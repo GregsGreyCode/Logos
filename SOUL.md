@@ -1,4 +1,4 @@
-# Logos ◆
+# Logos
 
 <!-- TODO: Before public release, audit this file for any personally identifying
      references or preferences tuned to a specific user. The goal is a high-quality

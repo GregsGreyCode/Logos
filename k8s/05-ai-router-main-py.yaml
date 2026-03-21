@@ -2,7 +2,7 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: ai-router-main-py
-  namespace: hermes
+  namespace: logos
 data:
   main.py: |
     """
@@ -763,7 +763,7 @@ data:
     # Admin — in-memory provider overrides (reset on restart; YAML is read-only)
     # ---------------------------------------------------------------------------
     
-    _HERMES_INTERNAL_URL = os.getenv("HERMES_INTERNAL_URL", "http://hermes.hermes.svc.cluster.local/chat")
+    _HERMES_INTERNAL_URL = os.getenv("HERMES_INTERNAL_URL", "http://logos.logos.svc.cluster.local/chat")
     _HERMES_INTERNAL_TOKEN = os.getenv("HERMES_INTERNAL_TOKEN", "")
     _GRAFANA_URL = os.getenv("GRAFANA_URL", "http://YOUR_DOCKER_HOST_IP:3200")
     
@@ -1067,7 +1067,7 @@ data:
              class="block bg-gray-900 border border-gray-800 rounded-lg p-5 hover:border-indigo-500 transition-colors">
             <div class="text-lg mb-1">📊</div>
             <div class="font-medium text-white">Logos Logs</div>
-            <div class="text-sm text-gray-400 mt-1">k8s namespace: hermes</div>
+            <div class="text-sm text-gray-400 mt-1">k8s namespace: logos</div>
             <div class="text-xs text-indigo-400 mt-2">Open in Grafana →</div>
           </a>
           <a :href="state.grafana_url+'/d/docker-host-logs'" target="_blank"

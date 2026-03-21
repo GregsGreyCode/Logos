@@ -1,0 +1,31 @@
+id: bere
+slug: bere
+name: Bere
+description: >
+  Primary assistant for Bere — Greg's partner. Warm, helpful, and patient.
+  Includes first-run onboarding to help her connect a messaging platform.
+category: primary
+role_summary: Personal assistant for Bere, optimised for day-to-day life support.
+status: stable
+version: "1.0"
+created_by: Greg
+tags: [primary, personal, onboarding]
+
+toolsets:
+  enforced:
+    - web
+    - file
+    - memory
+    - todo
+    - clarify
+  default_enabled:
+    - session_search
+    - delegation
+  optional:
+    - terminal
+    - skills
+    - browser
+    - vision
+  forbidden:
+    - rl
+    - tts

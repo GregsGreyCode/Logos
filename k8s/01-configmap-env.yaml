@@ -1,12 +1,12 @@
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: hermes-config
-  namespace: hermes
+  name: logos-config
+  namespace: logos
 data:
   HERMES_LOG_LEVEL: "info"
   HERMES_PORT: "8080"
   REQUEST_TIMEOUT_SECONDS: "120"
-  OPENAI_BASE_URL: "http://ai-router.hermes.svc.cluster.local:9001/v1"
+  OPENAI_BASE_URL: "http://ai-router.logos.svc.cluster.local:9001/v1"
   HERMES_MODEL: "qwen/qwen3.5-9b"
   LLM_MODEL: "balanced"

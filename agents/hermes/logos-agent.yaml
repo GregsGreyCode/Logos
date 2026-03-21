@@ -1,0 +1,49 @@
+schema_version: 1
+id: hermes
+slug: hermes
+name: "Hermes Agent"
+description: >
+  General-purpose AI agent with persistent memory, 90+ tools, and
+  multi-platform support. The reference Logos adapter.
+version: "1.3.0"
+status: stable
+created_by: greg
+tags: [general, tools, memory, multi-platform]
+
+# Dotted import path to the AgentAdapter subclass
+adapter: logos.adapters.hermes.adapter.HermesAdapter
+
+# Installation type — "builtin" means it lives in the agents/ tree
+install:
+  type: builtin
+  source: agents/hermes
+
+# Toolsets this agent knows how to use
+toolsets:
+  - web
+  - memory
+  - file
+  - terminal
+  - browser
+  - image_gen
+  - tts
+  - delegation
+  - session_search
+  - clarify
+  - todo
+  - code_execution
+  - mcp
+  - rl
+
+# Platforms tested and supported
+platforms:
+  - cli
+  - telegram
+  - discord
+  - whatsapp
+  - api
+
+# Advisory limits (callers may override)
+limits:
+  default_iterations: 90
+  max_iterations: 200

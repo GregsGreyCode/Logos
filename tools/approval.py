@@ -1,5 +1,9 @@
 """Dangerous command approval -- detection, prompting, and per-session state.
 
+Also contains the policy-based tool approval gate (check_policy_for_tool,
+create_policy_approval_request) used by the agent loop to enforce ActionPolicy
+write/exec controls on MCP and registry tool calls.
+
 This module is the single source of truth for the dangerous command system:
 - Pattern detection (DANGEROUS_PATTERNS, detect_dangerous_command)
 - Per-session approval state (thread-safe, keyed by session_key)
@@ -7,6 +11,8 @@ This module is the single source of truth for the dangerous command system:
 - Permanent allowlist persistence (config.yaml)
 """
 
+import hashlib
+import json
 import logging
 import os
 import re
@@ -453,3 +459,179 @@ def check_all_command_guards(command: str, env_type: str,
             save_permanent_allowlist(_permanent_approved)
 
     return {"approved": True, "message": None}
+
+
+# =========================================================================
+# Policy-based tool approval gate
+# =========================================================================
+
+def _args_hash(tool_args: dict) -> str:
+    """Stable hash of tool arguments for approval lookup."""
+    return hashlib.sha256(
+        json.dumps(tool_args, sort_keys=True, default=str).encode()
+    ).hexdigest()[:16]
+
+
+def check_policy_for_tool(
+    tool_name: str,
+    tool_args: dict,
+    session_id: str,
+    policy,  # ActionPolicy | None
+    workspace_path=None,  # str | Path | None — for WORKSPACE_ONLY enforcement
+) -> dict:
+    """Check a tool call against the resolved ActionPolicy.
+
+    Returns a dict:
+        allowed:           bool   — False means hard block
+        requires_approval: bool   — True means needs approval gate
+        reason:            str    — human-readable explanation
+        approval_id:       str|None — existing approved request ID (if found)
+        dry_run_simulate:  bool   — True means caller should simulate instead of block
+    """
+    if policy is None:
+        return {"allowed": True, "requires_approval": False, "reason": "", "approval_id": None, "dry_run_simulate": False}
+
+    try:
+        from gateway.auth.policy import check_tool as _check_tool
+        allowed, requires_approval, reason = _check_tool(tool_name, policy)
+    except Exception as e:
+        logger.warning("policy check_tool error for %s: %s", tool_name, e)
+        return {"allowed": True, "requires_approval": False, "reason": "", "approval_id": None, "dry_run_simulate": False}
+
+    if not allowed:
+        is_dry_run = "dry_run" in reason
+
+        # ── Exec dry-run exception: allow read-only commands through ──────
+        # write_policy=dry_run blocks exec tools by default, but clearly
+        # read-only commands (ls, cat, git log, kubectl get, …) don't mutate
+        # state, so we let them execute normally rather than simulating them.
+        if is_dry_run:
+            try:
+                from gateway.auth.policy import categorise_tool as _cat, ACTION_EXEC, ACTION_SSH_EXEC
+                if _cat(tool_name) in (ACTION_EXEC, ACTION_SSH_EXEC):
+                    cmd = (
+                        tool_args.get("command")
+                        or tool_args.get("cmd")
+                        or ""
+                    )
+                    if cmd:
+                        from gateway.dry_run import classify_exec_command as _clf
+                        classification, clf_reason = _clf(cmd)
+                        if classification == "read_only":
+                            logger.debug(
+                                "dry_run exec allow (read-only): tool=%s cmd=%r reason=%s",
+                                tool_name, cmd[:80], clf_reason,
+                            )
+                            return {
+                                "allowed": True,
+                                "requires_approval": False,
+                                "reason": f"dry_run_read_only_allowed: {clf_reason}",
+                                "approval_id": None,
+                                "dry_run_simulate": False,
+                            }
+                        logger.debug(
+                            "dry_run exec block (%s): tool=%s cmd=%r reason=%s",
+                            classification, tool_name, cmd[:80], clf_reason,
+                        )
+            except Exception as _clf_err:
+                logger.debug("dry_run exec classification error: %s", _clf_err)
+
+        return {
+            "allowed": False,
+            "requires_approval": False,
+            "reason": reason,
+            "approval_id": None,
+            "dry_run_simulate": is_dry_run,
+        }
+
+    # ── Filesystem path enforcement ──────────────────────────────────────
+    # For FILE_WRITE actions under WORKSPACE_ONLY, check the actual target path.
+    # This runs AFTER check_tool() passes (allowed=True) to catch path violations.
+    try:
+        from gateway.auth.policy import (
+            categorise_tool as _cat,
+            ACTION_FILE_WRITE, ACTION_GIT_MUTATION,
+            check_filesystem_path as _check_fs,
+            FilesystemPolicy,
+        )
+        action_type = _cat(tool_name)
+        if action_type == ACTION_FILE_WRITE:
+            write_path = (
+                tool_args.get("path")
+                or tool_args.get("file_path")
+                or tool_args.get("filename")
+                or ""
+            )
+            if write_path:
+                fs_allowed, fs_reason = _check_fs(write_path, policy, workspace_path)
+                if not fs_allowed:
+                    return {
+                        "allowed": False,
+                        "requires_approval": False,
+                        "reason": fs_reason,
+                        "approval_id": None,
+                        "dry_run_simulate": False,
+                    }
+    except Exception as _fs_err:
+        logger.warning("Filesystem path check error for %s: %s", tool_name, _fs_err)
+    # ─────────────────────────────────────────────────────────────────────
+
+    if not requires_approval:
+        return {"allowed": True, "requires_approval": False, "reason": "", "approval_id": None, "dry_run_simulate": False}
+
+    # Check if an approved request already exists for this exact tool call
+    try:
+        from gateway.auth import db as auth_db
+        existing = auth_db.find_approved_request(session_id, tool_name, _args_hash(tool_args))
+        if existing:
+            return {
+                "allowed": True,
+                "requires_approval": False,
+                "reason": "pre-approved",
+                "approval_id": existing["id"],
+                "dry_run_simulate": False,
+            }
+    except Exception as e:
+        logger.warning("approval lookup error for %s: %s", tool_name, e)
+
+    return {
+        "allowed": True,
+        "requires_approval": True,
+        "reason": reason,
+        "approval_id": None,
+        "dry_run_simulate": False,
+    }
+
+
+def create_policy_approval_request(
+    tool_name: str,
+    tool_args: dict,
+    session_id: str,
+    policy_id: Optional[str] = None,
+    user_id: Optional[str] = None,
+    expires_in: int = 300,
+) -> str:
+    """Persist a pending approval request and return its ID.
+
+    Called by the agent loop when check_policy_for_tool returns
+    requires_approval=True.  The returned ID is surfaced to the user so they
+    can approve via /approvals/{id}/approve or the web UI.
+    """
+    try:
+        from gateway.auth import db as auth_db
+        from gateway.auth.policy import categorise_tool
+        row = auth_db.create_approval_request(
+            session_id=session_id,
+            tool_name=tool_name,
+            tool_args=json.dumps(tool_args, default=str),
+            tool_args_hash=_args_hash(tool_args),
+            action_type=categorise_tool(tool_name),
+            user_id=user_id,
+            policy_id=policy_id,
+            expires_in=expires_in,
+        )
+        return row["id"]
+    except Exception as e:
+        logger.warning("Failed to persist approval request for %s: %s", tool_name, e)
+        # Fallback ID so the agent can still surface something to the user
+        return f"apr_fallback_{session_id[:8]}_{tool_name}"

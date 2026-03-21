@@ -1,17 +1,17 @@
-# Service for hermes-canary.
+# Service for logos-canary.
 # NodePort 30903 → external access at http://<node-ip>:30903
-# ClusterIP also available at http://hermes-canary.hermes.svc.cluster.local
+# ClusterIP also available at http://logos-canary.logos.svc.cluster.local
 # so the stable Hermes can smoke-test it in-cluster.
 #
-# Apply and delete alongside 10-hermes-canary-deployment.yaml.
+# Apply and delete alongside 10-logos-canary-deployment.yaml.
 apiVersion: v1
 kind: Service
 metadata:
-  name: hermes-canary
-  namespace: hermes
+  name: logos-canary
+  namespace: logos
 spec:
   selector:
-    app: hermes-canary
+    app: logos-canary
   ports:
     - name: http
       port: 80
