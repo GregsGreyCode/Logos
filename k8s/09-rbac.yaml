@@ -1,0 +1,50 @@
+# Namespace-scoped Role: manage Hermes instances (deployments, services, pvcs, pods)
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: hermes-instance-manager
+  namespace: hermes
+rules:
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "list", "watch", "create", "delete"]
+  - apiGroups: [""]
+    resources: ["services", "persistentvolumeclaims", "pods"]
+    verbs: ["get", "list", "watch", "create", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: hermes-instance-manager
+  namespace: hermes
+subjects:
+  - kind: ServiceAccount
+    name: hermes
+    namespace: hermes
+roleRef:
+  kind: Role
+  apiGroup: rbac.authorization.k8s.io
+  name: hermes-instance-manager
+---
+# Cluster-scoped read: list nodes (capacity) and pods cluster-wide (usage)
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: hermes-cluster-reader
+rules:
+  - apiGroups: [""]
+    resources: ["nodes", "pods"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: hermes-cluster-reader
+subjects:
+  - kind: ServiceAccount
+    name: hermes
+    namespace: hermes
+roleRef:
+  kind: ClusterRole
+  apiGroup: rbac.authorization.k8s.io
+  name: hermes-cluster-reader

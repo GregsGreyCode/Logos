@@ -1,0 +1,108 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ai-router
+  namespace: hermes
+  labels:
+    app: ai-router
+spec:
+  replicas: 1
+  revisionHistoryLimit: 2
+  selector:
+    matchLabels:
+      app: ai-router
+  template:
+    metadata:
+      labels:
+        app: ai-router
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9001"
+        prometheus.io/path: "/metrics"
+    spec:
+      imagePullSecrets:
+        - name: ghcr-creds
+
+      tolerations:
+        - key: "node-role.kubernetes.io/control-plane"
+          operator: "Exists"
+          effect: "NoSchedule"
+
+      volumes:
+        - name: providers-config
+          configMap:
+            name: ai-router-providers
+        - name: main-py
+          configMap:
+            name: ai-router-main-py
+        - name: tmp
+          emptyDir: {}
+
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+
+      containers:
+        - name: ai-router
+          image: ghcr.io/your-org/ai-router:latest
+          ports:
+            - name: http
+              containerPort: 9001
+
+          env:
+            - name: GRAFANA_URL
+              value: "http://YOUR_DOCKER_HOST_IP:3200"
+            - name: HERMES_INTERNAL_URL
+              value: "http://hermes.hermes.svc.cluster.local/chat"
+            - name: HERMES_INTERNAL_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: hermes-secret
+                  key: HERMES_INTERNAL_TOKEN
+
+          volumeMounts:
+            - name: providers-config
+              mountPath: /app/providers.yaml
+              subPath: providers.yaml
+              readOnly: true
+            - name: main-py
+              mountPath: /app/main.py
+              subPath: main.py
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            runAsUser: 10001
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 9001
+            initialDelaySeconds: 10
+            periodSeconds: 60
+            timeoutSeconds: 30
+            failureThreshold: 3
+
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 9001
+            initialDelaySeconds: 5
+            periodSeconds: 30
+            timeoutSeconds: 30
+            failureThreshold: 3

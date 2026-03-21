@@ -1,0 +1,28 @@
+id: general
+slug: general
+name: "General"
+description: "Open-ended peer assistant. Good for conversation, research, writing, and everyday tasks across any domain."
+category: general
+role_summary: "Handles diverse requests across conversation, research, creative work, and light task execution."
+status: stable
+version: "1.0"
+created_by: community
+tags: [general, conversation, research, writing]
+
+toolsets:
+  enforced:
+    - web
+    - memory
+  default_enabled:
+    - clarify
+    - session_search
+    - todo
+    - file
+  optional:
+    - browser
+    - image_gen
+    - tts
+    - delegation
+    - terminal
+  forbidden:
+    - rl

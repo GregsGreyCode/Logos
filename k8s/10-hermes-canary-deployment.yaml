@@ -1,0 +1,197 @@
+# Canary deployment for testing new Hermes images before promoting to stable.
+#
+# Workflow:
+#   1. Build new image: docker build → push as ghcr.io/your-org/hermes:canary
+#   2. kubectl apply -f 10-hermes-canary-deployment.yaml
+#   3. kubectl rollout status deployment/hermes-canary -n hermes --timeout=120s
+#   4. Smoke test: kubectl exec or curl http://hermes-canary.hermes.svc.cluster.local/health
+#   5a. PROMOTE: update image tag in 06-deployment.yaml → kubectl apply → kubectl rollout restart
+#   5b. ROLLBACK: kubectl delete -f 10-hermes-canary-deployment.yaml
+#
+# Requires: hermes-canary-telegram secret (separate test bot token).
+# Create with: ./scripts/create-k8s-secrets.sh --canary
+#
+# This file is meant to be applied temporarily and then deleted.
+# Do not leave it running alongside stable indefinitely.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: hermes-canary
+  namespace: hermes
+  labels:
+    app: hermes-canary
+spec:
+  replicas: 1
+  revisionHistoryLimit: 1
+  selector:
+    matchLabels:
+      app: hermes-canary
+  template:
+    metadata:
+      labels:
+        app: hermes-canary
+        canary: "true"
+    spec:
+      imagePullSecrets:
+        - name: ghcr-creds
+
+      tolerations:
+        - key: "node-role.kubernetes.io/control-plane"
+          operator: "Exists"
+          effect: "NoSchedule"
+
+      volumes:
+        # emptyDir — canary gets a fresh home, doesn't share PVC with stable
+        - name: hermes-home
+          emptyDir: {}
+        - name: hermes-config-seed
+          configMap:
+            name: hermes-config-yaml
+
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+        fsGroup: 10001
+
+      initContainers:
+        - name: seed-config
+          image: busybox:1.36
+          command:
+            - sh
+            - -c
+            - |
+              mkdir -p /hermes-home/memories
+              cp /seed/config.yaml /hermes-home/config.yaml
+              cp /seed/SOUL.md /hermes-home/SOUL.md
+              echo "canary: config.yaml and SOUL.md seeded"
+          volumeMounts:
+            - name: hermes-home
+              mountPath: /hermes-home
+            - name: hermes-config-seed
+              mountPath: /seed
+              readOnly: true
+          securityContext:
+            runAsUser: 10001
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+
+      containers:
+        - name: hermes
+          image: ghcr.io/your-org/hermes:canary
+          imagePullPolicy: Always
+          ports:
+            - name: http
+              containerPort: 8080
+
+          env:
+            - name: HOME
+              value: /home/hermes
+            - name: HERMES_LOG_LEVEL
+              valueFrom:
+                configMapKeyRef:
+                  name: hermes-config
+                  key: HERMES_LOG_LEVEL
+            - name: HERMES_PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: hermes-config
+                  key: HERMES_PORT
+            - name: REQUEST_TIMEOUT_SECONDS
+              valueFrom:
+                configMapKeyRef:
+                  name: hermes-config
+                  key: REQUEST_TIMEOUT_SECONDS
+            - name: OPENAI_BASE_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: hermes-config
+                  key: OPENAI_BASE_URL
+            - name: HERMES_MODEL
+              valueFrom:
+                configMapKeyRef:
+                  name: hermes-config
+                  key: HERMES_MODEL
+            - name: LLM_MODEL
+              valueFrom:
+                configMapKeyRef:
+                  name: hermes-config
+                  key: LLM_MODEL
+            - name: OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: hermes-secret
+                  key: OPENAI_API_KEY
+            - name: HERMES_INTERNAL_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: hermes-secret
+                  key: HERMES_INTERNAL_TOKEN
+            - name: HERMES_JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: hermes-secret
+                  key: HERMES_JWT_SECRET
+            # Separate test bot — avoids conflict with the live Telegram bot
+            - name: TELEGRAM_BOT_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: hermes-canary-telegram
+                  key: TELEGRAM_BOT_TOKEN
+            - name: HERMES_ADMIN_EMAIL
+              valueFrom:
+                secretKeyRef:
+                  name: hermes-secret
+                  key: HERMES_ADMIN_EMAIL
+            - name: HERMES_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: hermes-secret
+                  key: HERMES_ADMIN_PASSWORD
+            - name: TELEGRAM_ALLOWED_USERS
+              value: "8754717106"
+            - name: TELEGRAM_HOME_CHANNEL
+              value: "-5152225827"
+            - name: TELEGRAM_HOME_CHANNEL_NAME
+              value: "Homelab Notifications"
+
+          volumeMounts:
+            - name: hermes-home
+              mountPath: /home/hermes/.hermes
+
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "512Mi"
+            limits:
+              cpu: "2000m"
+              memory: "2Gi"
+
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
+
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 3
+
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            runAsUser: 10001
+            readOnlyRootFilesystem: false
+            capabilities:
+              drop:
+                - ALL

@@ -1,0 +1,207 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ai-router-providers
+  namespace: hermes
+data:
+  providers.yaml: |
+    # ── Token budget constants ────────────────────────────────────────────────────
+    #
+    # These calibrate the router's context estimator.
+    # Empirically validated: a real 31-tool Hermes request measured 16,611 tokens
+    # by LM Studio's tokenizer.  Adjust tool_overhead if you change tool schemas.
+    #
+    budget:
+      chars_per_token: 3.0        # conservative for mixed prose + JSON content
+      message_overhead: 12        # tokens per message: im_start/role/im_end
+      base_overhead: 256          # BOS, EOS, system template boilerplate
+      tool_overhead: 450          # tokens per tool schema (JSON is tokenized aggressively)
+      response_reserve: 2048      # tokens kept clear for the model's reply
+    
+    
+    # ── Tool tier policy ──────────────────────────────────────────────────────────
+    #
+    # Names must match what Hermes registers: mcp_{server_name}_{tool_name}
+    # Server names come from your ~/.hermes/config.yaml mcp_servers keys.
+    #
+    # base_mcp   — lightweight status tools, always included when context permits
+    # extended   — heavier tools, dropped first when context is tight
+    #
+    tool_tiers:
+      base_mcp:
+        - mcp_homelab_base_docker_list_containers
+        - mcp_homelab_base_prom_query
+      extended_mcp:
+        - mcp_homelab_extended_docker_get_logs
+        - mcp_homelab_extended_files_tree
+        - mcp_homelab_extended_files_read
+        - mcp_homelab_extended_proxmox_vms
+      ssh_mcp:
+        - mcp_homelab_ssh_ssh_list_hosts
+        - mcp_homelab_ssh_ssh_exec
+        - mcp_homelab_ssh_ssh_read_file
+      lgtm_base_mcp:
+        - mcp_homelab_lgtm_base_prometheus_list_targets
+        - mcp_homelab_lgtm_base_prometheus_list_alerts
+        - mcp_homelab_lgtm_base_loki_query
+        - mcp_homelab_lgtm_base_grafana_list_dashboards
+      lgtm_extended_mcp:
+        - mcp_homelab_lgtm_extended_grafana_get_dashboard
+        - mcp_homelab_lgtm_extended_grafana_list_datasources
+        - mcp_homelab_lgtm_extended_grafana_list_folders
+        - mcp_homelab_lgtm_extended_prometheus_list_rules
+        - mcp_homelab_lgtm_extended_alertmanager_list_alerts
+        - mcp_homelab_lgtm_extended_alertmanager_list_silences
+        - mcp_homelab_lgtm_extended_alertmanager_get_config
+        - mcp_homelab_lgtm_extended_loki_label_names
+        - mcp_homelab_lgtm_extended_loki_label_values
+    
+    
+    # ── Routing table ─────────────────────────────────────────────────────────────
+    #
+    # Each alias maps to an ordered list of (provider, model) candidates.
+    # The router tries each in order, skipping:
+    #   - disabled providers
+    #   - providers where estimated tokens won't fit
+    # If no candidate fits it uses the largest-context candidate as best-effort
+    # (tool budget trimming is the safety net).
+    #
+    # Add new aliases here without touching Python code.
+    #
+    routes:
+      # General-purpose: 9B @ 32k context, n5pro fallback
+      balanced:
+        - {provider: windows_gpu_9b,  model: qwen/qwen3.5-9b}
+        - {provider: n5pro,           model: qwen2.5-7b-instruct-q4}
+    
+      medium:
+        - {provider: windows_gpu_9b,  model: qwen/qwen3.5-9b}
+        - {provider: n5pro,           model: qwen2.5-7b-instruct-q4}
+    
+      # Low-latency quick replies
+      fast:
+        - {provider: windows_gpu_9b,  model: google/gemma-3-4b}
+        - {provider: n5pro,           model: qwen2.5-7b-instruct-q4}
+    
+      small:
+        - {provider: windows_gpu_9b,  model: google/gemma-3-4b}
+        - {provider: n5pro,           model: qwen2.5-7b-instruct-q4}
+
+      short:
+        - {provider: windows_gpu_9b,  model: google/gemma-3-4b}
+        - {provider: n5pro,           model: qwen2.5-7b-instruct-q4}
+
+      # 35B MoE @ 90k context — large context, no n5pro fallback
+      large:
+        - {provider: windows_gpu_35b, model: qwen/qwen3.5-35b-a3b}
+    
+      long:
+        - {provider: windows_gpu_35b, model: qwen/qwen3.5-35b-a3b}
+    
+      # Coding: coder model, fallback to 35B if coder is unloaded
+      coding:
+        - {provider: windows_gpu_9b,  model: qwen/qwen3-coder-next}
+    
+      coder:
+        - {provider: windows_gpu_9b,  model: qwen/qwen3-coder-next}
+    
+      brain:
+        - {provider: windows_gpu_9b,  model: qwen/qwen3-coder-next}
+        - {provider: windows_gpu_35b, model: qwen/qwen3.5-35b-a3b}
+    
+      gpt20b:
+        - {provider: windows_gpu_9b,  model: gpt-oss-20b}
+    
+    
+    # ── Providers ─────────────────────────────────────────────────────────────────
+    #
+    # context_limit: the actual context window loaded in the backend right now.
+    #   Update this when you reload a model with a different context size.
+    #   IMPORTANT: set to what the backend is *currently loaded with*, not the
+    #   theoretical model maximum.
+    #
+    # enabled: set false to pull a provider out of rotation without deleting config.
+    #
+    providers:
+      # 9B-class models: 32k context loaded in LM Studio
+      windows_gpu_9b:
+        name: windows-lmstudio
+        endpoint: http://YOUR_LM_STUDIO_HOST:1234/v1
+        enabled: true
+        context_limit: 32768
+        models:
+          - qwen/qwen3.5-9b
+          - qwen/qwen3-coder-next
+          - google/gemma-3-4b
+          - gpt-oss-20b
+        hardware:
+          gpu: RTX 4080 SUPER
+          vram_gb: 16
+          ram_gb: 64
+    
+      # 35B MoE: 90k context currently loaded in LM Studio
+      # Max theoretical: 262144. Update context_limit when you change LM Studio settings.
+      windows_gpu_35b:
+        name: windows-lmstudio
+        endpoint: http://YOUR_LM_STUDIO_HOST:1234/v1
+        enabled: true
+        context_limit: 90000
+        models:
+          - qwen/qwen3.5-35b-a3b
+        hardware:
+          gpu: RTX 4080 SUPER
+          vram_gb: 16
+          ram_gb: 64
+    
+      n5pro:
+        name: n5pro-llama
+        endpoint: http://YOUR_OLLAMA_HOST:11434/v1
+        enabled: true
+        context_limit: 8192
+        models:
+          - qwen2.5-7b-instruct-q4
+        hardware:
+          gpu: Radeon 890M
+          vram_gb: 8
+          ram_gb: 64
+    
+    
+    # ── Embedding providers ───────────────────────────────────────────────────────
+    #
+    # Separate from chat providers — embedding calls go to /embeddings not /chat/completions.
+    # endpoint: base URL (same format as chat providers, e.g. LM Studio /v1)
+    # models: models actually loaded; used for passthrough resolution and /v1/models listing.
+    #
+    embedding_providers:
+      lmstudio_embeddings:
+        name: lmstudio-embeddings
+        endpoint: http://YOUR_LM_STUDIO_HOST:1234/v1
+        enabled: true
+        models:
+          - text-embedding-nomic-embed-text-v1.5
+          - jinaai/jina-embeddings-v4-text-retrieval
+    
+    
+    # ── Embedding routes ──────────────────────────────────────────────────────────
+    #
+    # Maps OpenAI embedding model aliases → local backend (provider + model).
+    # List-based like chat routes: router tries candidates in order, falling back
+    # to the next if a provider is disabled or returns an error.
+    #
+    # Add new aliases here without touching Python.
+    #
+    embedding_routes:
+      # OpenAI small → nomic, fallback to jina
+      text-embedding-3-small:
+        - {provider: lmstudio_embeddings, model: text-embedding-nomic-embed-text-v1.5}
+        - {provider: lmstudio_embeddings, model: jinaai/jina-embeddings-v4-text-retrieval}
+    
+      # OpenAI large → jina (higher quality), fallback to nomic
+      text-embedding-3-large:
+        - {provider: lmstudio_embeddings, model: jinaai/jina-embeddings-v4-text-retrieval}
+        - {provider: lmstudio_embeddings, model: text-embedding-nomic-embed-text-v1.5}
+    
+      # Legacy ada alias → nomic, fallback to jina
+      text-embedding-ada-002:
+        - {provider: lmstudio_embeddings, model: text-embedding-nomic-embed-text-v1.5}
+        - {provider: lmstudio_embeddings, model: jinaai/jina-embeddings-v4-text-retrieval}
