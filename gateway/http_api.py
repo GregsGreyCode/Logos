@@ -5333,14 +5333,14 @@ _LOGIN_HTML = """<!DOCTYPE html>
       background-size: 28px 28px;
     }
 
-    /* ambient glow centred on page */
+    /* ambient glow — originates at logo position, fans downward toward the card */
     body::before {
       content: '';
       position: fixed;
-      top: 0; left: 50%;
+      top: 22vh; left: 50%;
       transform: translateX(-50%);
-      width: 900px; height: 600px;
-      background: radial-gradient(ellipse at 50% 0%, var(--accent-subtle, rgba(99,102,241,0.07)) 0%, transparent 70%);
+      width: 600px; height: 480px;
+      background: radial-gradient(ellipse at 50% 0%, rgba(99,102,241,0.18) 0%, rgba(99,102,241,0.07) 30%, transparent 70%);
       pointer-events: none;
       z-index: 0;
     }
@@ -5446,7 +5446,6 @@ _LOGIN_HTML = """<!DOCTYPE html>
         <img src="/static/logo.svg" alt="Logos" class="logo-img relative mx-auto"
              style="width:120px;height:120px;object-fit:contain;">
       </div>
-      <h1 class="text-white font-semibold tracking-tight mb-1.5" style="font-size:1.5rem;letter-spacing:-0.02em;">Logos</h1>
       <p style="font-size:0.8rem;color:rgba(100,116,139,0.9);letter-spacing:0.04em;">self-hosted AI agent platform</p>
     </div>
 
