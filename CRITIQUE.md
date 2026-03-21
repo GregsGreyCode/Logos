@@ -316,6 +316,9 @@ There is no `NetworkPolicy` manifest in `k8s/`. All Hermes pods can reach all ot
 
 ## 13. Future Ideas / Deferred Work
 
+**Setup wizard model catalog is hardcoded and will age badly.**
+The onboarding wizard's curated model list (`ollamaModelCatalog` in `gateway/http_api.py`) is a static array — qwen3:9b, llama3.1:8b, llama3.2:3b, etc. This will drift from reality as new models release. The right long-term fix is a versioned catalog file (YAML or JSON) served from a CDN or fetched from a community-maintained registry at wizard load time, with the hardcoded list as a fallback. Ollama's own library API (`https://ollama.com/api/library`) and Open WebUI's model catalog are potential upstream sources. Until then, every new model generation requires a code change and redeploy to surface recommendations to users.
+
 **Weekly self-improvement cron skill.**
 The agent should run a weekly cron job that reviews its own recent run history, identifies one high-priority error or improvement opportunity, performs a dry-run of the proposed fix using the existing `dry_run` infrastructure, and — if the dry-run passes — surfaces the fix to the operator for approval before applying it. This closes the loop between observability (runs are already recorded) and self-correction. Implementation path: a skill that queries `hermes runs list`, picks the highest-signal failure, drafts a patch, runs it through `dry_run_simulate`, then sends a formatted proposal via the configured delivery channel.
 
