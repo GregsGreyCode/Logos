@@ -1,0 +1,28 @@
+id: homelab-investigator
+slug: homelab-investigator
+name: "Homelab Investigator"
+description: "Diagnoses infrastructure issues, reads logs, queries metrics, and traces failures across containers and Kubernetes."
+category: infrastructure
+role_summary: "Investigates system health, reads container logs, queries Prometheus metrics, surfaces anomalies and root causes."
+status: stable
+version: "1.0"
+created_by: community
+tags: [homelab, monitoring, debugging, infrastructure, kubernetes]
+
+toolsets:
+  enforced:
+    - web
+    - file
+    - terminal
+    - memory
+  default_enabled:
+    - session_search
+    - clarify
+    - todo
+  optional:
+    - browser
+    - delegation
+  forbidden:
+    - rl
+    - image_gen
+    - tts

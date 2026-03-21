@@ -1,0 +1,1189 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ai-router-main-py
+  namespace: hermes
+data:
+  main.py: |
+    """
+    AI Router — smart inference gateway for Hermes homelab agent.
+    
+    Responsibilities:
+      - Route alias names (balanced, brain, coding, fast, big) to concrete
+        provider + model pairs, trying candidates in priority order.
+      - Estimate request token cost and apply a tool-tier budget:
+          full      → all tools fit, nothing dropped
+          base_only → extended MCP tools dropped
+          no_mcp    → all MCP tools dropped (very tight context)
+      - Forward full OpenAI-compatible requests to the chosen backend,
+        including streaming, tool schemas, and tool_choice.
+      - Return clear structured errors when backends fail.
+    
+    Configuration lives entirely in providers.yaml — no routing logic in Python.
+    """
+    
+    import base64
+    import json
+    import logging
+    import os
+    import struct
+    import threading
+    import time
+    from typing import Optional
+    
+    import httpx
+    import requests
+    import yaml
+    from fastapi import FastAPI, HTTPException, Request, Response
+    from fastapi.responses import StreamingResponse, HTMLResponse
+    from prometheus_client import Counter, Histogram, generate_latest, CONTENT_TYPE_LATEST
+    
+    # ---------------------------------------------------------------------------
+    # Logging
+    # ---------------------------------------------------------------------------
+    
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    )
+    logger = logging.getLogger("ai_router")
+    
+    # ---------------------------------------------------------------------------
+    # Config
+    # ---------------------------------------------------------------------------
+    
+    with open("/app/providers.yaml", "r") as _f:
+        _config = yaml.safe_load(_f)
+    
+    _providers: dict = _config["providers"]
+    _routes: dict = _config.get("routes", {})
+    _tool_tiers: dict = _config.get("tool_tiers", {})
+    _budget: dict = _config.get("budget", {})
+    _embedding_providers: dict = _config.get("embedding_providers", {})
+    _embedding_routes: dict = _config.get("embedding_routes", {})
+    
+    # Token estimation constants — read from config, sensible defaults
+    _CHARS_PER_TOKEN: float = _budget.get("chars_per_token", 3.0)
+    _PER_MESSAGE_OVERHEAD: int = _budget.get("message_overhead", 12)
+    _BASE_OVERHEAD: int = _budget.get("base_overhead", 256)
+    _PER_TOOL_OVERHEAD: int = _budget.get("tool_overhead", 450)
+    _RESPONSE_RESERVE: int = _budget.get("response_reserve", 2048)
+    
+    # Tool tiers — names must match Hermes's mcp_{server}_{tool} naming convention
+    _MCP_BASE_TOOLS: frozenset[str] = frozenset(_tool_tiers.get("base_mcp", []))
+    _MCP_EXTENDED_TOOLS: frozenset[str] = frozenset(_tool_tiers.get("extended_mcp", []))
+    
+    # ---------------------------------------------------------------------------
+    # Prometheus metrics
+    # ---------------------------------------------------------------------------
+    
+    app = FastAPI(title="AI Router")
+    
+    REQUEST_COUNT = Counter(
+        "ai_router_requests_total",
+        "Total requests routed",
+        ["alias", "provider"],
+    )
+    REQUEST_LATENCY = Histogram(
+        "ai_router_request_latency_seconds",
+        "End-to-end latency per routed request",
+        ["alias", "provider"],
+    )
+    PROVIDER_FAILURES = Counter(
+        "ai_router_provider_failures_total",
+        "Backend errors by provider",
+        ["provider"],
+    )
+    ROUTE_DECISIONS = Counter(
+        "ai_router_route_decisions_total",
+        "Routing decisions made",
+        ["alias", "provider", "model", "reason"],
+    )
+    CONTEXT_REJECTIONS = Counter(
+        "ai_router_context_rejections_total",
+        "Requests that exceeded a provider's context window",
+        ["provider", "model"],
+    )
+    TOOL_BUDGET_DROPS = Counter(
+        "ai_router_tool_budget_drops_total",
+        "Tool drop events by tier",
+        ["tier"],
+    )
+    EMBEDDING_REQUEST_COUNT = Counter(
+        "ai_router_embedding_requests_total",
+        "Total embedding requests routed",
+        ["alias", "provider"],
+    )
+    EMBEDDING_LATENCY = Histogram(
+        "ai_router_embedding_latency_seconds",
+        "End-to-end latency per embedding request",
+        ["alias", "provider"],
+    )
+    EMBEDDING_FAILURES = Counter(
+        "ai_router_embedding_failures_total",
+        "Embedding backend errors by provider",
+        ["provider"],
+    )
+    
+    # ---------------------------------------------------------------------------
+    # Token estimation
+    # ---------------------------------------------------------------------------
+    
+    def estimate_tokens(messages: list[dict], tools: list | None = None) -> int:
+        """Conservative upper-bound token estimate.
+    
+        Accounts for message content, per-message chat-template overhead,
+        per-tool schema overhead (calibrated empirically), and fixed base overhead.
+        Does NOT include the response reserve — callers add that when checking fits.
+        """
+        msg_chars = sum(
+            len(str(m.get("content") or "")) + len(str(m.get("role") or ""))
+            for m in messages
+        )
+        return (
+            int(msg_chars / _CHARS_PER_TOKEN)
+            + len(messages) * _PER_MESSAGE_OVERHEAD
+            + (len(tools) * _PER_TOOL_OVERHEAD if tools else 0)
+            + _BASE_OVERHEAD
+        )
+    
+    # ---------------------------------------------------------------------------
+    # Provider helpers
+    # ---------------------------------------------------------------------------
+    
+    def _provider(key: str) -> dict:
+        return _providers[key]
+    
+    def _context_limit(provider_key: str) -> int:
+        return _provider(provider_key).get("context_limit", 8192)
+    
+    def _is_enabled(provider_key: str) -> bool:
+        if provider_key in _provider_overrides:
+            return _provider_overrides[provider_key]
+        return _provider(provider_key).get("enabled", True)
+    
+    def _fits(provider_key: str, estimated_tokens: int) -> bool:
+        return estimated_tokens + _RESPONSE_RESERVE <= _context_limit(provider_key)
+    
+    # ---------------------------------------------------------------------------
+    # Routing
+    # ---------------------------------------------------------------------------
+    
+    def resolve_route(
+        alias: str,
+        messages: list[dict],
+        tools: list | None = None,
+    ) -> tuple[str, str, str]:
+        """Return (provider_key, model_name, decision_reason).
+    
+        Works through the route table for the given alias, trying each candidate
+        in order.  Skips disabled providers and providers whose context window
+        won't fit the estimated request size.
+    
+        If no candidate fits, falls back to the candidate with the largest context
+        window and relies on the tool-budget layer to trim tools down to fit.
+        """
+        estimated = estimate_tokens(messages, tools)
+        tool_count = len(tools) if tools else 0
+    
+        candidates = _routes.get(alias)
+    
+        if candidates:
+            # Try each candidate in priority order
+            for c in candidates:
+                pk, model = c["provider"], c["model"]
+                if not _is_enabled(pk):
+                    logger.debug("route: skip %s/%s (disabled)", pk, model)
+                    continue
+                if _fits(pk, estimated):
+                    reason = f"route_{alias}"
+                    _log_route(alias, pk, model, reason, estimated, tool_count)
+                    return pk, model, reason
+    
+            # No candidate fits — pick the one with the largest context as best-effort
+            available = [c for c in candidates if _is_enabled(c["provider"])]
+            if available:
+                best = max(available, key=lambda c: _context_limit(c["provider"]))
+                reason = f"route_{alias}_oversized"
+                logger.warning(
+                    "route: no candidate fits %d tokens for alias=%s — using %s/%s as best-effort",
+                    estimated, alias, best["provider"], best["model"],
+                )
+                _log_route(alias, best["provider"], best["model"], reason, estimated, tool_count)
+                return best["provider"], best["model"], reason
+    
+            # All candidates are disabled
+            raise HTTPException(
+                status_code=503,
+                detail=f"No providers available for alias '{alias}'. "
+                       "Check providers.yaml enabled flags.",
+            )
+    
+        # Passthrough — alias is a raw model name
+        for pk, p in _providers.items():
+            if alias in p.get("models", []) and _is_enabled(pk):
+                _log_route(alias, pk, alias, "passthrough", estimated, tool_count)
+                return pk, alias, "passthrough"
+    
+        # Unknown alias — try windows_gpu as default
+        logger.warning("route: unknown alias=%s, defaulting to windows_gpu passthrough", alias)
+        return "windows_gpu", alias, "passthrough_default"
+    
+    
+    def _log_route(alias, provider, model, reason, estimated_tokens, tool_count):
+        logger.info(
+            "route: alias=%s → %s/%s reason=%s estimated_tokens=%d tools=%d",
+            alias, provider, model, reason, estimated_tokens, tool_count,
+        )
+    
+    # ---------------------------------------------------------------------------
+    # Tool budget enforcement
+    # ---------------------------------------------------------------------------
+    #
+    # Three tiers, applied in order when context is too tight:
+    #
+    #   full      — all tools fit                              → pass through unchanged
+    #   base_only — drop extended MCP tools                   → keep base MCP + non-MCP
+    #   no_mcp    — drop all MCP tools                        → keep only native Hermes tools
+    #
+    
+    def _tool_fn_name(tool: dict) -> str:
+        return tool.get("function", {}).get("name", "")
+    
+    def apply_tool_budget(
+        tools: list[dict] | None,
+        messages: list[dict],
+        provider_key: str,
+    ) -> tuple[list[dict] | None, str]:
+        """Return (filtered_tools, tier) enforcing the provider's context budget."""
+        if not tools:
+            return tools, "full"
+    
+        usable = _context_limit(provider_key) - _RESPONSE_RESERVE
+    
+        def fits(tl: list[dict]) -> bool:
+            return estimate_tokens(messages, tl) <= usable
+    
+        if fits(tools):
+            return tools, "full"
+    
+        # Drop extended MCP tools
+        without_extended = [t for t in tools if _tool_fn_name(t) not in _MCP_EXTENDED_TOOLS]
+        if fits(without_extended):
+            n_dropped = len(tools) - len(without_extended)
+            logger.info(
+                "tool_budget: base_only — dropped %d extended MCP tool(s) "
+                "(provider=%s limit=%d estimated=%d)",
+                n_dropped, provider_key, _context_limit(provider_key),
+                estimate_tokens(messages, tools),
+            )
+            TOOL_BUDGET_DROPS.labels(tier="extended").inc()
+            return without_extended, "base_only"
+    
+        # Drop all MCP tools
+        non_mcp = [t for t in tools if not _tool_fn_name(t).startswith("mcp_")]
+        n_base = sum(1 for t in tools if _tool_fn_name(t) in _MCP_BASE_TOOLS)
+        n_ext = sum(1 for t in tools if _tool_fn_name(t) in _MCP_EXTENDED_TOOLS)
+        logger.warning(
+            "tool_budget: no_mcp — dropped all MCP tools (%d base + %d extended) "
+            "(provider=%s limit=%d estimated=%d)",
+            n_base, n_ext, provider_key, _context_limit(provider_key),
+            estimate_tokens(messages, tools),
+        )
+        TOOL_BUDGET_DROPS.labels(tier="all_mcp").inc()
+        return non_mcp, "no_mcp"
+    
+    # ---------------------------------------------------------------------------
+    # Backend error handling
+    # ---------------------------------------------------------------------------
+    
+    def _parse_backend_error(resp) -> str:
+        """Extract the most useful error string from a backend error response."""
+        try:
+            body = resp.json() if callable(getattr(resp, "json", None)) else json.loads(resp.text)
+            if isinstance(body, dict):
+                err = body.get("error", {})
+                if isinstance(err, dict):
+                    return err.get("message", str(body))
+                if isinstance(err, str):
+                    return err
+                return body.get("detail", str(body))
+        except Exception:
+            pass
+        text = getattr(resp, "text", "") or ""
+        return text[:500] if text else f"HTTP {resp.status_code}"
+    
+    
+    def _is_context_error(msg: str) -> bool:
+        return any(kw in msg.lower() for kw in (
+            "context", "token", "exceed", "too long", "maximum", "length", "overflow",
+        ))
+    
+    
+    def _backend_exception(
+        status_code: int,
+        raw_msg: str,
+        provider_key: str,
+        model: str,
+        estimated_tokens: int,
+    ) -> HTTPException:
+        if status_code == 400 and _is_context_error(raw_msg):
+            CONTEXT_REJECTIONS.labels(provider=provider_key, model=model).inc()
+            return HTTPException(
+                status_code=413,
+                detail={
+                    "error": "context_limit_exceeded",
+                    "provider": provider_key,
+                    "model": model,
+                    "estimated_tokens": estimated_tokens,
+                    "model_limit": _context_limit(provider_key),
+                    "message": raw_msg,
+                    "hint": (
+                        "Reduce tool count, trim message history, or reload the model "
+                        "with a larger context window in LM Studio."
+                    ),
+                },
+            )
+        PROVIDER_FAILURES.labels(provider=provider_key).inc()
+        return HTTPException(
+            status_code=502,
+            detail={
+                "error": "backend_error",
+                "provider": provider_key,
+                "model": model,
+                "http_status": status_code,
+                "message": raw_msg,
+            },
+        )
+    
+    # ---------------------------------------------------------------------------
+    # Request dispatch helpers
+    # ---------------------------------------------------------------------------
+    
+    def _build_payload(body: dict, resolved_model: str, filtered_tools) -> dict:
+        payload = {**body, "model": resolved_model}
+        if filtered_tools is not body.get("tools"):
+            if filtered_tools:
+                payload["tools"] = filtered_tools
+            else:
+                payload.pop("tools", None)
+                payload.pop("tool_choice", None)
+        return payload
+    
+    
+    async def _dispatch_streaming(url: str, payload: dict, provider_key: str, resolved_model: str,
+                                   alias: str, decision_reason: str, estimated_tokens: int):
+        """Stream response from backend, emitting a structured error event on failure."""
+        async def generate():
+            async with httpx.AsyncClient(timeout=120) as client:
+                async with client.stream("POST", url, json=payload) as r:
+                    if r.status_code >= 400:
+                        err_body = await r.aread()
+                        err_text = err_body.decode(errors="replace")[:500]
+                        logger.error(
+                            "stream backend error: %s/%s HTTP %d: %s",
+                            provider_key, resolved_model, r.status_code, err_text,
+                        )
+                        PROVIDER_FAILURES.labels(provider=provider_key).inc()
+                        evt = json.dumps({
+                            "error": {
+                                "error": "backend_error",
+                                "provider": provider_key,
+                                "http_status": r.status_code,
+                                "message": err_text,
+                                "estimated_tokens": estimated_tokens,
+                            }
+                        })
+                        yield f"data: {evt}\n\n".encode()
+                        yield b"data: [DONE]\n\n"
+                        return
+    
+                    REQUEST_COUNT.labels(alias=alias, provider=provider_key).inc()
+                    ROUTE_DECISIONS.labels(
+                        alias=alias, provider=provider_key,
+                        model=resolved_model, reason=decision_reason,
+                    ).inc()
+                    async for chunk in r.aiter_bytes():
+                        yield chunk
+    
+        return StreamingResponse(generate(), media_type="text/event-stream")
+    
+    
+    def _dispatch_sync(url: str, payload: dict, provider_key: str, resolved_model: str,
+                       alias: str, decision_reason: str, estimated_tokens: int,
+                       tool_count: int, budget_tier: str):
+        """Synchronous (non-streaming) backend call."""
+        start = time.time()
+        response = requests.post(url, json=payload, timeout=120)
+    
+        if not response.ok:
+            msg = _parse_backend_error(response)
+            logger.error(
+                "backend error: %s/%s HTTP %d estimated=%d tools=%d: %s",
+                provider_key, resolved_model, response.status_code,
+                estimated_tokens, tool_count, msg,
+            )
+            raise _backend_exception(
+                response.status_code, msg, provider_key, resolved_model, estimated_tokens
+            )
+    
+        duration = time.time() - start
+        REQUEST_COUNT.labels(alias=alias, provider=provider_key).inc()
+        REQUEST_LATENCY.labels(alias=alias, provider=provider_key).observe(duration)
+        ROUTE_DECISIONS.labels(
+            alias=alias, provider=provider_key,
+            model=resolved_model, reason=decision_reason,
+        ).inc()
+    
+        logger.info(
+            "ok: alias=%s → %s/%s %.2fs estimated=%d tools=%d budget=%s",
+            alias, provider_key, resolved_model, duration,
+            estimated_tokens, tool_count, budget_tier,
+        )
+        return response.json()
+    
+    # ---------------------------------------------------------------------------
+    # Embedding routing
+    # ---------------------------------------------------------------------------
+    
+    def _ep_enabled(key: str) -> bool:
+        return _embedding_providers.get(key, {}).get("enabled", True)
+    
+    
+    def resolve_embedding(alias: str) -> list[tuple[str, str]]:
+        """Return ordered list of (provider_key, resolved_model) candidates.
+    
+        Checks embedding_routes first (alias → mapped model), then falls through
+        to passthrough if alias is a raw model name listed under an embedding provider.
+        Returns an empty list if the alias is completely unknown.
+        """
+        candidates = _embedding_routes.get(alias)
+        if candidates:
+            return [
+                (c["provider"], c["model"])
+                for c in candidates
+                if _ep_enabled(c["provider"])
+            ]
+        # Passthrough — alias is a raw model name served directly by a provider
+        for pk, p in _embedding_providers.items():
+            if alias in p.get("models", []) and _ep_enabled(pk):
+                return [(pk, alias)]
+        return []
+    
+    
+    def _embedding_error(
+        status_code: int,
+        raw_msg: str,
+        provider_key: str,
+        model: str,
+    ) -> HTTPException:
+        """Map backend embedding errors to structured, typed responses."""
+        lower = raw_msg.lower()
+        if "dimension" in lower:
+            error_type = "unsupported_dimensions"
+            http_out = 422
+        elif status_code == 404 or ("not found" in lower and "model" in lower):
+            error_type = "model_not_found"
+            http_out = 404
+        elif status_code in (400, 422):
+            error_type = "invalid_embedding_request"
+            http_out = 400
+        else:
+            error_type = "backend_error"
+            http_out = 502
+        EMBEDDING_FAILURES.labels(provider=provider_key).inc()
+        return HTTPException(
+            status_code=http_out,
+            detail={
+                "error": error_type,
+                "provider": provider_key,
+                "model": model,
+                "http_status": status_code,
+                "message": raw_msg,
+            },
+        )
+    
+    
+    # ---------------------------------------------------------------------------
+    # Endpoints
+    # ---------------------------------------------------------------------------
+    
+    
+    # ---------------------------------------------------------------------------
+    # Background provider health cache
+    # Probes each provider endpoint on a schedule; /health returns the cache
+    # instantly so k8s probes never hit LM Studio directly.
+    # ---------------------------------------------------------------------------
+    
+    _health_cache: dict = {"status": "ok", "providers": {}, "checked_at": None}
+    _HEALTH_CHECK_INTERVAL = 120  # seconds between backend probes
+    
+    
+    def _refresh_health_cache():
+        provider_status = {}
+        seen_endpoints: set[str] = set()
+        for pk, p in _providers.items():
+            if not p.get("enabled", True):
+                provider_status[pk] = {"status": "disabled"}
+                continue
+            endpoint = p["endpoint"]
+            if endpoint in seen_endpoints:
+                # Same LM Studio instance — reuse result, don't probe twice
+                for other_pk, other_p in _providers.items():
+                    if other_p.get("endpoint") == endpoint and other_pk in provider_status:
+                        provider_status[pk] = dict(provider_status[other_pk])
+                        break
+                else:
+                    provider_status[pk] = {"status": "unknown"}
+                continue
+            seen_endpoints.add(endpoint)
+            try:
+                r = requests.head(f"{endpoint}/models", timeout=5)
+                provider_status[pk] = {"status": "ok" if r.ok else "degraded", "http": r.status_code}
+            except Exception as e:
+                provider_status[pk] = {"status": "unreachable", "error": str(e)[:80]}
+        _health_cache["providers"] = provider_status
+        _health_cache["checked_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    
+    
+    def _health_check_loop():
+        while True:
+            try:
+                _refresh_health_cache()
+            except Exception as e:
+                logger.warning(f"health cache refresh failed: {e}")
+            time.sleep(_HEALTH_CHECK_INTERVAL)
+    
+    
+    # Start background health checker on import
+    _health_thread = threading.Thread(target=_health_check_loop, daemon=True)
+    _health_thread.start()
+    
+    
+    @app.get("/health")
+    def health():
+        """Liveness check — returns cached provider status, never probes backends inline."""
+        return _health_cache
+    
+    
+    @app.get("/providers")
+    def list_providers():
+        return _providers
+    
+    
+    @app.get("/metrics")
+    def metrics():
+        return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
+    
+    
+    @app.get("/v1/models")
+    def v1_models():
+        data = []
+        seen: set[str] = set()
+        for pk, p in _providers.items():
+            if not p.get("enabled", True):
+                continue
+            for m in p.get("models", []):
+                if m not in seen:
+                    seen.add(m)
+                    data.append({"id": m, "object": "model", "owned_by": pk})
+        for alias in _routes:
+            if alias not in seen:
+                data.append({"id": alias, "object": "model", "owned_by": "router"})
+        # Embedding models and aliases
+        for pk, p in _embedding_providers.items():
+            if not p.get("enabled", True):
+                continue
+            for m in p.get("models", []):
+                if m not in seen:
+                    seen.add(m)
+                    data.append({"id": m, "object": "model", "owned_by": pk})
+        for alias in _embedding_routes:
+            if alias not in seen:
+                seen.add(alias)
+                data.append({"id": alias, "object": "model", "owned_by": "router"})
+        return {"object": "list", "data": data}
+    
+    
+    @app.post("/v1/embeddings")
+    async def embeddings(request: Request):
+        """OpenAI-compatible embeddings with alias resolution and provider fallback."""
+        body = await request.json()
+        alias = body.get("model", "")
+        raw_input = body.get("input", [])
+        input_count = len(raw_input) if isinstance(raw_input, list) else 1
+    
+        candidates = resolve_embedding(alias)
+        if not candidates:
+            raise HTTPException(
+                status_code=404,
+                detail={
+                    "error": "model_not_found",
+                    "alias": alias,
+                    "message": (
+                        f"No embedding provider configured for '{alias}'. "
+                        "Add it to embedding_routes or embedding_providers in providers.yaml."
+                    ),
+                },
+            )
+    
+        provider_key, resolved_model = candidates[0]
+        logger.info(
+            "embedding_dispatch: alias=%s provider=%s resolved_model=%s input_count=%d",
+            alias, provider_key, resolved_model, input_count,
+        )
+    
+        # OpenAI SDK v6 always requests encoding_format=base64 for performance.
+        # LM Studio ignores this and returns a JSON float array, which the SDK's
+        # toFloat32Array() then misinterprets (treats each float as a byte → 768/4=192 values).
+        # Fix: strip base64 from the backend request and re-encode here if needed.
+        requested_base64 = body.get("encoding_format") == "base64"
+        backend_body = {k: v for k, v in body.items() if k != "encoding_format"} if requested_base64 else body
+    
+        last_exc: Optional[HTTPException] = None
+        for provider_key, resolved_model in candidates:
+            provider = _embedding_providers[provider_key]
+            url = f'{provider["endpoint"]}/embeddings'
+            payload = {**backend_body, "model": resolved_model}
+    
+            start = time.time()
+            try:
+                resp = requests.post(url, json=payload, timeout=60)
+            except requests.RequestException as e:
+                EMBEDDING_FAILURES.labels(provider=provider_key).inc()
+                logger.warning(
+                    "embedding connection failed: %s/%s: %s",
+                    provider_key, resolved_model, e,
+                )
+                last_exc = HTTPException(
+                    status_code=502,
+                    detail={
+                        "error": "backend_unreachable",
+                        "provider": provider_key,
+                        "model": resolved_model,
+                        "message": str(e),
+                    },
+                )
+                continue
+    
+            if not resp.ok:
+                raw_msg = _parse_backend_error(resp)
+                logger.warning(
+                    "embedding backend error: %s/%s HTTP %d: %s",
+                    provider_key, resolved_model, resp.status_code, raw_msg,
+                )
+                last_exc = _embedding_error(resp.status_code, raw_msg, provider_key, resolved_model)
+                continue
+    
+            duration = time.time() - start
+            EMBEDDING_REQUEST_COUNT.labels(alias=alias, provider=provider_key).inc()
+            EMBEDDING_LATENCY.labels(alias=alias, provider=provider_key).observe(duration)
+            logger.info(
+                "embedding ok: alias=%s → %s/%s %.2fs input_count=%d",
+                alias, provider_key, resolved_model, duration, input_count,
+            )
+    
+            result = resp.json()
+            # Echo the alias back so clients see the model name they requested
+            if isinstance(result, dict):
+                result["model"] = alias
+    
+            # If the client requested base64 encoding, convert float arrays to proper
+            # base64 float32 (little-endian) so OpenAI SDK v6 can decode them correctly.
+            if requested_base64 and isinstance(result, dict) and isinstance(result.get("data"), list):
+                for item in result["data"]:
+                    emb = item.get("embedding")
+                    if isinstance(emb, list):
+                        item["embedding"] = base64.b64encode(
+                            struct.pack(f"{len(emb)}f", *emb)
+                        ).decode("utf-8")
+                result["object"] = "list"
+    
+            return result
+    
+        raise last_exc
+    
+    
+    @app.post("/v1/chat/completions")
+    async def chat_completions(request: Request):
+        """OpenAI-compatible chat completions with smart routing and tool-budget enforcement."""
+        body = await request.json()
+        alias = body.get("model", "balanced")
+        messages = body.get("messages", [])
+        tools = body.get("tools")
+    
+        estimated_tokens = estimate_tokens(messages, tools)
+        tool_count = len(tools) if tools else 0
+    
+        # 1. Route
+        provider_key, resolved_model, decision_reason = resolve_route(alias, messages, tools)
+        provider = _provider(provider_key)
+    
+        # 2. Apply tool budget
+        filtered_tools, budget_tier = apply_tool_budget(tools, messages, provider_key)
+        if filtered_tools is not tools:
+            tool_count = len(filtered_tools) if filtered_tools else 0
+            estimated_tokens = estimate_tokens(messages, filtered_tools)
+    
+        logger.info(
+            "dispatch: alias=%s → %s/%s reason=%s estimated=%d tools=%d budget=%s stream=%s",
+            alias, provider_key, resolved_model, decision_reason,
+            estimated_tokens, tool_count, budget_tier, bool(body.get("stream")),
+        )
+    
+        # 3. Build payload and dispatch
+        payload = _build_payload(body, resolved_model, filtered_tools)
+        url = f'{provider["endpoint"]}/chat/completions'
+    
+        try:
+            if body.get("stream"):
+                return await _dispatch_streaming(
+                    url, payload, provider_key, resolved_model,
+                    alias, decision_reason, estimated_tokens,
+                )
+            return _dispatch_sync(
+                url, payload, provider_key, resolved_model,
+                alias, decision_reason, estimated_tokens, tool_count, budget_tier,
+            )
+        except HTTPException:
+            raise
+        except (requests.RequestException, httpx.HTTPError) as e:
+            PROVIDER_FAILURES.labels(provider=provider_key).inc()
+            raise HTTPException(
+                status_code=502,
+                detail={
+                    "error": "connection_failed",
+                    "provider": provider_key,
+                    "message": str(e),
+                },
+            )
+    
+    
+    # ---------------------------------------------------------------------------
+    # Admin — in-memory provider overrides (reset on restart; YAML is read-only)
+    # ---------------------------------------------------------------------------
+    
+    _HERMES_INTERNAL_URL = os.getenv("HERMES_INTERNAL_URL", "http://hermes.hermes.svc.cluster.local/chat")
+    _HERMES_INTERNAL_TOKEN = os.getenv("HERMES_INTERNAL_TOKEN", "")
+    _GRAFANA_URL = os.getenv("GRAFANA_URL", "http://YOUR_DOCKER_HOST_IP:3200")
+    
+    _provider_overrides: dict[str, bool] = {}  # key → enabled override
+    
+    
+    def _effective_enabled(key: str) -> bool:
+        if key in _provider_overrides:
+            return _provider_overrides[key]
+        return _providers.get(key, {}).get("enabled", True)
+    
+    
+    @app.post("/admin/providers/{key}/toggle")
+    def admin_toggle_provider(key: str):
+        if key not in _providers:
+            raise HTTPException(status_code=404, detail=f"Provider '{key}' not found")
+        current = _effective_enabled(key)
+        _provider_overrides[key] = not current
+        logger.info("admin: toggled provider %s → enabled=%s", key, not current)
+        return {"provider": key, "enabled": not current}
+    
+    
+    @app.post("/admin/chat")
+    async def admin_chat_proxy(request: Request):
+        """Proxy chat requests to the Hermes HTTP API with SSE pass-through."""
+        body = await request.json()
+        headers = {"Content-Type": "application/json"}
+        if _HERMES_INTERNAL_TOKEN:
+            headers["Authorization"] = f"Bearer {_HERMES_INTERNAL_TOKEN}"
+    
+        async def _stream():
+            try:
+                async with httpx.AsyncClient(timeout=180) as client:
+                    async with client.stream("POST", _HERMES_INTERNAL_URL, json=body, headers=headers) as r:
+                        if r.status_code >= 400:
+                            err = await r.aread()
+                            data = json.dumps({"type": "error", "content": f"Hermes error {r.status_code}: {err.decode()[:200]}"})
+                            yield f"data: {data}\n\n".encode()
+                            yield b'data: {"type":"done"}\n\n'
+                            return
+                        async for chunk in r.aiter_bytes():
+                            yield chunk
+            except Exception as e:
+                data = json.dumps({"type": "error", "content": f"Proxy error: {e}"})
+                yield f"data: {data}\n\n".encode()
+                yield b'data: {"type":"done"}\n\n'
+    
+        return StreamingResponse(_stream(), media_type="text/event-stream")
+    
+    
+    @app.get("/admin/state")
+    def admin_state():
+        """Full provider + routing state for the admin UI."""
+        providers_out = {}
+        for key, p in _providers.items():
+            cache_entry = _health_cache.get("providers", {}).get(key, {})
+            providers_out[key] = {
+                "key": key,
+                "name": p.get("name", key),
+                "endpoint": p.get("endpoint", ""),
+                "enabled": _effective_enabled(key),
+                "context_limit": p.get("context_limit", 0),
+                "models": p.get("models", []),
+                "hardware": p.get("hardware", {}),
+                "health": cache_entry.get("status", "unknown"),
+            }
+        routes_out = {alias: candidates for alias, candidates in _routes.items()}
+        return {
+            "providers": providers_out,
+            "routes": routes_out,
+            "health_checked_at": _health_cache.get("checked_at"),
+            "grafana_url": _GRAFANA_URL,
+            "hermes_url": _HERMES_INTERNAL_URL,
+        }
+    
+    
+    @app.get("/admin/models-live")
+    def admin_models_live():
+        """Query each provider's live /v1/models and diff against providers.yaml config."""
+        import requests as _req
+        results = {}
+        for pk, p in _providers.items():
+            base = p["endpoint"].rstrip("/")
+            configured = set(p.get("models", []))
+            try:
+                resp = _req.get(f"{base}/models", timeout=5)
+                if resp.ok:
+                    live_ids = {m["id"] for m in resp.json().get("data", [])}
+                    results[pk] = {
+                        "status": "ok",
+                        "enabled": _effective_enabled(pk),
+                        "configured": sorted(configured),
+                        "live": sorted(live_ids),
+                        "missing": sorted(configured - live_ids),
+                        "extra": sorted(live_ids - configured),
+                    }
+                else:
+                    results[pk] = {
+                        "status": "error", "http": resp.status_code,
+                        "enabled": _effective_enabled(pk),
+                        "configured": sorted(configured),
+                    }
+            except Exception as e:
+                results[pk] = {
+                    "status": "unreachable", "error": str(e)[:120],
+                    "enabled": _effective_enabled(pk),
+                    "configured": sorted(configured),
+                }
+        return {"providers": results, "checked_at": time.time()}
+    
+    
+    @app.post("/admin/benchmark")
+    async def admin_benchmark(request: Request):
+        """Synthetic benchmark: send N test prompts to each provider/model, measure latency and tok/s."""
+        import requests as _req
+        body = await request.json()
+        providers_filter = body.get("providers")   # None = all enabled
+        models_filter = body.get("models")          # None = all configured
+        n_prompts = min(int(body.get("n_prompts", 3)), 10)
+    
+        test_prompt = body.get("prompt", "Count from 1 to 10.")
+        test_messages = [{"role": "user", "content": test_prompt}]
+    
+        results = []
+        for pk, p in _providers.items():
+            if providers_filter and pk not in providers_filter:
+                continue
+            if not _effective_enabled(pk):
+                continue
+            for model in p.get("models", []):
+                if models_filter and model not in models_filter:
+                    continue
+                url = f'{p["endpoint"]}/chat/completions'
+                payload = {
+                    "model": model,
+                    "messages": test_messages,
+                    "stream": False,
+                    "max_tokens": 80,
+                }
+                timings = []
+                errors = []
+                for _ in range(n_prompts):
+                    t0 = time.time()
+                    try:
+                        resp = _req.post(url, json=payload, timeout=60)
+                        elapsed = time.time() - t0
+                        if resp.ok:
+                            data = resp.json()
+                            comp_tokens = data.get("usage", {}).get("completion_tokens", 0)
+                            timings.append({
+                                "elapsed_s": round(elapsed, 3),
+                                "completion_tokens": comp_tokens,
+                                "tok_s": round(comp_tokens / elapsed, 1) if elapsed > 0 and comp_tokens > 0 else None,
+                            })
+                        else:
+                            errors.append(f"HTTP {resp.status_code}")
+                    except Exception as e:
+                        errors.append(str(e)[:60])
+    
+                entry = {
+                    "provider": pk,
+                    "provider_name": p.get("name", pk),
+                    "model": model,
+                    "n_ok": len(timings),
+                    "n_err": len(errors),
+                    "errors": errors[:3],
+                }
+                if timings:
+                    latencies = sorted(t["elapsed_s"] for t in timings)
+                    tok_rates = [t["tok_s"] for t in timings if t["tok_s"] is not None]
+                    n = len(latencies)
+                    entry["p50_s"] = latencies[n // 2]
+                    entry["p95_s"] = latencies[int(n * 0.95)] if n >= 2 else latencies[-1]
+                    entry["avg_s"] = round(sum(latencies) / n, 3)
+                    entry["avg_tok_s"] = round(sum(tok_rates) / len(tok_rates), 1) if tok_rates else None
+                    entry["samples"] = timings
+                results.append(entry)
+    
+        return {
+            "results": results,
+            "test_prompt": test_prompt,
+            "n_prompts": n_prompts,
+            "ran_at": time.time(),
+        }
+    
+    
+    _ADMIN_HTML = """<!DOCTYPE html>
+    <html lang="en">
+    <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>AI Router Admin</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+    <style>
+      [x-cloak]{display:none!important}
+      .tab-active{border-bottom:2px solid #6366f1;color:#6366f1}
+      pre{white-space:pre-wrap;word-break:break-word}
+    </style>
+    </head>
+    <body class="bg-gray-950 text-gray-100 min-h-screen" x-data="app()" x-init="init()">
+    
+    <div class="max-w-6xl mx-auto px-4 py-6">
+      <div class="flex items-center gap-3 mb-6">
+        <span class="text-2xl">⚡</span>
+        <h1 class="text-xl font-bold text-white">AI Router Admin</h1>
+        <span class="ml-auto text-xs text-gray-500" x-text="state.health_checked_at ? 'health checked: '+state.health_checked_at : 'loading...'"></span>
+      </div>
+    
+      <!-- Tabs -->
+      <div class="flex gap-6 border-b border-gray-800 mb-6">
+        <button class="pb-2 text-sm font-medium" :class="tab==='providers'?'tab-active':'text-gray-400 hover:text-white'" @click="tab='providers'">Providers</button>
+        <button class="pb-2 text-sm font-medium" :class="tab==='routes'?'tab-active':'text-gray-400 hover:text-white'" @click="tab='routes'">Routes</button>
+        <button class="pb-2 text-sm font-medium" :class="tab==='chat'?'tab-active':'text-gray-400 hover:text-white'" @click="tab='chat'; scrollChat()">Chat</button>
+        <button class="pb-2 text-sm font-medium" :class="tab==='logs'?'tab-active':'text-gray-400 hover:text-white'" @click="tab='logs'">Logs</button>
+      </div>
+    
+      <!-- Providers tab -->
+      <div x-show="tab==='providers'" x-cloak>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <template x-for="(p, key) in state.providers" :key="key">
+            <div class="bg-gray-900 rounded-lg p-4 border border-gray-800">
+              <div class="flex items-start justify-between">
+                <div>
+                  <div class="flex items-center gap-2">
+                    <span class="font-semibold text-white" x-text="p.name"></span>
+                    <span class="text-xs px-2 py-0.5 rounded-full"
+                      :class="p.health==='ok'?'bg-green-900 text-green-300':p.health==='disabled'?'bg-gray-800 text-gray-500':'bg-red-900 text-red-300'"
+                      x-text="p.health"></span>
+                  </div>
+                  <div class="text-xs text-gray-400 mt-1" x-text="p.endpoint"></div>
+                  <div class="text-xs text-gray-500 mt-1">
+                    <span x-text="(p.context_limit/1000).toFixed(0)+'k ctx'"></span>
+                    <span x-if="p.hardware.gpu"> · <span x-text="p.hardware.gpu"></span></span>
+                  </div>
+                  <div class="flex flex-wrap gap-1 mt-2">
+                    <template x-for="m in p.models" :key="m">
+                      <span class="text-xs bg-gray-800 text-gray-300 px-2 py-0.5 rounded" x-text="m"></span>
+                    </template>
+                  </div>
+                </div>
+                <button
+                  class="ml-4 text-xs px-3 py-1.5 rounded-md font-medium transition-colors"
+                  :class="p.enabled?'bg-indigo-600 hover:bg-indigo-500 text-white':'bg-gray-700 hover:bg-gray-600 text-gray-300'"
+                  @click="toggleProvider(key)"
+                  x-text="p.enabled?'Enabled':'Disabled'">
+                </button>
+              </div>
+            </div>
+          </template>
+        </div>
+        <p class="text-xs text-gray-600 mt-4">* Toggles are in-memory and reset on router restart. Edit providers.yaml ConfigMap to persist.</p>
+      </div>
+    
+      <!-- Routes tab -->
+      <div x-show="tab==='routes'" x-cloak>
+        <div class="space-y-3">
+          <template x-for="(candidates, alias) in state.routes" :key="alias">
+            <div class="bg-gray-900 rounded-lg p-3 border border-gray-800">
+              <div class="flex items-center gap-3">
+                <span class="font-mono text-indigo-400 text-sm w-24 shrink-0" x-text="alias"></span>
+                <div class="flex flex-wrap gap-2">
+                  <template x-for="(c,i) in candidates" :key="i">
+                    <span class="text-xs bg-gray-800 text-gray-300 px-2 py-0.5 rounded font-mono"
+                      :class="state.providers[c.provider]&&!state.providers[c.provider].enabled?'opacity-40 line-through':''"
+                      x-text="c.provider+'/'+c.model"></span>
+                  </template>
+                </div>
+              </div>
+            </div>
+          </template>
+        </div>
+      </div>
+    
+      <!-- Chat tab -->
+      <div x-show="tab==='chat'" x-cloak class="flex flex-col" style="height:70vh">
+        <div id="chat-messages" class="flex-1 overflow-y-auto bg-gray-900 rounded-lg border border-gray-800 p-4 mb-3 space-y-3">
+          <template x-for="(msg,i) in chatMessages" :key="i">
+            <div :class="msg.role==='user'?'text-right':''">
+              <span class="inline-block max-w-2xl text-left px-3 py-2 rounded-lg text-sm"
+                :class="msg.role==='user'?'bg-indigo-700 text-white':'bg-gray-800 text-gray-100'"
+                x-text="msg.content"></span>
+            </div>
+          </template>
+          <div x-show="chatLoading" class="text-gray-500 text-sm animate-pulse">Logos is thinking...</div>
+        </div>
+        <div class="flex gap-2">
+          <input x-model="chatInput" @keydown.enter="sendChat()"
+            class="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-indigo-500"
+            placeholder="Message Logos... (Enter to send)" :disabled="chatLoading">
+          <button @click="sendChat()" :disabled="chatLoading"
+            class="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 px-4 py-2 rounded-lg text-sm font-medium">Send</button>
+        </div>
+        <p class="text-xs text-gray-600 mt-2">Requires Logos HTTP API to be running (port 8080).</p>
+      </div>
+    
+      <!-- Logs tab -->
+      <div x-show="tab==='logs'" x-cloak>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <a :href="state.grafana_url+'/d/hermes-logs'" target="_blank"
+             class="block bg-gray-900 border border-gray-800 rounded-lg p-5 hover:border-indigo-500 transition-colors">
+            <div class="text-lg mb-1">📊</div>
+            <div class="font-medium text-white">Logos Logs</div>
+            <div class="text-sm text-gray-400 mt-1">k8s namespace: hermes</div>
+            <div class="text-xs text-indigo-400 mt-2">Open in Grafana →</div>
+          </a>
+          <a :href="state.grafana_url+'/d/docker-host-logs'" target="_blank"
+             class="block bg-gray-900 border border-gray-800 rounded-lg p-5 hover:border-indigo-500 transition-colors">
+            <div class="text-lg mb-1">🐳</div>
+            <div class="font-medium text-white">Docker Host Logs</div>
+            <div class="text-sm text-gray-400 mt-1">All docker containers on YOUR_DOCKER_HOST_IP</div>
+            <div class="text-xs text-indigo-400 mt-2">Open in Grafana →</div>
+          </a>
+          <a :href="state.grafana_url" target="_blank"
+             class="block bg-gray-900 border border-gray-800 rounded-lg p-5 hover:border-indigo-500 transition-colors">
+            <div class="text-lg mb-1">🔍</div>
+            <div class="font-medium text-white">Grafana Explore</div>
+            <div class="text-sm text-gray-400 mt-1">Full log search & explore</div>
+            <div class="text-xs text-indigo-400 mt-2">Open Grafana →</div>
+          </a>
+          <a :href="state.grafana_url+'/dashboards'" target="_blank"
+             class="block bg-gray-900 border border-gray-800 rounded-lg p-5 hover:border-indigo-500 transition-colors">
+            <div class="text-lg mb-1">📈</div>
+            <div class="font-medium text-white">All Dashboards</div>
+            <div class="text-sm text-gray-400 mt-1">Metrics, LM Studio, homelab</div>
+            <div class="text-xs text-indigo-400 mt-2">Browse →</div>
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <script>
+    function app() {
+      return {
+        tab: 'providers',
+        state: { providers: {}, routes: {}, grafana_url: '', health_checked_at: '' },
+        chatMessages: [],
+        chatInput: '',
+        chatLoading: false,
+        chatSessionId: 'admin-' + Math.random().toString(36).slice(2,8),
+    
+        async init() {
+          await this.loadState();
+          setInterval(() => this.loadState(), 30000);
+        },
+    
+        async loadState() {
+          try {
+            const r = await fetch('/admin/state');
+            this.state = await r.json();
+          } catch(e) { console.error('loadState failed', e); }
+        },
+    
+        async toggleProvider(key) {
+          try {
+            const r = await fetch('/admin/providers/'+key+'/toggle', {method:'POST'});
+            const d = await r.json();
+            if (this.state.providers[key]) this.state.providers[key].enabled = d.enabled;
+          } catch(e) { alert('Toggle failed: '+e); }
+        },
+    
+        async sendChat() {
+          const msg = this.chatInput.trim();
+          if (!msg || this.chatLoading) return;
+          this.chatInput = '';
+          this.chatMessages.push({role:'user', content: msg});
+          this.chatLoading = true;
+          this.scrollChat();
+          try {
+            const r = await fetch('/admin/chat', {
+              method: 'POST',
+              headers: {'Content-Type':'application/json'},
+              body: JSON.stringify({message: msg, session_id: this.chatSessionId, user_name: 'Admin'})
+            });
+            const reader = r.body.getReader();
+            const dec = new TextDecoder();
+            let buf = '';
+            let reply = '';
+            while(true) {
+              const {done, value} = await reader.read();
+              if(done) break;
+              buf += dec.decode(value, {stream:true});
+              const lines = buf.split('\\n');
+              buf = lines.pop();
+              for(const line of lines) {
+                if(!line.startsWith('data:')) continue;
+                try {
+                  const d = JSON.parse(line.slice(5).trim());
+                  if(d.type==='message') reply = d.content;
+                  if(d.type==='done' && reply) {
+                    this.chatMessages.push({role:'assistant', content: reply});
+                    reply = '';
+                  }
+                  if(d.type==='error') {
+                    this.chatMessages.push({role:'assistant', content: '❌ '+d.content});
+                  }
+                } catch(_){}
+              }
+            }
+          } catch(e) {
+            this.chatMessages.push({role:'assistant', content: '❌ Connection error: '+e});
+          } finally {
+            this.chatLoading = false;
+            this.scrollChat();
+          }
+        },
+    
+        scrollChat() {
+          this.$nextTick(() => {
+            const el = document.getElementById('chat-messages');
+            if(el) el.scrollTop = el.scrollHeight;
+          });
+        }
+      }
+    }
+    </script>
+    </body>
+    </html>"""
+    
+    
+    @app.get("/admin", response_class=HTMLResponse)
+    def admin_ui():
+        return HTMLResponse(content=_ADMIN_HTML)

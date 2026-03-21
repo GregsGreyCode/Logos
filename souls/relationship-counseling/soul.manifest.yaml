@@ -1,0 +1,27 @@
+id: relationship-counseling
+slug: relationship-counseling
+name: "Relationship Counseling"
+description: "A reflective space for thinking through interpersonal situations, communication patterns, and emotions."
+category: personal
+role_summary: "Helps process relationship dynamics and feelings. Listens before advising. Non-prescriptive. Not a therapist."
+status: experimental
+version: "1.0"
+created_by: community
+tags: [relationship, emotional, personal, counseling, communication]
+
+toolsets:
+  enforced:
+    - memory
+  default_enabled:
+    - clarify
+    - session_search
+  optional:
+    - tts
+  forbidden:
+    - terminal
+    - rl
+    - file
+    - browser
+    - image_gen
+    - web
+    - todo

@@ -1,0 +1,26 @@
+id: news-anchor
+slug: news-anchor
+name: "News Anchor"
+description: "Researches and summarizes news on topics of interest. Produces structured briefings with sources."
+category: research
+role_summary: "Finds, aggregates, and presents news summaries. Good for morning briefings, topic digests, and current events."
+status: experimental
+version: "1.0"
+created_by: community
+tags: [news, research, summarization, briefing, current-events]
+
+toolsets:
+  enforced:
+    - web
+  default_enabled:
+    - memory
+    - clarify
+    - session_search
+  optional:
+    - tts
+    - image_gen
+    - browser
+  forbidden:
+    - terminal
+    - rl
+    - file

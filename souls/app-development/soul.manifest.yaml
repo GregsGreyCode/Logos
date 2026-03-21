@@ -1,0 +1,28 @@
+id: app-development
+slug: app-development
+name: "App Development"
+description: "Think through, design, and build applications. Good for architecture planning, API design, and implementation."
+category: development
+role_summary: "Pair programmer and architect for app design, API planning, code generation, and implementation guidance."
+status: stable
+version: "1.0"
+created_by: community
+tags: [coding, architecture, planning, development, api]
+
+toolsets:
+  enforced:
+    - web
+    - file
+    - memory
+  default_enabled:
+    - todo
+    - clarify
+    - session_search
+    - delegation
+    - terminal
+  optional:
+    - browser
+    - image_gen
+  forbidden:
+    - rl
+    - tts

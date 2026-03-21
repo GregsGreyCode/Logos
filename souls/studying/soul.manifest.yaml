@@ -1,0 +1,27 @@
+id: studying
+slug: studying
+name: "Studying"
+description: "Helps learn, memorize, and understand subjects. Generates explanations, quizzes, and study plans."
+category: education
+role_summary: "Learning companion for structured study, concept explanation, knowledge testing, and study planning."
+status: stable
+version: "1.0"
+created_by: community
+tags: [learning, education, research, explanation, study]
+
+toolsets:
+  enforced:
+    - web
+    - memory
+  default_enabled:
+    - clarify
+    - session_search
+    - todo
+  optional:
+    - image_gen
+    - tts
+    - browser
+  forbidden:
+    - terminal
+    - rl
+    - file

@@ -1,0 +1,232 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: hermes
+  namespace: hermes
+  labels:
+    app: hermes
+spec:
+  replicas: 1
+  revisionHistoryLimit: 2
+  selector:
+    matchLabels:
+      app: hermes
+  template:
+    metadata:
+      labels:
+        app: hermes
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+        prometheus.io/path: "/metrics"
+    spec:
+      serviceAccountName: hermes
+
+      imagePullSecrets:
+        - name: ghcr-creds
+
+      tolerations:
+        - key: "node-role.kubernetes.io/control-plane"
+          operator: "Exists"
+          effect: "NoSchedule"
+
+      volumes:
+        # PVC backed by local-path-provisioner (rancher/local-path-provisioner).
+        # Stores ~/.hermes/: memory, SOUL.md, skills, runtime config changes.
+        # Persists across pod restarts. Tied to the node where the pod is scheduled.
+        - name: hermes-home
+          persistentVolumeClaim:
+            claimName: hermes-pvc
+        - name: hermes-config-seed
+          configMap:
+            name: hermes-config-yaml
+        # Scratch space for Hermes to write reports, docs, research output.
+        # Ephemeral — cleared on pod restart. For persistent output use operator git_commit.
+        - name: hermes-work
+          emptyDir: {}
+        # Shared memory written by primary instances, mounted read-only by spawned instances.
+        # Primary mounts this read-write so it can update MEMORY.md / USER.md here.
+        - name: hermes-shared-memory
+          persistentVolumeClaim:
+            claimName: hermes-shared-memory-pvc
+
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+        # Ensures the PVC is chowned to this GID on mount so runAsUser 10001 can write
+        fsGroup: 10001
+
+      initContainers:
+        # Step 1: Fix ownership on the PVC root so user 10001 can write.
+        # local-path-provisioner creates the directory as root — this corrects it.
+        - name: fix-perms
+          image: busybox:1.36
+          command:
+            - sh
+            - -c
+            - |
+              chown -R 10001:10001 /hermes-home
+              chmod 750 /hermes-home
+              mkdir -p /hermes-shared/memories
+              chown -R 10001:10001 /hermes-shared
+              chmod 750 /hermes-shared
+          volumeMounts:
+            - name: hermes-home
+              mountPath: /hermes-home
+            - name: hermes-shared-memory
+              mountPath: /hermes-shared
+          securityContext:
+            runAsUser: 0
+
+        # Step 2: Seed config.yaml from ConfigMap into PVC.
+        # ConfigMap is source-of-truth for MCP config; runs as hermes user.
+        # PVC gives Hermes a writable home for memory, SOUL.md, skills, runtime config.
+        - name: seed-config
+          image: busybox:1.36
+          command:
+            - sh
+            - -c
+            - |
+              mkdir -p /hermes-home/memories
+              sed "s|\${INSPECTOR_TOKEN}|${INSPECTOR_TOKEN}|g" /seed/config.yaml > /hermes-home/config.yaml
+              cp /seed/SOUL.md /hermes-home/SOUL.md
+              echo "config.yaml and SOUL.md seeded from ConfigMap"
+          env:
+            - name: INSPECTOR_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: hermes-secret
+                  key: INSPECTOR_TOKEN
+          volumeMounts:
+            - name: hermes-home
+              mountPath: /hermes-home
+            - name: hermes-config-seed
+              mountPath: /seed
+              readOnly: true
+          securityContext:
+            runAsUser: 10001
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+
+      containers:
+        - name: hermes
+          image: ghcr.io/your-org/logos:latest
+          ports:
+            - name: http
+              containerPort: 8080
+
+          env:
+            - name: HOME
+              value: /home/hermes
+            - name: HERMES_LOG_LEVEL
+              valueFrom:
+                configMapKeyRef:
+                  name: hermes-config
+                  key: HERMES_LOG_LEVEL
+            - name: HERMES_PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: hermes-config
+                  key: HERMES_PORT
+            - name: REQUEST_TIMEOUT_SECONDS
+              valueFrom:
+                configMapKeyRef:
+                  name: hermes-config
+                  key: REQUEST_TIMEOUT_SECONDS
+            - name: OPENAI_BASE_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: hermes-config
+                  key: OPENAI_BASE_URL
+            - name: HERMES_MODEL
+              valueFrom:
+                configMapKeyRef:
+                  name: hermes-config
+                  key: HERMES_MODEL
+            - name: LLM_MODEL
+              valueFrom:
+                configMapKeyRef:
+                  name: hermes-config
+                  key: LLM_MODEL
+            - name: OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: hermes-secret
+                  key: OPENAI_API_KEY
+            - name: HERMES_INTERNAL_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: hermes-secret
+                  key: HERMES_INTERNAL_TOKEN
+            - name: HERMES_JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: hermes-secret
+                  key: HERMES_JWT_SECRET
+            - name: HERMES_ADMIN_EMAIL
+              valueFrom:
+                secretKeyRef:
+                  name: hermes-secret
+                  key: HERMES_ADMIN_EMAIL
+            - name: HERMES_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: hermes-secret
+                  key: HERMES_ADMIN_PASSWORD
+            - name: TELEGRAM_BOT_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: hermes-telegram
+                  key: TELEGRAM_BOT_TOKEN
+            - name: TELEGRAM_ALLOWED_USERS
+              value: "REPLACE_WITH_TELEGRAM_USER_ID"
+            - name: TELEGRAM_HOME_CHANNEL
+              value: "REPLACE_WITH_TELEGRAM_CHANNEL_ID"
+            - name: TELEGRAM_HOME_CHANNEL_NAME
+              value: "Homelab Notifications"
+            - name: HERMES_INSTANCE_NAME
+              value: "Logos"
+
+          volumeMounts:
+            - name: hermes-home
+              mountPath: /home/hermes/.hermes
+            - name: hermes-work
+              mountPath: /work
+            - name: hermes-shared-memory
+              mountPath: /home/hermes/.hermes-shared
+
+          readinessProbe:
+            httpGet:
+              path: /health/ready
+              port: 8080
+            initialDelaySeconds: 15
+            periodSeconds: 15
+            failureThreshold: 3
+
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            failureThreshold: 3
+
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "2Gi"
+            limits:
+              cpu: "4000m"
+              memory: "8Gi"
+
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            runAsUser: 10001
+            readOnlyRootFilesystem: false
+            capabilities:
+              drop:
+                - ALL

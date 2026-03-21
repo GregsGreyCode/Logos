@@ -1,0 +1,28 @@
+id: homelab-code-fix
+slug: homelab-code-fix
+name: "Homelab Code Fix"
+description: "Reads, patches, and tests code in the homelab repo. Focused on targeted fixes with minimal blast radius."
+category: infrastructure
+role_summary: "Reads files, understands errors, writes targeted patches, and commits changes. Confirms before destructive operations."
+status: stable
+version: "1.0"
+created_by: community
+tags: [homelab, coding, debugging, git, infrastructure]
+
+toolsets:
+  enforced:
+    - web
+    - file
+    - terminal
+    - memory
+  default_enabled:
+    - session_search
+    - todo
+    - delegation
+  optional:
+    - browser
+    - clarify
+  forbidden:
+    - rl
+    - image_gen
+    - tts
