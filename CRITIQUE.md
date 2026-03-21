@@ -255,6 +255,13 @@ Note: `init: true` (tini) only reaps processes re-parented to PID 1 — it does 
 
 ## 11. Additional Issues (Post-Initial Audit)
 
+### UI / Dashboard
+
+**Chat scroll-to-bottom fires unconditionally on page load.**
+The dashboard scrolls the chat pane to the bottom on every render/refresh, regardless of whether the content is taller than the viewport. If the conversation is short enough to fit entirely within the chat container, there is nothing to scroll — but the scroll fires anyway. This causes a jarring jump for short sessions and is perceptible whenever the page is refreshed. The correct behaviour is: only scroll to bottom if `scrollHeight > clientHeight` (i.e. the content actually overflows the container). A one-line guard before the scroll call fixes it.
+
+---
+
 ### Privacy
 
 **Honcho is a cloud integration that sends conversation data to a third party.**

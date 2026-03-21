@@ -54,6 +54,7 @@ _hermes_home: Path = Path.home() / ".hermes"
 _AI_ROUTER_BASE = "http://ai-router.hermes.svc.cluster.local:9001"
 _CANARY_HEALTH_URL = "http://hermes-canary.hermes.svc.cluster.local/health"
 _INSTANCE_NAME = os.environ.get("HERMES_INSTANCE_NAME", "Hermes")
+_IS_CANARY = os.environ.get("HERMES_IS_CANARY", "").lower() in ("1", "true", "yes")
 _HERMES_NAMESPACE = "hermes"
 _INSTANCE_CPU_REQUEST = "500m"
 _INSTANCE_MEM_REQUEST = "2Gi"
@@ -733,7 +734,7 @@ _ADMIN_HTML = """<!DOCTYPE html>
   /* Copy button — appears on bubble hover */
   .msg-copy{
     display:inline-flex;align-items:center;gap:.25rem;
-    position:absolute;top:.4rem;right:.4rem;
+    position:absolute;bottom:.4rem;right:.4rem;
     background:transparent;border:1px solid transparent;border-radius:4px;
     padding:.2rem .4rem;font-size:.65rem;color:#4b5563;
     cursor:pointer;opacity:0;transition:opacity .15s,color .15s,border-color .15s;
@@ -824,8 +825,23 @@ _ADMIN_HTML = """<!DOCTYPE html>
   <!-- Tabs + theme swatches -->
   <div class="flex items-end gap-6 border-b border-gray-800 mb-3">
     <!-- Logos brand mark -->
-    <div class="pb-2 shrink-0">
-      <img src="/static/logo.svg" alt="Logos" style="height:32px;width:32px;object-fit:contain;filter:drop-shadow(0 0 6px var(--accent-glow, rgba(99,102,241,0.4)));">
+    <div class="pb-2 shrink-0 flex items-center gap-2">
+      <!-- Inline SVG so gradient stops can use CSS theme variables -->
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 625 625" fill="none" aria-label="Logos"
+           style="height:32px;width:32px;flex-shrink:0;filter:drop-shadow(0 0 6px var(--accent-glow, rgba(99,102,241,0.4)));">
+        <defs>
+          <linearGradient id="logoGrad-nav" x1="100" y1="100" x2="525" y2="525" gradientUnits="userSpaceOnUse">
+            <stop offset="0%" stop-color="var(--accent)"/>
+            <stop offset="100%" stop-color="var(--accent-light)"/>
+          </linearGradient>
+        </defs>
+        <g fill="url(#logoGrad-nav)" fill-rule="evenodd">
+          <path d="M 466.0,133.0 L 455.0,128.0 L 442.0,128.0 L 433.0,132.0 L 426.0,139.0 L 421.0,150.0 L 423.0,170.0 L 381.0,209.0 L 380.0,131.0 L 390.0,126.0 L 400.0,114.0 L 402.0,96.0 L 397.0,84.0 L 385.0,74.0 L 369.0,72.0 L 354.0,79.0 L 348.0,86.0 L 345.0,94.0 L 345.0,109.0 L 349.0,118.0 L 357.0,126.0 L 365.0,129.0 L 367.0,132.0 L 366.0,178.0 L 319.0,134.0 L 321.0,113.0 L 315.0,100.0 L 307.0,93.0 L 299.0,90.0 L 283.0,91.0 L 273.0,97.0 L 269.0,102.0 L 265.0,111.0 L 265.0,125.0 L 270.0,136.0 L 277.0,143.0 L 287.0,148.0 L 286.0,167.0 L 235.0,167.0 L 223.0,153.0 L 213.0,149.0 L 202.0,149.0 L 192.0,153.0 L 184.0,161.0 L 180.0,170.0 L 180.0,184.0 L 182.0,190.0 L 191.0,201.0 L 199.0,205.0 L 212.0,206.0 L 222.0,202.0 L 230.0,195.0 L 236.0,180.0 L 286.0,180.0 L 286.0,218.0 L 255.0,247.0 L 192.0,248.0 L 187.0,247.0 L 182.0,238.0 L 174.0,231.0 L 166.0,228.0 L 154.0,228.0 L 146.0,231.0 L 139.0,237.0 L 133.0,248.0 L 132.0,256.0 L 137.0,273.0 L 149.0,283.0 L 164.0,285.0 L 171.0,283.0 L 180.0,277.0 L 225.0,319.0 L 231.0,321.0 L 269.0,321.0 L 277.0,327.0 L 279.0,333.0 L 278.0,421.0 L 272.0,428.0 L 269.0,429.0 L 237.0,429.0 L 233.0,432.0 L 232.0,439.0 L 236.0,443.0 L 275.0,443.0 L 282.0,440.0 L 288.0,434.0 L 292.0,426.0 L 291.0,320.0 L 283.0,311.0 L 274.0,307.0 L 234.0,307.0 L 199.0,276.0 L 187.0,262.0 L 258.0,261.0 L 265.0,258.0 L 300.0,223.0 L 300.0,148.0 L 309.0,144.0 L 367.0,200.0 L 367.0,220.0 L 316.0,268.0 L 312.0,278.0 L 312.0,421.0 L 316.0,433.0 L 322.0,439.0 L 331.0,443.0 L 483.0,444.0 L 450.0,468.0 L 175.0,468.0 L 169.0,463.0 L 168.0,460.0 L 168.0,337.0 L 166.0,333.0 L 137.0,305.0 L 132.0,304.0 L 129.0,308.0 L 129.0,500.0 L 131.0,504.0 L 135.0,506.0 L 462.0,506.0 L 477.0,496.0 L 506.0,472.0 L 507.0,434.0 L 502.0,429.0 L 335.0,429.0 L 327.0,422.0 L 326.0,419.0 L 326.0,343.0 L 371.0,304.0 L 381.0,306.0 L 388.0,315.0 L 388.0,325.0 L 346.0,377.0 L 346.0,395.0 L 349.0,396.0 L 392.0,346.0 L 402.0,329.0 L 402.0,314.0 L 400.0,308.0 L 391.0,296.0 L 379.0,291.0 L 379.0,277.0 L 430.0,247.0 L 432.0,247.0 L 436.0,253.0 L 444.0,259.0 L 450.0,261.0 L 463.0,261.0 L 472.0,257.0 L 483.0,243.0 L 485.0,233.0 L 484.0,225.0 L 478.0,213.0 L 471.0,207.0 L 464.0,204.0 L 454.0,203.0 L 446.0,205.0 L 434.0,214.0 L 430.0,221.0 L 427.0,233.0 L 373.0,263.0 L 367.0,269.0 L 365.0,274.0 L 365.0,289.0 L 327.0,322.0 L 326.0,321.0 L 327.0,278.0 L 432.0,181.0 L 442.0,185.0 L 451.0,186.0 L 460.0,184.0 L 471.0,176.0 L 476.0,167.0 L 477.0,152.0 L 472.0,139.0 Z M 157.0,241.0 L 164.0,241.0 L 168.0,243.0 L 175.0,252.0 L 175.0,261.0 L 173.0,265.0 L 168.0,270.0 L 163.0,272.0 L 157.0,272.0 L 151.0,269.0 L 145.0,259.0 L 145.0,253.0 L 148.0,247.0 Z M 453.0,217.0 L 460.0,217.0 L 466.0,220.0 L 472.0,230.0 L 472.0,235.0 L 469.0,242.0 L 460.0,248.0 L 453.0,248.0 L 447.0,245.0 L 441.0,234.0 L 443.0,224.0 L 448.0,219.0 Z M 204.0,162.0 L 214.0,163.0 L 222.0,172.0 L 221.0,184.0 L 212.0,192.0 L 202.0,192.0 L 193.0,183.0 L 192.0,177.0 L 195.0,168.0 Z M 445.0,141.0 L 456.0,142.0 L 464.0,152.0 L 463.0,164.0 L 455.0,172.0 L 447.0,173.0 L 442.0,171.0 L 434.0,161.0 L 434.0,152.0 L 436.0,148.0 Z M 289.0,103.0 L 299.0,104.0 L 306.0,110.0 L 308.0,115.0 L 308.0,123.0 L 306.0,127.0 L 297.0,134.0 L 285.0,132.0 L 278.0,123.0 L 279.0,111.0 Z M 368.0,86.0 L 376.0,85.0 L 381.0,87.0 L 386.0,91.0 L 389.0,98.0 L 387.0,110.0 L 378.0,117.0 L 369.0,117.0 L 365.0,115.0 L 358.0,107.0 L 358.0,96.0 L 360.0,92.0 Z"/>
+        </g>
+      </svg>
+      <template x-if="isCanary">
+        <span class="px-2 py-0.5 rounded-full text-[10px] font-bold tracking-widest uppercase border border-yellow-500 bg-yellow-950 text-yellow-400 self-center">canary</span>
+      </template>
     </div>
     <button class="pb-2 text-sm font-medium border-b-2 border-transparent"
       :class="tab==='sessions'?'tab-active':'text-gray-400 hover:text-white'"
@@ -1108,7 +1124,18 @@ _ADMIN_HTML = """<!DOCTYPE html>
                  x-transition:leave-end="opacity-0"
                  class="flex items-end justify-center pb-6 h-full pointer-events-none select-none"
                  style="opacity:0.12">
-              <img src="/static/logo.svg" alt="Logos" style="width:100px;height:100px;object-fit:contain;filter:grayscale(1) brightness(2);">
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 625 625" fill="none" aria-hidden="true"
+                   style="width:100px;height:100px;filter:grayscale(1) brightness(2);">
+                <defs>
+                  <linearGradient id="logoGrad-ghost" x1="100" y1="100" x2="525" y2="525" gradientUnits="userSpaceOnUse">
+                    <stop offset="0%" stop-color="var(--accent)"/>
+                    <stop offset="100%" stop-color="var(--accent-light)"/>
+                  </linearGradient>
+                </defs>
+                <g fill="url(#logoGrad-ghost)" fill-rule="evenodd">
+                  <path d="M 466.0,133.0 L 455.0,128.0 L 442.0,128.0 L 433.0,132.0 L 426.0,139.0 L 421.0,150.0 L 423.0,170.0 L 381.0,209.0 L 380.0,131.0 L 390.0,126.0 L 400.0,114.0 L 402.0,96.0 L 397.0,84.0 L 385.0,74.0 L 369.0,72.0 L 354.0,79.0 L 348.0,86.0 L 345.0,94.0 L 345.0,109.0 L 349.0,118.0 L 357.0,126.0 L 365.0,129.0 L 367.0,132.0 L 366.0,178.0 L 319.0,134.0 L 321.0,113.0 L 315.0,100.0 L 307.0,93.0 L 299.0,90.0 L 283.0,91.0 L 273.0,97.0 L 269.0,102.0 L 265.0,111.0 L 265.0,125.0 L 270.0,136.0 L 277.0,143.0 L 287.0,148.0 L 286.0,167.0 L 235.0,167.0 L 223.0,153.0 L 213.0,149.0 L 202.0,149.0 L 192.0,153.0 L 184.0,161.0 L 180.0,170.0 L 180.0,184.0 L 182.0,190.0 L 191.0,201.0 L 199.0,205.0 L 212.0,206.0 L 222.0,202.0 L 230.0,195.0 L 236.0,180.0 L 286.0,180.0 L 286.0,218.0 L 255.0,247.0 L 192.0,248.0 L 187.0,247.0 L 182.0,238.0 L 174.0,231.0 L 166.0,228.0 L 154.0,228.0 L 146.0,231.0 L 139.0,237.0 L 133.0,248.0 L 132.0,256.0 L 137.0,273.0 L 149.0,283.0 L 164.0,285.0 L 171.0,283.0 L 180.0,277.0 L 225.0,319.0 L 231.0,321.0 L 269.0,321.0 L 277.0,327.0 L 279.0,333.0 L 278.0,421.0 L 272.0,428.0 L 269.0,429.0 L 237.0,429.0 L 233.0,432.0 L 232.0,439.0 L 236.0,443.0 L 275.0,443.0 L 282.0,440.0 L 288.0,434.0 L 292.0,426.0 L 291.0,320.0 L 283.0,311.0 L 274.0,307.0 L 234.0,307.0 L 199.0,276.0 L 187.0,262.0 L 258.0,261.0 L 265.0,258.0 L 300.0,223.0 L 300.0,148.0 L 309.0,144.0 L 367.0,200.0 L 367.0,220.0 L 316.0,268.0 L 312.0,278.0 L 312.0,421.0 L 316.0,433.0 L 322.0,439.0 L 331.0,443.0 L 483.0,444.0 L 450.0,468.0 L 175.0,468.0 L 169.0,463.0 L 168.0,460.0 L 168.0,337.0 L 166.0,333.0 L 137.0,305.0 L 132.0,304.0 L 129.0,308.0 L 129.0,500.0 L 131.0,504.0 L 135.0,506.0 L 462.0,506.0 L 477.0,496.0 L 506.0,472.0 L 507.0,434.0 L 502.0,429.0 L 335.0,429.0 L 327.0,422.0 L 326.0,419.0 L 326.0,343.0 L 371.0,304.0 L 381.0,306.0 L 388.0,315.0 L 388.0,325.0 L 346.0,377.0 L 346.0,395.0 L 349.0,396.0 L 392.0,346.0 L 402.0,329.0 L 402.0,314.0 L 400.0,308.0 L 391.0,296.0 L 379.0,291.0 L 379.0,277.0 L 430.0,247.0 L 432.0,247.0 L 436.0,253.0 L 444.0,259.0 L 450.0,261.0 L 463.0,261.0 L 472.0,257.0 L 483.0,243.0 L 485.0,233.0 L 484.0,225.0 L 478.0,213.0 L 471.0,207.0 L 464.0,204.0 L 454.0,203.0 L 446.0,205.0 L 434.0,214.0 L 430.0,221.0 L 427.0,233.0 L 373.0,263.0 L 367.0,269.0 L 365.0,274.0 L 365.0,289.0 L 327.0,322.0 L 326.0,321.0 L 327.0,278.0 L 432.0,181.0 L 442.0,185.0 L 451.0,186.0 L 460.0,184.0 L 471.0,176.0 L 476.0,167.0 L 477.0,152.0 L 472.0,139.0 Z M 157.0,241.0 L 164.0,241.0 L 168.0,243.0 L 175.0,252.0 L 175.0,261.0 L 173.0,265.0 L 168.0,270.0 L 163.0,272.0 L 157.0,272.0 L 151.0,269.0 L 145.0,259.0 L 145.0,253.0 L 148.0,247.0 Z M 453.0,217.0 L 460.0,217.0 L 466.0,220.0 L 472.0,230.0 L 472.0,235.0 L 469.0,242.0 L 460.0,248.0 L 453.0,248.0 L 447.0,245.0 L 441.0,234.0 L 443.0,224.0 L 448.0,219.0 Z M 204.0,162.0 L 214.0,163.0 L 222.0,172.0 L 221.0,184.0 L 212.0,192.0 L 202.0,192.0 L 193.0,183.0 L 192.0,177.0 L 195.0,168.0 Z M 445.0,141.0 L 456.0,142.0 L 464.0,152.0 L 463.0,164.0 L 455.0,172.0 L 447.0,173.0 L 442.0,171.0 L 434.0,161.0 L 434.0,152.0 L 436.0,148.0 Z M 289.0,103.0 L 299.0,104.0 L 306.0,110.0 L 308.0,115.0 L 308.0,123.0 L 306.0,127.0 L 297.0,134.0 L 285.0,132.0 L 278.0,123.0 L 279.0,111.0 Z M 368.0,86.0 L 376.0,85.0 L 381.0,87.0 L 386.0,91.0 L 389.0,98.0 L 387.0,110.0 L 378.0,117.0 L 369.0,117.0 L 365.0,115.0 L 358.0,107.0 L 358.0,96.0 L 360.0,92.0 Z"/>
+                </g>
+              </svg>
             </div>
             <template x-for="(msg,i) in chatMessages" :key="i">
               <div :class="msg.role==='user' ? 'text-right' : 'text-left'">
@@ -1120,7 +1147,7 @@ _ADMIN_HTML = """<!DOCTYPE html>
                 <!-- Assistant messages: rendered + copy button + click-toggled stats -->
                 <template x-if="msg.role!=='user'">
                   <div class="msg-wrap relative inline-block max-w-3xl" x-data="{statsOpen:false,copied:false}">
-                    <div class="text-left px-3 py-2 rounded-xl text-sm bg-gray-800 text-gray-100"
+                    <div class="text-left px-3 pt-2 pb-7 rounded-xl text-sm bg-gray-800 text-gray-100"
                       :class="chatRenderMode==='mono' ? 'chat-mono' : 'chat-md'"
                       x-html="renderMsg(msg.content)"></div>
                     <!-- Copy button — visible on bubble hover -->
@@ -3699,6 +3726,7 @@ function app() {
     // auth
     authUser: null,
     authPermissions: [],
+    isCanary: window.__LOGOS__?.isCanary || false,
     // routing
     routingTab: localStorage.getItem('hermes_routing_tab') || 'machines',
     // admin
@@ -3881,7 +3909,7 @@ function app() {
     async loadAuth() {
       try {
         const r = await fetch('/auth/me', { credentials: 'same-origin' });
-        if (r.status === 401) { window.location.href = '/login'; return; }
+        if (r.status === 401 || r.status === 404) { window.location.href = '/login'; return; }
         if (r.ok) {
           const d = await r.json();
           this.authUser = d.user;
@@ -5503,7 +5531,8 @@ _LOGIN_HTML = """<!DOCTYPE html>
             credentials: 'same-origin',
           });
           if (res.ok) {
-            window.location.href = '/';
+            const d = await res.json().catch(() => ({}));
+            window.location.href = d.setup_required ? '/setup' : '/';
           } else {
             const d = await res.json().catch(() => ({}));
             this.error = ({
@@ -5526,8 +5555,642 @@ _LOGIN_HTML = """<!DOCTYPE html>
 </html>"""
 
 
+_SETUP_HTML = """<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Logos Setup</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+  <style>
+    [x-cloak]{display:none!important}
+    body{background:#030712}
+  </style>
+</head>
+<body class="min-h-screen text-white" style="background:#030712">
+<div x-data="setup()" x-init="init()" class="flex flex-col min-h-screen">
+
+  <!-- Header -->
+  <header class="flex flex-col items-center pt-10 pb-4 gap-5">
+    <div class="flex items-center gap-2.5">
+      <img src="/chat_logo.png" class="h-8 w-8 rounded-xl" onerror="this.style.display='none'">
+      <span class="font-semibold text-lg tracking-tight">Logos</span>
+    </div>
+    <!-- Step indicator — visible from step 1 onward -->
+    <div x-show="step > 0" x-transition.opacity class="flex items-center gap-1">
+      <template x-for="i in [1,2,3,4]" :key="i">
+        <div class="flex items-center gap-1">
+          <div class="w-2 h-2 rounded-full transition-all duration-500"
+               :class="step > i ? 'bg-indigo-400' : step === i ? 'bg-indigo-500 scale-125' : 'bg-gray-700'"></div>
+          <div x-show="i < 4" class="w-6 h-px transition-colors duration-500"
+               :class="step > i ? 'bg-indigo-600' : 'bg-gray-700'"></div>
+        </div>
+      </template>
+    </div>
+  </header>
+
+  <!-- Main content -->
+  <main class="flex-1 flex items-start justify-center px-4 pt-6 pb-16">
+    <div class="w-full max-w-md">
+
+      <!-- ── Step 0: Track selection ─────────────────────────────────── -->
+      <div x-show="step===0" x-transition.opacity>
+        <div class="text-center mb-8">
+          <h1 class="text-2xl font-bold mb-2">Welcome to Logos</h1>
+          <p class="text-gray-400 text-sm">One decision shapes your setup. You can change it later.</p>
+        </div>
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <!-- Local-first -->
+          <button @click="selectTrack('local')"
+            class="text-left p-5 rounded-2xl border border-gray-700 bg-gray-900 hover:border-indigo-500 hover:bg-gray-800/80 transition-all duration-200 group">
+            <div class="w-9 h-9 rounded-xl bg-indigo-950 flex items-center justify-center mb-3 group-hover:bg-indigo-900 transition-colors border border-indigo-800">
+              <svg class="w-4 h-4 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                  d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/>
+              </svg>
+            </div>
+            <div class="font-semibold text-white mb-1">Local-first</div>
+            <div class="text-xs text-gray-400 leading-relaxed mb-3">
+              Your data never leaves this machine. Models run on your hardware.
+            </div>
+            <div class="text-xs text-indigo-400 font-medium">Free &middot; Private &middot; Ollama or LM Studio</div>
+          </button>
+          <!-- Frontier-first (coming soon) -->
+          <div class="text-left p-5 rounded-2xl border border-gray-800 bg-gray-900/40 opacity-50 cursor-not-allowed select-none">
+            <div class="w-9 h-9 rounded-xl bg-gray-800 flex items-center justify-center mb-3 border border-gray-700">
+              <svg class="w-4 h-4 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                  d="M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2.5 0 0010.5 8h.5a2 2 0 012 2 2 2 0 104 0 2 2 0 012-2h1.064M15 20.488V18a2 2 0 012-2h3.064"/>
+              </svg>
+            </div>
+            <div class="font-semibold text-gray-500 mb-1">Frontier-first</div>
+            <div class="text-xs text-gray-600 leading-relaxed mb-3">
+              Best available cloud models via Anthropic, OpenAI, or OpenRouter.
+            </div>
+            <div class="text-xs text-gray-600 font-medium">Coming soon</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── Step 1: Connect model server ───────────────────────────── -->
+      <div x-show="step===1" x-cloak x-transition.opacity>
+        <div class="mb-6">
+          <h2 class="text-xl font-bold mb-1">Connect your model server</h2>
+          <p class="text-gray-400 text-sm">Logos needs a local model server to process messages.</p>
+        </div>
+
+        <!-- Probing -->
+        <div x-show="probing" class="flex items-center gap-3 p-4 rounded-xl bg-gray-900 border border-gray-800 mb-4">
+          <div class="w-4 h-4 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin flex-shrink-0"></div>
+          <span class="text-sm text-gray-300">Checking for model servers&hellip;</span>
+        </div>
+
+        <!-- Found -->
+        <div x-show="activeServer && !probing">
+          <div class="flex items-center gap-3 p-4 rounded-xl bg-green-950/60 border border-green-800 mb-4">
+            <div class="w-5 h-5 rounded-full bg-green-500 flex items-center justify-center flex-shrink-0">
+              <svg class="w-3 h-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/>
+              </svg>
+            </div>
+            <div>
+              <div class="text-sm font-medium text-green-300"
+                x-text="activeServer && activeServer.type === 'ollama' ? 'Ollama detected' : 'LM Studio detected'"></div>
+              <div class="text-xs text-green-700" x-text="activeServer && activeServer.endpoint"></div>
+            </div>
+          </div>
+          <button @click="goNext()"
+            class="w-full py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-medium transition-colors">
+            Continue &rarr;
+          </button>
+        </div>
+
+        <!-- Not found: install instructions -->
+        <div x-show="!activeServer && !probing">
+          <p class="text-sm text-amber-400 mb-4">No model server found. Follow the steps below — Logos will detect it automatically.</p>
+
+          <!-- Tabs -->
+          <div class="flex gap-1 p-1 bg-gray-900 rounded-xl mb-4 border border-gray-800">
+            <button @click="serverTab='ollama'"
+              :class="serverTab==='ollama' ? 'bg-gray-700 text-white shadow-sm' : 'text-gray-500 hover:text-gray-300'"
+              class="flex-1 py-1.5 rounded-lg text-xs font-medium transition-all">Ollama</button>
+            <button @click="serverTab='lmstudio'"
+              :class="serverTab==='lmstudio' ? 'bg-gray-700 text-white shadow-sm' : 'text-gray-500 hover:text-gray-300'"
+              class="flex-1 py-1.5 rounded-lg text-xs font-medium transition-all">LM Studio</button>
+          </div>
+
+          <!-- Ollama instructions -->
+          <div x-show="serverTab==='ollama'" class="space-y-3">
+            <div class="p-4 rounded-xl bg-gray-900 border border-gray-800">
+              <div class="text-xs text-gray-500 uppercase tracking-wider mb-3 font-medium">1. Install Ollama</div>
+              <div class="flex gap-1 mb-3">
+                <button @click="osPlatform='mac'" :class="osPlatform==='mac'?'bg-gray-700 text-white':'text-gray-500 hover:text-gray-300'" class="px-2.5 py-1 rounded-md text-xs transition-colors">macOS</button>
+                <button @click="osPlatform='linux'" :class="osPlatform==='linux'?'bg-gray-700 text-white':'text-gray-500 hover:text-gray-300'" class="px-2.5 py-1 rounded-md text-xs transition-colors">Linux</button>
+                <button @click="osPlatform='windows'" :class="osPlatform==='windows'?'bg-gray-700 text-white':'text-gray-500 hover:text-gray-300'" class="px-2.5 py-1 rounded-md text-xs transition-colors">Windows</button>
+              </div>
+              <div x-show="osPlatform==='mac'" class="space-y-2">
+                <div class="flex items-center justify-between bg-gray-950 rounded-lg px-3 py-2">
+                  <code class="text-xs text-indigo-300 font-mono">brew install ollama</code>
+                  <button @click="copy('brew install ollama')" class="text-gray-600 hover:text-gray-400 text-xs ml-3" x-text="copied==='brew install ollama'?'✓':'copy'"></button>
+                </div>
+                <p class="text-xs text-gray-600">Or <a href="https://ollama.com/download" target="_blank" class="text-indigo-400 hover:underline">download the macOS app ↗</a></p>
+              </div>
+              <div x-show="osPlatform==='linux'">
+                <div class="flex items-center justify-between bg-gray-950 rounded-lg px-3 py-2">
+                  <code class="text-xs text-indigo-300 font-mono">curl -fsSL https://ollama.com/install.sh | sh</code>
+                  <button @click="copy('curl -fsSL https://ollama.com/install.sh | sh')" class="text-gray-600 hover:text-gray-400 text-xs ml-3 flex-shrink-0" x-text="copied==='curl -fsSL https://ollama.com/install.sh | sh'?'✓':'copy'"></button>
+                </div>
+              </div>
+              <div x-show="osPlatform==='windows'" class="space-y-1">
+                <p class="text-xs text-gray-400">Download and run the Windows installer:</p>
+                <a href="https://ollama.com/download" target="_blank" class="text-xs text-indigo-400 hover:underline">ollama.com/download ↗</a>
+              </div>
+            </div>
+            <div class="p-4 rounded-xl bg-gray-900 border border-gray-800">
+              <div class="text-xs text-gray-500 uppercase tracking-wider mb-2 font-medium">2. Start Ollama</div>
+              <div class="flex items-center justify-between bg-gray-950 rounded-lg px-3 py-2">
+                <code class="text-xs text-indigo-300 font-mono">ollama serve</code>
+                <button @click="copy('ollama serve')" class="text-gray-600 hover:text-gray-400 text-xs ml-3" x-text="copied==='ollama serve'?'✓':'copy'"></button>
+              </div>
+              <p class="text-xs text-gray-600 mt-2">Skip this if Ollama is already running as a service.</p>
+            </div>
+            <div class="p-3 rounded-xl bg-gray-900/50 border border-gray-800 flex items-center gap-2">
+              <div class="w-2 h-2 rounded-full bg-amber-500 animate-pulse flex-shrink-0"></div>
+              <span class="text-xs text-gray-400">Watching for Ollama on port 11434&hellip;</span>
+            </div>
+          </div>
+
+          <!-- LM Studio instructions -->
+          <div x-show="serverTab==='lmstudio'" class="space-y-3">
+            <div class="p-4 rounded-xl bg-gray-900 border border-gray-800">
+              <div class="text-xs text-gray-500 uppercase tracking-wider mb-4 font-medium">LM Studio setup</div>
+              <div class="space-y-4">
+                <div class="flex gap-3">
+                  <div class="w-5 h-5 rounded-full bg-indigo-950 border border-indigo-800 flex items-center justify-center flex-shrink-0 text-[10px] text-indigo-400 font-bold">1</div>
+                  <div>
+                    <div class="text-xs text-white mb-0.5">Download LM Studio</div>
+                    <a href="https://lmstudio.ai" target="_blank" class="text-xs text-indigo-400 hover:underline">lmstudio.ai ↗</a>
+                  </div>
+                </div>
+                <div class="flex gap-3">
+                  <div class="w-5 h-5 rounded-full bg-indigo-950 border border-indigo-800 flex items-center justify-center flex-shrink-0 text-[10px] text-indigo-400 font-bold">2</div>
+                  <div class="text-xs text-gray-300">Open the <span class="font-medium text-white">Discover</span> tab, search for a model, and download it</div>
+                </div>
+                <div class="flex gap-3">
+                  <div class="w-5 h-5 rounded-full bg-indigo-950 border border-indigo-800 flex items-center justify-center flex-shrink-0 text-[10px] text-indigo-400 font-bold">3</div>
+                  <div class="text-xs text-gray-300">Click the <span class="font-medium text-white">&harr; Local Server</span> tab in the left sidebar</div>
+                </div>
+                <div class="flex gap-3">
+                  <div class="w-5 h-5 rounded-full bg-amber-950 border border-amber-800 flex items-center justify-center flex-shrink-0 text-[10px] text-amber-400 font-bold">4</div>
+                  <div class="text-xs text-gray-300">Turn <span class="text-amber-400 font-medium">Enable Auth off</span> &mdash; simplest for local use</div>
+                </div>
+                <div class="flex gap-3">
+                  <div class="w-5 h-5 rounded-full bg-green-950 border border-green-800 flex items-center justify-center flex-shrink-0 text-[10px] text-green-400 font-bold">5</div>
+                  <div class="text-xs text-gray-300">Click <span class="font-medium text-white">Start Server</span></div>
+                </div>
+              </div>
+            </div>
+
+            <!-- LM Studio auth key fallback -->
+            <div x-show="lmstudioAuthRequired" class="p-4 rounded-xl bg-amber-950/50 border border-amber-800">
+              <div class="text-xs text-amber-300 font-medium mb-1">Auth is enabled in LM Studio</div>
+              <p class="text-xs text-amber-400/80 mb-3">Disable "Enable Auth" in the Local Server tab, or paste your API key:</p>
+              <input x-model="lmstudioKey" type="password" placeholder="lmstudio-api-key"
+                class="w-full bg-gray-900 border border-amber-700 rounded-lg px-3 py-2 text-xs text-white placeholder-gray-600 focus:outline-none focus:border-amber-500">
+            </div>
+
+            <div class="p-3 rounded-xl bg-gray-900/50 border border-gray-800 flex items-center gap-2">
+              <div class="w-2 h-2 rounded-full bg-amber-500 animate-pulse flex-shrink-0"></div>
+              <span class="text-xs text-gray-400">Watching for LM Studio on port 1234&hellip;</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── Step 2: Pick model ──────────────────────────────────────── -->
+      <div x-show="step===2" x-cloak x-transition.opacity>
+        <div class="mb-6">
+          <h2 class="text-xl font-bold mb-1">Choose a model</h2>
+          <p class="text-gray-400 text-sm"
+            x-text="activeServer && activeServer.models.length > 0
+              ? activeServer.models.length + ' model' + (activeServer.models.length !== 1 ? 's' : '') + ' available'
+              : 'No models downloaded yet'"></p>
+        </div>
+
+        <!-- Model list -->
+        <div x-show="activeServer && activeServer.models.length > 0" class="space-y-2 mb-4">
+          <template x-for="m in (activeServer ? activeServer.models : [])" :key="m.id">
+            <button @click="selectedModel = m.id"
+              :class="selectedModel === m.id
+                ? 'border-indigo-500 bg-indigo-950/40'
+                : 'border-gray-700 bg-gray-900 hover:border-gray-600'"
+              class="w-full text-left p-4 rounded-xl border transition-all duration-150">
+              <div class="flex items-center justify-between">
+                <div>
+                  <div class="text-sm font-medium text-white" x-text="m.name"></div>
+                  <div class="text-xs text-gray-500 mt-0.5" x-show="m.size > 0" x-text="formatSize(m.size)"></div>
+                </div>
+                <div class="flex items-center gap-2 flex-shrink-0 ml-3">
+                  <span x-show="isRecommended(m.id)"
+                    class="text-[10px] px-1.5 py-0.5 rounded-full bg-indigo-950 text-indigo-400 border border-indigo-800 font-medium">recommended</span>
+                  <div :class="selectedModel === m.id ? 'bg-indigo-500 border-indigo-500' : 'border-gray-600'"
+                    class="w-4 h-4 rounded-full border-2 transition-all duration-150 flex items-center justify-center">
+                    <div x-show="selectedModel === m.id" class="w-2 h-2 rounded-full bg-white"></div>
+                  </div>
+                </div>
+              </div>
+            </button>
+          </template>
+        </div>
+
+        <!-- No models on Ollama: pull option -->
+        <div x-show="activeServer && activeServer.models.length === 0 && activeServer.type === 'ollama'" class="mb-4">
+          <div class="p-4 rounded-xl bg-gray-900 border border-gray-800">
+            <div class="text-sm text-gray-300 mb-4">No models downloaded yet. Choose one to download now:</div>
+            <div class="text-xs text-gray-500 mb-2">How much RAM does this machine have?</div>
+            <div class="grid grid-cols-4 gap-1.5 mb-4">
+              <template x-for="r in [{l:'8 GB',v:'8'},{l:'16 GB',v:'16'},{l:'32 GB',v:'32'},{l:'GPU',v:'gpu'}]" :key="r.v">
+                <button @click="ramChoice=r.v; suggestModel()"
+                  :class="ramChoice===r.v ? 'bg-indigo-900 border-indigo-700 text-indigo-200' : 'bg-gray-800 border-gray-700 text-gray-400 hover:border-gray-500'"
+                  class="py-2 rounded-lg border text-xs font-medium transition-all" x-text="r.l"></button>
+              </template>
+            </div>
+            <template x-if="suggestedModel">
+              <div>
+                <div x-show="!pulling" class="p-3 bg-gray-800/80 rounded-xl flex items-center justify-between mb-3">
+                  <div>
+                    <div class="text-sm text-white font-medium" x-text="suggestedModel.name"></div>
+                    <div class="text-xs text-gray-500" x-text="suggestedModel.size"></div>
+                  </div>
+                  <button @click="startPull(suggestedModel.name)"
+                    class="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-medium transition-colors">
+                    Download
+                  </button>
+                </div>
+                <div x-show="pulling" class="space-y-2">
+                  <div class="flex justify-between text-xs text-gray-400 mb-1">
+                    <span x-text="pullStatus || 'Downloading…'"></span>
+                    <span x-text="pullProgress + '%'"></span>
+                  </div>
+                  <div class="h-1.5 bg-gray-800 rounded-full overflow-hidden">
+                    <div class="h-full bg-indigo-500 rounded-full transition-all duration-200"
+                      :style="'width:' + pullProgress + '%'"></div>
+                  </div>
+                </div>
+                <div x-show="pullError" class="text-xs text-red-400 mt-2" x-text="pullError"></div>
+              </div>
+            </template>
+          </div>
+        </div>
+
+        <!-- No models on LM Studio -->
+        <div x-show="activeServer && activeServer.models.length === 0 && activeServer.type === 'lmstudio'" class="mb-4">
+          <div class="p-4 rounded-xl bg-amber-950/40 border border-amber-900">
+            <div class="text-sm text-amber-300 mb-1">No model loaded</div>
+            <p class="text-xs text-amber-400/80 mb-3">Download a model in LM Studio's Discover tab and load it in the Local Server tab, then click Refresh.</p>
+            <button @click="refreshModels()"
+              class="px-3 py-1.5 rounded-lg bg-gray-800 hover:bg-gray-700 text-xs text-gray-300 transition-colors">
+              Refresh model list
+            </button>
+          </div>
+        </div>
+
+        <button @click="goNext()" :disabled="!selectedModel"
+          class="w-full py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 disabled:cursor-not-allowed text-white text-sm font-medium transition-colors">
+          Continue &rarr;
+        </button>
+      </div>
+
+      <!-- ── Step 3: Test it ─────────────────────────────────────────── -->
+      <div x-show="step===3" x-cloak x-transition.opacity>
+        <div class="mb-6">
+          <h2 class="text-xl font-bold mb-1">Let&rsquo;s test it</h2>
+          <p class="text-gray-400 text-sm">Sending a message to confirm everything is working.</p>
+        </div>
+
+        <div class="p-4 rounded-xl bg-gray-900 border border-gray-800 mb-4 min-h-[130px] flex flex-col justify-between">
+          <div>
+            <div class="text-[10px] text-gray-600 uppercase tracking-wider mb-3 font-medium" x-text="selectedModel"></div>
+            <!-- Waiting -->
+            <div x-show="testResponse === '' && !testError" class="flex items-center gap-2">
+              <div class="flex gap-1">
+                <div class="w-1.5 h-1.5 rounded-full bg-gray-600 animate-bounce" style="animation-delay:0ms"></div>
+                <div class="w-1.5 h-1.5 rounded-full bg-gray-600 animate-bounce" style="animation-delay:150ms"></div>
+                <div class="w-1.5 h-1.5 rounded-full bg-gray-600 animate-bounce" style="animation-delay:300ms"></div>
+              </div>
+            </div>
+            <!-- Streaming response -->
+            <p x-show="testResponse !== ''" class="text-sm text-gray-100 leading-relaxed" x-text="testResponse"></p>
+            <!-- Error -->
+            <p x-show="testError" class="text-sm text-red-400" x-text="testError"></p>
+          </div>
+          <!-- Footer -->
+          <div x-show="testDone" class="flex items-center gap-2 pt-3 mt-3 border-t border-gray-800">
+            <div class="w-2 h-2 rounded-full bg-green-500 flex-shrink-0"></div>
+            <span class="text-xs text-gray-500" x-text="'Response in ' + testLatency + 'ms · ' + (activeServer && activeServer.type === 'ollama' ? 'Ollama' : 'LM Studio')"></span>
+          </div>
+        </div>
+
+        <div x-show="testError" class="mb-3">
+          <button @click="runTest()"
+            class="w-full py-2 rounded-xl border border-gray-700 hover:border-gray-500 text-xs text-gray-400 transition-colors">
+            Try again
+          </button>
+        </div>
+
+        <button @click="goNext()" :disabled="!testDone"
+          class="w-full py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 disabled:cursor-not-allowed text-white text-sm font-medium transition-colors">
+          Continue &rarr;
+        </button>
+      </div>
+
+      <!-- ── Step 4: Done ────────────────────────────────────────────── -->
+      <div x-show="step===4" x-cloak x-transition.opacity>
+        <div class="text-center mb-8">
+          <div class="w-16 h-16 rounded-2xl bg-green-950 border border-green-800 flex items-center justify-center mx-auto mb-5">
+            <svg class="w-8 h-8 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
+            </svg>
+          </div>
+          <h2 class="text-2xl font-bold mb-2">Logos is ready</h2>
+          <p class="text-gray-400 text-sm">Your assistant is configured and working.</p>
+        </div>
+
+        <div class="p-4 rounded-xl bg-gray-900 border border-gray-800 mb-6 divide-y divide-gray-800">
+          <div class="flex justify-between text-sm py-2.5">
+            <span class="text-gray-500">Track</span>
+            <span class="text-white font-medium">Local-first</span>
+          </div>
+          <div class="flex justify-between text-sm py-2.5">
+            <span class="text-gray-500">Server</span>
+            <span class="text-white font-medium"
+              x-text="activeServer ? (activeServer.type === 'ollama' ? 'Ollama' : 'LM Studio') : '&mdash;'"></span>
+          </div>
+          <div class="flex justify-between text-sm py-2.5">
+            <span class="text-gray-500">Model</span>
+            <span class="text-white font-medium truncate ml-4" x-text="selectedModel || '&mdash;'"></span>
+          </div>
+        </div>
+
+        <button @click="complete()" :disabled="completing"
+          class="w-full py-3 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white font-semibold transition-colors">
+          <span x-show="!completing">Open Logos &rarr;</span>
+          <span x-show="completing" class="flex items-center justify-center gap-2">
+            <div class="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin"></div>
+            Finishing up&hellip;
+          </span>
+        </button>
+      </div>
+
+    </div>
+  </main>
+</div>
+
+<script>
+function getCsrfToken() {
+  return document.cookie.split(';')
+    .map(c => c.trim())
+    .find(c => c.startsWith('csrf_token='))
+    ?.split('=')[1] ?? '';
+}
+
+function setup() {
+  return {
+    step: 0,
+    track: null,
+
+    // Step 1
+    probing: false,
+    activeServer: null,
+    serverTab: 'ollama',
+    osPlatform: 'mac',
+    lmstudioKey: '',
+    lmstudioAuthRequired: false,
+    pollTimer: null,
+    copied: '',
+
+    // Step 2
+    selectedModel: null,
+    ramChoice: null,
+    suggestedModel: null,
+    pulling: false,
+    pullProgress: 0,
+    pullStatus: '',
+    pullError: null,
+
+    // Step 3
+    testResponse: '',
+    testDone: false,
+    testError: null,
+    testLatency: null,
+
+    // Step 4
+    completing: false,
+
+    init() {
+      const ua = navigator.userAgent;
+      if (ua.includes('Win')) this.osPlatform = 'windows';
+      else if (ua.includes('Linux')) this.osPlatform = 'linux';
+      else this.osPlatform = 'mac';
+    },
+
+    selectTrack(track) {
+      this.track = track;
+      this.step = 1;
+      this.$nextTick(() => this.startProbing());
+    },
+
+    async startProbing() {
+      this.probing = true;
+      await this.probe();
+      if (!this.activeServer) {
+        this.probing = false;
+        this.pollTimer = setInterval(() => this.probe(), 3000);
+      }
+    },
+
+    async probe() {
+      try {
+        const url = this.lmstudioKey
+          ? '/api/setup/probe?lmstudio_key=' + encodeURIComponent(this.lmstudioKey)
+          : '/api/setup/probe';
+        const r = await fetch(url, { credentials: 'include' });
+        const d = await r.json();
+        const found = (d.servers || []).find(s => s.status === 'up');
+        if (found) {
+          if (this.pollTimer) { clearInterval(this.pollTimer); this.pollTimer = null; }
+          this.probing = false;
+          this.activeServer = found;
+          this.lmstudioAuthRequired = false;
+          // Auto-advance after brief success display
+          setTimeout(() => { if (this.step === 1) this.goNext(); }, 1200);
+        } else {
+          const lms = (d.servers || []).find(s => s.type === 'lmstudio' && s.status === 'auth_required');
+          if (lms) this.lmstudioAuthRequired = true;
+          this.probing = false;
+        }
+      } catch {
+        this.probing = false;
+      }
+    },
+
+    goNext() {
+      if (this.step === 1) { this.step = 2; return; }
+      if (this.step === 2) { this.step = 3; this.$nextTick(() => this.runTest()); return; }
+      if (this.step === 3) { this.step = 4; return; }
+    },
+
+    formatSize(bytes) {
+      if (!bytes) return '';
+      const gb = bytes / 1e9;
+      return gb >= 1 ? gb.toFixed(1) + ' GB' : (bytes / 1e6).toFixed(0) + ' MB';
+    },
+
+    isRecommended(id) {
+      return /llama3\.2:3b/i.test(id) || /llama-3\.2-3b/i.test(id);
+    },
+
+    suggestModel() {
+      const map = {
+        '8':   { name: 'llama3.2:3b',  size: '2.0 GB' },
+        '16':  { name: 'llama3.2:8b',  size: '5.0 GB' },
+        '32':  { name: 'llama3.1:32b', size: '20 GB'  },
+        'gpu': { name: 'llama3.3:70b', size: '43 GB'  },
+      };
+      this.suggestedModel = map[this.ramChoice] || map['8'];
+    },
+
+    async startPull(modelName) {
+      this.pulling = true;
+      this.pullProgress = 0;
+      this.pullStatus = 'Starting download\u2026';
+      this.pullError = null;
+      try {
+        const r = await fetch('/api/setup/pull', {
+          method: 'POST', credentials: 'include',
+          headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken() },
+          body: JSON.stringify({ model: modelName }),
+        });
+        const reader = r.body.getReader();
+        const dec = new TextDecoder();
+        let buf = '';
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buf += dec.decode(value, { stream: true });
+          const lines = buf.split('\\n'); buf = lines.pop();
+          for (const line of lines) {
+            if (!line.startsWith('data: ')) continue;
+            try {
+              const ev = JSON.parse(line.slice(6));
+              if (ev.error) { this.pullError = ev.error; this.pulling = false; return; }
+              this.pullProgress = ev.pct || 0;
+              this.pullStatus = ev.status || '';
+              if (ev.done) {
+                this.pulling = false;
+                this.selectedModel = modelName;
+                if (this.activeServer) this.activeServer.models = [{ id: modelName, name: modelName, size: 0 }];
+              }
+            } catch {}
+          }
+        }
+      } catch (e) {
+        this.pullError = e.message;
+        this.pulling = false;
+      }
+    },
+
+    async refreshModels() {
+      try {
+        const r = await fetch('/api/setup/probe', { credentials: 'include' });
+        const d = await r.json();
+        const lms = (d.servers || []).find(s => s.type === 'lmstudio' && s.status === 'up');
+        if (lms) this.activeServer = lms;
+      } catch {}
+    },
+
+    async runTest() {
+      this.testResponse = ''; this.testDone = false;
+      this.testError = null; this.testLatency = null;
+      try {
+        const r = await fetch('/api/setup/test', {
+          method: 'POST', credentials: 'include',
+          headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken() },
+          body: JSON.stringify({
+            endpoint: this.activeServer ? this.activeServer.endpoint : '',
+            model: this.selectedModel,
+            api_key: this.lmstudioKey || 'ollama',
+          }),
+        });
+        const reader = r.body.getReader();
+        const dec = new TextDecoder();
+        let buf = '';
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buf += dec.decode(value, { stream: true });
+          const lines = buf.split('\\n'); buf = lines.pop();
+          for (const line of lines) {
+            if (!line.startsWith('data: ')) continue;
+            try {
+              const ev = JSON.parse(line.slice(6));
+              if (ev.error) { this.testError = ev.error; return; }
+              if (ev.token) this.testResponse += ev.token;
+              if (ev.done) { this.testDone = true; this.testLatency = ev.latency; }
+            } catch {}
+          }
+        }
+      } catch (e) {
+        this.testError = 'Connection error \u2014 ' + e.message;
+      }
+    },
+
+    async complete() {
+      this.completing = true;
+      try {
+        const r = await fetch('/api/setup/complete', {
+          method: 'POST', credentials: 'include',
+          headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken() },
+          body: JSON.stringify({
+            endpoint: this.activeServer ? this.activeServer.endpoint : '',
+            model: this.selectedModel,
+            server_type: this.activeServer ? this.activeServer.type : '',
+          }),
+        });
+        if (r.ok) { window.location.href = '/'; return; }
+        const d = await r.json().catch(() => ({}));
+        alert(d.error || 'Setup failed \u2014 please try again.');
+        this.completing = false;
+      } catch (e) {
+        alert('Error: ' + e.message);
+        this.completing = false;
+      }
+    },
+
+    copy(text) {
+      navigator.clipboard.writeText(text).catch(() => {});
+      this.copied = text;
+      setTimeout(() => { this.copied = ''; }, 1500);
+    },
+  };
+}
+</script>
+</body>
+</html>"""
+
+
+async def _handle_setup_page(request: web.Request) -> web.Response:
+    from gateway.auth.db import is_setup_completed
+    if is_setup_completed():
+        raise web.HTTPFound("/")
+    return web.Response(text=_SETUP_HTML, content_type="text/html")
+
+
 async def _handle_index(request: web.Request) -> web.Response:
-    return web.Response(text=_ADMIN_HTML, content_type="text/html")
+    inject = f'<script>window.__LOGOS__={{isCanary:{str(_IS_CANARY).lower()}}};</script>'
+    html = _ADMIN_HTML.replace("</head>", inject + "</head>", 1)
+    return web.Response(text=html, content_type="text/html")
 
 
 async def _handle_login_page(request: web.Request) -> web.Response:
@@ -6715,6 +7378,13 @@ async def start_http_api(runner: Any, port: int = 8080) -> None:
     app.router.add_post("/auth/refresh", handle_refresh)
 
     # ── Authenticated routes ───────────────────────────────────────────────
+    from gateway import setup_handlers as _sh
+    app.router.add_get("/setup",              _handle_setup_page)
+    app.router.add_get("/api/setup/probe",    _sh.handle_setup_probe)
+    app.router.add_post("/api/setup/pull",    require_csrf(_sh.handle_setup_pull))
+    app.router.add_post("/api/setup/test",    require_csrf(_sh.handle_setup_test))
+    app.router.add_post("/api/setup/complete", require_csrf(_sh.handle_setup_complete))
+
     app.router.add_get("/",              _handle_index)
     app.router.add_get("/auth/me",       handle_me)
     app.router.add_get("/users/me",      handle_me)

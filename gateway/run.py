@@ -3577,7 +3577,9 @@ class GatewayRunner:
         history: List[Dict[str, Any]],
         source: SessionSource,
         session_id: str,
-        session_key: str = None
+        session_key: str = None,
+        action_policy=None,
+        auth_user_id: str = None,
     ) -> Dict[str, Any]:
         """
         Run the agent with the given message and context.

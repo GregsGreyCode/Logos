@@ -20,6 +20,7 @@ Kubernetes manifests for the `hermes` namespace. Apply in filename order (00 →
 | `09-ai-router-deployment.yaml` | Deployment `ai-router` | ai-router pod |
 | `10-hermes-canary-deployment.yaml` | Deployment `hermes-canary` | Canary pod for self-update testing — apply temporarily, delete after promote/rollback |
 | `11-hermes-canary-service.yaml` | Service `hermes-canary` | In-cluster service for smoke-testing the canary |
+| `12-hermes-canary-admin-secret.yaml` | Secret `hermes-canary-admin` | Canary-only admin credentials (template — fill in password before applying) |
 
 Note: `08-configmap-providers.yaml` is managed by `scripts/apply-providers.sh`, not committed to the repo.
 
@@ -151,6 +152,30 @@ Five secrets required — none committed to the repo. Use `scripts/create-k8s-se
 | `hermes-canary-telegram` | `TELEGRAM_BOT_TOKEN` | Canary/test bot — separate @BotFather bot |
 | `hermes-notifications-telegram` | `TELEGRAM_BOT_TOKEN` | Homelab_Home_Notifications bot |
 | `ghcr-creds` | docker registry auth | GitHub PAT with `read:packages` scope |
+| `hermes-canary-admin` | `HERMES_ADMIN_EMAIL`, `HERMES_ADMIN_PASSWORD`, `HERMES_ADMIN_NAME` | Canary-only admin login — see below |
+
+### Canary admin credentials
+
+The canary starts with a fresh `auth.db` (no PVC) and seeds its admin user from `hermes-canary-admin`. This is intentionally separate from production so the canary has known, fixed login credentials.
+
+```
+Email:    admin@hermes-canary
+Password: (stored in the hermes-canary-admin k8s secret)
+```
+
+To create/recreate the secret:
+```bash
+kubectl create secret generic hermes-canary-admin \
+  --namespace hermes \
+  --from-literal=HERMES_ADMIN_EMAIL=admin@hermes-canary \
+  --from-literal=HERMES_ADMIN_PASSWORD=YOUR_CANARY_PASSWORD \
+  --from-literal=HERMES_ADMIN_NAME="Canary Admin"
+```
+
+To check the current password:
+```bash
+kubectl get secret hermes-canary-admin -n hermes -o jsonpath='{.data.HERMES_ADMIN_PASSWORD}' | base64 -d
+```
 
 **Inspector token flow**: `02-secret.yaml` sets `INSPECTOR_TOKEN` → the `seed-config` initContainer substitutes it into `config.yaml` via `sed` at pod startup → Hermes reads `config.yaml` and sends `Authorization: Bearer <token>` to `inspector-mcp`. Changing the token requires updating both the k8s secret and `inspector-mcp/.env`, then restarting both services.
 
