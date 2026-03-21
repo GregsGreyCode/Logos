@@ -5658,7 +5658,7 @@ _SETUP_HTML = """<!DOCTYPE html>
               <input x-model="ollamaUrl" type="text" placeholder="http://localhost:11434"
                 @keydown.enter="connectServer()"
                 class="flex-1 bg-gray-950 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-indigo-500 font-mono">
-              <button @click="connectServer()" :disabled="probing"
+              <button @click="connectServer()" :disabled="probing || scanning"
                 class="px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-sm font-medium transition-colors flex-shrink-0">
                 <span x-show="!probing">Connect</span>
                 <span x-show="probing" class="flex items-center gap-1.5">
@@ -5666,7 +5666,31 @@ _SETUP_HTML = """<!DOCTYPE html>
                 </span>
               </button>
             </div>
-            <p class="text-xs text-gray-600 mt-2">Ollama running on another machine? Enter its IP address instead of localhost.</p>
+            <div class="flex items-center justify-between mt-2">
+              <p class="text-xs text-gray-600">Ollama on another machine? Enter its IP address.</p>
+              <button @click="scanNetwork()" :disabled="scanning || probing"
+                class="text-xs text-indigo-400 hover:text-indigo-300 disabled:opacity-50 transition-colors flex items-center gap-1">
+                <span x-show="!scanning">
+                  <svg class="w-3 h-3 inline -mt-0.5 mr-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.111 16.404a5.5 5.5 0 017.778 0M12 20h.01m-7.08-7.071c3.904-3.905 10.236-3.905 14.14 0M1.394 9.393c5.857-5.857 15.355-5.857 21.213 0"/></svg>
+                  Scan network
+                </span>
+                <span x-show="scanning" class="flex items-center gap-1.5">
+                  <div class="w-3 h-3 border-2 border-indigo-400/40 border-t-indigo-400 rounded-full animate-spin"></div>
+                  Scanning&hellip;
+                </span>
+              </button>
+            </div>
+            <!-- Scan results dropdown -->
+            <div x-show="scanResults.length > 0 && serverTab==='ollama'" class="mt-3 space-y-1.5">
+              <p class="text-xs text-gray-500 mb-1">Found on your network — click to select:</p>
+              <template x-for="s in scanResults.filter(r => r.type==='ollama' || r.type==='unknown')" :key="s.endpoint">
+                <button @click="ollamaUrl = s.endpoint.replace('/v1',''); connectServer()"
+                  class="w-full text-left px-3 py-2 rounded-lg bg-gray-800 hover:bg-gray-700 border border-gray-700 transition-colors">
+                  <span class="text-xs font-mono text-indigo-300" x-text="s.endpoint.replace('/v1','')"></span>
+                  <span class="text-xs text-gray-500 ml-2" x-text="s.models.length + ' model' + (s.models.length!==1?'s':'') + ' loaded'"></span>
+                </button>
+              </template>
+            </div>
           </div>
 
           <!-- Status -->
@@ -5739,7 +5763,31 @@ _SETUP_HTML = """<!DOCTYPE html>
               <input x-model="lmstudioUrl" type="text" placeholder="http://localhost:1234"
                 @keydown.enter="connectServer()"
                 class="w-full bg-gray-950 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-indigo-500 font-mono">
-              <p class="text-xs text-gray-600 mt-1.5">LM Studio running on another machine? Enter its IP address.</p>
+              <div class="flex items-center justify-between mt-1.5">
+                <p class="text-xs text-gray-600">LM Studio on another machine? Enter its IP address.</p>
+                <button @click="scanNetwork()" :disabled="scanning || probing"
+                  class="text-xs text-indigo-400 hover:text-indigo-300 disabled:opacity-50 transition-colors flex items-center gap-1">
+                  <span x-show="!scanning">
+                    <svg class="w-3 h-3 inline -mt-0.5 mr-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.111 16.404a5.5 5.5 0 017.778 0M12 20h.01m-7.08-7.071c3.904-3.905 10.236-3.905 14.14 0M1.394 9.393c5.857-5.857 15.355-5.857 21.213 0"/></svg>
+                    Scan network
+                  </span>
+                  <span x-show="scanning" class="flex items-center gap-1.5">
+                    <div class="w-3 h-3 border-2 border-indigo-400/40 border-t-indigo-400 rounded-full animate-spin"></div>
+                    Scanning&hellip;
+                  </span>
+                </button>
+              </div>
+              <!-- Scan results for LM Studio -->
+              <div x-show="scanResults.length > 0 && serverTab==='lmstudio'" class="mt-3 space-y-1.5">
+                <p class="text-xs text-gray-500 mb-1">Found on your network — click to select:</p>
+                <template x-for="s in scanResults.filter(r => r.type==='lmstudio')" :key="s.endpoint">
+                  <button @click="lmstudioUrl = s.endpoint.replace('/v1',''); connectServer()"
+                    class="w-full text-left px-3 py-2 rounded-lg bg-gray-800 hover:bg-gray-700 border border-gray-700 transition-colors">
+                    <span class="text-xs font-mono text-indigo-300" x-text="s.endpoint.replace('/v1','')"></span>
+                    <span class="text-xs text-gray-500 ml-2" x-text="s.status==='auth_required' ? 'auth required' : s.models.length + ' model' + (s.models.length!==1?'s':'') + ' loaded'"></span>
+                  </button>
+                </template>
+              </div>
             </div>
             <div>
               <label class="text-xs text-gray-500 uppercase tracking-wider font-medium block mb-2">API Key <span class="normal-case text-gray-600 font-normal">(from LM Studio &rarr; Local Server tab)</span></label>
@@ -5807,87 +5855,142 @@ _SETUP_HTML = """<!DOCTYPE html>
 
       <!-- ── Step 2: Pick model ──────────────────────────────────────── -->
       <div x-show="step===2" x-cloak x-transition.opacity>
-        <div class="mb-6">
+        <div class="mb-5">
           <h2 class="text-xl font-bold mb-1">Choose a model</h2>
           <p class="text-gray-400 text-sm"
             x-text="activeServer && activeServer.models.length > 0
-              ? activeServer.models.length + ' model' + (activeServer.models.length !== 1 ? 's' : '') + ' available'
-              : 'No models downloaded yet'"></p>
+              ? activeServer.models.length + ' model' + (activeServer.models.length !== 1 ? 's' : '') + ' found on your server'
+              : 'No models loaded yet'"></p>
         </div>
 
-        <!-- Model list -->
-        <div x-show="activeServer && activeServer.models.length > 0" class="space-y-2 mb-4">
-          <template x-for="m in (activeServer ? activeServer.models : [])" :key="m.id">
-            <button @click="selectedModel = m.id"
-              :class="selectedModel === m.id
-                ? 'border-indigo-500 bg-indigo-950/40'
-                : 'border-gray-700 bg-gray-900 hover:border-gray-600'"
-              class="w-full text-left p-4 rounded-xl border transition-all duration-150">
-              <div class="flex items-center justify-between">
-                <div>
-                  <div class="text-sm font-medium text-white" x-text="m.name"></div>
-                  <div class="text-xs text-gray-500 mt-0.5" x-show="m.size > 0" x-text="formatSize(m.size)"></div>
-                </div>
-                <div class="flex items-center gap-2 flex-shrink-0 ml-3">
-                  <span x-show="isRecommended(m.id)"
-                    class="text-[10px] px-1.5 py-0.5 rounded-full bg-indigo-950 text-indigo-400 border border-indigo-800 font-medium">recommended</span>
-                  <div :class="selectedModel === m.id ? 'bg-indigo-500 border-indigo-500' : 'border-gray-600'"
-                    class="w-4 h-4 rounded-full border-2 transition-all duration-150 flex items-center justify-center">
-                    <div x-show="selectedModel === m.id" class="w-2 h-2 rounded-full bg-white"></div>
-                  </div>
-                </div>
-              </div>
-            </button>
-          </template>
-        </div>
-
-        <!-- No models on Ollama: pull option -->
-        <div x-show="activeServer && activeServer.models.length === 0 && activeServer.type === 'ollama'" class="mb-4">
-          <div class="p-4 rounded-xl bg-gray-900 border border-gray-800">
-            <div class="text-sm text-gray-300 mb-4">No models downloaded yet. Choose one to download now:</div>
-            <div class="text-xs text-gray-500 mb-2">How much RAM does this machine have?</div>
-            <div class="grid grid-cols-4 gap-1.5 mb-4">
-              <template x-for="r in [{l:'8 GB',v:'8'},{l:'16 GB',v:'16'},{l:'32 GB',v:'32'},{l:'GPU',v:'gpu'}]" :key="r.v">
-                <button @click="ramChoice=r.v; suggestModel()"
-                  :class="ramChoice===r.v ? 'bg-indigo-900 border-indigo-700 text-indigo-200' : 'bg-gray-800 border-gray-700 text-gray-400 hover:border-gray-500'"
-                  class="py-2 rounded-lg border text-xs font-medium transition-all" x-text="r.l"></button>
-              </template>
-            </div>
-            <template x-if="suggestedModel">
-              <div>
-                <div x-show="!pulling" class="p-3 bg-gray-800/80 rounded-xl flex items-center justify-between mb-3">
+        <!-- ── Models already on the server ── -->
+        <div x-show="activeServer && activeServer.models.length > 0">
+          <div class="space-y-2 mb-4">
+            <template x-for="m in (activeServer ? activeServer.models : [])" :key="m.id">
+              <button @click="selectedModel = m.id"
+                :class="selectedModel === m.id
+                  ? 'border-indigo-500 bg-indigo-950/40'
+                  : 'border-gray-700 bg-gray-900 hover:border-gray-600'"
+                class="w-full text-left p-4 rounded-xl border transition-all duration-150">
+                <div class="flex items-center justify-between">
                   <div>
-                    <div class="text-sm text-white font-medium" x-text="suggestedModel.name"></div>
-                    <div class="text-xs text-gray-500" x-text="suggestedModel.size"></div>
+                    <div class="text-sm font-medium text-white" x-text="m.name"></div>
+                    <div class="text-xs text-gray-500 mt-0.5" x-show="m.size > 0" x-text="formatSize(m.size)"></div>
                   </div>
-                  <button @click="startPull(suggestedModel.name)"
-                    class="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-medium transition-colors">
-                    Download
-                  </button>
+                  <div class="flex items-center gap-2 flex-shrink-0 ml-3">
+                    <span x-show="isRecommended(m.id)"
+                      class="text-[10px] px-1.5 py-0.5 rounded-full bg-indigo-950 text-indigo-400 border border-indigo-800 font-medium">recommended</span>
+                    <div :class="selectedModel === m.id ? 'bg-indigo-500 border-indigo-500' : 'border-gray-600'"
+                      class="w-4 h-4 rounded-full border-2 transition-all duration-150 flex items-center justify-center">
+                      <div x-show="selectedModel === m.id" class="w-2 h-2 rounded-full bg-white"></div>
+                    </div>
+                  </div>
                 </div>
-                <div x-show="pulling" class="space-y-2">
-                  <div class="flex justify-between text-xs text-gray-400 mb-1">
-                    <span x-text="pullStatus || 'Downloading…'"></span>
+              </button>
+            </template>
+          </div>
+
+          <!-- Ollama: offer to pull another model -->
+          <div x-show="activeServer && activeServer.type === 'ollama'" class="mb-4">
+            <details class="group">
+              <summary class="text-xs text-gray-500 hover:text-gray-400 cursor-pointer select-none list-none flex items-center gap-1.5">
+                <svg class="w-3 h-3 transition-transform group-open:rotate-90" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+                Download a different model
+              </summary>
+              <div class="mt-3" x-data="{}" @click.stop>
+                <template x-for="m in ollamaModelCatalog" :key="m.id">
+                  <div x-show="!activeServer || !activeServer.models.find(x => x.id === m.id)"
+                    class="flex items-center justify-between p-3 rounded-xl bg-gray-900 border border-gray-800 mb-2">
+                    <div>
+                      <div class="text-sm font-medium text-white" x-text="m.name"></div>
+                      <div class="text-xs text-gray-500 mt-0.5"><span x-text="m.size"></span> &middot; <span x-text="m.ram + ' RAM'"></span> &middot; <span x-text="m.desc"></span></div>
+                    </div>
+                    <button @click="startPull(m.id)" :disabled="pulling"
+                      class="ml-3 px-3 py-1.5 rounded-lg bg-gray-700 hover:bg-gray-600 disabled:opacity-50 text-white text-xs font-medium transition-colors flex-shrink-0">
+                      Download
+                    </button>
+                  </div>
+                </template>
+                <div x-show="pulling" class="mt-3 space-y-1.5">
+                  <div class="flex justify-between text-xs text-gray-400">
+                    <span x-text="pullStatus || 'Downloading\u2026'"></span>
                     <span x-text="pullProgress + '%'"></span>
                   </div>
                   <div class="h-1.5 bg-gray-800 rounded-full overflow-hidden">
-                    <div class="h-full bg-indigo-500 rounded-full transition-all duration-200"
-                      :style="'width:' + pullProgress + '%'"></div>
+                    <div class="h-full bg-indigo-500 rounded-full transition-all duration-200" :style="'width:' + pullProgress + '%'"></div>
                   </div>
                 </div>
                 <div x-show="pullError" class="text-xs text-red-400 mt-2" x-text="pullError"></div>
               </div>
-            </template>
+            </details>
           </div>
         </div>
 
-        <!-- No models on LM Studio -->
+        <!-- ── No models on Ollama ── -->
+        <div x-show="activeServer && activeServer.models.length === 0 && activeServer.type === 'ollama'" class="mb-4">
+          <p class="text-sm text-gray-400 mb-4">Ollama is running but has no models yet. Pick one to download:</p>
+          <div class="space-y-2 mb-4">
+            <template x-for="m in ollamaModelCatalog" :key="m.id">
+              <div class="p-4 rounded-xl bg-gray-900 border transition-all duration-150"
+                :class="suggestedModel && suggestedModel.id === m.id ? 'border-indigo-500' : 'border-gray-800 hover:border-gray-700'">
+                <div class="flex items-start justify-between gap-3">
+                  <div class="flex-1 min-w-0">
+                    <div class="flex items-center gap-2 flex-wrap">
+                      <span class="text-sm font-medium text-white" x-text="m.name"></span>
+                      <span x-show="m.recommended" class="text-[10px] px-1.5 py-0.5 rounded-full bg-indigo-950 text-indigo-400 border border-indigo-800 font-medium">recommended</span>
+                    </div>
+                    <div class="text-xs text-gray-500 mt-1" x-text="m.desc"></div>
+                    <div class="text-xs text-gray-600 mt-1">
+                      <span x-text="m.size"></span>
+                      <span class="mx-1">&middot;</span>
+                      <span>needs </span><span x-text="m.ram"></span><span> RAM</span>
+                    </div>
+                  </div>
+                  <button @click="suggestedModel = m; startPull(m.id)" :disabled="pulling"
+                    class="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-xs font-medium transition-colors flex-shrink-0">
+                    Download
+                  </button>
+                </div>
+              </div>
+            </template>
+          </div>
+
+          <!-- Pull progress -->
+          <div x-show="pulling" class="p-4 rounded-xl bg-gray-900 border border-gray-800 space-y-2">
+            <div class="flex justify-between text-xs text-gray-400">
+              <span x-text="pullStatus || 'Downloading\u2026'"></span>
+              <span x-text="pullProgress + '%'"></span>
+            </div>
+            <div class="h-1.5 bg-gray-800 rounded-full overflow-hidden">
+              <div class="h-full bg-indigo-500 rounded-full transition-all duration-200" :style="'width:' + pullProgress + '%'"></div>
+            </div>
+          </div>
+          <div x-show="pullError" class="text-xs text-red-400 mt-2" x-text="pullError"></div>
+        </div>
+
+        <!-- ── No models on LM Studio ── -->
         <div x-show="activeServer && activeServer.models.length === 0 && activeServer.type === 'lmstudio'" class="mb-4">
-          <div class="p-4 rounded-xl bg-amber-950/40 border border-amber-900">
-            <div class="text-sm text-amber-300 mb-1">No model loaded</div>
-            <p class="text-xs text-amber-400/80 mb-3">Download a model in LM Studio's Discover tab and load it in the Local Server tab, then click Refresh.</p>
+          <div class="p-5 rounded-xl bg-gray-900 border border-gray-800">
+            <div class="text-sm font-medium text-white mb-3">Load a model in LM Studio first</div>
+            <ol class="space-y-2.5 text-sm text-gray-400 mb-4 list-none">
+              <li class="flex gap-3">
+                <span class="w-5 h-5 rounded-full bg-gray-700 text-white text-xs flex items-center justify-center flex-shrink-0 mt-0.5 font-medium">1</span>
+                <span>Open LM Studio and go to the <span class="text-white font-medium">Discover</span> tab — this is the model marketplace. Search for any model and click Download.</span>
+              </li>
+              <li class="flex gap-3">
+                <span class="w-5 h-5 rounded-full bg-gray-700 text-white text-xs flex items-center justify-center flex-shrink-0 mt-0.5 font-medium">2</span>
+                <span>Go to the <span class="text-white font-medium">Local Server</span> tab, select the model you just downloaded, and press <span class="text-white font-medium">Start Server</span>.</span>
+              </li>
+              <li class="flex gap-3">
+                <span class="w-5 h-5 rounded-full bg-gray-700 text-white text-xs flex items-center justify-center flex-shrink-0 mt-0.5 font-medium">3</span>
+                <span>Come back here and click <span class="text-white font-medium">Refresh</span> — your model will appear above.</span>
+              </li>
+            </ol>
+            <div class="rounded-lg bg-gray-800/60 border border-gray-700 px-3 py-2.5 text-xs text-gray-400 mb-4">
+              <span class="text-gray-300 font-medium">Not sure which model to pick?</span> In the Discover tab, look for <span class="font-mono text-indigo-300">Llama 3.2 3B</span> — it's fast, small (~2 GB), and works well on most machines.
+            </div>
             <button @click="refreshModels()"
-              class="px-3 py-1.5 rounded-lg bg-gray-800 hover:bg-gray-700 text-xs text-gray-300 transition-colors">
+              class="px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-medium transition-colors">
               Refresh model list
             </button>
           </div>
@@ -5999,6 +6102,8 @@ function setup() {
 
     // Step 1
     probing: false,
+    scanning: false,
+    scanResults: [],
     activeServer: null,
     serverTab: 'ollama',
     osPlatform: 'mac',
@@ -6010,9 +6115,15 @@ function setup() {
 
     // Step 2
     selectedModel: null,
-    ramChoice: null,
     suggestedModel: null,
     pulling: false,
+    ollamaModelCatalog: [
+      { id: 'llama3.2:3b',        name: 'Llama 3.2 3B',        size: '2.0 GB', ram: '8 GB',  desc: 'Fast and lightweight — great for everyday tasks.',        recommended: true  },
+      { id: 'llama3.1:8b',        name: 'Llama 3.1 8B',        size: '4.9 GB', ram: '16 GB', desc: 'Balanced speed and reasoning. Good all-rounder.',          recommended: false },
+      { id: 'qwen2.5-coder:7b',   name: 'Qwen 2.5 Coder 7B',  size: '4.7 GB', ram: '16 GB', desc: 'Excellent for coding and technical questions.',            recommended: false },
+      { id: 'gemma2:9b',          name: 'Gemma 2 9B',          size: '5.4 GB', ram: '16 GB', desc: "Google's efficient model, strong instruction following.",  recommended: false },
+      { id: 'llama3.1:70b',       name: 'Llama 3.1 70B',       size: '40 GB',  ram: '48 GB', desc: 'Near-frontier quality. Needs plenty of RAM or a GPU.',    recommended: false },
+    ],
     pullProgress: 0,
     pullStatus: '',
     pullError: null,
@@ -6066,6 +6177,27 @@ function setup() {
       this.probeStatus = '';
       this.activeServer = null;
       this.probing = false;
+      this.scanResults = [];
+    },
+
+    async scanNetwork() {
+      this.scanning = true;
+      this.scanResults = [];
+      try {
+        const r = await fetch('/api/setup/scan', { credentials: 'include' });
+        const d = await r.json();
+        this.scanResults = (d.servers || []).filter(s => s.status !== 'down');
+        // Auto-populate URL if exactly one found for current tab
+        if (this.scanResults.length === 1) {
+          const s = this.scanResults[0];
+          const base = s.endpoint.replace('/v1', '');
+          if (this.serverTab === 'ollama' && s.type === 'ollama') this.ollamaUrl = base;
+          if (this.serverTab === 'lmstudio' && s.type === 'lmstudio') this.lmstudioUrl = base;
+        }
+      } catch {
+        // silent — scan results just stay empty
+      }
+      this.scanning = false;
     },
 
     goNext() {
@@ -6082,16 +6214,6 @@ function setup() {
 
     isRecommended(id) {
       return /llama3\.2:3b/i.test(id) || /llama-3\.2-3b/i.test(id);
-    },
-
-    suggestModel() {
-      const map = {
-        '8':   { name: 'llama3.2:3b',  size: '2.0 GB' },
-        '16':  { name: 'llama3.2:8b',  size: '5.0 GB' },
-        '32':  { name: 'llama3.1:32b', size: '20 GB'  },
-        'gpu': { name: 'llama3.3:70b', size: '43 GB'  },
-      };
-      this.suggestedModel = map[this.ramChoice] || map['8'];
     },
 
     async startPull(modelName) {
@@ -7421,6 +7543,7 @@ async def start_http_api(runner: Any, port: int = 8080) -> None:
     from gateway import setup_handlers as _sh
     app.router.add_get("/setup",              _handle_setup_page)
     app.router.add_get("/api/setup/probe",    _sh.handle_setup_probe)
+    app.router.add_get("/api/setup/scan",     _sh.handle_setup_scan)
     app.router.add_post("/api/setup/pull",    require_csrf(_sh.handle_setup_pull))
     app.router.add_post("/api/setup/test",    require_csrf(_sh.handle_setup_test))
     app.router.add_post("/api/setup/complete", require_csrf(_sh.handle_setup_complete))
