@@ -1,10 +1,10 @@
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: hermes-shared-memory-pvc
-  namespace: hermes
+  name: logos-shared-memory-pvc
+  namespace: logos
   annotations:
-    hermes.io/purpose: "Shared read-only memory for spawned instances. Primary instances
+    logos.io/purpose: "Shared read-only memory for spawned instances. Primary instances
       write here; spawned instances mount this read-only so they can see the primary's
       MEMORY.md and USER.md without modifying them."
 spec:

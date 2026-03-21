@@ -1540,15 +1540,28 @@ class GatewayRunner:
             }
             await self.hooks.emit("agent:start", hook_ctx)
             
-            # Run the agent
-            agent_result = await self._run_agent(
-                message=message_text,
-                context_prompt=context_prompt,
-                history=history,
-                source=source,
-                session_id=session_entry.session_id,
-                session_key=session_key
-            )
+            # Run the agent with a hard top-level timeout so a hung MCP call or
+            # blocked network request can never stall the platform adapter thread
+            # indefinitely.  Individual tools have their own timeouts; this is the
+            # safety net for the entire turn.
+            _AGENT_TIMEOUT_S = int(os.getenv("HERMES_AGENT_TIMEOUT", "600"))  # 10 min default
+            try:
+                agent_result = await asyncio.wait_for(
+                    self._run_agent(
+                        message=message_text,
+                        context_prompt=context_prompt,
+                        history=history,
+                        source=source,
+                        session_id=session_entry.session_id,
+                        session_key=session_key,
+                    ),
+                    timeout=_AGENT_TIMEOUT_S,
+                )
+            except asyncio.TimeoutError:
+                raise RuntimeError(
+                    f"Agent timed out after {_AGENT_TIMEOUT_S}s. "
+                    "The run was cancelled. Try a shorter request or check for hung tools."
+                )
             
             response = agent_result.get("final_response", "")
             agent_messages = agent_result.get("messages", [])
@@ -3650,9 +3663,11 @@ class GatewayRunner:
         last_tool = [None]  # Mutable container for tracking in closure
         last_progress_msg = [None]  # Track last message for dedup
         repeat_count = [0]  # How many times the same message repeated
-        
+        tools_used_count = [0]  # Actual tool calls made this turn
+
         def progress_callback(tool_name: str, preview: str = None, args: dict = None):
             """Callback invoked by agent when a tool is called."""
+            tools_used_count[0] += 1
             if not progress_queue:
                 return
             
@@ -4061,6 +4076,7 @@ class GatewayRunner:
                 "messages": result_holder[0].get("messages", []) if result_holder[0] else [],
                 "api_calls": result_holder[0].get("api_calls", 0) if result_holder[0] else 0,
                 "tools": tools_holder[0] or [],
+                "tools_used": tools_used_count[0],
                 "history_offset": len(agent_history),
                 "last_prompt_tokens": _last_prompt_toks,
                 "model": _resolved_model,

@@ -1,8 +1,8 @@
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: hermes-config-yaml
-  namespace: hermes
+  name: logos-config-yaml
+  namespace: logos
 data:
   config.yaml: |
     # ── Hermes runtime config ────────────────────────────────────────────────
@@ -15,7 +15,7 @@ data:
 
     # ── Platform toolsets ────────────────────────────────────────────────────
     # Override the default toolset per messaging platform.
-    # Default (without this config) is "hermes-telegram" which has ALL 65 tools.
+    # Default (without this config) is "logos-telegram" which has ALL 65 tools.
     # By listing specific toolsets we avoid sending browser/vision/TTS/MoA
     # schemas to the model — each schema costs ~450 tokens.
     #
@@ -23,7 +23,7 @@ data:
     # List them explicitly here to include them for this platform.
     #
     # Estimated tool count: ~36 tools × 450 tokens = ~16,200 tokens overhead
-    # vs ~65 tools × 450 tokens = ~29,250 tokens with hermes-telegram default
+    # vs ~65 tools × 450 tokens = ~29,250 tokens with logos-telegram default
     # ── Delegation ───────────────────────────────────────────────────────────
     # Subagents spawned via delegate_task use this model override.
     # "brain" routes via ai-router to qwen3-coder-next (larger reasoning model).
@@ -194,9 +194,9 @@ data:
             - kubectl_delete_deployment_tool
 
   SOUL.md: |
-    # Hermes ☤
+    # Logos
 
-    You are Hermes, an AI assistant made by Nous Research. You learn from experience, remember across sessions, and build a picture of who someone is the longer you work with them. This is how you talk and who you are.
+    You are an AI assistant running on Logos. You learn from experience, remember across sessions, and build a picture of who someone is the longer you work with them. This is how you talk and who you are.
 
     You're a peer. You know a lot but you don't perform knowing. Treat people like they can keep up.
 
@@ -361,26 +361,26 @@ data:
 
     ④ Deploy canary
     ```
-    kubectl_apply_tool(manifest_path="hosts/k8s/k8_files/hermes_deployment/10-hermes-canary-deployment.yaml", dry_run=False)
-    kubectl_apply_tool(manifest_path="hosts/k8s/k8_files/hermes_deployment/11-hermes-canary-service.yaml", dry_run=False)
-    kubectl_rollout_status_tool(deployment="hermes-canary", namespace="hermes", timeout=120)
+    kubectl_apply_tool(manifest_path="hosts/k8s/k8_files/hermes_deployment/10-logos-canary-deployment.yaml", dry_run=False)
+    kubectl_apply_tool(manifest_path="hosts/k8s/k8_files/hermes_deployment/11-logos-canary-service.yaml", dry_run=False)
+    kubectl_rollout_status_tool(deployment="logos-canary", namespace="logos", timeout=120)
     ```
 
     ⑤ Smoke test
-    The canary is reachable in-cluster at `http://hermes-canary.hermes.svc.cluster.local/health`.
-    Use the `terminal` tool to curl it: `curl -s http://hermes-canary.hermes.svc.cluster.local/health`
+    The canary is reachable in-cluster at `http://logos-canary.logos.svc.cluster.local/health`.
+    Use the `terminal` tool to curl it: `curl -s http://logos-canary.logos.svc.cluster.local/health`
     Report the result to the user.
 
     ⑥a PROMOTE (canary is healthy — user confirms)
     - Update the image tag in `hosts/k8s/k8_files/hermes_deployment/06-deployment.yaml` from `:latest` to `:canary` (or a git SHA)
     - `kubectl_apply_tool` to apply the updated deployment
-    - `kubectl_rollout_restart_tool(deployment="hermes", namespace="hermes")`
+    - `kubectl_rollout_restart_tool(deployment="logos", namespace="logos")`
     - `kubectl_rollout_status_tool` to confirm
-    - `kubectl_delete_deployment_tool(deployment="hermes-canary", namespace="hermes")` to clean up
-    - Delete the canary service: apply 11-hermes-canary-service.yaml with replicas removed, or ask user to run `kubectl delete -f ...`
+    - `kubectl_delete_deployment_tool(deployment="logos-canary", namespace="logos")` to clean up
+    - Delete the canary service: apply 11-logos-canary-service.yaml with replicas removed, or ask user to run `kubectl delete -f ...`
 
     ⑥b ROLLBACK (canary failed or user rejects)
-    - `kubectl_delete_deployment_tool(deployment="hermes-canary", namespace="hermes")`
+    - `kubectl_delete_deployment_tool(deployment="logos-canary", namespace="logos")`
     - Revert code changes if needed
 
     Never skip the dry-run step. Never push the image or apply live without reporting the plan and getting explicit user approval first.

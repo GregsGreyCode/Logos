@@ -2,8 +2,8 @@
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
-  name: hermes-instance-manager
-  namespace: hermes
+  name: logos-instance-manager
+  namespace: logos
 rules:
   - apiGroups: ["apps"]
     resources: ["deployments"]
@@ -15,22 +15,22 @@ rules:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
-  name: hermes-instance-manager
-  namespace: hermes
+  name: logos-instance-manager
+  namespace: logos
 subjects:
   - kind: ServiceAccount
-    name: hermes
-    namespace: hermes
+    name: logos
+    namespace: logos
 roleRef:
   kind: Role
   apiGroup: rbac.authorization.k8s.io
-  name: hermes-instance-manager
+  name: logos-instance-manager
 ---
 # Cluster-scoped read: list nodes (capacity) and pods cluster-wide (usage)
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: hermes-cluster-reader
+  name: logos-cluster-reader
 rules:
   - apiGroups: [""]
     resources: ["nodes", "pods"]
@@ -39,12 +39,12 @@ rules:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
-  name: hermes-cluster-reader
+  name: logos-cluster-reader
 subjects:
   - kind: ServiceAccount
-    name: hermes
-    namespace: hermes
+    name: logos
+    namespace: logos
 roleRef:
   kind: ClusterRole
   apiGroup: rbac.authorization.k8s.io
-  name: hermes-cluster-reader
+  name: logos-cluster-reader

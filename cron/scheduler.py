@@ -381,15 +381,21 @@ def tick(verbose: bool = True) -> int:
                 if verbose:
                     logger.info("Output saved to: %s", output_file)
 
-                # Deliver the final response to the origin/target chat
+                # Deliver the final response to the origin/target chat.
+                # Delivery happens BEFORE marking the job complete so a delivery
+                # failure doesn't silently produce a "ran and succeeded" record.
                 deliver_content = final_response if success else f"⚠️ Cron job '{job.get('name', job['id'])}' failed:\n{error}"
+                delivery_ok = True
                 if deliver_content:
                     try:
                         _deliver_result(job, deliver_content)
                     except Exception as de:
                         logger.error("Delivery failed for job %s: %s", job["id"], de)
+                        delivery_ok = False
+                        error = f"Delivery failed: {de}"
 
-                mark_job_run(job["id"], success, error)
+                # Only mark success when both execution AND delivery succeeded.
+                mark_job_run(job["id"], success and delivery_ok, error)
                 executed += 1
 
             except Exception as e:

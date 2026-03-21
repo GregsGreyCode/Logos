@@ -2,7 +2,7 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: ai-router-providers
-  namespace: hermes
+  namespace: logos
 data:
   providers.yaml: |
     # ── Token budget constants ────────────────────────────────────────────────────

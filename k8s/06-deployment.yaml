@@ -1,26 +1,26 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: hermes
-  namespace: hermes
+  name: logos
+  namespace: logos
   labels:
-    app: hermes
+    app: logos
 spec:
   replicas: 1
   revisionHistoryLimit: 2
   selector:
     matchLabels:
-      app: hermes
+      app: logos
   template:
     metadata:
       labels:
-        app: hermes
+        app: logos
       annotations:
         prometheus.io/scrape: "true"
         prometheus.io/port: "8080"
         prometheus.io/path: "/metrics"
     spec:
-      serviceAccountName: hermes
+      serviceAccountName: logos
 
       imagePullSecrets:
         - name: ghcr-creds
@@ -34,21 +34,21 @@ spec:
         # PVC backed by local-path-provisioner (rancher/local-path-provisioner).
         # Stores ~/.hermes/: memory, SOUL.md, skills, runtime config changes.
         # Persists across pod restarts. Tied to the node where the pod is scheduled.
-        - name: hermes-home
+        - name: logos-home
           persistentVolumeClaim:
-            claimName: hermes-pvc
-        - name: hermes-config-seed
+            claimName: logos-pvc
+        - name: logos-config-seed
           configMap:
-            name: hermes-config-yaml
+            name: logos-config-yaml
         # Scratch space for Hermes to write reports, docs, research output.
         # Ephemeral — cleared on pod restart. For persistent output use operator git_commit.
-        - name: hermes-work
+        - name: logos-work
           emptyDir: {}
         # Shared memory written by primary instances, mounted read-only by spawned instances.
         # Primary mounts this read-write so it can update MEMORY.md / USER.md here.
-        - name: hermes-shared-memory
+        - name: logos-shared-memory
           persistentVolumeClaim:
-            claimName: hermes-shared-memory-pvc
+            claimName: logos-shared-memory-pvc
 
       securityContext:
         seccompProfile:
@@ -65,15 +65,15 @@ spec:
             - sh
             - -c
             - |
-              chown -R 10001:10001 /hermes-home
-              chmod 750 /hermes-home
+              chown -R 10001:10001 /logos-home
+              chmod 750 /logos-home
               mkdir -p /hermes-shared/memories
               chown -R 10001:10001 /hermes-shared
               chmod 750 /hermes-shared
           volumeMounts:
-            - name: hermes-home
-              mountPath: /hermes-home
-            - name: hermes-shared-memory
+            - name: logos-home
+              mountPath: /logos-home
+            - name: logos-shared-memory
               mountPath: /hermes-shared
           securityContext:
             runAsUser: 0
@@ -87,20 +87,20 @@ spec:
             - sh
             - -c
             - |
-              mkdir -p /hermes-home/memories
-              sed "s|\${INSPECTOR_TOKEN}|${INSPECTOR_TOKEN}|g" /seed/config.yaml > /hermes-home/config.yaml
-              cp /seed/SOUL.md /hermes-home/SOUL.md
+              mkdir -p /logos-home/memories
+              sed "s|\${INSPECTOR_TOKEN}|${INSPECTOR_TOKEN}|g" /seed/config.yaml > /logos-home/config.yaml
+              cp /seed/SOUL.md /logos-home/SOUL.md
               echo "config.yaml and SOUL.md seeded from ConfigMap"
           env:
             - name: INSPECTOR_TOKEN
               valueFrom:
                 secretKeyRef:
-                  name: hermes-secret
+                  name: logos-secret
                   key: INSPECTOR_TOKEN
           volumeMounts:
-            - name: hermes-home
-              mountPath: /hermes-home
-            - name: hermes-config-seed
+            - name: logos-home
+              mountPath: /logos-home
+            - name: logos-config-seed
               mountPath: /seed
               readOnly: true
           securityContext:
@@ -112,7 +112,7 @@ spec:
                 - ALL
 
       containers:
-        - name: hermes
+        - name: logos
           image: ghcr.io/your-org/logos:latest
           ports:
             - name: http
@@ -124,62 +124,62 @@ spec:
             - name: HERMES_LOG_LEVEL
               valueFrom:
                 configMapKeyRef:
-                  name: hermes-config
+                  name: logos-config
                   key: HERMES_LOG_LEVEL
             - name: HERMES_PORT
               valueFrom:
                 configMapKeyRef:
-                  name: hermes-config
+                  name: logos-config
                   key: HERMES_PORT
             - name: REQUEST_TIMEOUT_SECONDS
               valueFrom:
                 configMapKeyRef:
-                  name: hermes-config
+                  name: logos-config
                   key: REQUEST_TIMEOUT_SECONDS
             - name: OPENAI_BASE_URL
               valueFrom:
                 configMapKeyRef:
-                  name: hermes-config
+                  name: logos-config
                   key: OPENAI_BASE_URL
             - name: HERMES_MODEL
               valueFrom:
                 configMapKeyRef:
-                  name: hermes-config
+                  name: logos-config
                   key: HERMES_MODEL
             - name: LLM_MODEL
               valueFrom:
                 configMapKeyRef:
-                  name: hermes-config
+                  name: logos-config
                   key: LLM_MODEL
             - name: OPENAI_API_KEY
               valueFrom:
                 secretKeyRef:
-                  name: hermes-secret
+                  name: logos-secret
                   key: OPENAI_API_KEY
             - name: HERMES_INTERNAL_TOKEN
               valueFrom:
                 secretKeyRef:
-                  name: hermes-secret
+                  name: logos-secret
                   key: HERMES_INTERNAL_TOKEN
             - name: HERMES_JWT_SECRET
               valueFrom:
                 secretKeyRef:
-                  name: hermes-secret
+                  name: logos-secret
                   key: HERMES_JWT_SECRET
             - name: HERMES_ADMIN_EMAIL
               valueFrom:
                 secretKeyRef:
-                  name: hermes-secret
+                  name: logos-secret
                   key: HERMES_ADMIN_EMAIL
             - name: HERMES_ADMIN_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: hermes-secret
+                  name: logos-secret
                   key: HERMES_ADMIN_PASSWORD
             - name: TELEGRAM_BOT_TOKEN
               valueFrom:
                 secretKeyRef:
-                  name: hermes-telegram
+                  name: logos-telegram
                   key: TELEGRAM_BOT_TOKEN
             - name: TELEGRAM_ALLOWED_USERS
               value: "REPLACE_WITH_TELEGRAM_USER_ID"
@@ -191,11 +191,11 @@ spec:
               value: "Logos"
 
           volumeMounts:
-            - name: hermes-home
+            - name: logos-home
               mountPath: /home/hermes/.hermes
-            - name: hermes-work
+            - name: logos-work
               mountPath: /work
-            - name: hermes-shared-memory
+            - name: logos-shared-memory
               mountPath: /home/hermes/.hermes-shared
 
           readinessProbe:

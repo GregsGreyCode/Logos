@@ -1,14 +1,14 @@
 # Canary deployment for testing new Hermes images before promoting to stable.
 #
 # Workflow:
-#   1. Build new image: docker build → push as ghcr.io/your-org/hermes:canary
-#   2. kubectl apply -f 10-hermes-canary-deployment.yaml
-#   3. kubectl rollout status deployment/hermes-canary -n hermes --timeout=120s
-#   4. Smoke test: kubectl exec or curl http://hermes-canary.hermes.svc.cluster.local/health
+#   1. Build new image: docker build → push as ghcr.io/your-org/logos:canary
+#   2. kubectl apply -f 10-logos-canary-deployment.yaml
+#   3. kubectl rollout status deployment/logos-canary -n logos --timeout=120s
+#   4. Smoke test: kubectl exec or curl http://logos-canary.logos.svc.cluster.local/health
 #   5a. PROMOTE: update image tag in 06-deployment.yaml → kubectl apply → kubectl rollout restart
-#   5b. ROLLBACK: kubectl delete -f 10-hermes-canary-deployment.yaml
+#   5b. ROLLBACK: kubectl delete -f 10-logos-canary-deployment.yaml
 #
-# Requires: hermes-canary-telegram secret (separate test bot token).
+# Requires: logos-canary-telegram secret (separate test bot token).
 # Create with: ./scripts/create-k8s-secrets.sh --canary
 #
 # This file is meant to be applied temporarily and then deleted.
@@ -16,20 +16,20 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: hermes-canary
-  namespace: hermes
+  name: logos-canary
+  namespace: logos
   labels:
-    app: hermes-canary
+    app: logos-canary
 spec:
   replicas: 1
   revisionHistoryLimit: 1
   selector:
     matchLabels:
-      app: hermes-canary
+      app: logos-canary
   template:
     metadata:
       labels:
-        app: hermes-canary
+        app: logos-canary
         canary: "true"
     spec:
       imagePullSecrets:
@@ -42,11 +42,11 @@ spec:
 
       volumes:
         # emptyDir — canary gets a fresh home, doesn't share PVC with stable
-        - name: hermes-home
+        - name: logos-home
           emptyDir: {}
-        - name: hermes-config-seed
+        - name: logos-config-seed
           configMap:
-            name: hermes-config-yaml
+            name: logos-config-yaml
 
       securityContext:
         seccompProfile:
@@ -60,14 +60,14 @@ spec:
             - sh
             - -c
             - |
-              mkdir -p /hermes-home/memories
-              cp /seed/config.yaml /hermes-home/config.yaml
-              cp /seed/SOUL.md /hermes-home/SOUL.md
+              mkdir -p /logos-home/memories
+              cp /seed/config.yaml /logos-home/config.yaml
+              cp /seed/SOUL.md /logos-home/SOUL.md
               echo "canary: config.yaml and SOUL.md seeded"
           volumeMounts:
-            - name: hermes-home
-              mountPath: /hermes-home
-            - name: hermes-config-seed
+            - name: logos-home
+              mountPath: /logos-home
+            - name: logos-config-seed
               mountPath: /seed
               readOnly: true
           securityContext:
@@ -79,8 +79,8 @@ spec:
                 - ALL
 
       containers:
-        - name: hermes
-          image: ghcr.io/your-org/hermes:canary
+        - name: logos
+          image: ghcr.io/your-org/logos:canary
           imagePullPolicy: Always
           ports:
             - name: http
@@ -92,63 +92,63 @@ spec:
             - name: HERMES_LOG_LEVEL
               valueFrom:
                 configMapKeyRef:
-                  name: hermes-config
+                  name: logos-config
                   key: HERMES_LOG_LEVEL
             - name: HERMES_PORT
               valueFrom:
                 configMapKeyRef:
-                  name: hermes-config
+                  name: logos-config
                   key: HERMES_PORT
             - name: REQUEST_TIMEOUT_SECONDS
               valueFrom:
                 configMapKeyRef:
-                  name: hermes-config
+                  name: logos-config
                   key: REQUEST_TIMEOUT_SECONDS
             - name: OPENAI_BASE_URL
               valueFrom:
                 configMapKeyRef:
-                  name: hermes-config
+                  name: logos-config
                   key: OPENAI_BASE_URL
             - name: HERMES_MODEL
               valueFrom:
                 configMapKeyRef:
-                  name: hermes-config
+                  name: logos-config
                   key: HERMES_MODEL
             - name: LLM_MODEL
               valueFrom:
                 configMapKeyRef:
-                  name: hermes-config
+                  name: logos-config
                   key: LLM_MODEL
             - name: OPENAI_API_KEY
               valueFrom:
                 secretKeyRef:
-                  name: hermes-secret
+                  name: logos-secret
                   key: OPENAI_API_KEY
             - name: HERMES_INTERNAL_TOKEN
               valueFrom:
                 secretKeyRef:
-                  name: hermes-secret
+                  name: logos-secret
                   key: HERMES_INTERNAL_TOKEN
             - name: HERMES_JWT_SECRET
               valueFrom:
                 secretKeyRef:
-                  name: hermes-secret
+                  name: logos-secret
                   key: HERMES_JWT_SECRET
             # Separate test bot — avoids conflict with the live Telegram bot
             - name: TELEGRAM_BOT_TOKEN
               valueFrom:
                 secretKeyRef:
-                  name: hermes-canary-telegram
+                  name: logos-canary-telegram
                   key: TELEGRAM_BOT_TOKEN
             - name: HERMES_ADMIN_EMAIL
               valueFrom:
                 secretKeyRef:
-                  name: hermes-secret
+                  name: logos-secret
                   key: HERMES_ADMIN_EMAIL
             - name: HERMES_ADMIN_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: hermes-secret
+                  name: logos-secret
                   key: HERMES_ADMIN_PASSWORD
             - name: TELEGRAM_ALLOWED_USERS
               value: "8754717106"
@@ -158,7 +158,7 @@ spec:
               value: "Homelab Notifications"
 
           volumeMounts:
-            - name: hermes-home
+            - name: logos-home
               mountPath: /home/hermes/.hermes
 
           resources:

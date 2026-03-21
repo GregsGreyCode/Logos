@@ -64,6 +64,8 @@ def _security_scan_skill(skill_dir: Path) -> Optional[str]:
             return f"Security scan blocked this skill ({reason}):\n{report}"
     except Exception as e:
         logger.warning("Security scan failed for %s: %s", skill_dir, e)
+        # Fail-closed: scanner unavailable means we can't verify safety.
+        return f"Security scan could not complete ({e}). Skill creation blocked."
     return None
 
 import yaml

@@ -2,7 +2,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: ai-router
-  namespace: hermes
+  namespace: logos
   labels:
     app: ai-router
 spec:
@@ -53,11 +53,11 @@ spec:
             - name: GRAFANA_URL
               value: "http://YOUR_DOCKER_HOST_IP:3200"
             - name: HERMES_INTERNAL_URL
-              value: "http://hermes.hermes.svc.cluster.local/chat"
+              value: "http://logos.logos.svc.cluster.local/chat"
             - name: HERMES_INTERNAL_TOKEN
               valueFrom:
                 secretKeyRef:
-                  name: hermes-secret
+                  name: logos-secret
                   key: HERMES_INTERNAL_TOKEN
 
           volumeMounts:
