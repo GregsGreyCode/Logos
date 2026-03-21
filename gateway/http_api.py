@@ -14,6 +14,7 @@ Provides:
 
 import asyncio
 import dataclasses
+import importlib.metadata
 import json
 import logging
 import os
@@ -55,6 +56,13 @@ _AI_ROUTER_BASE = "http://ai-router.hermes.svc.cluster.local:9001"
 _CANARY_HEALTH_URL = "http://hermes-canary.hermes.svc.cluster.local/health"
 _INSTANCE_NAME = os.environ.get("HERMES_INSTANCE_NAME", "Hermes")
 _IS_CANARY = os.environ.get("HERMES_IS_CANARY", "").lower() in ("1", "true", "yes")
+
+try:
+    _APP_VERSION = importlib.metadata.version("hermes-agent")
+except importlib.metadata.PackageNotFoundError:
+    _APP_VERSION = "dev"
+_BUILD_SHA = os.environ.get("BUILD_SHA", "local")[:7]
+_VERSION_LABEL = f"v{_APP_VERSION} · {_BUILD_SHA}{' · canary' if _IS_CANARY else ''}"
 _HERMES_NAMESPACE = "hermes"
 _INSTANCE_CPU_REQUEST = "500m"
 _INSTANCE_MEM_REQUEST = "2Gi"
@@ -5510,6 +5518,13 @@ _LOGIN_HTML = """<!DOCTYPE html>
 
   </div>
 
+  <!-- Version badge — fixed bottom-right -->
+  <div style="position:fixed;bottom:16px;right:18px;z-index:50;
+              font-size:0.65rem;color:rgba(71,85,105,0.55);
+              letter-spacing:0.04em;font-family:ui-monospace,monospace;">
+    __VERSION_LABEL__
+  </div>
+
   <script src="https://unpkg.com/alpinejs@3/dist/cdn.min.js" defer></script>
   <script>
   function loginApp() {
@@ -6442,7 +6457,8 @@ async def _handle_index(request: web.Request) -> web.Response:
 
 
 async def _handle_login_page(request: web.Request) -> web.Response:
-    return web.Response(text=_LOGIN_HTML, content_type="text/html")
+    html = _LOGIN_HTML.replace("__VERSION_LABEL__", _VERSION_LABEL)
+    return web.Response(text=html, content_type="text/html")
 
 
 async def _handle_status(request: web.Request) -> web.Response:
