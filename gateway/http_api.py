@@ -5341,33 +5341,43 @@ _LOGIN_HTML = """<!DOCTYPE html>
       background-size: 28px 28px;
     }
 
-    /* ambient glow — originates at logo position, fans downward toward the card */
+    /* ambient glow — soft ellipse behind logo, no hard edges */
     body::before {
       content: '';
       position: fixed;
-      top: 22vh; left: 50%;
+      top: 10vh; left: 50%;
       transform: translateX(-50%);
-      width: 600px; height: 480px;
-      background: radial-gradient(ellipse at 50% 0%, rgba(99,102,241,0.18) 0%, rgba(99,102,241,0.07) 30%, transparent 70%);
+      width: 700px; height: 700px;
+      background: radial-gradient(ellipse at 50% 30%, rgba(99,102,241,0.13) 0%, rgba(99,102,241,0.04) 45%, transparent 70%);
       pointer-events: none;
       z-index: 0;
     }
 
     [x-cloak] { display: none !important; }
 
-    /* logo halo */
+    /* logo halo — cycles through all four theme accent colours */
+    @keyframes halo-cycle {
+      0%,  18% { background: radial-gradient(ellipse at center, rgba(99,102,241,0.22) 0%, transparent 68%); }
+      25%, 43% { background: radial-gradient(ellipse at center, rgba(239,68,68,0.22)  0%, transparent 68%); }
+      50%, 68% { background: radial-gradient(ellipse at center, rgba(34,197,94,0.22)  0%, transparent 68%); }
+      75%, 93% { background: radial-gradient(ellipse at center, rgba(168,85,247,0.22) 0%, transparent 68%); }
+      100%     { background: radial-gradient(ellipse at center, rgba(99,102,241,0.22) 0%, transparent 68%); }
+    }
+    @keyframes glow-cycle {
+      0%,  18% { filter: drop-shadow(0 0 14px rgba(99,102,241,0.55)); }
+      25%, 43% { filter: drop-shadow(0 0 14px rgba(239,68,68,0.55));  }
+      50%, 68% { filter: drop-shadow(0 0 14px rgba(34,197,94,0.55));  }
+      75%, 93% { filter: drop-shadow(0 0 14px rgba(168,85,247,0.55)); }
+      100%     { filter: drop-shadow(0 0 14px rgba(99,102,241,0.55)); }
+    }
     .logo-halo {
       position: absolute;
       inset: -32px;
-      background: radial-gradient(ellipse at center, var(--accent-glow, rgba(99,102,241,0.15)) 0%, transparent 68%);
       border-radius: 50%;
       pointer-events: none;
+      animation: halo-cycle 12s ease-in-out infinite;
     }
-    @keyframes logo-pulse {
-      0%, 100% { filter: drop-shadow(0 0 6px var(--accent-subtle, rgba(99,102,241,0.15))); }
-      50%       { filter: drop-shadow(0 0 16px var(--accent-glow, rgba(99,102,241,0.4))); }
-    }
-    .logo-img { animation: logo-pulse 5s ease-in-out infinite; }
+    .logo-img { animation: glow-cycle 12s ease-in-out infinite; }
 
     /* card */
     .login-card {
@@ -5403,7 +5413,7 @@ _LOGIN_HTML = """<!DOCTYPE html>
       box-shadow: 0 0 0 3px var(--accent-subtle, rgba(99,102,241,0.08));
     }
 
-    /* button */
+    /* button — gradient matches the logo (indigo → purple) */
     .btn-signin {
       width: 100%;
       padding: 11px;
@@ -5411,14 +5421,14 @@ _LOGIN_HTML = """<!DOCTYPE html>
       font-size: 0.875rem;
       font-weight: 500;
       color: #fff;
-      background: linear-gradient(135deg, #4338ca 0%, #0284c7 100%);
-      box-shadow: 0 1px 2px rgba(0,0,0,0.4), 0 0 0 1px rgba(99,102,241,0.25) inset;
+      background: linear-gradient(135deg, #6366f1 0%, #a855f7 100%);
+      box-shadow: 0 1px 2px rgba(0,0,0,0.4), 0 0 0 1px rgba(99,102,241,0.3) inset;
       transition: opacity 150ms ease, box-shadow 150ms ease, transform 80ms ease;
       cursor: pointer;
     }
     .btn-signin:hover:not(:disabled) {
-      opacity: 0.9;
-      box-shadow: 0 1px 2px rgba(0,0,0,0.5), 0 0 24px rgba(14,165,233,0.18), 0 0 0 1px rgba(99,102,241,0.3) inset;
+      opacity: 0.92;
+      box-shadow: 0 1px 2px rgba(0,0,0,0.5), 0 0 28px rgba(168,85,247,0.25), 0 0 0 1px rgba(168,85,247,0.35) inset;
     }
     .btn-signin:active:not(:disabled) { transform: translateY(1px); opacity: 0.95; }
     .btn-signin:disabled { opacity: 0.45; cursor: not-allowed; }
@@ -5448,17 +5458,19 @@ _LOGIN_HTML = """<!DOCTYPE html>
   <div x-data="loginApp()" x-init="init()" class="relative z-10 w-full px-5" style="max-width:400px;">
 
     <!-- Brand -->
-    <div class="text-center mb-9 fade-up">
-      <div class="relative inline-block mb-6">
+    <div class="text-center mb-6 fade-up" style="margin-top:6vh;">
+      <div class="relative inline-block mb-8">
         <div class="logo-halo"></div>
         <img src="/static/logo.svg" alt="Logos" class="logo-img relative mx-auto"
              style="width:120px;height:120px;object-fit:contain;">
       </div>
-      <p style="font-size:0.8rem;color:rgba(100,116,139,0.9);letter-spacing:0.04em;">self-hosted AI agent platform</p>
     </div>
 
     <!-- Card -->
     <div class="login-card px-7 py-7 fade-up-card">
+      <!-- Dynamic title: Sign in / Get started -->
+      <p class="text-center mb-5" style="font-size:0.72rem;font-weight:600;letter-spacing:0.1em;text-transform:uppercase;color:rgba(148,163,184,0.5);"
+         x-text="needsSetup ? 'Get started' : 'Sign in'"></p>
       <form @submit.prevent="submit()" class="space-y-5">
 
         <div>
@@ -5497,7 +5509,7 @@ _LOGIN_HTML = """<!DOCTYPE html>
         </div>
 
         <button type="submit" :disabled="loading" class="btn-signin mt-1">
-          <span x-show="!loading">Sign in</span>
+          <span x-show="!loading" x-text="needsSetup ? 'Get started' : 'Sign in'"></span>
           <span x-show="loading" x-cloak class="flex items-center justify-center gap-2">
             <svg class="animate-spin w-4 h-4 opacity-80" fill="none" viewBox="0 0 24 24">
               <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
@@ -5529,10 +5541,16 @@ _LOGIN_HTML = """<!DOCTYPE html>
   <script>
   function loginApp() {
     return {
-      email: '', password: '', error: '', loading: false,
+      email: '', password: '', error: '', loading: false, needsSetup: false,
       init() {
+        // If already logged in, redirect
         fetch('/auth/me', { credentials: 'same-origin' })
           .then(r => { if (r.ok) window.location.href = '/'; })
+          .catch(() => {});
+        // Check if setup is required (public endpoint — no auth needed)
+        fetch('/api/setup/status', { credentials: 'same-origin' })
+          .then(r => r.ok ? r.json() : null)
+          .then(d => { if (d && !d.completed) this.needsSetup = true; })
           .catch(() => {});
       },
       async submit() {
