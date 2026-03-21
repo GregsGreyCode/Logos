@@ -2,6 +2,7 @@
 
 Endpoints:
   GET  /api/setup/probe    — probe a model server (Ollama or LM Studio / OpenAI-compatible)
+  GET  /api/setup/scan     — sweep local subnet for model servers on :11434 and :1234
   POST /api/setup/pull     — SSE: stream Ollama model pull progress
   POST /api/setup/test     — SSE: stream a test prompt response
   POST /api/setup/complete — save machine config and mark setup done
@@ -12,8 +13,10 @@ Probe query params:
 """
 
 import asyncio
+import ipaddress
 import json
 import logging
+import socket
 import time
 
 import aiohttp
@@ -25,6 +28,9 @@ from gateway import seed as _seed
 logger = logging.getLogger(__name__)
 
 _PROBE_TIMEOUT = aiohttp.ClientTimeout(total=4)
+_SCAN_TIMEOUT  = aiohttp.ClientTimeout(total=1)   # aggressive — we're sweeping 254 hosts
+_SCAN_PORTS    = [11434, 1234]
+_SCAN_CONCURRENCY = 40
 
 
 # ── Probe helpers ──────────────────────────────────────────────────────────────
@@ -74,6 +80,32 @@ async def _probe_server(
     return {"type": "unknown", "endpoint": f"{base}/v1", "status": "down", "models": []}
 
 
+def _local_subnet() -> str | None:
+    """Return the /24 subnet of this machine's primary LAN interface, e.g. '192.168.1'."""
+    try:
+        # Connect to a public address (no packet sent) to find the outbound interface IP.
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.connect(("8.8.8.8", 80))
+            ip = s.getsockname()[0]
+        parts = ip.split(".")
+        if len(parts) == 4 and not ip.startswith("127."):
+            return ".".join(parts[:3])
+    except Exception:
+        pass
+    return None
+
+
+async def _scan_host(session: aiohttp.ClientSession, ip: str) -> list[dict]:
+    """Check both model-server ports on a single IP; return found servers."""
+    found = []
+    for port in _SCAN_PORTS:
+        url = f"http://{ip}:{port}"
+        result = await _probe_server(session, url, api_key=None)
+        if result["status"] in ("up", "auth_required"):
+            found.append(result)
+    return found
+
+
 # ── Route handlers ─────────────────────────────────────────────────────────────
 
 async def handle_setup_probe(request: web.Request) -> web.Response:
@@ -97,6 +129,50 @@ async def handle_setup_probe(request: web.Request) -> web.Response:
             _probe_server(session, "http://localhost:1234", api_key),
         )
     return web.json_response({"servers": [ollama, lmstudio]})
+
+
+async def handle_setup_scan(request: web.Request) -> web.Response:
+    """Sweep the local /24 subnet for model servers on :11434 and :1234.
+
+    Returns all discovered servers sorted by IP.  Localhost is always
+    checked first and prepended to the results so it ranks highest.
+    """
+    subnet = _local_subnet()
+    results: list[dict] = []
+
+    connector = aiohttp.TCPConnector(limit=_SCAN_CONCURRENCY)
+    async with aiohttp.ClientSession(connector=connector) as session:
+        # Always check localhost first (covers Docker / WSL scenarios)
+        local_results = await asyncio.gather(
+            _probe_server(session, "http://localhost:11434", None),
+            _probe_server(session, "http://localhost:1234", None),
+        )
+        for r in local_results:
+            if r["status"] in ("up", "auth_required"):
+                results.append(r)
+
+        if subnet:
+            hosts = [f"{subnet}.{i}" for i in range(1, 255)]
+            sem = asyncio.Semaphore(_SCAN_CONCURRENCY)
+
+            async def probe_with_sem(ip: str) -> list[dict]:
+                async with sem:
+                    return await _scan_host(session, ip)
+
+            batches = await asyncio.gather(*[probe_with_sem(h) for h in hosts])
+            for batch in batches:
+                results.extend(batch)
+
+    # Deduplicate by endpoint
+    seen: set[str] = set()
+    unique = []
+    for r in results:
+        if r["endpoint"] not in seen:
+            seen.add(r["endpoint"])
+            unique.append(r)
+
+    logger.info("setup scan: subnet=%s found=%d", subnet or "localhost-only", len(unique))
+    return web.json_response({"servers": unique, "subnet": subnet})
 
 
 async def handle_setup_pull(request: web.Request) -> web.Response:
