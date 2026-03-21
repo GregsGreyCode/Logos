@@ -5637,134 +5637,171 @@ _SETUP_HTML = """<!DOCTYPE html>
       <div x-show="step===1" x-cloak x-transition.opacity>
         <div class="mb-6">
           <h2 class="text-xl font-bold mb-1">Connect your model server</h2>
-          <p class="text-gray-400 text-sm">Logos needs a local model server to process messages.</p>
+          <p class="text-gray-400 text-sm">Ollama or LM Studio — on this machine or anywhere on your network.</p>
         </div>
 
-        <!-- Probing -->
-        <div x-show="probing" class="flex items-center gap-3 p-4 rounded-xl bg-gray-900 border border-gray-800 mb-4">
-          <div class="w-4 h-4 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin flex-shrink-0"></div>
-          <span class="text-sm text-gray-300">Checking for model servers&hellip;</span>
+        <!-- Server type tabs -->
+        <div class="flex gap-1 p-1 bg-gray-900 rounded-xl mb-4 border border-gray-800">
+          <button @click="serverTab='ollama'; resetProbe()"
+            :class="serverTab==='ollama' ? 'bg-gray-700 text-white shadow-sm' : 'text-gray-500 hover:text-gray-300'"
+            class="flex-1 py-1.5 rounded-lg text-xs font-medium transition-all">Ollama</button>
+          <button @click="serverTab='lmstudio'; resetProbe()"
+            :class="serverTab==='lmstudio' ? 'bg-gray-700 text-white shadow-sm' : 'text-gray-500 hover:text-gray-300'"
+            class="flex-1 py-1.5 rounded-lg text-xs font-medium transition-all">LM Studio</button>
         </div>
 
-        <!-- Found -->
-        <div x-show="activeServer && !probing">
-          <div class="flex items-center gap-3 p-4 rounded-xl bg-green-950/60 border border-green-800 mb-4">
-            <div class="w-5 h-5 rounded-full bg-green-500 flex items-center justify-center flex-shrink-0">
-              <svg class="w-3 h-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/>
-              </svg>
+        <!-- ── Ollama panel ── -->
+        <div x-show="serverTab==='ollama'" class="space-y-3">
+          <div class="p-4 rounded-xl bg-gray-900 border border-gray-800">
+            <label class="text-xs text-gray-500 uppercase tracking-wider font-medium block mb-2">Server address</label>
+            <div class="flex gap-2">
+              <input x-model="ollamaUrl" type="text" placeholder="http://localhost:11434"
+                @keydown.enter="connectServer()"
+                class="flex-1 bg-gray-950 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-indigo-500 font-mono">
+              <button @click="connectServer()" :disabled="probing"
+                class="px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-sm font-medium transition-colors flex-shrink-0">
+                <span x-show="!probing">Connect</span>
+                <span x-show="probing" class="flex items-center gap-1.5">
+                  <div class="w-3 h-3 border-2 border-white/40 border-t-white rounded-full animate-spin"></div>
+                </span>
+              </button>
             </div>
+            <p class="text-xs text-gray-600 mt-2">Ollama running on another machine? Enter its IP address instead of localhost.</p>
+          </div>
+
+          <!-- Status -->
+          <div x-show="probeStatus" class="p-3 rounded-xl border flex items-center gap-3"
+            :class="probeStatus==='up' ? 'bg-green-950/60 border-green-800' : probeStatus==='down' ? 'bg-red-950/40 border-red-900' : 'bg-gray-900 border-gray-800'">
+            <div x-show="probeStatus==='up'" class="w-5 h-5 rounded-full bg-green-500 flex items-center justify-center flex-shrink-0">
+              <svg class="w-3 h-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/></svg>
+            </div>
+            <div x-show="probeStatus==='down'" class="w-5 h-5 rounded-full bg-red-700 flex items-center justify-center flex-shrink-0 text-white text-xs font-bold">✕</div>
             <div>
-              <div class="text-sm font-medium text-green-300"
-                x-text="activeServer && activeServer.type === 'ollama' ? 'Ollama detected' : 'LM Studio detected'"></div>
-              <div class="text-xs text-green-700" x-text="activeServer && activeServer.endpoint"></div>
+              <div class="text-sm font-medium"
+                :class="probeStatus==='up' ? 'text-green-300' : 'text-red-400'"
+                x-text="probeStatus==='up' ? 'Connected — ' + (activeServer ? activeServer.endpoint : '') : 'Not reachable at that address'"></div>
+              <div x-show="probeStatus==='down'" class="text-xs text-gray-500 mt-0.5">Check the address and that Ollama is running (<code class="font-mono">ollama serve</code>)</div>
             </div>
           </div>
-          <button @click="goNext()"
+
+          <button x-show="probeStatus==='up'" @click="goNext()"
             class="w-full py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-medium transition-colors">
             Continue &rarr;
           </button>
-        </div>
 
-        <!-- Not found: install instructions -->
-        <div x-show="!activeServer && !probing">
-          <p class="text-sm text-amber-400 mb-4">No model server found. Follow the steps below — Logos will detect it automatically.</p>
-
-          <!-- Tabs -->
-          <div class="flex gap-1 p-1 bg-gray-900 rounded-xl mb-4 border border-gray-800">
-            <button @click="serverTab='ollama'"
-              :class="serverTab==='ollama' ? 'bg-gray-700 text-white shadow-sm' : 'text-gray-500 hover:text-gray-300'"
-              class="flex-1 py-1.5 rounded-lg text-xs font-medium transition-all">Ollama</button>
-            <button @click="serverTab='lmstudio'"
-              :class="serverTab==='lmstudio' ? 'bg-gray-700 text-white shadow-sm' : 'text-gray-500 hover:text-gray-300'"
-              class="flex-1 py-1.5 rounded-lg text-xs font-medium transition-all">LM Studio</button>
-          </div>
-
-          <!-- Ollama instructions -->
-          <div x-show="serverTab==='ollama'" class="space-y-3">
-            <div class="p-4 rounded-xl bg-gray-900 border border-gray-800">
-              <div class="text-xs text-gray-500 uppercase tracking-wider mb-3 font-medium">1. Install Ollama</div>
-              <div class="flex gap-1 mb-3">
-                <button @click="osPlatform='mac'" :class="osPlatform==='mac'?'bg-gray-700 text-white':'text-gray-500 hover:text-gray-300'" class="px-2.5 py-1 rounded-md text-xs transition-colors">macOS</button>
-                <button @click="osPlatform='linux'" :class="osPlatform==='linux'?'bg-gray-700 text-white':'text-gray-500 hover:text-gray-300'" class="px-2.5 py-1 rounded-md text-xs transition-colors">Linux</button>
-                <button @click="osPlatform='windows'" :class="osPlatform==='windows'?'bg-gray-700 text-white':'text-gray-500 hover:text-gray-300'" class="px-2.5 py-1 rounded-md text-xs transition-colors">Windows</button>
-              </div>
-              <div x-show="osPlatform==='mac'" class="space-y-2">
-                <div class="flex items-center justify-between bg-gray-950 rounded-lg px-3 py-2">
-                  <code class="text-xs text-indigo-300 font-mono">brew install ollama</code>
-                  <button @click="copy('brew install ollama')" class="text-gray-600 hover:text-gray-400 text-xs ml-3" x-text="copied==='brew install ollama'?'✓':'copy'"></button>
+          <!-- Install guide (collapsed) -->
+          <details class="group">
+            <summary class="text-xs text-gray-500 hover:text-gray-300 cursor-pointer select-none list-none flex items-center gap-1">
+              <svg class="w-3 h-3 transition-transform group-open:rotate-90" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+              Need to install Ollama?
+            </summary>
+            <div class="mt-3 space-y-3">
+              <div class="p-4 rounded-xl bg-gray-900 border border-gray-800">
+                <div class="flex gap-1 mb-3">
+                  <button @click="osPlatform='mac'" :class="osPlatform==='mac'?'bg-gray-700 text-white':'text-gray-500 hover:text-gray-300'" class="px-2.5 py-1 rounded-md text-xs transition-colors">macOS</button>
+                  <button @click="osPlatform='linux'" :class="osPlatform==='linux'?'bg-gray-700 text-white':'text-gray-500 hover:text-gray-300'" class="px-2.5 py-1 rounded-md text-xs transition-colors">Linux</button>
+                  <button @click="osPlatform='windows'" :class="osPlatform==='windows'?'bg-gray-700 text-white':'text-gray-500 hover:text-gray-300'" class="px-2.5 py-1 rounded-md text-xs transition-colors">Windows</button>
                 </div>
-                <p class="text-xs text-gray-600">Or <a href="https://ollama.com/download" target="_blank" class="text-indigo-400 hover:underline">download the macOS app ↗</a></p>
-              </div>
-              <div x-show="osPlatform==='linux'">
-                <div class="flex items-center justify-between bg-gray-950 rounded-lg px-3 py-2">
-                  <code class="text-xs text-indigo-300 font-mono">curl -fsSL https://ollama.com/install.sh | sh</code>
-                  <button @click="copy('curl -fsSL https://ollama.com/install.sh | sh')" class="text-gray-600 hover:text-gray-400 text-xs ml-3 flex-shrink-0" x-text="copied==='curl -fsSL https://ollama.com/install.sh | sh'?'✓':'copy'"></button>
+                <div x-show="osPlatform==='mac'" class="space-y-2">
+                  <div class="flex items-center justify-between bg-gray-950 rounded-lg px-3 py-2">
+                    <code class="text-xs text-indigo-300 font-mono">brew install ollama</code>
+                    <button @click="copy('brew install ollama')" class="text-gray-600 hover:text-gray-400 text-xs ml-3" x-text="copied==='brew install ollama'?'✓':'copy'"></button>
+                  </div>
+                  <p class="text-xs text-gray-600">Or <a href="https://ollama.com/download" target="_blank" class="text-indigo-400 hover:underline">download the macOS app ↗</a></p>
                 </div>
-              </div>
-              <div x-show="osPlatform==='windows'" class="space-y-1">
-                <p class="text-xs text-gray-400">Download and run the Windows installer:</p>
-                <a href="https://ollama.com/download" target="_blank" class="text-xs text-indigo-400 hover:underline">ollama.com/download ↗</a>
-              </div>
-            </div>
-            <div class="p-4 rounded-xl bg-gray-900 border border-gray-800">
-              <div class="text-xs text-gray-500 uppercase tracking-wider mb-2 font-medium">2. Start Ollama</div>
-              <div class="flex items-center justify-between bg-gray-950 rounded-lg px-3 py-2">
-                <code class="text-xs text-indigo-300 font-mono">ollama serve</code>
-                <button @click="copy('ollama serve')" class="text-gray-600 hover:text-gray-400 text-xs ml-3" x-text="copied==='ollama serve'?'✓':'copy'"></button>
-              </div>
-              <p class="text-xs text-gray-600 mt-2">Skip this if Ollama is already running as a service.</p>
-            </div>
-            <div class="p-3 rounded-xl bg-gray-900/50 border border-gray-800 flex items-center gap-2">
-              <div class="w-2 h-2 rounded-full bg-amber-500 animate-pulse flex-shrink-0"></div>
-              <span class="text-xs text-gray-400">Watching for Ollama on port 11434&hellip;</span>
-            </div>
-          </div>
-
-          <!-- LM Studio instructions -->
-          <div x-show="serverTab==='lmstudio'" class="space-y-3">
-            <div class="p-4 rounded-xl bg-gray-900 border border-gray-800">
-              <div class="text-xs text-gray-500 uppercase tracking-wider mb-4 font-medium">LM Studio setup</div>
-              <div class="space-y-4">
-                <div class="flex gap-3">
-                  <div class="w-5 h-5 rounded-full bg-indigo-950 border border-indigo-800 flex items-center justify-center flex-shrink-0 text-[10px] text-indigo-400 font-bold">1</div>
-                  <div>
-                    <div class="text-xs text-white mb-0.5">Download LM Studio</div>
-                    <a href="https://lmstudio.ai" target="_blank" class="text-xs text-indigo-400 hover:underline">lmstudio.ai ↗</a>
+                <div x-show="osPlatform==='linux'">
+                  <div class="flex items-center justify-between bg-gray-950 rounded-lg px-3 py-2">
+                    <code class="text-xs text-indigo-300 font-mono">curl -fsSL https://ollama.com/install.sh | sh</code>
+                    <button @click="copy('curl -fsSL https://ollama.com/install.sh | sh')" class="text-gray-600 hover:text-gray-400 text-xs ml-3 flex-shrink-0" x-text="copied==='curl -fsSL https://ollama.com/install.sh | sh'?'✓':'copy'"></button>
                   </div>
                 </div>
-                <div class="flex gap-3">
-                  <div class="w-5 h-5 rounded-full bg-indigo-950 border border-indigo-800 flex items-center justify-center flex-shrink-0 text-[10px] text-indigo-400 font-bold">2</div>
-                  <div class="text-xs text-gray-300">Open the <span class="font-medium text-white">Discover</span> tab, search for a model, and download it</div>
-                </div>
-                <div class="flex gap-3">
-                  <div class="w-5 h-5 rounded-full bg-indigo-950 border border-indigo-800 flex items-center justify-center flex-shrink-0 text-[10px] text-indigo-400 font-bold">3</div>
-                  <div class="text-xs text-gray-300">Click the <span class="font-medium text-white">&harr; Local Server</span> tab in the left sidebar</div>
-                </div>
-                <div class="flex gap-3">
-                  <div class="w-5 h-5 rounded-full bg-amber-950 border border-amber-800 flex items-center justify-center flex-shrink-0 text-[10px] text-amber-400 font-bold">4</div>
-                  <div class="text-xs text-gray-300">Turn <span class="text-amber-400 font-medium">Enable Auth off</span> &mdash; simplest for local use</div>
-                </div>
-                <div class="flex gap-3">
-                  <div class="w-5 h-5 rounded-full bg-green-950 border border-green-800 flex items-center justify-center flex-shrink-0 text-[10px] text-green-400 font-bold">5</div>
-                  <div class="text-xs text-gray-300">Click <span class="font-medium text-white">Start Server</span></div>
+                <div x-show="osPlatform==='windows'">
+                  <a href="https://ollama.com/download" target="_blank" class="text-xs text-indigo-400 hover:underline">Download Ollama for Windows ↗</a>
                 </div>
               </div>
+              <div class="p-4 rounded-xl bg-gray-900 border border-gray-800">
+                <div class="text-xs text-gray-500 uppercase tracking-wider mb-2 font-medium">Start Ollama</div>
+                <div class="flex items-center justify-between bg-gray-950 rounded-lg px-3 py-2">
+                  <code class="text-xs text-indigo-300 font-mono">ollama serve</code>
+                  <button @click="copy('ollama serve')" class="text-gray-600 hover:text-gray-400 text-xs ml-3" x-text="copied==='ollama serve'?'✓':'copy'"></button>
+                </div>
+                <p class="text-xs text-gray-600 mt-2">Skip if Ollama is already running as a service.</p>
+              </div>
             </div>
+          </details>
+        </div>
 
-            <!-- LM Studio auth key fallback -->
-            <div x-show="lmstudioAuthRequired" class="p-4 rounded-xl bg-amber-950/50 border border-amber-800">
-              <div class="text-xs text-amber-300 font-medium mb-1">Auth is enabled in LM Studio</div>
-              <p class="text-xs text-amber-400/80 mb-3">Disable "Enable Auth" in the Local Server tab, or paste your API key:</p>
-              <input x-model="lmstudioKey" type="password" placeholder="lmstudio-api-key"
-                class="w-full bg-gray-900 border border-amber-700 rounded-lg px-3 py-2 text-xs text-white placeholder-gray-600 focus:outline-none focus:border-amber-500">
+        <!-- ── LM Studio panel ── -->
+        <div x-show="serverTab==='lmstudio'" class="space-y-3">
+          <div class="p-4 rounded-xl bg-gray-900 border border-gray-800 space-y-3">
+            <div>
+              <label class="text-xs text-gray-500 uppercase tracking-wider font-medium block mb-2">Server address</label>
+              <input x-model="lmstudioUrl" type="text" placeholder="http://localhost:1234"
+                @keydown.enter="connectServer()"
+                class="w-full bg-gray-950 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-indigo-500 font-mono">
+              <p class="text-xs text-gray-600 mt-1.5">LM Studio running on another machine? Enter its IP address.</p>
             </div>
+            <div>
+              <label class="text-xs text-gray-500 uppercase tracking-wider font-medium block mb-2">API Key <span class="normal-case text-gray-600 font-normal">(from LM Studio &rarr; Local Server tab)</span></label>
+              <input x-model="lmstudioKey" type="password" placeholder="lmstudio-&hellip; or leave blank if auth is off"
+                class="w-full bg-gray-950 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-indigo-500 font-mono">
+            </div>
+            <button @click="connectServer()" :disabled="probing"
+              class="w-full py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-sm font-medium transition-colors">
+              <span x-show="!probing">Connect</span>
+              <span x-show="probing" class="flex items-center justify-center gap-2">
+                <div class="w-3 h-3 border-2 border-white/40 border-t-white rounded-full animate-spin"></div>
+                Connecting&hellip;
+              </span>
+            </button>
+          </div>
 
-            <div class="p-3 rounded-xl bg-gray-900/50 border border-gray-800 flex items-center gap-2">
-              <div class="w-2 h-2 rounded-full bg-amber-500 animate-pulse flex-shrink-0"></div>
-              <span class="text-xs text-gray-400">Watching for LM Studio on port 1234&hellip;</span>
+          <!-- Status -->
+          <div x-show="probeStatus" class="p-3 rounded-xl border flex items-center gap-3"
+            :class="probeStatus==='up' ? 'bg-green-950/60 border-green-800' : probeStatus==='down' ? 'bg-red-950/40 border-red-900' : probeStatus==='auth_required' ? 'bg-amber-950/40 border-amber-800' : 'bg-gray-900 border-gray-800'">
+            <div x-show="probeStatus==='up'" class="w-5 h-5 rounded-full bg-green-500 flex items-center justify-center flex-shrink-0">
+              <svg class="w-3 h-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/></svg>
+            </div>
+            <div x-show="probeStatus==='down'" class="w-5 h-5 rounded-full bg-red-700 flex items-center justify-center flex-shrink-0 text-white text-xs font-bold">✕</div>
+            <div x-show="probeStatus==='auth_required'" class="w-5 h-5 rounded-full bg-amber-600 flex items-center justify-center flex-shrink-0 text-white text-xs font-bold">!</div>
+            <div>
+              <div class="text-sm font-medium"
+                :class="{'text-green-300':probeStatus==='up','text-red-400':probeStatus==='down','text-amber-300':probeStatus==='auth_required'}"
+                x-text="probeStatus==='up' ? 'Connected — ' + (activeServer ? activeServer.endpoint : '') : probeStatus==='auth_required' ? 'Auth required — enter your API key above' : 'Not reachable at that address'"></div>
+              <div x-show="probeStatus==='down'" class="text-xs text-gray-500 mt-0.5">Check the address and that the Local Server is running in LM Studio</div>
             </div>
           </div>
+
+          <button x-show="probeStatus==='up'" @click="goNext()"
+            class="w-full py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-medium transition-colors">
+            Continue &rarr;
+          </button>
+
+          <!-- Install guide (collapsed) -->
+          <details class="group">
+            <summary class="text-xs text-gray-500 hover:text-gray-300 cursor-pointer select-none list-none flex items-center gap-1">
+              <svg class="w-3 h-3 transition-transform group-open:rotate-90" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+              Need to install LM Studio?
+            </summary>
+            <div class="mt-3 p-4 rounded-xl bg-gray-900 border border-gray-800 space-y-4">
+              <div class="flex gap-3">
+                <div class="w-5 h-5 rounded-full bg-indigo-950 border border-indigo-800 flex items-center justify-center flex-shrink-0 text-[10px] text-indigo-400 font-bold">1</div>
+                <div><div class="text-xs text-white mb-0.5">Download LM Studio</div><a href="https://lmstudio.ai" target="_blank" class="text-xs text-indigo-400 hover:underline">lmstudio.ai ↗</a></div>
+              </div>
+              <div class="flex gap-3">
+                <div class="w-5 h-5 rounded-full bg-indigo-950 border border-indigo-800 flex items-center justify-center flex-shrink-0 text-[10px] text-indigo-400 font-bold">2</div>
+                <div class="text-xs text-gray-300">Open the <span class="font-medium text-white">Discover</span> tab, search for a model, and download it</div>
+              </div>
+              <div class="flex gap-3">
+                <div class="w-5 h-5 rounded-full bg-indigo-950 border border-indigo-800 flex items-center justify-center flex-shrink-0 text-[10px] text-indigo-400 font-bold">3</div>
+                <div class="text-xs text-gray-300">Click the <span class="font-medium text-white">&harr; Local Server</span> tab &rarr; click <span class="font-medium text-white">Start Server</span></div>
+              </div>
+              <div class="flex gap-3">
+                <div class="w-5 h-5 rounded-full bg-indigo-950 border border-indigo-800 flex items-center justify-center flex-shrink-0 text-[10px] text-indigo-400 font-bold">4</div>
+                <div class="text-xs text-gray-300">If auth is enabled, copy the API key shown in the Local Server tab and paste it above</div>
+              </div>
+            </div>
+          </details>
         </div>
       </div>
 
@@ -5965,9 +6002,10 @@ function setup() {
     activeServer: null,
     serverTab: 'ollama',
     osPlatform: 'mac',
+    ollamaUrl: 'http://localhost:11434',
+    lmstudioUrl: 'http://localhost:1234',
     lmstudioKey: '',
-    lmstudioAuthRequired: false,
-    pollTimer: null,
+    probeStatus: '',
     copied: '',
 
     // Step 2
@@ -5998,41 +6036,36 @@ function setup() {
     selectTrack(track) {
       this.track = track;
       this.step = 1;
-      this.$nextTick(() => this.startProbing());
     },
 
-    async startProbing() {
+    async connectServer() {
       this.probing = true;
-      await this.probe();
-      if (!this.activeServer) {
-        this.probing = false;
-        this.pollTimer = setInterval(() => this.probe(), 3000);
-      }
-    },
-
-    async probe() {
+      this.probeStatus = '';
       try {
-        const url = this.lmstudioKey
-          ? '/api/setup/probe?lmstudio_key=' + encodeURIComponent(this.lmstudioKey)
-          : '/api/setup/probe';
-        const r = await fetch(url, { credentials: 'include' });
+        const baseUrl = this.serverTab === 'ollama' ? this.ollamaUrl : this.lmstudioUrl;
+        const params = new URLSearchParams({ url: baseUrl.trim() });
+        if (this.serverTab === 'lmstudio' && this.lmstudioKey.trim()) {
+          params.set('api_key', this.lmstudioKey.trim());
+        }
+        const r = await fetch('/api/setup/probe?' + params, { credentials: 'include' });
         const d = await r.json();
-        const found = (d.servers || []).find(s => s.status === 'up');
-        if (found) {
-          if (this.pollTimer) { clearInterval(this.pollTimer); this.pollTimer = null; }
-          this.probing = false;
-          this.activeServer = found;
-          this.lmstudioAuthRequired = false;
-          // Auto-advance after brief success display
-          setTimeout(() => { if (this.step === 1) this.goNext(); }, 1200);
+        const server = (d.servers || [])[0];
+        if (server) {
+          this.probeStatus = server.status;
+          if (server.status === 'up') this.activeServer = server;
         } else {
-          const lms = (d.servers || []).find(s => s.type === 'lmstudio' && s.status === 'auth_required');
-          if (lms) this.lmstudioAuthRequired = true;
-          this.probing = false;
+          this.probeStatus = 'down';
         }
       } catch {
-        this.probing = false;
+        this.probeStatus = 'down';
       }
+      this.probing = false;
+    },
+
+    resetProbe() {
+      this.probeStatus = '';
+      this.activeServer = null;
+      this.probing = false;
     },
 
     goNext() {
@@ -6070,7 +6103,10 @@ function setup() {
         const r = await fetch('/api/setup/pull', {
           method: 'POST', credentials: 'include',
           headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken() },
-          body: JSON.stringify({ model: modelName }),
+          body: JSON.stringify({
+            model: modelName,
+            base_url: this.activeServer ? this.activeServer.endpoint.replace(/\/v1$/, '') : 'http://localhost:11434',
+          }),
         });
         const reader = r.body.getReader();
         const dec = new TextDecoder();
@@ -6102,11 +6138,15 @@ function setup() {
     },
 
     async refreshModels() {
+      if (!this.activeServer) return;
       try {
-        const r = await fetch('/api/setup/probe', { credentials: 'include' });
+        const baseUrl = this.activeServer.endpoint.replace(/\/v1$/, '');
+        const params = new URLSearchParams({ url: baseUrl });
+        if (this.lmstudioKey.trim()) params.set('api_key', this.lmstudioKey.trim());
+        const r = await fetch('/api/setup/probe?' + params, { credentials: 'include' });
         const d = await r.json();
-        const lms = (d.servers || []).find(s => s.type === 'lmstudio' && s.status === 'up');
-        if (lms) this.activeServer = lms;
+        const found = (d.servers || []).find(s => s.status === 'up');
+        if (found) this.activeServer = found;
       } catch {}
     },
 

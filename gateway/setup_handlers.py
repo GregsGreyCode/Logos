@@ -1,10 +1,14 @@
 """Setup wizard API handlers.
 
 Endpoints:
-  GET  /api/setup/probe    — probe Ollama (:11434) and LM Studio (:1234)
+  GET  /api/setup/probe    — probe a model server (Ollama or LM Studio / OpenAI-compatible)
   POST /api/setup/pull     — SSE: stream Ollama model pull progress
   POST /api/setup/test     — SSE: stream a test prompt response
   POST /api/setup/complete — save machine config and mark setup done
+
+Probe query params:
+  url      — base URL to probe, e.g. http://192.168.1.50:11434  (omit for localhost auto-scan)
+  api_key  — optional Bearer token (for LM Studio with auth enabled)
 """
 
 import asyncio
@@ -20,74 +24,77 @@ from gateway import seed as _seed
 
 logger = logging.getLogger(__name__)
 
-_PROBE_TIMEOUT = aiohttp.ClientTimeout(total=3)
+_PROBE_TIMEOUT = aiohttp.ClientTimeout(total=4)
 
 
 # ── Probe helpers ──────────────────────────────────────────────────────────────
 
-async def _probe_ollama(session: aiohttp.ClientSession) -> dict:
+async def _probe_server(
+    session: aiohttp.ClientSession,
+    base_url: str,
+    api_key: str | None = None,
+) -> dict:
+    """Probe a single base URL.
+
+    Tries Ollama's native /api/tags first (unique to Ollama).
+    Falls back to OpenAI-compatible /v1/models (LM Studio, vLLM, etc.).
+    Returns a result dict with keys: type, endpoint, status, models.
+    """
+    base = base_url.rstrip("/")
+
+    # ── Ollama: unique /api/tags endpoint ──────────────────────────────────
     try:
-        async with session.get(
-            "http://localhost:11434/api/tags", timeout=_PROBE_TIMEOUT
-        ) as r:
+        async with session.get(f"{base}/api/tags", timeout=_PROBE_TIMEOUT) as r:
             if r.status == 200:
-                data = await r.json()
+                data = await r.json(content_type=None)
                 models = [
                     {"id": m["name"], "name": m["name"], "size": m.get("size", 0)}
                     for m in data.get("models", [])
                 ]
-                return {
-                    "type": "ollama",
-                    "endpoint": "http://localhost:11434/v1",
-                    "status": "up",
-                    "models": models,
-                }
+                return {"type": "ollama", "endpoint": f"{base}/v1", "status": "up", "models": models}
     except Exception:
         pass
-    return {"type": "ollama", "endpoint": "http://localhost:11434/v1", "status": "down", "models": []}
 
-
-async def _probe_lmstudio(session: aiohttp.ClientSession, api_key: str | None = None) -> dict:
-    headers = {}
-    if api_key:
-        headers["Authorization"] = f"Bearer {api_key}"
+    # ── OpenAI-compatible: /v1/models (LM Studio, etc.) ───────────────────
+    headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
     try:
-        async with session.get(
-            "http://localhost:1234/v1/models", headers=headers, timeout=_PROBE_TIMEOUT
-        ) as r:
+        async with session.get(f"{base}/v1/models", headers=headers, timeout=_PROBE_TIMEOUT) as r:
             if r.status == 200:
-                data = await r.json()
+                data = await r.json(content_type=None)
                 models = [
                     {"id": m["id"], "name": m["id"], "size": 0}
                     for m in data.get("data", [])
                 ]
-                return {
-                    "type": "lmstudio",
-                    "endpoint": "http://localhost:1234/v1",
-                    "status": "up",
-                    "models": models,
-                }
+                return {"type": "lmstudio", "endpoint": f"{base}/v1", "status": "up", "models": models}
             if r.status == 401:
-                return {
-                    "type": "lmstudio",
-                    "endpoint": "http://localhost:1234/v1",
-                    "status": "auth_required",
-                    "models": [],
-                }
+                return {"type": "lmstudio", "endpoint": f"{base}/v1", "status": "auth_required", "models": []}
     except Exception:
         pass
-    return {"type": "lmstudio", "endpoint": "http://localhost:1234/v1", "status": "down", "models": []}
+
+    return {"type": "unknown", "endpoint": f"{base}/v1", "status": "down", "models": []}
 
 
 # ── Route handlers ─────────────────────────────────────────────────────────────
 
 async def handle_setup_probe(request: web.Request) -> web.Response:
-    """Probe local model servers. Query param: lmstudio_key (optional)."""
-    lmstudio_key = request.query.get("lmstudio_key") or None
+    """Probe a model server.
+
+    With ?url=...: probe that specific address.
+    Without url:   scan localhost defaults (Ollama :11434, LM Studio :1234).
+    Optional: ?api_key=... for servers with auth enabled.
+    """
+    raw_url = (request.query.get("url") or "").strip()
+    api_key = request.query.get("api_key") or None
+
     async with aiohttp.ClientSession() as session:
+        if raw_url:
+            result = await _probe_server(session, raw_url, api_key)
+            return web.json_response({"servers": [result]})
+
+        # Auto-scan both localhost defaults in parallel
         ollama, lmstudio = await asyncio.gather(
-            _probe_ollama(session),
-            _probe_lmstudio(session, lmstudio_key),
+            _probe_server(session, "http://localhost:11434", None),
+            _probe_server(session, "http://localhost:1234", api_key),
         )
     return web.json_response({"servers": [ollama, lmstudio]})
 
@@ -99,6 +106,7 @@ async def handle_setup_pull(request: web.Request) -> web.Response:
     except Exception:
         return web.json_response({"error": "invalid_json"}, status=400)
 
+    base_url = (body.get("base_url") or "http://localhost:11434").rstrip("/")
     model = (body.get("model") or "llama3.2:3b").strip()
 
     response = web.StreamResponse(headers={
@@ -114,7 +122,7 @@ async def handle_setup_pull(request: web.Request) -> web.Response:
     try:
         async with aiohttp.ClientSession() as session:
             async with session.post(
-                "http://localhost:11434/api/pull",
+                f"{base_url}/api/pull",
                 json={"name": model, "stream": True},
                 timeout=aiohttp.ClientTimeout(total=600),
             ) as r:
@@ -199,7 +207,7 @@ async def handle_setup_test(request: web.Request) -> web.Response:
                     except Exception:
                         pass
     except asyncio.TimeoutError:
-        await send({"error": "Request timed out — model may be too large or still loading."})
+        await send({"error": "Request timed out — the model may still be loading. Try again in a moment."})
     except Exception as e:
         await send({"error": str(e)})
 
