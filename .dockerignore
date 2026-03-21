@@ -1,0 +1,17 @@
+venv/
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+.git/
+node_modules/
+*.tar
+*.egg-info/
+.pytest_cache/
+htmlcov/
+temp_vision_images/
+logs/
+k8s/
+.claude/
+CRITIQUE.md
+onboarding_plan.md
