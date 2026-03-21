@@ -147,12 +147,29 @@ async def handle_setup_probe(request: web.Request) -> web.Response:
             result = await _probe_server(session, raw_url, api_key, prefer=prefer)
             return web.json_response({"servers": [result]})
 
-        # Auto-scan both localhost defaults in parallel
-        ollama, lmstudio = await asyncio.gather(
-            _probe_server(session, "http://localhost:11434", None,     prefer="ollama"),
-            _probe_server(session, "http://localhost:1234",  api_key,  prefer="lmstudio"),
-        )
-    return web.json_response({"servers": [ollama, lmstudio]})
+        # Auto-detect: probe localhost AND node IP (K8s pods see pod CNI, not node LAN)
+        targets = [
+            ("http://localhost:11434", None,    "ollama"),
+            ("http://localhost:1234",  api_key, "lmstudio"),
+        ]
+        node_ip = os.environ.get("NODE_IP", "").strip()
+        if node_ip and not node_ip.startswith("127."):
+            targets += [
+                (f"http://{node_ip}:11434", None,    "ollama"),
+                (f"http://{node_ip}:1234",  api_key, "lmstudio"),
+            ]
+        results = await asyncio.gather(*[
+            _probe_server(session, url, key, prefer=prefer_type)
+            for url, key, prefer_type in targets
+        ])
+        # Deduplicate by endpoint (localhost and NODE_IP may resolve to same machine)
+        seen: set[str] = set()
+        unique = []
+        for r in results:
+            if r["endpoint"] not in seen:
+                seen.add(r["endpoint"])
+                unique.append(r)
+    return web.json_response({"servers": unique})
 
 
 async def handle_setup_scan(request: web.Request) -> web.Response:
