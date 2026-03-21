@@ -5941,9 +5941,7 @@ _SETUP_HTML = """<!DOCTYPE html>
                     </div>
                     <div class="text-xs text-gray-500 mt-1" x-text="m.desc"></div>
                     <div class="text-xs text-gray-600 mt-1">
-                      <span x-text="m.size"></span>
-                      <span class="mx-1">&middot;</span>
-                      <span>needs </span><span x-text="m.ram"></span><span> RAM</span>
+                      <span x-text="m.size"></span><span class="mx-1">&middot;</span><span>needs </span><span x-text="m.ram"></span><span> on the inference machine</span>
                     </div>
                   </div>
                   <button @click="suggestedModel = m; startPull(m.id)" :disabled="pulling"
@@ -6118,11 +6116,11 @@ function setup() {
     suggestedModel: null,
     pulling: false,
     ollamaModelCatalog: [
-      { id: 'llama3.2:3b',        name: 'Llama 3.2 3B',        size: '2.0 GB', ram: '8 GB',  desc: 'Fast and lightweight — great for everyday tasks.',        recommended: true  },
-      { id: 'llama3.1:8b',        name: 'Llama 3.1 8B',        size: '4.9 GB', ram: '16 GB', desc: 'Balanced speed and reasoning. Good all-rounder.',          recommended: false },
-      { id: 'qwen2.5-coder:7b',   name: 'Qwen 2.5 Coder 7B',  size: '4.7 GB', ram: '16 GB', desc: 'Excellent for coding and technical questions.',            recommended: false },
-      { id: 'gemma2:9b',          name: 'Gemma 2 9B',          size: '5.4 GB', ram: '16 GB', desc: "Google's efficient model, strong instruction following.",  recommended: false },
-      { id: 'llama3.1:70b',       name: 'Llama 3.1 70B',       size: '40 GB',  ram: '48 GB', desc: 'Near-frontier quality. Needs plenty of RAM or a GPU.',    recommended: false },
+      { id: 'llama3.2:3b',        name: 'Llama 3.2 3B',        size: '2.0 GB', ram: '8 GB system RAM',   desc: 'Fast and lightweight — great for everyday tasks.',                             recommended: true  },
+      { id: 'llama3.1:8b',        name: 'Llama 3.1 8B',        size: '4.9 GB', ram: '16 GB system RAM',  desc: 'Balanced speed and reasoning. Good all-rounder.',                             recommended: false },
+      { id: 'qwen2.5-coder:7b',   name: 'Qwen 2.5 Coder 7B',  size: '4.7 GB', ram: '16 GB system RAM',  desc: 'Excellent for coding and technical questions.',                               recommended: false },
+      { id: 'gemma2:9b',          name: 'Gemma 2 9B',          size: '5.4 GB', ram: '16 GB system RAM',  desc: "Google\u2019s efficient model, strong instruction following.",                recommended: false },
+      { id: 'llama3.1:70b',       name: 'Llama 3.1 70B',       size: '40 GB',  ram: '48 GB system RAM or GPU VRAM', desc: 'Near-frontier quality. Needs a powerful machine or dedicated GPU.', recommended: false },
     ],
     pullProgress: 0,
     pullStatus: '',
@@ -6154,7 +6152,7 @@ function setup() {
       this.probeStatus = '';
       try {
         const baseUrl = this.serverTab === 'ollama' ? this.ollamaUrl : this.lmstudioUrl;
-        const params = new URLSearchParams({ url: baseUrl.trim() });
+        const params = new URLSearchParams({ url: baseUrl.trim(), prefer: this.serverTab });
         if (this.serverTab === 'lmstudio' && this.lmstudioKey.trim()) {
           params.set('api_key', this.lmstudioKey.trim());
         }

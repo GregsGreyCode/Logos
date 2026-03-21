@@ -89,6 +89,12 @@ spec:
           env:
             - name: HOME
               value: /home/hermes
+            # Inject node LAN IP so the setup wizard's network scan uses the
+            # correct /24 subnet rather than the pod's CNI address.
+            - name: NODE_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.hostIP
             - name: HERMES_IS_CANARY
               value: "true"
             - name: HERMES_LOG_LEVEL
@@ -147,17 +153,17 @@ spec:
             - name: HERMES_ADMIN_EMAIL
               valueFrom:
                 secretKeyRef:
-                  name: hermes-canary-admin
+                  name: logos-canary-admin
                   key: HERMES_ADMIN_EMAIL
             - name: HERMES_ADMIN_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: hermes-canary-admin
+                  name: logos-canary-admin
                   key: HERMES_ADMIN_PASSWORD
             - name: HERMES_ADMIN_NAME
               valueFrom:
                 secretKeyRef:
-                  name: hermes-canary-admin
+                  name: logos-canary-admin
                   key: HERMES_ADMIN_NAME
             - name: TELEGRAM_ALLOWED_USERS
               value: "8754717106"

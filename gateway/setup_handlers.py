@@ -13,9 +13,9 @@ Probe query params:
 """
 
 import asyncio
-import ipaddress
 import json
 import logging
+import os
 import socket
 import time
 
@@ -39,29 +39,35 @@ async def _probe_server(
     session: aiohttp.ClientSession,
     base_url: str,
     api_key: str | None = None,
+    prefer: str = "ollama",
 ) -> dict:
     """Probe a single base URL.
 
-    Tries Ollama's native /api/tags first (unique to Ollama).
-    Falls back to OpenAI-compatible /v1/models (LM Studio, vLLM, etc.).
+    prefer='ollama'  — try /api/tags first (Ollama-native), fall back to /v1/models
+    prefer='lmstudio'— skip /api/tags entirely; only probe /v1/models
+                       (LM Studio now responds to /api/tags in Ollama-compat mode,
+                        so we must not use it to classify an LM Studio server)
+
     Returns a result dict with keys: type, endpoint, status, models.
     """
     base = base_url.rstrip("/")
 
-    # ── Ollama: unique /api/tags endpoint ──────────────────────────────────
-    try:
-        async with session.get(f"{base}/api/tags", timeout=_PROBE_TIMEOUT) as r:
-            if r.status == 200:
-                data = await r.json(content_type=None)
-                models = [
-                    {"id": m["name"], "name": m["name"], "size": m.get("size", 0)}
-                    for m in data.get("models", [])
-                ]
-                return {"type": "ollama", "endpoint": f"{base}/v1", "status": "up", "models": models}
-    except Exception:
-        pass
+    # ── Ollama: native /api/tags (skipped when caller knows it's LM Studio) ─
+    if prefer == "ollama":
+        try:
+            async with session.get(f"{base}/api/tags", timeout=_PROBE_TIMEOUT) as r:
+                if r.status == 200:
+                    data = await r.json(content_type=None)
+                    models = [
+                        {"id": m["name"], "name": m["name"], "size": m.get("size", 0)}
+                        for m in data.get("models", [])
+                    ]
+                    return {"type": "ollama", "endpoint": f"{base}/v1", "status": "up", "models": models}
+        except Exception:
+            pass
 
-    # ── OpenAI-compatible: /v1/models (LM Studio, etc.) ───────────────────
+    # ── OpenAI-compatible: /v1/models (LM Studio, vLLM, etc.) ────────────
+    server_type = "lmstudio" if prefer == "lmstudio" else "lmstudio"
     headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
     try:
         async with session.get(f"{base}/v1/models", headers=headers, timeout=_PROBE_TIMEOUT) as r:
@@ -71,9 +77,9 @@ async def _probe_server(
                     {"id": m["id"], "name": m["id"], "size": 0}
                     for m in data.get("data", [])
                 ]
-                return {"type": "lmstudio", "endpoint": f"{base}/v1", "status": "up", "models": models}
+                return {"type": server_type, "endpoint": f"{base}/v1", "status": "up", "models": models}
             if r.status == 401:
-                return {"type": "lmstudio", "endpoint": f"{base}/v1", "status": "auth_required", "models": []}
+                return {"type": server_type, "endpoint": f"{base}/v1", "status": "auth_required", "models": []}
     except Exception:
         pass
 
@@ -81,9 +87,22 @@ async def _probe_server(
 
 
 def _local_subnet() -> str | None:
-    """Return the /24 subnet of this machine's primary LAN interface, e.g. '192.168.1'."""
+    """Return the /24 subnet to scan, e.g. '192.168.1'.
+
+    In Kubernetes, the pod's CNI IP (10.244.x.x) is the wrong subnet —
+    we want the node's LAN IP instead.  The deployment injects NODE_IP
+    via the downward API (status.hostIP) for exactly this case.
+    """
+    # K8s: prefer the node's LAN IP injected via downward API
+    node_ip = os.environ.get("NODE_IP", "").strip()
+    if node_ip and not node_ip.startswith("127."):
+        parts = node_ip.split(".")
+        if len(parts) == 4:
+            logger.debug("scan subnet from NODE_IP: %s", node_ip)
+            return ".".join(parts[:3])
+
+    # Bare-metal / Docker: use outbound interface IP (no packet sent)
     try:
-        # Connect to a public address (no packet sent) to find the outbound interface IP.
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
             s.connect(("8.8.8.8", 80))
             ip = s.getsockname()[0]
@@ -114,19 +133,24 @@ async def handle_setup_probe(request: web.Request) -> web.Response:
     With ?url=...: probe that specific address.
     Without url:   scan localhost defaults (Ollama :11434, LM Studio :1234).
     Optional: ?api_key=... for servers with auth enabled.
+    Optional: ?prefer=ollama|lmstudio — controls which probe path is tried first;
+              defaults to 'ollama'. Pass 'lmstudio' when probing an LM Studio server
+              to skip the /api/tags check (LM Studio now responds to that endpoint
+              in Ollama-compat mode, which would cause misclassification).
     """
     raw_url = (request.query.get("url") or "").strip()
     api_key = request.query.get("api_key") or None
+    prefer  = request.query.get("prefer") or "ollama"
 
     async with aiohttp.ClientSession() as session:
         if raw_url:
-            result = await _probe_server(session, raw_url, api_key)
+            result = await _probe_server(session, raw_url, api_key, prefer=prefer)
             return web.json_response({"servers": [result]})
 
         # Auto-scan both localhost defaults in parallel
         ollama, lmstudio = await asyncio.gather(
-            _probe_server(session, "http://localhost:11434", None),
-            _probe_server(session, "http://localhost:1234", api_key),
+            _probe_server(session, "http://localhost:11434", None,     prefer="ollama"),
+            _probe_server(session, "http://localhost:1234",  api_key,  prefer="lmstudio"),
         )
     return web.json_response({"servers": [ollama, lmstudio]})
 
