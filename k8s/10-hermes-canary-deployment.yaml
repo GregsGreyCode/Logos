@@ -89,6 +89,8 @@ spec:
           env:
             - name: HOME
               value: /home/hermes
+            - name: HERMES_IS_CANARY
+              value: "true"
             - name: HERMES_LOG_LEVEL
               valueFrom:
                 configMapKeyRef:
@@ -140,16 +142,23 @@ spec:
                 secretKeyRef:
                   name: logos-canary-telegram
                   key: TELEGRAM_BOT_TOKEN
+            # Canary-only admin credentials — from hermes-canary-admin secret (12-hermes-canary-admin-secret.yaml)
+            # Kept separate so canary has known/documented login credentials independent of stable.
             - name: HERMES_ADMIN_EMAIL
               valueFrom:
                 secretKeyRef:
-                  name: logos-secret
+                  name: hermes-canary-admin
                   key: HERMES_ADMIN_EMAIL
             - name: HERMES_ADMIN_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: logos-secret
+                  name: hermes-canary-admin
                   key: HERMES_ADMIN_PASSWORD
+            - name: HERMES_ADMIN_NAME
+              valueFrom:
+                secretKeyRef:
+                  name: hermes-canary-admin
+                  key: HERMES_ADMIN_NAME
             - name: TELEGRAM_ALLOWED_USERS
               value: "8754717106"
             - name: TELEGRAM_HOME_CHANNEL

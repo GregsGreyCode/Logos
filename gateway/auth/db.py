@@ -1481,3 +1481,47 @@ def list_agent_runs(
             params + [limit, offset],
         ).fetchall()
     return [dict(r) for r in rows], total
+
+
+# ── Platform settings (singleton id=1) ────────────────────────────────────────
+
+def get_platform_feature_flags() -> dict:
+    """Return the platform feature_flags JSON dict (empty dict if unset)."""
+    with _conn() as conn:
+        row = conn.execute(
+            "SELECT feature_flags FROM platform_settings WHERE id=1"
+        ).fetchone()
+    if row and row["feature_flags"]:
+        try:
+            return json.loads(row["feature_flags"])
+        except Exception:
+            return {}
+    return {}
+
+
+def set_platform_feature_flag(key: str, value) -> None:
+    """Set a single key in platform feature_flags JSON."""
+    flags = get_platform_feature_flags()
+    flags[key] = value
+    with _conn() as conn:
+        conn.execute(
+            "UPDATE platform_settings SET feature_flags=?, updated_at=? WHERE id=1",
+            (json.dumps(flags), int(time.time() * 1000)),
+        )
+
+
+def is_setup_completed() -> bool:
+    return bool(get_platform_feature_flags().get("setup_completed"))
+
+
+def mark_setup_completed() -> None:
+    set_platform_feature_flag("setup_completed", True)
+
+
+def ensure_user_settings(user_id: str) -> None:
+    """Insert a user_settings row if one doesn't exist yet."""
+    with _conn() as conn:
+        conn.execute(
+            "INSERT OR IGNORE INTO user_settings (user_id, updated_at) VALUES (?, ?)",
+            (user_id, int(time.time() * 1000)),
+        )

@@ -116,7 +116,8 @@ async def handle_login(request: web.Request) -> web.Response:
     auth_db.update_last_login(user["id"])
     auth_db.write_audit_log(user["id"], "login", ip_address=ip)
 
-    resp = web.json_response({"user": _user_public(user)})
+    setup_required = user["role"] == "admin" and not auth_db.is_setup_completed()
+    resp = web.json_response({"user": _user_public(user), "setup_required": setup_required})
     set_auth_cookies(resp, access_token, raw_refresh)
     return resp
 
