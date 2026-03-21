@@ -4362,7 +4362,16 @@ async def start_gateway(config: Optional[GatewayConfig] = None, replace: bool = 
     from gateway.status import write_pid_file, remove_pid_file
     write_pid_file()
     atexit.register(remove_pid_file)
-    
+
+    # Start the HTTP API + dashboard server alongside the platform adapters
+    http_port = int(os.getenv("HERMES_PORT", "8080"))
+    try:
+        from gateway.http_api import start_http_api
+        asyncio.create_task(start_http_api(runner, http_port))
+        logger.info("HTTP API task scheduled on port %d", http_port)
+    except Exception as _http_err:
+        logger.warning("HTTP API failed to start: %s", _http_err)
+
     # Start background cron ticker so scheduled jobs fire automatically
     cron_stop = threading.Event()
     cron_thread = threading.Thread(
