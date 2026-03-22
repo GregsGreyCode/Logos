@@ -5897,11 +5897,12 @@ _SETUP_HTML = """<!DOCTYPE html>
           <!-- 2-column step grid -->
           <div class="px-7 py-5 grid grid-cols-2 gap-3">
             <template x-for="s in setupSteps" :key="s.n">
-              <div class="flex items-start gap-3 p-4 rounded-xl bg-gray-800/30 border border-gray-700/30">
+              <div class="flex items-start gap-3 p-4 rounded-xl bg-gray-800/30 border border-gray-700/30"
+                :class="s.n === setupSteps.length ? 'col-span-2 max-w-[calc(50%-6px)] mx-auto w-full' : ''">
                 <div class="w-6 h-6 rounded-full bg-gray-800 border border-gray-700 flex items-center justify-center text-xs font-mono text-gray-400 flex-shrink-0 mt-0.5"
                   x-text="s.n"></div>
                 <div class="min-w-0 flex-1">
-                  <div class="flex items-center gap-2 flex-wrap mb-1">
+                  <div class="flex items-center justify-between gap-2 mb-1">
                     <div class="text-sm font-semibold text-gray-200 leading-tight" x-text="s.name"></div>
                     <span class="spinner-hue text-[9px] px-1.5 py-0.5 rounded-full border border-indigo-800 text-indigo-400 font-medium uppercase tracking-wider flex-shrink-0"
                       x-text="s.tag"></span>
@@ -6463,7 +6464,7 @@ _SETUP_HTML = """<!DOCTYPE html>
           <!-- Hermes — available -->
           <button @click="selectedAgentType = 'hermes'"
             class="w-full text-left p-4 rounded-xl border transition-all duration-200"
-            :class="selectedAgentType === 'hermes' ? 'border-indigo-500 bg-indigo-950/30' : 'border-gray-800 bg-gray-900 hover:border-gray-700'">
+            :class="selectedAgentType === 'hermes' ? 'border-indigo-500 bg-indigo-950/30 spinner-hue' : 'border-gray-800 bg-gray-900 hover:border-gray-700'">
             <div class="flex items-start gap-3">
               <div class="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0 mt-0.5 text-lg transition-colors"
                 :class="selectedAgentType === 'hermes' ? 'bg-indigo-900 border border-indigo-700' : 'bg-gray-800 border border-gray-700'">✦</div>
@@ -6518,7 +6519,7 @@ _SETUP_HTML = """<!DOCTYPE html>
           <!-- This machine -->
           <button @click="execEnv = 'local'"
             class="w-full text-left p-4 rounded-xl border transition-all duration-200"
-            :class="execEnv === 'local' ? 'border-indigo-500 bg-indigo-950/30' : 'border-gray-800 bg-gray-900 hover:border-gray-700'">
+            :class="execEnv === 'local' ? 'border-indigo-500 bg-indigo-950/30 spinner-hue' : 'border-gray-800 bg-gray-900 hover:border-gray-700'">
             <div class="flex items-start gap-3">
               <div class="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0 mt-0.5 text-lg transition-colors"
                 :class="execEnv === 'local' ? 'bg-indigo-900 border border-indigo-700' : 'bg-gray-800 border border-gray-700'">
@@ -6544,7 +6545,7 @@ _SETUP_HTML = """<!DOCTYPE html>
           <!-- Kubernetes -->
           <button @click="execEnv = 'k8s'"
             class="w-full text-left p-4 rounded-xl border transition-all duration-200"
-            :class="execEnv === 'k8s' ? 'border-indigo-500 bg-indigo-950/30' : 'border-gray-800 bg-gray-900 hover:border-gray-700'">
+            :class="execEnv === 'k8s' ? 'border-indigo-500 bg-indigo-950/30 spinner-hue' : 'border-gray-800 bg-gray-900 hover:border-gray-700'">
             <div class="flex items-start gap-3">
               <div class="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0 mt-0.5 text-base transition-colors font-bold"
                 :class="execEnv === 'k8s' ? 'bg-indigo-900 border border-indigo-700 text-indigo-300' : 'bg-gray-800 border border-gray-700 text-gray-500'">k8s</div>
@@ -6570,12 +6571,12 @@ _SETUP_HTML = """<!DOCTYPE html>
             <div class="flex gap-2">
               <button @click="k8sMode = 'incluster'"
                 class="flex-1 py-1.5 rounded-lg text-xs font-medium transition-colors"
-                :class="k8sMode === 'incluster' ? 'bg-indigo-900 text-indigo-200 border border-indigo-700' : 'bg-gray-800 text-gray-400 border border-gray-700 hover:border-gray-600'">
+                :class="k8sMode === 'incluster' ? 'bg-indigo-900 text-indigo-200 border border-indigo-700 spinner-hue' : 'bg-gray-800 text-gray-400 border border-gray-700 hover:border-gray-600'">
                 Same cluster
               </button>
               <button @click="k8sMode = 'kubeconfig'"
                 class="flex-1 py-1.5 rounded-lg text-xs font-medium transition-colors"
-                :class="k8sMode === 'kubeconfig' ? 'bg-indigo-900 text-indigo-200 border border-indigo-700' : 'bg-gray-800 text-gray-400 border border-gray-700 hover:border-gray-600'">
+                :class="k8sMode === 'kubeconfig' ? 'bg-indigo-900 text-indigo-200 border border-indigo-700 spinner-hue' : 'bg-gray-800 text-gray-400 border border-gray-700 hover:border-gray-600'">
                 External cluster
               </button>
             </div>
