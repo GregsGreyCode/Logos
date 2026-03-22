@@ -5535,9 +5535,6 @@ _LOGIN_HTML = """<!DOCTYPE html>
     <!-- Reveal section — expands on activate() -->
     <div :class="phase==='login' ? 'login-reveal open' : 'login-reveal'">
 
-      <h1 class="text-center text-white font-semibold mb-8"
-          style="font-size:1.75rem;letter-spacing:-0.03em;">Logos</h1>
-
       <!-- Card -->
       <div class="login-card px-7 py-7">
         <p class="text-center mb-5"
