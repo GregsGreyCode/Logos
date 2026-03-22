@@ -5489,18 +5489,16 @@ _LOGIN_HTML = """<!DOCTYPE html>
     .float-input {
       width: 100%;
       background: rgba(255,255,255,0.04);
-      border: 1px solid rgba(255,255,255,0.09);
+      border: 1px solid rgba(255,255,255,0.07);
       border-radius: 12px;
       padding: 20px 16px 8px;
       color: #f1f5f9; font-size: 0.875rem; outline: none;
-      transition: border-color 150ms ease, box-shadow 150ms ease, background 150ms ease;
+      transition: background 0.6s ease;
     }
     .float-input::placeholder { color: transparent; }
-    .float-input:hover  { border-color: rgba(255,255,255,0.14); }
+    .float-input:hover  { background: rgba(255,255,255,0.055); }
     .float-input:focus  {
-      background: rgba(255,255,255,0.06);
-      border-color: rgba(99,102,241,0.45);
-      box-shadow: 0 0 0 3px rgba(99,102,241,0.08);
+      background: rgba(0,0,0,0.25);
     }
     .float-label {
       position: absolute; left: 16px; top: 50%;
