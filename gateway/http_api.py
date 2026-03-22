@@ -6839,6 +6839,10 @@ function setup() {
       if (ua.includes('Win')) this.osPlatform = 'windows';
       else if (ua.includes('Linux')) this.osPlatform = 'linux';
       else this.osPlatform = 'mac';
+      // Local-first is the only available track — skip the track-selection
+      // screen and go straight to scanning. Step 0 will be restored once
+      // Frontier-first is available.
+      this.$nextTick(() => this.selectTrack('local'));
     },
 
     selectTrack(track) {
