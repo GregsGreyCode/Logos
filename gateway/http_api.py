@@ -5905,7 +5905,8 @@ _SETUP_HTML = """<!DOCTYPE html>
             <div class="text-xs text-gray-400 leading-relaxed mb-3">
               Your data never leaves this machine. Models run on your hardware.
             </div>
-            <div class="text-xs text-indigo-400 font-medium">Free &middot; Private &middot; Ollama or LM Studio</div>
+            <div class="text-xs text-indigo-400 font-medium">Free &middot; Private</div>
+            <div class="text-xs text-indigo-300/60 mt-0.5">Ollama &middot; LM Studio</div>
           </button>
           <!-- Frontier-first (coming soon) -->
           <div class="text-left p-5 rounded-2xl border border-gray-800 bg-gray-900/40 opacity-50 cursor-not-allowed select-none">
