@@ -116,10 +116,14 @@ def _local_subnet() -> str | None:
 
 async def _scan_host(session: aiohttp.ClientSession, ip: str) -> list[dict]:
     """Check both model-server ports on a single IP; return found servers."""
+    # Port 11434 is Ollama-native; port 1234 is LM Studio's default.
+    # Use prefer='lmstudio' on 1234 so we don't misclassify LM Studio as
+    # Ollama (LM Studio now responds to /api/tags in compat mode).
+    port_prefer = {11434: "ollama", 1234: "lmstudio"}
     found = []
     for port in _SCAN_PORTS:
         url = f"http://{ip}:{port}"
-        result = await _probe_server(session, url, api_key=None)
+        result = await _probe_server(session, url, api_key=None, prefer=port_prefer.get(port, "ollama"))
         if result["status"] in ("up", "auth_required"):
             found.append(result)
     return found
