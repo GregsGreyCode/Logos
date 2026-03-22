@@ -2,8 +2,6 @@
   <img src="assets/banner.png" alt="Logos" width="100%">
 </p>
 
-# Logos
-
 **A self-hosted platform for agentic AI. Compose agents from first principles — on your hardware, under your rules.**
 
 Logos is a control plane for AI agents. Not a single agent — a platform. Agent runtimes (Hermes by default, others via the adapter interface) plug into the platform; you assemble what you need from five composable dimensions: **Soul**, **Tools**, **Agent**, **Model**, and **Policy**. That combination — a **STAMP** — defines every run Logos records, making every interaction observable, reproducible, and auditable.
