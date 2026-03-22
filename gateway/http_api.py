@@ -5370,13 +5370,19 @@ _LOGIN_HTML = """<!DOCTYPE html>
          0°  → indigo, 60° → magenta, 120° → orange, 180° → yellow,
          240° → green,  300° → cyan,   360° → back to indigo.          */
     @keyframes ambient-color {
-      0%   { background: #6366f1; }
-      17%  { background: #d946ef; }
-      33%  { background: #f97316; }
-      50%  { background: #eab308; }
-      67%  { background: #22c55e; }
-      83%  { background: #06b6d4; }
-      100% { background: #6366f1; }
+      0%    { background: #6366f1; }
+      8%    { background: #8b5cf6; }
+      17%   { background: #d946ef; }
+      25%   { background: #ec4899; }
+      33%   { background: #f97316; }
+      42%   { background: #f59e0b; }
+      50%   { background: #eab308; }
+      58%   { background: #84cc16; }
+      67%   { background: #22c55e; }
+      75%   { background: #14b8a6; }
+      83%   { background: #06b6d4; }
+      92%   { background: #818cf8; }
+      100%  { background: #6366f1; }
     }
     body::before {
       content: '';
@@ -5385,8 +5391,8 @@ _LOGIN_HTML = """<!DOCTYPE html>
       transform: translate(-50%, -50%);
       width: 2400px; height: 2400px;
       border-radius: 50%;
-      filter: blur(260px);
-      opacity: 0.18;
+      filter: blur(280px);
+      opacity: 0.13;
       animation: ambient-color 60s linear infinite;
       pointer-events: none;
       z-index: 0;
@@ -5435,13 +5441,16 @@ _LOGIN_HTML = """<!DOCTYPE html>
     .login-reveal {
       max-height: 0;
       opacity: 0;
-      overflow: hidden;
+      overflow: visible;
+      clip-path: inset(0 -40px -80px -40px);
       transition: max-height 3s cubic-bezier(0.16,1,0.3,1),
-                  opacity    2s ease 0.8s;
+                  opacity    2s ease 0.8s,
+                  clip-path  3s cubic-bezier(0.16,1,0.3,1);
     }
     .login-reveal.open {
       max-height: 700px;
       opacity: 1;
+      clip-path: inset(-40px -40px -80px -40px);
     }
 
     /* ── Hint pulse ── */
@@ -5458,7 +5467,7 @@ _LOGIN_HTML = """<!DOCTYPE html>
     .login-card {
       background: rgba(10,18,35,0.85);
       border: 1px solid rgba(99,102,241,0.1);
-      border-radius: 20px;
+      border-radius: 28px;
       box-shadow:
         0 0 0 1px rgba(255,255,255,0.03) inset,
         0 1px 0   rgba(255,255,255,0.05) inset,
