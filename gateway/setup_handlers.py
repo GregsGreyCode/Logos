@@ -590,9 +590,6 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
                 "server_type": m.get("server_type") or fallback_type,
             })
 
-    candidate_ids = _pick_compare_candidates([s["id"] for s in model_specs])
-    candidates    = [s for s in model_specs if s["id"] in candidate_ids]
-
     response = web.StreamResponse(headers={
         "Content-Type": "text/event-stream",
         "Cache-Control": "no-cache",
@@ -603,18 +600,27 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
     async def send(data: dict) -> None:
         await response.write(f"data: {json.dumps(data)}\n\n".encode())
 
-    # Group candidates by server endpoint so we can test each server in parallel
+    # Pick candidates per-server so each machine gets its own benchmark pool
+    # (up to 4 candidates from each server's model list independently)
     from collections import defaultdict as _dd
-    server_groups: dict[str, list[dict]] = _dd(list)
-    for c in candidates:
-        server_groups[c["endpoint"]].append(c)
+    per_server_specs: dict[str, list[dict]] = _dd(list)
+    for s in model_specs:
+        per_server_specs[s["endpoint"]].append(s)
 
+    server_groups: dict[str, list[dict]] = _dd(list)
+    for ep, specs in per_server_specs.items():
+        ep_candidate_ids = set(_pick_compare_candidates([s["id"] for s in specs]))
+        for s in specs:
+            if s["id"] in ep_candidate_ids:
+                server_groups[ep].append(s)
+
+    candidates = [m for group in server_groups.values() for m in group]
     n_servers = len(server_groups)
     await send({"targets": [c["id"] for c in candidates]})
     await send({"log": (
         f"Testing {len(candidates)} model{'s' if len(candidates) != 1 else ''} "
         f"across {n_servers} server{'s' if n_servers != 1 else ''}"
-        + (" — running in parallel" if n_servers > 1 else "")
+        + (" — each server benchmarked independently in parallel" if n_servers > 1 else "")
     )})
 
     results: list[dict] = []
@@ -832,7 +838,7 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
                 await send({"log": f"  {'✓' if quality_pass else '⚠'} {tok_s} tok/s{approx_note} · {tests_passed}/6 eval tests passed"})
                 result: dict = {
                     "model": model_id, "tok_s": tok_s, "quality_pass": quality_pass,
-                    "ttft_ms": ttft_ms, "approx": approx, "eval": {
+                    "ttft_ms": ttft_ms, "approx": approx, "endpoint": endpoint, "eval": {
                         "instruction": instruct_pass, "reasoning": reason_pass,
                         "format": format_pass, "tool_call": tool_pass,
                         "nested_json": nested_json_pass, "multihop": multihop_pass,
@@ -842,7 +848,7 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
             except Exception as exc:
                 err_msg = str(exc)
                 await send({"log": f"  ✗ Error: {err_msg[:200]}"})
-                result = {"model": model_id, "tok_s": 0, "quality_pass": False, "ttft_ms": None, "approx": False, "error": err_msg[:300]}
+                result = {"model": model_id, "tok_s": 0, "quality_pass": False, "ttft_ms": None, "approx": False, "endpoint": endpoint, "error": err_msg[:300]}
             finally:
                 hint_task.cancel()
                 try:
@@ -892,18 +898,32 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
     fast_rec    = fast["model"]    if fast and fast is not best else None
     fast_reason = _fast_reason(fast) if fast and fast is not best else None
 
+    # Per-server recommendations — best model on each individual inference machine
+    per_server_recs: dict[str, dict] = {}
+    for ep, group in server_groups.items():
+        ep_valid = [r for r in valid if r.get("endpoint") == ep]
+        ep_gated = [r for r in ep_valid if r.get("eval", {}).get("format") and r.get("eval", {}).get("tool_call")]
+        ep_pool  = ep_gated if ep_gated else ep_valid
+        if ep_pool:
+            ep_best = max(ep_pool, key=_compare_score)
+            per_server_recs[ep] = {"model": ep_best["model"], "reason": _compare_reason(ep_best)}
+
     if best:
         await send({"log": f"Recommendation: {best['model']}"})
     if fast_rec:
         await send({"log": f"Speed pick: {fast_rec}"})
+    if len(per_server_recs) > 1:
+        for ep, rec in per_server_recs.items():
+            await send({"log": f"  Server {ep}: {rec['model']}"})
 
     await send({
-        "done":                True,
-        "recommendation":      best["model"] if best else None,
-        "reason":              _compare_reason(best) if best else "Could not benchmark any models.",
-        "fast_recommendation": fast_rec,
-        "fast_reason":         fast_reason,
-        "results":             results,
+        "done":                       True,
+        "recommendation":             best["model"] if best else None,
+        "reason":                     _compare_reason(best) if best else "Could not benchmark any models.",
+        "fast_recommendation":        fast_rec,
+        "fast_reason":                fast_reason,
+        "per_server_recommendations": per_server_recs,
+        "results":                    results,
     })
     return response
 

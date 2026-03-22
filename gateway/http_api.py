@@ -6215,9 +6215,13 @@ _SETUP_HTML = """<!DOCTYPE html>
                 <div class="flex items-center justify-between px-3 py-2.5"
                   :class="compareDone && compareResults[mid] && !compareResults[mid].error ? 'cursor-pointer hover:bg-white/5' : ''"
                   @click="compareDone && compareResults[mid] && !compareResults[mid].error ? (compareExpanded = compareExpanded === mid ? null : mid) : null">
-                  <div class="flex items-center gap-2 min-w-0">
+                  <div class="flex items-center gap-2 min-w-0 flex-wrap">
                     <span x-show="compareRecommended === mid && compareDone"
-                      class="text-[9px] px-1.5 py-0.5 rounded-full bg-indigo-900 text-indigo-300 border border-indigo-700 font-semibold uppercase tracking-wider flex-shrink-0">Best</span>
+                      class="spinner-hue text-[9px] px-1.5 py-0.5 rounded-full bg-indigo-900 text-indigo-300 border border-indigo-700 font-semibold uppercase tracking-wider flex-shrink-0">Best</span>
+                    <template x-if="compareDone && compareRecommended !== mid && serverBestFor(mid)">
+                      <span class="text-[9px] px-1.5 py-0.5 rounded-full bg-gray-800 text-gray-300 border border-gray-600 font-semibold uppercase tracking-wider flex-shrink-0"
+                        :x-text="'Best \u00b7 ' + serverBestFor(mid)"></span>
+                    </template>
                     <span class="font-mono text-xs text-gray-200 truncate" x-text="mid"></span>
                     <span class="text-[10px] text-gray-600 flex-shrink-0 font-mono"
                       x-text="modelServer(mid) ? serverName(modelServer(mid)) : ''"></span>
@@ -6901,6 +6905,7 @@ function setup() {
     compareReason: '',
     compareFastRecommended: null,
     compareFastReason: '',
+    compareServerRecs: {},
     compareExpanded: null,
 
     selectedModel: null,
@@ -7253,6 +7258,7 @@ function setup() {
       this.compareReason          = '';
       this.compareFastRecommended = null;
       this.compareFastReason      = '';
+      this.compareServerRecs      = {};
       this.compareExpanded        = null;
       this.runCompare();
     },
@@ -7324,6 +7330,7 @@ function setup() {
                 this.compareReason           = ev.reason || '';
                 this.compareFastRecommended  = ev.fast_recommendation || null;
                 this.compareFastReason       = ev.fast_reason || '';
+                this.compareServerRecs       = ev.per_server_recommendations || {};
                 if (ev.recommendation) {
                   const m = models.find(x => x.id === ev.recommendation);
                   if (m) this.pickModel(m);
@@ -7441,6 +7448,17 @@ function setup() {
       const m = this.getModels().find(m => m.id === modelId);
       if (!m) return null;
       return this.selectedServers.find(s => s.endpoint === m._serverEndpoint) || null;
+    },
+
+    // Return the server name for which this model is the per-server best (or null)
+    serverBestFor(modelId) {
+      for (const [ep, rec] of Object.entries(this.compareServerRecs || {})) {
+        if (rec.model === modelId) {
+          const s = this.selectedServers.find(s => s.endpoint === ep);
+          return s ? this.serverName(s) : ep;
+        }
+      }
+      return null;
     },
 
     // Models NOT in compareTargets — available for delegation
