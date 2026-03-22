@@ -5584,6 +5584,13 @@ _LOGIN_HTML = """<!DOCTYPE html>
         <img src="/static/logo.svg" alt="Logos" class="logo-img relative mx-auto"
              style="width:120px;height:120px;object-fit:contain;">
       </div>
+      <!-- Hint — shown beneath logo after 10s, only in splash phase -->
+      <div x-show="showHint && phase === 'splash'" x-cloak style="margin-top:1.5rem;">
+        <p class="hint-text"
+           style="font-size:0.78rem;color:rgba(148,163,184,0.5);letter-spacing:0.08em;">
+          click anywhere to continue
+        </p>
+      </div>
     </div>
 
     <!-- Reveal section — expands on activate(); static class prevents pre-Alpine flash -->
@@ -5645,15 +5652,6 @@ _LOGIN_HTML = """<!DOCTYPE html>
       </p>
 
     </div><!-- /login-reveal -->
-  </div>
-
-  <!-- Hint — fades in after 10s inactivity in splash mode -->
-  <div x-show="showHint" x-cloak
-       style="position:fixed;bottom:18%;left:0;right:0;text-align:center;z-index:20;pointer-events:none;">
-    <p class="hint-text"
-       style="font-size:0.78rem;color:rgba(148,163,184,0.5);letter-spacing:0.08em;">
-      click anywhere to continue
-    </p>
   </div>
 
   <!-- Version badge -->
@@ -5723,7 +5721,7 @@ _LOGIN_HTML = """<!DOCTYPE html>
             document.body.style.setProperty('animation-play-state', 'paused');
             const elapsed = (performance.now() / 1000).toFixed(1);
             window.location.href = `/setup?t=${elapsed}`;
-          }, 4000);
+          }, 3000);
         } else {
           this.phase = 'login';
           this._startInactivity();
@@ -6789,14 +6787,14 @@ function setup() {
         slug:  'news-anchor',
         icon:  '◉',
         name:  'News Anchor',
-        desc:  'Researches and summarises news into structured briefings. Sources claims, doesn\'t editorialize.',
+        desc:  "Researches and summarises news into structured briefings. Sources claims, doesn't editorialize.",
         tools: ['Web search', 'Firecrawl', 'Summarisation'],
       },
       {
         slug:  'studying',
         icon:  '◑',
         name:  'Studying',
-        desc:  'Helps you learn from first principles. Explains concepts, checks understanding, doesn\'t dump information.',
+        desc:  "Helps you learn from first principles. Explains concepts, checks understanding, doesn't dump information.",
         tools: ['Web search', 'File I/O'],
       },
       {
