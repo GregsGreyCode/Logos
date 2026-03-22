@@ -5429,7 +5429,7 @@ _LOGIN_HTML = """<!DOCTYPE html>
       to   { opacity: 1; transform: scale(1); }
     }
     .logo-wrap {
-      animation: logo-fadein 3s cubic-bezier(0.16,1,0.3,1) both;
+      animation: logo-fadein 6s cubic-bezier(0.16,1,0.3,1) both;
       /* spring upward when card reveals */
       transition: transform 4.8s cubic-bezier(0.34, 1.4, 0.64, 1);
     }
@@ -5445,9 +5445,9 @@ _LOGIN_HTML = """<!DOCTYPE html>
       opacity: 0;
       overflow: visible;
       clip-path: inset(0 -60px -100px -60px);
-      transition: max-height 1.4s cubic-bezier(0.22, 1, 0.36, 1),
+      transition: max-height 2.8s cubic-bezier(0.22, 1, 0.36, 1),
                   opacity    0.01s linear,
-                  clip-path  1.4s cubic-bezier(0.22, 1, 0.36, 1);
+                  clip-path  2.8s cubic-bezier(0.22, 1, 0.36, 1);
     }
     .login-reveal.open {
       max-height: 700px;
@@ -5458,8 +5458,8 @@ _LOGIN_HTML = """<!DOCTYPE html>
     .login-card {
       transform: translateY(32px);
       opacity: 0;
-      transition: transform 1s cubic-bezier(0.34, 1.4, 0.64, 1) 0.15s,
-                  opacity   0.7s ease 0.15s;
+      transition: transform 2s cubic-bezier(0.34, 1.4, 0.64, 1) 0.3s,
+                  opacity   1.4s ease 0.3s;
     }
     .login-reveal.open .login-card {
       transform: translateY(0);
@@ -5469,8 +5469,8 @@ _LOGIN_HTML = """<!DOCTYPE html>
     .login-footer {
       transform: translateY(16px);
       opacity: 0;
-      transition: transform 1s cubic-bezier(0.34, 1.4, 0.64, 1) 0.35s,
-                  opacity   0.7s ease 0.35s;
+      transition: transform 2s cubic-bezier(0.34, 1.4, 0.64, 1) 0.7s,
+                  opacity   1.4s ease 0.7s;
     }
     .login-reveal.open .login-footer {
       transform: translateY(0);
@@ -5483,8 +5483,8 @@ _LOGIN_HTML = """<!DOCTYPE html>
       50%       { opacity: 0.7; }
     }
     .hint-text {
-      animation: hint-pulse 2.4s ease-in-out infinite;
-      transition: opacity 0.8s ease;
+      animation: hint-pulse 4.8s ease-in-out infinite;
+      transition: opacity 1.6s ease;
     }
 
     /* ── Card ── */
@@ -5527,7 +5527,7 @@ _LOGIN_HTML = """<!DOCTYPE html>
       padding: 14px 16px;
       color: #f1f5f9; font-size: 0.875rem; outline: none;
       caret-color: rgba(165,180,252,0.6);
-      transition: background 0.6s ease;
+      transition: background 1.2s ease;
     }
     .float-input::placeholder { color: transparent; }
     .float-input:hover  { background: rgba(255,255,255,0.055); }
@@ -5539,7 +5539,7 @@ _LOGIN_HTML = """<!DOCTYPE html>
       transform: translateY(-50%);
       font-size: 0.875rem; color: rgba(148,163,184,0.4);
       pointer-events: none;
-      transition: opacity 0.4s ease, color 0.4s ease;
+      transition: opacity 0.8s ease, color 0.8s ease;
     }
     /* hide when focused or has value */
     .float-input:focus ~ .float-label,
