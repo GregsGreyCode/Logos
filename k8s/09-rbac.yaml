@@ -1,4 +1,4 @@
-# Namespace-scoped Role: manage Hermes instances (deployments, services, pvcs, pods)
+# Namespace-scoped Role: manage Hermes instances (deployments, services, pvcs, pods, jobs)
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
@@ -11,6 +11,13 @@ rules:
   - apiGroups: [""]
     resources: ["services", "persistentvolumeclaims", "pods"]
     verbs: ["get", "list", "watch", "create", "delete"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get"]
+  # Jobs — required for k8s exec mode (agent tasks run as batch Jobs)
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["get", "list", "watch", "create", "delete", "patch"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding

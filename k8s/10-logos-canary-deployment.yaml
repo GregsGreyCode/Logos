@@ -32,6 +32,8 @@ spec:
         app: logos-canary
         canary: "true"
     spec:
+      serviceAccountName: logos
+
       imagePullSecrets:
         - name: ghcr-creds
 
