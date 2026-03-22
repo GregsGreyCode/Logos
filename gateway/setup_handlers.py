@@ -4,7 +4,8 @@ Endpoints:
   GET  /api/setup/probe    — probe a model server (Ollama or LM Studio / OpenAI-compatible)
   GET  /api/setup/scan     — sweep local subnet for model servers on :11434 and :1234
   POST /api/setup/pull     — SSE: stream Ollama model pull progress
-  POST /api/setup/test     — SSE: stream a test prompt response
+  POST /api/setup/compare  — SSE: quick-benchmark candidates, recommend best model
+  POST /api/setup/test     — SSE: full benchmark of selected model
   POST /api/setup/complete — save machine config and mark setup done
 
 Probe query params:
@@ -16,6 +17,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import socket
 import time
 
@@ -278,8 +280,55 @@ _BENCH_PROMPTS = [
     "What is 17 multiplied by 6? Answer with just the number.",
     "Name the capital of France in one word.",
 ]
-_QUALITY_PROMPT  = "What is 2+2? Reply with only the number."
+_QUALITY_PROMPT   = "What is 2+2? Reply with only the number."
 _QUALITY_EXPECTED = "4"
+_COMPARE_PROMPT   = "List three key traits of a helpful AI assistant."
+_COMPARE_TIMEOUT  = aiohttp.ClientTimeout(total=90)   # per-model; handles cold-start
+
+
+def _parse_model_size_b(model_id: str) -> float:
+    """Extract parameter count in billions from a model ID string. Returns 0 if unknown."""
+    m = re.search(r'(\d+(?:\.\d+)?)\s*b(?:[^a-z]|$)', model_id.lower())
+    return float(m.group(1)) if m else 0.0
+
+
+def _pick_compare_candidates(model_ids: list[str], max_n: int = 4) -> list[str]:
+    """Pick up to max_n diverse candidates: sweet-spot (7-13B) first, then smaller, then larger."""
+    SWEET = 8.0
+
+    def priority(mid: str) -> float:
+        sz = _parse_model_size_b(mid)
+        if sz == 0:
+            return 50.0   # unknown size: deprioritise
+        dist = abs(sz - SWEET)
+        bias = 0.5 if sz > SWEET else 0.0  # slight penalty for going over sweet spot
+        return dist + bias
+
+    return sorted(model_ids, key=priority)[:max_n]
+
+
+def _compare_score(r: dict) -> float:
+    if r.get("error") or r.get("tok_s", 0) == 0:
+        return -1.0
+    q      = 1.5 if r.get("quality_pass") else 1.0
+    speed  = min(r["tok_s"], 30) / 30            # normalise; cap at "Fast"
+    sz     = _parse_model_size_b(r["model"])
+    size_b = min(sz, 13) / 13 * 0.3 if sz > 0 else 0  # prefer bigger up to 13B
+    return q * (0.6 * speed + 0.4) + size_b
+
+
+def _compare_reason(best: dict) -> str:
+    label, _ = _bench_score(best["tok_s"])
+    q = best.get("quality_pass", False)
+    if q and best["tok_s"] >= 15:
+        return (f"{label} at {best['tok_s']} tok/s with reasoning confirmed — "
+                f"this is the best fit for your hardware.")
+    if q:
+        return (f"Slowest option tested, but reasoning confirmed. "
+                f"Consider a smaller quantised model for better speed.")
+    return (f"{label} at {best['tok_s']} tok/s but reasoning check failed. "
+            f"A general-purpose chat model (e.g. Qwen3-8B) will work better.")
+
 
 def _bench_score(tok_s: float) -> tuple[str, str]:
     """Return (label, colour) based on tokens/sec."""
@@ -336,6 +385,118 @@ async def _stream_chat(
     return text, ttft or 0.0, time.time() - t0, tok_count
 
 
+async def handle_setup_compare(request: web.Request) -> web.Response:
+    """SSE: quick-benchmark up to 4 candidate models and recommend the best one.
+
+    Events emitted:
+      {"targets": [model_id, ...]}           — candidates selected for testing
+      {"testing": model_id}                  — about to test this model
+      {"loading_model": model_id}            — model is cold-starting (no tokens yet after 8s)
+      {"result": {model, tok_s, quality_pass, error?}}
+      {"done": true, "recommendation": model_id|null, "reason": str, "results": [...]}
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "invalid_json"}, status=400)
+
+    endpoint  = (body.get("endpoint") or "").rstrip("/")
+    api_key   = body.get("api_key") or "ollama"
+    model_ids = body.get("models") or []
+
+    if not endpoint or not model_ids:
+        return web.json_response({"error": "endpoint and models required"}, status=400)
+
+    candidates = _pick_compare_candidates(model_ids)
+
+    response = web.StreamResponse(headers={
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache",
+        "X-Accel-Buffering": "no",
+    })
+    await response.prepare(request)
+
+    async def send(data: dict) -> None:
+        await response.write(f"data: {json.dumps(data)}\n\n".encode())
+
+    await send({"targets": candidates})
+
+    results: list[dict] = []
+    async with aiohttp.ClientSession() as session:
+        for model_id in candidates:
+            await send({"testing": model_id})
+            t0             = time.time()
+            tok_count      = 0
+            loading_emitted = False
+            try:
+                async with session.post(
+                    f"{endpoint}/chat/completions",
+                    headers={"Authorization": f"Bearer {api_key}"},
+                    json={
+                        "model": model_id,
+                        "messages": [{"role": "user", "content": _COMPARE_PROMPT}],
+                        "stream": True,
+                        "max_tokens": 30,
+                    },
+                    timeout=_COMPARE_TIMEOUT,
+                ) as r:
+                    if r.status != 200:
+                        raise RuntimeError(f"HTTP {r.status}")
+                    while True:
+                        try:
+                            raw = await asyncio.wait_for(r.content.readline(), timeout=3.0)
+                        except asyncio.TimeoutError:
+                            if not loading_emitted and (time.time() - t0) >= 8.0:
+                                await send({"loading_model": model_id})
+                                loading_emitted = True
+                            continue
+                        if not raw:
+                            break
+                        line = raw.decode().strip()
+                        if not line.startswith("data: "):
+                            continue
+                        chunk_data = line[6:]
+                        if chunk_data == "[DONE]":
+                            break
+                        try:
+                            chunk = json.loads(chunk_data)
+                            if chunk["choices"][0]["delta"].get("content"):
+                                tok_count += 1
+                        except Exception:
+                            pass
+
+                total_s = time.time() - t0
+                tok_s   = round(tok_count / total_s) if total_s > 0 else 0
+
+                # Quick quality check (model already warm at this point)
+                quality_pass = False
+                try:
+                    qtext, _, _, _ = await _stream_chat(
+                        session, endpoint, model_id, api_key, _QUALITY_PROMPT, max_tokens=10
+                    )
+                    quality_pass = _QUALITY_EXPECTED in qtext.strip()
+                except Exception:
+                    pass
+
+                result: dict = {"model": model_id, "tok_s": tok_s, "quality_pass": quality_pass}
+            except Exception as exc:
+                result = {"model": model_id, "tok_s": 0, "quality_pass": False, "error": str(exc)[:120]}
+
+            results.append(result)
+            await send({"result": result})
+
+    valid = [r for r in results if not r.get("error") and r.get("tok_s", 0) > 0]
+    best  = max(valid, key=_compare_score) if valid else None
+
+    await send({
+        "done":           True,
+        "recommendation": best["model"] if best else None,
+        "reason":         _compare_reason(best) if best else "Could not benchmark any models.",
+        "results":        results,
+    })
+    return response
+
+
 async def handle_setup_test(request: web.Request) -> web.Response:
     """Stream benchmark results via SSE.
 
@@ -372,6 +533,8 @@ async def handle_setup_test(request: web.Request) -> web.Response:
             t0 = time.time()
             ttft_ms: int | None = None
             tok_count = 0
+            loading_emitted = False
+            _LOADING_HINT_AFTER = 8.0  # emit loading_model hint after this many seconds
             async with session.post(
                 f"{endpoint}/chat/completions",
                 headers={"Authorization": f"Bearer {api_key}"},
@@ -380,13 +543,22 @@ async def handle_setup_test(request: web.Request) -> web.Response:
                     "messages": [{"role": "user", "content": _BENCH_PROMPTS[0]}],
                     "stream": True, "max_tokens": 80,
                 },
-                timeout=aiohttp.ClientTimeout(total=45),
+                timeout=aiohttp.ClientTimeout(total=120),
             ) as r:
                 if r.status != 200:
                     text = await r.text()
                     await send({"error": f"Model server returned {r.status}: {text[:200]}"})
                     return response
-                async for raw in r.content:
+                while True:
+                    try:
+                        raw = await asyncio.wait_for(r.content.readline(), timeout=3.0)
+                    except asyncio.TimeoutError:
+                        if not loading_emitted and (time.time() - t0) >= _LOADING_HINT_AFTER:
+                            await send({"status": "loading_model"})
+                            loading_emitted = True
+                        continue
+                    if not raw:
+                        break
                     line = raw.decode().strip()
                     if not line.startswith("data: "):
                         continue
