@@ -6651,13 +6651,21 @@ _SETUP_HTML = """<!DOCTYPE html>
               <button @click="k8sMode = 'incluster'"
                 class="flex-1 py-1.5 rounded-lg text-xs font-medium transition-colors"
                 :class="k8sMode === 'incluster' ? 'bg-indigo-900 text-indigo-200 border border-indigo-700' : 'bg-gray-800 text-gray-400 border border-gray-700 hover:border-gray-600'">
-                Same cluster (Logos is running inside k8s)
+                Same cluster
               </button>
               <button @click="k8sMode = 'kubeconfig'"
                 class="flex-1 py-1.5 rounded-lg text-xs font-medium transition-colors"
                 :class="k8sMode === 'kubeconfig' ? 'bg-indigo-900 text-indigo-200 border border-indigo-700' : 'bg-gray-800 text-gray-400 border border-gray-700 hover:border-gray-600'">
-                External cluster (provide kubeconfig)
+                External cluster
               </button>
+            </div>
+
+            <!-- Mode description -->
+            <div x-show="k8sMode === 'incluster'" class="text-xs text-gray-500 leading-relaxed">
+              Logos is running inside your Kubernetes cluster. It uses the service account token mounted in its pod — no credentials or IP address needed.
+            </div>
+            <div x-show="k8sMode === 'kubeconfig'" class="text-xs text-gray-500 leading-relaxed">
+              Logos is external to the cluster. Paste a kubeconfig below to provide the cluster address and credentials.
             </div>
 
             <!-- Auto namespace (read-only) -->
@@ -6665,11 +6673,6 @@ _SETUP_HTML = """<!DOCTYPE html>
               <span class="text-xs text-gray-500">Namespace</span>
               <span class="font-mono text-xs text-indigo-300 bg-indigo-950/40 border border-indigo-900 px-2 py-0.5 rounded" x-text="selectedAgentType || 'hermes'"></span>
               <span class="text-xs text-gray-600">— derived from agent runtime</span>
-            </div>
-
-            <!-- In-cluster explanation -->
-            <div x-show="k8sMode === 'incluster'" class="text-xs text-gray-500 leading-relaxed">
-              Logos uses the service account token mounted automatically in its pod. No IP address or credentials needed — the cluster API is reachable internally.
             </div>
 
             <!-- Kubeconfig paste -->
@@ -7037,10 +7040,10 @@ function setup() {
         if (saved) {
           const s = JSON.parse(saved);
           if (s?.ts && Date.now() - s.ts < 24 * 60 * 60 * 1000) {
-            // Always start at step 0 so the user sees the intro/track selection.
-            // Data is restored so later steps don't need to re-run their work.
-            this.step  = 0;
-            this.track = s.track ?? null;
+            // Restore the actual step; step 3 (async test) restarts from step 2.
+            this.step           = s.step === 3 ? 2 : (s.step || 0);
+            this.introConfirmed = s.introConfirmed ?? (this.step > 0);
+            this.track          = s.track ?? null;
             if (s.foundServers?.length) {
               this.foundServers    = s.foundServers;
               this.selectedServers = s.selectedServers || [];
@@ -7054,6 +7057,7 @@ function setup() {
               this.compareReason          = s.compareReason          || '';
               this.compareFastRecommended = s.compareFastRecommended || null;
               this.compareFastReason      = s.compareFastReason      || '';
+              this.compareServerRecs      = s.compareServerRecs      || {};
               this.compareDone            = true;
             }
             if (s.selectedModel)     this.selectedModel     = s.selectedModel;
@@ -7096,6 +7100,7 @@ function setup() {
         localStorage.setItem('logos_setup_progress', JSON.stringify({
           ts:                     Date.now(),
           step:                   this.step,
+          introConfirmed:         this.introConfirmed,
           track:                  this.track,
           foundServers:           this.foundServers,
           selectedServers:        this.selectedServers,
@@ -7106,6 +7111,7 @@ function setup() {
           compareReason:          this.compareReason,
           compareFastRecommended: this.compareFastRecommended,
           compareFastReason:      this.compareFastReason,
+          compareServerRecs:      this.compareServerRecs,
           compareDone:            this.compareDone,
           selectedModel:          this.selectedModel,
           execEnv:                this.execEnv,
