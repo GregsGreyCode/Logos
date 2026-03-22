@@ -336,6 +336,17 @@ _MULTIHOP_PROMPT = (
 _MULTIHOP_CHECK = "120"   # 5 × 4 × 6 = 120
 
 
+def _strip_think(text: str) -> str:
+    """Strip <think>...</think> (and <thinking>) blocks produced by reasoning models.
+
+    Qwen3 and similar models emit a chain-of-thought block before the real answer.
+    Removing it lets the eval checks see only the final response.
+    """
+    text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL | re.IGNORECASE)
+    text = re.sub(r"<thinking>.*?</thinking>", "", text, flags=re.DOTALL | re.IGNORECASE)
+    return text.strip()
+
+
 def _eval_tool_call(text: str) -> bool:
     """Return True if response is valid JSON routing A→search_web and B→run_code."""
     cleaned = re.sub(r"```[a-z]*\n?", "", text).strip()
@@ -787,13 +798,18 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
 
                 # ── Capability evals — each retried once on failure ────────────
                 async def _eval_once(prompt: str, check_fn, max_tokens: int) -> bool:
-                    """Run eval, retry once if it fails. Stop early on first pass."""
+                    """Run eval, retry once if it fails. Stop early on first pass.
+
+                    max_tokens is set high enough to absorb <think> chains (Qwen3 etc.)
+                    plus the actual answer. _strip_think removes the reasoning block
+                    before the check function sees the text.
+                    """
                     for attempt in range(2):
                         try:
                             txt, _, _, _ = await _stream_chat(
                                 http, endpoint, model_id, api_key, prompt, max_tokens=max_tokens
                             )
-                            if check_fn(txt):
+                            if check_fn(_strip_think(txt)):
                                 return True
                         except Exception:
                             pass
@@ -805,7 +821,7 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
                 instruct_pass = await _eval_once(
                     _INSTRUCT_PROMPT,
                     lambda t: all(c in t for c in _INSTRUCT_CHECKS),
-                    60,
+                    600,
                 )
                 await send({"log": f"    {'✓' if instruct_pass else '✗'} instruction following"})
 
@@ -813,24 +829,24 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
                 reason_pass = await _eval_once(
                     _REASON_PROMPT,
                     lambda t: all(c in t for c in _REASON_CHECKS),
-                    30,
+                    600,
                 )
                 await send({"log": f"    {'✓' if reason_pass else '✗'} reasoning"})
 
                 await send({"log": "  Eval 3/6: strict JSON format…"})
-                format_pass = await _eval_once(_FORMAT_PROMPT, _eval_format, 40)
+                format_pass = await _eval_once(_FORMAT_PROMPT, _eval_format, 600)
                 await send({"log": f"    {'✓' if format_pass else '✗'} JSON format"})
 
                 await send({"log": "  Eval 4/6: tool selection (2 scenarios)…"})
-                tool_pass = await _eval_once(_TOOL_PROMPT, _eval_tool_call, 60)
+                tool_pass = await _eval_once(_TOOL_PROMPT, _eval_tool_call, 600)
                 await send({"log": f"    {'✓' if tool_pass else '✗'} tool selection"})
 
                 await send({"log": "  Eval 5/6: nested JSON schema…"})
-                nested_json_pass = await _eval_once(_NESTED_JSON_PROMPT, _eval_nested_json, 60)
+                nested_json_pass = await _eval_once(_NESTED_JSON_PROMPT, _eval_nested_json, 600)
                 await send({"log": f"    {'✓' if nested_json_pass else '✗'} nested JSON"})
 
                 await send({"log": "  Eval 6/6: multi-step reasoning…"})
-                multihop_pass = await _eval_once(_MULTIHOP_PROMPT, _eval_multihop, 20)
+                multihop_pass = await _eval_once(_MULTIHOP_PROMPT, _eval_multihop, 600)
                 await send({"log": f"    {'✓' if multihop_pass else '✗'} multi-step reasoning"})
 
                 tests_passed = sum([instruct_pass, reason_pass, format_pass, tool_pass, nested_json_pass, multihop_pass])
@@ -1100,8 +1116,13 @@ async def handle_setup_complete(request: web.Request) -> web.Response:
         if "error" in result and result["error"] != "machines_already_exist":
             return web.json_response(result, status=409)
 
-        # Save model preference on the admin user
-        user_id = request["current_user"]["sub"]
+        # Save model preference on the admin user.
+        # During first-run setup the browser has no session yet, so we look up
+        # the seeded admin account directly rather than reading current_user.
+        admin_users, _ = auth_db.list_users(page=1, limit=1, role="admin")
+        if not admin_users:
+            return web.json_response({"error": "no_admin_user"}, status=500)
+        user_id = admin_users[0]["id"]
         agent_type   = (body.get("agent_type") or "general").strip()
         exec_env     = (body.get("exec_env") or "local").strip()
         k8s_ns       = (body.get("k8s_namespace") or "hermes").strip()

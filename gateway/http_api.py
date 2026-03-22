@@ -6665,13 +6665,15 @@ _SETUP_HTML = """<!DOCTYPE html>
         <div class="space-y-3 mb-6">
           <div>
             <label class="block text-xs text-gray-500 mb-1.5">Email address</label>
-            <input x-model="setupEmail" type="email" placeholder="you@example.com"
-              class="w-full bg-gray-900 border border-gray-700 rounded-xl px-3 py-2.5 text-sm focus:border-indigo-500 focus:outline-none transition-colors" />
+            <input x-model="setupEmail" type="email" placeholder="you@example.com" autocomplete="off"
+              class="w-full bg-gray-900 border border-gray-700 rounded-xl px-3 py-2.5 text-sm focus:border-indigo-500 focus:outline-none transition-colors"
+              style="-webkit-box-shadow:0 0 0 1000px #111827 inset;-webkit-text-fill-color:#f3f4f6;color:#f3f4f6" />
           </div>
           <div>
             <label class="block text-xs text-gray-500 mb-1.5">Username</label>
-            <input x-model="setupUsername" type="text" placeholder="yourname"
-              class="w-full bg-gray-900 border border-gray-700 rounded-xl px-3 py-2.5 text-sm focus:border-indigo-500 focus:outline-none transition-colors" />
+            <input x-model="setupUsername" type="text" placeholder="yourname" autocomplete="off"
+              class="w-full bg-gray-900 border border-gray-700 rounded-xl px-3 py-2.5 text-sm focus:border-indigo-500 focus:outline-none transition-colors"
+              style="-webkit-box-shadow:0 0 0 1000px #111827 inset;-webkit-text-fill-color:#f3f4f6;color:#f3f4f6" />
           </div>
           <div>
             <label class="block text-xs text-gray-500 mb-1.5">Password</label>
