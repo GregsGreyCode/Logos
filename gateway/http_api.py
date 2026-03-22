@@ -5529,8 +5529,8 @@ _LOGIN_HTML = """<!DOCTYPE html>
       </div>
     </div>
 
-    <!-- Reveal section — expands on activate() -->
-    <div :class="phase==='login' ? 'login-reveal open' : 'login-reveal'">
+    <!-- Reveal section — expands on activate(); static class prevents pre-Alpine flash -->
+    <div class="login-reveal" :class="{ open: phase === 'login' }">
 
       <!-- Card -->
       <div class="login-card px-7 py-7">
@@ -5633,6 +5633,7 @@ _LOGIN_HTML = """<!DOCTYPE html>
         if (this.phase !== 'splash') return;
         clearTimeout(this._hintTimer);
         this.showHint = false;
+        if (this.needsSetup) { window.location.href = '/setup'; return; }
         this.phase = 'login';
         this.$nextTick(() => {
           document.getElementById('identifier')?.focus();
