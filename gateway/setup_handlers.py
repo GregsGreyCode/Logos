@@ -39,47 +39,55 @@ async def _probe_server(
     session: aiohttp.ClientSession,
     base_url: str,
     api_key: str | None = None,
-    prefer: str = "ollama",
+    prefer: str = "ollama",   # kept for API compat but no longer used for typing
+    timeout: aiohttp.ClientTimeout = _PROBE_TIMEOUT,
 ) -> dict:
-    """Probe a single base URL.
+    """Probe a single base URL and return its type, models, and status.
 
-    prefer='ollama'  — try /api/tags first (Ollama-native), fall back to /v1/models
-    prefer='lmstudio'— skip /api/tags entirely; only probe /v1/models
-                       (LM Studio now responds to /api/tags in Ollama-compat mode,
-                        so we must not use it to classify an LM Studio server)
-
-    Returns a result dict with keys: type, endpoint, status, models.
+    Detection strategy (port-agnostic):
+      1. GET /api/version  — returns {"version":"x.y.z"} on Ollama only.
+         LM Studio does NOT expose this endpoint.  Definitive Ollama signal.
+      2. GET /v1/models    — OpenAI-compatible; present on both LM Studio and
+         Ollama.  If we reach here without step 1 succeeding → LM Studio
+         (or another OpenAI-compat server).
     """
     base = base_url.rstrip("/")
-
-    # ── Ollama: native /api/tags (skipped when caller knows it's LM Studio) ─
-    if prefer == "ollama":
-        try:
-            async with session.get(f"{base}/api/tags", timeout=_PROBE_TIMEOUT) as r:
-                if r.status == 200:
-                    data = await r.json(content_type=None)
-                    models = [
-                        {"id": m["name"], "name": m["name"], "size": m.get("size", 0)}
-                        for m in data.get("models", [])
-                    ]
-                    return {"type": "ollama", "endpoint": f"{base}/v1", "status": "up", "models": models}
-        except Exception:
-            pass
-
-    # ── OpenAI-compatible: /v1/models (LM Studio, vLLM, etc.) ────────────
-    server_type = "lmstudio" if prefer == "lmstudio" else "ollama"
     headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
+
+    # ── Step 1: /api/version — definitive Ollama fingerprint ─────────────
     try:
-        async with session.get(f"{base}/v1/models", headers=headers, timeout=_PROBE_TIMEOUT) as r:
+        async with session.get(f"{base}/api/version", timeout=timeout) as r:
+            if r.status == 200:
+                data = await r.json(content_type=None)
+                if "version" in data:
+                    # Confirmed Ollama — fetch model list via /api/tags
+                    models: list[dict] = []
+                    try:
+                        async with session.get(f"{base}/api/tags", timeout=timeout) as tr:
+                            if tr.status == 200:
+                                td = await tr.json(content_type=None)
+                                models = [
+                                    {"id": m["name"], "name": m["name"], "size": m.get("size", 0)}
+                                    for m in td.get("models", [])
+                                ]
+                    except Exception:
+                        pass
+                    return {"type": "ollama", "endpoint": f"{base}/v1", "status": "up", "models": models}
+    except Exception:
+        pass
+
+    # ── Step 2: /v1/models — LM Studio / OpenAI-compat ───────────────────
+    try:
+        async with session.get(f"{base}/v1/models", headers=headers, timeout=timeout) as r:
             if r.status == 200:
                 data = await r.json(content_type=None)
                 models = [
                     {"id": m["id"], "name": m["id"], "size": 0}
                     for m in data.get("data", [])
                 ]
-                return {"type": server_type, "endpoint": f"{base}/v1", "status": "up", "models": models}
+                return {"type": "lmstudio", "endpoint": f"{base}/v1", "status": "up", "models": models}
             if r.status == 401:
-                return {"type": server_type, "endpoint": f"{base}/v1", "status": "auth_required", "models": []}
+                return {"type": "lmstudio", "endpoint": f"{base}/v1", "status": "auth_required", "models": []}
     except Exception:
         pass
 
@@ -116,14 +124,11 @@ def _local_subnet() -> str | None:
 
 async def _scan_host(session: aiohttp.ClientSession, ip: str) -> list[dict]:
     """Check both model-server ports on a single IP; return found servers."""
-    # Port 11434 is Ollama-native; port 1234 is LM Studio's default.
-    # Use prefer='lmstudio' on 1234 so we don't misclassify LM Studio as
-    # Ollama (LM Studio now responds to /api/tags in compat mode).
-    port_prefer = {11434: "ollama", 1234: "lmstudio"}
     found = []
     for port in _SCAN_PORTS:
-        url = f"http://{ip}:{port}"
-        result = await _probe_server(session, url, api_key=None, prefer=port_prefer.get(port, "ollama"))
+        result = await _probe_server(
+            session, f"http://{ip}:{port}", api_key=None, timeout=_SCAN_TIMEOUT
+        )
         if result["status"] in ("up", "auth_required"):
             found.append(result)
     return found
