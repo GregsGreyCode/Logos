@@ -5427,7 +5427,8 @@ _LOGIN_HTML = """<!DOCTYPE html>
       /* spring upward when card reveals */
       transition: transform 4.8s cubic-bezier(0.34, 1.4, 0.64, 1);
     }
-    .logo-wrap.logo-up { transform: translateY(-24px); }
+    .logo-wrap.logo-up  { transform: translateY(-24px); }
+    .logo-wrap.logo-top { transform: translateY(-42vh); }
     .logo-img { animation: logo-hue 60s linear infinite; }
 
     /* ── Splash → login reveal ─────────────────────────────────────────
@@ -5548,7 +5549,7 @@ _LOGIN_HTML = """<!DOCTYPE html>
   <div class="relative z-10 w-full px-5" style="max-width:400px;">
 
     <!-- Logo — springs upward when card reveals -->
-    <div class="text-center logo-wrap" :class="{ 'logo-up': phase === 'login' }" style="padding-top:2vh; padding-bottom:1.5rem;">
+    <div class="text-center logo-wrap" :class="{ 'logo-up': phase === 'login', 'logo-top': phase === 'setup' }" style="padding-top:2vh; padding-bottom:1.5rem;">
       <div class="relative inline-block">
         <div class="logo-halo"></div>
         <img src="/static/logo.svg" alt="Logos" class="logo-img relative mx-auto"
@@ -5657,7 +5658,11 @@ _LOGIN_HTML = """<!DOCTYPE html>
         if (this.phase !== 'splash') return;
         clearTimeout(this._hintTimer);
         this.showHint = false;
-        if (this.needsSetup) { window.location.href = '/setup'; return; }
+        if (this.needsSetup) {
+          this.phase = 'setup';
+          setTimeout(() => { window.location.href = '/setup'; }, 4000);
+          return;
+        }
         this.phase = 'login';
       },
 
@@ -5705,18 +5710,19 @@ _SETUP_HTML = """<!DOCTYPE html>
   <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
   <style>
     [x-cloak]{display:none!important}
-    body{background:#030712}
+    body{background:#010409}
     @keyframes dot-fade{0%,80%,100%{opacity:0}40%{opacity:1}}
+    @keyframes logo-hue{from{filter:hue-rotate(0deg)}to{filter:hue-rotate(360deg)}}
+    .setup-logo{animation:logo-hue 60s linear infinite}
   </style>
 </head>
-<body class="min-h-screen text-white" style="background:#030712">
+<body class="min-h-screen text-white">
 <div x-data="setup()" x-init="init()" class="flex flex-col min-h-screen">
 
   <!-- Header -->
   <header class="flex flex-col items-center pt-10 pb-4 gap-5">
-    <div class="flex items-center gap-2.5">
-      <img src="/chat_logo.png" class="h-8 w-8 rounded-xl" onerror="this.style.display='none'">
-      <span class="font-semibold text-lg tracking-tight">Logos</span>
+    <div class="flex items-center justify-center">
+      <img src="/static/logo.svg" class="setup-logo" style="width:80px;height:80px;object-fit:contain;">
     </div>
     <!-- Step indicator — visible from step 1 onward -->
     <div x-show="step > 0" x-transition.opacity class="flex items-center gap-1">
