@@ -5428,7 +5428,6 @@ _LOGIN_HTML = """<!DOCTYPE html>
       transition: transform 4.8s cubic-bezier(0.34, 1.4, 0.64, 1);
     }
     .logo-wrap.logo-up  { transform: translateY(-24px); }
-    .logo-wrap.logo-top { transform: translateY(-42vh) scale(0.667); }
     /* Fast close when logging in */
     .login-reveal.closing {
       max-height: 0 !important; opacity: 0 !important;
@@ -5554,7 +5553,7 @@ _LOGIN_HTML = """<!DOCTYPE html>
   <div class="relative z-10 w-full px-5" style="max-width:400px;">
 
     <!-- Logo — springs upward when card reveals -->
-    <div class="text-center logo-wrap" :class="{ 'logo-up': phase === 'login', 'logo-top': phase === 'setup' }" style="padding-top:2vh; padding-bottom:1.5rem;">
+    <div class="text-center logo-wrap" :class="{ 'logo-up': phase === 'login' }" style="padding-top:2vh; padding-bottom:1.5rem;">
       <div class="relative inline-block">
         <div class="logo-halo"></div>
         <img src="/static/logo.svg" alt="Logos" class="logo-img relative mx-auto"
@@ -5667,11 +5666,23 @@ _LOGIN_HTML = """<!DOCTYPE html>
         this.showHint = false;
         if (this.needsSetup) {
           this.phase = 'setup';
+          // Compute exact pixel delta so the logo lands on the setup page logo position:
+          // setup header: pt-10 (40px) + half of 80px logo = 80px from top, h-centred
+          const logoWrap = document.querySelector('.logo-wrap');
+          if (logoWrap) {
+            const r = logoWrap.getBoundingClientRect();
+            const fromCX = r.left + r.width / 2;
+            const fromCY = r.top  + r.height / 2;
+            const toCX   = window.innerWidth / 2;
+            const toCY   = 80;  // matches setup page header position
+            logoWrap.style.transform = `translate(${toCX - fromCX}px, ${toCY - fromCY}px) scale(0.667)`;
+          }
           this._setupRedirectTimer = setTimeout(() => {
-          document.body.style.transition = 'opacity 0.6s ease';
-          document.body.style.opacity = '0';
-          setTimeout(() => { window.location.href = '/setup'; }, 650);
-        }, 4000);
+            document.body.style.transition = 'opacity 0.6s ease';
+            document.body.style.opacity = '0';
+            const elapsed = (performance.now() / 1000).toFixed(1);
+            setTimeout(() => { window.location.href = `/setup?t=${elapsed}`; }, 650);
+          }, 4000);
         } else {
           this.phase = 'login';
           this._startInactivity();
@@ -5768,7 +5779,7 @@ _SETUP_HTML = """<!DOCTYPE html>
       transform:translate(-50%,-50%);
       width:2400px;height:2400px;border-radius:50%;
       filter:blur(280px);opacity:0.033;
-      animation:ambient-color 60s linear infinite;
+      animation:ambient-color 60s linear var(--orb-delay, 0s) infinite;
       pointer-events:none;z-index:0;
     }
     .setup-logo{animation:logo-hue 60s linear infinite}
@@ -5777,7 +5788,24 @@ _SETUP_HTML = """<!DOCTYPE html>
       filter:blur(160px);opacity:0.14;pointer-events:none;
       animation:halo-color 60s linear infinite;
     }
+    /* animation-delay set inline by JS to sync with login page cycle */
   </style>
+  <script>
+    // Sync glow animations with the login page cycle via ?t=elapsed_seconds
+    (function(){
+      const t = parseFloat(new URLSearchParams(location.search).get('t') || '0');
+      if (!t) return;
+      const delay = (-(t % 60)).toFixed(2) + 's';
+      document.addEventListener('DOMContentLoaded', function() {
+        const halo = document.querySelector('.setup-halo');
+        const logo = document.querySelector('.setup-logo');
+        if (halo) halo.style.animationDelay = delay;
+        if (logo) logo.style.animationDelay = delay;
+        // Sync body orb via CSS variable on :root
+        document.documentElement.style.setProperty('--orb-delay', delay);
+      });
+    })();
+  </script>
 </head>
 <body class="min-h-screen text-white">
 <div x-data="setup()" x-init="init()" class="flex flex-col min-h-screen">
@@ -6635,6 +6663,12 @@ function setup() {
   };
 }
 </script>
+  <!-- Version badge -->
+  <div style="position:fixed;bottom:16px;right:18px;z-index:50;
+              font-size:0.65rem;color:rgba(71,85,105,0.45);
+              letter-spacing:0.04em;font-family:ui-monospace,monospace;pointer-events:none;">
+    __VERSION_LABEL__
+  </div>
 </body>
 </html>"""
 
@@ -6643,7 +6677,8 @@ async def _handle_setup_page(request: web.Request) -> web.Response:
     from gateway.auth.db import is_setup_completed
     if is_setup_completed():
         raise web.HTTPFound("/")
-    return web.Response(text=_SETUP_HTML, content_type="text/html")
+    html = _SETUP_HTML.replace("__VERSION_LABEL__", _VERSION_LABEL)
+    return web.Response(text=html, content_type="text/html")
 
 
 async def _handle_setup_status(request: web.Request) -> web.Response:
