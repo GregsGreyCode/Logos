@@ -36,21 +36,30 @@ docker buildx build --platform linux/amd64 \
 
 ### 3. Deploy
 
-Two deployments exist in the `hermes` Kubernetes namespace on the homelab cluster:
+Three deployments exist in the `logos` Kubernetes namespace on the homelab cluster:
 
-| Deployment | Image tag | Purpose |
-|---|---|---|
-| `hermes` | `ghcr.io/gregsgreycode/logos:latest` | Production |
-| `hermes-canary` | `ghcr.io/gregsgreycode/logos:canary` | Canary / testing |
+| Deployment | NodePort | Image tag | Purpose |
+|---|---|---|---|
+| `logos` | 30902 | `ghcr.io/gregsgreycode/logos:latest` | Production (stable) |
+| `logos-canary` | 30903 | `ghcr.io/gregsgreycode/logos:canary` | Canary / testing new features |
+| `logos-setup-test` | 30904 | `ghcr.io/gregsgreycode/logos:canary` | Setup wizard iteration — wipes state on every start |
 
-Deploying the canary is a two-command manual operation:
+Deploying the canary (after building and pushing):
 
 ```bash
-kubectl set image deployment/hermes-canary hermes=ghcr.io/gregsgreycode/logos:canary -n hermes
-kubectl rollout status deployment/hermes-canary -n hermes
+kubectl rollout restart deployment/logos-canary -n logos
+kubectl rollout status deployment/logos-canary -n logos --timeout=120s
 ```
 
-Deploying to production requires a separate image build tagged `:latest` and the same `set image` sequence against the `hermes` deployment. There is no documented promotion path from canary → production.
+Deploying the setup-test pod (wipes all state automatically via `HERMES_WIPE_ON_START=true`):
+
+```bash
+kubectl apply -f k8s/13-logos-setup-test-deployment.yaml -f k8s/14-logos-setup-test-service.yaml
+```
+
+Deploying to production requires building the `:latest` tag and applying `k8s/06-deployment.yaml`.
+
+The `logos-setup-test` deployment uses a generic SOUL.md (`15-logos-generic-config.yaml`) with no homelab-specific content, safe for testing with untrusted users.
 
 ### 4. Verification
 
@@ -73,8 +82,8 @@ The fix is two lines: copy `pyproject.toml` first, install, then copy the rest.
 ### No versioned image tags
 Only `:canary` and `:latest` are used. There is no way to roll back to a specific version without knowing the exact image digest. A bad deploy to production means manually finding the previous digest from `ghcr.io` and re-running `kubectl set image`.
 
-### Namespace naming inconsistency
-K8s resources are in the `hermes` namespace with deployment names `hermes` and `hermes-canary`. The k8s manifests in the repo have been updated to say `logos` but haven't been applied to the cluster. This creates confusion between what the code says and what is actually running.
+### Namespace naming
+K8s resources are in the `logos` namespace. All deployments (`logos`, `logos-canary`, `logos-setup-test`) match the manifest names. Resolved.
 
 ### No canary → production promotion workflow
 There is no documented or scripted process for saying "canary looks good, promote to production." The developer has to remember the correct commands, the right image tag, and the right deployment name.

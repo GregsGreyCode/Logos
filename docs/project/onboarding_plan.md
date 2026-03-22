@@ -21,9 +21,9 @@ Both tracks have full access to the gateway (Telegram, Discord, Slack, etc.), ru
 
 ---
 
-## Onboarding Flow (v0.3.34 — browser wizard at /setup)
+## Onboarding Flow (v0.3.53 — browser wizard at /setup)
 
-The setup wizard runs entirely in the browser. Wizard state is persisted to `localStorage` under the key `logos_setup_progress` (24-hour TTL), so refreshing the page resumes from the current step without re-running benchmarks.
+The setup wizard runs entirely in the browser. Wizard state is persisted to `localStorage` under the key `logos_setup_progress_v2` (1-hour TTL), so refreshing the page resumes from the current step without re-running benchmarks.
 
 ### Step 0 — Track Selection
 
@@ -32,7 +32,7 @@ The founding decision. Two options are presented:
 - **Local-first** — active and fully supported
 - **Frontier-first** — visible but marked "coming soon"
 
-A collapsible intro panel explains the full 8-step flow with STAMP context before the user commits to a track.
+A collapsible intro panel explains the full 7-step flow with STAMP context before the user commits to a track.
 
 ---
 
@@ -63,19 +63,13 @@ Results display: tok/s, TTFT, eval breakdown. Rows are clickable to expand detai
 
 ---
 
-### Step 3 — Verify Model
-
-Live test call to the selected model. Measures latency, TTFT, throughput, and quality pass/fail. Confirms end-to-end connectivity before committing the choice.
-
----
-
-### Step 4 — Agent Runtime
+### Step 3 — Agent Runtime
 
 Runtime picker. Hermes is available; other runtimes are shown as "coming soon". Selection drives the Kubernetes namespace value used in step 5.
 
 ---
 
-### Step 5 — Execution Target
+### Step 4 — Execution Target
 
 Two options:
 - **This machine** (local)
@@ -85,23 +79,23 @@ A connectivity test is available. Namespace is auto-derived from the agent runti
 
 ---
 
-### Step 6 — Soul
+### Step 5 — Soul
 
 A 4×2 grid of 8 soul presets. Only the selected card hue-cycles. Each card shows an icon, name, description, and tool hints.
 
 ---
 
-### Step 7 — Your Account
+### Step 6 — Your Account
 
 Email, username, password, and confirm password. All fields are required. On submit, the backend updates the admin user and replaces the default seed credentials (`admin@example.com` / `admin`).
 
 ---
 
-### Step 8 — Review & Launch
+### Step 7 — Review & Launch
 
-Summary of all configuration from steps 0–7. Inline error display (no `alert()` calls). An endpoint reachability check warns if the model server is unreachable rather than blocking launch. Back navigation is available from this step.
+Summary of all configuration from steps 0–6. Inline error display (no `alert()` calls). An endpoint reachability check warns if the model server is unreachable rather than blocking launch. Back navigation is available from this step.
 
-On `complete()`, both `logos_setup_progress` and `logos_setup_scan` are cleared from `localStorage`.
+On `complete()`, `logos_setup_progress_v2` and `logos_setup_scan` are cleared from `localStorage`. The chosen model and endpoint are written to `config.yaml` (`HERMES_MODEL`, `OPENAI_BASE_URL`) so the agent uses them on next start — skipped if those env vars are already set (respects pre-configured k8s deployments). All selected inference servers are registered as machines in the routing database.
 
 ---
 
@@ -117,13 +111,15 @@ On `complete()`, both `logos_setup_progress` and `logos_setup_scan` are cleared 
 | Benchmark — SSE streaming, warmup pass, 3-pass median | Done |
 | Benchmark — 4 capability evals | Done |
 | Benchmark — pre-selects best balanced + fastest | Done |
-| Verify model — live test call with latency/quality | Done |
+| Verify model step (removed — folded into benchmark + reachability check) | Removed in v0.3.44 |
 | Agent runtime picker | Done |
 | Execution target — local and Kubernetes | Done |
 | Soul preset grid (8 presets) | Done |
 | Admin account creation (step 7) | Done |
 | Review & launch with reachability check | Done |
-| Wizard state persistence (24hr, localStorage) | Done |
+| Wizard state persistence (1hr, localStorage, key v2) | Done |
+| Multi-server benchmark + registration | Done — all selected servers benchmarked and registered |
+| Model written to config.yaml on complete | Done — agent picks up chosen model on next start |
 | Back navigation from all steps | Done |
 | Frontier-first track | Not built — coming soon |
 | System check / hermes doctor step | Not built |
