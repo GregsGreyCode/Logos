@@ -5925,8 +5925,17 @@ _SETUP_HTML = """<!DOCTYPE html>
                   </svg>
                 </button>
                 <div class="flex-1 min-w-0">
-                  <div class="flex items-center gap-2 flex-wrap">
-                    <span class="text-sm font-semibold text-white" x-text="s.type==='lmstudio' ? 'LM Studio' : 'Ollama'"></span>
+                  <div class="flex items-center gap-2 flex-wrap" x-data="{ editing: false, draft: '' }">
+                    <span x-show="!editing" @click="editing=true; draft=s.customName||(s.type==='lmstudio'?'LM Studio':'Ollama')"
+                      class="text-sm font-semibold text-white cursor-text hover:text-indigo-300 transition-colors"
+                      x-text="s.customName || (s.type==='lmstudio' ? 'LM Studio' : 'Ollama')"
+                      title="Click to rename"></span>
+                    <input x-show="editing" x-model="draft" type="text"
+                      @blur="s.customName=draft.trim()||''; editing=false"
+                      @keydown.enter="s.customName=draft.trim()||''; editing=false"
+                      @keydown.escape="editing=false"
+                      x-init="$watch('editing', v => v && $nextTick(() => $el.focus()))"
+                      class="text-sm font-semibold bg-transparent border-b border-indigo-400 text-white focus:outline-none w-32">
                     <span x-show="s.status==='up'" class="text-[10px] px-1.5 py-0.5 rounded-full bg-green-950 text-green-400 border border-green-800 font-medium">running</span>
                     <span x-show="s.status==='auth_required'" class="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-950 text-amber-400 border border-amber-800 font-medium">auth required</span>
                   </div>
@@ -5939,7 +5948,7 @@ _SETUP_HTML = """<!DOCTYPE html>
                       x-model="s._apiKey"
                       class="flex-1 bg-gray-950 border border-gray-700 rounded-lg px-3 py-1.5 text-xs text-white placeholder-gray-600 focus:outline-none focus:border-indigo-500 font-mono">
                     <button @click="retryWithKey(s)" :disabled="!s._apiKey"
-                      class="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-xs font-medium flex-shrink-0 transition-colors">
+                      class="btn-primary px-3 py-1.5 rounded-lg text-xs flex-shrink-0">
                       Connect
                     </button>
                   </div>
@@ -5975,11 +5984,14 @@ _SETUP_HTML = """<!DOCTYPE html>
                   @keydown.enter="addManualServer()"
                   class="flex-1 bg-gray-950 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-indigo-500 font-mono">
                 <button @click="addManualServer()" :disabled="manualProbing||!manualUrl.trim()"
-                  class="px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-sm font-medium flex-shrink-0 transition-colors">
+                  class="btn-primary px-4 py-2 rounded-lg text-sm flex-shrink-0">
                   <span x-show="!manualProbing">Add</span>
                   <span x-show="manualProbing" class="flex items-center gap-1"><div class="w-3 h-3 border-2 border-white/40 border-t-white rounded-full animate-spin"></div></span>
                 </button>
               </div>
+              <input x-model="manualName" type="text"
+                placeholder="Custom name (optional, e.g. &ldquo;Gaming PC&rdquo;)"
+                class="w-full bg-gray-950 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-indigo-500">
               <input x-show="manualType==='lmstudio'" x-model="manualKey" type="password"
                 placeholder="API key (if auth is enabled in LM Studio)"
                 class="w-full bg-gray-950 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-indigo-500 font-mono">
@@ -6319,6 +6331,7 @@ function setup() {
     showManualEntry: false,
     manualType: 'ollama',
     manualUrl: '',
+    manualName: '',
     manualKey: '',
     manualProbing: false,
     manualError: '',
@@ -6428,12 +6441,13 @@ function setup() {
         const d = await r.json();
         const server = (d.servers || [])[0];
         if (server && server.status === 'up') {
-          const enriched = { ...server, _apiKey: this.manualKey };
+          const enriched = { ...server, _apiKey: this.manualKey, customName: this.manualName.trim() || '' };
           if (!this.foundServers.find(s => s.endpoint === server.endpoint)) this.foundServers.push(enriched);
           if (!this.selectedServers.find(s => s.endpoint === server.endpoint)) this.selectedServers.push(enriched);
           this.activeServer = this.selectedServers[0] || null;
           this.showManualEntry = false;
           this.manualUrl = '';
+          this.manualName = '';
           this.manualKey = '';
         } else {
           this.manualError = server?.status === 'auth_required'
