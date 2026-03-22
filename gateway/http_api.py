@@ -6541,7 +6541,7 @@ _SETUP_HTML = """<!DOCTYPE html>
             <!-- Auto namespace (read-only) -->
             <div class="flex items-center gap-2">
               <span class="text-xs text-gray-500">Namespace</span>
-              <span class="font-mono text-xs text-indigo-300 bg-indigo-950/40 border border-indigo-900 px-2 py-0.5 rounded" x-text="k8sNamespace"></span>
+              <span class="font-mono text-xs text-indigo-300 bg-indigo-950/40 border border-indigo-900 px-2 py-0.5 rounded" x-text="selectedAgentType || 'hermes'"></span>
               <span class="text-xs text-gray-600">— derived from agent runtime</span>
             </div>
 
@@ -6568,7 +6568,7 @@ _SETUP_HTML = """<!DOCTYPE html>
                   Testing&hellip;
                 </span>
               </button>
-              <span x-show="k8sTestResult === 'ok'" class="text-xs text-green-400">&#x2713; Connected to namespace <span class="font-mono" x-text="k8sNamespace"></span></span>
+              <span x-show="k8sTestResult === 'ok'" class="text-xs text-green-400">&#x2713; Connected to namespace <span class="font-mono" x-text="selectedAgentType || 'hermes'"></span></span>
               <span x-show="k8sTestResult === 'error'" class="text-xs text-red-400" x-text="k8sTestError"></span>
             </div>
           </div>
@@ -6658,7 +6658,7 @@ _SETUP_HTML = """<!DOCTYPE html>
           </div>
           <div x-show="execEnv === 'k8s'" class="flex justify-between text-sm py-2.5">
             <span class="text-gray-500">Namespace</span>
-            <span class="text-white font-medium font-mono text-xs" x-text="k8sNamespace"></span>
+            <span class="text-white font-medium font-mono text-xs" x-text="selectedAgentType || 'hermes'"></span>
           </div>
           <div x-show="testLatency" class="flex justify-between text-sm py-2.5">
             <span class="text-gray-500">Model latency</span>
@@ -6822,10 +6822,6 @@ function setup() {
     k8sTesting: false,
     k8sTestResult: null,
     k8sTestError: '',
-    get k8sNamespace() {
-      // Namespace is the agent runtime name — currently always 'hermes'
-      return this.selectedAgentType || 'hermes';
-    },
 
     // Step 6
     completing: false,
@@ -7313,7 +7309,7 @@ function setup() {
           headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken() },
           body: JSON.stringify({
             mode:       this.k8sMode,
-            namespace:  this.k8sNamespace,
+            namespace:  this.selectedAgentType || 'hermes',
             kubeconfig: this.kubeconfig,
           }),
         });
@@ -7339,7 +7335,7 @@ function setup() {
             server_type:   this.activeServer ? this.activeServer.type : '',
             agent_type:    this.selectedSoul || 'general',
             exec_env:      this.execEnv || 'local',
-            k8s_namespace: this.k8sNamespace || 'hermes',
+            k8s_namespace: this.selectedAgentType || 'hermes',
             kubeconfig:    this.execEnv === 'k8s' && this.k8sMode === 'kubeconfig' ? this.kubeconfig : '',
           }),
         });
