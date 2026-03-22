@@ -6229,8 +6229,10 @@ _SETUP_HTML = """<!DOCTYPE html>
             class="mb-4 p-3 rounded-xl bg-indigo-950/40 border border-indigo-800 text-xs text-indigo-200 leading-relaxed"
             x-text="compareReason"></div>
           <div x-show="compareDone && !compareRecommended"
-            class="mb-4 p-3 rounded-xl bg-red-950/30 border border-red-900 text-xs text-red-400">
-            Could not benchmark any models. Make sure a model is loaded and reachable, then try again.
+            class="mb-4 p-3 rounded-xl bg-red-950/30 border border-red-900 text-xs text-red-400 space-y-1.5">
+            <div class="font-medium">Could not benchmark any models.</div>
+            <div x-show="compareReason" class="font-mono opacity-80" x-text="compareReason"></div>
+            <div>Make sure a model is loaded and reachable, then try again.</div>
           </div>
 
           <!-- Override / re-run (after done) -->
@@ -6285,10 +6287,24 @@ _SETUP_HTML = """<!DOCTYPE html>
           <span class="font-mono truncate max-w-[160px]" x-text="activeServer ? activeServer.endpoint.replace('/v1','') : ''"></span>
         </div>
 
+        <!-- Live phase log -->
+        <div x-show="testLog.length > 0"
+          class="mb-3 rounded-xl bg-black/60 border border-gray-800 px-3 py-2.5 font-mono text-[11px] leading-relaxed space-y-0.5 max-h-28 overflow-y-auto"
+          x-ref="testLogEl">
+          <template x-for="(entry, idx) in testLog" :key="idx">
+            <div :class="entry.startsWith('Phase') ? 'text-gray-300 font-medium' :
+                         entry.startsWith('Result') ? 'text-indigo-400 font-medium' :
+                         entry.includes('\u2713') ? 'text-green-400' :
+                         entry.includes('\u26a0') || entry.includes('failed') || entry.includes('error') ? 'text-yellow-400' :
+                         'text-gray-500'"
+              x-text="entry"></div>
+          </template>
+        </div>
+
         <div class="p-4 rounded-xl bg-gray-900 border border-gray-800 mb-4 min-h-[120px] flex flex-col justify-between">
           <div>
-            <!-- Waiting -->
-            <div x-show="testResponse === '' && !testError && !testBenchmarking && !testLoadingModel" class="flex items-center gap-2 text-gray-600 text-sm">
+            <!-- Waiting (only before first log event arrives) -->
+            <div x-show="testResponse === '' && !testError && !testBenchmarking && !testLoadingModel && testLog.length === 0" class="flex items-center gap-2 text-gray-600 text-sm">
               <div class="flex gap-1">
                 <div class="w-1.5 h-1.5 rounded-full bg-gray-700 animate-bounce" style="animation-delay:0ms"></div>
                 <div class="w-1.5 h-1.5 rounded-full bg-gray-700 animate-bounce" style="animation-delay:150ms"></div>
@@ -6653,6 +6669,7 @@ function setup() {
     testBenchmarking: false,
     testLoadingModel: false,
     testRuns: 0,
+    testLog: [],
 
     // Step 4 — agent choice
     selectedAgentType: 'general',
@@ -6837,16 +6854,25 @@ function setup() {
     async runCompare() {
       const models = this.getModels();
       try {
+        if (!this.activeServer || !this.activeServer.endpoint) {
+          this.compareReason = 'No server selected — go back to step 1 and pick a model server.';
+          return;
+        }
         const r = await fetch('/api/setup/compare', {
           method: 'POST', credentials: 'include',
           headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken() },
           body: JSON.stringify({
-            endpoint:    this.activeServer ? this.activeServer.endpoint : '',
-            api_key:     (this.activeServer && this.activeServer._apiKey) || 'ollama',
+            endpoint:    this.activeServer.endpoint,
+            api_key:     this.activeServer._apiKey || 'ollama',
             models:      models.map(m => m.id),
-            server_type: this.activeServer ? this.activeServer.type : 'unknown',
+            server_type: this.activeServer.type || 'unknown',
           }),
         });
+        if (!r.ok) {
+          const errBody = await r.json().catch(() => ({ error: `HTTP ${r.status}` }));
+          this.compareReason = errBody.error || `Server error: ${r.status}`;
+          return;
+        }
         const reader = r.body.getReader();
         const dec = new TextDecoder();
         let buf = '';
@@ -6889,9 +6915,16 @@ function setup() {
           }
         }
       } catch (e) {
-        this.compareRunning = false;
-        this.compareDone    = true;
-        this.compareReason  = 'Comparison failed: ' + e.message;
+        this.compareReason = 'Connection error: ' + e.message;
+      } finally {
+        // Always ensure we exit the "scanning" state — never leave the UI stuck
+        if (this.compareRunning) {
+          this.compareRunning    = false;
+          this.compareDone       = true;
+          this.compareTesting    = null;
+          this.compareLoadingFor = null;
+          if (!this.compareReason) this.compareReason = 'Stream closed before comparison completed.';
+        }
       }
     },
 
@@ -7042,7 +7075,7 @@ function setup() {
 
     async runTest() {
       this.testResponse = ''; this.testDone = false; this.testBenchmarking = false;
-      this.testLoadingModel = false;
+      this.testLoadingModel = false; this.testLog = [];
       this.testError = null; this.testLatency = null; this.testTtft = null;
       this.testTokS = null; this.testScoreLabel = ''; this.testQualityPass = null; this.testRuns = 0;
       try {
@@ -7070,6 +7103,10 @@ function setup() {
               if (ev.error)      { this.testError = ev.error; return; }
               if (ev.status === 'loading_model') { this.testLoadingModel = true; }
               if (ev.status === 'benchmarking') { this.testBenchmarking = true; this.testLoadingModel = false; }
+              if (ev.log) {
+                this.testLog = [...this.testLog, ev.log];
+                this.$nextTick(() => { const el = this.$refs.testLogEl; if (el) el.scrollTop = el.scrollHeight; });
+              }
               if (ev.token)      { this.testResponse += ev.token; this.testLoadingModel = false; }
               if (ev.done) {
                 this.testDone        = true;
