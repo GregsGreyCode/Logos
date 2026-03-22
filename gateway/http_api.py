@@ -6230,10 +6230,25 @@ _SETUP_HTML = """<!DOCTYPE html>
             </div>
           </div>
 
-          <!-- Recommendation blurb -->
+          <!-- Best balanced recommendation -->
           <div x-show="compareDone && compareRecommended"
-            class="mb-3 p-3 rounded-xl bg-indigo-950/40 border border-indigo-800 text-xs text-indigo-200 leading-relaxed"
-            x-text="compareReason"></div>
+            class="mb-2 p-3 rounded-xl bg-indigo-950/40 border border-indigo-800 text-xs leading-relaxed space-y-1">
+            <div class="flex items-center gap-2 text-indigo-300 font-semibold text-[11px] uppercase tracking-wider">
+              <span>⚖</span><span>Best balanced</span>
+              <span class="font-mono font-normal normal-case tracking-normal text-indigo-400" x-text="compareRecommended"></span>
+            </div>
+            <div class="text-indigo-200" x-text="compareReason"></div>
+          </div>
+
+          <!-- Fastest acceptable (only shown when different from best balanced) -->
+          <div x-show="compareDone && compareFastRecommended"
+            class="mb-3 p-3 rounded-xl bg-gray-900/60 border border-gray-700 text-xs leading-relaxed space-y-1">
+            <div class="flex items-center gap-2 text-gray-300 font-semibold text-[11px] uppercase tracking-wider">
+              <span>⚡</span><span>Fastest acceptable</span>
+              <span class="font-mono font-normal normal-case tracking-normal text-gray-400" x-text="compareFastRecommended"></span>
+            </div>
+            <div class="text-gray-400" x-text="compareFastReason"></div>
+          </div>
 
           <!-- Secondary models available for delegation -->
           <div x-show="compareDone && secondaryModels().length > 0" class="mb-4">
@@ -6309,46 +6324,48 @@ _SETUP_HTML = """<!DOCTYPE html>
         </div>
       </div>
 
-      <!-- ── Step 3: Test it ─────────────────────────────────────────── -->
+      <!-- ── Step 3: Confirm default model ────────────────────────────── -->
       <div x-show="step===3" x-cloak x-transition.opacity>
         <div class="mb-5">
-          <h2 class="text-xl font-bold mb-1">Confirming your default model
-            <span class="inline-flex ml-0.5 text-gray-600">
-              <span style="animation:dot-fade 1.4s infinite;animation-delay:0s">.</span>
-              <span style="animation:dot-fade 1.4s infinite;animation-delay:0.2s">.</span>
-              <span style="animation:dot-fade 1.4s infinite;animation-delay:0.4s">.</span>
-            </span>
-          </h2>
-          <p class="text-gray-400 text-sm">Sending a quick message to confirm everything is working.</p>
+          <h2 class="text-xl font-bold mb-1">Confirming your default model</h2>
+          <p class="text-gray-400 text-sm">Sending a quick message to verify the model is responding.</p>
         </div>
 
         <!-- Model + server info -->
         <div class="flex items-center gap-2 mb-3 text-xs text-gray-600">
           <span class="font-mono text-gray-500" x-text="selectedModel"></span>
           <span>&middot;</span>
-          <span x-text="activeServer ? (activeServer.type === 'ollama' ? 'Ollama' : 'LM Studio') : ''"></span>
+          <span x-text="activeServer ? serverName(activeServer) : ''"></span>
           <span>&middot;</span>
           <span class="font-mono truncate max-w-[160px]" x-text="activeServer ? activeServer.endpoint.replace('/v1','') : ''"></span>
         </div>
 
-        <!-- Live phase log -->
-        <div x-show="testLog.length > 0"
-          class="thin-scroll mb-3 rounded-xl bg-black/60 border border-gray-800 px-3 py-2.5 font-mono text-[11px] leading-relaxed space-y-0.5 max-h-28"
-          x-ref="testLogEl">
-          <template x-for="(entry, idx) in testLog" :key="idx">
-            <div :class="entry.startsWith('Phase') ? 'text-gray-300 font-medium' :
-                         entry.startsWith('Result') ? 'text-indigo-400 font-medium' :
-                         entry.includes('\u2713') ? 'text-green-400' :
-                         entry.includes('\u26a0') || entry.includes('failed') || entry.includes('error') ? 'text-yellow-400' :
-                         'text-gray-500'"
-              x-text="entry"></div>
-          </template>
-        </div>
+        <!-- Step 2 benchmark results (if this model was already tested) -->
+        <template x-for="r in compareResults.filter(r => r.model === selectedModel)" :key="r.model">
+          <div class="mb-3 p-3 rounded-xl bg-gray-900 border border-gray-800 text-xs space-y-2">
+            <div class="flex items-center gap-3 flex-wrap">
+              <span class="font-semibold text-gray-300">Benchmark</span>
+              <span class="font-mono text-indigo-300" x-text="r.tok_s + ' tok/s'"></span>
+              <span x-show="r.ttft_ms" class="text-gray-600 font-mono" x-text="'TTFT ' + r.ttft_ms + 'ms'"></span>
+              <span class="font-semibold"
+                :class="(r.eval && r.eval.score >= 3) ? 'text-green-400' : 'text-yellow-400'"
+                x-text="r.eval ? r.eval.score + '/4 evals' : ''"></span>
+            </div>
+            <div x-show="r.eval" class="flex gap-3 flex-wrap text-[10px]">
+              <span :class="r.eval.instruction ? 'text-green-400' : 'text-gray-700'">✓ instruction</span>
+              <span :class="r.eval.reasoning   ? 'text-green-400' : 'text-gray-700'">✓ reasoning</span>
+              <span :class="r.eval.format       ? 'text-green-400' : 'text-gray-700'">✓ format</span>
+              <span :class="r.eval.tool_call    ? 'text-green-400' : 'text-gray-700'">✓ tool-call</span>
+            </div>
+          </div>
+        </template>
 
-        <div class="p-4 rounded-xl bg-gray-900 border border-gray-800 mb-4 min-h-[120px] flex flex-col justify-between">
+        <!-- Live response box -->
+        <div class="p-4 rounded-xl bg-gray-900 border border-gray-800 mb-4 min-h-[100px] flex flex-col justify-between">
           <div>
-            <!-- Waiting (only before first log event arrives) -->
-            <div x-show="testResponse === '' && !testError && !testBenchmarking && !testLoadingModel && testLog.length === 0" class="flex items-center gap-2 text-gray-600 text-sm">
+            <!-- Waiting -->
+            <div x-show="testResponse === '' && !testError && !testLoadingModel && !testDone"
+              class="flex items-center gap-2 text-gray-600 text-sm">
               <div class="flex gap-1">
                 <div class="w-1.5 h-1.5 rounded-full bg-gray-700 animate-bounce" style="animation-delay:0ms"></div>
                 <div class="w-1.5 h-1.5 rounded-full bg-gray-700 animate-bounce" style="animation-delay:150ms"></div>
@@ -6356,70 +6373,29 @@ _SETUP_HTML = """<!DOCTYPE html>
               </div>
               <span>Waiting for first token&hellip;</span>
             </div>
-            <!-- Loading model (LM Studio cold-start) -->
-            <div x-show="testLoadingModel && testResponse === '' && !testBenchmarking && !testError" class="flex items-center gap-2 text-amber-400 text-sm">
+            <!-- Loading model -->
+            <div x-show="testLoadingModel && testResponse === '' && !testError"
+              class="flex items-center gap-2 text-amber-400 text-sm">
               <div class="spinner-hue"><div class="w-3 h-3 border border-amber-900 border-t-amber-400 rounded-full animate-spin"></div></div>
               <span>Loading model into memory&hellip; this can take a minute on first use.</span>
             </div>
-            <!-- Benchmarking notice -->
-            <div x-show="testBenchmarking && !testDone" class="flex items-center gap-2 text-gray-500 text-xs mb-2">
-              <div class="spinner-hue"><div class="w-3 h-3 border border-gray-700 border-t-indigo-400 rounded-full animate-spin"></div></div>
-              <span>Running benchmark&hellip;</span>
-            </div>
-            <!-- Streaming -->
+            <!-- Streaming response -->
             <p x-show="testResponse !== ''" class="text-sm text-gray-100 leading-relaxed" x-text="testResponse"></p>
             <!-- Error -->
             <p x-show="testError" class="text-sm text-red-400" x-text="testError"></p>
           </div>
-          <!-- Score + metrics footer -->
-          <div x-show="testDone" class="pt-3 mt-3 border-t border-gray-800 space-y-2">
-            <!-- Score badge -->
-            <div class="flex items-center gap-3">
-              <span class="text-xs font-semibold px-2.5 py-1 rounded-full"
-                :class="{
-                  'bg-green-950 text-green-300 border border-green-800':  testScoreColour==='green',
-                  'bg-indigo-950 text-indigo-300 border border-indigo-800': testScoreColour==='indigo',
-                  'bg-yellow-950 text-yellow-300 border border-yellow-800': testScoreColour==='yellow',
-                  'bg-red-950 text-red-300 border border-red-800':         testScoreColour==='red',
-                }"
-                x-text="testScoreLabel"></span>
-              <span class="text-xs font-mono text-gray-400" x-text="testTokS + ' tok/s'"></span>
-              <span x-show="testQualityPass !== null" class="text-xs"
-                :class="testQualityPass ? 'text-green-400' : 'text-yellow-400'"
-                x-text="testQualityPass ? '✓ reasoning ok' : '⚠ check reasoning'"></span>
-            </div>
-            <!-- Raw metrics -->
-            <div class="flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-gray-600">
-              <span x-text="'avg ' + testLatency + 'ms'"></span>
-              <span x-show="testTtft">&middot; <span x-text="'TTFT ' + testTtft + 'ms'"></span></span>
-              <span x-text="'· ' + testRuns + ' runs'"></span>
-            </div>
-            <!-- Recommendation -->
-            <template x-if="testDone">
-              <div class="mt-3 pt-3 border-t border-gray-800">
-                <template x-for="rec in [benchRecommendation()]" :key="rec.text">
-                  <div class="flex items-start gap-2.5 p-2.5 rounded-lg"
-                    :class="{
-                      'bg-green-950/40 border border-green-900':  rec.tone === 'good',
-                      'bg-indigo-950/40 border border-indigo-900': rec.tone === 'upgrade',
-                      'bg-yellow-950/40 border border-yellow-900': rec.tone === 'warn',
-                      'bg-red-950/40 border border-red-900':       rec.tone === 'bad',
-                    }">
-                    <span class="text-base leading-none mt-0.5" x-text="rec.icon"></span>
-                    <span class="text-xs leading-relaxed"
-                      :class="{
-                        'text-green-300':  rec.tone === 'good',
-                        'text-indigo-300': rec.tone === 'upgrade',
-                        'text-yellow-300': rec.tone === 'warn',
-                        'text-red-300':    rec.tone === 'bad',
-                      }"
-                      x-text="rec.text"></span>
-                  </div>
-                </template>
-              </div>
-            </template>
+          <!-- Confirmation footer -->
+          <div x-show="testDone" class="pt-2 mt-2 border-t border-gray-800 flex items-center gap-3 text-xs">
+            <span class="text-green-400">✓ responding</span>
+            <span x-show="testTtft" class="text-gray-600 font-mono" x-text="'TTFT ' + testTtft + 'ms'"></span>
+            <span x-show="testTokS" class="text-gray-600 font-mono" x-text="testTokS + ' tok/s'"></span>
           </div>
         </div>
+
+        <!-- Step 2 recommendation reason -->
+        <template x-if="compareReason">
+          <p class="text-xs text-gray-500 mb-4 leading-relaxed" x-text="compareReason"></p>
+        </template>
 
         <div x-show="testError" class="mb-3">
           <button @click="runTest()"
@@ -6429,8 +6405,8 @@ _SETUP_HTML = """<!DOCTYPE html>
         </div>
 
         <button @click="goNext()" :disabled="!testDone"
-          class="btn-primary w-full py-2.5 rounded-xl text-sm">
-          Continue &rarr;
+          class="btn-primary w-full py-2.5 rounded-xl text-sm font-semibold">
+          Confirm default model &rarr;
         </button>
       </div>
 
@@ -6684,6 +6660,8 @@ function setup() {
     compareLoadingFor: null,
     compareRecommended: null,
     compareReason: '',
+    compareFastRecommended: null,
+    compareFastReason: '',
 
     selectedModel: null,
     suggestedModel: null,
@@ -6891,8 +6869,10 @@ function setup() {
       this.compareResults     = {};
       this.compareTesting     = null;
       this.compareLoadingFor  = null;
-      this.compareRecommended = null;
-      this.compareReason      = '';
+      this.compareRecommended     = null;
+      this.compareReason          = '';
+      this.compareFastRecommended = null;
+      this.compareFastReason      = '';
       this.runCompare();
     },
 
@@ -6955,12 +6935,14 @@ function setup() {
                 this.compareResults = { ...this.compareResults, [ev.result.model]: ev.result };
               }
               if (ev.done) {
-                this.compareRunning     = false;
-                this.compareDone        = true;
-                this.compareTesting     = null;
-                this.compareLoadingFor  = null;
-                this.compareRecommended = ev.recommendation;
-                this.compareReason      = ev.reason || '';
+                this.compareRunning          = false;
+                this.compareDone             = true;
+                this.compareTesting          = null;
+                this.compareLoadingFor       = null;
+                this.compareRecommended      = ev.recommendation;
+                this.compareReason           = ev.reason || '';
+                this.compareFastRecommended  = ev.fast_recommendation || null;
+                this.compareFastReason       = ev.fast_reason || '';
                 if (ev.recommendation) {
                   const m = models.find(x => x.id === ev.recommendation);
                   if (m) this.pickModel(m);

@@ -276,79 +276,72 @@ async def handle_setup_pull(request: web.Request) -> web.Response:
     return response
 
 
-_BENCH_PROMPTS = [
-    "Say hello in one sentence.",
-    "What is 17 multiplied by 6? Answer with just the number.",
-    "Name the capital of France in one word.",
-]
 # ── Benchmark prompts ────────────────────────────────────────────────────────
-# Speed: generates ~100 tokens of coherent prose — good throughput signal
+# Pass 1: prose — baseline throughput under natural language generation
 _BENCH_PROMPT = (
     "Briefly explain three steps you would take to debug a program that crashes unexpectedly. "
     "Be concise."
 )
+# Pass 2: structured — throughput under formatting constraints (some models slow here)
+_BENCH_PROMPT_STRUCT = (
+    'Output exactly this JSON and nothing else: '
+    '{"steps": ["reproduce error", "add logging", "fix and test"]}'
+)
 
-# Test 1 — Instruction following: multi-step, each step is checkable
+# Test 1 — Instruction following: 4-step ordered task, all outputs must be present
 _INSTRUCT_PROMPT = (
-    "Follow these instructions exactly, in order:\n"
+    "Follow these instructions exactly, one item per line:\n"
     "1. Write the word ALPHA\n"
     "2. Write the result of 15 + 27\n"
-    "3. Write the word BETA"
+    "3. Write the word BETA\n"
+    "4. Write the number of letters in the word elephant"
 )
-_INSTRUCT_CHECKS = ["ALPHA", "42", "BETA"]
+_INSTRUCT_CHECKS = ["ALPHA", "42", "BETA", "8"]
 
-# Test 2 — Reasoning: requires a calculation step
-_REASON_PROMPT  = "A train travels 60 km in 45 minutes. What is its speed in km/h? Reply with only the number."
-_REASON_EXPECTED = "80"
+# Test 2 — Reasoning: two-part arithmetic, both answers must be present
+_REASON_PROMPT = (
+    "Answer both with only numbers, one per line:\n"
+    "1. A car covers 150 km in 2.5 hours. Speed in km/h?\n"
+    "2. What is 17 × 6 − 14?"
+)
+_REASON_CHECKS = ["60", "88"]  # 150/2.5=60, 102-14=88
 
-# Test 3 — Format compliance: critical for tool-calling / structured output
+# Test 3 — Strict format compliance: exact JSON only, no surrounding prose accepted
 _FORMAT_PROMPT = 'Reply with ONLY a valid JSON object, no other text: {"status": "ok", "value": 99}'
 
-# Test 4 — Tool-call readiness: simulate a basic agent tool selection
+# Test 4 — Tool selection: two scenarios, must route both correctly
 _TOOL_PROMPT = (
-    'You have two tools: "search_web" (for looking up current information) and '
-    '"run_code" (for executing Python). '
-    'A user asks: "What is the current Bitcoin price?" '
-    'Reply with ONLY a JSON object: {"tool": "<tool_name>", "reason": "<one sentence>"}'
+    'You have two tools: "search_web" (for current information) and "run_code" (for Python execution). '
+    'For each request, choose the correct tool:\n'
+    'A: "What is the current Bitcoin price?"\n'
+    'B: "Write a Python function to reverse a list."\n'
+    'Reply with ONLY valid JSON: {"A": "<tool_name>", "B": "<tool_name>"}'
 )
 
 
 def _eval_tool_call(text: str) -> bool:
-    """Return True if response contains valid JSON selecting search_web."""
-    import re as _re
-    cleaned = _re.sub(r"```[a-z]*\n?", "", text).strip()
+    """Return True if response is valid JSON routing A→search_web and B→run_code."""
+    cleaned = re.sub(r"```[a-z]*\n?", "", text).strip()
     try:
         obj = json.loads(cleaned)
-        return obj.get("tool") == "search_web"
+        return obj.get("A") == "search_web" and obj.get("B") == "run_code"
     except Exception:
-        m = _re.search(r'\{[^}]+\}', cleaned)
-        if m:
-            try:
-                return json.loads(m.group()).get("tool") == "search_web"
-            except Exception:
-                pass
         return False
 
 _COMPARE_TIMEOUT  = aiohttp.ClientTimeout(total=120)   # per-model; handles cold-start
 
 
 def _eval_format(text: str) -> bool:
-    """Return True if the response contains parseable JSON with status=ok and value=99."""
-    import re as _re
-    # Strip markdown fences if present
-    cleaned = _re.sub(r"```[a-z]*\n?", "", text).strip()
+    """Return True if the response is exactly valid JSON with status=ok and value=99.
+
+    Strict: no prose before or after the JSON object is accepted.
+    Models that wrap in markdown fences are tolerated (fences stripped first).
+    """
+    cleaned = re.sub(r"```[a-z]*\n?", "", text).strip()
     try:
         obj = json.loads(cleaned)
         return obj.get("status") == "ok" and obj.get("value") == 99
     except Exception:
-        # Try to find JSON object anywhere in the text
-        m = _re.search(r'\{[^}]+\}', cleaned)
-        if m:
-            try:
-                obj = json.loads(m.group())
-                return obj.get("status") == "ok" and obj.get("value") == 99
-            except Exception:
-                pass
         return False
 
 
@@ -358,31 +351,76 @@ def _parse_model_size_b(model_id: str) -> float:
     return float(m.group(1)) if m else 0.0
 
 
+_INSTRUCT_KEYWORDS = {"instruct", "chat", "it", "tool", "assistant", "hermes", "qwen", "gemma", "llama"}
+
+
 def _pick_compare_candidates(model_ids: list[str], max_n: int = 4) -> list[str]:
-    """Pick up to max_n diverse candidates: sweet-spot (7-13B) first, then smaller, then larger."""
-    SWEET = 8.0
+    """Sample one representative from each size bucket, then fill remaining slots.
 
-    def priority(mid: str) -> float:
+    Buckets: small (<5B), mid (5–13B), large (>13B), unknown (no size in name).
+    Within each bucket models are ranked by quality heuristics:
+      - mid/large: prefer closer to 9B sweet spot; larger wins ties
+      - small: prefer larger (closer to 4–5B)
+      - unknown: prefer names containing instruct/chat/tool keywords
+    This avoids the old approach of hard-suppressing unknowns or large quants.
+    """
+    def _bucket(mid: str) -> str:
         sz = _parse_model_size_b(mid)
-        if sz == 0:
-            return 50.0   # unknown size: deprioritise
-        dist = abs(sz - SWEET)
-        bias = 0.5 if sz > SWEET else 0.0  # slight penalty for going over sweet spot
-        return dist + bias
+        if sz == 0:   return "unknown"
+        if sz < 5:    return "small"
+        if sz <= 13:  return "mid"
+        return "large"
 
-    return sorted(model_ids, key=priority)[:max_n]
+    def _rank(mid: str, bucket: str) -> float:
+        sz = _parse_model_size_b(mid)
+        if bucket == "mid":    return abs(sz - 9.0)
+        if bucket == "small":  return -sz                 # larger small = better
+        if bucket == "large":  return sz                  # smaller large = better
+        # unknown: prefer instruct-hinted names
+        name = mid.lower()
+        return 0.0 if any(kw in name for kw in _INSTRUCT_KEYWORDS) else 1.0
+
+    buckets: dict[str, list[str]] = {"mid": [], "small": [], "large": [], "unknown": []}
+    for mid in model_ids:
+        b = _bucket(mid)
+        buckets[b].append(mid)
+    for b, items in buckets.items():
+        items.sort(key=lambda m: _rank(m, b))
+
+    # One slot per bucket (priority: mid → small → large → unknown), then fill
+    selected: list[str] = []
+    for b in ("mid", "small", "large", "unknown"):
+        for mid in buckets[b]:
+            if mid not in selected:
+                selected.append(mid)
+                break
+    for b in ("mid", "small", "large", "unknown"):
+        for mid in buckets[b]:
+            if mid not in selected:
+                selected.append(mid)
+                if len(selected) >= max_n:
+                    return selected
+    return selected[:max_n]
 
 
 def _compare_score(r: dict) -> float:
+    """Composite score for ranking models within a gated candidate pool.
+
+    Weights: eval capability 60%, throughput 20%, TTFT 15%, model size 5%.
+    JSON format and tool-call are handled as mandatory gates before ranking
+    (see handle_setup_compare), not as score components here.
+    """
     if r.get("error") or r.get("tok_s", 0) == 0:
         return -1.0
     eval_score = r.get("eval", {}).get("score", 1 if r.get("quality_pass") else 0)
-    eval_frac  = eval_score / 4                  # 0.0 – 1.0
-    speed      = min(r["tok_s"], 40) / 40        # normalise; cap at 40 tok/s
+    eval_frac  = eval_score / 4                      # 0.0 – 1.0
+    speed      = min(r["tok_s"], 40) / 40            # cap at 40 tok/s
     sz         = _parse_model_size_b(r["model"])
-    size_b     = min(sz, 13) / 13 * 0.2 if sz > 0 else 0  # prefer bigger up to 13B
-    # Weights: eval quality 45%, speed 35%, model size 20%
-    return 0.45 * eval_frac + 0.35 * speed + size_b
+    size_b     = min(sz, 13) / 13 * 0.05 if sz > 0 else 0
+    ttft_ms    = r.get("ttft_ms")
+    # TTFT score: ≤500ms→1.0, ≥4000ms→0.0
+    ttft_score = max(0.0, min(1.0, (4000 - ttft_ms) / 3500)) if ttft_ms is not None else 0.5
+    return 0.60 * eval_frac + 0.20 * speed + 0.15 * ttft_score + size_b
 
 
 def _compare_reason(best: dict) -> str:
@@ -395,18 +433,30 @@ def _compare_reason(best: dict) -> str:
     if ev.get("format"):      parts.append("structured output")
     if ev.get("tool_call"):   parts.append("tool selection")
     eval_str  = ", ".join(parts) if parts else "limited capability confirmed"
+    ttft_ms   = best.get("ttft_ms")
+    ttft_note = f", {ttft_ms}ms TTFT" if ttft_ms is not None else ""
 
     if score == 4 and best["tok_s"] >= 15:
-        return (f"{label} at {best['tok_s']} tok/s — passes all 4 eval tests "
+        return (f"{label} at {best['tok_s']} tok/s{ttft_note} — passes all 4 eval tests "
                 f"({eval_str}). Strong default agent model for your hardware.")
     if score >= 3 and best["tok_s"] >= 10:
-        return (f"{label} at {best['tok_s']} tok/s — passes {score}/4 eval tests "
+        return (f"{label} at {best['tok_s']} tok/s{ttft_note} — passes {score}/4 eval tests "
                 f"({eval_str}). Solid baseline agent model.")
     if score >= 3:
         return (f"Passes {score}/4 eval tests but slow at {best['tok_s']} tok/s. "
                 f"Consider a smaller quantised model for better responsiveness.")
     return (f"{label} at {best['tok_s']} tok/s but only {score}/4 eval tests passed. "
             f"A general-purpose model (e.g. Qwen3-8B, Gemma3-9B) will work better.")
+
+
+def _fast_reason(r: dict) -> str:
+    """Short reason string for the fastest-acceptable recommendation."""
+    label, _ = _bench_score(r["tok_s"])
+    ttft_ms   = r.get("ttft_ms")
+    ttft_note = f", {ttft_ms}ms TTFT" if ttft_ms is not None else ""
+    score     = r.get("eval", {}).get("score", 0)
+    return (f"{label} at {r['tok_s']} tok/s{ttft_note} — {score}/4 evals. "
+            f"Best speed choice that passes the format and tool-call gates.")
 
 
 def _bench_score(tok_s: float) -> tuple[str, str]:
@@ -566,7 +616,8 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
 
             hint_task = asyncio.create_task(_model_hint())
 
-            async def _bench_run(pass_num: int) -> float:
+            async def _bench_run(pass_num: int, prompt: str) -> tuple[float, bool]:
+                """Return (tok_s, approx) — approx=True when usage.completion_tokens unavailable."""
                 nonlocal ttft_s
                 t_start    = time.time()
                 tok_count  = 0
@@ -579,7 +630,7 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
                     headers={"Authorization": f"Bearer {api_key}"},
                     json={
                         "model": model_id,
-                        "messages": [{"role": "user", "content": _BENCH_PROMPT}],
+                        "messages": [{"role": "user", "content": prompt}],
                         "stream": True,
                         "max_tokens": 120,
                         "stream_options": {"include_usage": True},
@@ -612,43 +663,46 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
                         except Exception:
                             pass
 
-                end_t = time.time()
-                gen_s = (end_t - t_first) if t_first else (end_t - t_start)
+                end_t  = time.time()
+                gen_s  = (end_t - t_first) if t_first else (end_t - t_start)
                 if gen_s <= 0:
-                    return 0.0
+                    return 0.0, True
+                approx      = usage_toks is None
                 actual_toks = usage_toks or max(tok_count, round(char_count / 4))
-                return actual_toks / gen_s
+                return actual_toks / gen_s, approx
 
             try:
-                r1 = await _bench_run(1)
-                await send({"log": f"  Pass 1: {r1:.1f} tok/s"})
-                r2 = await _bench_run(2)
-                await send({"log": f"  Pass 2: {r2:.1f} tok/s"})
+                r1, approx1 = await _bench_run(1, _BENCH_PROMPT)
+                await send({"log": f"  Pass 1 (prose): {r1:.1f} tok/s"})
+                r2, approx2 = await _bench_run(2, _BENCH_PROMPT_STRUCT)
+                await send({"log": f"  Pass 2 (structured): {r2:.1f} tok/s"})
 
                 tok_s   = round((r1 + r2) / 2)
+                approx  = approx1 and approx2   # only flag if both passes used fallback
                 ttft_ms = round(ttft_s * 1000) if ttft_s is not None else None
-                await send({"log": f"  Avg: {tok_s} tok/s"})
+                approx_note = " (~approx)" if approx else ""
+                await send({"log": f"  Avg: {tok_s} tok/s{approx_note}"})
 
-                # ── 3-part eval ──────────────────────────────────────────────
-                await send({"log": "  Eval 1/3: instruction following…"})
+                # ── Capability evals ──────────────────────────────────────────
+                await send({"log": "  Eval 1/4: instruction following…"})
                 instruct_pass = False
                 try:
-                    itext, _, _, _ = await _stream_chat(http, endpoint, model_id, api_key, _INSTRUCT_PROMPT, max_tokens=40)
+                    itext, _, _, _ = await _stream_chat(http, endpoint, model_id, api_key, _INSTRUCT_PROMPT, max_tokens=60)
                     instruct_pass = all(c in itext for c in _INSTRUCT_CHECKS)
                 except Exception:
                     pass
                 await send({"log": f"    {'✓' if instruct_pass else '✗'} instruction following"})
 
-                await send({"log": "  Eval 2/3: reasoning…"})
+                await send({"log": "  Eval 2/4: reasoning (2-part)…"})
                 reason_pass = False
                 try:
-                    rtext, _, _, _ = await _stream_chat(http, endpoint, model_id, api_key, _REASON_PROMPT, max_tokens=20)
-                    reason_pass = _REASON_EXPECTED in rtext.strip()
+                    rtext, _, _, _ = await _stream_chat(http, endpoint, model_id, api_key, _REASON_PROMPT, max_tokens=30)
+                    reason_pass = all(c in rtext for c in _REASON_CHECKS)
                 except Exception:
                     pass
                 await send({"log": f"    {'✓' if reason_pass else '✗'} reasoning"})
 
-                await send({"log": "  Eval 3/4: format compliance…"})
+                await send({"log": "  Eval 3/4: strict JSON format…"})
                 format_pass = False
                 try:
                     ftext, _, _, _ = await _stream_chat(http, endpoint, model_id, api_key, _FORMAT_PROMPT, max_tokens=40)
@@ -657,7 +711,7 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
                     pass
                 await send({"log": f"    {'✓' if format_pass else '✗'} JSON format"})
 
-                await send({"log": "  Eval 4/4: tool-call selection…"})
+                await send({"log": "  Eval 4/4: tool selection (2 scenarios)…"})
                 tool_pass = False
                 try:
                     ttext, _, _, _ = await _stream_chat(http, endpoint, model_id, api_key, _TOOL_PROMPT, max_tokens=60)
@@ -667,18 +721,18 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
                 await send({"log": f"    {'✓' if tool_pass else '✗'} tool selection"})
 
                 tests_passed = sum([instruct_pass, reason_pass, format_pass, tool_pass])
-                quality_pass = tests_passed >= 3  # pass if ≥3/4 tests pass
-                await send({"log": f"  {'✓' if quality_pass else '⚠'} {tok_s} tok/s · {tests_passed}/4 eval tests passed"})
+                quality_pass = tests_passed >= 3
+                await send({"log": f"  {'✓' if quality_pass else '⚠'} {tok_s} tok/s{approx_note} · {tests_passed}/4 eval tests passed"})
                 result: dict = {
                     "model": model_id, "tok_s": tok_s, "quality_pass": quality_pass,
-                    "ttft_ms": ttft_ms, "eval": {
+                    "ttft_ms": ttft_ms, "approx": approx, "eval": {
                         "instruction": instruct_pass, "reasoning": reason_pass,
                         "format": format_pass, "tool_call": tool_pass, "score": tests_passed,
                     },
                 }
             except Exception as exc:
                 await send({"log": f"  ✗ Error: {str(exc)[:80]}"})
-                result = {"model": model_id, "tok_s": 0, "quality_pass": False, "ttft_ms": None, "error": str(exc)[:120]}
+                result = {"model": model_id, "tok_s": 0, "quality_pass": False, "ttft_ms": None, "approx": False, "error": str(exc)[:120]}
             finally:
                 hint_task.cancel()
                 try:
@@ -710,27 +764,46 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
         ])
 
     valid = [r for r in results if not r.get("error") and r.get("tok_s", 0) > 0]
-    best  = max(valid, key=_compare_score) if valid else None
+
+    # Mandatory gates: JSON format + tool-call selection are critical for agent use.
+    # Models that pass both are ranked first; if none pass, fall back to all valid models.
+    gated = [r for r in valid if r.get("eval", {}).get("format") and r.get("eval", {}).get("tool_call")]
+    pool  = gated if gated else valid
+    if gated:
+        await send({"log": f"{len(gated)}/{len(valid)} model(s) passed format+tool gates"})
+    elif valid:
+        await send({"log": "⚠ No model passed format+tool gates — ranking all valid models"})
+
+    # Best balanced: highest composite score
+    best = max(pool, key=_compare_score) if pool else None
+
+    # Fastest acceptable: highest tok/s from gated pool (only surface if different from best)
+    fast = max(pool, key=lambda r: r.get("tok_s", 0)) if pool else None
+    fast_rec    = fast["model"]    if fast and fast is not best else None
+    fast_reason = _fast_reason(fast) if fast and fast is not best else None
 
     if best:
         await send({"log": f"Recommendation: {best['model']}"})
+    if fast_rec:
+        await send({"log": f"Speed pick: {fast_rec}"})
 
     await send({
-        "done":           True,
-        "recommendation": best["model"] if best else None,
-        "reason":         _compare_reason(best) if best else "Could not benchmark any models.",
-        "results":        results,
+        "done":                True,
+        "recommendation":      best["model"] if best else None,
+        "reason":              _compare_reason(best) if best else "Could not benchmark any models.",
+        "fast_recommendation": fast_rec,
+        "fast_reason":         fast_reason,
+        "results":             results,
     })
     return response
 
 
 async def handle_setup_test(request: web.Request) -> web.Response:
-    """Stream benchmark results via SSE.
+    """SSE: stream one prompt live to verify the model is responding.
 
-    Phase 1: stream the first prompt response live (so the user sees output).
-    Phase 2: run 2 more silent benchmark prompts to measure tok/s.
-    Phase 3: run quality check prompt, emit pass/fail.
-    Final:   emit score event with rating.
+    Step 2 (compare) already ran the full benchmark and evals.
+    This step is a connectivity confirmation only — one live completion
+    measuring TTFT and rough tok/s, no redundant re-benchmarking.
     """
     try:
         body = await request.json()
@@ -756,18 +829,17 @@ async def handle_setup_test(request: web.Request) -> web.Response:
 
     try:
         async with aiohttp.ClientSession() as session:
-            # ── Phase 1: stream first prompt live ──────────────────────────
             t0 = time.time()
             ttft_ms: int | None = None
+            t_first: float | None = None
             tok_count = 0
+            char_count = 0
+            usage_toks: int | None = None
 
-            # Background task: emit loading hint after 8s with no first token
             async def _loading_hint() -> None:
                 await asyncio.sleep(8.0)
                 await send({"status": "loading_model"})
-                await send({"log": "  Model loading into memory — this can take 30–60s on first use"})
 
-            await send({"log": f"Phase 1/3 — connecting to {endpoint.replace('/v1', '')}…"})
             hint_task = asyncio.create_task(_loading_hint())
             try:
                 async with session.post(
@@ -775,8 +847,10 @@ async def handle_setup_test(request: web.Request) -> web.Response:
                     headers={"Authorization": f"Bearer {api_key}"},
                     json={
                         "model": model,
-                        "messages": [{"role": "user", "content": _BENCH_PROMPTS[0]}],
-                        "stream": True, "max_tokens": 80,
+                        "messages": [{"role": "user", "content": _BENCH_PROMPT}],
+                        "stream": True,
+                        "max_tokens": 80,
+                        "stream_options": {"include_usage": True},
                     },
                     timeout=aiohttp.ClientTimeout(total=120),
                 ) as r:
@@ -789,69 +863,37 @@ async def handle_setup_test(request: web.Request) -> web.Response:
                         line = raw.decode().strip()
                         if not line.startswith("data: "):
                             continue
-                        data = line[6:]
-                        if data == "[DONE]":
+                        chunk_data = line[6:]
+                        if chunk_data == "[DONE]":
                             break
                         try:
-                            chunk = json.loads(data)
+                            chunk = json.loads(chunk_data)
+                            if chunk.get("usage", {}).get("completion_tokens"):
+                                usage_toks = chunk["usage"]["completion_tokens"]
                             delta = chunk["choices"][0]["delta"].get("content", "")
                             if delta:
                                 if ttft_ms is None:
                                     ttft_ms = round((time.time() - t0) * 1000)
-                                    hint_task.cancel()  # got first token — no longer need hint
-                                    await send({"log": f"  First token: {ttft_ms}ms TTFT \u2713"})
+                                    t_first = time.time()
+                                    hint_task.cancel()
                                 tok_count += 1
+                                char_count += len(delta)
                                 await send({"token": delta})
                         except Exception:
                             pass
             finally:
                 hint_task.cancel()
-            run1_s = time.time() - t0
-            await send({"log": f"  Phase 1 done \u2014 {tok_count} tokens \u00b7 {run1_s:.1f}s"})
 
-            # ── Phase 2: two more silent runs for throughput ────────────────
-            await send({"status": "benchmarking"})
-            await send({"log": "Phase 2/3 \u2014 measuring throughput\u2026"})
-            run_times: list[float] = [run1_s]
-            run_toks:  list[int]   = [tok_count]
-            for i, prompt in enumerate(_BENCH_PROMPTS[1:], start=2):
-                await send({"log": f"  Run {i}/{len(_BENCH_PROMPTS)}\u2026"})
-                try:
-                    _, _, t, n = await _stream_chat(session, endpoint, model, api_key, prompt)
-                    run_times.append(t)
-                    run_toks.append(n)
-                    await send({"log": f"  Run {i} done: {n} tokens \u00b7 {t:.1f}s"})
-                except Exception as exc:
-                    await send({"log": f"  Run {i} failed: {str(exc)[:60]}"})
-
-            total_toks = sum(run_toks)
-            total_s    = sum(run_times)
-            avg_tok_s  = round(total_toks / total_s) if total_s > 0 else 0
-            avg_ms     = round(total_s / len(run_times) * 1000)
-
-            # ── Phase 3: quality sanity check ──────────────────────────────
-            await send({"log": "Phase 3/3 \u2014 quality check\u2026"})
-            quality_pass = False
-            try:
-                qtext, _, _, _ = await _stream_chat(
-                    session, endpoint, model, api_key, _QUALITY_PROMPT, max_tokens=10
-                )
-                quality_pass = _QUALITY_EXPECTED in qtext.strip()
-                await send({"log": "  \u2713 Reasoning ok" if quality_pass else "  \u26a0 Reasoning check failed"})
-            except Exception as exc:
-                await send({"log": f"  Quality check error: {str(exc)[:60]}"})
-
-            label, colour = _bench_score(avg_tok_s)
-            await send({"log": f"Result: {avg_tok_s} tok/s \u00b7 {label}"})
+            gen_s = (time.time() - t_first) if t_first else max(time.time() - t0, 0.1)
+            actual_toks = usage_toks or max(tok_count, round(char_count / 4))
+            tok_s = round(actual_toks / gen_s)
+            label, colour = _bench_score(tok_s)
             await send({
                 "done": True,
-                "latency": avg_ms,
                 "ttft": ttft_ms,
-                "tok_s": avg_tok_s,
+                "tok_s": tok_s,
                 "score_label": label,
                 "score_colour": colour,
-                "quality_pass": quality_pass,
-                "runs": len(run_times),
             })
 
     except asyncio.TimeoutError:

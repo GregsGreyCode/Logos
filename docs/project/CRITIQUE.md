@@ -314,7 +314,37 @@ There is no `NetworkPolicy` manifest in `k8s/`. All Hermes pods can reach all ot
 
 ---
 
-## 13. Future Ideas / Deferred Work
+## 13. Benchmark Methodology Critique (v0.3.13)
+
+> External review of the setup wizard's local model selection pipeline.
+
+### What works
+
+The design is more thoughtful than naive "pick the biggest" or "pick the fastest" approaches. Candidate pre-selection, multi-pass throughput measurement, TTFT tracking, and a 4-part capability eval suite are all defensible choices for a local inference context.
+
+### Implemented improvements (v0.3.13)
+
+- **Smart candidate bucketing** — replaced 7–13B priority sort with cross-bucket sampling (small/mid/large/unknown), so a good 4B or well-quantised 14B isn't suppressed
+- **Two benchmark prompt types** — prose pass + structured JSON pass, averaged; captures models that slow down under formatting constraints
+- **Stronger eval tests** — 4-step instruction test, 2-part arithmetic, strict JSON parsing (no regex fallback), two-scenario tool selection (search_web vs run_code, both must be correct)
+- **Mandatory gates** — models that fail both format and tool-call are ranked in a separate pool; only surface ungated models if no gated model is available
+- **Scoring weights updated** — eval 60%, throughput 20%, TTFT 15%, size 5% (eval is now dominant as it should be)
+- **Two recommendations** — "best balanced" (highest composite score) + "fastest acceptable" (highest tok/s in the gated pool), shown separately in the UI
+- **TTFT in scoring** — a 40 tok/s model with 4s TTFT scores lower than 28 tok/s with 0.5s TTFT, reflecting real interactive UX
+
+### Remaining gaps (deferred)
+
+**Multiple prompts per capability.** Currently each of the 4 evals uses one prompt. A single question is easy to pass by luck or pattern-match. A robust evaluation would run 2–3 prompts per capability and require a pass rate (e.g. ≥ 0.67) rather than a single binary outcome. This applies especially to structured JSON (currently 1 prompt) and tool selection (currently a two-scenario single call, not independently scored).
+
+**Token fallback is still approximate.** `max(SSE_chunk_count, char_count ÷ 4)` varies significantly by model, language, and output format. No server-reported count from non-streaming completion is attempted. The result is flagged as "(~approx)" in the debug log but is not explicitly downweighted in scoring.
+
+**Warmup request not separated.** Pass 1 includes TTFT from cold-start (potentially long for LM Studio). Throughput is measured from first token, so TTFT is excluded from tok/s — but a separate explicit warmup round would give cleaner data for models with very long cold-start times.
+
+**Three-tier recommendation.** The current "balanced + fastest" split is useful but a third tier — "quality mode: strongest passing model regardless of speed" — would complete the picture for users with slower hardware who prioritise capability over responsiveness.
+
+---
+
+## 14. Future Ideas / Deferred Work
 
 **Setup wizard model catalog is hardcoded and will age badly.**
 The onboarding wizard's curated model list (`ollamaModelCatalog` in `gateway/http_api.py`) is a static array — qwen3:9b, llama3.1:8b, llama3.2:3b, etc. This will drift from reality as new models release. The right long-term fix is a versioned catalog file (YAML or JSON) served from a CDN or fetched from a community-maintained registry at wizard load time, with the hardcoded list as a fallback. Ollama's own library API (`https://ollama.com/api/library`) and Open WebUI's model catalog are potential upstream sources. Until then, every new model generation requires a code change and redeploy to surface recommendations to users.
