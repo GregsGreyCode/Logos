@@ -5386,7 +5386,7 @@ _LOGIN_HTML = """<!DOCTYPE html>
       width: 2400px; height: 2400px;
       border-radius: 50%;
       filter: blur(280px);
-      opacity: 0.065;
+      opacity: 0.033;
       animation: ambient-color 60s linear infinite;
       pointer-events: none;
       z-index: 0;
@@ -5409,7 +5409,7 @@ _LOGIN_HTML = """<!DOCTYPE html>
       inset: -280px;
       border-radius: 50%;
       filter: blur(160px);
-      opacity: 0.28;
+      opacity: 0.14;
       pointer-events: none;
       animation: halo-color 60s linear infinite;
     }
@@ -5428,7 +5428,12 @@ _LOGIN_HTML = """<!DOCTYPE html>
       transition: transform 4.8s cubic-bezier(0.34, 1.4, 0.64, 1);
     }
     .logo-wrap.logo-up  { transform: translateY(-24px); }
-    .logo-wrap.logo-top { transform: translateY(-42vh); }
+    .logo-wrap.logo-top { transform: translateY(-42vh) scale(0.667); }
+    /* Fast close when logging in */
+    .login-reveal.closing {
+      max-height: 0 !important; opacity: 0 !important;
+      transition: max-height 0.5s ease, opacity 0.35s ease !important;
+    }
     .logo-img { animation: logo-hue 60s linear infinite; }
 
     /* ── Splash → login reveal ─────────────────────────────────────────
@@ -5543,7 +5548,7 @@ _LOGIN_HTML = """<!DOCTYPE html>
     }
   </style>
 </head>
-<body @click="activate()" x-data="loginApp()" x-init="init()">
+<body @click="activate()" @mousemove.window.throttle.2000ms="resetInactivity()" @keydown.window="resetInactivity()" x-data="loginApp()" x-init="init()">
 
   <!-- Main content — flex-centred by body -->
   <div class="relative z-10 w-full px-5" style="max-width:400px;">
@@ -5558,7 +5563,7 @@ _LOGIN_HTML = """<!DOCTYPE html>
     </div>
 
     <!-- Reveal section — expands on activate(); static class prevents pre-Alpine flash -->
-    <div class="login-reveal" :class="{ open: phase === 'login' }">
+    <div class="login-reveal" :class="{ open: phase === 'login', closing: phase === 'loggedin' }">
 
       <!-- Card -->
       <div class="login-card px-7 py-7">
@@ -5638,10 +5643,12 @@ _LOGIN_HTML = """<!DOCTYPE html>
   <script>
   function loginApp() {
     return {
-      phase: 'splash',   // 'splash' | 'login'
+      phase: 'splash',   // 'splash' | 'login' | 'setup' | 'loggedin'
       showHint: false,
       identifier: '', password: '', error: '', loading: false, needsSetup: false,
       _hintTimer: null,
+      _inactivityTimer: null,
+      _setupRedirectTimer: null,
 
       init() {
         fetch('/auth/me', { credentials: 'same-origin' })
@@ -5655,15 +5662,32 @@ _LOGIN_HTML = """<!DOCTYPE html>
       },
 
       activate() {
-        if (this.phase !== 'splash') return;
+        if (this.phase !== 'splash') { this.resetInactivity(); return; }
         clearTimeout(this._hintTimer);
         this.showHint = false;
         if (this.needsSetup) {
           this.phase = 'setup';
-          setTimeout(() => { window.location.href = '/setup'; }, 4000);
-          return;
+          this._setupRedirectTimer = setTimeout(() => { window.location.href = '/setup'; }, 4000);
+        } else {
+          this.phase = 'login';
+          this._startInactivity();
         }
-        this.phase = 'login';
+      },
+
+      _startInactivity() {
+        clearTimeout(this._inactivityTimer);
+        this._inactivityTimer = setTimeout(() => this._revertSplash(), 30000);
+      },
+
+      resetInactivity() {
+        if (this.phase !== 'login') return;
+        this._startInactivity();
+      },
+
+      _revertSplash() {
+        this.phase = 'splash';
+        clearTimeout(this._hintTimer);
+        this._hintTimer = setTimeout(() => { if (this.phase === 'splash') this.showHint = true; }, 10000);
       },
 
       async submit() {
@@ -5677,6 +5701,18 @@ _LOGIN_HTML = """<!DOCTYPE html>
           });
           if (res.ok) {
             const d = await res.json().catch(() => ({}));
+            clearTimeout(this._inactivityTimer);
+            // Animate logo to top-left corner, close card, then navigate
+            this.phase = 'loggedin';
+            const logoEl = document.querySelector('.logo-wrap');
+            if (logoEl) {
+              const rect = logoEl.getBoundingClientRect();
+              const targetX = 44 - (rect.left + rect.width / 2);
+              const targetY = 44 - (rect.top + rect.height / 2);
+              logoEl.style.transition = 'transform 0.9s cubic-bezier(0.4,0,0.2,1)';
+              logoEl.style.transform = `translate(${targetX}px, ${targetY}px) scale(0.27)`;
+            }
+            await new Promise(r => setTimeout(r, 900));
             window.location.href = d.setup_required ? '/setup' : '/';
           } else {
             const d = await res.json().catch(() => ({}));
@@ -5721,7 +5757,7 @@ _SETUP_HTML = """<!DOCTYPE html>
 
   <!-- Header -->
   <header class="flex flex-col items-center pt-10 pb-4 gap-5">
-    <div class="flex items-center justify-center">
+    <div class="flex items-center justify-center" style="margin-bottom:-20px;">
       <img src="/static/logo.svg" class="setup-logo" style="width:80px;height:80px;object-fit:contain;">
     </div>
     <!-- Step indicator — visible from step 1 onward -->
