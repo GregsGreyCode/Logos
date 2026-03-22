@@ -1518,6 +1518,10 @@ def mark_setup_completed() -> None:
     set_platform_feature_flag("setup_completed", True)
 
 
+def reset_setup_completed() -> None:
+    set_platform_feature_flag("setup_completed", False)
+
+
 def ensure_user_settings(user_id: str) -> None:
     """Insert a user_settings row if one doesn't exist yet."""
     with _conn() as conn:
