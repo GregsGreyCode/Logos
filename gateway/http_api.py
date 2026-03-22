@@ -5364,41 +5364,57 @@ _LOGIN_HTML = """<!DOCTYPE html>
       background-size: 28px 28px;
     }
 
-    /* ambient glow — full-viewport overlay so no hard edges at top/bottom */
+    /* ambient glow — large blurred orb, colour interpolates smoothly with logo */
+    @keyframes ambient-color {
+      0%   { background: #6366f1; }
+      17%  { background: #ef4444; }
+      33%  { background: #eab308; }
+      50%  { background: #22c55e; }
+      67%  { background: #0ea5e9; }
+      83%  { background: #a855f7; }
+      100% { background: #6366f1; }
+    }
     body::before {
       content: '';
       position: fixed;
-      inset: 0;
-      background: radial-gradient(ellipse at 50% 38%, rgba(99,102,241,0.14) 0%, rgba(99,102,241,0.05) 38%, transparent 62%);
+      top: 28%; left: 50%;
+      transform: translate(-50%, -50%);
+      width: 900px; height: 600px;
+      border-radius: 50%;
+      filter: blur(140px);
+      opacity: 0.12;
+      animation: ambient-color 60s linear infinite;
       pointer-events: none;
       z-index: 0;
     }
 
     [x-cloak] { display: none !important; }
 
-    /* logo halo — follows the same hue cycle as the logo */
-    @keyframes halo-hue {
-      0%   { background: radial-gradient(ellipse at center, rgba(99,102,241,0.20) 0%, transparent 68%); }
-      17%  { background: radial-gradient(ellipse at center, rgba(239,68,68,0.20)  0%, transparent 68%); }
-      33%  { background: radial-gradient(ellipse at center, rgba(234,179,8,0.18)  0%, transparent 68%); }
-      50%  { background: radial-gradient(ellipse at center, rgba(34,197,94,0.20)  0%, transparent 68%); }
-      67%  { background: radial-gradient(ellipse at center, rgba(14,165,233,0.20) 0%, transparent 68%); }
-      83%  { background: radial-gradient(ellipse at center, rgba(168,85,247,0.20) 0%, transparent 68%); }
-      100% { background: radial-gradient(ellipse at center, rgba(99,102,241,0.20) 0%, transparent 68%); }
+    /* logo halo — blurred solid colour, interpolates smoothly, in sync with logo and ambient */
+    @keyframes halo-color {
+      0%   { background: #6366f1; }
+      17%  { background: #ef4444; }
+      33%  { background: #eab308; }
+      50%  { background: #22c55e; }
+      67%  { background: #0ea5e9; }
+      83%  { background: #a855f7; }
+      100% { background: #6366f1; }
     }
     .logo-halo {
       position: absolute;
-      inset: -32px;
+      inset: -28px;
       border-radius: 50%;
+      filter: blur(24px);
+      opacity: 0.55;
       pointer-events: none;
-      animation: halo-hue 30s linear infinite;
+      animation: halo-color 60s linear infinite;
     }
-    /* logo gradient cycles through the colour spectrum — hue-rotate matches full 360° in 30s */
+    /* logo gradient — same 60s cycle via hue-rotate, perfectly in sync */
     @keyframes logo-hue {
       0%   { filter: hue-rotate(0deg); }
       100% { filter: hue-rotate(360deg); }
     }
-    .logo-img { animation: logo-hue 30s linear infinite; }
+    .logo-img { animation: logo-hue 60s linear infinite; }
 
     /* card */
     .login-card {
