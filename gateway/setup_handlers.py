@@ -281,10 +281,75 @@ _BENCH_PROMPTS = [
     "What is 17 multiplied by 6? Answer with just the number.",
     "Name the capital of France in one word.",
 ]
-_QUALITY_PROMPT   = "What is 2+2? Reply with only the number."
-_QUALITY_EXPECTED = "4"
-_COMPARE_PROMPT   = "List three key traits of a helpful AI assistant."
-_COMPARE_TIMEOUT  = aiohttp.ClientTimeout(total=90)   # per-model; handles cold-start
+# ── Benchmark prompts ────────────────────────────────────────────────────────
+# Speed: generates ~100 tokens of coherent prose — good throughput signal
+_BENCH_PROMPT = (
+    "Briefly explain three steps you would take to debug a program that crashes unexpectedly. "
+    "Be concise."
+)
+
+# Test 1 — Instruction following: multi-step, each step is checkable
+_INSTRUCT_PROMPT = (
+    "Follow these instructions exactly, in order:\n"
+    "1. Write the word ALPHA\n"
+    "2. Write the result of 15 + 27\n"
+    "3. Write the word BETA"
+)
+_INSTRUCT_CHECKS = ["ALPHA", "42", "BETA"]
+
+# Test 2 — Reasoning: requires a calculation step
+_REASON_PROMPT  = "A train travels 60 km in 45 minutes. What is its speed in km/h? Reply with only the number."
+_REASON_EXPECTED = "80"
+
+# Test 3 — Format compliance: critical for tool-calling / structured output
+_FORMAT_PROMPT = 'Reply with ONLY a valid JSON object, no other text: {"status": "ok", "value": 99}'
+
+# Test 4 — Tool-call readiness: simulate a basic agent tool selection
+_TOOL_PROMPT = (
+    'You have two tools: "search_web" (for looking up current information) and '
+    '"run_code" (for executing Python). '
+    'A user asks: "What is the current Bitcoin price?" '
+    'Reply with ONLY a JSON object: {"tool": "<tool_name>", "reason": "<one sentence>"}'
+)
+
+
+def _eval_tool_call(text: str) -> bool:
+    """Return True if response contains valid JSON selecting search_web."""
+    import re as _re
+    cleaned = _re.sub(r"```[a-z]*\n?", "", text).strip()
+    try:
+        obj = json.loads(cleaned)
+        return obj.get("tool") == "search_web"
+    except Exception:
+        m = _re.search(r'\{[^}]+\}', cleaned)
+        if m:
+            try:
+                return json.loads(m.group()).get("tool") == "search_web"
+            except Exception:
+                pass
+        return False
+
+_COMPARE_TIMEOUT  = aiohttp.ClientTimeout(total=120)   # per-model; handles cold-start
+
+
+def _eval_format(text: str) -> bool:
+    """Return True if the response contains parseable JSON with status=ok and value=99."""
+    import re as _re
+    # Strip markdown fences if present
+    cleaned = _re.sub(r"```[a-z]*\n?", "", text).strip()
+    try:
+        obj = json.loads(cleaned)
+        return obj.get("status") == "ok" and obj.get("value") == 99
+    except Exception:
+        # Try to find JSON object anywhere in the text
+        m = _re.search(r'\{[^}]+\}', cleaned)
+        if m:
+            try:
+                obj = json.loads(m.group())
+                return obj.get("status") == "ok" and obj.get("value") == 99
+            except Exception:
+                pass
+        return False
 
 
 def _parse_model_size_b(model_id: str) -> float:
@@ -311,24 +376,37 @@ def _pick_compare_candidates(model_ids: list[str], max_n: int = 4) -> list[str]:
 def _compare_score(r: dict) -> float:
     if r.get("error") or r.get("tok_s", 0) == 0:
         return -1.0
-    q      = 1.5 if r.get("quality_pass") else 1.0
-    speed  = min(r["tok_s"], 30) / 30            # normalise; cap at "Fast"
-    sz     = _parse_model_size_b(r["model"])
-    size_b = min(sz, 13) / 13 * 0.3 if sz > 0 else 0  # prefer bigger up to 13B
-    return q * (0.6 * speed + 0.4) + size_b
+    eval_score = r.get("eval", {}).get("score", 1 if r.get("quality_pass") else 0)
+    eval_frac  = eval_score / 4                  # 0.0 – 1.0
+    speed      = min(r["tok_s"], 40) / 40        # normalise; cap at 40 tok/s
+    sz         = _parse_model_size_b(r["model"])
+    size_b     = min(sz, 13) / 13 * 0.2 if sz > 0 else 0  # prefer bigger up to 13B
+    # Weights: eval quality 45%, speed 35%, model size 20%
+    return 0.45 * eval_frac + 0.35 * speed + size_b
 
 
 def _compare_reason(best: dict) -> str:
     label, _ = _bench_score(best["tok_s"])
-    q = best.get("quality_pass", False)
-    if q and best["tok_s"] >= 15:
-        return (f"{label} at {best['tok_s']} tok/s with reasoning confirmed — "
-                f"this is the best fit for your hardware.")
-    if q:
-        return (f"Slowest option tested, but reasoning confirmed. "
-                f"Consider a smaller quantised model for better speed.")
-    return (f"{label} at {best['tok_s']} tok/s but reasoning check failed. "
-            f"A general-purpose chat model (e.g. Qwen3-8B) will work better.")
+    ev        = best.get("eval", {})
+    score     = ev.get("score", 1 if best.get("quality_pass") else 0)
+    parts: list[str] = []
+    if ev.get("instruction"): parts.append("follows instructions")
+    if ev.get("reasoning"):   parts.append("reasons correctly")
+    if ev.get("format"):      parts.append("structured output")
+    if ev.get("tool_call"):   parts.append("tool selection")
+    eval_str  = ", ".join(parts) if parts else "limited capability confirmed"
+
+    if score == 4 and best["tok_s"] >= 15:
+        return (f"{label} at {best['tok_s']} tok/s — passes all 4 eval tests "
+                f"({eval_str}). Strong default agent model for your hardware.")
+    if score >= 3 and best["tok_s"] >= 10:
+        return (f"{label} at {best['tok_s']} tok/s — passes {score}/4 eval tests "
+                f"({eval_str}). Solid baseline agent model.")
+    if score >= 3:
+        return (f"Passes {score}/4 eval tests but slow at {best['tok_s']} tok/s. "
+                f"Consider a smaller quantised model for better responsiveness.")
+    return (f"{label} at {best['tok_s']} tok/s but only {score}/4 eval tests passed. "
+            f"A general-purpose model (e.g. Qwen3-8B, Gemma3-9B) will work better.")
 
 
 def _bench_score(tok_s: float) -> tuple[str, str]:
@@ -402,16 +480,29 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
     except Exception:
         return web.json_response({"error": "invalid_json"}, status=400)
 
-    endpoint    = (body.get("endpoint") or "").rstrip("/")
-    api_key     = body.get("api_key") or "ollama"
-    model_ids   = body.get("models") or []
-    server_type = body.get("server_type") or "unknown"
-    base_url    = re.sub(r"/v1/?$", "", endpoint)
+    fallback_endpoint = (body.get("endpoint") or "").rstrip("/")
+    fallback_key      = body.get("api_key") or "ollama"
+    fallback_type     = body.get("server_type") or "unknown"
+    raw_models        = body.get("models") or []
 
-    if not endpoint or not model_ids:
+    if not fallback_endpoint or not raw_models:
         return web.json_response({"error": "endpoint and models required"}, status=400)
 
-    candidates = _pick_compare_candidates(model_ids)
+    # Accept per-model specs [{id, endpoint, api_key, server_type}] or plain strings
+    model_specs: list[dict] = []
+    for m in raw_models:
+        if isinstance(m, str):
+            model_specs.append({"id": m, "endpoint": fallback_endpoint, "api_key": fallback_key, "server_type": fallback_type})
+        else:
+            model_specs.append({
+                "id":          m["id"],
+                "endpoint":    (m.get("endpoint") or fallback_endpoint).rstrip("/"),
+                "api_key":     m.get("api_key") or fallback_key,
+                "server_type": m.get("server_type") or fallback_type,
+            })
+
+    candidate_ids = _pick_compare_candidates([s["id"] for s in model_specs])
+    candidates    = [s for s in model_specs if s["id"] in candidate_ids]
 
     response = web.StreamResponse(headers={
         "Content-Type": "text/event-stream",
@@ -423,48 +514,75 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
     async def send(data: dict) -> None:
         await response.write(f"data: {json.dumps(data)}\n\n".encode())
 
-    await send({"targets": candidates})
-    await send({"log": f"Connected to {base_url} — testing {len(candidates)} model{'s' if len(candidates) != 1 else ''}"})
+    # Group candidates by server endpoint so we can test each server in parallel
+    from collections import defaultdict as _dd
+    server_groups: dict[str, list[dict]] = _dd(list)
+    for c in candidates:
+        server_groups[c["endpoint"]].append(c)
+
+    n_servers = len(server_groups)
+    await send({"targets": [c["id"] for c in candidates]})
+    await send({"log": (
+        f"Testing {len(candidates)} model{'s' if len(candidates) != 1 else ''} "
+        f"across {n_servers} server{'s' if n_servers != 1 else ''}"
+        + (" — running in parallel" if n_servers > 1 else "")
+    )})
 
     results: list[dict] = []
-    async with aiohttp.ClientSession() as session:
-        for model_id in candidates:
+    results_lock = asyncio.Lock()
+
+    async def _test_server_group(group: list[dict], http: aiohttp.ClientSession) -> None:
+        """Test all models for one server sequentially (protects that server's VRAM)."""
+        for spec in group:
+            model_id    = spec["id"]
+            endpoint    = spec["endpoint"]
+            api_key     = spec["api_key"]
+            server_type = spec["server_type"]
+            base_url    = re.sub(r"/v1/?$", "", endpoint)
+
             await send({"testing": model_id})
-            await send({"log": f"→ {model_id}"})
+            await send({"log": f"→ {model_id}  ({base_url})"})
 
             # LM Studio: try native load API before benchmarking (best-effort)
             if server_type == "lmstudio":
                 try:
-                    async with session.post(
+                    async with http.post(
                         f"{base_url}/api/v1/models/load",
-                        json={"identifier": model_id, "config": {"context_length": 4096}},
+                        json={"model": model_id, "context_length": 4096},
                         timeout=aiohttp.ClientTimeout(total=5),
                     ) as lr:
                         if lr.status == 200:
                             await send({"log": f"  Load request sent for {model_id}"})
                 except Exception:
-                    pass  # fall back to auto-load via chat completions
+                    pass
 
-            t0             = time.time()
-            tok_count      = 0
+            t0                   = time.time()
             ttft_s: float | None = None
 
-            # Background task: emit loading hint after 8s with no first token
-            async def _model_hint() -> None:
+            async def _model_hint(mid: str = model_id) -> None:
                 await asyncio.sleep(8.0)
-                await send({"loading_model": model_id})
-                await send({"log": f"  Loading {model_id} into memory…"})
+                await send({"loading_model": mid})
+                await send({"log": f"  Loading {mid} into memory…"})
 
             hint_task = asyncio.create_task(_model_hint())
-            try:
-                async with session.post(
+
+            async def _bench_run(pass_num: int) -> float:
+                nonlocal ttft_s
+                t_start    = time.time()
+                tok_count  = 0
+                char_count = 0
+                t_first: float | None  = None
+                usage_toks: int | None = None
+
+                async with http.post(
                     f"{endpoint}/chat/completions",
                     headers={"Authorization": f"Bearer {api_key}"},
                     json={
                         "model": model_id,
-                        "messages": [{"role": "user", "content": _COMPARE_PROMPT}],
+                        "messages": [{"role": "user", "content": _BENCH_PROMPT}],
                         "stream": True,
-                        "max_tokens": 30,
+                        "max_tokens": 120,
+                        "stream_options": {"include_usage": True},
                     },
                     timeout=_COMPARE_TIMEOUT,
                 ) as r:
@@ -479,40 +597,117 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
                             break
                         try:
                             chunk = json.loads(chunk_data)
-                            if chunk["choices"][0]["delta"].get("content"):
-                                if ttft_s is None:
-                                    ttft_s = time.time() - t0
-                                    hint_task.cancel()
-                                    await send({"log": f"  First token: {ttft_s:.1f}s TTFT"})
-                                tok_count += 1
+                            if chunk.get("usage", {}).get("completion_tokens"):
+                                usage_toks = chunk["usage"]["completion_tokens"]
+                            content = chunk["choices"][0]["delta"].get("content") or ""
+                            if content:
+                                if t_first is None:
+                                    t_first = time.time()
+                                    if pass_num == 1:
+                                        ttft_s = t_first - t0
+                                        hint_task.cancel()
+                                        await send({"log": f"  First token: {ttft_s:.1f}s TTFT"})
+                                tok_count  += 1
+                                char_count += len(content)
                         except Exception:
                             pass
 
-                total_s = time.time() - t0
-                tok_s   = round(tok_count / total_s) if total_s > 0 else 0
-                ttft_ms = round(ttft_s * 1000) if ttft_s is not None else None
+                end_t = time.time()
+                gen_s = (end_t - t_first) if t_first else (end_t - t_start)
+                if gen_s <= 0:
+                    return 0.0
+                actual_toks = usage_toks or max(tok_count, round(char_count / 4))
+                return actual_toks / gen_s
 
-                await send({"log": "  Quality check\u2026"})
-                quality_pass = False
+            try:
+                r1 = await _bench_run(1)
+                await send({"log": f"  Pass 1: {r1:.1f} tok/s"})
+                r2 = await _bench_run(2)
+                await send({"log": f"  Pass 2: {r2:.1f} tok/s"})
+
+                tok_s   = round((r1 + r2) / 2)
+                ttft_ms = round(ttft_s * 1000) if ttft_s is not None else None
+                await send({"log": f"  Avg: {tok_s} tok/s"})
+
+                # ── 3-part eval ──────────────────────────────────────────────
+                await send({"log": "  Eval 1/3: instruction following…"})
+                instruct_pass = False
                 try:
-                    qtext, _, _, _ = await _stream_chat(
-                        session, endpoint, model_id, api_key, _QUALITY_PROMPT, max_tokens=10
-                    )
-                    quality_pass = _QUALITY_EXPECTED in qtext.strip()
+                    itext, _, _, _ = await _stream_chat(http, endpoint, model_id, api_key, _INSTRUCT_PROMPT, max_tokens=40)
+                    instruct_pass = all(c in itext for c in _INSTRUCT_CHECKS)
                 except Exception:
                     pass
+                await send({"log": f"    {'✓' if instruct_pass else '✗'} instruction following"})
 
-                verdict = "\u2713" if quality_pass else "\u26a0"
-                await send({"log": f"  {verdict} {tok_s} tok/s \u2014 reasoning {'ok' if quality_pass else 'check'}"})
-                result: dict = {"model": model_id, "tok_s": tok_s, "quality_pass": quality_pass, "ttft_ms": ttft_ms}
+                await send({"log": "  Eval 2/3: reasoning…"})
+                reason_pass = False
+                try:
+                    rtext, _, _, _ = await _stream_chat(http, endpoint, model_id, api_key, _REASON_PROMPT, max_tokens=20)
+                    reason_pass = _REASON_EXPECTED in rtext.strip()
+                except Exception:
+                    pass
+                await send({"log": f"    {'✓' if reason_pass else '✗'} reasoning"})
+
+                await send({"log": "  Eval 3/4: format compliance…"})
+                format_pass = False
+                try:
+                    ftext, _, _, _ = await _stream_chat(http, endpoint, model_id, api_key, _FORMAT_PROMPT, max_tokens=40)
+                    format_pass = _eval_format(ftext)
+                except Exception:
+                    pass
+                await send({"log": f"    {'✓' if format_pass else '✗'} JSON format"})
+
+                await send({"log": "  Eval 4/4: tool-call selection…"})
+                tool_pass = False
+                try:
+                    ttext, _, _, _ = await _stream_chat(http, endpoint, model_id, api_key, _TOOL_PROMPT, max_tokens=60)
+                    tool_pass = _eval_tool_call(ttext)
+                except Exception:
+                    pass
+                await send({"log": f"    {'✓' if tool_pass else '✗'} tool selection"})
+
+                tests_passed = sum([instruct_pass, reason_pass, format_pass, tool_pass])
+                quality_pass = tests_passed >= 3  # pass if ≥3/4 tests pass
+                await send({"log": f"  {'✓' if quality_pass else '⚠'} {tok_s} tok/s · {tests_passed}/4 eval tests passed"})
+                result: dict = {
+                    "model": model_id, "tok_s": tok_s, "quality_pass": quality_pass,
+                    "ttft_ms": ttft_ms, "eval": {
+                        "instruction": instruct_pass, "reasoning": reason_pass,
+                        "format": format_pass, "tool_call": tool_pass, "score": tests_passed,
+                    },
+                }
             except Exception as exc:
-                await send({"log": f"  \u2715 Error: {str(exc)[:80]}"})
+                await send({"log": f"  ✗ Error: {str(exc)[:80]}"})
                 result = {"model": model_id, "tok_s": 0, "quality_pass": False, "ttft_ms": None, "error": str(exc)[:120]}
             finally:
                 hint_task.cancel()
+                try:
+                    if server_type == "lmstudio":
+                        ur = await http.post(
+                            f"{base_url}/api/v1/models/unload",
+                            json={"instance_id": model_id},
+                            timeout=aiohttp.ClientTimeout(total=5),
+                        )
+                        await send({"log": f"  Unloaded {model_id} (HTTP {ur.status})"})
+                    elif server_type == "ollama":
+                        ur = await http.post(
+                            f"{base_url}/api/generate",
+                            json={"model": model_id, "keep_alive": 0, "prompt": ""},
+                            timeout=aiohttp.ClientTimeout(total=5),
+                        )
+                        await send({"log": f"  Unloaded {model_id} (HTTP {ur.status})"})
+                except Exception as ue:
+                    await send({"log": f"  Unload skipped: {str(ue)[:60]}"})
 
-            results.append(result)
+            async with results_lock:
+                results.append(result)
             await send({"result": result})
+
+    async with aiohttp.ClientSession() as session:
+        await asyncio.gather(*[
+            _test_server_group(group, session)
+            for group in server_groups.values()
+        ])
 
     valid = [r for r in results if not r.get("error") and r.get("tok_s", 0) > 0]
     best  = max(valid, key=_compare_score) if valid else None

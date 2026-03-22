@@ -58,9 +58,15 @@ _INSTANCE_NAME = os.environ.get("HERMES_INSTANCE_NAME", "Hermes")
 _IS_CANARY = os.environ.get("HERMES_IS_CANARY", "").lower() in ("1", "true", "yes")
 
 try:
-    _APP_VERSION = importlib.metadata.version("hermes-agent")
-except importlib.metadata.PackageNotFoundError:
-    _APP_VERSION = "dev"
+    # Read directly from pyproject.toml — immune to stale installed metadata
+    import tomllib as _tomllib
+    with open(os.path.join(os.path.dirname(__file__), "..", "pyproject.toml"), "rb") as _f:
+        _APP_VERSION = _tomllib.load(_f)["project"]["version"]
+except Exception:
+    try:
+        _APP_VERSION = importlib.metadata.version("hermes-agent")
+    except importlib.metadata.PackageNotFoundError:
+        _APP_VERSION = "dev"
 _BUILD_SHA = os.environ.get("BUILD_SHA", "local")[:7]
 _VERSION_LABEL = f"v{_APP_VERSION} · {_BUILD_SHA}{' · canary' if _IS_CANARY else ''}"
 _HERMES_NAMESPACE = "hermes"
@@ -694,6 +700,11 @@ _ADMIN_HTML = """<!DOCTYPE html>
   }
   .chat-scroll{flex:1;overflow-y:auto;scroll-behavior:smooth;min-height:0}
   .sidebar-scroll{overflow-y:auto;flex:1}
+  .thin-scroll{overflow-y:auto;scrollbar-width:thin;scrollbar-color:var(--accent-muted) transparent}
+  .thin-scroll::-webkit-scrollbar{width:4px}
+  .thin-scroll::-webkit-scrollbar-track{background:transparent}
+  .thin-scroll::-webkit-scrollbar-thumb{background:var(--accent-muted);border-radius:9999px}
+  .thin-scroll::-webkit-scrollbar-thumb:hover{background:var(--accent)}
   .exec-scroll{overflow-y:auto;flex:1;min-height:0}
   .activity-scroll{overflow-y:auto;scrollbar-width:none;-ms-overflow-style:none}
   .activity-scroll::-webkit-scrollbar{display:none}
@@ -5928,7 +5939,7 @@ _SETUP_HTML = """<!DOCTYPE html>
       <!-- ── Step 1: Connect model server ───────────────────────────── -->
       <div x-show="step===1" x-cloak x-transition.opacity>
         <div class="mb-6">
-          <h2 class="text-xl font-bold mb-1">Connect your model server</h2>
+          <h2 class="text-xl font-bold mb-1">Connect your model server(s)</h2>
           <p class="text-gray-400 text-sm">Logos will check for Ollama and LM Studio automatically.</p>
         </div>
 
@@ -5942,6 +5953,9 @@ _SETUP_HTML = """<!DOCTYPE html>
 
         <!-- Results -->
         <div x-show="!autoScanning && autoScanDone" class="space-y-3">
+
+          <!-- Rename hint -->
+          <p x-show="foundServers.length > 0" class="text-xs text-gray-600 mb-2">Click a server name to rename it.</p>
 
           <!-- Found server cards -->
           <template x-for="s in foundServers" :key="s.endpoint">
@@ -5957,9 +5971,9 @@ _SETUP_HTML = """<!DOCTYPE html>
                 </button>
                 <div class="flex-1 min-w-0">
                   <div class="flex items-center gap-2 flex-wrap" x-data="{ editing: false, draft: '' }">
-                    <span x-show="!editing" @click="editing=true; draft=s.customName||(s.type==='lmstudio'?'LM Studio':'Ollama')"
+                    <span x-show="!editing" @click="editing=true; draft=s.customName||serverDefaultName(s)"
                       class="text-sm font-semibold text-white cursor-text hover:text-indigo-300 transition-colors"
-                      x-text="s.customName || (s.type==='lmstudio' ? 'LM Studio' : 'Ollama')"
+                      x-text="serverName(s)"
                       title="Click to rename"></span>
                     <input x-show="editing" x-model="draft" type="text"
                       @blur="s.customName=draft.trim()||''; editing=false"
@@ -6164,6 +6178,8 @@ _SETUP_HTML = """<!DOCTYPE html>
                   <span x-show="compareRecommended === mid && compareDone"
                     class="text-[9px] px-1.5 py-0.5 rounded-full bg-indigo-900 text-indigo-300 border border-indigo-700 font-semibold uppercase tracking-wider flex-shrink-0">Best</span>
                   <span class="font-mono text-xs text-gray-200 truncate" x-text="mid"></span>
+                  <span class="text-[10px] text-gray-600 flex-shrink-0 font-mono"
+                    x-text="modelServer(mid) ? serverName(modelServer(mid)) : ''"></span>
                 </div>
                 <div class="flex items-center gap-2 flex-shrink-0 ml-3 text-xs">
                   <!-- Queued -->
@@ -6214,20 +6230,30 @@ _SETUP_HTML = """<!DOCTYPE html>
             </div>
           </div>
 
-          <!-- Live event log -->
-          <div x-show="compareLog.length > 0"
-            class="mt-3 rounded-xl bg-black/60 border border-gray-800 px-3 py-2.5 font-mono text-[11px] leading-relaxed space-y-0.5 max-h-36 overflow-y-auto"
-            x-ref="compareLogEl">
-            <template x-for="(entry, idx) in compareLog" :key="idx">
-              <div :class="entry.startsWith('Recommendation') ? 'text-indigo-400' : entry.startsWith('→') ? 'text-gray-300' : 'text-gray-500'"
-                x-text="entry"></div>
-            </template>
-          </div>
-
           <!-- Recommendation blurb -->
           <div x-show="compareDone && compareRecommended"
-            class="mb-4 p-3 rounded-xl bg-indigo-950/40 border border-indigo-800 text-xs text-indigo-200 leading-relaxed"
+            class="mb-3 p-3 rounded-xl bg-indigo-950/40 border border-indigo-800 text-xs text-indigo-200 leading-relaxed"
             x-text="compareReason"></div>
+
+          <!-- Secondary models available for delegation -->
+          <div x-show="compareDone && secondaryModels().length > 0" class="mb-4">
+            <details class="group">
+              <summary class="text-xs text-gray-500 hover:text-gray-300 cursor-pointer list-none flex items-center gap-1.5 py-1">
+                <svg class="w-3 h-3 transition-transform group-open:rotate-90" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+                <span x-text="secondaryModels().length + ' more model' + (secondaryModels().length !== 1 ? 's' : '') + ' available for delegation'"></span>
+              </summary>
+              <div class="mt-2 space-y-1">
+                <template x-for="m in secondaryModels()" :key="m.id">
+                  <div class="flex items-center justify-between px-3 py-2 rounded-lg bg-gray-900 border border-gray-800 text-xs">
+                    <span class="font-mono text-gray-400 truncate" x-text="m.id"></span>
+                    <span class="text-gray-600 font-mono flex-shrink-0 ml-2"
+                      x-text="modelServer(m.id) ? serverName(modelServer(m.id)) : ''"></span>
+                  </div>
+                </template>
+                <p class="text-[11px] text-gray-600 px-1 pt-1">The agent can delegate heavier tasks to these models automatically.</p>
+              </div>
+            </details>
+          </div>
           <div x-show="compareDone && !compareRecommended"
             class="mb-4 p-3 rounded-xl bg-red-950/30 border border-red-900 text-xs text-red-400 space-y-1.5">
             <div class="font-medium">Could not benchmark any models.</div>
@@ -6259,8 +6285,26 @@ _SETUP_HTML = """<!DOCTYPE html>
           <div x-show="compareDone && selectedModel" x-transition.opacity>
             <button @click="goNext()"
               class="btn-primary w-full py-2.5 rounded-xl text-sm">
-              Test <span class="font-mono text-xs" x-text="selectedModel"></span> &rarr;
+              Confirm default model &rarr;
             </button>
+          </div>
+
+          <!-- Debug log — bottom of step so it expands into free space -->
+          <div x-show="compareLog.length > 0" class="mt-4">
+            <button @click="compareLogOpen = !compareLogOpen"
+              class="flex items-center gap-1.5 text-[11px] text-gray-600 hover:text-gray-400 transition-colors select-none">
+              <svg :class="compareLogOpen ? 'rotate-90' : ''" class="w-3 h-3 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+              <span x-text="compareLogOpen ? 'Hide debug log' : 'Show debug log (' + compareLog.length + ' lines)'"></span>
+            </button>
+            <div x-show="compareLogOpen"
+              class="thin-scroll mt-1.5 rounded-xl bg-black/60 border border-gray-800 px-3 py-2.5 font-mono text-[11px] leading-relaxed space-y-0.5"
+              style="max-height:12rem;overflow-y:auto"
+              x-ref="compareLogEl">
+              <template x-for="(entry, idx) in compareLog" :key="idx">
+                <div :class="entry.startsWith('Recommendation') ? 'text-indigo-400' : entry.startsWith('→') ? 'text-gray-300' : 'text-gray-500'"
+                  x-text="entry"></div>
+              </template>
+            </div>
           </div>
         </div>
       </div>
@@ -6268,7 +6312,7 @@ _SETUP_HTML = """<!DOCTYPE html>
       <!-- ── Step 3: Test it ─────────────────────────────────────────── -->
       <div x-show="step===3" x-cloak x-transition.opacity>
         <div class="mb-5">
-          <h2 class="text-xl font-bold mb-1">Let&rsquo;s test it
+          <h2 class="text-xl font-bold mb-1">Confirming your default model
             <span class="inline-flex ml-0.5 text-gray-600">
               <span style="animation:dot-fade 1.4s infinite;animation-delay:0s">.</span>
               <span style="animation:dot-fade 1.4s infinite;animation-delay:0.2s">.</span>
@@ -6289,7 +6333,7 @@ _SETUP_HTML = """<!DOCTYPE html>
 
         <!-- Live phase log -->
         <div x-show="testLog.length > 0"
-          class="mb-3 rounded-xl bg-black/60 border border-gray-800 px-3 py-2.5 font-mono text-[11px] leading-relaxed space-y-0.5 max-h-28 overflow-y-auto"
+          class="thin-scroll mb-3 rounded-xl bg-black/60 border border-gray-800 px-3 py-2.5 font-mono text-[11px] leading-relaxed space-y-0.5 max-h-28"
           x-ref="testLogEl">
           <template x-for="(entry, idx) in testLog" :key="idx">
             <div :class="entry.startsWith('Phase') ? 'text-gray-300 font-medium' :
@@ -6711,6 +6755,7 @@ function setup() {
 
     // Compare event log
     compareLog: [],
+    compareLogOpen: false,
 
     init() {
       const ua = navigator.userAgent;
@@ -6864,8 +6909,18 @@ function setup() {
           body: JSON.stringify({
             endpoint:    this.activeServer.endpoint,
             api_key:     this.activeServer._apiKey || 'ollama',
-            models:      models.map(m => m.id),
             server_type: this.activeServer.type || 'unknown',
+            models: models.map(m => {
+              const srv = this.selectedServers
+                ? this.selectedServers.find(s => s.endpoint === m._serverEndpoint)
+                : null;
+              return {
+                id:          m.id,
+                endpoint:    m._serverEndpoint || this.activeServer.endpoint,
+                api_key:     (srv && srv._apiKey) || m._apiKey || this.activeServer._apiKey || 'ollama',
+                server_type: m._serverType     || this.activeServer.type || 'unknown',
+              };
+            }),
           }),
         });
         if (!r.ok) {
@@ -7006,6 +7061,27 @@ function setup() {
 
     hasOllamaServer() {
       return this.selectedServers.some(s => s.type === 'ollama');
+    },
+
+    serverDefaultName(s) {
+      return s.type === 'lmstudio' ? 'LM Studio' : s.type === 'ollama' ? 'Ollama' : 'Server';
+    },
+
+    serverName(s) {
+      return s.customName || this.serverDefaultName(s);
+    },
+
+    // Find the server a model belongs to
+    modelServer(modelId) {
+      const m = this.getModels().find(m => m.id === modelId);
+      if (!m) return null;
+      return this.selectedServers.find(s => s.endpoint === m._serverEndpoint) || null;
+    },
+
+    // Models NOT in compareTargets — available for delegation
+    secondaryModels() {
+      const targets = new Set(this.compareTargets);
+      return this.getModels().filter(m => !targets.has(m.id));
     },
 
     formatSize(bytes) {
@@ -8429,11 +8505,11 @@ async def start_http_api(runner: Any, port: int = 8080) -> None:
     app.router.add_get("/api/setup/probe",    _sh.handle_setup_probe)
     app.router.add_get("/api/setup/scan",     _sh.handle_setup_scan)
     app.router.add_get("/api/setup/status",   _handle_setup_status)
-    app.router.add_post("/api/setup/pull",    require_csrf(_sh.handle_setup_pull))
-    app.router.add_post("/api/setup/compare", require_csrf(_sh.handle_setup_compare))
-    app.router.add_post("/api/setup/test-k8s", require_csrf(_sh.handle_setup_test_k8s))
-    app.router.add_post("/api/setup/test",    require_csrf(_sh.handle_setup_test))
-    app.router.add_post("/api/setup/complete", require_csrf(_sh.handle_setup_complete))
+    app.router.add_post("/api/setup/pull",    _sh.handle_setup_pull)
+    app.router.add_post("/api/setup/compare", _sh.handle_setup_compare)
+    app.router.add_post("/api/setup/test-k8s", _sh.handle_setup_test_k8s)
+    app.router.add_post("/api/setup/test",    _sh.handle_setup_test)
+    app.router.add_post("/api/setup/complete", _sh.handle_setup_complete)
     app.router.add_post("/api/setup/reset",
         require_csrf(require_permission("admin")(_handle_setup_reset)))
 

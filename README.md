@@ -224,6 +224,77 @@ From the dashboard, open **Runs**. Click on the run you just created. You'll see
 
 ---
 
+## Local model benchmarking
+
+When you connect a local inference server (Ollama or LM Studio), the setup wizard automatically benchmarks your available models to find the best one for driving the agent. This is the **"Scanning models"** step.
+
+### Candidate selection
+
+Up to 4 models are selected from those available on your server(s). The selection prioritises models in the **7–13B parameter range** — large enough to reason reliably, small enough to run at useful speeds on consumer hardware. Smaller and larger models are included if the pool is thin. Models with unrecognised naming conventions (parameter count unknown) are deprioritised.
+
+### Speed benchmark — tokens per second
+
+Each candidate is benchmarked twice on a fixed prose prompt:
+
+> *"Briefly explain three steps you would take to debug a program that crashes unexpectedly. Be concise."*
+
+The prompt targets ~80–120 output tokens — enough to get a stable throughput measurement without long runtimes.
+
+Token count is taken from `usage.completion_tokens` in the SSE stream (authoritative). If the server does not return usage data, the fallback is `max(SSE_chunk_count, char_count ÷ 4)`.
+
+Time-to-first-token (TTFT) is measured on pass 1 only (model may still be loading into VRAM). Throughput is measured from **first token to last token** on both passes and averaged, so cold-start latency does not inflate the tok/s figure. This means tok/s reflects the model's actual generation throughput at its operating parameter count and quantisation level.
+
+Speed thresholds:
+
+| Label | Tokens/sec | Notes |
+|-------|-----------|-------|
+| Fast | ≥ 30 | Comfortable for interactive use |
+| Good | ≥ 15 | Responsive for most tasks |
+| Usable | ≥ 6 | Acceptable; notable latency on long outputs |
+| Slow | < 6 | Likely too large for real-time agent use on this hardware |
+
+### Capability evals — 4 tests
+
+After the speed pass, four capability probes determine whether the model is fit for agentic use:
+
+| # | Test | Prompt | Pass condition |
+|---|------|--------|---------------|
+| 1 | **Instruction following** | Multi-step ordered instructions: write ALPHA, compute 15+27, write BETA | All three outputs present in response |
+| 2 | **Arithmetic reasoning** | "A train travels 60 km in 45 minutes. What is its speed in km/h? Reply with only the number." | Response contains "80" |
+| 3 | **Structured output** | "Reply with ONLY a valid JSON object: `{"status": "ok", "value": 99}`" | Parseable JSON with correct field values |
+| 4 | **Tool selection** | Two tools offered: `search_web` and `run_code`. User asks for current Bitcoin price. Reply with `{"tool": "<name>", "reason": "..."}` | JSON parsed, `tool == "search_web"` |
+
+A model passes the capability bar if it scores **≥ 3/4** tests.
+
+### Scoring formula
+
+Each model receives a composite score:
+
+```
+score = 0.45 × (eval_tests_passed / 4)
+      + 0.35 × min(tok_s, 40) / 40
+      + 0.20 × min(param_count_B, 13) / 13
+```
+
+- **Eval quality (45%)** — weighted most heavily; a fast but unreliable model produces poor agent outcomes.
+- **Speed (35%)** — capped at 40 tok/s for scoring; returns above that have diminishing value for interactive use.
+- **Model size (20%)** — within the sweet spot, a larger model is preferred; capped at 13B (beyond which speed typically drops below useful thresholds on consumer hardware).
+
+The highest-scoring model is recommended as the default.
+
+### VRAM management
+
+Between tests, each model is explicitly unloaded from GPU memory to prevent contention from affecting subsequent throughput measurements:
+
+- **LM Studio**: `POST /api/v1/models/unload` with `{"instance_id": model_id}`
+- **Ollama**: `POST /api/generate` with `{"model": model_id, "keep_alive": 0, "prompt": ""}`
+
+### Multi-server parallelism
+
+If you connect more than one inference server, each server's models are tested **in parallel with other servers** — but models on the *same* server are tested sequentially to prevent VRAM contention. Results are merged and scored together.
+
+---
+
 ## Customising your STAMP
 
 **Soul** — edit `~/.hermes/SOUL.md` at any time. Changes take effect on the next message; no restart needed. The soul is the fastest way to change how the agent behaves without touching config or code.

@@ -26,6 +26,10 @@ _PUBLIC_PATHS = frozenset({
     "/api/setup/status",
     "/api/setup/scan",
     "/api/setup/probe",
+    "/api/setup/pull",
+    "/api/setup/compare",
+    "/api/setup/test",
+    "/api/setup/complete",
     "/setup",
 })
 
