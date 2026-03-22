@@ -5534,9 +5534,6 @@ _LOGIN_HTML = """<!DOCTYPE html>
 
       <!-- Card -->
       <div class="login-card px-7 py-7">
-        <p class="text-center mb-5"
-           style="font-size:0.72rem;font-weight:600;letter-spacing:0.1em;text-transform:uppercase;color:rgba(148,163,184,0.5);"
-           x-text="needsSetup ? 'Get started' : 'Sign in'"></p>
         <form @submit.prevent="submit()" @click.stop class="space-y-5">
 
           <div class="float-wrap">
