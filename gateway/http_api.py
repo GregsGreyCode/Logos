@@ -5569,8 +5569,9 @@ _LOGIN_HTML = """<!DOCTYPE html>
         <img src="/static/logo.svg" alt="Logos" class="logo-img relative mx-auto"
              style="width:120px;height:120px;object-fit:contain;">
       </div>
-      <!-- Hint — shown beneath logo after 10s, only in splash phase -->
-      <div x-show="showHint && phase === 'splash'" x-cloak style="margin-top:1.5rem;">
+      <!-- Hint — space always reserved so the logo doesn't shift when it appears -->
+      <div style="margin-top:1.5rem;height:1.2rem;transition:opacity 0.6s ease;"
+           :style="(showHint && phase === 'splash') ? 'opacity:1' : 'opacity:0'">
         <p class="hint-text"
            style="font-size:0.78rem;color:rgba(148,163,184,0.5);letter-spacing:0.08em;">
           click anywhere to continue
