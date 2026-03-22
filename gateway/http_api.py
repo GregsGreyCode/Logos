@@ -6952,7 +6952,7 @@ function setup() {
         const saved = localStorage.getItem('logos_setup_progress_v2');
         if (saved) {
           const s = JSON.parse(saved);
-          if (s?.ts && Date.now() - s.ts < 24 * 60 * 60 * 1000) {
+          if (s?.ts && Date.now() - s.ts < 60 * 60 * 1000) {
             this.step           = s.step || 0;
             this.introConfirmed = s.introConfirmed ?? (this.step > 0);
             this.track          = s.track ?? null;
