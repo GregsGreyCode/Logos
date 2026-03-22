@@ -5667,7 +5667,11 @@ _LOGIN_HTML = """<!DOCTYPE html>
         this.showHint = false;
         if (this.needsSetup) {
           this.phase = 'setup';
-          this._setupRedirectTimer = setTimeout(() => { window.location.href = '/setup'; }, 4000);
+          this._setupRedirectTimer = setTimeout(() => {
+          document.body.style.transition = 'opacity 0.6s ease';
+          document.body.style.opacity = '0';
+          setTimeout(() => { window.location.href = '/setup'; }, 650);
+        }, 4000);
         } else {
           this.phase = 'login';
           this._startInactivity();
@@ -5746,7 +5750,8 @@ _SETUP_HTML = """<!DOCTYPE html>
   <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
   <style>
     [x-cloak]{display:none!important}
-    body{background-color:#010409;background-image:radial-gradient(rgba(99,102,241,0.06) 1px,transparent 1px);background-size:28px 28px;overflow-x:hidden}
+    @keyframes page-fadein{from{opacity:0}to{opacity:1}}
+    body{background-color:#010409;background-image:radial-gradient(rgba(99,102,241,0.06) 1px,transparent 1px);background-size:28px 28px;overflow-x:hidden;animation:page-fadein 0.8s ease both;}
     @keyframes dot-fade{0%,80%,100%{opacity:0}40%{opacity:1}}
     @keyframes logo-hue{from{filter:hue-rotate(0deg)}to{filter:hue-rotate(360deg)}}
     @keyframes ambient-color{
