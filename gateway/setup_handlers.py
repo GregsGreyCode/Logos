@@ -319,6 +319,22 @@ _TOOL_PROMPT = (
     'Reply with ONLY valid JSON: {"A": "<tool_name>", "B": "<tool_name>"}'
 )
 
+# Test 5 — Nested JSON schema: requires correct nesting, array, mixed types
+# Harder than flat JSON (test 3) — small models that pass flat JSON often fail nesting
+_NESTED_JSON_PROMPT = (
+    'Reply with ONLY valid JSON, no other text:\n'
+    '{"id": 7, "tags": ["agent", "llm"], "meta": {"active": true}}'
+)
+
+# Test 6 — Multi-step word problem: three chained multiplications
+# Tests chained arithmetic reasoning beyond the 2-step test 2
+_MULTIHOP_PROMPT = (
+    "Answer with a single number only:\n"
+    "A box has 5 layers. Each layer has 4 rows of oranges. Each row has 6 oranges. "
+    "How many oranges are in the box in total?"
+)
+_MULTIHOP_CHECK = "120"   # 5 × 4 × 6 = 120
+
 
 def _eval_tool_call(text: str) -> bool:
     """Return True if response is valid JSON routing A→search_web and B→run_code."""
@@ -328,6 +344,28 @@ def _eval_tool_call(text: str) -> bool:
         return obj.get("A") == "search_web" and obj.get("B") == "run_code"
     except Exception:
         return False
+
+
+def _eval_nested_json(text: str) -> bool:
+    """Return True if response is valid JSON with correct nested structure and values."""
+    cleaned = re.sub(r"```[a-z]*\n?", "", text).strip()
+    try:
+        obj = json.loads(cleaned)
+        return (
+            obj.get("id") == 7
+            and isinstance(obj.get("tags"), list)
+            and "agent" in obj["tags"]
+            and "llm" in obj["tags"]
+            and isinstance(obj.get("meta"), dict)
+            and obj["meta"].get("active") is True
+        )
+    except Exception:
+        return False
+
+
+def _eval_multihop(text: str) -> bool:
+    """Return True if the response contains the correct multi-step answer."""
+    return _MULTIHOP_CHECK in text
 
 _COMPARE_TIMEOUT  = aiohttp.ClientTimeout(total=120)   # per-model; handles cold-start
 
@@ -414,7 +452,7 @@ def _compare_score(r: dict) -> float:
     if r.get("error") or r.get("tok_s", 0) == 0:
         return -1.0
     eval_score = r.get("eval", {}).get("score", 1 if r.get("quality_pass") else 0)
-    eval_frac  = eval_score / 4                      # 0.0 – 1.0
+    eval_frac  = eval_score / 6                      # 0.0 – 1.0
     speed      = min(r["tok_s"], 40) / 40            # cap at 40 tok/s
     sz         = _parse_model_size_b(r["model"])
     size_b     = min(sz, 13) / 13 * 0.05 if sz > 0 else 0
@@ -437,16 +475,16 @@ def _compare_reason(best: dict) -> str:
     ttft_ms   = best.get("ttft_ms")
     ttft_note = f", {ttft_ms}ms TTFT" if ttft_ms is not None else ""
 
-    if score == 4 and best["tok_s"] >= 15:
-        return (f"{label} at {best['tok_s']} tok/s{ttft_note} — passes all 4 eval tests "
+    if score == 6 and best["tok_s"] >= 15:
+        return (f"{label} at {best['tok_s']} tok/s{ttft_note} — passes all 6 eval tests "
                 f"({eval_str}). Strong default agent model for your hardware.")
-    if score >= 3 and best["tok_s"] >= 10:
-        return (f"{label} at {best['tok_s']} tok/s{ttft_note} — passes {score}/4 eval tests "
+    if score >= 4 and best["tok_s"] >= 10:
+        return (f"{label} at {best['tok_s']} tok/s{ttft_note} — passes {score}/6 eval tests "
                 f"({eval_str}). Solid baseline agent model.")
-    if score >= 3:
-        return (f"Passes {score}/4 eval tests but slow at {best['tok_s']} tok/s. "
+    if score >= 4:
+        return (f"Passes {score}/6 eval tests but slow at {best['tok_s']} tok/s. "
                 f"Consider a smaller quantised model for better responsiveness.")
-    return (f"{label} at {best['tok_s']} tok/s but only {score}/4 eval tests passed. "
+    return (f"{label} at {best['tok_s']} tok/s but only {score}/6 eval tests passed. "
             f"A general-purpose model (e.g. Qwen3-8B, Gemma3-9B) will work better.")
 
 
@@ -456,7 +494,7 @@ def _fast_reason(r: dict) -> str:
     ttft_ms   = r.get("ttft_ms")
     ttft_note = f", {ttft_ms}ms TTFT" if ttft_ms is not None else ""
     score     = r.get("eval", {}).get("score", 0)
-    return (f"{label} at {r['tok_s']} tok/s{ttft_note} — {score}/4 evals. "
+    return (f"{label} at {r['tok_s']} tok/s{ttft_note} — {score}/6 evals. "
             f"Best speed choice that passes the format and tool-call gates.")
 
 
@@ -654,8 +692,12 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
 
             hint_task = asyncio.create_task(_model_hint())
 
-            async def _bench_run(pass_num: int, prompt: str) -> tuple[float, bool]:
-                """Return (tok_s, approx) — approx=True when usage.completion_tokens unavailable."""
+            async def _bench_run(pass_num: int, prompt: str, max_tokens: int = 120) -> tuple[float, bool]:
+                """Return (tok_s, approx) — approx=True when usage.completion_tokens unavailable.
+
+                pass_num == 0 is a warmup: loads the model into memory, result discarded.
+                TTFT is only captured on pass_num == 1 (first real pass, model already hot).
+                """
                 nonlocal ttft_s
                 t_start    = time.time()
                 tok_count  = 0
@@ -670,7 +712,7 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
                         "model": model_id,
                         "messages": [{"role": "user", "content": prompt}],
                         "stream": True,
-                        "max_tokens": 120,
+                        "max_tokens": max_tokens,
                         "stream_options": {"include_usage": True},
                     },
                     timeout=_COMPARE_TIMEOUT,
@@ -710,6 +752,19 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
                 return actual_toks / gen_s, approx
 
             try:
+                # ── Warmup pass — ensures model is fully loaded before timing ──
+                # Result is discarded; this prevents the cold-start penalty from
+                # skewing pass 1 (seen as ~33% of real throughput on first model).
+                await send({"log": "  Warmup (loading model into memory)…"})
+                try:
+                    await _bench_run(0, "Reply with one word.", max_tokens=10)
+                    hint_task.cancel()
+                    await send({"log": "  Model ready."})
+                except Exception as _we:
+                    await send({"log": f"  Warmup failed ({str(_we)[:80]}), continuing anyway…"})
+                # Reset t0 so TTFT on pass 1 is measured from a hot-model start
+                t0 = time.time()
+
                 # ── 3-pass speed benchmark, take median (discards outliers) ──
                 r1, approx1 = await _bench_run(1, _BENCH_PROMPT)
                 await send({"log": f"  Pass 1 (prose): {r1:.1f} tok/s"})
@@ -740,7 +795,7 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
                             await asyncio.sleep(0.5)   # brief pause before retry
                     return False
 
-                await send({"log": "  Eval 1/4: instruction following…"})
+                await send({"log": "  Eval 1/6: instruction following…"})
                 instruct_pass = await _eval_once(
                     _INSTRUCT_PROMPT,
                     lambda t: all(c in t for c in _INSTRUCT_CHECKS),
@@ -748,7 +803,7 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
                 )
                 await send({"log": f"    {'✓' if instruct_pass else '✗'} instruction following"})
 
-                await send({"log": "  Eval 2/4: reasoning (2-part)…"})
+                await send({"log": "  Eval 2/6: reasoning (2-part)…"})
                 reason_pass = await _eval_once(
                     _REASON_PROMPT,
                     lambda t: all(c in t for c in _REASON_CHECKS),
@@ -756,22 +811,32 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
                 )
                 await send({"log": f"    {'✓' if reason_pass else '✗'} reasoning"})
 
-                await send({"log": "  Eval 3/4: strict JSON format…"})
+                await send({"log": "  Eval 3/6: strict JSON format…"})
                 format_pass = await _eval_once(_FORMAT_PROMPT, _eval_format, 40)
                 await send({"log": f"    {'✓' if format_pass else '✗'} JSON format"})
 
-                await send({"log": "  Eval 4/4: tool selection (2 scenarios)…"})
+                await send({"log": "  Eval 4/6: tool selection (2 scenarios)…"})
                 tool_pass = await _eval_once(_TOOL_PROMPT, _eval_tool_call, 60)
                 await send({"log": f"    {'✓' if tool_pass else '✗'} tool selection"})
 
-                tests_passed = sum([instruct_pass, reason_pass, format_pass, tool_pass])
-                quality_pass = tests_passed >= 3
-                await send({"log": f"  {'✓' if quality_pass else '⚠'} {tok_s} tok/s{approx_note} · {tests_passed}/4 eval tests passed"})
+                await send({"log": "  Eval 5/6: nested JSON schema…"})
+                nested_json_pass = await _eval_once(_NESTED_JSON_PROMPT, _eval_nested_json, 60)
+                await send({"log": f"    {'✓' if nested_json_pass else '✗'} nested JSON"})
+
+                await send({"log": "  Eval 6/6: multi-step reasoning…"})
+                multihop_pass = await _eval_once(_MULTIHOP_PROMPT, _eval_multihop, 20)
+                await send({"log": f"    {'✓' if multihop_pass else '✗'} multi-step reasoning"})
+
+                tests_passed = sum([instruct_pass, reason_pass, format_pass, tool_pass, nested_json_pass, multihop_pass])
+                quality_pass = tests_passed >= 4
+                await send({"log": f"  {'✓' if quality_pass else '⚠'} {tok_s} tok/s{approx_note} · {tests_passed}/6 eval tests passed"})
                 result: dict = {
                     "model": model_id, "tok_s": tok_s, "quality_pass": quality_pass,
                     "ttft_ms": ttft_ms, "approx": approx, "eval": {
                         "instruction": instruct_pass, "reasoning": reason_pass,
-                        "format": format_pass, "tool_call": tool_pass, "score": tests_passed,
+                        "format": format_pass, "tool_call": tool_pass,
+                        "nested_json": nested_json_pass, "multihop": multihop_pass,
+                        "score": tests_passed,
                     },
                 }
             except Exception as exc:
@@ -1027,12 +1092,47 @@ async def handle_setup_complete(request: web.Request) -> web.Response:
             auth_db.set_platform_feature_flag("k8s_kubeconfig", kubeconfig)
         auth_db.mark_setup_completed()
 
+        # Update admin account credentials if the user customised them
+        setup_email    = (body.get("setup_email") or "").strip()
+        setup_username = (body.get("setup_username") or "").strip()
+        setup_password = (body.get("setup_password") or "").strip()
+        if setup_email or setup_username or setup_password:
+            from gateway.auth.password import hash_password as _hp
+            updates = {}
+            if setup_email:    updates["email"]         = setup_email
+            if setup_username: updates["username"]       = setup_username
+            if setup_password: updates["password_hash"]  = _hp(setup_password)
+            if updates:
+                auth_db.update_user(user_id, **updates)
+                logger.info("setup: updated admin credentials for %s", user_id)
+
         auth_db.write_audit_log(
             user_id, "setup_completed",
             metadata={"endpoint": endpoint, "model": model},
             ip_address=request.remote,
         )
         logger.info("setup completed: endpoint=%s model=%s by %s", endpoint, model, user_id)
+
+        # Warn if the model endpoint isn't reachable from this host
+        # (common when user selected localhost but runs Logos in k8s)
+        warning = None
+        try:
+            import aiohttp as _aio
+            async with _aio.ClientSession() as _s:
+                async with _s.get(
+                    endpoint.replace("/v1", "") + "/api/tags",
+                    timeout=_aio.ClientTimeout(total=3),
+                ) as _r:
+                    pass  # reachable
+        except Exception as _reach_err:
+            warning = (
+                f"Model server at {endpoint} is not reachable from this host "
+                f"({type(_reach_err).__name__}: {str(_reach_err)[:120]}). "
+                "If Logos runs in Kubernetes, use the node's LAN IP instead of localhost."
+            )
+
+        if warning:
+            return web.json_response({"ok": True, "warning": warning})
         return web.json_response({"ok": True})
     except Exception as exc:
         logger.exception("setup/complete failed: %s", exc)
