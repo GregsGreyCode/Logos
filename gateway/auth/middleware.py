@@ -24,6 +24,8 @@ _PUBLIC_PATHS = frozenset({
     "/auth/refresh",
     "/chat_logo.png",
     "/api/setup/status",
+    "/api/setup/scan",
+    "/api/setup/probe",
     "/setup",
 })
 
