@@ -1504,7 +1504,7 @@ _ADMIN_HTML = """<!DOCTYPE html>
 
       <!-- Header -->
       <div class="flex items-center justify-between mb-4">
-        <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Machines</div>
+        <div class="text-sm font-semibold text-white">Machines</div>
         <button @click="adminMachineForm={name:'',endpoint_url:'',description:''}; adminMachineFormOpen=!adminMachineFormOpen"
           class="text-xs px-3 py-1.5 rounded-lg bg-[var(--accent)] text-white hover:opacity-90 transition-opacity">+ Register</button>
       </div>
@@ -1696,7 +1696,7 @@ _ADMIN_HTML = """<!DOCTYPE html>
     <div x-show="can('manage_profiles')" class="mb-8">
       <div class="border-t border-gray-800 mb-6 pt-6">
         <div class="flex items-center justify-between mb-4">
-          <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Routing Profiles</div>
+          <div class="text-sm font-semibold text-white">Routing Profiles</div>
         <button @click="adminPolicyForm={name:'',description:'',fallback:'any_available'}; adminPolicyFormOpen=true"
           class="text-xs px-3 py-1.5 rounded-lg bg-[var(--accent)] text-white hover:opacity-90 transition-opacity">+ New Profile</button>
       </div>
@@ -1849,9 +1849,9 @@ _ADMIN_HTML = """<!DOCTYPE html>
     <!-- ── Model Map section (collapsible) ── -->
     <div class="mb-6 border-t border-gray-800 pt-6">
       <button @click="modelMapOpen=!modelMapOpen"
-        class="flex items-center gap-2 w-full text-left mb-4 group">
+        class="flex items-center justify-between w-full text-left mb-4 group">
+        <span class="text-sm font-semibold text-white group-hover:text-gray-200">Model Map</span>
         <span class="text-xs text-gray-600 transition-transform" :class="modelMapOpen ? 'rotate-90' : ''" style="display:inline-block">▶</span>
-        <span class="text-xs font-semibold text-gray-400 uppercase tracking-wider group-hover:text-gray-300">Model Map</span>
       </button>
     <div x-show="modelMapOpen" x-cloak>
       <!-- Explanatory header -->
@@ -1946,12 +1946,59 @@ _ADMIN_HTML = """<!DOCTYPE html>
     <!-- ── Benchmark section (collapsible) ── -->
     <div x-show="can('manage_machines')" class="mb-6 border-t border-gray-800 pt-6">
       <button @click="benchmarkOpen=!benchmarkOpen"
-        class="flex items-center gap-2 w-full text-left mb-4 group">
+        class="flex items-center justify-between w-full text-left mb-4 group">
+        <span class="text-sm font-semibold text-white group-hover:text-gray-200">Benchmark</span>
         <span class="text-xs text-gray-600 transition-transform" :class="benchmarkOpen ? 'rotate-90' : ''" style="display:inline-block">▶</span>
-        <span class="text-xs font-semibold text-gray-400 uppercase tracking-wider group-hover:text-gray-300">Benchmark</span>
-        <span class="text-xs text-gray-700">— measure tok/s and latency per provider</span>
       </button>
       <div x-show="benchmarkOpen" x-cloak>
+
+        <!-- Capability Benchmark — runs setup compare against all registered machines in parallel -->
+        <div class="bg-gray-900 border border-gray-800 rounded-xl p-4 mb-4">
+          <div class="flex items-center justify-between mb-3">
+            <div>
+              <div class="text-xs font-semibold text-gray-300 mb-0.5">Capability Benchmark</div>
+              <div class="text-xs text-gray-600">Runs capability evals (instruction, reasoning, JSON, tool call) against all registered machines in parallel.</div>
+            </div>
+            <button @click="runCapabilityBenchmark()" :disabled="capBenchRunning"
+              class="text-xs px-3 py-1.5 rounded border border-gray-700 text-gray-400 hover:text-white transition-colors disabled:opacity-40 shrink-0 ml-4">
+              <span x-show="!capBenchRunning">Run Capability Benchmark</span>
+              <span x-show="capBenchRunning" class="animate-pulse">Running…</span>
+            </button>
+          </div>
+          <!-- Per-machine progress bars -->
+          <template x-if="Object.keys(capBenchServers).length > 0">
+            <div class="mb-3 space-y-2">
+              <template x-for="(srv, ep) in capBenchServers" :key="ep">
+                <div class="flex items-center gap-2">
+                  <div class="text-xs text-gray-500 font-mono truncate flex-1" x-text="ep"></div>
+                  <div class="text-xs shrink-0"
+                    :class="srv.done ? (srv.error ? 'text-red-400' : 'text-green-400') : 'text-indigo-400 animate-pulse'"
+                    x-text="srv.done ? (srv.error ? 'error' : (srv.best ? srv.best + ' · ' + (srv.score ?? '?') + '/6' : 'done')) : (srv.testing ? srv.testing.split(':')[0].slice(-20) + '…' : 'queued')"></div>
+                </div>
+              </template>
+            </div>
+          </template>
+          <!-- Log stream -->
+          <div x-show="capBenchLog.length > 0">
+            <div class="flex items-center justify-between mb-1">
+              <button @click="capBenchLogOpen=!capBenchLogOpen"
+                class="flex items-center gap-1.5 text-[11px] text-gray-600 hover:text-gray-400 transition-colors select-none">
+                <svg :class="capBenchLogOpen ? 'rotate-90' : ''" class="w-3 h-3 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+                <span x-text="capBenchLogOpen ? 'Hide log' : 'Show log (' + capBenchLog.length + ' lines)'"></span>
+              </button>
+            </div>
+            <div x-show="capBenchLogOpen"
+              class="thin-scroll rounded-xl bg-black/60 border border-gray-800 px-3 py-2.5 font-mono text-[11px] leading-relaxed space-y-0.5"
+              style="max-height:14rem;overflow-y:auto"
+              x-ref="capBenchLogEl">
+              <template x-for="(entry, idx) in capBenchLog" :key="idx">
+                <div :class="entry.startsWith('      ') ? 'text-gray-600 pl-2' : entry.startsWith('Recommendation') ? 'text-indigo-400' : entry.startsWith('→') ? 'text-gray-300' : entry.includes('✓') ? 'text-green-500/80' : entry.includes('✗') ? 'text-red-500/70' : 'text-gray-500'"
+                  x-text="entry"></div>
+              </template>
+            </div>
+          </div>
+        </div>
+
         <!-- Models Live drift check -->
         <div class="bg-gray-900 border border-gray-800 rounded-xl p-4 mb-4">
           <div class="flex items-center justify-between mb-3">
@@ -2067,10 +2114,9 @@ _ADMIN_HTML = """<!DOCTYPE html>
     <!-- ── Debug section (collapsible) ── -->
     <div x-show="can('view_routing_debug')" class="mb-6 border-t border-gray-800 pt-6">
       <button @click="debugOpen=!debugOpen; if(debugOpen) loadAdminUsers()"
-        class="flex items-center gap-2 w-full text-left mb-4 group">
+        class="flex items-center justify-between w-full text-left mb-4 group">
+        <span class="text-sm font-semibold text-white group-hover:text-gray-200">Debug</span>
         <span class="text-xs text-gray-600 transition-transform" :class="debugOpen ? 'rotate-90' : ''" style="display:inline-block">▶</span>
-        <span class="text-xs font-semibold text-gray-400 uppercase tracking-wider group-hover:text-gray-300">Debug</span>
-        <span class="text-xs text-gray-700">— simulate route resolution</span>
       </button>
     <div x-show="debugOpen" x-cloak>
 
@@ -3782,6 +3828,11 @@ function app() {
     benchmarkRunning: false,
     benchmarkResult: null,
     benchmarkNPrompts: 3,
+    // capability benchmark (routing tab)
+    capBenchRunning: false,
+    capBenchLog: [],
+    capBenchLogOpen: false,
+    capBenchServers: {},   // ep → {done, error, testing, best, score}
     modelsLiveLoading: false,
     modelsLiveResult: null,
     // routing debug
@@ -4764,6 +4815,103 @@ function app() {
           body: JSON.stringify({ids}),
         });
       } catch(e) { console.error('reorder failed', e); }
+    },
+
+    async runCapabilityBenchmark() {
+      if (this.capBenchRunning) return;
+      const machines = (this.adminMachines || []).filter(m => m.endpoint_url);
+      if (!machines.length) { this.capBenchLog = ['No registered machines with endpoints found.']; return; }
+
+      this.capBenchRunning = true;
+      this.capBenchLog = [];
+      this.capBenchServers = {};
+      this.capBenchLogOpen = true;
+
+      // Probe each machine for models (in parallel)
+      const probeResults = await Promise.all(machines.map(async m => {
+        try {
+          const r = await fetch('/api/setup/probe?url=' + encodeURIComponent(m.endpoint_url), {credentials:'include'});
+          const d = await r.json();
+          const servers = d.servers || [];
+          const srv = servers[0] || {};
+          return { machine: m, endpoint: srv.endpoint || m.endpoint_url, type: srv.type || 'unknown', models: srv.models || [] };
+        } catch(e) {
+          return { machine: m, endpoint: m.endpoint_url, type: 'unknown', models: [] };
+        }
+      }));
+
+      // Initialise per-server status
+      probeResults.forEach(p => {
+        this.capBenchServers = {...this.capBenchServers, [p.endpoint]: {done: false, error: false, testing: null, best: null, score: null}};
+      });
+
+      const allModels = probeResults.flatMap(p =>
+        p.models.length ? p.models.map(mod => ({id: mod.id || mod.name, endpoint: p.endpoint, api_key: 'ollama', server_type: p.type}))
+        : [{id: '__probe__', endpoint: p.endpoint, api_key: 'ollama', server_type: p.type}]
+      ).filter(m => m.id !== '__probe__');
+
+      if (!allModels.length) {
+        this.capBenchLog = ['No models found on registered machines. Check that Ollama / LM Studio is running.'];
+        this.capBenchRunning = false;
+        return;
+      }
+
+      const fallback = probeResults[0];
+      try {
+        const r = await fetch('/api/setup/compare', {
+          method: 'POST', credentials: 'include',
+          headers: {'Content-Type':'application/json','X-CSRF-Token':getCsrfToken()},
+          body: JSON.stringify({endpoint: fallback.endpoint, api_key: 'ollama', server_type: fallback.type, models: allModels}),
+        });
+        if (!r.ok) { this.capBenchLog = ['Error starting benchmark: HTTP ' + r.status]; this.capBenchRunning = false; return; }
+        const reader = r.body.getReader();
+        const dec = new TextDecoder();
+        let buf = '';
+        while (true) {
+          const {done, value} = await reader.read();
+          if (done) break;
+          buf += dec.decode(value, {stream: true});
+          const lines = buf.split('\\n'); buf = lines.pop();
+          for (const line of lines) {
+            if (!line.startsWith('data: ')) continue;
+            try {
+              const ev = JSON.parse(line.slice(6));
+              if (ev.log) {
+                this.capBenchLog = [...this.capBenchLog, ev.log];
+                this.$nextTick(() => { const el = this.$refs.capBenchLogEl; if(el) el.scrollTop = el.scrollHeight; });
+              }
+              if (ev.testing) {
+                // Find which server this model belongs to
+                const spec = allModels.find(m => m.id === ev.testing);
+                if (spec) {
+                  const srv = {...(this.capBenchServers[spec.endpoint] || {}), testing: ev.testing};
+                  this.capBenchServers = {...this.capBenchServers, [spec.endpoint]: srv};
+                }
+              }
+              if (ev.result) {
+                const ep = ev.result.endpoint;
+                if (ep && this.capBenchServers[ep] !== undefined) {
+                  const existing = this.capBenchServers[ep] || {};
+                  const score = ev.result.eval?.score ?? 0;
+                  const best = existing.best == null || score > (existing._bestScore || 0)
+                    ? ev.result.model : existing.best;
+                  const bestScore = existing.best == null || score > (existing._bestScore || 0)
+                    ? score : (existing._bestScore || 0);
+                  this.capBenchServers = {...this.capBenchServers, [ep]: {...existing, testing: null, best, score: bestScore, _bestScore: bestScore}};
+                }
+              }
+              if (ev.done) {
+                Object.keys(this.capBenchServers).forEach(ep => {
+                  this.capBenchServers = {...this.capBenchServers, [ep]: {...this.capBenchServers[ep], done: true}};
+                });
+              }
+            } catch(_) {}
+          }
+        }
+      } catch(e) {
+        this.capBenchLog = [...this.capBenchLog, 'Error: ' + String(e)];
+      }
+      this.capBenchRunning = false;
     },
 
     async runBenchmark() {
@@ -5906,10 +6054,10 @@ _SETUP_HTML = """<!DOCTYPE html>
             </template>
           </div>
 
-          <!-- When complete -->
-          <div class="mx-7 mb-6 p-4 rounded-xl bg-gray-800/40 border border-gray-700/40">
-            <div class="text-xs text-gray-500 uppercase tracking-wider font-semibold mb-1.5">When complete</div>
-            <p class="text-sm text-gray-400 leading-relaxed">
+          <!-- When complete — same treatment as the header section above the grid -->
+          <div class="px-7 py-6 border-t border-gray-800/60">
+            <div class="text-base font-semibold text-white mb-1">When complete</div>
+            <p class="text-sm text-gray-500 leading-relaxed">
               You&rsquo;ll have a fully configured platform: inference routed to a benchmarked local model,
               an agent runtime and soul selected, and a secured admin account.
               The platform is ready for agent runs.
@@ -6195,9 +6343,9 @@ _SETUP_HTML = """<!DOCTYPE html>
 
           <!-- Header -->
           <div class="mb-5">
-            <h2 class="text-xl font-bold mb-1" x-text="compareDone ? 'Here\'s how your models performed' : 'Finding your best model\u2026'"></h2>
+            <h2 class="text-xl font-bold mb-1">Benchmark</h2>
             <p class="text-gray-400 text-sm" x-show="!compareDone">Testing available models on your hardware — this takes a moment.</p>
-            <p class="text-gray-400 text-sm" x-show="compareDone">We&rsquo;ve pre-selected the best fit. You can override below.</p>
+            <p class="text-gray-400 text-sm" x-show="compareDone">Here&rsquo;s how your models performed. We&rsquo;ve pre-selected the best fit. You can override below.</p>
           </div>
 
           <!-- Per-model progress rows -->
@@ -6426,7 +6574,7 @@ _SETUP_HTML = """<!DOCTYPE html>
                 <svg :class="compareLogOpen ? 'rotate-90' : ''" class="w-3 h-3 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
                 <span x-text="compareLogOpen ? 'Hide debug log' : 'Show debug log (' + compareLog.length + ' lines)'"></span>
               </button>
-              <button x-show="compareLogOpen" @click="navigator.clipboard.writeText(compareLog.join('\n')).then(() => { compareCopied = true; setTimeout(() => compareCopied = false, 1500) })"
+              <button x-show="compareLogOpen" @click="copyDebugLog()"
                 class="flex items-center gap-1 text-[11px] transition-colors select-none"
                 :class="compareCopied ? 'text-green-400' : 'text-gray-600 hover:text-gray-400'">
                 <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
@@ -6438,7 +6586,7 @@ _SETUP_HTML = """<!DOCTYPE html>
               style="max-height:16rem;overflow-y:auto"
               x-ref="compareLogEl">
               <template x-for="(entry, idx) in compareLog" :key="idx">
-                <div :class="entry.startsWith('Recommendation') ? 'text-indigo-400' : entry.startsWith('→') ? 'text-gray-300' : entry.includes('✓') ? 'text-green-500/80' : entry.includes('✗') ? 'text-red-500/70' : 'text-gray-500'"
+                <div :class="entry.startsWith('      ') ? 'text-gray-600 pl-2' : entry.startsWith('Recommendation') ? 'text-indigo-400' : entry.startsWith('→') ? 'text-gray-300' : entry.includes('✓') ? 'text-green-500/80' : entry.includes('✗') ? 'text-red-500/70' : 'text-gray-500'"
                   x-text="entry"></div>
               </template>
             </div>
@@ -6667,13 +6815,13 @@ _SETUP_HTML = """<!DOCTYPE html>
         <div class="space-y-3 mb-6">
           <div>
             <label class="block text-xs text-gray-500 mb-1.5">Email address</label>
-            <input x-model="setupEmail" type="email" placeholder="you@example.com" autocomplete="off"
+            <input x-model="setupEmail" type="email" placeholder="" autocomplete="off"
               class="w-full bg-gray-900 border border-gray-700 rounded-xl px-3 py-2.5 text-sm focus:border-indigo-500 focus:outline-none transition-colors"
               style="-webkit-box-shadow:0 0 0 1000px #111827 inset;-webkit-text-fill-color:#f3f4f6;color:#f3f4f6" />
           </div>
           <div>
             <label class="block text-xs text-gray-500 mb-1.5">Username</label>
-            <input x-model="setupUsername" type="text" placeholder="yourname" autocomplete="off"
+            <input x-model="setupUsername" type="text" placeholder="" autocomplete="off"
               class="w-full bg-gray-900 border border-gray-700 rounded-xl px-3 py-2.5 text-sm focus:border-indigo-500 focus:outline-none transition-colors"
               style="-webkit-box-shadow:0 0 0 1000px #111827 inset;-webkit-text-fill-color:#f3f4f6;color:#f3f4f6" />
           </div>
@@ -6942,6 +7090,24 @@ function setup() {
     compareLog: [],
     compareLogOpen: false,
     compareCopied: false,
+
+    copyDebugLog() {
+      const text = this.compareLog.join('\n');
+      if (navigator.clipboard && window.isSecureContext) {
+        navigator.clipboard.writeText(text).then(() => { this.compareCopied = true; setTimeout(() => this.compareCopied = false, 1500); });
+      } else {
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        ta.style.cssText = 'position:fixed;opacity:0;top:0;left:0';
+        document.body.appendChild(ta);
+        ta.focus();
+        ta.select();
+        try { document.execCommand('copy'); } catch (_) {}
+        document.body.removeChild(ta);
+        this.compareCopied = true;
+        setTimeout(() => this.compareCopied = false, 1500);
+      }
+    },
 
     init() {
       const ua = navigator.userAgent;
