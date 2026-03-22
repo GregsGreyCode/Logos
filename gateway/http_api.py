@@ -5493,6 +5493,7 @@ _LOGIN_HTML = """<!DOCTYPE html>
       border-radius: 12px;
       padding: 20px 16px 8px;
       color: #f1f5f9; font-size: 0.875rem; outline: none;
+      caret-color: rgba(165,180,252,0.6);
       transition: background 0.6s ease;
     }
     .float-input::placeholder { color: transparent; }
