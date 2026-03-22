@@ -82,7 +82,7 @@ spec:
 
       containers:
         - name: logos
-          image: ghcr.io/your-org/logos:canary
+          image: ghcr.io/gregsgreycode/logos:canary
           imagePullPolicy: Always
           ports:
             - name: http
