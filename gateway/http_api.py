@@ -5895,7 +5895,7 @@ _SETUP_HTML = """<!DOCTYPE html>
         <!-- Scanning -->
         <div x-show="autoScanning" class="flex flex-col items-center py-12 gap-4">
           <div class="w-8 h-8 border-2 border-gray-800 border-t-indigo-500 rounded-full animate-spin"></div>
-          <p class="text-sm text-gray-500">Checking for model servers&hellip;</p>
+          <p class="text-sm text-gray-500">Scanning local network for model servers&hellip;</p>
         </div>
 
         <!-- Results -->
@@ -6360,7 +6360,7 @@ function setup() {
       this.selectedServers = [];
       this.activeServer = null;
       try {
-        const r = await fetch('/api/setup/probe', { credentials: 'include' });
+        const r = await fetch('/api/setup/scan', { credentials: 'include' });
         const d = await r.json();
         // Add _apiKey field for auth_required inline entry
         this.foundServers = (d.servers || [])
