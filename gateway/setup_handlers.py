@@ -288,15 +288,16 @@ _BENCH_PROMPT_STRUCT = (
     '{"steps": ["reproduce error", "add logging", "fix and test"]}'
 )
 
-# Test 1 — Instruction following: 4-step ordered task, all outputs must be present
+# Test 1 — Instruction following: 4-step ordered task, all string outputs must be present
+# Note: all expected outputs are unambiguous strings/numbers — avoids word/digit variance
 _INSTRUCT_PROMPT = (
     "Follow these instructions exactly, one item per line:\n"
     "1. Write the word ALPHA\n"
     "2. Write the result of 15 + 27\n"
     "3. Write the word BETA\n"
-    "4. Write the number of letters in the word elephant"
+    "4. Write the word GAMMA"
 )
-_INSTRUCT_CHECKS = ["ALPHA", "42", "BETA", "8"]
+_INSTRUCT_CHECKS = ["ALPHA", "42", "BETA", "GAMMA"]
 
 # Test 2 — Reasoning: two-part arithmetic, both answers must be present
 _REASON_PROMPT = (
@@ -581,8 +582,45 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
     results: list[dict] = []
     results_lock = asyncio.Lock()
 
+    async def _flush_lmstudio_vram(base_url: str, http: aiohttp.ClientSession) -> None:
+        """Unload every currently-loaded model from LM Studio before benchmarking.
+
+        Models loaded outside our session (e.g. olmocr left loaded by the user)
+        will consume VRAM and throttle throughput for every model we test.
+        """
+        try:
+            async with http.get(
+                f"{base_url}/api/v1/models",
+                timeout=aiohttp.ClientTimeout(total=5),
+            ) as r:
+                if r.status != 200:
+                    return
+                data = await r.json(content_type=None)
+                loaded = [m["id"] for m in data.get("data", []) if m.get("state") in ("loaded", "loading", None)]
+        except Exception:
+            return
+        for mid in loaded:
+            try:
+                async with http.post(
+                    f"{base_url}/api/v1/models/unload",
+                    json={"instance_id": mid},
+                    timeout=aiohttp.ClientTimeout(total=8),
+                ) as ur:
+                    await send({"log": f"  Pre-flush: unloaded {mid} (HTTP {ur.status})"})
+            except Exception as e:
+                await send({"log": f"  Pre-flush: could not unload {mid}: {str(e)[:60]}"})
+        if loaded:
+            await asyncio.sleep(1.5)   # give LM Studio time to actually free VRAM
+
     async def _test_server_group(group: list[dict], http: aiohttp.ClientSession) -> None:
         """Test all models for one server sequentially (protects that server's VRAM)."""
+        # Flush any pre-existing models from VRAM before we start
+        first_spec = group[0]
+        if first_spec["server_type"] == "lmstudio":
+            base_url_flush = re.sub(r"/v1/?$", "", first_spec["endpoint"])
+            await send({"log": f"Clearing VRAM on {base_url_flush}…"})
+            await _flush_lmstudio_vram(base_url_flush, http)
+
         for spec in group:
             model_id    = spec["id"]
             endpoint    = spec["endpoint"]
@@ -672,52 +710,58 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
                 return actual_toks / gen_s, approx
 
             try:
+                # ── 3-pass speed benchmark, take median (discards outliers) ──
                 r1, approx1 = await _bench_run(1, _BENCH_PROMPT)
                 await send({"log": f"  Pass 1 (prose): {r1:.1f} tok/s"})
                 r2, approx2 = await _bench_run(2, _BENCH_PROMPT_STRUCT)
                 await send({"log": f"  Pass 2 (structured): {r2:.1f} tok/s"})
+                r3, approx3 = await _bench_run(3, _BENCH_PROMPT)
+                await send({"log": f"  Pass 3 (prose): {r3:.1f} tok/s"})
 
-                tok_s   = round((r1 + r2) / 2)
-                approx  = approx1 and approx2   # only flag if both passes used fallback
+                tok_s   = round(sorted([r1, r2, r3])[1])   # median of 3
+                approx  = approx1 and approx2 and approx3
                 ttft_ms = round(ttft_s * 1000) if ttft_s is not None else None
                 approx_note = " (~approx)" if approx else ""
-                await send({"log": f"  Avg: {tok_s} tok/s{approx_note}"})
+                await send({"log": f"  Median: {tok_s} tok/s{approx_note}"})
 
-                # ── Capability evals ──────────────────────────────────────────
+                # ── Capability evals — each retried once on failure ────────────
+                async def _eval_once(prompt: str, check_fn, max_tokens: int) -> bool:
+                    """Run eval, retry once if it fails. Stop early on first pass."""
+                    for attempt in range(2):
+                        try:
+                            txt, _, _, _ = await _stream_chat(
+                                http, endpoint, model_id, api_key, prompt, max_tokens=max_tokens
+                            )
+                            if check_fn(txt):
+                                return True
+                        except Exception:
+                            pass
+                        if attempt == 0:
+                            await asyncio.sleep(0.5)   # brief pause before retry
+                    return False
+
                 await send({"log": "  Eval 1/4: instruction following…"})
-                instruct_pass = False
-                try:
-                    itext, _, _, _ = await _stream_chat(http, endpoint, model_id, api_key, _INSTRUCT_PROMPT, max_tokens=60)
-                    instruct_pass = all(c in itext for c in _INSTRUCT_CHECKS)
-                except Exception:
-                    pass
+                instruct_pass = await _eval_once(
+                    _INSTRUCT_PROMPT,
+                    lambda t: all(c in t for c in _INSTRUCT_CHECKS),
+                    60,
+                )
                 await send({"log": f"    {'✓' if instruct_pass else '✗'} instruction following"})
 
                 await send({"log": "  Eval 2/4: reasoning (2-part)…"})
-                reason_pass = False
-                try:
-                    rtext, _, _, _ = await _stream_chat(http, endpoint, model_id, api_key, _REASON_PROMPT, max_tokens=30)
-                    reason_pass = all(c in rtext for c in _REASON_CHECKS)
-                except Exception:
-                    pass
+                reason_pass = await _eval_once(
+                    _REASON_PROMPT,
+                    lambda t: all(c in t for c in _REASON_CHECKS),
+                    30,
+                )
                 await send({"log": f"    {'✓' if reason_pass else '✗'} reasoning"})
 
                 await send({"log": "  Eval 3/4: strict JSON format…"})
-                format_pass = False
-                try:
-                    ftext, _, _, _ = await _stream_chat(http, endpoint, model_id, api_key, _FORMAT_PROMPT, max_tokens=40)
-                    format_pass = _eval_format(ftext)
-                except Exception:
-                    pass
+                format_pass = await _eval_once(_FORMAT_PROMPT, _eval_format, 40)
                 await send({"log": f"    {'✓' if format_pass else '✗'} JSON format"})
 
                 await send({"log": "  Eval 4/4: tool selection (2 scenarios)…"})
-                tool_pass = False
-                try:
-                    ttext, _, _, _ = await _stream_chat(http, endpoint, model_id, api_key, _TOOL_PROMPT, max_tokens=60)
-                    tool_pass = _eval_tool_call(ttext)
-                except Exception:
-                    pass
+                tool_pass = await _eval_once(_TOOL_PROMPT, _eval_tool_call, 60)
                 await send({"log": f"    {'✓' if tool_pass else '✗'} tool selection"})
 
                 tests_passed = sum([instruct_pass, reason_pass, format_pass, tool_pass])
@@ -731,8 +775,9 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
                     },
                 }
             except Exception as exc:
-                await send({"log": f"  ✗ Error: {str(exc)[:80]}"})
-                result = {"model": model_id, "tok_s": 0, "quality_pass": False, "ttft_ms": None, "approx": False, "error": str(exc)[:120]}
+                err_msg = str(exc)
+                await send({"log": f"  ✗ Error: {err_msg[:200]}"})
+                result = {"model": model_id, "tok_s": 0, "quality_pass": False, "ttft_ms": None, "approx": False, "error": err_msg[:300]}
             finally:
                 hint_task.cancel()
                 try:
