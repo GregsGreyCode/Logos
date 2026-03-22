@@ -5854,12 +5854,12 @@ _SETUP_HTML = """<!DOCTYPE html>
     </div>
     <!-- Step indicator — visible from step 1 onward -->
     <div x-show="step > 0" x-transition.opacity class="spinner-hue flex items-center gap-1">
-      <template x-for="i in [1,2,3,4,5,6,7,8]" :key="i">
+      <template x-for="i in [1,2,3,4,5,6,7]" :key="i">
         <div class="flex items-center gap-1">
           <div class="w-2 h-2 rounded-full transition-all duration-500"
                :class="step > i ? 'bg-indigo-400 cursor-pointer hover:scale-125' : step === i ? 'bg-indigo-500 scale-125' : 'bg-gray-700'"
                @click="goTo(i)" :title="step > i ? 'Go back to step ' + i : ''"></div>
-          <div x-show="i < 8" class="w-4 h-px transition-colors duration-500"
+          <div x-show="i < 7" class="w-4 h-px transition-colors duration-500"
                :class="step > i ? 'bg-indigo-600' : 'bg-gray-700'"></div>
         </div>
       </template>
@@ -5882,7 +5882,7 @@ _SETUP_HTML = """<!DOCTYPE html>
           <!-- Header text -->
           <div class="px-7 py-6 border-b border-gray-800/60">
             <div class="text-base font-semibold text-white mb-1">What setup configures</div>
-            <div class="text-sm text-gray-500 mb-4">Eight steps, from model discovery to launch.</div>
+            <div class="text-sm text-gray-500 mb-4">Seven steps, from model discovery to launch.</div>
             <p class="text-sm text-gray-500 leading-relaxed">
               Setup establishes how Logos routes inference, which models and runtimes are available, and what operating boundaries apply to agent runs.
               These choices define the platform&rsquo;s initial profile. Everything here can be adjusted from the dashboard after launch.
@@ -6444,96 +6444,8 @@ _SETUP_HTML = """<!DOCTYPE html>
         </div>
       </div>
 
-      <!-- ── Step 3: Confirm default model ────────────────────────────── -->
+      <!-- ── Step 3: Choose your agent runtime ─────────────────────── -->
       <div x-show="step===3" x-cloak x-transition.opacity.duration.300ms>
-        <div class="mb-5">
-          <h2 class="text-xl font-bold mb-1">Confirming your default model</h2>
-          <p class="text-gray-400 text-sm">Sending a quick message to verify the model is responding.</p>
-        </div>
-
-        <!-- Model + server info -->
-        <div class="flex items-center gap-2 mb-3 text-xs text-gray-600">
-          <span class="font-mono text-gray-500" x-text="selectedModel"></span>
-          <span>&middot;</span>
-          <span x-text="activeServer ? serverName(activeServer) : ''"></span>
-          <span>&middot;</span>
-          <span class="font-mono truncate max-w-[160px]" x-text="activeServer ? activeServer.endpoint.replace('/v1','') : ''"></span>
-        </div>
-
-        <!-- Step 2 benchmark results (if this model was already tested) -->
-        <template x-for="r in compareResults.filter(r => r.model === selectedModel)" :key="r.model">
-          <div class="mb-3 p-3 rounded-xl bg-gray-900 border border-gray-800 text-xs space-y-2">
-            <div class="flex items-center gap-3 flex-wrap">
-              <span class="font-semibold text-gray-300">Benchmark</span>
-              <span class="font-mono text-indigo-300" x-text="r.tok_s + ' tok/s'"></span>
-              <span x-show="r.ttft_ms" class="text-gray-600 font-mono" x-text="'TTFT ' + r.ttft_ms + 'ms'"></span>
-              <span class="font-semibold"
-                :class="(r.eval && r.eval.score >= 4) ? 'text-green-400' : 'text-yellow-400'"
-                x-text="r.eval ? r.eval.score + '/6 evals' : ''"></span>
-            </div>
-            <div x-show="r.eval" class="flex gap-3 flex-wrap text-[10px]">
-              <span :class="r.eval.instruction  ? 'text-green-400' : 'text-gray-700'">✓ instruction</span>
-              <span :class="r.eval.reasoning    ? 'text-green-400' : 'text-gray-700'">✓ reasoning</span>
-              <span :class="r.eval.format       ? 'text-green-400' : 'text-gray-700'">✓ format</span>
-              <span :class="r.eval.tool_call    ? 'text-green-400' : 'text-gray-700'">✓ tool-call</span>
-              <span :class="r.eval.nested_json  ? 'text-green-400' : 'text-gray-700'">✓ nested-json</span>
-              <span :class="r.eval.multihop     ? 'text-green-400' : 'text-gray-700'">✓ multi-step</span>
-            </div>
-          </div>
-        </template>
-
-        <!-- Live response box -->
-        <div class="p-4 rounded-xl bg-gray-900 border border-gray-800 mb-4 min-h-[100px] flex flex-col justify-between">
-          <div>
-            <!-- Waiting -->
-            <div x-show="testResponse === '' && !testError && !testLoadingModel && !testDone"
-              class="flex items-center gap-2 text-gray-600 text-sm">
-              <div class="flex gap-1">
-                <div class="w-1.5 h-1.5 rounded-full bg-gray-700 animate-bounce" style="animation-delay:0ms"></div>
-                <div class="w-1.5 h-1.5 rounded-full bg-gray-700 animate-bounce" style="animation-delay:150ms"></div>
-                <div class="w-1.5 h-1.5 rounded-full bg-gray-700 animate-bounce" style="animation-delay:300ms"></div>
-              </div>
-              <span>Waiting for first token&hellip;</span>
-            </div>
-            <!-- Loading model -->
-            <div x-show="testLoadingModel && testResponse === '' && !testError"
-              class="flex items-center gap-2 text-amber-400 text-sm">
-              <div class="spinner-hue"><div class="w-3 h-3 border border-amber-900 border-t-amber-400 rounded-full animate-spin"></div></div>
-              <span>Loading model into memory&hellip; this can take a minute on first use.</span>
-            </div>
-            <!-- Streaming response -->
-            <p x-show="testResponse !== ''" class="text-sm text-gray-100 leading-relaxed" x-text="testResponse"></p>
-            <!-- Error -->
-            <p x-show="testError" class="text-sm text-red-400" x-text="testError"></p>
-          </div>
-          <!-- Confirmation footer -->
-          <div x-show="testDone" class="pt-2 mt-2 border-t border-gray-800 flex items-center gap-3 text-xs">
-            <span class="text-green-400">✓ responding</span>
-            <span x-show="testTtft" class="text-gray-600 font-mono" x-text="'TTFT ' + testTtft + 'ms'"></span>
-            <span x-show="testTokS" class="text-gray-600 font-mono" x-text="testTokS + ' tok/s'"></span>
-          </div>
-        </div>
-
-        <!-- Step 2 recommendation reason -->
-        <template x-if="compareReason">
-          <p class="text-xs text-gray-500 mb-4 leading-relaxed" x-text="compareReason"></p>
-        </template>
-
-        <div x-show="testError" class="mb-3">
-          <button @click="runTest()"
-            class="w-full py-2 rounded-xl border border-gray-700 hover:border-gray-500 text-xs text-gray-400 transition-colors">
-            Try again
-          </button>
-        </div>
-
-        <button @click="goNext()" :disabled="!testDone"
-          class="btn-primary w-full py-2.5 rounded-xl text-sm font-semibold">
-          Confirm default model &rarr;
-        </button>
-      </div>
-
-      <!-- ── Step 4: Choose your agent runtime ─────────────────────── -->
-      <div x-show="step===4" x-cloak x-transition.opacity.duration.300ms>
         <div class="mb-5">
           <h2 class="text-xl font-bold mb-1">Choose your agent</h2>
           <p class="text-gray-400 text-sm">Select the agent runtime that will handle your conversations and tasks.</p>
@@ -6587,8 +6499,8 @@ _SETUP_HTML = """<!DOCTYPE html>
         </div>
       </div>
 
-      <!-- ── Step 5: Where to run agents ───────────────────────────── -->
-      <div x-show="step===5" x-cloak x-transition.opacity.duration.300ms>
+      <!-- ── Step 4: Where to run agents ───────────────────────────── -->
+      <div x-show="step===4" x-cloak x-transition.opacity.duration.300ms>
         <div class="mb-5">
           <h2 class="text-xl font-bold mb-1">Where to run agents</h2>
           <p class="text-gray-400 text-sm">Choose where agent tasks execute. This affects resource usage and isolation.</p>
@@ -6707,8 +6619,8 @@ _SETUP_HTML = """<!DOCTYPE html>
         </div>
       </div>
 
-      <!-- ── Step 6: Choose a soul ───────────────────────────────────── -->
-      <div x-show="step===6" x-cloak x-transition.opacity.duration.300ms>
+      <!-- ── Step 5: Choose a soul ───────────────────────────────────── -->
+      <div x-show="step===5" x-cloak x-transition.opacity.duration.300ms>
         <div class="mb-5">
           <h2 class="text-xl font-bold mb-1">Choose a soul</h2>
           <p class="text-gray-400 text-sm">A soul shapes how your agent thinks and communicates and is a starting point for its character. It works alongside the tools you enable &mdash; pick one that fits what you want for your first agent instance.</p>
@@ -6744,8 +6656,8 @@ _SETUP_HTML = """<!DOCTYPE html>
         </div>
       </div>
 
-      <!-- ── Step 7: Your account ────────────────────────────────────── -->
-      <div x-show="step===7" x-cloak x-transition.opacity.duration.300ms>
+      <!-- ── Step 6: Your account ────────────────────────────────────── -->
+      <div x-show="step===6" x-cloak x-transition.opacity.duration.300ms>
         <div class="mb-6">
           <h2 class="text-xl font-bold mb-1">Your account</h2>
           <p class="text-gray-400 text-sm">Set your login credentials. You'll use these to sign in to Logos going forward.</p>
@@ -6781,8 +6693,8 @@ _SETUP_HTML = """<!DOCTYPE html>
         </button>
       </div>
 
-      <!-- ── Step 8: Review & launch ─────────────────────────────────── -->
-      <div x-show="step===8" x-cloak x-transition.opacity.duration.300ms>
+      <!-- ── Step 7: Review & launch ─────────────────────────────────── -->
+      <div x-show="step===7" x-cloak x-transition.opacity.duration.300ms>
         <div class="text-center mb-8">
           <div class="w-16 h-16 rounded-2xl bg-green-950 border border-green-800 flex items-center justify-center mx-auto mb-5">
             <svg class="w-8 h-8 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -6873,12 +6785,11 @@ function setup() {
     setupSteps: [
       { n: 1, name: 'Connect model servers',  tag: 'detects',    desc: 'Logos scans your network for Ollama and LM Studio. Detected servers become inference endpoints. You can add servers manually or adjust later.' },
       { n: 2, name: 'Benchmark models',       tag: 'measures',   desc: 'Candidate models run 6 eval tests: instruction following, reasoning, JSON format, tool selection, nested JSON, and multi-step arithmetic. The best fit is pre-selected; you can override freely.' },
-      { n: 3, name: 'Verify model',           tag: 'validates',  desc: 'A live call confirms the selected model responds correctly to agent-style prompts. Measures TTFT and throughput before anything is committed.' },
-      { n: 4, name: 'Agent runtime',          tag: 'configures', desc: 'Choose which agent engine handles your sessions. Hermes is available now; additional runtimes plug in as they are released.' },
-      { n: 5, name: 'Execution target',       tag: 'configures', desc: 'Decide where agent processes run — on this machine or as Kubernetes Jobs. Affects resource isolation, scaling, and where logs appear.' },
-      { n: 6, name: 'Soul',                   tag: 'configures', desc: "A soul defines the agent's communication style and default behaviour. It is a starting point — editable at any time from the dashboard." },
-      { n: 7, name: 'Your account',           tag: 'secures',    desc: 'Set the email, username, and password for the admin account that protects the dashboard and API.' },
-      { n: 8, name: 'Review & launch',        tag: 'confirms',   desc: 'Review every setting, confirm the model endpoint is reachable, and launch the platform.' },
+      { n: 3, name: 'Agent runtime',          tag: 'configures', desc: 'Choose which agent engine handles your sessions. Hermes is available now; additional runtimes plug in as they are released.' },
+      { n: 4, name: 'Execution target',       tag: 'configures', desc: 'Decide where agent processes run — on this machine or as Kubernetes Jobs. Affects resource isolation, scaling, and where logs appear.' },
+      { n: 5, name: 'Soul',                   tag: 'configures', desc: "A soul defines the agent's communication style and default behaviour. It is a starting point — editable at any time from the dashboard." },
+      { n: 6, name: 'Your account',           tag: 'secures',    desc: 'Set the email, username, and password for the admin account that protects the dashboard and API.' },
+      { n: 7, name: 'Review & launch',        tag: 'confirms',   desc: 'Review every setting, confirm the model endpoint is reachable, and launch the platform.' },
     ],
 
     // Step 1
@@ -7040,8 +6951,7 @@ function setup() {
         if (saved) {
           const s = JSON.parse(saved);
           if (s?.ts && Date.now() - s.ts < 24 * 60 * 60 * 1000) {
-            // Restore the actual step; step 3 (async test) restarts from step 2.
-            this.step           = s.step === 3 ? 2 : (s.step || 0);
+            this.step           = s.step || 0;
             this.introConfirmed = s.introConfirmed ?? (this.step > 0);
             this.track          = s.track ?? null;
             if (s.foundServers?.length) {
@@ -7226,15 +7136,14 @@ function setup() {
 
     goNext() {
       if (this.step === 1) { this.step = 2; this._saveProgress(); this.$nextTick(() => { if (!this.compareDone) this.startCompare(); }); return; }
-      if (this.step === 2) { this.step = 3; this._saveProgress(); this.$nextTick(() => this.runTest()); return; }
+      if (this.step === 2) { this.step = 3; this._saveProgress(); return; }
       if (this.step === 3) { this.step = 4; this._saveProgress(); return; }
       if (this.step === 4) { this.step = 5; this._saveProgress(); return; }
       if (this.step === 5) { this.step = 6; this._saveProgress(); return; }
       if (this.step === 6) { this.step = 7; this._saveProgress(); return; }
-      if (this.step === 7) { this.step = 8; this._saveProgress(); return; }
     },
     goTo(i) {
-      if (i < this.step && i >= 1 && this.step <= 8) {
+      if (i < this.step && i >= 1 && this.step <= 7) {
         this.step = i;
         this._saveProgress();
         if (i === 2) this.$nextTick(() => { if (!this.compareDone) this.startCompare(); });
