@@ -1,0 +1,212 @@
+# Setup-test deployment — always starts with a wiped database so you can iterate
+# on the setup wizard without needing code changes or pod restarts.
+#
+# Workflow:
+#   kubectl apply -f 13-logos-setup-test-deployment.yaml -f 14-logos-setup-test-service.yaml
+#   Open http://<node-ip>:30904  — you'll land on /setup every time
+#
+# To re-run setup from scratch without restarting:
+#   kubectl rollout restart deployment/logos-setup-test -n logos
+#
+# HERMES_WIPE_ON_START=true: wipes setup_completed flag + machines + policies at startup.
+# emptyDir home: DB is also cleared on every pod restart regardless.
+#
+# Delete when no longer needed:
+#   kubectl delete -f 13-logos-setup-test-deployment.yaml -f 14-logos-setup-test-service.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: logos-setup-test
+  namespace: logos
+  labels:
+    app: logos-setup-test
+spec:
+  replicas: 1
+  revisionHistoryLimit: 1
+  selector:
+    matchLabels:
+      app: logos-setup-test
+  template:
+    metadata:
+      labels:
+        app: logos-setup-test
+        canary: "true"
+    spec:
+      serviceAccountName: logos
+
+      imagePullSecrets:
+        - name: ghcr-creds
+
+      tolerations:
+        - key: "node-role.kubernetes.io/control-plane"
+          operator: "Exists"
+          effect: "NoSchedule"
+
+      volumes:
+        # emptyDir — fresh DB on every pod restart
+        - name: logos-home
+          emptyDir: {}
+        - name: logos-config-seed
+          configMap:
+            name: logos-config-generic
+
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+        fsGroup: 10001
+
+      initContainers:
+        - name: seed-config
+          image: busybox:1.36
+          command:
+            - sh
+            - -c
+            - |
+              mkdir -p /logos-home/memories
+              cp /seed/config.yaml /logos-home/config.yaml
+              cp /seed/SOUL.md /logos-home/SOUL.md
+              echo "setup-test: config.yaml and SOUL.md seeded"
+          volumeMounts:
+            - name: logos-home
+              mountPath: /logos-home
+            - name: logos-config-seed
+              mountPath: /seed
+              readOnly: true
+          securityContext:
+            runAsUser: 10001
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+
+      containers:
+        - name: logos
+          image: ghcr.io/gregsgreycode/logos:canary
+          imagePullPolicy: Always
+          ports:
+            - name: http
+              containerPort: 8080
+
+          env:
+            - name: HOME
+              value: /home/hermes
+            - name: NODE_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.hostIP
+            # Wipe setup state at each startup so /setup always runs fresh
+            - name: HERMES_WIPE_ON_START
+              value: "true"
+            - name: HERMES_IS_CANARY
+              value: "true"
+            - name: HERMES_LOG_LEVEL
+              valueFrom:
+                configMapKeyRef:
+                  name: logos-config
+                  key: HERMES_LOG_LEVEL
+            - name: HERMES_PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: logos-config
+                  key: HERMES_PORT
+            - name: REQUEST_TIMEOUT_SECONDS
+              valueFrom:
+                configMapKeyRef:
+                  name: logos-config
+                  key: REQUEST_TIMEOUT_SECONDS
+            - name: OPENAI_BASE_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: logos-config
+                  key: OPENAI_BASE_URL
+            - name: HERMES_MODEL
+              valueFrom:
+                configMapKeyRef:
+                  name: logos-config
+                  key: HERMES_MODEL
+            - name: LLM_MODEL
+              valueFrom:
+                configMapKeyRef:
+                  name: logos-config
+                  key: LLM_MODEL
+            - name: OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: logos-secret
+                  key: OPENAI_API_KEY
+            - name: HERMES_INTERNAL_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: logos-secret
+                  key: HERMES_INTERNAL_TOKEN
+            - name: HERMES_JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: logos-secret
+                  key: HERMES_JWT_SECRET
+            - name: TELEGRAM_BOT_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: logos-canary-telegram
+                  key: TELEGRAM_BOT_TOKEN
+            - name: HERMES_ADMIN_EMAIL
+              valueFrom:
+                secretKeyRef:
+                  name: logos-canary-admin
+                  key: HERMES_ADMIN_EMAIL
+            - name: HERMES_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: logos-canary-admin
+                  key: HERMES_ADMIN_PASSWORD
+            - name: HERMES_ADMIN_NAME
+              valueFrom:
+                secretKeyRef:
+                  name: logos-canary-admin
+                  key: HERMES_ADMIN_NAME
+            - name: TELEGRAM_ALLOWED_USERS
+              value: "8754717106"
+            - name: TELEGRAM_HOME_CHANNEL
+              value: "-5152225827"
+            - name: TELEGRAM_HOME_CHANNEL_NAME
+              value: "Homelab Notifications"
+
+          volumeMounts:
+            - name: logos-home
+              mountPath: /home/hermes/.hermes
+
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "512Mi"
+            limits:
+              cpu: "2000m"
+              memory: "2Gi"
+
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
+
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 3
+
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            runAsUser: 10001
+            readOnlyRootFilesystem: false
+            capabilities:
+              drop:
+                - ALL
