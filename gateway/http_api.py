@@ -818,8 +818,7 @@ _ADMIN_HTML = """<!DOCTYPE html>
   @keyframes hermes-shimmer{0%,100%{filter:brightness(1)}50%{filter:brightness(1.12)}}
   .hermes-logo-idle{animation:hermes-shimmer 4s ease-in-out infinite}
 
-  @keyframes logo-hue{from{filter:hue-rotate(0deg)}to{filter:hue-rotate(360deg)}}
-  .inst-active{background:linear-gradient(135deg,#6366f1 0%,#a855f7 100%)!important;color:#fff!important;animation:logo-hue 60s linear infinite}
+  .inst-active{background:linear-gradient(135deg,#6366f1 0%,#a855f7 100%)!important;color:#fff!important;filter:hue-rotate(var(--hue-deg,0deg))}
 
   /* wake animation — breathe-pulse replaces bouncing balls */
   @keyframes logos-wake{0%,100%{transform:scale(0.55);opacity:0.2}45%{transform:scale(1.25);opacity:1}70%{transform:scale(0.9);opacity:0.7}}
@@ -3862,6 +3861,14 @@ function app() {
       );
     },
     async init() {
+      // Hue-cycle via rAF so all inst-active pills are always in sync
+      const _hueStart = performance.now() / 1000;
+      const _hueTick = ts => {
+        const deg = ((ts / 1000 - _hueStart) * 6 % 360).toFixed(1);
+        document.documentElement.style.setProperty('--hue-deg', deg + 'deg');
+        requestAnimationFrame(_hueTick);
+      };
+      requestAnimationFrame(_hueTick);
       // Apply saved theme immediately; watch for reactive changes
       document.documentElement.setAttribute('data-theme', this.theme);
       this.$watch('theme',      val => document.documentElement.setAttribute('data-theme', val));
@@ -5438,7 +5445,7 @@ _LOGIN_HTML = """<!DOCTYPE html>
       max-height: 0 !important; opacity: 0 !important;
       transition: max-height 0.5s ease, opacity 0.35s ease !important;
     }
-    .logo-img { animation: logo-hue 60s linear infinite; }
+    .logo-img { filter: hue-rotate(var(--hue-deg, 0deg)); }
 
     /* ── Splash → login reveal ─────────────────────────────────────────
        max-height reserves the space so the logo floats up naturally.
@@ -5513,7 +5520,7 @@ _LOGIN_HTML = """<!DOCTYPE html>
       background: linear-gradient(135deg, #6366f1 0%, #a855f7 100%);
       box-shadow: 0 1px 2px rgba(0,0,0,0.4), 0 0 0 1px rgba(99,102,241,0.3) inset;
       transition: opacity 150ms ease, box-shadow 150ms ease, transform 80ms ease;
-      animation: logo-hue 60s linear infinite;
+      filter: hue-rotate(var(--hue-deg, 0deg));
       cursor: pointer;
     }
     .btn-signin:hover:not(:disabled) {
@@ -5665,6 +5672,14 @@ _LOGIN_HTML = """<!DOCTYPE html>
           .then(d => { if (d && !d.completed) this.needsSetup = true; })
           .catch(() => {});
         this._hintTimer = setTimeout(() => { if (this.phase === 'splash') this.showHint = true; }, 10000);
+        // Drive hue for logo + button via rAF so they're always in sync
+        const pageStart = performance.now() / 1000;
+        const tick = ts => {
+          const deg = ((ts / 1000 - pageStart) * 6 % 360).toFixed(1);
+          document.documentElement.style.setProperty('--hue-deg', deg + 'deg');
+          requestAnimationFrame(tick);
+        };
+        requestAnimationFrame(tick);
       },
 
       activate() {
@@ -5798,7 +5813,7 @@ _SETUP_HTML = """<!DOCTYPE html>
       animation:ambient-color 60s linear var(--orb-delay, 0s) infinite;
       pointer-events:none;z-index:0;
     }
-    .setup-logo{animation:logo-hue 60s linear infinite}
+    .setup-logo{filter:hue-rotate(var(--hue-deg,0deg))}
     .setup-halo{
       position:absolute;inset:-280px;border-radius:50%;
       filter:blur(160px);opacity:0.14;pointer-events:none;
@@ -5809,26 +5824,35 @@ _SETUP_HTML = """<!DOCTYPE html>
       color:#fff;font-weight:500;cursor:pointer;
       box-shadow:0 1px 2px rgba(0,0,0,0.4),0 0 0 1px rgba(99,102,241,0.3) inset;
       transition:opacity 150ms ease,box-shadow 150ms ease;
-      animation:logo-hue 60s linear var(--orb-delay,0s) infinite;
+      filter:hue-rotate(var(--hue-deg,0deg));
     }
     .btn-primary:hover:not(:disabled){opacity:0.9;box-shadow:0 1px 2px rgba(0,0,0,0.5),0 0 20px rgba(168,85,247,0.2),0 0 0 1px rgba(168,85,247,0.35) inset;}
     .btn-primary:active:not(:disabled){opacity:0.95;transform:translateY(1px);}
-    .btn-primary:disabled{opacity:0.4;cursor:not-allowed;animation:none;background:#4f46e5;}
-    .spinner-hue{animation:logo-hue 60s linear var(--orb-delay,0s) infinite;}
+    .btn-primary:disabled{opacity:0.4;cursor:not-allowed;filter:none;background:#4f46e5;}
+    .spinner-hue{filter:hue-rotate(var(--hue-deg,0deg));}
+    .icon-hue{filter:hue-rotate(var(--hue-deg,0deg));}
     /* animation-delay set inline by JS to sync with login page cycle */
   </style>
   <script>
-    // Sync glow animations with the login page cycle via ?t=elapsed_seconds
+    // Drive all hue-synced elements from a single rAF loop via --hue-deg.
+    // This guarantees sync regardless of when elements appear in the DOM.
     (function(){
       const t = parseFloat(new URLSearchParams(location.search).get('t') || '0');
-      if (!t) return;
+      const pageStart = performance.now() / 1000;
+      // 6 deg/s → full 360° in 60s, matching logo-hue keyframe rate
+      function tick(ts) {
+        const elapsed = t + (ts / 1000 - pageStart);
+        const deg = ((elapsed * 6) % 360).toFixed(1);
+        document.documentElement.style.setProperty('--hue-deg', deg + 'deg');
+        requestAnimationFrame(tick);
+      }
+      requestAnimationFrame(tick);
+
+      // Halo and body orb still use CSS animation — set their delay once
       const delay = (-(t % 60)).toFixed(2) + 's';
       document.addEventListener('DOMContentLoaded', function() {
         const halo = document.querySelector('.setup-halo');
-        const logo = document.querySelector('.setup-logo');
         if (halo) halo.style.animationDelay = delay;
-        if (logo) logo.style.animationDelay = delay;
-        // Sync body orb + buttons via CSS variable on :root
         document.documentElement.style.setProperty('--orb-delay', delay);
       });
     })();
@@ -5871,7 +5895,7 @@ _SETUP_HTML = """<!DOCTYPE html>
           <!-- Local-first -->
           <button @click="selectTrack('local')"
             class="text-left p-5 rounded-2xl border border-gray-700 bg-gray-900 hover:border-indigo-500 hover:bg-gray-800/80 transition-all duration-200 group">
-            <div class="w-9 h-9 rounded-xl bg-indigo-950 flex items-center justify-center mb-3 group-hover:bg-indigo-900 transition-colors border border-indigo-800">
+            <div class="icon-hue w-9 h-9 rounded-xl bg-indigo-950 flex items-center justify-center mb-3 group-hover:bg-indigo-900 transition-colors border border-indigo-800">
               <svg class="w-4 h-4 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
                   d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/>
@@ -5881,7 +5905,7 @@ _SETUP_HTML = """<!DOCTYPE html>
             <div class="text-xs text-gray-400 leading-relaxed mb-3">
               Your data never leaves this machine. Models run on your hardware.
             </div>
-            <div class="text-xs text-indigo-400 font-medium">Free &middot; Private &middot; Ollama or LM Studio</div>
+            <div class="icon-hue text-xs text-indigo-400 font-medium">Free &middot; Private &middot; Ollama or LM Studio</div>
           </button>
           <!-- Frontier-first (coming soon) -->
           <div class="text-left p-5 rounded-2xl border border-gray-800 bg-gray-900/40 opacity-50 cursor-not-allowed select-none">
