@@ -5894,8 +5894,8 @@ _SETUP_HTML = """<!DOCTYPE html>
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <!-- Local-first -->
           <button @click="selectTrack('local')"
-            class="text-left p-5 rounded-2xl border border-gray-700 bg-gray-900 hover:border-indigo-500 hover:bg-gray-800/80 transition-all duration-200 group">
-            <div class="icon-hue w-9 h-9 rounded-xl bg-indigo-950 flex items-center justify-center mb-3 group-hover:bg-indigo-900 transition-colors border border-indigo-800">
+            class="icon-hue text-left p-5 rounded-2xl border border-gray-700 bg-gray-900 hover:border-indigo-500 hover:bg-gray-800/80 transition-all duration-200 group">
+            <div class="w-9 h-9 rounded-xl bg-indigo-950 flex items-center justify-center mb-3 group-hover:bg-indigo-900 transition-colors border border-indigo-800">
               <svg class="w-4 h-4 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
                   d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/>
@@ -5905,7 +5905,7 @@ _SETUP_HTML = """<!DOCTYPE html>
             <div class="text-xs text-gray-400 leading-relaxed mb-3">
               Your data never leaves this machine. Models run on your hardware.
             </div>
-            <div class="icon-hue text-xs text-indigo-400 font-medium">Free &middot; Private &middot; Ollama or LM Studio</div>
+            <div class="text-xs text-indigo-400 font-medium">Free &middot; Private &middot; Ollama or LM Studio</div>
           </button>
           <!-- Frontier-first (coming soon) -->
           <div class="text-left p-5 rounded-2xl border border-gray-800 bg-gray-900/40 opacity-50 cursor-not-allowed select-none">
