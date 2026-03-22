@@ -570,7 +570,9 @@ async def handle_setup_test(request: web.Request) -> web.Response:
             async def _loading_hint() -> None:
                 await asyncio.sleep(8.0)
                 await send({"status": "loading_model"})
+                await send({"log": "  Model loading into memory — this can take 30–60s on first use"})
 
+            await send({"log": f"Phase 1/3 — connecting to {endpoint.replace('/v1', '')}…"})
             hint_task = asyncio.create_task(_loading_hint())
             try:
                 async with session.post(
@@ -602,6 +604,7 @@ async def handle_setup_test(request: web.Request) -> web.Response:
                                 if ttft_ms is None:
                                     ttft_ms = round((time.time() - t0) * 1000)
                                     hint_task.cancel()  # got first token — no longer need hint
+                                    await send({"log": f"  First token: {ttft_ms}ms TTFT \u2713"})
                                 tok_count += 1
                                 await send({"token": delta})
                         except Exception:
@@ -609,18 +612,22 @@ async def handle_setup_test(request: web.Request) -> web.Response:
             finally:
                 hint_task.cancel()
             run1_s = time.time() - t0
+            await send({"log": f"  Phase 1 done \u2014 {tok_count} tokens \u00b7 {run1_s:.1f}s"})
 
             # ── Phase 2: two more silent runs for throughput ────────────────
             await send({"status": "benchmarking"})
+            await send({"log": "Phase 2/3 \u2014 measuring throughput\u2026"})
             run_times: list[float] = [run1_s]
             run_toks:  list[int]   = [tok_count]
-            for prompt in _BENCH_PROMPTS[1:]:
+            for i, prompt in enumerate(_BENCH_PROMPTS[1:], start=2):
+                await send({"log": f"  Run {i}/{len(_BENCH_PROMPTS)}\u2026"})
                 try:
                     _, _, t, n = await _stream_chat(session, endpoint, model, api_key, prompt)
                     run_times.append(t)
                     run_toks.append(n)
-                except Exception:
-                    pass
+                    await send({"log": f"  Run {i} done: {n} tokens \u00b7 {t:.1f}s"})
+                except Exception as exc:
+                    await send({"log": f"  Run {i} failed: {str(exc)[:60]}"})
 
             total_toks = sum(run_toks)
             total_s    = sum(run_times)
@@ -628,16 +635,19 @@ async def handle_setup_test(request: web.Request) -> web.Response:
             avg_ms     = round(total_s / len(run_times) * 1000)
 
             # ── Phase 3: quality sanity check ──────────────────────────────
+            await send({"log": "Phase 3/3 \u2014 quality check\u2026"})
             quality_pass = False
             try:
                 qtext, _, _, _ = await _stream_chat(
                     session, endpoint, model, api_key, _QUALITY_PROMPT, max_tokens=10
                 )
                 quality_pass = _QUALITY_EXPECTED in qtext.strip()
-            except Exception:
-                pass
+                await send({"log": "  \u2713 Reasoning ok" if quality_pass else "  \u26a0 Reasoning check failed"})
+            except Exception as exc:
+                await send({"log": f"  Quality check error: {str(exc)[:60]}"})
 
             label, colour = _bench_score(avg_tok_s)
+            await send({"log": f"Result: {avg_tok_s} tok/s \u00b7 {label}"})
             await send({
                 "done": True,
                 "latency": avg_ms,
