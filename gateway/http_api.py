@@ -5425,7 +5425,7 @@ _LOGIN_HTML = """<!DOCTYPE html>
     .logo-wrap {
       animation: logo-fadein 6s cubic-bezier(0.16,1,0.3,1) both;
       /* spring upward when card reveals */
-      transition: transform 4.8s cubic-bezier(0.34, 1.4, 0.64, 1);
+      transition: transform 4.8s cubic-bezier(0.22, 1, 0.36, 1);
     }
     .logo-wrap.logo-up  { transform: translateY(-24px); }
     /* Fast close when logging in */
@@ -5678,10 +5678,8 @@ _LOGIN_HTML = """<!DOCTYPE html>
             logoWrap.style.transform = `translate(${toCX - fromCX}px, ${toCY - fromCY}px) scale(0.667)`;
           }
           this._setupRedirectTimer = setTimeout(() => {
-            document.body.style.transition = 'opacity 0.6s ease';
-            document.body.style.opacity = '0';
             const elapsed = (performance.now() / 1000).toFixed(1);
-            setTimeout(() => { window.location.href = `/setup?t=${elapsed}`; }, 650);
+            window.location.href = `/setup?t=${elapsed}`;
           }, 4000);
         } else {
           this.phase = 'login';
