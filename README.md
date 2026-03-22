@@ -2,6 +2,8 @@
   <img src="assets/banner.png" alt="Logos" width="100%">
 </p>
 
+> **Early alpha** — core gateway, auth, dashboard, and setup wizard work. Expect rough edges; breaking changes between releases are likely. If you hit a bug, open an issue.
+
 **A self-hosted platform for agentic AI. Compose agents from first principles on your own hardware, under your rules.**
 
 Logos is a control plane for AI agents — not a single agent, but a platform. Agent runtimes plug in; you assemble what you need from five composable dimensions: **Soul**, **Tools**, **Agent**, **Model**, and **Policy** and you request an instance. 
