@@ -5431,7 +5431,7 @@ _LOGIN_HTML = """<!DOCTYPE html>
     .logo-wrap {
       animation: logo-fadein 3s cubic-bezier(0.16,1,0.3,1) both;
       /* spring upward when card reveals */
-      transition: transform 1.1s cubic-bezier(0.34, 1.4, 0.64, 1);
+      transition: transform 2.4s cubic-bezier(0.34, 1.4, 0.64, 1);
     }
     .logo-wrap.logo-up { transform: translateY(-24px); }
     .logo-img { animation: logo-hue 60s linear infinite; }
