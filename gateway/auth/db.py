@@ -424,7 +424,7 @@ def get_user_policy(user_id: str) -> Optional[dict]:
 
 
 def update_user(user_id: str, **fields) -> Optional[dict]:
-    allowed = {"role", "status", "display_name", "password_hash"}
+    allowed = {"role", "status", "display_name", "password_hash", "email", "username"}
     updates = {k: v for k, v in fields.items() if k in allowed}
     if not updates:
         return get_user_by_id(user_id)

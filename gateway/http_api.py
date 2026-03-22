@@ -5699,9 +5699,9 @@ _LOGIN_HTML = """<!DOCTYPE html>
             // Freeze all animations before page handoff so nothing is mid-fade
             document.querySelectorAll('.logo-wrap, .logo-halo, .logo-img').forEach(el => {
               const computed = getComputedStyle(el);
-              el.style.filter  = computed.filter;
+              el.style.filter    = computed.filter;
+              el.style.opacity   = computed.opacity;
               el.style.animation = 'none';
-              el.style.opacity   = '1';
             });
             // Also freeze the body ambient orb (body::before can't be targeted,
             // so set animation-play-state which pauses it in place)
@@ -5793,19 +5793,26 @@ _SETUP_HTML = """<!DOCTYPE html>
     .setup-content{animation:page-fadein 1s ease 0.2s both}
     @keyframes dot-fade{0%,80%,100%{opacity:0}40%{opacity:1}}
     /* All colour cycling driven by --hue-deg from the rAF wall-clock loop */
+    @keyframes orb-fadein{to{opacity:0.033}}
+    @keyframes halo-fadein{to{opacity:0.14}}
     body::before{
       content:'';position:fixed;top:50%;left:50%;
       transform:translate(-50%,-50%);
       width:2400px;height:2400px;border-radius:50%;
       background:#6366f1;
-      filter:blur(280px) hue-rotate(var(--hue-deg,0deg));opacity:0.033;
+      filter:blur(280px) hue-rotate(var(--hue-deg,0deg));
+      opacity:0;
       pointer-events:none;z-index:0;
+      animation:orb-fadein 0.8s ease 0.1s forwards;
     }
     .setup-logo{filter:hue-rotate(var(--hue-deg,0deg))}
     .setup-halo{
       position:absolute;inset:-280px;border-radius:50%;
       background:#6366f1;
-      filter:blur(160px) hue-rotate(var(--hue-deg,0deg));opacity:0.14;pointer-events:none;
+      filter:blur(160px) hue-rotate(var(--hue-deg,0deg));
+      opacity:0;
+      pointer-events:none;
+      animation:halo-fadein 0.8s ease 0.1s forwards;
     }
     .btn-primary{
       background:linear-gradient(135deg,#6366f1 0%,#a855f7 100%);
@@ -5847,12 +5854,12 @@ _SETUP_HTML = """<!DOCTYPE html>
     </div>
     <!-- Step indicator — visible from step 1 onward -->
     <div x-show="step > 0" x-transition.opacity class="spinner-hue flex items-center gap-1">
-      <template x-for="i in [1,2,3,4,5,6,7]" :key="i">
+      <template x-for="i in [1,2,3,4,5,6,7,8]" :key="i">
         <div class="flex items-center gap-1">
           <div class="w-2 h-2 rounded-full transition-all duration-500"
                :class="step > i ? 'bg-indigo-400 cursor-pointer hover:scale-125' : step === i ? 'bg-indigo-500 scale-125' : 'bg-gray-700'"
                @click="goTo(i)" :title="step > i ? 'Go back to step ' + i : ''"></div>
-          <div x-show="i < 7" class="w-4 h-px transition-colors duration-500"
+          <div x-show="i < 8" class="w-4 h-px transition-colors duration-500"
                :class="step > i ? 'bg-indigo-600' : 'bg-gray-700'"></div>
         </div>
       </template>
@@ -5861,14 +5868,74 @@ _SETUP_HTML = """<!DOCTYPE html>
 
   <!-- Main content -->
   <main class="setup-content flex-1 flex items-start justify-center px-4 pt-6 pb-16">
-    <div class="w-full max-w-md">
+    <div class="w-full max-w-lg">
 
       <!-- ── Step 0: Track selection ─────────────────────────────────── -->
       <div x-show="step===0" x-transition.opacity>
-        <div class="text-center mb-8">
+        <div class="text-center mb-6">
           <h1 class="text-2xl font-bold mb-2">Welcome to Logos</h1>
-          <p class="text-gray-400 text-sm">One decision shapes your setup. You can change it later.</p>
+          <p class="text-gray-400 text-sm">A control plane for agentic AI.</p>
         </div>
+
+        <!-- ── Setup journey overview ─────────────────────────────────── -->
+        <div class="mb-6 rounded-2xl border border-gray-800 bg-gray-900/60 overflow-hidden">
+          <!-- Collapsible header -->
+          <button @click="introOpen = !introOpen"
+            class="w-full flex items-center justify-between px-5 py-4 text-left hover:bg-white/[0.02] transition-colors">
+            <div>
+              <div class="text-sm font-semibold text-white">What setup configures</div>
+              <div class="text-xs text-gray-500 mt-0.5">8 steps &mdash; inference routing, model selection, runtime, and account</div>
+            </div>
+            <span class="text-gray-600 transition-transform duration-200 ml-3 flex-shrink-0"
+              :class="introOpen ? 'rotate-180' : ''" style="display:inline-block;font-size:12px">&#9660;</span>
+          </button>
+
+          <!-- Body -->
+          <div x-show="introOpen" x-transition.opacity class="border-t border-gray-800/60">
+            <!-- What setup does -->
+            <div class="px-5 pt-4 pb-3 border-b border-gray-800/40">
+              <p class="text-xs text-gray-500 leading-relaxed">
+                Setup establishes how Logos routes inference, which models and runtimes are available, and what operating boundaries apply to agent runs.
+                These choices define the platform&rsquo;s initial profile. Everything here can be adjusted from the dashboard after launch.
+              </p>
+              <p class="text-xs text-gray-500 leading-relaxed mt-1.5">
+                Each agent run is recorded as a <span class="text-gray-400 font-medium">STAMP</span> &mdash;
+                Soul &plus; Tools &plus; Agent &plus; Model &plus; Policy &mdash; making sessions reproducible, comparable, and auditable.
+                Setup defines the defaults that every STAMP inherits.
+              </p>
+            </div>
+
+            <!-- Step list — data-driven from setupSteps -->
+            <div class="px-5 pt-3 pb-1">
+              <template x-for="s in setupSteps" :key="s.n">
+                <div class="flex items-start gap-3 py-2.5 border-b border-gray-800/30 last:border-0">
+                  <div class="w-5 h-5 rounded-full bg-gray-800 border border-gray-700 flex items-center justify-center text-[10px] font-mono text-gray-500 flex-shrink-0 mt-0.5"
+                    x-text="s.n"></div>
+                  <div class="min-w-0">
+                    <div class="text-sm font-semibold text-gray-200 leading-tight" x-text="s.name"></div>
+                    <div class="text-xs text-gray-500 leading-relaxed mt-0.5" x-text="s.desc"></div>
+                  </div>
+                  <div class="flex-shrink-0 ml-auto pl-2">
+                    <span class="spinner-hue text-[10px] px-1.5 py-0.5 rounded-full border border-indigo-800 text-indigo-400 font-medium uppercase tracking-wider"
+                      x-text="s.tag"></span>
+                  </div>
+                </div>
+              </template>
+            </div>
+
+            <!-- What you get at the end -->
+            <div class="mx-5 mb-5 mt-3 p-3 rounded-xl bg-gray-800/40 border border-gray-700/40">
+              <div class="text-xs text-gray-500 uppercase tracking-wider font-semibold mb-1.5">When complete</div>
+              <p class="text-xs text-gray-400 leading-relaxed">
+                Logos has a configured inference route, a benchmarked default model, a defined agent runtime and soul,
+                and a secured admin account. The platform is ready for agent runs.
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <!-- Track selection -->
+        <p class="text-xs text-gray-600 mb-3 px-0.5">First, one decision shapes what follows:</p>
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <!-- Local-first -->
           <button @click="selectTrack('local')"
@@ -6140,47 +6207,126 @@ _SETUP_HTML = """<!DOCTYPE html>
           <!-- Per-model progress rows -->
           <div class="space-y-2 mb-4">
             <template x-for="mid in compareTargets" :key="mid">
-              <div class="flex items-center justify-between px-3 py-2.5 rounded-xl bg-gray-900 border transition-all duration-300"
-                :class="compareRecommended === mid && compareDone ? 'border-indigo-500 bg-indigo-950/20' : 'border-gray-800'">
-                <div class="flex items-center gap-2 min-w-0">
-                  <span x-show="compareRecommended === mid && compareDone"
-                    class="text-[9px] px-1.5 py-0.5 rounded-full bg-indigo-900 text-indigo-300 border border-indigo-700 font-semibold uppercase tracking-wider flex-shrink-0">Best</span>
-                  <span class="font-mono text-xs text-gray-200 truncate" x-text="mid"></span>
-                  <span class="text-[10px] text-gray-600 flex-shrink-0 font-mono"
-                    x-text="modelServer(mid) ? serverName(modelServer(mid)) : ''"></span>
+              <div class="rounded-xl border transition-all duration-300 overflow-hidden"
+                :class="compareRecommended === mid && compareDone ? 'border-indigo-500 bg-indigo-950/20' : 'border-gray-800 bg-gray-900'">
+                <!-- Summary row — clickable once results are in -->
+                <div class="flex items-center justify-between px-3 py-2.5"
+                  :class="compareDone && compareResults[mid] && !compareResults[mid].error ? 'cursor-pointer hover:bg-white/5' : ''"
+                  @click="compareDone && compareResults[mid] && !compareResults[mid].error ? (compareExpanded = compareExpanded === mid ? null : mid) : null">
+                  <div class="flex items-center gap-2 min-w-0">
+                    <span x-show="compareRecommended === mid && compareDone"
+                      class="text-[9px] px-1.5 py-0.5 rounded-full bg-indigo-900 text-indigo-300 border border-indigo-700 font-semibold uppercase tracking-wider flex-shrink-0">Best</span>
+                    <span class="font-mono text-xs text-gray-200 truncate" x-text="mid"></span>
+                    <span class="text-[10px] text-gray-600 flex-shrink-0 font-mono"
+                      x-text="modelServer(mid) ? serverName(modelServer(mid)) : ''"></span>
+                  </div>
+                  <div class="flex items-center gap-2 flex-shrink-0 ml-3 text-xs">
+                    <!-- Queued -->
+                    <span x-show="compareTesting !== mid && !compareResults[mid]" class="text-gray-700">queued</span>
+                    <!-- Testing / loading -->
+                    <template x-if="compareTesting === mid">
+                      <div class="flex items-center gap-1.5">
+                        <div class="spinner-hue"><div class="w-3 h-3 border border-gray-700 border-t-indigo-400 rounded-full animate-spin"></div></div>
+                        <span class="text-gray-500" x-text="compareLoadingFor === mid ? 'loading\u2026' : 'testing\u2026'"></span>
+                      </div>
+                    </template>
+                    <!-- Result -->
+                    <template x-if="compareResults[mid]">
+                      <div class="flex items-center gap-2">
+                        <template x-if="compareResults[mid].error">
+                          <span class="text-red-500">error</span>
+                        </template>
+                        <template x-if="!compareResults[mid].error">
+                          <div class="flex items-center gap-2">
+                            <span class="font-mono font-semibold"
+                              :class="{
+                                'text-green-400':  compareResults[mid].tok_s >= 30,
+                                'text-indigo-400': compareResults[mid].tok_s >= 15 && compareResults[mid].tok_s < 30,
+                                'text-yellow-400': compareResults[mid].tok_s >= 6  && compareResults[mid].tok_s < 15,
+                                'text-red-400':    compareResults[mid].tok_s < 6,
+                              }"
+                              x-text="compareResults[mid].tok_s + ' tok/s'"></span>
+                            <span :class="compareResults[mid].quality_pass ? 'text-green-500' : 'text-yellow-600'"
+                              x-text="compareResults[mid].quality_pass ? '\u2713' : '\u26a0'"></span>
+                            <span x-show="compareDone" class="text-gray-700 text-[10px]"
+                              x-text="compareExpanded === mid ? '\u25b4' : '\u25be'"></span>
+                          </div>
+                        </template>
+                      </div>
+                    </template>
+                  </div>
                 </div>
-                <div class="flex items-center gap-2 flex-shrink-0 ml-3 text-xs">
-                  <!-- Queued -->
-                  <span x-show="compareTesting !== mid && !compareResults[mid]" class="text-gray-700">queued</span>
-                  <!-- Testing / loading -->
-                  <template x-if="compareTesting === mid">
+                <!-- Expanded detail panel -->
+                <div x-show="compareExpanded === mid && compareResults[mid] && !compareResults[mid].error"
+                  class="px-3 pb-3 border-t border-gray-800/60 pt-2.5 space-y-2">
+                  <!-- Speed + TTFT -->
+                  <div class="flex items-center gap-4 text-xs">
+                    <div>
+                      <span class="text-gray-600">Speed</span>
+                      <span class="ml-1.5 font-mono font-semibold"
+                        :class="{
+                          'text-green-400':  compareResults[mid]?.tok_s >= 30,
+                          'text-indigo-400': compareResults[mid]?.tok_s >= 15 && compareResults[mid]?.tok_s < 30,
+                          'text-yellow-400': compareResults[mid]?.tok_s >= 6  && compareResults[mid]?.tok_s < 15,
+                          'text-red-400':    compareResults[mid]?.tok_s < 6,
+                        }"
+                        x-text="compareResults[mid]?.tok_s + ' tok/s'"></span>
+                      <span class="ml-1 text-gray-600"
+                        x-text="compareResults[mid]?.tok_s >= 30 ? '(fast)' : compareResults[mid]?.tok_s >= 15 ? '(good)' : compareResults[mid]?.tok_s >= 6 ? '(usable — may feel slow)' : '(too slow for agent use)'"></span>
+                    </div>
+                    <div x-show="compareResults[mid]?.ttft_ms">
+                      <span class="text-gray-600">TTFT</span>
+                      <span class="ml-1.5 font-mono text-gray-300" x-text="compareResults[mid]?.ttft_ms + 'ms'"></span>
+                    </div>
+                  </div>
+                  <!-- Eval breakdown -->
+                  <div class="grid grid-cols-2 gap-x-4 gap-y-1 text-[11px]">
                     <div class="flex items-center gap-1.5">
-                      <div class="spinner-hue"><div class="w-3 h-3 border border-gray-700 border-t-indigo-400 rounded-full animate-spin"></div></div>
-                      <span class="text-gray-500" x-text="compareLoadingFor === mid ? 'loading\u2026' : 'testing\u2026'"></span>
+                      <span :class="compareResults[mid]?.eval?.instruction ? 'text-green-500' : 'text-red-400'"
+                        x-text="compareResults[mid]?.eval?.instruction ? '\u2713' : '\u2717'"></span>
+                      <span class="text-gray-400">Instruction following</span>
                     </div>
-                  </template>
-                  <!-- Result -->
-                  <template x-if="compareResults[mid]">
-                    <div class="flex items-center gap-2">
-                      <template x-if="compareResults[mid].error">
-                        <span class="text-red-500">error</span>
-                      </template>
-                      <template x-if="!compareResults[mid].error">
-                        <div class="flex items-center gap-2">
-                          <span class="font-mono font-semibold"
-                            :class="{
-                              'text-green-400':  compareResults[mid].tok_s >= 30,
-                              'text-indigo-400': compareResults[mid].tok_s >= 15 && compareResults[mid].tok_s < 30,
-                              'text-yellow-400': compareResults[mid].tok_s >= 6  && compareResults[mid].tok_s < 15,
-                              'text-red-400':    compareResults[mid].tok_s < 6,
-                            }"
-                            x-text="compareResults[mid].tok_s + ' tok/s'"></span>
-                          <span :class="compareResults[mid].quality_pass ? 'text-green-500' : 'text-yellow-600'"
-                            x-text="compareResults[mid].quality_pass ? '\u2713' : '\u26a0'"></span>
-                        </div>
-                      </template>
+                    <div class="flex items-center gap-1.5">
+                      <span :class="compareResults[mid]?.eval?.reasoning ? 'text-green-500' : 'text-red-400'"
+                        x-text="compareResults[mid]?.eval?.reasoning ? '\u2713' : '\u2717'"></span>
+                      <span class="text-gray-400">Reasoning</span>
                     </div>
-                  </template>
+                    <div class="flex items-center gap-1.5">
+                      <span :class="compareResults[mid]?.eval?.format ? 'text-green-500' : 'text-red-400'"
+                        x-text="compareResults[mid]?.eval?.format ? '\u2713' : '\u2717'"></span>
+                      <span class="text-gray-400">JSON format</span>
+                    </div>
+                    <div class="flex items-center gap-1.5">
+                      <span :class="compareResults[mid]?.eval?.tool_call ? 'text-green-500' : 'text-red-400'"
+                        x-text="compareResults[mid]?.eval?.tool_call ? '\u2713' : '\u2717'"></span>
+                      <span class="text-gray-400">Tool selection</span>
+                    </div>
+                  </div>
+                  <!-- Why not selected (if not the best) -->
+                  <div x-show="compareRecommended !== mid && compareDone" class="text-[11px] text-gray-600 pt-0.5">
+                    <template x-if="compareResults[mid]?.eval?.score < 3">
+                      <span>Not selected: failed
+                        <span class="text-red-400/80" x-text="[
+                          !compareResults[mid]?.eval?.instruction && 'instruction following',
+                          !compareResults[mid]?.eval?.reasoning   && 'reasoning',
+                          !compareResults[mid]?.eval?.format      && 'JSON format',
+                          !compareResults[mid]?.eval?.tool_call   && 'tool selection',
+                        ].filter(Boolean).join(', ')"></span>
+                        — agent loops may break.
+                      </span>
+                    </template>
+                    <template x-if="compareResults[mid]?.eval?.score >= 3 && compareResults[mid]?.tok_s < 6">
+                      <span>Not selected: too slow for interactive agent use.</span>
+                    </template>
+                    <template x-if="compareResults[mid]?.eval?.score >= 3 && compareResults[mid]?.tok_s >= 6">
+                      <span>Not selected: another model scored higher overall.</span>
+                    </template>
+                  </div>
+                  <!-- Select this model override -->
+                  <button @click="pickModel(getModels().find(m => m.id === mid)); compareExpanded = null"
+                    class="text-[11px] text-indigo-400 hover:text-indigo-300 transition-colors">
+                    Use this model instead &rarr;
+                  </button>
                 </div>
               </div>
             </template>
@@ -6316,14 +6462,16 @@ _SETUP_HTML = """<!DOCTYPE html>
               <span class="font-mono text-indigo-300" x-text="r.tok_s + ' tok/s'"></span>
               <span x-show="r.ttft_ms" class="text-gray-600 font-mono" x-text="'TTFT ' + r.ttft_ms + 'ms'"></span>
               <span class="font-semibold"
-                :class="(r.eval && r.eval.score >= 3) ? 'text-green-400' : 'text-yellow-400'"
-                x-text="r.eval ? r.eval.score + '/4 evals' : ''"></span>
+                :class="(r.eval && r.eval.score >= 4) ? 'text-green-400' : 'text-yellow-400'"
+                x-text="r.eval ? r.eval.score + '/6 evals' : ''"></span>
             </div>
             <div x-show="r.eval" class="flex gap-3 flex-wrap text-[10px]">
-              <span :class="r.eval.instruction ? 'text-green-400' : 'text-gray-700'">✓ instruction</span>
-              <span :class="r.eval.reasoning   ? 'text-green-400' : 'text-gray-700'">✓ reasoning</span>
+              <span :class="r.eval.instruction  ? 'text-green-400' : 'text-gray-700'">✓ instruction</span>
+              <span :class="r.eval.reasoning    ? 'text-green-400' : 'text-gray-700'">✓ reasoning</span>
               <span :class="r.eval.format       ? 'text-green-400' : 'text-gray-700'">✓ format</span>
               <span :class="r.eval.tool_call    ? 'text-green-400' : 'text-gray-700'">✓ tool-call</span>
+              <span :class="r.eval.nested_json  ? 'text-green-400' : 'text-gray-700'">✓ nested-json</span>
+              <span :class="r.eval.multihop     ? 'text-green-400' : 'text-gray-700'">✓ multi-step</span>
             </div>
           </div>
         </template>
@@ -6554,7 +6702,7 @@ _SETUP_HTML = """<!DOCTYPE html>
       <div x-show="step===6" x-cloak x-transition.opacity>
         <div class="mb-5">
           <h2 class="text-xl font-bold mb-1">Choose a soul</h2>
-          <p class="text-gray-400 text-sm">A soul shapes how your agent thinks and communicates. It works alongside the tools you enable — pick one that fits what you&rsquo;ll use Logos for most.</p>
+          <p class="text-gray-400 text-sm">A soul shapes how your agent thinks and communicates and is a starting point for its character. It works alongside the tools you enable &mdash; pick one that fits what you want for your first agent instance.</p>
         </div>
 
         <!-- 4×2 grid — each card offset by 45° so the hue wave sweeps left→right -->
@@ -6563,7 +6711,7 @@ _SETUP_HTML = """<!DOCTYPE html>
             <button @click="selectedSoul = soul.slug"
               class="text-left p-3 rounded-xl border transition-all duration-200 relative overflow-hidden"
               :class="selectedSoul === soul.slug ? 'border-indigo-500 bg-indigo-950/30' : 'border-gray-800 bg-gray-900 hover:border-gray-600'"
-              :style="`filter: hue-rotate(calc(var(--hue-deg, 0deg) + ${idx * 45}deg))`">
+              :style="selectedSoul === soul.slug ? 'filter: hue-rotate(var(--hue-deg, 0deg))' : ''">
               <!-- icon -->
               <div class="w-8 h-8 rounded-lg flex items-center justify-center mb-2 text-sm transition-colors"
                 :class="selectedSoul === soul.slug ? 'bg-indigo-900 border border-indigo-700' : 'bg-gray-800 border border-gray-700'"
@@ -6587,8 +6735,45 @@ _SETUP_HTML = """<!DOCTYPE html>
         </div>
       </div>
 
-      <!-- ── Step 7: Review & launch ─────────────────────────────────── -->
+      <!-- ── Step 7: Your account ────────────────────────────────────── -->
       <div x-show="step===7" x-cloak x-transition.opacity>
+        <div class="mb-6">
+          <h2 class="text-xl font-bold mb-1">Your account</h2>
+          <p class="text-gray-400 text-sm">Set your login credentials. You'll use these to sign in to Logos going forward.</p>
+        </div>
+        <div class="space-y-3 mb-6">
+          <div>
+            <label class="block text-xs text-gray-500 mb-1.5">Email address</label>
+            <input x-model="setupEmail" type="email" placeholder="you@example.com"
+              class="w-full bg-gray-900 border border-gray-700 rounded-xl px-3 py-2.5 text-sm focus:border-indigo-500 focus:outline-none transition-colors" />
+          </div>
+          <div>
+            <label class="block text-xs text-gray-500 mb-1.5">Username</label>
+            <input x-model="setupUsername" type="text" placeholder="yourname"
+              class="w-full bg-gray-900 border border-gray-700 rounded-xl px-3 py-2.5 text-sm focus:border-indigo-500 focus:outline-none transition-colors" />
+          </div>
+          <div>
+            <label class="block text-xs text-gray-500 mb-1.5">Password</label>
+            <input x-model="setupPassword" type="password" placeholder="&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;"
+              class="w-full bg-gray-900 border border-gray-700 rounded-xl px-3 py-2.5 text-sm focus:border-indigo-500 focus:outline-none transition-colors" />
+          </div>
+          <div>
+            <label class="block text-xs text-gray-500 mb-1.5">Confirm password</label>
+            <input x-model="setupPasswordConfirm" type="password" placeholder="&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;"
+              class="w-full bg-gray-900 border border-gray-700 rounded-xl px-3 py-2.5 text-sm focus:border-indigo-500 focus:outline-none transition-colors" />
+          </div>
+          <div x-show="setupPassword && setupPasswordConfirm && setupPassword !== setupPasswordConfirm"
+            class="text-xs text-red-400 px-1">Passwords do not match.</div>
+        </div>
+        <button @click="goNext()"
+          :disabled="!setupEmail.trim() || !setupUsername.trim() || !setupPassword || setupPassword !== setupPasswordConfirm"
+          class="btn-primary w-full py-2.5 rounded-xl text-sm">
+          Continue &rarr;
+        </button>
+      </div>
+
+      <!-- ── Step 8: Review & launch ─────────────────────────────────── -->
+      <div x-show="step===8" x-cloak x-transition.opacity>
         <div class="text-center mb-8">
           <div class="w-16 h-16 rounded-2xl bg-green-950 border border-green-800 flex items-center justify-center mx-auto mb-5">
             <svg class="w-8 h-8 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -6631,9 +6816,25 @@ _SETUP_HTML = """<!DOCTYPE html>
           </div>
         </div>
 
+        <!-- Error / warning from complete() -->
+        <div x-show="completeError" class="mb-4 p-3 rounded-xl text-sm"
+          :class="completeError?.warning ? 'bg-amber-950/40 border border-amber-800 text-amber-300' : 'bg-red-950/40 border border-red-800 text-red-300'">
+          <div class="font-semibold mb-1" x-text="completeError?.warning ? '⚠ Setup saved — but model server unreachable' : '✗ Setup failed'"></div>
+          <div class="text-xs opacity-80" x-text="completeError?.message"></div>
+          <template x-if="completeError?.warning">
+            <div class="mt-2 text-xs">
+              Logos is configured. Make sure your model server is running and reachable from this machine, then
+              <a href="/" class="underline hover:text-amber-200">go to the dashboard</a>.
+            </div>
+          </template>
+          <template x-if="!completeError?.warning">
+            <div class="mt-2 text-xs">Check the steps above or go back and adjust your settings.</div>
+          </template>
+        </div>
+
         <button @click="complete()" :disabled="completing"
           class="btn-primary w-full py-3 rounded-xl font-semibold">
-          <span x-show="!completing">Launch Logos &rarr;</span>
+          <span x-show="!completing" x-text="completeError?.warning ? 'Go to Dashboard \u2192' : 'Launch Logos \u2192'"></span>
           <span x-show="completing" class="flex items-center justify-center gap-2">
             <div class="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin"></div>
             Finishing up&hellip;
@@ -6657,6 +6858,19 @@ function setup() {
   return {
     step: 0,
     track: null,
+
+    // Step 0 — intro panel
+    introOpen: true,
+    setupSteps: [
+      { n: 1, name: 'Connect model servers',  tag: 'detects',    desc: 'Logos scans your network for Ollama and LM Studio. Detected servers become inference endpoints. You can add servers manually or adjust later.' },
+      { n: 2, name: 'Benchmark models',       tag: 'measures',   desc: 'Candidate models run 6 eval tests: instruction following, reasoning, JSON format, tool selection, nested JSON, and multi-step arithmetic. The best fit is pre-selected; you can override freely.' },
+      { n: 3, name: 'Verify model',           tag: 'validates',  desc: 'A live call confirms the selected model responds correctly to agent-style prompts. Measures TTFT and throughput before anything is committed.' },
+      { n: 4, name: 'Agent runtime',          tag: 'configures', desc: 'Choose which agent engine handles your sessions. Hermes is available now; additional runtimes plug in as they are released.' },
+      { n: 5, name: 'Execution target',       tag: 'configures', desc: 'Decide where agent processes run — on this machine or as Kubernetes Jobs. Affects resource isolation, scaling, and where logs appear.' },
+      { n: 6, name: 'Soul',                   tag: 'configures', desc: "A soul defines the agent's communication style and default behaviour. It is a starting point — editable at any time from the dashboard." },
+      { n: 7, name: 'Your account',           tag: 'secures',    desc: 'Set the email, username, and password for the admin account that protects the dashboard and API.' },
+      { n: 8, name: 'Review & launch',        tag: 'confirms',   desc: 'Review every setting, confirm the model endpoint is reachable, and launch the platform.' },
+    ],
 
     // Step 1
     autoScanning: false,
@@ -6685,6 +6899,7 @@ function setup() {
     compareReason: '',
     compareFastRecommended: null,
     compareFastReason: '',
+    compareExpanded: null,
 
     selectedModel: null,
     suggestedModel: null,
@@ -6718,6 +6933,12 @@ function setup() {
 
     // Step 4 — agent runtime
     selectedAgentType: 'hermes',
+
+    // Account setup (step 7)
+    setupEmail: '',
+    setupUsername: '',
+    setupPassword: '',
+    setupPasswordConfirm: '',
 
     // Step 6 — soul
     selectedSoul: 'general',
@@ -6790,6 +7011,7 @@ function setup() {
 
     // Step 6
     completing: false,
+    completeError: null,
 
     // Compare event log
     compareLog: [],
@@ -6800,12 +7022,101 @@ function setup() {
       if (ua.includes('Win')) this.osPlatform = 'windows';
       else if (ua.includes('Linux')) this.osPlatform = 'linux';
       else this.osPlatform = 'mac';
+
+      // Restore full wizard progress so a refresh resumes from where the user left off
+      let restoredFromProgress = false;
+      try {
+        const saved = localStorage.getItem('logos_setup_progress');
+        if (saved) {
+          const s = JSON.parse(saved);
+          if (s?.ts && Date.now() - s.ts < 24 * 60 * 60 * 1000) {
+            // Always start at step 0 so the user sees the intro/track selection.
+            // Data is restored so later steps don't need to re-run their work.
+            this.step  = 0;
+            this.track = s.track ?? null;
+            if (s.foundServers?.length) {
+              this.foundServers    = s.foundServers;
+              this.selectedServers = s.selectedServers || [];
+              this.activeServer    = s.activeServer    || null;
+              this.autoScanDone    = true;
+            }
+            if (s.compareDone) {
+              this.compareTargets         = s.compareTargets         || [];
+              this.compareResults         = s.compareResults         || {};
+              this.compareRecommended     = s.compareRecommended     || null;
+              this.compareReason          = s.compareReason          || '';
+              this.compareFastRecommended = s.compareFastRecommended || null;
+              this.compareFastReason      = s.compareFastReason      || '';
+              this.compareDone            = true;
+            }
+            if (s.selectedModel)     this.selectedModel     = s.selectedModel;
+            if (s.execEnv)           this.execEnv           = s.execEnv;
+            if (s.k8sMode)           this.k8sMode           = s.k8sMode;
+            if (s.selectedSoul)      this.selectedSoul      = s.selectedSoul;
+            if (s.selectedAgentType) this.selectedAgentType = s.selectedAgentType;
+            if (s.setupEmail)        this.setupEmail        = s.setupEmail;
+            if (s.setupUsername)     this.setupUsername     = s.setupUsername;
+            restoredFromProgress = true;
+          }
+        }
+      } catch {}
+
+      // Fallback: restore scan-only cache
+      if (!restoredFromProgress) {
+        try {
+          const cached = localStorage.getItem('logos_setup_scan');
+          if (cached) {
+            const { servers, ts } = JSON.parse(cached);
+            if (servers?.length && Date.now() - ts < 10 * 60 * 1000) {
+              this.foundServers    = servers;
+              this.selectedServers = servers.filter(s => s.status === 'up');
+              this.activeServer    = this.selectedServers[0] || null;
+              this.autoScanDone    = true;
+            }
+          }
+        } catch {}
+      }
+
+      // Watch fields set directly from templates
+      this.$watch('selectedSoul',      () => this._saveProgress());
+      this.$watch('execEnv',           () => this._saveProgress());
+      this.$watch('k8sMode',           () => this._saveProgress());
+      this.$watch('selectedAgentType', () => this._saveProgress());
+    },
+
+    _saveProgress() {
+      try {
+        localStorage.setItem('logos_setup_progress', JSON.stringify({
+          ts:                     Date.now(),
+          step:                   this.step,
+          track:                  this.track,
+          foundServers:           this.foundServers,
+          selectedServers:        this.selectedServers,
+          activeServer:           this.activeServer,
+          compareTargets:         this.compareTargets,
+          compareResults:         this.compareResults,
+          compareRecommended:     this.compareRecommended,
+          compareReason:          this.compareReason,
+          compareFastRecommended: this.compareFastRecommended,
+          compareFastReason:      this.compareFastReason,
+          compareDone:            this.compareDone,
+          selectedModel:          this.selectedModel,
+          execEnv:                this.execEnv,
+          k8sMode:                this.k8sMode,
+          selectedSoul:           this.selectedSoul,
+          selectedAgentType:      this.selectedAgentType,
+          setupEmail:             this.setupEmail,
+          setupUsername:          this.setupUsername,
+        }));
+      } catch {}
     },
 
     selectTrack(track) {
       this.track = track;
       this.step = 1;
-      this.$nextTick(() => this.autoDetect());
+      this._saveProgress();
+      // Only scan if we don't already have cached results — avoids redundant scan on resume
+      this.$nextTick(() => { if (!this.autoScanDone) this.autoDetect(); });
     },
 
     async autoDetect() {
@@ -6829,6 +7140,10 @@ function setup() {
         // Auto-select all 'up' servers
         this.selectedServers = this.foundServers.filter(s => s.status === 'up');
         this.activeServer = this.selectedServers[0] || null;
+        // Cache results so a refresh skips the scan wait
+        if (this.foundServers.length) {
+          try { localStorage.setItem('logos_setup_scan', JSON.stringify({ servers: this.foundServers, ts: Date.now() })); } catch {}
+        }
       } catch {
         this.foundServers = [];
       }
@@ -6897,17 +7212,19 @@ function setup() {
     },
 
     goNext() {
-      if (this.step === 1) { this.step = 2; this.$nextTick(() => this.startCompare()); return; }
-      if (this.step === 2) { this.step = 3; this.$nextTick(() => this.runTest()); return; }
-      if (this.step === 3) { this.step = 4; return; }
-      if (this.step === 4) { this.step = 5; return; }
-      if (this.step === 5) { this.step = 6; return; }
-      if (this.step === 6) { this.step = 7; return; }
+      if (this.step === 1) { this.step = 2; this._saveProgress(); this.$nextTick(() => { if (!this.compareDone) this.startCompare(); }); return; }
+      if (this.step === 2) { this.step = 3; this._saveProgress(); this.$nextTick(() => this.runTest()); return; }
+      if (this.step === 3) { this.step = 4; this._saveProgress(); return; }
+      if (this.step === 4) { this.step = 5; this._saveProgress(); return; }
+      if (this.step === 5) { this.step = 6; this._saveProgress(); return; }
+      if (this.step === 6) { this.step = 7; this._saveProgress(); return; }
+      if (this.step === 7) { this.step = 8; this._saveProgress(); return; }
     },
     goTo(i) {
-      if (i < this.step && i >= 1 && this.step < 7) {
+      if (i < this.step && i >= 1 && this.step <= 8) {
         this.step = i;
-        if (i === 2) this.$nextTick(() => this.startCompare());
+        this._saveProgress();
+        if (i === 2) this.$nextTick(() => { if (!this.compareDone) this.startCompare(); });
       }
     },
 
@@ -6934,6 +7251,7 @@ function setup() {
       this.compareReason          = '';
       this.compareFastRecommended = null;
       this.compareFastReason      = '';
+      this.compareExpanded        = null;
       this.runCompare();
     },
 
@@ -7008,6 +7326,7 @@ function setup() {
                   const m = models.find(x => x.id === ev.recommendation);
                   if (m) this.pickModel(m);
                 }
+                this._saveProgress();
               }
             } catch {}
           }
@@ -7041,6 +7360,7 @@ function setup() {
       this.selectedModel = m.id;
       const server = this.selectedServers.find(s => (s.models || []).some(x => x.id === m.id));
       if (server) this.activeServer = server;
+      this._saveProgress();
     },
 
     modelSize(id) {
@@ -7285,7 +7605,9 @@ function setup() {
     },
 
     async complete() {
+      if (this.completeError?.warning) { window.location.href = '/'; return; }
       this.completing = true;
+      this.completeError = null;
       try {
         const r = await fetch('/api/setup/complete', {
           method: 'POST', credentials: 'include',
@@ -7298,16 +7620,28 @@ function setup() {
             exec_env:      this.execEnv || 'local',
             k8s_namespace: this.selectedAgentType || 'hermes',
             kubeconfig:    this.execEnv === 'k8s' && this.k8sMode === 'kubeconfig' ? this.kubeconfig : '',
+            setup_email:    this.setupEmail    || '',
+            setup_username: this.setupUsername || '',
+            setup_password: this.setupPassword || '',
           }),
         });
-        if (r.ok) { window.location.href = '/'; return; }
+        if (r.ok) {
+          const d = await r.json().catch(() => ({}));
+          if (d.warning) {
+            // Endpoint unreachable but setup saved — show warning then proceed
+            this.completeError = { warning: true, message: d.warning };
+            this.completing = false;
+            return;
+          }
+          try { localStorage.removeItem('logos_setup_scan'); localStorage.removeItem('logos_setup_progress'); } catch {}
+          window.location.href = '/';
+          return;
+        }
         const d = await r.json().catch(() => ({}));
-        console.error('setup/complete failed', r.status, d);
-        alert(d.error || 'Setup failed \u2014 please try again. (Check browser console for details)');
+        this.completeError = { warning: false, message: d.detail || d.error || `Setup failed (HTTP ${r.status}) — check server logs.` };
         this.completing = false;
       } catch (e) {
-        console.error('setup/complete error', e);
-        alert('Error: ' + e.message);
+        this.completeError = { warning: false, message: 'Network error: ' + e.message };
         this.completing = false;
       }
     },
