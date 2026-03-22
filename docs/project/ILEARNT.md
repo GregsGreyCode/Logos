@@ -45,6 +45,18 @@
 - **Soft guardrails are not sandboxes** — path boundary enforcement in Python can be bypassed via subshells, heredocs, eval. A real sandbox needs a kernel boundary. Document the limitation honestly.
 - **Dual persistence without a source of truth causes subtle bugs** — SQLite + JSONL for session state means divergence on crash. Pick one. SQLite wins.
 
+## Benchmarking / Model Selection
+
+- **tok/s from SSE chunk count is almost always wrong** — SSE chunks ≠ tokens. A 120-token response may arrive in 3 chunks, giving 3/10s = 0 tok/s. Always prefer `usage.completion_tokens` from the stream; fall back to `char_count ÷ 4` with an "~approx" label, not silently.
+- **TTFT matters separately from throughput** — a model at 40 tok/s with 4s TTFT feels slower than 28 tok/s with 0.5s TTFT for short agent interactions. Track both and include TTFT (15%) in the ranking score.
+- **Single benchmark prompt understates structured-output slowdown** — some models run 20–30% slower on JSON/tool-call prompts than plain prose. Running two passes (prose + structured) and averaging gives a better proxy for real agent workloads.
+- **7–13B hard preference suppresses good candidates** — a 4B model may outscore a weak 7B on real evals, and a 14B Q4 quant may still be fast enough. Sample across size buckets (small/mid/large/unknown) instead of sorting by distance from a sweet spot.
+- **JSON format and tool-call selection are mandatory gates, not just score components** — a model that can't reliably produce structured output or select the right tool will break agent loops regardless of speed. Rank within a gated pool; fall back to ungated only if no model passes.
+- **One recommendation is not enough** — "best balanced" and "fastest acceptable" serve different user preferences. Always surface both if they differ (balanced = highest composite score; fastest = highest tok/s in the gated pool).
+- **Multiple prompts per capability improve discrimination** — a single arithmetic prompt or single tool-call prompt is too easy; mediocre models pass while strong ones don't separate. Future: 2–3 prompts per eval category with a pass-rate threshold (e.g. ≥ 0.67) instead of pass/fail on one shot.
+- **VRAM state between tests must be explicit** — LM Studio: `POST /api/v1/models/unload` with `{"instance_id": model_id}`. Ollama: `POST /api/generate` with `{"model": model_id, "keep_alive": 0, "prompt": ""}`. Without this, each model loads on top of the previous one and throughput measurements for later models are degraded.
+- **`x-transition` on Alpine `x-show` can interfere with `max-height` overflow** — transitions using opacity/scale don't affect max-height, but the interaction with certain CSS classes can cause unexpected layout. Use explicit inline `style="max-height:Xrem;overflow-y:auto"` rather than Tailwind's `max-h-*` on transitioning elements.
+
 ## Security
 
 - **CSRF tokens required on all state-changing requests** — cookie auth alone is not enough. Every POST/PATCH needs a `X-CSRF-Token` header validated server-side.

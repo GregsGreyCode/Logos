@@ -230,19 +230,30 @@ When you connect a local inference server (Ollama or LM Studio), the setup wizar
 
 ### Candidate selection
 
-Up to 4 models are selected from those available on your server(s). The selection prioritises models in the **7–13B parameter range** — large enough to reason reliably, small enough to run at useful speeds on consumer hardware. Smaller and larger models are included if the pool is thin. Models with unrecognised naming conventions (parameter count unknown) are deprioritised.
+Up to 4 candidates are selected by sampling across **size buckets**: small (<5B), mid (5–13B), large (>13B), and unknown (no size in name). One representative is taken from each bucket, then remaining slots are filled from the best of the remaining candidates.
+
+Within each bucket, models are ranked by quality heuristics:
+- **Mid**: closest to the 9B sweet spot (large enough to reason, fast enough to use)
+- **Small**: largest available (4–5B beats 1–3B)
+- **Large**: smallest available (14B beats 70B on throughput)
+- **Unknown**: names containing `instruct`, `chat`, `tool`, `assistant` are preferred
+
+This avoids hard-suppressing unknown-size models or well-quantised large models that may outperform a weak 7B.
 
 ### Speed benchmark — tokens per second
 
-Each candidate is benchmarked twice on a fixed prose prompt:
+Two benchmark passes are run per model on different prompt types to capture throughput across workloads:
 
-> *"Briefly explain three steps you would take to debug a program that crashes unexpectedly. Be concise."*
+| Pass | Prompt type | Purpose |
+|------|-------------|---------|
+| 1 | Natural language prose | Baseline throughput |
+| 2 | Structured JSON output | Throughput under formatting constraints |
 
-The prompt targets ~80–120 output tokens — enough to get a stable throughput measurement without long runtimes.
+The two results are averaged. Some models slow significantly on structured output — this matters because agent workloads mix both types.
 
-Token count is taken from `usage.completion_tokens` in the SSE stream (authoritative). If the server does not return usage data, the fallback is `max(SSE_chunk_count, char_count ÷ 4)`.
+Token count is taken from `usage.completion_tokens` in the SSE stream (authoritative). If the server does not return usage data, the fallback is `max(SSE_chunk_count, char_count ÷ 4)` — this is shown as "(~approx)" in the debug log.
 
-Time-to-first-token (TTFT) is measured on pass 1 only (model may still be loading into VRAM). Throughput is measured from **first token to last token** on both passes and averaged, so cold-start latency does not inflate the tok/s figure. This means tok/s reflects the model's actual generation throughput at its operating parameter count and quantisation level.
+Time-to-first-token (TTFT) is measured on pass 1 only (model may still be loading into VRAM). Throughput is measured from **first token to last token**, so cold-start latency does not inflate the tok/s figure.
 
 Speed thresholds:
 
@@ -259,12 +270,14 @@ After the speed pass, four capability probes determine whether the model is fit 
 
 | # | Test | Prompt | Pass condition |
 |---|------|--------|---------------|
-| 1 | **Instruction following** | Multi-step ordered instructions: write ALPHA, compute 15+27, write BETA | All three outputs present in response |
-| 2 | **Arithmetic reasoning** | "A train travels 60 km in 45 minutes. What is its speed in km/h? Reply with only the number." | Response contains "80" |
-| 3 | **Structured output** | "Reply with ONLY a valid JSON object: `{"status": "ok", "value": 99}`" | Parseable JSON with correct field values |
-| 4 | **Tool selection** | Two tools offered: `search_web` and `run_code`. User asks for current Bitcoin price. Reply with `{"tool": "<name>", "reason": "..."}` | JSON parsed, `tool == "search_web"` |
+| 1 | **Instruction following** | 4-step ordered task: ALPHA, 15+27, BETA, letter count of "elephant" | All four outputs present (ALPHA, 42, BETA, 8) |
+| 2 | **Arithmetic reasoning** | Two-part: 150 km in 2.5 h → speed; 17×6−14 | Both answers present (60, 88) |
+| 3 | **Strict JSON format** | Reply with ONLY a specific JSON object, no surrounding text | Parses cleanly as JSON with exact field values; extra prose fails |
+| 4 | **Tool selection (2 scenarios)** | Route "What is Bitcoin price?" and "Write a Python reverse function" to the right tool | `{"A": "search_web", "B": "run_code"}` — both must be correct |
 
 A model passes the capability bar if it scores **≥ 3/4** tests.
+
+Evals 3 and 4 are strict — no regex fallback. A model that outputs valid JSON surrounded by prose fails eval 3; a model whose tool selection JSON is unparseable fails eval 4. This matches the stricter requirements of real agentic use.
 
 ### Scoring formula
 
@@ -272,13 +285,15 @@ Each model receives a composite score:
 
 ```
 score = 0.45 × (eval_tests_passed / 4)
-      + 0.35 × min(tok_s, 40) / 40
-      + 0.20 × min(param_count_B, 13) / 13
+      + 0.30 × min(tok_s, 40) / 40
+      + 0.15 × ttft_score              (1.0 at ≤500ms, 0.0 at ≥4s)
+      + 0.10 × min(param_count_B, 13) / 13
 ```
 
 - **Eval quality (45%)** — weighted most heavily; a fast but unreliable model produces poor agent outcomes.
-- **Speed (35%)** — capped at 40 tok/s for scoring; returns above that have diminishing value for interactive use.
-- **Model size (20%)** — within the sweet spot, a larger model is preferred; capped at 13B (beyond which speed typically drops below useful thresholds on consumer hardware).
+- **Speed (30%)** — capped at 40 tok/s; returns above that have diminishing value for interactive use.
+- **TTFT (15%)** — time-to-first-token affects perceived responsiveness, especially for short interactions where a 4s wait before any output is noticeable even if throughput is high afterward.
+- **Model size (10%)** — all else equal, a larger model is preferred; capped at 13B.
 
 The highest-scoring model is recommended as the default.
 
