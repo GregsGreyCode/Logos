@@ -206,6 +206,32 @@ Source lives in `gateway/`, `tools/`, and `agent/`. See [`AGENTS.md`](AGENTS.md)
 
 ---
 
+## Building & Deploying
+
+Logos is distributed as a container image. The `BUILD_SHA` build argument bakes the git commit short SHA into the image — it appears in the login screen version footer.
+
+**Build and push:**
+
+```bash
+docker buildx build \
+  --platform linux/amd64 \
+  --build-arg BUILD_SHA=$(git rev-parse --short HEAD) \
+  -t ghcr.io/gregsgreycode/logos:canary \
+  --push \
+  .
+```
+
+> **Why `--build-arg BUILD_SHA=...` is required:** the Dockerfile defaults to `ARG BUILD_SHA=unknown`. If you omit this flag, the version footer in the login screen will display `unknown` instead of the actual commit SHA.
+
+After pushing, roll out the updated image to your cluster:
+
+```bash
+kubectl rollout restart deployment/logos -n logos
+kubectl rollout status  deployment/logos -n logos
+```
+
+---
+
 ## Contributing
 
 ```bash
