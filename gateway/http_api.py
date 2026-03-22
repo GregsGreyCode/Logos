@@ -5746,19 +5746,41 @@ _SETUP_HTML = """<!DOCTYPE html>
   <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
   <style>
     [x-cloak]{display:none!important}
-    body{background:#010409}
+    body{background:#010409;overflow-x:hidden}
     @keyframes dot-fade{0%,80%,100%{opacity:0}40%{opacity:1}}
     @keyframes logo-hue{from{filter:hue-rotate(0deg)}to{filter:hue-rotate(360deg)}}
+    @keyframes ambient-color{
+      0%{background:#6366f1}17%{background:#d946ef}33%{background:#f97316}
+      50%{background:#eab308}67%{background:#22c55e}83%{background:#06b6d4}100%{background:#6366f1}
+    }
+    @keyframes halo-color{
+      0%{background:#6366f1}17%{background:#d946ef}33%{background:#f97316}
+      50%{background:#eab308}67%{background:#22c55e}83%{background:#06b6d4}100%{background:#6366f1}
+    }
+    body::before{
+      content:'';position:fixed;top:50%;left:50%;
+      transform:translate(-50%,-50%);
+      width:2400px;height:2400px;border-radius:50%;
+      filter:blur(280px);opacity:0.033;
+      animation:ambient-color 60s linear infinite;
+      pointer-events:none;z-index:0;
+    }
     .setup-logo{animation:logo-hue 60s linear infinite}
+    .setup-halo{
+      position:absolute;inset:-280px;border-radius:50%;
+      filter:blur(160px);opacity:0.14;pointer-events:none;
+      animation:halo-color 60s linear infinite;
+    }
   </style>
 </head>
 <body class="min-h-screen text-white">
 <div x-data="setup()" x-init="init()" class="flex flex-col min-h-screen">
 
   <!-- Header -->
-  <header class="flex flex-col items-center pt-10 pb-4 gap-5">
-    <div class="flex items-center justify-center" style="margin-bottom:-20px;">
-      <img src="/static/logo.svg" class="setup-logo" style="width:80px;height:80px;object-fit:contain;">
+  <header class="flex flex-col items-center pt-10 pb-4 gap-5" style="position:relative;z-index:1">
+    <div class="relative inline-block" style="margin-bottom:-20px;">
+      <div class="setup-halo"></div>
+      <img src="/static/logo.svg" class="setup-logo relative" style="width:80px;height:80px;object-fit:contain;">
     </div>
     <!-- Step indicator — visible from step 1 onward -->
     <div x-show="step > 0" x-transition.opacity class="flex items-center gap-1">
