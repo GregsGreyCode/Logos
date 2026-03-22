@@ -6,18 +6,18 @@
 
 Logos is a control plane for AI agents. Not a single agent — a platform. 
 
-Agent runtime plug into the platform; you assemble what you need from five composable dimensions: 
+Agent runtimes plug into the platform; you assemble what you need from five composable dimensions: 
 **Soul**, **Tools**, **Agent**, **Model**, and **Policy**. 
 
-That combination, a **STAMP**, defines every run Logos records, making every interaction observable, reproducible, and auditable.
+That combination, a **STAMP**, defines every run Logos records, making every agent interaction observable, reproducible, and auditable.
 
 No black-box behaviour you can't inspect. Run it on a $5 VPS, a homelab Kubernetes cluster, or serverless infrastructure. 
 
-The user decides their approach during onboarding and Logos can be configured to route agent requests to local models, ip addresses or cloud providers (Anthropic, OpenAI, OpenRouter). 
+The user decides their privacy approach during onboarding and Logos can be configured to route agent requests to local models, ip addresses or cloud provided models (Anthropic, OpenAI, OpenRouter). 
 
 ---
 
-Cloud AI assistants are opaque by design — you can't inspect what happened, swap the model, change the persona, or restrict what the agent is allowed to do. 
+Cloud AI assistants are opaque by design — you can't inspect what happened, swap the model, change the persona, or directly control what the agent is allowed to do. 
 
 Single-agent tools give you one thing and call it a platform/operating system.
 
@@ -29,13 +29,15 @@ Logos gives observable runs, pluggable runtimes, explicit policies, and a soul y
 
 **Homelab enthusiasts** who want to run agents-as-a-service at home. There's quite a lot of observability to be achieved agentically once the agent knows their infrastructure. It can query Prometheus, read logs, SSH into machines, inspect containers, and automate deployments.
 
-**Developers** who want a personal AI dev partner that can browse the web, run code, edit files, search a codebase, and remember how you work — without sending your code to a third party.
+**Developers** who want a personal IDE integrated AI dev partner that can browse the web, run code, edit files, search a codebase, and remember how you work — without sending code to a third party.
 
 **Families or households** where different people want different AI experiences: different personalities, different model capabilities, different permission levels, all from one deployment.
 
-**Privacy-conscious users** who want the capability of frontier AI without the data sharing. 
+**Privacy-conscious users** who want a local agentic ai exprience without the data sharing. 
 
-**Tinkerers** who want a platform they can modify, extend, and break without worrying about someone else's SLA.
+**Bleeding-edge users** who want to try different agents out with the top paid for models - token manager, secrets and budgeting coming soon. 
+
+**Tinkerers** who want a platform where they can test out agentic combinations, and improve, modify, update, extend, and break the platform and it's adapters without worrying about SLAs.
 
 You could ask an agent on Logos to:
 
