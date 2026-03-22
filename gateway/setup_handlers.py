@@ -67,7 +67,7 @@ async def _probe_server(
             pass
 
     # ── OpenAI-compatible: /v1/models (LM Studio, vLLM, etc.) ────────────
-    server_type = "lmstudio" if prefer == "lmstudio" else "lmstudio"
+    server_type = "lmstudio" if prefer == "lmstudio" else "ollama"
     headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
     try:
         async with session.get(f"{base}/v1/models", headers=headers, timeout=_PROBE_TIMEOUT) as r:
