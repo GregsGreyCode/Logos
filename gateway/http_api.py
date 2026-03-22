@@ -5409,7 +5409,7 @@ _LOGIN_HTML = """<!DOCTYPE html>
       inset: -50px;
       border-radius: 50%;
       filter: blur(50px);
-      opacity: 0.5;
+      opacity: 0.12;
       pointer-events: none;
       animation: halo-color 60s linear infinite;
     }
@@ -5625,7 +5625,7 @@ _LOGIN_HTML = """<!DOCTYPE html>
           .then(r => r.ok ? r.json() : null)
           .then(d => { if (d && !d.completed) this.needsSetup = true; })
           .catch(() => {});
-        this._hintTimer = setTimeout(() => { this.showHint = true; }, 10000);
+        this._hintTimer = setTimeout(() => { if (this.phase === 'splash') this.showHint = true; }, 10000);
       },
 
       activate() {
