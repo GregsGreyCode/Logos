@@ -5751,7 +5751,8 @@ _SETUP_HTML = """<!DOCTYPE html>
   <style>
     [x-cloak]{display:none!important}
     @keyframes page-fadein{from{opacity:0}to{opacity:1}}
-    body{background-color:#010409;background-image:radial-gradient(rgba(99,102,241,0.06) 1px,transparent 1px);background-size:28px 28px;overflow-x:hidden;animation:page-fadein 0.8s ease both;}
+    body{background-color:#010409;background-image:radial-gradient(rgba(99,102,241,0.06) 1px,transparent 1px);background-size:28px 28px;overflow-x:hidden}
+    .setup-content{animation:page-fadein 1s ease 0.2s both}
     @keyframes dot-fade{0%,80%,100%{opacity:0}40%{opacity:1}}
     @keyframes logo-hue{from{filter:hue-rotate(0deg)}to{filter:hue-rotate(360deg)}}
     @keyframes ambient-color{
@@ -5801,7 +5802,7 @@ _SETUP_HTML = """<!DOCTYPE html>
   </header>
 
   <!-- Main content -->
-  <main class="flex-1 flex items-start justify-center px-4 pt-6 pb-16">
+  <main class="setup-content flex-1 flex items-start justify-center px-4 pt-6 pb-16">
     <div class="w-full max-w-md">
 
       <!-- ── Step 0: Track selection ─────────────────────────────────── -->
