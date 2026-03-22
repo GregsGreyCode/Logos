@@ -113,7 +113,8 @@ spec:
 
       containers:
         - name: logos
-          image: ghcr.io/your-org/logos:latest
+          image: ghcr.io/gregsgreycode/logos:canary
+          imagePullPolicy: Always
           ports:
             - name: http
               containerPort: 8080
@@ -188,13 +189,13 @@ spec:
                   name: logos-telegram
                   key: TELEGRAM_BOT_TOKEN
             - name: TELEGRAM_ALLOWED_USERS
-              value: "REPLACE_WITH_TELEGRAM_USER_ID"
+              value: "8754717106"
             - name: TELEGRAM_HOME_CHANNEL
-              value: "REPLACE_WITH_TELEGRAM_CHANNEL_ID"
+              value: "-5152225827"
             - name: TELEGRAM_HOME_CHANNEL_NAME
               value: "Homelab Notifications"
             - name: HERMES_INSTANCE_NAME
-              value: "Logos"
+              value: "Hermes for Greg"
 
           volumeMounts:
             - name: logos-home

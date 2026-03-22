@@ -10,8 +10,9 @@ spec:
     - name: http
       port: 80
       targetPort: http
+      nodePort: 30920
     - name: api
       port: 8080
       targetPort: 8080
-      nodePort: 30902
+      nodePort: 30910
   type: NodePort
