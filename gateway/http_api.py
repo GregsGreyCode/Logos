@@ -6432,6 +6432,11 @@ function setup() {
       this.foundServers = [];
       this.selectedServers = [];
       this.activeServer = null;
+      this.showManualEntry = false;
+      this.manualUrl = '';
+      this.manualName = '';
+      this.manualKey = '';
+      this.manualError = '';
       try {
         const r = await fetch('/api/setup/scan', { credentials: 'include' });
         const d = await r.json();
