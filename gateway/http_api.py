@@ -5353,6 +5353,8 @@ _LOGIN_HTML = """<!DOCTYPE html>
   <style>
     *, *::before, *::after { box-sizing: border-box; }
 
+    html { background: #010409; }
+
     body {
       background-color: #010409;
       min-height: 100vh;
@@ -5678,6 +5680,16 @@ _LOGIN_HTML = """<!DOCTYPE html>
             logoWrap.style.transform = `translate(${toCX - fromCX}px, ${toCY - fromCY}px) scale(0.667)`;
           }
           this._setupRedirectTimer = setTimeout(() => {
+            // Freeze all animations before page handoff so nothing is mid-fade
+            document.querySelectorAll('.logo-wrap, .logo-halo, .logo-img').forEach(el => {
+              const computed = getComputedStyle(el);
+              el.style.filter  = computed.filter;
+              el.style.animation = 'none';
+              el.style.opacity   = '1';
+            });
+            // Also freeze the body ambient orb (body::before can't be targeted,
+            // so set animation-play-state which pauses it in place)
+            document.body.style.setProperty('animation-play-state', 'paused');
             const elapsed = (performance.now() / 1000).toFixed(1);
             window.location.href = `/setup?t=${elapsed}`;
           }, 4000);
@@ -5759,6 +5771,7 @@ _SETUP_HTML = """<!DOCTYPE html>
   <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
   <style>
     [x-cloak]{display:none!important}
+    html{background:#010409}
     @keyframes page-fadein{from{opacity:0}to{opacity:1}}
     body{background-color:#010409;background-image:radial-gradient(rgba(99,102,241,0.06) 1px,transparent 1px);background-size:28px 28px;overflow-x:hidden}
     .setup-content{animation:page-fadein 1s ease 0.2s both}
