@@ -469,7 +469,6 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
                     timeout=_COMPARE_TIMEOUT,
                 ) as r:
                     if r.status != 200:
-                        hint_task.cancel()
                         raise RuntimeError(f"HTTP {r.status}")
                     async for raw in r.content:
                         line = raw.decode().strip()
@@ -483,20 +482,17 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
                             if chunk["choices"][0]["delta"].get("content"):
                                 if ttft_s is None:
                                     ttft_s = time.time() - t0
-                                    hint_task.cancel()  # first token — cancel loading hint
+                                    hint_task.cancel()
                                     await send({"log": f"  First token: {ttft_s:.1f}s TTFT"})
                                 tok_count += 1
                         except Exception:
                             pass
-            finally:
-                hint_task.cancel()
 
                 total_s = time.time() - t0
                 tok_s   = round(tok_count / total_s) if total_s > 0 else 0
                 ttft_ms = round(ttft_s * 1000) if ttft_s is not None else None
 
-                # Quality check
-                await send({"log": f"  Quality check…"})
+                await send({"log": "  Quality check\u2026"})
                 quality_pass = False
                 try:
                     qtext, _, _, _ = await _stream_chat(
@@ -506,12 +502,14 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
                 except Exception:
                     pass
 
-                verdict = "✓" if quality_pass else "⚠"
-                await send({"log": f"  {verdict} {tok_s} tok/s — reasoning {'ok' if quality_pass else 'check'}"})
+                verdict = "\u2713" if quality_pass else "\u26a0"
+                await send({"log": f"  {verdict} {tok_s} tok/s \u2014 reasoning {'ok' if quality_pass else 'check'}"})
                 result: dict = {"model": model_id, "tok_s": tok_s, "quality_pass": quality_pass, "ttft_ms": ttft_ms}
             except Exception as exc:
-                await send({"log": f"  ✕ Error: {str(exc)[:80]}"})
+                await send({"log": f"  \u2715 Error: {str(exc)[:80]}"})
                 result = {"model": model_id, "tok_s": 0, "quality_pass": False, "ttft_ms": None, "error": str(exc)[:120]}
+            finally:
+                hint_task.cancel()
 
             results.append(result)
             await send({"result": result})
