@@ -6095,8 +6095,9 @@ _SETUP_HTML = """<!DOCTYPE html>
       <!-- ── Step 2: Pick model ──────────────────────────────────────── -->
       <div x-show="step===2" x-cloak x-transition.opacity>
         <div class="mb-5">
-          <h2 class="text-xl font-bold mb-1">Choose a model</h2>
-          <p class="text-gray-400 text-sm" x-text="modelStepSubtitle()"></p>
+          <h2 class="text-xl font-bold mb-1">Choose your agent's default model</h2>
+          <p class="text-gray-400 text-sm">This is the model Hermes will use by default. You can change it per-session at any time.</p>
+          <p class="text-gray-600 text-xs mt-1" x-text="modelStepSubtitle()"></p>
         </div>
 
         <!-- Auto-continue notice -->
