@@ -5445,6 +5445,7 @@ _LOGIN_HTML = """<!DOCTYPE html>
       max-height: 0;
       opacity: 0;
       overflow: visible;
+      pointer-events: none;
       clip-path: inset(0 -60px -100px -60px);
       transition: max-height 2.8s cubic-bezier(0.22, 1, 0.36, 1),
                   opacity    0.01s linear,
@@ -5453,6 +5454,7 @@ _LOGIN_HTML = """<!DOCTYPE html>
     .login-reveal.open {
       max-height: 700px;
       opacity: 1;
+      pointer-events: auto;
       clip-path: inset(-60px -60px -100px -60px);
     }
     /* Card enters from below on its own spring — delayed slightly */
