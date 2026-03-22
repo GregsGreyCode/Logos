@@ -23,6 +23,7 @@ _PUBLIC_PATHS = frozenset({
     "/auth/logout",
     "/auth/refresh",
     "/chat_logo.png",
+    "/api/setup/status",
 })
 
 # Simple in-process rate limiter keyed by IP
