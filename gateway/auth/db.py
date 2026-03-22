@@ -350,6 +350,14 @@ def get_user_by_email(email: str) -> Optional[dict]:
         return dict(row) if row else None
 
 
+def get_user_by_username(username: str) -> Optional[dict]:
+    with _conn() as conn:
+        row = conn.execute(
+            "SELECT * FROM users WHERE lower(username) = ?", (username.lower(),)
+        ).fetchone()
+        return dict(row) if row else None
+
+
 def get_user_by_id(user_id: str) -> Optional[dict]:
     with _conn() as conn:
         row = conn.execute(

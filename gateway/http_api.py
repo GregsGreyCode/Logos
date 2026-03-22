@@ -5505,16 +5505,14 @@ _LOGIN_HTML = """<!DOCTYPE html>
       position: absolute; left: 16px; top: 50%;
       transform: translateY(-50%);
       font-size: 0.875rem; color: rgba(148,163,184,0.4);
-      pointer-events: none; transition: all 140ms ease;
+      pointer-events: none;
+      transition: opacity 0.4s ease, color 0.4s ease;
     }
+    /* hide when focused or has value */
     .float-input:focus ~ .float-label,
     .float-input:not(:placeholder-shown) ~ .float-label {
-      top: 10px; transform: translateY(0);
-      font-size: 0.62rem; font-weight: 600;
-      letter-spacing: 0.07em; text-transform: uppercase;
-      color: rgba(148,163,184,0.55);
+      opacity: 0;
     }
-    .float-input:focus ~ .float-label { color: rgba(165,180,252,0.8); }
   </style>
 </head>
 <body @click="activate()" x-data="loginApp()" x-init="init()">
@@ -5542,9 +5540,9 @@ _LOGIN_HTML = """<!DOCTYPE html>
         <form @submit.prevent="submit()" @click.stop class="space-y-5">
 
           <div class="float-wrap">
-            <input id="email" x-model="email" type="email" required autocomplete="email"
+            <input id="identifier" x-model="identifier" type="text" required autocomplete="username"
                    class="float-input" placeholder=" "/>
-            <label class="float-label" for="email">Email</label>
+            <label class="float-label" for="identifier">Email or Username</label>
           </div>
 
           <div x-data="{ show: false }" class="float-wrap">
@@ -5617,7 +5615,7 @@ _LOGIN_HTML = """<!DOCTYPE html>
     return {
       phase: 'splash',   // 'splash' | 'login'
       showHint: false,
-      email: '', password: '', error: '', loading: false, needsSetup: false,
+      identifier: '', password: '', error: '', loading: false, needsSetup: false,
       _hintTimer: null,
 
       init() {
@@ -5637,7 +5635,7 @@ _LOGIN_HTML = """<!DOCTYPE html>
         this.showHint = false;
         this.phase = 'login';
         this.$nextTick(() => {
-          document.getElementById('email')?.focus();
+          document.getElementById('identifier')?.focus();
         });
       },
 
@@ -5647,7 +5645,7 @@ _LOGIN_HTML = """<!DOCTYPE html>
           const res = await fetch('/auth/login', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ email: this.email, password: this.password }),
+            body: JSON.stringify({ identifier: this.identifier, password: this.password }),
             credentials: 'same-origin',
           });
           if (res.ok) {
@@ -5656,10 +5654,10 @@ _LOGIN_HTML = """<!DOCTYPE html>
           } else {
             const d = await res.json().catch(() => ({}));
             this.error = ({
-              invalid_credentials: 'Invalid email or password.',
+              invalid_credentials: 'Invalid credentials.',
               account_locked:      'Account locked \u2014 try again in a few minutes.',
               rate_limited:        'Too many attempts \u2014 slow down.',
-              missing_fields:      'Email and password required.',
+              missing_fields:      'Username/email and password required.',
             })[d.error] ?? 'Sign in failed. Please try again.';
           }
         } catch {

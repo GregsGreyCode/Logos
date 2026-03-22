@@ -65,14 +65,17 @@ async def handle_login(request: web.Request) -> web.Response:
     except Exception:
         return web.json_response({"error": "invalid_json"}, status=400)
 
-    email    = (body.get("email") or "").lower().strip()
-    password = body.get("password") or ""
-    if not email or not password:
+    identifier = (body.get("email") or body.get("identifier") or "").strip()
+    password   = body.get("password") or ""
+    if not identifier or not password:
         return web.json_response({"error": "missing_fields"}, status=400)
 
-    user = auth_db.get_user_by_email(email)
+    # Accept email or username
+    user = auth_db.get_user_by_email(identifier)
+    if user is None:
+        user = auth_db.get_user_by_username(identifier)
 
-    # Constant-time path for unknown email (prevent enumeration)
+    # Constant-time path for unknown identifier (prevent enumeration)
     if user is None:
         hash_password("dummy_constant_time_comparison")
         return web.json_response({"error": "invalid_credentials"}, status=401)
