@@ -7,6 +7,7 @@ Endpoints:
   POST /api/setup/compare  — SSE: quick-benchmark candidates, recommend best model
   POST /api/setup/test     — SSE: full benchmark of selected model
   POST /api/setup/complete — save machine config and mark setup done
+  POST /api/setup/test-k8s   — test Kubernetes connectivity
 
 Probe query params:
   url      — base URL to probe, e.g. http://192.168.1.50:11434  (omit for localhost auto-scan)
@@ -389,10 +390,11 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
     """SSE: quick-benchmark up to 4 candidate models and recommend the best one.
 
     Events emitted:
-      {"targets": [model_id, ...]}           — candidates selected for testing
-      {"testing": model_id}                  — about to test this model
-      {"loading_model": model_id}            — model is cold-starting (no tokens yet after 8s)
-      {"result": {model, tok_s, quality_pass, error?}}
+      {"targets": [model_id, ...]}
+      {"testing": model_id}
+      {"loading_model": model_id}
+      {"log": "message"}
+      {"result": {model, tok_s, quality_pass, ttft_ms, error?}}
       {"done": true, "recommendation": model_id|null, "reason": str, "results": [...]}
     """
     try:
@@ -400,9 +402,11 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
     except Exception:
         return web.json_response({"error": "invalid_json"}, status=400)
 
-    endpoint  = (body.get("endpoint") or "").rstrip("/")
-    api_key   = body.get("api_key") or "ollama"
-    model_ids = body.get("models") or []
+    endpoint    = (body.get("endpoint") or "").rstrip("/")
+    api_key     = body.get("api_key") or "ollama"
+    model_ids   = body.get("models") or []
+    server_type = body.get("server_type") or "unknown"
+    base_url    = re.sub(r"/v1/?$", "", endpoint)
 
     if not endpoint or not model_ids:
         return web.json_response({"error": "endpoint and models required"}, status=400)
@@ -420,14 +424,38 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
         await response.write(f"data: {json.dumps(data)}\n\n".encode())
 
     await send({"targets": candidates})
+    await send({"log": f"Connected to {base_url} — testing {len(candidates)} model{'s' if len(candidates) != 1 else ''}"})
 
     results: list[dict] = []
     async with aiohttp.ClientSession() as session:
         for model_id in candidates:
             await send({"testing": model_id})
+            await send({"log": f"→ {model_id}"})
+
+            # LM Studio: try native load API before benchmarking (best-effort)
+            if server_type == "lmstudio":
+                try:
+                    async with session.post(
+                        f"{base_url}/api/v1/models/load",
+                        json={"identifier": model_id, "config": {"context_length": 4096}},
+                        timeout=aiohttp.ClientTimeout(total=5),
+                    ) as lr:
+                        if lr.status == 200:
+                            await send({"log": f"  Load request sent for {model_id}"})
+                except Exception:
+                    pass  # fall back to auto-load via chat completions
+
             t0             = time.time()
             tok_count      = 0
-            loading_emitted = False
+            ttft_s: float | None = None
+
+            # Background task: emit loading hint after 8s with no first token
+            async def _model_hint() -> None:
+                await asyncio.sleep(8.0)
+                await send({"loading_model": model_id})
+                await send({"log": f"  Loading {model_id} into memory…"})
+
+            hint_task = asyncio.create_task(_model_hint())
             try:
                 async with session.post(
                     f"{endpoint}/chat/completions",
@@ -441,17 +469,9 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
                     timeout=_COMPARE_TIMEOUT,
                 ) as r:
                     if r.status != 200:
+                        hint_task.cancel()
                         raise RuntimeError(f"HTTP {r.status}")
-                    while True:
-                        try:
-                            raw = await asyncio.wait_for(r.content.readline(), timeout=3.0)
-                        except asyncio.TimeoutError:
-                            if not loading_emitted and (time.time() - t0) >= 8.0:
-                                await send({"loading_model": model_id})
-                                loading_emitted = True
-                            continue
-                        if not raw:
-                            break
+                    async for raw in r.content:
                         line = raw.decode().strip()
                         if not line.startswith("data: "):
                             continue
@@ -461,14 +481,22 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
                         try:
                             chunk = json.loads(chunk_data)
                             if chunk["choices"][0]["delta"].get("content"):
+                                if ttft_s is None:
+                                    ttft_s = time.time() - t0
+                                    hint_task.cancel()  # first token — cancel loading hint
+                                    await send({"log": f"  First token: {ttft_s:.1f}s TTFT"})
                                 tok_count += 1
                         except Exception:
                             pass
+            finally:
+                hint_task.cancel()
 
                 total_s = time.time() - t0
                 tok_s   = round(tok_count / total_s) if total_s > 0 else 0
+                ttft_ms = round(ttft_s * 1000) if ttft_s is not None else None
 
-                # Quick quality check (model already warm at this point)
+                # Quality check
+                await send({"log": f"  Quality check…"})
                 quality_pass = False
                 try:
                     qtext, _, _, _ = await _stream_chat(
@@ -478,15 +506,21 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
                 except Exception:
                     pass
 
-                result: dict = {"model": model_id, "tok_s": tok_s, "quality_pass": quality_pass}
+                verdict = "✓" if quality_pass else "⚠"
+                await send({"log": f"  {verdict} {tok_s} tok/s — reasoning {'ok' if quality_pass else 'check'}"})
+                result: dict = {"model": model_id, "tok_s": tok_s, "quality_pass": quality_pass, "ttft_ms": ttft_ms}
             except Exception as exc:
-                result = {"model": model_id, "tok_s": 0, "quality_pass": False, "error": str(exc)[:120]}
+                await send({"log": f"  ✕ Error: {str(exc)[:80]}"})
+                result = {"model": model_id, "tok_s": 0, "quality_pass": False, "ttft_ms": None, "error": str(exc)[:120]}
 
             results.append(result)
             await send({"result": result})
 
     valid = [r for r in results if not r.get("error") and r.get("tok_s", 0) > 0]
     best  = max(valid, key=_compare_score) if valid else None
+
+    if best:
+        await send({"log": f"Recommendation: {best['model']}"})
 
     await send({
         "done":           True,
@@ -533,48 +567,49 @@ async def handle_setup_test(request: web.Request) -> web.Response:
             t0 = time.time()
             ttft_ms: int | None = None
             tok_count = 0
-            loading_emitted = False
-            _LOADING_HINT_AFTER = 8.0  # emit loading_model hint after this many seconds
-            async with session.post(
-                f"{endpoint}/chat/completions",
-                headers={"Authorization": f"Bearer {api_key}"},
-                json={
-                    "model": model,
-                    "messages": [{"role": "user", "content": _BENCH_PROMPTS[0]}],
-                    "stream": True, "max_tokens": 80,
-                },
-                timeout=aiohttp.ClientTimeout(total=120),
-            ) as r:
-                if r.status != 200:
-                    text = await r.text()
-                    await send({"error": f"Model server returned {r.status}: {text[:200]}"})
-                    return response
-                while True:
-                    try:
-                        raw = await asyncio.wait_for(r.content.readline(), timeout=3.0)
-                    except asyncio.TimeoutError:
-                        if not loading_emitted and (time.time() - t0) >= _LOADING_HINT_AFTER:
-                            await send({"status": "loading_model"})
-                            loading_emitted = True
-                        continue
-                    if not raw:
-                        break
-                    line = raw.decode().strip()
-                    if not line.startswith("data: "):
-                        continue
-                    data = line[6:]
-                    if data == "[DONE]":
-                        break
-                    try:
-                        chunk = json.loads(data)
-                        delta = chunk["choices"][0]["delta"].get("content", "")
-                        if delta:
-                            if ttft_ms is None:
-                                ttft_ms = round((time.time() - t0) * 1000)
-                            tok_count += 1
-                            await send({"token": delta})
-                    except Exception:
-                        pass
+
+            # Background task: emit loading hint after 8s with no first token
+            async def _loading_hint() -> None:
+                await asyncio.sleep(8.0)
+                await send({"status": "loading_model"})
+
+            hint_task = asyncio.create_task(_loading_hint())
+            try:
+                async with session.post(
+                    f"{endpoint}/chat/completions",
+                    headers={"Authorization": f"Bearer {api_key}"},
+                    json={
+                        "model": model,
+                        "messages": [{"role": "user", "content": _BENCH_PROMPTS[0]}],
+                        "stream": True, "max_tokens": 80,
+                    },
+                    timeout=aiohttp.ClientTimeout(total=120),
+                ) as r:
+                    if r.status != 200:
+                        hint_task.cancel()
+                        text = await r.text()
+                        await send({"error": f"Model server returned {r.status}: {text[:200]}"})
+                        return response
+                    async for raw in r.content:
+                        line = raw.decode().strip()
+                        if not line.startswith("data: "):
+                            continue
+                        data = line[6:]
+                        if data == "[DONE]":
+                            break
+                        try:
+                            chunk = json.loads(data)
+                            delta = chunk["choices"][0]["delta"].get("content", "")
+                            if delta:
+                                if ttft_ms is None:
+                                    ttft_ms = round((time.time() - t0) * 1000)
+                                    hint_task.cancel()  # got first token — no longer need hint
+                                tok_count += 1
+                                await send({"token": delta})
+                        except Exception:
+                            pass
+            finally:
+                hint_task.cancel()
             run1_s = time.time() - t0
 
             # ── Phase 2: two more silent runs for throughput ────────────────
@@ -624,6 +659,41 @@ async def handle_setup_test(request: web.Request) -> web.Response:
     return response
 
 
+async def handle_setup_test_k8s(request: web.Request) -> web.Response:
+    """Test Kubernetes connectivity for the chosen execution environment."""
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "invalid_json"}, status=400)
+
+    mode            = body.get("mode", "incluster")   # "incluster" | "kubeconfig"
+    namespace       = body.get("namespace", "hermes")
+    kubeconfig_text = body.get("kubeconfig", "")
+
+    try:
+        from kubernetes import client as _kc, config as _kcfg
+        if mode == "incluster":
+            _kcfg.load_incluster_config()
+        else:
+            if not kubeconfig_text.strip():
+                return web.json_response({"ok": False, "error": "kubeconfig is empty"}, status=400)
+            import tempfile, os as _os
+            with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
+                f.write(kubeconfig_text)
+                tmp = f.name
+            try:
+                _kcfg.load_kube_config(config_file=tmp)
+            finally:
+                _os.unlink(tmp)
+
+        v1 = _kc.CoreV1Api()
+        # Try reading the namespace — lightweight existence check
+        ns_obj = v1.read_namespace(namespace)
+        return web.json_response({"ok": True, "namespace": namespace, "uid": ns_obj.metadata.uid})
+    except Exception as exc:
+        return web.json_response({"ok": False, "error": str(exc)[:300]}, status=200)
+
+
 async def handle_setup_complete(request: web.Request) -> web.Response:
     """Save machine config and mark setup complete."""
     try:
@@ -652,10 +722,17 @@ async def handle_setup_complete(request: web.Request) -> web.Response:
 
     # Save model preference on the admin user
     user_id = request["current_user"]["sub"]
-    auth_db.ensure_user_settings(user_id)
-    auth_db.update_user_settings(user_id, default_model=model)
+    agent_type   = (body.get("agent_type") or "general").strip()
+    exec_env     = (body.get("exec_env") or "local").strip()
+    k8s_ns       = (body.get("k8s_namespace") or "hermes").strip()
+    kubeconfig   = (body.get("kubeconfig") or "").strip()
 
-    # Mark setup complete
+    auth_db.ensure_user_settings(user_id)
+    auth_db.update_user_settings(user_id, default_model=model, default_soul=agent_type)
+    auth_db.set_platform_feature_flag("exec_env", exec_env)
+    auth_db.set_platform_feature_flag("k8s_namespace", k8s_ns)
+    if kubeconfig:
+        auth_db.set_platform_feature_flag("k8s_kubeconfig", kubeconfig)
     auth_db.mark_setup_completed()
 
     auth_db.write_audit_log(

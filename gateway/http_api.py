@@ -5869,12 +5869,12 @@ _SETUP_HTML = """<!DOCTYPE html>
     </div>
     <!-- Step indicator — visible from step 1 onward -->
     <div x-show="step > 0" x-transition.opacity class="spinner-hue flex items-center gap-1">
-      <template x-for="i in [1,2,3,4]" :key="i">
+      <template x-for="i in [1,2,3,4,5,6]" :key="i">
         <div class="flex items-center gap-1">
           <div class="w-2 h-2 rounded-full transition-all duration-500"
                :class="step > i ? 'bg-indigo-400 cursor-pointer hover:scale-125' : step === i ? 'bg-indigo-500 scale-125' : 'bg-gray-700'"
                @click="goTo(i)" :title="step > i ? 'Go back to step ' + i : ''"></div>
-          <div x-show="i < 4" class="w-6 h-px transition-colors duration-500"
+          <div x-show="i < 6" class="w-4 h-px transition-colors duration-500"
                :class="step > i ? 'bg-indigo-600' : 'bg-gray-700'"></div>
         </div>
       </template>
@@ -6214,6 +6214,16 @@ _SETUP_HTML = """<!DOCTYPE html>
             </div>
           </div>
 
+          <!-- Live event log -->
+          <div x-show="compareLog.length > 0"
+            class="mt-3 rounded-xl bg-black/60 border border-gray-800 px-3 py-2.5 font-mono text-[11px] leading-relaxed space-y-0.5 max-h-36 overflow-y-auto"
+            x-ref="compareLogEl">
+            <template x-for="(entry, idx) in compareLog" :key="idx">
+              <div :class="entry.startsWith('Recommendation') ? 'text-indigo-400' : entry.startsWith('→') ? 'text-gray-300' : 'text-gray-500'"
+                x-text="entry"></div>
+            </template>
+          </div>
+
           <!-- Recommendation blurb -->
           <div x-show="compareDone && compareRecommended"
             class="mb-4 p-3 rounded-xl bg-indigo-950/40 border border-indigo-800 text-xs text-indigo-200 leading-relaxed"
@@ -6364,8 +6374,166 @@ _SETUP_HTML = """<!DOCTYPE html>
         </button>
       </div>
 
-      <!-- ── Step 4: Done ────────────────────────────────────────────── -->
+      <!-- ── Step 4: Choose your agent ─────────────────────────────── -->
       <div x-show="step===4" x-cloak x-transition.opacity>
+        <div class="mb-5">
+          <h2 class="text-xl font-bold mb-1">Choose your agent</h2>
+          <p class="text-gray-400 text-sm">Pick the agent type that best matches how you&rsquo;ll use Logos. You can change this later.</p>
+        </div>
+
+        <div class="space-y-2 mb-6">
+          <template x-for="opt in agentOptions" :key="opt.id">
+            <button @click="selectedAgentType = opt.id"
+              class="w-full text-left p-4 rounded-xl border transition-all duration-200"
+              :class="selectedAgentType === opt.id ? 'border-indigo-500 bg-indigo-950/30' : 'border-gray-800 bg-gray-900 hover:border-gray-700'">
+              <div class="flex items-start gap-3">
+                <div class="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0 mt-0.5 text-lg transition-colors"
+                  :class="selectedAgentType === opt.id ? 'bg-indigo-900 border border-indigo-700' : 'bg-gray-800 border border-gray-700'"
+                  x-text="opt.icon"></div>
+                <div class="flex-1 min-w-0">
+                  <div class="flex items-center gap-2 mb-0.5">
+                    <span class="text-sm font-semibold text-white" x-text="opt.name"></span>
+                    <span x-show="selectedAgentType === opt.id"
+                      class="text-[9px] px-1.5 py-0.5 rounded-full bg-indigo-900 text-indigo-300 border border-indigo-700 font-semibold uppercase tracking-wider">Selected</span>
+                  </div>
+                  <p class="text-xs text-gray-400 leading-relaxed" x-text="opt.desc"></p>
+                  <div class="flex flex-wrap gap-1 mt-2">
+                    <template x-for="t in opt.tools" :key="t">
+                      <span class="text-[10px] px-1.5 py-0.5 rounded bg-gray-800 text-gray-500 border border-gray-700" x-text="t"></span>
+                    </template>
+                  </div>
+                </div>
+              </div>
+            </button>
+          </template>
+        </div>
+
+        <div x-show="selectedAgentType" x-transition.opacity>
+          <button @click="goNext()" class="btn-primary w-full py-2.5 rounded-xl text-sm">
+            Continue &rarr;
+          </button>
+        </div>
+      </div>
+
+      <!-- ── Step 5: Where to run agents ───────────────────────────── -->
+      <div x-show="step===5" x-cloak x-transition.opacity>
+        <div class="mb-5">
+          <h2 class="text-xl font-bold mb-1">Where to run agents</h2>
+          <p class="text-gray-400 text-sm">Choose where agent tasks execute. This affects resource usage and isolation.</p>
+        </div>
+
+        <div class="space-y-2 mb-4">
+          <!-- This machine -->
+          <button @click="execEnv = 'local'"
+            class="w-full text-left p-4 rounded-xl border transition-all duration-200"
+            :class="execEnv === 'local' ? 'border-indigo-500 bg-indigo-950/30' : 'border-gray-800 bg-gray-900 hover:border-gray-700'">
+            <div class="flex items-start gap-3">
+              <div class="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0 mt-0.5 text-lg transition-colors"
+                :class="execEnv === 'local' ? 'bg-indigo-900 border border-indigo-700' : 'bg-gray-800 border border-gray-700'">
+                <svg class="w-4 h-4" :class="execEnv==='local' ? 'text-indigo-300' : 'text-gray-500'" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/>
+                </svg>
+              </div>
+              <div class="flex-1">
+                <div class="flex items-center gap-2 mb-0.5">
+                  <span class="text-sm font-semibold text-white">This machine</span>
+                  <span x-show="execEnv === 'local'" class="text-[9px] px-1.5 py-0.5 rounded-full bg-indigo-900 text-indigo-300 border border-indigo-700 font-semibold uppercase tracking-wider">Selected</span>
+                </div>
+                <p class="text-xs text-gray-400">Agents run inside the Logos process. Simple setup, no extra infrastructure.</p>
+                <div class="mt-2 flex flex-wrap gap-3 text-[10px] text-gray-600">
+                  <span>~300 MB RAM per agent run</span>
+                  <span>&middot; ~0.5 CPU core</span>
+                  <span>&middot; model load on inference machine</span>
+                </div>
+              </div>
+            </div>
+          </button>
+
+          <!-- Kubernetes -->
+          <button @click="execEnv = 'k8s'"
+            class="w-full text-left p-4 rounded-xl border transition-all duration-200"
+            :class="execEnv === 'k8s' ? 'border-indigo-500 bg-indigo-950/30' : 'border-gray-800 bg-gray-900 hover:border-gray-700'">
+            <div class="flex items-start gap-3">
+              <div class="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0 mt-0.5 text-base transition-colors font-bold"
+                :class="execEnv === 'k8s' ? 'bg-indigo-900 border border-indigo-700 text-indigo-300' : 'bg-gray-800 border border-gray-700 text-gray-500'">k8s</div>
+              <div class="flex-1">
+                <div class="flex items-center gap-2 mb-0.5">
+                  <span class="text-sm font-semibold text-white">Kubernetes cluster</span>
+                  <span x-show="execEnv === 'k8s'" class="text-[9px] px-1.5 py-0.5 rounded-full bg-indigo-900 text-indigo-300 border border-indigo-700 font-semibold uppercase tracking-wider">Selected</span>
+                </div>
+                <p class="text-xs text-gray-400">Each agent run spawns an isolated Job in your cluster. Better resource isolation and scaling.</p>
+                <div class="mt-2 flex flex-wrap gap-3 text-[10px] text-gray-600">
+                  <span>500m CPU request</span>
+                  <span>&middot; 2 Gi memory request</span>
+                  <span>&middot; 4 CPU / 6 Gi limits</span>
+                </div>
+              </div>
+            </div>
+          </button>
+        </div>
+
+        <!-- Kubernetes config (shown when k8s selected) -->
+        <div x-show="execEnv === 'k8s'" x-transition.opacity class="mb-4 space-y-3">
+          <div class="p-4 rounded-xl bg-gray-900 border border-gray-800 space-y-3">
+            <!-- Mode selector -->
+            <div class="flex gap-2">
+              <button @click="k8sMode = 'incluster'"
+                class="flex-1 py-1.5 rounded-lg text-xs font-medium transition-colors"
+                :class="k8sMode === 'incluster' ? 'bg-indigo-900 text-indigo-200 border border-indigo-700' : 'bg-gray-800 text-gray-400 border border-gray-700 hover:border-gray-600'">
+                In-cluster (auto)
+              </button>
+              <button @click="k8sMode = 'kubeconfig'"
+                class="flex-1 py-1.5 rounded-lg text-xs font-medium transition-colors"
+                :class="k8sMode === 'kubeconfig' ? 'bg-indigo-900 text-indigo-200 border border-indigo-700' : 'bg-gray-800 text-gray-400 border border-gray-700 hover:border-gray-600'">
+                Custom kubeconfig
+              </button>
+            </div>
+
+            <!-- Namespace -->
+            <div>
+              <label class="block text-xs text-gray-500 mb-1">Namespace</label>
+              <input x-model="k8sNamespace" type="text" placeholder="hermes"
+                class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-indigo-500"/>
+            </div>
+
+            <!-- In-cluster explanation -->
+            <div x-show="k8sMode === 'incluster'" class="text-xs text-gray-500 leading-relaxed">
+              Uses the pod&rsquo;s service account automatically. Works when Logos is already running inside the cluster you want to use.
+            </div>
+
+            <!-- Kubeconfig paste -->
+            <div x-show="k8sMode === 'kubeconfig'">
+              <label class="block text-xs text-gray-500 mb-1">Paste kubeconfig YAML</label>
+              <textarea x-model="kubeconfig" rows="6" placeholder="apiVersion: v1&#10;kind: Config&#10;..."
+                class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-xs text-white placeholder-gray-600 font-mono focus:outline-none focus:border-indigo-500 resize-none"></textarea>
+            </div>
+
+            <!-- Test connection button + result -->
+            <div class="flex items-center gap-3">
+              <button @click="testK8s()"
+                :disabled="k8sTesting || (k8sMode === 'kubeconfig' && !kubeconfig.trim())"
+                class="px-3 py-1.5 rounded-lg border border-gray-700 hover:border-gray-500 text-xs text-gray-300 transition-colors disabled:opacity-40">
+                <span x-show="!k8sTesting">Test connection</span>
+                <span x-show="k8sTesting" class="flex items-center gap-1.5">
+                  <div class="w-3 h-3 border border-gray-600 border-t-indigo-400 rounded-full animate-spin"></div>
+                  Testing&hellip;
+                </span>
+              </button>
+              <span x-show="k8sTestResult === 'ok'" class="text-xs text-green-400">&#x2713; Connected to namespace <span class="font-mono" x-text="k8sNamespace"></span></span>
+              <span x-show="k8sTestResult === 'error'" class="text-xs text-red-400" x-text="k8sTestError"></span>
+            </div>
+          </div>
+        </div>
+
+        <div x-show="execEnv" x-transition.opacity>
+          <button @click="goNext()" class="btn-primary w-full py-2.5 rounded-xl text-sm">
+            Continue &rarr;
+          </button>
+        </div>
+      </div>
+
+      <!-- ── Step 6: Review & launch ─────────────────────────────────── -->
+      <div x-show="step===6" x-cloak x-transition.opacity>
         <div class="text-center mb-8">
           <div class="w-16 h-16 rounded-2xl bg-green-950 border border-green-800 flex items-center justify-center mx-auto mb-5">
             <svg class="w-8 h-8 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -6373,13 +6541,13 @@ _SETUP_HTML = """<!DOCTYPE html>
             </svg>
           </div>
           <h2 class="text-2xl font-bold mb-2">Logos is ready</h2>
-          <p class="text-gray-400 text-sm">Your first assistant is configured and working.</p>
+          <p class="text-gray-400 text-sm">Review your configuration and launch.</p>
         </div>
 
         <div class="p-4 rounded-xl bg-gray-900 border border-gray-800 mb-6 divide-y divide-gray-800">
           <div class="flex justify-between text-sm py-2.5">
             <span class="text-gray-500">Agent</span>
-            <span class="text-white font-medium">Hermes</span>
+            <span class="text-white font-medium" x-text="agentOptions.find(a=>a.id===selectedAgentType)?.name || selectedAgentType || '&mdash;'"></span>
           </div>
           <div class="flex justify-between text-sm py-2.5">
             <span class="text-gray-500">Server</span>
@@ -6388,17 +6556,25 @@ _SETUP_HTML = """<!DOCTYPE html>
           </div>
           <div class="flex justify-between text-sm py-2.5">
             <span class="text-gray-500">Model</span>
-            <span class="text-white font-medium truncate ml-4" x-text="selectedModel || '&mdash;'"></span>
+            <span class="text-white font-medium truncate ml-4 font-mono text-xs" x-text="selectedModel || '&mdash;'"></span>
           </div>
           <div class="flex justify-between text-sm py-2.5">
-            <span class="text-gray-500">Response time</span>
-            <span class="text-white font-medium" x-text="testLatency ? testLatency + 'ms' : '&mdash;'"></span>
+            <span class="text-gray-500">Execution</span>
+            <span class="text-white font-medium" x-text="execEnv === 'k8s' ? 'Kubernetes (' + (k8sMode === 'incluster' ? 'in-cluster' : 'kubeconfig') + ')' : 'This machine'"></span>
+          </div>
+          <div x-show="execEnv === 'k8s'" class="flex justify-between text-sm py-2.5">
+            <span class="text-gray-500">Namespace</span>
+            <span class="text-white font-medium font-mono text-xs" x-text="k8sNamespace"></span>
+          </div>
+          <div x-show="testLatency" class="flex justify-between text-sm py-2.5">
+            <span class="text-gray-500">Model latency</span>
+            <span class="text-white font-medium" x-text="testLatency + 'ms avg'"></span>
           </div>
         </div>
 
         <button @click="complete()" :disabled="completing"
           class="btn-primary w-full py-3 rounded-xl font-semibold">
-          <span x-show="!completing">Open Logos &rarr;</span>
+          <span x-show="!completing">Launch Logos &rarr;</span>
           <span x-show="completing" class="flex items-center justify-center gap-2">
             <div class="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin"></div>
             Finishing up&hellip;
@@ -6478,8 +6654,46 @@ function setup() {
     testLoadingModel: false,
     testRuns: 0,
 
-    // Step 4
+    // Step 4 — agent choice
+    selectedAgentType: 'general',
+    agentOptions: [
+      {
+        id:    'general',
+        icon:  '✦',
+        name:  'General Assistant',
+        desc:  'All-round task executor — research, writing, analysis, browsing, and more. The best starting point for most users.',
+        tools: ['Web search', 'File I/O', 'Code execution', 'Browsing'],
+      },
+      {
+        id:    'coder',
+        icon:  '⌥',
+        name:  'Software Engineer',
+        desc:  'Deep coding focus with full terminal access, git operations, code review, and debugging.',
+        tools: ['Terminal', 'Git', 'File I/O', 'Web search', 'Code execution'],
+      },
+      {
+        id:    'researcher',
+        icon:  '◎',
+        name:  'Researcher',
+        desc:  'Web search, document analysis, and structured synthesis. Great for deep-dive investigations.',
+        tools: ['Web search', 'Firecrawl', 'File I/O', 'Summarisation'],
+      },
+    ],
+
+    // Step 5 — execution environment
+    execEnv: 'local',
+    k8sMode: 'incluster',
+    k8sNamespace: 'hermes',
+    kubeconfig: '',
+    k8sTesting: false,
+    k8sTestResult: null,
+    k8sTestError: '',
+
+    // Step 6
     completing: false,
+
+    // Compare event log
+    compareLog: [],
 
     init() {
       const ua = navigator.userAgent;
@@ -6583,17 +6797,14 @@ function setup() {
     },
 
     goNext() {
-      if (this.step === 1) {
-        this.step = 2;
-        this.$nextTick(() => this.startCompare());
-        return;
-      }
+      if (this.step === 1) { this.step = 2; this.$nextTick(() => this.startCompare()); return; }
       if (this.step === 2) { this.step = 3; this.$nextTick(() => this.runTest()); return; }
       if (this.step === 3) { this.step = 4; return; }
+      if (this.step === 4) { this.step = 5; return; }
+      if (this.step === 5) { this.step = 6; return; }
     },
     goTo(i) {
-      // Only allow going back to a step already reached, not forward past current
-      if (i < this.step && i >= 1 && this.step < 4) {
+      if (i < this.step && i >= 1 && this.step < 6) {
         this.step = i;
         if (i === 2) this.$nextTick(() => this.startCompare());
       }
@@ -6630,9 +6841,10 @@ function setup() {
           method: 'POST', credentials: 'include',
           headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken() },
           body: JSON.stringify({
-            endpoint: this.activeServer ? this.activeServer.endpoint : '',
-            api_key:  (this.activeServer && this.activeServer._apiKey) || 'ollama',
-            models:   models.map(m => m.id),
+            endpoint:    this.activeServer ? this.activeServer.endpoint : '',
+            api_key:     (this.activeServer && this.activeServer._apiKey) || 'ollama',
+            models:      models.map(m => m.id),
+            server_type: this.activeServer ? this.activeServer.type : 'unknown',
           }),
         });
         const reader = r.body.getReader();
@@ -6650,6 +6862,13 @@ function setup() {
               if (ev.targets)       { this.compareTargets = ev.targets; }
               if (ev.testing)       { this.compareTesting = ev.testing; }
               if (ev.loading_model) { this.compareLoadingFor = ev.loading_model; }
+              if (ev.log) {
+                this.compareLog = [...this.compareLog.slice(-49), ev.log];
+                this.$nextTick(() => {
+                  const el = this.$refs.compareLogEl;
+                  if (el) el.scrollTop = el.scrollHeight;
+                });
+              }
               if (ev.result) {
                 this.compareLoadingFor = null;
                 this.compareResults = { ...this.compareResults, [ev.result.model]: ev.result };
@@ -6885,6 +7104,30 @@ function setup() {
                          return { tone: 'bad',      icon: '✕', text: 'Too slow and reasoning issues. Drop to a 3–4B model like Qwen3-4B, or use a cloud endpoint.' };
     },
 
+    async testK8s() {
+      this.k8sTesting = true;
+      this.k8sTestResult = null;
+      this.k8sTestError = '';
+      try {
+        const r = await fetch('/api/setup/test-k8s', {
+          method: 'POST', credentials: 'include',
+          headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken() },
+          body: JSON.stringify({
+            mode:       this.k8sMode,
+            namespace:  this.k8sNamespace || 'hermes',
+            kubeconfig: this.kubeconfig,
+          }),
+        });
+        const d = await r.json();
+        this.k8sTestResult = d.ok ? 'ok' : 'error';
+        if (!d.ok) this.k8sTestError = d.error || 'Connection failed';
+      } catch (e) {
+        this.k8sTestResult = 'error';
+        this.k8sTestError = e.message;
+      }
+      this.k8sTesting = false;
+    },
+
     async complete() {
       this.completing = true;
       try {
@@ -6892,9 +7135,13 @@ function setup() {
           method: 'POST', credentials: 'include',
           headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken() },
           body: JSON.stringify({
-            endpoint: this.activeServer ? this.activeServer.endpoint : '',
-            model: this.selectedModel,
-            server_type: this.activeServer ? this.activeServer.type : '',
+            endpoint:      this.activeServer ? this.activeServer.endpoint : '',
+            model:         this.selectedModel,
+            server_type:   this.activeServer ? this.activeServer.type : '',
+            agent_type:    this.selectedAgentType || 'general',
+            exec_env:      this.execEnv || 'local',
+            k8s_namespace: this.k8sNamespace || 'hermes',
+            kubeconfig:    this.execEnv === 'k8s' && this.k8sMode === 'kubeconfig' ? this.kubeconfig : '',
           }),
         });
         if (r.ok) { window.location.href = '/'; return; }
@@ -8147,6 +8394,7 @@ async def start_http_api(runner: Any, port: int = 8080) -> None:
     app.router.add_get("/api/setup/status",   _handle_setup_status)
     app.router.add_post("/api/setup/pull",    require_csrf(_sh.handle_setup_pull))
     app.router.add_post("/api/setup/compare", require_csrf(_sh.handle_setup_compare))
+    app.router.add_post("/api/setup/test-k8s", require_csrf(_sh.handle_setup_test_k8s))
     app.router.add_post("/api/setup/test",    require_csrf(_sh.handle_setup_test))
     app.router.add_post("/api/setup/complete", require_csrf(_sh.handle_setup_complete))
     app.router.add_post("/api/setup/reset",
