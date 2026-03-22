@@ -977,8 +977,17 @@ _ADMIN_HTML = """<!DOCTYPE html>
                 class="text-sm text-gray-400 hover:text-gray-200 border border-gray-700 rounded-lg px-4 py-2 transition-colors">Cancel</button>
             </div>
           </div>
+          <!-- Admin: Re-run setup wizard -->
+          <template x-if="authUser?.role === 'admin'">
+            <div class="px-4 py-3 border-t border-gray-800">
+              <button @click="resetSetup()"
+                class="text-xs text-gray-500 hover:text-amber-400 transition-colors w-full text-left">
+                Re-run setup wizard…
+              </button>
+            </div>
+          </template>
           <!-- Log out -->
-          <div class="px-4 py-3">
+          <div class="px-4 py-3 border-t border-gray-800">
             <button @click="logout()"
               class="text-xs text-gray-400 hover:text-red-400 transition-colors w-full text-left">Log out</button>
           </div>
@@ -3952,6 +3961,20 @@ function app() {
         window.location.href = '/login';
       }
     },
+    async resetSetup() {
+      if (!confirm('This will re-enable the setup wizard. You will be redirected to /setup on next login. Continue?')) return;
+      const r = await fetch('/api/setup/reset', {
+        method: 'POST',
+        headers: { 'X-CSRF-Token': getCsrfToken() },
+        credentials: 'same-origin',
+      });
+      if (r.ok) {
+        alert('Setup wizard re-enabled. It will appear on next login.');
+        this.accountMenuOpen = false;
+      } else {
+        alert('Failed to reset setup state.');
+      }
+    },
 
     async submitChangePassword() {
       this.changePwError = '';
@@ -5355,29 +5378,20 @@ _LOGIN_HTML = """<!DOCTYPE html>
 
     [x-cloak] { display: none !important; }
 
-    /* logo halo — cycles through all four theme accent colours */
-    @keyframes halo-cycle {
-      0%,  18% { background: radial-gradient(ellipse at center, rgba(99,102,241,0.22) 0%, transparent 68%); }
-      25%, 43% { background: radial-gradient(ellipse at center, rgba(239,68,68,0.22)  0%, transparent 68%); }
-      50%, 68% { background: radial-gradient(ellipse at center, rgba(34,197,94,0.22)  0%, transparent 68%); }
-      75%, 93% { background: radial-gradient(ellipse at center, rgba(168,85,247,0.22) 0%, transparent 68%); }
-      100%     { background: radial-gradient(ellipse at center, rgba(99,102,241,0.22) 0%, transparent 68%); }
-    }
-    @keyframes glow-cycle {
-      0%,  18% { filter: drop-shadow(0 0 14px rgba(99,102,241,0.55)); }
-      25%, 43% { filter: drop-shadow(0 0 14px rgba(239,68,68,0.55));  }
-      50%, 68% { filter: drop-shadow(0 0 14px rgba(34,197,94,0.55));  }
-      75%, 93% { filter: drop-shadow(0 0 14px rgba(168,85,247,0.55)); }
-      100%     { filter: drop-shadow(0 0 14px rgba(99,102,241,0.55)); }
-    }
+    /* logo halo — static soft glow, neutral */
     .logo-halo {
       position: absolute;
       inset: -32px;
+      background: radial-gradient(ellipse at center, rgba(99,102,241,0.12) 0%, transparent 68%);
       border-radius: 50%;
       pointer-events: none;
-      animation: halo-cycle 12s ease-in-out infinite;
     }
-    .logo-img { animation: glow-cycle 12s ease-in-out infinite; }
+    /* logo gradient slowly cycles through all four theme colours (top-left → bottom-right) */
+    @keyframes logo-hue {
+      0%   { filter: hue-rotate(0deg)   drop-shadow(0 0 10px rgba(99,102,241,0.35)); }
+      100% { filter: hue-rotate(360deg) drop-shadow(0 0 10px rgba(99,102,241,0.35)); }
+    }
+    .logo-img { animation: logo-hue 30s linear infinite; }
 
     /* card */
     .login-card {
@@ -6466,6 +6480,19 @@ async def _handle_setup_page(request: web.Request) -> web.Response:
     if is_setup_completed():
         raise web.HTTPFound("/")
     return web.Response(text=_SETUP_HTML, content_type="text/html")
+
+
+async def _handle_setup_status(request: web.Request) -> web.Response:
+    from gateway.auth.db import is_setup_completed
+    return web.json_response({"completed": is_setup_completed()})
+
+
+async def _handle_setup_reset(request: web.Request) -> web.Response:
+    from gateway.auth.db import reset_setup_completed, write_audit_log
+    user_id = request["current_user"]["sub"]
+    reset_setup_completed()
+    write_audit_log(user_id, "setup_reset", ip_address=request.remote)
+    return web.json_response({"ok": True})
 
 
 async def _handle_index(request: web.Request) -> web.Response:
@@ -7664,9 +7691,12 @@ async def start_http_api(runner: Any, port: int = 8080) -> None:
     app.router.add_get("/setup",              _handle_setup_page)
     app.router.add_get("/api/setup/probe",    _sh.handle_setup_probe)
     app.router.add_get("/api/setup/scan",     _sh.handle_setup_scan)
+    app.router.add_get("/api/setup/status",   _handle_setup_status)
     app.router.add_post("/api/setup/pull",    require_csrf(_sh.handle_setup_pull))
     app.router.add_post("/api/setup/test",    require_csrf(_sh.handle_setup_test))
     app.router.add_post("/api/setup/complete", require_csrf(_sh.handle_setup_complete))
+    app.router.add_post("/api/setup/reset",
+        require_csrf(require_permission("admin")(_handle_setup_reset)))
 
     app.router.add_get("/",              _handle_index)
     app.router.add_get("/auth/me",       handle_me)
