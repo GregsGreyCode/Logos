@@ -5359,30 +5359,34 @@ _LOGIN_HTML = """<!DOCTYPE html>
       display: flex;
       align-items: center;
       justify-content: center;
-      /* subtle dot grid */
-      background-image: radial-gradient(var(--accent-subtle, rgba(99,102,241,0.07)) 1px, transparent 1px);
+      overflow: hidden;
+      background-image: radial-gradient(rgba(99,102,241,0.06) 1px, transparent 1px);
       background-size: 28px 28px;
     }
 
-    /* ambient glow — large blurred orb, colour interpolates smoothly with logo */
+    /* ── Ambient glow ─────────────────────────────────────────────────────
+       Huge blurred orb centred on the logo area. Colours synced to the
+       actual hue-rotate progression of the logo gradient (avg hue ~260°):
+         0°  → indigo, 60° → magenta, 120° → orange, 180° → yellow,
+         240° → green,  300° → cyan,   360° → back to indigo.          */
     @keyframes ambient-color {
       0%   { background: #6366f1; }
-      17%  { background: #ef4444; }
-      33%  { background: #eab308; }
-      50%  { background: #22c55e; }
-      67%  { background: #0ea5e9; }
-      83%  { background: #a855f7; }
+      17%  { background: #d946ef; }
+      33%  { background: #f97316; }
+      50%  { background: #eab308; }
+      67%  { background: #22c55e; }
+      83%  { background: #06b6d4; }
       100% { background: #6366f1; }
     }
     body::before {
       content: '';
       position: fixed;
-      top: 28%; left: 50%;
+      top: 40%; left: 50%;
       transform: translate(-50%, -50%);
-      width: 900px; height: 600px;
+      width: 1400px; height: 900px;
       border-radius: 50%;
-      filter: blur(140px);
-      opacity: 0.12;
+      filter: blur(200px);
+      opacity: 0.09;
       animation: ambient-color 60s linear infinite;
       pointer-events: none;
       z-index: 0;
@@ -5390,77 +5394,80 @@ _LOGIN_HTML = """<!DOCTYPE html>
 
     [x-cloak] { display: none !important; }
 
-    /* logo halo — blurred solid colour, interpolates smoothly, in sync with logo and ambient */
+    /* ── Logo halo ── same colour keyframes, tighter blur, more intense */
     @keyframes halo-color {
       0%   { background: #6366f1; }
-      17%  { background: #ef4444; }
-      33%  { background: #eab308; }
-      50%  { background: #22c55e; }
-      67%  { background: #0ea5e9; }
-      83%  { background: #a855f7; }
+      17%  { background: #d946ef; }
+      33%  { background: #f97316; }
+      50%  { background: #eab308; }
+      67%  { background: #22c55e; }
+      83%  { background: #06b6d4; }
       100% { background: #6366f1; }
     }
     .logo-halo {
       position: absolute;
-      inset: -28px;
+      inset: -50px;
       border-radius: 50%;
-      filter: blur(24px);
-      opacity: 0.55;
+      filter: blur(50px);
+      opacity: 0.5;
       pointer-events: none;
       animation: halo-color 60s linear infinite;
     }
-    /* logo gradient — same 60s cycle via hue-rotate, perfectly in sync */
+    /* ── Logo SVG — hue-rotate in sync (360° over 60s) */
     @keyframes logo-hue {
-      0%   { filter: hue-rotate(0deg); }
-      100% { filter: hue-rotate(360deg); }
+      from { filter: hue-rotate(0deg); }
+      to   { filter: hue-rotate(360deg); }
     }
     .logo-img { animation: logo-hue 60s linear infinite; }
 
-    /* card */
+    /* ── Splash → login reveal ──────────────────────────────────────────
+       The logo is always in normal flow; body flex-centres it.
+       When hidden, the container is ~120px tall → logo centred in viewport.
+       When the reveal div expands, the container grows and the logo
+       naturally floats upward. max-height transition drives the motion.  */
+    .login-reveal {
+      max-height: 0;
+      opacity: 0;
+      overflow: hidden;
+      transition: max-height 0.9s cubic-bezier(0.16,1,0.3,1),
+                  opacity    0.5s ease 0.25s;
+    }
+    .login-reveal.open {
+      max-height: 700px;
+      opacity: 1;
+    }
+
+    /* ── Hint pulse ── */
+    @keyframes hint-pulse {
+      0%, 100% { opacity: 0.35; }
+      50%       { opacity: 0.7; }
+    }
+    .hint-text {
+      animation: hint-pulse 2.4s ease-in-out infinite;
+      transition: opacity 0.8s ease;
+    }
+
+    /* ── Card ── */
     .login-card {
       background: rgba(10,18,35,0.85);
-      border: 1px solid var(--accent-subtle, rgba(99,102,241,0.1));
+      border: 1px solid rgba(99,102,241,0.1);
       border-radius: 20px;
       box-shadow:
         0 0 0 1px rgba(255,255,255,0.03) inset,
         0 1px 0   rgba(255,255,255,0.05) inset,
         0 8px 32px rgba(0,0,0,0.5),
-        0 32px 64px rgba(0,0,0,0.3),
-        0 0 80px var(--accent-subtle, rgba(99,102,241,0.04));
+        0 32px 64px rgba(0,0,0,0.3);
       backdrop-filter: blur(12px);
     }
 
-    /* inputs */
-    .input-field {
-      width: 100%;
-      background: rgba(255,255,255,0.04);
-      border: 1px solid rgba(255,255,255,0.09);
-      border-radius: 12px;
-      padding: 11px 16px;
-      color: #f1f5f9;
-      font-size: 0.875rem;
-      outline: none;
-      transition: border-color 150ms ease, box-shadow 150ms ease, background 150ms ease;
-    }
-    .input-field::placeholder { color: rgba(148,163,184,0.38); }
-    .input-field:hover { border-color: rgba(255,255,255,0.14); }
-    .input-field:focus {
-      background: rgba(255,255,255,0.06);
-      border-color: var(--accent, rgba(99,102,241,0.45));
-      box-shadow: 0 0 0 3px var(--accent-subtle, rgba(99,102,241,0.08));
-    }
-
-    /* button — gradient matches the logo (indigo → purple) */
+    /* ── Button ── */
     .btn-signin {
-      width: 100%;
-      padding: 11px;
-      border-radius: 12px;
-      font-size: 0.875rem;
-      font-weight: 500;
-      color: #fff;
+      width: 100%; padding: 11px; border-radius: 12px;
+      font-size: 0.875rem; font-weight: 500; color: #fff;
       background: linear-gradient(135deg, #6366f1 0%, #a855f7 100%);
       box-shadow: 0 1px 2px rgba(0,0,0,0.4), 0 0 0 1px rgba(99,102,241,0.3) inset;
       transition: opacity 150ms ease, box-shadow 150ms ease, transform 80ms ease;
+      animation: logo-hue 60s linear infinite;
       cursor: pointer;
     }
     .btn-signin:hover:not(:disabled) {
@@ -5468,18 +5475,9 @@ _LOGIN_HTML = """<!DOCTYPE html>
       box-shadow: 0 1px 2px rgba(0,0,0,0.5), 0 0 28px rgba(168,85,247,0.25), 0 0 0 1px rgba(168,85,247,0.35) inset;
     }
     .btn-signin:active:not(:disabled) { transform: translateY(1px); opacity: 0.95; }
-    .btn-signin:disabled { opacity: 0.45; cursor: not-allowed; }
+    .btn-signin:disabled { opacity: 0.45; cursor: not-allowed; animation: none; }
 
-    /* entry animation */
-    @keyframes fade-up {
-      from { opacity: 0; transform: translateY(16px); }
-      to   { opacity: 1; transform: translateY(0); }
-    }
-    .fade-up         { animation: fade-up 0.5s cubic-bezier(0.16,1,0.3,1) both; }
-    .fade-up-card    { animation: fade-up 0.5s 0.07s cubic-bezier(0.16,1,0.3,1) both; }
-    .fade-up-footer  { animation: fade-up 0.5s 0.14s cubic-bezier(0.16,1,0.3,1) both; }
-
-    /* floating label fields */
+    /* ── Floating label inputs ── */
     .float-wrap { position: relative; }
     .float-input {
       width: 100%;
@@ -5487,124 +5485,126 @@ _LOGIN_HTML = """<!DOCTYPE html>
       border: 1px solid rgba(255,255,255,0.09);
       border-radius: 12px;
       padding: 20px 16px 8px;
-      color: #f1f5f9;
-      font-size: 0.875rem;
-      outline: none;
+      color: #f1f5f9; font-size: 0.875rem; outline: none;
       transition: border-color 150ms ease, box-shadow 150ms ease, background 150ms ease;
     }
     .float-input::placeholder { color: transparent; }
-    .float-input:hover { border-color: rgba(255,255,255,0.14); }
-    .float-input:focus {
+    .float-input:hover  { border-color: rgba(255,255,255,0.14); }
+    .float-input:focus  {
       background: rgba(255,255,255,0.06);
-      border-color: var(--accent, rgba(99,102,241,0.45));
-      box-shadow: 0 0 0 3px var(--accent-subtle, rgba(99,102,241,0.08));
+      border-color: rgba(99,102,241,0.45);
+      box-shadow: 0 0 0 3px rgba(99,102,241,0.08);
     }
     .float-label {
-      position: absolute;
-      left: 16px; top: 50%;
+      position: absolute; left: 16px; top: 50%;
       transform: translateY(-50%);
-      font-size: 0.875rem;
-      color: rgba(148,163,184,0.4);
-      pointer-events: none;
-      transition: all 140ms ease;
+      font-size: 0.875rem; color: rgba(148,163,184,0.4);
+      pointer-events: none; transition: all 140ms ease;
     }
-    /* float up when focused or has value */
     .float-input:focus ~ .float-label,
     .float-input:not(:placeholder-shown) ~ .float-label {
-      top: 10px;
-      transform: translateY(0);
-      font-size: 0.62rem;
-      font-weight: 600;
-      letter-spacing: 0.07em;
-      text-transform: uppercase;
+      top: 10px; transform: translateY(0);
+      font-size: 0.62rem; font-weight: 600;
+      letter-spacing: 0.07em; text-transform: uppercase;
       color: rgba(148,163,184,0.55);
     }
-    .float-input:focus ~ .float-label {
-      color: var(--accent-light, rgba(165,180,252,0.8));
-    }
+    .float-input:focus ~ .float-label { color: rgba(165,180,252,0.8); }
   </style>
 </head>
-<body>
-  <div x-data="loginApp()" x-init="init()" class="relative z-10 w-full px-5" style="max-width:400px;">
+<body @click="activate()" x-data="loginApp()" x-init="init()">
 
-    <!-- Brand -->
-    <div class="text-center fade-up" style="margin-top:6vh;">
-      <div class="relative inline-block mb-5">
+  <!-- Main content — flex-centred by body -->
+  <div class="relative z-10 w-full px-5" style="max-width:400px;">
+
+    <!-- Logo — always visible; floats up as .login-reveal expands below -->
+    <div class="text-center" style="padding-top:2vh; padding-bottom:1.5rem;">
+      <div class="relative inline-block">
         <div class="logo-halo"></div>
         <img src="/static/logo.svg" alt="Logos" class="logo-img relative mx-auto"
              style="width:120px;height:120px;object-fit:contain;">
       </div>
-      <h1 class="text-white font-semibold mb-8"
+    </div>
+
+    <!-- Reveal section — expands on activate() -->
+    <div :class="phase==='login' ? 'login-reveal open' : 'login-reveal'">
+
+      <h1 class="text-center text-white font-semibold mb-8"
           style="font-size:1.75rem;letter-spacing:-0.03em;">Logos</h1>
-    </div>
 
-    <!-- Card -->
-    <div class="login-card px-7 py-7 fade-up-card">
-      <!-- Dynamic title: Sign in / Get started -->
-      <p class="text-center mb-5" style="font-size:0.72rem;font-weight:600;letter-spacing:0.1em;text-transform:uppercase;color:rgba(148,163,184,0.5);"
-         x-text="needsSetup ? 'Get started' : 'Sign in'"></p>
-      <form @submit.prevent="submit()" class="space-y-5">
+      <!-- Card -->
+      <div class="login-card px-7 py-7">
+        <p class="text-center mb-5"
+           style="font-size:0.72rem;font-weight:600;letter-spacing:0.1em;text-transform:uppercase;color:rgba(148,163,184,0.5);"
+           x-text="needsSetup ? 'Get started' : 'Sign in'"></p>
+        <form @submit.prevent="submit()" @click.stop class="space-y-5">
 
-        <!-- Email — floating label -->
-        <div class="float-wrap">
-          <input id="email" x-model="email" type="email" required autocomplete="email"
-                 class="float-input" placeholder=" "/>
-          <label class="float-label" for="email">Email</label>
-        </div>
+          <div class="float-wrap">
+            <input id="email" x-model="email" type="email" required autocomplete="email"
+                   class="float-input" placeholder=" "/>
+            <label class="float-label" for="email">Email</label>
+          </div>
 
-        <!-- Password — floating label + show/hide toggle -->
-        <div x-data="{ show: false }" class="float-wrap">
-          <input id="password" x-model="password" :type="show ? 'text' : 'password'"
-                 required autocomplete="current-password"
-                 class="float-input" style="padding-right:2.75rem;" placeholder=" "/>
-          <label class="float-label" for="password">Password</label>
-          <button type="button" @click="show=!show" tabindex="-1"
-                  class="absolute right-3.5 top-1/2 -translate-y-1/2 p-0.5 transition-colors"
-                  style="color:rgba(100,116,139,0.6);"
-                  onmouseover="this.style.color='rgba(148,163,184,1)'"
-                  onmouseout="this.style.color='rgba(100,116,139,0.6)'">
-            <svg x-show="!show" xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-              <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
-              <path stroke-linecap="round" stroke-linejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/>
-            </svg>
-            <svg x-show="show" x-cloak xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-              <path stroke-linecap="round" stroke-linejoin="round" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21"/>
-            </svg>
+          <div x-data="{ show: false }" class="float-wrap">
+            <input id="password" x-model="password" :type="show ? 'text' : 'password'"
+                   required autocomplete="current-password"
+                   class="float-input" style="padding-right:2.75rem;" placeholder=" "/>
+            <label class="float-label" for="password">Password</label>
+            <button type="button" @click.stop="show=!show" tabindex="-1"
+                    class="absolute right-3.5 top-1/2 -translate-y-1/2 p-0.5 transition-colors"
+                    style="color:rgba(100,116,139,0.6);"
+                    onmouseover="this.style.color='rgba(148,163,184,1)'"
+                    onmouseout="this.style.color='rgba(100,116,139,0.6)'">
+              <svg x-show="!show" xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
+                <path stroke-linecap="round" stroke-linejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/>
+              </svg>
+              <svg x-show="show" x-cloak xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21"/>
+              </svg>
+            </button>
+          </div>
+
+          <div x-show="error" x-cloak
+               style="background:rgba(239,68,68,0.07);border:1px solid rgba(239,68,68,0.18);border-radius:10px;padding:10px 14px;">
+            <p class="text-red-400 text-sm" x-text="error"></p>
+          </div>
+
+          <button type="submit" :disabled="loading" class="btn-signin mt-1">
+            <span x-show="!loading" x-text="needsSetup ? 'Get started' : 'Sign in'"></span>
+            <span x-show="loading" x-cloak class="flex items-center justify-center gap-2">
+              <svg class="animate-spin w-4 h-4 opacity-80" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"/>
+              </svg>
+              Signing in
+            </span>
           </button>
-        </div>
 
-        <!-- Error -->
-        <div x-show="error" x-cloak
-             style="background:rgba(239,68,68,0.07);border:1px solid rgba(239,68,68,0.18);border-radius:10px;padding:10px 14px;">
-          <p class="text-red-400 text-sm" x-text="error"></p>
-        </div>
+        </form>
+      </div>
 
-        <button type="submit" :disabled="loading" class="btn-signin mt-1">
-          <span x-show="!loading" x-text="needsSetup ? 'Get started' : 'Sign in'"></span>
-          <span x-show="loading" x-cloak class="flex items-center justify-center gap-2">
-            <svg class="animate-spin w-4 h-4 opacity-80" fill="none" viewBox="0 0 24 24">
-              <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
-              <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"/>
-            </svg>
-            Signing in
-          </span>
-        </button>
+      <!-- Footer -->
+      <p class="text-center mt-6"
+         style="font-size:0.72rem;color:rgba(71,85,105,0.7);letter-spacing:0.05em;">
+        A self-hosted AI agent platform
+      </p>
 
-      </form>
-    </div>
-
-    <!-- Footer -->
-    <p class="text-center mt-7 fade-up-footer"
-       style="font-size:0.72rem;color:rgba(71,85,105,0.8);letter-spacing:0.05em;">
-      A self-hosted AI agent platform
-    </p>
-
+    </div><!-- /login-reveal -->
   </div>
 
-  <!-- Version badge — fixed bottom-right -->
+  <!-- Hint — fades in after 10s inactivity in splash mode -->
+  <div x-show="showHint" x-cloak
+       style="position:fixed;bottom:18%;left:0;right:0;text-align:center;z-index:20;pointer-events:none;">
+    <p class="hint-text"
+       style="font-size:0.78rem;color:rgba(148,163,184,0.5);letter-spacing:0.08em;">
+      click anywhere to continue
+    </p>
+  </div>
+
+  <!-- Version badge -->
   <div style="position:fixed;bottom:16px;right:18px;z-index:50;
-              font-size:0.65rem;color:rgba(71,85,105,0.55);
-              letter-spacing:0.04em;font-family:ui-monospace,monospace;">
+              font-size:0.65rem;color:rgba(71,85,105,0.45);
+              letter-spacing:0.04em;font-family:ui-monospace,monospace;pointer-events:none;">
     __VERSION_LABEL__
   </div>
 
@@ -5612,18 +5612,32 @@ _LOGIN_HTML = """<!DOCTYPE html>
   <script>
   function loginApp() {
     return {
+      phase: 'splash',   // 'splash' | 'login'
+      showHint: false,
       email: '', password: '', error: '', loading: false, needsSetup: false,
+      _hintTimer: null,
+
       init() {
-        // If already logged in, redirect
         fetch('/auth/me', { credentials: 'same-origin' })
           .then(r => { if (r.ok) window.location.href = '/'; })
           .catch(() => {});
-        // Check if setup is required (public endpoint — no auth needed)
         fetch('/api/setup/status', { credentials: 'same-origin' })
           .then(r => r.ok ? r.json() : null)
           .then(d => { if (d && !d.completed) this.needsSetup = true; })
           .catch(() => {});
+        this._hintTimer = setTimeout(() => { this.showHint = true; }, 10000);
       },
+
+      activate() {
+        if (this.phase !== 'splash') return;
+        clearTimeout(this._hintTimer);
+        this.showHint = false;
+        this.phase = 'login';
+        this.$nextTick(() => {
+          document.getElementById('email')?.focus();
+        });
+      },
+
       async submit() {
         this.loading = true; this.error = '';
         try {
