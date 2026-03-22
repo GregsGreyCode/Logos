@@ -5381,12 +5381,12 @@ _LOGIN_HTML = """<!DOCTYPE html>
     body::before {
       content: '';
       position: fixed;
-      top: 40%; left: 50%;
+      top: 50%; left: 50%;
       transform: translate(-50%, -50%);
-      width: 1400px; height: 900px;
+      width: 2400px; height: 2400px;
       border-radius: 50%;
-      filter: blur(200px);
-      opacity: 0.09;
+      filter: blur(300px);
+      opacity: 0.06;
       animation: ambient-color 60s linear infinite;
       pointer-events: none;
       z-index: 0;
