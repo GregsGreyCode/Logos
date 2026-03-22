@@ -6426,17 +6426,25 @@ _SETUP_HTML = """<!DOCTYPE html>
 
           <!-- Debug log — bottom of step so it expands into free space -->
           <div x-show="compareLog.length > 0" class="mt-4">
-            <button @click="compareLogOpen = !compareLogOpen"
-              class="flex items-center gap-1.5 text-[11px] text-gray-600 hover:text-gray-400 transition-colors select-none">
-              <svg :class="compareLogOpen ? 'rotate-90' : ''" class="w-3 h-3 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
-              <span x-text="compareLogOpen ? 'Hide debug log' : 'Show debug log (' + compareLog.length + ' lines)'"></span>
-            </button>
+            <div class="flex items-center justify-between">
+              <button @click="compareLogOpen = !compareLogOpen"
+                class="flex items-center gap-1.5 text-[11px] text-gray-600 hover:text-gray-400 transition-colors select-none">
+                <svg :class="compareLogOpen ? 'rotate-90' : ''" class="w-3 h-3 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+                <span x-text="compareLogOpen ? 'Hide debug log' : 'Show debug log (' + compareLog.length + ' lines)'"></span>
+              </button>
+              <button x-show="compareLogOpen" @click="navigator.clipboard.writeText(compareLog.join('\n')).then(() => { compareCopied = true; setTimeout(() => compareCopied = false, 1500) })"
+                class="flex items-center gap-1 text-[11px] transition-colors select-none"
+                :class="compareCopied ? 'text-green-400' : 'text-gray-600 hover:text-gray-400'">
+                <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
+                <span x-text="compareCopied ? 'Copied!' : 'Copy'"></span>
+              </button>
+            </div>
             <div x-show="compareLogOpen"
               class="thin-scroll mt-1.5 rounded-xl bg-black/60 border border-gray-800 px-3 py-2.5 font-mono text-[11px] leading-relaxed space-y-0.5"
-              style="max-height:12rem;overflow-y:auto"
+              style="max-height:16rem;overflow-y:auto"
               x-ref="compareLogEl">
               <template x-for="(entry, idx) in compareLog" :key="idx">
-                <div :class="entry.startsWith('Recommendation') ? 'text-indigo-400' : entry.startsWith('→') ? 'text-gray-300' : 'text-gray-500'"
+                <div :class="entry.startsWith('Recommendation') ? 'text-indigo-400' : entry.startsWith('→') ? 'text-gray-300' : entry.includes('✓') ? 'text-green-500/80' : entry.includes('✗') ? 'text-red-500/70' : 'text-gray-500'"
                   x-text="entry"></div>
               </template>
             </div>
@@ -6939,6 +6947,7 @@ function setup() {
     // Compare event log
     compareLog: [],
     compareLogOpen: false,
+    compareCopied: false,
 
     init() {
       const ua = navigator.userAgent;
@@ -7228,7 +7237,7 @@ function setup() {
               if (ev.testing)       { this.compareTesting = ev.testing; }
               if (ev.loading_model) { this.compareLoadingFor = ev.loading_model; }
               if (ev.log) {
-                this.compareLog = [...this.compareLog.slice(-49), ev.log];
+                this.compareLog = [...this.compareLog, ev.log];
                 this.$nextTick(() => {
                   const el = this.$refs.compareLogEl;
                   if (el) el.scrollTop = el.scrollHeight;
