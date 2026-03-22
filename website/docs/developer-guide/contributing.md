@@ -208,6 +208,28 @@ feat(gateway): add WhatsApp multi-user session isolation
 fix(security): prevent shell injection in sudo password piping
 ```
 
+## Building the Container Image
+
+Logos ships as a Docker image. The `BUILD_SHA` build argument bakes the git commit short SHA into the image; it appears in the login screen version footer. **Always pass this argument** — without it the footer shows `unknown`.
+
+```bash
+docker buildx build \
+  --platform linux/amd64 \
+  --build-arg BUILD_SHA=$(git rev-parse --short HEAD) \
+  -t ghcr.io/gregsgreycode/logos:canary \
+  --push \
+  .
+```
+
+Then roll out to the cluster:
+
+```bash
+kubectl rollout restart deployment/logos -n logos
+kubectl rollout status  deployment/logos -n logos
+```
+
+> **Why this matters:** the Dockerfile contains `ARG BUILD_SHA=unknown` as the default. If you build without `--build-arg BUILD_SHA=...`, the version footer will display `unknown` regardless of what commit is running in production.
+
 ## Reporting Issues
 
 - Use [GitHub Issues](https://github.com/NousResearch/hermes-agent/issues)
