@@ -977,9 +977,10 @@ async def handle_setup_test_k8s(request: web.Request) -> web.Response:
                 _os.unlink(tmp)
 
         v1 = _kc.CoreV1Api()
-        # Try reading the namespace — lightweight existence check
-        ns_obj = v1.read_namespace(namespace)
-        return web.json_response({"ok": True, "namespace": namespace, "uid": ns_obj.metadata.uid})
+        # List pods in namespace — uses the service account's existing pod permissions
+        pod_list = v1.list_namespaced_pod(namespace, limit=1)
+        count = len(pod_list.items)
+        return web.json_response({"ok": True, "namespace": namespace, "pod_count": count})
     except Exception as exc:
         return web.json_response({"ok": False, "error": str(exc)[:300]}, status=200)
 
