@@ -5916,8 +5916,9 @@ _SETUP_HTML = """<!DOCTYPE html>
           <div class="mx-7 mb-6 p-4 rounded-xl bg-gray-800/40 border border-gray-700/40">
             <div class="text-xs text-gray-500 uppercase tracking-wider font-semibold mb-1.5">When complete</div>
             <p class="text-sm text-gray-400 leading-relaxed">
-              Logos has a configured inference route, a benchmarked default model, a defined agent runtime and soul,
-              and a secured admin account. The platform is ready for agent runs.
+              You&rsquo;ll have a fully configured platform: inference routed to a benchmarked local model,
+              an agent runtime and soul selected, and a secured admin account.
+              Everything is adjustable from the dashboard &mdash; setup just gives you a solid starting point.
             </p>
           </div>
         </div>
