@@ -5868,74 +5868,75 @@ _SETUP_HTML = """<!DOCTYPE html>
 
   <!-- Main content -->
   <main class="setup-content flex-1 flex items-start justify-center px-4 pt-6 pb-16">
-    <div class="w-full max-w-lg">
+    <div class="w-full" :style="'max-width:' + ((step===0 && !introConfirmed) ? '58rem' : '34rem') + '; transition:max-width 0.4s cubic-bezier(0.4,0,0.2,1)'">
 
-      <!-- ── Step 0: Track selection ─────────────────────────────────── -->
-      <div x-show="step===0" x-transition.opacity>
-        <div class="text-center mb-6">
+      <!-- ── Step 0a: Setup overview (wide intro) ─────────────────────── -->
+      <div x-show="step===0 && !introConfirmed" x-transition.opacity.duration.300ms>
+        <div class="text-center mb-7">
           <h1 class="text-2xl font-bold mb-2">Welcome to Logos</h1>
           <p class="text-gray-400 text-sm">A control plane for agentic AI.</p>
         </div>
 
-        <!-- ── Setup journey overview ─────────────────────────────────── -->
-        <div class="mb-6 rounded-2xl border border-gray-800 bg-gray-900/60 overflow-hidden">
-          <!-- Collapsible header -->
-          <button @click="introOpen = !introOpen"
-            class="w-full flex items-center justify-between px-5 py-4 text-left hover:bg-white/[0.02] transition-colors">
-            <div>
-              <div class="text-sm font-semibold text-white">What setup configures</div>
-              <div class="text-xs text-gray-500 mt-0.5">8 steps &mdash; inference routing, model selection, runtime, and account</div>
-            </div>
-            <span class="text-gray-600 transition-transform duration-200 ml-3 flex-shrink-0"
-              :class="introOpen ? 'rotate-180' : ''" style="display:inline-block;font-size:12px">&#9660;</span>
-          </button>
+        <!-- Overview card -->
+        <div class="rounded-2xl border border-gray-800 bg-gray-900/60 overflow-hidden mb-6">
+          <!-- Header text -->
+          <div class="px-7 py-6 border-b border-gray-800/60">
+            <div class="text-base font-semibold text-white mb-1">What setup configures</div>
+            <div class="text-sm text-gray-500 mb-4">8 steps &mdash; inference routing, model selection, runtime, and account</div>
+            <p class="text-sm text-gray-500 leading-relaxed">
+              Setup establishes how Logos routes inference, which models and runtimes are available, and what operating boundaries apply to agent runs.
+              These choices define the platform&rsquo;s initial profile. Everything here can be adjusted from the dashboard after launch.
+            </p>
+            <p class="text-sm text-gray-500 leading-relaxed mt-2">
+              Each agent run is recorded as a <span class="text-gray-300 font-medium">STAMP</span> &mdash;
+              Soul &plus; Tools &plus; Agent &plus; Model &plus; Policy &mdash; making sessions reproducible, comparable, and auditable.
+              Setup defines the defaults that every STAMP inherits.
+            </p>
+          </div>
 
-          <!-- Body -->
-          <div x-show="introOpen" x-transition.opacity class="border-t border-gray-800/60">
-            <!-- What setup does -->
-            <div class="px-5 pt-4 pb-3 border-b border-gray-800/40">
-              <p class="text-xs text-gray-500 leading-relaxed">
-                Setup establishes how Logos routes inference, which models and runtimes are available, and what operating boundaries apply to agent runs.
-                These choices define the platform&rsquo;s initial profile. Everything here can be adjusted from the dashboard after launch.
-              </p>
-              <p class="text-xs text-gray-500 leading-relaxed mt-1.5">
-                Each agent run is recorded as a <span class="text-gray-400 font-medium">STAMP</span> &mdash;
-                Soul &plus; Tools &plus; Agent &plus; Model &plus; Policy &mdash; making sessions reproducible, comparable, and auditable.
-                Setup defines the defaults that every STAMP inherits.
-              </p>
-            </div>
-
-            <!-- Step list — data-driven from setupSteps -->
-            <div class="px-5 pt-3 pb-1">
-              <template x-for="s in setupSteps" :key="s.n">
-                <div class="flex items-start gap-3 py-2.5 border-b border-gray-800/30 last:border-0">
-                  <div class="w-5 h-5 rounded-full bg-gray-800 border border-gray-700 flex items-center justify-center text-[10px] font-mono text-gray-500 flex-shrink-0 mt-0.5"
-                    x-text="s.n"></div>
-                  <div class="min-w-0">
+          <!-- 2-column step grid -->
+          <div class="px-7 py-5 grid grid-cols-2 gap-3">
+            <template x-for="s in setupSteps" :key="s.n">
+              <div class="flex items-start gap-3 p-4 rounded-xl bg-gray-800/30 border border-gray-700/30">
+                <div class="w-6 h-6 rounded-full bg-gray-800 border border-gray-700 flex items-center justify-center text-xs font-mono text-gray-400 flex-shrink-0 mt-0.5"
+                  x-text="s.n"></div>
+                <div class="min-w-0 flex-1">
+                  <div class="flex items-center gap-2 flex-wrap mb-1">
                     <div class="text-sm font-semibold text-gray-200 leading-tight" x-text="s.name"></div>
-                    <div class="text-xs text-gray-500 leading-relaxed mt-0.5" x-text="s.desc"></div>
-                  </div>
-                  <div class="flex-shrink-0 ml-auto pl-2">
-                    <span class="spinner-hue text-[10px] px-1.5 py-0.5 rounded-full border border-indigo-800 text-indigo-400 font-medium uppercase tracking-wider"
+                    <span class="spinner-hue text-[9px] px-1.5 py-0.5 rounded-full border border-indigo-800 text-indigo-400 font-medium uppercase tracking-wider flex-shrink-0"
                       x-text="s.tag"></span>
                   </div>
+                  <div class="text-xs text-gray-500 leading-relaxed" x-text="s.desc"></div>
                 </div>
-              </template>
-            </div>
+              </div>
+            </template>
+          </div>
 
-            <!-- What you get at the end -->
-            <div class="mx-5 mb-5 mt-3 p-3 rounded-xl bg-gray-800/40 border border-gray-700/40">
-              <div class="text-xs text-gray-500 uppercase tracking-wider font-semibold mb-1.5">When complete</div>
-              <p class="text-xs text-gray-400 leading-relaxed">
-                Logos has a configured inference route, a benchmarked default model, a defined agent runtime and soul,
-                and a secured admin account. The platform is ready for agent runs.
-              </p>
-            </div>
+          <!-- When complete -->
+          <div class="mx-7 mb-6 p-4 rounded-xl bg-gray-800/40 border border-gray-700/40">
+            <div class="text-xs text-gray-500 uppercase tracking-wider font-semibold mb-1.5">When complete</div>
+            <p class="text-sm text-gray-400 leading-relaxed">
+              Logos has a configured inference route, a benchmarked default model, a defined agent runtime and soul,
+              and a secured admin account. The platform is ready for agent runs.
+            </p>
           </div>
         </div>
 
-        <!-- Track selection -->
-        <p class="text-xs text-gray-600 mb-3 px-0.5">First, one decision shapes what follows:</p>
+        <!-- Continue -->
+        <div class="flex justify-center">
+          <button @click="introConfirmed = true"
+            class="spinner-hue px-8 py-3 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-semibold transition-all duration-200">
+            Continue &rarr;
+          </button>
+        </div>
+      </div>
+
+      <!-- ── Step 0b: Track selection ──────────────────────────────────── -->
+      <div x-show="step===0 && introConfirmed" x-cloak x-transition.opacity.duration.300ms>
+        <div class="text-center mb-6">
+          <h2 class="text-xl font-bold mb-2">One decision shapes what follows</h2>
+          <p class="text-gray-400 text-sm">Choose your inference path to begin.</p>
+        </div>
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <!-- Local-first -->
           <button @click="selectTrack('local')"
@@ -5971,7 +5972,7 @@ _SETUP_HTML = """<!DOCTYPE html>
       </div>
 
       <!-- ── Step 1: Connect model server ───────────────────────────── -->
-      <div x-show="step===1" x-cloak x-transition.opacity>
+      <div x-show="step===1" x-cloak x-transition.opacity.duration.300ms>
         <div class="mb-5">
           <h2 class="text-xl font-bold mb-1">Connect your model server(s)</h2>
           <p class="text-gray-400 text-sm">Logos will check for Ollama and LM Studio on your network automatically.</p>
@@ -6143,7 +6144,7 @@ _SETUP_HTML = """<!DOCTYPE html>
       </div>
 
       <!-- ── Step 2: Auto-compare models ─────────────────────────────── -->
-      <div x-show="step===2" x-cloak x-transition.opacity>
+      <div x-show="step===2" x-cloak x-transition.opacity.duration.300ms>
 
         <!-- No models on Ollama: pull catalog -->
         <div x-show="getModels().length===0 && hasOllamaServer()" class="space-y-3">
@@ -6439,7 +6440,7 @@ _SETUP_HTML = """<!DOCTYPE html>
       </div>
 
       <!-- ── Step 3: Confirm default model ────────────────────────────── -->
-      <div x-show="step===3" x-cloak x-transition.opacity>
+      <div x-show="step===3" x-cloak x-transition.opacity.duration.300ms>
         <div class="mb-5">
           <h2 class="text-xl font-bold mb-1">Confirming your default model</h2>
           <p class="text-gray-400 text-sm">Sending a quick message to verify the model is responding.</p>
@@ -6527,7 +6528,7 @@ _SETUP_HTML = """<!DOCTYPE html>
       </div>
 
       <!-- ── Step 4: Choose your agent runtime ─────────────────────── -->
-      <div x-show="step===4" x-cloak x-transition.opacity>
+      <div x-show="step===4" x-cloak x-transition.opacity.duration.300ms>
         <div class="mb-5">
           <h2 class="text-xl font-bold mb-1">Choose your agent</h2>
           <p class="text-gray-400 text-sm">Select the agent runtime that will handle your conversations and tasks.</p>
@@ -6582,7 +6583,7 @@ _SETUP_HTML = """<!DOCTYPE html>
       </div>
 
       <!-- ── Step 5: Where to run agents ───────────────────────────── -->
-      <div x-show="step===5" x-cloak x-transition.opacity>
+      <div x-show="step===5" x-cloak x-transition.opacity.duration.300ms>
         <div class="mb-5">
           <h2 class="text-xl font-bold mb-1">Where to run agents</h2>
           <p class="text-gray-400 text-sm">Choose where agent tasks execute. This affects resource usage and isolation.</p>
@@ -6699,7 +6700,7 @@ _SETUP_HTML = """<!DOCTYPE html>
       </div>
 
       <!-- ── Step 6: Choose a soul ───────────────────────────────────── -->
-      <div x-show="step===6" x-cloak x-transition.opacity>
+      <div x-show="step===6" x-cloak x-transition.opacity.duration.300ms>
         <div class="mb-5">
           <h2 class="text-xl font-bold mb-1">Choose a soul</h2>
           <p class="text-gray-400 text-sm">A soul shapes how your agent thinks and communicates and is a starting point for its character. It works alongside the tools you enable &mdash; pick one that fits what you want for your first agent instance.</p>
@@ -6736,7 +6737,7 @@ _SETUP_HTML = """<!DOCTYPE html>
       </div>
 
       <!-- ── Step 7: Your account ────────────────────────────────────── -->
-      <div x-show="step===7" x-cloak x-transition.opacity>
+      <div x-show="step===7" x-cloak x-transition.opacity.duration.300ms>
         <div class="mb-6">
           <h2 class="text-xl font-bold mb-1">Your account</h2>
           <p class="text-gray-400 text-sm">Set your login credentials. You'll use these to sign in to Logos going forward.</p>
@@ -6773,7 +6774,7 @@ _SETUP_HTML = """<!DOCTYPE html>
       </div>
 
       <!-- ── Step 8: Review & launch ─────────────────────────────────── -->
-      <div x-show="step===8" x-cloak x-transition.opacity>
+      <div x-show="step===8" x-cloak x-transition.opacity.duration.300ms>
         <div class="text-center mb-8">
           <div class="w-16 h-16 rounded-2xl bg-green-950 border border-green-800 flex items-center justify-center mx-auto mb-5">
             <svg class="w-8 h-8 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -6860,7 +6861,7 @@ function setup() {
     track: null,
 
     // Step 0 — intro panel
-    introOpen: true,
+    introConfirmed: false,
     setupSteps: [
       { n: 1, name: 'Connect model servers',  tag: 'detects',    desc: 'Logos scans your network for Ollama and LM Studio. Detected servers become inference endpoints. You can add servers manually or adjust later.' },
       { n: 2, name: 'Benchmark models',       tag: 'measures',   desc: 'Candidate models run 6 eval tests: instruction following, reasoning, JSON format, tool selection, nested JSON, and multi-step arithmetic. The best fit is pre-selected; you can override freely.' },
