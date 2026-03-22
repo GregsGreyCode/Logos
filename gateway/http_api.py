@@ -3872,10 +3872,9 @@ function app() {
       );
     },
     async init() {
-      // Hue-cycle via rAF so all inst-active pills are always in sync
-      const _hueStart = performance.now() / 1000;
-      const _hueTick = ts => {
-        const deg = ((ts / 1000 - _hueStart) * 6 % 360).toFixed(1);
+      // Hue-cycle anchored to wall-clock time — stays in sync across pages and refreshes
+      const _hueTick = () => {
+        const deg = ((Date.now() / 1000) * 6 % 360).toFixed(1);
         document.documentElement.style.setProperty('--hue-deg', deg + 'deg');
         requestAnimationFrame(_hueTick);
       };
@@ -5682,9 +5681,10 @@ _LOGIN_HTML = """<!DOCTYPE html>
           .catch(() => {});
         this._hintTimer = setTimeout(() => { if (this.phase === 'splash') this.showHint = true; }, 10000);
         // Drive hue for logo + button via rAF so they're always in sync
-        const pageStart = performance.now() / 1000;
-        const tick = ts => {
-          const deg = ((ts / 1000 - pageStart) * 6 % 360).toFixed(1);
+        const tick = () => {
+          // Anchor hue to wall-clock time so every page load/refresh
+          // shows the same colour at the same real-world second.
+          const deg = ((Date.now() / 1000) * 6 % 360).toFixed(1);
           document.documentElement.style.setProperty('--hue-deg', deg + 'deg');
           requestAnimationFrame(tick);
         };
@@ -5846,12 +5846,10 @@ _SETUP_HTML = """<!DOCTYPE html>
     // Drive all hue-synced elements from a single rAF loop via --hue-deg.
     // This guarantees sync regardless of when elements appear in the DOM.
     (function(){
-      const t = parseFloat(new URLSearchParams(location.search).get('t') || '0');
-      const pageStart = performance.now() / 1000;
-      // 6 deg/s → full 360° in 60s, matching logo-hue keyframe rate
-      function tick(ts) {
-        const elapsed = t + (ts / 1000 - pageStart);
-        const deg = ((elapsed * 6) % 360).toFixed(1);
+      // Anchor to wall-clock time — same colour at the same real-world second
+      // on every page and after every refresh. 6 deg/s → full 360° in 60s.
+      function tick() {
+        const deg = ((Date.now() / 1000) * 6 % 360).toFixed(1);
         document.documentElement.style.setProperty('--hue-deg', deg + 'deg');
         requestAnimationFrame(tick);
       }
@@ -6085,8 +6083,8 @@ _SETUP_HTML = """<!DOCTYPE html>
               </summary>
               <div class="mt-2 p-4 rounded-xl bg-gray-900 border border-gray-800 space-y-3">
                 <div class="flex gap-2.5"><span class="w-4 h-4 rounded-full bg-gray-700 text-white text-[10px] flex items-center justify-center flex-shrink-0 font-medium">1</span><span class="text-xs text-gray-300">Download LM Studio from <a href="https://lmstudio.ai" target="_blank" class="text-indigo-400 hover:underline">lmstudio.ai &nearr;</a></span></div>
-                <div class="flex gap-2.5"><span class="w-4 h-4 rounded-full bg-gray-700 text-white text-[10px] flex items-center justify-center flex-shrink-0 font-medium">2</span><span class="text-xs text-gray-300">Open the <span class="text-white font-medium">Discover</span> tab, search for a model, download it</span></div>
-                <div class="flex gap-2.5"><span class="w-4 h-4 rounded-full bg-gray-700 text-white text-[10px] flex items-center justify-center flex-shrink-0 font-medium">3</span><span class="text-xs text-gray-300">Go to <span class="text-white font-medium">&harr; Local Server</span> &rarr; select your model &rarr; <span class="text-white font-medium">Start Server</span></span></div>
+                <div class="flex gap-2.5"><span class="w-4 h-4 rounded-full bg-gray-700 text-white text-[10px] flex items-center justify-center flex-shrink-0 font-medium">2</span><span class="text-xs text-gray-300">Open the <span class="text-white font-medium">Model Search</span> tab, download models you like that are advised as being able to run on your hardware</span></div>
+                <div class="flex gap-2.5"><span class="w-4 h-4 rounded-full bg-gray-700 text-white text-[10px] flex items-center justify-center flex-shrink-0 font-medium">3</span><span class="text-xs text-gray-300">Go to the <span class="text-white font-medium">Developer</span> tab and start your server by clicking the slider button</span></div>
               </div>
             </details>
           </div>
@@ -6151,8 +6149,8 @@ _SETUP_HTML = """<!DOCTYPE html>
         <div x-show="getModels().length===0 && !hasOllamaServer()" class="p-5 rounded-xl bg-gray-900 border border-gray-800">
           <div class="text-sm font-medium text-white mb-3">Load a model in LM Studio first</div>
           <ol class="space-y-2.5 text-sm text-gray-400 mb-4 list-none">
-            <li class="flex gap-3"><span class="w-5 h-5 rounded-full bg-gray-700 text-white text-xs flex items-center justify-center flex-shrink-0 mt-0.5 font-medium">1</span><span>Go to the <span class="text-white font-medium">Discover</span> tab &mdash; search for a model and click Download. Not sure what to pick? Ask a chatbot: <span class="italic text-gray-500">"Best LM Studio model for an AI agent with X GB VRAM?"</span> Our benchmark will tell you if it&rsquo;s the right fit.</span></li>
-            <li class="flex gap-3"><span class="w-5 h-5 rounded-full bg-gray-700 text-white text-xs flex items-center justify-center flex-shrink-0 mt-0.5 font-medium">2</span><span>Go to <span class="text-white font-medium">Local Server</span>, select your model, and press <span class="text-white font-medium">Start Server</span>.</span></li>
+            <li class="flex gap-3"><span class="w-5 h-5 rounded-full bg-gray-700 text-white text-xs flex items-center justify-center flex-shrink-0 mt-0.5 font-medium">1</span><span>Open the <span class="text-white font-medium">Model Search</span> tab, download models you like that are advised as being able to run on your hardware. Not sure what to pick? Ask a chatbot: <span class="italic text-gray-500">"Best LM Studio model for an AI agent with X GB VRAM?"</span></span></li>
+            <li class="flex gap-3"><span class="w-5 h-5 rounded-full bg-gray-700 text-white text-xs flex items-center justify-center flex-shrink-0 mt-0.5 font-medium">2</span><span>Go to the <span class="text-white font-medium">Developer</span> tab and start your server by clicking the slider button.</span></li>
             <li class="flex gap-3"><span class="w-5 h-5 rounded-full bg-gray-700 text-white text-xs flex items-center justify-center flex-shrink-0 mt-0.5 font-medium">3</span><span>Come back here and click Refresh.</span></li>
           </ol>
           <button @click="refreshModels()" class="btn-primary px-4 py-2 rounded-lg text-xs">Refresh model list</button>
