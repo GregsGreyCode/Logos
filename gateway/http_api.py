@@ -5936,9 +5936,22 @@ _SETUP_HTML = """<!DOCTYPE html>
 
       <!-- ── Step 1: Connect model server ───────────────────────────── -->
       <div x-show="step===1" x-cloak x-transition.opacity>
-        <div class="mb-6">
+        <div class="mb-4">
           <h2 class="text-xl font-bold mb-1">Connect your model server(s)</h2>
-          <p class="text-gray-400 text-sm">Logos will check for Ollama and LM Studio automatically.</p>
+          <p class="text-gray-400 text-sm">Logos will check for Ollama and LM Studio on your network automatically.</p>
+        </div>
+
+        <!-- Before-you-start hint — always visible -->
+        <div class="mb-4 p-3 rounded-xl bg-gray-900 border border-gray-800 text-xs text-gray-500 leading-relaxed space-y-1">
+          <p class="text-gray-400 font-medium mb-1">Before scanning — make sure at least one is running:</p>
+          <div class="flex items-start gap-2">
+            <span class="text-indigo-400 font-mono flex-shrink-0">Ollama</span>
+            <span>Install from <span class="font-mono text-gray-400">ollama.com</span>, then run <span class="font-mono bg-gray-800 px-1 rounded">ollama serve</span> or start the desktop app. Default port: <span class="font-mono text-gray-400">11434</span>.</span>
+          </div>
+          <div class="flex items-start gap-2">
+            <span class="text-indigo-400 font-mono flex-shrink-0">LM Studio</span>
+            <span>Install from <span class="font-mono text-gray-400">lmstudio.ai</span>, load a model, then enable the local server from the Developer tab. Default port: <span class="font-mono text-gray-400">1234</span>.</span>
+          </div>
         </div>
 
         <!-- Scanning -->
@@ -6001,9 +6014,26 @@ _SETUP_HTML = """<!DOCTYPE html>
           </template>
 
           <!-- Nothing found -->
-          <div x-show="foundServers.length===0" class="p-5 rounded-xl bg-gray-900 border border-gray-800 text-center">
-            <p class="text-sm text-gray-300 mb-1">No model servers detected</p>
-            <p class="text-xs text-gray-600">Ollama (:11434) and LM Studio (:1234) were not found.</p>
+          <div x-show="foundServers.length===0" class="p-4 rounded-xl bg-gray-900 border border-gray-800 space-y-3">
+            <p class="text-sm font-semibold text-gray-300">No model servers detected</p>
+            <p class="text-xs text-gray-500">Ollama (port 11434) and LM Studio (port 1234) were not found on this machine or local network. Set one up and hit Scan again.</p>
+            <div class="space-y-2 pt-1 border-t border-gray-800">
+              <div class="space-y-0.5">
+                <p class="text-xs font-semibold text-indigo-400">Ollama</p>
+                <p class="text-xs text-gray-500">1. Download from <span class="font-mono text-gray-400">ollama.com</span> and install.</p>
+                <p class="text-xs text-gray-500">2. Run <span class="font-mono bg-gray-800 px-1 rounded">ollama pull qwen2.5:7b</span> (or any model).</p>
+                <p class="text-xs text-gray-500">3. Ollama serves automatically on port 11434.</p>
+              </div>
+              <div class="space-y-0.5 pt-1">
+                <p class="text-xs font-semibold text-indigo-400">LM Studio</p>
+                <p class="text-xs text-gray-500">1. Download from <span class="font-mono text-gray-400">lmstudio.ai</span> and install.</p>
+                <p class="text-xs text-gray-500">2. Search for a model (e.g. Qwen2.5 7B) and download it.</p>
+                <p class="text-xs text-gray-500">3. Go to the <span class="font-mono bg-gray-800 px-1 rounded">Developer</span> tab and start the local server.</p>
+              </div>
+            </div>
+            <button @click="autoDetect()" class="w-full mt-1 py-2 rounded-lg border border-gray-700 hover:border-indigo-500 text-xs text-gray-400 hover:text-indigo-300 transition-colors">
+              Scan again
+            </button>
           </div>
 
           <!-- Manual add -->
@@ -6833,10 +6863,6 @@ function setup() {
       if (ua.includes('Win')) this.osPlatform = 'windows';
       else if (ua.includes('Linux')) this.osPlatform = 'linux';
       else this.osPlatform = 'mac';
-      // Local-first is the only available track — skip the track-selection
-      // screen and go straight to scanning. Step 0 will be restored once
-      // Frontier-first is available.
-      this.$nextTick(() => this.selectTrack('local'));
     },
 
     selectTrack(track) {
