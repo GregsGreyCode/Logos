@@ -818,6 +818,9 @@ _ADMIN_HTML = """<!DOCTYPE html>
   @keyframes hermes-shimmer{0%,100%{filter:brightness(1)}50%{filter:brightness(1.12)}}
   .hermes-logo-idle{animation:hermes-shimmer 4s ease-in-out infinite}
 
+  @keyframes logo-hue{from{filter:hue-rotate(0deg)}to{filter:hue-rotate(360deg)}}
+  .inst-active{background:linear-gradient(135deg,#6366f1 0%,#a855f7 100%)!important;color:#fff!important;animation:logo-hue 60s linear infinite}
+
   /* wake animation — breathe-pulse replaces bouncing balls */
   @keyframes logos-wake{0%,100%{transform:scale(0.55);opacity:0.2}45%{transform:scale(1.25);opacity:1}70%{transform:scale(0.9);opacity:0.7}}
   .logos-wake-dot{width:7px;height:7px;border-radius:9999px;background:var(--accent);display:inline-block;animation:logos-wake 1.6s ease-in-out infinite}
@@ -1005,7 +1008,7 @@ _ADMIN_HTML = """<!DOCTYPE html>
         <div class="flex items-center gap-0.5">
           <button class="flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium transition-colors"
             :class="activeInstanceId === inst.id
-              ? 'bg-indigo-700 text-white'
+              ? 'inst-active'
               : inst.k8s_status === 'stopped' ? 'bg-gray-900 text-gray-600 border border-gray-800 hover:bg-gray-800 hover:text-gray-400'
               : 'bg-gray-800 text-gray-400 hover:bg-gray-700 hover:text-white'"
             :title="inst.id === 'self' ? 'Core — always available'
@@ -5845,7 +5848,8 @@ _SETUP_HTML = """<!DOCTYPE html>
       <template x-for="i in [1,2,3,4]" :key="i">
         <div class="flex items-center gap-1">
           <div class="w-2 h-2 rounded-full transition-all duration-500"
-               :class="step > i ? 'bg-indigo-400' : step === i ? 'bg-indigo-500 scale-125' : 'bg-gray-700'"></div>
+               :class="step > i ? 'bg-indigo-400 cursor-pointer hover:scale-125' : step === i ? 'bg-indigo-500 scale-125' : 'bg-gray-700'"
+               @click="goTo(i)" :title="step > i ? 'Go back to step ' + i : ''"></div>
           <div x-show="i < 4" class="w-6 h-px transition-colors duration-500"
                :class="step > i ? 'bg-indigo-600' : 'bg-gray-700'"></div>
         </div>
@@ -5917,7 +5921,7 @@ _SETUP_HTML = """<!DOCTYPE html>
           <!-- Found server cards -->
           <template x-for="s in foundServers" :key="s.endpoint">
             <div class="p-4 rounded-xl border transition-all"
-              :class="isServerSelected(s) ? 'border-indigo-500 bg-indigo-950/30' : 'border-gray-700 bg-gray-900'">
+              :class="isServerSelected(s) ? 'border-indigo-500 bg-indigo-950/30 spinner-hue' : 'border-gray-700 bg-gray-900'">
               <div class="flex items-start gap-3">
                 <button @click="s.status==='up' && toggleServer(s)"
                   :class="isServerSelected(s) ? 'bg-indigo-500 border-indigo-500' : 'border-gray-600'"
@@ -6470,6 +6474,13 @@ function setup() {
       }
       if (this.step === 2) { this.step = 3; this.$nextTick(() => this.runTest()); return; }
       if (this.step === 3) { this.step = 4; return; }
+    },
+    goTo(i) {
+      // Only allow going back to a step already reached, not forward past current
+      if (i < this.step && i >= 1 && this.step < 4) {
+        this.step = i;
+        if (i === 2) this.$nextTick(() => this.initModelStep());
+      }
     },
 
     initModelStep() {
