@@ -6947,7 +6947,7 @@ function setup() {
       // Restore full wizard progress so a refresh resumes from where the user left off
       let restoredFromProgress = false;
       try {
-        const saved = localStorage.getItem('logos_setup_progress');
+        const saved = localStorage.getItem('logos_setup_progress_v2');
         if (saved) {
           const s = JSON.parse(saved);
           if (s?.ts && Date.now() - s.ts < 24 * 60 * 60 * 1000) {
@@ -7007,7 +7007,7 @@ function setup() {
 
     _saveProgress() {
       try {
-        localStorage.setItem('logos_setup_progress', JSON.stringify({
+        localStorage.setItem('logos_setup_progress_v2', JSON.stringify({
           ts:                     Date.now(),
           step:                   this.step,
           introConfirmed:         this.introConfirmed,
@@ -7568,7 +7568,7 @@ function setup() {
             this.completing = false;
             return;
           }
-          try { localStorage.removeItem('logos_setup_scan'); localStorage.removeItem('logos_setup_progress'); } catch {}
+          try { localStorage.removeItem('logos_setup_scan'); localStorage.removeItem('logos_setup_progress'); localStorage.removeItem('logos_setup_progress_v2'); } catch {}
           window.location.href = '/';
           return;
         }
