@@ -5656,7 +5656,7 @@ _LOGIN_HTML = """<!DOCTYPE html>
           .then(r => r.ok ? r.json() : null)
           .then(d => { if (d && !d.completed) this.needsSetup = true; })
           .catch(() => {});
-        this._hintTimer = setTimeout(() => { if (this.phase === 'splash') this.showHint = true; }, 5000);
+        this._hintTimer = setTimeout(() => { if (this.phase === 'splash') this.showHint = true; }, 10000);
       },
 
       activate() {
