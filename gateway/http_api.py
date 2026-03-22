@@ -5635,9 +5635,6 @@ _LOGIN_HTML = """<!DOCTYPE html>
         this.showHint = false;
         if (this.needsSetup) { window.location.href = '/setup'; return; }
         this.phase = 'login';
-        this.$nextTick(() => {
-          document.getElementById('identifier')?.focus();
-        });
       },
 
       async submit() {
