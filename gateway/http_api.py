@@ -5370,19 +5370,13 @@ _LOGIN_HTML = """<!DOCTYPE html>
          0°  → indigo, 60° → magenta, 120° → orange, 180° → yellow,
          240° → green,  300° → cyan,   360° → back to indigo.          */
     @keyframes ambient-color {
-      0%    { background: #6366f1; }
-      8%    { background: #8b5cf6; }
-      17%   { background: #d946ef; }
-      25%   { background: #ec4899; }
-      33%   { background: #f97316; }
-      42%   { background: #f59e0b; }
-      50%   { background: #eab308; }
-      58%   { background: #84cc16; }
-      67%   { background: #22c55e; }
-      75%   { background: #14b8a6; }
-      83%   { background: #06b6d4; }
-      92%   { background: #818cf8; }
-      100%  { background: #6366f1; }
+      0%   { background: #6366f1; }
+      17%  { background: #d946ef; }
+      33%  { background: #f97316; }
+      50%  { background: #eab308; }
+      67%  { background: #22c55e; }
+      83%  { background: #06b6d4; }
+      100% { background: #6366f1; }
     }
     body::before {
       content: '';
@@ -5392,7 +5386,7 @@ _LOGIN_HTML = """<!DOCTYPE html>
       width: 2400px; height: 2400px;
       border-radius: 50%;
       filter: blur(280px);
-      opacity: 0.13;
+      opacity: 0.065;
       animation: ambient-color 60s linear infinite;
       pointer-events: none;
       z-index: 0;
@@ -5415,7 +5409,7 @@ _LOGIN_HTML = """<!DOCTYPE html>
       inset: -280px;
       border-radius: 50%;
       filter: blur(160px);
-      opacity: 0.55;
+      opacity: 0.28;
       pointer-events: none;
       animation: halo-color 60s linear infinite;
     }
