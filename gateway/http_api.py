@@ -5841,7 +5841,7 @@ _SETUP_HTML = """<!DOCTYPE html>
       <img src="/static/logo.svg" class="setup-logo relative" style="width:80px;height:80px;object-fit:contain;">
     </div>
     <!-- Step indicator — visible from step 1 onward -->
-    <div x-show="step > 0" x-transition.opacity class="flex items-center gap-1">
+    <div x-show="step > 0" x-transition.opacity class="spinner-hue flex items-center gap-1">
       <template x-for="i in [1,2,3,4]" :key="i">
         <div class="flex items-center gap-1">
           <div class="w-2 h-2 rounded-full transition-all duration-500"
@@ -5905,7 +5905,9 @@ _SETUP_HTML = """<!DOCTYPE html>
 
         <!-- Scanning -->
         <div x-show="autoScanning" class="flex flex-col items-center py-12 gap-4">
-          <div class="spinner-hue w-8 h-8 border-2 border-gray-800 border-t-indigo-500 rounded-full animate-spin"></div>
+          <div class="spinner-hue">
+            <div class="w-8 h-8 border-2 border-gray-800 border-t-indigo-500 rounded-full animate-spin"></div>
+          </div>
           <p class="text-sm text-gray-500">Scanning local network for model servers&hellip;</p>
         </div>
 
