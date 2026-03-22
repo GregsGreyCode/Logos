@@ -5354,7 +5354,7 @@ _LOGIN_HTML = """<!DOCTYPE html>
     *, *::before, *::after { box-sizing: border-box; }
 
     body {
-      background-color: #020817;
+      background-color: #010409;
       min-height: 100vh;
       display: flex;
       align-items: center;
