@@ -798,57 +798,83 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
                 await send({"log": f"  Median: {tok_s} tok/s{approx_note}"})
 
                 # ── Capability evals — each retried once on failure ────────────
-                async def _eval_once(prompt: str, check_fn, max_tokens: int) -> bool:
-                    """Run eval, retry once if it fails. Stop early on first pass.
+                async def _eval_once(prompt: str, check_fn, max_tokens: int) -> tuple[bool, str]:
+                    """Run eval, retry once if it fails. Returns (passed, last_stripped_response).
 
                     max_tokens is set high enough to absorb <think> chains (Qwen3 etc.)
                     plus the actual answer. _strip_think removes the reasoning block
                     before the check function sees the text.
                     """
+                    last_stripped = ""
                     for attempt in range(2):
                         try:
                             txt, _, _, _ = await _stream_chat(
                                 http, endpoint, model_id, api_key, prompt, max_tokens=max_tokens
                             )
-                            if check_fn(_strip_think(txt)):
-                                return True
-                        except Exception:
-                            pass
+                            last_stripped = _strip_think(txt)
+                            if check_fn(last_stripped):
+                                return True, last_stripped
+                        except Exception as e:
+                            last_stripped = f"[error: {str(e)[:80]}]"
                         if attempt == 0:
                             await asyncio.sleep(0.5)   # brief pause before retry
-                    return False
+                    return False, last_stripped
+
+                async def _log_eval_detail(prompt: str, response: str, missing: list[str] | None = None) -> None:
+                    """Emit detail lines (prompt snippet, response, missing checks) on eval failure."""
+                    prompt_preview = (prompt[:120] + "…") if len(prompt) > 120 else prompt
+                    resp_preview = (response[:300] + "…") if len(response) > 300 else (response or "(empty)")
+                    await send({"log": f"      prompt: {prompt_preview}"})
+                    await send({"log": f"      got:    {resp_preview}"})
+                    if missing:
+                        await send({"log": f"      missing: {', '.join(missing)}"})
 
                 await send({"log": "  Eval 1/6: instruction following…"})
-                instruct_pass = await _eval_once(
+                instruct_pass, instruct_resp = await _eval_once(
                     _INSTRUCT_PROMPT,
                     lambda t: all(c in t for c in _INSTRUCT_CHECKS),
                     600,
                 )
                 await send({"log": f"    {'✓' if instruct_pass else '✗'} instruction following"})
+                if not instruct_pass:
+                    missing = [c for c in _INSTRUCT_CHECKS if c not in instruct_resp]
+                    await _log_eval_detail(_INSTRUCT_PROMPT, instruct_resp, missing)
 
                 await send({"log": "  Eval 2/6: reasoning (2-part)…"})
-                reason_pass = await _eval_once(
+                reason_pass, reason_resp = await _eval_once(
                     _REASON_PROMPT,
                     lambda t: all(c in t for c in _REASON_CHECKS),
                     600,
                 )
                 await send({"log": f"    {'✓' if reason_pass else '✗'} reasoning"})
+                if not reason_pass:
+                    missing = [c for c in _REASON_CHECKS if c not in reason_resp]
+                    await _log_eval_detail(_REASON_PROMPT, reason_resp, missing)
 
                 await send({"log": "  Eval 3/6: strict JSON format…"})
-                format_pass = await _eval_once(_FORMAT_PROMPT, _eval_format, 600)
+                format_pass, format_resp = await _eval_once(_FORMAT_PROMPT, _eval_format, 600)
                 await send({"log": f"    {'✓' if format_pass else '✗'} JSON format"})
+                if not format_pass:
+                    await _log_eval_detail(_FORMAT_PROMPT, format_resp)
 
                 await send({"log": "  Eval 4/6: tool selection (2 scenarios)…"})
-                tool_pass = await _eval_once(_TOOL_PROMPT, _eval_tool_call, 600)
+                tool_pass, tool_resp = await _eval_once(_TOOL_PROMPT, _eval_tool_call, 600)
                 await send({"log": f"    {'✓' if tool_pass else '✗'} tool selection"})
+                if not tool_pass:
+                    await _log_eval_detail(_TOOL_PROMPT, tool_resp)
 
                 await send({"log": "  Eval 5/6: nested JSON schema…"})
-                nested_json_pass = await _eval_once(_NESTED_JSON_PROMPT, _eval_nested_json, 600)
+                nested_json_pass, nested_resp = await _eval_once(_NESTED_JSON_PROMPT, _eval_nested_json, 600)
                 await send({"log": f"    {'✓' if nested_json_pass else '✗'} nested JSON"})
+                if not nested_json_pass:
+                    await _log_eval_detail(_NESTED_JSON_PROMPT, nested_resp)
 
                 await send({"log": "  Eval 6/6: multi-step reasoning…"})
-                multihop_pass = await _eval_once(_MULTIHOP_PROMPT, _eval_multihop, 600)
+                multihop_pass, multihop_resp = await _eval_once(_MULTIHOP_PROMPT, _eval_multihop, 600)
                 await send({"log": f"    {'✓' if multihop_pass else '✗'} multi-step reasoning"})
+                if not multihop_pass:
+                    expected = _MULTIHOP_CHECK
+                    await _log_eval_detail(_MULTIHOP_PROMPT, multihop_resp, [f"expected '{expected}'"])
 
                 tests_passed = sum([instruct_pass, reason_pass, format_pass, tool_pass, nested_json_pass, multihop_pass])
                 quality_pass = tests_passed >= 4
