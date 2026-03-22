@@ -5385,8 +5385,8 @@ _LOGIN_HTML = """<!DOCTYPE html>
       transform: translate(-50%, -50%);
       width: 2400px; height: 2400px;
       border-radius: 50%;
-      filter: blur(300px);
-      opacity: 0.06;
+      filter: blur(260px);
+      opacity: 0.18;
       animation: ambient-color 60s linear infinite;
       pointer-events: none;
       z-index: 0;
@@ -5491,7 +5491,7 @@ _LOGIN_HTML = """<!DOCTYPE html>
       background: rgba(255,255,255,0.04);
       border: 1px solid rgba(255,255,255,0.07);
       border-radius: 12px;
-      padding: 20px 16px 8px;
+      padding: 14px 16px;
       color: #f1f5f9; font-size: 0.875rem; outline: none;
       caret-color: rgba(165,180,252,0.6);
       transition: background 0.6s ease;
