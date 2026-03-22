@@ -6153,7 +6153,7 @@ _SETUP_HTML = """<!DOCTYPE html>
                   </summary>
                   <div class="mt-1 space-y-1 pl-1">
                     <template x-for="m in group.models" :key="m.id">
-                      <button @click="pickModel(m); $el.closest('details').open=false; $el.closest('details.group').open=false"
+                      <button @click="pickModel(m); goNext()"
                         :class="selectedModel===m.id ? 'border-indigo-500 bg-indigo-950/30' : 'border-gray-800 hover:border-gray-700'"
                         class="w-full text-left px-3 py-2 rounded-lg bg-gray-900 border transition-all text-xs">
                         <div class="flex items-center justify-between">
@@ -6174,11 +6174,6 @@ _SETUP_HTML = """<!DOCTYPE html>
             </div>
           </details>
 
-          <button @click="goNext()" :disabled="!selectedModel"
-            x-show="selectedModel && !autoAdvancing"
-            class="btn-primary w-full py-2.5 rounded-xl text-sm">
-            Continue &rarr;
-          </button>
         </div>
 
         <!-- No models on Ollama: pull catalog -->
