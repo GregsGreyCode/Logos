@@ -5412,10 +5412,10 @@ _LOGIN_HTML = """<!DOCTYPE html>
     }
     .logo-halo {
       position: absolute;
-      inset: -50px;
+      inset: -280px;
       border-radius: 50%;
-      filter: blur(50px);
-      opacity: 0.12;
+      filter: blur(160px);
+      opacity: 0.55;
       pointer-events: none;
       animation: halo-color 60s linear infinite;
     }
@@ -5430,27 +5430,51 @@ _LOGIN_HTML = """<!DOCTYPE html>
     }
     .logo-wrap {
       animation: logo-fadein 3s cubic-bezier(0.16,1,0.3,1) both;
+      /* spring upward when card reveals */
+      transition: transform 1.1s cubic-bezier(0.34, 1.4, 0.64, 1);
     }
+    .logo-wrap.logo-up { transform: translateY(-24px); }
     .logo-img { animation: logo-hue 60s linear infinite; }
 
-    /* ── Splash → login reveal ──────────────────────────────────────────
-       The logo is always in normal flow; body flex-centres it.
-       When hidden, the container is ~120px tall → logo centred in viewport.
-       When the reveal div expands, the container grows and the logo
-       naturally floats upward. max-height transition drives the motion.  */
+    /* ── Splash → login reveal ─────────────────────────────────────────
+       max-height reserves the space so the logo floats up naturally.
+       The card itself slides in from below via its own transform — these
+       two motions run independently, giving an organic layered feel.     */
     .login-reveal {
       max-height: 0;
       opacity: 0;
       overflow: visible;
-      clip-path: inset(0 -40px -80px -40px);
-      transition: max-height 3s cubic-bezier(0.16,1,0.3,1),
-                  opacity    2s ease 0.8s,
-                  clip-path  3s cubic-bezier(0.16,1,0.3,1);
+      clip-path: inset(0 -60px -100px -60px);
+      transition: max-height 1.4s cubic-bezier(0.22, 1, 0.36, 1),
+                  opacity    0.01s linear,
+                  clip-path  1.4s cubic-bezier(0.22, 1, 0.36, 1);
     }
     .login-reveal.open {
       max-height: 700px;
       opacity: 1;
-      clip-path: inset(-40px -40px -80px -40px);
+      clip-path: inset(-60px -60px -100px -60px);
+    }
+    /* Card enters from below on its own spring — delayed slightly */
+    .login-card {
+      transform: translateY(32px);
+      opacity: 0;
+      transition: transform 1s cubic-bezier(0.34, 1.4, 0.64, 1) 0.15s,
+                  opacity   0.7s ease 0.15s;
+    }
+    .login-reveal.open .login-card {
+      transform: translateY(0);
+      opacity: 1;
+    }
+    /* Footer text same entry */
+    .login-footer {
+      transform: translateY(16px);
+      opacity: 0;
+      transition: transform 1s cubic-bezier(0.34, 1.4, 0.64, 1) 0.35s,
+                  opacity   0.7s ease 0.35s;
+    }
+    .login-reveal.open .login-footer {
+      transform: translateY(0);
+      opacity: 1;
     }
 
     /* ── Hint pulse ── */
@@ -5529,8 +5553,8 @@ _LOGIN_HTML = """<!DOCTYPE html>
   <!-- Main content — flex-centred by body -->
   <div class="relative z-10 w-full px-5" style="max-width:400px;">
 
-    <!-- Logo — always visible; floats up as .login-reveal expands below -->
-    <div class="text-center logo-wrap" style="padding-top:2vh; padding-bottom:1.5rem;">
+    <!-- Logo — springs upward when card reveals -->
+    <div class="text-center logo-wrap" :class="{ 'logo-up': phase === 'login' }" style="padding-top:2vh; padding-bottom:1.5rem;">
       <div class="relative inline-block">
         <div class="logo-halo"></div>
         <img src="/static/logo.svg" alt="Logos" class="logo-img relative mx-auto"
@@ -5591,7 +5615,7 @@ _LOGIN_HTML = """<!DOCTYPE html>
       </div>
 
       <!-- Footer -->
-      <p class="text-center mt-6"
+      <p class="login-footer text-center mt-6"
          style="font-size:0.72rem;color:rgba(71,85,105,0.7);letter-spacing:0.05em;">
         A self-hosted AI agent platform
       </p>
