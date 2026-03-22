@@ -6551,7 +6551,8 @@ _SETUP_HTML = """<!DOCTYPE html>
             <div x-show="k8sMode === 'kubeconfig'">
               <label class="block text-xs text-gray-500 mb-1">Paste kubeconfig YAML <span class="text-gray-600">(contains cluster address and credentials)</span></label>
               <textarea x-model="kubeconfig" rows="6" placeholder="apiVersion: v1&#10;kind: Config&#10;..."
-                class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-xs text-white placeholder-gray-600 font-mono focus:outline-none focus:border-indigo-500 resize-none"></textarea>
+                class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-xs text-white placeholder-gray-600 font-mono focus:outline-none focus:border-indigo-500 resize-none appearance-none"
+                style="box-sizing:border-box;"></textarea>
             </div>
 
             <!-- Test connection button + result -->
@@ -6585,29 +6586,25 @@ _SETUP_HTML = """<!DOCTYPE html>
           <p class="text-gray-400 text-sm">A soul shapes how your agent thinks and communicates. It works alongside the tools you enable — pick one that fits what you&rsquo;ll use Logos for most.</p>
         </div>
 
-        <div class="space-y-2 mb-6">
-          <template x-for="soul in soulOptions" :key="soul.slug">
+        <!-- 4×2 grid — each card offset by 45° so the hue wave sweeps left→right -->
+        <div class="grid grid-cols-2 gap-2 mb-6">
+          <template x-for="(soul, idx) in soulOptions" :key="soul.slug">
             <button @click="selectedSoul = soul.slug"
-              class="w-full text-left p-4 rounded-xl border transition-all duration-200"
-              :class="selectedSoul === soul.slug ? 'border-indigo-500 bg-indigo-950/30' : 'border-gray-800 bg-gray-900 hover:border-gray-700'">
-              <div class="flex items-start gap-3">
-                <div class="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0 mt-0.5 text-base transition-colors"
-                  :class="selectedSoul === soul.slug ? 'bg-indigo-900 border border-indigo-700' : 'bg-gray-800 border border-gray-700'"
-                  x-text="soul.icon"></div>
-                <div class="flex-1 min-w-0">
-                  <div class="flex items-center gap-2 mb-0.5">
-                    <span class="text-sm font-semibold text-white" x-text="soul.name"></span>
-                    <span x-show="selectedSoul === soul.slug"
-                      class="text-[9px] px-1.5 py-0.5 rounded-full bg-indigo-900 text-indigo-300 border border-indigo-700 font-semibold uppercase tracking-wider">Selected</span>
-                  </div>
-                  <p class="text-xs text-gray-400 leading-relaxed" x-text="soul.desc"></p>
-                  <div class="flex flex-wrap gap-1 mt-2">
-                    <template x-for="t in soul.tools" :key="t">
-                      <span class="text-[10px] px-1.5 py-0.5 rounded bg-gray-800 text-gray-500 border border-gray-700" x-text="t"></span>
-                    </template>
-                  </div>
-                </div>
+              class="text-left p-3 rounded-xl border transition-all duration-200 relative overflow-hidden"
+              :class="selectedSoul === soul.slug ? 'border-indigo-500 bg-indigo-950/30' : 'border-gray-800 bg-gray-900 hover:border-gray-600'"
+              :style="`filter: hue-rotate(calc(var(--hue-deg, 0deg) + ${idx * 45}deg))`">
+              <!-- icon -->
+              <div class="w-8 h-8 rounded-lg flex items-center justify-center mb-2 text-sm transition-colors"
+                :class="selectedSoul === soul.slug ? 'bg-indigo-900 border border-indigo-700' : 'bg-gray-800 border border-gray-700'"
+                x-text="soul.icon"></div>
+              <!-- name + selected badge -->
+              <div class="flex items-center gap-1.5 mb-1 flex-wrap">
+                <span class="text-xs font-semibold text-white leading-tight" x-text="soul.name"></span>
+                <span x-show="selectedSoul === soul.slug"
+                  class="text-[8px] px-1 py-0.5 rounded-full bg-indigo-900 text-indigo-300 border border-indigo-700 font-semibold uppercase tracking-wider flex-shrink-0">✓</span>
               </div>
+              <!-- desc -->
+              <p class="text-[10px] text-gray-500 leading-relaxed line-clamp-3" x-text="soul.desc"></p>
             </button>
           </template>
         </div>
