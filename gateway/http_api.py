@@ -5882,7 +5882,7 @@ _SETUP_HTML = """<!DOCTYPE html>
           <!-- Header text -->
           <div class="px-7 py-6 border-b border-gray-800/60">
             <div class="text-base font-semibold text-white mb-1">What setup configures</div>
-            <div class="text-sm text-gray-500 mb-4">8 steps &mdash; inference routing, model selection, runtime, and account</div>
+            <div class="text-sm text-gray-500 mb-4">Eight steps, from model discovery to launch.</div>
             <p class="text-sm text-gray-500 leading-relaxed">
               Setup establishes how Logos routes inference, which models and runtimes are available, and what operating boundaries apply to agent runs.
               These choices define the platform&rsquo;s initial profile. Everything here can be adjusted from the dashboard after launch.
@@ -5918,7 +5918,7 @@ _SETUP_HTML = """<!DOCTYPE html>
             <p class="text-sm text-gray-400 leading-relaxed">
               You&rsquo;ll have a fully configured platform: inference routed to a benchmarked local model,
               an agent runtime and soul selected, and a secured admin account.
-              Everything is adjustable from the dashboard &mdash; setup just gives you a solid starting point.
+              The platform is ready for agent runs.
             </p>
           </div>
         </div>
