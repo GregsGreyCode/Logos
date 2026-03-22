@@ -1047,8 +1047,11 @@ async def handle_setup_test_k8s(request: web.Request) -> web.Response:
 
     try:
         from kubernetes import client as _kc, config as _kcfg
+        # Always use an explicit Configuration so we don't pollute (or inherit
+        # from) the global in-cluster config that may already be loaded.
+        cfg = _kc.Configuration()
         if mode == "incluster":
-            _kcfg.load_incluster_config()
+            _kcfg.load_incluster_config(client_configuration=cfg)
         else:
             if not kubeconfig_text.strip():
                 return web.json_response({"ok": False, "error": "kubeconfig is empty"}, status=400)
@@ -1057,14 +1060,14 @@ async def handle_setup_test_k8s(request: web.Request) -> web.Response:
                 f.write(kubeconfig_text)
                 tmp = f.name
             try:
-                _kcfg.load_kube_config(config_file=tmp)
+                _kcfg.load_kube_config(config_file=tmp, client_configuration=cfg)
             finally:
                 _os.unlink(tmp)
 
-        v1 = _kc.CoreV1Api()
-        # List pods in namespace — uses the service account's existing pod permissions
-        pod_list = v1.list_namespaced_pod(namespace, limit=1)
-        count = len(pod_list.items)
+        with _kc.ApiClient(cfg) as api_client:
+            v1 = _kc.CoreV1Api(api_client)
+            pod_list = v1.list_namespaced_pod(namespace, limit=1)
+            count = len(pod_list.items)
         return web.json_response({"ok": True, "namespace": namespace, "pod_count": count})
     except Exception as exc:
         return web.json_response({"ok": False, "error": str(exc)[:300]}, status=200)
