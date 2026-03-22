@@ -997,38 +997,42 @@ async def handle_setup_complete(request: web.Request) -> web.Response:
     if not endpoint or not model:
         return web.json_response({"error": "endpoint and model required"}, status=400)
 
-    # Clear any example-placeholder machines and their auto-generated profiles
-    for m in auth_db.list_machines():
-        if (m.get("description") or "").startswith("Example"):
-            auth_db.delete_machine(m["id"])
-    for p in auth_db.list_policies():
-        if (p.get("description") or "").startswith(("Auto-generated", "Auto-created")):
-            auth_db.delete_policy(p["id"])
+    try:
+        # Clear any example-placeholder machines and their auto-generated profiles
+        for m in auth_db.list_machines():
+            if (m.get("description") or "").startswith("Example"):
+                auth_db.delete_machine(m["id"])
+        for p in auth_db.list_policies():
+            if (p.get("description") or "").startswith(("Auto-generated", "Auto-created")):
+                auth_db.delete_policy(p["id"])
 
-    # Create the real machine (skip if a non-example one already exists)
-    result = _seed.apply_single_machine_setup(endpoint)
-    if "error" in result and result["error"] != "machines_already_exist":
-        return web.json_response(result, status=409)
+        # Create the real machine (skip if a non-example one already exists)
+        result = _seed.apply_single_machine_setup(endpoint)
+        if "error" in result and result["error"] != "machines_already_exist":
+            return web.json_response(result, status=409)
 
-    # Save model preference on the admin user
-    user_id = request["current_user"]["sub"]
-    agent_type   = (body.get("agent_type") or "general").strip()
-    exec_env     = (body.get("exec_env") or "local").strip()
-    k8s_ns       = (body.get("k8s_namespace") or "hermes").strip()
-    kubeconfig   = (body.get("kubeconfig") or "").strip()
+        # Save model preference on the admin user
+        user_id = request["current_user"]["sub"]
+        agent_type   = (body.get("agent_type") or "general").strip()
+        exec_env     = (body.get("exec_env") or "local").strip()
+        k8s_ns       = (body.get("k8s_namespace") or "hermes").strip()
+        kubeconfig   = (body.get("kubeconfig") or "").strip()
 
-    auth_db.ensure_user_settings(user_id)
-    auth_db.update_user_settings(user_id, default_model=model, default_soul=agent_type)
-    auth_db.set_platform_feature_flag("exec_env", exec_env)
-    auth_db.set_platform_feature_flag("k8s_namespace", k8s_ns)
-    if kubeconfig:
-        auth_db.set_platform_feature_flag("k8s_kubeconfig", kubeconfig)
-    auth_db.mark_setup_completed()
+        auth_db.ensure_user_settings(user_id)
+        auth_db.update_user_settings(user_id, default_model=model, default_soul=agent_type)
+        auth_db.set_platform_feature_flag("exec_env", exec_env)
+        auth_db.set_platform_feature_flag("k8s_namespace", k8s_ns)
+        if kubeconfig:
+            auth_db.set_platform_feature_flag("k8s_kubeconfig", kubeconfig)
+        auth_db.mark_setup_completed()
 
-    auth_db.write_audit_log(
-        user_id, "setup_completed",
-        metadata={"endpoint": endpoint, "model": model},
-        ip_address=request.remote,
-    )
-    logger.info("setup completed: endpoint=%s model=%s by %s", endpoint, model, user_id)
-    return web.json_response({"ok": True})
+        auth_db.write_audit_log(
+            user_id, "setup_completed",
+            metadata={"endpoint": endpoint, "model": model},
+            ip_address=request.remote,
+        )
+        logger.info("setup completed: endpoint=%s model=%s by %s", endpoint, model, user_id)
+        return web.json_response({"ok": True})
+    except Exception as exc:
+        logger.exception("setup/complete failed: %s", exc)
+        return web.json_response({"error": "internal_error", "detail": str(exc)[:300]}, status=500)

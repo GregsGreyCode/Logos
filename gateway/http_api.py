@@ -5880,12 +5880,12 @@ _SETUP_HTML = """<!DOCTYPE html>
     </div>
     <!-- Step indicator — visible from step 1 onward -->
     <div x-show="step > 0" x-transition.opacity class="spinner-hue flex items-center gap-1">
-      <template x-for="i in [1,2,3,4,5,6]" :key="i">
+      <template x-for="i in [1,2,3,4,5,6,7]" :key="i">
         <div class="flex items-center gap-1">
           <div class="w-2 h-2 rounded-full transition-all duration-500"
                :class="step > i ? 'bg-indigo-400 cursor-pointer hover:scale-125' : step === i ? 'bg-indigo-500 scale-125' : 'bg-gray-700'"
                @click="goTo(i)" :title="step > i ? 'Go back to step ' + i : ''"></div>
-          <div x-show="i < 6" class="w-4 h-px transition-colors duration-500"
+          <div x-show="i < 7" class="w-4 h-px transition-colors duration-500"
                :class="step > i ? 'bg-indigo-600' : 'bg-gray-700'"></div>
         </div>
       </template>
@@ -6410,38 +6410,52 @@ _SETUP_HTML = """<!DOCTYPE html>
         </button>
       </div>
 
-      <!-- ── Step 4: Choose your agent ─────────────────────────────── -->
+      <!-- ── Step 4: Choose your agent runtime ─────────────────────── -->
       <div x-show="step===4" x-cloak x-transition.opacity>
         <div class="mb-5">
           <h2 class="text-xl font-bold mb-1">Choose your agent</h2>
-          <p class="text-gray-400 text-sm">Pick the agent type that best matches how you&rsquo;ll use Logos. You can change this later.</p>
+          <p class="text-gray-400 text-sm">Select the agent runtime that will handle your conversations and tasks.</p>
         </div>
 
-        <div class="space-y-2 mb-6">
-          <template x-for="opt in agentOptions" :key="opt.id">
-            <button @click="selectedAgentType = opt.id"
-              class="w-full text-left p-4 rounded-xl border transition-all duration-200"
-              :class="selectedAgentType === opt.id ? 'border-indigo-500 bg-indigo-950/30' : 'border-gray-800 bg-gray-900 hover:border-gray-700'">
-              <div class="flex items-start gap-3">
-                <div class="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0 mt-0.5 text-lg transition-colors"
-                  :class="selectedAgentType === opt.id ? 'bg-indigo-900 border border-indigo-700' : 'bg-gray-800 border border-gray-700'"
-                  x-text="opt.icon"></div>
-                <div class="flex-1 min-w-0">
-                  <div class="flex items-center gap-2 mb-0.5">
-                    <span class="text-sm font-semibold text-white" x-text="opt.name"></span>
-                    <span x-show="selectedAgentType === opt.id"
-                      class="text-[9px] px-1.5 py-0.5 rounded-full bg-indigo-900 text-indigo-300 border border-indigo-700 font-semibold uppercase tracking-wider">Selected</span>
-                  </div>
-                  <p class="text-xs text-gray-400 leading-relaxed" x-text="opt.desc"></p>
-                  <div class="flex flex-wrap gap-1 mt-2">
-                    <template x-for="t in opt.tools" :key="t">
-                      <span class="text-[10px] px-1.5 py-0.5 rounded bg-gray-800 text-gray-500 border border-gray-700" x-text="t"></span>
-                    </template>
-                  </div>
+        <div class="space-y-2 mb-4">
+          <!-- Hermes — available -->
+          <button @click="selectedAgentType = 'hermes'"
+            class="w-full text-left p-4 rounded-xl border transition-all duration-200"
+            :class="selectedAgentType === 'hermes' ? 'border-indigo-500 bg-indigo-950/30' : 'border-gray-800 bg-gray-900 hover:border-gray-700'">
+            <div class="flex items-start gap-3">
+              <div class="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0 mt-0.5 text-lg transition-colors"
+                :class="selectedAgentType === 'hermes' ? 'bg-indigo-900 border border-indigo-700' : 'bg-gray-800 border border-gray-700'">✦</div>
+              <div class="flex-1 min-w-0">
+                <div class="flex items-center gap-2 mb-0.5">
+                  <span class="text-sm font-semibold text-white">Hermes</span>
+                  <span class="text-[9px] px-1.5 py-0.5 rounded-full bg-green-950 text-green-400 border border-green-800 font-semibold uppercase tracking-wider">Available</span>
+                  <span x-show="selectedAgentType === 'hermes'" class="text-[9px] px-1.5 py-0.5 rounded-full bg-indigo-900 text-indigo-300 border border-indigo-700 font-semibold uppercase tracking-wider">Selected</span>
+                </div>
+                <p class="text-xs text-gray-400 leading-relaxed">General-purpose agent with a full tool loop — research, coding, file operations, web browsing, and more. The default runtime for all conversation types.</p>
+                <div class="flex flex-wrap gap-1 mt-2">
+                  <span class="text-[10px] px-1.5 py-0.5 rounded bg-gray-800 text-gray-500 border border-gray-700">Web search</span>
+                  <span class="text-[10px] px-1.5 py-0.5 rounded bg-gray-800 text-gray-500 border border-gray-700">File I/O</span>
+                  <span class="text-[10px] px-1.5 py-0.5 rounded bg-gray-800 text-gray-500 border border-gray-700">Code execution</span>
+                  <span class="text-[10px] px-1.5 py-0.5 rounded bg-gray-800 text-gray-500 border border-gray-700">Terminal</span>
+                  <span class="text-[10px] px-1.5 py-0.5 rounded bg-gray-800 text-gray-500 border border-gray-700">Browsing</span>
                 </div>
               </div>
-            </button>
-          </template>
+            </div>
+          </button>
+
+          <!-- Future runtimes — coming soon -->
+          <div class="w-full text-left p-4 rounded-xl border border-gray-800 bg-gray-900/40 opacity-50 cursor-not-allowed select-none">
+            <div class="flex items-start gap-3">
+              <div class="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0 mt-0.5 text-lg bg-gray-800 border border-gray-700 text-gray-600">◈</div>
+              <div class="flex-1 min-w-0">
+                <div class="flex items-center gap-2 mb-0.5">
+                  <span class="text-sm font-semibold text-gray-500">More agents</span>
+                  <span class="text-[9px] px-1.5 py-0.5 rounded-full bg-gray-800 text-gray-600 border border-gray-700 font-semibold uppercase tracking-wider">Coming soon</span>
+                </div>
+                <p class="text-xs text-gray-600 leading-relaxed">Additional agent runtimes will appear here. Once Hermes is running, you can ask it to help you configure and launch other agent types.</p>
+              </div>
+            </div>
+          </div>
         </div>
 
         <div x-show="selectedAgentType" x-transition.opacity>
@@ -6477,8 +6491,8 @@ _SETUP_HTML = """<!DOCTYPE html>
                 </div>
                 <p class="text-xs text-gray-400">Agents run inside the Logos process. Simple setup, no extra infrastructure.</p>
                 <div class="mt-2 flex flex-wrap gap-3 text-[10px] text-gray-600">
-                  <span>~300 MB RAM per agent run</span>
-                  <span>&middot; ~0.5 CPU core</span>
+                  <span>~600 MB–1 GB RAM per agent run</span>
+                  <span>&middot; 0.5–2 CPU cores (spikes during tool use)</span>
                   <span>&middot; model load on inference machine</span>
                 </div>
               </div>
@@ -6499,9 +6513,8 @@ _SETUP_HTML = """<!DOCTYPE html>
                 </div>
                 <p class="text-xs text-gray-400">Each agent run spawns an isolated Job in your cluster. Better resource isolation and scaling.</p>
                 <div class="mt-2 flex flex-wrap gap-3 text-[10px] text-gray-600">
-                  <span>500m CPU request</span>
-                  <span>&middot; 2 Gi memory request</span>
-                  <span>&middot; 4 CPU / 6 Gi limits</span>
+                  <span>500m CPU · 2 Gi memory (requests)</span>
+                  <span>&middot; 4 CPU / 8 Gi (limits)</span>
                 </div>
               </div>
             </div>
@@ -6516,30 +6529,30 @@ _SETUP_HTML = """<!DOCTYPE html>
               <button @click="k8sMode = 'incluster'"
                 class="flex-1 py-1.5 rounded-lg text-xs font-medium transition-colors"
                 :class="k8sMode === 'incluster' ? 'bg-indigo-900 text-indigo-200 border border-indigo-700' : 'bg-gray-800 text-gray-400 border border-gray-700 hover:border-gray-600'">
-                In-cluster (auto)
+                Same cluster (Logos is running inside k8s)
               </button>
               <button @click="k8sMode = 'kubeconfig'"
                 class="flex-1 py-1.5 rounded-lg text-xs font-medium transition-colors"
                 :class="k8sMode === 'kubeconfig' ? 'bg-indigo-900 text-indigo-200 border border-indigo-700' : 'bg-gray-800 text-gray-400 border border-gray-700 hover:border-gray-600'">
-                Custom kubeconfig
+                External cluster (provide kubeconfig)
               </button>
             </div>
 
-            <!-- Namespace -->
-            <div>
-              <label class="block text-xs text-gray-500 mb-1">Namespace</label>
-              <input x-model="k8sNamespace" type="text" placeholder="hermes"
-                class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-indigo-500"/>
+            <!-- Auto namespace (read-only) -->
+            <div class="flex items-center gap-2">
+              <span class="text-xs text-gray-500">Namespace</span>
+              <span class="font-mono text-xs text-indigo-300 bg-indigo-950/40 border border-indigo-900 px-2 py-0.5 rounded" x-text="k8sNamespace"></span>
+              <span class="text-xs text-gray-600">— derived from agent runtime</span>
             </div>
 
             <!-- In-cluster explanation -->
             <div x-show="k8sMode === 'incluster'" class="text-xs text-gray-500 leading-relaxed">
-              Uses the pod&rsquo;s service account automatically. Works when Logos is already running inside the cluster you want to use.
+              Logos uses the service account token mounted automatically in its pod. No IP address or credentials needed — the cluster API is reachable internally.
             </div>
 
             <!-- Kubeconfig paste -->
             <div x-show="k8sMode === 'kubeconfig'">
-              <label class="block text-xs text-gray-500 mb-1">Paste kubeconfig YAML</label>
+              <label class="block text-xs text-gray-500 mb-1">Paste kubeconfig YAML <span class="text-gray-600">(contains cluster address and credentials)</span></label>
               <textarea x-model="kubeconfig" rows="6" placeholder="apiVersion: v1&#10;kind: Config&#10;..."
                 class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-xs text-white placeholder-gray-600 font-mono focus:outline-none focus:border-indigo-500 resize-none"></textarea>
             </div>
@@ -6568,8 +6581,49 @@ _SETUP_HTML = """<!DOCTYPE html>
         </div>
       </div>
 
-      <!-- ── Step 6: Review & launch ─────────────────────────────────── -->
+      <!-- ── Step 6: Choose a soul ───────────────────────────────────── -->
       <div x-show="step===6" x-cloak x-transition.opacity>
+        <div class="mb-5">
+          <h2 class="text-xl font-bold mb-1">Choose a soul</h2>
+          <p class="text-gray-400 text-sm">A soul shapes how your agent thinks and communicates. It works alongside the tools you enable — pick one that fits what you&rsquo;ll use Logos for most.</p>
+        </div>
+
+        <div class="space-y-2 mb-6">
+          <template x-for="soul in soulOptions" :key="soul.slug">
+            <button @click="selectedSoul = soul.slug"
+              class="w-full text-left p-4 rounded-xl border transition-all duration-200"
+              :class="selectedSoul === soul.slug ? 'border-indigo-500 bg-indigo-950/30' : 'border-gray-800 bg-gray-900 hover:border-gray-700'">
+              <div class="flex items-start gap-3">
+                <div class="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0 mt-0.5 text-base transition-colors"
+                  :class="selectedSoul === soul.slug ? 'bg-indigo-900 border border-indigo-700' : 'bg-gray-800 border border-gray-700'"
+                  x-text="soul.icon"></div>
+                <div class="flex-1 min-w-0">
+                  <div class="flex items-center gap-2 mb-0.5">
+                    <span class="text-sm font-semibold text-white" x-text="soul.name"></span>
+                    <span x-show="selectedSoul === soul.slug"
+                      class="text-[9px] px-1.5 py-0.5 rounded-full bg-indigo-900 text-indigo-300 border border-indigo-700 font-semibold uppercase tracking-wider">Selected</span>
+                  </div>
+                  <p class="text-xs text-gray-400 leading-relaxed" x-text="soul.desc"></p>
+                  <div class="flex flex-wrap gap-1 mt-2">
+                    <template x-for="t in soul.tools" :key="t">
+                      <span class="text-[10px] px-1.5 py-0.5 rounded bg-gray-800 text-gray-500 border border-gray-700" x-text="t"></span>
+                    </template>
+                  </div>
+                </div>
+              </div>
+            </button>
+          </template>
+        </div>
+
+        <div x-show="selectedSoul" x-transition.opacity>
+          <button @click="goNext()" class="btn-primary w-full py-2.5 rounded-xl text-sm">
+            Continue &rarr;
+          </button>
+        </div>
+      </div>
+
+      <!-- ── Step 7: Review & launch ─────────────────────────────────── -->
+      <div x-show="step===7" x-cloak x-transition.opacity>
         <div class="text-center mb-8">
           <div class="w-16 h-16 rounded-2xl bg-green-950 border border-green-800 flex items-center justify-center mx-auto mb-5">
             <svg class="w-8 h-8 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -6583,7 +6637,11 @@ _SETUP_HTML = """<!DOCTYPE html>
         <div class="p-4 rounded-xl bg-gray-900 border border-gray-800 mb-6 divide-y divide-gray-800">
           <div class="flex justify-between text-sm py-2.5">
             <span class="text-gray-500">Agent</span>
-            <span class="text-white font-medium" x-text="agentOptions.find(a=>a.id===selectedAgentType)?.name || selectedAgentType || '&mdash;'"></span>
+            <span class="text-white font-medium capitalize" x-text="selectedAgentType || '&mdash;'"></span>
+          </div>
+          <div class="flex justify-between text-sm py-2.5">
+            <span class="text-gray-500">Soul</span>
+            <span class="text-white font-medium" x-text="soulOptions.find(s=>s.slug===selectedSoul)?.name || selectedSoul || '&mdash;'"></span>
           </div>
           <div class="flex justify-between text-sm py-2.5">
             <span class="text-gray-500">Server</span>
@@ -6693,40 +6751,81 @@ function setup() {
     testRuns: 0,
     testLog: [],
 
-    // Step 4 — agent choice
-    selectedAgentType: 'general',
-    agentOptions: [
+    // Step 4 — agent runtime
+    selectedAgentType: 'hermes',
+
+    // Step 6 — soul
+    selectedSoul: 'general',
+    soulOptions: [
       {
-        id:    'general',
+        slug:  'general',
         icon:  '✦',
-        name:  'General Assistant',
-        desc:  'All-round task executor — research, writing, analysis, browsing, and more. The best starting point for most users.',
+        name:  'General',
+        desc:  'All-round peer assistant — research, writing, analysis, conversation. Treats you like a capable adult. Best starting point.',
         tools: ['Web search', 'File I/O', 'Code execution', 'Browsing'],
       },
       {
-        id:    'coder',
+        slug:  'app-development',
         icon:  '⌥',
-        name:  'Software Engineer',
-        desc:  'Deep coding focus with full terminal access, git operations, code review, and debugging.',
-        tools: ['Terminal', 'Git', 'File I/O', 'Web search', 'Code execution'],
+        name:  'App Development',
+        desc:  'Technical collaborator for building software. Architecture first, simple over clever. Asks about constraints before designing.',
+        tools: ['Terminal', 'Git', 'File I/O', 'Code execution', 'Web search'],
       },
       {
-        id:    'researcher',
+        slug:  'homelab-investigator',
         icon:  '◎',
-        name:  'Researcher',
-        desc:  'Web search, document analysis, and structured synthesis. Great for deep-dive investigations.',
-        tools: ['Web search', 'Firecrawl', 'File I/O', 'Summarisation'],
+        name:  'Homelab Investigator',
+        desc:  'Investigates infrastructure — containers, Kubernetes, metrics, logs, network. Reports findings; lets you decide what to do.',
+        tools: ['Terminal', 'SSH', 'Kubectl', 'Logs', 'File I/O'],
+      },
+      {
+        slug:  'homelab-code-fix',
+        icon:  '⌗',
+        name:  'Homelab Code Fix',
+        desc:  'Fixes code in homelab repositories. Reads before writing, makes targeted changes, explains what changed and why.',
+        tools: ['File I/O', 'Terminal', 'Git', 'Code execution'],
+      },
+      {
+        slug:  'news-anchor',
+        icon:  '◉',
+        name:  'News Anchor',
+        desc:  'Researches and summarises news into structured briefings. Sources claims, doesn\'t editorialize.',
+        tools: ['Web search', 'Firecrawl', 'Summarisation'],
+      },
+      {
+        slug:  'studying',
+        icon:  '◑',
+        name:  'Studying',
+        desc:  'Helps you learn from first principles. Explains concepts, checks understanding, doesn\'t dump information.',
+        tools: ['Web search', 'File I/O'],
+      },
+      {
+        slug:  'planning-life',
+        icon:  '◷',
+        name:  'Planning & Life',
+        desc:  'Thinking partner for time, energy, and attention. Not a productivity coach selling a system.',
+        tools: [],
+      },
+      {
+        slug:  'relationship-counseling',
+        icon:  '◌',
+        name:  'Relationship Counseling',
+        desc:  'Reflective space for thinking through interpersonal situations. Listens before advising. Not a therapist.',
+        tools: [],
       },
     ],
 
     // Step 5 — execution environment
     execEnv: 'local',
     k8sMode: 'incluster',
-    k8sNamespace: 'hermes',
     kubeconfig: '',
     k8sTesting: false,
     k8sTestResult: null,
     k8sTestError: '',
+    get k8sNamespace() {
+      // Namespace is the agent runtime name — currently always 'hermes'
+      return this.selectedAgentType || 'hermes';
+    },
 
     // Step 6
     completing: false,
@@ -6842,9 +6941,10 @@ function setup() {
       if (this.step === 3) { this.step = 4; return; }
       if (this.step === 4) { this.step = 5; return; }
       if (this.step === 5) { this.step = 6; return; }
+      if (this.step === 6) { this.step = 7; return; }
     },
     goTo(i) {
-      if (i < this.step && i >= 1 && this.step < 6) {
+      if (i < this.step && i >= 1 && this.step < 7) {
         this.step = i;
         if (i === 2) this.$nextTick(() => this.startCompare());
       }
@@ -7209,7 +7309,7 @@ function setup() {
           headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken() },
           body: JSON.stringify({
             mode:       this.k8sMode,
-            namespace:  this.k8sNamespace || 'hermes',
+            namespace:  this.k8sNamespace,
             kubeconfig: this.kubeconfig,
           }),
         });
@@ -7233,7 +7333,7 @@ function setup() {
             endpoint:      this.activeServer ? this.activeServer.endpoint : '',
             model:         this.selectedModel,
             server_type:   this.activeServer ? this.activeServer.type : '',
-            agent_type:    this.selectedAgentType || 'general',
+            agent_type:    this.selectedSoul || 'general',
             exec_env:      this.execEnv || 'local',
             k8s_namespace: this.k8sNamespace || 'hermes',
             kubeconfig:    this.execEnv === 'k8s' && this.k8sMode === 'kubeconfig' ? this.kubeconfig : '',
