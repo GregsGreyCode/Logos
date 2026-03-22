@@ -5416,29 +5416,15 @@ _LOGIN_HTML = """<!DOCTYPE html>
 
     [x-cloak] { display: none !important; }
 
-    /* ── Logo halo ── same colour keyframes, tighter blur, more intense */
-    @keyframes halo-color {
-      0%   { background: #6366f1; }
-      17%  { background: #d946ef; }
-      33%  { background: #f97316; }
-      50%  { background: #eab308; }
-      67%  { background: #22c55e; }
-      83%  { background: #06b6d4; }
-      100% { background: #6366f1; }
-    }
+    /* ── Logo halo — driven by --hue-deg so it stays in sync with the logo */
     .logo-halo {
       position: absolute;
       inset: -280px;
       border-radius: 50%;
-      filter: blur(160px);
+      background: #6366f1;
+      filter: blur(160px) hue-rotate(var(--hue-deg, 0deg));
       opacity: 0.14;
       pointer-events: none;
-      animation: halo-color 60s linear infinite;
-    }
-    /* ── Logo SVG — hue-rotate in sync (360° over 60s) */
-    @keyframes logo-hue {
-      from { filter: hue-rotate(0deg); }
-      to   { filter: hue-rotate(360deg); }
     }
     @keyframes logo-fadein {
       from { opacity: 0; }
@@ -5805,28 +5791,20 @@ _SETUP_HTML = """<!DOCTYPE html>
     body{background-color:#010409;background-image:radial-gradient(rgba(99,102,241,0.06) 1px,transparent 1px);background-size:28px 28px;overflow-x:hidden}
     .setup-content{animation:page-fadein 1s ease 0.2s both}
     @keyframes dot-fade{0%,80%,100%{opacity:0}40%{opacity:1}}
-    @keyframes logo-hue{from{filter:hue-rotate(0deg)}to{filter:hue-rotate(360deg)}}
-    @keyframes ambient-color{
-      0%{background:#6366f1}17%{background:#d946ef}33%{background:#f97316}
-      50%{background:#eab308}67%{background:#22c55e}83%{background:#06b6d4}100%{background:#6366f1}
-    }
-    @keyframes halo-color{
-      0%{background:#6366f1}17%{background:#d946ef}33%{background:#f97316}
-      50%{background:#eab308}67%{background:#22c55e}83%{background:#06b6d4}100%{background:#6366f1}
-    }
+    /* All colour cycling driven by --hue-deg from the rAF wall-clock loop */
     body::before{
       content:'';position:fixed;top:50%;left:50%;
       transform:translate(-50%,-50%);
       width:2400px;height:2400px;border-radius:50%;
-      filter:blur(280px);opacity:0.033;
-      animation:ambient-color 60s linear var(--orb-delay, 0s) infinite;
+      background:#6366f1;
+      filter:blur(280px) hue-rotate(var(--hue-deg,0deg));opacity:0.033;
       pointer-events:none;z-index:0;
     }
     .setup-logo{filter:hue-rotate(var(--hue-deg,0deg))}
     .setup-halo{
       position:absolute;inset:-280px;border-radius:50%;
-      filter:blur(160px);opacity:0.14;pointer-events:none;
-      animation:halo-color 60s linear infinite;
+      background:#6366f1;
+      filter:blur(160px) hue-rotate(var(--hue-deg,0deg));opacity:0.14;pointer-events:none;
     }
     .btn-primary{
       background:linear-gradient(135deg,#6366f1 0%,#a855f7 100%);
@@ -5854,14 +5832,6 @@ _SETUP_HTML = """<!DOCTYPE html>
         requestAnimationFrame(tick);
       }
       requestAnimationFrame(tick);
-
-      // Halo and body orb still use CSS animation — set their delay once
-      const delay = (-(t % 60)).toFixed(2) + 's';
-      document.addEventListener('DOMContentLoaded', function() {
-        const halo = document.querySelector('.setup-halo');
-        if (halo) halo.style.animationDelay = delay;
-        document.documentElement.style.setProperty('--orb-delay', delay);
-      });
     })();
   </script>
 </head>
