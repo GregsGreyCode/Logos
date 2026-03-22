@@ -5418,6 +5418,13 @@ _LOGIN_HTML = """<!DOCTYPE html>
       from { filter: hue-rotate(0deg); }
       to   { filter: hue-rotate(360deg); }
     }
+    @keyframes logo-fadein {
+      from { opacity: 0; transform: scale(0.96); }
+      to   { opacity: 1; transform: scale(1); }
+    }
+    .logo-wrap {
+      animation: logo-fadein 3s cubic-bezier(0.16,1,0.3,1) both;
+    }
     .logo-img { animation: logo-hue 60s linear infinite; }
 
     /* ── Splash → login reveal ──────────────────────────────────────────
@@ -5429,8 +5436,8 @@ _LOGIN_HTML = """<!DOCTYPE html>
       max-height: 0;
       opacity: 0;
       overflow: hidden;
-      transition: max-height 0.9s cubic-bezier(0.16,1,0.3,1),
-                  opacity    0.5s ease 0.25s;
+      transition: max-height 3s cubic-bezier(0.16,1,0.3,1),
+                  opacity    2s ease 0.8s;
     }
     .login-reveal.open {
       max-height: 700px;
@@ -5517,7 +5524,7 @@ _LOGIN_HTML = """<!DOCTYPE html>
   <div class="relative z-10 w-full px-5" style="max-width:400px;">
 
     <!-- Logo — always visible; floats up as .login-reveal expands below -->
-    <div class="text-center" style="padding-top:2vh; padding-bottom:1.5rem;">
+    <div class="text-center logo-wrap" style="padding-top:2vh; padding-bottom:1.5rem;">
       <div class="relative inline-block">
         <div class="logo-halo"></div>
         <img src="/static/logo.svg" alt="Logos" class="logo-img relative mx-auto"
@@ -5625,7 +5632,7 @@ _LOGIN_HTML = """<!DOCTYPE html>
           .then(r => r.ok ? r.json() : null)
           .then(d => { if (d && !d.completed) this.needsSetup = true; })
           .catch(() => {});
-        this._hintTimer = setTimeout(() => { if (this.phase === 'splash') this.showHint = true; }, 10000);
+        this._hintTimer = setTimeout(() => { if (this.phase === 'splash') this.showHint = true; }, 5000);
       },
 
       activate() {
