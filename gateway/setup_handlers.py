@@ -18,6 +18,7 @@ import asyncio
 import json
 import logging
 import os
+import pathlib
 import re
 import socket
 import time
@@ -1111,10 +1112,58 @@ async def handle_setup_complete(request: web.Request) -> web.Response:
             if (p.get("description") or "").startswith(("Auto-generated", "Auto-created")):
                 auth_db.delete_policy(p["id"])
 
-        # Create the real machine (skip if a non-example one already exists)
-        result = _seed.apply_single_machine_setup(endpoint)
-        if "error" in result and result["error"] != "machines_already_exist":
-            return web.json_response(result, status=409)
+        # Register inference machines — one per selected server.
+        # Fall back to single-server path if no servers list provided.
+        servers = body.get("servers") or []
+        if not auth_db.list_machines():
+            if servers and len(servers) > 1:
+                # Multi-server: create a machine for each server, one catch-all policy.
+                machine_ids = []
+                for idx, srv in enumerate(servers):
+                    ep   = (srv.get("endpoint") or "").strip().rstrip("/")
+                    name = (srv.get("name") or "").strip() or f"Inference Node {idx + 1}"
+                    desc = f"Auto-registered by setup wizard ({srv.get('type','unknown')})."
+                    m_obj = auth_db.create_machine(name=name, endpoint_url=ep or endpoint, description=desc)
+                    auth_db.set_machine_capabilities(
+                        m_obj["id"],
+                        ["lightweight", "general", "coding", "reasoning", "vision", "embedding"],
+                    )
+                    machine_ids.append(m_obj["id"])
+                # Catch-all policy routing to first machine (user can tune later)
+                policy = auth_db.create_policy(
+                    name="default",
+                    description="Auto-created by setup wizard.",
+                    fallback="any_available",
+                )
+                auth_db.set_policy_rules(policy["id"], [
+                    {"model_class": "*", "machine_id": machine_ids[0], "rank": 1},
+                ])
+                logger.info("setup wizard: %d machines registered", len(machine_ids))
+            else:
+                # Single-server path
+                result = _seed.apply_single_machine_setup(endpoint)
+                if "error" in result and result["error"] != "machines_already_exist":
+                    return web.json_response(result, status=409)
+
+        # Write chosen model + endpoint to config.yaml so the agent actually uses them.
+        # Keys are bridged to env vars by run.py on startup (only if not already in env,
+        # so pre-configured k8s deployments with explicit env vars are not overridden).
+        _hermes_home = pathlib.Path(os.environ.get("HOME", "/home/hermes")) / ".hermes"
+        _config_path = _hermes_home / "config.yaml"
+        try:
+            import yaml as _yaml
+            _cfg: dict = {}
+            if _config_path.exists():
+                with open(_config_path, encoding="utf-8") as _f:
+                    _cfg = _yaml.safe_load(_f) or {}
+            if not os.getenv("HERMES_MODEL"):
+                _cfg["HERMES_MODEL"] = model
+            if not os.getenv("OPENAI_BASE_URL"):
+                _cfg["OPENAI_BASE_URL"] = endpoint
+            _config_path.write_text(_yaml.dump(_cfg, default_flow_style=False, allow_unicode=True))
+            logger.info("setup: wrote HERMES_MODEL=%s to config.yaml", model)
+        except Exception as _cfg_err:
+            logger.warning("setup: could not write model to config.yaml: %s", _cfg_err)
 
         # Save model preference on the admin user.
         # During first-run setup the browser has no session yet, so we look up

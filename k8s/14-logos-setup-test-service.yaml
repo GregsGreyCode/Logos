@@ -1,0 +1,17 @@
+# Service for logos-setup-test.
+# NodePort 30904 → http://<node-ip>:30904
+# Apply and delete alongside 13-logos-setup-test-deployment.yaml.
+apiVersion: v1
+kind: Service
+metadata:
+  name: logos-setup-test
+  namespace: logos
+spec:
+  selector:
+    app: logos-setup-test
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+      nodePort: 30904
+  type: NodePort

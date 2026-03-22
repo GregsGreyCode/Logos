@@ -743,24 +743,25 @@ _ADMIN_HTML = """<!DOCTYPE html>
   .msg-stats-row{display:flex;align-items:center;justify-content:space-between;gap:.6rem;font-size:.72rem;line-height:1.6}
   .msg-stats-label{color:#64748b}
   .msg-stats-val{color:#e2e8f0;font-family:monospace}
-  /* Stats toggle — click to show/hide */
+  /* Bottom bar: stats toggle (left) + copy button (right) — always visible, inside bubble */
+  .msg-bar{
+    display:flex;align-items:center;justify-content:space-between;
+    padding:.2rem .4rem .2rem .5rem;min-height:1.5rem;
+  }
   .msg-hint{
-    display:flex;align-items:center;justify-content:flex-end;gap:.2rem;
+    display:inline-flex;align-items:center;gap:.2rem;
     font-size:.62rem;color:#4b5563;cursor:pointer;user-select:none;
-    line-height:1.4;padding-right:4px;padding-top:2px;transition:color .15s;
+    line-height:1.4;transition:color .15s;
   }
   .msg-hint:hover{color:#818cf8}
-  /* Copy button — appears on bubble hover */
   .msg-copy{
     display:inline-flex;align-items:center;gap:.25rem;
-    position:absolute;bottom:.4rem;right:.4rem;
     background:transparent;border:1px solid transparent;border-radius:4px;
-    padding:.2rem .4rem;font-size:.65rem;color:#4b5563;
-    cursor:pointer;opacity:0;transition:opacity .15s,color .15s,border-color .15s;
+    padding:.15rem .35rem;font-size:.65rem;color:#4b5563;
+    cursor:pointer;transition:color .15s,border-color .15s;flex-shrink:0;
   }
-  .msg-wrap:hover .msg-copy{opacity:1}
   .msg-copy:hover{color:#a5b4fc;border-color:#374151}
-  .msg-copy.copied{color:#4ade80!important;border-color:#166534!important;opacity:1!important}
+  .msg-copy.copied{color:#4ade80!important;border-color:#166534!important}
 
   /* ── Mic button ───────────────────────────────────────────────────── */
   @keyframes mic-pulse{0%,100%{box-shadow:0 0 0 0 rgba(239,68,68,.5)}50%{box-shadow:0 0 0 6px rgba(239,68,68,0)}}
@@ -837,6 +838,11 @@ _ADMIN_HTML = """<!DOCTYPE html>
   .logos-wake-dot:nth-child(1){animation-delay:0ms}
   .logos-wake-dot:nth-child(2){animation-delay:220ms}
   .logos-wake-dot:nth-child(3){animation-delay:440ms}
+
+  /* First-load staggered fade-in (triggered via sessionStorage logos_fl flag) */
+  @keyframes fl-fade{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
+  .fl-hidden{opacity:0}
+  .fl-anim{animation:fl-fade 0.6s ease forwards}
 </style>
 </head>
 <body class="bg-gray-950 text-gray-100 min-h-screen" x-data="app()" x-init="init()">
@@ -844,7 +850,7 @@ _ADMIN_HTML = """<!DOCTYPE html>
 <div class="max-w-screen-xl mx-auto px-4 pt-4 pb-0">
 
   <!-- Tabs + theme swatches -->
-  <div class="flex items-end gap-6 border-b border-gray-800 mb-3">
+  <div class="flex items-end gap-6 border-b border-gray-800 mb-3" data-fl="0">
     <!-- Logos brand mark — matches the logo.svg the login page animates to this position -->
     <div class="pb-2 shrink-0 flex items-center gap-2">
       <img src="/static/logo.svg" alt="Logos"
@@ -886,46 +892,9 @@ _ADMIN_HTML = """<!DOCTYPE html>
         <span>canary live</span>
       </div>
     </template>
-    <!-- Theme picker -->
-    <div class="ml-auto pb-2 relative" x-data @click.away="themePickerOpen=false">
-      <button @click="themePickerOpen=!themePickerOpen"
-        class="flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-xs font-medium transition-colors"
-        :class="themePickerOpen
-          ? 'border-[var(--accent)] bg-[var(--accent-subtle)] text-[var(--accent-light)]'
-          : 'border-gray-700 text-gray-400 hover:border-gray-600 hover:text-gray-300'">
-        <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--accent)"></span>
-        <span x-text="themes.find(t=>t.id===theme)?.name || theme"></span>
-        <span class="opacity-50" x-text="themePickerOpen ? '▲' : '▼'"></span>
-      </button>
-
-      <!-- Dropdown -->
-      <div x-show="themePickerOpen" x-cloak
-        class="absolute right-0 top-full mt-2 z-50 p-3 rounded-2xl border border-gray-700 shadow-2xl"
-        style="width:280px;background:var(--bg-card);border-color:var(--border-strong)">
-        <div class="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">Theme</div>
-        <div class="grid grid-cols-2 gap-2">
-          <template x-for="t in themes" :key="t.id">
-            <button class="th-card" :class="theme===t.id ? 'th-active' : ''"
-              @click="setTheme(t.id); themePickerOpen=false">
-              <!-- Swatch bar: base / surface / accent -->
-              <div class="th-swatch">
-                <span :style="`background:${t.base};flex:2`"></span>
-                <span :style="`background:${t.surface};flex:2`"></span>
-                <span :style="`background:${t.accent};flex:1`"></span>
-              </div>
-              <div class="text-xs font-semibold leading-tight" style="color:#f3f4f6" x-text="t.name"></div>
-              <div class="text-xs mt-0.5 leading-tight" style="color:#6b7280" x-text="t.mood"></div>
-            </button>
-          </template>
-        </div>
-        <div class="mt-3 pt-3 border-t text-xs text-gray-600" style="border-color:var(--border-col)">
-          Theme is saved and persists across sessions.
-        </div>
-      </div>
-    </div>
     <!-- Account menu -->
     <template x-if="authUser">
-      <div class="pb-2 relative ml-2 shrink-0" @click.away="accountMenuOpen=false">
+      <div class="pb-2 relative ml-auto shrink-0" @click.away="accountMenuOpen=false">
         <button @click="accountMenuOpen=!accountMenuOpen"
           class="flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-xs font-medium transition-colors border-b-2 border-transparent"
           :class="accountMenuOpen
@@ -936,7 +905,7 @@ _ADMIN_HTML = """<!DOCTYPE html>
         </button>
         <div x-show="accountMenuOpen" x-cloak
           class="absolute right-0 top-full mt-2 z-50 rounded-xl border border-gray-700 shadow-2xl overflow-hidden"
-          style="width:220px;background:var(--bg-card);border-color:var(--border-strong)">
+          style="width:280px;background:var(--bg-card);border-color:var(--border-strong)">
           <!-- User info -->
           <div class="px-4 py-3 border-b border-gray-800">
             <div class="text-xs font-semibold text-white" x-text="authUser.display_name || authUser.email"></div>
@@ -975,6 +944,23 @@ _ADMIN_HTML = """<!DOCTYPE html>
                 class="text-sm text-gray-400 hover:text-gray-200 border border-gray-700 rounded-lg px-4 py-2 transition-colors">Cancel</button>
             </div>
           </div>
+          <!-- Theme picker -->
+          <div class="px-4 py-3 border-t border-gray-800">
+            <div class="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Theme</div>
+            <div class="grid grid-cols-2 gap-2">
+              <template x-for="t in themes" :key="t.id">
+                <button class="th-card" :class="theme===t.id ? 'th-active' : ''"
+                  @click="setTheme(t.id)">
+                  <div class="th-swatch">
+                    <span :style="`background:${t.base};flex:2`"></span>
+                    <span :style="`background:${t.surface};flex:2`"></span>
+                    <span :style="`background:${t.accent};flex:1`"></span>
+                  </div>
+                  <div class="text-xs font-semibold leading-tight" style="color:#f3f4f6" x-text="t.name"></div>
+                </button>
+              </template>
+            </div>
+          </div>
           <!-- Admin: Re-run setup wizard -->
           <template x-if="authUser?.role === 'admin'">
             <div class="px-4 py-3 border-t border-gray-800">
@@ -998,7 +984,7 @@ _ADMIN_HTML = """<!DOCTYPE html>
   <div x-show="tab==='sessions'" x-cloak style="height:calc(100vh - 84px)">
 
     <!-- Agent selector — who are you talking to? -->
-    <div class="flex items-center gap-2 mb-3 flex-wrap">
+    <div class="flex items-center gap-2 mb-3 flex-wrap" data-fl="1">
       <template x-for="inst in chatAgents" :key="inst.id">
         <div class="flex items-center gap-0.5">
           <button class="flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium transition-colors"
@@ -1052,7 +1038,7 @@ _ADMIN_HTML = """<!DOCTYPE html>
       </template>
     </div>
 
-    <div class="flex gap-4 h-full" style="height:calc(100% - 36px)">
+    <div class="flex gap-4 h-full" style="height:calc(100% - 36px)" data-fl="2">
 
       <!-- Sidebar: chat history list -->
       <div class="w-44 shrink-0 flex flex-col h-full">
@@ -1094,11 +1080,12 @@ _ADMIN_HTML = """<!DOCTYPE html>
           <!-- Card header -->
           <div class="px-4 pt-3 pb-0 border-b border-gray-800 shrink-0">
 
-            <!-- Row 1: name + status dot + chat ID + canary -->
-            <div class="flex items-center gap-3 pb-1.5">
-              <div class="w-2 h-2 rounded-full shrink-0"
-                :class="chatLoading ? 'bg-indigo-500 animate-pulse' : 'bg-green-500'"></div>
+            <!-- Row 1: Core badge + name + status dot (after name, like chips) + chat ID + canary -->
+            <div class="flex items-center gap-2 pb-1.5">
+              <span class="text-[10px] font-bold tracking-wider uppercase px-1 py-0.5 rounded bg-indigo-900 text-indigo-300 shrink-0">Core</span>
               <span class="font-semibold text-white" x-text="status.instance_name || 'Hermes'"></span>
+              <span class="w-2 h-2 rounded-full shrink-0"
+                :class="chatLoading ? 'bg-indigo-500 animate-pulse icon-hue' : 'bg-green-500'"></span>
               <span class="text-xs text-gray-600 font-mono"
                 x-text="activeChatId ? '#' + activeChatId.slice(-6) : ''"></span>
               <template x-if="canary.active">
@@ -1149,20 +1136,27 @@ _ADMIN_HTML = """<!DOCTYPE html>
                   <span class="inline-block max-w-3xl text-left px-3 py-2 rounded-xl text-sm leading-relaxed bg-indigo-700 text-white"
                     x-text="msg.content"></span>
                 </template>
-                <!-- Assistant messages: rendered + copy button + click-toggled stats -->
+                <!-- Assistant messages: rendered + bottom bar (stats toggle + copy) -->
                 <template x-if="msg.role!=='user'">
-                  <div class="msg-wrap relative inline-block max-w-3xl" x-data="{statsOpen:false,copied:false}">
-                    <div class="text-left px-3 pt-2 pb-7 rounded-xl text-sm bg-gray-800 text-gray-100"
-                      :class="chatRenderMode==='mono' ? 'chat-mono' : 'chat-md'"
+                  <div class="msg-wrap inline-block max-w-3xl" x-data="{statsOpen:false,copied:false}">
+                    <div class="text-left px-3 pt-2 pb-2 rounded-t-xl text-sm bg-gray-800 text-gray-100"
+                      :class="[chatRenderMode==='mono' ? 'chat-mono' : 'chat-md', !msg.stats ? 'rounded-b-xl' : '']"
                       x-html="renderMsg(msg.content)"></div>
-                    <!-- Copy button — visible on bubble hover -->
-                    <button class="msg-copy" :class="copied?\'copied\':\'\'"
-                      @click.stop="navigator.clipboard.writeText(msg.content).then(()=>{copied=true;setTimeout(()=>copied=false,1500)})"
-                      title="Copy response">
-                      <svg width="11" height="11" viewBox="0 0 16 16" fill="none"><rect x="5" y="5" width="9" height="9" rx="2" stroke="currentColor" stroke-width="1.5"/><path d="M3 10V3a2 2 0 012-2h7" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
-                      <span x-text="copied?\'✓ copied\':\'copy\'"></span>
-                    </button>
-                    <!-- Stats card — only shown when explicitly toggled -->
+                    <!-- Bottom bar: stats toggle (left) + copy (right) — only when stats available -->
+                    <template x-if="msg.stats">
+                      <div class="msg-bar bg-gray-800 rounded-b-xl border-t border-gray-700/40">
+                        <span class="msg-hint" @click.stop="statsOpen=!statsOpen">
+                          <span x-text="statsOpen ? \'▴ hide stats\' : \'⋯ stats\'"></span>
+                        </span>
+                        <button class="msg-copy" :class="copied?\'copied\':\'\'"
+                          @click.stop="navigator.clipboard.writeText(msg.content).then(()=>{copied=true;setTimeout(()=>copied=false,1500)})"
+                          title="Copy response">
+                          <svg width="11" height="11" viewBox="0 0 16 16" fill="none"><rect x="5" y="5" width="9" height="9" rx="2" stroke="currentColor" stroke-width="1.5"/><path d="M3 10V3a2 2 0 012-2h7" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+                          <span x-text="copied?\'✓ copied\':\'copy\'"></span>
+                        </button>
+                      </div>
+                    </template>
+                    <!-- Stats panel — expandable -->
                     <template x-if="msg.stats">
                       <div class="msg-stats" x-show="statsOpen">
                         <template x-if="msg.stats.model">
@@ -1199,12 +1193,6 @@ _ADMIN_HTML = """<!DOCTYPE html>
                         </template>
                       </div>
                     </template>
-                    <!-- Stats toggle — click to expand/collapse -->
-                    <template x-if="msg.stats">
-                      <span class="msg-hint" @click="statsOpen=!statsOpen">
-                        <span x-text="statsOpen ? \'▴ hide stats\' : \'⋯ stats\'"></span>
-                      </span>
-                    </template>
                   </div>
                 </template>
               </div>
@@ -1217,11 +1205,11 @@ _ADMIN_HTML = """<!DOCTYPE html>
                 <span class="logos-wake-dot"></span>
                 <span class="logos-wake-dot"></span>
               </div>
-              <!-- thinking state: classic bounce -->
+              <!-- thinking state: classic bounce, hue-cycles with logo -->
               <div x-show="!isWakingUp" class="flex gap-1">
-                <span class="w-1.5 h-1.5 bg-indigo-400 rounded-full animate-bounce" style="animation-delay:0ms"></span>
-                <span class="w-1.5 h-1.5 bg-indigo-400 rounded-full animate-bounce" style="animation-delay:150ms"></span>
-                <span class="w-1.5 h-1.5 bg-indigo-400 rounded-full animate-bounce" style="animation-delay:300ms"></span>
+                <span class="w-1.5 h-1.5 rounded-full animate-bounce icon-hue" style="background:#6366f1;animation-delay:0ms"></span>
+                <span class="w-1.5 h-1.5 rounded-full animate-bounce icon-hue" style="background:#6366f1;animation-delay:150ms"></span>
+                <span class="w-1.5 h-1.5 rounded-full animate-bounce icon-hue" style="background:#6366f1;animation-delay:300ms"></span>
               </div>
               <span x-text="(status.instance_name||'Hermes') + ' is thinking\u2026'"></span>
             </div>
@@ -3847,16 +3835,31 @@ function app() {
       );
     },
     async init() {
-      // Hue-cycle anchored to wall-clock time — stays in sync across pages and refreshes
+      // Hue-cycle: offset+rate approach so speed can change smoothly (no jump on transition).
+      // Normal: 6 deg/s (1 rotation/min). Thinking: 30 deg/s (5× faster).
+      let _hueOffset = 0, _hueRef = Date.now(), _hueRate = 6;
+      const _setHueRate = r => { _hueOffset = (((_hueOffset + _hueRate * (Date.now() - _hueRef) / 1000) % 360) + 360) % 360; _hueRef = Date.now(); _hueRate = r; };
       const _hueTick = () => {
-        const deg = ((Date.now() / 1000) * 6 % 360).toFixed(1);
-        document.documentElement.style.setProperty('--hue-deg', deg + 'deg');
+        const deg = (((_hueOffset + _hueRate * (Date.now() - _hueRef) / 1000) % 360) + 360) % 360;
+        document.documentElement.style.setProperty('--hue-deg', deg.toFixed(1) + 'deg');
         requestAnimationFrame(_hueTick);
       };
       requestAnimationFrame(_hueTick);
       // Apply saved theme immediately; watch for reactive changes
       document.documentElement.setAttribute('data-theme', this.theme);
       this.$watch('theme',      val => document.documentElement.setAttribute('data-theme', val));
+      this.$watch('chatLoading', v => _setHueRate(v ? 30 : 6));
+      // Staggered first-load fade-in (set by login page on successful auth)
+      try {
+        if (sessionStorage.getItem('logos_fl') === '1') {
+          sessionStorage.removeItem('logos_fl');
+          document.querySelectorAll('[data-fl]').forEach(el => {
+            el.classList.add('fl-hidden');
+            const delay = parseFloat(el.dataset.fl) * 0.2;
+            setTimeout(() => { el.classList.remove('fl-hidden'); el.classList.add('fl-anim'); }, delay * 1000);
+          });
+        }
+      } catch {}
       this.$watch('tab',            val => localStorage.setItem('hermes_tab', val));
       this.$watch('routingTab',     val => localStorage.setItem('hermes_routing_tab', val));
       this.$watch('adminTab',       val => localStorage.setItem('hermes_admin_tab', val));
@@ -5518,6 +5521,12 @@ _LOGIN_HTML = """<!DOCTYPE html>
     .float-input:focus  {
       background: rgba(0,0,0,0.25);
     }
+    .float-input:-webkit-autofill,
+    .float-input:-webkit-autofill:hover,
+    .float-input:-webkit-autofill:focus {
+      -webkit-box-shadow: 0 0 0 1000px rgba(0,0,0,0.25) inset;
+      -webkit-text-fill-color: #f1f5f9;
+    }
     .float-label {
       position: absolute; left: 16px; top: 50%;
       transform: translateY(-50%);
@@ -5718,16 +5727,25 @@ _LOGIN_HTML = """<!DOCTYPE html>
           if (res.ok) {
             const d = await res.json().catch(() => ({}));
             clearTimeout(this._inactivityTimer);
-            // Animate logo to top-left corner, close card, then navigate
+            // Animate logo to the exact nav logo position on the main page, then navigate.
+            // Nav logo layout: max-w-screen-xl mx-auto px-4 pt-4, first item in items-end flex.
+            // Logo is 32×32, center = (containerLeft + 16 + 16, 32).
             this.phase = 'loggedin';
             const logoEl = document.querySelector('.logo-wrap');
             if (logoEl) {
               const rect = logoEl.getBoundingClientRect();
-              const targetX = 44 - (rect.left + rect.width / 2);
-              const targetY = 44 - (rect.top + rect.height / 2);
+              const fromCX = rect.left + rect.width / 2;
+              const fromCY = rect.top  + rect.height / 2;
+              const vw = window.innerWidth;
+              const navLogoX = Math.max(0, (vw - 1280) / 2) + 16 + 16;
+              const navLogoY = 32;
+              const targetX = navLogoX - fromCX;
+              const targetY = navLogoY - fromCY;
               logoEl.style.transition = 'transform 0.9s cubic-bezier(0.4,0,0.2,1)';
               logoEl.style.transform = `translate(${targetX}px, ${targetY}px) scale(0.27)`;
             }
+            // Signal the main page to do a staggered first-load fade-in
+            try { sessionStorage.setItem('logos_fl', '1'); } catch {}
             await new Promise(r => setTimeout(r, 900));
             window.location.href = d.setup_required ? '/setup' : '/';
           } else {
@@ -7545,6 +7563,14 @@ function setup() {
             setup_email:    this.setupEmail    || '',
             setup_username: this.setupUsername || '',
             setup_password: this.setupPassword || '',
+            // All selected servers so the backend can register each as a machine
+            servers: (this.selectedServers || []).map(s => ({
+              endpoint:          s.endpoint,
+              type:              s.type || 'unknown',
+              api_key:           s._apiKey || '',
+              name:              s.customName || s.name || '',
+              recommended_model: (this.compareServerRecs[s.endpoint] || {}).model || null,
+            })),
           }),
         });
         if (r.ok) {
@@ -8754,6 +8780,17 @@ async def start_http_api(runner: Any, port: int = 8080) -> None:
     hermes_home = Path(os.environ.get("HERMES_HOME") or (Path.home() / ".hermes"))
     _hermes_home = hermes_home
     auth_db.init_db(hermes_home)
+    # HERMES_WIPE_ON_START: wipe setup state so /setup always runs fresh (setup-test deployments)
+    if os.environ.get("HERMES_WIPE_ON_START", "").lower() in ("1", "true", "yes"):
+        try:
+            auth_db.reset_setup_completed()
+            for _m in auth_db.list_machines():
+                auth_db.delete_machine(_m["id"])
+            for _p in auth_db.list_policies():
+                auth_db.delete_policy(_p["id"])
+            logger.info("HERMES_WIPE_ON_START: wiped setup state, machines, and policies")
+        except Exception as _wipe_err:
+            logger.warning("HERMES_WIPE_ON_START: partial failure: %s", _wipe_err)
     # Env-var admin seeding (takes priority over generic seed)
     _ensure_admin_exists()
     # Generic seed: machines → profiles → admin user (all no-ops on existing data)
