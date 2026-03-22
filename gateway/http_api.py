@@ -5966,7 +5966,7 @@ _SETUP_HTML = """<!DOCTYPE html>
                       @keydown.escape="editing=false"
                       x-init="$watch('editing', v => v && $nextTick(() => $el.focus()))"
                       class="text-sm font-semibold bg-transparent border-b border-indigo-400 text-white focus:outline-none w-32">
-                    <span x-show="s.status==='up'" class="text-[10px] px-1.5 py-0.5 rounded-full bg-green-950 text-green-400 border border-green-800 font-medium">running</span>
+                    <span x-show="s.status==='up'" class="spinner-hue text-[10px] px-1.5 py-0.5 rounded-full bg-indigo-950 text-indigo-300 border border-indigo-800 font-medium">running</span>
                     <span x-show="s.status==='auth_required'" class="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-950 text-amber-400 border border-amber-800 font-medium">auth required</span>
                   </div>
                   <div class="text-xs text-gray-500 font-mono mt-0.5 truncate" x-text="s.endpoint.replace('/v1','')"></div>
@@ -5996,7 +5996,7 @@ _SETUP_HTML = """<!DOCTYPE html>
           <!-- Manual add -->
           <div>
             <button @click="showManualEntry=!showManualEntry"
-              class="flex items-center gap-1.5 text-xs text-indigo-400 hover:text-indigo-300 transition-colors py-1">
+              class="icon-hue flex items-center gap-1.5 text-xs text-indigo-400 hover:text-indigo-300 transition-colors py-1">
               <svg class="w-3.5 h-3.5 transition-transform" :class="showManualEntry?'rotate-45':''" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
               </svg>
@@ -6248,7 +6248,7 @@ _SETUP_HTML = """<!DOCTYPE html>
         <div class="p-4 rounded-xl bg-gray-900 border border-gray-800 mb-4 min-h-[120px] flex flex-col justify-between">
           <div>
             <!-- Waiting -->
-            <div x-show="testResponse === '' && !testError" class="flex items-center gap-2 text-gray-600 text-sm">
+            <div x-show="testResponse === '' && !testError && !testBenchmarking" class="flex items-center gap-2 text-gray-600 text-sm">
               <div class="flex gap-1">
                 <div class="w-1.5 h-1.5 rounded-full bg-gray-700 animate-bounce" style="animation-delay:0ms"></div>
                 <div class="w-1.5 h-1.5 rounded-full bg-gray-700 animate-bounce" style="animation-delay:150ms"></div>
@@ -6256,21 +6256,39 @@ _SETUP_HTML = """<!DOCTYPE html>
               </div>
               <span>Waiting for first token&hellip;</span>
             </div>
+            <!-- Benchmarking notice -->
+            <div x-show="testBenchmarking && !testDone" class="flex items-center gap-2 text-gray-500 text-xs mb-2">
+              <div class="spinner-hue"><div class="w-3 h-3 border border-gray-700 border-t-indigo-400 rounded-full animate-spin"></div></div>
+              <span>Running benchmark&hellip;</span>
+            </div>
             <!-- Streaming -->
             <p x-show="testResponse !== ''" class="text-sm text-gray-100 leading-relaxed" x-text="testResponse"></p>
             <!-- Error -->
             <p x-show="testError" class="text-sm text-red-400" x-text="testError"></p>
           </div>
-          <!-- Metrics footer -->
-          <div x-show="testDone" class="flex flex-wrap items-center gap-x-3 gap-y-1 pt-3 mt-3 border-t border-gray-800">
-            <div class="flex items-center gap-1.5">
-              <div class="w-2 h-2 rounded-full bg-green-500 flex-shrink-0"></div>
-              <span class="text-xs text-green-400 font-medium">Live</span>
+          <!-- Score + metrics footer -->
+          <div x-show="testDone" class="pt-3 mt-3 border-t border-gray-800 space-y-2">
+            <!-- Score badge -->
+            <div class="flex items-center gap-3">
+              <span class="text-xs font-semibold px-2.5 py-1 rounded-full"
+                :class="{
+                  'bg-green-950 text-green-300 border border-green-800':  testScoreColour==='green',
+                  'bg-indigo-950 text-indigo-300 border border-indigo-800': testScoreColour==='indigo',
+                  'bg-yellow-950 text-yellow-300 border border-yellow-800': testScoreColour==='yellow',
+                  'bg-red-950 text-red-300 border border-red-800':         testScoreColour==='red',
+                }"
+                x-text="testScoreLabel"></span>
+              <span class="text-xs font-mono text-gray-400" x-text="testTokS + ' tok/s'"></span>
+              <span x-show="testQualityPass !== null" class="text-xs"
+                :class="testQualityPass ? 'text-green-400' : 'text-yellow-400'"
+                x-text="testQualityPass ? '✓ reasoning ok' : '⚠ check reasoning'"></span>
             </div>
-            <span class="text-xs text-gray-500" x-text="'Total ' + testLatency + 'ms'"></span>
-            <span x-show="testTtft" class="text-xs text-gray-600" x-text="'&middot; TTFT ' + testTtft + 'ms'"></span>
-            <span x-show="testLatency > 0 && testResponse.length > 0" class="text-xs text-gray-600"
-              x-text="'&middot; ~' + Math.max(1, Math.round((testResponse.split(/\s+/).length) / (testLatency / 1000))) + ' tok/s'"></span>
+            <!-- Raw metrics -->
+            <div class="flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-gray-600">
+              <span x-text="'avg ' + testLatency + 'ms'"></span>
+              <span x-show="testTtft">&middot; <span x-text="'TTFT ' + testTtft + 'ms'"></span></span>
+              <span x-text="'· ' + testRuns + ' runs'"></span>
+            </div>
           </div>
         </div>
 
@@ -6385,6 +6403,12 @@ function setup() {
     testError: null,
     testLatency: null,
     testTtft: null,
+    testTokS: null,
+    testScoreLabel: '',
+    testScoreColour: 'indigo',
+    testQualityPass: null,
+    testBenchmarking: false,
+    testRuns: 0,
 
     // Step 4
     completing: false,
@@ -6662,9 +6686,9 @@ function setup() {
     },
 
     async runTest() {
-      this.testResponse = ''; this.testDone = false;
+      this.testResponse = ''; this.testDone = false; this.testBenchmarking = false;
       this.testError = null; this.testLatency = null; this.testTtft = null;
-      const t0 = Date.now();
+      this.testTokS = null; this.testScoreLabel = ''; this.testQualityPass = null; this.testRuns = 0;
       try {
         const r = await fetch('/api/setup/test', {
           method: 'POST', credentials: 'include',
@@ -6687,12 +6711,20 @@ function setup() {
             if (!line.startsWith('data: ')) continue;
             try {
               const ev = JSON.parse(line.slice(6));
-              if (ev.error) { this.testError = ev.error; return; }
-              if (ev.token) {
-                if (this.testTtft === null) this.testTtft = Date.now() - t0;
-                this.testResponse += ev.token;
+              if (ev.error)      { this.testError = ev.error; return; }
+              if (ev.status === 'benchmarking') { this.testBenchmarking = true; }
+              if (ev.token)      { this.testResponse += ev.token; }
+              if (ev.done) {
+                this.testDone        = true;
+                this.testLatency     = ev.latency;
+                this.testTtft        = ev.ttft;
+                this.testTokS        = ev.tok_s;
+                this.testScoreLabel  = ev.score_label;
+                this.testScoreColour = ev.score_colour;
+                this.testQualityPass = ev.quality_pass;
+                this.testRuns        = ev.runs;
+                this.testBenchmarking = false;
               }
-              if (ev.done) { this.testDone = true; this.testLatency = ev.latency; }
             } catch {}
           }
         }

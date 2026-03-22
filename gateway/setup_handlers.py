@@ -268,16 +268,85 @@ async def handle_setup_pull(request: web.Request) -> web.Response:
     return response
 
 
+_BENCH_PROMPTS = [
+    "Say hello in one sentence.",
+    "What is 17 multiplied by 6? Answer with just the number.",
+    "Name the capital of France in one word.",
+]
+_QUALITY_PROMPT  = "What is 2+2? Reply with only the number."
+_QUALITY_EXPECTED = "4"
+
+def _bench_score(tok_s: float) -> tuple[str, str]:
+    """Return (label, colour) based on tokens/sec."""
+    if tok_s >= 30:  return ("Fast",   "green")
+    if tok_s >= 15:  return ("Good",   "indigo")
+    if tok_s >= 6:   return ("Usable", "yellow")
+    return ("Slow", "red")
+
+
+async def _stream_chat(
+    session: aiohttp.ClientSession,
+    endpoint: str,
+    model: str,
+    api_key: str,
+    prompt: str,
+    max_tokens: int = 80,
+) -> tuple[str, float, float, int]:
+    """Return (response_text, ttft_s, total_s, token_count)."""
+    t0 = time.time()
+    ttft: float | None = None
+    text = ""
+    tok_count = 0
+    async with session.post(
+        f"{endpoint}/chat/completions",
+        headers={"Authorization": f"Bearer {api_key}"},
+        json={
+            "model": model,
+            "messages": [{"role": "user", "content": prompt}],
+            "stream": True,
+            "max_tokens": max_tokens,
+        },
+        timeout=aiohttp.ClientTimeout(total=45),
+    ) as r:
+        if r.status != 200:
+            body = await r.text()
+            raise RuntimeError(f"HTTP {r.status}: {body[:200]}")
+        async for raw in r.content:
+            line = raw.decode().strip()
+            if not line.startswith("data: "):
+                continue
+            data = line[6:]
+            if data == "[DONE]":
+                break
+            try:
+                chunk = json.loads(data)
+                delta = chunk["choices"][0]["delta"].get("content", "")
+                if delta:
+                    if ttft is None:
+                        ttft = time.time() - t0
+                    text += delta
+                    tok_count += 1
+            except Exception:
+                pass
+    return text, ttft or 0.0, time.time() - t0, tok_count
+
+
 async def handle_setup_test(request: web.Request) -> web.Response:
-    """Stream a test-prompt response via SSE."""
+    """Stream benchmark results via SSE.
+
+    Phase 1: stream the first prompt response live (so the user sees output).
+    Phase 2: run 2 more silent benchmark prompts to measure tok/s.
+    Phase 3: run quality check prompt, emit pass/fail.
+    Final:   emit score event with rating.
+    """
     try:
         body = await request.json()
     except Exception:
         return web.json_response({"error": "invalid_json"}, status=400)
 
     endpoint = (body.get("endpoint") or "http://localhost:11434/v1").rstrip("/")
-    model = body.get("model") or ""
-    api_key = body.get("api_key") or "ollama"
+    model    = body.get("model") or ""
+    api_key  = body.get("api_key") or "ollama"
 
     if not model:
         return web.json_response({"error": "model required"}, status=400)
@@ -292,43 +361,86 @@ async def handle_setup_test(request: web.Request) -> web.Response:
     async def send(data: dict) -> None:
         await response.write(f"data: {json.dumps(data)}\n\n".encode())
 
-    start = time.time()
     try:
         async with aiohttp.ClientSession() as session:
+            # ── Phase 1: stream first prompt live ──────────────────────────
+            t0 = time.time()
+            ttft_ms: int | None = None
+            tok_count = 0
             async with session.post(
                 f"{endpoint}/chat/completions",
                 headers={"Authorization": f"Bearer {api_key}"},
                 json={
                     "model": model,
-                    "messages": [{"role": "user", "content": "Say hello briefly."}],
-                    "stream": True,
-                    "max_tokens": 60,
+                    "messages": [{"role": "user", "content": _BENCH_PROMPTS[0]}],
+                    "stream": True, "max_tokens": 80,
                 },
-                timeout=aiohttp.ClientTimeout(total=30),
+                timeout=aiohttp.ClientTimeout(total=45),
             ) as r:
                 if r.status != 200:
                     text = await r.text()
                     await send({"error": f"Model server returned {r.status}: {text[:200]}"})
                     return response
-
                 async for raw in r.content:
                     line = raw.decode().strip()
                     if not line.startswith("data: "):
                         continue
                     data = line[6:]
                     if data == "[DONE]":
-                        latency = round((time.time() - start) * 1000)
-                        await send({"done": True, "latency": latency})
                         break
                     try:
                         chunk = json.loads(data)
                         delta = chunk["choices"][0]["delta"].get("content", "")
                         if delta:
+                            if ttft_ms is None:
+                                ttft_ms = round((time.time() - t0) * 1000)
+                            tok_count += 1
                             await send({"token": delta})
                     except Exception:
                         pass
+            run1_s = time.time() - t0
+
+            # ── Phase 2: two more silent runs for throughput ────────────────
+            await send({"status": "benchmarking"})
+            run_times: list[float] = [run1_s]
+            run_toks:  list[int]   = [tok_count]
+            for prompt in _BENCH_PROMPTS[1:]:
+                try:
+                    _, _, t, n = await _stream_chat(session, endpoint, model, api_key, prompt)
+                    run_times.append(t)
+                    run_toks.append(n)
+                except Exception:
+                    pass
+
+            total_toks = sum(run_toks)
+            total_s    = sum(run_times)
+            avg_tok_s  = round(total_toks / total_s) if total_s > 0 else 0
+            avg_ms     = round(total_s / len(run_times) * 1000)
+
+            # ── Phase 3: quality sanity check ──────────────────────────────
+            quality_pass = False
+            try:
+                qtext, _, _, _ = await _stream_chat(
+                    session, endpoint, model, api_key, _QUALITY_PROMPT, max_tokens=10
+                )
+                quality_pass = _QUALITY_EXPECTED in qtext.strip()
+            except Exception:
+                pass
+
+            label, colour = _bench_score(avg_tok_s)
+            await send({
+                "done": True,
+                "latency": avg_ms,
+                "ttft": ttft_ms,
+                "tok_s": avg_tok_s,
+                "score_label": label,
+                "score_colour": colour,
+                "quality_pass": quality_pass,
+                "runs": len(run_times),
+            })
+
     except asyncio.TimeoutError:
-        await send({"error": "Request timed out — the model may still be loading. Try again in a moment."})
+        await send({"error": "Timed out — the model may still be loading. Try again in a moment."})
     except Exception as e:
         await send({"error": str(e)})
 
