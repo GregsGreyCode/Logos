@@ -6092,94 +6092,16 @@ _SETUP_HTML = """<!DOCTYPE html>
         </div>
       </div>
 
-      <!-- ── Step 2: Pick model ──────────────────────────────────────── -->
+      <!-- ── Step 2: Auto-compare models ─────────────────────────────── -->
       <div x-show="step===2" x-cloak x-transition.opacity>
-        <div class="mb-5">
-          <h2 class="text-xl font-bold mb-1">Choose your agent's default model</h2>
-          <p class="text-gray-400 text-sm">This is the model Hermes will use by default. You can change it per-session at any time.</p>
-          <p class="text-gray-600 text-xs mt-1" x-text="modelStepSubtitle()"></p>
-        </div>
-
-        <!-- Auto-continue notice -->
-        <div x-show="autoAdvancing" class="p-4 rounded-xl bg-green-950/40 border border-green-800 flex items-center gap-3 mb-4">
-          <div class="w-5 h-5 rounded-full bg-green-500 flex items-center justify-center flex-shrink-0">
-            <svg class="w-3 h-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/></svg>
-          </div>
-          <div>
-            <div class="text-sm text-green-300 font-medium" x-text="'Using ' + selectedModel"></div>
-            <div class="text-xs text-green-400/70">Continuing automatically&hellip;</div>
-          </div>
-        </div>
-
-        <!-- Models available -->
-        <div x-show="!autoAdvancing && getModels().length > 0" class="space-y-4">
-
-          <!-- Recommended -->
-          <div x-show="recommendedModel()" class="p-4 rounded-xl border-2 border-indigo-500 bg-indigo-950/20">
-            <div class="flex items-start justify-between gap-3">
-              <div>
-                <div class="flex items-center gap-2 mb-1">
-                  <span class="text-[10px] px-1.5 py-0.5 rounded-full bg-indigo-900 text-indigo-300 border border-indigo-700 font-medium uppercase tracking-wider">Recommended</span>
-                  <span class="text-[10px] text-gray-500" x-text="modelSizeLabel(recommendedModel()?.id)"></span>
-                </div>
-                <div class="text-sm font-semibold text-white" x-text="recommendedModel()?.name || recommendedModel()?.id"></div>
-                <div class="text-xs text-gray-500 mt-0.5">Good balance of speed and capability for most setups.</div>
-                <div x-show="recommendedModel()?.size > 0" class="text-xs text-gray-600 mt-0.5" x-text="formatSize(recommendedModel()?.size)"></div>
-              </div>
-              <button @click="pickModel(recommendedModel()); goNext()"
-                class="btn-primary px-4 py-2 rounded-xl text-sm flex-shrink-0">
-                Use this &rarr;
-              </button>
-            </div>
-          </div>
-
-          <!-- Size picker -->
-          <details class="group" x-show="getModelSizeGroups().length > 1">
-            <summary class="text-xs text-gray-500 hover:text-gray-300 cursor-pointer select-none list-none flex items-center gap-1.5 py-1">
-              <svg class="w-3 h-3 transition-transform group-open:rotate-90" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
-              Choose a different size
-            </summary>
-            <div class="mt-3 space-y-2">
-              <template x-for="group in getModelSizeGroups()" :key="group.key">
-                <details class="group/inner">
-                  <summary class="flex items-center justify-between p-3 rounded-xl bg-gray-900 border border-gray-800 cursor-pointer list-none hover:border-gray-700 transition-colors">
-                    <div class="flex items-center gap-2">
-                      <span class="text-sm font-medium text-white" x-text="group.label"></span>
-                      <span class="text-xs text-gray-600" x-text="group.models.length + ' model' + (group.models.length!==1?'s':'')"></span>
-                    </div>
-                    <div class="flex items-center gap-2">
-                      <span class="text-xs text-gray-600" x-text="group.ramHint"></span>
-                      <svg class="w-3 h-3 text-gray-600 transition-transform group-open/inner:rotate-90" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
-                    </div>
-                  </summary>
-                  <div class="mt-1 space-y-1 pl-1">
-                    <template x-for="m in group.models" :key="m.id">
-                      <button @click="pickModel(m); goNext()"
-                        :class="selectedModel===m.id ? 'border-indigo-500 bg-indigo-950/30' : 'border-gray-800 hover:border-gray-700'"
-                        class="w-full text-left px-3 py-2 rounded-lg bg-gray-900 border transition-all text-xs">
-                        <div class="flex items-center justify-between">
-                          <span class="text-white font-mono" x-text="m.id"></span>
-                          <div class="flex items-center gap-2">
-                            <span x-show="m.size>0" class="text-gray-600" x-text="formatSize(m.size)"></span>
-                            <div :class="selectedModel===m.id ? 'bg-indigo-500 border-indigo-500':'border-gray-600'"
-                              class="w-3.5 h-3.5 rounded-full border-2 flex items-center justify-center flex-shrink-0">
-                              <div x-show="selectedModel===m.id" class="w-1.5 h-1.5 rounded-full bg-white"></div>
-                            </div>
-                          </div>
-                        </div>
-                      </button>
-                    </template>
-                  </div>
-                </details>
-              </template>
-            </div>
-          </details>
-
-        </div>
 
         <!-- No models on Ollama: pull catalog -->
         <div x-show="getModels().length===0 && hasOllamaServer()" class="space-y-3">
-          <p class="text-sm text-gray-400">No models downloaded yet. Pick one to pull now:</p>
+          <div class="mb-5">
+            <h2 class="text-xl font-bold mb-1">Download a model first</h2>
+            <p class="text-gray-400 text-sm">No models found on your Ollama server. Pull one to continue.</p>
+            <p class="text-gray-500 text-xs mt-2">Not sure which to pick? Ask an AI chatbot: <span class="italic text-gray-600">"What's the best Ollama model for an AI agent on a machine with X GB RAM?"</span> — then come back and download it. Our benchmark will assess whether it&rsquo;s the right fit.</p>
+          </div>
           <div class="space-y-2">
             <template x-for="m in ollamaModelCatalog" :key="m.id">
               <div class="p-4 rounded-xl bg-gray-900 border border-gray-800 hover:border-gray-700 transition-all">
@@ -6215,12 +6137,118 @@ _SETUP_HTML = """<!DOCTYPE html>
         <div x-show="getModels().length===0 && !hasOllamaServer()" class="p-5 rounded-xl bg-gray-900 border border-gray-800">
           <div class="text-sm font-medium text-white mb-3">Load a model in LM Studio first</div>
           <ol class="space-y-2.5 text-sm text-gray-400 mb-4 list-none">
-            <li class="flex gap-3"><span class="w-5 h-5 rounded-full bg-gray-700 text-white text-xs flex items-center justify-center flex-shrink-0 mt-0.5 font-medium">1</span><span>Open LM Studio and go to the <span class="text-white font-medium">Discover</span> tab &mdash; search for a model and click Download.</span></li>
-            <li class="flex gap-3"><span class="w-5 h-5 rounded-full bg-gray-700 text-white text-xs flex items-center justify-center flex-shrink-0 mt-0.5 font-medium">2</span><span>Go to the <span class="text-white font-medium">Local Server</span> tab, select your model, and press <span class="text-white font-medium">Start Server</span>.</span></li>
+            <li class="flex gap-3"><span class="w-5 h-5 rounded-full bg-gray-700 text-white text-xs flex items-center justify-center flex-shrink-0 mt-0.5 font-medium">1</span><span>Go to the <span class="text-white font-medium">Discover</span> tab &mdash; search for a model and click Download. Not sure what to pick? Ask a chatbot: <span class="italic text-gray-500">"Best LM Studio model for an AI agent with X GB VRAM?"</span> Our benchmark will tell you if it&rsquo;s the right fit.</span></li>
+            <li class="flex gap-3"><span class="w-5 h-5 rounded-full bg-gray-700 text-white text-xs flex items-center justify-center flex-shrink-0 mt-0.5 font-medium">2</span><span>Go to <span class="text-white font-medium">Local Server</span>, select your model, and press <span class="text-white font-medium">Start Server</span>.</span></li>
             <li class="flex gap-3"><span class="w-5 h-5 rounded-full bg-gray-700 text-white text-xs flex items-center justify-center flex-shrink-0 mt-0.5 font-medium">3</span><span>Come back here and click Refresh.</span></li>
           </ol>
-          <div class="text-xs text-gray-500 bg-gray-800/60 rounded-lg px-3 py-2 mb-4">Not sure? Search for <span class="font-mono text-indigo-300">Llama 3.2 3B</span> in Discover &mdash; fast, 2 GB, works on most machines.</div>
           <button @click="refreshModels()" class="btn-primary px-4 py-2 rounded-lg text-xs">Refresh model list</button>
+        </div>
+
+        <!-- Models available: auto-compare -->
+        <div x-show="getModels().length > 0">
+
+          <!-- Header -->
+          <div class="mb-5">
+            <h2 class="text-xl font-bold mb-1" x-text="compareDone ? 'Here\'s how your models performed' : 'Finding your best model\u2026'"></h2>
+            <p class="text-gray-400 text-sm" x-show="!compareDone">Testing available models on your hardware — this takes a moment.</p>
+            <p class="text-gray-400 text-sm" x-show="compareDone">We&rsquo;ve pre-selected the best fit. You can override below.</p>
+          </div>
+
+          <!-- Per-model progress rows -->
+          <div class="space-y-2 mb-4">
+            <template x-for="mid in compareTargets" :key="mid">
+              <div class="flex items-center justify-between px-3 py-2.5 rounded-xl bg-gray-900 border transition-all duration-300"
+                :class="compareRecommended === mid && compareDone ? 'border-indigo-500 bg-indigo-950/20' : 'border-gray-800'">
+                <div class="flex items-center gap-2 min-w-0">
+                  <span x-show="compareRecommended === mid && compareDone"
+                    class="text-[9px] px-1.5 py-0.5 rounded-full bg-indigo-900 text-indigo-300 border border-indigo-700 font-semibold uppercase tracking-wider flex-shrink-0">Best</span>
+                  <span class="font-mono text-xs text-gray-200 truncate" x-text="mid"></span>
+                </div>
+                <div class="flex items-center gap-2 flex-shrink-0 ml-3 text-xs">
+                  <!-- Queued -->
+                  <span x-show="compareTesting !== mid && !compareResults[mid]" class="text-gray-700">queued</span>
+                  <!-- Testing / loading -->
+                  <template x-if="compareTesting === mid">
+                    <div class="flex items-center gap-1.5">
+                      <div class="spinner-hue"><div class="w-3 h-3 border border-gray-700 border-t-indigo-400 rounded-full animate-spin"></div></div>
+                      <span class="text-gray-500" x-text="compareLoadingFor === mid ? 'loading\u2026' : 'testing\u2026'"></span>
+                    </div>
+                  </template>
+                  <!-- Result -->
+                  <template x-if="compareResults[mid]">
+                    <div class="flex items-center gap-2">
+                      <template x-if="compareResults[mid].error">
+                        <span class="text-red-500">error</span>
+                      </template>
+                      <template x-if="!compareResults[mid].error">
+                        <div class="flex items-center gap-2">
+                          <span class="font-mono font-semibold"
+                            :class="{
+                              'text-green-400':  compareResults[mid].tok_s >= 30,
+                              'text-indigo-400': compareResults[mid].tok_s >= 15 && compareResults[mid].tok_s < 30,
+                              'text-yellow-400': compareResults[mid].tok_s >= 6  && compareResults[mid].tok_s < 15,
+                              'text-red-400':    compareResults[mid].tok_s < 6,
+                            }"
+                            x-text="compareResults[mid].tok_s + ' tok/s'"></span>
+                          <span :class="compareResults[mid].quality_pass ? 'text-green-500' : 'text-yellow-600'"
+                            x-text="compareResults[mid].quality_pass ? '\u2713' : '\u26a0'"></span>
+                        </div>
+                      </template>
+                    </div>
+                  </template>
+                </div>
+              </div>
+            </template>
+
+            <!-- Loading model notice -->
+            <div x-show="compareLoadingFor" class="text-xs text-amber-400/80 px-1 flex items-center gap-1.5">
+              <div class="spinner-hue"><div class="w-2.5 h-2.5 border border-amber-900 border-t-amber-400 rounded-full animate-spin"></div></div>
+              <span>Loading <span class="font-mono" x-text="compareLoadingFor"></span> into memory&hellip;</span>
+            </div>
+
+            <!-- Waiting to start (no targets yet) -->
+            <div x-show="compareTargets.length === 0 && compareRunning" class="flex items-center gap-2 py-2 text-gray-600 text-sm">
+              <div class="spinner-hue"><div class="w-3 h-3 border border-gray-700 border-t-indigo-400 rounded-full animate-spin"></div></div>
+              <span>Scanning models&hellip;</span>
+            </div>
+          </div>
+
+          <!-- Recommendation blurb -->
+          <div x-show="compareDone && compareRecommended"
+            class="mb-4 p-3 rounded-xl bg-indigo-950/40 border border-indigo-800 text-xs text-indigo-200 leading-relaxed"
+            x-text="compareReason"></div>
+          <div x-show="compareDone && !compareRecommended"
+            class="mb-4 p-3 rounded-xl bg-red-950/30 border border-red-900 text-xs text-red-400">
+            Could not benchmark any models. Make sure a model is loaded and reachable, then try again.
+          </div>
+
+          <!-- Override / re-run (after done) -->
+          <div x-show="compareDone" class="mb-4 space-y-2">
+            <details class="group">
+              <summary class="text-xs text-gray-500 hover:text-gray-300 cursor-pointer list-none flex items-center gap-1.5 py-1">
+                <svg class="w-3 h-3 transition-transform group-open:rotate-90" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+                Override model selection
+              </summary>
+              <div class="mt-2 space-y-1">
+                <template x-for="m in getModels()" :key="m.id">
+                  <button @click="pickModel(m); compareRecommended = m.id"
+                    :class="selectedModel === m.id ? 'border-indigo-500 bg-indigo-950/30 text-white' : 'border-gray-800 hover:border-gray-700 text-gray-400'"
+                    class="w-full text-left px-3 py-2 rounded-lg bg-gray-900 border transition-all text-xs font-mono">
+                    <span x-text="m.id"></span>
+                  </button>
+                </template>
+              </div>
+            </details>
+            <button @click="startCompare()" class="text-xs text-gray-600 hover:text-gray-400 transition-colors">&#8635; Re-run comparison</button>
+          </div>
+
+          <!-- Continue (only shown after comparison completes) -->
+          <div x-show="compareDone && selectedModel" x-transition.opacity>
+            <button @click="goNext()"
+              class="btn-primary w-full py-2.5 rounded-xl text-sm">
+              Test <span class="font-mono text-xs" x-text="selectedModel"></span> &rarr;
+            </button>
+          </div>
         </div>
       </div>
 
@@ -6249,13 +6277,18 @@ _SETUP_HTML = """<!DOCTYPE html>
         <div class="p-4 rounded-xl bg-gray-900 border border-gray-800 mb-4 min-h-[120px] flex flex-col justify-between">
           <div>
             <!-- Waiting -->
-            <div x-show="testResponse === '' && !testError && !testBenchmarking" class="flex items-center gap-2 text-gray-600 text-sm">
+            <div x-show="testResponse === '' && !testError && !testBenchmarking && !testLoadingModel" class="flex items-center gap-2 text-gray-600 text-sm">
               <div class="flex gap-1">
                 <div class="w-1.5 h-1.5 rounded-full bg-gray-700 animate-bounce" style="animation-delay:0ms"></div>
                 <div class="w-1.5 h-1.5 rounded-full bg-gray-700 animate-bounce" style="animation-delay:150ms"></div>
                 <div class="w-1.5 h-1.5 rounded-full bg-gray-700 animate-bounce" style="animation-delay:300ms"></div>
               </div>
               <span>Waiting for first token&hellip;</span>
+            </div>
+            <!-- Loading model (LM Studio cold-start) -->
+            <div x-show="testLoadingModel && testResponse === '' && !testBenchmarking && !testError" class="flex items-center gap-2 text-amber-400 text-sm">
+              <div class="spinner-hue"><div class="w-3 h-3 border border-amber-900 border-t-amber-400 rounded-full animate-spin"></div></div>
+              <span>Loading model into memory&hellip; this can take a minute on first use.</span>
             </div>
             <!-- Benchmarking notice -->
             <div x-show="testBenchmarking && !testDone" class="flex items-center gap-2 text-gray-500 text-xs mb-2">
@@ -6290,6 +6323,30 @@ _SETUP_HTML = """<!DOCTYPE html>
               <span x-show="testTtft">&middot; <span x-text="'TTFT ' + testTtft + 'ms'"></span></span>
               <span x-text="'· ' + testRuns + ' runs'"></span>
             </div>
+            <!-- Recommendation -->
+            <template x-if="testDone">
+              <div class="mt-3 pt-3 border-t border-gray-800">
+                <template x-for="rec in [benchRecommendation()]" :key="rec.text">
+                  <div class="flex items-start gap-2.5 p-2.5 rounded-lg"
+                    :class="{
+                      'bg-green-950/40 border border-green-900':  rec.tone === 'good',
+                      'bg-indigo-950/40 border border-indigo-900': rec.tone === 'upgrade',
+                      'bg-yellow-950/40 border border-yellow-900': rec.tone === 'warn',
+                      'bg-red-950/40 border border-red-900':       rec.tone === 'bad',
+                    }">
+                    <span class="text-base leading-none mt-0.5" x-text="rec.icon"></span>
+                    <span class="text-xs leading-relaxed"
+                      :class="{
+                        'text-green-300':  rec.tone === 'good',
+                        'text-indigo-300': rec.tone === 'upgrade',
+                        'text-yellow-300': rec.tone === 'warn',
+                        'text-red-300':    rec.tone === 'bad',
+                      }"
+                      x-text="rec.text"></span>
+                  </div>
+                </template>
+              </div>
+            </template>
           </div>
         </div>
 
@@ -6371,7 +6428,6 @@ function setup() {
     foundServers: [],
     selectedServers: [],
     activeServer: null,
-    autoAdvancing: false,
     showManualEntry: false,
     manualType: 'ollama',
     manualUrl: '',
@@ -6382,7 +6438,16 @@ function setup() {
     osPlatform: 'mac',
     copied: '',
 
-    // Step 2
+    // Step 2 — auto-compare
+    compareRunning: false,
+    compareDone: false,
+    compareTargets: [],
+    compareResults: {},
+    compareTesting: null,
+    compareLoadingFor: null,
+    compareRecommended: null,
+    compareReason: '',
+
     selectedModel: null,
     suggestedModel: null,
     pulling: false,
@@ -6409,6 +6474,7 @@ function setup() {
     testScoreColour: 'indigo',
     testQualityPass: null,
     testBenchmarking: false,
+    testLoadingModel: false,
     testRuns: 0,
 
     // Step 4
@@ -6518,7 +6584,7 @@ function setup() {
     goNext() {
       if (this.step === 1) {
         this.step = 2;
-        this.$nextTick(() => this.initModelStep());
+        this.$nextTick(() => this.startCompare());
         return;
       }
       if (this.step === 2) { this.step = 3; this.$nextTick(() => this.runTest()); return; }
@@ -6528,24 +6594,84 @@ function setup() {
       // Only allow going back to a step already reached, not forward past current
       if (i < this.step && i >= 1 && this.step < 4) {
         this.step = i;
-        if (i === 2) this.$nextTick(() => this.initModelStep());
+        if (i === 2) this.$nextTick(() => this.startCompare());
       }
     },
 
-    initModelStep() {
+    startCompare() {
       const models = this.getModels();
       if (models.length === 0) return;
-      const rec = this.recommendedModel();
-      if (rec) {
-        this.pickModel(rec);
-        // Auto-advance if every model is in the same size bucket (clear winner)
-        const sizes = new Set(models.map(m => this.modelSize(m.id)));
-        if (sizes.size === 1) {
-          this.autoAdvancing = true;
-          setTimeout(() => {
-            if (this.step === 2) { this.autoAdvancing = false; this.step = 3; this.$nextTick(() => this.runTest()); }
-          }, 2000);
+      // Single model — skip comparison, go straight to test
+      if (models.length === 1) {
+        this.pickModel(models[0]);
+        this.compareTargets     = [models[0].id];
+        this.compareResults     = {};
+        this.compareRecommended = models[0].id;
+        this.compareReason      = 'Only one model available — proceeding to full test.';
+        this.compareDone        = true;
+        return;
+      }
+      this.compareRunning     = true;
+      this.compareDone        = false;
+      this.compareTargets     = [];
+      this.compareResults     = {};
+      this.compareTesting     = null;
+      this.compareLoadingFor  = null;
+      this.compareRecommended = null;
+      this.compareReason      = '';
+      this.runCompare();
+    },
+
+    async runCompare() {
+      const models = this.getModels();
+      try {
+        const r = await fetch('/api/setup/compare', {
+          method: 'POST', credentials: 'include',
+          headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken() },
+          body: JSON.stringify({
+            endpoint: this.activeServer ? this.activeServer.endpoint : '',
+            api_key:  (this.activeServer && this.activeServer._apiKey) || 'ollama',
+            models:   models.map(m => m.id),
+          }),
+        });
+        const reader = r.body.getReader();
+        const dec = new TextDecoder();
+        let buf = '';
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buf += dec.decode(value, { stream: true });
+          const lines = buf.split('\\n'); buf = lines.pop();
+          for (const line of lines) {
+            if (!line.startsWith('data: ')) continue;
+            try {
+              const ev = JSON.parse(line.slice(6));
+              if (ev.targets)       { this.compareTargets = ev.targets; }
+              if (ev.testing)       { this.compareTesting = ev.testing; }
+              if (ev.loading_model) { this.compareLoadingFor = ev.loading_model; }
+              if (ev.result) {
+                this.compareLoadingFor = null;
+                this.compareResults = { ...this.compareResults, [ev.result.model]: ev.result };
+              }
+              if (ev.done) {
+                this.compareRunning     = false;
+                this.compareDone        = true;
+                this.compareTesting     = null;
+                this.compareLoadingFor  = null;
+                this.compareRecommended = ev.recommendation;
+                this.compareReason      = ev.reason || '';
+                if (ev.recommendation) {
+                  const m = models.find(x => x.id === ev.recommendation);
+                  if (m) this.pickModel(m);
+                }
+              }
+            } catch {}
+          }
         }
+      } catch (e) {
+        this.compareRunning = false;
+        this.compareDone    = true;
+        this.compareReason  = 'Comparison failed: ' + e.message;
       }
     },
 
@@ -6666,8 +6792,8 @@ function setup() {
               this.pullStatus = ev.status || '';
               if (ev.done) {
                 this.pulling = false;
-                this.selectedModel = modelName;
                 if (this.activeServer) this.activeServer.models = [{ id: modelName, name: modelName, size: 0 }];
+                this.$nextTick(() => this.startCompare());
               }
             } catch {}
           }
@@ -6687,12 +6813,16 @@ function setup() {
         const r = await fetch('/api/setup/probe?' + params, { credentials: 'include' });
         const d = await r.json();
         const found = (d.servers || []).find(s => s.status === 'up');
-        if (found) this.activeServer = { ...found, _apiKey: this.activeServer._apiKey || '' };
+        if (found) {
+          this.activeServer = { ...found, _apiKey: this.activeServer._apiKey || '' };
+          if ((found.models || []).length > 0) this.$nextTick(() => this.startCompare());
+        }
       } catch {}
     },
 
     async runTest() {
       this.testResponse = ''; this.testDone = false; this.testBenchmarking = false;
+      this.testLoadingModel = false;
       this.testError = null; this.testLatency = null; this.testTtft = null;
       this.testTokS = null; this.testScoreLabel = ''; this.testQualityPass = null; this.testRuns = 0;
       try {
@@ -6718,8 +6848,9 @@ function setup() {
             try {
               const ev = JSON.parse(line.slice(6));
               if (ev.error)      { this.testError = ev.error; return; }
-              if (ev.status === 'benchmarking') { this.testBenchmarking = true; }
-              if (ev.token)      { this.testResponse += ev.token; }
+              if (ev.status === 'loading_model') { this.testLoadingModel = true; }
+              if (ev.status === 'benchmarking') { this.testBenchmarking = true; this.testLoadingModel = false; }
+              if (ev.token)      { this.testResponse += ev.token; this.testLoadingModel = false; }
               if (ev.done) {
                 this.testDone        = true;
                 this.testLatency     = ev.latency;
@@ -6737,6 +6868,20 @@ function setup() {
       } catch (e) {
         this.testError = 'Connection error \u2014 ' + e.message;
       }
+    },
+
+    benchRecommendation() {
+      const s = this.testTokS;
+      const q = this.testQualityPass;
+      if (s === null) return { text: '', tone: 'good', icon: '' };
+      if (s >= 30 && q)  return { tone: 'upgrade', icon: '⚡', text: 'Great speed — you have headroom. Consider a 14B model (e.g. Qwen2.5-14B Q4) for stronger reasoning if VRAM allows.' };
+      if (s >= 30 && !q) return { tone: 'warn',    icon: '⚠', text: 'Fast, but reasoning looks weak — this model may not suit agent tasks. Try a general-purpose chat model like Qwen3-8B or Llama-3.1-8B.' };
+      if (s >= 15 && q)  return { tone: 'good',    icon: '✓', text: 'Sweet spot — fast enough and reasoning checks out. This model is well-matched to your hardware.' };
+      if (s >= 15 && !q) return { tone: 'warn',    icon: '⚠', text: 'Speed is fine but reasoning looks off. Try a different model in the same size class (7–9B), or a more instruction-tuned variant.' };
+      if (s >= 6  && q)  return { tone: 'warn',    icon: '↓', text: 'Responses will feel sluggish at this speed. Consider a smaller quantised model — e.g. Qwen3-8B Q4_K_M (~5 GB VRAM) for snappier results.' };
+      if (s >= 6  && !q) return { tone: 'bad',     icon: '↓', text: 'Slow and reasoning issues — try a 7B model like Qwen3-8B or Llama-3.1-8B at Q4 quantisation.' };
+      if (q)             return { tone: 'bad',      icon: '↓', text: 'Too slow for comfortable use. Drop to a 3–4B model (e.g. Qwen3-4B) or connect a faster inference machine.' };
+                         return { tone: 'bad',      icon: '✕', text: 'Too slow and reasoning issues. Drop to a 3–4B model like Qwen3-4B, or use a cloud endpoint.' };
     },
 
     async complete() {
@@ -8000,6 +8145,7 @@ async def start_http_api(runner: Any, port: int = 8080) -> None:
     app.router.add_get("/api/setup/scan",     _sh.handle_setup_scan)
     app.router.add_get("/api/setup/status",   _handle_setup_status)
     app.router.add_post("/api/setup/pull",    require_csrf(_sh.handle_setup_pull))
+    app.router.add_post("/api/setup/compare", require_csrf(_sh.handle_setup_compare))
     app.router.add_post("/api/setup/test",    require_csrf(_sh.handle_setup_test))
     app.router.add_post("/api/setup/complete", require_csrf(_sh.handle_setup_complete))
     app.router.add_post("/api/setup/reset",
