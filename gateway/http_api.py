@@ -5801,6 +5801,17 @@ _SETUP_HTML = """<!DOCTYPE html>
       filter:blur(160px);opacity:0.14;pointer-events:none;
       animation:halo-color 60s linear infinite;
     }
+    .btn-primary{
+      background:linear-gradient(135deg,#6366f1 0%,#a855f7 100%);
+      color:#fff;font-weight:500;cursor:pointer;
+      box-shadow:0 1px 2px rgba(0,0,0,0.4),0 0 0 1px rgba(99,102,241,0.3) inset;
+      transition:opacity 150ms ease,box-shadow 150ms ease;
+      animation:logo-hue 60s linear var(--orb-delay,0s) infinite;
+    }
+    .btn-primary:hover:not(:disabled){opacity:0.9;box-shadow:0 1px 2px rgba(0,0,0,0.5),0 0 20px rgba(168,85,247,0.2),0 0 0 1px rgba(168,85,247,0.35) inset;}
+    .btn-primary:active:not(:disabled){opacity:0.95;transform:translateY(1px);}
+    .btn-primary:disabled{opacity:0.4;cursor:not-allowed;animation:none;background:#4f46e5;}
+    .spinner-hue{animation:logo-hue 60s linear var(--orb-delay,0s) infinite;}
     /* animation-delay set inline by JS to sync with login page cycle */
   </style>
   <script>
@@ -5814,7 +5825,7 @@ _SETUP_HTML = """<!DOCTYPE html>
         const logo = document.querySelector('.setup-logo');
         if (halo) halo.style.animationDelay = delay;
         if (logo) logo.style.animationDelay = delay;
-        // Sync body orb via CSS variable on :root
+        // Sync body orb + buttons via CSS variable on :root
         document.documentElement.style.setProperty('--orb-delay', delay);
       });
     })();
@@ -5894,7 +5905,7 @@ _SETUP_HTML = """<!DOCTYPE html>
 
         <!-- Scanning -->
         <div x-show="autoScanning" class="flex flex-col items-center py-12 gap-4">
-          <div class="w-8 h-8 border-2 border-gray-800 border-t-indigo-500 rounded-full animate-spin"></div>
+          <div class="spinner-hue w-8 h-8 border-2 border-gray-800 border-t-indigo-500 rounded-full animate-spin"></div>
           <p class="text-sm text-gray-500">Scanning local network for model servers&hellip;</p>
         </div>
 
@@ -6032,7 +6043,7 @@ _SETUP_HTML = """<!DOCTYPE html>
               Re-scan
             </button>
             <button @click="goNext()" :disabled="selectedServers.length===0"
-              class="flex-1 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 disabled:cursor-not-allowed text-white text-sm font-medium transition-colors">
+              class="btn-primary flex-1 py-2.5 rounded-xl text-sm">
               Continue &rarr;
             </button>
           </div>
@@ -6073,7 +6084,7 @@ _SETUP_HTML = """<!DOCTYPE html>
                 <div x-show="recommendedModel()?.size > 0" class="text-xs text-gray-600 mt-0.5" x-text="formatSize(recommendedModel()?.size)"></div>
               </div>
               <button @click="pickModel(recommendedModel()); goNext()"
-                class="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-medium transition-colors flex-shrink-0">
+                class="btn-primary px-4 py-2 rounded-xl text-sm flex-shrink-0">
                 Use this &rarr;
               </button>
             </div>
@@ -6123,7 +6134,7 @@ _SETUP_HTML = """<!DOCTYPE html>
 
           <button @click="goNext()" :disabled="!selectedModel"
             x-show="selectedModel && !autoAdvancing"
-            class="w-full py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 text-white text-sm font-medium transition-colors">
+            class="btn-primary w-full py-2.5 rounded-xl text-sm">
             Continue &rarr;
           </button>
         </div>
@@ -6144,7 +6155,7 @@ _SETUP_HTML = """<!DOCTYPE html>
                     <div class="text-xs text-gray-600 mt-0.5"><span x-text="m.size"></span><span class="mx-1">&middot;</span><span x-text="m.ram"></span><span> on the inference machine</span></div>
                   </div>
                   <button @click="startPull(m.id)" :disabled="pulling"
-                    class="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-xs font-medium transition-colors flex-shrink-0">
+                    class="btn-primary px-3 py-1.5 rounded-lg text-xs flex-shrink-0">
                     Download
                   </button>
                 </div>
@@ -6171,7 +6182,7 @@ _SETUP_HTML = """<!DOCTYPE html>
             <li class="flex gap-3"><span class="w-5 h-5 rounded-full bg-gray-700 text-white text-xs flex items-center justify-center flex-shrink-0 mt-0.5 font-medium">3</span><span>Come back here and click Refresh.</span></li>
           </ol>
           <div class="text-xs text-gray-500 bg-gray-800/60 rounded-lg px-3 py-2 mb-4">Not sure? Search for <span class="font-mono text-indigo-300">Llama 3.2 3B</span> in Discover &mdash; fast, 2 GB, works on most machines.</div>
-          <button @click="refreshModels()" class="px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-medium transition-colors">Refresh model list</button>
+          <button @click="refreshModels()" class="btn-primary px-4 py-2 rounded-lg text-xs">Refresh model list</button>
         </div>
       </div>
 
@@ -6234,7 +6245,7 @@ _SETUP_HTML = """<!DOCTYPE html>
         </div>
 
         <button @click="goNext()" :disabled="!testDone"
-          class="w-full py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 disabled:cursor-not-allowed text-white text-sm font-medium transition-colors">
+          class="btn-primary w-full py-2.5 rounded-xl text-sm">
           Continue &rarr;
         </button>
       </div>
@@ -6272,7 +6283,7 @@ _SETUP_HTML = """<!DOCTYPE html>
         </div>
 
         <button @click="complete()" :disabled="completing"
-          class="w-full py-3 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white font-semibold transition-colors">
+          class="btn-primary w-full py-3 rounded-xl font-semibold">
           <span x-show="!completing">Open Logos &rarr;</span>
           <span x-show="completing" class="flex items-center justify-center gap-2">
             <div class="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin"></div>
