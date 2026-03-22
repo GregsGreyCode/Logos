@@ -5364,32 +5364,39 @@ _LOGIN_HTML = """<!DOCTYPE html>
       background-size: 28px 28px;
     }
 
-    /* ambient glow — soft ellipse behind logo, no hard edges */
+    /* ambient glow — full-viewport overlay so no hard edges at top/bottom */
     body::before {
       content: '';
       position: fixed;
-      top: 10vh; left: 50%;
-      transform: translateX(-50%);
-      width: 700px; height: 700px;
-      background: radial-gradient(ellipse at 50% 30%, rgba(99,102,241,0.13) 0%, rgba(99,102,241,0.04) 45%, transparent 70%);
+      inset: 0;
+      background: radial-gradient(ellipse at 50% 38%, rgba(99,102,241,0.14) 0%, rgba(99,102,241,0.05) 38%, transparent 62%);
       pointer-events: none;
       z-index: 0;
     }
 
     [x-cloak] { display: none !important; }
 
-    /* logo halo — static soft glow, neutral */
+    /* logo halo — follows the same hue cycle as the logo */
+    @keyframes halo-hue {
+      0%   { background: radial-gradient(ellipse at center, rgba(99,102,241,0.20) 0%, transparent 68%); }
+      17%  { background: radial-gradient(ellipse at center, rgba(239,68,68,0.20)  0%, transparent 68%); }
+      33%  { background: radial-gradient(ellipse at center, rgba(234,179,8,0.18)  0%, transparent 68%); }
+      50%  { background: radial-gradient(ellipse at center, rgba(34,197,94,0.20)  0%, transparent 68%); }
+      67%  { background: radial-gradient(ellipse at center, rgba(14,165,233,0.20) 0%, transparent 68%); }
+      83%  { background: radial-gradient(ellipse at center, rgba(168,85,247,0.20) 0%, transparent 68%); }
+      100% { background: radial-gradient(ellipse at center, rgba(99,102,241,0.20) 0%, transparent 68%); }
+    }
     .logo-halo {
       position: absolute;
       inset: -32px;
-      background: radial-gradient(ellipse at center, rgba(99,102,241,0.12) 0%, transparent 68%);
       border-radius: 50%;
       pointer-events: none;
+      animation: halo-hue 30s linear infinite;
     }
-    /* logo gradient slowly cycles through all four theme colours (top-left → bottom-right) */
+    /* logo gradient cycles through the colour spectrum — hue-rotate matches full 360° in 30s */
     @keyframes logo-hue {
-      0%   { filter: hue-rotate(0deg)   drop-shadow(0 0 10px rgba(99,102,241,0.35)); }
-      100% { filter: hue-rotate(360deg) drop-shadow(0 0 10px rgba(99,102,241,0.35)); }
+      0%   { filter: hue-rotate(0deg); }
+      100% { filter: hue-rotate(360deg); }
     }
     .logo-img { animation: logo-hue 30s linear infinite; }
 
@@ -5472,12 +5479,14 @@ _LOGIN_HTML = """<!DOCTYPE html>
   <div x-data="loginApp()" x-init="init()" class="relative z-10 w-full px-5" style="max-width:400px;">
 
     <!-- Brand -->
-    <div class="text-center mb-6 fade-up" style="margin-top:6vh;">
-      <div class="relative inline-block mb-8">
+    <div class="text-center fade-up" style="margin-top:6vh;">
+      <div class="relative inline-block mb-5">
         <div class="logo-halo"></div>
         <img src="/static/logo.svg" alt="Logos" class="logo-img relative mx-auto"
              style="width:120px;height:120px;object-fit:contain;">
       </div>
+      <h1 class="text-white font-semibold mb-8"
+          style="font-size:1.75rem;letter-spacing:-0.03em;">Logos</h1>
     </div>
 
     <!-- Card -->
@@ -5539,7 +5548,7 @@ _LOGIN_HTML = """<!DOCTYPE html>
     <!-- Footer -->
     <p class="text-center mt-7 fade-up-footer"
        style="font-size:0.72rem;color:rgba(71,85,105,0.8);letter-spacing:0.05em;">
-      Logos &middot; self-hosted AI agent platform
+      A self-hosted AI agent platform
     </p>
 
   </div>
