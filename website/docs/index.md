@@ -8,7 +8,7 @@ hide_table_of_contents: true
 
 # Logos
 
-A self-hosted agent platform built by [Nous Research](https://nousresearch.com). Route inference across local and cloud hardware, benchmark models against your own workloads, define routing policies per user, and run auditable agent sessions — all from a single control plane you operate yourself.
+A self-hosted agent platform. Route inference across local and cloud hardware, benchmark models against your own workloads, define routing policies per user, and run auditable agent sessions — all from a single control plane you operate yourself.
 
 <div style={{display: 'flex', gap: '1rem', marginBottom: '2rem', flexWrap: 'wrap'}}>
   <a href="/docs/getting-started/installation" style={{display: 'inline-block', padding: '0.6rem 1.2rem', backgroundColor: '#FFD700', color: '#07070d', borderRadius: '8px', fontWeight: 600, textDecoration: 'none'}}>Get Started →</a>
