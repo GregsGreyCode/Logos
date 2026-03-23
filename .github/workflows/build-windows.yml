@@ -6,6 +6,9 @@ on:
       - 'v*'          # e.g. v0.4.0 → builds + attaches to GitHub Release
   workflow_dispatch:   # manual trigger from Actions tab (for testing)
 
+permissions:
+  contents: write   # required to create/update GitHub Releases
+
 concurrency:
   group: build-windows-${{ github.ref }}
   cancel-in-progress: true
