@@ -1,23 +1,23 @@
 ---
 slug: /
 sidebar_position: 0
-title: "Hermes Agent Documentation"
-description: "The self-improving AI agent built by Nous Research. A built-in learning loop that creates skills from experience, improves them during use, and remembers across sessions."
+title: "Logos Documentation"
+description: "A self-hosted agent platform — inference routing, multi-model benchmarking, and policy-governed agent runs across local and cloud hardware."
 hide_table_of_contents: true
 ---
 
-# Hermes Agent
+# Logos
 
-The self-improving AI agent built by [Nous Research](https://nousresearch.com). The only agent with a built-in learning loop — it creates skills from experience, improves them during use, nudges itself to persist knowledge, and builds a deepening model of who you are across sessions.
+A self-hosted agent platform built by [Nous Research](https://nousresearch.com). Route inference across local and cloud hardware, benchmark models against your own workloads, define routing policies per user, and run auditable agent sessions — all from a single control plane you operate yourself.
 
 <div style={{display: 'flex', gap: '1rem', marginBottom: '2rem', flexWrap: 'wrap'}}>
   <a href="/docs/getting-started/installation" style={{display: 'inline-block', padding: '0.6rem 1.2rem', backgroundColor: '#FFD700', color: '#07070d', borderRadius: '8px', fontWeight: 600, textDecoration: 'none'}}>Get Started →</a>
-  <a href="https://github.com/NousResearch/hermes-agent" style={{display: 'inline-block', padding: '0.6rem 1.2rem', border: '1px solid rgba(255,215,0,0.2)', borderRadius: '8px', textDecoration: 'none'}}>View on GitHub</a>
+  <a href="https://github.com/GregsGreyCode/Logos" style={{display: 'inline-block', padding: '0.6rem 1.2rem', border: '1px solid rgba(255,215,0,0.2)', borderRadius: '8px', textDecoration: 'none'}}>View on GitHub</a>
 </div>
 
-## What is Hermes Agent?
+## What is Logos?
 
-It's not a coding copilot tethered to an IDE or a chatbot wrapper around a single API. It's an **autonomous agent** that gets more capable the longer it runs. It lives wherever you put it — a $5 VPS, a GPU cluster, or serverless infrastructure (Daytona, Modal) that costs nearly nothing when idle. Talk to it from Telegram while it works on a cloud VM you never SSH into yourself. It's not tied to your laptop.
+It's not a chatbot wrapper or a single-model assistant. It's a **platform** — a control plane that sits in front of your inference hardware, routes requests to the right model for the job, enforces policies per user, and records every agent run as a reproducible STAMP (Soul + Tools + Agent + Model + Policy). Run it on a homelab node, a VPS, or a Kubernetes cluster. Talk to agents through Telegram, Discord, Slack, or the built-in web UI.
 
 ## Quick Links
 
