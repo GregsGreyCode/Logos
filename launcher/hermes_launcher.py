@@ -16,12 +16,14 @@ from __future__ import annotations
 
 import asyncio
 import http.server
+import json
 import multiprocessing
 import os
 import socketserver
 import sys
 import threading
 import time
+import urllib.request
 import webbrowser
 from pathlib import Path
 
@@ -44,6 +46,27 @@ _HERMES_HOME = Path(os.environ.get("HERMES_HOME", Path.home() / ".logos"))
 # Pin into os.environ so the in-process gateway import sees the same path.
 os.environ.setdefault("HERMES_HOME", str(_HERMES_HOME))
 _LOG_PATH = _HERMES_HOME / "logs" / "logos.log"
+_UPDATES_DIR = _HERMES_HOME / "updates"
+
+# Current app version — read from bundled pyproject.toml, or importlib.metadata
+try:
+    import tomllib as _tomllib_v
+    if getattr(sys, "frozen", False):
+        _pyproj = Path(sys._MEIPASS) / "pyproject.toml"  # type: ignore[attr-defined]
+    else:
+        _pyproj = Path(__file__).parent.parent / "pyproject.toml"
+    with open(_pyproj, "rb") as _fv:
+        _APP_VERSION = _tomllib_v.load(_fv)["project"]["version"]
+except Exception:
+    try:
+        import importlib.metadata as _imeta
+        _APP_VERSION = _imeta.version("logos")
+    except Exception:
+        _APP_VERSION = "0.0.0"
+
+_GITHUB_RELEASES_API = (
+    "https://api.github.com/repos/GregsGreyCode/Logos/releases/latest"
+)
 # Splash server — serves a branded loading page on a separate port while the
 # gateway starts up, so the --app window never shows Edge's error page.
 _SPLASH_PORT = int(os.environ.get("LOGOS_SPLASH_PORT", "8079"))
@@ -302,6 +325,186 @@ def _log(msg: str) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Auto-update — Plan C: tray-driven background updater
+# ---------------------------------------------------------------------------
+
+class _Upd:
+    """Thread-safe update state.  All fields written under .lock."""
+    lock = threading.Lock()
+    available: str = ""           # "" = none known; "0.4.17" = update ready to offer
+    download_url: str = ""        # HTTPS URL to the LogosSetup-*.exe asset
+    downloading: bool = False     # True while the .exe is streaming to disk
+    ready_path: Path | None = None  # set once the download is complete
+
+
+def _parse_version(v: str) -> tuple[int, ...]:
+    """Convert "v0.4.17" or "0.4.17" to (0, 4, 17) for comparison."""
+    return tuple(int(x) for x in v.lstrip("v").split(".") if x.isdigit())
+
+
+def _check_for_update() -> tuple[str, str] | tuple[None, None]:
+    """Query GitHub releases API.  Returns (version_str, download_url) or (None, None)."""
+    try:
+        req = urllib.request.Request(
+            _GITHUB_RELEASES_API,
+            headers={"User-Agent": f"Logos/{_APP_VERSION}"},
+        )
+        with urllib.request.urlopen(req, timeout=10) as r:
+            data = json.loads(r.read().decode())
+        tag = data.get("tag_name", "")
+        if not tag:
+            return None, None
+        if _parse_version(tag) <= _parse_version(_APP_VERSION):
+            return None, None  # already up to date
+        for asset in data.get("assets", []):
+            name = asset.get("name", "")
+            if name.startswith("LogosSetup") and name.endswith(".exe"):
+                return tag.lstrip("v"), asset["browser_download_url"]
+    except Exception as exc:
+        _log(f"Update check failed: {exc}")
+    return None, None
+
+
+def _download_update(version: str, url: str, icon) -> Path | None:
+    """Download installer to ~/.logos/updates/.  Returns local path or None."""
+    _UPDATES_DIR.mkdir(parents=True, exist_ok=True)
+    dest = _UPDATES_DIR / f"LogosSetup-{version}.exe"
+    if dest.exists():
+        return dest  # already cached from a previous check
+    tmp = dest.with_suffix(".tmp")
+    try:
+        urllib.request.urlretrieve(url, tmp)
+        tmp.rename(dest)
+        return dest
+    except Exception as exc:
+        _log(f"Update download failed: {exc}")
+        try:
+            tmp.unlink(missing_ok=True)
+        except Exception:
+            pass
+        return None
+
+
+def _apply_update(path: Path, icon) -> None:
+    """Launch the installer silently then exit so the file lock is released.
+
+    The installer is started with DETACHED_PROCESS so it keeps running after
+    the launcher exits.  /SILENT shows a progress window so the user knows
+    something is happening.  A WizardSilent [Run] entry in logos.iss ensures
+    Logos relaunches automatically once the install finishes.
+    """
+    import subprocess
+    try:
+        icon.notify("Installing Logos update — this will take a moment.", "Logos Update")
+        time.sleep(1.5)
+        kwargs: dict = {}
+        if sys.platform == "win32":
+            kwargs["creationflags"] = subprocess.DETACHED_PROCESS
+        subprocess.Popen([str(path), "/SILENT", "/NORESTART"], **kwargs)
+        time.sleep(0.5)
+    except Exception as exc:
+        _log(f"Update install failed: {exc}")
+        icon.notify("Update failed — see logs.", "Logos Update")
+        return
+    _stop_gateway()
+    icon.stop()
+
+
+def _start_update_checker(icon) -> None:
+    """Background daemon: check for updates 30 s after start, then every 24 h."""
+
+    def _loop():
+        time.sleep(30)
+        while True:
+            version, url = _check_for_update()
+            if version and url:
+                with _Upd.lock:
+                    _Upd.available = version
+                    _Upd.download_url = url
+                _log(f"Update available: v{version}")
+                icon.notify(
+                    f"Logos {version} is available. Open the tray menu to update.",
+                    "Update Available",
+                )
+                _rebuild_menu(icon)
+            time.sleep(24 * 3600)
+
+    threading.Thread(target=_loop, daemon=True, name="logos-update-check").start()
+
+
+def _rebuild_menu(icon) -> None:
+    """Reassemble the tray menu, injecting an update item when one is available."""
+    import pystray
+
+    with _Upd.lock:
+        avail = _Upd.available
+        downloading = _Upd.downloading
+        ready = _Upd.ready_path
+        url = _Upd.download_url
+
+    # --- update section (injected at top of menu) ---
+    extra: list = []
+    if ready and avail:
+        def _on_install(icon, item, _p=ready, _v=avail):
+            threading.Thread(
+                target=_apply_update, args=(_p, icon), daemon=True, name="logos-update-apply"
+            ).start()
+        extra = [
+            pystray.MenuItem(f"Install Logos {avail} & restart", _on_install),
+            pystray.Menu.SEPARATOR,
+        ]
+    elif downloading:
+        extra = [
+            pystray.MenuItem("Downloading update\u2026", None, enabled=False),
+            pystray.Menu.SEPARATOR,
+        ]
+    elif avail and url:
+        def _on_download(icon, item, _v=avail, _u=url):
+            with _Upd.lock:
+                _Upd.downloading = True
+            _rebuild_menu(icon)
+
+            def _dl(_v=_v, _u=_u):
+                p = _download_update(_v, _u, icon)
+                with _Upd.lock:
+                    _Upd.downloading = False
+                    _Upd.ready_path = p
+                if p:
+                    icon.notify(
+                        f"Logos {_v} ready. Click 'Install' in the tray menu.",
+                        "Logos Update",
+                    )
+                _rebuild_menu(icon)
+
+            threading.Thread(target=_dl, daemon=True, name="logos-update-dl").start()
+
+        extra = [
+            pystray.MenuItem(f"Update to Logos {avail}\u2026", _on_download),
+            pystray.Menu.SEPARATOR,
+        ]
+
+    # --- standard items ---
+    def on_open(icon, item):
+        _open_browser()
+
+    def on_restart(icon, item):
+        icon.notify("Restarting Logos\u2026", "Logos")
+        threading.Thread(target=_restart_gateway, daemon=True).start()
+
+    def on_quit(icon, item):
+        _stop_gateway()
+        icon.stop()
+
+    icon.menu = pystray.Menu(
+        *extra,
+        pystray.MenuItem("Open Logos", on_open, default=True),
+        pystray.MenuItem("Restart", on_restart),
+        pystray.Menu.SEPARATOR,
+        pystray.MenuItem("Quit", on_quit),
+    )
+
+
+# ---------------------------------------------------------------------------
 # Tray icon
 # ---------------------------------------------------------------------------
 
@@ -416,28 +619,6 @@ def _start_icon_animation(icon) -> None:
     threading.Thread(target=_loop, daemon=True, name="logos-icon-anim").start()
 
 
-def _build_menu(icon):
-    import pystray
-
-    def on_open(icon, item):
-        _open_browser()
-
-    def on_restart(icon, item):
-        icon.notify("Restarting Logos…", "Logos")
-        threading.Thread(target=_restart_gateway, daemon=True).start()
-
-    def on_quit(icon, item):
-        _stop_gateway()
-        icon.stop()
-
-    return pystray.Menu(
-        pystray.MenuItem("Open Logos", on_open, default=True),
-        pystray.MenuItem("Restart", on_restart),
-        pystray.Menu.SEPARATOR,
-        pystray.MenuItem("Quit", on_quit),
-    )
-
-
 def _run_tray() -> None:
     import pystray
 
@@ -447,8 +628,9 @@ def _run_tray() -> None:
         img = Image.new("RGBA", (1, 1))
 
     icon = pystray.Icon("Logos", img, "Logos - Agentic AI Platform", menu=None)
-    icon.menu = _build_menu(icon)
+    _rebuild_menu(icon)
     _start_icon_animation(icon)
+    _start_update_checker(icon)
     icon.run()
 
 
