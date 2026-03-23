@@ -51,7 +51,7 @@ from gateway.session import SessionSource, build_session_context, build_session_
 logger = logging.getLogger(__name__)
 
 _start_time: float = 0.0
-_hermes_home: Path = Path.home() / ".hermes"
+_hermes_home: Path = Path(os.environ.get("HERMES_HOME") or (Path.home() / ".logos"))
 _AI_ROUTER_BASE = "http://ai-router.hermes.svc.cluster.local:9001"
 _CANARY_HEALTH_URL = "http://hermes-canary.hermes.svc.cluster.local/health"
 _INSTANCE_NAME = os.environ.get("HERMES_INSTANCE_NAME", "Hermes")
@@ -5958,7 +5958,7 @@ _LOGIN_HTML = """<!DOCTYPE html>
     }
   </style>
 </head>
-<body @click="activate()" @mousemove.window.throttle.2000ms="resetInactivity()" @keydown.window="resetInactivity()" x-data="loginApp()" x-init="init()">
+<body @click="toggle()" @mousemove.window.throttle.2000ms="resetInactivity()" @keydown.window="resetInactivity()" x-data="loginApp()" x-init="init()">
 
   <!-- Main content — flex-centred by body -->
   <div class="relative z-10 w-full px-5" style="max-width:400px;">
@@ -5971,7 +5971,7 @@ _LOGIN_HTML = """<!DOCTYPE html>
              style="width:120px;height:120px;object-fit:contain;">
       </div>
       <!-- Hint — space always reserved so the logo doesn't shift when it appears -->
-      <div style="margin-top:1.5rem;height:1.2rem;transition:opacity 0.6s ease;"
+      <div style="margin-top:2.5rem;height:1.2rem;transition:opacity 0.6s ease;"
            :style="(showHint && phase === 'splash') ? 'opacity:1' : 'opacity:0'">
         <p class="hint-text"
            style="font-size:0.78rem;color:rgba(148,163,184,0.5);letter-spacing:0.08em;">
@@ -5981,7 +5981,7 @@ _LOGIN_HTML = """<!DOCTYPE html>
     </div>
 
     <!-- Reveal section — expands on activate(); static class prevents pre-Alpine flash -->
-    <div class="login-reveal" :class="{ open: phase === 'login', closing: phase === 'loggedin' }">
+    <div class="login-reveal" @click.stop :class="{ open: phase === 'login', closing: phase === 'loggedin' }">
 
       <!-- Card -->
       <div class="login-card px-7 py-7">
@@ -6114,6 +6114,11 @@ _LOGIN_HTML = """<!DOCTYPE html>
           this.phase = 'login';
           this._startInactivity();
         }
+      },
+
+      toggle() {
+        if (this.phase === 'login') { this._revertSplash(); return; }
+        this.activate();
       },
 
       _startInactivity() {
@@ -9336,11 +9341,28 @@ async def start_http_api(runner: Any, port: int = 8080) -> None:
     global _start_time
     _start_time = time.time()
 
-    # Initialise auth DB alongside existing hermes state
+    # Initialise auth DB alongside existing Logos state
     global _hermes_home
-    hermes_home = Path(os.environ.get("HERMES_HOME") or (Path.home() / ".hermes"))
+    hermes_home = Path(os.environ.get("HERMES_HOME") or (Path.home() / ".logos"))
     _hermes_home = hermes_home
     auth_db.init_db(hermes_home)
+
+    # Ensure a stable JWT secret exists for local installs.
+    # K8s sets HERMES_JWT_SECRET via a k8s Secret; local desktop/CLI installs
+    # never set it.  Generate once, persist to ~/.logos/.jwt_secret so tokens
+    # survive gateway restarts without forcing re-login every time.
+    if not os.environ.get("HERMES_JWT_SECRET"):
+        import secrets as _secrets
+        _jwt_secret_path = hermes_home / ".jwt_secret"
+        if _jwt_secret_path.exists():
+            os.environ["HERMES_JWT_SECRET"] = _jwt_secret_path.read_text().strip()
+        else:
+            _jwt_secret_path.parent.mkdir(parents=True, exist_ok=True)
+            _new_secret = _secrets.token_hex(32)
+            _jwt_secret_path.write_text(_new_secret)
+            _jwt_secret_path.chmod(0o600)
+            os.environ["HERMES_JWT_SECRET"] = _new_secret
+            logger.info("Generated new JWT secret at %s", _jwt_secret_path)
     # HERMES_WIPE_ON_START: wipe setup state so /setup always runs fresh (setup-test deployments)
     if os.environ.get("HERMES_WIPE_ON_START", "").lower() in ("1", "true", "yes"):
         try:
