@@ -101,6 +101,7 @@ Some things you could ask an agent on Logos to do:
 - **Runs on your schedule** — cron scheduling with delivery to Telegram
 - **Delegates with structure** — A2A handoffs with explicit contracts, structured I/O validation, and full run lineage
 - **Workflow engine** — JSON-defined task graphs with DAG execution, parallel steps, conditional branching, and human approval gates; examples in `workflows/examples/`
+- **Self-improves** — the Evolution system lets agents propose code improvements on a configurable schedule; you review, question, or accept each proposal, with optional frontier AI (Claude/GPT) consultation before deciding
 - **Integrates editors** — ACP protocol support for VS Code, Zed, and JetBrains
 - **Connects any model** — Anthropic, OpenAI, OpenRouter (200+ models), Nous Portal, or any OpenAI-compatible endpoint
 - **Runs anywhere** — local, Docker, SSH, Modal, Daytona, Singularity
@@ -116,6 +117,7 @@ Some things you could ask an agent on Logos to do:
 | **Policy & Trust** | Per-user action policies (write, exec, filesystem, provider, network, secret) with approval gates and provider trust enforcement |
 | **Run Auditability** | Every agent request produces a run record: tool timeline, policy snapshot, model used, output summary, clone-to-chat replay |
 | **Workspace Isolation** | Ephemeral per-run workspaces, filesystem path enforcement (Python-level), dry-run simulation for safe rehearsal. True OS-level sandboxing requires container backends (Docker, Modal, etc.) |
+| **Evolution** | Agents propose platform improvements on a configurable schedule; human reviews and decides; optional frontier AI consultation before committing |
 
 ---
 
@@ -342,6 +344,62 @@ Runs, evals, and metrics are accessible from the web dashboard and as slash comm
 ```
 
 Per-session state is tracked while running. The live execution view shows what tools the agent is calling and how long each step takes. After each tool completes, if it took longer than **30 seconds** a slow-tool warning is logged with the tool name, elapsed time, and thread pool queue depth. Runs that remain in `status='running'` for more than **1 hour** are surfaced as stuck in `/metrics` and the Prometheus export.
+
+---
+
+## Evolution — agent self-improvement
+
+The **Evolution** tab gives agents a structured channel to propose improvements to the platform itself, on a schedule you control.
+
+### How it works
+
+1. **Agents analyse your codebase** on the configured interval (default: once a week). Each agent reads the repository, looks for bugs, complexity hotspots, and `TODO`/`FIXME` comments, and drafts a concrete improvement.
+2. **A proposal is submitted** — title, summary, a unified diff, and the list of affected files. The proposal appears in the Evolution tab for your review.
+3. **You decide:**
+   - **Accept** — mark the proposal for implementation; the diff is applied to a branch in your git fork and a PR is opened.
+   - **Decline** — reject it with or without explanation.
+   - **Ask a question** — send a clarifying question back to the agent. The agent answers and the proposal returns to pending for re-review.
+4. **Optionally consult a frontier model** — before deciding, you can ask Claude or GPT-4o to review the proposal and give an independent assessment.
+
+### Your fork as source of truth
+
+Each Logos deployment works against **your own fork** of the repository. Fork the canonical repo into your GitHub account, configure the fork URL in Evolution Settings, and the agent reads from it and opens PRs against it. This means:
+
+- Your deployment's improvement history is yours — isolated from other users.
+- You decide when to pull upstream changes from the canonical repo.
+- Accepted proposals land as conventional PRs that you can review, diff, and merge (or not) in your normal workflow.
+
+### Setting up
+
+1. **Fork** the canonical Logos repository to your GitHub account.
+2. In the **Evolution tab → Settings**, configure:
+   - **Fork remote URL** — your fork's HTTPS URL (`https://github.com/you/logos`)
+   - **Username** and **Personal access token** — a GitHub PAT with `repo` scope
+   - **Base branch** — the branch PRs will target (default: `main`)
+   - **Schedule** — how often agents should run the self-improvement skill (1 hour → 1 year)
+   - **Frontier model** — which AI to consult for proposal reviews (Claude or GPT-4o)
+3. Toggle **Enabled** to start the schedule.
+
+### Permissions
+
+| Role | Can do |
+|------|--------|
+| Admin / Operator | View proposals, create proposals, accept/decline/question, consult frontier, configure settings |
+| User | View proposals |
+| Viewer | View proposals |
+
+### API
+
+```
+GET    /evolution/proposals              # list (filterable by status)
+GET    /evolution/proposals/{id}         # get one
+POST   /evolution/proposals             # create (agents use this)
+POST   /evolution/proposals/{id}/decide  # accept / decline / question
+POST   /evolution/proposals/{id}/answer  # agent answers a question
+POST   /evolution/proposals/{id}/consult # consult a frontier model
+GET    /evolution/settings               # get settings
+PATCH  /evolution/settings               # update settings
+```
 
 ---
 
