@@ -2,7 +2,9 @@
 
 ## ⚠️ Why Windows shows a warning
 
-Logos is currently unsigned. Code signing certificates require an identity validation process that is not yet available to us. We prefer to invest in development and transparency rather than pay for a certificate we can't fully back.
+Logos is currently unsigned. Code signing certificates is either quite expensive at this time or seems to require an identity validation process that is not yet available to us in the UK.
+
+We publish full build transparency instead.
 
 When you first run the installer, Windows SmartScreen may show:
 
