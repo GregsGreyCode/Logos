@@ -5404,7 +5404,7 @@ _LOGIN_HTML = """<!DOCTYPE html>
       width: 2400px; height: 2400px;
       border-radius: 50%;
       filter: blur(280px);
-      opacity: 0.033;
+      opacity: 0.038;
       animation: ambient-color 60s linear infinite;
       pointer-events: none;
       z-index: 0;
@@ -5419,7 +5419,7 @@ _LOGIN_HTML = """<!DOCTYPE html>
       border-radius: 50%;
       background: #6366f1;
       filter: blur(160px) hue-rotate(var(--hue-deg, 0deg));
-      opacity: 0.14;
+      opacity: 0.16;
       pointer-events: none;
     }
     @keyframes logo-fadein {
@@ -5437,7 +5437,7 @@ _LOGIN_HTML = """<!DOCTYPE html>
       max-height: 0 !important; opacity: 0 !important;
       transition: max-height 0.5s ease, opacity 0.35s ease !important;
     }
-    .logo-img { filter: hue-rotate(var(--hue-deg, 0deg)); }
+    .logo-img { filter: hue-rotate(var(--hue-deg, 0deg)) brightness(1.15); }
 
     /* ── Splash → login reveal ─────────────────────────────────────────
        max-height reserves the space so the logo floats up naturally.
@@ -5512,7 +5512,7 @@ _LOGIN_HTML = """<!DOCTYPE html>
       background: linear-gradient(135deg, #6366f1 0%, #a855f7 100%);
       box-shadow: 0 1px 2px rgba(0,0,0,0.4), 0 0 0 1px rgba(99,102,241,0.3) inset;
       transition: opacity 150ms ease, box-shadow 150ms ease, transform 80ms ease;
-      filter: hue-rotate(var(--hue-deg, 0deg));
+      filter: hue-rotate(var(--hue-deg, 0deg)) brightness(1.15);
       cursor: pointer;
     }
     .btn-signin:hover:not(:disabled) {
@@ -5673,7 +5673,7 @@ _LOGIN_HTML = """<!DOCTYPE html>
         const tick = () => {
           // Anchor hue to wall-clock time so every page load/refresh
           // shows the same colour at the same real-world second.
-          const deg = ((Date.now() / 1000) * 6 % 360).toFixed(1);
+          const deg = ((Date.now() / 1000) * 12 % 360).toFixed(1);
           document.documentElement.style.setProperty('--hue-deg', deg + 'deg');
           requestAnimationFrame(tick);
         };
