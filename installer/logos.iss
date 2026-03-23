@@ -8,7 +8,7 @@
 
 #define MyAppName "Logos - Agentic AI Platform"
 #define MyAppVersion "0.4.13"
-#define MyAppPublisher "gregsgreycoder"
+#define MyAppPublisher "gregsgreycode"
 #define MyAppURL "https://github.com/gregsgreycode/hermes"
 #define MyAppExeName "Logos.exe"
 #define MyOutputDir "output"
