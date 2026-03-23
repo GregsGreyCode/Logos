@@ -114,10 +114,11 @@ pytest tests/ -v
 
 ```
 logos/                        ← repo root
-├── run_agent.py              # AIAgent class — core conversation loop, tool dispatch, session persistence
-├── hermes_state.py           # SQLite session database with FTS5 full-text search (SCHEMA v8)
-├── model_tools.py            # Tool orchestration (thin layer over tools/registry.py)
-├── toolsets.py               # Tool groupings and presets
+├── agents/hermes/agent.py    # AIAgent class — production agent runtime (entrypoint: agents.hermes.agent:main)
+├── core/                     # Canonical platform modules (state, model_tools, toolsets, clock, constants, …)
+├── hermes_state.py           # Shim → core/state.py
+├── model_tools.py            # Shim → core/model_tools.py
+├── toolsets.py               # Shim → core/toolsets.py
 ├── batch_runner.py           # Parallel batch processing for trajectory generation
 │
 ├── agent/                    # Agent internals
