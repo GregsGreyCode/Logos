@@ -45,7 +45,7 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
 Name: "startupentry"; Description: "Start Logos automatically when Windows starts"; GroupDescription: "Startup:"; Flags: unchecked
-Name: "cleaninstall"; Description: "Clean install — remove all settings, config and data (~\.hermes\)"; GroupDescription: "Advanced:"; Flags: unchecked
+Name: "cleaninstall"; Description: "Clean install — remove all settings, config and data (~\.logos\)"; GroupDescription: "Advanced:"; Flags: unchecked
 
 [Files]
 ; Main application bundle (PyInstaller output)
@@ -96,7 +96,7 @@ begin
   end;
 end;
 
-// Clean install task: wipe ~/.hermes before copying new files
+// Clean install task: wipe ~/.logos before copying new files
 procedure CurStepChanged(CurStep: TSetupStep);
 var
   HermesDir: String;
@@ -104,7 +104,7 @@ begin
   if (CurStep = ssInstall) and IsTaskSelected('cleaninstall') then
   begin
     HermesDir := ExpandConstant('{userdocs}');  // placeholder — resolved below
-    HermesDir := GetEnv('USERPROFILE') + '\.hermes';
+    HermesDir := GetEnv('USERPROFILE') + '\.logos';
     if DirExists(HermesDir) then
     begin
       if MsgBox('This will permanently delete all Logos data at:' + #13#10 +
@@ -119,14 +119,14 @@ begin
   end;
 end;
 
-// Uninstall: offer to remove ~/.hermes data
+// Uninstall: offer to remove ~/.logos data
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 var
   HermesDir: String;
 begin
   if CurUninstallStep = usPostUninstall then
   begin
-    HermesDir := GetEnv('USERPROFILE') + '\.hermes';
+    HermesDir := GetEnv('USERPROFILE') + '\.logos';
     if DirExists(HermesDir) then
     begin
       if MsgBox('Do you want to remove all Logos data (config, API keys, logs)?'  + #13#10 +
