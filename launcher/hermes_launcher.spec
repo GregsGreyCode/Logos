@@ -23,8 +23,6 @@ a = Analysis(
     pathex=[str(ROOT)],
     binaries=[],
     datas=[
-        # Static assets served by the gateway
-        (str(ROOT / "gateway" / "static"), "gateway/static"),
         # Soul files
         (str(ROOT / "souls"), "souls"),
         # Default config template
