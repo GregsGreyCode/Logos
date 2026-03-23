@@ -7,7 +7,7 @@
 ;   3. Inno Setup 6 installed: https://jrsoftware.org/isdl.php
 
 #define MyAppName "Logos - Agentic AI Platform"
-#define MyAppVersion "0.4.16"
+#define MyAppVersion "0.4.17"
 #define MyAppPublisher "gregsgreycode"
 #define MyAppURL "https://github.com/gregsgreycode/hermes"
 #define MyAppExeName "Logos.exe"
@@ -66,10 +66,15 @@ Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; \
   Flags: uninsdeletevalue; Tasks: startupentry
 
 [Run]
-; Launch after install
+; Interactive install — show "Launch Logos?" checkbox on the final wizard page
 Filename: "{app}\{#MyAppExeName}"; \
   Description: "{cm:LaunchProgram,{#StringChange(MyAppName, '&', '&&')}}"; \
   Flags: nowait postinstall skipifsilent
+
+; Auto-update (silent) install — always relaunch automatically
+; WizardSilent is true when /SILENT or /VERYSILENT is passed (e.g. by the
+; in-app tray updater), so the user doesn't need to click Finish to relaunch.
+Filename: "{app}\{#MyAppExeName}"; Flags: nowait; Check: WizardSilent
 
 [UninstallRun]
 ; Graceful shutdown before uninstall

@@ -473,7 +473,9 @@ _ADMIN_HTML = """<!DOCTYPE html>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Logos</title>
+<meta name="theme-color" content="#0d0d0d">
 <link rel="icon" type="image/svg+xml" href="/static/logo.svg">
+<link rel="shortcut icon" href="/favicon.ico">
 <script src="https://cdn.tailwindcss.com"></script>
 <script src="https://cdn.jsdelivr.net/npm/marked@9/marked.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/dompurify@3/dist/purify.min.js"></script>
@@ -5759,7 +5761,9 @@ _LOGIN_HTML = """<!DOCTYPE html>
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>Logos \u2014 Sign In</title>
+  <meta name="theme-color" content="#0d0d0d">
   <link rel="icon" type="image/svg+xml" href="/static/logo.svg">
+  <link rel="shortcut icon" href="/favicon.ico">
   <script src="https://cdn.tailwindcss.com"></script>
   <style>
     *, *::before, *::after { box-sizing: border-box; }
@@ -6190,6 +6194,9 @@ _SETUP_HTML = """<!DOCTYPE html>
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="setup-ts" content="__SETUP_TS__">
   <title>Logos Setup</title>
+  <meta name="theme-color" content="#0d0d0d">
+  <link rel="icon" type="image/svg+xml" href="/static/logo.svg">
+  <link rel="shortcut icon" href="/favicon.ico">
   <script src="https://cdn.tailwindcss.com"></script>
   <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
   <style>
@@ -6254,10 +6261,10 @@ _SETUP_HTML = """<!DOCTYPE html>
 <div x-data="setup()" x-init="init()" class="flex flex-col min-h-screen">
 
   <!-- Header -->
-  <header class="flex flex-col items-center pt-10 pb-4 gap-5" style="position:relative;z-index:1">
-    <div class="relative inline-block" style="margin-bottom:-20px;">
+  <header class="flex flex-col items-center pt-10 pb-4 gap-4" style="position:relative;z-index:1">
+    <div class="relative inline-block">
       <div class="setup-halo"></div>
-      <img src="/static/logo.svg" class="setup-logo relative" style="width:80px;height:80px;object-fit:contain;">
+      <img src="/static/logo.svg" class="setup-logo relative" style="width:56px;height:56px;object-fit:contain;">
     </div>
     <!-- Step indicator — visible from step 1 onward -->
     <div x-show="step > 0" x-transition.opacity class="spinner-hue flex items-center gap-1">
@@ -8622,6 +8629,26 @@ async def _handle_spawn_templates_delete(request: web.Request) -> web.Response:
     return web.json_response({"status": "ok"})
 
 
+async def _handle_favicon(request: web.Request) -> web.Response:
+    """Serve logos.ico as /favicon.ico — public route so Edge --app shows the
+    correct icon in the title bar and Windows taskbar without requiring auth."""
+    import sys as _sys2
+    import pathlib as _pl2
+    candidates = []
+    if getattr(_sys2, "frozen", False):
+        candidates.append(_pl2.Path(_sys2._MEIPASS) / "launcher" / "logos.ico")
+    candidates.append(_pl2.Path(__file__).parent.parent / "launcher" / "logos.ico")
+    for p in candidates:
+        if p.exists():
+            data = p.read_bytes()
+            return web.Response(
+                body=data,
+                content_type="image/x-icon",
+                headers={"Cache-Control": "public, max-age=86400"},
+            )
+    raise web.HTTPNotFound()
+
+
 async def _handle_logo(request: web.Request) -> web.Response:
     """Serve the chat logo image from the baked-in app directory."""
     import pathlib
@@ -9366,6 +9393,7 @@ async def start_http_api(runner: Any, port: int = 8080) -> None:
     app.router.add_get("/health",        _handle_health)
     app.router.add_get("/healthz",       _handle_health)       # K8s liveness probe alias
     app.router.add_get("/health/ready",  _handle_health_ready)
+    app.router.add_get("/favicon.ico",   _handle_favicon)      # public — Edge --app needs this before auth
     app.router.add_get("/chat_logo.png", _handle_logo)
     app.router.add_get("/login",         _handle_login_page)
 

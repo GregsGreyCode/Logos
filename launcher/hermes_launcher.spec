@@ -31,6 +31,9 @@ a = Analysis(
         (str(ROOT / "hermes_cli" / "config.py"), "hermes_cli"),
         # Tray icon — must be bundled so pystray can find it when frozen
         (str(ROOT / "launcher" / "logos.ico"), "launcher"),
+        # pyproject.toml — read by the launcher to know its own version for
+        # update checks and by the gateway to populate _APP_VERSION.
+        (str(ROOT / "pyproject.toml"), "."),
     ],
     hiddenimports=[
         # Gateway + agent
