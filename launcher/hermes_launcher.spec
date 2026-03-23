@@ -29,6 +29,8 @@ a = Analysis(
         (str(ROOT / "souls"), "souls"),
         # Default config template
         (str(ROOT / "hermes_cli" / "config.py"), "hermes_cli"),
+        # Tray icon — must be bundled so pystray can find it when frozen
+        (str(ROOT / "launcher" / "logos.ico"), "launcher"),
     ],
     hiddenimports=[
         # Gateway + agent
