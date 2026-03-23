@@ -7126,7 +7126,7 @@ function setup() {
         const saved = localStorage.getItem('logos_setup_progress_v2');
         if (saved) {
           const s = JSON.parse(saved);
-          const _svrMatch = !s.serverTs || s.serverTs >= _pageTs;
+          const _svrMatch = _pageTs > 0 && s.serverTs === _pageTs;
           if (s?.ts && Date.now() - s.ts < 60 * 60 * 1000 && _svrMatch) {
             this.step           = s.step || 0;
             this.introConfirmed = s.introConfirmed ?? (this.step > 0);
