@@ -33,7 +33,7 @@ Confidence levels: **HIGH** = very confident in classification | **MEDIUM** = li
 
 | Path | Classification | Why | Confidence | Action |
 |------|---------------|-----|------------|--------|
-| `cli.py` | Legacy / ambiguous | Docstring: "Hermes Agent CLI - Interactive Terminal Interface". Large file. `hermes_cli/main.py` is the current production CLI. This file is imported ONLY by the root `hermes` legacy script. However — it may have features not yet in `hermes_cli`. | MEDIUM | **Deep-read before acting.** Diff capabilities vs `hermes_cli/main.py`. If fully superseded, archive to `archive/hermes-origin/cli.py`. |
+| `cli.py` | **Active production — KEEP** | Deep-read confirmed: `hermes_cli/main.py:cmd_chat()` does `from cli import main as cli_main` and calls it. `cli.py` IS the interactive REPL engine (6545 lines, `HermesCLI` class). `hermes_cli/main.py` is only the command dispatcher. Long-term move to `hermes_cli/chat.py`, but requires updating the import. Do NOT archive. | HIGH | **Keep as-is.** Future: rename to `hermes_cli/chat.py` + update import in `hermes_cli/main.py:cmd_chat()`. |
 | `cli-config.yaml.example` | Ambiguous | Config example file. Unclear if it matches current hermes_cli config schema or is from old `cli.py` era. | MEDIUM | Verify against `hermes_cli/config.py` schema; update or remove |
 
 ---
