@@ -43,27 +43,22 @@ jobs:
         run: pip install -e ".[messaging,cron,pty,mcp,acp]"
 
       # ── 4. Desktop build tools ───────────────────────────────────────────
-      # cairosvg requires cairo.dll which isn't on the runner — make_icon.py
-      # falls back to PIL automatically, so we don't install cairosvg here.
+      # logos.ico is pre-built and committed — no SVG/cairo dependency at CI time.
       - name: Install desktop build tools
         run: pip install pyinstaller pystray Pillow
 
-      # ── 5. Generate icon ─────────────────────────────────────────────────
-      - name: Generate logos.ico from SVG
-        run: python launcher\make_icon.py
-
-      # ── 6. PyInstaller ───────────────────────────────────────────────────
+      # ── 5. PyInstaller ───────────────────────────────────────────────────
       - name: Build executable with PyInstaller
         run: pyinstaller launcher\hermes_launcher.spec --noconfirm
 
-      # ── 7. Inno Setup ────────────────────────────────────────────────────
+      # ── 6. Inno Setup ────────────────────────────────────────────────────
       - name: Build installer with Inno Setup
         run: |
           $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
           & $iscc installer\logos.iss
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-      # ── 8. Upload artifact ───────────────────────────────────────────────
+      # ── 7. Upload artifact ───────────────────────────────────────────────
       - name: Upload installer artifact
         uses: actions/upload-artifact@v4
         with:
@@ -71,7 +66,7 @@ jobs:
           path: installer\output\LogosSetup-*.exe
           retention-days: 30
 
-      # ── 9. Attach to the existing GitHub Release (tags only) ─────────────
+      # ── 8. Attach to the existing GitHub Release (tags only) ─────────────
       # GitHub auto-creates a release when a tag is pushed; this step
       # uploads the installer to that existing release.
       - name: Upload to GitHub Release
