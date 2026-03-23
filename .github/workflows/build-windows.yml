@@ -158,6 +158,14 @@ jobs:
 
             ---
 
+            ### 📦 Prerequisites
+
+            Logos is self-contained — no Python or runtime install required.
+
+            **MCP servers (optional):** if you want to connect stdio-based MCP servers (anything using `npx` or `node` in its config), you must install [Node.js](https://nodejs.org) (LTS) separately. HTTP/StreamableHTTP MCP servers work without it.
+
+            ---
+
             ### 🧪 VirusTotal scan
 
             [Scan `${{ steps.hashes.outputs.installer_name }}` on VirusTotal](https://www.virustotal.com/gui/file/${{ steps.hashes.outputs.installer_hash }})
