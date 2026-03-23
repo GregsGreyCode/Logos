@@ -140,7 +140,10 @@ def _start_gateway() -> None:
             _gateway_loop = loop
         try:
             from gateway.run import start_gateway  # type: ignore
-            loop.run_until_complete(start_gateway(None))
+            # replace=True clears any stale PID file from a previous crashed
+            # or force-killed instance — without this the gateway refuses to
+            # start if the PID file exists but the process is gone.
+            loop.run_until_complete(start_gateway(None, replace=True))
         except Exception as exc:
             _log(f"Gateway error: {exc}")
         finally:
@@ -320,7 +323,13 @@ def _make_icon_at_hue(hue: float):
     from PIL import Image, ImageOps
     ico = _ico_path()
     if ico:
-        img = Image.open(ico).convert("RGBA").resize((64, 64), Image.LANCZOS)
+        img = Image.open(ico).convert("RGBA")
+        # Auto-crop to the tight bounding box of non-transparent pixels so the
+        # logo mark fills the icon area rather than sitting in a sea of padding.
+        bbox = img.getbbox()
+        if bbox:
+            img = img.crop(bbox)
+        img = img.resize((64, 64), Image.LANCZOS)
         # Rotate hue: convert to HSV via ImageOps is not built-in; use a fast
         # pixel-level hue shift via the 'hue' channel in HSV mode.
         r, g, b, a = img.split()
@@ -360,7 +369,11 @@ def _make_icon_greyscale():
     from PIL import Image, ImageOps
     ico = _ico_path()
     if ico:
-        img = Image.open(ico).convert("RGBA").resize((64, 64), Image.LANCZOS)
+        img = Image.open(ico).convert("RGBA")
+        bbox = img.getbbox()
+        if bbox:
+            img = img.crop(bbox)
+        img = img.resize((64, 64), Image.LANCZOS)
         r, g, b, a = img.split()
         grey = ImageOps.grayscale(Image.merge("RGB", (r, g, b)))
         grey_rgba = Image.merge("RGBA", (*grey.split() * 3, a))
