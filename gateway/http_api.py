@@ -754,6 +754,11 @@ _ADMIN_HTML = """<!DOCTYPE html>
         :class="tab==='runs'?'tab-active':'text-gray-400 hover:text-white'"
         @click="tab='runs'; loadAgentRuns()">Runs</button>
     </template>
+    <template x-if="can('view_evolution')">
+      <button class="pb-2 text-sm font-medium border-b-2 border-transparent"
+        :class="tab==='evolution'?'tab-active':'text-gray-400 hover:text-white'"
+        @click="tab='evolution'; loadEvolutionProposals(); loadEvolutionSettings()">Evolution</button>
+    </template>
     <!-- Canary pill (inline, between Admin and Theme) -->
     <template x-if="canary.active">
       <div class="pb-2 flex items-center gap-1.5 px-2.5 py-1 rounded-full border border-yellow-600 bg-yellow-950 text-yellow-400 text-xs font-medium animate-pulse self-center">
@@ -3530,6 +3535,292 @@ _ADMIN_HTML = """<!DOCTYPE html>
 
   </div>
 
+  <!-- ── Evolution Tab ────────────────────────────────────────────────── -->
+  <div x-show="tab==='evolution'" x-cloak class="p-6 max-w-5xl mx-auto space-y-6">
+
+    <!-- Sub-nav -->
+    <div class="flex items-center gap-5 border-b border-gray-800 pb-2">
+      <button class="pb-2 text-sm font-medium border-b-2 -mb-2.5"
+        :class="evoPanel==='proposals'?'border-[var(--accent)] text-[var(--accent)]':'border-transparent text-gray-400 hover:text-white'"
+        @click="evoPanel='proposals'">Proposals</button>
+      <template x-if="can('manage_evolution')">
+        <button class="pb-2 text-sm font-medium border-b-2 -mb-2.5"
+          :class="evoPanel==='settings'?'border-[var(--accent)] text-[var(--accent)]':'border-transparent text-gray-400 hover:text-white'"
+          @click="evoPanel='settings'; loadEvolutionSettings()">Settings</button>
+      </template>
+    </div>
+
+    <!-- ── Proposals panel ─────────────────────────────────── -->
+    <div x-show="evoPanel==='proposals'" class="space-y-4">
+
+      <!-- Filter row -->
+      <div class="flex items-center justify-between">
+        <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Self-Improvement Proposals</div>
+        <div class="flex items-center gap-3">
+          <select x-model="evoStatusFilter" @change="evoOffset=0; loadEvolutionProposals()"
+            class="text-xs bg-gray-800 border border-gray-700 rounded-lg px-2 py-1.5 text-gray-300 focus:outline-none focus:border-[var(--accent)]">
+            <option value="">All statuses</option>
+            <option value="pending">Pending</option>
+            <option value="accepted">Accepted</option>
+            <option value="declined">Declined</option>
+            <option value="questioned">Questioned</option>
+            <option value="in_progress">In Progress</option>
+            <option value="merged">Merged</option>
+            <option value="cancelled">Cancelled</option>
+          </select>
+          <button @click="loadEvolutionProposals()" class="text-xs text-[var(--accent)] hover:opacity-80 flex items-center gap-1"><span>&#8635;</span> Refresh</button>
+        </div>
+      </div>
+
+      <!-- Loading -->
+      <div x-show="evoLoading" class="text-center text-gray-600 py-12 text-sm">Loading…</div>
+
+      <!-- Empty state -->
+      <div x-show="!evoLoading && evolutionProposals.length === 0"
+        class="text-center py-16 text-gray-600">
+        <div class="text-4xl mb-3">🌱</div>
+        <div class="text-sm font-medium text-gray-500">No proposals yet</div>
+        <div class="text-xs text-gray-600 mt-1">Agents will submit self-improvement proposals on the configured schedule.</div>
+      </div>
+
+      <!-- Proposals list -->
+      <template x-for="p in evolutionProposals" :key="p.id">
+        <div class="bg-gray-900 border rounded-xl overflow-hidden"
+          :class="selectedProposalId===p.id ? 'border-[var(--accent)]/60' : 'border-gray-800 hover:border-gray-700'"
+          @click="selectedProposalId = selectedProposalId===p.id ? null : p.id; evoConsultResult=null; evoQuestionText=''">
+
+          <!-- Row header -->
+          <div class="flex items-start gap-3 px-4 py-3 cursor-pointer">
+            <!-- Status badge -->
+            <span class="mt-0.5 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider shrink-0"
+              :class="{
+                'bg-yellow-900/60 text-yellow-400 border border-yellow-800': p.status==='pending',
+                'bg-green-900/60 text-green-400 border border-green-800': p.status==='accepted',
+                'bg-red-900/60 text-red-400 border border-red-800': p.status==='declined',
+                'bg-blue-900/60 text-blue-300 border border-blue-800': p.status==='questioned',
+                'bg-purple-900/60 text-purple-300 border border-purple-800': p.status==='in_progress',
+                'bg-teal-900/60 text-teal-300 border border-teal-800': p.status==='merged',
+                'bg-gray-800 text-gray-500 border border-gray-700': p.status==='cancelled'
+              }" x-text="p.status"></span>
+            <!-- Type badge -->
+            <span class="mt-0.5 px-2 py-0.5 rounded-full text-[10px] font-medium uppercase tracking-wider shrink-0 bg-gray-800 text-gray-400 border border-gray-700"
+              x-text="p.proposal_type"></span>
+            <div class="min-w-0 flex-1">
+              <div class="text-sm font-medium text-white truncate" x-text="p.title"></div>
+              <div class="text-xs text-gray-500 mt-0.5" x-text="new Date(p.created_at).toLocaleString()"></div>
+            </div>
+            <span class="text-gray-600 text-xs mt-1 shrink-0" x-text="selectedProposalId===p.id ? '▲' : '▼'"></span>
+          </div>
+
+          <!-- Expanded detail -->
+          <div x-show="selectedProposalId===p.id" class="border-t border-gray-800 px-4 py-4 space-y-4" @click.stop>
+
+            <!-- Summary -->
+            <div>
+              <div class="text-[10px] text-gray-600 uppercase tracking-wider mb-1">Summary</div>
+              <div class="text-xs text-gray-300 whitespace-pre-wrap" x-text="p.summary"></div>
+            </div>
+
+            <!-- Target files -->
+            <div x-show="p.target_files && p.target_files.length">
+              <div class="text-[10px] text-gray-600 uppercase tracking-wider mb-1">Target Files</div>
+              <div class="flex flex-wrap gap-1">
+                <template x-for="f in p.target_files" :key="f">
+                  <span class="text-[11px] font-mono bg-gray-800 text-gray-300 px-2 py-0.5 rounded border border-gray-700" x-text="f"></span>
+                </template>
+              </div>
+            </div>
+
+            <!-- Diff -->
+            <div x-show="p.diff_text">
+              <div class="text-[10px] text-gray-600 uppercase tracking-wider mb-1">Proposed Diff</div>
+              <pre class="text-[11px] font-mono bg-gray-950 text-gray-300 rounded-lg p-3 overflow-x-auto max-h-64 overflow-y-auto border border-gray-800 whitespace-pre" x-text="p.diff_text"></pre>
+            </div>
+
+            <!-- Question / Answer -->
+            <div x-show="p.question_text">
+              <div class="text-[10px] text-blue-600 uppercase tracking-wider mb-1">Question from Reviewer</div>
+              <div class="text-xs text-blue-300 bg-blue-950/40 border border-blue-900 rounded-lg p-3 whitespace-pre-wrap" x-text="p.question_text"></div>
+            </div>
+            <div x-show="p.answer_text">
+              <div class="text-[10px] text-gray-600 uppercase tracking-wider mb-1">Agent Answer</div>
+              <div class="text-xs text-gray-300 bg-gray-800 rounded-lg p-3 whitespace-pre-wrap" x-text="p.answer_text"></div>
+            </div>
+
+            <!-- Frontier output -->
+            <div x-show="p.frontier_output || evoConsultResult">
+              <div class="text-[10px] text-purple-500 uppercase tracking-wider mb-1">
+                Frontier Advice <span x-show="p.frontier_model || evoConsultModel" class="lowercase normal-case font-normal" x-text="'(' + (p.frontier_model || evoConsultModel) + ')'"></span>
+              </div>
+              <div class="text-xs text-gray-300 bg-gray-800 rounded-lg p-3 whitespace-pre-wrap max-h-64 overflow-y-auto"
+                x-text="evoConsultResult || p.frontier_output"></div>
+            </div>
+
+            <!-- Action buttons -->
+            <template x-if="can('decide_evolution') && p.status === 'pending'">
+              <div class="flex flex-wrap gap-2 pt-2 border-t border-gray-800">
+                <button @click="decideProposal(p.id, 'accept')"
+                  class="px-3 py-1.5 rounded-lg text-xs font-medium bg-green-800 hover:bg-green-700 text-green-100 border border-green-700">Accept</button>
+                <button @click="decideProposal(p.id, 'decline')"
+                  class="px-3 py-1.5 rounded-lg text-xs font-medium bg-red-900 hover:bg-red-800 text-red-200 border border-red-800">Decline</button>
+                <button @click="evoAskingQuestion = evoAskingQuestion===p.id ? null : p.id"
+                  class="px-3 py-1.5 rounded-lg text-xs font-medium bg-blue-900 hover:bg-blue-800 text-blue-200 border border-blue-800">Ask Question</button>
+                <template x-if="can('manage_evolution')">
+                  <button @click="evoConsultingFrontier = evoConsultingFrontier===p.id ? null : p.id"
+                    class="px-3 py-1.5 rounded-lg text-xs font-medium bg-purple-900 hover:bg-purple-800 text-purple-200 border border-purple-800">Consult Frontier AI</button>
+                </template>
+              </div>
+            </template>
+
+            <!-- Question input -->
+            <div x-show="evoAskingQuestion===p.id" class="space-y-2" @click.stop>
+              <textarea x-model="evoQuestionText" rows="3" placeholder="Ask the agent a question about this proposal…"
+                class="w-full text-xs bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-gray-200 resize-none focus:outline-none focus:border-[var(--accent)]"></textarea>
+              <div class="flex gap-2">
+                <button @click="decideProposal(p.id, 'question', evoQuestionText); evoAskingQuestion=null"
+                  class="px-3 py-1.5 rounded-lg text-xs font-medium bg-blue-800 hover:bg-blue-700 text-white">Send Question</button>
+                <button @click="evoAskingQuestion=null; evoQuestionText=''"
+                  class="px-3 py-1.5 rounded-lg text-xs font-medium bg-gray-800 hover:bg-gray-700 text-gray-300">Cancel</button>
+              </div>
+            </div>
+
+            <!-- Frontier consult input -->
+            <div x-show="evoConsultingFrontier===p.id" class="space-y-2" @click.stop>
+              <div class="flex items-center gap-2">
+                <label class="text-xs text-gray-400 shrink-0">Model</label>
+                <select x-model="evoConsultModel"
+                  class="text-xs bg-gray-800 border border-gray-700 rounded-lg px-2 py-1.5 text-gray-200 focus:outline-none focus:border-[var(--accent)]">
+                  <option value="claude-opus-4-6">Claude Opus 4.6</option>
+                  <option value="claude-sonnet-4-6">Claude Sonnet 4.6</option>
+                  <option value="gpt-4o">GPT-4o</option>
+                  <option value="gpt-4o-mini">GPT-4o Mini</option>
+                </select>
+                <button @click="consultFrontier(p.id); evoConsultingFrontier=null"
+                  class="px-3 py-1.5 rounded-lg text-xs font-medium bg-purple-800 hover:bg-purple-700 text-white">Ask</button>
+                <button @click="evoConsultingFrontier=null"
+                  class="px-3 py-1.5 rounded-lg text-xs font-medium bg-gray-800 hover:bg-gray-700 text-gray-300">Cancel</button>
+              </div>
+            </div>
+
+          </div>
+        </div>
+      </template>
+
+      <!-- Pagination -->
+      <div x-show="evolutionTotal > evoPageSize" class="flex items-center justify-between pt-2">
+        <div class="text-xs text-gray-600" x-text="'Showing ' + (evoOffset+1) + '–' + Math.min(evoOffset+evoPageSize, evolutionTotal) + ' of ' + evolutionTotal"></div>
+        <div class="flex gap-2">
+          <button @click="evoOffset=Math.max(0,evoOffset-evoPageSize); loadEvolutionProposals()"
+            :disabled="evoOffset===0"
+            class="text-xs px-3 py-1.5 rounded-lg border border-gray-700 text-gray-400 disabled:opacity-40 hover:enabled:bg-gray-800">← Prev</button>
+          <button @click="evoOffset+=evoPageSize; loadEvolutionProposals()"
+            :disabled="evoOffset+evoPageSize>=evolutionTotal"
+            class="text-xs px-3 py-1.5 rounded-lg border border-gray-700 text-gray-400 disabled:opacity-40 hover:enabled:bg-gray-800">Next →</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Settings panel ──────────────────────────────────── -->
+    <div x-show="evoPanel==='settings'" class="space-y-6">
+      <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Evolution Settings</div>
+
+      <!-- Loading -->
+      <div x-show="evoSettingsLoading" class="text-center text-gray-600 py-12 text-sm">Loading…</div>
+
+      <div x-show="!evoSettingsLoading" class="space-y-6">
+
+        <!-- Schedule section -->
+        <div class="bg-gray-900 border border-gray-800 rounded-xl p-5 space-y-4">
+          <div class="text-xs font-semibold text-gray-300 uppercase tracking-wider">Schedule</div>
+          <div class="flex items-center gap-3">
+            <label class="text-xs text-gray-400 w-28 shrink-0">Enabled</label>
+            <button @click="evoSettingsForm.enabled = !evoSettingsForm.enabled"
+              class="relative inline-flex h-5 w-9 items-center rounded-full transition-colors"
+              :class="evoSettingsForm.enabled ? 'bg-[var(--accent)]' : 'bg-gray-700'">
+              <span class="inline-block h-3 w-3 transform rounded-full bg-white shadow transition-transform"
+                :class="evoSettingsForm.enabled ? 'translate-x-5' : 'translate-x-1'"></span>
+            </button>
+          </div>
+          <div class="flex items-center gap-3">
+            <label class="text-xs text-gray-400 w-28 shrink-0">Interval</label>
+            <select x-model="evoSettingsForm.schedule_label" @change="evoSettingsForm.schedule_minutes = evoScheduleMinutes(evoSettingsForm.schedule_label)"
+              class="text-xs bg-gray-800 border border-gray-700 rounded-lg px-2 py-1.5 text-gray-200 focus:outline-none focus:border-[var(--accent)]">
+              <option value="1 hour">1 hour</option>
+              <option value="6 hours">6 hours</option>
+              <option value="1 day">1 day</option>
+              <option value="3 days">3 days</option>
+              <option value="1 week">1 week (default)</option>
+              <option value="1 month">1 month</option>
+              <option value="1 year">1 year</option>
+            </select>
+          </div>
+          <div class="flex items-center gap-3">
+            <label class="text-xs text-gray-400 w-28 shrink-0">Max pending</label>
+            <input type="number" x-model.number="evoSettingsForm.max_pending" min="1" max="50"
+              class="text-xs bg-gray-800 border border-gray-700 rounded-lg px-2 py-1.5 text-gray-200 w-20 focus:outline-none focus:border-[var(--accent)]" />
+            <span class="text-xs text-gray-600">proposals at once</span>
+          </div>
+        </div>
+
+        <!-- Git section -->
+        <div class="bg-gray-900 border border-gray-800 rounded-xl p-5 space-y-4">
+          <div class="text-xs font-semibold text-gray-300 uppercase tracking-wider">Git Integration</div>
+          <div class="text-xs text-gray-500">Fork the canonical Logos repo into your own GitHub account, then configure it here. The agent uses your fork as its source of truth — reading the latest code and opening PRs there when proposals are accepted.</div>
+          <div class="flex items-center gap-3">
+            <label class="text-xs text-gray-400 w-28 shrink-0">Fork remote URL</label>
+            <input type="text" x-model="evoSettingsForm.git_remote_url" placeholder="https://github.com/you/logos"
+              class="text-xs bg-gray-800 border border-gray-700 rounded-lg px-2 py-1.5 text-gray-200 flex-1 focus:outline-none focus:border-[var(--accent)]" />
+          </div>
+          <div class="flex items-center gap-3">
+            <label class="text-xs text-gray-400 w-28 shrink-0">Username</label>
+            <input type="text" x-model="evoSettingsForm.git_username" placeholder="your-github-username"
+              class="text-xs bg-gray-800 border border-gray-700 rounded-lg px-2 py-1.5 text-gray-200 flex-1 focus:outline-none focus:border-[var(--accent)]" />
+          </div>
+          <div class="flex items-center gap-3">
+            <label class="text-xs text-gray-400 w-28 shrink-0">Personal access token</label>
+            <input type="password" x-model="evoSettingsForm.git_pat" placeholder="ghp_…"
+              class="text-xs bg-gray-800 border border-gray-700 rounded-lg px-2 py-1.5 text-gray-200 flex-1 focus:outline-none focus:border-[var(--accent)]" />
+          </div>
+          <div class="flex items-center gap-3">
+            <label class="text-xs text-gray-400 w-28 shrink-0">Base branch</label>
+            <input type="text" x-model="evoSettingsForm.git_base_branch" placeholder="main"
+              class="text-xs bg-gray-800 border border-gray-700 rounded-lg px-2 py-1.5 text-gray-200 w-40 focus:outline-none focus:border-[var(--accent)]" />
+          </div>
+        </div>
+
+        <!-- Frontier section -->
+        <div class="bg-gray-900 border border-gray-800 rounded-xl p-5 space-y-4">
+          <div class="text-xs font-semibold text-gray-300 uppercase tracking-wider">Frontier Model</div>
+          <div class="text-xs text-gray-500">Used when you request a frontier AI review of a proposal.</div>
+          <div class="flex items-center gap-3">
+            <label class="text-xs text-gray-400 w-28 shrink-0">Model</label>
+            <select x-model="evoSettingsForm.frontier_model"
+              class="text-xs bg-gray-800 border border-gray-700 rounded-lg px-2 py-1.5 text-gray-200 focus:outline-none focus:border-[var(--accent)]">
+              <option value="claude-opus-4-6">Claude Opus 4.6</option>
+              <option value="claude-sonnet-4-6">Claude Sonnet 4.6</option>
+              <option value="gpt-4o">GPT-4o</option>
+              <option value="gpt-4o-mini">GPT-4o Mini</option>
+            </select>
+          </div>
+          <div class="flex items-center gap-3">
+            <label class="text-xs text-gray-400 w-28 shrink-0">API key env var</label>
+            <input type="text" x-model="evoSettingsForm.frontier_api_key_env" placeholder="ANTHROPIC_API_KEY"
+              class="text-xs bg-gray-800 border border-gray-700 rounded-lg px-2 py-1.5 text-gray-200 flex-1 focus:outline-none focus:border-[var(--accent)]" />
+            <span class="text-xs text-gray-600">env var name on the server</span>
+          </div>
+        </div>
+
+        <!-- Save button -->
+        <div class="flex justify-end">
+          <button @click="saveEvolutionSettings()"
+            class="px-4 py-2 rounded-lg text-sm font-medium text-white"
+            style="background:var(--accent)">Save Settings</button>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
   <!-- ── Activity history modal ─────────────────────────────────────── -->
   <div x-show="activityModalOpen" x-cloak
     class="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4"
@@ -3676,6 +3967,23 @@ function app() {
     selectedAgentRun: null,
     agentRunsMsg: null,
     clonePayload: null,
+    // evolution
+    evoPanel: 'proposals',
+    evolutionProposals: [],
+    evolutionTotal: 0,
+    evoOffset: 0,
+    evoPageSize: 20,
+    evoLoading: false,
+    evoStatusFilter: '',
+    selectedProposalId: null,
+    evoQuestionText: '',
+    evoAskingQuestion: null,
+    evoConsultingFrontier: null,
+    evoConsultModel: 'claude-opus-4-6',
+    evoConsultResult: null,
+    evoSettingsLoading: false,
+    evolutionSettings: {},
+    evoSettingsForm: {},
     adminUserFormOpen: false,
     adminUserForm: {},
     adminMachineFormOpen: false,
@@ -5013,6 +5321,93 @@ function app() {
           this.$nextTick(() => this._scrollChat());
         }
       } catch(e) { console.error('clone failed', e); }
+    },
+
+    // ── Evolution methods ──────────────────────────────────────────────
+    async loadEvolutionProposals() {
+      this.evoLoading = true;
+      try {
+        let url = `/evolution/proposals?limit=${this.evoPageSize}&offset=${this.evoOffset}`;
+        if (this.evoStatusFilter) url += `&status=${encodeURIComponent(this.evoStatusFilter)}`;
+        const r = await fetch(url, {credentials: 'include'});
+        if (!r.ok) throw new Error(await r.text());
+        const d = await r.json();
+        this.evolutionProposals = d.items || [];
+        this.evolutionTotal = d.total || 0;
+      } catch(e) { this.evolutionProposals = []; }
+      this.evoLoading = false;
+    },
+
+    async loadEvolutionSettings() {
+      this.evoSettingsLoading = true;
+      try {
+        const r = await fetch('/evolution/settings', {credentials: 'include'});
+        if (!r.ok) throw new Error(await r.text());
+        this.evolutionSettings = await r.json();
+        this.evoSettingsForm = Object.assign({}, this.evolutionSettings);
+      } catch(e) { /* ignore */ }
+      this.evoSettingsLoading = false;
+    },
+
+    async saveEvolutionSettings() {
+      try {
+        const r = await fetch('/evolution/settings', {
+          method: 'PATCH',
+          credentials: 'include',
+          headers: {'Content-Type': 'application/json', 'X-CSRF-Token': this.csrfToken},
+          body: JSON.stringify(this.evoSettingsForm),
+        });
+        if (!r.ok) throw new Error(await r.text());
+        this.evolutionSettings = await r.json();
+        this.evoSettingsForm = Object.assign({}, this.evolutionSettings);
+      } catch(e) { alert('Save failed: ' + e.message); }
+    },
+
+    async decideProposal(id, action, questionText) {
+      const body = {action};
+      if (action === 'question') body.question_text = questionText || '';
+      try {
+        const r = await fetch(`/evolution/proposals/${id}/decide`, {
+          method: 'POST',
+          credentials: 'include',
+          headers: {'Content-Type': 'application/json', 'X-CSRF-Token': this.csrfToken},
+          body: JSON.stringify(body),
+        });
+        if (!r.ok) throw new Error(await r.text());
+        const updated = await r.json();
+        const idx = this.evolutionProposals.findIndex(p => p.id === id);
+        if (idx >= 0) this.evolutionProposals[idx] = updated;
+        this.evoQuestionText = '';
+      } catch(e) { alert('Action failed: ' + e.message); }
+    },
+
+    async consultFrontier(id) {
+      this.evoConsultResult = null;
+      try {
+        const r = await fetch(`/evolution/proposals/${id}/consult`, {
+          method: 'POST',
+          credentials: 'include',
+          headers: {'Content-Type': 'application/json', 'X-CSRF-Token': this.csrfToken},
+          body: JSON.stringify({model: this.evoConsultModel}),
+        });
+        if (!r.ok) throw new Error(await r.text());
+        const d = await r.json();
+        this.evoConsultResult = d.output;
+        // Update local proposal cache
+        const idx = this.evolutionProposals.findIndex(p => p.id === id);
+        if (idx >= 0) {
+          this.evolutionProposals[idx].frontier_output = d.output;
+          this.evolutionProposals[idx].frontier_model = d.model;
+        }
+      } catch(e) { alert('Frontier consultation failed: ' + e.message); }
+    },
+
+    evoScheduleMinutes(label) {
+      const map = {
+        '1 hour': 60, '6 hours': 360, '1 day': 1440,
+        '3 days': 4320, '1 week': 10080, '1 month': 43200, '1 year': 525600
+      };
+      return map[label] || 10080;
     },
 
     _runStatusClass(status) {
@@ -9102,6 +9497,20 @@ async def start_http_api(runner: Any, port: int = 8080) -> None:
     app.router.add_get("/runs",            _vrun(_handle_runs_list))
     app.router.add_get("/runs/{id}",       _vrun(_handle_run_get))
     app.router.add_get("/runs/{id}/clone", _vrun(_handle_run_clone))
+
+    # ── Evolution ───────────────────────────────────────────────────────────
+    from gateway import evolution_handlers as _eh
+    _vev  = require_permission("view_evolution")
+    _mev  = require_permission("manage_evolution")
+    _dev  = require_permission("decide_evolution")
+    app.router.add_get("/evolution/proposals",           _vev(_eh.handle_list_proposals))
+    app.router.add_get("/evolution/proposals/{id}",      _vev(_eh.handle_get_proposal))
+    app.router.add_post("/evolution/proposals",          _mev(require_csrf(_eh.handle_create_proposal)))
+    app.router.add_post("/evolution/proposals/{id}/decide", _dev(require_csrf(_eh.handle_decide_proposal)))
+    app.router.add_post("/evolution/proposals/{id}/answer", _mev(require_csrf(_eh.handle_answer_question)))
+    app.router.add_post("/evolution/proposals/{id}/consult", _dev(require_csrf(_eh.handle_consult_frontier)))
+    app.router.add_get("/evolution/settings",            _vev(_eh.handle_get_settings))
+    app.router.add_patch("/evolution/settings",          _mev(require_csrf(_eh.handle_update_settings)))
 
     app.router.add_get("/admin/routing/resolve",  _vrd(admin_handlers.handle_routing_resolve))
     app.router.add_get("/admin/routing/log",      require_permission("view_audit_logs")(admin_handlers.handle_routing_log))
