@@ -48,12 +48,15 @@ _SPLASH_PORT = int(os.environ.get("LOGOS_SPLASH_PORT", "8079"))
 _SPLASH_URL = f"http://127.0.0.1:{_SPLASH_PORT}"
 
 # Inline loading page — polls gateway health and redirects when ready.
+# Uses /favicon.svg served by the same splash handler so Edge shows the
+# Logos icon in the title bar instead of the browser globe.
 _SPLASH_HTML = f"""\
 <!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <title>Logos</title>
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
 <style>
 *{{box-sizing:border-box;margin:0;padding:0}}
 html,body{{height:100%;background:#0d0d0d;display:flex;align-items:center;
@@ -66,16 +69,25 @@ html,body{{height:100%;background:#0d0d0d;display:flex;align-items:center;
 @keyframes spin{{to{{transform:rotate(360deg)}}}}
 h1{{font-size:26px;font-weight:700;letter-spacing:-.5px;margin-bottom:8px}}
 p{{font-size:14px;color:#666;letter-spacing:.02em}}
+p.err{{color:#ef4444;margin-top:16px;font-size:13px;line-height:1.5}}
 </style>
 </head>
 <body>
 <div class="card">
-  <div class="ring"></div>
+  <div class="ring" id="ring"></div>
   <h1>Logos</h1>
-  <p>Starting up&hellip;</p>
+  <p id="msg">Starting up&hellip;</p>
 </div>
 <script>
+var deadline = Date.now() + 90000;
 (function poll(){{
+  if(Date.now() > deadline){{
+    document.getElementById("ring").style.animationPlayState="paused";
+    document.getElementById("msg").className="err";
+    document.getElementById("msg").innerHTML=
+      "Logos did not start in time.<br>Check logs at %USERPROFILE%\\.hermes\\logs\\launcher.log";
+    return;
+  }}
   fetch("http://127.0.0.1:{_PORT}/health")
     .then(function(r){{if(r.ok){{location.href="http://127.0.0.1:{_PORT}";return;}}setTimeout(poll,600);
     }}).catch(function(){{setTimeout(poll,600);}});
@@ -84,6 +96,23 @@ p{{font-size:14px;color:#666;letter-spacing:.02em}}
 </body>
 </html>
 """.encode()
+
+
+def _logo_svg_bytes() -> bytes:
+    """Return the Logos SVG icon, resolved from the bundle or source tree."""
+    if getattr(sys, "frozen", False):
+        p = Path(sys._MEIPASS) / "assets" / "logo.svg"  # type: ignore[attr-defined]
+    else:
+        p = Path(__file__).parent.parent / "assets" / "logo.svg"
+    try:
+        return p.read_bytes()
+    except OSError:
+        # Minimal fallback SVG if the asset is missing
+        return (
+            b'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">'
+            b'<circle cx="50" cy="50" r="45" fill="#7c3aed"/>'
+            b"</svg>"
+        )
 
 # ---------------------------------------------------------------------------
 # Gateway — runs in-process in a background thread.
@@ -160,11 +189,19 @@ def _wait_for_gateway(timeout: int = 20) -> bool:
 
 class _SplashHandler(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
-        self.send_response(200)
-        self.send_header("Content-Type", "text/html; charset=utf-8")
-        self.send_header("Content-Length", str(len(_SPLASH_HTML)))
-        self.end_headers()
-        self.wfile.write(_SPLASH_HTML)
+        if self.path == "/favicon.svg":
+            data = _logo_svg_bytes()
+            self.send_response(200)
+            self.send_header("Content-Type", "image/svg+xml")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+        else:
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(_SPLASH_HTML)))
+            self.end_headers()
+            self.wfile.write(_SPLASH_HTML)
 
     def log_message(self, *args):
         pass  # suppress console noise
