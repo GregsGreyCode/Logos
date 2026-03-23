@@ -14,13 +14,22 @@ Requirements (desktop only, not added to main pyproject.toml):
 
 from __future__ import annotations
 
+import asyncio
+import multiprocessing
 import os
-import subprocess
 import sys
 import threading
 import time
 import webbrowser
 from pathlib import Path
+
+# ---------------------------------------------------------------------------
+# PyInstaller / multiprocessing guard — MUST be first executable statement.
+# On Windows, frozen executables re-run the entry point for every spawned
+# process (no fork). freeze_support() detects that case and exits early
+# so only the real launcher proceeds.
+# ---------------------------------------------------------------------------
+multiprocessing.freeze_support()
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -33,49 +42,50 @@ _HERMES_HOME = Path(os.environ.get("HERMES_HOME", Path.home() / ".hermes"))
 _LOG_PATH = _HERMES_HOME / "logs" / "launcher.log"
 
 # ---------------------------------------------------------------------------
-# Gateway process management
+# Gateway — runs in-process in a background thread.
+# This avoids the PyInstaller Windows re-entry problem: when frozen,
+# sys.executable IS Logos.exe, so subprocess.Popen([sys.executable, ...])
+# would re-run the launcher, spawning infinite processes.
 # ---------------------------------------------------------------------------
 
-_gateway_proc: subprocess.Popen | None = None
+_gateway_loop: asyncio.AbstractEventLoop | None = None
+_gateway_thread: threading.Thread | None = None
 _gateway_lock = threading.Lock()
 
 
-def _find_gateway_cmd() -> list[str]:
-    """Locate the gateway entry point — works both from source and PyInstaller bundle."""
-    if getattr(sys, "frozen", False):
-        # PyInstaller bundle: use the bundled hermes script
-        base = Path(sys.executable).parent
-        hermes_bin = base / ("hermes.exe" if sys.platform == "win32" else "hermes")
-        if hermes_bin.exists():
-            return [str(hermes_bin), "gateway", "run", "--port", str(_PORT)]
-    # Source or installed package
-    return [sys.executable, "-m", "gateway.run", "--port", str(_PORT)]
-
-
 def _start_gateway() -> None:
-    global _gateway_proc
-    with _gateway_lock:
-        _LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
-        env = {**os.environ, "HERMES_RUNTIME_MODE": "local"}
-        with open(_LOG_PATH, "a") as log_fh:
-            _gateway_proc = subprocess.Popen(
-                _find_gateway_cmd(),
-                env=env,
-                stdout=log_fh,
-                stderr=log_fh,
-            )
+    global _gateway_loop, _gateway_thread
+
+    os.environ.setdefault("HERMES_RUNTIME_MODE", "local")
+    _LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+
+    def _run() -> None:
+        global _gateway_loop
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        with _gateway_lock:
+            _gateway_loop = loop
+        try:
+            from gateway.run import start_gateway  # type: ignore
+            loop.run_until_complete(start_gateway(None))
+        except Exception as exc:
+            _log(f"Gateway error: {exc}")
+        finally:
+            loop.close()
+            with _gateway_lock:
+                _gateway_loop = None
+
+    _gateway_thread = threading.Thread(target=_run, daemon=True, name="logos-gateway")
+    _gateway_thread.start()
 
 
 def _stop_gateway() -> None:
-    global _gateway_proc
     with _gateway_lock:
-        if _gateway_proc and _gateway_proc.poll() is None:
-            _gateway_proc.terminate()
-            try:
-                _gateway_proc.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                _gateway_proc.kill()
-        _gateway_proc = None
+        loop = _gateway_loop
+    if loop and not loop.is_closed():
+        loop.call_soon_threadsafe(loop.stop)
+    if _gateway_thread:
+        _gateway_thread.join(timeout=5)
 
 
 def _restart_gateway() -> None:
@@ -104,12 +114,19 @@ def _open_browser() -> None:
     webbrowser.open(_BASE_URL)
 
 
+def _log(msg: str) -> None:
+    try:
+        with open(_LOG_PATH, "a") as f:
+            f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} {msg}\n")
+    except Exception:
+        pass
+
+
 # ---------------------------------------------------------------------------
 # Tray icon
 # ---------------------------------------------------------------------------
 
 def _make_icon():
-    """Create a simple coloured square icon (placeholder — replace with logo.png)."""
     try:
         from PIL import Image, ImageDraw
         img = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
@@ -147,7 +164,6 @@ def _run_tray() -> None:
 
     img = _make_icon()
     if img is None:
-        # pystray needs an image; fall back to a 1×1 transparent PNG
         from PIL import Image
         img = Image.new("RGBA", (1, 1))
 
@@ -161,27 +177,25 @@ def _run_tray() -> None:
 # ---------------------------------------------------------------------------
 
 def main() -> None:
-    # Start gateway in background
     _start_gateway()
 
-    # Open browser once gateway is ready
     def _open_when_ready():
         if _wait_for_gateway():
             _open_browser()
         else:
-            print("[launcher] Gateway did not start in time — check logs at", _LOG_PATH)
+            _log("Gateway did not start in time — check logs at " + str(_LOG_PATH))
 
     threading.Thread(target=_open_when_ready, daemon=True).start()
 
-    # Run tray icon (blocks until Quit)
     try:
         _run_tray()
     except ImportError:
         # pystray not installed — headless mode (useful on Linux servers)
         print(f"[launcher] Logos running at {_BASE_URL} (no tray icon)")
         try:
-            _gateway_proc.wait()
-        except (KeyboardInterrupt, AttributeError):
+            while _gateway_thread and _gateway_thread.is_alive():
+                time.sleep(1)
+        except KeyboardInterrupt:
             pass
         finally:
             _stop_gateway()
