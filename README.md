@@ -152,7 +152,20 @@ curl -fsSL https://raw.githubusercontent.com/GregsGreyCode/logos/main/scripts/in
 
 Works on Linux, macOS, and WSL2. The installer handles everything — Python, Node.js, and dependencies. No prerequisites except git.
 
-> **Windows:** Native Windows is not supported. Please install [WSL2](https://learn.microsoft.com/en-us/windows/wsl/install) and run the command above.
+### Windows native installer
+
+A native Windows installer (`.exe`) is available on the [GitHub Releases](https://github.com/GregsGreyCode/logos/releases) page. No WSL2 required — download, run, and Logos starts in the system tray.
+
+> **SmartScreen warning:** Logos is currently unsigned. Windows may show a "Windows protected your PC" prompt on first run — click **"More info" → "Run anyway"**. See [SECURITY.md](SECURITY.md) for how to verify the SHA256 hash of your download and confirm it matches the published value from our CI pipeline before running.
+
+**Verify before running (PowerShell):**
+```powershell
+# Replace X.Y.Z with the version you downloaded
+certutil -hashfile LogosSetup-X.Y.Z.exe SHA256
+# Compare to the SHA256 published in the GitHub Release notes
+```
+
+Each release publishes the hash in the release notes, in a `SHA256SUMS.txt` file, and in a `.sha256` sidecar — all produced by the same public GitHub Actions run that built the binary.
 
 Once installed, start the gateway:
 

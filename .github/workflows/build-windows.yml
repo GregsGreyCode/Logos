@@ -98,23 +98,102 @@ jobs:
           timestamp-rfc3161:   http://timestamp.acs.microsoft.com
           timestamp-digest:    SHA256
 
-      # ── 7. Upload artifact ───────────────────────────────────────────────
+      # ── 8. Compute SHA256 hashes ─────────────────────────────────────────
+      # Sidecar .sha256 files give users a machine-readable hash to verify.
+      # The combined SHA256SUMS.txt is also uploaded to the Release.
+      - name: Compute SHA256 hashes
+        id: hashes
+        run: |
+          $exeFile       = "dist\Logos\Logos.exe"
+          $installerFile = (Get-Item "installer\output\LogosSetup-*.exe").FullName
+          $installerName = (Get-Item "installer\output\LogosSetup-*.exe").Name
+
+          $exeHash       = (Get-FileHash $exeFile       -Algorithm SHA256).Hash.ToLower()
+          $installerHash = (Get-FileHash $installerFile -Algorithm SHA256).Hash.ToLower()
+
+          # Sidecar file next to the installer (conventional format)
+          "$installerHash  $installerName" |
+            Out-File -FilePath "$installerFile.sha256" -Encoding utf8 -NoNewline
+
+          # Combined checksums file
+          "$installerHash  $installerName`n$exeHash  Logos.exe" |
+            Out-File -FilePath "installer\output\SHA256SUMS.txt" -Encoding utf8
+
+          # Expose to later steps
+          "exe_hash=$exeHash"             >> $env:GITHUB_OUTPUT
+          "installer_hash=$installerHash" >> $env:GITHUB_OUTPUT
+          "installer_name=$installerName" >> $env:GITHUB_OUTPUT
+
+      # ── 9. Upload artifact ───────────────────────────────────────────────
       - name: Upload installer artifact
         uses: actions/upload-artifact@v4
         with:
           name: LogosSetup-windows
-          path: installer\output\LogosSetup-*.exe
+          path: |
+            installer\output\LogosSetup-*.exe
+            installer\output\LogosSetup-*.exe.sha256
+            installer\output\SHA256SUMS.txt
           retention-days: 30
 
-      # ── 8. Attach to the existing GitHub Release (tags only) ─────────────
-      # GitHub auto-creates a release when a tag is pushed; this step
-      # uploads the installer to that existing release.
+      # ── 10. Attach to GitHub Release (tags only) ─────────────────────────
+      # Uploads installer + sidecar hash + SHA256SUMS.txt.
+      # The release body includes hashes and verification instructions so
+      # users can confirm binary integrity without trusting the download host.
       - name: Upload to GitHub Release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_name }}
-          files: installer\output\LogosSetup-*.exe
+          files: |
+            installer\output\LogosSetup-*.exe
+            installer\output\LogosSetup-*.exe.sha256
+            installer\output\SHA256SUMS.txt
           fail_on_unmatched_files: true
+          body: |
+            ## Logos ${{ github.ref_name }} — Windows Installer
+
+            ### Download
+            Download **`${{ steps.hashes.outputs.installer_name }}`** from the assets below.
+
+            ---
+
+            ### SHA256 verification
+
+            Always verify the hash after downloading — it proves the file has not been tampered with in transit.
+
+            | File | SHA256 |
+            |------|--------|
+            | `${{ steps.hashes.outputs.installer_name }}` | `${{ steps.hashes.outputs.installer_hash }}` |
+            | `Logos.exe` (inner binary) | `${{ steps.hashes.outputs.exe_hash }}` |
+
+            **Verify on Windows (PowerShell or certutil):**
+            ```powershell
+            certutil -hashfile ${{ steps.hashes.outputs.installer_name }} SHA256
+            # or:
+            (Get-FileHash "${{ steps.hashes.outputs.installer_name }}" -Algorithm SHA256).Hash
+            ```
+
+            **Verify on macOS / Linux:**
+            ```bash
+            sha256sum ${{ steps.hashes.outputs.installer_name }}
+            ```
+
+            A machine-readable `SHA256SUMS.txt` and a `.sha256` sidecar file are also attached to this release.
+
+            ---
+
+            ### Why no code signature?
+
+            Logos is an early-stage open-source project. Code signing certificates require identity validation processes that are not yet available to us. We publish full build transparency instead.
+
+            Windows SmartScreen may show a warning on first run — click **"More info" → "Run anyway"** to proceed. This is safe if the SHA256 hash above matches your download.
+
+            ---
+
+            ### Build transparency
+
+            - Built by GitHub Actions — [view this workflow run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
+            - Full source → binary pipeline is public and auditable
+            - [View source at this tag](${{ github.server_url }}/${{ github.repository }}/tree/${{ github.ref_name }})
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
