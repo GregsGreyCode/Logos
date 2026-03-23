@@ -1,6 +1,6 @@
-# Contributing to Hermes Agent
+# Contributing to Logos
 
-Thank you for contributing to Hermes Agent! This guide covers everything you need: setting up your dev environment, understanding the architecture, deciding what to build, and getting your PR merged.
+Thank you for contributing to Logos! This guide covers everything you need: setting up your dev environment, understanding the architecture, deciding what to build, and getting your PR merged.
 
 ---
 
@@ -9,7 +9,7 @@ Thank you for contributing to Hermes Agent! This guide covers everything you nee
 We value contributions in this order:
 
 1. **Bug fixes** — crashes, incorrect behavior, data loss. Always top priority.
-2. **Cross-platform compatibility** — Windows, macOS, different Linux distros, different terminal emulators. We want Hermes to work everywhere.
+2. **Cross-platform compatibility** — Windows, macOS, different Linux distros, different terminal emulators. We want Logos to work everywhere.
 3. **Security hardening** — shell injection, prompt injection, path traversal, privilege escalation. See [Security](#security-considerations).
 4. **Performance and robustness** — retry logic, error handling, graceful degradation.
 5. **New skills** — but only broadly useful ones. See [Should it be a Skill or a Tool?](#should-it-be-a-skill-or-a-tool)
@@ -38,14 +38,14 @@ This is the most common question for new contributors. The answer is almost alwa
 
 ### Should the Skill be bundled?
 
-Bundled skills (in `skills/`) ship with every Hermes install. They should be **broadly useful to most users**:
+Bundled skills (in `skills/`) ship with every Logos install. They should be **broadly useful to most users**:
 
 - Document handling, web research, common dev workflows, system administration
 - Used regularly by a wide range of people
 
 If your skill is official and useful but not universally needed (e.g., a paid service integration, a heavyweight dependency), put it in **`optional-skills/`** — it ships with the repo but isn't activated by default. Users can discover it via `hermes skills browse` (labeled "official") and install it with `hermes skills install` (no third-party warning, builtin trust).
 
-If your skill is specialized, community-contributed, or niche, it's better suited for a **Skills Hub** — upload it to a skills registry and share it in the [Nous Research Discord](https://github.com/GregsGreyCode/Logos/discussions). Users can install it with `hermes skills install`.
+If your skill is specialized, community-contributed, or niche, it's better suited for a **Skills Hub** — upload it to a skills registry and share it in [GitHub Discussions](https://github.com/GregsGreyCode/Logos/discussions). Users can install it with `hermes skills install`.
 
 ---
 
@@ -64,7 +64,7 @@ If your skill is specialized, community-contributed, or niche, it's better suite
 
 ```bash
 git clone --recurse-submodules https://github.com/GregsGreyCode/Logos.git
-cd hermes-agent
+cd Logos
 
 # Create venv with Python 3.11
 uv venv venv --python 3.11
@@ -113,15 +113,14 @@ pytest tests/ -v
 ## Project Structure
 
 ```
-hermes-agent/
+logos/                        ← repo root
 ├── run_agent.py              # AIAgent class — core conversation loop, tool dispatch, session persistence
-├── cli.py                    # HermesCLI class — interactive TUI, prompt_toolkit integration
+├── hermes_state.py           # SQLite session database with FTS5 full-text search (SCHEMA v8)
 ├── model_tools.py            # Tool orchestration (thin layer over tools/registry.py)
-├── toolsets.py               # Tool groupings and presets (hermes-cli, hermes-telegram, etc.)
-├── hermes_state.py           # SQLite session database with FTS5 full-text search, session titles
+├── toolsets.py               # Tool groupings and presets
 ├── batch_runner.py           # Parallel batch processing for trajectory generation
 │
-├── agent/                    # Agent internals (extracted modules)
+├── agent/                    # Agent internals
 │   ├── prompt_builder.py         # System prompt assembly (identity, skills, context files, memory)
 │   ├── context_compressor.py     # Auto-summarization when approaching context limits
 │   ├── auxiliary_client.py       # Resolves auxiliary OpenAI clients (summarization, vision)
@@ -129,11 +128,11 @@ hermes-agent/
 │   ├── model_metadata.py         # Model context lengths, token estimation
 │   └── trajectory.py             # Trajectory saving helpers
 │
-├── hermes_cli/               # CLI command implementations
+├── hermes_cli/               # Platform CLI command implementations
 │   ├── main.py                   # Entry point, argument parsing, command dispatch
 │   ├── config.py                 # Config management, migration, env var definitions
 │   ├── setup.py                  # Interactive setup wizard
-│   ├── auth.py                   # Provider resolution, OAuth, Nous Portal
+│   ├── auth.py                   # Provider resolution, OAuth
 │   ├── models.py                 # OpenRouter model selection lists
 │   ├── banner.py                 # Welcome banner, ASCII art
 │   ├── commands.py               # Slash command definitions + autocomplete
@@ -147,36 +146,45 @@ hermes-agent/
 │   ├── approval.py               # Dangerous command detection + per-session approval
 │   ├── terminal_tool.py          # Terminal orchestration (sudo, env lifecycle, backends)
 │   ├── file_operations.py        # read_file, write_file, search, patch, etc.
-│   ├── web_tools.py              # web_search, web_extract (Firecrawl + Gemini summarization)
+│   ├── web_tools.py              # web_search, web_extract
 │   ├── vision_tools.py           # Image analysis via multimodal models
 │   ├── delegate_tool.py          # Subagent spawning and parallel task execution
 │   ├── code_execution_tool.py    # Sandboxed Python with RPC tool access
 │   ├── session_search_tool.py    # Search past conversations with FTS5 + summarization
 │   ├── cronjob_tools.py          # Scheduled task management
-│   ├── skill_tools.py            # Skill search, load, manage
 │   └── environments/             # Terminal execution backends
-│       ├── base.py                   # BaseEnvironment ABC
-│       ├── local.py, docker.py, ssh.py, singularity.py, modal.py, daytona.py
+│       └── base.py, local.py, docker.py, ssh.py, singularity.py, modal.py, daytona.py
 │
-├── gateway/                  # Messaging gateway
+├── gateway/                  # HTTP API, auth, web UI, messaging gateway
 │   ├── run.py                    # GatewayRunner — platform lifecycle, message routing, cron
 │   ├── config.py                 # Platform configuration resolution
 │   ├── session.py                # Session store, context prompts, reset policies
+│   ├── http_api.py               # Web dashboard REST API
+│   ├── auth/                     # Auth DB, policy enforcement
 │   └── platforms/                # Platform adapters
-│       ├── telegram.py, discord_adapter.py, slack.py, whatsapp.py
+│       └── telegram.py, discord_adapter.py, slack.py, whatsapp.py, email.py
 │
-├── scripts/                  # Installer and bridge scripts
+├── logos/                    # Logos platform abstractions (WIP)
+│   ├── agent/                    # Agent interface ABC + runner
+│   ├── adapters/hermes/          # Hermes adapter implementation
+│   ├── blueprints/               # STAMP blueprint schema/loader/validator
+│   ├── policy/                   # Policy enforcement
+│   └── registry/                 # Agent/tool catalog + installer
+│
+├── scripts/                  # Installer and operational scripts
 │   ├── install.sh                # Linux/macOS installer
 │   ├── install.ps1               # Windows PowerShell installer
+│   ├── dev-setup.sh              # Local dev setup (after cloning)
 │   └── whatsapp-bridge/          # Node.js WhatsApp bridge (Baileys)
 │
 ├── skills/                   # Bundled skills (copied to ~/.hermes/skills/ on install)
 ├── optional-skills/          # Official optional skills (discoverable via hub, not activated by default)
 ├── environments/             # RL training environments (Atropos integration)
+├── k8s/                      # Kubernetes deployment manifests
 ├── tests/                    # Test suite
-├── website/                  # Documentation site (hermes-agent.nousresearch.com)
+├── website/                  # Documentation site (Docusaurus)
+├── docs/                     # Internal docs, architecture, project planning
 │
-├── cli-config.yaml.example   # Example configuration (copied to ~/.hermes/config.yaml)
 └── AGENTS.md                 # Development guide for AI coding assistants
 ```
 
@@ -219,7 +227,7 @@ User message → AIAgent._run_agent_loop()
 
 - **Self-registering tools**: Each tool file calls `registry.register()` at import time. `model_tools.py` triggers discovery by importing all tool modules.
 - **Toolset grouping**: Tools are grouped into toolsets (`web`, `terminal`, `file`, `browser`, etc.) that can be enabled/disabled per platform.
-- **Session persistence**: All conversations are stored in SQLite (`hermes_state.py`) with full-text search and unique session titles. JSON logs go to `~/.hermes/sessions/`.
+- **Session persistence**: All conversations are stored in SQLite (`hermes_state.py`, SCHEMA v8) with full-text search and unique session titles. JSON logs go to `~/.hermes/sessions/`.
 - **Ephemeral injection**: System prompts and prefill messages are injected at API call time, never persisted to the database or logs.
 - **Provider abstraction**: The agent works with any OpenAI-compatible API. Provider resolution happens at init time (Nous Portal OAuth, OpenRouter API key, or custom endpoint).
 - **Provider routing**: When using OpenRouter, `provider_routing` in config.yaml controls provider selection (sort by throughput/latency/price, allow/ignore specific providers, data retention policies). These are injected as `extra_body.provider` in API requests.
@@ -514,7 +522,7 @@ See `hermes_cli/skin_engine.py` for the full schema and existing skins as exampl
 
 ## Cross-Platform Compatibility
 
-Hermes runs on Linux, macOS, and Windows. When writing code that touches the OS:
+Logos runs on Linux, macOS, and Windows. When writing code that touches the OS:
 
 ### Critical rules
 
@@ -554,7 +562,7 @@ Hermes runs on Linux, macOS, and Windows. When writing code that touches the OS:
 
 ## Security Considerations
 
-Hermes has terminal access. Security matters.
+Logos has terminal access. Security matters.
 
 ### Existing protections
 
@@ -648,7 +656,7 @@ test(tools): add unit tests for file_operations
 
 ## Community
 
-- **Discord**: [github.com/GregsGreyCode/Logos/discussions](https://github.com/GregsGreyCode/Logos/discussions) — for questions, showcasing projects, and sharing skills
+- **GitHub Discussions**: [github.com/GregsGreyCode/Logos/discussions](https://github.com/GregsGreyCode/Logos/discussions) — for questions, showcasing projects, and sharing skills
 - **GitHub Discussions**: For design proposals and architecture discussions
 - **Skills Hub**: Upload specialized skills to a registry and share them with the community
 

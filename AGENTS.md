@@ -1,6 +1,6 @@
-# Hermes Agent - Development Guide
+# Logos - Development Guide
 
-Instructions for AI coding assistants and developers working on the hermes-agent codebase.
+Instructions for AI coding assistants and developers working on the Logos codebase.
 
 ## Development Environment
 
@@ -11,13 +11,21 @@ source .venv/bin/activate  # ALWAYS activate before running Python
 ## Project Structure
 
 ```
-hermes-agent/
-├── run_agent.py          # AIAgent class — core conversation loop
-├── model_tools.py        # Tool orchestration, _discover_tools(), handle_function_call()
-├── toolsets.py           # Toolset definitions, _HERMES_CORE_TOOLS list
-├── cli.py                # HermesCLI class — interactive CLI orchestrator
-├── hermes_state.py       # SessionDB — SQLite session store (FTS5 search)
-├── agent/                # Agent internals
+logos/                        ← repo root
+├── run_agent.py              # AIAgent class — active hermes-agent runtime (canonical)
+├── hermes_state.py           # SessionDB — SQLite session store v8 (canonical; core/state.py is stale)
+├── model_tools.py            # Tool orchestration, _discover_tools(), handle_function_call()
+├── toolsets.py               # Toolset definitions, _HERMES_CORE_TOOLS list
+├── hermes_constants.py       # Shared constants (OpenRouter, Nous API URLs)
+├── hermes_time.py            # Timezone-aware clock
+├── utils.py                  # Shared utilities (atomic_json_write, etc.)
+├── runs.py                   # Run audit trail (RunRecorder, RunReplayer)
+├── metrics.py                # Prometheus-compatible metrics engine
+├── batch_runner.py           # Parallel batch processing
+├── mini_swe_runner.py        # mini-swe-agent runner
+├── rl_cli.py                 # RL training CLI runner
+│
+├── agent/                    # Agent internals
 │   ├── prompt_builder.py     # System prompt assembly
 │   ├── context_compressor.py # Auto context compression
 │   ├── prompt_caching.py     # Anthropic prompt caching
@@ -25,40 +33,82 @@ hermes-agent/
 │   ├── model_metadata.py     # Model context lengths, token estimation
 │   ├── display.py            # KawaiiSpinner, tool preview formatting
 │   ├── skill_commands.py     # Skill slash commands (shared CLI/gateway)
+│   ├── anthropic_adapter.py  # Anthropic streaming adapter
+│   ├── redact.py             # PII redaction helpers
 │   └── trajectory.py         # Trajectory saving helpers
-├── hermes_cli/           # CLI subcommands and setup
-│   ├── main.py           # Entry point — all `hermes` subcommands
-│   ├── config.py         # DEFAULT_CONFIG, OPTIONAL_ENV_VARS, migration
-│   ├── commands.py       # Slash command definitions + SlashCommandCompleter
-│   ├── callbacks.py      # Terminal callbacks (clarify, sudo, approval)
-│   ├── setup.py          # Interactive setup wizard
-│   ├── skin_engine.py    # Skin/theme engine — CLI visual customization
-│   ├── skills_config.py  # `hermes skills` — enable/disable skills per platform
-│   ├── tools_config.py   # `hermes tools` — enable/disable tools per platform
-│   ├── skills_hub.py     # `/skills` slash command (search, browse, install)
-│   ├── models.py         # Model catalog, provider model lists
-│   └── auth.py           # Provider credential resolution
-├── tools/                # Tool implementations (one file per tool)
-│   ├── registry.py       # Central tool registry (schemas, handlers, dispatch)
-│   ├── approval.py       # Dangerous command detection
-│   ├── terminal_tool.py  # Terminal orchestration
-│   ├── process_registry.py # Background process management
-│   ├── file_tools.py     # File read/write/search/patch
-│   ├── web_tools.py      # Firecrawl search/extract
-│   ├── browser_tool.py   # Browserbase browser automation
+│
+├── hermes_cli/               # Platform CLI entry point
+│   ├── main.py               # Entry point — all `hermes` subcommands
+│   ├── config.py             # DEFAULT_CONFIG, OPTIONAL_ENV_VARS, migration
+│   ├── commands.py           # Slash command definitions + SlashCommandCompleter
+│   ├── callbacks.py          # Terminal callbacks (clarify, sudo, approval)
+│   ├── setup.py              # Interactive setup wizard
+│   ├── skin_engine.py        # Skin/theme engine — CLI visual customization
+│   ├── skills_config.py      # `hermes skills` — enable/disable skills per platform
+│   ├── tools_config.py       # `hermes tools` — enable/disable tools per platform
+│   ├── skills_hub.py         # `/skills` slash command (search, browse, install)
+│   ├── models.py             # Model catalog, provider model lists
+│   └── auth.py               # Provider credential resolution
+│
+├── tools/                    # Tool implementations (one file per tool)
+│   ├── registry.py           # Central tool registry (schemas, handlers, dispatch)
+│   ├── approval.py           # Dangerous command detection
+│   ├── terminal_tool.py      # Terminal orchestration
+│   ├── process_registry.py   # Background process management
+│   ├── file_tools.py         # File read/write/search/patch
+│   ├── web_tools.py          # Firecrawl search/extract
+│   ├── browser_tool.py       # Browserbase browser automation
 │   ├── code_execution_tool.py # execute_code sandbox
-│   ├── delegate_tool.py  # Subagent delegation
-│   ├── mcp_tool.py       # MCP client (~1050 lines)
-│   └── environments/     # Terminal backends (local, docker, ssh, modal, daytona, singularity)
-├── gateway/              # Messaging platform gateway
-│   ├── run.py            # Main loop, slash commands, message dispatch
-│   ├── session.py        # SessionStore — conversation persistence
-│   └── platforms/        # Adapters: telegram, discord, slack, whatsapp, homeassistant, signal
-├── acp_adapter/          # ACP server (VS Code / Zed / JetBrains integration)
-├── cron/                 # Scheduler (jobs.py, scheduler.py)
-├── environments/         # RL training environments (Atropos)
-├── tests/                # Pytest suite (~3000 tests)
-└── batch_runner.py       # Parallel batch processing
+│   ├── delegate_tool.py      # Subagent delegation
+│   ├── mcp_tool.py           # MCP client
+│   └── environments/         # Terminal backends (local, docker, ssh, modal, daytona, singularity)
+│
+├── gateway/                  # HTTP API, auth, web UI, messaging gateway
+│   ├── run.py                # GatewayRunner — main loop, message dispatch
+│   ├── session.py            # SessionStore — conversation persistence
+│   ├── http_api.py           # Web dashboard API
+│   ├── auth/                 # Auth + policy enforcement
+│   └── platforms/            # Adapters: telegram, discord, slack, whatsapp, homeassistant, signal
+│
+├── logos/                    # Logos platform abstraction layer (WIP)
+│   ├── agent/                # Agent interface ABC + runner
+│   ├── adapters/hermes/      # Hermes adapter implementation
+│   ├── blueprints/           # STAMP blueprint schema/loader/validator
+│   ├── policy/               # Policy enforcement
+│   ├── registry/             # Agent/tool catalog + installer
+│   ├── souls/                # Soul loader
+│   └── tools/                # Tool registry (logos-level)
+│
+├── core/                     # Shared module copies (NOTE: may lag root-level files)
+│   ├── state.py              # ⚠️  STALE — use hermes_state.py (schema v4 vs root v8)
+│   ├── constants.py          # Identical to hermes_constants.py
+│   ├── clock.py              # Identical to hermes_time.py
+│   ├── utils.py              # Identical to utils.py
+│   └── ...                   # Other copies — sync before using
+│
+├── agents/hermes/            # Refactored hermes agent (WIP — not yet production)
+│   ├── agent.py              # Uses core.* imports; needs core/ sync before promoting
+│   └── logos-agent.yaml      # Agent descriptor for Logos registry
+│
+├── acp_adapter/              # ACP protocol server (VS Code / Zed / JetBrains)
+├── cron/                     # Cron scheduler (jobs.py, scheduler.py)
+├── honcho_integration/       # Honcho AI memory integration
+├── evals/                    # Eval framework and suites
+├── workflows/                # DAG workflow engine
+├── environments/             # RL training environments (Atropos)
+├── k8s/                      # Kubernetes manifests (numbered apply order)
+├── tests/                    # Pytest suite
+├── skills/                   # Bundled agent skills
+├── optional-skills/          # Optional skills (not activated by default)
+├── souls/                    # Named agent personas
+├── docs/                     # Documentation
+├── website/                  # Docusaurus docs site
+├── landingpage/              # Static marketing landing page
+├── assets/                   # Logo, banner images
+├── scripts/                  # Operational scripts (install, release, dev-setup)
+├── archive/hermes-origin/    # Legacy files from hermes-agent era (pending review)
+├── mini-swe-agent/           # Git submodule
+└── tinker-atropos/           # Git submodule (RL training)
 ```
 
 **User config:** `~/.hermes/config.yaml` (settings), `~/.hermes/.env` (API keys)
@@ -72,7 +122,7 @@ tools/*.py  (each calls registry.register() at import time)
        ↑
 model_tools.py  (imports tools/registry + triggers tool discovery)
        ↑
-run_agent.py, cli.py, batch_runner.py, environments/
+run_agent.py, batch_runner.py, environments/
 ```
 
 ---
@@ -123,20 +173,20 @@ Messages follow OpenAI format: `{"role": "system/user/assistant/tool", ...}`. Re
 
 ---
 
-## CLI Architecture (cli.py)
+## CLI Architecture (hermes_cli/main.py)
 
 - **Rich** for banner/panels, **prompt_toolkit** for input with autocomplete
 - **KawaiiSpinner** (`agent/display.py`) — animated faces during API calls, `┊` activity feed for tool results
-- `load_cli_config()` in cli.py merges hardcoded defaults + user config YAML
+- Config loaded in `hermes_cli/main.py` from `~/.hermes/config.yaml`
 - **Skin engine** (`hermes_cli/skin_engine.py`) — data-driven CLI theming; initialized from `display.skin` config key at startup; skins customize banner colors, spinner faces/verbs/wings, tool prefix, response box, branding text
-- `process_command()` is a method on `HermesCLI` (not in commands.py)
+- Slash command dispatch lives in `hermes_cli/main.py`
 - Skill slash commands: `agent/skill_commands.py` scans `~/.hermes/skills/`, injects as **user message** (not system prompt) to preserve prompt caching
 
 ### Adding CLI Commands
 
 1. Add to `COMMANDS` dict in `hermes_cli/commands.py`
-2. Add handler in `HermesCLI.process_command()` in `cli.py`
-3. For persistent settings, use `save_config_value()` in `cli.py`
+2. Add handler in `hermes_cli/main.py`
+3. For persistent settings, use `save_config_value()` in `hermes_cli/config.py`
 
 ---
 
@@ -197,7 +247,7 @@ The registry handles schema collection, dispatch, availability checking, and err
 
 | Loader | Used by | Location |
 |--------|---------|----------|
-| `load_cli_config()` | CLI mode | `cli.py` |
+| Config load at startup | CLI mode | `hermes_cli/main.py` |
 | `load_config()` | `hermes tools`, `hermes setup` | `hermes_cli/config.py` |
 | Direct YAML load | Gateway | `gateway/run.py` |
 
@@ -242,7 +292,7 @@ hermes_cli/skin_engine.py    # SkinConfig dataclass, built-in skins, YAML loader
 
 ### Built-in skins
 
-- `default` — Classic Hermes gold/kawaii (the current look)
+- `default` — Classic Logos gold/kawaii (the current look)
 - `ares` — Crimson/bronze war-god theme with custom spinner wings
 - `mono` — Clean grayscale monochrome
 - `slate` — Cool blue developer-focused theme
@@ -328,6 +378,9 @@ Leaks as literal `?[K` text under `prompt_toolkit`'s `patch_stdout`. Use space-p
 
 ### `_last_resolved_tool_names` is a process-global in `model_tools.py`
 When subagents overwrite this global, `execute_code` calls after delegation may fail with missing tool imports. Known bug.
+
+### `core/state.py` is stale — do not use it
+`core/state.py` is SCHEMA_VERSION 4; the canonical `hermes_state.py` at root is SCHEMA_VERSION 8 with additional tables (runs, workspaces, eval_results). Always import from `hermes_state`, not `core.state`. `agents/hermes/agent.py` currently uses `core.*` — do not promote it to production until `core/` is synced.
 
 ### Tests must not write to `~/.hermes/`
 The `_isolate_hermes_home` autouse fixture in `tests/conftest.py` redirects `HERMES_HOME` to a temp dir. Never hardcode `~/.hermes/` paths in tests.
