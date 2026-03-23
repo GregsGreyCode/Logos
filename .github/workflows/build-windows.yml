@@ -6,7 +6,6 @@ on:
       - 'v*'          # e.g. v0.4.0 → builds + attaches to GitHub Release
   workflow_dispatch:   # manual trigger from Actions tab (for testing)
 
-# Only one build at a time — cancel any in-progress run for the same tag/ref
 concurrency:
   group: build-windows-${{ github.ref }}
   cancel-in-progress: true
@@ -15,55 +14,56 @@ jobs:
   build:
     runs-on: windows-latest
     timeout-minutes: 30
+    defaults:
+      run:
+        shell: pwsh   # use PowerShell for all steps
 
     steps:
       # ── 1. Source ────────────────────────────────────────────────────────
       - name: Checkout
         uses: actions/checkout@v4
 
-      # ── 2. Python + uv ──────────────────────────────────────────────────
+      # ── 2. Python ────────────────────────────────────────────────────────
       - name: Install uv
         uses: astral-sh/setup-uv@v5
 
-      - name: Set up Python 3.11
-        run: uv python install 3.11
+      - name: Create venv
+        run: uv venv .venv --python 3.11
+
+      # Add venv to PATH for ALL subsequent steps — this is the correct
+      # way to "activate" a venv in GitHub Actions (activation doesn't
+      # persist across run: blocks).
+      - name: Add venv to PATH
+        run: |
+          "${{ github.workspace }}\.venv\Scripts" |
+            Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
 
       # ── 3. App dependencies ──────────────────────────────────────────────
-      # Install the package in a venv so PyInstaller can find all imports.
-      # We skip heavy optional extras (rl, yc-bench, voice) that aren't
-      # needed at runtime on a desktop install.
       - name: Install app dependencies
-        run: |
-          uv venv .venv --python 3.11
-          .venv\Scripts\activate
-          uv pip install -e ".[messaging,cron,pty,mcp,acp]"
+        run: pip install -e ".[messaging,cron,pty,mcp,acp]"
 
-      # ── 4. Desktop-only deps ─────────────────────────────────────────────
+      # ── 4. Desktop build tools ───────────────────────────────────────────
+      # cairosvg requires cairo.dll which isn't on the runner — make_icon.py
+      # falls back to PIL automatically, so we don't install cairosvg here.
       - name: Install desktop build tools
-        run: |
-          .venv\Scripts\activate
-          pip install pyinstaller pystray Pillow cairosvg
+        run: pip install pyinstaller pystray Pillow
 
       # ── 5. Generate icon ─────────────────────────────────────────────────
       - name: Generate logos.ico from SVG
-        run: |
-          .venv\Scripts\activate
-          python launcher\make_icon.py
+        run: python launcher\make_icon.py
 
       # ── 6. PyInstaller ───────────────────────────────────────────────────
       - name: Build executable with PyInstaller
-        run: |
-          .venv\Scripts\activate
-          pyinstaller launcher\hermes_launcher.spec --noconfirm
+        run: pyinstaller launcher\hermes_launcher.spec --noconfirm
 
       # ── 7. Inno Setup ────────────────────────────────────────────────────
-      # windows-latest ships Inno Setup 6 at the path below.
       - name: Build installer with Inno Setup
         run: |
-          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer\logos.iss
-        shell: pwsh
+          $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+          & $iscc installer\logos.iss
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-      # ── 8. Upload artifact (always — even on workflow_dispatch) ──────────
+      # ── 8. Upload artifact ───────────────────────────────────────────────
       - name: Upload installer artifact
         uses: actions/upload-artifact@v4
         with:
@@ -71,12 +71,15 @@ jobs:
           path: installer\output\LogosSetup-*.exe
           retention-days: 30
 
-      # ── 9. Attach to GitHub Release (tags only) ──────────────────────────
-      - name: Create / update GitHub Release
+      # ── 9. Attach to the existing GitHub Release (tags only) ─────────────
+      # GitHub auto-creates a release when a tag is pushed; this step
+      # uploads the installer to that existing release.
+      - name: Upload to GitHub Release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ github.ref_name }}
           files: installer\output\LogosSetup-*.exe
-          generate_release_notes: true
+          fail_on_unmatched_files: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
