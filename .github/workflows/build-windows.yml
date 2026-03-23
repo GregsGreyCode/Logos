@@ -115,48 +115,49 @@ jobs:
           body: |
             ## Logos ${{ github.ref_name }} — Windows Installer
 
-            ### Download
             Download **`${{ steps.hashes.outputs.installer_name }}`** from the assets below.
 
             ---
 
-            ### SHA256 verification
+            ### ⚠️ Why Windows shows a warning
 
-            Always verify the hash after downloading — it proves the file has not been tampered with in transit.
+            Logos is currently unsigned. Code signing certificates require an identity validation process that is not yet available to us. We publish full build transparency instead.
+
+            Windows SmartScreen may show **"Windows protected your PC"** on first run — click **"More info" → "Run anyway"**. This is safe once you have verified the SHA256 hash below.
+
+            ---
+
+            ### 🔐 Build transparency
+
+            - Built exclusively by GitHub Actions — no local machines, no manual steps
+            - [View this exact workflow run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
+            - [View source at this tag](${{ github.server_url }}/${{ github.repository }}/tree/${{ github.ref_name }})
+
+            ---
+
+            ### 🔑 SHA256 verification
 
             | File | SHA256 |
             |------|--------|
             | `${{ steps.hashes.outputs.installer_name }}` | `${{ steps.hashes.outputs.installer_hash }}` |
             | `Logos.exe` (inner binary) | `${{ steps.hashes.outputs.exe_hash }}` |
 
-            **Verify on Windows (PowerShell or certutil):**
+            **Windows (PowerShell / certutil):**
             ```powershell
             certutil -hashfile ${{ steps.hashes.outputs.installer_name }} SHA256
-            # or:
-            (Get-FileHash "${{ steps.hashes.outputs.installer_name }}" -Algorithm SHA256).Hash
             ```
 
-            **Verify on macOS / Linux:**
+            **macOS / Linux:**
             ```bash
             sha256sum ${{ steps.hashes.outputs.installer_name }}
             ```
 
-            A machine-readable `SHA256SUMS.txt` and a `.sha256` sidecar file are also attached to this release.
+            `SHA256SUMS.txt` and a `.sha256` sidecar are also attached to this release.
 
             ---
 
-            ### Why no code signature?
+            ### 🧪 VirusTotal scan
 
-            Logos is an early-stage open-source project. Code signing certificates require identity validation processes that are not yet available to us. We publish full build transparency instead.
-
-            Windows SmartScreen may show a warning on first run — click **"More info" → "Run anyway"** to proceed. This is safe if the SHA256 hash above matches your download.
-
-            ---
-
-            ### Build transparency
-
-            - Built by GitHub Actions — [view this workflow run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
-            - Full source → binary pipeline is public and auditable
-            - [View source at this tag](${{ github.server_url }}/${{ github.repository }}/tree/${{ github.ref_name }})
+            [Scan `${{ steps.hashes.outputs.installer_name }}` on VirusTotal](https://www.virustotal.com/gui/file/${{ steps.hashes.outputs.installer_hash }})
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
