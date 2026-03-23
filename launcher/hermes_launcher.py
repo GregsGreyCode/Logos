@@ -67,6 +67,9 @@ except Exception:
 _GITHUB_RELEASES_API = (
     "https://api.github.com/repos/GregsGreyCode/Logos/releases/latest"
 )
+_GITHUB_RELEASES_PAGE = (
+    "https://github.com/GregsGreyCode/Logos/releases/latest"
+)
 # Splash server — serves a branded loading page on a separate port while the
 # gateway starts up, so the --app window never shows Edge's error page.
 _SPLASH_PORT = int(os.environ.get("LOGOS_SPLASH_PORT", "8079"))
@@ -343,7 +346,12 @@ def _parse_version(v: str) -> tuple[int, ...]:
 
 
 def _check_for_update() -> tuple[str, str] | tuple[None, None]:
-    """Query GitHub releases API.  Returns (version_str, download_url) or (None, None)."""
+    """Query GitHub releases API.  Returns (version_str, action_url) or (None, None).
+
+    action_url on Windows: direct .exe installer download URL (if asset exists).
+    action_url on Linux/macOS: GitHub releases page URL (opens in browser).
+    In both cases a non-None return means a newer version exists.
+    """
     try:
         req = urllib.request.Request(
             _GITHUB_RELEASES_API,
@@ -356,10 +364,15 @@ def _check_for_update() -> tuple[str, str] | tuple[None, None]:
             return None, None
         if _parse_version(tag) <= _parse_version(_APP_VERSION):
             return None, None  # already up to date
-        for asset in data.get("assets", []):
-            name = asset.get("name", "")
-            if name.startswith("LogosSetup") and name.endswith(".exe"):
-                return tag.lstrip("v"), asset["browser_download_url"]
+        version = tag.lstrip("v")
+        if sys.platform == "win32":
+            # Prefer direct installer download on Windows
+            for asset in data.get("assets", []):
+                name = asset.get("name", "")
+                if name.startswith("LogosSetup") and name.endswith(".exe"):
+                    return version, asset["browser_download_url"]
+        # Non-Windows, or Windows build not yet published: fall back to releases page
+        return version, data.get("html_url", _GITHUB_RELEASES_PAGE)
     except Exception as exc:
         _log(f"Update check failed: {exc}")
     return None, None
@@ -459,29 +472,42 @@ def _rebuild_menu(icon) -> None:
             pystray.Menu.SEPARATOR,
         ]
     elif avail and url:
-        def _on_download(icon, item, _v=avail, _u=url):
-            with _Upd.lock:
-                _Upd.downloading = True
-            _rebuild_menu(icon)
+        _is_installer = url.endswith(".exe")
 
-            def _dl(_v=_v, _u=_u):
-                p = _download_update(_v, _u, icon)
+        if _is_installer:
+            # Windows: download the installer then offer to run it
+            def _on_download(icon, item, _v=avail, _u=url):
                 with _Upd.lock:
-                    _Upd.downloading = False
-                    _Upd.ready_path = p
-                if p:
-                    icon.notify(
-                        f"Logos {_v} ready. Click 'Install' in the tray menu.",
-                        "Logos Update",
-                    )
+                    _Upd.downloading = True
                 _rebuild_menu(icon)
 
-            threading.Thread(target=_dl, daemon=True, name="logos-update-dl").start()
+                def _dl(_v=_v, _u=_u):
+                    p = _download_update(_v, _u, icon)
+                    with _Upd.lock:
+                        _Upd.downloading = False
+                        _Upd.ready_path = p
+                    if p:
+                        icon.notify(
+                            f"Logos {_v} ready. Click 'Install' in the tray menu.",
+                            "Logos Update",
+                        )
+                    _rebuild_menu(icon)
 
-        extra = [
-            pystray.MenuItem(f"Update to Logos {avail}\u2026", _on_download),
-            pystray.Menu.SEPARATOR,
-        ]
+                threading.Thread(target=_dl, daemon=True, name="logos-update-dl").start()
+
+            extra = [
+                pystray.MenuItem(f"Update to Logos {avail}\u2026", _on_download),
+                pystray.Menu.SEPARATOR,
+            ]
+        else:
+            # Linux/macOS: open the releases page in the system browser
+            def _on_view(icon, item, _u=url):
+                webbrowser.open(_u)
+
+            extra = [
+                pystray.MenuItem(f"Logos {avail} available \u2014 view release", _on_view),
+                pystray.Menu.SEPARATOR,
+            ]
 
     # --- standard items ---
     def on_open(icon, item):
