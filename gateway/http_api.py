@@ -9521,7 +9521,12 @@ async def start_http_api(runner: Any, port: int = 8080) -> None:
 
     # Serve static assets (logo, etc.)
     import pathlib as _pathlib
-    _static_dir = _pathlib.Path(__file__).parent.parent / "assets"
+    import sys as _sys
+    if getattr(_sys, "frozen", False):
+        # PyInstaller bundle: __file__ doesn't resolve relative to source tree
+        _static_dir = _pathlib.Path(_sys._MEIPASS) / "assets"
+    else:
+        _static_dir = _pathlib.Path(__file__).parent.parent / "assets"
     if _static_dir.exists():
         app.router.add_static("/static", str(_static_dir), show_index=False)
 
