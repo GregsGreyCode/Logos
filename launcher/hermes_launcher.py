@@ -251,7 +251,7 @@ def _run_tray() -> None:
         from PIL import Image
         img = Image.new("RGBA", (1, 1))
 
-    icon = pystray.Icon("Logos", img, "Logos", menu=None)
+    icon = pystray.Icon("Logos", img, "Logos - Agentic AI Platform", menu=None)
     icon.menu = _build_menu(icon)
     _start_icon_animation(icon)
     icon.run()
