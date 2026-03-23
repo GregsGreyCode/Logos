@@ -6933,11 +6933,11 @@ _SETUP_HTML = """<!DOCTYPE html>
       <div x-show="step===4" x-cloak x-transition.opacity.duration.300ms>
         <div class="mb-5">
           <h2 class="text-xl font-bold mb-1">Where to run agents</h2>
-          <p class="text-gray-400 text-sm">Choose where agent tasks execute. This affects resource usage and isolation.</p>
+          <p class="text-gray-400 text-sm">Choose where agent tasks execute. This affects isolation between sessions, resource limits, and how Logos scales.</p>
         </div>
 
         <div class="space-y-2 mb-4">
-          <!-- This machine -->
+          <!-- In-process (local) -->
           <button @click="execEnv = 'local'"
             class="w-full text-left p-4 rounded-xl border transition-all duration-200"
             :class="execEnv === 'local' ? 'border-indigo-500 bg-indigo-950/30 spinner-hue' : 'border-gray-800 bg-gray-900 hover:border-gray-700'">
@@ -6950,12 +6950,13 @@ _SETUP_HTML = """<!DOCTYPE html>
               </div>
               <div class="flex-1">
                 <div class="flex items-center gap-2 mb-0.5">
-                  <span class="text-sm font-semibold text-white">This machine</span>
+                  <span class="text-sm font-semibold text-white">In-process</span>
                   <span x-show="execEnv === 'local'" class="text-[9px] px-1.5 py-0.5 rounded-full bg-indigo-900 text-indigo-300 border border-indigo-700 font-semibold uppercase tracking-wider">Selected</span>
                 </div>
-                <p class="text-xs text-gray-400">Agents run inside the Logos process. Simple setup, no extra infrastructure.</p>
+                <p class="text-xs text-gray-400">Agent runs execute as threads inside the Logos process — whether that is a Windows app, a Linux install, or a Docker container. Simple setup, no extra infrastructure.</p>
+                <p class="text-xs text-gray-600 mt-1">All concurrent sessions share the same process boundary and resource ceiling. Workspace isolation is handled by Logos internally, not at the OS level.</p>
                 <div class="mt-2 flex flex-wrap gap-3 text-[10px] text-gray-600">
-                  <span>~600 MB–1 GB RAM per agent run</span>
+                  <span>~600 MB–1 GB RAM per agent run (shared pool)</span>
                   <span>&middot; 0.5–2 CPU cores (spikes during tool use)</span>
                   <span>&middot; model load on inference machine</span>
                 </div>
@@ -6975,7 +6976,8 @@ _SETUP_HTML = """<!DOCTYPE html>
                   <span class="text-sm font-semibold text-white">Kubernetes cluster</span>
                   <span x-show="execEnv === 'k8s'" class="text-[9px] px-1.5 py-0.5 rounded-full bg-indigo-900 text-indigo-300 border border-indigo-700 font-semibold uppercase tracking-wider">Selected</span>
                 </div>
-                <p class="text-xs text-gray-400">Each agent run spawns an isolated Job in your cluster. Better resource isolation and scaling.</p>
+                <p class="text-xs text-gray-400">Each agent run spawns a dedicated Kubernetes Job — a fully isolated pod with its own filesystem, process space, and resource limits.</p>
+                <p class="text-xs text-gray-600 mt-1">Works whether Logos itself runs inside the cluster or externally (Windows, Docker, bare metal). Choose the connection mode below.</p>
                 <div class="mt-2 flex flex-wrap gap-3 text-[10px] text-gray-600">
                   <span>500m CPU · 2 Gi memory (requests)</span>
                   <span>&middot; 4 CPU / 8 Gi (limits)</span>
@@ -6993,21 +6995,21 @@ _SETUP_HTML = """<!DOCTYPE html>
               <button @click="k8sMode = 'incluster'"
                 class="flex-1 py-1.5 rounded-lg text-xs font-medium transition-colors"
                 :class="k8sMode === 'incluster' ? 'bg-indigo-900 text-indigo-200 border border-indigo-700 spinner-hue' : 'bg-gray-800 text-gray-400 border border-gray-700 hover:border-gray-600'">
-                Same cluster
+                Logos is in the cluster
               </button>
               <button @click="k8sMode = 'kubeconfig'"
                 class="flex-1 py-1.5 rounded-lg text-xs font-medium transition-colors"
                 :class="k8sMode === 'kubeconfig' ? 'bg-indigo-900 text-indigo-200 border border-indigo-700 spinner-hue' : 'bg-gray-800 text-gray-400 border border-gray-700 hover:border-gray-600'">
-                External cluster
+                Logos is outside the cluster
               </button>
             </div>
 
             <!-- Mode description -->
             <div x-show="k8sMode === 'incluster'" class="text-xs text-gray-500 leading-relaxed">
-              Logos is running inside your Kubernetes cluster. It uses the service account token mounted in its pod — no credentials or IP address needed.
+              Logos is deployed as a pod inside your Kubernetes cluster. It authenticates using the service account token automatically mounted in its pod — no credentials or cluster address needed.
             </div>
             <div x-show="k8sMode === 'kubeconfig'" class="text-xs text-gray-500 leading-relaxed">
-              Logos is external to the cluster. Paste a kubeconfig below to provide the cluster address and credentials.
+              Logos is running outside the cluster — on a PC, in a standalone Docker container, or on a server. Paste a kubeconfig below so Logos can reach the cluster API to spawn agent Jobs there.
             </div>
 
             <!-- Auto namespace (read-only) -->
@@ -7157,7 +7159,7 @@ _SETUP_HTML = """<!DOCTYPE html>
           </div>
           <div class="flex justify-between text-sm py-2.5">
             <span class="text-gray-500">Execution</span>
-            <span class="text-white font-medium" x-text="execEnv === 'k8s' ? 'Kubernetes (' + (k8sMode === 'incluster' ? 'in-cluster' : 'kubeconfig') + ')' : 'This machine'"></span>
+            <span class="text-white font-medium" x-text="execEnv === 'k8s' ? 'Kubernetes (' + (k8sMode === 'incluster' ? 'in-cluster' : 'external') + ')' : 'In-process'"></span>
           </div>
           <div x-show="execEnv === 'k8s'" class="flex justify-between text-sm py-2.5">
             <span class="text-gray-500">Namespace</span>
@@ -7218,7 +7220,7 @@ function setup() {
       { n: 1, name: 'Connect model servers',  tag: 'detects',    desc: 'Logos scans your network for Ollama and LM Studio. Detected servers become inference endpoints. You can add servers manually or adjust later.' },
       { n: 2, name: 'Benchmark models',       tag: 'measures',   desc: 'Candidate models run 6 eval tests: instruction following, reasoning, JSON format, tool selection, nested JSON, and multi-step arithmetic. The best fit is pre-selected; you can override freely.' },
       { n: 3, name: 'Agent runtime',          tag: 'configures', desc: 'Choose which agent engine handles your sessions. Hermes is available now; additional runtimes plug in as they are released.' },
-      { n: 4, name: 'Execution target',       tag: 'configures', desc: 'Decide where agent processes run — on this machine or as Kubernetes Jobs. Affects resource isolation, scaling, and where logs appear.' },
+      { n: 4, name: 'Execution target',       tag: 'configures', desc: 'Decide where agent processes run — in-process alongside Logos, or as isolated Kubernetes Jobs. Affects resource isolation, scaling, and where logs appear.' },
       { n: 5, name: 'Soul',                   tag: 'configures', desc: "A soul defines the agent's communication style and default behaviour. It is a starting point — editable at any time from the dashboard." },
       { n: 6, name: 'Your account',           tag: 'secures',    desc: 'Set the email, username, and password for the admin account that protects the dashboard and API.' },
       { n: 7, name: 'Review & launch',        tag: 'confirms',   desc: 'Review every setting, confirm the model endpoint is reachable, and launch the platform.' },

@@ -15,8 +15,10 @@ Requirements (desktop only, not added to main pyproject.toml):
 from __future__ import annotations
 
 import asyncio
+import http.server
 import multiprocessing
 import os
+import socketserver
 import sys
 import threading
 import time
@@ -40,6 +42,48 @@ _BASE_URL = f"http://127.0.0.1:{_PORT}"
 _HEALTH_URL = f"{_BASE_URL}/health"
 _HERMES_HOME = Path(os.environ.get("HERMES_HOME", Path.home() / ".hermes"))
 _LOG_PATH = _HERMES_HOME / "logs" / "launcher.log"
+# Splash server — serves a branded loading page on a separate port while the
+# gateway starts up, so the --app window never shows Edge's error page.
+_SPLASH_PORT = int(os.environ.get("LOGOS_SPLASH_PORT", "8079"))
+_SPLASH_URL = f"http://127.0.0.1:{_SPLASH_PORT}"
+
+# Inline loading page — polls gateway health and redirects when ready.
+_SPLASH_HTML = f"""\
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Logos</title>
+<style>
+*{{box-sizing:border-box;margin:0;padding:0}}
+html,body{{height:100%;background:#0d0d0d;display:flex;align-items:center;
+  justify-content:center;font-family:-apple-system,BlinkMacSystemFont,
+  "Segoe UI",system-ui,sans-serif;color:#fff}}
+.card{{text-align:center;padding:48px 40px}}
+.ring{{width:72px;height:72px;border-radius:50%;border:3px solid transparent;
+  border-top-color:#7c3aed;border-right-color:#2563eb;
+  animation:spin 1.1s linear infinite;margin:0 auto 28px}}
+@keyframes spin{{to{{transform:rotate(360deg)}}}}
+h1{{font-size:26px;font-weight:700;letter-spacing:-.5px;margin-bottom:8px}}
+p{{font-size:14px;color:#666;letter-spacing:.02em}}
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="ring"></div>
+  <h1>Logos</h1>
+  <p>Starting up&hellip;</p>
+</div>
+<script>
+(function poll(){{
+  fetch("http://127.0.0.1:{_PORT}/health")
+    .then(function(r){{if(r.ok){{location.href="http://127.0.0.1:{_PORT}";return;}}setTimeout(poll,600);
+    }}).catch(function(){{setTimeout(poll,600);}});
+}})();
+</script>
+</body>
+</html>
+""".encode()
 
 # ---------------------------------------------------------------------------
 # Gateway — runs in-process in a background thread.
@@ -110,16 +154,45 @@ def _wait_for_gateway(timeout: int = 20) -> bool:
     return False
 
 
-def _open_browser() -> None:
+# ---------------------------------------------------------------------------
+# Splash server — branded loading page while gateway starts up
+# ---------------------------------------------------------------------------
+
+class _SplashHandler(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(_SPLASH_HTML)))
+        self.end_headers()
+        self.wfile.write(_SPLASH_HTML)
+
+    def log_message(self, *args):
+        pass  # suppress console noise
+
+
+def _start_splash() -> socketserver.TCPServer | None:
+    """Start the splash HTTP server. Returns the server (call .shutdown() when done)."""
+    try:
+        server = socketserver.TCPServer(("127.0.0.1", _SPLASH_PORT), _SplashHandler)
+        server.allow_reuse_address = True
+        threading.Thread(target=server.serve_forever, daemon=True, name="logos-splash").start()
+        return server
+    except OSError:
+        return None  # port in use — skip splash, fall back to direct URL
+
+
+def _open_browser(url: str = _BASE_URL) -> None:
     """Open Logos as a standalone app window using Edge/Chrome --app mode.
     Falls back to a regular browser tab if neither is found."""
     import subprocess
     import shutil
 
     candidates = [
-        # Windows: Edge (ships with every Win10/11 install)
+        # Windows: Edge (ships with every Win10/11 install — check both common locations)
         r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
         r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
+        # Windows: Edge in user-local install (newer installations)
+        str(Path(os.environ.get("LOCALAPPDATA", "")) / "Microsoft" / "Edge" / "Application" / "msedge.exe"),
         # Windows: Chrome
         r"C:\Program Files\Google\Chrome\Application\chrome.exe",
         r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
@@ -132,12 +205,18 @@ def _open_browser() -> None:
     for path in candidates:
         if path and Path(path).exists():
             try:
-                subprocess.Popen([path, f"--app={_BASE_URL}", "--no-first-run"])
+                subprocess.Popen([
+                    path,
+                    f"--app={url}",
+                    "--no-first-run",
+                    "--no-default-browser-check",
+                    "--window-size=1280,800",
+                ])
                 return
             except Exception:
                 pass
     # No Chromium-family browser found — fall back to default browser tab
-    webbrowser.open(_BASE_URL)
+    webbrowser.open(url)
 
 
 def _log(msg: str) -> None:
@@ -265,10 +344,27 @@ def main() -> None:
     _start_gateway()
 
     def _open_when_ready():
-        if _wait_for_gateway():
-            _open_browser()
+        # Start the branded splash page immediately so the --app window never
+        # shows Edge's "can't reach this page" error while the gateway boots.
+        splash = _start_splash()
+        if splash:
+            _open_browser(_SPLASH_URL)
+            # The splash page JS will redirect itself to the gateway when
+            # /health returns 200 — we just need to wait and then clean up.
+            if _wait_for_gateway(timeout=60):
+                # Give the redirect a moment to fire before shutting down.
+                time.sleep(1.5)
+            else:
+                _log("Gateway did not start in time — check logs at " + str(_LOG_PATH))
+                # Open directly so the user isn't stuck on the loading screen.
+                _open_browser(_BASE_URL)
+            splash.shutdown()
         else:
-            _log("Gateway did not start in time — check logs at " + str(_LOG_PATH))
+            # Splash port was busy — fall back to opening the gateway directly.
+            if _wait_for_gateway(timeout=60):
+                _open_browser()
+            else:
+                _log("Gateway did not start in time — check logs at " + str(_LOG_PATH))
 
     threading.Thread(target=_open_when_ready, daemon=True).start()
 

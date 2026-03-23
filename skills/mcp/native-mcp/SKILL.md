@@ -28,7 +28,7 @@ For ad-hoc, one-off MCP tool calls from the terminal without configuring anythin
 ## Prerequisites
 
 - **mcp Python package** -- optional dependency; install with `pip install mcp`. If not installed, MCP support is silently disabled.
-- **Node.js** -- required for `npx`-based MCP servers (most community servers)
+- **Node.js** -- required for `npx`-based MCP servers (most community servers). See [Windows note](#windows-node-js) below.
 - **uv** -- required for `uvx`-based MCP servers (Python-based servers)
 
 Install the MCP SDK:
@@ -38,6 +38,16 @@ pip install mcp
 # or, if using uv:
 uv pip install mcp
 ```
+
+### Windows — Node.js for stdio MCP servers {#windows-node-js}
+
+Logos **cannot install Node.js for you** on Windows. If you want to use stdio-based MCP servers (anything that uses `command: "npx"` or `command: "node"`), you must install Node.js yourself before configuring those servers:
+
+1. Download and install Node.js from **[nodejs.org](https://nodejs.org)** (LTS recommended)
+2. Ensure `npm` and `npx` are on your `PATH` — the Node.js installer does this automatically if you leave the default options checked
+3. Verify in a new terminal: `npx --version`
+
+HTTP/StreamableHTTP MCP servers (those with `url:` instead of `command:`) work on Windows without Node.js and require no additional setup.
 
 ## Quick Start
 
@@ -177,7 +187,8 @@ If HTTP support is not available in your installed `mcp` version, the server wil
 
 For stdio servers, Hermes does NOT pass your full shell environment to MCP subprocesses. Only safe baseline variables are inherited:
 
-- `PATH`, `HOME`, `USER`, `LANG`, `LC_ALL`, `TERM`, `SHELL`, `TMPDIR`
+- Unix: `PATH`, `HOME`, `USER`, `LANG`, `LC_ALL`, `TERM`, `SHELL`, `TMPDIR`
+- Windows: `USERPROFILE`, `APPDATA`, `LOCALAPPDATA`, `TEMP`, `TMP`, `SYSTEMROOT`, `SYSTEMDRIVE`, `COMSPEC`
 - Any `XDG_*` variables
 
 All other environment variables (API keys, tokens, secrets) are excluded unless you explicitly add them via the `env` config key. This prevents accidental credential leakage to untrusted MCP servers.
