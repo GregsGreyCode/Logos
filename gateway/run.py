@@ -4276,8 +4276,8 @@ async def start_gateway(config: Optional[GatewayConfig] = None, replace: bool = 
             )
             try:
                 os.kill(existing_pid, signal.SIGTERM)
-            except ProcessLookupError:
-                pass  # Already gone
+            except (ProcessLookupError, OSError):
+                pass  # Already gone (OSError covers WinError 6 on Windows)
             except PermissionError:
                 logger.error(
                     "Permission denied killing PID %d. Cannot replace.",
@@ -4289,8 +4289,8 @@ async def start_gateway(config: Optional[GatewayConfig] = None, replace: bool = 
                 try:
                     os.kill(existing_pid, 0)
                     _time.sleep(0.5)
-                except (ProcessLookupError, PermissionError):
-                    break  # Process is gone
+                except (ProcessLookupError, PermissionError, OSError):
+                    break  # Process is gone (OSError covers WinError 6 on Windows)
             else:
                 # Still alive after 10s — force kill
                 logger.warning(
@@ -4300,7 +4300,7 @@ async def start_gateway(config: Optional[GatewayConfig] = None, replace: bool = 
                 try:
                     os.kill(existing_pid, signal.SIGKILL)
                     _time.sleep(0.5)
-                except (ProcessLookupError, PermissionError):
+                except (ProcessLookupError, PermissionError, OSError):
                     pass
             remove_pid_file()
         else:

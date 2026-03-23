@@ -41,7 +41,7 @@ _PORT = int(os.environ.get("LOGOS_PORT", "8080"))
 _BASE_URL = f"http://127.0.0.1:{_PORT}"
 _HEALTH_URL = f"{_BASE_URL}/health"
 _HERMES_HOME = Path(os.environ.get("HERMES_HOME", Path.home() / ".hermes"))
-_LOG_PATH = _HERMES_HOME / "logs" / "launcher.log"
+_LOG_PATH = _HERMES_HOME / "logs" / "logos.log"
 # Splash server — serves a branded loading page on a separate port while the
 # gateway starts up, so the --app window never shows Edge's error page.
 _SPLASH_PORT = int(os.environ.get("LOGOS_SPLASH_PORT", "8079"))
@@ -85,7 +85,7 @@ var deadline = Date.now() + 90000;
     document.getElementById("ring").style.animationPlayState="paused";
     document.getElementById("msg").className="err";
     document.getElementById("msg").innerHTML=
-      "Logos did not start in time.<br>Check logs at %USERPROFILE%\\.hermes\\logs\\launcher.log";
+      "Logos did not start in time.<br>Check logs at {str(_LOG_PATH).replace(chr(92), '/')}";
     return;
   }}
   fetch("http://127.0.0.1:{_PORT}/health")
@@ -281,6 +281,7 @@ def _open_browser(url: str = _BASE_URL) -> None:
                     f"--user-data-dir={_profile_dir}",
                     "--no-first-run",
                     "--no-default-browser-check",
+                    "--disable-sync",
                     "--window-size=1280,800",
                 ])
                 return
