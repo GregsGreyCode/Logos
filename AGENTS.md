@@ -343,6 +343,42 @@ Activate with `/skin cyberpunk` or `display.skin: cyberpunk` in config.yaml.
 
 ---
 
+## Evolution System
+
+The Evolution feature lives across four files:
+
+| File | Role |
+|------|------|
+| `gateway/auth/db.py` | DB schema + CRUD (`evolution_proposals`, `evolution_settings`) |
+| `gateway/auth/rbac.py` | Permissions: `view_evolution`, `manage_evolution`, `decide_evolution` |
+| `gateway/evolution_handlers.py` | aiohttp request handlers for all `/evolution/*` routes |
+| `skills/evolution/self-improvement/SKILL.md` | Skill instructions executed by agents on schedule |
+
+### Proposal status FSM
+
+```
+pending → accepted
+        → declined
+        → questioned → pending (after agent answers)
+        → in_progress (after accepted + branch created)
+        → merged
+        → cancelled
+```
+
+### Frontier consultation
+
+`handle_consult_frontier` sends the proposal to a cloud AI (Claude or GPT-4o) and stores the response in `frontier_output`. The API key is read from a server-side env var named by `frontier_api_key_env` in settings — it is never sent to the client. The masked placeholder `"••••••••"` is returned for `git_pat` in all read responses; the handler ignores it on writes.
+
+### Adding new proposal types
+
+`proposal_type` has a SQLite CHECK constraint. To add a new type, add a migration that drops and recreates the constraint (SQLite does not support `ALTER COLUMN`), or widen the CHECK using a new schema version.
+
+### Skills execution
+
+Agents run `skills/evolution/self-improvement/SKILL.md` on the configured cron schedule. The cron job ID is stored in `evolution_settings.cron_job_id`. When settings are updated with a new schedule, the old cron job should be cancelled and a new one created (not yet automated — manual for now).
+
+---
+
 ## Important Policies
 ### Prompt Caching Must Not Break
 
