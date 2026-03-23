@@ -83,7 +83,6 @@ def _discover_tools():
         "tools.skill_manager_tool",
         "tools.browser_tool",
         "tools.cronjob_tools",
-        "tools.routing_tool",
         "tools.rl_training_tool",
         "tools.tts_tool",
         "tools.todo_tool",
@@ -92,11 +91,11 @@ def _discover_tools():
         "tools.clarify_tool",
         "tools.code_execution_tool",
         "tools.delegate_tool",
+        "tools.handoff_tool",
         "tools.process_registry",
         "tools.send_message_tool",
         "tools.honcho_tools",
         "tools.homeassistant_tool",
-        "tools.bug_notes_tool",
     ]
     import importlib
     for mod_name in _modules:
@@ -147,7 +146,6 @@ _LEGACY_TOOLSET_MAP = {
         "browser_vision"
     ],
     "cronjob_tools": ["schedule_cronjob", "list_cronjobs", "remove_cronjob"],
-    "operator": ["configure_routing"],
     "rl_tools": [
         "rl_list_environments", "rl_select_environment",
         "rl_get_current_config", "rl_edit_config",
@@ -202,7 +200,7 @@ def get_tool_definitions(
                     print(f"⚠️  Unknown toolset: {toolset_name}")
 
     elif disabled_toolsets:
-        from core.toolsets import get_all_toolsets
+        from toolsets import get_all_toolsets
         for ts_name in get_all_toolsets():
             tools_to_include.update(resolve_toolset(ts_name))
 
@@ -221,7 +219,7 @@ def get_tool_definitions(
                 if not quiet_mode:
                     print(f"⚠️  Unknown toolset: {toolset_name}")
     else:
-        from core.toolsets import get_all_toolsets
+        from toolsets import get_all_toolsets
         for ts_name in get_all_toolsets():
             tools_to_include.update(resolve_toolset(ts_name))
 
