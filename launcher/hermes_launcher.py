@@ -220,9 +220,21 @@ def _start_splash() -> socketserver.TCPServer | None:
 
 def _open_browser(url: str = _BASE_URL) -> None:
     """Open Logos as a standalone app window using Edge/Chrome --app mode.
-    Falls back to a regular browser tab if neither is found."""
+    Falls back to a regular browser tab if neither is found.
+
+    A dedicated --user-data-dir is passed so Logos gets its own browser
+    profile, isolated from the user's main Edge/Chrome session. This also
+    fixes the 'tray → Open Logos does nothing after closing the window' bug:
+    without a separate profile, Edge detects an existing instance is already
+    running and silently ignores the new --app launch instead of opening a
+    fresh window.
+    """
     import subprocess
     import shutil
+
+    # Logos-specific browser profile — keeps session data out of the user's
+    # main browser and guarantees a new window is always opened on demand.
+    _profile_dir = str(_HERMES_HOME / "browser-profile")
 
     candidates = [
         # Windows: Edge (ships with every Win10/11 install — check both common locations)
@@ -245,6 +257,7 @@ def _open_browser(url: str = _BASE_URL) -> None:
                 subprocess.Popen([
                     path,
                     f"--app={url}",
+                    f"--user-data-dir={_profile_dir}",
                     "--no-first-run",
                     "--no-default-browser-check",
                     "--window-size=1280,800",
