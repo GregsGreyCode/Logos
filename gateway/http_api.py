@@ -6370,24 +6370,31 @@ _SETUP_HTML = """<!DOCTYPE html>
             </div>
           </div>
 
-          <!-- Best balanced recommendation -->
+          <!-- Top pick recommendation -->
           <div x-show="compareDone && compareRecommended"
             class="mb-2 p-3 rounded-xl bg-indigo-950/40 border border-indigo-800 text-xs leading-relaxed space-y-1">
             <div class="flex items-center gap-2 text-indigo-300 font-semibold text-[11px] uppercase tracking-wider">
-              <span>⚖</span><span>Best balanced</span>
+              <span>🎯</span><span>Top pick</span>
               <span class="font-mono font-normal normal-case tracking-normal text-indigo-400" x-text="compareRecommended"></span>
             </div>
             <div class="text-indigo-200" x-text="compareReason"></div>
+            <div class="text-indigo-400/60 text-[10px]">Best overall for agent tasks — reasoning, tool use, and response quality.</div>
           </div>
 
-          <!-- Fastest acceptable (only shown when different from best balanced) -->
+          <!-- Speed pick (only shown when different from top pick) -->
           <div x-show="compareDone && compareFastRecommended"
             class="mb-3 p-3 rounded-xl bg-gray-900/60 border border-gray-700 text-xs leading-relaxed space-y-1">
             <div class="flex items-center gap-2 text-gray-300 font-semibold text-[11px] uppercase tracking-wider">
-              <span>⚡</span><span>Fastest acceptable</span>
+              <span>⚡</span><span>Speed pick</span>
               <span class="font-mono font-normal normal-case tracking-normal text-gray-400" x-text="compareFastRecommended"></span>
             </div>
             <div class="text-gray-400" x-text="compareFastReason"></div>
+            <div class="text-gray-600 text-[10px]">Faster responses — good for quick questions and high-volume use.</div>
+          </div>
+
+          <!-- Server load notice -->
+          <div x-show="compareDone" class="mb-3 text-[10px] text-gray-600 px-1 leading-relaxed">
+            Scores reflect conditions at test time. A server handling other requests or services during testing may show lower throughput than usual.
           </div>
 
           <!-- Secondary models available for delegation -->
@@ -6425,7 +6432,7 @@ _SETUP_HTML = """<!DOCTYPE html>
               </summary>
               <div class="mt-2 space-y-1">
                 <template x-for="m in getModels()" :key="m.id">
-                  <button @click="pickModel(m); compareRecommended = m.id"
+                  <button @click="pickServerModel(m._serverEndpoint || activeServer.endpoint, m.id); compareRecommended = m.id"
                     :class="selectedModel === m.id ? 'border-indigo-500 bg-indigo-950/30 text-white' : 'border-gray-800 hover:border-gray-700 text-gray-400'"
                     class="w-full text-left px-3 py-2 rounded-lg bg-gray-900 border transition-all text-xs font-mono">
                     <span x-text="m.id"></span>
@@ -7332,6 +7339,23 @@ function setup() {
           this.compareTesting    = null;
           this.compareLoadingFor = null;
           if (!this.compareReason) this.compareReason = 'Stream closed before comparison completed.';
+        }
+        // Ensure every selected server has a model assigned so the Continue button
+        // can appear even when the benchmark fails or the stream closes early.
+        // Priority: benchmark result for that server → any result → first available model.
+        for (const s of (this.selectedServers || [])) {
+          if (this.serverModelSelections[s.endpoint]) continue;
+          const resultForServer = Object.values(this.compareResults || {})
+            .find(r => r.endpoint === s.endpoint && r.model && !r.error);
+          const anyResult = Object.values(this.compareResults || {})
+            .find(r => r.model && !r.error);
+          const fallback = resultForServer || anyResult;
+          if (fallback) {
+            this.serverModelSelections = { ...this.serverModelSelections, [s.endpoint]: fallback.model };
+          } else {
+            const fm = (s.models || [])[0];
+            if (fm) this.serverModelSelections = { ...this.serverModelSelections, [s.endpoint]: fm.id || fm.name };
+          }
         }
       }
     },
