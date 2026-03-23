@@ -5429,7 +5429,7 @@ _LOGIN_HTML = """<!DOCTYPE html>
     .logo-wrap {
       animation: logo-fadein 6s cubic-bezier(0.16,1,0.3,1) both;
       /* spring upward when card reveals */
-      transition: transform 4.8s cubic-bezier(0.22, 1, 0.36, 1);
+      transition: transform 2.4s cubic-bezier(0.22, 1, 0.36, 1);
     }
     .logo-wrap.logo-up  { transform: translateY(-24px); }
     /* Fast close when logging in */
@@ -5673,7 +5673,7 @@ _LOGIN_HTML = """<!DOCTYPE html>
         const tick = () => {
           // Anchor hue to wall-clock time so every page load/refresh
           // shows the same colour at the same real-world second.
-          const deg = ((Date.now() / 1000) * 12 % 360).toFixed(1);
+          const deg = ((Date.now() / 1000) * 6 % 360).toFixed(1);
           document.documentElement.style.setProperty('--hue-deg', deg + 'deg');
           requestAnimationFrame(tick);
         };
@@ -5697,7 +5697,7 @@ _LOGIN_HTML = """<!DOCTYPE html>
             const toCY   = 80;  // matches setup page header position
             logoWrap.style.transform = `translate(${toCX - fromCX}px, ${toCY - fromCY}px) scale(0.667)`;
           }
-          this._setupRedirectTimer = setTimeout(() => {
+          this._setupRedirectTimer = setTimeout(() => { // matches 2.4s logo transition + 200ms settle
             // Freeze all animations before page handoff so nothing is mid-fade
             document.querySelectorAll('.logo-wrap, .logo-halo, .logo-img').forEach(el => {
               const computed = getComputedStyle(el);
@@ -5710,7 +5710,7 @@ _LOGIN_HTML = """<!DOCTYPE html>
             document.body.style.setProperty('animation-play-state', 'paused');
             const elapsed = (performance.now() / 1000).toFixed(1);
             window.location.href = `/setup?t=${elapsed}`;
-          }, 3000);
+          }, 2600);
         } else {
           this.phase = 'login';
           this._startInactivity();
