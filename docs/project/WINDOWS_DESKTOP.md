@@ -4,7 +4,7 @@
 > while preserving the existing Kubernetes/Docker server deployment path.
 
 **Date:** 2026-03-23
-**Status:** In progress (Phase 1-2 implemented)
+**Status:** Phases 1–2, 5–6 complete. Phases 3–4 (LocalProcessExecutor + KubernetesExecutor extraction) outstanding — see OUTSTANDING_FEATURES.md.
 
 ---
 
@@ -150,14 +150,14 @@ Tauri (Rust shell + webview) — eliminates the "embed Python" overhead, produce
 - [ ] Extract `_spawn_instance()`, `_list_hermes_instances()`, `_cluster_resources()`, `_delete_instance()` from `http_api.py` into `gateway/executors/kubernetes.py`
 - [ ] Replace calls in `http_api.py` with `request.app["executor"].method()`
 
-### Phase 5 — Desktop launcher
-- [ ] `launcher/hermes_launcher.py` — pystray tray app
-- [ ] `launcher/hermes_launcher.spec` — PyInstaller spec
-- [ ] `installer/logos.iss` — Inno Setup script
+### Phase 5 — Desktop launcher (done)
+- [x] `launcher/hermes_launcher.py` — pystray tray app
+- [x] `launcher/hermes_launcher.spec` — PyInstaller spec
+- [x] `installer/logos.iss` — Inno Setup script
 
-### Phase 6 — Windows CI
-- [ ] `.github/workflows/build-windows.yml` — build `.exe` on push to main
-- [ ] Upload artifact to GitHub Releases
+### Phase 6 — Windows CI (done)
+- [x] `.github/workflows/build-windows.yml` — build `.exe` on push to main
+- [x] Upload artifact to GitHub Releases with SHA256 hashes + VirusTotal link
 
 ---
 

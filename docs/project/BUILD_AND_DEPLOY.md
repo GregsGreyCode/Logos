@@ -69,8 +69,8 @@ Verification is manual: open the canary URL in a browser and walk through the se
 
 ## Pain Points
 
-### No CI container build
-The biggest gap. Every deploy requires the developer to be at their machine, run the build manually, and push. If the build machine is offline or the developer is not present, nothing deploys. There is no audit trail of what image was built from which commit.
+### ~~No CI container build~~ (resolved)
+`.github/workflows/build-image.yml` now builds and pushes on every `v*` tag. Versioned SHA tags, `:canary`, and `:latest` are all produced automatically.
 
 ### Dockerfile layer ordering wastes cache
 ```dockerfile
@@ -79,8 +79,8 @@ RUN uv pip install …  # ← re-runs even when pyproject.toml didn't change
 ```
 The fix is two lines: copy `pyproject.toml` first, install, then copy the rest.
 
-### No versioned image tags
-Only `:canary` and `:latest` are used. There is no way to roll back to a specific version without knowing the exact image digest. A bad deploy to production means manually finding the previous digest from `ghcr.io` and re-running `kubectl set image`.
+### ~~No versioned image tags~~ (resolved)
+CI now tags each image with the semver tag (e.g. `:v0.4.11`) in addition to `:canary` and `:latest`. Rollback by SHA tag is possible.
 
 ### Namespace naming
 K8s resources are in the `logos` namespace. All deployments (`logos`, `logos-canary`, `logos-setup-test`) match the manifest names. Resolved.
