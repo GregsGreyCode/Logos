@@ -32,10 +32,23 @@ from typing import Dict, Optional, Any, List
 # Add parent directory to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-# Resolve Hermes home directory (respects HERMES_HOME override)
-_hermes_home = Path(os.getenv("HERMES_HOME", Path.home() / ".hermes"))
+# Resolve home directory (respects HERMES_HOME override; defaults to ~/.logos).
+# Migration: if ~/.logos does not yet exist but ~/.hermes does (legacy Linux/macOS
+# installations), rename ~/.hermes → ~/.logos so existing data is preserved.
+_default_logos_home = Path.home() / ".logos"
+_legacy_hermes_home = Path.home() / ".hermes"
+if (
+    "HERMES_HOME" not in os.environ
+    and not _default_logos_home.exists()
+    and _legacy_hermes_home.exists()
+):
+    try:
+        _legacy_hermes_home.rename(_default_logos_home)
+    except OSError:
+        pass  # cross-device rename or permissions — leave both in place
+_hermes_home = Path(os.getenv("HERMES_HOME", _default_logos_home))
 
-# Load environment variables from ~/.hermes/.env first
+# Load environment variables from ~/.logos/.env first
 from dotenv import load_dotenv
 _env_path = _hermes_home / '.env'
 if _env_path.exists():
@@ -476,7 +489,7 @@ class GatewayRunner:
         """Load ephemeral prefill messages from config or env var.
         
         Checks HERMES_PREFILL_MESSAGES_FILE env var first, then falls back to
-        the prefill_messages_file key in ~/.hermes/config.yaml.
+        the prefill_messages_file key in ~/.logos/config.yaml.
         Relative paths are resolved from ~/.hermes/.
         """
         import json as _json
@@ -515,7 +528,7 @@ class GatewayRunner:
         """Load ephemeral system prompt from config or env var.
         
         Checks HERMES_EPHEMERAL_SYSTEM_PROMPT env var first, then falls back to
-        agent.system_prompt in ~/.hermes/config.yaml.
+        agent.system_prompt in ~/.logos/config.yaml.
         """
         prompt = os.getenv("HERMES_EPHEMERAL_SYSTEM_PROMPT", "")
         if prompt:
@@ -666,7 +679,7 @@ class GatewayRunner:
         if not _any_allowlist and not _allow_all:
             logger.warning(
                 "No user allowlists configured. All unauthorized users will be denied. "
-                "Set GATEWAY_ALLOW_ALL_USERS=true in ~/.hermes/.env to allow open access, "
+                "Set GATEWAY_ALLOW_ALL_USERS=true in ~/.logos/.env to allow open access, "
                 "or configure platform allowlists (e.g., TELEGRAM_ALLOWED_USERS=your_id)."
             )
         
@@ -2021,7 +2034,7 @@ class GatewayRunner:
             personalities = {}
 
         if not personalities:
-            return "No personalities configured in `~/.hermes/config.yaml`"
+            return "No personalities configured in `~/.logos/config.yaml`"
 
         if not args:
             lines = ["🎭 **Available Personalities**\n"]
@@ -4304,7 +4317,7 @@ async def start_gateway(config: Optional[GatewayConfig] = None, replace: bool = 
                     pass
             remove_pid_file()
         else:
-            hermes_home = os.getenv("HERMES_HOME", "~/.hermes")
+            hermes_home = os.getenv("HERMES_HOME", str(Path.home() / ".logos"))
             logger.error(
                 "Another gateway instance is already running (PID %d, HERMES_HOME=%s). "
                 "Use 'hermes gateway restart' to replace it, or 'hermes gateway stop' first.",
