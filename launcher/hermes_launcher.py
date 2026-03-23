@@ -111,6 +111,32 @@ def _wait_for_gateway(timeout: int = 20) -> bool:
 
 
 def _open_browser() -> None:
+    """Open Logos as a standalone app window using Edge/Chrome --app mode.
+    Falls back to a regular browser tab if neither is found."""
+    import subprocess
+    import shutil
+
+    candidates = [
+        # Windows: Edge (ships with every Win10/11 install)
+        r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
+        r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
+        # Windows: Chrome
+        r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+        r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+        # PATH-based (macOS / Linux)
+        shutil.which("google-chrome") or "",
+        shutil.which("chromium-browser") or "",
+        shutil.which("chromium") or "",
+        shutil.which("msedge") or "",
+    ]
+    for path in candidates:
+        if path and Path(path).exists():
+            try:
+                subprocess.Popen([path, f"--app={_BASE_URL}", "--no-first-run"])
+                return
+            except Exception:
+                pass
+    # No Chromium-family browser found — fall back to default browser tab
     webbrowser.open(_BASE_URL)
 
 
@@ -126,15 +152,73 @@ def _log(msg: str) -> None:
 # Tray icon
 # ---------------------------------------------------------------------------
 
+def _ico_path() -> Path | None:
+    """Locate logos.ico — works both from source tree and PyInstaller bundle."""
+    if getattr(sys, "frozen", False):
+        # PyInstaller: files land in sys._MEIPASS
+        p = Path(sys._MEIPASS) / "launcher" / "logos.ico"  # type: ignore[attr-defined]
+        if p.exists():
+            return p
+    # Source tree
+    p = Path(__file__).parent / "logos.ico"
+    return p if p.exists() else None
+
+
+def _make_icon_at_hue(hue: float):
+    """Return the logos.ico resized to 64×64 with its hue rotated.
+
+    Falls back to a plain circle if PIL ImageOps isn't available or the
+    .ico file is missing.
+    """
+    from PIL import Image, ImageOps
+    ico = _ico_path()
+    if ico:
+        img = Image.open(ico).convert("RGBA").resize((64, 64), Image.LANCZOS)
+        # Rotate hue: convert to HSV via ImageOps is not built-in; use a fast
+        # pixel-level hue shift via the 'hue' channel in HSV mode.
+        r, g, b, a = img.split()
+        rgb = Image.merge("RGB", (r, g, b))
+        hsv = rgb.convert("HSV")
+        h, s, v = hsv.split()
+        # Shift each hue pixel by the desired offset (wraps in 0-255 space)
+        shift = int((hue % 1.0) * 255)
+        h = h.point(lambda p: (p + shift) % 256)
+        shifted = Image.merge("HSV", (h, s, v)).convert("RGB")
+        r2, g2, b2 = shifted.split()
+        return Image.merge("RGBA", (r2, g2, b2, a))
+    # Fallback: plain circle
+    import colorsys
+    from PIL import ImageDraw
+    rv, gv, bv = colorsys.hsv_to_rgb(hue, 0.72, 0.97)
+    fill = (int(rv * 255), int(gv * 255), int(bv * 255), 255)
+    img = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
+    ImageDraw.Draw(img).ellipse([4, 4, 60, 60], fill=fill)
+    return img
+
+
 def _make_icon():
     try:
-        from PIL import Image, ImageDraw
-        img = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
-        draw = ImageDraw.Draw(img)
-        draw.ellipse([4, 4, 60, 60], fill=(99, 102, 241, 255))  # indigo
-        return img
-    except ImportError:
+        return _make_icon_at_hue(0.0)  # no shift — original logo colours
+    except Exception:
         return None
+
+
+def _start_icon_animation(icon) -> None:
+    """Cycle the tray icon hue — mirrors the logo CSS hue-rotate animation."""
+    _HUE_STEP = 1.0 / 80   # full cycle in ~8 s at 100 ms ticks
+    hue = 0.0
+
+    def _loop():
+        nonlocal hue
+        while True:
+            try:
+                icon.icon = _make_icon_at_hue(hue)
+            except Exception:
+                pass
+            hue = (hue + _HUE_STEP) % 1.0
+            time.sleep(0.1)
+
+    threading.Thread(target=_loop, daemon=True, name="logos-icon-anim").start()
 
 
 def _build_menu(icon):
@@ -169,6 +253,7 @@ def _run_tray() -> None:
 
     icon = pystray.Icon("Logos", img, "Logos", menu=None)
     icon.menu = _build_menu(icon)
+    _start_icon_animation(icon)
     icon.run()
 
 
