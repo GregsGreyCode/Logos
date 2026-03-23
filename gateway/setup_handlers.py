@@ -1213,7 +1213,7 @@ async def handle_setup_complete(request: web.Request) -> web.Response:
         # Write chosen model + endpoint to config.yaml so the agent actually uses them.
         # Keys are bridged to env vars by run.py on startup (only if not already in env,
         # so pre-configured k8s deployments with explicit env vars are not overridden).
-        _hermes_home = pathlib.Path(os.environ.get("HOME", "/home/hermes")) / ".hermes"
+        _hermes_home = pathlib.Path(os.environ.get("HERMES_HOME") or (pathlib.Path.home() / ".logos"))
         _config_path = _hermes_home / "config.yaml"
         try:
             import yaml as _yaml
