@@ -162,10 +162,28 @@ def _stop_gateway() -> None:
 
 
 def _restart_gateway() -> None:
+    _gateway_ready.clear()  # go back to colour-cycling during restart
     _stop_gateway()
     time.sleep(0.5)
     _start_gateway()
-    _wait_for_gateway()
+    _wait_for_login(timeout=60)
+    _gateway_ready.set()
+
+
+def _wait_for_login(timeout: int = 60) -> bool:
+    """Poll /login until the full UI is serving — used to gate the tray colour."""
+    import urllib.request
+    deadline = time.monotonic() + timeout
+    url = f"{_BASE_URL}/login"
+    while time.monotonic() < deadline:
+        try:
+            with urllib.request.urlopen(url, timeout=2) as r:
+                if r.status == 200:
+                    return True
+        except Exception:
+            pass
+        time.sleep(0.5)
+    return False
 
 
 def _wait_for_gateway(timeout: int = 20) -> bool:
@@ -332,14 +350,47 @@ def _make_icon():
         return None
 
 
+# Set when the gateway is ready — animation thread watches this to switch
+# from colour-cycling (loading) to colourless/static (running).
+_gateway_ready = threading.Event()
+
+
+def _make_icon_greyscale():
+    """Return the logo icon desaturated — used when Logos is fully running."""
+    from PIL import Image, ImageOps
+    ico = _ico_path()
+    if ico:
+        img = Image.open(ico).convert("RGBA").resize((64, 64), Image.LANCZOS)
+        r, g, b, a = img.split()
+        grey = ImageOps.grayscale(Image.merge("RGB", (r, g, b)))
+        grey_rgba = Image.merge("RGBA", (*grey.split() * 3, a))
+        return grey_rgba
+    # Fallback: grey circle
+    from PIL import ImageDraw
+    img = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
+    ImageDraw.Draw(img).ellipse([4, 4, 60, 60], fill=(160, 160, 160, 255))
+    return img
+
+
 def _start_icon_animation(icon) -> None:
-    """Cycle the tray icon hue — mirrors the logo CSS hue-rotate animation."""
-    _HUE_STEP = 1.0 / 80   # full cycle in ~8 s at 100 ms ticks
+    """Cycle the tray icon hue while loading; go colourless once gateway is ready."""
+    _HUE_STEP = 1.0 / 80   # full colour cycle in ~8 s at 100 ms ticks
     hue = 0.0
 
     def _loop():
         nonlocal hue
         while True:
+            if _gateway_ready.is_set():
+                try:
+                    icon.icon = _make_icon_greyscale()
+                except Exception:
+                    pass
+                # No need to keep looping once settled — sleep long and check
+                # in case of a restart that clears the event.
+                _gateway_ready.wait(timeout=5)
+                if _gateway_ready.is_set():
+                    time.sleep(4.9)
+                continue
             try:
                 icon.icon = _make_icon_at_hue(hue)
             except Exception:
@@ -404,15 +455,22 @@ def main() -> None:
             if _wait_for_gateway(timeout=60):
                 # Give the redirect a moment to fire before shutting down.
                 time.sleep(1.5)
+                splash.shutdown()
+                # Now wait for /login — that's when the full UI is ready
+                # and the tray icon switches from colour-cycling to colour.
+                _wait_for_login(timeout=30)
+                _gateway_ready.set()
             else:
                 _log("Gateway did not start in time — check logs at " + str(_LOG_PATH))
                 # Open directly so the user isn't stuck on the loading screen.
                 _open_browser(_BASE_URL)
-            splash.shutdown()
+                splash.shutdown()
         else:
             # Splash port was busy — fall back to opening the gateway directly.
             if _wait_for_gateway(timeout=60):
                 _open_browser()
+                _wait_for_login(timeout=30)
+                _gateway_ready.set()
             else:
                 _log("Gateway did not start in time — check logs at " + str(_LOG_PATH))
 
