@@ -11,8 +11,8 @@
 #define MyAppPublisher "Greg"
 #define MyAppURL "https://github.com/gregsgreycode/hermes"
 #define MyAppExeName "Logos.exe"
-#define MyOutputDir "installer\output"
-#define MySourceDir "dist\Logos"
+#define MyOutputDir "output"
+#define MySourceDir "..\dist\Logos"
 
 [Setup]
 AppId={{E8A1F3D2-4B6C-4E7A-9F2B-3C5D8E1A0B4F}
@@ -34,7 +34,7 @@ Compression=lzma2/ultra64
 SolidCompression=yes
 ; UI
 WizardStyle=modern
-SetupIconFile=launcher\logos.ico
+SetupIconFile=..\launcher\logos.ico
 UninstallDisplayIcon={app}\{#MyAppExeName}
 ; Windows 10 1903+ required (for the webview APIs)
 MinVersion=10.0.18362
