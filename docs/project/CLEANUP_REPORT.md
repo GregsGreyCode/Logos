@@ -60,8 +60,8 @@
 | `core/` | **STALE migration copies** | ⚠️ See Section 2.4 — core/ is OLDER than root-level files |
 | `agents/hermes/` | **Work-in-progress** | ⚠️ Refactored agent importing stale core.* — see Section 2.4 |
 | `environments/` | **Likely hermes-agent** | RL/Atropos training environments |
-| `hermes` (root script) | **Legacy** | Old launcher: `from cli import main; fire.Fire(main)` — superseded |
-| `cli.py` | **Legacy / Ambiguous** | Old standalone CLI — `hermes_cli/main.py` is the successor |
+| `hermes` (root script) | **Legacy** | Moved to `archive/hermes-origin/hermes` |
+| `cli.py` | **Active production — hermes-agent origin** | `hermes_cli/main.py:cmd_chat()` imports it directly. It IS the interactive REPL engine. Not archiveable. Long-term: move to `hermes_cli/chat.py`. |
 | `hermes_agent.egg-info/` | **Build artifact** | Should be gitignored |
 | `datagen-config-examples/` | **Likely hermes-agent** | Data generation scripts/configs |
 | `landingpage/nous-logo.png` | **Legacy** | Old Nous Research logo |
