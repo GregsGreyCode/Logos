@@ -40,7 +40,9 @@ multiprocessing.freeze_support()
 _PORT = int(os.environ.get("LOGOS_PORT", "8080"))
 _BASE_URL = f"http://127.0.0.1:{_PORT}"
 _HEALTH_URL = f"{_BASE_URL}/health"
-_HERMES_HOME = Path(os.environ.get("HERMES_HOME", Path.home() / ".hermes"))
+_HERMES_HOME = Path(os.environ.get("HERMES_HOME", Path.home() / ".logos"))
+# Pin into os.environ so the in-process gateway import sees the same path.
+os.environ.setdefault("HERMES_HOME", str(_HERMES_HOME))
 _LOG_PATH = _HERMES_HOME / "logs" / "logos.log"
 # Splash server — serves a branded loading page on a separate port while the
 # gateway starts up, so the --app window never shows Edge's error page.
