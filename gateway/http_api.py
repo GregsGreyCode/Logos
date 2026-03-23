@@ -56,6 +56,7 @@ _AI_ROUTER_BASE = "http://ai-router.hermes.svc.cluster.local:9001"
 _CANARY_HEALTH_URL = "http://hermes-canary.hermes.svc.cluster.local/health"
 _INSTANCE_NAME = os.environ.get("HERMES_INSTANCE_NAME", "Hermes")
 _IS_CANARY = os.environ.get("HERMES_IS_CANARY", "").lower() in ("1", "true", "yes")
+_RUNTIME_MODE = os.environ.get("HERMES_RUNTIME_MODE", "kubernetes")  # "local" | "kubernetes"
 
 try:
     # Read directly from pyproject.toml — immune to stale installed metadata
@@ -863,9 +864,11 @@ _ADMIN_HTML = """<!DOCTYPE html>
     <button class="pb-2 text-sm font-medium border-b-2 border-transparent"
       :class="tab==='sessions'?'tab-active':'text-gray-400 hover:text-white'"
       @click="tab='sessions'; if(!clusterInstances.length) loadInstances()">Chats</button>
-    <button class="pb-2 text-sm font-medium border-b-2 border-transparent"
-      :class="tab==='instances'?'tab-active':'text-gray-400 hover:text-white'"
-      @click="tab='instances'; loadInstances(); loadSouls()">Instances</button>
+    <template x-if="runtimeMode === 'kubernetes'">
+      <button class="pb-2 text-sm font-medium border-b-2 border-transparent"
+        :class="tab==='instances'?'tab-active':'text-gray-400 hover:text-white'"
+        @click="tab='instances'; loadInstances(); loadSouls()">Instances</button>
+    </template>
     <template x-if="can('manage_machines') || can('manage_profiles') || can('view_routing_debug')">
       <button class="pb-2 text-sm font-medium border-b-2 border-transparent"
         :class="tab==='routing'?'tab-active':'text-gray-400 hover:text-white'"
@@ -2317,8 +2320,8 @@ _ADMIN_HTML = """<!DOCTYPE html>
 
   </div><!-- /routing tab -->
 
-  <!-- ── Instances Tab ────────────────────────────────────────────── -->
-  <div x-show="tab==='instances'" x-cloak>
+  <!-- ── Instances Tab (kubernetes mode only) ─────────────────────── -->
+  <div x-show="tab==='instances' && runtimeMode === 'kubernetes'" x-cloak>
 
     <!-- Cluster resources — compact bar -->
     <div class="flex items-center gap-3 mb-5 px-3 py-2 rounded-lg border border-gray-800 bg-gray-900 text-xs flex-wrap">
@@ -3767,6 +3770,7 @@ function app() {
     authUser: null,
     authPermissions: [],
     isCanary: window.__LOGOS__?.isCanary || false,
+    runtimeMode: window.__LOGOS__?.runtimeMode || 'kubernetes',
     // routing
     routingTab: localStorage.getItem('hermes_routing_tab') || 'machines',
     // admin
@@ -7855,7 +7859,7 @@ async def _handle_setup_reset(request: web.Request) -> web.Response:
 
 
 async def _handle_index(request: web.Request) -> web.Response:
-    inject = f'<script>window.__LOGOS__={{isCanary:{str(_IS_CANARY).lower()}}};</script>'
+    inject = f'<script>window.__LOGOS__={{isCanary:{str(_IS_CANARY).lower()},runtimeMode:"{_RUNTIME_MODE}"}};</script>'
     html = _ADMIN_HTML.replace("</head>", inject + "</head>", 1)
     return web.Response(text=html, content_type="text/html")
 

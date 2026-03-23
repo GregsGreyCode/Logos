@@ -127,6 +127,13 @@ if _config_path.exists():
         _tz_cfg = _cfg.get("timezone", "")
         if _tz_cfg and isinstance(_tz_cfg, str) and "HERMES_TIMEZONE" not in os.environ:
             os.environ["HERMES_TIMEZONE"] = _tz_cfg.strip()
+        # Runtime mode: bridge config.yaml → HERMES_RUNTIME_MODE env var.
+        # Controls whether k8s or local-process executor is used for Instances.
+        _runtime_cfg = _cfg.get("runtime", {})
+        if isinstance(_runtime_cfg, dict):
+            _runtime_mode = str(_runtime_cfg.get("mode", "")).strip()
+            if _runtime_mode and "HERMES_RUNTIME_MODE" not in os.environ:
+                os.environ["HERMES_RUNTIME_MODE"] = _runtime_mode
         # Security settings
         _security_cfg = _cfg.get("security", {})
         if isinstance(_security_cfg, dict):
