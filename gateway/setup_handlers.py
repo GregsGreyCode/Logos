@@ -37,6 +37,59 @@ _SCAN_PORTS    = [11434, 1234]
 _SCAN_CONCURRENCY = 40
 
 
+def _own_ips() -> set[str]:
+    """Return all IPv4 addresses that refer to this machine (for dedup)."""
+    ips: set[str] = {"127.0.0.1", "localhost"}
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.connect(("8.8.8.8", 80))
+            ips.add(s.getsockname()[0])
+    except Exception:
+        pass
+    try:
+        for info in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET):
+            ips.add(info[4][0])
+    except Exception:
+        pass
+    return ips
+
+
+def _dedup_servers(results: list[dict]) -> list[dict]:
+    """Deduplicate server list, collapsing LAN-IP entries that duplicate a
+    localhost entry on the same port (same physical machine, different address)."""
+    own = _own_ips()
+    # Build a set of ports already covered by a localhost/loopback entry
+    local_ports: set[int] = set()
+    for r in results:
+        if r.get("status") not in ("up", "auth_required"):
+            continue
+        try:
+            from urllib.parse import urlparse
+            p = urlparse(r["endpoint"])
+            if p.hostname in ("localhost", "127.0.0.1"):
+                local_ports.add(p.port)
+        except Exception:
+            pass
+
+    seen: set[str] = set()
+    unique: list[dict] = []
+    for r in results:
+        ep = r["endpoint"]
+        if ep in seen:
+            continue
+        # Skip a LAN-IP entry for this machine if localhost already covers the same port
+        try:
+            from urllib.parse import urlparse
+            p = urlparse(ep)
+            if p.hostname in own and p.hostname not in ("localhost", "127.0.0.1") and p.port in local_ports:
+                continue  # already represented by localhost:PORT
+        except Exception:
+            pass
+        seen.add(ep)
+        unique.append(r)
+    return unique
+
+
 # ── Probe helpers ──────────────────────────────────────────────────────────────
 
 async def _probe_server(
@@ -175,14 +228,7 @@ async def handle_setup_probe(request: web.Request) -> web.Response:
             _probe_server(session, url, key, prefer=prefer_type)
             for url, key, prefer_type in targets
         ])
-        # Deduplicate by endpoint (localhost and NODE_IP may resolve to same machine)
-        seen: set[str] = set()
-        unique = []
-        for r in results:
-            if r["endpoint"] not in seen:
-                seen.add(r["endpoint"])
-                unique.append(r)
-    return web.json_response({"servers": unique})
+    return web.json_response({"servers": _dedup_servers(results)})
 
 
 async def handle_setup_scan(request: web.Request) -> web.Response:
@@ -217,14 +263,7 @@ async def handle_setup_scan(request: web.Request) -> web.Response:
             for batch in batches:
                 results.extend(batch)
 
-    # Deduplicate by endpoint
-    seen: set[str] = set()
-    unique = []
-    for r in results:
-        if r["endpoint"] not in seen:
-            seen.add(r["endpoint"])
-            unique.append(r)
-
+    unique = _dedup_servers(results)
     logger.info("setup scan: subnet=%s found=%d", subnet or "localhost-only", len(unique))
     return web.json_response({"servers": unique, "subnet": subnet})
 
