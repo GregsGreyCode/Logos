@@ -8,7 +8,7 @@ version = "0.4.13"
 description = "A self-hosted agent platform — inference routing, multi-model benchmarking, and policy-governed agent runs across local and cloud hardware"
 readme = "README.md"
 requires-python = ">=3.11"
-authors = [{ name = "Greg" }]
+authors = [{ name = "gregsgreycoder" }]
 license = { text = "MIT" }
 dependencies = [
   # Core
