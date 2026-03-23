@@ -54,12 +54,49 @@ jobs:
       - name: Build executable with PyInstaller
         run: pyinstaller launcher\hermes_launcher.spec --noconfirm
 
-      # ── 6. Inno Setup ────────────────────────────────────────────────────
+      # ── 6. Sign Logos.exe ────────────────────────────────────────────────
+      # Azure Trusted Signing gives immediate SmartScreen/SAC reputation.
+      # Skipped if secrets are not configured (e.g. forks, draft PRs).
+      - name: Sign executable (Azure Trusted Signing)
+        if: ${{ secrets.AZURE_CLIENT_ID != '' }}
+        uses: azure/trusted-signing-action@v0.5.0
+        with:
+          azure-tenant-id:              ${{ secrets.AZURE_TENANT_ID }}
+          azure-client-id:              ${{ secrets.AZURE_CLIENT_ID }}
+          azure-client-secret:          ${{ secrets.AZURE_CLIENT_SECRET }}
+          endpoint:                     ${{ secrets.AZURE_TRUSTED_SIGNING_ENDPOINT }}
+          trusted-signing-account-name: ${{ secrets.AZURE_TRUSTED_SIGNING_ACCOUNT }}
+          certificate-profile-name:     ${{ secrets.AZURE_TRUSTED_SIGNING_PROFILE }}
+          files-folder:        dist\Logos
+          files-folder-filter: exe
+          file-digest:         SHA256
+          timestamp-rfc3161:   http://timestamp.acs.microsoft.com
+          timestamp-digest:    SHA256
+
+      # ── 7. Inno Setup ────────────────────────────────────────────────────
       - name: Build installer with Inno Setup
         run: |
           $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
           & $iscc installer\logos.iss
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      # ── Sign the installer too ───────────────────────────────────────────
+      # SAC checks both the inner exe AND the installer that delivered it.
+      - name: Sign installer (Azure Trusted Signing)
+        if: ${{ secrets.AZURE_CLIENT_ID != '' }}
+        uses: azure/trusted-signing-action@v0.5.0
+        with:
+          azure-tenant-id:              ${{ secrets.AZURE_TENANT_ID }}
+          azure-client-id:              ${{ secrets.AZURE_CLIENT_ID }}
+          azure-client-secret:          ${{ secrets.AZURE_CLIENT_SECRET }}
+          endpoint:                     ${{ secrets.AZURE_TRUSTED_SIGNING_ENDPOINT }}
+          trusted-signing-account-name: ${{ secrets.AZURE_TRUSTED_SIGNING_ACCOUNT }}
+          certificate-profile-name:     ${{ secrets.AZURE_TRUSTED_SIGNING_PROFILE }}
+          files-folder:        installer\output
+          files-folder-filter: exe
+          file-digest:         SHA256
+          timestamp-rfc3161:   http://timestamp.acs.microsoft.com
+          timestamp-digest:    SHA256
 
       # ── 7. Upload artifact ───────────────────────────────────────────────
       - name: Upload installer artifact
