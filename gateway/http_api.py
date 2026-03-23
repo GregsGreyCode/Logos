@@ -69,6 +69,7 @@ except Exception:
         _APP_VERSION = "dev"
 _BUILD_SHA = os.environ.get("BUILD_SHA", "local")[:7]
 _VERSION_LABEL = f"v{_APP_VERSION} · {_BUILD_SHA}{' · canary' if _IS_CANARY else ''}"
+_SERVER_START_TS = str(int(__import__("time").time()))  # unique per pod start; used to invalidate setup localStorage
 _HERMES_NAMESPACE = "hermes"
 _INSTANCE_CPU_REQUEST = "500m"
 _INSTANCE_MEM_REQUEST = "2Gi"
@@ -5923,6 +5924,7 @@ _SETUP_HTML = """<!DOCTYPE html>
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="setup-ts" content="__SETUP_TS__">
   <title>Logos Setup</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
@@ -6343,9 +6345,9 @@ _SETUP_HTML = """<!DOCTYPE html>
 
           <!-- Header -->
           <div class="mb-5">
-            <h2 class="text-xl font-bold mb-1">Benchmark</h2>
+            <h2 class="text-xl font-bold mb-1" x-text="compareDone ? 'Here\'s how your models performed' : 'Finding your best model\u2026'"></h2>
             <p class="text-gray-400 text-sm" x-show="!compareDone">Testing available models on your hardware — this takes a moment.</p>
-            <p class="text-gray-400 text-sm" x-show="compareDone">Here&rsquo;s how your models performed. We&rsquo;ve pre-selected the best fit. You can override below.</p>
+            <p class="text-gray-400 text-sm" x-show="compareDone">We&rsquo;ve pre-selected the best fit. You can override below.</p>
           </div>
 
           <!-- Per-model progress rows -->
@@ -7116,12 +7118,16 @@ function setup() {
       else this.osPlatform = 'mac';
 
       // Restore full wizard progress so a refresh resumes from where the user left off
+      // But only if the session belongs to this server instance — a pod restart (e.g.
+      // HERMES_WIPE_ON_START) invalidates saved state so the intro always shows fresh.
+      const _pageTs = parseInt(document.querySelector('meta[name="setup-ts"]')?.content || '0');
       let restoredFromProgress = false;
       try {
         const saved = localStorage.getItem('logos_setup_progress_v2');
         if (saved) {
           const s = JSON.parse(saved);
-          if (s?.ts && Date.now() - s.ts < 60 * 60 * 1000) {
+          const _svrMatch = !s.serverTs || s.serverTs >= _pageTs;
+          if (s?.ts && Date.now() - s.ts < 60 * 60 * 1000 && _svrMatch) {
             this.step           = s.step || 0;
             this.introConfirmed = s.introConfirmed ?? (this.step > 0);
             this.track          = s.track ?? null;
@@ -7180,6 +7186,7 @@ function setup() {
       try {
         localStorage.setItem('logos_setup_progress_v2', JSON.stringify({
           ts:                     Date.now(),
+          serverTs:               _pageTs,
           step:                   this.step,
           introConfirmed:         this.introConfirmed,
           track:                  this.track,
@@ -7782,7 +7789,7 @@ async def _handle_setup_page(request: web.Request) -> web.Response:
     from gateway.auth.db import is_setup_completed
     if is_setup_completed():
         raise web.HTTPFound("/")
-    html = _SETUP_HTML.replace("__VERSION_LABEL__", _VERSION_LABEL)
+    html = _SETUP_HTML.replace("__VERSION_LABEL__", _VERSION_LABEL).replace("__SETUP_TS__", _SERVER_START_TS)
     return web.Response(text=html, content_type="text/html")
 
 
