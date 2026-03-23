@@ -7,7 +7,7 @@
 ;   3. Inno Setup 6 installed: https://jrsoftware.org/isdl.php
 
 #define MyAppName "Logos - Agentic AI Platform"
-#define MyAppVersion "0.4.10"
+#define MyAppVersion "0.4.11"
 #define MyAppPublisher "Greg"
 #define MyAppURL "https://github.com/gregsgreycode/hermes"
 #define MyAppExeName "Logos.exe"
@@ -72,7 +72,8 @@ Filename: "{app}\{#MyAppExeName}"; \
 
 [UninstallRun]
 ; Graceful shutdown before uninstall
-Filename: "taskkill"; Parameters: "/IM {#MyAppExeName} /F"; Flags: runhidden; \
+; Use full path — Inno Setup Exec does not search PATH
+Filename: "{sys}\taskkill.exe"; Parameters: "/IM {#MyAppExeName} /F"; Flags: runhidden; \
   RunOnceId: "KillLogos"
 
 [Code]
@@ -87,7 +88,8 @@ begin
     if MsgBox('Logos is currently running. Close it before installing?',
       mbConfirmation, MB_YESNO) = IDYES then
     begin
-      Exec('taskkill', '/IM {#MyAppExeName} /F', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+      // Must use full path — Exec does not search PATH
+      Exec(ExpandConstant('{sys}\taskkill.exe'), '/IM {#MyAppExeName} /F', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
       Sleep(1500);
     end;
   end;

@@ -124,9 +124,16 @@ _DEFAULT_CONNECT_TIMEOUT = 60    # seconds for initial connection per server
 _MAX_RECONNECT_RETRIES = 5
 _MAX_BACKOFF_SECONDS = 60
 
-# Environment variables that are safe to pass to stdio subprocesses
+# Environment variables that are safe to pass to stdio subprocesses.
+# Includes both Unix and Windows baseline variables so that npx/npm
+# subprocesses can resolve npm cache, write temp files, and load system DLLs
+# on Windows without leaking any secrets from the parent process.
 _SAFE_ENV_KEYS = frozenset({
+    # Unix
     "PATH", "HOME", "USER", "LANG", "LC_ALL", "TERM", "SHELL", "TMPDIR",
+    # Windows — required for Node.js / npm to function correctly
+    "USERPROFILE", "APPDATA", "LOCALAPPDATA", "TEMP", "TMP",
+    "SYSTEMROOT", "SYSTEMDRIVE", "COMSPEC",
 })
 
 # Regex for credential patterns to strip from error messages
