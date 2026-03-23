@@ -121,7 +121,9 @@ jobs:
 
             ### ⚠️ Why Windows shows a warning
 
-            Logos is currently unsigned. Code signing certificates require an identity validation process that is not yet available to us. We publish full build transparency instead.
+            Logos is currently unsigned. Code signing certificates is either quite expensive at this time or seems to require an identity validation process that is not yet available to us in the UK.
+
+            We publish full build transparency instead.
 
             Windows SmartScreen may show **"Windows protected your PC"** on first run — click **"More info" → "Run anyway"**. This is safe once you have verified the SHA256 hash below.
 
