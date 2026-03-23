@@ -7,7 +7,7 @@
 ;   3. Inno Setup 6 installed: https://jrsoftware.org/isdl.php
 
 #define MyAppName "Logos - Agentic AI Platform"
-#define MyAppVersion "0.4.1"
+#define MyAppVersion "0.4.10"
 #define MyAppPublisher "Greg"
 #define MyAppURL "https://github.com/gregsgreycode/hermes"
 #define MyAppExeName "Logos.exe"
