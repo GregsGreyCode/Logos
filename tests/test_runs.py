@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from hermes_state import SessionDB
+from core.state import SessionDB
 from runs import (
     RunRecorder,
     RunReplayer,

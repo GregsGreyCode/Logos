@@ -31,7 +31,7 @@ os.environ.setdefault("MSWEA_GLOBAL_CONFIG_DIR", str(HERMES_HOME))
 os.environ.setdefault("MSWEA_SILENT_STARTUP", "1")
 
 from hermes_cli.colors import Colors, color
-from hermes_constants import OPENROUTER_MODELS_URL
+from core.constants import OPENROUTER_MODELS_URL
 
 
 _PROVIDER_ENV_HINTS = (

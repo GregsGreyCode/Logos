@@ -27,7 +27,7 @@ class TestFlushDeduplication:
     def _make_agent(self, session_db):
         """Create a minimal AIAgent with a real session DB."""
         with patch.dict(os.environ, {"OPENROUTER_API_KEY": "test-key"}):
-            from run_agent import AIAgent
+            from agents.hermes.agent import AIAgent
             agent = AIAgent(
                 model="test/model",
                 quiet_mode=True,
@@ -269,7 +269,7 @@ class TestFlushIdxInit:
     def test_init_zero(self):
         """Agent starts with _last_flushed_db_idx = 0."""
         with patch.dict(os.environ, {"OPENROUTER_API_KEY": "test-key"}):
-            from run_agent import AIAgent
+            from agents.hermes.agent import AIAgent
             agent = AIAgent(
                 model="test/model",
                 quiet_mode=True,
@@ -281,7 +281,7 @@ class TestFlushIdxInit:
     def test_no_session_db_noop(self):
         """Without session_db, flush is a no-op and doesn't crash."""
         with patch.dict(os.environ, {"OPENROUTER_API_KEY": "test-key"}):
-            from run_agent import AIAgent
+            from agents.hermes.agent import AIAgent
             agent = AIAgent(
                 model="test/model",
                 quiet_mode=True,

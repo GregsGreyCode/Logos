@@ -479,7 +479,8 @@ MIT — see [LICENSE](LICENSE).
 This project would not exist without the open-source work it stands on:
 
 - **[Anthropic / Claude](https://www.anthropic.com)** — Claude wrote a significant portion of the gateway, UI, tooling, and this documentation.
-- **[Nous Research](https://nousresearch.com)** — inspiration and influence on agentic patterns, skill creation, and self-improvement loops.
+- **[Nous Research / hermes-agent](https://github.com/NousResearch/hermes-agent)** — the Hermes agent runtime (`agents/hermes/`) is a heavily extended fork of their open-source hermes-agent. The platform layer (gateway, auth, dashboard, STAMP system, policy enforcement) is original work built on top of it. The [`tinker-atropos`](https://github.com/NousResearch/tinker-atropos) submodule is also theirs.
+- **[SWE-agent / mini-swe-agent](https://github.com/SWE-agent/mini-swe-agent)** — the [`mini-swe-agent`](https://github.com/SWE-agent/mini-swe-agent) submodule powers the terminal tool's PTY-based shell execution.
 - **[Ollama](https://github.com/ollama/ollama)** — makes running local LLMs approachable. Powers the homelab GPU machines that handle inference.
 - **[LM Studio](https://lmstudio.ai)** — excellent local model serving, especially for experimentation and first-time model setup.
 - **[faster-whisper](https://github.com/SYSTRAN/faster-whisper)** — powers in-pod voice transcription without any cloud dependency.
@@ -771,7 +772,8 @@ MIT — see [LICENSE](LICENSE).
 This project would not exist without the open-source work it stands on:
 
 - **[Anthropic / Claude](https://www.anthropic.com)** — Claude wrote a significant portion of the gateway, UI, tooling, and this documentation.
-- **[Nous Research](https://nousresearch.com)** — inspiration and influence on agentic patterns, skill creation, and self-improvement loops.
+- **[Nous Research / hermes-agent](https://github.com/NousResearch/hermes-agent)** — the Hermes agent runtime (`agents/hermes/`) is a heavily extended fork of their open-source hermes-agent. The platform layer (gateway, auth, dashboard, STAMP system, policy enforcement) is original work built on top of it. The [`tinker-atropos`](https://github.com/NousResearch/tinker-atropos) submodule is also theirs.
+- **[SWE-agent / mini-swe-agent](https://github.com/SWE-agent/mini-swe-agent)** — the [`mini-swe-agent`](https://github.com/SWE-agent/mini-swe-agent) submodule powers the terminal tool's PTY-based shell execution.
 - **[Ollama](https://github.com/ollama/ollama)** — makes running local LLMs approachable. Powers the homelab GPU machines that handle inference.
 - **[LM Studio](https://lmstudio.ai)** — excellent local model serving, especially for experimentation and first-time model setup.
 - **[faster-whisper](https://github.com/SYSTRAN/faster-whisper)** — powers in-pod voice transcription without any cloud dependency.

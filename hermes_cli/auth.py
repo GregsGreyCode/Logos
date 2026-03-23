@@ -37,7 +37,7 @@ import httpx
 import yaml
 
 from hermes_cli.config import get_hermes_home, get_config_path
-from hermes_constants import OPENROUTER_BASE_URL
+from core.constants import OPENROUTER_BASE_URL
 
 logger = logging.getLogger(__name__)
 

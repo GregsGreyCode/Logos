@@ -76,9 +76,9 @@ def _mock_response(message, finish_reason="tool_calls") -> SimpleNamespace:
 @pytest.fixture()
 def agent():
     with (
-        patch("run_agent.get_tool_definitions", return_value=_make_tool_defs("execute_code")),
-        patch("run_agent.check_toolset_requirements", return_value={}),
-        patch("run_agent.OpenAI"),
+        patch("agents.hermes.agent.get_tool_definitions", return_value=_make_tool_defs("execute_code")),
+        patch("agents.hermes.agent.check_toolset_requirements", return_value={}),
+        patch("agents.hermes.agent.OpenAI"),
     ):
         a = AIAgent(
             api_key="test-key",

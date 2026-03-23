@@ -3,7 +3,7 @@
 import json
 from unittest.mock import patch, MagicMock
 
-from trajectory_compressor import (
+from core.trajectory_compressor import (
     CompressionConfig,
     TrajectoryMetrics,
     AggregateMetrics,

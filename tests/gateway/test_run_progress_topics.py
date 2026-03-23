@@ -99,7 +99,7 @@ async def test_run_agent_progress_stays_in_originating_topic(monkeypatch, tmp_pa
 
     fake_run_agent = types.ModuleType("run_agent")
     fake_run_agent.AIAgent = FakeAgent
-    monkeypatch.setitem(sys.modules, "run_agent", fake_run_agent)
+    monkeypatch.setitem(sys.modules, "agents.hermes.agent", fake_run_agent)
 
     adapter = ProgressCaptureAdapter()
     runner = _make_runner(adapter)

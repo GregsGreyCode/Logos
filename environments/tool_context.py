@@ -31,7 +31,7 @@ from typing import Any, Dict, List, Optional
 import asyncio
 import concurrent.futures
 
-from model_tools import handle_function_call
+from core.model_tools import handle_function_call
 from tools.terminal_tool import cleanup_vm
 from tools.browser_tool import cleanup_browser
 

@@ -14,7 +14,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional, Dict, List, Any
 
-from hermes_time import now as _hermes_now
+from core.clock import now as _hermes_now
 
 try:
     from croniter import croniter

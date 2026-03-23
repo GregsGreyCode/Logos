@@ -62,7 +62,7 @@ _COMMAND_SPINNER_FRAMES = ("⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧
 
 # Load .env from ~/.hermes/.env first, then project root as dev fallback
 from dotenv import load_dotenv
-from hermes_constants import OPENROUTER_BASE_URL
+from core.constants import OPENROUTER_BASE_URL
 
 _hermes_home = Path(os.getenv("HERMES_HOME", Path.home() / ".hermes"))
 _user_env = _hermes_home / ".env"
@@ -414,8 +414,8 @@ from rich.text import Text as _RichText
 import fire
 
 # Import the agent and tool systems
-from run_agent import AIAgent
-from model_tools import get_tool_definitions, get_toolset_for_tool
+from agents.hermes.agent import AIAgent
+from core.model_tools import get_tool_definitions, get_toolset_for_tool
 from logos.agent import AgentContext, AgentRunner
 from logos.adapters.hermes import HermesAdapter
 
@@ -428,7 +428,7 @@ from hermes_cli.banner import (
 )
 from hermes_cli.commands import COMMANDS, SlashCommandCompleter
 from hermes_cli import callbacks as _callbacks
-from toolsets import get_all_toolsets, get_toolset_info, resolve_toolset, validate_toolset
+from core.toolsets import get_all_toolsets, get_toolset_info, resolve_toolset, validate_toolset
 
 # Cron job system for scheduled tasks (CRUD only — execution is handled by the gateway)
 from cron import create_job, list_jobs, remove_job, get_job
@@ -870,7 +870,7 @@ def build_welcome_banner(console: Console, model: str, cwd: str, tools: List[dic
         session_id: Unique session identifier for logging
         context_length: Model's context window size in tokens
     """
-    from model_tools import check_tool_availability, TOOLSET_REQUIREMENTS
+    from core.model_tools import check_tool_availability, TOOLSET_REQUIREMENTS
     
     tools = tools or []
     enabled_toolsets = enabled_toolsets or []
@@ -2001,7 +2001,7 @@ class HermesCLI:
     def _show_tool_availability_warnings(self):
         """Show warnings about disabled tools due to missing API keys."""
         try:
-            from model_tools import check_tool_availability, TOOLSET_REQUIREMENTS
+            from core.model_tools import check_tool_availability, TOOLSET_REQUIREMENTS
             
             available, unavailable = check_tool_availability()
             
@@ -4117,7 +4117,7 @@ class HermesCLI:
 
             # Refresh the agent's tool list so the model can call new tools
             if self.agent is not None:
-                from model_tools import get_tool_definitions
+                from core.model_tools import get_tool_definitions
                 self.agent.tools = get_tool_definitions(
                     enabled_toolsets=self.agent.enabled_toolsets
                     if hasattr(self.agent, "enabled_toolsets") else None,

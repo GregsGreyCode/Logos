@@ -3,7 +3,7 @@
 import pytest
 from unittest.mock import patch
 
-from toolset_distributions import (
+from core.toolset_distributions import (
     DISTRIBUTIONS,
     get_distribution,
     list_distributions,

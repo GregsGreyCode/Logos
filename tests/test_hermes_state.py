@@ -4,7 +4,7 @@ import time
 import pytest
 from pathlib import Path
 
-from hermes_state import SessionDB
+from core.state import SessionDB
 
 
 @pytest.fixture()
@@ -263,7 +263,7 @@ class TestFTS5Search:
 
     def test_sanitize_fts5_query_strips_dangerous_chars(self):
         """Unit test for _sanitize_fts5_query static method."""
-        from hermes_state import SessionDB
+        from core.state import SessionDB
         s = SessionDB._sanitize_fts5_query
         assert s('hello world') == 'hello world'
         assert '+' not in s('C++')
@@ -637,7 +637,7 @@ class TestSchemaInit:
         assert "schema_version" in tables
 
     def test_schema_version(self, db):
-        from hermes_state import SCHEMA_VERSION
+        from core.state import SCHEMA_VERSION
         cursor = db._conn.execute("SELECT version FROM schema_version")
         version = cursor.fetchone()[0]
         assert version == SCHEMA_VERSION
@@ -700,7 +700,7 @@ class TestSchemaInit:
         migrated_db = SessionDB(db_path=db_path)
 
         # Verify migration reached the current schema version
-        from hermes_state import SCHEMA_VERSION
+        from core.state import SCHEMA_VERSION
         cursor = migrated_db._conn.execute("SELECT version FROM schema_version")
         assert cursor.fetchone()[0] == SCHEMA_VERSION
 

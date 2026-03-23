@@ -231,7 +231,7 @@ def handoff_agent(
           run_id:           child run ID (linked to parent via parent_run_id)
           duration_s:       elapsed seconds
     """
-    from run_agent import AIAgent
+    from agents.hermes.agent import AIAgent
 
     if parent_agent is None:
         return json.dumps({"error": "handoff_agent requires a parent agent context."})

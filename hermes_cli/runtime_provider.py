@@ -15,7 +15,7 @@ from hermes_cli.auth import (
     resolve_api_key_provider_credentials,
 )
 from hermes_cli.config import load_config
-from hermes_constants import OPENROUTER_BASE_URL
+from core.constants import OPENROUTER_BASE_URL
 
 
 def _get_model_config() -> Dict[str, Any]:

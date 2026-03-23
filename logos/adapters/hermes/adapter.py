@@ -24,7 +24,7 @@ from logos.agent.interface import (
 )
 
 if TYPE_CHECKING:
-    from run_agent import AIAgent
+    from agents.hermes.agent import AIAgent
 
 
 class HermesAdapter(AgentAdapter):

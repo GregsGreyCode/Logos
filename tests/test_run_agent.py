@@ -16,9 +16,9 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-import run_agent
+import agents.hermes.agent as run_agent
 from honcho_integration.client import HonchoClientConfig
-from run_agent import AIAgent, _inject_honcho_turn_context
+from agents.hermes.agent import AIAgent, _inject_honcho_turn_context
 from agent.prompt_builder import DEFAULT_AGENT_IDENTITY
 
 
@@ -47,10 +47,10 @@ def agent():
     """Minimal AIAgent with mocked OpenAI client and tool loading."""
     with (
         patch(
-            "run_agent.get_tool_definitions", return_value=_make_tool_defs("web_search")
+            "agents.hermes.agent.get_tool_definitions", return_value=_make_tool_defs("web_search")
         ),
-        patch("run_agent.check_toolset_requirements", return_value={}),
-        patch("run_agent.OpenAI"),
+        patch("agents.hermes.agent.check_toolset_requirements", return_value={}),
+        patch("agents.hermes.agent.OpenAI"),
     ):
         a = AIAgent(
             api_key="test-key-1234567890",
@@ -67,11 +67,11 @@ def agent_with_memory_tool():
     """Agent whose valid_tool_names includes 'memory'."""
     with (
         patch(
-            "run_agent.get_tool_definitions",
+            "agents.hermes.agent.get_tool_definitions",
             return_value=_make_tool_defs("web_search", "memory"),
         ),
-        patch("run_agent.check_toolset_requirements", return_value={}),
-        patch("run_agent.OpenAI"),
+        patch("agents.hermes.agent.check_toolset_requirements", return_value={}),
+        patch("agents.hermes.agent.OpenAI"),
     ):
         a = AIAgent(
             api_key="test-k...7890",
@@ -103,11 +103,11 @@ def test_aiagent_reuses_existing_errors_log_handler():
 
         with (
             patch(
-                "run_agent.get_tool_definitions",
+                "agents.hermes.agent.get_tool_definitions",
                 return_value=_make_tool_defs("web_search"),
             ),
-            patch("run_agent.check_toolset_requirements", return_value={}),
-            patch("run_agent.OpenAI"),
+            patch("agents.hermes.agent.check_toolset_requirements", return_value={}),
+            patch("agents.hermes.agent.OpenAI"),
         ):
             AIAgent(
                 api_key="test-k...7890",
@@ -353,8 +353,8 @@ class TestInit:
     def test_anthropic_base_url_accepted(self):
         """Anthropic base URLs should route to native Anthropic client."""
         with (
-            patch("run_agent.get_tool_definitions", return_value=[]),
-            patch("run_agent.check_toolset_requirements", return_value={}),
+            patch("agents.hermes.agent.get_tool_definitions", return_value=[]),
+            patch("agents.hermes.agent.check_toolset_requirements", return_value={}),
             patch("agent.anthropic_adapter._anthropic_sdk") as mock_anthropic,
         ):
             agent = AIAgent(
@@ -370,9 +370,9 @@ class TestInit:
     def test_prompt_caching_claude_openrouter(self):
         """Claude model via OpenRouter should enable prompt caching."""
         with (
-            patch("run_agent.get_tool_definitions", return_value=[]),
-            patch("run_agent.check_toolset_requirements", return_value={}),
-            patch("run_agent.OpenAI"),
+            patch("agents.hermes.agent.get_tool_definitions", return_value=[]),
+            patch("agents.hermes.agent.check_toolset_requirements", return_value={}),
+            patch("agents.hermes.agent.OpenAI"),
         ):
             a = AIAgent(
                 api_key="test-key-1234567890",
@@ -386,9 +386,9 @@ class TestInit:
     def test_prompt_caching_non_claude(self):
         """Non-Claude model should disable prompt caching."""
         with (
-            patch("run_agent.get_tool_definitions", return_value=[]),
-            patch("run_agent.check_toolset_requirements", return_value={}),
-            patch("run_agent.OpenAI"),
+            patch("agents.hermes.agent.get_tool_definitions", return_value=[]),
+            patch("agents.hermes.agent.check_toolset_requirements", return_value={}),
+            patch("agents.hermes.agent.OpenAI"),
         ):
             a = AIAgent(
                 api_key="test-key-1234567890",
@@ -402,9 +402,9 @@ class TestInit:
     def test_prompt_caching_non_openrouter(self):
         """Custom base_url (not OpenRouter) should disable prompt caching."""
         with (
-            patch("run_agent.get_tool_definitions", return_value=[]),
-            patch("run_agent.check_toolset_requirements", return_value={}),
-            patch("run_agent.OpenAI"),
+            patch("agents.hermes.agent.get_tool_definitions", return_value=[]),
+            patch("agents.hermes.agent.check_toolset_requirements", return_value={}),
+            patch("agents.hermes.agent.OpenAI"),
         ):
             a = AIAgent(
                 api_key="test-key-1234567890",
@@ -419,8 +419,8 @@ class TestInit:
     def test_prompt_caching_native_anthropic(self):
         """Native Anthropic provider should enable prompt caching."""
         with (
-            patch("run_agent.get_tool_definitions", return_value=[]),
-            patch("run_agent.check_toolset_requirements", return_value={}),
+            patch("agents.hermes.agent.get_tool_definitions", return_value=[]),
+            patch("agents.hermes.agent.check_toolset_requirements", return_value={}),
             patch("agent.anthropic_adapter._anthropic_sdk"),
         ):
             a = AIAgent(
@@ -437,9 +437,9 @@ class TestInit:
         """valid_tool_names should contain names from loaded tools."""
         tools = _make_tool_defs("web_search", "terminal")
         with (
-            patch("run_agent.get_tool_definitions", return_value=tools),
-            patch("run_agent.check_toolset_requirements", return_value={}),
-            patch("run_agent.OpenAI"),
+            patch("agents.hermes.agent.get_tool_definitions", return_value=tools),
+            patch("agents.hermes.agent.check_toolset_requirements", return_value={}),
+            patch("agents.hermes.agent.OpenAI"),
         ):
             a = AIAgent(
                 api_key="test-key-1234567890",
@@ -452,9 +452,9 @@ class TestInit:
     def test_session_id_auto_generated(self):
         """Session ID should be auto-generated in YYYYMMDD_HHMMSS_<hex6> format."""
         with (
-            patch("run_agent.get_tool_definitions", return_value=[]),
-            patch("run_agent.check_toolset_requirements", return_value={}),
-            patch("run_agent.OpenAI"),
+            patch("agents.hermes.agent.get_tool_definitions", return_value=[]),
+            patch("agents.hermes.agent.check_toolset_requirements", return_value={}),
+            patch("agents.hermes.agent.OpenAI"),
         ):
             a = AIAgent(
                 api_key="test-key-1234567890",
@@ -470,17 +470,17 @@ class TestInit:
 
 class TestInterrupt:
     def test_interrupt_sets_flag(self, agent):
-        with patch("run_agent._set_interrupt"):
+        with patch("agents.hermes.agent._set_interrupt"):
             agent.interrupt()
             assert agent._interrupt_requested is True
 
     def test_interrupt_with_message(self, agent):
-        with patch("run_agent._set_interrupt"):
+        with patch("agents.hermes.agent._set_interrupt"):
             agent.interrupt("new question")
             assert agent._interrupt_message == "new question"
 
     def test_clear_interrupt(self, agent):
-        with patch("run_agent._set_interrupt"):
+        with patch("agents.hermes.agent._set_interrupt"):
             agent.interrupt("msg")
             agent.clear_interrupt()
             assert agent._interrupt_requested is False
@@ -488,7 +488,7 @@ class TestInterrupt:
 
     def test_is_interrupted_property(self, agent):
         assert agent.is_interrupted is False
-        with patch("run_agent._set_interrupt"):
+        with patch("agents.hermes.agent._set_interrupt"):
             agent.interrupt()
             assert agent.is_interrupted is True
 
@@ -499,7 +499,7 @@ class TestHydrateTodoStore:
             {"role": "user", "content": "hello"},
             {"role": "assistant", "content": "hi"},
         ]
-        with patch("run_agent._set_interrupt"):
+        with patch("agents.hermes.agent._set_interrupt"):
             agent._hydrate_todo_store(history)
         assert not agent._todo_store.has_items()
 
@@ -514,7 +514,7 @@ class TestHydrateTodoStore:
                 "tool_call_id": "c1",
             },
         ]
-        with patch("run_agent._set_interrupt"):
+        with patch("agents.hermes.agent._set_interrupt"):
             agent._hydrate_todo_store(history)
         assert agent._todo_store.has_items()
 
@@ -526,7 +526,7 @@ class TestHydrateTodoStore:
                 "tool_call_id": "c1",
             },
         ]
-        with patch("run_agent._set_interrupt"):
+        with patch("agents.hermes.agent._set_interrupt"):
             agent._hydrate_todo_store(history)
         assert not agent._todo_store.has_items()
 
@@ -538,7 +538,7 @@ class TestHydrateTodoStore:
                 "tool_call_id": "c1",
             },
         ]
-        with patch("run_agent._set_interrupt"):
+        with patch("agents.hermes.agent._set_interrupt"):
             agent._hydrate_todo_store(history)
         assert not agent._todo_store.has_items()
 
@@ -703,14 +703,14 @@ class TestExecuteToolCalls:
         tc = _mock_tool_call(name="web_search", arguments='{"q":"test"}', call_id="c1")
         mock_msg = _mock_assistant_msg(content="", tool_calls=[tc])
         messages = []
-        with patch(
-            "run_agent.handle_function_call", return_value="search result"
-        ) as mock_hfc:
+        from tools.registry import registry as _reg
+        with patch.object(_reg, "dispatch", return_value="search result") as mock_dispatch:
             agent._execute_tool_calls(mock_msg, messages, "task-1")
             # enabled_tools passes the agent's own valid_tool_names
-            args, kwargs = mock_hfc.call_args
-            assert args[:3] == ("web_search", {"q": "test"}, "task-1")
-            assert set(kwargs.get("enabled_tools", [])) == agent.valid_tool_names
+            call_kwargs = mock_dispatch.call_args.kwargs
+            assert mock_dispatch.call_args.args[:2] == ("web_search", {"q": "test"})
+            assert call_kwargs.get("task_id") == "task-1"
+            assert set(call_kwargs.get("enabled_tools", [])) == agent.valid_tool_names
         assert len(messages) == 1
         assert messages[0]["role"] == "tool"
         assert "search result" in messages[0]["content"]
@@ -721,7 +721,7 @@ class TestExecuteToolCalls:
         mock_msg = _mock_assistant_msg(content="", tool_calls=[tc1, tc2])
         messages = []
 
-        with patch("run_agent._set_interrupt"):
+        with patch("agents.hermes.agent._set_interrupt"):
             agent.interrupt()
 
         agent._execute_tool_calls(mock_msg, messages, "task-1")
@@ -738,12 +738,14 @@ class TestExecuteToolCalls:
         )
         mock_msg = _mock_assistant_msg(content="", tool_calls=[tc])
         messages = []
-        with patch("run_agent.handle_function_call", return_value="ok") as mock_hfc:
+        from tools.registry import registry as _reg
+        with patch.object(_reg, "dispatch", return_value="ok") as mock_dispatch:
             agent._execute_tool_calls(mock_msg, messages, "task-1")
             # Invalid JSON args should fall back to empty dict
-            args, kwargs = mock_hfc.call_args
-            assert args[:3] == ("web_search", {}, "task-1")
-            assert set(kwargs.get("enabled_tools", [])) == agent.valid_tool_names
+            call_kwargs = mock_dispatch.call_args.kwargs
+            assert mock_dispatch.call_args.args[:2] == ("web_search", {})
+            assert call_kwargs.get("task_id") == "task-1"
+            assert set(call_kwargs.get("enabled_tools", [])) == agent.valid_tool_names
         assert len(messages) == 1
         assert messages[0]["role"] == "tool"
         assert messages[0]["tool_call_id"] == "c1"
@@ -753,7 +755,8 @@ class TestExecuteToolCalls:
         mock_msg = _mock_assistant_msg(content="", tool_calls=[tc])
         messages = []
         big_result = "x" * 150_000
-        with patch("run_agent.handle_function_call", return_value=big_result):
+        from tools.registry import registry as _reg
+        with patch.object(_reg, "dispatch", return_value=big_result):
             agent._execute_tool_calls(mock_msg, messages, "task-1")
         # Content should be truncated
         assert len(messages[0]["content"]) < 150_000
@@ -808,11 +811,11 @@ class TestConcurrentToolExecution:
 
         call_log = []
 
-        def fake_handle(name, args, task_id, **kwargs):
+        def fake_invoke(name, args, task_id):
             call_log.append(name)
             return json.dumps({"result": args.get("q", "")})
 
-        with patch("run_agent.handle_function_call", side_effect=fake_handle):
+        with patch.object(agent, "_invoke_tool", side_effect=fake_invoke):
             agent._execute_tool_calls_concurrent(mock_msg, messages, "task-1")
 
         assert len(messages) == 3
@@ -836,13 +839,13 @@ class TestConcurrentToolExecution:
         mock_msg = _mock_assistant_msg(content="", tool_calls=[tc1, tc2])
         messages = []
 
-        def fake_handle(name, args, task_id, **kwargs):
+        def fake_invoke(name, args, task_id):
             q = args.get("q", "")
             if q == "slow":
                 _time.sleep(0.1)  # Slow tool
             return f"result_{q}"
 
-        with patch("run_agent.handle_function_call", side_effect=fake_handle):
+        with patch.object(agent, "_invoke_tool", side_effect=fake_invoke):
             agent._execute_tool_calls_concurrent(mock_msg, messages, "task-1")
 
         assert messages[0]["tool_call_id"] == "c1"
@@ -858,13 +861,13 @@ class TestConcurrentToolExecution:
         messages = []
 
         call_count = [0]
-        def fake_handle(name, args, task_id, **kwargs):
+        def fake_invoke(name, args, task_id):
             call_count[0] += 1
             if call_count[0] == 1:
                 raise RuntimeError("boom")
             return "success"
 
-        with patch("run_agent.handle_function_call", side_effect=fake_handle):
+        with patch.object(agent, "_invoke_tool", side_effect=fake_invoke):
             agent._execute_tool_calls_concurrent(mock_msg, messages, "task-1")
 
         assert len(messages) == 2
@@ -880,7 +883,7 @@ class TestConcurrentToolExecution:
         mock_msg = _mock_assistant_msg(content="", tool_calls=[tc1, tc2])
         messages = []
 
-        with patch("run_agent._set_interrupt"):
+        with patch("agents.hermes.agent._set_interrupt"):
             agent.interrupt()
 
         agent._execute_tool_calls_concurrent(mock_msg, messages, "task-1")
@@ -896,7 +899,7 @@ class TestConcurrentToolExecution:
         messages = []
         big_result = "x" * 150_000
 
-        with patch("run_agent.handle_function_call", return_value=big_result):
+        with patch.object(agent, "_invoke_tool", return_value=big_result):
             agent._execute_tool_calls_concurrent(mock_msg, messages, "task-1")
 
         assert len(messages) == 2
@@ -904,14 +907,15 @@ class TestConcurrentToolExecution:
             assert len(m["content"]) < 150_000
             assert "Truncated" in m["content"]
 
-    def test_invoke_tool_dispatches_to_handle_function_call(self, agent):
-        """_invoke_tool should route regular tools through handle_function_call."""
-        with patch("run_agent.handle_function_call", return_value="result") as mock_hfc:
+    def test_invoke_tool_dispatches_to_registry(self, agent):
+        """_invoke_tool should route regular tools through registry.dispatch."""
+        from tools.registry import registry as _reg
+        with patch.object(_reg, "dispatch", return_value="result") as mock_dispatch:
             result = agent._invoke_tool("web_search", {"q": "test"}, "task-1")
-            mock_hfc.assert_called_once_with(
-                "web_search", {"q": "test"}, "task-1",
-                enabled_tools=list(agent.valid_tool_names),
-            )
+            mock_dispatch.assert_called_once()
+            call_kwargs = mock_dispatch.call_args.kwargs
+            assert mock_dispatch.call_args.args[:2] == ("web_search", {"q": "test"})
+            assert call_kwargs.get("task_id") == "task-1"
         assert result == "result"
 
     def test_invoke_tool_handles_agent_level_tools(self, agent):
@@ -978,7 +982,7 @@ class TestRunConversation:
         resp2 = _mock_response(content="Done searching", finish_reason="stop")
         agent.client.chat.completions.create.side_effect = [resp1, resp2]
         with (
-            patch("run_agent.handle_function_call", return_value="search result"),
+            patch("tools.registry.registry.dispatch", return_value="search result"),
             patch.object(agent, "_persist_session"),
             patch.object(agent, "_save_trajectory"),
             patch.object(agent, "_cleanup_task_resources"),
@@ -998,7 +1002,7 @@ class TestRunConversation:
             patch.object(agent, "_persist_session"),
             patch.object(agent, "_save_trajectory"),
             patch.object(agent, "_cleanup_task_resources"),
-            patch("run_agent._set_interrupt"),
+            patch("agents.hermes.agent._set_interrupt"),
             patch.object(
                 agent, "_interruptible_api_call", side_effect=interrupt_side_effect
             ),
@@ -1100,7 +1104,7 @@ class TestRunConversation:
         agent.client.chat.completions.create.side_effect = [resp1, resp2]
 
         with (
-            patch("run_agent.handle_function_call", return_value="result"),
+            patch("tools.registry.registry.dispatch", return_value="result"),
             patch.object(
                 agent.context_compressor, "should_compress", return_value=True
             ),
@@ -1194,7 +1198,7 @@ class TestRetryExhaustion:
             patch.object(agent, "_persist_session"),
             patch.object(agent, "_save_trajectory"),
             patch.object(agent, "_cleanup_task_resources"),
-            patch("run_agent.time", self._make_fast_time_mock()),
+            patch("agents.hermes.agent.time", self._make_fast_time_mock()),
         ):
             result = agent.run_conversation("hello")
         assert result.get("completed") is False, (
@@ -1212,7 +1216,7 @@ class TestRetryExhaustion:
             patch.object(agent, "_persist_session"),
             patch.object(agent, "_save_trajectory"),
             patch.object(agent, "_cleanup_task_resources"),
-            patch("run_agent.time", self._make_fast_time_mock()),
+            patch("agents.hermes.agent.time", self._make_fast_time_mock()),
         ):
             with pytest.raises(RuntimeError, match="rate limited"):
                 agent.run_conversation("hello")
@@ -1337,7 +1341,7 @@ class TestNousCredentialRefresh:
         )
 
         agent.client = _ExistingClient()
-        with patch("run_agent.OpenAI", side_effect=_fake_openai):
+        with patch("agents.hermes.agent.OpenAI", side_effect=_fake_openai):
             ok = agent._try_refresh_nous_client_credentials(force=True)
 
         assert ok is True
@@ -1563,9 +1567,9 @@ class TestHonchoActivation:
         )
 
         with (
-            patch("run_agent.get_tool_definitions", return_value=_make_tool_defs("web_search")),
-            patch("run_agent.check_toolset_requirements", return_value={}),
-            patch("run_agent.OpenAI"),
+            patch("agents.hermes.agent.get_tool_definitions", return_value=_make_tool_defs("web_search")),
+            patch("agents.hermes.agent.check_toolset_requirements", return_value={}),
+            patch("agents.hermes.agent.OpenAI"),
             patch("honcho_integration.client.HonchoClientConfig.from_global_config", return_value=hcfg),
             patch("honcho_integration.client.get_honcho_client") as mock_client,
         ):
@@ -1595,9 +1599,9 @@ class TestHonchoActivation:
         manager.get_prefetch_context.return_value = {"representation": "Known user", "card": ""}
 
         with (
-            patch("run_agent.get_tool_definitions", return_value=_make_tool_defs("web_search")),
-            patch("run_agent.check_toolset_requirements", return_value={}),
-            patch("run_agent.OpenAI"),
+            patch("agents.hermes.agent.get_tool_definitions", return_value=_make_tool_defs("web_search")),
+            patch("agents.hermes.agent.check_toolset_requirements", return_value={}),
+            patch("agents.hermes.agent.OpenAI"),
             patch("honcho_integration.client.get_honcho_client") as mock_client,
             patch("tools.honcho_tools.set_session_context"),
         ):
@@ -1636,7 +1640,7 @@ class TestHonchoActivation:
 
         with (
             patch(
-                "run_agent.get_tool_definitions",
+                "agents.hermes.agent.get_tool_definitions",
                 side_effect=[
                     _make_tool_defs("web_search"),
                     _make_tool_defs(
@@ -1648,8 +1652,8 @@ class TestHonchoActivation:
                     ),
                 ],
             ),
-            patch("run_agent.check_toolset_requirements", return_value={}),
-            patch("run_agent.OpenAI"),
+            patch("agents.hermes.agent.check_toolset_requirements", return_value={}),
+            patch("agents.hermes.agent.OpenAI"),
             patch("tools.honcho_tools.set_session_context"),
         ):
             agent = AIAgent(
@@ -1677,9 +1681,9 @@ class TestHonchoActivation:
         )
 
         with (
-            patch("run_agent.get_tool_definitions", return_value=_make_tool_defs("web_search", "honcho_context")),
-            patch("run_agent.check_toolset_requirements", return_value={}),
-            patch("run_agent.OpenAI"),
+            patch("agents.hermes.agent.get_tool_definitions", return_value=_make_tool_defs("web_search", "honcho_context")),
+            patch("agents.hermes.agent.check_toolset_requirements", return_value={}),
+            patch("agents.hermes.agent.OpenAI"),
             patch("honcho_integration.client.HonchoClientConfig.from_global_config", return_value=hcfg),
             patch("honcho_integration.client.get_honcho_client") as mock_client,
         ):
@@ -1817,7 +1821,7 @@ class TestSafeWriter:
 
     def test_write_delegates_normally(self):
         """When stdout is healthy, _SafeWriter is transparent."""
-        from run_agent import _SafeWriter
+        from agents.hermes.agent import _SafeWriter
         from io import StringIO
         inner = StringIO()
         writer = _SafeWriter(inner)
@@ -1826,7 +1830,7 @@ class TestSafeWriter:
 
     def test_write_catches_oserror(self):
         """OSError on write is silently caught, returns len(data)."""
-        from run_agent import _SafeWriter
+        from agents.hermes.agent import _SafeWriter
         from unittest.mock import MagicMock
         inner = MagicMock()
         inner.write.side_effect = OSError(5, "Input/output error")
@@ -1836,7 +1840,7 @@ class TestSafeWriter:
 
     def test_flush_catches_oserror(self):
         """OSError on flush is silently caught."""
-        from run_agent import _SafeWriter
+        from agents.hermes.agent import _SafeWriter
         from unittest.mock import MagicMock
         inner = MagicMock()
         inner.flush.side_effect = OSError(5, "Input/output error")
@@ -1846,7 +1850,7 @@ class TestSafeWriter:
     def test_print_survives_broken_stdout(self, monkeypatch):
         """print() through _SafeWriter doesn't crash on broken pipe."""
         import sys
-        from run_agent import _SafeWriter
+        from agents.hermes.agent import _SafeWriter
         from unittest.mock import MagicMock
         broken = MagicMock()
         broken.write.side_effect = OSError(5, "Input/output error")
@@ -1860,7 +1864,7 @@ class TestSafeWriter:
     def test_installed_in_run_conversation(self, agent):
         """run_conversation installs _SafeWriter on stdio."""
         import sys
-        from run_agent import _SafeWriter
+        from agents.hermes.agent import _SafeWriter
         resp = _mock_response(content="Done", finish_reason="stop")
         agent.client.chat.completions.create.return_value = resp
         original_stdout = sys.stdout
@@ -1881,7 +1885,7 @@ class TestSafeWriter:
     def test_installed_before_init_time_honcho_error_prints(self):
         """AIAgent.__init__ wraps stdout before Honcho fallback prints can fire."""
         import sys
-        from run_agent import _SafeWriter
+        from agents.hermes.agent import _SafeWriter
 
         broken = MagicMock()
         broken.write.side_effect = OSError(5, "Input/output error")
@@ -1892,9 +1896,9 @@ class TestSafeWriter:
         try:
             hcfg = HonchoClientConfig(enabled=True, api_key="test-honcho-key")
             with (
-                patch("run_agent.get_tool_definitions", return_value=_make_tool_defs("web_search")),
-                patch("run_agent.check_toolset_requirements", return_value={}),
-                patch("run_agent.OpenAI"),
+                patch("agents.hermes.agent.get_tool_definitions", return_value=_make_tool_defs("web_search")),
+                patch("agents.hermes.agent.check_toolset_requirements", return_value={}),
+                patch("agents.hermes.agent.OpenAI"),
                 patch("hermes_cli.config.load_config", return_value={"memory": {}}),
                 patch("honcho_integration.client.HonchoClientConfig.from_global_config", return_value=hcfg),
                 patch("honcho_integration.client.get_honcho_client", side_effect=RuntimeError("boom")),
@@ -1914,7 +1918,7 @@ class TestSafeWriter:
     def test_double_wrap_prevented(self):
         """Wrapping an already-wrapped stream doesn't add layers."""
         import sys
-        from run_agent import _SafeWriter
+        from agents.hermes.agent import _SafeWriter
         from io import StringIO
         inner = StringIO()
         wrapped = _SafeWriter(inner)
@@ -1933,7 +1937,7 @@ class TestSaveSessionLogAtomicWrite:
         agent.session_log_file = tmp_path / "session.json"
         messages = [{"role": "user", "content": "hello"}]
 
-        with patch("run_agent.atomic_json_write", create=True) as mock_atomic_write:
+        with patch("agents.hermes.agent.atomic_json_write", create=True) as mock_atomic_write:
             agent._save_session_log(messages)
 
         mock_atomic_write.assert_called_once()
@@ -2048,8 +2052,8 @@ class TestAnthropicBaseUrlPassthrough:
 
     def test_custom_proxy_base_url_passed_through(self):
         with (
-            patch("run_agent.get_tool_definitions", return_value=_make_tool_defs("web_search")),
-            patch("run_agent.check_toolset_requirements", return_value={}),
+            patch("agents.hermes.agent.get_tool_definitions", return_value=_make_tool_defs("web_search")),
+            patch("agents.hermes.agent.check_toolset_requirements", return_value={}),
             patch("agent.anthropic_adapter.build_anthropic_client") as mock_build,
         ):
             mock_build.return_value = MagicMock()
@@ -2067,8 +2071,8 @@ class TestAnthropicBaseUrlPassthrough:
 
     def test_none_base_url_passed_as_none(self):
         with (
-            patch("run_agent.get_tool_definitions", return_value=_make_tool_defs("web_search")),
-            patch("run_agent.check_toolset_requirements", return_value={}),
+            patch("agents.hermes.agent.get_tool_definitions", return_value=_make_tool_defs("web_search")),
+            patch("agents.hermes.agent.check_toolset_requirements", return_value={}),
             patch("agent.anthropic_adapter.build_anthropic_client") as mock_build,
         ):
             mock_build.return_value = MagicMock()

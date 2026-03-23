@@ -181,7 +181,7 @@ def _run_single_child(
     routing subagents to a different provider:model pair (e.g. cheap/fast
     model on OpenRouter while the parent runs on Nous Portal).
     """
-    from run_agent import AIAgent
+    from agents.hermes.agent import AIAgent
 
     child_start = time.monotonic()
 
