@@ -6,7 +6,7 @@
 ;   2. Output must be at:      dist\Logos\Logos.exe
 ;   3. Inno Setup 6 installed: https://jrsoftware.org/isdl.php
 
-#define MyAppName "Logos"
+#define MyAppName "Logos - Agentic AI Platform"
 #define MyAppVersion "0.4.0"
 #define MyAppPublisher "Greg"
 #define MyAppURL "https://github.com/gregsgreycode/hermes"
