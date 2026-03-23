@@ -31,7 +31,9 @@ def svg_to_png_bytes(size: int) -> bytes:
             output_width=size,
             output_height=size,
         )
-    except ImportError:
+    except (ImportError, OSError):
+        # ImportError: cairosvg not installed
+        # OSError: cairo.dll not found on Windows (cairocffi raises this)
         return _fallback_png_bytes(size)
 
 
