@@ -32,6 +32,10 @@ ROLE_PERMISSIONS: dict[str, set[str]] = {
         "decide_workflow_approvals", # approve/reject workflow approval steps
         # Agent run records
         "view_runs",                # view agent run audit records
+        # Evolution
+        "view_evolution",           # view proposals and settings
+        "manage_evolution",         # configure evolution settings / trigger runs
+        "decide_evolution",         # accept / decline / question proposals
     },
     "operator": {
         "spawn_instance",
@@ -56,6 +60,10 @@ ROLE_PERMISSIONS: dict[str, set[str]] = {
         "decide_workflow_approvals",
         # Agent run records
         "view_runs",
+        # Evolution
+        "view_evolution",
+        "manage_evolution",
+        "decide_evolution",
     },
     "user": {
         "spawn_instance_restricted",  # only souls with user_accessible: true
@@ -66,6 +74,8 @@ ROLE_PERMISSIONS: dict[str, set[str]] = {
         "view_approvals",
         "view_workflows",           # users can view workflow runs (read-only)
         "view_runs",                # users can view their own agent run records
+        # Evolution
+        "view_evolution",
     },
     "viewer": {
         "view_instances",
