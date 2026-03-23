@@ -7098,7 +7098,7 @@ function setup() {
     compareCopied: false,
 
     copyDebugLog() {
-      const text = this.compareLog.join('\n');
+      const text = this.compareLog.join('\\n');
       if (navigator.clipboard && window.isSecureContext) {
         navigator.clipboard.writeText(text).then(() => { this.compareCopied = true; setTimeout(() => this.compareCopied = false, 1500); });
       } else {
