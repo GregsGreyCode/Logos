@@ -156,16 +156,48 @@ Works on Linux, macOS, and WSL2. The installer handles everything — Python, No
 
 A native Windows installer (`.exe`) is available on the [GitHub Releases](https://github.com/GregsGreyCode/logos/releases) page. No WSL2 required — download, run, and Logos starts in the system tray.
 
-> **SmartScreen warning:** Logos is currently unsigned. Windows may show a "Windows protected your PC" prompt on first run — click **"More info" → "Run anyway"**. See [SECURITY.md](SECURITY.md) for how to verify the SHA256 hash of your download and confirm it matches the published value from our CI pipeline before running.
+---
 
-**Verify before running (PowerShell):**
+#### ⚠️ Why Windows shows a warning
+
+Logos is currently unsigned. Code signing certificates require an identity validation process that is not yet available to us, and we prefer to invest in development and transparency rather than pay for a certificate we can't fully back.
+
+Windows SmartScreen may show **"Windows protected your PC"** on first run. Click **"More info" → "Run anyway"** to proceed.
+
+You can verify that what you downloaded is exactly what was built using the methods below.
+
+---
+
+#### 🔐 Build transparency
+
+Logos binaries are built exclusively via GitHub Actions — no local machines, no manual steps, no hidden stages.
+
+- Source → build → artifact pipeline is fully public
+- Every release links to the exact CI run that produced it
+- [View all builds](https://github.com/GregsGreyCode/logos/actions/workflows/build-windows.yml)
+
+---
+
+#### 🔑 SHA256 integrity verification
+
+Every release publishes SHA256 hashes for both the installer and the inner `Logos.exe`. These appear in the **GitHub Release notes**, in `SHA256SUMS.txt`, and in a `.sha256` sidecar file — all produced by the same CI run.
+
 ```powershell
-# Replace X.Y.Z with the version you downloaded
+# Windows — replace X.Y.Z with the version you downloaded
 certutil -hashfile LogosSetup-X.Y.Z.exe SHA256
-# Compare to the SHA256 published in the GitHub Release notes
+# Compare the output to the hash in the GitHub Release notes
 ```
 
-Each release publishes the hash in the release notes, in a `SHA256SUMS.txt` file, and in a `.sha256` sidecar — all produced by the same public GitHub Actions run that built the binary.
+```bash
+# macOS / Linux
+sha256sum LogosSetup-X.Y.Z.exe
+```
+
+---
+
+#### 🧪 VirusTotal scan
+
+Each release is scanned on [VirusTotal](https://www.virustotal.com) — the scan link is included in the GitHub Release notes for that version. You can also drag-and-drop your downloaded file at [virustotal.com](https://www.virustotal.com) to run your own scan.
 
 Once installed, start the gateway:
 
