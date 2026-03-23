@@ -11,10 +11,10 @@ Probabilities should sum to 100, but the system will normalize if they don't.
 
 Usage:
     from core.toolset_distributions import get_distribution, list_distributions
-    
+
     # Get a specific distribution
     dist = get_distribution("image_gen")
-    
+
     # List all available distributions
     all_dists = list_distributions()
 """

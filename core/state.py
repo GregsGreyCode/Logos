@@ -25,12 +25,43 @@ from typing import Dict, Any, List, Optional
 
 DEFAULT_DB_PATH = Path(os.getenv("HERMES_HOME", Path.home() / ".hermes")) / "state.db"
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 8
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS schema_version (
     version INTEGER NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS runs (
+    id TEXT PRIMARY KEY,
+    session_id TEXT,
+    source TEXT,
+    user_id TEXT,
+    model TEXT,
+    provider TEXT,
+    trigger_type TEXT DEFAULT 'user_message',
+    parent_run_id TEXT,
+    started_at REAL NOT NULL,
+    ended_at REAL,
+    status TEXT DEFAULT 'running',
+    api_call_count INTEGER DEFAULT 0,
+    input_tokens INTEGER DEFAULT 0,
+    output_tokens INTEGER DEFAULT 0,
+    tool_sequence TEXT,
+    approval_events TEXT,
+    error_details TEXT,
+    final_output_preview TEXT,
+    user_message_preview TEXT,
+    structured_input TEXT,
+    structured_output TEXT,
+    agent_contract TEXT,
+    agent_id TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_runs_session ON runs(session_id);
+CREATE INDEX IF NOT EXISTS idx_runs_started ON runs(started_at DESC);
+CREATE INDEX IF NOT EXISTS idx_runs_status ON runs(status);
+CREATE INDEX IF NOT EXISTS idx_runs_source ON runs(source);
 
 CREATE TABLE IF NOT EXISTS sessions (
     id TEXT PRIMARY KEY,
@@ -68,6 +99,44 @@ CREATE INDEX IF NOT EXISTS idx_sessions_source ON sessions(source);
 CREATE INDEX IF NOT EXISTS idx_sessions_parent ON sessions(parent_session_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_started ON sessions(started_at DESC);
 CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id, timestamp);
+
+CREATE TABLE IF NOT EXISTS workspaces (
+    id TEXT PRIMARY KEY,
+    run_id TEXT,
+    session_id TEXT,
+    path TEXT NOT NULL,
+    policy TEXT NOT NULL DEFAULT 'full_access',
+    write_policy TEXT NOT NULL DEFAULT 'full_write',
+    created_at REAL NOT NULL,
+    expires_at REAL,
+    status TEXT NOT NULL DEFAULT 'active',
+    repo_roots TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_workspaces_run ON workspaces(run_id);
+CREATE INDEX IF NOT EXISTS idx_workspaces_session ON workspaces(session_id);
+CREATE INDEX IF NOT EXISTS idx_workspaces_status ON workspaces(status);
+CREATE INDEX IF NOT EXISTS idx_workspaces_expires ON workspaces(expires_at);
+
+CREATE TABLE IF NOT EXISTS eval_results (
+    id TEXT PRIMARY KEY,
+    suite_name TEXT NOT NULL,
+    suite_run_id TEXT NOT NULL,
+    case_id TEXT NOT NULL,
+    case_name TEXT NOT NULL,
+    run_id TEXT,
+    started_at REAL NOT NULL,
+    ended_at REAL,
+    passed INTEGER NOT NULL DEFAULT 0,
+    score REAL NOT NULL DEFAULT 0.0,
+    assertion_results TEXT,
+    output_preview TEXT,
+    error TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_eval_results_suite ON eval_results(suite_name, started_at DESC);
+CREATE INDEX IF NOT EXISTS idx_eval_results_suite_run ON eval_results(suite_run_id);
+CREATE INDEX IF NOT EXISTS idx_eval_results_case ON eval_results(case_id);
 """
 
 FTS_SQL = """
@@ -152,6 +221,102 @@ class SessionDB:
                 except sqlite3.OperationalError:
                     pass  # Index already exists
                 cursor.execute("UPDATE schema_version SET version = 4")
+            if current_version < 5:
+                # v5: runs table for run auditability
+                try:
+                    cursor.executescript("""
+CREATE TABLE IF NOT EXISTS runs (
+    id TEXT PRIMARY KEY,
+    session_id TEXT,
+    source TEXT,
+    user_id TEXT,
+    model TEXT,
+    provider TEXT,
+    trigger_type TEXT DEFAULT 'user_message',
+    parent_run_id TEXT,
+    started_at REAL NOT NULL,
+    ended_at REAL,
+    status TEXT DEFAULT 'running',
+    api_call_count INTEGER DEFAULT 0,
+    input_tokens INTEGER DEFAULT 0,
+    output_tokens INTEGER DEFAULT 0,
+    tool_sequence TEXT,
+    approval_events TEXT,
+    error_details TEXT,
+    final_output_preview TEXT,
+    user_message_preview TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_runs_session ON runs(session_id);
+CREATE INDEX IF NOT EXISTS idx_runs_started ON runs(started_at DESC);
+CREATE INDEX IF NOT EXISTS idx_runs_status ON runs(status);
+CREATE INDEX IF NOT EXISTS idx_runs_source ON runs(source);
+                    """)
+                except sqlite3.OperationalError:
+                    pass
+                cursor.execute("UPDATE schema_version SET version = 5")
+            if current_version < 6:
+                # v6: workspaces table for per-run ephemeral workspace tracking
+                try:
+                    cursor.executescript("""
+CREATE TABLE IF NOT EXISTS workspaces (
+    id TEXT PRIMARY KEY,
+    run_id TEXT,
+    session_id TEXT,
+    path TEXT NOT NULL,
+    policy TEXT NOT NULL DEFAULT 'full_access',
+    write_policy TEXT NOT NULL DEFAULT 'full_write',
+    created_at REAL NOT NULL,
+    expires_at REAL,
+    status TEXT NOT NULL DEFAULT 'active',
+    repo_roots TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_workspaces_run ON workspaces(run_id);
+CREATE INDEX IF NOT EXISTS idx_workspaces_session ON workspaces(session_id);
+CREATE INDEX IF NOT EXISTS idx_workspaces_status ON workspaces(status);
+CREATE INDEX IF NOT EXISTS idx_workspaces_expires ON workspaces(expires_at);
+                    """)
+                except sqlite3.OperationalError:
+                    pass
+                cursor.execute("UPDATE schema_version SET version = 6")
+            if current_version < 7:
+                # v7: eval_results table + structured A2A columns on runs
+                for col in ("structured_input", "structured_output", "agent_contract"):
+                    try:
+                        cursor.execute(f"ALTER TABLE runs ADD COLUMN {col} TEXT")
+                    except sqlite3.OperationalError:
+                        pass  # column already exists
+                try:
+                    cursor.executescript("""
+CREATE TABLE IF NOT EXISTS eval_results (
+    id TEXT PRIMARY KEY,
+    suite_name TEXT NOT NULL,
+    suite_run_id TEXT NOT NULL,
+    case_id TEXT NOT NULL,
+    case_name TEXT NOT NULL,
+    run_id TEXT,
+    started_at REAL NOT NULL,
+    ended_at REAL,
+    passed INTEGER NOT NULL DEFAULT 0,
+    score REAL NOT NULL DEFAULT 0.0,
+    assertion_results TEXT,
+    output_preview TEXT,
+    error TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_eval_results_suite ON eval_results(suite_name, started_at DESC);
+CREATE INDEX IF NOT EXISTS idx_eval_results_suite_run ON eval_results(suite_run_id);
+CREATE INDEX IF NOT EXISTS idx_eval_results_case ON eval_results(case_id);
+                    """)
+                except sqlite3.OperationalError:
+                    pass
+                cursor.execute("UPDATE schema_version SET version = 7")
+            if current_version < 8:
+                # v8: agent_id column on runs — identifies which AgentAdapter
+                # created the run (e.g. "hermes").  NULL for pre-v8 runs.
+                try:
+                    cursor.execute("ALTER TABLE runs ADD COLUMN agent_id TEXT")
+                except sqlite3.OperationalError:
+                    pass  # column already exists
+                cursor.execute("UPDATE schema_version SET version = 8")
 
         # Unique title index — always ensure it exists (safe to run after migrations
         # since the title column is guaranteed to exist at this point)
@@ -767,6 +932,296 @@ class SessionDB:
         self._conn.execute("DELETE FROM sessions WHERE id = ?", (session_id,))
         self._conn.commit()
         return True
+
+    # =========================================================================
+    # Run records (auditability)
+    # =========================================================================
+
+    def create_run(
+        self,
+        run_id: str,
+        session_id: str,
+        source: str,
+        model: str,
+        provider: str,
+        user_message_preview: str,
+        user_id: str = None,
+        trigger_type: str = "user_message",
+        parent_run_id: str = None,
+        agent_id: str = None,
+    ) -> str:
+        """Insert a new run record in 'running' status. Returns run_id."""
+        try:
+            self._conn.execute(
+                """INSERT INTO runs
+                   (id, session_id, source, user_id, model, provider,
+                    trigger_type, parent_run_id, started_at, status,
+                    user_message_preview, agent_id)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (
+                    run_id, session_id, source, user_id, model, provider,
+                    trigger_type, parent_run_id, time.time(), "running",
+                    (user_message_preview or "")[:200], agent_id,
+                ),
+            )
+            self._conn.commit()
+        except Exception:
+            pass  # run records are best-effort
+        return run_id
+
+    def end_run(
+        self,
+        run_id: str,
+        status: str,
+        api_call_count: int = 0,
+        input_tokens: int = 0,
+        output_tokens: int = 0,
+        tool_sequence: Any = None,
+        approval_events: Any = None,
+        error_details: str = None,
+        final_output_preview: str = None,
+    ) -> None:
+        """Finalize a run record with outcome data."""
+        try:
+            self._conn.execute(
+                """UPDATE runs SET
+                   ended_at = ?, status = ?, api_call_count = ?,
+                   input_tokens = ?, output_tokens = ?,
+                   tool_sequence = ?, approval_events = ?,
+                   error_details = ?, final_output_preview = ?
+                   WHERE id = ?""",
+                (
+                    time.time(), status, api_call_count,
+                    input_tokens, output_tokens,
+                    json.dumps(tool_sequence) if tool_sequence else None,
+                    json.dumps(approval_events) if approval_events else None,
+                    error_details,
+                    (final_output_preview or "")[:500],
+                    run_id,
+                ),
+            )
+            self._conn.commit()
+        except Exception:
+            pass
+
+    def update_run_field(self, run_id: str, **fields) -> None:
+        """Update arbitrary JSON fields on a run record."""
+        allowed = {
+            "tool_sequence", "approval_events", "status",
+            "parent_run_id", "structured_input", "structured_output", "agent_contract",
+        }
+        sets = []
+        params = []
+        for k, v in fields.items():
+            if k not in allowed:
+                continue
+            sets.append(f"{k} = ?")
+            params.append(json.dumps(v) if isinstance(v, (list, dict)) else v)
+        if not sets:
+            return
+        params.append(run_id)
+        try:
+            self._conn.execute(
+                f"UPDATE runs SET {', '.join(sets)} WHERE id = ?", params
+            )
+            self._conn.commit()
+        except Exception:
+            pass
+
+    def get_run(self, run_id: str) -> Optional[Dict[str, Any]]:
+        """Return a run record dict or None."""
+        cursor = self._conn.execute("SELECT * FROM runs WHERE id = ?", (run_id,))
+        row = cursor.fetchone()
+        if row is None:
+            return None
+        r = dict(row)
+        for field in ("tool_sequence", "approval_events"):
+            if r.get(field):
+                try:
+                    r[field] = json.loads(r[field])
+                except Exception:
+                    pass
+        return r
+
+    def list_runs(
+        self,
+        source: str = None,
+        status: str = None,
+        limit: int = 20,
+        offset: int = 0,
+    ) -> List[Dict[str, Any]]:
+        """List run records newest-first, optionally filtered."""
+        clauses: List[str] = []
+        params: List[Any] = []
+        if source:
+            clauses.append("source = ?")
+            params.append(source)
+        if status:
+            clauses.append("status = ?")
+            params.append(status)
+        where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
+        params.extend([limit, offset])
+        cursor = self._conn.execute(
+            f"SELECT * FROM runs {where} ORDER BY started_at DESC LIMIT ? OFFSET ?",
+            params,
+        )
+        rows = []
+        for row in cursor.fetchall():
+            r = dict(row)
+            for field in ("tool_sequence", "approval_events"):
+                if r.get(field):
+                    try:
+                        r[field] = json.loads(r[field])
+                    except Exception:
+                        pass
+            rows.append(r)
+        return rows
+
+    # =========================================================================
+    # Workspace records
+    # =========================================================================
+
+    def create_workspace(
+        self,
+        workspace_id: str,
+        path: str,
+        policy: str,
+        write_policy: str,
+        created_at: float,
+        run_id: str = None,
+        session_id: str = None,
+        expires_at: float = None,
+        repo_roots: str = None,
+    ) -> None:
+        """Insert a new workspace record."""
+        self._conn.execute(
+            """INSERT OR IGNORE INTO workspaces
+               (id, run_id, session_id, path, policy, write_policy,
+                created_at, expires_at, status, repo_roots)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', ?)""",
+            (workspace_id, run_id, session_id, path, policy, write_policy,
+             created_at, expires_at, repo_roots),
+        )
+        self._conn.commit()
+
+    def update_workspace_status(self, workspace_id: str, status: str) -> None:
+        """Update the status of a workspace record."""
+        self._conn.execute(
+            "UPDATE workspaces SET status = ? WHERE id = ?",
+            (status, workspace_id),
+        )
+        self._conn.commit()
+
+    def list_workspaces(
+        self,
+        status: str = None,
+        run_id: str = None,
+        limit: int = 50,
+    ) -> List[Dict[str, Any]]:
+        """List workspace records, optionally filtered."""
+        clauses: List[str] = []
+        params: List[Any] = []
+        if status:
+            clauses.append("status = ?")
+            params.append(status)
+        if run_id:
+            clauses.append("run_id = ?")
+            params.append(run_id)
+        where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
+        params.append(limit)
+        cursor = self._conn.execute(
+            f"SELECT * FROM workspaces {where} ORDER BY created_at DESC LIMIT ?",
+            params,
+        )
+        return [dict(row) for row in cursor.fetchall()]
+
+    # =========================================================================
+    # Eval results (evals framework)
+    # =========================================================================
+
+    def save_eval_case_result(self, case_result) -> None:
+        """Persist a single eval case result.  Best-effort."""
+        try:
+            self._conn.execute(
+                """INSERT OR REPLACE INTO eval_results
+                   (id, suite_name, suite_run_id, case_id, case_name, run_id,
+                    started_at, ended_at, passed, score, assertion_results,
+                    output_preview, error)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (
+                    case_result.id,
+                    case_result.suite_id,
+                    getattr(case_result, "suite_run_id", ""),
+                    case_result.case_id,
+                    case_result.case_name,
+                    case_result.run_id,
+                    getattr(case_result, "started_at", None),
+                    getattr(case_result, "ended_at", None),
+                    1 if case_result.passed else 0,
+                    round(case_result.score, 4),
+                    json.dumps([a.to_dict() for a in case_result.assertion_results]),
+                    (case_result.output_preview or "")[:500],
+                    case_result.error,
+                ),
+            )
+            self._conn.commit()
+        except Exception:
+            pass  # best-effort
+
+    def save_eval_suite_result(self, suite_result) -> None:
+        """Persist summary row for a suite run.  Best-effort."""
+        # Store each case result; the suite-level summary is derivable
+        for case_result in (suite_result.case_results or []):
+            # Attach suite_run_id from the parent suite result
+            if not getattr(case_result, "suite_run_id", None):
+                case_result.suite_run_id = suite_result.id
+            self.save_eval_case_result(case_result)
+
+    def list_eval_results(
+        self,
+        suite_name: str = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> List[Dict[str, Any]]:
+        """List eval results, newest first, optionally filtered by suite."""
+        clauses: List[str] = []
+        params: List[Any] = []
+        if suite_name:
+            clauses.append("suite_name = ?")
+            params.append(suite_name)
+        where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
+        params.extend([limit, offset])
+        cursor = self._conn.execute(
+            f"SELECT * FROM eval_results {where} ORDER BY started_at DESC LIMIT ? OFFSET ?",
+            params,
+        )
+        rows = []
+        for row in cursor.fetchall():
+            r = dict(row)
+            if r.get("assertion_results"):
+                try:
+                    r["assertion_results"] = json.loads(r["assertion_results"])
+                except Exception:
+                    pass
+            rows.append(r)
+        return rows
+
+    def get_eval_suite_summary(self, suite_name: str, limit: int = 5) -> List[Dict[str, Any]]:
+        """Return per-suite-run summaries (pass rate, case count) newest first."""
+        cursor = self._conn.execute(
+            """SELECT suite_run_id,
+                      MIN(started_at) AS started_at,
+                      COUNT(*) AS total_cases,
+                      SUM(passed) AS passed_cases,
+                      AVG(score) AS avg_score
+               FROM eval_results
+               WHERE suite_name = ?
+               GROUP BY suite_run_id
+               ORDER BY started_at DESC
+               LIMIT ?""",
+            (suite_name, limit),
+        )
+        return [dict(row) for row in cursor.fetchall()]
 
     def prune_sessions(self, older_than_days: int = 90, source: str = None) -> int:
         """
