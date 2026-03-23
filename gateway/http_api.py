@@ -7088,6 +7088,10 @@ function setup() {
     completing: false,
     completeError: null,
 
+    // Server-instance timestamp — read once from <meta name="setup-ts"> so all
+    // methods can use it without scope issues (set in init, used in _saveProgress)
+    _serverTs: 0,
+
     // Compare event log
     compareLog: [],
     compareLogOpen: false,
@@ -7120,13 +7124,13 @@ function setup() {
       // Restore full wizard progress so a refresh resumes from where the user left off
       // But only if the session belongs to this server instance — a pod restart (e.g.
       // HERMES_WIPE_ON_START) invalidates saved state so the intro always shows fresh.
-      const _pageTs = parseInt(document.querySelector('meta[name="setup-ts"]')?.content || '0');
+      this._serverTs = parseInt(document.querySelector('meta[name="setup-ts"]')?.content || '0');
       let restoredFromProgress = false;
       try {
         const saved = localStorage.getItem('logos_setup_progress_v2');
         if (saved) {
           const s = JSON.parse(saved);
-          const _svrMatch = _pageTs > 0 && s.serverTs === _pageTs;
+          const _svrMatch = this._serverTs > 0 && s.serverTs === this._serverTs;
           if (s?.ts && Date.now() - s.ts < 60 * 60 * 1000 && _svrMatch) {
             this.step           = s.step || 0;
             this.introConfirmed = s.introConfirmed ?? (this.step > 0);
@@ -7186,7 +7190,7 @@ function setup() {
       try {
         localStorage.setItem('logos_setup_progress_v2', JSON.stringify({
           ts:                     Date.now(),
-          serverTs:               _pageTs,
+          serverTs:               this._serverTs,
           step:                   this.step,
           introConfirmed:         this.introConfirmed,
           track:                  this.track,
