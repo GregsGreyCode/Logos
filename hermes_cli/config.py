@@ -314,8 +314,17 @@ DEFAULT_CONFIG = {
         "tirith_fail_open": True,
     },
 
+    # Runtime execution mode.
+    # "local"      — agents run as supervised local processes on the host machine
+    #                (required for Windows desktop; also works on Linux/macOS without a cluster)
+    # "kubernetes" — use the Kubernetes cluster (default for server/homelab deployments)
+    "runtime": {
+        "mode": "local",                    # "local" | "kubernetes"
+        "local_port_range": [8081, 8199],   # Port pool for local agent instances
+    },
+
     # Config schema version - bump this when adding new required fields
-    "_config_version": 7,
+    "_config_version": 8,
 }
 
 # =============================================================================

@@ -1,0 +1,210 @@
+"""
+LocalProcessExecutor — runs agent instances as supervised local processes.
+
+Each instance is a separate Python process running `gateway.run` on a
+dedicated port allocated from the configured port pool.
+
+State is persisted in ~/.hermes/instances.json so instances survive
+gateway restarts.
+
+Phase 3 implementation: port allocation, spawn, health check, list, delete.
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+import os
+import signal
+import subprocess
+import sys
+import time
+from pathlib import Path
+from typing import List, Optional
+
+from .base import InstanceConfig, ResourceHeadroom, SpawnedInstance
+
+logger = logging.getLogger(__name__)
+
+_HERMES_HOME = Path(os.getenv("HERMES_HOME", Path.home() / ".hermes"))
+_INSTANCES_FILE = _HERMES_HOME / "instances.json"
+_HEALTH_TIMEOUT = 15  # seconds to wait for instance health check
+
+
+def _load_instances() -> List[dict]:
+    try:
+        if _INSTANCES_FILE.exists():
+            return json.loads(_INSTANCES_FILE.read_text(encoding="utf-8"))
+    except Exception:
+        pass
+    return []
+
+
+def _save_instances(instances: List[dict]) -> None:
+    _INSTANCES_FILE.parent.mkdir(parents=True, exist_ok=True)
+    _INSTANCES_FILE.write_text(json.dumps(instances, indent=2), encoding="utf-8")
+
+
+def _is_alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+        return True
+    except (ProcessLookupError, PermissionError):
+        return False
+
+
+def _health_check(port: int, timeout: int = _HEALTH_TIMEOUT) -> bool:
+    """Poll http://127.0.0.1:{port}/health until ready or timeout."""
+    import urllib.request
+    url = f"http://127.0.0.1:{port}/health"
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            with urllib.request.urlopen(url, timeout=2) as r:
+                if r.status == 200:
+                    return True
+        except Exception:
+            pass
+        time.sleep(0.5)
+    return False
+
+
+class LocalProcessExecutor:
+    """
+    Manages agent instances as supervised local processes.
+
+    Suitable for Windows desktop and Linux/macOS workstations that do not
+    have (or do not want) a Kubernetes cluster.
+    """
+
+    def __init__(self, port_range: tuple[int, int] = (8081, 8199)):
+        self.port_min, self.port_max = port_range
+
+    def _allocate_port(self, instances: List[dict]) -> int:
+        used = {inst.get("port") for inst in instances}
+        for port in range(self.port_min, self.port_max + 1):
+            if port not in used:
+                return port
+        raise RuntimeError(
+            f"No free ports in range {self.port_min}–{self.port_max}. "
+            f"Stop some instances first."
+        )
+
+    def spawn(self, config: InstanceConfig) -> SpawnedInstance:
+        instances = _load_instances()
+
+        # Prune dead instances before allocating
+        instances = [i for i in instances if _is_alive(i.get("pid", -1))]
+
+        port = config.port if config.port else self._allocate_port(instances)
+        url = f"http://127.0.0.1:{port}"
+
+        env = {**os.environ, "HERMES_INSTANCE_NAME": config.name}
+        if config.soul_name and config.soul_name != "default":
+            env["HERMES_SOUL"] = config.soul_name
+
+        cmd = [sys.executable, "-m", "gateway.run", "--port", str(port)]
+        log_path = _HERMES_HOME / "logs" / f"instance_{config.name}.log"
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+
+        with open(log_path, "a") as log_fh:
+            proc = subprocess.Popen(
+                cmd,
+                env=env,
+                stdout=log_fh,
+                stderr=log_fh,
+                # Keep process alive independent of launcher on Unix;
+                # on Windows, Popen already detaches from the console.
+                start_new_session=True,
+            )
+
+        record = {
+            "name": config.name,
+            "url": url,
+            "port": port,
+            "pid": proc.pid,
+            "source": "local",
+            "soul_name": config.soul_name,
+            "model": config.model,
+            "requester": config.requester,
+        }
+        instances.append(record)
+        _save_instances(instances)
+
+        healthy = _health_check(port)
+        if not healthy:
+            logger.warning("Instance %s did not become healthy within %ds", config.name, _HEALTH_TIMEOUT)
+
+        return SpawnedInstance(
+            name=config.name,
+            url=url,
+            port=port,
+            pid=proc.pid,
+            source="local",
+            soul_name=config.soul_name,
+            model=config.model,
+            requester=config.requester,
+            healthy=healthy,
+        )
+
+    def list_instances(self) -> List[dict]:
+        instances = _load_instances()
+        alive = []
+        changed = False
+        for inst in instances:
+            pid = inst.get("pid", -1)
+            if _is_alive(pid):
+                inst["healthy"] = _health_check(inst["port"], timeout=2)
+                alive.append(inst)
+            else:
+                changed = True  # prune dead entry
+        if changed:
+            _save_instances(alive)
+        return alive
+
+    def delete_instance(self, name: str) -> None:
+        instances = _load_instances()
+        remaining = []
+        for inst in instances:
+            if inst.get("name") == name:
+                pid = inst.get("pid")
+                if pid:
+                    try:
+                        os.kill(pid, signal.SIGTERM)
+                        # Give it a moment to exit cleanly
+                        for _ in range(20):
+                            if not _is_alive(pid):
+                                break
+                            time.sleep(0.1)
+                        else:
+                            os.kill(pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+            else:
+                remaining.append(inst)
+        _save_instances(remaining)
+
+    def get_headroom(self) -> ResourceHeadroom:
+        try:
+            import psutil
+            cpu_free = psutil.cpu_count(logical=True) * (1 - psutil.cpu_percent(interval=0.1) / 100)
+            mem = psutil.virtual_memory()
+            mem_free_gb = mem.available / (1024 ** 3)
+            # Require at least 1 CPU core and 1 GB RAM free
+            can_spawn = cpu_free >= 1.0 and mem_free_gb >= 1.0
+            reason = "" if can_spawn else (
+                f"Low resources: {cpu_free:.1f} CPU cores, {mem_free_gb:.1f} GB RAM free"
+            )
+            return ResourceHeadroom(
+                available_cpu=cpu_free,
+                available_mem_gb=mem_free_gb,
+                can_spawn=can_spawn,
+                reason=reason,
+            )
+        except ImportError:
+            # psutil not available — allow spawn, log warning
+            logger.debug("psutil not installed; skipping resource headroom check")
+            return ResourceHeadroom(can_spawn=True)
+        except Exception as exc:
+            logger.warning("get_headroom failed: %s", exc)
+            return ResourceHeadroom(can_spawn=True)
