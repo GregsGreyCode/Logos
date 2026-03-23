@@ -381,22 +381,21 @@ def _start_icon_animation(icon) -> None:
         nonlocal hue
         while True:
             if _gateway_ready.is_set():
+                # Connected — cycle colours
+                try:
+                    icon.icon = _make_icon_at_hue(hue)
+                except Exception:
+                    pass
+                hue = (hue + _HUE_STEP) % 1.0
+                time.sleep(0.1)
+            else:
+                # Loading — greyscale/static
                 try:
                     icon.icon = _make_icon_greyscale()
                 except Exception:
                     pass
-                # No need to keep looping once settled — sleep long and check
-                # in case of a restart that clears the event.
-                _gateway_ready.wait(timeout=5)
-                if _gateway_ready.is_set():
-                    time.sleep(4.9)
-                continue
-            try:
-                icon.icon = _make_icon_at_hue(hue)
-            except Exception:
-                pass
-            hue = (hue + _HUE_STEP) % 1.0
-            time.sleep(0.1)
+                # Poll every 200 ms until ready, then start cycling
+                _gateway_ready.wait(timeout=0.2)
 
     threading.Thread(target=_loop, daemon=True, name="logos-icon-anim").start()
 
