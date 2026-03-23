@@ -6334,7 +6334,7 @@ _SETUP_HTML = """<!DOCTYPE html>
           <div class="text-sm font-medium text-white mb-3">Load a model in LM Studio first</div>
           <ol class="space-y-2.5 text-sm text-gray-400 mb-4 list-none">
             <li class="flex gap-3"><span class="w-5 h-5 rounded-full bg-gray-700 text-white text-xs flex items-center justify-center flex-shrink-0 mt-0.5 font-medium">1</span><span>Open the <span class="text-white font-medium">Model Search</span> tab, download models you like that are advised as being able to run on your hardware. Not sure what to pick? Ask a chatbot: <span class="italic text-gray-500">"Best LM Studio model for an AI agent with X GB VRAM?"</span></span></li>
-            <li class="flex gap-3"><span class="w-5 h-5 rounded-full bg-gray-700 text-white text-xs flex items-center justify-center flex-shrink-0 mt-0.5 font-medium">2</span><span>Go to the <span class="text-white font-medium">Developer</span> tab and start your server by clicking the slider button.</span></li>
+            <li class="flex gap-3"><span class="w-5 h-5 rounded-full bg-gray-700 text-white text-xs flex items-center justify-center flex-shrink-0 mt-0.5 font-medium">2</span><span>Open the <span class="text-white font-medium">Model Search</span> tab and download a variety of models (it will tell you if it&rsquo;s likely to fit on your hardware).</span></li>
             <li class="flex gap-3"><span class="w-5 h-5 rounded-full bg-gray-700 text-white text-xs flex items-center justify-center flex-shrink-0 mt-0.5 font-medium">3</span><span>Come back here and click Refresh.</span></li>
           </ol>
           <button @click="refreshModels()" class="btn-primary px-4 py-2 rounded-lg text-xs">Refresh model list</button>
@@ -6350,147 +6350,154 @@ _SETUP_HTML = """<!DOCTYPE html>
             <p class="text-gray-400 text-sm" x-show="compareDone">We&rsquo;ve pre-selected the best fit. You can override below.</p>
           </div>
 
-          <!-- Per-model progress rows -->
-          <div class="space-y-2 mb-4">
-            <template x-for="mid in compareTargets" :key="mid">
-              <div class="rounded-xl border transition-all duration-300 overflow-hidden"
-                :class="compareRecommended === mid && compareDone ? 'border-indigo-500 bg-indigo-950/20' : 'border-gray-800 bg-gray-900'">
-                <!-- Summary row — clickable once results are in -->
-                <div class="flex items-center justify-between px-3 py-2.5"
-                  :class="compareDone && compareResults[mid] && !compareResults[mid].error ? 'cursor-pointer hover:bg-white/5' : ''"
-                  @click="compareDone && compareResults[mid] && !compareResults[mid].error ? (compareExpanded = compareExpanded === mid ? null : mid) : null">
-                  <div class="flex items-center gap-2 min-w-0 flex-wrap">
-                    <span x-show="compareRecommended === mid && compareDone"
-                      class="spinner-hue text-[9px] px-1.5 py-0.5 rounded-full bg-indigo-900 text-indigo-300 border border-indigo-700 font-semibold uppercase tracking-wider flex-shrink-0">Best</span>
-                    <template x-if="compareDone && compareRecommended !== mid && serverBestFor(mid)">
-                      <span class="text-[9px] px-1.5 py-0.5 rounded-full bg-gray-800 text-gray-300 border border-gray-600 font-semibold uppercase tracking-wider flex-shrink-0"
-                        :x-text="'Best \u00b7 ' + serverBestFor(mid)"></span>
-                    </template>
-                    <span class="font-mono text-xs text-gray-200 truncate" x-text="mid"></span>
-                    <span class="text-[10px] text-gray-600 flex-shrink-0 font-mono"
-                      x-text="modelServer(mid) ? serverName(modelServer(mid)) : ''"></span>
-                  </div>
-                  <div class="flex items-center gap-2 flex-shrink-0 ml-3 text-xs">
-                    <!-- Queued -->
-                    <span x-show="compareTesting !== mid && !compareResults[mid]" class="text-gray-700">queued</span>
-                    <!-- Testing / loading -->
-                    <template x-if="compareTesting === mid">
-                      <div class="flex items-center gap-1.5">
-                        <div class="spinner-hue"><div class="w-3 h-3 border border-gray-700 border-t-indigo-400 rounded-full animate-spin"></div></div>
-                        <span class="text-gray-500" x-text="compareLoadingFor === mid ? 'loading\u2026' : 'testing\u2026'"></span>
-                      </div>
-                    </template>
-                    <!-- Result -->
-                    <template x-if="compareResults[mid]">
-                      <div class="flex items-center gap-2">
-                        <template x-if="compareResults[mid].error">
-                          <span class="text-red-500">error</span>
-                        </template>
-                        <template x-if="!compareResults[mid].error">
-                          <div class="flex items-center gap-2">
-                            <span class="font-mono font-semibold"
-                              :class="{
-                                'text-green-400':  compareResults[mid].tok_s >= 30,
-                                'text-indigo-400': compareResults[mid].tok_s >= 15 && compareResults[mid].tok_s < 30,
-                                'text-yellow-400': compareResults[mid].tok_s >= 6  && compareResults[mid].tok_s < 15,
-                                'text-red-400':    compareResults[mid].tok_s < 6,
-                              }"
-                              x-text="compareResults[mid].tok_s + ' tok/s'"></span>
-                            <span :class="compareResults[mid].quality_pass ? 'text-green-500' : 'text-yellow-600'"
-                              x-text="compareResults[mid].quality_pass ? '\u2713' : '\u26a0'"></span>
-                            <span x-show="compareDone" class="text-gray-700 text-[10px]"
-                              x-text="compareExpanded === mid ? '\u25b4' : '\u25be'"></span>
-                          </div>
-                        </template>
-                      </div>
-                    </template>
-                  </div>
+          <!-- Per-server benchmark sections -->
+          <div class="space-y-5 mb-4">
+            <template x-for="server in selectedServers" :key="server.endpoint">
+              <div>
+                <!-- Server header — only shown when multiple servers are selected -->
+                <div x-show="selectedServers.length > 1" class="flex items-center gap-2 mb-2 pb-1.5 border-b border-gray-800/40">
+                  <span class="text-xs font-semibold text-gray-300" x-text="serverName(server)"></span>
+                  <span class="text-[11px] text-gray-600 font-mono" x-text="server.endpoint"></span>
                 </div>
-                <!-- Expanded detail panel -->
-                <div x-show="compareExpanded === mid && compareResults[mid] && !compareResults[mid].error"
-                  class="px-3 pb-3 border-t border-gray-800/60 pt-2.5 space-y-2">
-                  <!-- Speed + TTFT -->
-                  <div class="flex items-center gap-4 text-xs">
-                    <div>
-                      <span class="text-gray-600">Speed</span>
-                      <span class="ml-1.5 font-mono font-semibold"
-                        :class="{
-                          'text-green-400':  compareResults[mid]?.tok_s >= 30,
-                          'text-indigo-400': compareResults[mid]?.tok_s >= 15 && compareResults[mid]?.tok_s < 30,
-                          'text-yellow-400': compareResults[mid]?.tok_s >= 6  && compareResults[mid]?.tok_s < 15,
-                          'text-red-400':    compareResults[mid]?.tok_s < 6,
-                        }"
-                        x-text="compareResults[mid]?.tok_s + ' tok/s'"></span>
-                      <span class="ml-1 text-gray-600"
-                        x-text="compareResults[mid]?.tok_s >= 30 ? '(fast)' : compareResults[mid]?.tok_s >= 15 ? '(good)' : compareResults[mid]?.tok_s >= 6 ? '(usable — may feel slow)' : '(too slow for agent use)'"></span>
+
+                <!-- Model rows for this server -->
+                <div class="space-y-2">
+                  <template x-for="mid in compareTargetsForServer(server.endpoint)" :key="mid">
+                    <div class="rounded-xl border transition-all duration-300 overflow-hidden"
+                      :class="serverModelForServer(server.endpoint) === mid && compareDone ? 'border-indigo-500 bg-indigo-950/20' : 'border-gray-800 bg-gray-900'">
+                      <!-- Summary row — clickable once results are in -->
+                      <div class="flex items-center justify-between px-3 py-2.5"
+                        :class="compareDone && compareResults[mid] && !compareResults[mid].error ? 'cursor-pointer hover:bg-white/5' : ''"
+                        @click="compareDone && compareResults[mid] && !compareResults[mid].error ? (compareExpanded = compareExpanded === mid ? null : mid) : null">
+                        <div class="flex items-center gap-2 min-w-0 flex-wrap">
+                          <span x-show="serverModelForServer(server.endpoint) === mid && compareDone"
+                            class="spinner-hue text-[9px] px-1.5 py-0.5 rounded-full bg-indigo-900 text-indigo-300 border border-indigo-700 font-semibold uppercase tracking-wider flex-shrink-0">Best</span>
+                          <span class="font-mono text-xs text-gray-200 truncate" x-text="mid"></span>
+                        </div>
+                        <div class="flex items-center gap-2 flex-shrink-0 ml-3 text-xs">
+                          <!-- Queued -->
+                          <span x-show="compareTesting !== mid && !compareResults[mid]" class="text-gray-700">queued</span>
+                          <!-- Testing / loading -->
+                          <template x-if="compareTesting === mid">
+                            <div class="flex items-center gap-1.5">
+                              <div class="spinner-hue"><div class="w-3 h-3 border border-gray-700 border-t-indigo-400 rounded-full animate-spin"></div></div>
+                              <span class="text-gray-500" x-text="compareLoadingFor === mid ? 'loading\u2026' : 'testing\u2026'"></span>
+                            </div>
+                          </template>
+                          <!-- Result -->
+                          <template x-if="compareResults[mid]">
+                            <div class="flex items-center gap-2">
+                              <template x-if="compareResults[mid].error">
+                                <span class="text-red-500">error</span>
+                              </template>
+                              <template x-if="!compareResults[mid].error">
+                                <div class="flex items-center gap-2">
+                                  <span class="font-mono font-semibold"
+                                    :class="{
+                                      'text-green-400':  compareResults[mid].tok_s >= 30,
+                                      'text-indigo-400': compareResults[mid].tok_s >= 15 && compareResults[mid].tok_s < 30,
+                                      'text-yellow-400': compareResults[mid].tok_s >= 6  && compareResults[mid].tok_s < 15,
+                                      'text-red-400':    compareResults[mid].tok_s < 6,
+                                    }"
+                                    x-text="compareResults[mid].tok_s + ' tok/s'"></span>
+                                  <span :class="compareResults[mid].quality_pass ? 'text-green-500' : 'text-yellow-600'"
+                                    x-text="compareResults[mid].quality_pass ? '\u2713' : '\u26a0'"></span>
+                                  <span x-show="compareDone" class="text-gray-700 text-[10px]"
+                                    x-text="compareExpanded === mid ? '\u25b4' : '\u25be'"></span>
+                                </div>
+                              </template>
+                            </div>
+                          </template>
+                        </div>
+                      </div>
+                      <!-- Expanded detail panel -->
+                      <div x-show="compareExpanded === mid && compareResults[mid] && !compareResults[mid].error"
+                        class="px-3 pb-3 border-t border-gray-800/60 pt-2.5 space-y-2">
+                        <!-- Speed + TTFT -->
+                        <div class="flex items-center gap-4 text-xs">
+                          <div>
+                            <span class="text-gray-600">Speed</span>
+                            <span class="ml-1.5 font-mono font-semibold"
+                              :class="{
+                                'text-green-400':  compareResults[mid]?.tok_s >= 30,
+                                'text-indigo-400': compareResults[mid]?.tok_s >= 15 && compareResults[mid]?.tok_s < 30,
+                                'text-yellow-400': compareResults[mid]?.tok_s >= 6  && compareResults[mid]?.tok_s < 15,
+                                'text-red-400':    compareResults[mid]?.tok_s < 6,
+                              }"
+                              x-text="compareResults[mid]?.tok_s + ' tok/s'"></span>
+                            <span class="ml-1 text-gray-600"
+                              x-text="compareResults[mid]?.tok_s >= 30 ? '(fast)' : compareResults[mid]?.tok_s >= 15 ? '(good)' : compareResults[mid]?.tok_s >= 6 ? '(usable \u2014 may feel slow)' : '(too slow for agent use)'"></span>
+                          </div>
+                          <div x-show="compareResults[mid]?.ttft_ms">
+                            <span class="text-gray-600">TTFT</span>
+                            <span class="ml-1.5 font-mono text-gray-300" x-text="compareResults[mid]?.ttft_ms + 'ms'"></span>
+                          </div>
+                        </div>
+                        <!-- Eval breakdown -->
+                        <div class="grid grid-cols-2 gap-x-4 gap-y-1 text-[11px]">
+                          <div class="flex items-center gap-1.5">
+                            <span :class="compareResults[mid]?.eval?.instruction ? 'text-green-500' : 'text-red-400'"
+                              x-text="compareResults[mid]?.eval?.instruction ? '\u2713' : '\u2717'"></span>
+                            <span class="text-gray-400">Instruction following</span>
+                          </div>
+                          <div class="flex items-center gap-1.5">
+                            <span :class="compareResults[mid]?.eval?.reasoning ? 'text-green-500' : 'text-red-400'"
+                              x-text="compareResults[mid]?.eval?.reasoning ? '\u2713' : '\u2717'"></span>
+                            <span class="text-gray-400">Reasoning</span>
+                          </div>
+                          <div class="flex items-center gap-1.5">
+                            <span :class="compareResults[mid]?.eval?.format ? 'text-green-500' : 'text-red-400'"
+                              x-text="compareResults[mid]?.eval?.format ? '\u2713' : '\u2717'"></span>
+                            <span class="text-gray-400">JSON format</span>
+                          </div>
+                          <div class="flex items-center gap-1.5">
+                            <span :class="compareResults[mid]?.eval?.tool_call ? 'text-green-500' : 'text-red-400'"
+                              x-text="compareResults[mid]?.eval?.tool_call ? '\u2713' : '\u2717'"></span>
+                            <span class="text-gray-400">Tool selection</span>
+                          </div>
+                        </div>
+                        <!-- Why not selected (if not the best for this server) -->
+                        <div x-show="serverModelForServer(server.endpoint) !== mid && compareDone" class="text-[11px] text-gray-600 pt-0.5">
+                          <template x-if="compareResults[mid]?.eval?.score < 3">
+                            <span>Not selected: failed
+                              <span class="text-red-400/80" x-text="[
+                                !compareResults[mid]?.eval?.instruction && 'instruction following',
+                                !compareResults[mid]?.eval?.reasoning   && 'reasoning',
+                                !compareResults[mid]?.eval?.format      && 'JSON format',
+                                !compareResults[mid]?.eval?.tool_call   && 'tool selection',
+                              ].filter(Boolean).join(', ')"></span>
+                              — agent loops may break.
+                            </span>
+                          </template>
+                          <template x-if="compareResults[mid]?.eval?.score >= 3 && compareResults[mid]?.tok_s < 6">
+                            <span>Not selected: too slow for interactive agent use.</span>
+                          </template>
+                          <template x-if="compareResults[mid]?.eval?.score >= 3 && compareResults[mid]?.tok_s >= 6">
+                            <span>Not selected: another model scored higher overall.</span>
+                          </template>
+                        </div>
+                        <!-- Use this model for this machine -->
+                        <button @click="pickServerModel(server.endpoint, mid); compareExpanded = null"
+                          class="text-[11px] text-indigo-400 hover:text-indigo-300 transition-colors">
+                          Use this model for this machine &rarr;
+                        </button>
+                      </div>
                     </div>
-                    <div x-show="compareResults[mid]?.ttft_ms">
-                      <span class="text-gray-600">TTFT</span>
-                      <span class="ml-1.5 font-mono text-gray-300" x-text="compareResults[mid]?.ttft_ms + 'ms'"></span>
-                    </div>
+                  </template>
+
+                  <!-- Waiting to start for this server -->
+                  <div x-show="compareTargetsForServer(server.endpoint).length === 0 && compareRunning" class="flex items-center gap-2 py-2 text-gray-600 text-sm">
+                    <div class="spinner-hue"><div class="w-3 h-3 border border-gray-700 border-t-indigo-400 rounded-full animate-spin"></div></div>
+                    <span>Scanning models&hellip;</span>
                   </div>
-                  <!-- Eval breakdown -->
-                  <div class="grid grid-cols-2 gap-x-4 gap-y-1 text-[11px]">
-                    <div class="flex items-center gap-1.5">
-                      <span :class="compareResults[mid]?.eval?.instruction ? 'text-green-500' : 'text-red-400'"
-                        x-text="compareResults[mid]?.eval?.instruction ? '\u2713' : '\u2717'"></span>
-                      <span class="text-gray-400">Instruction following</span>
-                    </div>
-                    <div class="flex items-center gap-1.5">
-                      <span :class="compareResults[mid]?.eval?.reasoning ? 'text-green-500' : 'text-red-400'"
-                        x-text="compareResults[mid]?.eval?.reasoning ? '\u2713' : '\u2717'"></span>
-                      <span class="text-gray-400">Reasoning</span>
-                    </div>
-                    <div class="flex items-center gap-1.5">
-                      <span :class="compareResults[mid]?.eval?.format ? 'text-green-500' : 'text-red-400'"
-                        x-text="compareResults[mid]?.eval?.format ? '\u2713' : '\u2717'"></span>
-                      <span class="text-gray-400">JSON format</span>
-                    </div>
-                    <div class="flex items-center gap-1.5">
-                      <span :class="compareResults[mid]?.eval?.tool_call ? 'text-green-500' : 'text-red-400'"
-                        x-text="compareResults[mid]?.eval?.tool_call ? '\u2713' : '\u2717'"></span>
-                      <span class="text-gray-400">Tool selection</span>
-                    </div>
-                  </div>
-                  <!-- Why not selected (if not the best) -->
-                  <div x-show="compareRecommended !== mid && compareDone" class="text-[11px] text-gray-600 pt-0.5">
-                    <template x-if="compareResults[mid]?.eval?.score < 3">
-                      <span>Not selected: failed
-                        <span class="text-red-400/80" x-text="[
-                          !compareResults[mid]?.eval?.instruction && 'instruction following',
-                          !compareResults[mid]?.eval?.reasoning   && 'reasoning',
-                          !compareResults[mid]?.eval?.format      && 'JSON format',
-                          !compareResults[mid]?.eval?.tool_call   && 'tool selection',
-                        ].filter(Boolean).join(', ')"></span>
-                        — agent loops may break.
-                      </span>
-                    </template>
-                    <template x-if="compareResults[mid]?.eval?.score >= 3 && compareResults[mid]?.tok_s < 6">
-                      <span>Not selected: too slow for interactive agent use.</span>
-                    </template>
-                    <template x-if="compareResults[mid]?.eval?.score >= 3 && compareResults[mid]?.tok_s >= 6">
-                      <span>Not selected: another model scored higher overall.</span>
-                    </template>
-                  </div>
-                  <!-- Select this model override -->
-                  <button @click="pickModel(getModels().find(m => m.id === mid)); compareExpanded = null"
-                    class="text-[11px] text-indigo-400 hover:text-indigo-300 transition-colors">
-                    Use this model instead &rarr;
-                  </button>
                 </div>
               </div>
             </template>
 
-            <!-- Loading model notice -->
+            <!-- Loading model notice (global) -->
             <div x-show="compareLoadingFor" class="text-xs text-amber-400/80 px-1 flex items-center gap-1.5">
               <div class="spinner-hue"><div class="w-2.5 h-2.5 border border-amber-900 border-t-amber-400 rounded-full animate-spin"></div></div>
               <span>Loading <span class="font-mono" x-text="compareLoadingFor"></span> into memory&hellip;</span>
-            </div>
-
-            <!-- Waiting to start (no targets yet) -->
-            <div x-show="compareTargets.length === 0 && compareRunning" class="flex items-center gap-2 py-2 text-gray-600 text-sm">
-              <div class="spinner-hue"><div class="w-3 h-3 border border-gray-700 border-t-indigo-400 rounded-full animate-spin"></div></div>
-              <span>Scanning models&hellip;</span>
             </div>
           </div>
 
@@ -6561,10 +6568,10 @@ _SETUP_HTML = """<!DOCTYPE html>
           </div>
 
           <!-- Continue (only shown after comparison completes) -->
-          <div x-show="compareDone && selectedModel" x-transition.opacity>
+          <div x-show="compareDone && allServersHaveModel()" x-transition.opacity>
             <button @click="goNext()"
-              class="btn-primary w-full py-2.5 rounded-xl text-sm">
-              Confirm default model &rarr;
+              class="btn-primary w-full py-2.5 rounded-xl text-sm"
+              x-text="selectedServers.length > 1 ? 'Confirm model assignments \u2192' : 'Confirm default model \u2192'">
             </button>
           </div>
 
@@ -6974,6 +6981,7 @@ function setup() {
     compareFastRecommended: null,
     compareFastReason: '',
     compareServerRecs: {},
+    serverModelSelections: {},
     compareExpanded: null,
 
     selectedModel: null,
@@ -7149,6 +7157,7 @@ function setup() {
               this.compareFastRecommended = s.compareFastRecommended || null;
               this.compareFastReason      = s.compareFastReason      || '';
               this.compareServerRecs      = s.compareServerRecs      || {};
+              this.serverModelSelections  = s.serverModelSelections  || {};
               this.compareDone            = true;
             }
             if (s.selectedModel)     this.selectedModel     = s.selectedModel;
@@ -7204,6 +7213,7 @@ function setup() {
           compareFastRecommended: this.compareFastRecommended,
           compareFastReason:      this.compareFastReason,
           compareServerRecs:      this.compareServerRecs,
+          serverModelSelections:  this.serverModelSelections,
           compareDone:            this.compareDone,
           selectedModel:          this.selectedModel,
           execEnv:                this.execEnv,
@@ -7428,6 +7438,12 @@ function setup() {
                 this.compareFastRecommended  = ev.fast_recommendation || null;
                 this.compareFastReason       = ev.fast_reason || '';
                 this.compareServerRecs       = ev.per_server_recommendations || {};
+                // Seed per-server selections from benchmark recommendations
+                for (const [ep, rec] of Object.entries(this.compareServerRecs)) {
+                  if (!this.serverModelSelections[ep] && rec && rec.model) {
+                    this.serverModelSelections = { ...this.serverModelSelections, [ep]: rec.model };
+                  }
+                }
                 if (ev.recommendation) {
                   const m = models.find(x => x.id === ev.recommendation);
                   if (m) this.pickModel(m);
@@ -7562,6 +7578,34 @@ function setup() {
     secondaryModels() {
       const targets = new Set(this.compareTargets);
       return this.getModels().filter(m => !targets.has(m.id));
+    },
+
+    // Models in compareTargets that belong to a given server endpoint
+    compareTargetsForServer(ep) {
+      const models = this.getModels();
+      const byEp = new Set(models.filter(m => m._serverEndpoint === ep).map(m => m.id));
+      return this.compareTargets.filter(mid => byEp.has(mid));
+    },
+
+    // User-selected (or benchmark-recommended) model for a given server endpoint
+    serverModelForServer(ep) {
+      return this.serverModelSelections[ep] || (this.compareServerRecs[ep] || {}).model || null;
+    },
+
+    // Override the default model for a specific server; also update selectedModel if it's the primary
+    pickServerModel(ep, modelId) {
+      this.serverModelSelections = { ...this.serverModelSelections, [ep]: modelId };
+      const primaryEp = this.activeServer && this.activeServer.endpoint;
+      if (ep === primaryEp || this.selectedServers.length === 1) {
+        const m = this.getModels().find(x => x.id === modelId);
+        if (m) this.pickModel(m);
+      }
+    },
+
+    // True once every selected server has a model assigned
+    allServersHaveModel() {
+      if (!this.compareDone) return false;
+      return this.selectedServers.length > 0 && this.selectedServers.every(s => !!this.serverModelForServer(s.endpoint));
     },
 
     formatSize(bytes) {
@@ -7746,7 +7790,7 @@ function setup() {
               type:              s.type || 'unknown',
               api_key:           s._apiKey || '',
               name:              s.customName || s.name || '',
-              recommended_model: (this.compareServerRecs[s.endpoint] || {}).model || null,
+              recommended_model: this.serverModelSelections[s.endpoint] || (this.compareServerRecs[s.endpoint] || {}).model || null,
             })),
           }),
         });
