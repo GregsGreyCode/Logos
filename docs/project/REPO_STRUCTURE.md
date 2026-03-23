@@ -130,7 +130,7 @@ Move these if they appear at root:
 | `*_plan.md`, `*_spec.md`, `*_notes.md` | `docs/project/` |
 | `RELEASE_*.md` | `docs/project/` |
 | `CRITIQUE.md`, `COMPARISON.md`, `BUILD_AND_DEPLOY.md` | `docs/project/` |
-| One-off scripts (`run_agent.py`, `batch_runner.py`, etc.) | `scripts/` or delete if unused |
+| One-off scripts (`batch_runner.py`, etc.) | `scripts/` or delete if unused |
 | Temporary output files | `.gitignore` them; never commit |
 | `*.example` config files | `docs/` or `scripts/` with a README |
 | `node_modules/` | Should be in `.gitignore` — never committed |
@@ -146,23 +146,20 @@ These files currently sit at root and should be moved or reviewed:
 
 | File | Action |
 |---|---|
-| `batch_runner.py` | Move to `scripts/` or delete if unused |
-| `run_agent.py` | Move to `scripts/` or delete if unused |
-| `mini_swe_runner.py` | Move to `scripts/` or delete if unused |
-| `rl_cli.py` | Move to `scripts/` or delete if unused |
-| `metrics.py` | Move to `core/` or `gateway/` depending on usage |
-| `runs.py` | Move to `core/` or `gateway/` |
-| `hermes_state.py`, `hermes_time.py`, `hermes_constants.py` | Move to `core/` |
-| `toolsets.py`, `toolset_distributions.py` | Move to `tools/` |
-| `model_tools.py` | Move to `tools/` or `agent/` |
-| `trajectory_compressor.py` | Move to `agent/` or `tools/` |
+| `batch_runner.py` | Move to a `runners/` package or `scripts/` |
+| `mini_swe_runner.py` | Move to a `runners/` package or `scripts/` |
+| `rl_cli.py` | Move to a `runners/` package or `scripts/` |
+| `metrics.py` | Move to `core/` |
+| `runs.py` | Move to `core/` |
 | `utils.py` | Move to `core/` |
 | `cli-config.yaml.example` | Move to `docs/` with explanation |
-| `setup-hermes.sh` | Move to `scripts/` and rename `setup.sh` |
 | `minisweagent_path.py` | Move to `scripts/` or delete |
 | `data/`, `logs/`, `temp_vision_images/` | Verify `.gitignore` coverage |
 
-These moves should be done carefully — each file likely has import paths that reference its current location. A dedicated refactor pass with find-and-replace on import statements is the right approach, not ad-hoc moves.
+**Already completed:**
+- `run_agent.py` — deleted; production runtime is now `agents/hermes/agent.py` (entrypoint `agents.hermes.agent:main`)
+- `hermes_state.py`, `hermes_time.py`, `hermes_constants.py`, `model_tools.py`, `toolsets.py`, `toolset_distributions.py`, `trajectory_compressor.py` — `core/` is now canonical; root-level files are thin re-export shims
+- `setup-hermes.sh` — archived to `archive/`
 
 ---
 

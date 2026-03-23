@@ -12,12 +12,11 @@ source .venv/bin/activate  # ALWAYS activate before running Python
 
 ```
 logos/                        ← repo root
-├── run_agent.py              # AIAgent class — active hermes-agent runtime (canonical)
-├── hermes_state.py           # SessionDB — SQLite session store v8 (canonical; core/state.py is stale)
-├── model_tools.py            # Tool orchestration, _discover_tools(), handle_function_call()
-├── toolsets.py               # Toolset definitions, _HERMES_CORE_TOOLS list
-├── hermes_constants.py       # Shared constants (OpenRouter, Nous API URLs)
-├── hermes_time.py            # Timezone-aware clock
+├── hermes_state.py           # Shim → core/state.py (SessionDB, SQLite session store)
+├── model_tools.py            # Shim → core/model_tools.py (tool orchestration, handle_function_call)
+├── toolsets.py               # Shim → core/toolsets.py (toolset definitions, _HERMES_CORE_TOOLS)
+├── hermes_constants.py       # Shim → core/constants.py (shared constants)
+├── hermes_time.py            # Shim → core/clock.py (timezone-aware clock)
 ├── utils.py                  # Shared utilities (atomic_json_write, etc.)
 ├── runs.py                   # Run audit trail (RunRecorder, RunReplayer)
 ├── metrics.py                # Prometheus-compatible metrics engine
@@ -79,15 +78,18 @@ logos/                        ← repo root
 │   ├── souls/                # Soul loader
 │   └── tools/                # Tool registry (logos-level)
 │
-├── core/                     # Shared module copies (NOTE: may lag root-level files)
-│   ├── state.py              # ⚠️  STALE — use hermes_state.py (schema v4 vs root v8)
-│   ├── constants.py          # Identical to hermes_constants.py
-│   ├── clock.py              # Identical to hermes_time.py
-│   ├── utils.py              # Identical to utils.py
-│   └── ...                   # Other copies — sync before using
+├── core/                     # Canonical platform modules (import from here)
+│   ├── state.py              # SessionDB — SQLite session store (canonical)
+│   ├── constants.py          # Shared constants (canonical)
+│   ├── clock.py              # Timezone-aware clock (canonical)
+│   ├── model_tools.py        # Tool orchestration, handle_function_call (canonical)
+│   ├── toolsets.py           # Toolset definitions, _HERMES_CORE_TOOLS (canonical)
+│   ├── toolset_distributions.py  # Toolset sampling distributions (canonical)
+│   ├── trajectory_compressor.py  # Trajectory compression (canonical)
+│   └── utils.py              # Shared utilities (canonical)
 │
-├── agents/hermes/            # Refactored hermes agent (WIP — not yet production)
-│   ├── agent.py              # Uses core.* imports; needs core/ sync before promoting
+├── agents/hermes/            # Production Hermes agent runtime
+│   ├── agent.py              # AIAgent class — production entrypoint (agents.hermes.agent:main)
 │   └── logos-agent.yaml      # Agent descriptor for Logos registry
 │
 ├── acp_adapter/              # ACP protocol server (VS Code / Zed / JetBrains)
@@ -120,14 +122,14 @@ tools/registry.py  (no deps — imported by all tool files)
        ↑
 tools/*.py  (each calls registry.register() at import time)
        ↑
-model_tools.py  (imports tools/registry + triggers tool discovery)
+core/model_tools.py  (imports tools/registry + triggers tool discovery)
        ↑
-run_agent.py, batch_runner.py, environments/
+agents/hermes/agent.py, batch_runner.py, environments/
 ```
 
 ---
 
-## AIAgent Class (run_agent.py)
+## AIAgent Class (agents/hermes/agent.py)
 
 ```python
 class AIAgent:
@@ -215,13 +217,13 @@ registry.register(
 )
 ```
 
-**2. Add import** in `model_tools.py` `_discover_tools()` list.
+**2. Add import** in `core/model_tools.py` `_discover_tools()` list.
 
-**3. Add to `toolsets.py`** — either `_HERMES_CORE_TOOLS` (all platforms) or a new toolset.
+**3. Add to `core/toolsets.py`** — either `_HERMES_CORE_TOOLS` (all platforms) or a new toolset.
 
 The registry handles schema collection, dispatch, availability checking, and error wrapping. All handlers MUST return a JSON string.
 
-**Agent-level tools** (todo, memory): intercepted by `run_agent.py` before `handle_function_call()`. See `todo_tool.py` for the pattern.
+**Agent-level tools** (todo, memory): intercepted by `agents/hermes/agent.py` before tool dispatch. See `todo_tool.py` for the pattern.
 
 ---
 
@@ -376,11 +378,11 @@ Rendering bugs in tmux/iTerm2 — ghosting on scroll. Use `curses` (stdlib) inst
 ### DO NOT use `\033[K` (ANSI erase-to-EOL) in spinner/display code
 Leaks as literal `?[K` text under `prompt_toolkit`'s `patch_stdout`. Use space-padding: `f"\r{line}{' ' * pad}"`.
 
-### `_last_resolved_tool_names` is a process-global in `model_tools.py`
+### `_last_resolved_tool_names` is a process-global in `core/model_tools.py`
 When subagents overwrite this global, `execute_code` calls after delegation may fail with missing tool imports. Known bug.
 
-### `core/state.py` is stale — do not use it
-`core/state.py` is SCHEMA_VERSION 4; the canonical `hermes_state.py` at root is SCHEMA_VERSION 8 with additional tables (runs, workspaces, eval_results). Always import from `hermes_state`, not `core.state`. `agents/hermes/agent.py` currently uses `core.*` — do not promote it to production until `core/` is synced.
+### Import from `core.*`, not from root-level shims
+The canonical implementations live in `core/` (e.g. `core.state`, `core.model_tools`, `core.toolsets`, `core.clock`, `core.constants`). Root-level files like `hermes_state.py`, `model_tools.py`, `hermes_time.py` are thin re-export shims for backward compatibility — they work but add an indirection layer. New code should `from core.X import ...` directly.
 
 ### Tests must not write to `~/.hermes/`
 The `_isolate_hermes_home` autouse fixture in `tests/conftest.py` redirects `HERMES_HOME` to a temp dir. Never hardcode `~/.hermes/` paths in tests.
