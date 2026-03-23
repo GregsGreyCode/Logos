@@ -68,3 +68,12 @@ class InstanceExecutor(Protocol):
     def get_headroom(self) -> ResourceHeadroom:
         """Return current resource headroom to inform spawn decisions."""
         ...
+
+    def get_resources(self) -> dict:
+        """
+        Return a JSON-serialisable resource summary for the /instances API response.
+
+        K8s shape: {total_cpu, total_mem, used_cpu, used_mem, free_cpu, free_mem}
+        Local shape: {free_cpu, free_mem, can_spawn, reason}
+        """
+        ...

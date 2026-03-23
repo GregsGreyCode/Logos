@@ -71,14 +71,21 @@ except Exception:
 _BUILD_SHA = os.environ.get("BUILD_SHA", "local")[:7]
 _VERSION_LABEL = f"v{_APP_VERSION} · {_BUILD_SHA}{' · canary' if _IS_CANARY else ''}"
 _SERVER_START_TS = str(int(__import__("time").time()))  # unique per pod start; used to invalidate setup localStorage
-_HERMES_NAMESPACE = "hermes"
-_INSTANCE_CPU_REQUEST = "500m"
-_INSTANCE_MEM_REQUEST = "2Gi"
-_INSTANCE_CPU_LIMIT = "4000m"
-_INSTANCE_MEM_LIMIT = "6Gi"
-# Minimum free cluster resources before auto-spawning (fault-tolerant: queue if below)
-_SPAWN_CPU_THRESHOLD = 4.0   # cores
-_SPAWN_MEM_THRESHOLD = 6 * 1024 ** 3  # 6 GiB in bytes
+# K8s constants and helpers — extracted to gateway/executors/k8s_helpers.py
+from gateway.executors.k8s_helpers import (
+    HERMES_NAMESPACE as _HERMES_NAMESPACE,
+    INSTANCE_CPU_REQUEST as _INSTANCE_CPU_REQUEST,
+    INSTANCE_MEM_REQUEST as _INSTANCE_MEM_REQUEST,
+    INSTANCE_CPU_LIMIT as _INSTANCE_CPU_LIMIT,
+    INSTANCE_MEM_LIMIT as _INSTANCE_MEM_LIMIT,
+    SPAWN_CPU_THRESHOLD as _SPAWN_CPU_THRESHOLD,
+    SPAWN_MEM_THRESHOLD as _SPAWN_MEM_THRESHOLD,
+    k8s_clients as _k8s_clients,
+    safe_k8s_name as _safe_k8s_name,
+    cluster_resources as _cluster_resources,
+    list_hermes_instances as _list_hermes_instances,
+    delete_hermes_instance as _delete_instance,
+)
 
 # In-memory request queue for instances that couldn't spawn due to resource constraints
 _instance_queue: list[dict] = []
@@ -205,137 +212,11 @@ def _compute_effective_toolsets(soul: SoulManifest, overrides: dict) -> list[str
     return sorted(effective)
 
 
-# ── Kubernetes helpers ────────────────────────────────────────────────────────
-
-def _k8s_clients():
-    """Return (CoreV1Api, AppsV1Api) using in-cluster auth, falling back to kubeconfig."""
-    try:
-        from kubernetes import client as k8s_client, config as k8s_config
-        try:
-            k8s_config.load_incluster_config()
-        except Exception:
-            k8s_config.load_kube_config()
-        return k8s_client.CoreV1Api(), k8s_client.AppsV1Api()
-    except ImportError:
-        raise RuntimeError("kubernetes package not installed")
-
-
-def _parse_cpu(s: str) -> float:
-    """Parse k8s CPU string to float cores (e.g. '500m' → 0.5)."""
-    if not s:
-        return 0.0
-    if s.endswith("m"):
-        return int(s[:-1]) / 1000
-    return float(s)
-
-
-def _parse_mem(s: str) -> int:
-    """Parse k8s memory string to bytes (e.g. '2Gi' → 2147483648)."""
-    if not s:
-        return 0
-    for suffix, mult in [("Ki", 1024), ("Mi", 1024**2), ("Gi", 1024**3),
-                          ("Ti", 1024**4), ("K", 1000), ("M", 1000**2), ("G", 1000**3)]:
-        if s.endswith(suffix):
-            return int(s[:-len(suffix)]) * mult
-    return int(s)
-
-
-def _cluster_resources() -> dict:
-    """Return total allocatable and currently requested CPU/RAM across the cluster."""
-    core, _ = _k8s_clients()
-
-    total_cpu = total_mem = 0.0
-    for node in core.list_node().items:
-        alloc = node.status.allocatable or {}
-        total_cpu += _parse_cpu(alloc.get("cpu", "0"))
-        total_mem += _parse_mem(alloc.get("memory", "0"))
-
-    used_cpu = used_mem = 0.0
-    for pod in core.list_pod_for_all_namespaces().items:
-        if (pod.status.phase or "") not in ("Running", "Pending"):
-            continue
-        for c in (pod.spec.containers or []):
-            req = (c.resources and c.resources.requests) or {}
-            used_cpu += _parse_cpu(req.get("cpu", "0"))
-            used_mem += _parse_mem(req.get("memory", "0"))
-
-    return {
-        "total_cpu": round(total_cpu, 2),
-        "total_mem": int(total_mem),
-        "used_cpu": round(used_cpu, 2),
-        "used_mem": int(used_mem),
-        "free_cpu": round(total_cpu - used_cpu, 2),
-        "free_mem": int(total_mem - used_mem),
-    }
-
-
-def _list_hermes_instances() -> list[dict]:
-    """List Deployments in the hermes namespace that are Hermes instances."""
-    _, apps = _k8s_clients()
-    core, _ = _k8s_clients()
-    result = []
-    for dep in apps.list_namespaced_deployment(_HERMES_NAMESPACE).items:
-        name = dep.metadata.name
-        if not name.startswith("hermes"):
-            continue
-        # Find the NodePort for this deployment
-        port = None
-        try:
-            svcs = core.list_namespaced_service(
-                _HERMES_NAMESPACE,
-                label_selector=f"app={name}",
-            ).items
-            for svc in svcs:
-                for p in (svc.spec.ports or []):
-                    if p.node_port:
-                        port = p.node_port
-        except Exception:
-            pass
-
-        env_map = {}
-        containers = (dep.spec.template.spec.containers or [])
-        if containers:
-            for e in (containers[0].env or []):
-                if e.value:
-                    env_map[e.name] = e.value
-
-        ready = dep.status.ready_replicas or 0
-        desired = dep.spec.replicas or 1
-        annotations = dep.metadata.annotations or {}
-        soul_meta = None
-        if annotations.get("hermes.io/soul-slug"):
-            ets_raw = annotations.get("hermes.io/effective-toolsets", "[]")
-            try:
-                ets = json.loads(ets_raw)
-            except Exception:
-                ets = []
-            soul_meta = {
-                "slug": annotations["hermes.io/soul-slug"],
-                "name": annotations.get("hermes.io/soul-name", annotations["hermes.io/soul-slug"]),
-                "version": annotations.get("hermes.io/soul-version", ""),
-                "status": annotations.get("hermes.io/soul-status", "stable"),
-                "effective_toolsets": ets,
-            }
-        result.append({
-            "name": name,
-            "instance_name": env_map.get("HERMES_INSTANCE_NAME", name),
-            "ready": ready,
-            "desired": desired,
-            "status": "running" if ready >= desired else ("starting" if desired > 0 else "stopped"),
-            "node_port": port,
-            "created": dep.metadata.creation_timestamp.isoformat() if dep.metadata.creation_timestamp else None,
-            "soul": soul_meta,
-            "model_alias":  annotations.get("hermes.io/model-alias"),
-            "machine_id":   annotations.get("hermes.io/machine-id"),
-            "machine_name": annotations.get("hermes.io/machine-name"),
-            "requester":    annotations.get("hermes.io/requester", ""),
-        })
-    return result
-
-
-def _safe_k8s_name(requester: str) -> str:
-    name = re.sub(r"[^a-z0-9]+", "-", requester.lower()).strip("-")
-    return f"hermes-{name}"[:52]  # k8s name limit is 63 chars
+# ── Kubernetes helpers — see gateway/executors/k8s_helpers.py ────────────────
+# _k8s_clients, _cluster_resources, _list_hermes_instances, _delete_instance,
+# _safe_k8s_name, and all k8s constants are imported from k8s_helpers at the
+# top of this file. _spawn_instance (below) remains here because it depends on
+# soul/toolset resolution logic also in this module.
 
 
 def _spawn_instance(
@@ -584,22 +465,6 @@ def _spawn_instance(
             "snapshot_ref": snap_name,
         },
     }
-
-
-def _delete_instance(name: str) -> None:
-    core, apps = _k8s_clients()
-    from kubernetes.client.rest import ApiException
-    for fn in [
-        lambda: apps.delete_namespaced_deployment(name, _HERMES_NAMESPACE),
-        lambda: core.delete_namespaced_service(name, _HERMES_NAMESPACE),
-        lambda: core.delete_namespaced_persistent_volume_claim(f"{name}-pvc", _HERMES_NAMESPACE),
-        lambda: core.delete_namespaced_config_map(f"{name}-soul-snap", _HERMES_NAMESPACE),
-    ]:
-        try:
-            fn()
-        except ApiException as e:
-            if e.status != 404:
-                raise
 
 
 _ADMIN_HTML = """<!DOCTYPE html>
@@ -8071,13 +7936,14 @@ async def _handle_soul_detail(request: web.Request) -> web.Response:
 
 
 async def _handle_instances_get(request: web.Request) -> web.Response:
+    executor = request.app["executor"]
     loop = asyncio.get_event_loop()
     try:
-        res = await loop.run_in_executor(None, _cluster_resources)
+        res = await loop.run_in_executor(None, executor.get_resources)
     except Exception as e:
         res = {"_error": str(e)}
     try:
-        inst = await loop.run_in_executor(None, _list_hermes_instances)
+        inst = await loop.run_in_executor(None, executor.list_instances)
     except Exception as e:
         inst = []
         if "_error" not in res:
@@ -8184,27 +8050,48 @@ async def _handle_instances_post(request: web.Request) -> web.Response:
     )
 
     loop = asyncio.get_event_loop()
+    executor = request.app["executor"]
 
-    # Check resources
+    # Check resources via executor
     try:
-        res = await loop.run_in_executor(None, _cluster_resources)
-        has_cpu = res.get("free_cpu", 0) >= _SPAWN_CPU_THRESHOLD
-        has_mem = res.get("free_mem", 0) >= _SPAWN_MEM_THRESHOLD
-    except Exception:
-        has_cpu = has_mem = False  # k8s unavailable — queue it
+        headroom = await loop.run_in_executor(None, executor.get_headroom)
+        can_spawn_now = headroom.can_spawn
+        headroom_reason = headroom.reason
+    except Exception as e:
+        can_spawn_now = False
+        headroom_reason = f"executor unavailable: {e}"
 
-    if not has_cpu or not has_mem:
-        reason = f"insufficient resources (free: {res.get('free_cpu',0):.1f} CPU, {res.get('free_mem',0)//1024**3}Gi RAM)"
-        _instance_queue.append({"requester": requester, "soul_slug": soul_slug, "reason": reason, "requested_at": time.time()})
-        logger.info("Instance request queued for %s: %s", requester, reason)
-        return web.json_response({"status": "queued", "requester": requester, "reason": reason})
+    if not can_spawn_now:
+        _instance_queue.append({"requester": requester, "soul_slug": soul_slug, "reason": headroom_reason, "requested_at": time.time()})
+        logger.info("Instance request queued for %s: %s", requester, headroom_reason)
+        return web.json_response({"status": "queued", "requester": requester, "reason": headroom_reason})
 
+    # Spawn — k8s uses _spawn_instance directly (soul/toolset logic lives here);
+    # local mode uses executor.spawn() with a lightweight InstanceConfig.
     try:
-        result = await loop.run_in_executor(
-            None, _spawn_instance,
-            requester, soul_slug, tool_overrides,
-            model_alias, resolved_endpoint, resolved_machine_name, resolved_machine_id,
-        )
+        if _RUNTIME_MODE == "local":
+            from gateway.executors.base import InstanceConfig as _IC
+            spawned = await loop.run_in_executor(
+                None, executor.spawn,
+                _IC(
+                    name=_safe_k8s_name(requester),
+                    soul_name=soul_slug,
+                    model=model_alias,
+                    requester=requester,
+                ),
+            )
+            result = {
+                "status": "created" if spawned.healthy else "starting",
+                "name": spawned.name,
+                "url": spawned.url,
+                "instance_name": f"Hermes for {requester}",
+            }
+        else:
+            result = await loop.run_in_executor(
+                None, _spawn_instance,
+                requester, soul_slug, tool_overrides,
+                model_alias, resolved_endpoint, resolved_machine_name, resolved_machine_id,
+            )
     except Exception as e:
         logger.exception("Failed to spawn instance for %s", requester)
         return web.json_response({"error": "spawn_failed", "message": str(e)}, status=500)
@@ -8234,10 +8121,10 @@ async def _handle_instances_post(request: web.Request) -> web.Response:
         ip_address=request.remote,
     )
 
-    # Try to resolve NodePort (may take a moment to assign)
+    # Try to resolve NodePort / URL (may take a moment to assign)
     await asyncio.sleep(1)
     try:
-        instances = await loop.run_in_executor(None, _list_hermes_instances)
+        instances = await loop.run_in_executor(None, executor.list_instances)
         dep_name = _safe_k8s_name(requester)
         match = next((i for i in instances if i["name"] == dep_name), {})
         result["node_port"] = match.get("node_port")
@@ -8256,8 +8143,9 @@ async def _handle_instances_delete(request: web.Request) -> web.Response:
     if name == "hermes":
         raise web.HTTPForbidden(reason="Cannot delete the primary hermes deployment")
     loop = asyncio.get_event_loop()
+    executor = request.app["executor"]
     try:
-        await loop.run_in_executor(None, _delete_instance, name)
+        await loop.run_in_executor(None, executor.delete_instance, name)
     except Exception as e:
         raise web.HTTPInternalServerError(reason=str(e))
     auth_db.write_audit_log(
@@ -9037,6 +8925,11 @@ async def start_http_api(runner: Any, port: int = 8080) -> None:
     app = web.Application(middlewares=[cors_middleware, auth_middleware])
     app["runner"] = runner
 
+    # Executor — selects kubernetes or local-process backend based on runtime mode
+    from gateway.executors import build_executor
+    app["executor"] = build_executor(_RUNTIME_MODE)
+    logger.info("Instance executor: %s (runtime_mode=%s)", type(app["executor"]).__name__, _RUNTIME_MODE)
+
     # Workflow engine — lazily imported to avoid circular deps at module load.
     try:
         from workflows.engine import WorkflowEngine as _WFEngine
@@ -9204,15 +9097,16 @@ async def start_http_api(runner: Any, port: int = 8080) -> None:
     logger.info("HTTP API listening on port %d", port)
 
     async def _queue_retry_loop():
-        """Retry queued instance requests when cluster resources free up."""
+        """Retry queued instance requests when resources free up."""
+        _executor = app["executor"]
         while True:
             await asyncio.sleep(60)
             if not _instance_queue:
                 continue
             try:
                 loop = asyncio.get_event_loop()
-                res = await loop.run_in_executor(None, _cluster_resources)
-                if res.get("free_cpu", 0) >= _SPAWN_CPU_THRESHOLD and res.get("free_mem", 0) >= _SPAWN_MEM_THRESHOLD:
+                headroom = await loop.run_in_executor(None, _executor.get_headroom)
+                if headroom.can_spawn:
                     req = _instance_queue.pop(0)
                     logger.info("Retrying queued instance for %s", req["requester"])
                     await loop.run_in_executor(None, _spawn_instance, req["requester"])

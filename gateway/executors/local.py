@@ -208,3 +208,13 @@ class LocalProcessExecutor:
         except Exception as exc:
             logger.warning("get_headroom failed: %s", exc)
             return ResourceHeadroom(can_spawn=True)
+
+    def get_resources(self) -> dict:
+        """Return a resource summary dict for the /instances API response."""
+        headroom = self.get_headroom()
+        return {
+            "free_cpu": round(headroom.available_cpu, 2),
+            "free_mem": int(headroom.available_mem_gb * 1024**3),
+            "can_spawn": headroom.can_spawn,
+            "reason": headroom.reason,
+        }
