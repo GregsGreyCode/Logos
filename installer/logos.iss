@@ -34,8 +34,7 @@ Compression=lzma2/ultra64
 SolidCompression=yes
 ; UI
 WizardStyle=modern
-; Icon (uncomment when logos.ico is available)
-; SetupIconFile=launcher\logos.ico
+SetupIconFile=launcher\logos.ico
 UninstallDisplayIcon={app}\{#MyAppExeName}
 ; Windows 10 1903+ required (for the webview APIs)
 MinVersion=10.0.18362

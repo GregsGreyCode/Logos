@@ -79,7 +79,7 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    # icon="launcher/logos.ico",  # Uncomment when icon file is available
+    icon=str(ROOT / "launcher" / "logos.ico") if (ROOT / "launcher" / "logos.ico").exists() else None,
 )
 
 coll = COLLECT(

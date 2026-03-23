@@ -47,8 +47,8 @@ jobs:
           cp -r landingpage/* _site/
           # Docusaurus at /docs/
           cp -r website/build/* _site/docs/
-          # CNAME so GitHub Pages keeps the custom domain between deploys
-          echo "hermes-agent.nousresearch.com" > _site/CNAME
+          # CNAME: set this if you have a custom domain configured in GitHub Pages settings.
+          # echo "your-domain.com" > _site/CNAME
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
