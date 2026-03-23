@@ -45,6 +45,7 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
 Name: "startupentry"; Description: "Start Logos automatically when Windows starts"; GroupDescription: "Startup:"; Flags: unchecked
+Name: "cleaninstall"; Description: "Clean install — remove all settings, config and data (~\.hermes\)"; GroupDescription: "Advanced:"; Flags: unchecked
 
 [Files]
 ; Main application bundle (PyInstaller output)
@@ -91,6 +92,49 @@ begin
       // Must use full path — Exec does not search PATH
       Exec(ExpandConstant('{sys}\taskkill.exe'), '/IM {#MyAppExeName} /F', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
       Sleep(1500);
+    end;
+  end;
+end;
+
+// Clean install task: wipe ~/.hermes before copying new files
+procedure CurStepChanged(CurStep: TSetupStep);
+var
+  HermesDir: String;
+begin
+  if (CurStep = ssInstall) and IsTaskSelected('cleaninstall') then
+  begin
+    HermesDir := ExpandConstant('{userdocs}');  // placeholder — resolved below
+    HermesDir := GetEnv('USERPROFILE') + '\.hermes';
+    if DirExists(HermesDir) then
+    begin
+      if MsgBox('This will permanently delete all Logos data at:' + #13#10 +
+                HermesDir + #13#10#13#10 +
+                'This includes your config, API keys, logs and conversation history.' + #13#10 +
+                'Are you sure?',
+                mbConfirmation, MB_YESNO) = IDYES then
+      begin
+        DelTree(HermesDir, True, True, True);
+      end;
+    end;
+  end;
+end;
+
+// Uninstall: offer to remove ~/.hermes data
+procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+var
+  HermesDir: String;
+begin
+  if CurUninstallStep = usPostUninstall then
+  begin
+    HermesDir := GetEnv('USERPROFILE') + '\.hermes';
+    if DirExists(HermesDir) then
+    begin
+      if MsgBox('Do you want to remove all Logos data (config, API keys, logs)?'  + #13#10 +
+                HermesDir,
+                mbConfirmation, MB_YESNO) = IDYES then
+      begin
+        DelTree(HermesDir, True, True, True);
+      end;
     end;
   end;
 end;
