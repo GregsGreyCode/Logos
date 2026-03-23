@@ -14,7 +14,7 @@ from typing import Any, Dict, List, Optional
 import requests
 import yaml
 
-from hermes_constants import OPENROUTER_MODELS_URL
+from core.constants import OPENROUTER_MODELS_URL
 
 logger = logging.getLogger(__name__)
 

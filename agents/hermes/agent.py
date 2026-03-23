@@ -680,6 +680,8 @@ class AIAgent:
         # SQLite session store (optional -- provided by CLI or gateway)
         self._session_db = session_db
         self._last_flushed_db_idx = 0  # tracks DB-write cursor to prevent duplicate writes
+        # Active run recorder -- created per run_conversation() call, None otherwise
+        self._run_recorder = None
 
         # Action policy enforcement — enforced on every tool call in _invoke_tool.
         # None means no policy (DEFAULT_POLICY behaviour — fully permissive).
@@ -3591,7 +3593,7 @@ class AIAgent:
             )
         else:
             from tools.registry import registry as _registry
-            return _registry.invoke(
+            return _registry.dispatch(
                 function_name, function_args,
                 policy=self._action_policy,
                 session_id=self.session_id,
@@ -3726,6 +3728,23 @@ class AIAgent:
                     result_preview = function_result[:200] if len(function_result) > 200 else function_result
                     logging.debug(f"Tool {function_name} completed in {tool_duration:.2f}s")
                     logging.debug(f"Tool result preview: {result_preview}...")
+
+                # Run recorder: append tool event (best-effort)
+                if self._run_recorder:
+                    try:
+                        _args_pv = json.dumps(
+                            {k: str(v)[:80] for k, v in function_args.items()},
+                            ensure_ascii=False,
+                        )[:200]
+                        self._run_recorder.record_tool_call(
+                            tool_name=function_name,
+                            args_preview=_args_pv,
+                            success=not is_error,
+                            duration_ms=tool_duration * 1000,
+                            error=(function_result[:200] if is_error else None),
+                        )
+                    except Exception:
+                        pass
 
             # Print cute message per tool
             if self.quiet_mode:
@@ -3944,7 +3963,7 @@ class AIAgent:
                 _spinner_result = None
                 try:
                     from tools.registry import registry as _registry
-                    function_result = _registry.invoke(
+                    function_result = _registry.dispatch(
                         function_name, function_args,
                         policy=self._action_policy,
                         session_id=self.session_id,
@@ -3956,7 +3975,7 @@ class AIAgent:
                     _spinner_result = function_result
                 except Exception as tool_error:
                     function_result = f"Error executing tool '{function_name}': {tool_error}"
-                    logger.error("registry.invoke raised for %s: %s", function_name, tool_error, exc_info=True)
+                    logger.error("registry.dispatch raised for %s: %s", function_name, tool_error, exc_info=True)
                 finally:
                     tool_duration = time.time() - tool_start_time
                     cute_msg = _get_cute_tool_message_impl(function_name, function_args, tool_duration, result=_spinner_result)
@@ -3964,7 +3983,7 @@ class AIAgent:
             else:
                 try:
                     from tools.registry import registry as _registry
-                    function_result = _registry.invoke(
+                    function_result = _registry.dispatch(
                         function_name, function_args,
                         policy=self._action_policy,
                         session_id=self.session_id,
@@ -3975,7 +3994,7 @@ class AIAgent:
                     )
                 except Exception as tool_error:
                     function_result = f"Error executing tool '{function_name}': {tool_error}"
-                    logger.error("registry.invoke raised for %s: %s", function_name, tool_error, exc_info=True)
+                    logger.error("registry.dispatch raised for %s: %s", function_name, tool_error, exc_info=True)
                 tool_duration = time.time() - tool_start_time
 
             result_preview = function_result[:200] if len(function_result) > 200 else function_result
@@ -3989,6 +4008,23 @@ class AIAgent:
             if self.verbose_logging:
                 logging.debug(f"Tool {function_name} completed in {tool_duration:.2f}s")
                 logging.debug(f"Tool result preview: {result_preview}...")
+
+            # Run recorder: append tool event (best-effort)
+            if self._run_recorder:
+                try:
+                    _args_pv = json.dumps(
+                        {k: str(v)[:80] for k, v in function_args.items()},
+                        ensure_ascii=False,
+                    )[:200]
+                    self._run_recorder.record_tool_call(
+                        tool_name=function_name,
+                        args_preview=_args_pv,
+                        success=not _is_error_result,
+                        duration_ms=tool_duration * 1000,
+                        error=result_preview if _is_error_result else None,
+                    )
+                except Exception:
+                    pass
 
             # Guard against tools returning absurdly large content that would
             # blow up the context window. 100K chars ≈ 25K tokens — generous
@@ -4293,6 +4329,43 @@ class AIAgent:
         # Preserve the original user message before nudge injection.
         # Honcho should receive the actual user input, not system nudges.
         original_user_message = persist_user_message if persist_user_message is not None else user_message
+
+        # ── Workspace TTL cleanup (once per process) ─────────────────────────
+        # Expire and remove workspace directories from previous runs whose TTL
+        # has passed.  cleanup_expired_once_at_startup() is idempotent — a no-op
+        # after the first call within this process.
+        try:
+            from tools.workspace import get_workspace_manager as _get_wsmgr
+            _wsmgr_ref = _get_wsmgr()
+            if self._session_db:
+                _wsmgr_ref.inject_db(self._session_db)
+            _cleaned = _wsmgr_ref.cleanup_expired_once_at_startup()
+            if _cleaned:
+                logger.info("run_conversation: cleaned %d expired workspace(s)", _cleaned)
+        except Exception as _ws_cleanup_exc:
+            logger.debug("Workspace cleanup at startup failed (non-fatal): %s", _ws_cleanup_exc)
+
+        # ── Run record ──────────────────────────────────────────────────────
+        # Create a run record if we have a session DB.  Best-effort: failures
+        # never affect the agent.  The recorder is stored on self so that
+        # _execute_tool_calls_* can append tool events without extra params.
+        self._run_recorder = None
+        if self._session_db:
+            try:
+                from runs import RunRecorder, TRIGGER_USER
+                _run_id = str(uuid.uuid4())
+                self._run_recorder = RunRecorder(
+                    db=self._session_db,
+                    run_id=_run_id,
+                    session_id=self.session_id or "",
+                    source=self.platform or "cli",
+                    model=self.model,
+                    provider=self.provider,
+                    user_message=original_user_message or "",
+                    trigger_type=TRIGGER_USER,
+                )
+            except Exception as _rr_exc:
+                logger.debug("RunRecorder init failed (non-fatal): %s", _rr_exc)
 
         # Periodic memory nudge: remind the model to consider saving memories.
         # Counter resets whenever the memory tool is actually used.
@@ -5773,6 +5846,30 @@ class AIAgent:
 
         # Clear stream callback so it doesn't leak into future calls
         self._stream_callback = None
+
+        # ── Finalise run record ─────────────────────────────────────────────
+        if self._run_recorder:
+            try:
+                from runs import (STATUS_COMPLETED, STATUS_FAILED,
+                                  STATUS_INTERRUPTED, STATUS_MAX_ITERATIONS)
+                if interrupted:
+                    _run_status = STATUS_INTERRUPTED
+                elif completed:
+                    _run_status = STATUS_COMPLETED
+                elif (api_call_count >= self.max_iterations
+                        or self.iteration_budget.remaining <= 0):
+                    _run_status = STATUS_MAX_ITERATIONS
+                else:
+                    _run_status = STATUS_FAILED
+                self._run_recorder.finish(
+                    status=_run_status,
+                    final_response=final_response,
+                    api_call_count=api_call_count,
+                )
+            except Exception as _rr_fin_exc:
+                logger.debug("RunRecorder.finish failed (non-fatal): %s", _rr_fin_exc)
+            finally:
+                self._run_recorder = None
 
         return result
 

@@ -209,7 +209,7 @@ class TestRunBackgroundTask:
         mock_result = {"final_response": "Hello from background!", "messages": []}
 
         with patch("gateway.run._resolve_runtime_agent_kwargs", return_value={"api_key": "test-key"}), \
-             patch("run_agent.AIAgent") as MockAgent:
+             patch("agents.hermes.agent.AIAgent") as MockAgent:
             mock_agent_instance = MagicMock()
             mock_agent_instance.run_conversation.return_value = mock_result
             MockAgent.return_value = mock_agent_instance

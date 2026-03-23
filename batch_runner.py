@@ -33,13 +33,13 @@ from rich.progress import Progress, SpinnerColumn, BarColumn, TextColumn, TimeRe
 from rich.console import Console
 import fire
 
-from run_agent import AIAgent
-from toolset_distributions import (
+from agents.hermes.agent import AIAgent
+from core.toolset_distributions import (
     list_distributions, 
     sample_toolsets_from_distribution,
     validate_distribution
 )
-from model_tools import TOOL_TO_TOOLSET_MAP
+from core.model_tools import TOOL_TO_TOOLSET_MAP
 
 
 # Global configuration for worker processes
@@ -1183,7 +1183,7 @@ def main(
     """
     # Handle list distributions
     if list_distributions:
-        from toolset_distributions import list_distributions as get_all_dists, print_distribution_info
+        from core.toolset_distributions import list_distributions as get_all_dists, print_distribution_info
         
         print("📊 Available Toolset Distributions")
         print("=" * 70)

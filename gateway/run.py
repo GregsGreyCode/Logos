@@ -404,7 +404,7 @@ class GatewayRunner:
             if not history or len(history) < 4:
                 return
 
-            from run_agent import AIAgent
+            from agents.hermes.agent import AIAgent
             runtime_kwargs = _resolve_runtime_agent_kwargs()
             if not runtime_kwargs.get("api_key"):
                 return
@@ -1309,7 +1309,7 @@ class GatewayRunner:
                             pass
 
                     try:
-                        from run_agent import AIAgent
+                        from agents.hermes.agent import AIAgent
 
                         _hyg_runtime = _resolve_runtime_agent_kwargs()
                         if _hyg_runtime.get("api_key"):
@@ -2581,7 +2581,7 @@ class GatewayRunner:
         self, prompt: str, source: "SessionSource", task_id: str
     ) -> None:
         """Execute a background agent task and deliver the result to the chat."""
-        from run_agent import AIAgent
+        from agents.hermes.agent import AIAgent
 
         adapter = self.adapters.get(source.platform)
         if not adapter:
@@ -2837,7 +2837,7 @@ class GatewayRunner:
             return "Not enough conversation to compress (need at least 4 messages)."
 
         try:
-            from run_agent import AIAgent
+            from agents.hermes.agent import AIAgent
             from agent.model_metadata import estimate_messages_tokens_rough
 
             runtime_kwargs = _resolve_runtime_agent_kwargs()
@@ -3593,7 +3593,7 @@ class GatewayRunner:
         This is run in a thread pool to not block the event loop.
         Supports interruption via new messages.
         """
-        from run_agent import AIAgent
+        from agents.hermes.agent import AIAgent
         import queue
         
         # Determine toolset based on platform.

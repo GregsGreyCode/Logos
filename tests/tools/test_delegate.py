@@ -197,7 +197,7 @@ class TestDelegateTask(unittest.TestCase):
         """Verify child gets parent's depth + 1."""
         parent = _make_mock_parent(depth=0)
 
-        with patch("run_agent.AIAgent") as MockAgent:
+        with patch("agents.hermes.agent.AIAgent") as MockAgent:
             mock_child = MagicMock()
             mock_child.run_conversation.return_value = {
                 "final_response": "done", "completed": True, "api_calls": 1
@@ -211,7 +211,7 @@ class TestDelegateTask(unittest.TestCase):
         """Verify children are registered/unregistered for interrupt propagation."""
         parent = _make_mock_parent(depth=0)
 
-        with patch("run_agent.AIAgent") as MockAgent:
+        with patch("agents.hermes.agent.AIAgent") as MockAgent:
             mock_child = MagicMock()
             mock_child.run_conversation.return_value = {
                 "final_response": "done", "completed": True, "api_calls": 1
@@ -228,7 +228,7 @@ class TestDelegateTask(unittest.TestCase):
         parent.provider = "openai-codex"
         parent.api_mode = "codex_responses"
 
-        with patch("run_agent.AIAgent") as MockAgent:
+        with patch("agents.hermes.agent.AIAgent") as MockAgent:
             mock_child = MagicMock()
             mock_child.run_conversation.return_value = {
                 "final_response": "ok",
@@ -253,7 +253,7 @@ class TestDelegateObservability(unittest.TestCase):
         """Completed child should return tool_trace, tokens, model, exit_reason."""
         parent = _make_mock_parent(depth=0)
 
-        with patch("run_agent.AIAgent") as MockAgent:
+        with patch("agents.hermes.agent.AIAgent") as MockAgent:
             mock_child = MagicMock()
             mock_child.model = "claude-sonnet-4-6"
             mock_child.session_prompt_tokens = 5000
@@ -294,7 +294,7 @@ class TestDelegateObservability(unittest.TestCase):
         """Tool results containing 'error' should be marked as error status."""
         parent = _make_mock_parent(depth=0)
 
-        with patch("run_agent.AIAgent") as MockAgent:
+        with patch("agents.hermes.agent.AIAgent") as MockAgent:
             mock_child = MagicMock()
             mock_child.model = "claude-sonnet-4-6"
             mock_child.session_prompt_tokens = 0
@@ -321,7 +321,7 @@ class TestDelegateObservability(unittest.TestCase):
         """Parallel tool calls should each get their own result via tool_call_id matching."""
         parent = _make_mock_parent(depth=0)
 
-        with patch("run_agent.AIAgent") as MockAgent:
+        with patch("agents.hermes.agent.AIAgent") as MockAgent:
             mock_child = MagicMock()
             mock_child.model = "claude-sonnet-4-6"
             mock_child.session_prompt_tokens = 3000
@@ -370,7 +370,7 @@ class TestDelegateObservability(unittest.TestCase):
         """Interrupted child should report exit_reason='interrupted'."""
         parent = _make_mock_parent(depth=0)
 
-        with patch("run_agent.AIAgent") as MockAgent:
+        with patch("agents.hermes.agent.AIAgent") as MockAgent:
             mock_child = MagicMock()
             mock_child.model = "claude-sonnet-4-6"
             mock_child.session_prompt_tokens = 0
@@ -391,7 +391,7 @@ class TestDelegateObservability(unittest.TestCase):
         """Child that didn't complete and wasn't interrupted hit max_iterations."""
         parent = _make_mock_parent(depth=0)
 
-        with patch("run_agent.AIAgent") as MockAgent:
+        with patch("agents.hermes.agent.AIAgent") as MockAgent:
             mock_child = MagicMock()
             mock_child.model = "claude-sonnet-4-6"
             mock_child.session_prompt_tokens = 0
@@ -535,7 +535,7 @@ class TestDelegationProviderIntegration(unittest.TestCase):
         }
         parent = _make_mock_parent(depth=0)
 
-        with patch("run_agent.AIAgent") as MockAgent:
+        with patch("agents.hermes.agent.AIAgent") as MockAgent:
             mock_child = MagicMock()
             mock_child.run_conversation.return_value = {
                 "final_response": "done", "completed": True, "api_calls": 1
@@ -572,7 +572,7 @@ class TestDelegationProviderIntegration(unittest.TestCase):
         parent.base_url = "https://inference-api.nousresearch.com/v1"
         parent.api_key = "nous-key-abc"
 
-        with patch("run_agent.AIAgent") as MockAgent:
+        with patch("agents.hermes.agent.AIAgent") as MockAgent:
             mock_child = MagicMock()
             mock_child.run_conversation.return_value = {
                 "final_response": "done", "completed": True, "api_calls": 1
@@ -603,7 +603,7 @@ class TestDelegationProviderIntegration(unittest.TestCase):
         }
         parent = _make_mock_parent(depth=0)
 
-        with patch("run_agent.AIAgent") as MockAgent:
+        with patch("agents.hermes.agent.AIAgent") as MockAgent:
             mock_child = MagicMock()
             mock_child.run_conversation.return_value = {
                 "final_response": "done", "completed": True, "api_calls": 1
@@ -684,7 +684,7 @@ class TestDelegationProviderIntegration(unittest.TestCase):
         }
         parent = _make_mock_parent(depth=0)
 
-        with patch("run_agent.AIAgent") as MockAgent:
+        with patch("agents.hermes.agent.AIAgent") as MockAgent:
             mock_child = MagicMock()
             mock_child.run_conversation.return_value = {
                 "final_response": "done", "completed": True, "api_calls": 1

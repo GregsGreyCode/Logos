@@ -22,7 +22,7 @@ from evals.schema import (
 )
 
 if TYPE_CHECKING:
-    from run_agent import AIAgent
+    from agents.hermes.agent import AIAgent
 
 logger = logging.getLogger(__name__)
 

@@ -3,7 +3,7 @@
 import json
 import pytest
 
-from model_tools import (
+from core.model_tools import (
     handle_function_call,
     get_all_tool_names,
     get_toolset_for_tool,

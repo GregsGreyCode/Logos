@@ -27,7 +27,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-from hermes_time import now as _hermes_now
+from core.clock import now as _hermes_now
 
 logger = logging.getLogger(__name__)
 
@@ -154,7 +154,7 @@ def run_job(job: dict) -> tuple[bool, str, str, Optional[str]]:
     Returns:
         Tuple of (success, full_output_doc, final_response, error_message)
     """
-    from run_agent import AIAgent
+    from agents.hermes.agent import AIAgent
     
     # Initialize SQLite session store so cron job messages are persisted
     # and discoverable via session_search (same pattern as gateway/run.py).

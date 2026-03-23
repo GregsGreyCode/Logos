@@ -8,7 +8,7 @@ import sys
 from datetime import timedelta
 from unittest.mock import MagicMock, patch
 
-from hermes_state import SessionDB
+from core.state import SessionDB
 from tools.todo_tool import TodoStore
 
 

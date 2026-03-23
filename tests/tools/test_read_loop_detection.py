@@ -350,7 +350,7 @@ class TestCompressionFileHistory(unittest.TestCase):
         mock_agent._cached_system_prompt = None
 
         # Call the real _compress_context
-        from run_agent import AIAgent
+        from agents.hermes.agent import AIAgent
         result, _ = AIAgent._compress_context(
             mock_agent, messages, "system prompt",
             approx_tokens=1000, task_id="compress_test",

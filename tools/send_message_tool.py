@@ -154,7 +154,7 @@ def _handle_send(args):
             })
 
     try:
-        from model_tools import _run_async
+        from core.model_tools import _run_async
         result = _run_async(
             _send_to_platform(
                 platform,

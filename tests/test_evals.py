@@ -14,7 +14,7 @@ from evals.schema import (
     EvalSuite,
     EvalSuiteResult,
 )
-from hermes_state import SessionDB
+from core.state import SessionDB
 
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────

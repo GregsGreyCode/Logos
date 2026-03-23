@@ -255,7 +255,7 @@ async def test_session_hygiene_messages_stay_in_originating_topic(monkeypatch, t
 
     fake_run_agent = types.ModuleType("run_agent")
     fake_run_agent.AIAgent = FakeCompressAgent
-    monkeypatch.setitem(sys.modules, "run_agent", fake_run_agent)
+    monkeypatch.setitem(sys.modules, "agents.hermes.agent", fake_run_agent)
 
     gateway_run = importlib.import_module("gateway.run")
     GatewayRunner = gateway_run.GatewayRunner

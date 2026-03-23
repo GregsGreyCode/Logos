@@ -24,7 +24,7 @@ class TestInterruptPropagationToChild(unittest.TestCase):
 
     def test_parent_interrupt_sets_child_flag(self):
         """When parent.interrupt() is called, child._interrupt_requested should be set."""
-        from run_agent import AIAgent
+        from agents.hermes.agent import AIAgent
 
         parent = AIAgent.__new__(AIAgent)
         parent._interrupt_requested = False
@@ -53,7 +53,7 @@ class TestInterruptPropagationToChild(unittest.TestCase):
         This is the intended behavior at startup, but verify it doesn't
         accidentally clear an interrupt intended for a running child.
         """
-        from run_agent import AIAgent
+        from agents.hermes.agent import AIAgent
 
         child = AIAgent.__new__(AIAgent)
         child._interrupt_requested = True
@@ -72,7 +72,7 @@ class TestInterruptPropagationToChild(unittest.TestCase):
 
     def test_interrupt_during_child_api_call_detected(self):
         """Interrupt set during _interruptible_api_call is detected within 0.5s."""
-        from run_agent import AIAgent
+        from agents.hermes.agent import AIAgent
 
         child = AIAgent.__new__(AIAgent)
         child._interrupt_requested = False
@@ -113,7 +113,7 @@ class TestInterruptPropagationToChild(unittest.TestCase):
 
     def test_concurrent_interrupt_propagation(self):
         """Simulates exact CLI flow: parent runs delegate in thread, main thread interrupts."""
-        from run_agent import AIAgent
+        from agents.hermes.agent import AIAgent
 
         parent = AIAgent.__new__(AIAgent)
         parent._interrupt_requested = False
