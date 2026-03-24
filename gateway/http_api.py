@@ -6249,24 +6249,31 @@ _LOGIN_HTML = """<!DOCTYPE html>
             clearTimeout(this._inactivityTimer);
             this.phase = 'loggedin';
             const logoEl = document.querySelector('.logo-wrap');
-            if (logoEl) {
-              const rect = logoEl.getBoundingClientRect();
-              const fromCX = rect.left + rect.width / 2;
-              const fromCY = rect.top  + rect.height / 2;
+            const imgEl  = document.querySelector('.logo-img');
+            if (logoEl && imgEl) {
+              // Measure from the logo IMAGE (not the wrap, which includes the hint div below)
+              const wrapRect = logoEl.getBoundingClientRect();
+              const imgRect  = imgEl.getBoundingClientRect();
+              const fromCX   = imgRect.left + imgRect.width  / 2;
+              const fromCY   = imgRect.top  + imgRect.height / 2;
+              // Set transform-origin to the logo image centre so scale doesn't shift it
+              const originX  = imgRect.left - wrapRect.left + imgRect.width  / 2;
+              const originY  = imgRect.top  - wrapRect.top  + imgRect.height / 2;
+              logoEl.style.transformOrigin = `${originX}px ${originY}px`;
               logoEl.style.transition = 'transform 0.9s cubic-bezier(0.4,0,0.2,1)';
               if (d.setup_required) {
-                // Destination is /setup — centred 56px logo at pt-10 (same target as activate())
+                // Destination is /setup — centred 56px logo at pt-10
                 const toCX  = window.innerWidth / 2;
                 const toCY  = 68;
                 const scale = 56 / 100;
                 logoEl.style.transform = `translate(${toCX - fromCX}px, ${toCY - fromCY}px) scale(${scale.toFixed(4)})`;
               } else {
                 // Destination is / — animate to nav logo (32×32, top-left of max-w-screen-xl)
-                const vw = window.innerWidth;
+                const vw       = window.innerWidth;
                 const navLogoX = Math.max(0, (vw - 1280) / 2) + 16 + 16;
                 const navLogoY = 32;
                 const targetX  = navLogoX - fromCX;
-                // phase='loggedin' removes logo-up (translateY(-24px)); compensate here
+                // phase='loggedin' removes logo-up (translateY(-24px)) from wrap; compensate
                 const targetY  = navLogoY - fromCY - 24;
                 logoEl.style.transform = `translate(${targetX}px, ${targetY}px) scale(0.32)`;
               }
@@ -8736,16 +8743,23 @@ function setup() {
       this.step7ProbeStatus = 'checking';
       this.step7ProbeMsg = '';
       try {
-        const params = new URLSearchParams({ url: this.activeServer.endpoint });
-        if (this.activeServer._apiKey) params.set('api_key', this.activeServer._apiKey);
-        const r = await fetch('/api/setup/probe?' + params);
+        const ep  = this.activeServer.endpoint;
+        const key = this.serverKeys[ep] || this.activeServer._apiKey || '';
+        const params = new URLSearchParams({ url: ep });
+        if (key) params.set('api_key', key);
+        const r = await fetch('/api/setup/probe?' + params, { credentials: 'include' });
         const d = await r.json().catch(() => ({}));
-        if (d.ok || d.models?.length > 0) {
+        // Probe returns { servers: [{ status, models, ... }] }
+        const server = (d.servers || [])[0];
+        if (server && server.status === 'up') {
           this.step7ProbeStatus = 'ok';
           this.step7ProbeMsg = '';
+        } else if (server && server.status === 'auth_required') {
+          this.step7ProbeStatus = 'warn';
+          this.step7ProbeMsg = 'Server requires an API key — go back to step 1 and connect with your key.';
         } else {
           this.step7ProbeStatus = 'warn';
-          this.step7ProbeMsg = d.error || 'Server reachable but returned no models.';
+          this.step7ProbeMsg = server?.error || d.error || 'Could not reach server — make sure it is still running.';
         }
       } catch(e) {
         this.step7ProbeStatus = 'error';
@@ -8802,7 +8816,7 @@ function setup() {
             servers: (this.selectedServers || []).map(s => ({
               endpoint:          s.endpoint,
               type:              s.type || 'unknown',
-              api_key:           s._apiKey || '',
+              api_key:           this.serverKeys[s.endpoint] || s._apiKey || '',
               name:              s.customName || s.name || '',
               recommended_model: this.serverModelSelections[s.endpoint] || (this.compareServerRecs[s.endpoint] || {}).model || null,
             })),
