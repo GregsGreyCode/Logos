@@ -49,7 +49,9 @@ def _is_alive(pid: int) -> bool:
     try:
         os.kill(pid, 0)
         return True
-    except (ProcessLookupError, PermissionError):
+    except (ProcessLookupError, PermissionError, OSError):
+        # OSError covers WinError 6 (invalid handle) on Windows when the
+        # process no longer exists and its handle has been released.
         return False
 
 

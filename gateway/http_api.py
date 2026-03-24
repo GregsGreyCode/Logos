@@ -725,7 +725,7 @@ _ADMIN_HTML = """<!DOCTYPE html>
 <div class="max-w-screen-xl mx-auto px-4 pt-4 pb-0" style="position:relative;z-index:10">
 
   <!-- Tabs + theme swatches -->
-  <div class="flex items-end gap-6 border-b border-gray-800 mb-3" data-fl="0">
+  <div class="flex items-end gap-6 border-b border-gray-800 mb-3 relative z-40" data-fl="0">
     <!-- Logos brand mark — matches the logo.svg the login page animates to this position -->
     <div class="pb-2 shrink-0 flex items-center gap-2">
       <img src="/static/logo.svg" alt="Logos"
@@ -5988,6 +5988,10 @@ _LOGIN_HTML = """<!DOCTYPE html>
     .btn-signin:disabled { opacity: 0.45; cursor: not-allowed; animation: none; }
 
     /* ── Floating label inputs ── */
+    /* Hide browser-native password reveal eye (Edge/Chrome) — we have our own */
+    input[type="password"]::-ms-reveal,
+    input[type="password"]::-ms-clear { display: none !important; }
+    input::-webkit-credentials-auto-fill-button { display: none !important; }
     .float-wrap { position: relative; }
     .float-input {
       width: 100%;
@@ -6062,6 +6066,7 @@ _LOGIN_HTML = """<!DOCTYPE html>
           <div x-data="{ show: false }" class="float-wrap">
             <input id="password" x-model="password" :type="show ? 'text' : 'password'"
                    required autocomplete="current-password"
+                   @keydown.enter.prevent="$el.closest('form').dispatchEvent(new Event('submit'))"
                    class="float-input" style="padding-right:2.75rem;" placeholder=" "/>
             <label class="float-label" for="password">Password</label>
             <button type="button" @click.stop="show=!show" tabindex="-1"
@@ -6360,9 +6365,11 @@ _SETUP_HTML = """<!DOCTYPE html>
   <!-- Main content -->
   <main class="setup-content flex-1 flex items-start justify-center px-4 pt-6 pb-16">
     <div class="w-full" :style="'max-width:' + ((step===0 && setupMode === 'new' && !introConfirmed) ? '58rem' : '34rem') + '; transition:max-width 0.4s cubic-bezier(0.4,0,0.2,1)'">
+    <!-- Step content — opacity controlled by stepFading for a clean fade-out/fade-in between steps -->
+    <div :style="{opacity: stepFading ? 0 : 1, transition: 'opacity 0.18s ease'}" style="will-change:opacity">
 
       <!-- ── Pre-step: New install vs Connect to existing ────────────── -->
-      <div x-show="step===0 && setupMode === null" x-transition.opacity.duration.300ms>
+      <div x-show="step===0 && setupMode === null">
         <div class="text-center mb-8">
           <h1 class="text-2xl font-bold mb-2">Welcome to Logos</h1>
           <p class="text-gray-400 text-sm">How would you like to get started?</p>
@@ -6398,7 +6405,7 @@ _SETUP_HTML = """<!DOCTYPE html>
       </div>
 
       <!-- ── Connect-to-existing flow ──────────────────────────────────── -->
-      <div x-show="step===0 && setupMode === 'connect'" x-cloak x-transition.opacity.duration.300ms>
+      <div x-show="step===0 && setupMode === 'connect'" x-cloak>
         <div class="text-center mb-6">
           <h2 class="text-xl font-bold mb-2">Connect to a Logos server</h2>
           <p class="text-gray-400 text-sm">We&rsquo;ll scan your local network, or you can enter a URL directly.</p>
@@ -6450,7 +6457,7 @@ _SETUP_HTML = """<!DOCTYPE html>
       </div>
 
       <!-- ── Step 0a: Setup overview (wide intro) ─────────────────────── -->
-      <div x-show="step===0 && setupMode === 'new' && !introConfirmed" x-transition.opacity.duration.300ms>
+      <div x-show="step===0 && setupMode === 'new' && !introConfirmed">
         <div class="text-center mb-7">
           <h1 class="text-2xl font-bold mb-2">Welcome to Logos</h1>
           <p class="text-gray-400 text-sm">A control plane for agentic AI.</p>
@@ -6513,7 +6520,7 @@ _SETUP_HTML = """<!DOCTYPE html>
       </div>
 
       <!-- ── Step 0b: Track selection ──────────────────────────────────── -->
-      <div x-show="step===0 && setupMode === 'new' && introConfirmed" x-cloak x-transition.opacity.duration.300ms>
+      <div x-show="step===0 && setupMode === 'new' && introConfirmed" x-cloak>
         <div class="text-center mb-6">
           <h2 class="text-xl font-bold mb-2">One decision shapes what follows</h2>
           <p class="text-gray-400 text-sm">Choose your inference path to begin.</p>
@@ -6553,7 +6560,7 @@ _SETUP_HTML = """<!DOCTYPE html>
       </div>
 
       <!-- ── Step 1: Connect model server ───────────────────────────── -->
-      <div x-show="step===1" x-cloak x-transition.opacity.duration.300ms>
+      <div x-show="step===1" x-cloak>
         <div class="mb-5">
           <h2 class="text-xl font-bold mb-1">Connect your inference server(s)</h2>
           <p class="text-gray-400 text-sm">Logos will scan for Ollama and LM Studio on your local network. You can also add remote servers — on a LAN, VPC, or cloud VM — using a custom address.</p>
@@ -6875,7 +6882,7 @@ _SETUP_HTML = """<!DOCTYPE html>
       </div>
 
       <!-- ── Step 2: Auto-compare models ─────────────────────────────── -->
-      <div x-show="step===2" x-cloak x-transition.opacity.duration.300ms>
+      <div x-show="step===2" x-cloak>
 
         <!-- No models on Ollama: pull catalog -->
         <div x-show="getModels().length===0 && hasOllamaServer()" class="space-y-3">
@@ -7218,7 +7225,7 @@ _SETUP_HTML = """<!DOCTYPE html>
       </div>
 
       <!-- ── Step 3: Choose your agent runtime ─────────────────────── -->
-      <div x-show="step===3" x-cloak x-transition.opacity.duration.300ms>
+      <div x-show="step===3" x-cloak>
         <div class="mb-5">
           <h2 class="text-xl font-bold mb-1">Choose your agent</h2>
           <p class="text-gray-400 text-sm">Select the agent runtime that will handle your conversations and tasks.</p>
@@ -7273,7 +7280,7 @@ _SETUP_HTML = """<!DOCTYPE html>
       </div>
 
       <!-- ── Step 4: Where to run agents ───────────────────────────── -->
-      <div x-show="step===4" x-cloak x-transition.opacity.duration.300ms>
+      <div x-show="step===4" x-cloak>
         <div class="mb-5">
           <h2 class="text-xl font-bold mb-1">Where to run agents</h2>
           <p class="text-gray-400 text-sm">Choose where agent tasks execute. This affects isolation between sessions, resource limits, and how Logos scales.</p>
@@ -7405,7 +7412,7 @@ _SETUP_HTML = """<!DOCTYPE html>
       </div>
 
       <!-- ── Step 5: Choose a soul ───────────────────────────────────── -->
-      <div x-show="step===5" x-cloak x-transition.opacity.duration.300ms>
+      <div x-show="step===5" x-cloak>
         <div class="mb-5">
           <h2 class="text-xl font-bold mb-1">Choose a soul</h2>
           <p class="text-gray-400 text-sm">A soul shapes how your agent thinks and communicates and is a starting point for its character. It works alongside the tools you enable &mdash; pick one that fits what you want for your first agent instance.</p>
@@ -7442,7 +7449,7 @@ _SETUP_HTML = """<!DOCTYPE html>
       </div>
 
       <!-- ── Step 6: Your account ────────────────────────────────────── -->
-      <div x-show="step===6" x-cloak x-transition.opacity.duration.300ms>
+      <div x-show="step===6" x-cloak>
         <div class="mb-6">
           <h2 class="text-xl font-bold mb-1">Your account</h2>
           <p class="text-gray-400 text-sm">Set your login credentials. You'll use these to sign in to Logos going forward.</p>
@@ -7468,6 +7475,7 @@ _SETUP_HTML = """<!DOCTYPE html>
           <div>
             <label class="block text-xs text-gray-500 mb-1.5">Confirm password</label>
             <input x-model="setupPasswordConfirm" type="password" placeholder="&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;"
+              @keydown.enter="setupEmail.trim() && setupUsername.trim() && setupPassword && setupPassword === setupPasswordConfirm && goNext()"
               class="w-full bg-gray-900 border border-gray-700 rounded-xl px-3 py-2.5 text-sm focus:border-indigo-500 focus:outline-none transition-colors" />
           </div>
           <div x-show="setupPassword && setupPasswordConfirm && setupPassword !== setupPasswordConfirm"
@@ -7481,7 +7489,7 @@ _SETUP_HTML = """<!DOCTYPE html>
       </div>
 
       <!-- ── Step 7: Review & launch ─────────────────────────────────── -->
-      <div x-show="step===7" x-cloak x-transition.opacity.duration.300ms>
+      <div x-show="step===7" x-cloak>
         <div class="text-center mb-8">
           <div class="w-16 h-16 rounded-2xl bg-green-950 border border-green-800 flex items-center justify-center mx-auto mb-5">
             <svg class="w-8 h-8 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -7512,7 +7520,7 @@ _SETUP_HTML = """<!DOCTYPE html>
           </div>
           <div class="flex justify-between text-sm py-2.5">
             <span class="text-gray-500">Execution</span>
-            <span class="text-white font-medium" x-text="execEnv === 'k8s' ? 'Kubernetes (' + (k8sMode === 'incluster' ? 'in-cluster' : 'external') + ')' : 'In-process'"></span>
+            <span class="text-white font-medium" x-text="execEnv === 'k8s' ? 'Kubernetes (' + (k8sMode === 'incluster' ? 'in-cluster' : 'external') + ')' : 'Local'"></span>
           </div>
           <div x-show="execEnv === 'k8s'" class="flex justify-between text-sm py-2.5">
             <span class="text-gray-500">Namespace</span>
@@ -7550,6 +7558,7 @@ _SETUP_HTML = """<!DOCTYPE html>
         </button>
       </div>
 
+    </div><!-- /step fade wrapper -->
     </div>
   </main>
 </div>
@@ -7566,6 +7575,7 @@ function setup() {
   return {
     step: 0,
     track: null,
+    stepFading: false,
 
     // Pre-step: mode selection (null = choice screen, 'new' = new install, 'connect' = connect to existing)
     setupMode: null,
@@ -8000,19 +8010,27 @@ function setup() {
       this.manualProbing = false;
     },
 
-    goNext() {
-      if (this.step === 1) { this.step = 2; this._saveProgress(); this.$nextTick(() => { if (!this.compareDone) this.startCompare(); }); return; }
-      if (this.step === 2) { this.step = 3; this._saveProgress(); return; }
-      if (this.step === 3) { this.step = 4; this._saveProgress(); return; }
-      if (this.step === 4) { this.step = 5; this._saveProgress(); return; }
-      if (this.step === 5) { this.step = 6; this._saveProgress(); return; }
-      if (this.step === 6) { this.step = 7; this._saveProgress(); return; }
+    async _goStep(n, afterFn) {
+      this.stepFading = true;
+      await new Promise(r => setTimeout(r, 180));
+      this.step = n;
+      this._saveProgress();
+      if (afterFn) afterFn();
+      await this.$nextTick();
+      this.stepFading = false;
     },
-    goTo(i) {
+
+    async goNext() {
+      if (this.step === 1) { await this._goStep(2, () => { this.$nextTick(() => { if (!this.compareDone) this.startCompare(); }); }); return; }
+      if (this.step === 2) { await this._goStep(3); return; }
+      if (this.step === 3) { await this._goStep(4); return; }
+      if (this.step === 4) { await this._goStep(5); return; }
+      if (this.step === 5) { await this._goStep(6); return; }
+      if (this.step === 6) { await this._goStep(7); return; }
+    },
+    async goTo(i) {
       if (i < this.step && i >= 1 && this.step <= 7) {
-        this.step = i;
-        this._saveProgress();
-        if (i === 2) this.$nextTick(() => { if (!this.compareDone) this.startCompare(); });
+        await this._goStep(i, i === 2 ? () => { this.$nextTick(() => { if (!this.compareDone) this.startCompare(); }); } : null);
       }
     },
 
@@ -8585,6 +8603,41 @@ async def _handle_index(request: web.Request) -> web.Response:
 async def _handle_login_page(request: web.Request) -> web.Response:
     html = _LOGIN_HTML.replace("__VERSION_LABEL__", _VERSION_LABEL)
     return web.Response(text=html, content_type="text/html")
+
+
+async def _handle_log_tail(request: web.Request) -> web.Response:
+    """Return the last N lines of the gateway log file.
+
+    GET /api/logs?n=200&file=gateway   (file: gateway|errors)
+    Requires view_audit_logs permission (admin/operator).
+    """
+    n = min(int(request.query.get("n", 200)), 2000)
+    fname = request.query.get("file", "gateway")
+    if fname not in ("gateway", "errors"):
+        return web.json_response({"error": "invalid file"}, status=400)
+    log_path = _hermes_home / "logs" / f"{fname}.log"
+    try:
+        if not log_path.exists():
+            return web.json_response({"lines": [], "path": str(log_path), "exists": False})
+        # Read last N lines efficiently without loading the whole file
+        lines: list[str] = []
+        with open(log_path, "rb") as fh:
+            # Seek backwards in chunks to find the last N newlines
+            chunk = 1024 * 32
+            fh.seek(0, 2)  # end
+            size = fh.tell()
+            buf = b""
+            pos = size
+            while len(lines) < n + 1 and pos > 0:
+                read = min(chunk, pos)
+                pos -= read
+                fh.seek(pos)
+                buf = fh.read(read) + buf
+                lines = buf.split(b"\n")
+        lines = [l.decode("utf-8", errors="replace") for l in lines[-n:] if l]
+        return web.json_response({"lines": lines, "path": str(log_path), "exists": True, "total_bytes": log_path.stat().st_size})
+    except Exception as exc:
+        return web.json_response({"error": str(exc)}, status=500)
 
 
 async def _handle_status(request: web.Request) -> web.Response:
@@ -9916,6 +9969,10 @@ async def start_http_api(runner: Any, port: int = 8080) -> None:
     app.router.add_get(
         "/audit-logs",
         require_permission("view_audit_logs")(handle_audit_logs),
+    )
+    app.router.add_get(
+        "/api/logs",
+        require_permission("view_audit_logs")(_handle_log_tail),
     )
     app.router.add_get("/souls",         _handle_souls_get)
     app.router.add_get("/souls/{slug}",  _handle_soul_detail)
