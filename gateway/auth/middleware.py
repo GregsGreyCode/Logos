@@ -18,6 +18,7 @@ logger = logging.getLogger(__name__)
 _PUBLIC_PATHS = frozenset({
     "/health",
     "/health/ready",
+    "/api/hue",
     "/login",
     "/auth/login",
     "/auth/logout",
@@ -29,6 +30,7 @@ _PUBLIC_PATHS = frozenset({
     "/api/setup/pull",
     "/api/setup/compare",
     "/api/setup/test",
+    "/api/setup/test-k8s",
     "/api/setup/complete",
     "/setup",
 })

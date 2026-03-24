@@ -4,7 +4,7 @@
 > while preserving the existing Kubernetes/Docker server deployment path.
 
 **Date:** 2026-03-23
-**Status:** Phases 1–2, 5–6 complete. Phases 3–4 (LocalProcessExecutor + KubernetesExecutor extraction) outstanding — see OUTSTANDING_FEATURES.md.
+**Status:** Phases 1–3, 5–6 complete. Phase 4 (KubernetesExecutor extraction) outstanding — see OUTSTANDING_FEATURES.md.
 
 ---
 
@@ -28,7 +28,7 @@ The Docker image path is **unchanged**. The `.exe` adds a second execution backe
 | Location | What it does | Coupling |
 |---|---|---|
 | `gateway/http_api.py:209-595` | Spawn/list/delete Instances pods | Hard k8s |
-| `gateway/http_api.py:55,73` | `_AI_ROUTER_BASE`, `_HERMES_NAMESPACE` constants | Hard k8s |
+| `gateway/http_api.py:55,73` | `_AI_ROUTER_BASE`, `_HERMES_NAMESPACE` constants | Soft — `AI_ROUTER_BASE` now env-configurable; proxy endpoints fail gracefully |
 | `gateway/http_api.py:867-868` | Instances tab UI | UI-only |
 
 Everything else (chat, sessions, tools, routing, auth, setup wizard) is k8s-agnostic.
@@ -81,7 +81,7 @@ class InstanceExecutor(Protocol):
 
 ### UI gating
 
-The Instances tab is hidden when `runtimeMode === 'local'`. In `local` mode, agent spawn is a first-class UI concept separate from the k8s Instances management panel.
+The **Agents tab** (formerly Instances) is visible in **all runtime modes**. In `local` mode it shows psutil-based system resources (free CPU cores + free RAM) instead of cluster totals, and instance cards show per-process CPU% and RAM usage. In `kubernetes` mode it shows cluster-wide CPU/RAM bars with used/total breakdown.
 
 `runtime.mode` flows: `config.yaml` → `run.py` (bridge to `HERMES_RUNTIME_MODE`) → `http_api.py` (reads env, injects into `window.__LOGOS__`) → Alpine (`runtimeMode` data property).
 
@@ -135,16 +135,19 @@ Tauri (Rust shell + webview) — eliminates the "embed Python" overhead, produce
 ### Phase 2 — UI gating + executor skeleton (done)
 - [x] Inject `runtimeMode` into `window.__LOGOS__` in `_handle_index`
 - [x] Add `runtimeMode` Alpine data property
-- [x] Gate Instances tab button + content behind `runtimeMode === 'kubernetes'`
 - [x] Create `gateway/executors/` package (base, kubernetes stub, local skeleton)
+- [x] Agents tab visible in all runtime modes (renamed from Instances; k8s gate removed)
 
-### Phase 3 — LocalProcessExecutor (next)
-- [ ] Implement port allocation from pool
-- [ ] Implement `spawn()` — `subprocess.Popen` + PID tracking
-- [ ] Implement `list_instances()` — read `~/.hermes/instances.json` + health check
-- [ ] Implement `delete_instance()` — SIGTERM + cleanup
-- [ ] Implement `get_headroom()` — psutil CPU/RAM
-- [ ] Wire executor into gateway startup via `build_executor(config)`
+### Phase 3 — LocalProcessExecutor (done)
+- [x] Implement port allocation from pool
+- [x] Implement `spawn()` — `subprocess.Popen` + PID tracking
+- [x] Implement `list_instances()` — read `~/.hermes/instances.json` + health check + per-process psutil CPU/RAM
+- [x] Implement `delete_instance()` — SIGTERM + SIGKILL fallback + cleanup
+- [x] Implement `get_headroom()` — psutil CPU/RAM with 1-core / 1-GB thresholds
+- [x] Implement `get_resources()` — system-wide free CPU + RAM for UI resource bar
+- [x] Wire executor into gateway startup via `build_executor(mode)`
+- [x] Normalize local instance shape to match k8s shape (single UI template serves both)
+- [x] Local instances auto-appear in chat agent selector; Chat → button links to `http://127.0.0.1:{port}`
 
 ### Phase 4 — KubernetesExecutor extraction
 - [ ] Extract `_spawn_instance()`, `_list_hermes_instances()`, `_cluster_resources()`, `_delete_instance()` from `http_api.py` into `gateway/executors/kubernetes.py`

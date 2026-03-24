@@ -618,28 +618,39 @@ def _make_icon_greyscale():
 
 
 def _start_icon_animation(icon) -> None:
-    """Cycle the tray icon hue while loading; go colourless once gateway is ready."""
-    _HUE_STEP = 1.0 / 80   # full colour cycle in ~8 s at 100 ms ticks
-    hue = 0.0
+    """Cycle the tray icon hue in phase-lock with the browser UI (6 deg/s = 60 s/cycle)."""
+
+    def _fetch_epoch() -> float:
+        """Query the gateway for the shared hue epoch so tray stays phase-locked."""
+        import urllib.request as _ur
+        import json as _js
+        try:
+            with _ur.urlopen("http://127.0.0.1:4444/api/hue", timeout=2) as r:
+                return _js.loads(r.read())["epoch_ms"] / 1000.0
+        except Exception:
+            return time.time()
+
+    def _hue_from_epoch(epoch: float) -> float:
+        """Compute current hue (0–1) from the shared epoch, matching the browser formula."""
+        return (((time.time() - epoch) * 6) % 360) / 360.0
 
     def _loop():
-        nonlocal hue
+        epoch: float | None = None
         while True:
             if _gateway_ready.is_set():
-                # Connected — cycle colours
+                if epoch is None:
+                    epoch = _fetch_epoch()
                 try:
-                    icon.icon = _make_icon_at_hue(hue)
+                    icon.icon = _make_icon_at_hue(_hue_from_epoch(epoch))
                 except Exception:
                     pass
-                hue = (hue + _HUE_STEP) % 1.0
                 time.sleep(0.1)
             else:
-                # Loading — greyscale/static
+                epoch = None  # reset so we re-sync phase when gateway comes back
                 try:
                     icon.icon = _make_icon_greyscale()
                 except Exception:
                     pass
-                # Poll every 200 ms until ready, then start cycling
                 _gateway_ready.wait(timeout=0.2)
 
     threading.Thread(target=_loop, daemon=True, name="logos-icon-anim").start()
