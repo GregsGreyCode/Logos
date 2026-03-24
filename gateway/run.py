@@ -3679,11 +3679,23 @@ class GatewayRunner:
                                     f"{_lms_base}/api/v1/models/load",
                                     headers=_lms_headers,
                                     json={"model": _lms_model, "context_length": _ctx},
-                                    timeout=_aiohttp.ClientTimeout(total=10),
+                                    timeout=_aiohttp.ClientTimeout(total=30),
                                 ) as _lr:
                                     if _lr.status == 200:
                                         break   # accepted — stop trying smaller sizes
-                                    # 4xx likely means context too large; try next
+                                    # Failed (context too large or model stuck) —
+                                    # unload before retrying with a smaller size so
+                                    # LM Studio isn't left with a half-loaded model.
+                                    try:
+                                        async with _lms_http.post(
+                                            f"{_lms_base}/api/v1/models/unload",
+                                            headers=_lms_headers,
+                                            json={"model": _lms_model},
+                                            timeout=_aiohttp.ClientTimeout(total=10),
+                                        ):
+                                            pass
+                                    except Exception:
+                                        pass
                             except Exception:
                                 break   # network error — don't retry
                 except Exception:
