@@ -7,9 +7,11 @@ on:
     branches: [main]
   workflow_call:   # allow other workflows to call this as a gate
 
-# Cancel in-progress runs for the same PR/branch
+# Cancel in-progress runs for the same PR/branch.
+# Use run_id as a tiebreaker when called via workflow_call so two callers
+# (build-image + build-windows) don't cancel each other.
 concurrency:
-  group: tests-${{ github.ref }}
+  group: tests-${{ github.ref }}-${{ github.workflow_ref || github.run_id }}
   cancel-in-progress: true
 
 jobs:
