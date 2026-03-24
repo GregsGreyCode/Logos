@@ -193,6 +193,32 @@ def _stop_gateway() -> None:
         _gateway_thread.join(timeout=5)
 
 
+def _kill_instances() -> None:
+    """Kill any agent instances spawned by LocalProcessExecutor and clear the registry."""
+    import json
+    import signal
+    instances_file = _HERMES_HOME / "instances.json"
+    try:
+        if not instances_file.exists():
+            return
+        instances = json.loads(instances_file.read_text(encoding="utf-8"))
+        for inst in instances:
+            pid = inst.get("pid")
+            if not pid:
+                continue
+            try:
+                if sys.platform == "win32":
+                    import subprocess
+                    subprocess.run(["taskkill", "/F", "/PID", str(pid)], capture_output=True)
+                else:
+                    os.kill(pid, signal.SIGTERM)
+            except Exception:
+                pass
+        instances_file.write_text("[]", encoding="utf-8")
+    except Exception:
+        pass
+
+
 def _restart_gateway() -> None:
     _gateway_ready.clear()  # go back to colour-cycling during restart
     _stop_gateway()
@@ -520,6 +546,7 @@ def _rebuild_menu(icon) -> None:
 
     def on_quit(icon, item):
         _stop_gateway()
+        _kill_instances()
         icon.stop()
 
     icon.menu = pystray.Menu(
