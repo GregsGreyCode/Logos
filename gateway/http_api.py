@@ -5987,6 +5987,10 @@ _LOGIN_HTML = """<!DOCTYPE html>
     .btn-signin:active:not(:disabled) { transform: translateY(1px); opacity: 0.95; }
     .btn-signin:disabled { opacity: 0.45; cursor: not-allowed; animation: none; }
 
+    /* ── Navigation progress bar ── */
+    @keyframes nav-progress{from{width:0%}to{width:100%}}
+    .nav-progress-hue{filter:hue-rotate(var(--hue-deg,0deg));}
+
     /* ── Floating label inputs ── */
     /* Hide browser-native password reveal eye (Edge/Chrome) — we have our own */
     input[type="password"]::-ms-reveal,
@@ -6119,6 +6123,12 @@ _LOGIN_HTML = """<!DOCTYPE html>
     __VERSION_LABEL__
   </div>
 
+  <!-- Navigation progress bar — appears when navigating to /setup or / -->
+  <div x-show="navigating" x-cloak style="position:fixed;bottom:0;left:0;right:0;height:2px;background:rgba(255,255,255,0.04);z-index:9999;pointer-events:none">
+    <div class="nav-progress-hue" style="height:100%;width:0%;background:linear-gradient(90deg,#6366f1,#a855f7);animation:nav-progress linear forwards;"
+         :style="`animation-duration:${navBarDur}ms`"></div>
+  </div>
+
   <script src="https://unpkg.com/alpinejs@3/dist/cdn.min.js" defer></script>
   <script>
   function loginApp() {
@@ -6126,6 +6136,7 @@ _LOGIN_HTML = """<!DOCTYPE html>
       phase: 'splash',   // 'splash' | 'login' | 'setup' | 'loggedin'
       showHint: false,
       identifier: '', password: '', error: '', loading: false, needsSetup: false,
+      navigating: false, navBarDur: 2600,
       _hintTimer: null,
       _inactivityTimer: null,
       _setupRedirectTimer: null,
@@ -6156,6 +6167,7 @@ _LOGIN_HTML = """<!DOCTYPE html>
         this.showHint = false;
         if (this.needsSetup) {
           this.phase = 'setup';
+          this.navigating = true; this.navBarDur = 2600;
           // Animate the logo to land on the setup page logo position:
           // Setup page header: pt-10 (40px) + logo is 56×56px centred horizontally.
           // toCX: centre of viewport (setup logo is perfectly centred).
@@ -6245,6 +6257,7 @@ _LOGIN_HTML = """<!DOCTYPE html>
             }
             // Signal the main page to do a staggered first-load fade-in
             try { sessionStorage.setItem('logos_fl', '1'); } catch {}
+            this.navigating = true; this.navBarDur = 900;
             await new Promise(r => setTimeout(r, 900));
             window.location.href = d.setup_required ? '/setup' : '/';
           } else {
