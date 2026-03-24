@@ -1108,7 +1108,7 @@ _ADMIN_HTML = """<!DOCTYPE html>
           </div>
 
           <!-- Agent unreachable banner -->
-          <template x-if="agentAlive === false && !chatLoading">
+          <template x-if="agentAlive === false && agentEverConnected && !chatLoading">
             <div class="mx-3 mt-2 mb-1 px-3 py-2 rounded-lg bg-red-950/60 border border-red-900/60 flex items-center gap-2 text-xs text-red-400 shrink-0">
               <span>&#9888;</span>
               <span>Agent is not responding &mdash; check that your model server is running, then wait a moment for reconnection.</span>
@@ -3924,6 +3924,7 @@ function app() {
     tab: localStorage.getItem('hermes_tab') || 'sessions',
     status: { uptime_s: 0, instance_name: 'Hermes', active_sessions: [], recent_sessions: [] },
     agentAlive: null,
+    agentEverConnected: false,   // true once first /status succeeds; gate for the error banner
     routerState: { providers: {}, routes: {}, grafana_url: 'http://192.168.1.253:3200' },
     canary: { active: false },
     chats: [],
@@ -4113,12 +4114,16 @@ function app() {
       );
     },
     async init() {
-      // Hue-cycle: offset+rate approach so speed can change smoothly (no jump on transition).
-      // Normal: 6 deg/s (1 rotation/min). Thinking: 30 deg/s (5× faster).
-      // Seed offset from server epoch so all tabs and the tray icon stay phase-locked.
-      const _epochOffset = window._hueEpochMs ? (((Date.now() - window._hueEpochMs) * 6 / 1000) % 360 + 360) % 360 : 0;
-      let _hueOffset = _epochOffset, _hueRef = Date.now(), _hueRate = 6;
-      const _setHueRate = r => { _hueOffset = (((_hueOffset + _hueRate * (Date.now() - _hueRef) / 1000) % 360) + 360) % 360; _hueRef = Date.now(); _hueRate = r; };
+      // Hue-cycle: wall-clock anchored at normal rate (6 deg/s) so /login, /setup,
+      // and / always show the same colour at the same real-world second.
+      // During chat loading the rate increases; on return we re-anchor to wall-clock.
+      const _wallDeg = () => (((Date.now() / 1000) * 6) % 360 + 360) % 360;
+      let _hueRate = 6, _hueBase = 0, _hueRef = Date.now();
+      const _setHueRate = r => {
+        if (r === 6) { _hueBase = 0; }  // snap back to wall-clock anchor
+        else { _hueBase = _hueRate === 6 ? _wallDeg() : (((_hueBase + _hueRate * (Date.now() - _hueRef) / 1000) % 360) + 360) % 360; _hueRef = Date.now(); }
+        _hueRate = r;
+      };
       // Favicon hue sync — canvas-based, throttled to ~10 fps to avoid GC pressure.
       const _favCanvas = document.createElement('canvas'); _favCanvas.width = _favCanvas.height = 32;
       const _favCtx = _favCanvas.getContext('2d');
@@ -4126,7 +4131,7 @@ function app() {
       const _favLink = document.querySelector('link[rel="icon"][type="image/svg+xml"]');
       let _favTs = 0;
       const _hueTick = () => {
-        const deg = (((_hueOffset + _hueRate * (Date.now() - _hueRef) / 1000) % 360) + 360) % 360;
+        const deg = _hueRate === 6 ? _wallDeg() : (((_hueBase + _hueRate * (Date.now() - _hueRef) / 1000) % 360) + 360) % 360;
         document.documentElement.style.setProperty('--hue-deg', deg.toFixed(1) + 'deg');
         const _now = Date.now();
         if (_now - _favTs > 100 && _favCtx && _favImg.complete && _favLink) {
@@ -4708,6 +4713,7 @@ function app() {
         if (!r.ok) throw new Error('status ' + r.status);
         this.status = await r.json();
         this.agentAlive = true;
+        this.agentEverConnected = true;
         this.lastRefresh = new Date().toLocaleTimeString();
         // Keep self label in sync with instance name
         if (this.activeInstanceId === 'self') this._buildChatAgents();
