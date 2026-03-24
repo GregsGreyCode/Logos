@@ -7,7 +7,7 @@ description: >
   multi-platform support. The reference Logos adapter.
 version: "1.3.0"
 status: stable
-created_by: greg
+created_by: gregsgreycode
 tags: [general, tools, memory, multi-platform]
 
 # Dotted import path to the AgentAdapter subclass

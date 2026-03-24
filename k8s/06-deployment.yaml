@@ -195,7 +195,7 @@ spec:
             - name: TELEGRAM_HOME_CHANNEL_NAME
               value: "Homelab Notifications"
             - name: HERMES_INSTANCE_NAME
-              value: "Hermes for Greg"
+              value: "Hermes"
 
           volumeMounts:
             - name: logos-home

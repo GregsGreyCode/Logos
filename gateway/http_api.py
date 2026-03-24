@@ -1600,7 +1600,7 @@ _ADMIN_HTML = """<!DOCTYPE html>
           <div class="grid grid-cols-2 gap-3 mb-3">
             <div>
               <label class="text-xs text-gray-500 block mb-1">Name</label>
-              <input x-model="adminPolicyForm.name" type="text" placeholder="e.g. bere-home"
+              <input x-model="adminPolicyForm.name" type="text" placeholder="e.g. home-routing"
                 class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm text-white focus:border-[var(--accent)] focus:outline-none">
             </div>
             <div>
@@ -1613,7 +1613,7 @@ _ADMIN_HTML = """<!DOCTYPE html>
             </div>
             <div class="col-span-2">
               <label class="text-xs text-gray-500 block mb-1">Description (optional)</label>
-              <input x-model="adminPolicyForm.description" type="text" placeholder="Route lightweight to Bere's PC, fallback to server"
+              <input x-model="adminPolicyForm.description" type="text" placeholder="Route lightweight tasks to home PC, fallback to server"
                 class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm text-white focus:border-[var(--accent)] focus:outline-none">
             </div>
           </div>
@@ -2957,7 +2957,7 @@ _ADMIN_HTML = """<!DOCTYPE html>
           <div class="grid grid-cols-2 gap-3 mb-3">
             <div>
               <label class="text-xs text-gray-500 block mb-1">Name</label>
-              <input x-model="adminPolicyForm.name" type="text" placeholder="e.g. bere-local"
+              <input x-model="adminPolicyForm.name" type="text" placeholder="e.g. local-routing"
                 class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm text-white focus:border-[var(--accent)] focus:outline-none">
             </div>
             <div>
@@ -2970,7 +2970,7 @@ _ADMIN_HTML = """<!DOCTYPE html>
             </div>
             <div class="col-span-2">
               <label class="text-xs text-gray-500 block mb-1">Description (optional)</label>
-              <input x-model="adminPolicyForm.description" type="text" placeholder="Route lightweight to Bere's PC"
+              <input x-model="adminPolicyForm.description" type="text" placeholder="Route lightweight tasks to local machine"
                 class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm text-white focus:border-[var(--accent)] focus:outline-none">
             </div>
           </div>
