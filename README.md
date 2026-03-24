@@ -543,7 +543,6 @@ kubectl rollout status  deployment/logos -n logos
 ```bash
 git clone https://github.com/GregsGreyCode/logos.git
 cd logos
-git submodule update --init mini-swe-agent
 curl -LsSf https://astral.sh/uv/install.sh | sh
 uv venv .venv --python 3.11
 source .venv/bin/activate
@@ -555,7 +554,7 @@ uv pip install -e "./mini-swe-agent"
 **Why these choices:**
 - `uv` — significantly faster than pip for dependency resolution; the project uses it throughout
 - Python 3.11 — minimum supported version; 3.12+ untested
-- `mini-swe-agent` — a submodule used by the agent's code-editing toolset; required for full functionality
+- `mini-swe-agent` — vendored directly into the repo; powers the agent's code-editing toolset
 
 **Test script options:**
 
@@ -591,7 +590,7 @@ This project would not exist without the open-source work it stands on:
 
 - **[Anthropic / Claude](https://www.anthropic.com)** — Claude wrote a significant portion of the gateway, UI, tooling, and this documentation.
 - **[Nous Research / hermes-agent](https://github.com/NousResearch/hermes-agent)** — the Hermes agent runtime (`agents/hermes/`) is a heavily extended fork of their open-source hermes-agent. The platform layer (gateway, auth, dashboard, STAMP system, policy enforcement) is original work built on top of it. The [`tinker-atropos`](https://github.com/NousResearch/tinker-atropos) submodule is also theirs.
-- **[SWE-agent / mini-swe-agent](https://github.com/SWE-agent/mini-swe-agent)** — the [`mini-swe-agent`](https://github.com/SWE-agent/mini-swe-agent) submodule powers the terminal tool's PTY-based shell execution.
+- **[SWE-agent / mini-swe-agent](https://github.com/SWE-agent/mini-swe-agent)** — vendored directly into the repo (MIT licence), powers the terminal tool's PTY-based shell execution.
 - **[Ollama](https://github.com/ollama/ollama)** — makes running local LLMs approachable. Powers the homelab GPU machines that handle inference.
 - **[LM Studio](https://lmstudio.ai)** — excellent local model serving, especially for experimentation and first-time model setup.
 - **[faster-whisper](https://github.com/SYSTRAN/faster-whisper)** — powers in-pod voice transcription without any cloud dependency.
