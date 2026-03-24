@@ -1,6 +1,7 @@
 """Admin handlers: machines, routing policies, user-policy assignment, routing resolver."""
 
 import logging
+import os
 import time as _time
 
 import aiohttp
@@ -58,12 +59,39 @@ async def _probe_health(endpoint_url: str) -> dict:
     base = endpoint_url.rstrip("/")
     if base.endswith("/v1"):
         base = base[:-3]
+
+    api_key = os.environ.get("OPENAI_API_KEY", "")
+    auth_headers = {"Authorization": f"Bearer {api_key}"} if api_key and api_key != "ollama" else {}
+
     try:
         async with aiohttp.ClientSession() as session:
-            async with session.get(
-                f"{base}/health", timeout=aiohttp.ClientTimeout(total=3)
-            ) as r:
-                return {"status": "ok" if r.ok else "degraded", "http": r.status}
+            # 1. Try /health (works for Ollama, internal Hermes nodes — no auth needed)
+            try:
+                async with session.get(
+                    f"{base}/health", timeout=aiohttp.ClientTimeout(total=3)
+                ) as r:
+                    if r.ok:
+                        return {"status": "ok", "http": r.status}
+            except Exception:
+                pass
+
+            # 2. Fall back to /v1/models with API key (LM Studio, OpenAI-compatible servers)
+            for headers in (auth_headers, {}):
+                try:
+                    async with session.get(
+                        f"{base}/v1/models", headers=headers,
+                        timeout=aiohttp.ClientTimeout(total=3)
+                    ) as r:
+                        if r.ok:
+                            return {"status": "ok", "http": r.status}
+                        if r.status not in (401, 403):
+                            return {"status": "degraded", "http": r.status}
+                except Exception:
+                    pass
+                if not headers:
+                    break
+
+            return {"status": "unreachable", "error": "no reachable endpoint"}
     except Exception as exc:
         return {"status": "unreachable", "error": str(exc)[:80]}
 
