@@ -810,15 +810,17 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
     results: list[dict] = []
     results_lock = asyncio.Lock()
 
-    async def _flush_lmstudio_vram(base_url: str, http: aiohttp.ClientSession) -> None:
+    async def _flush_lmstudio_vram(base_url: str, http: aiohttp.ClientSession, api_key: str = "") -> None:
         """Unload every currently-loaded model from LM Studio before benchmarking.
 
         Models loaded outside our session (e.g. olmocr left loaded by the user)
         will consume VRAM and throttle throughput for every model we test.
         """
+        _headers = {"Authorization": f"Bearer {api_key}"} if api_key and api_key != "ollama" else {}
         try:
             async with http.get(
                 f"{base_url}/api/v1/models",
+                headers=_headers,
                 timeout=aiohttp.ClientTimeout(total=5),
             ) as r:
                 if r.status != 200:
@@ -831,6 +833,7 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
             try:
                 async with http.post(
                     f"{base_url}/api/v1/models/unload",
+                    headers=_headers,
                     json={"instance_id": mid},
                     timeout=aiohttp.ClientTimeout(total=8),
                 ) as ur:
@@ -847,7 +850,7 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
         if first_spec["server_type"] == "lmstudio":
             base_url_flush = re.sub(r"/v1/?$", "", first_spec["endpoint"])
             await send({"log": f"Clearing VRAM on {base_url_flush}…"})
-            await _flush_lmstudio_vram(base_url_flush, http)
+            await _flush_lmstudio_vram(base_url_flush, http, first_spec.get("api_key", ""))
 
         for spec in group:
             model_id    = spec["id"]
@@ -862,9 +865,11 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
 
             # LM Studio: try native load API before benchmarking (best-effort)
             if server_type == "lmstudio":
+                _auth_headers = {"Authorization": f"Bearer {api_key}"} if api_key and api_key != "ollama" else {}
                 try:
                     async with http.post(
                         f"{base_url}/api/v1/models/load",
+                        headers=_auth_headers,
                         json={"model": model_id, "context_length": 4096},
                         timeout=aiohttp.ClientTimeout(total=5),
                     ) as lr:
@@ -1022,11 +1027,22 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
                 t0 = time.time()
 
                 # ── 3-pass speed benchmark, take median (discards outliers) ──
-                r1, approx1 = await _bench_run(1, _BENCH_PROMPT)
+                # Retry once on ServerDisconnectedError — llama.cpp and some other
+                # servers close the TCP connection immediately after each response.
+                # aiohttp may return a stale pooled connection; a single retry with a
+                # short pause is enough to get a fresh connection established.
+                async def _bench_run_r(pass_num: int, prompt: str, max_tokens: int = 120) -> tuple[float, bool]:
+                    try:
+                        return await _bench_run(pass_num, prompt, max_tokens)
+                    except aiohttp.ServerDisconnectedError:
+                        await asyncio.sleep(0.5)
+                        return await _bench_run(pass_num, prompt, max_tokens)
+
+                r1, approx1 = await _bench_run_r(1, _BENCH_PROMPT)
                 await send({"log": f"  Pass 1 (prose): {r1:.1f} tok/s"})
-                r2, approx2 = await _bench_run(2, _BENCH_PROMPT_STRUCT)
+                r2, approx2 = await _bench_run_r(2, _BENCH_PROMPT_STRUCT)
                 await send({"log": f"  Pass 2 (structured): {r2:.1f} tok/s"})
-                r3, approx3 = await _bench_run(3, _BENCH_PROMPT)
+                r3, approx3 = await _bench_run_r(3, _BENCH_PROMPT)
                 await send({"log": f"  Pass 3 (prose): {r3:.1f} tok/s"})
 
                 tok_s   = round(sorted([r1, r2, r3])[1])   # median of 3
@@ -1168,8 +1184,10 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
                 hint_task.cancel()
                 try:
                     if server_type == "lmstudio":
+                        _unload_headers = {"Authorization": f"Bearer {api_key}"} if api_key and api_key != "ollama" else {}
                         ur = await http.post(
                             f"{base_url}/api/v1/models/unload",
+                            headers=_unload_headers,
                             json={"instance_id": model_id},
                             timeout=aiohttp.ClientTimeout(total=5),
                         )
