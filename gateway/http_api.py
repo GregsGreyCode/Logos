@@ -6607,8 +6607,8 @@ _SETUP_HTML = """<!DOCTYPE html>
       <!-- ── Step 1: Connect model server ───────────────────────────── -->
       <div x-show="step===1" x-cloak>
         <div class="mb-5">
-          <h2 class="text-xl font-bold mb-1">Connect your inference server(s)</h2>
-          <p class="text-gray-400 text-sm">Logos will scan for Ollama and LM Studio on your local network. You can also add remote servers — on a LAN, VPC, or cloud VM — using a custom address.</p>
+          <h2 class="text-xl font-bold mb-1">Choose where your agents will run</h2>
+          <p class="text-gray-400 text-sm">Logos scanned for local inference servers and found the results below. Select every server you want agents to route across, then continue to benchmark.</p>
         </div>
 
         <!-- Scanning -->
@@ -6620,144 +6620,106 @@ _SETUP_HTML = """<!DOCTYPE html>
         </div>
 
         <!-- Results -->
-        <div x-show="!autoScanning && autoScanDone" class="space-y-3">
+        <div x-show="!autoScanning && autoScanDone" class="space-y-4">
 
-          <!-- Rename hint -->
-          <p x-show="foundServers.length > 0" class="text-xs text-gray-600 mb-2">Click a server name to rename it.</p>
-
-          <!-- This machine: grouped card when multiple localhost servers found -->
-          <template x-if="localServers.length > 1">
-            <div class="p-4 rounded-xl border border-gray-700 bg-gray-900 space-y-3">
-              <div class="text-xs text-gray-500 uppercase tracking-wider font-semibold">This machine</div>
-              <template x-for="s in localServers" :key="s.endpoint">
-                <div class="flex items-start gap-3 pt-2 border-t border-gray-800 first:border-t-0 first:pt-0">
-                  <button @click="s.status==='up' && toggleServer(s)"
-                    :class="isServerSelected(s) ? 'bg-indigo-500 border-indigo-500' : 'border-gray-600'"
-                    class="w-5 h-5 rounded border-2 flex items-center justify-center flex-shrink-0 mt-0.5 transition-all">
-                    <svg x-show="isServerSelected(s)" class="w-3 h-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/>
-                    </svg>
-                  </button>
-                  <div class="flex-1 min-w-0">
-                    <div class="flex items-center gap-2 flex-wrap" x-data="{ editing: false, draft: '' }">
-                      <span x-show="!editing" @click="editing=true; draft=s.customName||serverDefaultName(s)"
-                        class="text-sm font-semibold text-white cursor-text hover:text-indigo-300 transition-colors"
-                        x-text="serverName(s)" title="Click to rename"></span>
-                      <input x-show="editing" x-model="draft" type="text"
-                        @blur="s.customName=draft.trim()||''; editing=false"
-                        @keydown.enter="s.customName=draft.trim()||''; editing=false"
-                        @keydown.escape="editing=false"
-                        x-init="$watch('editing', v => v && $nextTick(() => $el.focus()))"
-                        class="text-sm font-semibold bg-transparent border-b border-indigo-400 text-white focus:outline-none w-32">
-                      <span class="text-[10px] font-mono text-gray-600"
-                        x-text="':' + new URL(s.endpoint).port"></span>
-                      <span x-show="s.status==='up'" class="text-[10px] px-1.5 py-0.5 rounded-full bg-indigo-950 text-indigo-300 border border-indigo-800 font-medium">running</span>
-                      <span x-show="s.status==='auth_required'" class="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-950 text-amber-400 border border-amber-800 font-medium">auth required</span>
-                    </div>
-                    <div x-show="s.status==='up'" class="text-xs text-gray-600 mt-0.5"
-                      x-text="s.models.length===0 ? 'No models loaded yet' : s.models.length + ' model' + (s.models.length!==1?'s':'') + ' ready'"></div>
-                    <div x-show="s.status==='auth_required'" class="mt-2 space-y-1.5">
-                      <div class="flex gap-2">
-                        <input type="password" placeholder="API key (optional)"
-                          x-model="s._apiKey"
-                          class="flex-1 bg-gray-950 border border-gray-700 rounded-lg px-3 py-1.5 text-xs text-white placeholder-gray-600 focus:outline-none focus:border-indigo-500 font-mono">
-                        <button @click="retryWithKey(s)" :disabled="!s._apiKey"
-                          class="btn-primary px-3 py-1.5 rounded-lg text-xs flex-shrink-0">Connect</button>
-                      </div>
-                      <button @click="s._apiKey=''; retryWithKey(s)" class="text-xs text-gray-600 hover:text-gray-400 transition-colors">Skip — connect without key</button>
+          <!-- LOCAL MACHINE -->
+          <template x-if="localServers.length > 0">
+            <div>
+              <div class="text-[10px] text-gray-500 uppercase tracking-wider font-semibold mb-2 px-1">Local Machine</div>
+              <div class="rounded-xl border border-gray-700 bg-gray-900 divide-y divide-gray-800">
+                <template x-for="group in groupedLocalServers" :key="group.type">
+                  <div class="px-4 py-3">
+                    <!-- App label -->
+                    <div class="text-sm font-semibold text-white mb-2" x-text="group.label"></div>
+                    <!-- Endpoint rows -->
+                    <div class="space-y-2">
+                      <template x-for="s in group.servers" :key="s.endpoint">
+                        <div class="flex items-start gap-3 pl-1">
+                          <button @click="s.status==='up' && toggleServer(s)"
+                            :class="isServerSelected(s) ? 'bg-indigo-500 border-indigo-500' : s.status==='up' ? 'border-gray-600 hover:border-gray-400 cursor-pointer' : 'border-gray-700 opacity-40 cursor-default'"
+                            class="w-4 h-4 rounded border-2 flex items-center justify-center flex-shrink-0 mt-0.5 transition-all">
+                            <svg x-show="isServerSelected(s)" class="w-2.5 h-2.5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/>
+                            </svg>
+                          </button>
+                          <div class="flex-1 min-w-0">
+                            <div class="flex items-center gap-2 flex-wrap">
+                              <span class="text-xs font-mono text-gray-400" x-text="'Port ' + new URL(s.endpoint).port"></span>
+                              <span x-show="s.status==='up'" class="text-[10px] px-1.5 py-0.5 rounded-full bg-green-950 text-green-400 border border-green-900 font-medium">Running</span>
+                              <span x-show="s.status==='auth_required'" class="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-950 text-amber-400 border border-amber-800 font-medium">Needs API key</span>
+                              <span x-show="s.status==='up' && s.models.length > 0" class="text-[10px] text-gray-600"
+                                x-text="s.models.length + ' model' + (s.models.length!==1?'s':'')"></span>
+                              <span x-show="s.status==='up' && s.models.length === 0" class="text-[10px] text-gray-600">No models loaded</span>
+                            </div>
+                            <div x-show="s.status==='auth_required'" class="mt-2 space-y-1.5">
+                              <p class="text-xs text-gray-500">This endpoint requires an API key to connect.</p>
+                              <div class="flex gap-2">
+                                <input type="password" placeholder="Enter API key"
+                                  x-model="s._apiKey"
+                                  class="flex-1 bg-gray-950 border border-gray-700 rounded-lg px-3 py-1.5 text-xs text-white placeholder-gray-600 focus:outline-none focus:border-indigo-500 font-mono">
+                                <button @click="retryWithKey(s)" :disabled="!s._apiKey"
+                                  class="btn-primary px-3 py-1.5 rounded-lg text-xs flex-shrink-0 disabled:opacity-40">Connect</button>
+                              </div>
+                              <button @click="s._apiKey=''; retryWithKey(s)" class="text-xs text-gray-700 hover:text-gray-500 transition-colors">Connect without authentication (not recommended)</button>
+                            </div>
+                          </div>
+                        </div>
+                      </template>
                     </div>
                   </div>
-                </div>
-              </template>
+                </template>
+              </div>
             </div>
           </template>
 
-          <!-- Single localhost server — shown as a normal card -->
-          <template x-if="localServers.length === 1">
-            <template x-for="s in localServers" :key="s.endpoint">
-              <div class="p-4 rounded-xl border transition-all"
-                :class="isServerSelected(s) ? 'border-indigo-500 bg-indigo-950/30 spinner-hue' : 'border-gray-700 bg-gray-900'">
-                <div class="flex items-start gap-3">
-                  <button @click="s.status==='up' && toggleServer(s)"
-                    :class="isServerSelected(s) ? 'bg-indigo-500 border-indigo-500' : 'border-gray-600'"
-                    class="w-5 h-5 rounded border-2 flex items-center justify-center flex-shrink-0 mt-0.5 transition-all">
-                    <svg x-show="isServerSelected(s)" class="w-3 h-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/>
-                    </svg>
-                  </button>
-                  <div class="flex-1 min-w-0">
-                    <div class="flex items-center gap-2 flex-wrap" x-data="{ editing: false, draft: '' }">
-                      <span x-show="!editing" @click="editing=true; draft=s.customName||serverDefaultName(s)"
-                        class="text-sm font-semibold text-white cursor-text hover:text-indigo-300 transition-colors"
-                        x-text="serverName(s)" title="Click to rename"></span>
-                      <input x-show="editing" x-model="draft" type="text"
-                        @blur="s.customName=draft.trim()||''; editing=false"
-                        @keydown.enter="s.customName=draft.trim()||''; editing=false"
-                        @keydown.escape="editing=false"
-                        x-init="$watch('editing', v => v && $nextTick(() => $el.focus()))"
-                        class="text-sm font-semibold bg-transparent border-b border-indigo-400 text-white focus:outline-none w-32">
-                      <span x-show="s.status==='up'" class="text-[10px] px-1.5 py-0.5 rounded-full bg-indigo-950 text-indigo-300 border border-indigo-800 font-medium">running</span>
-                      <span x-show="s.status==='auth_required'" class="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-950 text-amber-400 border border-amber-800 font-medium">auth required</span>
-                    </div>
-                    <div class="text-xs text-gray-500 font-mono mt-0.5 truncate" x-text="s.endpoint.replace('/v1','')"></div>
-                    <div x-show="s.status==='up'" class="text-xs text-gray-600 mt-0.5"
-                      x-text="s.models.length===0 ? 'No models loaded yet' : s.models.length + ' model' + (s.models.length!==1?'s':'') + ' ready'"></div>
-                    <div x-show="s.status==='auth_required'" class="mt-2 space-y-1.5">
-                      <div class="flex gap-2">
-                        <input type="password" placeholder="API key (optional — from LM Studio \u2192 Local Server)"
-                          x-model="s._apiKey"
-                          class="flex-1 bg-gray-950 border border-gray-700 rounded-lg px-3 py-1.5 text-xs text-white placeholder-gray-600 focus:outline-none focus:border-indigo-500 font-mono">
-                        <button @click="retryWithKey(s)" :disabled="!s._apiKey"
-                          class="btn-primary px-3 py-1.5 rounded-lg text-xs flex-shrink-0">Connect</button>
+          <!-- REMOTE SERVERS -->
+          <template x-if="remoteServers.length > 0">
+            <div>
+              <div class="text-[10px] text-gray-500 uppercase tracking-wider font-semibold mb-2 px-1">Remote Servers</div>
+              <div class="space-y-2">
+                <template x-for="s in remoteServers" :key="s.endpoint">
+                  <div class="p-4 rounded-xl border transition-all"
+                    :class="isServerSelected(s) ? 'border-indigo-500/60 bg-indigo-950/20' : 'border-gray-700 bg-gray-900'">
+                    <div class="flex items-start gap-3">
+                      <button @click="s.status==='up' && toggleServer(s)"
+                        :class="isServerSelected(s) ? 'bg-indigo-500 border-indigo-500' : s.status==='up' ? 'border-gray-600 hover:border-gray-400 cursor-pointer' : 'border-gray-700 opacity-40 cursor-default'"
+                        class="w-5 h-5 rounded border-2 flex items-center justify-center flex-shrink-0 mt-0.5 transition-all">
+                        <svg x-show="isServerSelected(s)" class="w-3 h-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/>
+                        </svg>
+                      </button>
+                      <div class="flex-1 min-w-0">
+                        <div class="flex items-center gap-2 flex-wrap" x-data="{ editing: false, draft: '' }">
+                          <span x-show="!editing" @click="editing=true; draft=s.customName||serverDefaultName(s)"
+                            class="text-sm font-semibold text-white cursor-text hover:text-indigo-300 transition-colors"
+                            x-text="serverName(s)" title="Click to rename"></span>
+                          <input x-show="editing" x-model="draft" type="text"
+                            @blur="s.customName=draft.trim()||''; editing=false"
+                            @keydown.enter="s.customName=draft.trim()||''; editing=false"
+                            @keydown.escape="editing=false"
+                            x-init="$watch('editing', v => v && $nextTick(() => $el.focus()))"
+                            class="text-sm font-semibold bg-transparent border-b border-indigo-400 text-white focus:outline-none w-32">
+                          <span x-show="s.status==='up'" class="text-[10px] px-1.5 py-0.5 rounded-full bg-green-950 text-green-400 border border-green-900 font-medium">Running</span>
+                          <span x-show="s.status==='auth_required'" class="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-950 text-amber-400 border border-amber-800 font-medium">Needs API key</span>
+                        </div>
+                        <div class="text-xs text-gray-600 font-mono mt-0.5 truncate" x-text="s.endpoint.replace('/v1','')"></div>
+                        <div x-show="s.status==='up'" class="text-xs text-gray-600 mt-0.5"
+                          x-text="s.models.length===0 ? 'No models loaded yet' : s.models.length + ' model' + (s.models.length!==1?'s':'') + ' ready'"></div>
+                        <div x-show="s.status==='auth_required'" class="mt-2 space-y-1.5">
+                          <p class="text-xs text-gray-500">This server requires an API key to connect.</p>
+                          <div class="flex gap-2">
+                            <input type="password" placeholder="Enter API key"
+                              x-model="s._apiKey"
+                              class="flex-1 bg-gray-950 border border-gray-700 rounded-lg px-3 py-1.5 text-xs text-white placeholder-gray-600 focus:outline-none focus:border-indigo-500 font-mono">
+                            <button @click="retryWithKey(s)" :disabled="!s._apiKey"
+                              class="btn-primary px-3 py-1.5 rounded-lg text-xs flex-shrink-0 disabled:opacity-40">Connect</button>
+                          </div>
+                          <button @click="s._apiKey=''; retryWithKey(s)" class="text-xs text-gray-700 hover:text-gray-500 transition-colors">Connect without authentication (not recommended)</button>
+                        </div>
                       </div>
-                      <button @click="s._apiKey=''; retryWithKey(s)" class="text-xs text-gray-600 hover:text-gray-400 transition-colors">Skip — connect without key</button>
                     </div>
                   </div>
-                </div>
-              </div>
-            </template>
-          </template>
-
-          <!-- Remote servers — always individual cards -->
-          <template x-for="s in remoteServers" :key="s.endpoint">
-            <div class="p-4 rounded-xl border transition-all"
-              :class="isServerSelected(s) ? 'border-indigo-500 bg-indigo-950/30 spinner-hue' : 'border-gray-700 bg-gray-900'">
-              <div class="flex items-start gap-3">
-                <button @click="s.status==='up' && toggleServer(s)"
-                  :class="isServerSelected(s) ? 'bg-indigo-500 border-indigo-500' : 'border-gray-600'"
-                  class="w-5 h-5 rounded border-2 flex items-center justify-center flex-shrink-0 mt-0.5 transition-all">
-                  <svg x-show="isServerSelected(s)" class="w-3 h-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/>
-                  </svg>
-                </button>
-                <div class="flex-1 min-w-0">
-                  <div class="flex items-center gap-2 flex-wrap" x-data="{ editing: false, draft: '' }">
-                    <span x-show="!editing" @click="editing=true; draft=s.customName||serverDefaultName(s)"
-                      class="text-sm font-semibold text-white cursor-text hover:text-indigo-300 transition-colors"
-                      x-text="serverName(s)" title="Click to rename"></span>
-                    <input x-show="editing" x-model="draft" type="text"
-                      @blur="s.customName=draft.trim()||''; editing=false"
-                      @keydown.enter="s.customName=draft.trim()||''; editing=false"
-                      @keydown.escape="editing=false"
-                      x-init="$watch('editing', v => v && $nextTick(() => $el.focus()))"
-                      class="text-sm font-semibold bg-transparent border-b border-indigo-400 text-white focus:outline-none w-32">
-                    <span x-show="s.status==='up'" class="text-[10px] px-1.5 py-0.5 rounded-full bg-indigo-950 text-indigo-300 border border-indigo-800 font-medium">running</span>
-                    <span x-show="s.status==='auth_required'" class="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-950 text-amber-400 border border-amber-800 font-medium">auth required</span>
-                  </div>
-                  <div class="text-xs text-gray-500 font-mono mt-0.5 truncate" x-text="s.endpoint.replace('/v1','')"></div>
-                  <div x-show="s.status==='up'" class="text-xs text-gray-600 mt-0.5"
-                    x-text="s.models.length===0 ? 'No models loaded yet' : s.models.length + ' model' + (s.models.length!==1?'s':'') + ' ready'"></div>
-                  <div x-show="s.status==='auth_required'" class="mt-2 space-y-1.5">
-                    <div class="flex gap-2">
-                      <input type="password" placeholder="API key (optional)"
-                        x-model="s._apiKey"
-                        class="flex-1 bg-gray-950 border border-gray-700 rounded-lg px-3 py-1.5 text-xs text-white placeholder-gray-600 focus:outline-none focus:border-indigo-500 font-mono">
-                      <button @click="retryWithKey(s)" :disabled="!s._apiKey"
-                        class="btn-primary px-3 py-1.5 rounded-lg text-xs flex-shrink-0">Connect</button>
-                    </div>
-                    <button @click="s._apiKey=''; retryWithKey(s)" class="text-xs text-gray-600 hover:text-gray-400 transition-colors">Skip — connect without key</button>
-                  </div>
-                </div>
+                </template>
               </div>
             </div>
           </template>
@@ -6921,16 +6883,19 @@ _SETUP_HTML = """<!DOCTYPE html>
           </div>
 
           <!-- Footer -->
-          <div class="flex items-center gap-3 pt-1">
-            <button @click="autoDetect()" :disabled="autoScanning"
-              class="text-xs text-gray-600 hover:text-gray-400 disabled:opacity-50 transition-colors flex items-center gap-1.5 flex-shrink-0">
-              <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
-              Re-scan
-            </button>
-            <button @click="goNext()" :disabled="selectedServers.length===0"
-              class="btn-primary flex-1 py-2.5 rounded-xl text-sm">
-              Continue &rarr;
-            </button>
+          <div class="space-y-2 pt-1">
+            <p x-show="selectedServers.length===0 && foundServers.length>0" class="text-xs text-center text-gray-600">Select at least one server to continue</p>
+            <div class="flex items-center gap-3">
+              <button @click="autoDetect()" :disabled="autoScanning"
+                class="text-xs text-gray-600 hover:text-gray-400 disabled:opacity-50 transition-colors flex items-center gap-1.5 flex-shrink-0">
+                <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+                Re-scan
+              </button>
+              <button @click="goNext()" :disabled="selectedServers.length===0"
+                class="btn-primary flex-1 py-2.5 rounded-xl text-sm disabled:opacity-40 disabled:cursor-not-allowed transition-opacity">
+                Continue &rarr; Benchmark models
+              </button>
+            </div>
           </div>
         </div>
       </div>
@@ -7074,6 +7039,11 @@ _SETUP_HTML = """<!DOCTYPE html>
                                     x-text="compareExpanded === mid ? '\u25b4' : '\u25be'"></span>
                                 </div>
                               </template>
+                              <!-- Per-model retry -->
+                              <button @click.stop="retryModel(mid)"
+                                class="text-gray-700 hover:text-gray-400 transition-colors" title="Re-test this model">
+                                <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+                              </button>
                             </div>
                           </template>
                         </div>
@@ -8175,6 +8145,60 @@ function setup() {
       this.runCompare();
     },
 
+    async retryModel(mid) {
+      const allModels = this.getModels();
+      const m = allModels.find(m => m.id === mid);
+      if (!m || this.compareTesting) return;
+      const srv = this.selectedServers
+        ? this.selectedServers.find(s => s.endpoint === m._serverEndpoint)
+        : this.activeServer;
+      const endpoint = (srv && srv.endpoint) || (this.activeServer && this.activeServer.endpoint);
+      // Clear old result and mark as testing
+      const results = { ...this.compareResults };
+      delete results[mid];
+      this.compareResults = results;
+      this.compareTesting = mid;
+      this.compareLoadingFor = null;
+      try {
+        const r = await fetch('/api/setup/compare', {
+          method: 'POST', credentials: 'include',
+          headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken() },
+          body: JSON.stringify({
+            endpoint:    endpoint,
+            api_key:     (srv && srv._apiKey) || (this.activeServer && this.activeServer._apiKey) || 'ollama',
+            server_type: (srv && srv.type)    || (this.activeServer && this.activeServer.type)    || 'unknown',
+            models: [{ id: mid, endpoint: m._serverEndpoint || endpoint,
+              api_key:     (srv && srv._apiKey) || m._apiKey || (this.activeServer && this.activeServer._apiKey) || 'ollama',
+              server_type: m._serverType || (srv && srv.type) || 'unknown',
+            }],
+          }),
+        });
+        if (!r.ok) {
+          const errBody = await r.json().catch(() => ({ error: "HTTP " + r.status }));
+          this.compareResults = { ...this.compareResults, [mid]: { model: mid, error: errBody.error || "HTTP " + r.status } };
+          this.compareTesting = null; return;
+        }
+        const reader = r.body.getReader(); const dec = new TextDecoder(); let buf = '';
+        while (true) {
+          const { done, value } = await reader.read(); if (done) break;
+          buf += dec.decode(value, { stream: true });
+          const lines = buf.split('\\n'); buf = lines.pop();
+          for (const line of lines) {
+            if (!line.startsWith('data: ')) continue;
+            try {
+              const ev = JSON.parse(line.slice(6));
+              if (ev.loading_model) { this.compareLoadingFor = ev.loading_model; }
+              if (ev.result) { this.compareLoadingFor = null; this.compareResults = { ...this.compareResults, [ev.result.model]: ev.result }; }
+            } catch {}
+          }
+        }
+      } catch(err) {
+        this.compareResults = { ...this.compareResults, [mid]: { model: mid, error: String(err) } };
+      }
+      this.compareTesting = null;
+      this.compareLoadingFor = null;
+    },
+
     async runCompare() {
       const models = this.getModels();
       try {
@@ -8374,7 +8398,13 @@ function setup() {
     },
 
     serverDefaultName(s) {
-      return s.type === 'lmstudio' ? 'LM Studio' : s.type === 'ollama' ? 'Ollama' : 'Server';
+      if (s.type === 'lmstudio') return 'LM Studio';
+      if (s.type === 'ollama') return 'Ollama';
+      if (s.type === 'vllm') return 'vLLM';
+      try {
+        const u = new URL(s.endpoint.replace('/v1',''));
+        return u.hostname + (u.port && u.port !== '80' && u.port !== '443' ? ':' + u.port : '');
+      } catch { return 'Server'; }
     },
 
     serverName(s) {
@@ -8391,6 +8421,18 @@ function setup() {
       return this.foundServers.filter(s => {
         try { const h = new URL(s.endpoint).hostname; return h !== 'localhost' && h !== '127.0.0.1'; } catch { return false; }
       });
+    },
+
+    get groupedLocalServers() {
+      const order = ['ollama','lmstudio','vllm'];
+      const labels = { ollama: 'Ollama', lmstudio: 'LM Studio', vllm: 'vLLM' };
+      const map = {};
+      for (const s of this.localServers) {
+        const k = s.type || 'other';
+        if (!map[k]) map[k] = { type: k, label: labels[k] || 'Local Server', servers: [] };
+        map[k].servers.push(s);
+      }
+      return [...order.filter(k => map[k]), ...Object.keys(map).filter(k => !order.includes(k))].map(k => map[k]);
     },
 
     // Find the server a model belongs to
