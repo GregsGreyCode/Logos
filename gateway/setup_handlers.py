@@ -33,7 +33,7 @@ logger = logging.getLogger(__name__)
 
 _PROBE_TIMEOUT = aiohttp.ClientTimeout(total=4)
 _SCAN_TIMEOUT  = aiohttp.ClientTimeout(total=1)   # aggressive — we're sweeping 254 hosts
-_SCAN_PORTS    = [11434, 1234]
+_SCAN_PORTS    = [11434, 1234, 8080]   # Ollama, LM Studio, llama.cpp/vLLM default
 _SCAN_CONCURRENCY = 40
 
 
@@ -232,7 +232,7 @@ async def handle_setup_probe(request: web.Request) -> web.Response:
 
 
 async def handle_setup_scan(request: web.Request) -> web.Response:
-    """Sweep the local /24 subnet for model servers on :11434 and :1234.
+    """Sweep the local /24 subnet for model servers on :11434, :1234, and :8080.
 
     Returns all discovered servers sorted by IP.  Localhost is always
     checked first and prepended to the results so it ranks highest.
@@ -246,6 +246,7 @@ async def handle_setup_scan(request: web.Request) -> web.Response:
         local_results = await asyncio.gather(
             _probe_server(session, "http://localhost:11434", None),
             _probe_server(session, "http://localhost:1234", None),
+            _probe_server(session, "http://localhost:8080", None),
         )
         for r in local_results:
             if r["status"] in ("up", "auth_required"):
