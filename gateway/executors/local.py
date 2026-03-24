@@ -116,16 +116,18 @@ class LocalProcessExecutor:
         log_path = _HERMES_HOME / "logs" / f"instance_{config.name}.log"
         log_path.parent.mkdir(parents=True, exist_ok=True)
 
+        # On Windows use CREATE_DETACHED_PROCESS so the child survives if the
+        # parent exits; on Unix start_new_session=True creates a new session leader.
+        _popen_kwargs: dict = {"env": env, "stdout": None, "stderr": None}
+        if sys.platform == "win32":
+            _popen_kwargs["creationflags"] = subprocess.CREATE_DETACHED_PROCESS
+        else:
+            _popen_kwargs["start_new_session"] = True
+
         with open(log_path, "a") as log_fh:
-            proc = subprocess.Popen(
-                cmd,
-                env=env,
-                stdout=log_fh,
-                stderr=log_fh,
-                # Keep process alive independent of launcher on Unix;
-                # on Windows, Popen already detaches from the console.
-                start_new_session=True,
-            )
+            _popen_kwargs["stdout"] = log_fh
+            _popen_kwargs["stderr"] = log_fh
+            proc = subprocess.Popen(cmd, **_popen_kwargs)
 
         record = {
             "name": config.name,
@@ -194,8 +196,21 @@ class LocalProcessExecutor:
                                 break
                             time.sleep(0.1)
                         else:
-                            os.kill(pid, signal.SIGKILL)
-                    except ProcessLookupError:
+                            # SIGKILL doesn't exist on Windows; fall back to
+                            # TerminateProcess via os.kill with a no-op signal
+                            # (signal 0) just to confirm alive, then force-kill.
+                            if hasattr(signal, "SIGKILL"):
+                                os.kill(pid, signal.SIGKILL)
+                            else:
+                                # Windows: forcefully terminate via subprocess
+                                try:
+                                    subprocess.run(
+                                        ["taskkill", "/F", "/PID", str(pid)],
+                                        capture_output=True,
+                                    )
+                                except Exception:
+                                    pass
+                    except (ProcessLookupError, OSError):
                         pass
             else:
                 remaining.append(inst)
