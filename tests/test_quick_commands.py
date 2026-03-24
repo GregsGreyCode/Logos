@@ -111,6 +111,8 @@ class TestGatewayQuickCommands:
         runner.config = {"quick_commands": {"limits": {"type": "exec", "command": "echo ok"}}}
         runner._running_agents = {}
         runner._pending_messages = {}
+        runner._seen_message_ids = __import__("collections").deque(maxlen=500)
+        runner._platform_stats = {}
         runner._is_user_authorized = MagicMock(return_value=True)
 
         event = self._make_event("limits")
@@ -124,6 +126,8 @@ class TestGatewayQuickCommands:
         runner.config = {"quick_commands": {"bad": {"type": "prompt", "command": "echo hi"}}}
         runner._running_agents = {}
         runner._pending_messages = {}
+        runner._seen_message_ids = __import__("collections").deque(maxlen=500)
+        runner._platform_stats = {}
         runner._is_user_authorized = MagicMock(return_value=True)
 
         event = self._make_event("bad")
@@ -139,6 +143,8 @@ class TestGatewayQuickCommands:
         runner.config = {"quick_commands": {"slow": {"type": "exec", "command": "sleep 100"}}}
         runner._running_agents = {}
         runner._pending_messages = {}
+        runner._seen_message_ids = __import__("collections").deque(maxlen=500)
+        runner._platform_stats = {}
         runner._is_user_authorized = MagicMock(return_value=True)
 
         event = self._make_event("slow")
@@ -158,6 +164,8 @@ class TestGatewayQuickCommands:
         )
         runner._running_agents = {}
         runner._pending_messages = {}
+        runner._seen_message_ids = __import__("collections").deque(maxlen=500)
+        runner._platform_stats = {}
         runner._is_user_authorized = MagicMock(return_value=True)
 
         event = self._make_event("limits")
