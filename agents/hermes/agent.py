@@ -155,10 +155,20 @@ class _SafeWriter:
 
 
 def _install_safe_stdio() -> None:
-    """Wrap stdout/stderr so best-effort console output cannot crash the agent."""
+    """Wrap stdout/stderr so best-effort console output cannot crash the agent.
+
+    On Windows GUI builds (frozen, no console) sys.stdout/stderr are None.
+    Replace them with a no-op writer so print() never raises AttributeError.
+    """
+    import io
     for stream_name in ("stdout", "stderr"):
         stream = getattr(sys, stream_name, None)
-        if stream is not None and not isinstance(stream, _SafeWriter):
+        if stream is None:
+            # No console (Windows GUI app) — use a silent devnull writer
+            setattr(sys, stream_name, _SafeWriter(
+                io.TextIOWrapper(open(os.devnull, "wb"), encoding="utf-8", errors="replace")
+            ))
+        elif not isinstance(stream, _SafeWriter):
             setattr(sys, stream_name, _SafeWriter(stream))
 
 

@@ -101,11 +101,18 @@ class LocalProcessExecutor:
         port = config.port if config.port else self._allocate_port(instances)
         url = f"http://127.0.0.1:{port}"
 
-        env = {**os.environ, "HERMES_INSTANCE_NAME": config.name}
+        env = {**os.environ, "HERMES_INSTANCE_NAME": config.name, "HERMES_PORT": str(port)}
         if config.soul_name and config.soul_name != "default":
             env["HERMES_SOUL"] = config.soul_name
 
-        cmd = [sys.executable, "-m", "gateway.run", "--port", str(port)]
+        # When running as a frozen executable (Logos.exe), sys.executable is the
+        # launcher itself.  Pass --agent-mode so the launcher skips its UI and
+        # runs only the gateway on the port supplied via HERMES_PORT.
+        # In development (plain Python), use the normal -m gateway.run invocation.
+        if getattr(sys, "frozen", False):
+            cmd = [sys.executable, "--agent-mode"]
+        else:
+            cmd = [sys.executable, "-m", "gateway.run"]
         log_path = _HERMES_HOME / "logs" / f"instance_{config.name}.log"
         log_path.parent.mkdir(parents=True, exist_ok=True)
 

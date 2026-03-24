@@ -722,6 +722,37 @@ def _run_tray_client_mode(remote_url: str) -> None:
 
 
 def main() -> None:
+    # ── Agent-mode: spawned by LocalProcessExecutor for multi-instance support ──
+    # When Logos is frozen (Logos.exe), subprocess.Popen([sys.executable, ...])
+    # would re-run the full launcher.  The executor passes --agent-mode to skip
+    # all launcher UI and just start a gateway on the port supplied via HERMES_PORT.
+    if "--agent-mode" in sys.argv:
+        # Redirect None stdout/stderr (no console on Windows GUI apps) to devnull
+        # so the gateway and agent code can print() without AttributeErrors.
+        import io
+        if sys.stdout is None:
+            sys.stdout = io.TextIOWrapper(open(os.devnull, "wb"), encoding="utf-8", errors="replace")
+        if sys.stderr is None:
+            sys.stderr = io.TextIOWrapper(open(os.devnull, "wb"), encoding="utf-8", errors="replace")
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            from gateway.run import start_gateway  # type: ignore
+            loop.run_until_complete(start_gateway(None, replace=False))
+        except Exception as exc:
+            _log(f"Agent-mode gateway error: {exc}")
+        finally:
+            loop.close()
+        return
+
+    # Redirect None stdout/stderr before anything else so print() in the
+    # gateway / agent code never raises AttributeError on Windows GUI builds.
+    import io
+    if sys.stdout is None:
+        sys.stdout = io.TextIOWrapper(open(os.devnull, "wb"), encoding="utf-8", errors="replace")
+    if sys.stderr is None:
+        sys.stderr = io.TextIOWrapper(open(os.devnull, "wb"), encoding="utf-8", errors="replace")
+
     remote_url = _read_connect_url()
     if remote_url:
         _log(f"Client mode: opening remote Logos at {remote_url}")

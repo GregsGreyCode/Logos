@@ -4319,9 +4319,16 @@ async def start_gateway(config: Optional[GatewayConfig] = None, replace: bool = 
     # The PID file is scoped to HERMES_HOME, so future multi-profile
     # setups (each profile using a distinct HERMES_HOME) will naturally
     # allow concurrent instances without tripping this guard.
+    #
+    # Skip the guard for named agent instances (spawned by LocalProcessExecutor)
+    # — they intentionally share HERMES_HOME with the main gateway for auth/config
+    # access but run on different ports and must not kill the parent process.
     import time as _time
     from gateway.status import get_running_pid, remove_pid_file
-    existing_pid = get_running_pid()
+    if os.environ.get("HERMES_INSTANCE_NAME"):
+        existing_pid = None  # agent instances coexist with the main gateway
+    else:
+        existing_pid = get_running_pid()
     if existing_pid is not None and existing_pid != os.getpid():
         if replace:
             logger.info(

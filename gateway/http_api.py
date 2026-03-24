@@ -784,8 +784,8 @@ _ADMIN_HTML = """<!DOCTYPE html>
           <span class="opacity-50" x-text="accountMenuOpen ? '▲' : '▼'"></span>
         </button>
         <div x-show="accountMenuOpen" x-cloak
-          class="absolute right-0 top-full mt-2 z-50 bg-gray-900 rounded-xl border border-gray-700 shadow-2xl overflow-hidden"
-          style="width:280px;background:var(--bg-card);border-color:var(--border-strong)">
+          class="absolute right-0 top-full mt-2 z-50 bg-gray-900 rounded-xl border border-gray-700 shadow-2xl overflow-hidden w-60"
+          style="background:var(--bg-card);border-color:var(--border-strong)">
           <!-- User info -->
           <div class="px-4 py-3 border-b border-gray-800">
             <div class="text-xs font-semibold text-white" x-text="authUser.display_name || authUser.email"></div>
@@ -6285,8 +6285,10 @@ _SETUP_HTML = """<!DOCTYPE html>
     [x-cloak]{display:none!important}
     html{background:#010409}
     @keyframes page-fadein{from{opacity:0}to{opacity:1}}
+    @keyframes page-fadeout{from{opacity:1}to{opacity:0}}
     body{background-color:#010409;background-image:radial-gradient(rgba(99,102,241,0.06) 1px,transparent 1px);background-size:28px 28px;overflow-x:hidden}
     .setup-content{animation:page-fadein 1s ease 0.2s both}
+    .setup-fadeout{animation:page-fadeout 0.45s ease forwards!important}
     @keyframes dot-fade{0%,80%,100%{opacity:0}40%{opacity:1}}
     /* All colour cycling driven by --hue-deg from the rAF wall-clock loop */
     @keyframes orb-fadein{to{opacity:0.033}}
@@ -8539,8 +8541,17 @@ function setup() {
       await new Promise(r => setTimeout(r, 900));
     },
 
+    async _fadeOutPage() {
+      // Fade the entire setup page out before navigating — mirrors the page-fadein on load.
+      const content = document.querySelector('.setup-content');
+      if (content) {
+        content.classList.add('setup-fadeout');
+        await new Promise(r => setTimeout(r, 460));
+      }
+    },
+
     async complete() {
-      if (this.completeError?.warning) { await this._flyLogoToNav(); window.location.href = '/'; return; }
+      if (this.completeError?.warning) { await this._flyLogoToNav(); await this._fadeOutPage(); window.location.href = '/login'; return; }
       this.completing = true;
       this.completeError = null;
       try {
@@ -8579,7 +8590,8 @@ function setup() {
           try { localStorage.removeItem('logos_setup_scan'); localStorage.removeItem('logos_setup_progress'); localStorage.removeItem('logos_setup_progress_v2'); } catch {}
           try { sessionStorage.setItem('logos_fl', '1'); } catch {}
           await this._flyLogoToNav();
-          window.location.href = '/';
+          await this._fadeOutPage();
+          window.location.href = '/login';
           return;
         }
         const d = await r.json().catch(() => ({}));
