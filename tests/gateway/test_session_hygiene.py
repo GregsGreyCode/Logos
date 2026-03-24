@@ -285,6 +285,8 @@ async def test_session_hygiene_messages_stay_in_originating_topic(monkeypatch, t
     runner._pending_messages = {}
     runner._pending_approvals = {}
     runner._session_db = None
+    runner._seen_message_ids = __import__("collections").deque(maxlen=500)
+    runner._platform_stats = {}
     runner._is_user_authorized = lambda _source: True
     runner._set_session_env = lambda _context: None
     runner._run_agent = AsyncMock(

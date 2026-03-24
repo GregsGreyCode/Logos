@@ -293,19 +293,21 @@ class TestBuildSessionContextPrompt:
 
 
 class TestSessionStoreRewriteTranscript:
-    """Regression: /retry and /undo must persist truncated history to disk."""
+    """Regression: /retry and /undo must persist truncated history to SQLite."""
 
     @pytest.fixture()
     def store(self, tmp_path):
+        from hermes_state import SessionDB
         config = GatewayConfig()
         with patch("gateway.session.SessionStore._ensure_loaded"):
             s = SessionStore(sessions_dir=tmp_path, config=config)
-        s._db = None  # no SQLite for these tests
+        s._db = SessionDB(db_path=tmp_path / "test.db")
         s._loaded = True
         return s
 
     def test_rewrite_replaces_jsonl(self, store, tmp_path):
         session_id = "test_session_1"
+        store._db.create_session(session_id=session_id, source="test")
         # Write initial transcript
         for msg in [
             {"role": "user", "content": "hello"},
@@ -328,6 +330,7 @@ class TestSessionStoreRewriteTranscript:
 
     def test_rewrite_with_empty_list(self, store):
         session_id = "test_session_2"
+        store._db.create_session(session_id=session_id, source="test")
         store.append_to_transcript(session_id, {"role": "user", "content": "hi"})
 
         store.rewrite_transcript(session_id, [])
