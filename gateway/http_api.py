@@ -6473,25 +6473,38 @@ _SETUP_HTML = """<!DOCTYPE html>
 
       <!-- ── Step 0a: Setup overview (wide intro) ─────────────────────── -->
       <div x-show="step===0 && setupMode === 'new' && !introConfirmed">
-        <div class="text-center mb-7">
-          <h1 class="text-2xl font-bold mb-2">Welcome to Logos</h1>
-          <p class="text-gray-400 text-sm">A control plane for agentic AI.</p>
+        <div class="text-center mb-7 relative">
+          <h1 class="text-2xl font-bold mb-2" x-text="tldr ? 'welcome to logos no cap' : 'Welcome to Logos'"></h1>
+          <p class="text-gray-400 text-sm" x-text="tldr ? 'it does AI things on ur computer fr' : 'A control plane for agentic AI.'"></p>
+          <!-- TL;DR toggle — top-right corner -->
+          <button @click="tldr=!tldr"
+            class="absolute top-0 right-0 spinner-hue text-[10px] px-2.5 py-1 rounded-full border font-medium transition-all"
+            :class="tldr ? 'bg-indigo-950 border-indigo-600 text-indigo-200' : 'bg-gray-900 border-gray-700 text-gray-500 hover:border-gray-500 hover:text-gray-400'"
+            title="Toggle TL;DR mode">
+            <span x-text="tldr ? '⚡ tl;dr on' : '⚡ tl;dr'"></span>
+          </button>
         </div>
 
         <!-- Overview card -->
         <div class="rounded-2xl border border-gray-800 bg-gray-900/60 overflow-hidden mb-6">
           <!-- Header text -->
           <div class="px-7 py-6 border-b border-gray-800/60">
-            <div class="text-base font-semibold text-white mb-1">What setup configures</div>
-            <div class="text-sm text-gray-500 mb-4">Seven steps, from model discovery to launch.</div>
-            <p class="text-sm text-gray-500 leading-relaxed">
+            <div class="text-base font-semibold text-white mb-1" x-text="tldr ? 'what ur about to do' : 'What setup configures'"></div>
+            <div class="text-sm text-gray-500 mb-4" x-text="tldr ? '7 steps, its not that deep' : 'Seven steps, from model discovery to launch.'"></div>
+            <p class="text-sm text-gray-500 leading-relaxed" x-show="!tldr">
               Setup establishes how Logos routes inference, which models and runtimes are available, and what operating boundaries apply to agent runs.
               These choices define the platform&rsquo;s initial profile. Everything here can be adjusted from the dashboard after launch.
             </p>
-            <p class="text-sm text-gray-500 leading-relaxed mt-2">
+            <p class="text-sm text-gray-500 leading-relaxed" x-show="tldr" x-cloak>
+              this makes logos find ur AI model and hook everything up. u pick the model, set the vibe, make an account. everything can be changed later its fine
+            </p>
+            <p class="text-sm text-gray-500 leading-relaxed mt-2" x-show="!tldr">
               Each agent run is recorded as a <span class="text-gray-300 font-medium">STAMP</span> &mdash;
               Soul &plus; Tools &plus; Agent &plus; Model &plus; Policy &mdash; making sessions reproducible, comparable, and auditable.
               Setup defines the defaults that every STAMP inherits.
+            </p>
+            <p class="text-sm text-gray-500 leading-relaxed mt-2" x-show="tldr" x-cloak>
+              every chat gets stamped so u can replay it or compare models. ur just setting the defaults rn
             </p>
           </div>
 
@@ -6505,10 +6518,10 @@ _SETUP_HTML = """<!DOCTYPE html>
                 <div class="min-w-0 flex-1">
                   <div class="flex items-center justify-between gap-2 mb-1">
                     <div class="text-sm font-semibold text-gray-200 leading-tight" x-text="s.name"></div>
-                    <span class="spinner-hue text-[9px] px-1.5 py-0.5 rounded-full border border-indigo-800 text-indigo-400 font-medium uppercase tracking-wider flex-shrink-0"
+                    <span class="text-[9px] px-1.5 py-0.5 rounded-full border border-indigo-800 text-indigo-400 font-medium uppercase tracking-wider flex-shrink-0"
                       x-text="s.tag"></span>
                   </div>
-                  <div class="text-xs text-gray-500 leading-relaxed" x-text="s.desc"></div>
+                  <div class="text-xs text-gray-500 leading-relaxed" x-text="tldr ? s.tldrDesc : s.desc"></div>
                 </div>
               </div>
             </template>
@@ -6516,11 +6529,14 @@ _SETUP_HTML = """<!DOCTYPE html>
 
           <!-- When complete — same treatment as the header section above the grid -->
           <div class="px-7 py-6 border-t border-gray-800/60">
-            <div class="text-base font-semibold text-white mb-1">When complete</div>
-            <p class="text-sm text-gray-500 leading-relaxed">
+            <div class="text-base font-semibold text-white mb-1" x-text="tldr ? 'when ur done' : 'When complete'"></div>
+            <p class="text-sm text-gray-500 leading-relaxed" x-show="!tldr">
               You&rsquo;ll have a fully configured platform: inference routed to a benchmarked local model,
               an agent runtime and soul selected, and a secured admin account.
               The platform is ready for agent runs.
+            </p>
+            <p class="text-sm text-gray-500 leading-relaxed" x-show="tldr" x-cloak>
+              ur good. AI is ready, account is set up. just go off at this point
             </p>
           </div>
         </div>
@@ -6621,17 +6637,20 @@ _SETUP_HTML = """<!DOCTYPE html>
                         class="text-sm font-semibold bg-transparent border-b border-indigo-400 text-white focus:outline-none w-32">
                       <span class="text-[10px] font-mono text-gray-600"
                         x-text="':' + new URL(s.endpoint).port"></span>
-                      <span x-show="s.status==='up'" class="spinner-hue text-[10px] px-1.5 py-0.5 rounded-full bg-indigo-950 text-indigo-300 border border-indigo-800 font-medium">running</span>
+                      <span x-show="s.status==='up'" class="text-[10px] px-1.5 py-0.5 rounded-full bg-indigo-950 text-indigo-300 border border-indigo-800 font-medium">running</span>
                       <span x-show="s.status==='auth_required'" class="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-950 text-amber-400 border border-amber-800 font-medium">auth required</span>
                     </div>
                     <div x-show="s.status==='up'" class="text-xs text-gray-600 mt-0.5"
                       x-text="s.models.length===0 ? 'No models loaded yet' : s.models.length + ' model' + (s.models.length!==1?'s':'') + ' ready'"></div>
-                    <div x-show="s.status==='auth_required'" class="mt-2 flex gap-2">
-                      <input type="password" placeholder="Paste API key"
-                        x-model="s._apiKey"
-                        class="flex-1 bg-gray-950 border border-gray-700 rounded-lg px-3 py-1.5 text-xs text-white placeholder-gray-600 focus:outline-none focus:border-indigo-500 font-mono">
-                      <button @click="retryWithKey(s)" :disabled="!s._apiKey"
-                        class="btn-primary px-3 py-1.5 rounded-lg text-xs flex-shrink-0">Connect</button>
+                    <div x-show="s.status==='auth_required'" class="mt-2 space-y-1.5">
+                      <div class="flex gap-2">
+                        <input type="password" placeholder="API key (optional)"
+                          x-model="s._apiKey"
+                          class="flex-1 bg-gray-950 border border-gray-700 rounded-lg px-3 py-1.5 text-xs text-white placeholder-gray-600 focus:outline-none focus:border-indigo-500 font-mono">
+                        <button @click="retryWithKey(s)" :disabled="!s._apiKey"
+                          class="btn-primary px-3 py-1.5 rounded-lg text-xs flex-shrink-0">Connect</button>
+                      </div>
+                      <button @click="s._apiKey=''; retryWithKey(s)" class="text-xs text-gray-600 hover:text-gray-400 transition-colors">Skip — connect without key</button>
                     </div>
                   </div>
                 </div>
@@ -6663,18 +6682,21 @@ _SETUP_HTML = """<!DOCTYPE html>
                         @keydown.escape="editing=false"
                         x-init="$watch('editing', v => v && $nextTick(() => $el.focus()))"
                         class="text-sm font-semibold bg-transparent border-b border-indigo-400 text-white focus:outline-none w-32">
-                      <span x-show="s.status==='up'" class="spinner-hue text-[10px] px-1.5 py-0.5 rounded-full bg-indigo-950 text-indigo-300 border border-indigo-800 font-medium">running</span>
+                      <span x-show="s.status==='up'" class="text-[10px] px-1.5 py-0.5 rounded-full bg-indigo-950 text-indigo-300 border border-indigo-800 font-medium">running</span>
                       <span x-show="s.status==='auth_required'" class="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-950 text-amber-400 border border-amber-800 font-medium">auth required</span>
                     </div>
                     <div class="text-xs text-gray-500 font-mono mt-0.5 truncate" x-text="s.endpoint.replace('/v1','')"></div>
                     <div x-show="s.status==='up'" class="text-xs text-gray-600 mt-0.5"
                       x-text="s.models.length===0 ? 'No models loaded yet' : s.models.length + ' model' + (s.models.length!==1?'s':'') + ' ready'"></div>
-                    <div x-show="s.status==='auth_required'" class="mt-2 flex gap-2">
-                      <input type="password" placeholder="Paste API key from LM Studio \u2192 Local Server tab"
-                        x-model="s._apiKey"
-                        class="flex-1 bg-gray-950 border border-gray-700 rounded-lg px-3 py-1.5 text-xs text-white placeholder-gray-600 focus:outline-none focus:border-indigo-500 font-mono">
-                      <button @click="retryWithKey(s)" :disabled="!s._apiKey"
-                        class="btn-primary px-3 py-1.5 rounded-lg text-xs flex-shrink-0">Connect</button>
+                    <div x-show="s.status==='auth_required'" class="mt-2 space-y-1.5">
+                      <div class="flex gap-2">
+                        <input type="password" placeholder="API key (optional — from LM Studio \u2192 Local Server)"
+                          x-model="s._apiKey"
+                          class="flex-1 bg-gray-950 border border-gray-700 rounded-lg px-3 py-1.5 text-xs text-white placeholder-gray-600 focus:outline-none focus:border-indigo-500 font-mono">
+                        <button @click="retryWithKey(s)" :disabled="!s._apiKey"
+                          class="btn-primary px-3 py-1.5 rounded-lg text-xs flex-shrink-0">Connect</button>
+                      </div>
+                      <button @click="s._apiKey=''; retryWithKey(s)" class="text-xs text-gray-600 hover:text-gray-400 transition-colors">Skip — connect without key</button>
                     </div>
                   </div>
                 </div>
@@ -6705,18 +6727,21 @@ _SETUP_HTML = """<!DOCTYPE html>
                       @keydown.escape="editing=false"
                       x-init="$watch('editing', v => v && $nextTick(() => $el.focus()))"
                       class="text-sm font-semibold bg-transparent border-b border-indigo-400 text-white focus:outline-none w-32">
-                    <span x-show="s.status==='up'" class="spinner-hue text-[10px] px-1.5 py-0.5 rounded-full bg-indigo-950 text-indigo-300 border border-indigo-800 font-medium">running</span>
+                    <span x-show="s.status==='up'" class="text-[10px] px-1.5 py-0.5 rounded-full bg-indigo-950 text-indigo-300 border border-indigo-800 font-medium">running</span>
                     <span x-show="s.status==='auth_required'" class="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-950 text-amber-400 border border-amber-800 font-medium">auth required</span>
                   </div>
                   <div class="text-xs text-gray-500 font-mono mt-0.5 truncate" x-text="s.endpoint.replace('/v1','')"></div>
                   <div x-show="s.status==='up'" class="text-xs text-gray-600 mt-0.5"
                     x-text="s.models.length===0 ? 'No models loaded yet' : s.models.length + ' model' + (s.models.length!==1?'s':'') + ' ready'"></div>
-                  <div x-show="s.status==='auth_required'" class="mt-2 flex gap-2">
-                    <input type="password" placeholder="Paste API key from LM Studio \u2192 Local Server tab"
-                      x-model="s._apiKey"
-                      class="flex-1 bg-gray-950 border border-gray-700 rounded-lg px-3 py-1.5 text-xs text-white placeholder-gray-600 focus:outline-none focus:border-indigo-500 font-mono">
-                    <button @click="retryWithKey(s)" :disabled="!s._apiKey"
-                      class="btn-primary px-3 py-1.5 rounded-lg text-xs flex-shrink-0">Connect</button>
+                  <div x-show="s.status==='auth_required'" class="mt-2 space-y-1.5">
+                    <div class="flex gap-2">
+                      <input type="password" placeholder="API key (optional)"
+                        x-model="s._apiKey"
+                        class="flex-1 bg-gray-950 border border-gray-700 rounded-lg px-3 py-1.5 text-xs text-white placeholder-gray-600 focus:outline-none focus:border-indigo-500 font-mono">
+                      <button @click="retryWithKey(s)" :disabled="!s._apiKey"
+                        class="btn-primary px-3 py-1.5 rounded-lg text-xs flex-shrink-0">Connect</button>
+                    </div>
+                    <button @click="s._apiKey=''; retryWithKey(s)" class="text-xs text-gray-600 hover:text-gray-400 transition-colors">Skip — connect without key</button>
                   </div>
                 </div>
               </div>
@@ -7634,14 +7659,15 @@ function setup() {
 
     // Step 0 — intro panel
     introConfirmed: false,
+    tldr: false,
     setupSteps: [
-      { n: 1, name: 'Connect inference servers',  tag: 'detects',    desc: 'Logos scans your local network for Ollama and LM Studio. You can also add remote servers — on a LAN, VPC, or cloud VM — using a custom address. No Logos installation is needed on the inference machine.' },
-      { n: 2, name: 'Benchmark models',       tag: 'measures',   desc: 'Candidate models run 6 eval tests: instruction following, reasoning, JSON format, tool selection, nested JSON, and multi-step arithmetic. The best fit is pre-selected; you can override freely.' },
-      { n: 3, name: 'Agent runtime',          tag: 'configures', desc: 'Choose which agent engine handles your sessions. Hermes is available now; additional runtimes plug in as they are released.' },
-      { n: 4, name: 'Execution target',       tag: 'configures', desc: 'Decide where agent processes run — in-process alongside Logos, or as isolated Kubernetes Jobs. Affects resource isolation, scaling, and where logs appear.' },
-      { n: 5, name: 'Soul',                   tag: 'configures', desc: "A soul defines the agent's communication style and default behaviour. It is a starting point — editable at any time from the dashboard." },
-      { n: 6, name: 'Your account',           tag: 'secures',    desc: 'Set the email, username, and password for the admin account that protects the dashboard and API.' },
-      { n: 7, name: 'Review & launch',        tag: 'confirms',   desc: 'Review every setting, confirm the model endpoint is reachable, and launch the platform.' },
+      { n: 1, name: 'Connect inference servers',  tag: 'detects',    desc: 'Logos scans your local network for Ollama and LM Studio. You can also add remote servers — on a LAN, VPC, or cloud VM — using a custom address. No Logos installation is needed on the inference machine.', tldrDesc: 'finds where ur AI lives (ollama, lm studio etc). no logos needed on the other machine, its just scanning' },
+      { n: 2, name: 'Benchmark models',       tag: 'measures',   desc: 'Candidate models run 6 eval tests: instruction following, reasoning, JSON format, tool selection, nested JSON, and multi-step arithmetic. The best fit is pre-selected; you can override freely.', tldrDesc: 'makes each model answer 6 questions to see which one is actually smart. picks the best one for u' },
+      { n: 3, name: 'Agent runtime',          tag: 'configures', desc: 'Choose which agent engine handles your sessions. Hermes is available now; additional runtimes plug in as they are released.', tldrDesc: 'picks which brain runs ur AI sessions. hermes for now, more later' },
+      { n: 4, name: 'Execution target',       tag: 'configures', desc: 'Decide where agent processes run — in-process alongside Logos, or as isolated Kubernetes Jobs. Affects resource isolation, scaling, and where logs appear.', tldrDesc: 'decides if the AI runs here or in a lil box. affects logs and stuff. local = easiest' },
+      { n: 5, name: 'Soul',                   tag: 'configures', desc: "A soul defines the agent's communication style and default behaviour. It is a starting point — editable at any time from the dashboard.", tldrDesc: 'personality for the AI. vibes only. change it later whenever' },
+      { n: 6, name: 'Your account',           tag: 'secures',    desc: 'Set the email, username, and password for the admin account that protects the dashboard and API.', tldrDesc: 'make a password so randos cant use ur AI. basic security bestie' },
+      { n: 7, name: 'Review & launch',        tag: 'confirms',   desc: 'Review every setting, confirm the model endpoint is reachable, and launch the platform.', tldrDesc: 'check it all looks right then go brr. thats it' },
     ],
 
     // Step 1
