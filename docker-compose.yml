@@ -1,0 +1,73 @@
+# Logos — simple Docker Compose deployment
+#
+# Agents run as child processes INSIDE this container (HERMES_RUNTIME_MODE=local).
+# The container boundary isolates agent tool use from the host — agents cannot
+# see or touch anything outside this container.
+#
+# Quick start:
+#   cp .env.example .env   # fill in HERMES_JWT_SECRET (required)
+#   docker compose up -d
+#   open http://localhost:8080
+#
+# For pod-level agent isolation (each agent in its own container) use
+# docker-compose.k3s.yml instead.
+
+services:
+  logos:
+    build:
+      context: .
+      args:
+        BUILD_SHA: unknown
+    image: logos:local
+    restart: unless-stopped
+    ports:
+      - "${LOGOS_PORT:-8080}:8080"
+    environment:
+      # ── Required ────────────────────────────────────────────────────────────
+      # Generate with: openssl rand -hex 32
+      HERMES_JWT_SECRET: "${HERMES_JWT_SECRET}"
+
+      # ── Agent execution ─────────────────────────────────────────────────────
+      # "local"  → agents spawn as child processes inside this container (default)
+      # "kubernetes" → agents spawn as k8s pods (see docker-compose.k3s.yml)
+      HERMES_RUNTIME_MODE: "${HERMES_RUNTIME_MODE:-local}"
+
+      # ── Gateway ─────────────────────────────────────────────────────────────
+      HERMES_PORT: "8080"
+      HERMES_INSTANCE_NAME: "${HERMES_INSTANCE_NAME:-Hermes}"
+      HERMES_LOG_LEVEL: "${HERMES_LOG_LEVEL:-info}"
+
+      # ── Cookies ─────────────────────────────────────────────────────────────
+      # Set to "true" only when running behind an HTTPS reverse proxy.
+      # Leave empty (default) for plain HTTP or local access.
+      HERMES_COOKIE_SECURE: "${HERMES_COOKIE_SECURE:-}"
+
+      # ── Model / inference ───────────────────────────────────────────────────
+      # These can also be set via the setup wizard on first run.
+      OPENAI_BASE_URL: "${OPENAI_BASE_URL:-}"
+      HERMES_MODEL: "${HERMES_MODEL:-}"
+      OPENAI_API_KEY: "${OPENAI_API_KEY:-local}"
+
+      # ── Optional: pre-create admin account (skip setup wizard) ──────────────
+      HERMES_ADMIN_EMAIL: "${HERMES_ADMIN_EMAIL:-}"
+      HERMES_ADMIN_PASSWORD: "${HERMES_ADMIN_PASSWORD:-}"
+      HERMES_ADMIN_NAME: "${HERMES_ADMIN_NAME:-}"
+
+      # ── Optional integrations ───────────────────────────────────────────────
+      TELEGRAM_BOT_TOKEN: "${TELEGRAM_BOT_TOKEN:-}"
+      TELEGRAM_ALLOWED_USERS: "${TELEGRAM_ALLOWED_USERS:-}"
+
+    volumes:
+      # Persists: auth DB, memory, sessions, logs, skills, config.yaml
+      - logos-data:/home/hermes/.hermes
+
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+
+volumes:
+  logos-data:
+    driver: local

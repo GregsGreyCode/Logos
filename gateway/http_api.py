@@ -715,9 +715,9 @@ _ADMIN_HTML = """<!DOCTYPE html>
   .logos-wake-dot:nth-child(3){animation-delay:440ms}
 
   /* First-load staggered fade-in (triggered via sessionStorage logos_fl flag) */
-  @keyframes fl-fade{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
+  @keyframes fl-fade{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
   .fl-hidden{opacity:0}
-  .fl-anim{animation:fl-fade 0.6s ease forwards}
+  .fl-anim{animation:fl-fade 0.85s cubic-bezier(0.22,1,0.36,1) forwards}
 </style>
 </head>
 <body class="bg-gray-950 text-gray-100 min-h-screen" x-data="app()" x-init="init()">
@@ -970,7 +970,8 @@ _ADMIN_HTML = """<!DOCTYPE html>
               <span class="text-[10px] font-bold tracking-wider uppercase px-1 py-0.5 rounded bg-indigo-900 text-indigo-300 shrink-0">Core</span>
               <span class="font-semibold text-white" x-text="status.instance_name || 'Hermes'"></span>
               <span class="w-2 h-2 rounded-full shrink-0"
-                :class="chatLoading ? 'bg-indigo-500 animate-pulse icon-hue' : 'bg-green-500'"></span>
+                :class="chatLoading ? 'bg-indigo-500 animate-pulse icon-hue' : agentAlive === false ? 'bg-red-500' : agentAlive === null ? 'bg-gray-600 animate-pulse' : 'bg-green-500'"
+                :title="chatLoading ? 'Thinking\u2026' : agentAlive === false ? 'Agent not responding' : agentAlive === null ? 'Checking\u2026' : 'Connected'"></span>
               <span class="text-xs text-gray-600 font-mono"
                 x-text="activeChatId ? '#' + activeChatId.slice(-6) : ''"></span>
               <template x-if="canary.active">
@@ -1105,6 +1106,14 @@ _ADMIN_HTML = """<!DOCTYPE html>
               <span>Instance is starting up — chat will be available once it\'s ready.</span>
             </div>
           </div>
+
+          <!-- Agent unreachable banner -->
+          <template x-if="agentAlive === false && !chatLoading">
+            <div class="mx-3 mt-2 mb-1 px-3 py-2 rounded-lg bg-red-950/60 border border-red-900/60 flex items-center gap-2 text-xs text-red-400 shrink-0">
+              <span>&#9888;</span>
+              <span>Agent is not responding &mdash; check that your model server is running, then wait a moment for reconnection.</span>
+            </div>
+          </template>
 
           <!-- Active tool bar -->
           <template x-if="chatLoading && webSession">
@@ -3914,6 +3923,7 @@ function app() {
   return {
     tab: localStorage.getItem('hermes_tab') || 'sessions',
     status: { uptime_s: 0, instance_name: 'Hermes', active_sessions: [], recent_sessions: [] },
+    agentAlive: null,
     routerState: { providers: {}, routes: {}, grafana_url: 'http://192.168.1.253:3200' },
     canary: { active: false },
     chats: [],
@@ -4139,7 +4149,7 @@ function app() {
           sessionStorage.removeItem('logos_fl');
           document.querySelectorAll('[data-fl]').forEach(el => {
             el.classList.add('fl-hidden');
-            const delay = parseFloat(el.dataset.fl) * 0.2;
+            const delay = parseFloat(el.dataset.fl) * 0.35;
             setTimeout(() => { el.classList.remove('fl-hidden'); el.classList.add('fl-anim'); }, delay * 1000);
           });
         }
@@ -4695,7 +4705,9 @@ function app() {
       const prevKeys = new Set(this.prevActiveSessions.map(s => s.session_key));
       try {
         const r = await fetch(this.instanceUrl + '/status');
+        if (!r.ok) throw new Error('status ' + r.status);
         this.status = await r.json();
+        this.agentAlive = true;
         this.lastRefresh = new Date().toLocaleTimeString();
         // Keep self label in sync with instance name
         if (this.activeInstanceId === 'self') this._buildChatAgents();
@@ -4715,7 +4727,7 @@ function app() {
           }
         }
         this.prevActiveSessions = [...(this.status.active_sessions||[])];
-      } catch(e) { console.error('status poll failed', e); }
+      } catch(e) { console.error('status poll failed', e); this.agentAlive = false; }
     },
 
     async loadRouterState() {
@@ -6296,7 +6308,7 @@ _SETUP_HTML = """<!DOCTYPE html>
   <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
   <style>
     [x-cloak]{display:none!important}
-    html{background:#010409}
+    html{background:#010409;font-size:clamp(15px,1.2vw,18px)}
     @keyframes page-fadein{from{opacity:0}to{opacity:1}}
     @keyframes page-fadeout{from{opacity:1}to{opacity:0}}
     body{background-color:#010409;background-image:radial-gradient(rgba(99,102,241,0.06) 1px,transparent 1px);background-size:28px 28px;overflow-x:hidden}
@@ -7604,6 +7616,21 @@ _SETUP_HTML = """<!DOCTYPE html>
           </div>
         </div>
 
+        <!-- Live endpoint health probe result -->
+        <template x-if="step7ProbeStatus">
+          <div class="mb-4 p-3 rounded-xl text-sm flex items-start gap-2"
+            :class="step7ProbeStatus === 'ok' ? 'bg-green-950/40 border border-green-800 text-green-300'
+                  : step7ProbeStatus === 'checking' ? 'bg-gray-900 border border-gray-700 text-gray-400'
+                  : 'bg-amber-950/40 border border-amber-800 text-amber-300'">
+            <span x-show="step7ProbeStatus === 'checking'" class="animate-spin shrink-0 mt-0.5">&#9881;</span>
+            <span x-show="step7ProbeStatus === 'ok'" class="shrink-0 mt-0.5">&#10003;</span>
+            <span x-show="step7ProbeStatus === 'warn' || step7ProbeStatus === 'error'" class="shrink-0 mt-0.5">&#9888;</span>
+            <span x-text="step7ProbeStatus === 'checking' ? 'Checking model server\u2026'
+                        : step7ProbeStatus === 'ok' ? 'Model server is reachable and ready.'
+                        : step7ProbeMsg || 'Model server did not respond.'"></span>
+          </div>
+        </template>
+
         <!-- Error / warning from complete() -->
         <div x-show="completeError" class="mb-4 p-3 rounded-xl text-sm"
           :class="completeError?.warning ? 'bg-amber-950/40 border border-amber-800 text-amber-300' : 'bg-red-950/40 border border-red-800 text-red-300'">
@@ -7736,11 +7763,15 @@ function setup() {
     // Step 4 — agent runtime
     selectedAgentType: 'hermes',
 
-    // Account setup (step 7)
+    // Account setup (step 6 / final creds)
     setupEmail: '',
     setupUsername: '',
     setupPassword: '',
     setupPasswordConfirm: '',
+
+    // Step 7 — pre-launch endpoint health
+    step7ProbeStatus: null,   // null=unchecked, 'checking', 'ok', 'warn', 'error'
+    step7ProbeMsg: '',
 
     // Step 6 — soul
     selectedSoul: 'general',
@@ -7914,6 +7945,12 @@ function setup() {
       this.$watch('execEnv',           () => this._saveProgress());
       this.$watch('k8sMode',           () => this._saveProgress());
       this.$watch('selectedAgentType', () => this._saveProgress());
+
+      // Re-run endpoint probe whenever step 7 is entered — handles goNext(),
+      // goTo() back-then-forward, and progress-restore that resumes at step 7.
+      this.$watch('step', val => { if (val === 7) this.$nextTick(() => this._probeForStep7()); });
+      // Also trigger immediately if progress restored us directly to step 7
+      if (this.step === 7) this.$nextTick(() => this._probeForStep7());
     },
 
     _saveProgress() {
@@ -8565,6 +8602,30 @@ function setup() {
       this.k8sTesting = false;
     },
 
+    async _probeForStep7() {
+      // Re-probe the selected endpoint when step 7 is shown so the user sees
+      // real readiness state before clicking Launch.
+      if (!this.activeServer?.endpoint) return;
+      this.step7ProbeStatus = 'checking';
+      this.step7ProbeMsg = '';
+      try {
+        const params = new URLSearchParams({ url: this.activeServer.endpoint });
+        if (this.activeServer._apiKey) params.set('api_key', this.activeServer._apiKey);
+        const r = await fetch('/api/setup/probe?' + params);
+        const d = await r.json().catch(() => ({}));
+        if (d.ok || d.models?.length > 0) {
+          this.step7ProbeStatus = 'ok';
+          this.step7ProbeMsg = '';
+        } else {
+          this.step7ProbeStatus = 'warn';
+          this.step7ProbeMsg = d.error || 'Server reachable but returned no models.';
+        }
+      } catch(e) {
+        this.step7ProbeStatus = 'error';
+        this.step7ProbeMsg = 'Could not reach ' + (this.activeServer?.endpoint || 'server') + ': ' + e.message;
+      }
+    },
+
     async _flyLogoToNav() {
       // Animate the setup logo from its current top-centre position to the
       // nav logo position on the main page (top-left, 32×32).
@@ -8592,7 +8653,7 @@ function setup() {
     },
 
     async complete() {
-      if (this.completeError?.warning) { await this._flyLogoToNav(); await this._fadeOutPage(); window.location.href = '/login'; return; }
+      if (this.completeError?.warning) { await this._flyLogoToNav(); await this._fadeOutPage(); window.location.href = '/'; return; }
       this.completing = true;
       this.completeError = null;
       try {
@@ -8632,7 +8693,9 @@ function setup() {
           try { sessionStorage.setItem('logos_fl', '1'); } catch {}
           await this._flyLogoToNav();
           await this._fadeOutPage();
-          window.location.href = '/login';
+          // needs_login=true means the server completed setup but couldn't issue
+          // auth cookies (e.g. token-generation error). Fall back to /login.
+          window.location.href = d.needs_login ? '/login' : '/';
           return;
         }
         const d = await r.json().catch(() => ({}));

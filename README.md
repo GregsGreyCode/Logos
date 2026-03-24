@@ -147,6 +147,105 @@ The soul lives in `SOUL.md`, editable without a restart. Tools are scoped per pl
 
 ---
 
+## 🔒 Security & deployment model
+
+**Understanding the isolation boundary matters before you choose how to run Logos.** Agents can read files, execute code, and make network requests — what they _cannot_ reach depends entirely on your deployment mode.
+
+### Isolation modes at a glance
+
+| Mode | How it's run | Isolation boundary | Agents can reach… |
+|------|-------------|-------------------|-------------------|
+| **Bare metal — local** | `pip install logos` / Windows `.exe` | OS process boundary | Your user's home directory and whatever that user can reach on the host |
+| **Docker Compose** | `docker-compose.yml` | Container boundary | Files/processes _inside_ the container only; the host filesystem is not mounted |
+| **Docker Compose + k3s** | `docker-compose.k3s.yml` | Kubernetes pod boundary | A fresh pod with its own filesystem and network namespace per agent |
+| **External Kubernetes** | `k8s/` manifests | Kubernetes pod + RBAC boundary | Pod resources only; network policies and RBAC apply |
+
+### Bare metal (Windows / Linux / macOS)
+
+Agents run as child processes of the gateway, inheriting the same user account. There is **no additional sandbox** beyond normal OS process isolation. An agent that calls the terminal tool can read and write anything your user account can.
+
+**Mitigations:**
+- Keep policy level at `WORKSPACE_ONLY` or lower to restrict filesystem access to the working directory.
+- Run Logos under a dedicated low-privilege user account, not your daily-driver account.
+- The Windows `.exe` installer creates a sandboxed Node/Python environment, but it still runs as your Windows user.
+
+### Docker Compose — `docker-compose.yml` (recommended for most users)
+
+Logos and all its agents run inside a single Docker container. The host filesystem is **not mounted** — agents can only see what's inside the container. They cannot read your `.env` file, home directory, or other host files.
+
+```
+Host OS
+└── Docker container  ← isolation boundary
+    ├── Logos gateway
+    └── Agent processes (child processes inside the same container)
+```
+
+**What agents cannot do:** escape the container, read host files, reach host network services (unless you expose ports in `docker-compose.yml`).
+
+**What agents can do:** read/write files inside the container, make outbound HTTP requests, call the tools you've enabled.
+
+**To start:**
+```bash
+cp .env.example .env   # add your API keys + HERMES_JWT_SECRET
+docker compose up -d
+```
+
+### Docker Compose + k3s — `docker-compose.k3s.yml` (strongest self-hosted isolation)
+
+Each agent session spawns a dedicated Kubernetes pod inside an embedded [k3s](https://k3s.io) cluster. Pods have their own filesystem, network namespace, and resource limits — agents are isolated from each other _and_ from the Logos gateway container.
+
+```
+Host OS
+└── Docker network
+    ├── k3s container (privileged)  ← runs the Kubernetes control plane
+    └── logos container
+        └── Agent pods (k8s pods in the hermes namespace)  ← per-agent isolation boundary
+```
+
+**Requirements:** Linux host only. k3s requires a privileged container and Linux namespaces/cgroups — this does **not** work on Docker Desktop for Mac or Windows without extra configuration.
+
+**To start:**
+```bash
+cp .env.example .env   # add HERMES_JWT_SECRET (required)
+docker compose -f docker-compose.k3s.yml up -d
+# In setup wizard step 4: choose Kubernetes → "Logos is outside the cluster"
+# Leave kubeconfig empty — it is mounted automatically.
+```
+
+### External Kubernetes (`k8s/` manifests)
+
+Deploy Logos to an existing cluster. Agent pods run in the `hermes` namespace with full Kubernetes isolation. You can layer network policies and RBAC on top for production deployments. See [`k8s/README.md`](k8s/README.md) for deployment instructions.
+
+---
+
+### 🔑 Secrets and auth
+
+**`HERMES_JWT_SECRET`**
+All session tokens are signed with this secret. Generate it once with `openssl rand -hex 32` and store it somewhere safe.
+- If you lose it, all active sessions are invalidated on next restart (users will need to log in again — no data is lost).
+- Rotating it intentionally: change the value, restart Logos.
+- Never commit it to version control.
+
+**`HERMES_COOKIE_SECURE`**
+Set to `true` if Logos is behind an HTTPS reverse proxy (nginx, Caddy, Traefik). This adds the `Secure` flag to auth cookies so they are only sent over HTTPS.
+- Leave empty for plain HTTP (local or docker-compose without TLS termination).
+- **Do not expose Logos directly on the internet without TLS.**
+
+**API keys in `.env`**
+In Docker deployments, API keys live in the `.env` file on the host — they are passed as environment variables to the container and are **not visible to agents** (agents cannot read the host `.env` file or process environment of the gateway). On bare metal, agents run in the same process environment, so a sufficiently capable agent could read them via `os.environ`.
+
+---
+
+### 🌐 Network exposure
+
+By default Logos binds to `0.0.0.0:8080`, making the dashboard reachable from any interface. In a homelab or VPS deployment:
+
+- Put it behind a reverse proxy (nginx, Caddy) with TLS.
+- Use firewall rules to restrict access to trusted IPs if you don't have a proxy.
+- The Telegram integration lets you reach your agent without exposing the web UI at all.
+
+---
+
 ## ⚡ Quick install
 
 > **Before running:** you can inspect the installer first:
