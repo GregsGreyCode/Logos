@@ -740,30 +740,30 @@ _ADMIN_HTML = """<!DOCTYPE html>
     <button class="pb-2 text-sm font-medium border-b-2 border-transparent"
       :class="tab==='instances'?'tab-active':'text-gray-400 hover:text-white'"
       @click="tab='instances'; loadInstances(); loadSouls()">Agents</button>
-    <template x-if="can('manage_machines') || can('manage_profiles') || can('view_routing_debug')">
+    <template x-if="can('view_runs')">
       <button class="pb-2 text-sm font-medium border-b-2 border-transparent"
-        :class="tab==='routing'?'tab-active':'text-gray-400 hover:text-white'"
-        @click="tab='routing'; loadRoutingData()">Routing</button>
-    </template>
-    <template x-if="can('manage_users') || can('view_audit_logs')">
-      <button class="pb-2 text-sm font-medium border-b-2 border-transparent"
-        :class="tab==='admin'?'tab-active':'text-gray-400 hover:text-white'"
-        @click="tab='admin'; if(!can('manage_users') && adminTab==='users') adminTab='audit'; if(adminTab==='routing-log') loadAdminRoutingLog(); else loadAdminData()">Admin</button>
+        :class="tab==='runs'?'tab-active':'text-gray-400 hover:text-white'"
+        @click="tab='runs'; loadAgentRuns()">Runs</button>
     </template>
     <template x-if="can('view_workflows')">
       <button class="pb-2 text-sm font-medium border-b-2 border-transparent"
         :class="tab==='workflows'?'tab-active':'text-gray-400 hover:text-white'"
         @click="tab='workflows'; loadWorkflows()">Workflows</button>
     </template>
-    <template x-if="can('view_runs')">
+    <template x-if="can('manage_machines') || can('manage_profiles') || can('view_routing_debug')">
       <button class="pb-2 text-sm font-medium border-b-2 border-transparent"
-        :class="tab==='runs'?'tab-active':'text-gray-400 hover:text-white'"
-        @click="tab='runs'; loadAgentRuns()">Runs</button>
+        :class="tab==='routing'?'tab-active':'text-gray-400 hover:text-white'"
+        @click="tab='routing'; loadRoutingData()">Routing</button>
     </template>
     <template x-if="can('view_evolution')">
       <button class="pb-2 text-sm font-medium border-b-2 border-transparent"
         :class="tab==='evolution'?'tab-active':'text-gray-400 hover:text-white'"
         @click="tab='evolution'; loadEvolutionProposals(); loadEvolutionSettings()">Evolution</button>
+    </template>
+    <template x-if="can('manage_users') || can('view_audit_logs')">
+      <button class="pb-2 text-sm font-medium border-b-2 border-transparent"
+        :class="tab==='admin'?'tab-active':'text-gray-400 hover:text-white'"
+        @click="tab='admin'; if(!can('manage_users') && adminTab==='users') adminTab='audit'; if(adminTab==='routing-log') loadAdminRoutingLog(); else loadAdminData()">Admin</button>
     </template>
     <!-- Canary pill (inline, between Admin and Theme) -->
     <template x-if="canary.active">
@@ -2239,12 +2239,12 @@ _ADMIN_HTML = """<!DOCTYPE html>
       <template x-if="!clusterRes._error && runtimeMode !== 'kubernetes'">
         <div class="flex items-center gap-3 flex-wrap flex-1">
           <div class="flex items-center gap-1.5">
-            <span class="text-gray-600">CPU free</span>
+            <span class="text-gray-600">CPU available</span>
             <span class="text-gray-400 font-mono" x-text="(clusterRes.free_cpu || 0).toFixed(1) + ' cores'"></span>
           </div>
           <span class="text-gray-800 select-none">·</span>
           <div class="flex items-center gap-1.5">
-            <span class="text-gray-600">RAM free</span>
+            <span class="text-gray-600">RAM available</span>
             <span class="text-gray-400 font-mono" x-text="fmtBytes(clusterRes.free_mem || 0)"></span>
           </div>
           <span x-show="clusterRes.can_spawn === false" class="text-orange-400 ml-auto" x-text="'⚠ ' + (clusterRes.reason || 'Resources low')"></span>
