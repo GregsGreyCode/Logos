@@ -3656,7 +3656,31 @@ class GatewayRunner:
         """
         from agents.hermes.agent import AIAgent
         import queue
-        
+
+        # LM Studio: pre-load the model with a 16 K context before the agent runs.
+        # Without this, LM Studio auto-loads with its default context (~4096) which
+        # is too small once the system prompt + tool definitions are included.
+        # Best-effort — failures are silently ignored.
+        _lmstudio_server_type = os.getenv("HERMES_SERVER_TYPE", "")
+        if _lmstudio_server_type == "lmstudio":
+            import re as _re
+            import aiohttp as _aiohttp
+            _lms_base = re.sub(r"/v1/?$", "", os.getenv("OPENAI_BASE_URL", "")).rstrip("/")
+            _lms_model = os.getenv("HERMES_MODEL", "")
+            _lms_key   = os.getenv("OPENAI_API_KEY", "")
+            if _lms_base and _lms_model:
+                _lms_headers = {"Authorization": f"Bearer {_lms_key}"} if _lms_key and _lms_key != "ollama" else {}
+                try:
+                    async with _aiohttp.ClientSession() as _lms_http:
+                        await _lms_http.post(
+                            f"{_lms_base}/api/v1/models/load",
+                            headers=_lms_headers,
+                            json={"model": _lms_model, "context_length": 16384},
+                            timeout=_aiohttp.ClientTimeout(total=10),
+                        )
+                except Exception:
+                    pass
+
         # Determine toolset based on platform.
         # Check config.yaml for per-platform overrides, fallback to hardcoded defaults.
         default_toolset_map = {

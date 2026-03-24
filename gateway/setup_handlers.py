@@ -1590,6 +1590,16 @@ async def handle_setup_complete(request: web.Request) -> web.Response:
                 os.environ["OPENAI_BASE_URL"] = endpoint
             if not os.getenv("HERMES_MODEL"):
                 os.environ["HERMES_MODEL"] = model
+            # Persist the primary server type so the gateway can pre-load the model
+            # with a sufficient context window before the first chat turn.
+            _primary_server_type = ""
+            for _srv in (body.get("servers") or []):
+                if (_srv.get("endpoint") or "").rstrip("/") == endpoint.rstrip("/"):
+                    _primary_server_type = _srv.get("type") or ""
+                    break
+            if _primary_server_type and not os.getenv("HERMES_SERVER_TYPE"):
+                _cfg["HERMES_SERVER_TYPE"] = _primary_server_type
+                os.environ["HERMES_SERVER_TYPE"] = _primary_server_type
             # Persist the chosen execution mode so restarts use the correct executor.
             # Only written if not already forced via env var (k8s deployments set
             # HERMES_RUNTIME_MODE explicitly and must not be overridden by setup).
