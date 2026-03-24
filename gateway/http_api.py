@@ -6057,7 +6057,7 @@ _LOGIN_HTML = """<!DOCTYPE html>
              style="width:100px;height:100px;object-fit:contain;">
       </div>
       <!-- Hint — space always reserved so the logo doesn't shift when it appears -->
-      <div style="margin-top:2.5rem;height:1.2rem;transition:opacity 0.6s ease;"
+      <div style="margin-top:5rem;height:1.2rem;transition:opacity 0.6s ease;"
            :style="(showHint && phase === 'splash') ? 'opacity:1' : 'opacity:0'">
         <p class="hint-text"
            style="font-size:0.78rem;color:rgba(148,163,184,0.5);letter-spacing:0.08em;">
@@ -6161,7 +6161,7 @@ _LOGIN_HTML = """<!DOCTYPE html>
           .then(r => r.ok ? r.json() : null)
           .then(d => { if (d && !d.completed) this.needsSetup = true; })
           .catch(() => {});
-        this._hintTimer = setTimeout(() => { if (this.phase === 'splash') this.showHint = true; }, 10000);
+        this._hintTimer = setTimeout(() => { if (this.phase === 'splash') this.showHint = true; }, 3000);
         // Drive hue for logo + button via rAF so they're always in sync
         const tick = () => {
           // Anchor hue to wall-clock time so every page load/refresh
@@ -6232,7 +6232,7 @@ _LOGIN_HTML = """<!DOCTYPE html>
       _revertSplash() {
         this.phase = 'splash';
         clearTimeout(this._hintTimer);
-        this._hintTimer = setTimeout(() => { if (this.phase === 'splash') this.showHint = true; }, 10000);
+        this._hintTimer = setTimeout(() => { if (this.phase === 'splash') this.showHint = true; }, 3000);
       },
 
       async submit() {
@@ -6505,7 +6505,7 @@ _SETUP_HTML = """<!DOCTYPE html>
                 class="spinner-hue text-xs px-4 py-1.5 rounded-full border font-semibold tracking-wide transition-all flex-shrink-0"
                 :class="tldr ? 'bg-indigo-950 border-indigo-500 text-indigo-200' : 'bg-gray-900 border-gray-600 text-gray-400 hover:border-gray-400 hover:text-gray-200'"
                 title="Toggle TL;DR mode">
-                <span x-text="tldr ? '⚡ TL;DR ON' : '⚡ TL;DR'"></span>
+                <span x-text="tldr ? '⚡ TL;DR ON' : 'click here for tl;dr'"></span>
               </button>
             </div>
             <div class="text-sm text-gray-500 mb-4" x-text="tldr ? 'Seven steps.' : 'Seven steps, from model discovery to launch.'"></div>
@@ -6677,14 +6677,14 @@ _SETUP_HTML = """<!DOCTYPE html>
                               </div>
                             </div>
                             <!-- Auth required: key must be provided to connect -->
-                            <div x-show="s.status==='auth_required'" class="mt-2 space-y-1.5">
+                            <div x-show="s.status==='auth_required'" class="mt-2 space-y-1.5" x-data="{ localKey: '' }">
                               <p class="text-xs text-gray-500">Authentication is enabled on this endpoint — enter the API key configured in LM Studio.</p>
                               <div class="flex gap-2">
                                 <input type="password" placeholder="Enter API key"
-                                  x-model="serverKeys[s.endpoint]"
-                                  @keydown.enter="retryWithKey(s)"
+                                  x-model="localKey"
+                                  @keydown.enter="serverKeys[s.endpoint] = localKey; retryWithKey(s)"
                                   class="flex-1 bg-gray-950 border border-gray-700 rounded-lg px-3 py-1.5 text-xs text-white placeholder-gray-600 focus:outline-none focus:border-indigo-500 font-mono">
-                                <button @click="retryWithKey(s)" :disabled="!serverKeys[s.endpoint] || retryingServers[s.endpoint]"
+                                <button @click="serverKeys[s.endpoint] = localKey; retryWithKey(s)" :disabled="!localKey || retryingServers[s.endpoint]"
                                   class="btn-primary px-3 py-1.5 rounded-lg text-xs flex-shrink-0 disabled:opacity-40 flex items-center gap-1.5">
                                   <span x-show="!retryingServers[s.endpoint]">Connect</span>
                                   <template x-if="retryingServers[s.endpoint]">
@@ -6739,14 +6739,14 @@ _SETUP_HTML = """<!DOCTYPE html>
                         <div class="text-xs text-gray-600 font-mono mt-0.5 truncate" x-text="s.endpoint.replace('/v1','')"></div>
                         <div x-show="s.status==='up'" class="text-xs text-gray-600 mt-0.5"
                           x-text="s.models.length===0 ? 'No models loaded yet' : s.models.length + ' model' + (s.models.length!==1?'s':'') + ' ready'"></div>
-                        <div x-show="s.status==='auth_required'" class="mt-2 space-y-1.5">
+                        <div x-show="s.status==='auth_required'" class="mt-2 space-y-1.5" x-data="{ localKey: '' }">
                           <p class="text-xs text-gray-500">This server requires an API key to connect.</p>
                           <div class="flex gap-2">
                             <input type="password" placeholder="Enter API key"
-                              x-model="serverKeys[s.endpoint]"
-                              @keydown.enter="retryWithKey(s)"
+                              x-model="localKey"
+                              @keydown.enter="serverKeys[s.endpoint] = localKey; retryWithKey(s)"
                               class="flex-1 bg-gray-950 border border-gray-700 rounded-lg px-3 py-1.5 text-xs text-white placeholder-gray-600 focus:outline-none focus:border-indigo-500 font-mono">
-                            <button @click="retryWithKey(s)" :disabled="!serverKeys[s.endpoint] || retryingServers[s.endpoint]"
+                            <button @click="serverKeys[s.endpoint] = localKey; retryWithKey(s)" :disabled="!localKey || retryingServers[s.endpoint]"
                               class="btn-primary px-3 py-1.5 rounded-lg text-xs flex-shrink-0 disabled:opacity-40 flex items-center gap-1.5">
                               <span x-show="!retryingServers[s.endpoint]">Connect</span>
                               <template x-if="retryingServers[s.endpoint]">
