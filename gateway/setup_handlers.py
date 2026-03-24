@@ -556,39 +556,78 @@ def _eval_format(text: str) -> bool:
         return False
 
 
-def _parse_model_size_b(model_id: str) -> float:
-    """Extract parameter count in billions from a model ID string. Returns 0 if unknown."""
+def _parse_model_size_b(model_id: str, hint_size_b: float = 0.0) -> float:
+    """Extract parameter count in billions from a model ID string.
+
+    If hint_size_b is provided (e.g. from Ollama /api/show), it takes priority.
+    Returns 0 if unknown.
+    """
+    if hint_size_b > 0:
+        return hint_size_b
     m = re.search(r'(\d+(?:\.\d+)?)\s*b(?:[^a-z]|$)', model_id.lower())
     return float(m.group(1)) if m else 0.0
 
 
+async def _ollama_fetch_sizes(
+    base_url: str, model_ids: list[str], http: aiohttp.ClientSession
+) -> dict[str, float]:
+    """Call Ollama /api/show for each model to get the real parameter count.
+
+    Returns {model_id: size_in_billions}. Missing/failed entries are omitted.
+    """
+    sizes: dict[str, float] = {}
+    for mid in model_ids:
+        try:
+            async with http.post(
+                f"{base_url}/api/show",
+                json={"name": mid},
+                timeout=aiohttp.ClientTimeout(total=5),
+            ) as r:
+                if r.status == 200:
+                    data = await r.json(content_type=None)
+                    param_size = data.get("details", {}).get("parameter_size", "")
+                    m = re.match(r"(\d+(?:\.\d+)?)", param_size.upper().replace("B", ""))
+                    if m:
+                        sizes[mid] = float(m.group(1))
+        except Exception:
+            pass
+    return sizes
+
+
 _INSTRUCT_KEYWORDS = {"instruct", "chat", "it", "tool", "assistant", "hermes", "qwen", "gemma", "llama"}
+# Models specialised for one domain — not ideal as everyday agent defaults
+_SPECIALIZED_KEYWORDS = {"coder", "code", "math", "vision", "ocr", "embed", "search"}
 
 
-def _pick_compare_candidates(model_ids: list[str], max_n: int = 4) -> list[str]:
+def _pick_compare_candidates(
+    model_ids: list[str], max_n: int = 4, sizes: dict[str, float] | None = None
+) -> list[str]:
     """Sample one representative from each size bucket, then fill remaining slots.
 
     Buckets: small (<5B), mid (5–13B), large (>13B), unknown (no size in name).
     Within each bucket models are ranked by quality heuristics:
       - mid/large: prefer closer to 9B sweet spot; larger wins ties
       - small: prefer larger (closer to 4–5B)
-      - unknown: prefer names containing instruct/chat/tool keywords
+      - unknown: prefer instruct-hinted names; deprioritise coder/math/vision
     This avoids the old approach of hard-suppressing unknowns or large quants.
     """
+    _sizes = sizes or {}
+
     def _bucket(mid: str) -> str:
-        sz = _parse_model_size_b(mid)
+        sz = _parse_model_size_b(mid, _sizes.get(mid, 0.0))
         if sz == 0:   return "unknown"
         if sz < 5:    return "small"
         if sz <= 13:  return "mid"
         return "large"
 
     def _rank(mid: str, bucket: str) -> float:
-        sz = _parse_model_size_b(mid)
+        sz = _parse_model_size_b(mid, _sizes.get(mid, 0.0))
         if bucket == "mid":    return abs(sz - 9.0)
         if bucket == "small":  return -sz                 # larger small = better
         if bucket == "large":  return sz                  # smaller large = better
-        # unknown: prefer instruct-hinted names
+        # unknown: prefer instruct-hinted, deprioritise specialised (coder/math/vision)
         name = mid.lower()
+        if any(kw in name for kw in _SPECIALIZED_KEYWORDS): return 2.0
         return 0.0 if any(kw in name for kw in _INSTRUCT_KEYWORDS) else 1.0
 
     buckets: dict[str, list[str]] = {"mid": [], "small": [], "large": [], "unknown": []}
@@ -626,12 +665,15 @@ def _compare_score(r: dict) -> float:
     eval_score = r.get("eval", {}).get("score", 1 if r.get("quality_pass") else 0)
     eval_frac  = eval_score / 6                      # 0.0 – 1.0
     speed      = min(r["tok_s"], 40) / 40            # cap at 40 tok/s
-    sz         = _parse_model_size_b(r["model"])
+    sz         = _parse_model_size_b(r["model"], r.get("size_b", 0.0))
     size_b     = min(sz, 13) / 13 * 0.05 if sz > 0 else 0
     ttft_ms    = r.get("ttft_ms")
     # TTFT score: ≤500ms→1.0, ≥4000ms→0.0
     ttft_score = max(0.0, min(1.0, (4000 - ttft_ms) / 3500)) if ttft_ms is not None else 0.5
-    return 0.60 * eval_frac + 0.20 * speed + 0.15 * ttft_score + size_b
+    # Penalise domain-specific models (coder, math, vision) — not good everyday agent defaults
+    name_lower = r["model"].lower()
+    specialized_penalty = -0.15 if any(kw in name_lower for kw in _SPECIALIZED_KEYWORDS) else 0.0
+    return 0.60 * eval_frac + 0.20 * speed + 0.15 * ttft_score + size_b + specialized_penalty
 
 
 def _compare_reason(best: dict) -> str:
@@ -791,9 +833,24 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
     for s in model_specs:
         per_server_specs[s["endpoint"]].append(s)
 
+    # Enrich Ollama specs with actual parameter counts from /api/show
+    # so that models without a size in their name are bucketed correctly.
+    _ollama_sizes: dict[str, dict[str, float]] = {}   # ep → {model_id: size_b}
+    async with aiohttp.ClientSession() as _size_http:
+        for ep, specs in per_server_specs.items():
+            if specs and specs[0]["server_type"] == "ollama":
+                base = re.sub(r"/v1/?$", "", ep)
+                _ollama_sizes[ep] = await _ollama_fetch_sizes(base, [s["id"] for s in specs], _size_http)
+                # Store enriched size_b back on spec for downstream use
+                for spec in specs:
+                    sz = _ollama_sizes[ep].get(spec["id"], 0.0)
+                    if sz > 0:
+                        spec["size_b"] = sz
+
     server_groups: dict[str, list[dict]] = _dd(list)
     for ep, specs in per_server_specs.items():
-        ep_candidate_ids = set(_pick_compare_candidates([s["id"] for s in specs]))
+        ep_sizes = _ollama_sizes.get(ep, {})
+        ep_candidate_ids = set(_pick_compare_candidates([s["id"] for s in specs], sizes=ep_sizes))
         for s in specs:
             if s["id"] in ep_candidate_ids:
                 server_groups[ep].append(s)
@@ -1162,7 +1219,9 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
 
                 result: dict = {
                     "model": model_id, "tok_s": tok_s, "quality_pass": quality_pass,
-                    "ttft_ms": ttft_ms, "approx": approx, "endpoint": endpoint, "eval": {
+                    "ttft_ms": ttft_ms, "approx": approx, "endpoint": endpoint,
+                    **({"size_b": spec.get("size_b")} if spec.get("size_b") else {}),
+                    "eval": {
                         "instruction": instruct_pass, "reasoning": reason_pass,
                         "format": format_pass, "tool_call": tool_pass,
                         "nested_json": nested_json_pass, "multihop": multihop_pass,
