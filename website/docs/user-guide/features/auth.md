@@ -52,9 +52,9 @@ All routes except `/health` and `/login` require an authenticated session. Unaut
 On first start, Hermes seeds an admin account from environment variables:
 
 ```bash
-HERMES_ADMIN_EMAIL=greg@example.com
+HERMES_ADMIN_EMAIL=admin@example.com
 HERMES_ADMIN_PASSWORD=your-strong-password
-HERMES_ADMIN_NAME=Greg         # display name (optional, defaults to "Admin")
+HERMES_ADMIN_NAME=Admin        # display name (optional, defaults to "Admin")
 HERMES_JWT_SECRET=<32-byte hex> # generate: openssl rand -hex 32
 ```
 
@@ -107,7 +107,7 @@ Service-to-service calls using `Authorization: Bearer <HERMES_INTERNAL_TOKEN>` b
 POST /auth/login
 Content-Type: application/json
 
-{ "email": "greg@example.com", "password": "yourpassword" }
+{ "email": "admin@example.com", "password": "yourpassword" }
 ```
 
 ```json
@@ -125,7 +125,7 @@ GET /auth/me
 
 ```json
 {
-  "user": { "id": "...", "email": "...", "role": "admin", "display_name": "Greg" },
+  "user": { "id": "...", "email": "...", "role": "admin", "display_name": "Admin" },
   "settings": { "ui_theme": "midnight", "default_soul": null, ... },
   "permissions": ["delete_instance", "manage_platform", "manage_users", ...]
 }
@@ -139,7 +139,7 @@ X-CSRF-Token: <csrf_token>
 Content-Type: application/json
 
 {
-  "display_name": "Greg",
+  "display_name": "Admin",
   "ui_theme": "dusk",
   "default_soul": "general",
   "notification_telegram": true
@@ -154,11 +154,11 @@ X-CSRF-Token: <csrf_token>
 Content-Type: application/json
 
 {
-  "email": "bere@example.com",
-  "username": "bere",
+  "email": "alice@example.com",
+  "username": "alice",
   "password": "temporary-password",
   "role": "user",
-  "display_name": "Bere"
+  "display_name": "Alice"
 }
 ```
 

@@ -5,7 +5,7 @@ Bug Notes Tool - Self-Reported Issue Tracker
 Lets the agent log notes about things that didn't work: failed prompts,
 tool misbehaviours, incorrect assumptions, delivery failures, or anything
 else worth fixing later. Notes are saved to $HERMES_HOME/bug_notes.md in a
-human-readable format so the user (Greg) can pull them up and work through
+human-readable format so the user can pull them up and work through
 them at any time.
 
 Design:
@@ -210,7 +210,7 @@ BUG_NOTES_SCHEMA = {
         "- You catch yourself having reasoned incorrectly or hallucinated a command\n"
         "- A skill or prompt instruction produced a bad outcome\n"
         "- Something is misconfigured in the environment\n\n"
-        "Notes are saved to $HERMES_HOME/bug_notes.md so Greg can review and fix "
+        "Notes are saved to $HERMES_HOME/bug_notes.md so you can review and fix "
         "them later. Always add a note before giving up on a failed task.\n\n"
         "**Actions:**\n"
         "- `add` — save a new bug note (requires description)\n"
