@@ -571,37 +571,49 @@ async def _stream_chat(
     ttft: float | None = None
     text = ""
     tok_count = 0
-    async with session.post(
-        f"{endpoint}/chat/completions",
-        headers={"Authorization": f"Bearer {api_key}"},
-        json={
-            "model": model,
-            "messages": [{"role": "user", "content": prompt}],
-            "stream": True,
-            "max_tokens": max_tokens,
-        },
-        timeout=aiohttp.ClientTimeout(total=45),
-    ) as r:
-        if r.status != 200:
-            body = await r.text()
-            raise RuntimeError(f"HTTP {r.status}: {body[:200]}")
-        async for raw in r.content:
-            line = raw.decode().strip()
-            if not line.startswith("data: "):
-                continue
-            data = line[6:]
-            if data == "[DONE]":
-                break
-            try:
-                chunk = json.loads(data)
-                delta = chunk["choices"][0]["delta"].get("content", "")
-                if delta:
-                    if ttft is None:
-                        ttft = time.time() - t0
-                    text += delta
-                    tok_count += 1
-            except Exception:
-                pass
+    try:
+        async with session.post(
+            f"{endpoint}/chat/completions",
+            headers={"Authorization": f"Bearer {api_key}"},
+            json={
+                "model": model,
+                "messages": [{"role": "user", "content": prompt}],
+                "stream": True,
+                "max_tokens": max_tokens,
+            },
+            timeout=aiohttp.ClientTimeout(total=45),
+        ) as r:
+            if r.status != 200:
+                body = await r.text()
+                raise RuntimeError(f"HTTP {r.status}: {body[:200]}")
+            _buf = ""
+            _done = False
+            async for raw in r.content:
+                if _done:
+                    continue
+                _buf += raw.decode(errors="replace")
+                while "\n" in _buf:
+                    _line, _buf = _buf.split("\n", 1)
+                    _line = _line.strip()
+                    if not _line.startswith("data: "):
+                        continue
+                    data = _line[6:]
+                    if data == "[DONE]":
+                        _done = True
+                        break
+                    try:
+                        chunk = json.loads(data)
+                        delta = chunk["choices"][0]["delta"].get("content", "")
+                        if delta:
+                            if ttft is None:
+                                ttft = time.time() - t0
+                            text += delta
+                            tok_count += 1
+                    except Exception:
+                        pass
+    except aiohttp.ServerDisconnectedError:
+        if not text:
+            raise
     return text, ttft or 0.0, time.time() - t0, tok_count
 
 
@@ -763,43 +775,62 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
                 t_first: float | None  = None
                 usage_toks: int | None = None
 
-                async with http.post(
-                    f"{endpoint}/chat/completions",
-                    headers={"Authorization": f"Bearer {api_key}"},
-                    json={
-                        "model": model_id,
-                        "messages": [{"role": "user", "content": prompt}],
-                        "stream": True,
-                        "max_tokens": max_tokens,
-                        "stream_options": {"include_usage": True},
-                    },
-                    timeout=_COMPARE_TIMEOUT,
-                ) as r:
-                    if r.status != 200:
-                        raise RuntimeError(f"HTTP {r.status}")
-                    async for raw in r.content:
-                        line = raw.decode().strip()
-                        if not line.startswith("data: "):
-                            continue
-                        chunk_data = line[6:]
-                        if chunk_data == "[DONE]":
-                            break
-                        try:
-                            chunk = json.loads(chunk_data)
-                            if chunk.get("usage", {}).get("completion_tokens"):
-                                usage_toks = chunk["usage"]["completion_tokens"]
-                            content = chunk["choices"][0]["delta"].get("content") or ""
-                            if content:
-                                if t_first is None:
-                                    t_first = time.time()
-                                    if pass_num == 1:
-                                        ttft_s = t_first - t0
-                                        hint_task.cancel()
-                                        await send({"log": f"  First token: {ttft_s:.1f}s TTFT"})
-                                tok_count  += 1
-                                char_count += len(content)
-                        except Exception:
-                            pass
+                _stream_done = False
+                _status_code = None
+                try:
+                    async with http.post(
+                        f"{endpoint}/chat/completions",
+                        headers={"Authorization": f"Bearer {api_key}"},
+                        json={
+                            "model": model_id,
+                            "messages": [{"role": "user", "content": prompt}],
+                            "stream": True,
+                            "max_tokens": max_tokens,
+                            "stream_options": {"include_usage": True},
+                        },
+                        timeout=_COMPARE_TIMEOUT,
+                    ) as r:
+                        _status_code = r.status
+                        if r.status != 200:
+                            raise RuntimeError(f"HTTP {r.status}")
+                        _buf = ""
+                        async for raw in r.content:
+                            if _stream_done:
+                                continue
+                            # Split chunk by newlines — servers may batch multiple SSE events
+                            _buf += raw.decode(errors="replace")
+                            while "\n" in _buf:
+                                _line, _buf = _buf.split("\n", 1)
+                                _line = _line.strip()
+                                if not _line.startswith("data: "):
+                                    continue
+                                chunk_data = _line[6:]
+                                if chunk_data == "[DONE]":
+                                    _stream_done = True
+                                    break
+                                try:
+                                    chunk = json.loads(chunk_data)
+                                    if chunk.get("usage", {}).get("completion_tokens"):
+                                        usage_toks = chunk["usage"]["completion_tokens"]
+                                    content = chunk["choices"][0]["delta"].get("content") or ""
+                                    if content:
+                                        if t_first is None:
+                                            t_first = time.time()
+                                            if pass_num == 1:
+                                                ttft_s = t_first - t0
+                                                hint_task.cancel()
+                                                await send({"log": f"  First token: {ttft_s:.1f}s TTFT"})
+                                        tok_count  += 1
+                                        char_count += len(content)
+                                except Exception:
+                                    pass
+                except aiohttp.ServerDisconnectedError:
+                    # llama.cpp (and some other servers) close the TCP connection
+                    # immediately after the final [DONE] chunk rather than waiting
+                    # for the client to drain.  Treat this as a normal end-of-stream
+                    # if we received content; re-raise only if we got nothing at all.
+                    if not t_first:
+                        raise
 
                 end_t  = time.time()
                 gen_s  = (end_t - t_first) if t_first else (end_t - t_start)
@@ -1055,45 +1086,57 @@ async def handle_setup_test(request: web.Request) -> web.Response:
 
             hint_task = asyncio.create_task(_loading_hint())
             try:
-                async with session.post(
-                    f"{endpoint}/chat/completions",
-                    headers={"Authorization": f"Bearer {api_key}"},
-                    json={
-                        "model": model,
-                        "messages": [{"role": "user", "content": _BENCH_PROMPT}],
-                        "stream": True,
-                        "max_tokens": 80,
-                        "stream_options": {"include_usage": True},
-                    },
-                    timeout=aiohttp.ClientTimeout(total=120),
-                ) as r:
-                    if r.status != 200:
-                        hint_task.cancel()
-                        text = await r.text()
-                        await send({"error": f"Model server returned {r.status}: {text[:200]}"})
-                        return response
-                    async for raw in r.content:
-                        line = raw.decode().strip()
-                        if not line.startswith("data: "):
-                            continue
-                        chunk_data = line[6:]
-                        if chunk_data == "[DONE]":
-                            break
-                        try:
-                            chunk = json.loads(chunk_data)
-                            if chunk.get("usage", {}).get("completion_tokens"):
-                                usage_toks = chunk["usage"]["completion_tokens"]
-                            delta = chunk["choices"][0]["delta"].get("content", "")
-                            if delta:
-                                if ttft_ms is None:
-                                    ttft_ms = round((time.time() - t0) * 1000)
-                                    t_first = time.time()
-                                    hint_task.cancel()
-                                tok_count += 1
-                                char_count += len(delta)
-                                await send({"token": delta})
-                        except Exception:
-                            pass
+                try:
+                    async with session.post(
+                        f"{endpoint}/chat/completions",
+                        headers={"Authorization": f"Bearer {api_key}"},
+                        json={
+                            "model": model,
+                            "messages": [{"role": "user", "content": _BENCH_PROMPT}],
+                            "stream": True,
+                            "max_tokens": 80,
+                            "stream_options": {"include_usage": True},
+                        },
+                        timeout=aiohttp.ClientTimeout(total=120),
+                    ) as r:
+                        if r.status != 200:
+                            hint_task.cancel()
+                            text = await r.text()
+                            await send({"error": f"Model server returned {r.status}: {text[:200]}"})
+                            return response
+                        _buf = ""
+                        _done = False
+                        async for raw in r.content:
+                            if _done:
+                                continue
+                            _buf += raw.decode(errors="replace")
+                            while "\n" in _buf:
+                                _line, _buf = _buf.split("\n", 1)
+                                _line = _line.strip()
+                                if not _line.startswith("data: "):
+                                    continue
+                                chunk_data = _line[6:]
+                                if chunk_data == "[DONE]":
+                                    _done = True
+                                    break
+                                try:
+                                    chunk = json.loads(chunk_data)
+                                    if chunk.get("usage", {}).get("completion_tokens"):
+                                        usage_toks = chunk["usage"]["completion_tokens"]
+                                    delta = chunk["choices"][0]["delta"].get("content", "")
+                                    if delta:
+                                        if ttft_ms is None:
+                                            ttft_ms = round((time.time() - t0) * 1000)
+                                            t_first = time.time()
+                                            hint_task.cancel()
+                                        tok_count += 1
+                                        char_count += len(delta)
+                                        await send({"token": delta})
+                                except Exception:
+                                    pass
+                except aiohttp.ServerDisconnectedError:
+                    if not t_first:
+                        raise
             finally:
                 hint_task.cancel()
 
