@@ -7534,7 +7534,14 @@ _SETUP_HTML = """<!DOCTYPE html>
                   class="text-[8px] px-1 py-0.5 rounded-full bg-indigo-900 text-indigo-300 border border-indigo-700 font-semibold uppercase tracking-wider flex-shrink-0">✓</span>
               </div>
               <!-- desc -->
-              <p class="text-[10px] text-gray-500 leading-relaxed line-clamp-3" x-text="soul.desc"></p>
+              <p class="text-xs text-gray-300 leading-relaxed line-clamp-3" x-text="soul.desc"></p>
+              <!-- first-run hint -->
+              <div class="mt-1.5 flex items-center gap-1.5 flex-wrap">
+                <span x-show="soul.firstRun"
+                  class="text-[9px] px-1.5 py-0.5 rounded-full bg-green-950 text-green-400 border border-green-900 font-semibold uppercase tracking-wider">Recommended</span>
+                <span x-show="!soul.firstRun"
+                  class="text-[9px] text-gray-600">best after initial setup</span>
+              </div>
             </button>
           </template>
         </div>
@@ -7794,11 +7801,12 @@ function setup() {
     selectedSoul: 'general',
     soulOptions: [
       {
-        slug:  'general',
-        icon:  '✦',
-        name:  'General',
-        desc:  'All-round peer assistant — research, writing, analysis, conversation. Treats you like a capable adult. Best starting point.',
-        tools: ['Web search', 'File I/O', 'Code execution', 'Browsing'],
+        slug:     'general',
+        icon:     '✦',
+        name:     'General',
+        desc:     'All-round peer assistant — research, writing, analysis, conversation. Treats you like a capable adult.',
+        tools:    ['Web search', 'File I/O', 'Code execution', 'Browsing'],
+        firstRun: true,
       },
       {
         slug:  'app-development',
