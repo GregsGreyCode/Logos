@@ -112,7 +112,7 @@ Test agentic combinations, then modify, extend, and break the platform and its a
 - **Self-improvement** — the Evolution system lets agents propose code improvements on a schedule; you review, question, or accept each proposal
 - **IDE integration** — ACP protocol for VS Code, Zed, and JetBrains
 - **Model support** — Anthropic, OpenAI, OpenRouter (200+ models), Nous Portal, or any OpenAI-compatible endpoint
-- **Runs anywhere** — local, Docker, SSH, Modal, Daytona, Singularity
+- **Runs anywhere** — local, Docker, SSH
 - **Cancel mid-response** — abort any in-flight request without waiting for it to finish
 
 ---
@@ -508,12 +508,13 @@ Source in `gateway/`, `tools/`, and `agent/`. See [`AGENTS.md`](AGENTS.md) for i
 
 | Backend | Status |
 |---------|--------|
-| Local (Ollama) | ✅ First-class |
-| Docker | ✅ First-class |
-| SSH | ✅ First-class |
-| Modal | 🧪 Experimental |
-| Daytona | 🧪 Experimental |
-| Singularity | 🧪 Experimental |
+| Local (Ollama / LM Studio) | ✅ Tested |
+| Docker | ✅ Tested |
+| Kubernetes (k3s / external) | ✅ Tested |
+| SSH | ✅ Tested |
+| Modal | ⚠️ Not yet tested |
+| Daytona | ⚠️ Not yet tested |
+| Singularity | ⚠️ Not yet tested |
 
 ---
 
@@ -589,7 +590,7 @@ MIT — see [LICENSE](LICENSE).
 This project would not exist without the open-source work it stands on:
 
 - **[Anthropic / Claude](https://www.anthropic.com)** — Claude wrote a significant portion of the gateway, UI, tooling, and this documentation.
-- **[Nous Research / hermes-agent](https://github.com/NousResearch/hermes-agent)** — the Hermes agent runtime (`agents/hermes/`) is a heavily extended fork of their open-source hermes-agent. The platform layer (gateway, auth, dashboard, STAMP system, policy enforcement) is original work built on top of it. The [`tinker-atropos`](https://github.com/NousResearch/tinker-atropos) submodule is also theirs.
+- **[Nous Research / hermes-agent](https://github.com/NousResearch/hermes-agent)** — the Hermes agent runtime (`agents/hermes/`) is a heavily extended fork of their open-source hermes-agent. The platform layer (gateway, auth, dashboard, STAMP system, policy enforcement) is original work built on top of it. The `tinker-atropos` RL submodule combines [Atropos](https://github.com/NousResearch/atropos) (Nous Research) and [Tinker](https://github.com/thinking-machines-lab/tinker) (Thinking Machines Lab).
 - **[SWE-agent / mini-swe-agent](https://github.com/SWE-agent/mini-swe-agent)** — vendored directly into the repo (MIT licence), powers the terminal tool's PTY-based shell execution.
 - **[Ollama](https://github.com/ollama/ollama)** — makes running local LLMs approachable. Powers the homelab GPU machines that handle inference.
 - **[LM Studio](https://lmstudio.ai)** — excellent local model serving, especially for experimentation and first-time model setup.
