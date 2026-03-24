@@ -6085,16 +6085,22 @@ _LOGIN_HTML = """<!DOCTYPE html>
         this.showHint = false;
         if (this.needsSetup) {
           this.phase = 'setup';
-          // Compute exact pixel delta so the logo lands on the setup page logo position:
-          // setup header: pt-10 (40px) + half of 80px logo = 80px from top, h-centred
+          // Animate the logo to land on the setup page logo position:
+          // Setup page: max-w-screen-xl mx-auto px-4 pt-4, logo is 32×32 in an items-end
+          // tab row (pb-2 on the logo div) → logo image centre ≈ 32px from viewport top.
+          // toCX: container left-edge (centred up to 1280px wide) + px-4(16) + half-logo(16)
+          // toCY: 41 = 32 + ~9px correction because the hint text below the logo shifts
+          //        .logo-wrap's centroid below the logo image (scale origin is div centre).
+          // scale: target size / login logo size = 32 / 120 ≈ 0.2667
           const logoWrap = document.querySelector('.logo-wrap');
           if (logoWrap) {
             const r = logoWrap.getBoundingClientRect();
             const fromCX = r.left + r.width / 2;
             const fromCY = r.top  + r.height / 2;
-            const toCX   = window.innerWidth / 2;
-            const toCY   = 80;  // matches setup page header position
-            logoWrap.style.transform = `translate(${toCX - fromCX}px, ${toCY - fromCY}px) scale(0.667)`;
+            const toCX   = Math.max(0, (window.innerWidth - 1280) / 2) + 32;
+            const toCY   = 41;
+            const scale  = 32 / 120;
+            logoWrap.style.transform = `translate(${toCX - fromCX}px, ${toCY - fromCY}px) scale(${scale.toFixed(4)})`;
           }
           this._setupRedirectTimer = setTimeout(() => { // matches 2.4s logo transition + 200ms settle
             // Freeze all animations before page handoff so nothing is mid-fade
