@@ -345,9 +345,10 @@ def build_session_key(source: SessionSource) -> str:
 class SessionStore:
     """
     Manages session storage and retrieval.
-    
-    Uses SQLite (via SessionDB) for session metadata and message transcripts.
-    Falls back to legacy JSONL files if SQLite is unavailable.
+
+    SQLite (via SessionDB) is the sole session store.  Legacy JSONL files
+    are no longer written; the JSONL read path is retained for one-time
+    migration of existing transcript data.
     """
     
     def __init__(self, sessions_dir: Path, config: GatewayConfig,
@@ -725,16 +726,16 @@ class SessionStore:
         return self.sessions_dir / f"{session_id}.jsonl"
     
     def append_to_transcript(self, session_id: str, message: Dict[str, Any], skip_db: bool = False) -> None:
-        """Append a message to a session's transcript (SQLite + legacy JSONL).
+        """Append a message to a session's transcript (SQLite only).
 
         Args:
-            skip_db: When True, only write to JSONL and skip the SQLite write.
-                     Used when the agent already persisted messages to SQLite
-                     via its own _flush_messages_to_session_db(), preventing
-                     the duplicate-write bug (#860).
+            skip_db: When True, skip the SQLite write.  Used when the agent
+                     already persisted messages via _flush_messages_to_session_db(),
+                     preventing duplicate writes (bug #860).
         """
-        # Write to SQLite (unless the agent already handled it)
-        if self._db and not skip_db:
+        if skip_db:
+            return
+        if self._db:
             try:
                 self._db.append_message(
                     session_id=session_id,
@@ -746,19 +747,12 @@ class SessionStore:
                 )
             except Exception as e:
                 logger.debug("Session DB operation failed: %s", e)
-        
-        # Also write legacy JSONL (keeps existing tooling working during transition)
-        transcript_path = self.get_transcript_path(session_id)
-        with open(transcript_path, "a", encoding="utf-8") as f:
-            f.write(json.dumps(message, ensure_ascii=False) + "\n")
     
     def rewrite_transcript(self, session_id: str, messages: List[Dict[str, Any]]) -> None:
         """Replace the entire transcript for a session with new messages.
-        
+
         Used by /retry, /undo, and /compress to persist modified conversation history.
-        Rewrites both SQLite and legacy JSONL storage.
         """
-        # SQLite: clear old messages and re-insert
         if self._db:
             try:
                 self._db.clear_messages(session_id)
@@ -773,12 +767,6 @@ class SessionStore:
                     )
             except Exception as e:
                 logger.debug("Failed to rewrite transcript in DB: %s", e)
-        
-        # JSONL: overwrite the file
-        transcript_path = self.get_transcript_path(session_id)
-        with open(transcript_path, "w", encoding="utf-8") as f:
-            for msg in messages:
-                f.write(json.dumps(msg, ensure_ascii=False) + "\n")
 
     def load_transcript(self, session_id: str) -> List[Dict[str, Any]]:
         """Load all messages from a session's transcript."""

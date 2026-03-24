@@ -66,34 +66,71 @@ def _validate_contract(contract: Dict) -> Optional[str]:
     return None
 
 
-def _validate_output_against_schema(output_obj: Any, schema: Dict) -> Optional[str]:
+_JSON_TYPE_MAP = {
+    "string": str, "number": (int, float), "integer": int,
+    "boolean": bool, "array": list, "object": dict, "null": type(None),
+}
+
+
+def _validate_output_against_schema(
+    output_obj: Any,
+    schema: Dict,
+    _path: str = "",
+) -> Optional[str]:
     """
-    Basic JSON Schema validation (type, required, properties).
-    Returns error message or None if valid.
+    Recursive JSON Schema validation: type, required, properties, enum, items.
+    Returns an error message or None if valid.
     """
     if not isinstance(schema, dict):
-        return None  # No schema — skip
-    if not isinstance(output_obj, dict):
-        return f"expected JSON object, got {type(output_obj).__name__}"
+        return None
 
-    # Check required fields
-    for field in schema.get("required", []):
-        if field not in output_obj:
-            return f"missing required field: {field!r}"
+    # --- type check ---
+    expected_type = schema.get("type")
+    if expected_type:
+        if expected_type == "object":
+            if not isinstance(output_obj, dict):
+                return f"{_path or 'root'}: expected object, got {type(output_obj).__name__}"
+        elif expected_type in _JSON_TYPE_MAP:
+            if not isinstance(output_obj, _JSON_TYPE_MAP[expected_type]):
+                return (
+                    f"{_path or 'root'}: expected {expected_type}, "
+                    f"got {type(output_obj).__name__}"
+                )
 
-    # Check property types
-    for prop, prop_schema in schema.get("properties", {}).items():
-        if prop not in output_obj:
-            continue
-        expected_type = prop_schema.get("type")
-        val = output_obj[prop]
-        type_map = {
-            "string": str, "number": (int, float), "integer": int,
-            "boolean": bool, "array": list, "object": dict, "null": type(None),
-        }
-        if expected_type and expected_type in type_map:
-            if not isinstance(val, type_map[expected_type]):
-                return f"field {prop!r} should be {expected_type}, got {type(val).__name__}"
+    # --- enum check ---
+    enum_vals = schema.get("enum")
+    if enum_vals is not None and output_obj not in enum_vals:
+        return (
+            f"{_path or 'root'}: value {output_obj!r} not in allowed values "
+            f"{enum_vals}"
+        )
+
+    # --- object: required + properties ---
+    if isinstance(output_obj, dict):
+        for field in schema.get("required", []):
+            if field not in output_obj:
+                return f"{_path or 'root'}: missing required field {field!r}"
+
+        for prop, prop_schema in schema.get("properties", {}).items():
+            if prop not in output_obj:
+                continue
+            err = _validate_output_against_schema(
+                output_obj[prop], prop_schema,
+                _path=f"{_path}.{prop}" if _path else prop,
+            )
+            if err:
+                return err
+
+    # --- array: validate items schema ---
+    items_schema = schema.get("items")
+    if isinstance(output_obj, list) and isinstance(items_schema, dict):
+        for i, item in enumerate(output_obj):
+            err = _validate_output_against_schema(
+                item, items_schema,
+                _path=f"{_path}[{i}]",
+            )
+            if err:
+                return err
 
     return None
 

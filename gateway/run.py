@@ -14,6 +14,7 @@ Usage:
 """
 
 import asyncio
+import contextvars
 import json
 import logging
 import os
@@ -186,6 +187,20 @@ from gateway.session import (
 from gateway.delivery import DeliveryRouter, DeliveryTarget
 from gateway.platforms.base import BasePlatformAdapter, MessageEvent, MessageType
 
+# Per-async-task session ID, propagated through the request path so every
+# log record in a message-handling turn includes a common trace identifier.
+_session_ctx: contextvars.ContextVar[str] = contextvars.ContextVar(
+    "session_id", default="-"
+)
+
+
+class _SessionFilter(logging.Filter):
+    """Inject the current session_id into every log record for this module."""
+    def filter(self, record: logging.LogRecord) -> bool:
+        record.session_id = _session_ctx.get()
+        return True
+
+
 logger = logging.getLogger(__name__)
 
 
@@ -270,6 +285,15 @@ class GatewayRunner:
         # Key: session_key, Value: AIAgent instance
         self._running_agents: Dict[str, Any] = {}
         self._pending_messages: Dict[str, str] = {}  # Queued messages during interrupt
+
+        # Per-platform request counters (success / error) for /health reporting.
+        # Keys are platform.value strings (e.g. "telegram", "discord").
+        self._platform_stats: Dict[str, Dict[str, int]] = {}
+
+        # Bounded set of recently-seen message IDs for idempotency.
+        # Prevents double-processing when Telegram retries on timeout.
+        import collections
+        self._seen_message_ids: collections.deque = collections.deque(maxlen=500)
         
         # Track pending exec approvals per session
         # Key: session_key, Value: {"command": str, "pattern_key": str, ...}
@@ -975,6 +999,15 @@ class GatewayRunner:
         7. Return response
         """
         source = event.source
+        _platform = source.platform.value if source.platform else "unknown"
+
+        # Idempotency guard: Telegram retries messages on timeout; skip if already seen.
+        if event.message_id:
+            _mid = f"{_platform}:{event.message_id}"
+            if _mid in self._seen_message_ids:
+                logger.debug("Skipping duplicate message %s", _mid)
+                return None
+            self._seen_message_ids.append(_mid)
 
         # Check if user is authorized
         if not self._is_user_authorized(source):
@@ -1180,6 +1213,10 @@ class GatewayRunner:
         # Get or create session
         session_entry = self.session_store.get_or_create_session(source)
         session_key = session_entry.session_key
+
+        # Bind session ID to the current async task so all log calls below
+        # (and in _run_agent) share a common trace identifier.
+        _session_ctx.set(session_entry.session_id)
         
         # Emit session:start for new or auto-reset sessions
         _is_new_session = (
@@ -1696,10 +1733,14 @@ class GatewayRunner:
             if self._should_send_voice_reply(event, response, agent_messages):
                 await self._send_voice_reply(event, response)
 
+            ps = self._platform_stats.setdefault(_platform, {"success": 0, "error": 0})
+            ps["success"] += 1
             return response
-            
+
         except Exception as e:
             logger.exception("Agent error in session %s", session_key)
+            ps = self._platform_stats.setdefault(_platform, {"success": 0, "error": 0})
+            ps["error"] += 1
             return (
                 "Sorry, I encountered an unexpected error. "
                 "The details have been logged for debugging. "
@@ -4347,7 +4388,10 @@ async def start_gateway(config: Optional[GatewayConfig] = None, replace: bool = 
         backupCount=3,
     )
     from agent.redact import RedactingFormatter
-    file_handler.setFormatter(RedactingFormatter('%(asctime)s %(levelname)s %(name)s: %(message)s'))
+    # Apply the session filter to the root logger so every log record — from
+    # any module — gets session_id injected (defaults to '-' outside a request).
+    logging.getLogger().addFilter(_SessionFilter())
+    file_handler.setFormatter(RedactingFormatter('%(asctime)s %(levelname)s %(name)s [%(session_id)s]: %(message)s'))
     logging.getLogger().addHandler(file_handler)
     logging.getLogger().setLevel(logging.INFO)
 
@@ -4358,7 +4402,7 @@ async def start_gateway(config: Optional[GatewayConfig] = None, replace: bool = 
         backupCount=2,
     )
     error_handler.setLevel(logging.WARNING)
-    error_handler.setFormatter(RedactingFormatter('%(asctime)s %(levelname)s %(name)s: %(message)s'))
+    error_handler.setFormatter(RedactingFormatter('%(asctime)s %(levelname)s %(name)s [%(session_id)s]: %(message)s'))
     logging.getLogger().addHandler(error_handler)
 
     runner = GatewayRunner(config)

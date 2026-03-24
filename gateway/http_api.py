@@ -4898,7 +4898,7 @@ function app() {
     _scrollChat() {
       this.$nextTick(() => {
         const el = document.getElementById('chat-messages');
-        if (el) el.scrollTop = el.scrollHeight;
+        if (el && el.scrollHeight > el.clientHeight) el.scrollTop = el.scrollHeight;
       });
     },
 
@@ -8676,6 +8676,7 @@ async def _handle_health(request: web.Request) -> web.Response:
         "status": "ok",
         "sessions": len(sessions),
         "uptime_s": uptime,
+        "platform_stats": getattr(runner, "_platform_stats", {}),
     })
 
 
