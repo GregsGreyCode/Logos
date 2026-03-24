@@ -181,6 +181,52 @@ class TestLocalProcessExecutorSpawn:
         assert result.requester == "user1"
         assert result.healthy is True
 
+    def test_spawn_uses_create_detached_process_on_windows(self, tmp_path, monkeypatch):
+        """On Windows, CREATE_DETACHED_PROCESS is passed instead of start_new_session."""
+        instances_file = self._make_instances_file(tmp_path)
+        monkeypatch.setattr("gateway.executors.local._INSTANCES_FILE", instances_file)
+        monkeypatch.setattr("sys.platform", "win32")
+
+        mock_proc = MagicMock()
+        mock_proc.pid = 4321
+
+        exe = LocalProcessExecutor(port_range=(8081, 8199))
+
+        with patch("subprocess.Popen", return_value=mock_proc) as mock_popen, \
+             patch("gateway.executors.local._health_check", return_value=True), \
+             patch("gateway.executors.local._is_alive", return_value=False), \
+             patch.object(Path, "mkdir", return_value=None), \
+             patch("builtins.open", MagicMock()):
+            exe.spawn(InstanceConfig(name="win-test"))
+
+        kwargs = mock_popen.call_args.kwargs
+        # CREATE_DETACHED_PROCESS = 0x8; use the numeric value since the
+        # attribute only exists on Windows
+        assert kwargs.get("creationflags") == 0x00000008
+        assert "start_new_session" not in kwargs
+
+    def test_spawn_uses_start_new_session_on_unix(self, tmp_path, monkeypatch):
+        """On Unix, start_new_session=True is used (not creationflags)."""
+        instances_file = self._make_instances_file(tmp_path)
+        monkeypatch.setattr("gateway.executors.local._INSTANCES_FILE", instances_file)
+        monkeypatch.setattr("sys.platform", "linux")
+
+        mock_proc = MagicMock()
+        mock_proc.pid = 1234
+
+        exe = LocalProcessExecutor(port_range=(8081, 8199))
+
+        with patch("subprocess.Popen", return_value=mock_proc) as mock_popen, \
+             patch("gateway.executors.local._health_check", return_value=True), \
+             patch("gateway.executors.local._is_alive", return_value=False), \
+             patch.object(Path, "mkdir", return_value=None), \
+             patch("builtins.open", MagicMock()):
+            exe.spawn(InstanceConfig(name="unix-test"))
+
+        kwargs = mock_popen.call_args.kwargs
+        assert kwargs.get("start_new_session") is True
+        assert "creationflags" not in kwargs
+
     def test_spawn_prunes_dead_instances_before_allocating(self, tmp_path, monkeypatch):
         """Dead PIDs in instances.json are removed before port allocation."""
         instances_file = tmp_path / "instances.json"
@@ -334,6 +380,68 @@ class TestLocalProcessExecutorDeleteInstance:
         names = [i["name"] for i in saved]
         assert "gone" not in names
         assert "keep" in names
+
+    def test_delete_escalates_to_sigkill_on_unix(self, tmp_path, monkeypatch):
+        """If SIGTERM doesn't kill the process, SIGKILL is sent on Unix."""
+        instances_file = tmp_path / "instances.json"
+        self._write_instances(instances_file, [
+            {"name": "stubborn", "port": 8081, "pid": 600,
+             "url": "http://127.0.0.1:8081", "source": "local",
+             "soul_name": "default", "model": "", "requester": ""},
+        ])
+        monkeypatch.setattr("gateway.executors.local._INSTANCES_FILE", instances_file)
+
+        exe = LocalProcessExecutor()
+        kill_calls = []
+
+        def mock_kill(pid, sig):
+            kill_calls.append((pid, sig))
+
+        # Process stays alive through the whole grace period → SIGKILL triggered
+        with patch("os.kill", side_effect=mock_kill), \
+             patch("gateway.executors.local._is_alive", return_value=True), \
+             patch("time.sleep"), \
+             patch("signal.SIGKILL", signal.SIGKILL, create=True):
+            exe.delete_instance("stubborn")
+
+        assert (600, signal.SIGTERM) in kill_calls
+        assert (600, signal.SIGKILL) in kill_calls
+
+    def test_delete_uses_taskkill_when_sigkill_missing(self, tmp_path, monkeypatch):
+        """On Windows (no SIGKILL), taskkill /F /PID is used as a fallback."""
+        instances_file = tmp_path / "instances.json"
+        self._write_instances(instances_file, [
+            {"name": "windows-proc", "port": 8081, "pid": 700,
+             "url": "http://127.0.0.1:8081", "source": "local",
+             "soul_name": "default", "model": "", "requester": ""},
+        ])
+        monkeypatch.setattr("gateway.executors.local._INSTANCES_FILE", instances_file)
+
+        exe = LocalProcessExecutor()
+        taskkill_calls = []
+
+        def fake_run(cmd, **kwargs):
+            taskkill_calls.append(cmd)
+
+        import signal as _signal
+        with patch("os.kill"), \
+             patch("gateway.executors.local._is_alive", return_value=True), \
+             patch("time.sleep"), \
+             patch("subprocess.run", side_effect=fake_run), \
+             patch.object(_signal, "SIGKILL", new=None, create=True) if not hasattr(_signal, "SIGKILL") \
+                 else patch("signal.SIGKILL", None):
+            # Remove SIGKILL attr to simulate Windows
+            original = getattr(_signal, "SIGKILL", "MISSING")
+            if original != "MISSING":
+                delattr(_signal, "SIGKILL")
+            try:
+                exe.delete_instance("windows-proc")
+            finally:
+                if original != "MISSING":
+                    _signal.SIGKILL = original
+
+        assert any("taskkill" in str(c) for c in taskkill_calls), \
+            f"Expected taskkill call, got: {taskkill_calls}"
 
     def test_delete_unknown_name_no_error(self, tmp_path, monkeypatch):
         instances_file = tmp_path / "instances.json"

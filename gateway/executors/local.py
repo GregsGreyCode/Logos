@@ -120,7 +120,8 @@ class LocalProcessExecutor:
         # parent exits; on Unix start_new_session=True creates a new session leader.
         _popen_kwargs: dict = {"env": env, "stdout": None, "stderr": None}
         if sys.platform == "win32":
-            _popen_kwargs["creationflags"] = subprocess.CREATE_DETACHED_PROCESS
+            # CREATE_DETACHED_PROCESS only defined on Windows (0x00000008)
+            _popen_kwargs["creationflags"] = getattr(subprocess, "CREATE_DETACHED_PROCESS", 0x00000008)
         else:
             _popen_kwargs["start_new_session"] = True
 
