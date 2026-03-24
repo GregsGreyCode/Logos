@@ -6473,23 +6473,25 @@ _SETUP_HTML = """<!DOCTYPE html>
 
       <!-- ── Step 0a: Setup overview (wide intro) ─────────────────────── -->
       <div x-show="step===0 && setupMode === 'new' && !introConfirmed">
-        <div class="text-center mb-7 relative">
+        <div class="text-center mb-7">
           <h1 class="text-2xl font-bold mb-2" x-text="tldr ? 'welcome to logos no cap' : 'Welcome to Logos'"></h1>
           <p class="text-gray-400 text-sm" x-text="tldr ? 'it does AI things on ur computer fr' : 'A control plane for agentic AI.'"></p>
-          <!-- TL;DR toggle — top-right corner -->
-          <button @click="tldr=!tldr"
-            class="absolute top-0 right-0 spinner-hue text-[10px] px-2.5 py-1 rounded-full border font-medium transition-all"
-            :class="tldr ? 'bg-indigo-950 border-indigo-600 text-indigo-200' : 'bg-gray-900 border-gray-700 text-gray-500 hover:border-gray-500 hover:text-gray-400'"
-            title="Toggle TL;DR mode">
-            <span x-text="tldr ? '⚡ tl;dr on' : '⚡ tl;dr'"></span>
-          </button>
         </div>
 
         <!-- Overview card -->
         <div class="rounded-2xl border border-gray-800 bg-gray-900/60 overflow-hidden mb-6">
           <!-- Header text -->
           <div class="px-7 py-6 border-b border-gray-800/60">
-            <div class="text-base font-semibold text-white mb-1" x-text="tldr ? 'what ur about to do' : 'What setup configures'"></div>
+            <div class="flex items-center justify-between gap-4 mb-1">
+              <div class="text-base font-semibold text-white" x-text="tldr ? 'what ur about to do' : 'What setup configures'"></div>
+              <!-- TL;DR toggle — top-right of the card header -->
+              <button @click="tldr=!tldr"
+                class="spinner-hue text-xs px-4 py-1.5 rounded-full border font-semibold tracking-wide transition-all flex-shrink-0"
+                :class="tldr ? 'bg-indigo-950 border-indigo-500 text-indigo-200' : 'bg-gray-900 border-gray-600 text-gray-400 hover:border-gray-400 hover:text-gray-200'"
+                title="Toggle TL;DR mode">
+                <span x-text="tldr ? '⚡ TL;DR ON' : '⚡ TL;DR'"></span>
+              </button>
+            </div>
             <div class="text-sm text-gray-500 mb-4" x-text="tldr ? '7 steps, its not that deep' : 'Seven steps, from model discovery to launch.'"></div>
             <p class="text-sm text-gray-500 leading-relaxed" x-show="!tldr">
               Setup establishes how Logos routes inference, which models and runtimes are available, and what operating boundaries apply to agent runs.
