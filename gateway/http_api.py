@@ -6704,14 +6704,14 @@ _SETUP_HTML = """<!DOCTYPE html>
                               </div>
                               <div class="flex gap-2">
                                 <input type="password" placeholder="API key (e.g. sk-lm-...)"
-                                  :value="localKeys[s.endpoint]||''"
-                                  @input="localKeys = {...localKeys, [s.endpoint]: $event.target.value}"
-                                  @change="localKeys = {...localKeys, [s.endpoint]: $event.target.value}"
-                                  @keydown.enter="serverKeys[s.endpoint] = localKeys[s.endpoint]||''; retryWithKey(s)"
+                                  :value="$data.localKeys[s.endpoint]||''"
+                                  @input="$data.localKeys = {...$data.localKeys, [s.endpoint]: $event.target.value}"
+                                  @change="$data.localKeys = {...$data.localKeys, [s.endpoint]: $event.target.value}"
+                                  @keydown.enter="serverKeys[s.endpoint] = $data.localKeys[s.endpoint]||''; retryWithKey(s)"
                                   :class="authEnforcedServers[s.endpoint] ? 'border-amber-700 focus:border-amber-500' : 'border-gray-700 focus:border-indigo-500'"
                                   class="flex-1 bg-gray-950 border rounded-lg px-3 py-1.5 text-xs text-white placeholder-gray-600 focus:outline-none font-mono transition-colors">
-                                <button @click="serverKeys[s.endpoint] = localKeys[s.endpoint]||''; retryWithKey(s)"
-                                  :disabled="!(localKeys[s.endpoint]||'') || retryingServers[s.endpoint]"
+                                <button @click="serverKeys[s.endpoint] = $data.localKeys[s.endpoint]||''; retryWithKey(s)"
+                                  :disabled="!($data.localKeys[s.endpoint]||'') || retryingServers[s.endpoint]"
                                   class="btn-primary px-3 py-1.5 rounded-lg text-xs flex-shrink-0 disabled:opacity-40 flex items-center gap-1.5">
                                   <span x-show="!retryingServers[s.endpoint]">Connect</span>
                                   <template x-if="retryingServers[s.endpoint]">
@@ -6719,7 +6719,7 @@ _SETUP_HTML = """<!DOCTYPE html>
                                   </template>
                                 </button>
                               </div>
-                              <p x-show="retryErrors[s.endpoint] && (localKeys[s.endpoint]||'')" class="text-xs text-red-400" x-text="retryErrors[s.endpoint]"></p>
+                              <p x-show="retryErrors[s.endpoint] && ($data.localKeys[s.endpoint]||'')" class="text-xs text-red-400" x-text="retryErrors[s.endpoint]"></p>
                               <!-- Try without auth — hidden once we know auth is enforced -->
                               <button x-show="!authEnforcedServers[s.endpoint]"
                                 @click="serverKeys[s.endpoint] = ''; retryWithKey(s)"
@@ -6779,14 +6779,14 @@ _SETUP_HTML = """<!DOCTYPE html>
                           </div>
                           <div class="flex gap-2">
                             <input type="password" placeholder="API key (e.g. sk-lm-...)"
-                              :value="localKeys[s.endpoint]||''"
-                              @input="localKeys = {...localKeys, [s.endpoint]: $event.target.value}"
-                              @change="localKeys = {...localKeys, [s.endpoint]: $event.target.value}"
-                              @keydown.enter="serverKeys[s.endpoint] = localKeys[s.endpoint]||''; retryWithKey(s)"
+                              :value="$data.localKeys[s.endpoint]||''"
+                              @input="$data.localKeys = {...$data.localKeys, [s.endpoint]: $event.target.value}"
+                              @change="$data.localKeys = {...$data.localKeys, [s.endpoint]: $event.target.value}"
+                              @keydown.enter="serverKeys[s.endpoint] = $data.localKeys[s.endpoint]||''; retryWithKey(s)"
                               :class="authEnforcedServers[s.endpoint] ? 'border-amber-700 focus:border-amber-500' : 'border-gray-700 focus:border-indigo-500'"
                               class="flex-1 bg-gray-950 border rounded-lg px-3 py-1.5 text-xs text-white placeholder-gray-600 focus:outline-none font-mono transition-colors">
-                            <button @click="serverKeys[s.endpoint] = localKeys[s.endpoint]||''; retryWithKey(s)"
-                              :disabled="!(localKeys[s.endpoint]||'') || retryingServers[s.endpoint]"
+                            <button @click="serverKeys[s.endpoint] = $data.localKeys[s.endpoint]||''; retryWithKey(s)"
+                              :disabled="!($data.localKeys[s.endpoint]||'') || retryingServers[s.endpoint]"
                               class="btn-primary px-3 py-1.5 rounded-lg text-xs flex-shrink-0 disabled:opacity-40 flex items-center gap-1.5">
                               <span x-show="!retryingServers[s.endpoint]">Connect</span>
                               <template x-if="retryingServers[s.endpoint]">
@@ -6794,7 +6794,7 @@ _SETUP_HTML = """<!DOCTYPE html>
                               </template>
                             </button>
                           </div>
-                          <p x-show="retryErrors[s.endpoint] && (localKeys[s.endpoint]||'')" class="text-xs text-red-400" x-text="retryErrors[s.endpoint]"></p>
+                          <p x-show="retryErrors[s.endpoint] && ($data.localKeys[s.endpoint]||'')" class="text-xs text-red-400" x-text="retryErrors[s.endpoint]"></p>
                           <!-- Try without auth — hidden once we know auth is enforced -->
                           <button x-show="!authEnforcedServers[s.endpoint]"
                             @click="serverKeys[s.endpoint] = ''; retryWithKey(s)"
@@ -8561,7 +8561,8 @@ function setup() {
     // True when the user has typed a key into any auth_required server's input
     // but hasn't clicked Connect yet — used to enable the Continue button.
     get hasPendingKeys() {
-      return Object.keys(this.localKeys).some(k => (this.localKeys[k] || '').trim());
+      const lk = this.$data ? this.$data.localKeys : this.localKeys;
+      return Object.keys(lk).some(k => (lk[k] || '').trim());
     },
 
     get localServers() {

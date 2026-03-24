@@ -824,6 +824,23 @@ def main() -> None:
 
     threading.Thread(target=_open_when_ready, daemon=True).start()
 
+    import signal as _signal
+
+    def _on_exit_signal(signum, frame):
+        """Handle SIGTERM / SIGINT so the process exits cleanly from the outside."""
+        _stop_gateway()
+        _kill_instances()
+        sys.exit(0)
+
+    try:
+        _signal.signal(_signal.SIGTERM, _on_exit_signal)
+    except Exception:
+        pass
+    try:
+        _signal.signal(_signal.SIGINT, _on_exit_signal)
+    except Exception:
+        pass
+
     try:
         _run_tray()
     except ImportError:
@@ -834,8 +851,11 @@ def main() -> None:
                 time.sleep(1)
         except KeyboardInterrupt:
             pass
-        finally:
-            _stop_gateway()
+    finally:
+        # Ensure the gateway and any spawned instances are cleaned up regardless
+        # of how icon.run() returned (user Quit, Windows task manager, signal, etc.)
+        _stop_gateway()
+        _kill_instances()
 
 
 if __name__ == "__main__":
