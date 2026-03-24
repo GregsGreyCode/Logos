@@ -6152,20 +6152,18 @@ _LOGIN_HTML = """<!DOCTYPE html>
         if (this.needsSetup) {
           this.phase = 'setup';
           // Animate the logo to land on the setup page logo position:
-          // Setup page: max-w-screen-xl mx-auto px-4 pt-4, logo is 32×32 in an items-end
-          // tab row (pb-2 on the logo div) → logo image centre ≈ 32px from viewport top.
-          // toCX: container left-edge (centred up to 1280px wide) + px-4(16) + half-logo(16)
-          // toCY: 41 = 32 + ~9px correction because the hint text below the logo shifts
-          //        .logo-wrap's centroid below the logo image (scale origin is div centre).
-          // scale: target size / login logo size = 32 / 120 ≈ 0.2667
+          // Setup page header: pt-10 (40px) + logo is 56×56px centred horizontally.
+          // toCX: centre of viewport (setup logo is perfectly centred).
+          // toCY: 40 + 28 = 68px (pt-10 padding + half of 56px logo height).
+          // scale: target size / login logo size = 56 / 120 ≈ 0.4667
           const logoWrap = document.querySelector('.logo-wrap');
           if (logoWrap) {
             const r = logoWrap.getBoundingClientRect();
             const fromCX = r.left + r.width / 2;
             const fromCY = r.top  + r.height / 2;
-            const toCX   = Math.max(0, (window.innerWidth - 1280) / 2) + 32;
-            const toCY   = 41;
-            const scale  = 32 / 120;
+            const toCX   = window.innerWidth / 2;
+            const toCY   = 68;
+            const scale  = 56 / 120;
             logoWrap.style.transform = `translate(${toCX - fromCX}px, ${toCY - fromCY}px) scale(${scale.toFixed(4)})`;
           }
           this._setupRedirectTimer = setTimeout(() => { // matches 2.4s logo transition + 200ms settle
@@ -6487,8 +6485,95 @@ _SETUP_HTML = """<!DOCTYPE html>
           <!-- Rename hint -->
           <p x-show="foundServers.length > 0" class="text-xs text-gray-600 mb-2">Click a server name to rename it.</p>
 
-          <!-- Found server cards -->
-          <template x-for="s in foundServers" :key="s.endpoint">
+          <!-- This machine: grouped card when multiple localhost servers found -->
+          <template x-if="localServers.length > 1">
+            <div class="p-4 rounded-xl border border-gray-700 bg-gray-900 space-y-3">
+              <div class="text-xs text-gray-500 uppercase tracking-wider font-semibold">This machine</div>
+              <template x-for="s in localServers" :key="s.endpoint">
+                <div class="flex items-start gap-3 pt-2 border-t border-gray-800 first:border-t-0 first:pt-0">
+                  <button @click="s.status==='up' && toggleServer(s)"
+                    :class="isServerSelected(s) ? 'bg-indigo-500 border-indigo-500' : 'border-gray-600'"
+                    class="w-5 h-5 rounded border-2 flex items-center justify-center flex-shrink-0 mt-0.5 transition-all">
+                    <svg x-show="isServerSelected(s)" class="w-3 h-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/>
+                    </svg>
+                  </button>
+                  <div class="flex-1 min-w-0">
+                    <div class="flex items-center gap-2 flex-wrap" x-data="{ editing: false, draft: '' }">
+                      <span x-show="!editing" @click="editing=true; draft=s.customName||serverDefaultName(s)"
+                        class="text-sm font-semibold text-white cursor-text hover:text-indigo-300 transition-colors"
+                        x-text="serverName(s)" title="Click to rename"></span>
+                      <input x-show="editing" x-model="draft" type="text"
+                        @blur="s.customName=draft.trim()||''; editing=false"
+                        @keydown.enter="s.customName=draft.trim()||''; editing=false"
+                        @keydown.escape="editing=false"
+                        x-init="$watch('editing', v => v && $nextTick(() => $el.focus()))"
+                        class="text-sm font-semibold bg-transparent border-b border-indigo-400 text-white focus:outline-none w-32">
+                      <span class="text-[10px] font-mono text-gray-600"
+                        x-text="':' + new URL(s.endpoint).port"></span>
+                      <span x-show="s.status==='up'" class="spinner-hue text-[10px] px-1.5 py-0.5 rounded-full bg-indigo-950 text-indigo-300 border border-indigo-800 font-medium">running</span>
+                      <span x-show="s.status==='auth_required'" class="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-950 text-amber-400 border border-amber-800 font-medium">auth required</span>
+                    </div>
+                    <div x-show="s.status==='up'" class="text-xs text-gray-600 mt-0.5"
+                      x-text="s.models.length===0 ? 'No models loaded yet' : s.models.length + ' model' + (s.models.length!==1?'s':'') + ' ready'"></div>
+                    <div x-show="s.status==='auth_required'" class="mt-2 flex gap-2">
+                      <input type="password" placeholder="Paste API key"
+                        x-model="s._apiKey"
+                        class="flex-1 bg-gray-950 border border-gray-700 rounded-lg px-3 py-1.5 text-xs text-white placeholder-gray-600 focus:outline-none focus:border-indigo-500 font-mono">
+                      <button @click="retryWithKey(s)" :disabled="!s._apiKey"
+                        class="btn-primary px-3 py-1.5 rounded-lg text-xs flex-shrink-0">Connect</button>
+                    </div>
+                  </div>
+                </div>
+              </template>
+            </div>
+          </template>
+
+          <!-- Single localhost server — shown as a normal card -->
+          <template x-if="localServers.length === 1">
+            <template x-for="s in localServers" :key="s.endpoint">
+              <div class="p-4 rounded-xl border transition-all"
+                :class="isServerSelected(s) ? 'border-indigo-500 bg-indigo-950/30 spinner-hue' : 'border-gray-700 bg-gray-900'">
+                <div class="flex items-start gap-3">
+                  <button @click="s.status==='up' && toggleServer(s)"
+                    :class="isServerSelected(s) ? 'bg-indigo-500 border-indigo-500' : 'border-gray-600'"
+                    class="w-5 h-5 rounded border-2 flex items-center justify-center flex-shrink-0 mt-0.5 transition-all">
+                    <svg x-show="isServerSelected(s)" class="w-3 h-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/>
+                    </svg>
+                  </button>
+                  <div class="flex-1 min-w-0">
+                    <div class="flex items-center gap-2 flex-wrap" x-data="{ editing: false, draft: '' }">
+                      <span x-show="!editing" @click="editing=true; draft=s.customName||serverDefaultName(s)"
+                        class="text-sm font-semibold text-white cursor-text hover:text-indigo-300 transition-colors"
+                        x-text="serverName(s)" title="Click to rename"></span>
+                      <input x-show="editing" x-model="draft" type="text"
+                        @blur="s.customName=draft.trim()||''; editing=false"
+                        @keydown.enter="s.customName=draft.trim()||''; editing=false"
+                        @keydown.escape="editing=false"
+                        x-init="$watch('editing', v => v && $nextTick(() => $el.focus()))"
+                        class="text-sm font-semibold bg-transparent border-b border-indigo-400 text-white focus:outline-none w-32">
+                      <span x-show="s.status==='up'" class="spinner-hue text-[10px] px-1.5 py-0.5 rounded-full bg-indigo-950 text-indigo-300 border border-indigo-800 font-medium">running</span>
+                      <span x-show="s.status==='auth_required'" class="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-950 text-amber-400 border border-amber-800 font-medium">auth required</span>
+                    </div>
+                    <div class="text-xs text-gray-500 font-mono mt-0.5 truncate" x-text="s.endpoint.replace('/v1','')"></div>
+                    <div x-show="s.status==='up'" class="text-xs text-gray-600 mt-0.5"
+                      x-text="s.models.length===0 ? 'No models loaded yet' : s.models.length + ' model' + (s.models.length!==1?'s':'') + ' ready'"></div>
+                    <div x-show="s.status==='auth_required'" class="mt-2 flex gap-2">
+                      <input type="password" placeholder="Paste API key from LM Studio \u2192 Local Server tab"
+                        x-model="s._apiKey"
+                        class="flex-1 bg-gray-950 border border-gray-700 rounded-lg px-3 py-1.5 text-xs text-white placeholder-gray-600 focus:outline-none focus:border-indigo-500 font-mono">
+                      <button @click="retryWithKey(s)" :disabled="!s._apiKey"
+                        class="btn-primary px-3 py-1.5 rounded-lg text-xs flex-shrink-0">Connect</button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </template>
+          </template>
+
+          <!-- Remote servers — always individual cards -->
+          <template x-for="s in remoteServers" :key="s.endpoint">
             <div class="p-4 rounded-xl border transition-all"
               :class="isServerSelected(s) ? 'border-indigo-500 bg-indigo-950/30 spinner-hue' : 'border-gray-700 bg-gray-900'">
               <div class="flex items-start gap-3">
@@ -6503,8 +6588,7 @@ _SETUP_HTML = """<!DOCTYPE html>
                   <div class="flex items-center gap-2 flex-wrap" x-data="{ editing: false, draft: '' }">
                     <span x-show="!editing" @click="editing=true; draft=s.customName||serverDefaultName(s)"
                       class="text-sm font-semibold text-white cursor-text hover:text-indigo-300 transition-colors"
-                      x-text="serverName(s)"
-                      title="Click to rename"></span>
+                      x-text="serverName(s)" title="Click to rename"></span>
                     <input x-show="editing" x-model="draft" type="text"
                       @blur="s.customName=draft.trim()||''; editing=false"
                       @keydown.enter="s.customName=draft.trim()||''; editing=false"
@@ -6517,15 +6601,12 @@ _SETUP_HTML = """<!DOCTYPE html>
                   <div class="text-xs text-gray-500 font-mono mt-0.5 truncate" x-text="s.endpoint.replace('/v1','')"></div>
                   <div x-show="s.status==='up'" class="text-xs text-gray-600 mt-0.5"
                     x-text="s.models.length===0 ? 'No models loaded yet' : s.models.length + ' model' + (s.models.length!==1?'s':'') + ' ready'"></div>
-                  <!-- Auth required: inline key entry -->
                   <div x-show="s.status==='auth_required'" class="mt-2 flex gap-2">
                     <input type="password" placeholder="Paste API key from LM Studio \u2192 Local Server tab"
                       x-model="s._apiKey"
                       class="flex-1 bg-gray-950 border border-gray-700 rounded-lg px-3 py-1.5 text-xs text-white placeholder-gray-600 focus:outline-none focus:border-indigo-500 font-mono">
                     <button @click="retryWithKey(s)" :disabled="!s._apiKey"
-                      class="btn-primary px-3 py-1.5 rounded-lg text-xs flex-shrink-0">
-                      Connect
-                    </button>
+                      class="btn-primary px-3 py-1.5 rounded-lg text-xs flex-shrink-0">Connect</button>
                   </div>
                 </div>
               </div>
@@ -6805,7 +6886,8 @@ _SETUP_HTML = """<!DOCTYPE html>
                           <template x-if="compareResults[mid]">
                             <div class="flex items-center gap-2">
                               <template x-if="compareResults[mid].error">
-                                <span class="text-red-500">error</span>
+                                <span class="text-red-500 cursor-help underline decoration-dotted"
+                                  :title="compareResults[mid].error">error</span>
                               </template>
                               <template x-if="!compareResults[mid].error">
                                 <div class="flex items-center gap-2">
@@ -8009,6 +8091,18 @@ function setup() {
       return s.customName || this.serverDefaultName(s);
     },
 
+    get localServers() {
+      return this.foundServers.filter(s => {
+        try { const h = new URL(s.endpoint).hostname; return h === 'localhost' || h === '127.0.0.1'; } catch { return false; }
+      });
+    },
+
+    get remoteServers() {
+      return this.foundServers.filter(s => {
+        try { const h = new URL(s.endpoint).hostname; return h !== 'localhost' && h !== '127.0.0.1'; } catch { return false; }
+      });
+    },
+
     // Find the server a model belongs to
     modelServer(modelId) {
       const m = this.getModels().find(m => m.id === modelId);
@@ -8218,8 +8312,25 @@ function setup() {
       this.k8sTesting = false;
     },
 
+    async _flyLogoToNav() {
+      // Animate the setup logo from its current top-centre position to the
+      // nav logo position on the main page (top-left, 32×32).
+      // Nav logo centre: containerLeft + px-4(16) + half-logo(16), y=32.
+      const logoEl = document.querySelector('.setup-logo');
+      if (!logoEl) return;
+      const r = logoEl.getBoundingClientRect();
+      const fromCX = r.left + r.width / 2;
+      const fromCY = r.top  + r.height / 2;
+      const toCX   = Math.max(0, (window.innerWidth - 1280) / 2) + 32;
+      const toCY   = 32;
+      logoEl.style.transition = 'transform 0.9s cubic-bezier(0.4,0,0.2,1)';
+      logoEl.style.transformOrigin = 'center center';
+      logoEl.style.transform = `translate(${toCX - fromCX}px, ${toCY - fromCY}px) scale(${(32/56).toFixed(4)})`;
+      await new Promise(r => setTimeout(r, 900));
+    },
+
     async complete() {
-      if (this.completeError?.warning) { window.location.href = '/'; return; }
+      if (this.completeError?.warning) { await this._flyLogoToNav(); window.location.href = '/'; return; }
       this.completing = true;
       this.completeError = null;
       try {
@@ -8256,6 +8367,8 @@ function setup() {
             return;
           }
           try { localStorage.removeItem('logos_setup_scan'); localStorage.removeItem('logos_setup_progress'); localStorage.removeItem('logos_setup_progress_v2'); } catch {}
+          try { sessionStorage.setItem('logos_fl', '1'); } catch {}
+          await this._flyLogoToNav();
           window.location.href = '/';
           return;
         }
