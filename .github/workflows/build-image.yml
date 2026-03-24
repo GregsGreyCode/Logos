@@ -6,6 +6,9 @@ on:
       - 'v*'          # e.g. v0.4.7 → builds + pushes to ghcr.io
   workflow_dispatch:   # manual trigger from Actions tab (for testing)
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 permissions:
   contents: read
   packages: write     # required to push to ghcr.io
