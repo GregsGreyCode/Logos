@@ -6180,18 +6180,24 @@ _LOGIN_HTML = """<!DOCTYPE html>
         if (this.needsSetup) {
           this.phase = 'setup';
           this.navigating = true; this.navBarDur = 2600;
-          // Animate the logo to land on the setup page logo position:
-          // Setup header: pt-10 (40px) + logo 56×56px centred horizontally.
-          // toCX: centre of viewport.  toCY: 40 + 28 = 68px.
-          // scale: 56 / 100 (login logo image is 100px).
+          // Animate the logo image to land on the setup page logo position.
+          // Measure from the image itself (not the wrap which includes the hint
+          // reservation below) so the "from" centre is accurate.
+          // Setup header: pt-10 (40px) + 56px logo → centre at y=68.
           const logoWrap = document.querySelector('.logo-wrap');
-          if (logoWrap) {
-            const r = logoWrap.getBoundingClientRect();
-            const fromCX = r.left + r.width / 2;
-            const fromCY = r.top  + r.height / 2;
-            const toCX   = window.innerWidth / 2;
-            const toCY   = 68;
-            const scale  = 56 / 100;
+          const logoImg  = document.querySelector('.logo-img');
+          if (logoWrap && logoImg) {
+            const wrapRect = logoWrap.getBoundingClientRect();
+            const imgRect  = logoImg.getBoundingClientRect();
+            const fromCX   = imgRect.left + imgRect.width  / 2;
+            const fromCY   = imgRect.top  + imgRect.height / 2;
+            // transform-origin relative to wrap so scale anchors on the logo centre
+            const originX  = imgRect.left - wrapRect.left + imgRect.width  / 2;
+            const originY  = imgRect.top  - wrapRect.top  + imgRect.height / 2;
+            logoWrap.style.transformOrigin = `${originX}px ${originY}px`;
+            const toCX  = window.innerWidth / 2;
+            const toCY  = 68;
+            const scale = 56 / 100;
             logoWrap.style.transform = `translate(${toCX - fromCX}px, ${toCY - fromCY}px) scale(${scale.toFixed(4)})`;
           }
           this._setupRedirectTimer = setTimeout(() => { // matches 2.4s logo transition + 200ms settle
@@ -6959,14 +6965,14 @@ _SETUP_HTML = """<!DOCTYPE html>
 
           <!-- Footer -->
           <div class="space-y-2 pt-1">
-            <p x-show="selectedServers.length===0 && foundServers.length>0 && !Object.values(localKeys).some(k=>k.trim())" class="text-xs text-center text-gray-600">Select at least one server to continue</p>
+            <p x-show="selectedServers.length===0 && foundServers.length>0 && !hasPendingKeys" class="text-xs text-center text-gray-600">Select at least one server to continue</p>
             <div class="flex items-center gap-3">
               <button @click="autoDetect()" :disabled="autoScanning"
                 class="text-xs text-gray-600 hover:text-gray-400 disabled:opacity-50 transition-colors flex items-center gap-1.5 flex-shrink-0">
                 <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
                 Re-scan
               </button>
-              <button @click="goNext()" :disabled="selectedServers.length===0 && !Object.values(localKeys).some(k=>k.trim())"
+              <button @click="goNext()" :disabled="selectedServers.length===0 && !hasPendingKeys"
                 class="btn-primary flex-1 py-2.5 rounded-xl text-sm disabled:opacity-40 disabled:cursor-not-allowed transition-opacity">
                 Continue &rarr; Benchmark models
               </button>
@@ -8544,6 +8550,12 @@ function setup() {
 
     serverName(s) {
       return s.customName || this.serverDefaultName(s);
+    },
+
+    // True when the user has typed a key into any auth_required server's input
+    // but hasn't clicked Connect yet — used to enable the Continue button.
+    get hasPendingKeys() {
+      return Object.keys(this.localKeys).some(k => (this.localKeys[k] || '').trim());
     },
 
     get localServers() {
