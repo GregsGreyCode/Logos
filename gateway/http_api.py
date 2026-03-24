@@ -6639,8 +6639,8 @@ _SETUP_HTML = """<!DOCTYPE html>
                     <div class="space-y-2">
                       <template x-for="s in group.servers" :key="s.endpoint">
                         <div class="flex items-start gap-3 pl-1">
-                          <button @click="s.status==='up' && toggleServer(s)"
-                            :class="isServerSelected(s) ? 'bg-indigo-500 border-indigo-500' : s.status==='up' ? 'border-gray-600 hover:border-gray-400 cursor-pointer' : 'border-gray-700 opacity-40 cursor-default'"
+                          <button @click="toggleServer(s)"
+                            :class="isServerSelected(s) ? 'bg-indigo-500 border-indigo-500' : 'border-gray-600 hover:border-gray-400 cursor-pointer'"
                             class="w-4 h-4 rounded border-2 flex items-center justify-center flex-shrink-0 mt-0.5 transition-all">
                             <svg x-show="isServerSelected(s)" class="w-2.5 h-2.5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/>
@@ -6715,8 +6715,8 @@ _SETUP_HTML = """<!DOCTYPE html>
                   <div class="p-4 rounded-xl border transition-all"
                     :class="isServerSelected(s) ? 'border-indigo-500/60 bg-indigo-950/20' : 'border-gray-700 bg-gray-900'">
                     <div class="flex items-start gap-3">
-                      <button @click="s.status==='up' && toggleServer(s)"
-                        :class="isServerSelected(s) ? 'bg-indigo-500 border-indigo-500' : s.status==='up' ? 'border-gray-600 hover:border-gray-400 cursor-pointer' : 'border-gray-700 opacity-40 cursor-default'"
+                      <button @click="toggleServer(s)"
+                        :class="isServerSelected(s) ? 'bg-indigo-500 border-indigo-500' : 'border-gray-600 hover:border-gray-400 cursor-pointer'"
                         class="w-5 h-5 rounded border-2 flex items-center justify-center flex-shrink-0 mt-0.5 transition-all">
                         <svg x-show="isServerSelected(s)" class="w-3 h-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/>
@@ -7911,9 +7911,8 @@ function setup() {
             this.track          = s.track ?? null;
             if (s.foundServers?.length) {
               this.foundServers    = s.foundServers;
-              // Only restore servers that are confirmed up — never restore auth_required
-              // servers (they'd contaminate the benchmark with unverified/wrong keys).
-              this.selectedServers = (s.selectedServers || []).filter(x => x.status === 'up');
+              // Restore up + auth_required servers (user explicitly selected them).
+              this.selectedServers = (s.selectedServers || []).filter(x => x.status === 'up' || x.status === 'auth_required');
               this.activeServer    = this.selectedServers[0] || null;
               this.autoScanDone    = true;
             }
@@ -8266,9 +8265,8 @@ function setup() {
     },
 
     async runCompare() {
-      // Safety net: drop any auth_required servers that may have survived from
-      // localStorage. They were never verified, so benchmarking them would fail.
-      this.selectedServers = this.selectedServers.filter(s => s.status === 'up');
+      // Drop servers that are down; keep 'up' and user-selected 'auth_required' (they chose it).
+      this.selectedServers = this.selectedServers.filter(s => s.status === 'up' || s.status === 'auth_required');
       this.activeServer = this.selectedServers[0] || null;
       const models = this.getModels();
       try {
