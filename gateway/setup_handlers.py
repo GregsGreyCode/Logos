@@ -133,7 +133,7 @@ async def _probe_server(
     except Exception:
         pass
 
-    # ── Step 2: /v1/models — LM Studio / OpenAI-compat ───────────────────
+    # ── Step 2: /v1/models — LM Studio / llama.cpp / OpenAI-compat ──────
     try:
         async with session.get(f"{base}/v1/models", headers=headers, timeout=timeout) as r:
             if r.status == 200:
@@ -142,7 +142,22 @@ async def _probe_server(
                     {"id": m["id"], "name": m["id"], "size": 0}
                     for m in data.get("data", [])
                 ]
-                return {"type": "lmstudio", "endpoint": f"{base}/v1", "status": "up", "models": models}
+                # ── Step 3: Distinguish llama.cpp from LM Studio ──────────
+                # llama.cpp exposes /health returning {"status": "ok"|"loading"}.
+                # LM Studio does not have this endpoint.
+                server_type = "lmstudio"
+                try:
+                    async with session.get(
+                        f"{base}/health",
+                        timeout=aiohttp.ClientTimeout(total=2),
+                    ) as hr:
+                        if hr.status in (200, 503):
+                            hd = await hr.json(content_type=None)
+                            if "status" in hd:
+                                server_type = "llamacpp"
+                except Exception:
+                    pass
+                return {"type": server_type, "endpoint": f"{base}/v1", "status": "up", "models": models}
             if r.status == 401:
                 return {"type": "lmstudio", "endpoint": f"{base}/v1", "status": "auth_required", "models": []}
     except Exception:
@@ -375,6 +390,91 @@ _MULTIHOP_PROMPT = (
     "How many oranges are in the box in total?"
 )
 _MULTIHOP_CHECK = "120"   # 5 × 4 × 6 = 120
+
+# ── Secondary (hard) evals — run when a model passes ≥5/6 standard evals ──────
+# These test capabilities that matter most for real agent workflows.
+
+# Hard 1 — 4-scenario routing across 5 tools
+_HARD_TOOL_PROMPT = (
+    'You have 5 tools: "search_web", "run_code", "read_file", "send_email", "query_db".\n'
+    'For each request choose the single correct tool:\n'
+    'A: "What are the latest AI research papers published today?"\n'
+    'B: "Calculate the median of this list: [7, 2, 9, 4, 1]"\n'
+    'C: "Load the contents of config.yaml"\n'
+    'D: "Tell alice@company.com that the nightly job completed"\n'
+    'Reply with ONLY valid JSON: {"A":"<tool>","B":"<tool>","C":"<tool>","D":"<tool>"}'
+)
+
+
+def _eval_hard_tool(text: str) -> bool:
+    cleaned = re.sub(r"```[a-z]*\n?", "", text).strip()
+    try:
+        obj = json.loads(cleaned)
+        return (
+            obj.get("A") == "search_web"
+            and obj.get("B") == "run_code"
+            and obj.get("C") == "read_file"
+            and obj.get("D") == "send_email"
+        )
+    except Exception:
+        return False
+
+
+# Hard 2 — Deep nested JSON: array of objects + mixed types
+_HARD_JSON_PROMPT = (
+    'Reply with ONLY valid JSON, no other text:\n'
+    '{"status":"ok","results":[{"id":1,"score":9.5,"tags":["pass","verified"]},'
+    '{"id":2,"score":7.0,"tags":["fail"]}],"meta":{"total":2,"checked":true}}'
+)
+
+
+def _eval_hard_json(text: str) -> bool:
+    cleaned = re.sub(r"```[a-z]*\n?", "", text).strip()
+    try:
+        obj = json.loads(cleaned)
+        results = obj.get("results", [])
+        return (
+            obj.get("status") == "ok"
+            and len(results) == 2
+            and results[0].get("id") == 1
+            and results[0].get("score") == 9.5
+            and "pass" in results[0].get("tags", [])
+            and results[1].get("id") == 2
+            and obj.get("meta", {}).get("total") == 2
+            and obj.get("meta", {}).get("checked") is True
+        )
+    except Exception:
+        return False
+
+
+# Hard 3 — 5-operation word problem (multiplication + subtraction)
+_HARD_REASON_PROMPT = (
+    "Answer with a single integer only:\n"
+    "A factory runs 3 shifts per day. Each shift produces 8 crates. "
+    "Each crate holds 12 bottles. After 5 days, 200 bottles are set aside for QA. "
+    "How many bottles remain?"
+)
+_HARD_REASON_CHECK = "1240"   # 3 × 8 × 12 × 5 − 200 = 1440 − 200 = 1240
+
+
+# Hard 4 — Constrained instruction following (must include AND exclude terms)
+_HARD_INSTRUCT_PROMPT = (
+    "Follow these rules exactly:\n"
+    "1. Write the word DELTA\n"
+    "2. Write the result of 256 ÷ 4\n"
+    "3. Write the word ECHO\n"
+    "4. Do NOT write the word ALPHA anywhere in your response\n"
+    "5. Write the word FOXTROT"
+)
+_HARD_INSTRUCT_PRESENT = ["DELTA", "64", "ECHO", "FOXTROT"]
+_HARD_INSTRUCT_ABSENT  = ["ALPHA"]
+
+
+def _eval_hard_instruct(text: str) -> bool:
+    return (
+        all(c in text for c in _HARD_INSTRUCT_PRESENT)
+        and all(c not in text for c in _HARD_INSTRUCT_ABSENT)
+    )
 
 
 def _strip_think(text: str) -> str:
@@ -737,7 +837,8 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
             base_url    = re.sub(r"/v1/?$", "", endpoint)
 
             await send({"testing": model_id})
-            await send({"log": f"→ {model_id}  ({base_url})"})
+            type_label = {"lmstudio": "LM Studio", "ollama": "Ollama", "llamacpp": "llama.cpp"}.get(server_type, server_type)
+            await send({"log": f"→ {model_id}  ({base_url})  [{type_label}]"})
 
             # LM Studio: try native load API before benchmarking (best-effort)
             if server_type == "lmstudio":
@@ -749,8 +850,11 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
                     ) as lr:
                         if lr.status == 200:
                             await send({"log": f"  Load request sent for {model_id}"})
-                except Exception:
-                    pass
+                        else:
+                            await send({"log": f"  Load request HTTP {lr.status} (model may already be loaded)"})
+                except Exception as _le:
+                    await send({"log": f"  Load request failed: {str(_le)[:80]}"})
+
 
             t0                   = time.time()
             ttft_s: float | None = None
@@ -841,6 +945,26 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
                 return actual_toks / gen_s, approx
 
             try:
+                # ── llama.cpp: wait for server ready before first request ─────
+                # llama.cpp disconnects mid-stream if the model is still loading.
+                # Poll /health until {"status":"ok"} or 45s timeout.
+                if server_type == "llamacpp":
+                    health_url = f"{base_url}/health"
+                    deadline   = time.time() + 45
+                    while time.time() < deadline:
+                        try:
+                            async with http.get(health_url, timeout=aiohttp.ClientTimeout(total=3)) as _hr:
+                                if _hr.status == 200:
+                                    _hd = await _hr.json(content_type=None)
+                                    if _hd.get("status") == "ok":
+                                        break
+                                    await send({"log": f"  Server status: {_hd.get('status','?')} — waiting…"})
+                        except Exception:
+                            pass
+                        await asyncio.sleep(2)
+                    else:
+                        await send({"log": "  ⚠ Server not ready after 45s, attempting anyway…"})
+
                 # ── Warmup pass — ensures model is fully loaded before timing ──
                 # Result is discarded; this prevents the cold-start penalty from
                 # skewing pass 1 (seen as ~33% of real throughput on first model).
@@ -950,6 +1074,33 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
                 tests_passed = sum([instruct_pass, reason_pass, format_pass, tool_pass, nested_json_pass, multihop_pass])
                 quality_pass = tests_passed >= 4
                 await send({"log": f"  {'✓' if quality_pass else '⚠'} {tok_s} tok/s{approx_note} · {tests_passed}/6 eval tests passed"})
+
+                # ── Secondary (hard) evals — only run if model passed ≥5/6 ──
+                hard_eval: dict = {}
+                if tests_passed >= 5:
+                    await send({"log": "  ★ Hard evals (model passed ≥5/6 — running advanced tests)…"})
+                    h1_pass, _ = await _eval_once(_HARD_TOOL_PROMPT, _eval_hard_tool, 600)
+                    await send({"log": f"    {'✓' if h1_pass else '✗'} hard tool routing (4 scenarios, 5 tools)"})
+
+                    h2_pass, _ = await _eval_once(_HARD_JSON_PROMPT, _eval_hard_json, 600)
+                    await send({"log": f"    {'✓' if h2_pass else '✗'} deep nested JSON (array of objects)"})
+
+                    h3_pass, h3_resp = await _eval_once(_HARD_REASON_PROMPT, lambda t: _HARD_REASON_CHECK in t, 600)
+                    await send({"log": f"    {'✓' if h3_pass else '✗'} 5-step arithmetic (expected {_HARD_REASON_CHECK})"})
+                    if not h3_pass:
+                        await _log_eval_detail(_HARD_REASON_PROMPT, h3_resp, [f"expected '{_HARD_REASON_CHECK}'"])
+
+                    h4_pass, _ = await _eval_once(_HARD_INSTRUCT_PROMPT, _eval_hard_instruct, 600)
+                    await send({"log": f"    {'✓' if h4_pass else '✗'} constrained instructions (include+exclude)"})
+
+                    hard_score = sum([h1_pass, h2_pass, h3_pass, h4_pass])
+                    await send({"log": f"  ★ Hard eval score: {hard_score}/4"})
+                    hard_eval = {
+                        "hard_tool": h1_pass, "hard_json": h2_pass,
+                        "hard_reasoning": h3_pass, "hard_instruct": h4_pass,
+                        "score": hard_score,
+                    }
+
                 result: dict = {
                     "model": model_id, "tok_s": tok_s, "quality_pass": quality_pass,
                     "ttft_ms": ttft_ms, "approx": approx, "endpoint": endpoint, "eval": {
@@ -957,6 +1108,7 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
                         "format": format_pass, "tool_call": tool_pass,
                         "nested_json": nested_json_pass, "multihop": multihop_pass,
                         "score": tests_passed,
+                        **({"hard": hard_eval} if hard_eval else {}),
                     },
                 }
             except Exception as exc:
@@ -1030,6 +1182,31 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
         for ep, rec in per_server_recs.items():
             await send({"log": f"  Server {ep}: {rec['model']}"})
 
+    # ── TTFT outlier detection — flag models whose TTFT is ≥3× median ──────
+    # TTFT is measured after warmup (model already hot in VRAM/RAM), so an
+    # unusually high value almost always means the inference machine is under
+    # load, not that the model is cold.  We only flag when ≥2 models have TTFT
+    # data AND the outlier is >3 s absolute (avoids false positives on
+    # CPU-only boxes where all models are legitimately slow but similar).
+    ttft_warnings: list[dict] = []
+    ttft_data = [r for r in valid if r.get("ttft_ms") is not None]
+    if len(ttft_data) >= 2:
+        ttfts = sorted(r["ttft_ms"] for r in ttft_data)
+        median_ttft = ttfts[len(ttfts) // 2]
+        _TTFT_RATIO   = 3.0    # ≥3× median
+        _TTFT_ABS_MS  = 3000   # AND >3 s absolute
+        for r in ttft_data:
+            if r["ttft_ms"] >= _TTFT_ABS_MS and r["ttft_ms"] >= _TTFT_RATIO * median_ttft:
+                ttft_warnings.append({
+                    "model":    r["model"],
+                    "ttft_ms":  r["ttft_ms"],
+                    "endpoint": r.get("endpoint", ""),
+                })
+                await send({"log": (
+                    f"  ⚠ {r['model']} TTFT {r['ttft_ms']}ms vs median {median_ttft}ms"
+                    f" — server may be under load"
+                )})
+
     await send({
         "done":                       True,
         "recommendation":             best["model"] if best else None,
@@ -1038,6 +1215,7 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
         "fast_reason":                fast_reason,
         "per_server_recommendations": per_server_recs,
         "results":                    results,
+        "ttft_warnings":              ttft_warnings,
     })
     return response
 

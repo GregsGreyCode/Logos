@@ -7115,6 +7115,13 @@ _SETUP_HTML = """<!DOCTYPE html>
             </div>
           </div>
 
+          <!-- Load warning — shown while benchmark is running -->
+          <div x-show="compareRunning"
+            class="mb-3 p-2.5 rounded-xl bg-gray-900/50 border border-gray-800 text-[11px] text-gray-500 flex items-start gap-2">
+            <span class="mt-0.5 flex-shrink-0">⚠</span>
+            <span>Results depend on current server load. For accurate scores, avoid running other workloads on your inference machines during the benchmark.</span>
+          </div>
+
           <!-- Top pick recommendation -->
           <div x-show="compareDone && compareRecommended"
             class="mb-2 p-3 rounded-xl bg-indigo-950/40 border border-indigo-800 text-xs leading-relaxed space-y-1">
@@ -7196,6 +7203,22 @@ _SETUP_HTML = """<!DOCTYPE html>
             </button>
           </div>
 
+          <!-- TTFT outlier warning — shown after benchmark if any model was suspiciously slow -->
+          <div x-show="compareDone && compareTtftWarnings.length > 0"
+            class="mt-3 p-2.5 rounded-xl bg-amber-950/30 border border-amber-900 text-[11px] text-amber-400 space-y-1">
+            <div class="font-medium flex items-center gap-1.5">
+              <span>⚠</span><span>High TTFT detected — inference server may be under load</span>
+            </div>
+            <template x-for="w in compareTtftWarnings" :key="w.model">
+              <div class="font-mono opacity-80">
+                <span x-text="w.model"></span>
+                <span class="text-amber-600"> — </span>
+                <span x-text="(w.ttft_ms / 1000).toFixed(1) + 's TTFT'"></span>
+              </div>
+            </template>
+            <div class="text-amber-600/80">Re-run the benchmark with no other workloads on the inference machine for more accurate results.</div>
+          </div>
+
           <!-- Debug log — bottom of step so it expands into free space -->
           <div x-show="compareLog.length > 0" class="mt-4">
             <div class="flex items-center justify-between">
@@ -7211,14 +7234,21 @@ _SETUP_HTML = """<!DOCTYPE html>
                 <span x-text="compareCopied ? 'Copied!' : 'Copy'"></span>
               </button>
             </div>
-            <div x-show="compareLogOpen"
-              class="thin-scroll mt-1.5 rounded-xl bg-black/60 border border-gray-800 px-3 py-2.5 font-mono text-[11px] leading-relaxed space-y-0.5"
-              style="max-height:16rem;overflow-y:auto"
-              x-ref="compareLogEl">
-              <template x-for="(entry, idx) in compareLog" :key="idx">
-                <div :class="entry.startsWith('      ') ? 'text-gray-600 pl-2' : entry.startsWith('Recommendation') ? 'text-indigo-400' : entry.startsWith('→') ? 'text-gray-300' : entry.includes('✓') ? 'text-green-500/80' : entry.includes('✗') ? 'text-red-500/70' : 'text-gray-500'"
-                  x-text="entry"></div>
-              </template>
+            <div x-show="compareLogOpen" class="relative">
+              <div class="thin-scroll mt-1.5 rounded-xl bg-black/60 border border-gray-800 px-3 py-2.5 font-mono text-[11px] leading-relaxed space-y-0.5"
+                style="max-height:16rem;overflow-y:auto"
+                x-ref="compareLogEl"
+                @scroll="compareLogPinned = $el.scrollTop < $el.scrollHeight - $el.clientHeight - 20">
+                <template x-for="(entry, idx) in compareLog" :key="idx">
+                  <div :class="entry.startsWith('      ') ? 'text-gray-600 pl-2' : entry.startsWith('Recommendation') ? 'text-indigo-400' : entry.startsWith('→') ? 'text-gray-300' : entry.includes('✓') ? 'text-green-500/80' : entry.includes('✗') ? 'text-red-500/70' : 'text-gray-500'"
+                    x-text="entry"></div>
+                </template>
+              </div>
+              <button x-show="compareLogPinned" @click="compareLogPinned=false; $nextTick(()=>{ const el=$refs.compareLogEl; if(el) el.scrollTop=el.scrollHeight; })"
+                class="absolute bottom-2 right-2 flex items-center gap-1 rounded-lg bg-gray-800/90 border border-gray-700 px-2 py-0.5 text-[10px] text-gray-400 hover:text-white hover:border-gray-500 transition-colors">
+                <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+                <span>scroll to bottom</span>
+              </button>
             </div>
           </div>
         </div>
@@ -7749,7 +7779,9 @@ function setup() {
     // Compare event log
     compareLog: [],
     compareLogOpen: false,
+    compareLogPinned: false,
     compareCopied: false,
+    compareTtftWarnings: [],
 
     copyDebugLog() {
       const text = this.compareLog.join('\\n');
@@ -8059,6 +8091,7 @@ function setup() {
       this.compareFastReason      = '';
       this.compareServerRecs      = {};
       this.compareExpanded        = null;
+      this.compareTtftWarnings    = [];
       this.runCompare();
     },
 
@@ -8111,10 +8144,12 @@ function setup() {
               if (ev.loading_model) { this.compareLoadingFor = ev.loading_model; }
               if (ev.log) {
                 this.compareLog = [...this.compareLog, ev.log];
-                this.$nextTick(() => {
-                  const el = this.$refs.compareLogEl;
-                  if (el) el.scrollTop = el.scrollHeight;
-                });
+                if (!this.compareLogPinned) {
+                  this.$nextTick(() => {
+                    const el = this.$refs.compareLogEl;
+                    if (el) el.scrollTop = el.scrollHeight;
+                  });
+                }
               }
               if (ev.result) {
                 this.compareLoadingFor = null;
@@ -8130,6 +8165,7 @@ function setup() {
                 this.compareFastRecommended  = ev.fast_recommendation || null;
                 this.compareFastReason       = ev.fast_reason || '';
                 this.compareServerRecs       = ev.per_server_recommendations || {};
+                this.compareTtftWarnings     = ev.ttft_warnings || [];
                 // Seed per-server selections from benchmark recommendations
                 for (const [ep, rec] of Object.entries(this.compareServerRecs)) {
                   if (!this.serverModelSelections[ep] && rec && rec.model) {
