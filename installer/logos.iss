@@ -7,7 +7,10 @@
 ;   3. Inno Setup 6 installed: https://jrsoftware.org/isdl.php
 
 #define MyAppName "Logos - Agentic AI Platform"
-#define MyAppVersion "0.4.21"
+; MyAppVersion can be overridden at build time: ISCC /DMyAppVersion=x.y.z
+#ifndef MyAppVersion
+  #define MyAppVersion "0.0.0"
+#endif
 #define MyAppPublisher "gregsgreycode"
 #define MyAppURL "https://github.com/gregsgreycode/hermes"
 #define MyAppExeName "Logos.exe"
