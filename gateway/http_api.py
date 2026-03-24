@@ -6915,14 +6915,34 @@ _SETUP_HTML = """<!DOCTYPE html>
           <div x-show="pullError" class="text-xs text-red-400" x-text="pullError"></div>
         </div>
 
-        <!-- No models on LM Studio -->
+        <!-- No models on LM Studio / llama.cpp / other OpenAI-compat server -->
         <div x-show="getModels().length===0 && !hasOllamaServer()" class="p-5 rounded-xl bg-gray-900 border border-gray-800">
-          <div class="text-sm font-medium text-white mb-3">Load a model in LM Studio first</div>
-          <ol class="space-y-2.5 text-sm text-gray-400 mb-4 list-none">
-            <li class="flex gap-3"><span class="w-5 h-5 rounded-full bg-gray-700 text-white text-xs flex items-center justify-center flex-shrink-0 mt-0.5 font-medium">1</span><span>Open the <span class="text-white font-medium">Model Search</span> tab, download models you like that are advised as being able to run on your hardware. Not sure what to pick? Ask a chatbot: <span class="italic text-gray-500">"Best LM Studio model for an AI agent with X GB VRAM?"</span></span></li>
-            <li class="flex gap-3"><span class="w-5 h-5 rounded-full bg-gray-700 text-white text-xs flex items-center justify-center flex-shrink-0 mt-0.5 font-medium">2</span><span>Open the <span class="text-white font-medium">Model Search</span> tab and download a variety of models (it will tell you if it&rsquo;s likely to fit on your hardware).</span></li>
-            <li class="flex gap-3"><span class="w-5 h-5 rounded-full bg-gray-700 text-white text-xs flex items-center justify-center flex-shrink-0 mt-0.5 font-medium">3</span><span>Come back here and click Refresh.</span></li>
-          </ol>
+          <div class="text-sm font-medium text-white mb-3">No models found on your server</div>
+          <p class="text-xs text-gray-500 mb-3">Your server is running but has no models loaded yet. Load or download a model and then refresh.</p>
+          <div class="space-y-2 mb-4">
+            <details class="group">
+              <summary class="text-xs text-indigo-400 cursor-pointer hover:text-indigo-300 list-none flex items-center gap-1.5">
+                <svg class="w-3 h-3 transition-transform group-open:rotate-90" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+                LM Studio instructions
+              </summary>
+              <ol class="mt-2 space-y-1.5 text-xs text-gray-400 list-none pl-4">
+                <li>1. Open the <span class="text-white font-medium">Model Search</span> tab and download a model (it will warn you if it won&apos;t fit in VRAM).</li>
+                <li>2. Go to <span class="text-white font-medium">Developer &rarr; Local Server</span> and load the model there.</li>
+                <li>3. Come back here and click Refresh.</li>
+              </ol>
+            </details>
+            <details class="group">
+              <summary class="text-xs text-indigo-400 cursor-pointer hover:text-indigo-300 list-none flex items-center gap-1.5">
+                <svg class="w-3 h-3 transition-transform group-open:rotate-90" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+                llama.cpp / llama-server instructions
+              </summary>
+              <ol class="mt-2 space-y-1.5 text-xs text-gray-400 list-none pl-4">
+                <li>1. Download a GGUF model from <span class="text-white font-medium">Hugging Face</span> (search for &ldquo;Q4_K_M GGUF&rdquo; variants of models like Qwen3 or Gemma3).</li>
+                <li>2. Restart llama-server with: <code class="text-indigo-300 font-mono">llama-server -m /path/to/model.gguf --port 8080</code></li>
+                <li>3. Come back here and click Refresh.</li>
+              </ol>
+            </details>
+          </div>
           <button @click="refreshModels()" class="btn-primary px-4 py-2 rounded-lg text-xs">Refresh model list</button>
         </div>
 
