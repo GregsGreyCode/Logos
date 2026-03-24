@@ -3670,7 +3670,14 @@ class GatewayRunner:
             _lms_key   = os.getenv("OPENAI_API_KEY", "")
             if _lms_base and _lms_model:
                 _lms_headers = {"Authorization": f"Bearer {_lms_key}"} if _lms_key and _lms_key != "ollama" else {}
-                _ctx_sizes = [16384, 8192, 4096]
+                # Use previously discovered working size as first attempt,
+                # then fall back to smaller sizes if that fails.
+                _saved_ctx = int(os.getenv("LMSTUDIO_CONTEXT_LENGTH", 0) or 0)
+                _all_sizes = [16384, 8192, 4096]
+                if _saved_ctx and _saved_ctx in _all_sizes:
+                    _ctx_sizes = [_saved_ctx] + [s for s in _all_sizes if s < _saved_ctx]
+                else:
+                    _ctx_sizes = _all_sizes
                 try:
                     async with _aiohttp.ClientSession() as _lms_http:
                         for _ctx in _ctx_sizes:
@@ -3682,6 +3689,18 @@ class GatewayRunner:
                                     timeout=_aiohttp.ClientTimeout(total=30),
                                 ) as _lr:
                                     if _lr.status == 200:
+                                        # Persist working context so next run starts here
+                                        if _ctx != _saved_ctx:
+                                            os.environ["LMSTUDIO_CONTEXT_LENGTH"] = str(_ctx)
+                                            try:
+                                                import yaml as _lms_yaml
+                                                _lms_cfg: dict = {}
+                                                if _config_path.exists():
+                                                    _lms_cfg = _lms_yaml.safe_load(_config_path.read_text(encoding="utf-8")) or {}
+                                                _lms_cfg["LMSTUDIO_CONTEXT_LENGTH"] = _ctx
+                                                _config_path.write_text(_lms_yaml.dump(_lms_cfg, default_flow_style=False, allow_unicode=True))
+                                            except Exception:
+                                                pass
                                         break   # accepted — stop trying smaller sizes
                                     # Failed (context too large or model stuck) —
                                     # unload before retrying with a smaller size so
