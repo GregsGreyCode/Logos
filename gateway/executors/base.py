@@ -20,6 +20,7 @@ class InstanceConfig:
     requester: str = ""
     port: int = 0                   # 0 = allocate automatically
     toolsets: List[str] = field(default_factory=list)
+    policy: str = ""                # policy level passed to child (e.g. WORKSPACE_ONLY)
 
 
 @dataclass
