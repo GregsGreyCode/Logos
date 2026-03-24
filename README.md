@@ -390,6 +390,12 @@ Runs, evals, and metrics are accessible from the web dashboard and as slash comm
 
 Per-session state is tracked while running. The live execution view shows what tools the agent is calling and how long each step takes. After each tool completes, if it took longer than **30 seconds** a slow-tool warning is logged with the tool name, elapsed time, and thread pool queue depth. Runs that remain in `status='running'` for more than **1 hour** are surfaced as stuck in `/metrics` and the Prometheus export.
 
+Every log line includes a `[session_id]` field — set via a `contextvars.ContextVar` at the start of each request and injected into all log records by a root-logger filter. This lets you `grep` a single session ID across gateway, agent, and tool logs without any thread-local state.
+
+`GET /healthz` returns per-platform success and error counters (`platform_stats`), useful for spotting silent adapter failures across Telegram, Discord, Slack, and other connected platforms.
+
+**Reliability:** the SQLite session store serialises writes through a `threading.Lock` with WAL mode and `wal_autocheckpoint=100` — concurrent gateway coroutines never race on the same connection. Incoming messages are deduplicated by `platform:message_id` against a 500-entry LRU cache, preventing double-processing on network retries. Cron delivery retries up to three times with exponential backoff before marking a job failed.
+
 ---
 
 ## Evolution — agent self-improvement
@@ -527,6 +533,8 @@ After pushing, roll out the updated image:
 kubectl rollout restart deployment/logos -n logos
 kubectl rollout status  deployment/logos -n logos
 ```
+
+`k8s/16-network-policy.yaml` ships two `NetworkPolicy` resources that lock down pod traffic: the gateway pod accepts ingress only on port 8080 and can reach DNS (53), HTTPS (443), HTTP (80), and the ai-router pod; the ai-router pod accepts ingress only from gateway pods and can reach DNS, HTTPS, HTTP, and local inference ports (Ollama 11434, LM Studio 1234, vLLM 8000). Apply after confirming your ingress controller namespace label matches the policy.
 
 ---
 

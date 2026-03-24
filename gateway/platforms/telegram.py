@@ -152,6 +152,11 @@ class TelegramAdapter(BasePlatformAdapter):
             await self._app.start()
             await self._app.updater.start_polling(
                 allowed_updates=Update.ALL_TYPES,
+                # Deliberate trade-off: discard messages queued while the gateway
+                # was down rather than processing a backlog storm on restart.
+                # Users who messaged during downtime will see no response; they
+                # must resend. Change to False if message durability matters more
+                # than avoiding backlog amplification.
                 drop_pending_updates=True,
             )
             

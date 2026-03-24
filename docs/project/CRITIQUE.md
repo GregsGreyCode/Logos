@@ -7,36 +7,24 @@
 
 ## 1. Critical Issues (Fix Before Public / Interview)
 
-**1. No health check endpoint.**
-The K8s deployment has no liveness or readiness probe. Kubernetes has no signal beyond "container is running." A hung gateway process that's no longer processing messages will never be restarted. Every production service needs `/healthz`. This is table stakes.
+**1. SQLite single connection shared across all platform threads.**
+`core/state.py:176` — `check_same_thread=False` with a single connection object, no connection pool, no `threading.Lock()`. WAL mode supports concurrent readers but only one writer. Under concurrent load from multiple platform adapters, write contention causes `OperationalError: database is locked` at 10-second timeouts. The timeout is per-query, not per-transaction. This is a correctness risk at any meaningful concurrency level.
 
-**2. Tool execution has no top-level timeout.**
-`gateway/run.py:1544` calls `_run_agent()` with no timeout wrapper. Individual tools have timeouts, but the agent loop itself does not. One hung MCP call or blocked network request stalls the entire platform adapter thread. On a single-process gateway, that means Telegram stops responding while Discord keeps working — users see intermittent failures with no signal.
+**2. Run state has no atomicity guarantees.**
+Runs are recorded incrementally (`runs.py:80-94`) with exceptions suppressed (`runs.py:104-105`). Tools execute with real side effects, but if the process dies before the DB write completes, the run record is incomplete with no recovery path. (The dual JSONL/SQLite session write is resolved — SQLite is now the sole session store.)
 
-**3. SQLite single connection shared across all platform threads.**
-`hermes_state.py:176` — `check_same_thread=False` with a single connection object, no connection pool, no `threading.Lock()`. WAL mode supports concurrent readers but only one writer. Under concurrent load from multiple platform adapters, write contention causes `OperationalError: database is locked` at 10-second timeouts. The timeout is per-query, not per-transaction. This is a correctness risk at any meaningful concurrency level.
-
-**4. Session and run state have no atomicity guarantees.**
-Sessions are dual-persisted to SQLite and JSONL (`gateway/session.py:396-417`), but the two writes are not transactional. A crash between them leaves the stores out of sync. Runs are recorded incrementally (`runs.py:80-94`) with exceptions suppressed (`runs.py:122-126`). Tools execute with real side effects, but if the process dies before the DB write completes, the run record is incomplete with no recovery path.
-
-**5. Workspace isolation is Python-level only — explicitly stated in the code.**
-`tools/workspace.py:4-34` includes its own disclaimer that a sufficiently capable agent can escape via direct syscalls, shell builtins, or symlink tricks. The `_REDIRECT_WRITE_RE` pattern at line 183 doesn't catch subshells (`(cat > /etc/file)`), heredocs, or eval-wrapped redirects. This is not a sandbox — it's a soft guardrail. Calling it "sandboxed execution" in the README will get challenged immediately.
+**3. Workspace isolation is Python-level only — explicitly stated in the code.**
+`tools/workspace.py:1-35` includes its own disclaimer that a sufficiently capable agent can escape via direct syscalls, shell builtins, or symlink tricks. The `_REDIRECT_WRITE_RE` pattern at line 163 doesn't catch subshells (`(cat > /etc/file)`), heredocs, or eval-wrapped redirects. This is not a sandbox — it's a soft guardrail. Calling it "sandboxed execution" in the README will get challenged immediately.
 
 ---
 
 ## 2. Architectural Weaknesses
-
-**Dual persistence without a source of truth.**
-Sessions are written to both SQLite and JSONL. There's no defined primary store. The fallback logic in `session.py:788-792` tries SQLite first, then JSONL. When they diverge (they will, under failure), you don't know which is correct. Pick one. SQLite is the right answer — JSONL is a crutch from an earlier iteration and should be removed.
 
 **AI router embedded in a Kubernetes ConfigMap.**
 `k8s/05-ai-router-main-py.yaml` embeds the entire router Python source as a ConfigMap value. You lose git diff readability on the logic, can't unit test it in isolation, and changes don't go through normal code review. The router should be a proper module with its own image or at minimum a tested module mounted into the pod.
 
 **No message durability before processing.**
 Messages arrive from platform adapters, are queued in memory, and then processed. If the gateway crashes after acknowledging receipt from Telegram but before the agent finishes, the message is gone. The platform user sees no error. The correct pattern is: persist the message as `pending` to the DB first, process it, mark it `done`. Without this, any crash during processing silently drops work.
-
-**Cron delivery is not atomic.**
-`cron/scheduler.py:380-392` — output is saved, then delivery is attempted. If delivery fails, the job is marked complete in the DB with no retry. The user never receives the output. A job that "ran" but whose output was never delivered is indistinguishable from a job that ran successfully.
 
 **Signal uses unauthenticated HTTP to a local daemon.**
 `gateway/platforms/signal.py:27-28` — the gateway talks to `signal-cli` over `127.0.0.1:8080` with no token, no mTLS. Any process on the host can read or inject Signal messages by hitting the same endpoint. The threat model assumes a trusted host, but that assumption is never documented and the channel is not encrypted.
@@ -48,9 +36,6 @@ The AI router routes based on availability checks, but there's no circuit breake
 
 ## 3. Overengineering / Unnecessary Complexity
 
-**JSONL + SQLite dual persistence.**
-This is complexity without benefit. JSONL gives you nothing that SQLite doesn't already provide with WAL mode. Remove JSONL. It is a liability, not a fallback.
-
 **Mixture-of-Agents defaults are not overridable via `hermes model`.**
 `tools/mixture_of_agents_tool.py:62-71` — four default reference models and an aggregator are defined as module constants. The tool function (line 219) does accept optional `reference_models` and `aggregator_model` overrides, and the docstring notes they can be changed at the top of the file. However, these defaults do not respect the user's active `hermes model` selection — MoA always routes to its own constants via OpenRouter regardless of what the primary agent is configured to use. This is an inconsistency worth documenting. Separately, the model name strings (`gpt-5.4-pro`, `gemini-3-pro-preview`) should be verified as valid current OpenRouter identifiers before going public.
 
@@ -61,17 +46,19 @@ This is complexity without benefit. JSONL gives you nothing that SQLite doesn't 
 
 ## 4. Missing Pieces
 
-| Gap | Why It Matters |
-|---|---|
-| `/healthz` endpoint | K8s probes, load balancer health, on-call runbooks all require this |
-| Structured logging with trace IDs | Cross-platform debugging is currently grep-based |
-| Message durability (outbox pattern) | Any crash during processing silently drops messages |
-| Rate limiting on platform adapters | No protection against runaway agent sending spam |
-| SQLite connection pooling | Current single-connection model breaks under concurrent writes |
-| Circuit breaker on model backends | Slow failures amplify without one |
-| Encrypted credential storage | Signal phone, WhatsApp session tokens are plaintext in env |
-| Explicit retries on cron delivery | Failed delivery is silently dropped |
-| Deduplication on incoming messages | Telegram retries on timeout; gateway has no idempotency key |
+| Gap | Why It Matters | Status |
+|---|---|---|
+| ~~Structured logging with trace IDs~~ | ~~Cross-platform debugging is currently grep-based~~ | ✅ Done |
+| Message durability (outbox pattern) | Any crash during processing silently drops messages | Open |
+| Rate limiting on platform adapters | No protection against runaway agent sending spam | Open |
+| ~~SQLite connection pooling~~ | ~~Current single-connection model breaks under concurrent writes~~ | ✅ Done (write lock) |
+| Circuit breaker on model backends | Slow failures amplify without one | Open |
+| Encrypted credential storage | Signal phone, WhatsApp session tokens are plaintext in env | Open |
+| ~~Explicit retries on cron delivery~~ | ~~Failed delivery is silently dropped~~ | ✅ Done (3 attempts, exp. backoff) |
+| ~~Deduplication on incoming messages~~ | ~~Telegram retries on timeout; gateway has no idempotency key~~ | ✅ Done (LRU message-ID cache) |
+| ~~Per-platform error rate metrics~~ | ~~Cannot distinguish Telegram failing from Discord~~ | ✅ Done (exposed via /health) |
+| ~~SQLite WAL unbounded growth~~ | ~~Process death before checkpoint bloats WAL on restart~~ | ✅ Done (wal_autocheckpoint=100) |
+| ~~No Kubernetes NetworkPolicy~~ | ~~Compromised pod has unrestricted lateral movement~~ | ✅ Done (k8s/16-network-policy.yaml) |
 
 ---
 
@@ -140,18 +127,58 @@ Stuck runs (>1 hour) appear in `hermes metrics` but there is no push alert. An o
 
 ## 8. Suggested Improvements (Highest Impact)
 
-| Change | Impact | Effort |
-|---|---|---|
-| Add `/healthz` endpoint | Enables K8s probes and on-call runbooks | Low |
-| Wrap `_run_agent()` in a hard timeout | Prevents hung threads freezing adapters | Low |
-| Atomic cron: deliver first, mark done after | Eliminates silent delivery failures | Low |
-| Add per-platform error rate metrics | Enables platform-specific alerting | Low |
-| Add trace ID to all log events | Makes debugging tractable | Medium |
-| Per-request SQLite connection or pool | Eliminates write contention correctness risk | Medium |
-| Outbox pattern for incoming messages | Prevents silent message loss on crash | Medium |
-| Remove JSONL, use SQLite as sole session store | Eliminates dual-persist inconsistency | Medium |
-| Encrypt credentials at rest | Removes trivial credential theft on host compromise | Medium |
-| Container boundary per run (Docker/gVisor) | Makes workspace isolation real, not aspirational | High |
+| Change | Impact | Effort | Status |
+|---|---|---|---|
+| ~~Add `/healthz` endpoint~~ | ~~Enables K8s probes and on-call runbooks~~ | ~~Low~~ | ✅ Done |
+| ~~Wrap `_run_agent()` in a hard timeout~~ | ~~Prevents hung threads freezing adapters~~ | ~~Low~~ | ✅ Done |
+| ~~Atomic cron: deliver first, mark done after~~ | ~~Eliminates silent delivery failures~~ | ~~Low~~ | ✅ Done |
+| Add per-platform error rate metrics | Enables platform-specific alerting | Low | Open |
+| ~~Add trace ID to all log events~~ | ~~Makes debugging tractable~~ | ~~Medium~~ | ✅ Done |
+| ~~Per-request SQLite connection or pool~~ | ~~Eliminates write contention correctness risk~~ | ~~Medium~~ | ✅ Done (write lock) |
+| Outbox pattern for incoming messages | Prevents silent message loss on crash | Medium | Open |
+| ~~Remove JSONL, use SQLite as sole session store~~ | ~~Eliminates dual-persist inconsistency~~ | ~~Medium~~ | ✅ Done |
+| Encrypt credentials at rest | Removes trivial credential theft on host compromise | Medium | Open |
+| Container boundary per run (Docker/gVisor) | Makes workspace isolation real, not aspirational | High | Open |
+
+### Proposed Solutions for Medium-Effort Items
+
+**Remove JSONL — use SQLite as sole session store**
+`gateway/session.py:append_to_transcript()` writes to both SQLite and a `.jsonl` file on every message. The JSONL write is marked "legacy" in the code. Migration path:
+1. Remove the JSONL write block from `append_to_transcript()` (lines ~750-752).
+2. Remove `get_transcript_path()` and the JSONL fallback load path in `_ensure_loaded()`.
+3. Verify all transcript reads go through `SessionDB` (`core/state.py`) — check `session.py:788-792`.
+4. Delete any `.jsonl` files from existing data dirs on deploy (non-destructive: they're redundant if SQLite is healthy).
+The fallback message at `session.py:371` can stay as a startup warning but should not re-enable JSONL writes.
+
+**Per-request SQLite connection / connection pool**
+`core/state.py:176` opens one connection at startup shared across all threads. Two options:
+- *Minimal fix*: add a `threading.Lock()` wrapping every write operation. Lowest risk, fixes the correctness bug, keeps the single-connection model.
+- *Proper fix*: replace the single `_conn` with a `threading.local()` connection-per-thread, or use a small pool (e.g. `queue.Queue` of 3–5 connections). Each method acquires a connection from the pool, uses it, returns it. This is the right answer for any sustained multi-adapter load.
+The WAL pragma should remain — it helps read concurrency regardless of the approach.
+
+**Add trace IDs across the request path**
+Every incoming message should receive a `trace_id = uuid4()` at the platform adapter boundary. Pass it through: `MessageEvent` → `gateway/run.py` → `_run_agent()` → tool calls. Attach it to every `logger.*` call in those code paths as a `extra={"trace_id": trace_id}` or via a `logging.LoggerAdapter`. The session ID already flows through the run path and can serve as the trace ID with no schema change — just ensure it's included in every log line in `run.py` and `tools/`.
+
+**~~Chat scroll-to-bottom guard~~** ✅ *Fixed — `gateway/http_api.py:4901` now guards with `scrollHeight > clientHeight`.*
+
+---
+
+### Theoretical Solutions for Remaining Open Items
+
+**Outbox pattern for incoming messages**
+The correct implementation: add a `pending_messages` table to `core/state.py` with columns `(id, platform, chat_id, user_id, message_text, received_at, status)`. In `_handle_message`, insert the message as `status='pending'` before any processing. After a successful agent response is sent, update to `status='done'`. On gateway restart, scan for `status='pending'` rows older than N seconds and either replay or notify the user. The tricky part is the replay: the agent's response may be non-idempotent (file writes, API calls), so replay must be opt-in or require explicit idempotency keys on tool calls. Without those, the outbox gives you *detection* of dropped messages without guaranteed recovery.
+
+**Container boundary per run (Docker/gVisor)**
+The cleanest implementation for K8s: run each tool-execution turn in an ephemeral sidecar pod via the Kubernetes Jobs API. The gateway submits a Job spec, the job container runs the agent turn, results are returned via a shared volume or a callback HTTP call, and the Job is deleted after completion. Alternatively, add a Docker socket mount to the gateway pod and use the Docker SDK to spawn per-run containers. Either approach adds ~500ms of cold-start latency per turn. gVisor (`runsc`) as the container runtime adds minimal overhead vs Docker while providing kernel-level isolation. The workspace isolation tool already has the right interface; the change is in the backend that executes the container.
+
+**Rate limiting on platform adapters**
+A simple token bucket per `(platform, user_id)` pair, stored in a `Dict[str, Deque[float]]` of recent message timestamps in `GatewayRunner`. On each `_handle_message`, pop timestamps older than the window (e.g. 60s), count remaining, reject if over limit. The policy (e.g. 30 messages/minute per user, 100/minute global per platform) lives in `config.yaml`. Rejected messages return a "slow down" response rather than silently dropping.
+
+**Circuit breaker on AI router**
+The router (`k8s/05-ai-router-main-py.yaml`) currently health-checks backends but has no failure-rate circuit. Add a per-backend rolling window of the last N requests with success/fail outcomes. If failure rate exceeds a threshold (e.g. >50% in last 10 requests), mark the backend as `OPEN` (skip it for 30s), then transition to `HALF_OPEN` (try one request), and back to `CLOSED` on success. The state can live in memory (resets on pod restart) — it doesn't need persistence. Python's `pybreaker` library implements this cleanly, or it's ~50 lines to write inline.
+
+**Encrypted credential storage**
+Environment variables are readable by any process with access to the pod's `/proc`. The practical fix for K8s: use Sealed Secrets (kubeseal) to encrypt the `02-secret.yaml` values at rest in git; they're decrypted only inside the cluster by the sealed-secrets controller. For the bare-metal install path, `~/.hermes/` credentials could be encrypted with `age` or `GPG` and decrypted at startup — but this adds a key management problem (where does the decryption key live?). For a personal homelab, host-level security (encrypted disk, limited SSH access) is a pragmatic substitute.
 
 ---
 
@@ -170,7 +197,7 @@ Stuck runs (>1 hour) appear in `hermes metrics` but there is no push alert. An o
    - *Follow-up:* What about `sh -c 'echo root >> /etc/passwd'`? Or a heredoc? Or a Python subprocess?
    - *Follow-up:* Is this a sandbox or an audit log? What's your actual threat model?
 
-4. Sessions are dual-persisted to SQLite and JSONL. Why both? Which is the source of truth after a partial write failure?
+4. ~~Sessions are dual-persisted to SQLite and JSONL. Why both? Which is the source of truth after a partial write failure?~~ *(Resolved — JSONL writes removed; SQLite is the sole store. Legacy JSONL read path retained for one-time migration.)*
 
 5. Your STAMP model records every run in full. What's your retention policy? How large does the runs table get after six months of daily use? Have you modelled that?
 
@@ -208,59 +235,7 @@ Stuck runs (>1 hour) appear in `hermes metrics` but there is no push alert. An o
 
 ---
 
-## 12. Socraticode Zombie Process Leak
-
-**Every agent call to socraticode leaks one zombie `[sh]` process.**
-
-`socraticode` spawns shell subprocesses internally (likely for `.gitignore` evaluation via `git ls-files` or similar) using Node's `child_process.exec()` or `spawn()`. It does not attach an `'exit'`/`'close'` event listener to the child handle, so libuv never calls `waitpid()` and the process stays in `Z` state until its parent socraticode instance is killed.
-
-As of 2026-03-21 there are 49 zombie `[sh]` processes on the host, each parented to a distinct `node /usr/local/bin/socraticode` instance — a 1:1 ratio confirming one leak per MCP session. One `[node]` zombie also appears, suggesting the same pattern affects a nested subprocess. Zombies accumulate from Mar 17 onward, consistent with Hermes agent activity.
-
-Zombies consume no CPU or memory, but each holds a PID. The default Linux PID limit is 32768. At current call volume this is not immediately dangerous, but a long-lived homelab deployment will exhaust PIDs over weeks. `docker compose restart socraticode-mcp` clears them.
-
-**Theoretical fix in socraticode (upstream):**
-
-Any `child_process.spawn()` or `exec()` call without an attached `exit` handler leaves a zombie. The fix is to ensure all spawned children are reaped:
-
-```js
-// Pattern causing zombies — no exit listener, child handle dropped
-const child = spawn('sh', ['-c', cmd]);
-
-// Fix — attach exit listener so libuv calls waitpid()
-const child = spawn('sh', ['-c', cmd]);
-child.on('exit', () => {});  // minimal; or use child.on('close', cb)
-
-// Or use the promise form which handles this automatically
-const { stdout } = await execPromise(cmd);
-```
-
-The correct approach is to audit every `spawn`/`exec` call in socraticode's source and ensure either: (a) an `'exit'` or `'close'` handler is attached, or (b) the call is `await`ed via `util.promisify(exec)`. A linter rule (`no-floating-promises`, `node/handle-callback-err`) would catch regressions.
-
-**How to push the fix:**
-
-Socraticode is an npm package. Check its source at `$(npm root -g)/socraticode/` or its GitHub repo. The fix is a small patch — file a GitHub issue with the zombie reproduction steps (spawn socraticode, call any tool that triggers a `sh` subprocess, observe `ps aux | awk '$8=="Z"'`), then submit a PR with the `exit` handler additions.
-
-**Workaround on our side (logos/homelab-infra), no upstream change needed:**
-
-Add `init: true` to `hosts/ai/socraticode/docker-compose.yml`:
-
-```yaml
-  socraticode-mcp:
-    init: true   # adds tini as PID 1; reaps orphans if socraticode processes die
-```
-
-Note: `init: true` (tini) only reaps processes re-parented to PID 1 — it does *not* fix zombies whose parent is still alive. The real fix requires either upstream socraticode patching or periodically restarting the container. A cron `docker compose restart socraticode-mcp` daily is a low-effort mitigation until upstream is fixed.
-
----
-
 ## 11. Additional Issues (Post-Initial Audit)
-
-### UI / Dashboard
-
-**Chat scroll-to-bottom fires unconditionally on page load.**
-The dashboard scrolls the chat pane to the bottom on every render/refresh, regardless of whether the content is taller than the viewport. If the conversation is short enough to fit entirely within the chat container, there is nothing to scroll — but the scroll fires anyway. This causes a jarring jump for short sessions and is perceptible whenever the page is refreshed. The correct behaviour is: only scroll to bottom if `scrollHeight > clientHeight` (i.e. the content actually overflows the container). A one-line guard before the scroll call fixes it.
-
----
 
 ### Privacy
 
@@ -283,14 +258,10 @@ The agent receives content from MCP tool results and external channels (web page
 **MCP config (`~/.hermes/config.yaml`) stores API credentials in plaintext adjacent to a broad filesystem MCP path.**
 If the filesystem MCP server is configured with a path that includes `~/.hermes/`, the agent can read its own config file and exfiltrate API keys to any connected channel or tool. The config path should be explicitly excluded from any filesystem MCP scope.
 
-**Handoff tool `policy_scope` is enforced by prompt, not by toolset filtering.**
-`tools/handoff_tool.py:112-120` — when `policy_scope` is `"restricted"` or `"read_only"`, the enforcement is a system prompt instruction: *"You are operating in RESTRICTED mode. Read-only operations only."* The child agent's actual toolset is not modified. A child with file write tools available can still use them — the restriction only works if the model follows instructions. This is not policy enforcement; it is a polite request. Real enforcement requires filtering the allowed toolsets at dispatch time based on the declared scope.
-
 **K8s secret manifest uses `stringData`.**
-`k8s/02-secret.yaml:7` — the Secret uses `stringData`, meaning values are committed as plaintext YAML. The current file contains placeholder values (`REPLACE_WITH_*`), so the template itself is safe. The risk is operational: when a user fills in real credentials, the file with plaintext secrets in git becomes the failure mode. The comment on line 11 correctly says to generate with `openssl rand -hex 32`, but there is nothing preventing someone from committing the filled-in file. Consider Sealed Secrets, SOPS, or at minimum a `.gitignore` entry and a warning in the file.
+`k8s/02-secret.yaml:7` — the Secret uses `stringData`, meaning values are committed as plaintext YAML. ✅ *Warning banner added at top of file.* The long-term fix is Sealed Secrets or SOPS — until then the file must never be committed with real values filled in.
 
-**No Kubernetes NetworkPolicy.**
-There is no `NetworkPolicy` manifest in `k8s/`. All Hermes pods can reach all other pods in the cluster and make arbitrary outbound connections. A compromised Hermes pod has unrestricted lateral movement. A NetworkPolicy restricting egress to known endpoints (inference backends, platform APIs) and ingress to the gateway port would significantly reduce blast radius.
+~~**No Kubernetes NetworkPolicy.**~~ ✅ *Fixed — `k8s/16-network-policy.yaml` added. Restricts ingress to port 8080, egress to DNS/HTTPS/HTTP + ai-router, and local inference ports. Review namespace selectors for your ingress controller before applying.*
 
 ---
 
@@ -302,15 +273,11 @@ There is no `NetworkPolicy` manifest in `k8s/`. All Hermes pods can reach all ot
 **K8s PVC uses node-local storage.**
 `k8s/05-pvc.yaml` uses `local-path` as the storage class, which binds to a single node's local disk. If that node is replaced, drained, or fails, the PVC is lost — taking with it skills, memory, session history, and the entire Hermes home directory. For a homelab this may be acceptable, but it needs to be explicit. There is no snapshot schedule, no backup job, and no documentation of the data loss risk. Anyone running this on a managed K8s cluster expecting persistent storage will be surprised.
 
-**Skill creation proceeds if the security scan raises an exception.**
-`tools/skill_manager_tool.py:56-67` — the security scan is called but if it raises, the exception is caught and logged, and skill creation continues. The intended behaviour when the scanner is unavailable should be to block creation, not to silently skip the check. Fail-closed is the right default for a security gate.
-
 ---
 
 ### Design
 
-**Handoff output schema validation is shallow.**
-`tools/handoff_tool.py:69-98` — `_validate_output_against_schema()` checks top-level required fields and basic type matching, but does not recurse into nested objects or arrays, and does not validate enum values or string patterns. A schema requiring `{"severity": "enum of [low, medium, high]"}` will accept `{"severity": "banana"}`. The docstring calls this "structured I/O validation" — the implementation does not deliver that.
+~~**Handoff output schema validation is shallow.**~~ ✅ *Fixed — `_validate_output_against_schema` now recurses into nested objects and arrays, validates `enum` values, and reports errors with full dot-path location.*
 
 ---
 
@@ -383,6 +350,6 @@ Policy enforcement is layered: filesystem access is scoped to per-run workspaces
 
 The AI routing layer is a separate service running in Kubernetes that distributes model requests across multiple inference backends based on model class, machine availability, and per-user priority. It handles load distribution and preferential routing; it does not yet implement circuit breaking, which is a known gap.
 
-Known production gaps stated directly: SQLite requires connection pooling before it scales to concurrent multi-user load. Cron delivery failure does not currently trigger a retry. There is no health check endpoint. Incoming messages have no durability guarantee before processing begins. These are the next four things to fix — they are operational hardening issues, not design flaws.
+Known production gaps stated directly: SQLite write contention is now serialised with a per-instance write lock — a proper connection pool is the next upgrade. Incoming messages have no durability guarantee before processing begins (outbox pattern). These are the remaining operational hardening items, not design flaws.
 
 The architecture is sound. The feature surface is real and code-backed. The gaps are known, specific, and fixable.

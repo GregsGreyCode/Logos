@@ -18,6 +18,7 @@ import json
 import os
 import re
 import sqlite3
+import threading
 import time
 from pathlib import Path
 from typing import Dict, Any, List, Optional
@@ -165,8 +166,9 @@ class SessionDB:
     """
     SQLite-backed session storage with FTS5 search.
 
-    Thread-safe for the common gateway pattern (multiple reader threads,
-    single writer via WAL mode). Each method opens its own cursor.
+    Thread-safe: WAL mode allows concurrent reads from any thread; a
+    _write_lock serialises all write operations so that execute()+commit()
+    pairs are never interleaved across platform-adapter threads.
     """
 
     def __init__(self, db_path: Path = None):
@@ -181,6 +183,11 @@ class SessionDB:
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA foreign_keys=ON")
+
+        # Serialise concurrent writes from multiple platform-adapter threads.
+        # WAL mode already handles concurrent reads; this lock ensures that
+        # no two threads interleave execute()+commit() on the shared connection.
+        self._write_lock = threading.Lock()
 
         self._init_schema()
 
@@ -334,6 +341,8 @@ CREATE INDEX IF NOT EXISTS idx_eval_results_case ON eval_results(case_id);
         except sqlite3.OperationalError:
             cursor.executescript(FTS_SQL)
 
+        # Limit WAL growth: checkpoint every 100 pages and prevent unbounded file growth.
+        self._conn.execute("PRAGMA wal_autocheckpoint=100")
         self._conn.commit()
 
     def close(self):
@@ -357,54 +366,58 @@ CREATE INDEX IF NOT EXISTS idx_eval_results_case ON eval_results(case_id);
         parent_session_id: str = None,
     ) -> str:
         """Create a new session record. Returns the session_id."""
-        self._conn.execute(
-            """INSERT INTO sessions (id, source, user_id, model, model_config,
-               system_prompt, parent_session_id, started_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-            (
-                session_id,
-                source,
-                user_id,
-                model,
-                json.dumps(model_config) if model_config else None,
-                system_prompt,
-                parent_session_id,
-                time.time(),
-            ),
-        )
-        self._conn.commit()
+        with self._write_lock:
+            self._conn.execute(
+                """INSERT INTO sessions (id, source, user_id, model, model_config,
+                   system_prompt, parent_session_id, started_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    session_id,
+                    source,
+                    user_id,
+                    model,
+                    json.dumps(model_config) if model_config else None,
+                    system_prompt,
+                    parent_session_id,
+                    time.time(),
+                ),
+            )
+            self._conn.commit()
         return session_id
 
     def end_session(self, session_id: str, end_reason: str) -> None:
         """Mark a session as ended."""
-        self._conn.execute(
-            "UPDATE sessions SET ended_at = ?, end_reason = ? WHERE id = ?",
-            (time.time(), end_reason, session_id),
-        )
-        self._conn.commit()
+        with self._write_lock:
+            self._conn.execute(
+                "UPDATE sessions SET ended_at = ?, end_reason = ? WHERE id = ?",
+                (time.time(), end_reason, session_id),
+            )
+            self._conn.commit()
 
     def update_system_prompt(self, session_id: str, system_prompt: str) -> None:
         """Store the full assembled system prompt snapshot."""
-        self._conn.execute(
-            "UPDATE sessions SET system_prompt = ? WHERE id = ?",
-            (system_prompt, session_id),
-        )
-        self._conn.commit()
+        with self._write_lock:
+            self._conn.execute(
+                "UPDATE sessions SET system_prompt = ? WHERE id = ?",
+                (system_prompt, session_id),
+            )
+            self._conn.commit()
 
     def update_token_counts(
         self, session_id: str, input_tokens: int = 0, output_tokens: int = 0,
         model: str = None,
     ) -> None:
         """Increment token counters and backfill model if not already set."""
-        self._conn.execute(
-            """UPDATE sessions SET
-               input_tokens = input_tokens + ?,
-               output_tokens = output_tokens + ?,
-               model = COALESCE(model, ?)
-               WHERE id = ?""",
-            (input_tokens, output_tokens, model, session_id),
-        )
-        self._conn.commit()
+        with self._write_lock:
+            self._conn.execute(
+                """UPDATE sessions SET
+                   input_tokens = input_tokens + ?,
+                   output_tokens = output_tokens + ?,
+                   model = COALESCE(model, ?)
+                   WHERE id = ?""",
+                (input_tokens, output_tokens, model, session_id),
+            )
+            self._conn.commit()
 
     def get_session(self, session_id: str) -> Optional[Dict[str, Any]]:
         """Get a session by ID."""
@@ -481,11 +494,12 @@ CREATE INDEX IF NOT EXISTS idx_eval_results_case ON eval_results(case_id);
                 raise ValueError(
                     f"Title '{title}' is already in use by session {conflict['id']}"
                 )
-        cursor = self._conn.execute(
-            "UPDATE sessions SET title = ? WHERE id = ?",
-            (title, session_id),
-        )
-        self._conn.commit()
+        with self._write_lock:
+            cursor = self._conn.execute(
+                "UPDATE sessions SET title = ? WHERE id = ?",
+                (title, session_id),
+            )
+            self._conn.commit()
         return cursor.rowcount > 0
 
     def get_session_title(self, session_id: str) -> Optional[str]:
@@ -636,43 +650,45 @@ CREATE INDEX IF NOT EXISTS idx_eval_results_case ON eval_results(case_id);
         Also increments the session's message_count (and tool_call_count
         if role is 'tool' or tool_calls is present).
         """
-        cursor = self._conn.execute(
-            """INSERT INTO messages (session_id, role, content, tool_call_id,
-               tool_calls, tool_name, timestamp, token_count, finish_reason)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (
-                session_id,
-                role,
-                content,
-                tool_call_id,
-                json.dumps(tool_calls) if tool_calls else None,
-                tool_name,
-                time.time(),
-                token_count,
-                finish_reason,
-            ),
-        )
-        msg_id = cursor.lastrowid
-
-        # Update counters
-        # Count actual tool calls from the tool_calls list (not from tool responses).
-        # A single assistant message can contain multiple parallel tool calls.
         num_tool_calls = 0
         if tool_calls is not None:
             num_tool_calls = len(tool_calls) if isinstance(tool_calls, list) else 1
-        if num_tool_calls > 0:
-            self._conn.execute(
-                """UPDATE sessions SET message_count = message_count + 1,
-                   tool_call_count = tool_call_count + ? WHERE id = ?""",
-                (num_tool_calls, session_id),
-            )
-        else:
-            self._conn.execute(
-                "UPDATE sessions SET message_count = message_count + 1 WHERE id = ?",
-                (session_id,),
-            )
 
-        self._conn.commit()
+        with self._write_lock:
+            cursor = self._conn.execute(
+                """INSERT INTO messages (session_id, role, content, tool_call_id,
+                   tool_calls, tool_name, timestamp, token_count, finish_reason)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    session_id,
+                    role,
+                    content,
+                    tool_call_id,
+                    json.dumps(tool_calls) if tool_calls else None,
+                    tool_name,
+                    time.time(),
+                    token_count,
+                    finish_reason,
+                ),
+            )
+            msg_id = cursor.lastrowid
+
+            # Update counters
+            # Count actual tool calls from the tool_calls list (not from tool responses).
+            # A single assistant message can contain multiple parallel tool calls.
+            if num_tool_calls > 0:
+                self._conn.execute(
+                    """UPDATE sessions SET message_count = message_count + 1,
+                       tool_call_count = tool_call_count + ? WHERE id = ?""",
+                    (num_tool_calls, session_id),
+                )
+            else:
+                self._conn.execute(
+                    "UPDATE sessions SET message_count = message_count + 1 WHERE id = ?",
+                    (session_id,),
+                )
+
+            self._conn.commit()
         return msg_id
 
     def get_messages(self, session_id: str) -> List[Dict[str, Any]]:
@@ -912,25 +928,27 @@ CREATE INDEX IF NOT EXISTS idx_eval_results_case ON eval_results(case_id);
 
     def clear_messages(self, session_id: str) -> None:
         """Delete all messages for a session and reset its counters."""
-        self._conn.execute(
-            "DELETE FROM messages WHERE session_id = ?", (session_id,)
-        )
-        self._conn.execute(
-            "UPDATE sessions SET message_count = 0, tool_call_count = 0 WHERE id = ?",
-            (session_id,),
-        )
-        self._conn.commit()
+        with self._write_lock:
+            self._conn.execute(
+                "DELETE FROM messages WHERE session_id = ?", (session_id,)
+            )
+            self._conn.execute(
+                "UPDATE sessions SET message_count = 0, tool_call_count = 0 WHERE id = ?",
+                (session_id,),
+            )
+            self._conn.commit()
 
     def delete_session(self, session_id: str) -> bool:
         """Delete a session and all its messages. Returns True if found."""
-        cursor = self._conn.execute(
-            "SELECT COUNT(*) FROM sessions WHERE id = ?", (session_id,)
-        )
-        if cursor.fetchone()[0] == 0:
-            return False
-        self._conn.execute("DELETE FROM messages WHERE session_id = ?", (session_id,))
-        self._conn.execute("DELETE FROM sessions WHERE id = ?", (session_id,))
-        self._conn.commit()
+        with self._write_lock:
+            cursor = self._conn.execute(
+                "SELECT COUNT(*) FROM sessions WHERE id = ?", (session_id,)
+            )
+            if cursor.fetchone()[0] == 0:
+                return False
+            self._conn.execute("DELETE FROM messages WHERE session_id = ?", (session_id,))
+            self._conn.execute("DELETE FROM sessions WHERE id = ?", (session_id,))
+            self._conn.commit()
         return True
 
     # =========================================================================
@@ -952,19 +970,20 @@ CREATE INDEX IF NOT EXISTS idx_eval_results_case ON eval_results(case_id);
     ) -> str:
         """Insert a new run record in 'running' status. Returns run_id."""
         try:
-            self._conn.execute(
-                """INSERT INTO runs
-                   (id, session_id, source, user_id, model, provider,
-                    trigger_type, parent_run_id, started_at, status,
-                    user_message_preview, agent_id)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
-                (
-                    run_id, session_id, source, user_id, model, provider,
-                    trigger_type, parent_run_id, time.time(), "running",
-                    (user_message_preview or "")[:200], agent_id,
-                ),
-            )
-            self._conn.commit()
+            with self._write_lock:
+                self._conn.execute(
+                    """INSERT INTO runs
+                       (id, session_id, source, user_id, model, provider,
+                        trigger_type, parent_run_id, started_at, status,
+                        user_message_preview, agent_id)
+                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    (
+                        run_id, session_id, source, user_id, model, provider,
+                        trigger_type, parent_run_id, time.time(), "running",
+                        (user_message_preview or "")[:200], agent_id,
+                    ),
+                )
+                self._conn.commit()
         except Exception:
             pass  # run records are best-effort
         return run_id
@@ -983,24 +1002,25 @@ CREATE INDEX IF NOT EXISTS idx_eval_results_case ON eval_results(case_id);
     ) -> None:
         """Finalize a run record with outcome data."""
         try:
-            self._conn.execute(
-                """UPDATE runs SET
-                   ended_at = ?, status = ?, api_call_count = ?,
-                   input_tokens = ?, output_tokens = ?,
-                   tool_sequence = ?, approval_events = ?,
-                   error_details = ?, final_output_preview = ?
-                   WHERE id = ?""",
-                (
-                    time.time(), status, api_call_count,
-                    input_tokens, output_tokens,
-                    json.dumps(tool_sequence) if tool_sequence else None,
-                    json.dumps(approval_events) if approval_events else None,
-                    error_details,
-                    (final_output_preview or "")[:500],
-                    run_id,
-                ),
-            )
-            self._conn.commit()
+            with self._write_lock:
+                self._conn.execute(
+                    """UPDATE runs SET
+                       ended_at = ?, status = ?, api_call_count = ?,
+                       input_tokens = ?, output_tokens = ?,
+                       tool_sequence = ?, approval_events = ?,
+                       error_details = ?, final_output_preview = ?
+                       WHERE id = ?""",
+                    (
+                        time.time(), status, api_call_count,
+                        input_tokens, output_tokens,
+                        json.dumps(tool_sequence) if tool_sequence else None,
+                        json.dumps(approval_events) if approval_events else None,
+                        error_details,
+                        (final_output_preview or "")[:500],
+                        run_id,
+                    ),
+                )
+                self._conn.commit()
         except Exception:
             pass
 
@@ -1021,10 +1041,11 @@ CREATE INDEX IF NOT EXISTS idx_eval_results_case ON eval_results(case_id);
             return
         params.append(run_id)
         try:
-            self._conn.execute(
-                f"UPDATE runs SET {', '.join(sets)} WHERE id = ?", params
-            )
-            self._conn.commit()
+            with self._write_lock:
+                self._conn.execute(
+                    f"UPDATE runs SET {', '.join(sets)} WHERE id = ?", params
+                )
+                self._conn.commit()
         except Exception:
             pass
 
@@ -1094,23 +1115,25 @@ CREATE INDEX IF NOT EXISTS idx_eval_results_case ON eval_results(case_id);
         repo_roots: str = None,
     ) -> None:
         """Insert a new workspace record."""
-        self._conn.execute(
-            """INSERT OR IGNORE INTO workspaces
-               (id, run_id, session_id, path, policy, write_policy,
-                created_at, expires_at, status, repo_roots)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', ?)""",
-            (workspace_id, run_id, session_id, path, policy, write_policy,
-             created_at, expires_at, repo_roots),
-        )
-        self._conn.commit()
+        with self._write_lock:
+            self._conn.execute(
+                """INSERT OR IGNORE INTO workspaces
+                   (id, run_id, session_id, path, policy, write_policy,
+                    created_at, expires_at, status, repo_roots)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', ?)""",
+                (workspace_id, run_id, session_id, path, policy, write_policy,
+                 created_at, expires_at, repo_roots),
+            )
+            self._conn.commit()
 
     def update_workspace_status(self, workspace_id: str, status: str) -> None:
         """Update the status of a workspace record."""
-        self._conn.execute(
-            "UPDATE workspaces SET status = ? WHERE id = ?",
-            (status, workspace_id),
-        )
-        self._conn.commit()
+        with self._write_lock:
+            self._conn.execute(
+                "UPDATE workspaces SET status = ? WHERE id = ?",
+                (status, workspace_id),
+            )
+            self._conn.commit()
 
     def list_workspaces(
         self,
@@ -1142,29 +1165,30 @@ CREATE INDEX IF NOT EXISTS idx_eval_results_case ON eval_results(case_id);
     def save_eval_case_result(self, case_result) -> None:
         """Persist a single eval case result.  Best-effort."""
         try:
-            self._conn.execute(
-                """INSERT OR REPLACE INTO eval_results
-                   (id, suite_name, suite_run_id, case_id, case_name, run_id,
-                    started_at, ended_at, passed, score, assertion_results,
-                    output_preview, error)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-                (
-                    case_result.id,
-                    case_result.suite_id,
-                    getattr(case_result, "suite_run_id", ""),
-                    case_result.case_id,
-                    case_result.case_name,
-                    case_result.run_id,
-                    getattr(case_result, "started_at", None),
-                    getattr(case_result, "ended_at", None),
-                    1 if case_result.passed else 0,
-                    round(case_result.score, 4),
-                    json.dumps([a.to_dict() for a in case_result.assertion_results]),
-                    (case_result.output_preview or "")[:500],
-                    case_result.error,
-                ),
-            )
-            self._conn.commit()
+            with self._write_lock:
+                self._conn.execute(
+                    """INSERT OR REPLACE INTO eval_results
+                       (id, suite_name, suite_run_id, case_id, case_name, run_id,
+                        started_at, ended_at, passed, score, assertion_results,
+                        output_preview, error)
+                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    (
+                        case_result.id,
+                        case_result.suite_id,
+                        getattr(case_result, "suite_run_id", ""),
+                        case_result.case_id,
+                        case_result.case_name,
+                        case_result.run_id,
+                        getattr(case_result, "started_at", None),
+                        getattr(case_result, "ended_at", None),
+                        1 if case_result.passed else 0,
+                        round(case_result.score, 4),
+                        json.dumps([a.to_dict() for a in case_result.assertion_results]),
+                        (case_result.output_preview or "")[:500],
+                        case_result.error,
+                    ),
+                )
+                self._conn.commit()
         except Exception:
             pass  # best-effort
 

@@ -387,12 +387,26 @@ def tick(verbose: bool = True) -> int:
                 deliver_content = final_response if success else f"⚠️ Cron job '{job.get('name', job['id'])}' failed:\n{error}"
                 delivery_ok = True
                 if deliver_content:
-                    try:
-                        _deliver_result(job, deliver_content)
-                    except Exception as de:
-                        logger.error("Delivery failed for job %s: %s", job["id"], de)
-                        delivery_ok = False
-                        error = f"Delivery failed: {de}"
+                    _MAX_DELIVERY_ATTEMPTS = 3
+                    for attempt in range(1, _MAX_DELIVERY_ATTEMPTS + 1):
+                        try:
+                            _deliver_result(job, deliver_content)
+                            break  # success
+                        except Exception as de:
+                            if attempt == _MAX_DELIVERY_ATTEMPTS:
+                                logger.error(
+                                    "Delivery failed for job %s after %d attempts: %s",
+                                    job["id"], attempt, de,
+                                )
+                                delivery_ok = False
+                                error = f"Delivery failed after {attempt} attempts: {de}"
+                            else:
+                                import time as _time
+                                logger.warning(
+                                    "Delivery attempt %d/%d failed for job %s: %s — retrying",
+                                    attempt, _MAX_DELIVERY_ATTEMPTS, job["id"], de,
+                                )
+                                _time.sleep(2 ** (attempt - 1))  # 1s, 2s
 
                 # Only mark success when both execution AND delivery succeeded.
                 mark_job_run(job["id"], success and delivery_ok, error)

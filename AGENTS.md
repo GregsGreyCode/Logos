@@ -79,7 +79,7 @@ logos/                        ← repo root
 │   └── tools/                # Tool registry (logos-level)
 │
 ├── core/                     # Canonical platform modules (import from here)
-│   ├── state.py              # SessionDB — SQLite session store (canonical)
+│   ├── state.py              # SessionDB — SQLite session store, thread-safe via write lock + WAL (canonical)
 │   ├── constants.py          # Shared constants (canonical)
 │   ├── clock.py              # Timezone-aware clock (canonical)
 │   ├── model_tools.py        # Tool orchestration, handle_function_call (canonical)
