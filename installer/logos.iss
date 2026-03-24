@@ -6,7 +6,7 @@
 ;   2. Output must be at:      dist\Logos\Logos.exe
 ;   3. Inno Setup 6 installed: https://jrsoftware.org/isdl.php
 
-#define MyAppName "Logos"
+#define MyAppName "Logos - Agentic AI Platform"
 ; MyAppVersion can be overridden at build time: ISCC /DMyAppVersion=x.y.z
 #ifndef MyAppVersion
   #define MyAppVersion "0.0.0"
@@ -21,6 +21,7 @@
 AppId={{E8A1F3D2-4B6C-4E7A-9F2B-3C5D8E1A0B4F}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
+AppVerName={#MyAppName}
 AppPublisher={#MyAppPublisher}
 AppPublisherURL={#MyAppURL}
 AppSupportURL={#MyAppURL}
