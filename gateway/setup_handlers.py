@@ -33,8 +33,7 @@ logger = logging.getLogger(__name__)
 
 _PROBE_TIMEOUT = aiohttp.ClientTimeout(total=4)
 _SCAN_TIMEOUT  = aiohttp.ClientTimeout(total=1)   # aggressive — we're sweeping 254 hosts
-_SCAN_PORTS    = [11434, 1234, 8081]   # Ollama, LM Studio, llama.cpp/vLLM default
-# Note: 8080 is excluded — that's Logos itself. llama.cpp users on 8080 can add manually.
+_SCAN_PORTS    = [11434, 1234, 8080]   # Ollama, LM Studio, llama.cpp/vLLM default
 _SCAN_CONCURRENCY = 40
 
 
