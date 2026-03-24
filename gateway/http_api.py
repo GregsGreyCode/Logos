@@ -6181,10 +6181,9 @@ _LOGIN_HTML = """<!DOCTYPE html>
           this.phase = 'setup';
           this.navigating = true; this.navBarDur = 2600;
           // Animate the logo to land on the setup page logo position:
-          // Setup page header: pt-10 (40px) + logo is 56×56px centred horizontally.
-          // toCX: centre of viewport (setup logo is perfectly centred).
-          // toCY: 40 + 28 = 68px (pt-10 padding + half of 56px logo height).
-          // scale: target size / login logo size = 56 / 100 = 0.56
+          // Setup header: pt-10 (40px) + logo 56×56px centred horizontally.
+          // toCX: centre of viewport.  toCY: 40 + 28 = 68px.
+          // scale: 56 / 100 (login logo image is 100px).
           const logoWrap = document.querySelector('.logo-wrap');
           if (logoWrap) {
             const r = logoWrap.getBoundingClientRect();
@@ -6192,7 +6191,7 @@ _LOGIN_HTML = """<!DOCTYPE html>
             const fromCY = r.top  + r.height / 2;
             const toCX   = window.innerWidth / 2;
             const toCY   = 68;
-            const scale  = 56 / 120;
+            const scale  = 56 / 100;
             logoWrap.style.transform = `translate(${toCX - fromCX}px, ${toCY - fromCY}px) scale(${scale.toFixed(4)})`;
           }
           this._setupRedirectTimer = setTimeout(() => { // matches 2.4s logo transition + 200ms settle
@@ -6248,24 +6247,29 @@ _LOGIN_HTML = """<!DOCTYPE html>
           if (res.ok) {
             const d = await res.json().catch(() => ({}));
             clearTimeout(this._inactivityTimer);
-            // Animate logo to the exact nav logo position on the main page, then navigate.
-            // Nav logo layout: max-w-screen-xl mx-auto px-4 pt-4, first item in items-end flex.
-            // Logo is 32×32, center = (containerLeft + 16 + 16, 32).
             this.phase = 'loggedin';
             const logoEl = document.querySelector('.logo-wrap');
             if (logoEl) {
               const rect = logoEl.getBoundingClientRect();
               const fromCX = rect.left + rect.width / 2;
               const fromCY = rect.top  + rect.height / 2;
-              const vw = window.innerWidth;
-              const navLogoX = Math.max(0, (vw - 1280) / 2) + 16 + 16;
-              const navLogoY = 32;
-              const targetX = navLogoX - fromCX;
-              // Compensate: phase='loggedin' queues removal of logo-up (translateY(-24px)) but
-              // getBoundingClientRect() still reflects the class transform at this point.
-              const targetY = navLogoY - fromCY - 24;
               logoEl.style.transition = 'transform 0.9s cubic-bezier(0.4,0,0.2,1)';
-              logoEl.style.transform = `translate(${targetX}px, ${targetY}px) scale(0.27)`;
+              if (d.setup_required) {
+                // Destination is /setup — centred 56px logo at pt-10 (same target as activate())
+                const toCX  = window.innerWidth / 2;
+                const toCY  = 68;
+                const scale = 56 / 100;
+                logoEl.style.transform = `translate(${toCX - fromCX}px, ${toCY - fromCY}px) scale(${scale.toFixed(4)})`;
+              } else {
+                // Destination is / — animate to nav logo (32×32, top-left of max-w-screen-xl)
+                const vw = window.innerWidth;
+                const navLogoX = Math.max(0, (vw - 1280) / 2) + 16 + 16;
+                const navLogoY = 32;
+                const targetX  = navLogoX - fromCX;
+                // phase='loggedin' removes logo-up (translateY(-24px)); compensate here
+                const targetY  = navLogoY - fromCY - 24;
+                logoEl.style.transform = `translate(${targetX}px, ${targetY}px) scale(0.32)`;
+              }
             }
             // Signal the main page to do a staggered first-load fade-in
             try { sessionStorage.setItem('logos_fl', '1'); } catch {}
@@ -6644,21 +6648,43 @@ _SETUP_HTML = """<!DOCTYPE html>
                           </button>
                           <div class="flex-1 min-w-0">
                             <div class="flex items-center gap-2 flex-wrap">
-                              <span class="text-xs font-mono text-gray-400" x-text="'Port ' + new URL(s.endpoint).port"></span>
+                              <span class="text-xs font-mono text-gray-400" x-text="new URL(s.endpoint).hostname + ':' + new URL(s.endpoint).port"></span>
                               <span x-show="s.status==='up'" class="text-[10px] px-1.5 py-0.5 rounded-full bg-green-950 text-green-400 border border-green-900 font-medium">Running</span>
-                              <span x-show="s.status==='auth_required'" class="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-950 text-amber-400 border border-amber-800 font-medium">Needs API key</span>
+                              <span x-show="s.status==='auth_required'" class="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-950 text-amber-400 border border-amber-800 font-medium">Auth required</span>
                               <span x-show="s.status==='up' && s.models.length > 0" class="text-[10px] text-gray-600"
                                 x-text="s.models.length + ' model' + (s.models.length!==1?'s':'')"></span>
                               <span x-show="s.status==='up' && s.models.length === 0" class="text-[10px] text-gray-600">No models loaded</span>
+                              <span x-show="s.status==='up' && serverKeys[s.endpoint]" class="text-[10px] text-green-500/70">&#128274; key set</span>
                             </div>
+                            <!-- Optional API key for running servers (encrypts requests, not required) -->
+                            <div x-show="s.status==='up'" class="mt-1.5" x-data="{ showKey: false }">
+                              <button @click="showKey = !showKey" class="text-[10px] text-gray-600 hover:text-gray-400 transition-colors flex items-center gap-1">
+                                <svg class="w-2.5 h-2.5 transition-transform" :class="showKey ? 'rotate-90' : ''" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+                                <span x-text="serverKeys[s.endpoint] ? 'API key set \u2014 change' : 'Add API key (optional)'"></span>
+                              </button>
+                              <div x-show="showKey" class="mt-1.5 space-y-1">
+                                <p class="text-[10px] text-gray-600">Encrypts requests to this server. Not required — works without one.</p>
+                                <div class="flex gap-2">
+                                  <input type="password" placeholder="API key"
+                                    x-model="serverKeys[s.endpoint]"
+                                    @keydown.enter="s._apiKey = serverKeys[s.endpoint]; showKey = false"
+                                    class="flex-1 bg-gray-950 border border-gray-700 rounded-lg px-3 py-1.5 text-xs text-white placeholder-gray-600 focus:outline-none focus:border-indigo-500 font-mono">
+                                  <button @click="s._apiKey = serverKeys[s.endpoint]; showKey = false"
+                                    class="btn-primary px-3 py-1.5 rounded-lg text-xs flex-shrink-0">Save</button>
+                                </div>
+                                <button x-show="serverKeys[s.endpoint]" @click="serverKeys[s.endpoint] = ''; s._apiKey = ''"
+                                  class="text-[10px] text-gray-700 hover:text-gray-500 transition-colors">Clear key</button>
+                              </div>
+                            </div>
+                            <!-- Auth required: key must be provided to connect -->
                             <div x-show="s.status==='auth_required'" class="mt-2 space-y-1.5">
-                              <p class="text-xs text-gray-500">This endpoint requires an API key to connect.</p>
+                              <p class="text-xs text-gray-500">Authentication is enabled on this endpoint — enter the API key configured in LM Studio.</p>
                               <div class="flex gap-2">
                                 <input type="password" placeholder="Enter API key"
-                                  x-model="s._apiKey"
+                                  x-model="serverKeys[s.endpoint]"
                                   @keydown.enter="retryWithKey(s)"
                                   class="flex-1 bg-gray-950 border border-gray-700 rounded-lg px-3 py-1.5 text-xs text-white placeholder-gray-600 focus:outline-none focus:border-indigo-500 font-mono">
-                                <button @click="retryWithKey(s)" :disabled="!s._apiKey || retryingServers[s.endpoint]"
+                                <button @click="retryWithKey(s)" :disabled="!serverKeys[s.endpoint] || retryingServers[s.endpoint]"
                                   class="btn-primary px-3 py-1.5 rounded-lg text-xs flex-shrink-0 disabled:opacity-40 flex items-center gap-1.5">
                                   <span x-show="!retryingServers[s.endpoint]">Connect</span>
                                   <template x-if="retryingServers[s.endpoint]">
@@ -6667,7 +6693,8 @@ _SETUP_HTML = """<!DOCTYPE html>
                                 </button>
                               </div>
                               <p x-show="retryErrors[s.endpoint]" class="text-xs text-red-400" x-text="retryErrors[s.endpoint]"></p>
-                              <button @click="s._apiKey=''; retryWithKey(s)" :disabled="retryingServers[s.endpoint]" class="text-xs text-gray-700 hover:text-gray-500 disabled:opacity-40 transition-colors">Connect without authentication (not recommended)</button>
+                              <button @click="serverKeys[s.endpoint] = ''; retryWithKey(s)" :disabled="retryingServers[s.endpoint]"
+                                class="text-[10px] text-gray-700 hover:text-gray-500 disabled:opacity-40 transition-colors">Connect without authentication</button>
                             </div>
                           </div>
                         </div>
@@ -6716,10 +6743,10 @@ _SETUP_HTML = """<!DOCTYPE html>
                           <p class="text-xs text-gray-500">This server requires an API key to connect.</p>
                           <div class="flex gap-2">
                             <input type="password" placeholder="Enter API key"
-                              x-model="s._apiKey"
+                              x-model="serverKeys[s.endpoint]"
                               @keydown.enter="retryWithKey(s)"
                               class="flex-1 bg-gray-950 border border-gray-700 rounded-lg px-3 py-1.5 text-xs text-white placeholder-gray-600 focus:outline-none focus:border-indigo-500 font-mono">
-                            <button @click="retryWithKey(s)" :disabled="!s._apiKey || retryingServers[s.endpoint]"
+                            <button @click="retryWithKey(s)" :disabled="!serverKeys[s.endpoint] || retryingServers[s.endpoint]"
                               class="btn-primary px-3 py-1.5 rounded-lg text-xs flex-shrink-0 disabled:opacity-40 flex items-center gap-1.5">
                               <span x-show="!retryingServers[s.endpoint]">Connect</span>
                               <template x-if="retryingServers[s.endpoint]">
@@ -6728,7 +6755,7 @@ _SETUP_HTML = """<!DOCTYPE html>
                             </button>
                           </div>
                           <p x-show="retryErrors[s.endpoint]" class="text-xs text-red-400" x-text="retryErrors[s.endpoint]"></p>
-                          <button @click="s._apiKey=''; retryWithKey(s)" :disabled="retryingServers[s.endpoint]" class="text-xs text-gray-700 hover:text-gray-500 disabled:opacity-40 transition-colors">Connect without authentication (not recommended)</button>
+                          <button @click="serverKeys[s.endpoint]=''; retryWithKey(s)" :disabled="retryingServers[s.endpoint]" class="text-xs text-gray-700 hover:text-gray-500 disabled:opacity-40 transition-colors">Connect without authentication (not recommended)</button>
                         </div>
                       </div>
                     </div>
@@ -7698,6 +7725,7 @@ function setup() {
     manualError: '',
     retryingServers: {},
     retryErrors: {},
+    serverKeys: {},
     osPlatform: 'mac',
     copied: '',
 
@@ -8062,13 +8090,16 @@ function setup() {
     },
 
     async retryWithKey(s) {
-      const ep = s.endpoint;
+      const ep  = s.endpoint;
+      // serverKeys is a top-level reactive map — more reliable than mutating nested s._apiKey
+      const key = this.serverKeys[ep] || s._apiKey || '';
+      s._apiKey = key;  // sync back so downstream benchmark code can read it
       this.retryingServers = { ...this.retryingServers, [ep]: true };
-      this.retryErrors = { ...this.retryErrors, [ep]: '' };
+      this.retryErrors     = { ...this.retryErrors,     [ep]: '' };
       const base = ep.replace('/v1', '');
       try {
         const params = new URLSearchParams({ url: base, prefer: s.type || 'lmstudio' });
-        if (s._apiKey) params.set('api_key', s._apiKey);
+        if (key) params.set('api_key', key);
         const r = await fetch('/api/setup/probe?' + params, { credentials: 'include' });
         const d = await r.json();
         const result = (d.servers || [])[0];
