@@ -6474,8 +6474,8 @@ _SETUP_HTML = """<!DOCTYPE html>
       <!-- ── Step 0a: Setup overview (wide intro) ─────────────────────── -->
       <div x-show="step===0 && setupMode === 'new' && !introConfirmed">
         <div class="text-center mb-7">
-          <h1 class="text-2xl font-bold mb-2" x-text="tldr ? 'welcome to logos no cap' : 'Welcome to Logos'"></h1>
-          <p class="text-gray-400 text-sm" x-text="tldr ? 'it does AI things on ur computer fr' : 'A control plane for agentic AI.'"></p>
+          <h1 class="text-2xl font-bold mb-2">Welcome to Logos</h1>
+          <p class="text-gray-400 text-sm" x-text="tldr ? 'Run AI agents on your own hardware.' : 'A control plane for agentic AI.'"></p>
         </div>
 
         <!-- Overview card -->
@@ -6492,13 +6492,13 @@ _SETUP_HTML = """<!DOCTYPE html>
                 <span x-text="tldr ? '⚡ TL;DR ON' : '⚡ TL;DR'"></span>
               </button>
             </div>
-            <div class="text-sm text-gray-500 mb-4" x-text="tldr ? '7 steps, its not that deep' : 'Seven steps, from model discovery to launch.'"></div>
+            <div class="text-sm text-gray-500 mb-4" x-text="tldr ? 'Seven steps.' : 'Seven steps, from model discovery to launch.'"></div>
             <p class="text-sm text-gray-500 leading-relaxed" x-show="!tldr">
               Setup establishes how Logos routes inference, which models and runtimes are available, and what operating boundaries apply to agent runs.
               These choices define the platform&rsquo;s initial profile. Everything here can be adjusted from the dashboard after launch.
             </p>
             <p class="text-sm text-gray-500 leading-relaxed" x-show="tldr" x-cloak>
-              this makes logos find ur AI model and hook everything up. u pick the model, set the vibe, make an account. everything can be changed later its fine
+              Connect your model, run a quick benchmark, pick an agent, set a soul, create an account. Everything can be changed later.
             </p>
             <p class="text-sm text-gray-500 leading-relaxed mt-2" x-show="!tldr">
               Each agent run is recorded as a <span class="text-gray-300 font-medium">STAMP</span> &mdash;
@@ -6506,7 +6506,7 @@ _SETUP_HTML = """<!DOCTYPE html>
               Setup defines the defaults that every STAMP inherits.
             </p>
             <p class="text-sm text-gray-500 leading-relaxed mt-2" x-show="tldr" x-cloak>
-              every chat gets stamped so u can replay it or compare models. ur just setting the defaults rn
+              Every session is logged so you can replay or compare runs later.
             </p>
           </div>
 
@@ -6531,14 +6531,14 @@ _SETUP_HTML = """<!DOCTYPE html>
 
           <!-- When complete — same treatment as the header section above the grid -->
           <div class="px-7 py-6 border-t border-gray-800/60">
-            <div class="text-base font-semibold text-white mb-1" x-text="tldr ? 'when ur done' : 'When complete'"></div>
+            <div class="text-base font-semibold text-white mb-1" x-text="tldr ? 'When done' : 'When complete'"></div>
             <p class="text-sm text-gray-500 leading-relaxed" x-show="!tldr">
               You&rsquo;ll have a fully configured platform: inference routed to a benchmarked local model,
               an agent runtime and soul selected, and a secured admin account.
               The platform is ready for agent runs.
             </p>
             <p class="text-sm text-gray-500 leading-relaxed" x-show="tldr" x-cloak>
-              ur good. AI is ready, account is set up. just go off at this point
+              Logos is running, your model is connected, and you have a login. You&rsquo;re ready to go.
             </p>
           </div>
         </div>
@@ -7663,13 +7663,13 @@ function setup() {
     introConfirmed: false,
     tldr: false,
     setupSteps: [
-      { n: 1, name: 'Connect inference servers',  tag: 'detects',    desc: 'Logos scans your local network for Ollama and LM Studio. You can also add remote servers — on a LAN, VPC, or cloud VM — using a custom address. No Logos installation is needed on the inference machine.', tldrDesc: 'finds where ur AI lives (ollama, lm studio etc). no logos needed on the other machine, its just scanning' },
-      { n: 2, name: 'Benchmark models',       tag: 'measures',   desc: 'Candidate models run 6 eval tests: instruction following, reasoning, JSON format, tool selection, nested JSON, and multi-step arithmetic. The best fit is pre-selected; you can override freely.', tldrDesc: 'makes each model answer 6 questions to see which one is actually smart. picks the best one for u' },
-      { n: 3, name: 'Agent runtime',          tag: 'configures', desc: 'Choose which agent engine handles your sessions. Hermes is available now; additional runtimes plug in as they are released.', tldrDesc: 'picks which brain runs ur AI sessions. hermes for now, more later' },
-      { n: 4, name: 'Execution target',       tag: 'configures', desc: 'Decide where agent processes run — in-process alongside Logos, or as isolated Kubernetes Jobs. Affects resource isolation, scaling, and where logs appear.', tldrDesc: 'decides if the AI runs here or in a lil box. affects logs and stuff. local = easiest' },
-      { n: 5, name: 'Soul',                   tag: 'configures', desc: "A soul defines the agent's communication style and default behaviour. It is a starting point — editable at any time from the dashboard.", tldrDesc: 'personality for the AI. vibes only. change it later whenever' },
-      { n: 6, name: 'Your account',           tag: 'secures',    desc: 'Set the email, username, and password for the admin account that protects the dashboard and API.', tldrDesc: 'make a password so randos cant use ur AI. basic security bestie' },
-      { n: 7, name: 'Review & launch',        tag: 'confirms',   desc: 'Review every setting, confirm the model endpoint is reachable, and launch the platform.', tldrDesc: 'check it all looks right then go brr. thats it' },
+      { n: 1, name: 'Connect inference servers',  tag: 'detects',    desc: 'Logos scans your local network for Ollama and LM Studio. You can also add remote servers — on a LAN, VPC, or cloud VM — using a custom address. No Logos installation is needed on the inference machine.', tldrDesc: 'Logos finds your models (Ollama, LM Studio) or you add one manually.' },
+      { n: 2, name: 'Benchmark models',       tag: 'measures',   desc: 'Candidate models run 6 eval tests: instruction following, reasoning, JSON format, tool selection, nested JSON, and multi-step arithmetic. The best fit is pre-selected; you can override freely.', tldrDesc: 'Each model runs a few tests. Logos picks the best one by default.' },
+      { n: 3, name: 'Agent runtime',          tag: 'configures', desc: 'Choose which agent engine handles your sessions. Hermes is available now; additional runtimes plug in as they are released.', tldrDesc: 'Choose what runs your agents (Hermes for now).' },
+      { n: 4, name: 'Execution target',       tag: 'configures', desc: 'Decide where agent processes run — in-process alongside Logos, or as isolated Kubernetes Jobs. Affects resource isolation, scaling, and where logs appear.', tldrDesc: 'Choose where agents run: Local (simple) or Isolated (more control).' },
+      { n: 5, name: 'Soul',                   tag: 'configures', desc: "A soul defines the agent's communication style and default behaviour. It is a starting point — editable at any time from the dashboard.", tldrDesc: 'Sets how the agent behaves. You can change it anytime.' },
+      { n: 6, name: 'Your account',           tag: 'secures',    desc: 'Set the email, username, and password for the admin account that protects the dashboard and API.', tldrDesc: 'Create a login to secure your setup.' },
+      { n: 7, name: 'Review & launch',        tag: 'confirms',   desc: 'Review every setting, confirm the model endpoint is reachable, and launch the platform.', tldrDesc: 'Check everything, then start Logos.' },
     ],
 
     // Step 1
