@@ -45,6 +45,7 @@ _HEALTH_URL = f"{_BASE_URL}/health"
 _HERMES_HOME = Path(os.environ.get("HERMES_HOME", Path.home() / ".logos"))
 # Pin into os.environ so the in-process gateway import sees the same path.
 os.environ.setdefault("HERMES_HOME", str(_HERMES_HOME))
+_CONNECT_JSON = _HERMES_HOME / "connect.json"
 _LOG_PATH = _HERMES_HOME / "logs" / "logos.log"
 _UPDATES_DIR = _HERMES_HOME / "updates"
 
@@ -675,7 +676,62 @@ def _run_tray() -> None:
 # Entry point
 # ---------------------------------------------------------------------------
 
+def _read_connect_url() -> str | None:
+    """Return the remote Logos URL from connect.json, or None if not set."""
+    try:
+        if _CONNECT_JSON.exists():
+            data = json.loads(_CONNECT_JSON.read_text(encoding="utf-8"))
+            url = (data.get("url") or "").strip().rstrip("/")
+            return url or None
+    except Exception:
+        pass
+    return None
+
+
+def _run_tray_client_mode(remote_url: str) -> None:
+    """Tray-only mode: no local gateway, just a launcher for a remote Logos server."""
+    import pystray
+
+    img = _make_icon()
+    if img is None:
+        from PIL import Image
+        img = Image.new("RGBA", (1, 1))
+
+    def on_open(icon, item):
+        webbrowser.open(remote_url)
+
+    def on_switch_local(icon, item):
+        try:
+            _CONNECT_JSON.unlink(missing_ok=True)
+        except Exception:
+            pass
+        icon.notify("Switched to local mode. Restart Logos to set up a local server.", "Logos")
+        icon.stop()
+
+    def on_quit(icon, item):
+        icon.stop()
+
+    icon = pystray.Icon("Logos", img, f"Logos — {remote_url}", menu=pystray.Menu(
+        pystray.MenuItem("Open Logos", on_open, default=True),
+        pystray.Menu.SEPARATOR,
+        pystray.MenuItem("Switch to local mode…", on_switch_local),
+        pystray.Menu.SEPARATOR,
+        pystray.MenuItem("Quit", on_quit),
+    ))
+    icon.run()
+
+
 def main() -> None:
+    remote_url = _read_connect_url()
+    if remote_url:
+        _log(f"Client mode: opening remote Logos at {remote_url}")
+        webbrowser.open(remote_url)
+        try:
+            _run_tray_client_mode(remote_url)
+        except ImportError:
+            print(f"[launcher] Client mode — Logos at {remote_url} (no tray icon)")
+        return
+
     _start_gateway()
 
     def _open_when_ready():
