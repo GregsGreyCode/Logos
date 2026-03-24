@@ -52,7 +52,10 @@ logger = logging.getLogger(__name__)
 
 _start_time: float = 0.0
 _hermes_home: Path = Path(os.environ.get("HERMES_HOME") or (Path.home() / ".logos"))
-_AI_ROUTER_BASE = "http://ai-router.hermes.svc.cluster.local:9001"
+_AI_ROUTER_BASE = os.environ.get(
+    "AI_ROUTER_BASE",
+    "http://ai-router.hermes.svc.cluster.local:9001",
+)
 _CANARY_HEALTH_URL = "http://hermes-canary.hermes.svc.cluster.local/health"
 _INSTANCE_NAME = os.environ.get("HERMES_INSTANCE_NAME", "Hermes")
 _IS_CANARY = os.environ.get("HERMES_IS_CANARY", "").lower() in ("1", "true", "yes")
@@ -467,6 +470,9 @@ def _spawn_instance(
     }
 
 
+# Stable epoch for hue-cycle phase-locking across all browser tabs and the tray icon.
+_HUE_EPOCH_MS: int = int(time.time() * 1000)
+
 _ADMIN_HTML = """<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -716,7 +722,7 @@ _ADMIN_HTML = """<!DOCTYPE html>
 </head>
 <body class="bg-gray-950 text-gray-100 min-h-screen" x-data="app()" x-init="init()">
 
-<div class="max-w-screen-xl mx-auto px-4 pt-4 pb-0">
+<div class="max-w-screen-xl mx-auto px-4 pt-4 pb-0" style="position:relative;z-index:10">
 
   <!-- Tabs + theme swatches -->
   <div class="flex items-end gap-6 border-b border-gray-800 mb-3" data-fl="0">
@@ -731,11 +737,9 @@ _ADMIN_HTML = """<!DOCTYPE html>
     <button class="pb-2 text-sm font-medium border-b-2 border-transparent"
       :class="tab==='sessions'?'tab-active':'text-gray-400 hover:text-white'"
       @click="tab='sessions'; if(!clusterInstances.length) loadInstances()">Chats</button>
-    <template x-if="runtimeMode === 'kubernetes'">
-      <button class="pb-2 text-sm font-medium border-b-2 border-transparent"
-        :class="tab==='instances'?'tab-active':'text-gray-400 hover:text-white'"
-        @click="tab='instances'; loadInstances(); loadSouls()">Instances</button>
-    </template>
+    <button class="pb-2 text-sm font-medium border-b-2 border-transparent"
+      :class="tab==='instances'?'tab-active':'text-gray-400 hover:text-white'"
+      @click="tab='instances'; loadInstances(); loadSouls()">Agents</button>
     <template x-if="can('manage_machines') || can('manage_profiles') || can('view_routing_debug')">
       <button class="pb-2 text-sm font-medium border-b-2 border-transparent"
         :class="tab==='routing'?'tab-active':'text-gray-400 hover:text-white'"
@@ -780,7 +784,7 @@ _ADMIN_HTML = """<!DOCTYPE html>
           <span class="opacity-50" x-text="accountMenuOpen ? '▲' : '▼'"></span>
         </button>
         <div x-show="accountMenuOpen" x-cloak
-          class="absolute right-0 top-full mt-2 z-50 rounded-xl border border-gray-700 shadow-2xl overflow-hidden"
+          class="absolute right-0 top-full mt-2 z-50 bg-gray-900 rounded-xl border border-gray-700 shadow-2xl overflow-hidden"
           style="width:280px;background:var(--bg-card);border-color:var(--border-strong)">
           <!-- User info -->
           <div class="px-4 py-3 border-b border-gray-800">
@@ -919,8 +923,13 @@ _ADMIN_HTML = """<!DOCTYPE html>
       <!-- Sidebar: chat history list -->
       <div class="w-44 shrink-0 flex flex-col h-full">
         <button @click="newChat()"
-          class="w-full mb-3 px-3 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-sm rounded-lg font-medium transition-colors flex items-center justify-center gap-2">
+          class="w-full mb-2 px-3 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-sm rounded-lg font-medium transition-colors flex items-center justify-center gap-2">
           <span>＋</span><span>New Chat</span>
+        </button>
+        <button @click="tab='instances'; loadInstances(); loadSouls()"
+          class="w-full mb-3 px-3 py-1.5 bg-gray-900 hover:bg-gray-800 text-gray-500 hover:text-gray-300 text-xs rounded-lg transition-colors flex items-center justify-center gap-1.5 border border-gray-800 hover:border-gray-700"
+          title="Spawn or manage agent instances">
+          <span>＋</span><span>Add Agent</span>
         </button>
         <div class="sidebar-scroll space-y-1 pr-1">
           <template x-for="chat in chats" :key="chat.id">
@@ -1216,7 +1225,7 @@ _ADMIN_HTML = """<!DOCTYPE html>
       </div>
 
       <!-- Right panel: Live Executions -->
-      <div class="w-72 shrink-0 flex flex-col h-full items-center">
+      <div class="w-60 shrink-0 flex flex-col h-full items-center">
         <div class="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3 shrink-0 w-full text-center">Live Executions</div>
         <div class="exec-scroll space-y-3 w-full">
           <template x-if="(status.active_sessions||[]).length === 0">
@@ -2193,15 +2202,15 @@ _ADMIN_HTML = """<!DOCTYPE html>
   </div><!-- /routing tab -->
 
   <!-- ── Instances Tab (kubernetes mode only) ─────────────────────── -->
-  <div x-show="tab==='instances' && runtimeMode === 'kubernetes'" x-cloak>
+  <div x-show="tab==='instances'" x-cloak>
 
-    <!-- Cluster resources — compact bar -->
+    <!-- Resource bar — adapts to k8s (cluster totals) or local (psutil free) -->
     <div class="flex items-center gap-3 mb-5 px-3 py-2 rounded-lg border border-gray-800 bg-gray-900 text-xs flex-wrap">
       <button @click="loadInstances()" class="text-gray-600 hover:text-gray-400 text-sm leading-none shrink-0" title="Refresh">↺</button>
       <span class="text-gray-800 shrink-0 select-none">|</span>
-      <span x-show="clusterRes._error" class="text-red-500" x-text="'k8s: ' + (clusterRes._error||'')"></span>
-      <span x-show="!clusterRes._error && !clusterRes.total_cpu" class="text-gray-600">Cluster data unavailable</span>
-      <template x-if="!clusterRes._error && clusterRes.total_cpu">
+      <span x-show="clusterRes._error" class="text-red-500" x-text="(runtimeMode === 'kubernetes' ? 'k8s: ' : 'sys: ') + (clusterRes._error||'')"></span>
+      <!-- k8s: show used/total with bars -->
+      <template x-if="!clusterRes._error && clusterRes.total_cpu && runtimeMode === 'kubernetes'">
         <div class="flex items-center gap-3 flex-wrap flex-1">
           <div class="flex items-center gap-1.5">
             <span class="text-gray-600">CPU</span>
@@ -2226,6 +2235,22 @@ _ADMIN_HTML = """<!DOCTYPE html>
             class="text-orange-400 ml-auto">⚠ Resources low — spawns will queue</span>
         </div>
       </template>
+      <!-- local: show psutil free resources -->
+      <template x-if="!clusterRes._error && runtimeMode !== 'kubernetes'">
+        <div class="flex items-center gap-3 flex-wrap flex-1">
+          <div class="flex items-center gap-1.5">
+            <span class="text-gray-600">CPU free</span>
+            <span class="text-gray-400 font-mono" x-text="(clusterRes.free_cpu || 0).toFixed(1) + ' cores'"></span>
+          </div>
+          <span class="text-gray-800 select-none">·</span>
+          <div class="flex items-center gap-1.5">
+            <span class="text-gray-600">RAM free</span>
+            <span class="text-gray-400 font-mono" x-text="fmtBytes(clusterRes.free_mem || 0)"></span>
+          </div>
+          <span x-show="clusterRes.can_spawn === false" class="text-orange-400 ml-auto" x-text="'⚠ ' + (clusterRes.reason || 'Resources low')"></span>
+        </div>
+      </template>
+      <span x-show="!clusterRes._error && !clusterRes.total_cpu && !clusterRes.free_cpu && runtimeMode === 'kubernetes'" class="text-gray-600">Cluster data unavailable</span>
     </div>
 
     <!-- Running instances -->
@@ -2266,8 +2291,8 @@ _ADMIN_HTML = """<!DOCTYPE html>
                 <span x-show="inst.soul?.status === 'experimental'"
                   class="text-xs text-yellow-600">experimental</span>
               </div>
-              <!-- Secondary: k8s name · ready · port -->
-              <div class="flex items-center gap-2 mt-0.5 text-xs text-gray-700 font-mono">
+              <!-- Secondary: name · ready/status · port · CPU/RAM (local) -->
+              <div class="flex items-center gap-2 mt-0.5 text-xs text-gray-700 font-mono flex-wrap">
                 <span x-text="inst.name"></span>
                 <span class="text-gray-800">·</span>
                 <span x-text="inst.ready + '/' + inst.desired + ' ready'"></span>
@@ -2277,13 +2302,25 @@ _ADMIN_HTML = """<!DOCTYPE html>
                     <span class="text-indigo-500" x-text="':' + inst.node_port"></span>
                   </span>
                 </template>
+                <template x-if="inst.cpu_percent != null">
+                  <span class="text-gray-700">
+                    <span class="text-gray-800">·</span>
+                    <span :class="inst.cpu_percent > 80 ? 'text-orange-500' : 'text-gray-600'" x-text="inst.cpu_percent + '% CPU'"></span>
+                  </span>
+                </template>
+                <template x-if="inst.mem_mb != null">
+                  <span class="text-gray-700">
+                    <span class="text-gray-800">·</span>
+                    <span :class="inst.mem_mb > 14000 ? 'text-orange-500' : 'text-gray-600'" x-text="inst.mem_mb >= 1024 ? (inst.mem_mb/1024).toFixed(1)+'GB' : inst.mem_mb+'MB'"></span>
+                  </span>
+                </template>
               </div>
             </div>
 
             <!-- Actions -->
             <div class="flex items-center gap-1.5 shrink-0">
-              <template x-if="inst.node_port">
-                <button @click="switchInstance('k8s-' + inst.name); tab='sessions'"
+              <template x-if="inst.node_port && inst.status === 'running'">
+                <button @click="switchInstance((inst.source === 'local' ? 'local-' : 'k8s-') + inst.name); tab='sessions'"
                   class="text-xs px-2.5 py-1 rounded-lg bg-[var(--accent)] hover:opacity-90 text-white font-medium transition-colors">
                   Chat →
                 </button>
@@ -4068,11 +4105,27 @@ function app() {
     async init() {
       // Hue-cycle: offset+rate approach so speed can change smoothly (no jump on transition).
       // Normal: 6 deg/s (1 rotation/min). Thinking: 30 deg/s (5× faster).
-      let _hueOffset = 0, _hueRef = Date.now(), _hueRate = 6;
+      // Seed offset from server epoch so all tabs and the tray icon stay phase-locked.
+      const _epochOffset = window._hueEpochMs ? (((Date.now() - window._hueEpochMs) * 6 / 1000) % 360 + 360) % 360 : 0;
+      let _hueOffset = _epochOffset, _hueRef = Date.now(), _hueRate = 6;
       const _setHueRate = r => { _hueOffset = (((_hueOffset + _hueRate * (Date.now() - _hueRef) / 1000) % 360) + 360) % 360; _hueRef = Date.now(); _hueRate = r; };
+      // Favicon hue sync — canvas-based, throttled to ~10 fps to avoid GC pressure.
+      const _favCanvas = document.createElement('canvas'); _favCanvas.width = _favCanvas.height = 32;
+      const _favCtx = _favCanvas.getContext('2d');
+      const _favImg = new Image(); _favImg.src = '/static/logo.svg';
+      const _favLink = document.querySelector('link[rel="icon"][type="image/svg+xml"]');
+      let _favTs = 0;
       const _hueTick = () => {
         const deg = (((_hueOffset + _hueRate * (Date.now() - _hueRef) / 1000) % 360) + 360) % 360;
         document.documentElement.style.setProperty('--hue-deg', deg.toFixed(1) + 'deg');
+        const _now = Date.now();
+        if (_now - _favTs > 100 && _favCtx && _favImg.complete && _favLink) {
+          _favTs = _now;
+          _favCtx.clearRect(0, 0, 32, 32);
+          _favCtx.filter = `hue-rotate(${deg.toFixed(1)}deg)`;
+          _favCtx.drawImage(_favImg, 0, 0, 32, 32);
+          _favLink.href = _favCanvas.toDataURL();
+        }
         requestAnimationFrame(_hueTick);
       };
       requestAnimationFrame(_hueTick);
@@ -4259,7 +4312,7 @@ function app() {
     _buildChatAgents() {
       const self = {id: 'self', name: this.status.instance_name || 'Hermes', url: '', source: 'self', editable: false};
       const k8s = (this.clusterInstances || [])
-        .filter(i => i.node_port)
+        .filter(i => i.node_port && i.source !== 'local')
         .map(i => ({
           id:           'k8s-' + i.name,
           name:         i.instance_name,
@@ -4271,7 +4324,20 @@ function app() {
           machine_name: i.machine_name || null,
           k8s_status:   i.status       || null,
         }));
-      this.chatAgents = [self, ...k8s, ...this.manualAgents];
+      const local = (this.clusterInstances || [])
+        .filter(i => i.source === 'local' && i.node_port && i.status === 'running')
+        .map(i => ({
+          id:           'local-' + i.name,
+          name:         i.instance_name,
+          url:          'http://127.0.0.1:' + i.node_port,
+          source:       'local',
+          editable:     false,
+          soul:         i.soul         || null,
+          model_alias:  i.model_alias  || null,
+          machine_name: null,
+          k8s_status:   i.status       || null,
+        }));
+      this.chatAgents = [self, ...k8s, ...local, ...this.manualAgents];
     },
 
     switchInstance(id) {
@@ -6168,7 +6234,9 @@ _LOGIN_HTML = """<!DOCTYPE html>
               const navLogoX = Math.max(0, (vw - 1280) / 2) + 16 + 16;
               const navLogoY = 32;
               const targetX = navLogoX - fromCX;
-              const targetY = navLogoY - fromCY;
+              // Compensate: phase='loggedin' queues removal of logo-up (translateY(-24px)) but
+              // getBoundingClientRect() still reflects the class transform at this point.
+              const targetY = navLogoY - fromCY - 24;
               logoEl.style.transition = 'transform 0.9s cubic-bezier(0.4,0,0.2,1)';
               logoEl.style.transform = `translate(${targetX}px, ${targetY}px) scale(0.27)`;
             }
@@ -6401,8 +6469,8 @@ _SETUP_HTML = """<!DOCTYPE html>
       <!-- ── Step 1: Connect model server ───────────────────────────── -->
       <div x-show="step===1" x-cloak x-transition.opacity.duration.300ms>
         <div class="mb-5">
-          <h2 class="text-xl font-bold mb-1">Connect your model server(s)</h2>
-          <p class="text-gray-400 text-sm">Logos will check for Ollama and LM Studio on your network automatically.</p>
+          <h2 class="text-xl font-bold mb-1">Connect your inference server(s)</h2>
+          <p class="text-gray-400 text-sm">Logos will scan for Ollama and LM Studio on your local network. You can also add remote servers — on a LAN, VPC, or cloud VM — using a custom address.</p>
         </div>
 
         <!-- Scanning -->
@@ -6480,14 +6548,24 @@ _SETUP_HTML = """<!DOCTYPE html>
               Add a server at a custom address
             </button>
             <div x-show="showManualEntry" class="mt-2 p-4 rounded-xl bg-gray-900 border border-gray-800 space-y-2">
+              <!-- VPC / remote context note -->
+              <div class="flex gap-2 p-2.5 rounded-lg bg-indigo-950/40 border border-indigo-900/50 text-xs text-indigo-300">
+                <svg class="w-3.5 h-3.5 mt-0.5 shrink-0 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                <span>Point this at any machine running an inference server — your LAN, a VPC, a cloud VM, or a remote server. <strong class="text-indigo-200">No Logos installation is needed there</strong> — just the inference software (Ollama, vLLM, etc.) and a reachable IP/port.</span>
+              </div>
               <div class="flex gap-2">
                 <select x-model="manualType"
                   class="bg-gray-950 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500">
                   <option value="ollama">Ollama</option>
                   <option value="lmstudio">LM Studio</option>
+                  <option value="vllm">vLLM</option>
+                  <option value="openai">OpenAI-compatible</option>
                 </select>
                 <input x-model="manualUrl" type="text"
-                  :placeholder="manualType==='ollama' ? 'http://192.168.1.50:11434 or http://your-vps-ip:11434' : 'http://192.168.1.50:1234 or http://your-vps-ip:1234'"
+                  :placeholder="manualType==='ollama' ? 'http://192.168.1.50:11434 or http://gpu-vm.vpc:11434'
+                    : manualType==='lmstudio' ? 'http://192.168.1.50:1234'
+                    : manualType==='vllm' ? 'http://gpu-vm.vpc:8000'
+                    : 'https://api.openai.com/v1 or http://custom-host/v1'"
                   @keydown.enter="addManualServer()"
                   class="flex-1 bg-gray-950 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-indigo-500 font-mono">
                 <button @click="addManualServer()" :disabled="manualProbing||!manualUrl.trim()"
@@ -6497,10 +6575,10 @@ _SETUP_HTML = """<!DOCTYPE html>
                 </button>
               </div>
               <input x-model="manualName" type="text"
-                placeholder="Custom name (optional, e.g. &ldquo;Gaming PC&rdquo;)"
+                placeholder="Custom name (optional, e.g. &ldquo;VPC GPU Node&rdquo; or &ldquo;Gaming PC&rdquo;)"
                 class="w-full bg-gray-950 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-indigo-500">
-              <input x-show="manualType==='lmstudio'" x-model="manualKey" type="password"
-                placeholder="API key (if auth is enabled in LM Studio)"
+              <input x-show="manualType==='lmstudio' || manualType==='openai'" x-model="manualKey" type="password"
+                :placeholder="manualType==='openai' ? 'API key' : 'API key (if auth is enabled in LM Studio)'"
                 class="w-full bg-gray-950 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-indigo-500 font-mono">
               <p x-show="manualError" class="text-xs text-red-400" x-text="manualError"></p>
             </div>
@@ -6551,6 +6629,63 @@ _SETUP_HTML = """<!DOCTYPE html>
                 <div class="flex gap-2.5"><span class="w-4 h-4 rounded-full bg-gray-700 text-white text-[10px] flex items-center justify-center flex-shrink-0 font-medium">1</span><span class="text-xs text-gray-300">Download LM Studio from <a href="https://lmstudio.ai" target="_blank" class="text-indigo-400 hover:underline">lmstudio.ai &nearr;</a></span></div>
                 <div class="flex gap-2.5"><span class="w-4 h-4 rounded-full bg-gray-700 text-white text-[10px] flex items-center justify-center flex-shrink-0 font-medium">2</span><span class="text-xs text-gray-300">Open the <span class="text-white font-medium">Model Search</span> tab, download models you like that are advised as being able to run on your hardware</span></div>
                 <div class="flex gap-2.5"><span class="w-4 h-4 rounded-full bg-gray-700 text-white text-[10px] flex items-center justify-center flex-shrink-0 font-medium">3</span><span class="text-xs text-gray-300">Go to the <span class="text-white font-medium">Developer</span> tab and start your server by clicking the slider button</span></div>
+              </div>
+            </details>
+            <details class="group">
+              <summary class="text-xs text-gray-500 hover:text-gray-300 cursor-pointer select-none list-none flex items-center gap-1.5">
+                <svg class="w-3 h-3 transition-transform group-open:rotate-90" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+                Running on a VPC, cloud VM, or remote server
+              </summary>
+              <div class="mt-2 p-4 rounded-xl bg-gray-900 border border-gray-800 space-y-4 text-xs text-gray-400">
+                <p class="text-gray-300 font-medium">You only need to install the inference software on the remote machine — not Logos.</p>
+
+                <!-- Ollama on remote Linux -->
+                <div class="space-y-2">
+                  <p class="text-[10px] text-gray-600 uppercase tracking-wider font-semibold">Ollama on a Linux VM</p>
+                  <div class="flex items-center justify-between bg-gray-950 rounded-lg px-3 py-2">
+                    <code class="text-indigo-300 font-mono">curl -fsSL https://ollama.com/install.sh | sh</code>
+                    <button @click="copy('curl -fsSL https://ollama.com/install.sh | sh')" class="text-gray-600 hover:text-gray-400 ml-3 flex-shrink-0" x-text="copied==='curl -fsSL https://ollama.com/install.sh | sh'?'copied':'copy'"></button>
+                  </div>
+                  <p class="text-gray-600">Then expose the API publicly (binds to all interfaces):</p>
+                  <div class="flex items-center justify-between bg-gray-950 rounded-lg px-3 py-2">
+                    <code class="text-indigo-300 font-mono">OLLAMA_HOST=0.0.0.0 ollama serve</code>
+                    <button @click="copy('OLLAMA_HOST=0.0.0.0 ollama serve')" class="text-gray-600 hover:text-gray-400 ml-3 flex-shrink-0" x-text="copied==='OLLAMA_HOST=0.0.0.0 ollama serve'?'copied':'copy'"></button>
+                  </div>
+                  <p class="text-gray-600">Then pull your model: <code class="text-gray-500 font-mono">ollama pull qwen2.5:14b</code></p>
+                </div>
+
+                <!-- vLLM on remote GPU -->
+                <div class="space-y-2">
+                  <p class="text-[10px] text-gray-600 uppercase tracking-wider font-semibold">vLLM on a GPU VM</p>
+                  <div class="flex items-center justify-between bg-gray-950 rounded-lg px-3 py-2">
+                    <code class="text-indigo-300 font-mono">pip install vllm</code>
+                    <button @click="copy('pip install vllm')" class="text-gray-600 hover:text-gray-400 ml-3 flex-shrink-0" x-text="copied==='pip install vllm'?'copied':'copy'"></button>
+                  </div>
+                  <div class="flex items-center justify-between bg-gray-950 rounded-lg px-3 py-2">
+                    <code class="text-indigo-300 font-mono">vllm serve Qwen/Qwen2.5-14B-Instruct --host 0.0.0.0 --port 8000</code>
+                    <button @click="copy('vllm serve Qwen/Qwen2.5-14B-Instruct --host 0.0.0.0 --port 8000')" class="text-gray-600 hover:text-gray-400 ml-3 flex-shrink-0" x-text="copied==='vllm serve Qwen/Qwen2.5-14B-Instruct --host 0.0.0.0 --port 8000'?'copied':'copy'"></button>
+                  </div>
+                </div>
+
+                <!-- Networking note -->
+                <div class="p-3 rounded-lg border border-amber-900/50 bg-amber-950/20 text-amber-300/80 space-y-1.5">
+                  <p class="font-medium text-amber-200">Networking checklist</p>
+                  <ul class="space-y-1 list-disc list-inside text-amber-300/70">
+                    <li>Open the inference port in the VM's firewall / security group (e.g. TCP 11434 for Ollama, 8000 for vLLM)</li>
+                    <li>If behind a private VPC with no public IP, use a VPN, SSH tunnel, or reverse proxy</li>
+                    <li>On AWS/GCP/Azure: add an inbound rule in the security group / firewall for the port</li>
+                  </ul>
+                </div>
+
+                <!-- SSH tunnel fallback -->
+                <div class="space-y-2">
+                  <p class="text-[10px] text-gray-600 uppercase tracking-wider font-semibold">Quick SSH tunnel (no firewall changes needed)</p>
+                  <div class="flex items-center justify-between bg-gray-950 rounded-lg px-3 py-2">
+                    <code class="text-indigo-300 font-mono">ssh -L 11434:localhost:11434 user@your-vm-ip</code>
+                    <button @click="copy('ssh -L 11434:localhost:11434 user@your-vm-ip')" class="text-gray-600 hover:text-gray-400 ml-3 flex-shrink-0" x-text="copied==='ssh -L 11434:localhost:11434 user@your-vm-ip'?'copied':'copy'"></button>
+                  </div>
+                  <p class="text-gray-600">Then add <code class="text-gray-500 font-mono">http://localhost:11434</code> as your server URL above — traffic tunnels securely.</p>
+                </div>
               </div>
             </details>
           </div>
@@ -7037,9 +7172,19 @@ _SETUP_HTML = """<!DOCTYPE html>
               <span class="text-xs text-gray-600">— derived from agent runtime</span>
             </div>
 
-            <!-- Kubeconfig paste -->
-            <div x-show="k8sMode === 'kubeconfig'">
-              <label class="block text-xs text-gray-500 mb-1">Paste kubeconfig YAML <span class="text-gray-600">(contains cluster address and credentials)</span></label>
+            <!-- Kubeconfig paste / drag-and-drop / browse -->
+            <div x-show="k8sMode === 'kubeconfig'"
+                 @dragover.prevent="$el.classList.add('border-indigo-600')"
+                 @dragleave="$el.classList.remove('border-indigo-600')"
+                 @drop.prevent="$el.classList.remove('border-indigo-600'); $event.dataTransfer.files[0] && $event.dataTransfer.files[0].text().then(t => kubeconfig = t)"
+                 class="border-2 border-dashed border-gray-700 rounded-lg p-2 transition-colors">
+              <label class="block text-xs text-gray-500 mb-1">
+                Paste kubeconfig YAML, drag-and-drop a file here, or
+                <span class="text-indigo-400 cursor-pointer hover:text-indigo-300 underline" @click="$refs.kubeconfigFile.click()">browse</span>
+                <span class="text-gray-600">(contains cluster address and credentials)</span>
+              </label>
+              <input type="file" x-ref="kubeconfigFile" accept=".yaml,.yml,.conf,text/plain" class="hidden"
+                     @change="$event.target.files[0] && $event.target.files[0].text().then(t => { kubeconfig = t; $event.target.value = ''; })">
               <textarea x-model="kubeconfig" rows="6" placeholder="apiVersion: v1&#10;kind: Config&#10;..."
                 class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-xs text-white placeholder-gray-600 font-mono focus:outline-none focus:border-indigo-500 resize-none appearance-none"
                 style="box-sizing:border-box;"></textarea>
@@ -7235,7 +7380,7 @@ function setup() {
     // Step 0 — intro panel
     introConfirmed: false,
     setupSteps: [
-      { n: 1, name: 'Connect model servers',  tag: 'detects',    desc: 'Logos scans your network for Ollama and LM Studio. Detected servers become inference endpoints. You can add servers manually or adjust later.' },
+      { n: 1, name: 'Connect inference servers',  tag: 'detects',    desc: 'Logos scans your local network for Ollama and LM Studio. You can also add remote servers — on a LAN, VPC, or cloud VM — using a custom address. No Logos installation is needed on the inference machine.' },
       { n: 2, name: 'Benchmark models',       tag: 'measures',   desc: 'Candidate models run 6 eval tests: instruction following, reasoning, JSON format, tool selection, nested JSON, and multi-step arithmetic. The best fit is pre-selected; you can override freely.' },
       { n: 3, name: 'Agent runtime',          tag: 'configures', desc: 'Choose which agent engine handles your sessions. Hermes is available now; additional runtimes plug in as they are released.' },
       { n: 4, name: 'Execution target',       tag: 'configures', desc: 'Decide where agent processes run — in-process alongside Logos, or as isolated Kubernetes Jobs. Affects resource isolation, scaling, and where logs appear.' },
@@ -8163,7 +8308,7 @@ async def _handle_setup_reset(request: web.Request) -> web.Response:
 
 
 async def _handle_index(request: web.Request) -> web.Response:
-    inject = f'<script>window.__LOGOS__={{isCanary:{str(_IS_CANARY).lower()},runtimeMode:"{_RUNTIME_MODE}"}};</script>'
+    inject = f'<script>window.__LOGOS__={{isCanary:{str(_IS_CANARY).lower()},runtimeMode:"{_RUNTIME_MODE}"}};window._hueEpochMs={_HUE_EPOCH_MS};</script>'
     html = _ADMIN_HTML.replace("</head>", inject + "</head>", 1)
     return web.Response(text=html, content_type="text/html")
 
@@ -8393,6 +8538,33 @@ async def _handle_instances_get(request: web.Request) -> web.Response:
     # Non-admins only see instances spawned for themselves
     if caller_role not in ("admin", "operator"):
         inst = [i for i in inst if i.get("requester", "").lower() == caller_name]
+    # Normalise local-executor instances to the same shape the k8s executor returns
+    # so the frontend can use a single template for both modes.
+    if _RUNTIME_MODE == "local":
+        registry = _get_soul_registry()
+        normalized = []
+        for i in inst:
+            slug = i.get("soul_name", "")
+            soul_obj = registry.get(slug)
+            normalized.append({
+                "name":          i.get("name", ""),
+                "instance_name": f"Hermes for {i.get('requester') or i.get('name', '')}",
+                "soul":          {"name": soul_obj.name, "slug": slug, "status": soul_obj.status}
+                                 if soul_obj else {"name": slug or "default", "slug": slug, "status": "stable"},
+                "model_alias":   i.get("model", ""),
+                "machine_name":  None,
+                "k8s_status":    "running" if i.get("healthy") else "starting",
+                "status":        "running" if i.get("healthy") else "starting",
+                "ready":         1 if i.get("healthy") else 0,
+                "desired":       1,
+                "node_port":     i.get("port"),
+                "url":           i.get("url"),
+                "pid":           i.get("pid"),
+                "source":        "local",
+                "cpu_percent":   i.get("cpu_percent"),
+                "mem_mb":        i.get("mem_mb"),
+            })
+        inst = normalized
     return web.json_response({
         "instances": inst,
         "resources": res,
@@ -8638,6 +8810,11 @@ async def _handle_spawn_templates_delete(request: web.Request) -> web.Response:
     templates = [t for t in _read_spawn_templates() if str(t.get("id")) != tpl_id]
     _write_spawn_templates(templates)
     return web.json_response({"status": "ok"})
+
+
+async def _handle_hue(request: web.Request) -> web.Response:
+    """Return the server hue epoch so the tray icon can phase-lock its cycle."""
+    return web.json_response({"epoch_ms": _HUE_EPOCH_MS, "rate": 6})
 
 
 async def _handle_favicon(request: web.Request) -> web.Response:
@@ -9423,6 +9600,7 @@ async def start_http_api(runner: Any, port: int = 8080) -> None:
     app.router.add_get("/healthz",       _handle_health)       # K8s liveness probe alias
     app.router.add_get("/health/ready",  _handle_health_ready)
     app.router.add_get("/favicon.ico",   _handle_favicon)      # public — Edge --app needs this before auth
+    app.router.add_get("/api/hue",       _handle_hue)          # public — tray icon phase-lock
     app.router.add_get("/chat_logo.png", _handle_logo)
     app.router.add_get("/login",         _handle_login_page)
 

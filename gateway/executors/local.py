@@ -155,6 +155,14 @@ class LocalProcessExecutor:
             pid = inst.get("pid", -1)
             if _is_alive(pid):
                 inst["healthy"] = _health_check(inst["port"], timeout=2)
+                # Per-process resource stats via psutil (best-effort)
+                try:
+                    import psutil as _ps
+                    proc = _ps.Process(pid)
+                    inst["cpu_percent"] = round(proc.cpu_percent(interval=None), 1)
+                    inst["mem_mb"] = round(proc.memory_info().rss / 1024 / 1024, 1)
+                except Exception:
+                    pass
                 alive.append(inst)
             else:
                 changed = True  # prune dead entry
