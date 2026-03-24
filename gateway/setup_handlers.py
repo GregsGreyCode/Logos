@@ -1514,6 +1514,17 @@ async def handle_setup_complete(request: web.Request) -> web.Response:
                 _cfg["HERMES_MODEL"] = model
             if not os.getenv("OPENAI_BASE_URL"):
                 _cfg["OPENAI_BASE_URL"] = endpoint
+            # Persist the API key for the primary server so the agent authenticates.
+            # Find it from the servers list; fall back to top-level api_key field.
+            _primary_key = ""
+            for _srv in (body.get("servers") or []):
+                if (_srv.get("endpoint") or "").rstrip("/") == endpoint.rstrip("/"):
+                    _primary_key = _srv.get("api_key") or ""
+                    break
+            if not _primary_key:
+                _primary_key = (body.get("api_key") or "")
+            if _primary_key and _primary_key not in ("ollama", "") and not os.getenv("OPENAI_API_KEY"):
+                _cfg["OPENAI_API_KEY"] = _primary_key
             # Persist the chosen execution mode so restarts use the correct executor.
             # Only written if not already forced via env var (k8s deployments set
             # HERMES_RUNTIME_MODE explicitly and must not be overridden by setup).
