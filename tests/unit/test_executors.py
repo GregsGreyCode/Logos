@@ -87,11 +87,12 @@ class TestPortAllocation:
                  patch("builtins.open", MagicMock()):
                 result = exe.spawn(config)
 
-        # Popen was called — the explicit port was passed to the command
+        # Popen was called — the explicit port is passed via HERMES_PORT env var
         call_args = mock_popen.call_args
-        cmd = call_args[0][0]
-        assert "--port" in cmd
-        assert "9000" in cmd
+        env = call_args[1].get("env") or call_args[0][1] if len(call_args[0]) > 1 else {}
+        # env is passed as keyword arg
+        env = mock_popen.call_args.kwargs.get("env") or mock_popen.call_args[1].get("env", {})
+        assert env.get("HERMES_PORT") == "9000"
 
 
 # ---------------------------------------------------------------------------
@@ -125,7 +126,9 @@ class TestLocalProcessExecutorSpawn:
         cmd = mock_popen.call_args[0][0]
         assert "-m" in cmd
         assert "gateway.run" in cmd
-        assert "--port" in cmd
+        # Port is now passed via HERMES_PORT env var, not --port flag
+        env = mock_popen.call_args.kwargs.get("env") or mock_popen.call_args[1].get("env", {})
+        assert "HERMES_PORT" in env
 
     def test_spawn_saves_to_instances_file(self, tmp_path, monkeypatch):
         instances_file = self._make_instances_file(tmp_path)
