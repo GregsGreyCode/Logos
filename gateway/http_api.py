@@ -6034,7 +6034,7 @@ _LOGIN_HTML = """<!DOCTYPE html>
       <div class="relative inline-block">
         <div class="logo-halo"></div>
         <img src="/static/logo.svg" alt="Logos" class="logo-img relative mx-auto"
-             style="width:120px;height:120px;object-fit:contain;">
+             style="width:100px;height:100px;object-fit:contain;">
       </div>
       <!-- Hint — space always reserved so the logo doesn't shift when it appears -->
       <div style="margin-top:2.5rem;height:1.2rem;transition:opacity 0.6s ease;"
@@ -6155,7 +6155,7 @@ _LOGIN_HTML = """<!DOCTYPE html>
           // Setup page header: pt-10 (40px) + logo is 56×56px centred horizontally.
           // toCX: centre of viewport (setup logo is perfectly centred).
           // toCY: 40 + 28 = 68px (pt-10 padding + half of 56px logo height).
-          // scale: target size / login logo size = 56 / 120 ≈ 0.4667
+          // scale: target size / login logo size = 56 / 100 = 0.56
           const logoWrap = document.querySelector('.logo-wrap');
           if (logoWrap) {
             const r = logoWrap.getBoundingClientRect();
