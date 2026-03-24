@@ -28,6 +28,12 @@ from aiohttp import web
 
 import gateway.auth.db as auth_db
 from gateway import seed as _seed
+from gateway.auth.tokens import (
+    REFRESH_TOKEN_TTL,
+    issue_access_token,
+    issue_refresh_token,
+    set_auth_cookies,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -1476,8 +1482,26 @@ async def handle_setup_complete(request: web.Request) -> web.Response:
                 _cfg["HERMES_MODEL"] = model
             if not os.getenv("OPENAI_BASE_URL"):
                 _cfg["OPENAI_BASE_URL"] = endpoint
+            # Persist the chosen execution mode so restarts use the correct executor.
+            # Only written if not already forced via env var (k8s deployments set
+            # HERMES_RUNTIME_MODE explicitly and must not be overridden by setup).
+            if not os.getenv("HERMES_RUNTIME_MODE"):
+                _cfg["HERMES_RUNTIME_MODE"] = "kubernetes" if exec_env == "k8s" else "local"
+            # For k8s-kubeconfig mode, also write the kubeconfig to a file so
+            # k8s_clients() can pick it up via load_kube_config() on the next start.
+            _kube_raw = kubeconfig if exec_env == "k8s" and kubeconfig else ""
+            if _kube_raw and not os.getenv("KUBECONFIG"):
+                _kube_path = _hermes_home / "kubeconfig.yaml"
+                try:
+                    _kube_path.write_text(_kube_raw, encoding="utf-8")
+                    _kube_path.chmod(0o600)
+                    _cfg["KUBECONFIG"] = str(_kube_path)
+                    logger.info("setup: wrote kubeconfig to %s", _kube_path)
+                except Exception as _kube_err:
+                    logger.warning("setup: could not write kubeconfig: %s", _kube_err)
             _config_path.write_text(_yaml.dump(_cfg, default_flow_style=False, allow_unicode=True))
-            logger.info("setup: wrote HERMES_MODEL=%s to config.yaml", model)
+            logger.info("setup: wrote HERMES_MODEL=%s HERMES_RUNTIME_MODE=%s to config.yaml",
+                        model, _cfg.get("HERMES_RUNTIME_MODE", "(env)"))
         except Exception as _cfg_err:
             logger.warning("setup: could not write model to config.yaml: %s", _cfg_err)
 
@@ -1547,9 +1571,43 @@ async def handle_setup_complete(request: web.Request) -> web.Response:
                 None, _auto_spawn_first_instance, agent_type, model
             )
 
+        # Issue a session for the admin so the frontend navigates straight to the
+        # main app.  This is best-effort: if token issuance fails for any reason
+        # (missing secret, DB write error, etc.) we still return a successful
+        # setup response and tell the frontend to fall back to the login page.
+        autologin_ok = False
+        access_token = raw_refresh = rtk_hash = None
+        try:
+            admin_email = admin_users[0].get("email", "")
+            admin_role  = admin_users[0].get("role", "admin")
+            # Re-fetch in case credentials were just updated above
+            updated_user = auth_db.get_user_by_id(user_id)
+            if updated_user:
+                admin_email = updated_user.get("email", admin_email)
+                admin_role  = updated_user.get("role", admin_role)
+            access_token          = issue_access_token(user_id, admin_email, admin_role)
+            raw_refresh, rtk_hash = issue_refresh_token()
+            auth_db.store_refresh_token(
+                user_id, rtk_hash,
+                expires_at=int(time.time()) + REFRESH_TOKEN_TTL,
+                ip=request.remote,
+                ua=request.headers.get("User-Agent"),
+            )
+            auth_db.write_audit_log(user_id, "setup_autologin", ip_address=request.remote)
+            autologin_ok = True
+        except Exception as _tok_err:
+            logger.warning("setup: auto-login token issuance failed (%s) — user will be sent to /login", _tok_err)
+
+        payload: dict = {"ok": True}
+        if not autologin_ok:
+            payload["needs_login"] = True
         if warning:
-            return web.json_response({"ok": True, "warning": warning})
-        return web.json_response({"ok": True})
+            payload["warning"] = warning
+
+        resp = web.json_response(payload)
+        if autologin_ok:
+            set_auth_cookies(resp, access_token, raw_refresh)
+        return resp
     except Exception as exc:
         logger.exception("setup/complete failed: %s", exc)
         return web.json_response({"error": "internal_error", "detail": str(exc)[:300]}, status=500)

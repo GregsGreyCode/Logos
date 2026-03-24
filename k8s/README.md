@@ -1,5 +1,13 @@
 # hermes_deployment
 
+> **Security model** — For a full explanation of isolation boundaries, what agents can/cannot reach in each deployment mode, and how secrets are handled, see the [Security & deployment model](../README.md#-security--deployment-model) section in the main README.
+
+### RBAC footprint
+
+`09-rbac.yaml` grants the `hermes` ServiceAccount permission to create and delete Deployments, Services, PVCs, and ConfigMaps in the `hermes` namespace. This is required for spawning additional agent instances from the dashboard. It is intentionally namespace-scoped — Hermes cannot create resources in other namespaces or read cluster-wide secrets. Review this role before applying to a shared cluster.
+
+---
+
 Kubernetes manifests for the `hermes` namespace. Apply in filename order (00 → 11).
 
 ## Manifests

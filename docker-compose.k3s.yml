@@ -1,0 +1,151 @@
+# Logos — Docker Compose with k3s for pod-level agent isolation
+#
+# Each agent session spawns a dedicated Kubernetes pod in the embedded k3s
+# cluster, giving full filesystem + network + resource isolation per run.
+# This is the same isolation model as a full Kubernetes deployment but
+# requires no external cluster.
+#
+# Trade-offs vs docker-compose.yml (simple):
+#   + Agents are isolated in pods (separate fs, network, resource limits)
+#   + Consistent with production k8s deployments
+#   - k3s requires a privileged container (Linux only, not supported on Mac/Windows Docker Desktop without extra config)
+#   - Spawning additional agent pods requires the logos image to be available
+#     to k3s containerd — see IMAGE NOTE below.
+#   - Higher memory baseline (~512 MB for k3s itself)
+#
+# Quick start:
+#   cp .env.example .env   # fill in HERMES_JWT_SECRET (required)
+#   docker compose -f docker-compose.k3s.yml up -d
+#   open http://localhost:8080
+#   # In setup wizard, step 4: choose Kubernetes → "Logos is outside the cluster"
+#   # Leave kubeconfig paste empty — it is mounted automatically via KUBECONFIG env var.
+#
+# IMAGE NOTE — for k3s to spawn agent pods it needs access to the logos image.
+# Options (pick one):
+#
+#   Option A — local registry (recommended, included below as a profile):
+#     docker compose -f docker-compose.k3s.yml --profile registry up -d
+#     docker tag logos:local localhost:5000/logos:local
+#     docker push localhost:5000/logos:local
+#     Then set LOGOS_IMAGE=localhost:5000/logos:local in .env
+#
+#   Option B — public registry:
+#     Set LOGOS_IMAGE=ghcr.io/youruser/logos:latest in .env and push there.
+#
+#   Option C — k3s image import (manual, no registry needed):
+#     docker save logos:local | docker compose -f docker-compose.k3s.yml exec -T k3s ctr images import -
+
+services:
+
+  # ── Optional local registry ────────────────────────────────────────────────
+  registry:
+    image: registry:2
+    profiles: [registry]
+    restart: unless-stopped
+    ports:
+      - "5000:5000"
+    volumes:
+      - registry-data:/var/lib/registry
+
+  # ── k3s (lightweight Kubernetes) ──────────────────────────────────────────
+  k3s:
+    image: rancher/k3s:v1.32-k3s1
+    privileged: true          # required: k3s needs iptables, namespaces, cgroups
+    restart: unless-stopped
+    command:
+      - server
+      - --disable=traefik     # not needed here; saves ~100 MB RAM
+      - --disable=servicelb   # same
+      - --tls-san=k3s         # allows logos container to reach API as "k3s"
+      - --write-kubeconfig=/kube/config
+      - --write-kubeconfig-mode=644
+    environment:
+      K3S_TOKEN: "${K3S_TOKEN:-logos-k3s-shared-token}"
+    volumes:
+      - k3s-data:/var/lib/rancher/k3s
+      - kubeconfig:/kube
+    healthcheck:
+      test: ["CMD", "k3s", "kubectl", "--kubeconfig=/kube/config", "get", "nodes"]
+      interval: 15s
+      timeout: 15s
+      retries: 12
+      start_period: 90s   # k3s takes ~60-90s on first boot
+
+  # ── One-time cluster setup ─────────────────────────────────────────────────
+  # Patches the kubeconfig server address from 127.0.0.1 to the k3s service
+  # name so the logos container can reach the API across the Docker network.
+  # Also creates the hermes namespace where agent pods will run.
+  k3s-init:
+    image: rancher/k3s:v1.32-k3s1
+    depends_on:
+      k3s:
+        condition: service_healthy
+    restart: "no"
+    volumes:
+      - kubeconfig:/kube
+    entrypoint: sh
+    command:
+      - -c
+      - |
+        set -e
+        sed 's|https://127.0.0.1:6443|https://k3s:6443|g' /kube/config > /kube/logos-config
+        chmod 644 /kube/logos-config
+        export KUBECONFIG=/kube/logos-config
+        k3s kubectl create namespace hermes --dry-run=client -o yaml | k3s kubectl apply -f -
+        echo "k3s-init: hermes namespace ready"
+
+  # ── Logos gateway ─────────────────────────────────────────────────────────
+  logos:
+    build:
+      context: .
+      args:
+        BUILD_SHA: unknown
+    image: logos:local
+    restart: unless-stopped
+    depends_on:
+      k3s-init:
+        condition: service_completed_successfully
+    ports:
+      - "${LOGOS_PORT:-8080}:8080"
+    environment:
+      HERMES_JWT_SECRET: "${HERMES_JWT_SECRET}"
+      HERMES_RUNTIME_MODE: "kubernetes"
+      HERMES_PORT: "8080"
+      HERMES_INSTANCE_NAME: "${HERMES_INSTANCE_NAME:-Hermes}"
+      HERMES_LOG_LEVEL: "${HERMES_LOG_LEVEL:-info}"
+      HERMES_COOKIE_SECURE: "${HERMES_COOKIE_SECURE:-}"
+      OPENAI_BASE_URL: "${OPENAI_BASE_URL:-}"
+      HERMES_MODEL: "${HERMES_MODEL:-}"
+      OPENAI_API_KEY: "${OPENAI_API_KEY:-local}"
+      HERMES_ADMIN_EMAIL: "${HERMES_ADMIN_EMAIL:-}"
+      HERMES_ADMIN_PASSWORD: "${HERMES_ADMIN_PASSWORD:-}"
+      HERMES_ADMIN_NAME: "${HERMES_ADMIN_NAME:-}"
+      TELEGRAM_BOT_TOKEN: "${TELEGRAM_BOT_TOKEN:-}"
+      TELEGRAM_ALLOWED_USERS: "${TELEGRAM_ALLOWED_USERS:-}"
+      # Kubernetes access — patched kubeconfig mounted below
+      # KUBECONFIG is read by the kubernetes python library automatically.
+      KUBECONFIG: "/kube/logos-config"
+      # Image used when spawning agent pods in k3s.
+      # Must be accessible from k3s containerd — see IMAGE NOTE above.
+      LOGOS_AGENT_IMAGE: "${LOGOS_IMAGE:-logos:local}"
+
+    volumes:
+      - logos-data:/home/hermes/.hermes
+      - kubeconfig:/kube:ro   # read-only — k3s-init wrote the patched config
+
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+volumes:
+  logos-data:
+    driver: local
+  k3s-data:
+    driver: local
+  kubeconfig:
+    driver: local
+  registry-data:
+    driver: local
