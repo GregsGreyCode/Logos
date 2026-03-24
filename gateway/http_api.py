@@ -6512,7 +6512,7 @@ _SETUP_HTML = """<!DOCTYPE html>
                 class="spinner-hue text-xs px-4 py-1.5 rounded-full border font-semibold tracking-wide transition-all flex-shrink-0"
                 :class="tldr ? 'bg-indigo-950 border-indigo-500 text-indigo-200' : 'bg-gray-900 border-gray-600 text-gray-400 hover:border-gray-400 hover:text-gray-200'"
                 title="Toggle TL;DR mode">
-                <span x-text="tldr ? '⚡ TL;DR ON' : 'click here for tl;dr'"></span>
+                <span x-text="tldr ? '⚡ TL;DR ON' : 'Click here for TL;DR'"></span>
               </button>
             </div>
             <div class="text-sm text-gray-500 mb-4" x-text="tldr ? 'Seven steps.' : 'Seven steps, from model discovery to launch.'"></div>
@@ -6959,14 +6959,14 @@ _SETUP_HTML = """<!DOCTYPE html>
 
           <!-- Footer -->
           <div class="space-y-2 pt-1">
-            <p x-show="selectedServers.length===0 && foundServers.length>0" class="text-xs text-center text-gray-600">Select at least one server to continue</p>
+            <p x-show="selectedServers.length===0 && foundServers.length>0 && !Object.values(localKeys).some(k=>k.trim())" class="text-xs text-center text-gray-600">Select at least one server to continue</p>
             <div class="flex items-center gap-3">
               <button @click="autoDetect()" :disabled="autoScanning"
                 class="text-xs text-gray-600 hover:text-gray-400 disabled:opacity-50 transition-colors flex items-center gap-1.5 flex-shrink-0">
                 <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
                 Re-scan
               </button>
-              <button @click="goNext()" :disabled="selectedServers.length===0"
+              <button @click="goNext()" :disabled="selectedServers.length===0 && !Object.values(localKeys).some(k=>k.trim())"
                 class="btn-primary flex-1 py-2.5 rounded-xl text-sm disabled:opacity-40 disabled:cursor-not-allowed transition-opacity">
                 Continue &rarr; Benchmark models
               </button>
@@ -8218,7 +8218,21 @@ function setup() {
     },
 
     async goNext() {
-      if (this.step === 1) { await this._goStep(2, () => { this.$nextTick(() => { if (!this.compareDone) this.startCompare(); }); }); return; }
+      if (this.step === 1) {
+        // Auto-connect any servers that have a key typed but haven't been connected yet
+        const pending = this.foundServers.filter(s =>
+          s.status === 'auth_required' && (this.localKeys[s.endpoint]||'').trim()
+        );
+        if (pending.length > 0) {
+          for (const s of pending) {
+            this.serverKeys = { ...this.serverKeys, [s.endpoint]: this.localKeys[s.endpoint]||'' };
+            await this.retryWithKey(s);
+          }
+          if (this.selectedServers.length === 0) return; // all connections failed — errors shown inline
+        }
+        await this._goStep(2, () => { this.$nextTick(() => { if (!this.compareDone) this.startCompare(); }); });
+        return;
+      }
       if (this.step === 2) { await this._goStep(3); return; }
       if (this.step === 3) { await this._goStep(4); return; }
       if (this.step === 4) { await this._goStep(5); return; }
