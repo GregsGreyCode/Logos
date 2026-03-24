@@ -3657,27 +3657,35 @@ class GatewayRunner:
         from agents.hermes.agent import AIAgent
         import queue
 
-        # LM Studio: pre-load the model with a 16 K context before the agent runs.
-        # Without this, LM Studio auto-loads with its default context (~4096) which
-        # is too small once the system prompt + tool definitions are included.
-        # Best-effort — failures are silently ignored.
+        # LM Studio: pre-load the model with the largest context it supports.
+        # The agent system prompt + tool definitions alone can be 3-5 K tokens,
+        # so we try descending context sizes until LM Studio accepts the load.
+        # Models like moonlight-16b cap at ~8 K; others support 16 K+.
+        # Best-effort — if all attempts fail we let LM Studio use its default.
         _lmstudio_server_type = os.getenv("HERMES_SERVER_TYPE", "")
         if _lmstudio_server_type == "lmstudio":
-            import re as _re
             import aiohttp as _aiohttp
-            _lms_base = re.sub(r"/v1/?$", "", os.getenv("OPENAI_BASE_URL", "")).rstrip("/")
+            _lms_base  = re.sub(r"/v1/?$", "", os.getenv("OPENAI_BASE_URL", "")).rstrip("/")
             _lms_model = os.getenv("HERMES_MODEL", "")
             _lms_key   = os.getenv("OPENAI_API_KEY", "")
             if _lms_base and _lms_model:
                 _lms_headers = {"Authorization": f"Bearer {_lms_key}"} if _lms_key and _lms_key != "ollama" else {}
+                _ctx_sizes = [16384, 8192, 4096]
                 try:
                     async with _aiohttp.ClientSession() as _lms_http:
-                        await _lms_http.post(
-                            f"{_lms_base}/api/v1/models/load",
-                            headers=_lms_headers,
-                            json={"model": _lms_model, "context_length": 16384},
-                            timeout=_aiohttp.ClientTimeout(total=10),
-                        )
+                        for _ctx in _ctx_sizes:
+                            try:
+                                async with _lms_http.post(
+                                    f"{_lms_base}/api/v1/models/load",
+                                    headers=_lms_headers,
+                                    json={"model": _lms_model, "context_length": _ctx},
+                                    timeout=_aiohttp.ClientTimeout(total=10),
+                                ) as _lr:
+                                    if _lr.status == 200:
+                                        break   # accepted — stop trying smaller sizes
+                                    # 4xx likely means context too large; try next
+                            except Exception:
+                                break   # network error — don't retry
                 except Exception:
                     pass
 
