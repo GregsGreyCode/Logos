@@ -12,20 +12,21 @@ import gateway.auth.db as auth_db
 
 logger = logging.getLogger(__name__)
 
-_OPENAI_BASE_URL = os.environ.get("OPENAI_BASE_URL", "").rstrip("/")
-_OPENAI_API_KEY  = os.environ.get("OPENAI_API_KEY", "")
-_EMBED_MODEL     = os.environ.get("EMBED_MODEL", "text-embedding-3-small")
+_EMBED_MODEL = os.environ.get("EMBED_MODEL", "text-embedding-3-small")
 
 
 async def _get_embedding(text: str) -> list | None:
     """Call the embedding endpoint. Returns None on failure (graceful degradation)."""
-    if not _OPENAI_BASE_URL or not _OPENAI_API_KEY:
+    # Read at call time — setup may have set these after module import
+    base_url = os.environ.get("OPENAI_BASE_URL", "").rstrip("/")
+    api_key  = os.environ.get("OPENAI_API_KEY", "")
+    if not base_url or not api_key:
         return None
     try:
         async with aiohttp.ClientSession() as session:
             async with session.post(
-                f"{_OPENAI_BASE_URL}/embeddings",
-                headers={"Authorization": f"Bearer {_OPENAI_API_KEY}", "Content-Type": "application/json"},
+                f"{base_url}/embeddings",
+                headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
                 json={"model": _EMBED_MODEL, "input": text[:8000]},
                 timeout=aiohttp.ClientTimeout(total=15),
             ) as r:
