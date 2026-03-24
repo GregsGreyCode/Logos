@@ -8235,12 +8235,15 @@ function setup() {
       if (models.length === 0) return;
       // Single model — skip comparison, go straight to test
       if (models.length === 1) {
-        this.pickModel(models[0]);
-        this.compareTargets     = [models[0].id];
+        const m = models[0];
+        const ep = m._serverEndpoint || (this.activeServer && this.activeServer.endpoint);
+        this.pickModel(m);
+        this.compareTargets     = [m.id];
         this.compareResults     = {};
-        this.compareRecommended = models[0].id;
-        this.compareReason      = 'Only one model available — proceeding to full test.';
+        this.compareRecommended = m.id;
+        this.compareReason      = 'Only one model available — selected automatically.';
         this.compareDone        = true;
+        if (ep) this.serverModelSelections = { ...this.serverModelSelections, [ep]: m.id };
         return;
       }
       this.compareRunning     = true;
