@@ -6161,7 +6161,7 @@ _LOGIN_HTML = """<!DOCTYPE html>
           .then(r => r.ok ? r.json() : null)
           .then(d => { if (d && !d.completed) this.needsSetup = true; })
           .catch(() => {});
-        this._hintTimer = setTimeout(() => { if (this.phase === 'splash') this.showHint = true; }, 3000);
+        this._hintTimer = setTimeout(() => { if (this.phase === 'splash') this.showHint = true; }, 1000);
         // Drive hue for logo + button via rAF so they're always in sync
         const tick = () => {
           // Anchor hue to wall-clock time so every page load/refresh
@@ -6232,7 +6232,7 @@ _LOGIN_HTML = """<!DOCTYPE html>
       _revertSplash() {
         this.phase = 'splash';
         clearTimeout(this._hintTimer);
-        this._hintTimer = setTimeout(() => { if (this.phase === 'splash') this.showHint = true; }, 3000);
+        this._hintTimer = setTimeout(() => { if (this.phase === 'splash') this.showHint = true; }, 1000);
       },
 
       async submit() {
@@ -6645,7 +6645,7 @@ _SETUP_HTML = """<!DOCTYPE html>
                     <!-- Endpoint rows -->
                     <div class="space-y-2">
                       <template x-for="s in group.servers" :key="s.endpoint">
-                        <div class="flex items-start gap-3 pl-1" x-data="{ localKey: '' }">
+                        <div class="flex items-start gap-3 pl-1">
                           <button @click="toggleServer(s)"
                             :class="isServerSelected(s) ? 'bg-indigo-500 border-indigo-500' : 'border-gray-600 hover:border-gray-400 cursor-pointer'"
                             class="w-4 h-4 rounded border-2 flex items-center justify-center flex-shrink-0 mt-0.5 transition-all">
@@ -6692,14 +6692,14 @@ _SETUP_HTML = """<!DOCTYPE html>
                               </div>
                               <div class="flex gap-2">
                                 <input type="password" placeholder="API key (e.g. sk-lm-...)"
-                                  :value="localKey"
-                                  @input="localKey = $event.target.value"
-                                  @change="localKey = $event.target.value"
-                                  @keydown.enter="serverKeys[s.endpoint] = localKey; retryWithKey(s)"
+                                  :value="localKeys[s.endpoint]||''"
+                                  @input="localKeys = {...localKeys, [s.endpoint]: $event.target.value}"
+                                  @change="localKeys = {...localKeys, [s.endpoint]: $event.target.value}"
+                                  @keydown.enter="serverKeys[s.endpoint] = localKeys[s.endpoint]||''; retryWithKey(s)"
                                   :class="authEnforcedServers[s.endpoint] ? 'border-amber-700 focus:border-amber-500' : 'border-gray-700 focus:border-indigo-500'"
                                   class="flex-1 bg-gray-950 border rounded-lg px-3 py-1.5 text-xs text-white placeholder-gray-600 focus:outline-none font-mono transition-colors">
-                                <button @click="serverKeys[s.endpoint] = localKey; retryWithKey(s)"
-                                  :disabled="!localKey || retryingServers[s.endpoint]"
+                                <button @click="serverKeys[s.endpoint] = localKeys[s.endpoint]||''; retryWithKey(s)"
+                                  :disabled="!(localKeys[s.endpoint]||'') || retryingServers[s.endpoint]"
                                   class="btn-primary px-3 py-1.5 rounded-lg text-xs flex-shrink-0 disabled:opacity-40 flex items-center gap-1.5">
                                   <span x-show="!retryingServers[s.endpoint]">Connect</span>
                                   <template x-if="retryingServers[s.endpoint]">
@@ -6707,7 +6707,7 @@ _SETUP_HTML = """<!DOCTYPE html>
                                   </template>
                                 </button>
                               </div>
-                              <p x-show="retryErrors[s.endpoint] && localKey" class="text-xs text-red-400" x-text="retryErrors[s.endpoint]"></p>
+                              <p x-show="retryErrors[s.endpoint] && (localKeys[s.endpoint]||'')" class="text-xs text-red-400" x-text="retryErrors[s.endpoint]"></p>
                               <!-- Try without auth — hidden once we know auth is enforced -->
                               <button x-show="!authEnforcedServers[s.endpoint]"
                                 @click="serverKeys[s.endpoint] = ''; retryWithKey(s)"
@@ -6732,7 +6732,7 @@ _SETUP_HTML = """<!DOCTYPE html>
               <div class="text-[10px] text-gray-500 uppercase tracking-wider font-semibold mb-2 px-1">Remote Servers</div>
               <div class="space-y-2">
                 <template x-for="s in remoteServers" :key="s.endpoint">
-                  <div class="p-4 rounded-xl border transition-all" x-data="{ localKey: '' }"
+                  <div class="p-4 rounded-xl border transition-all"
                     :class="isServerSelected(s) ? 'border-indigo-500/60 bg-indigo-950/20' : 'border-gray-700 bg-gray-900'">
                     <div class="flex items-start gap-3">
                       <button @click="toggleServer(s)"
@@ -6767,14 +6767,14 @@ _SETUP_HTML = """<!DOCTYPE html>
                           </div>
                           <div class="flex gap-2">
                             <input type="password" placeholder="API key (e.g. sk-lm-...)"
-                              :value="localKey"
-                              @input="localKey = $event.target.value"
-                              @change="localKey = $event.target.value"
-                              @keydown.enter="serverKeys[s.endpoint] = localKey; retryWithKey(s)"
+                              :value="localKeys[s.endpoint]||''"
+                              @input="localKeys = {...localKeys, [s.endpoint]: $event.target.value}"
+                              @change="localKeys = {...localKeys, [s.endpoint]: $event.target.value}"
+                              @keydown.enter="serverKeys[s.endpoint] = localKeys[s.endpoint]||''; retryWithKey(s)"
                               :class="authEnforcedServers[s.endpoint] ? 'border-amber-700 focus:border-amber-500' : 'border-gray-700 focus:border-indigo-500'"
                               class="flex-1 bg-gray-950 border rounded-lg px-3 py-1.5 text-xs text-white placeholder-gray-600 focus:outline-none font-mono transition-colors">
-                            <button @click="serverKeys[s.endpoint] = localKey; retryWithKey(s)"
-                              :disabled="!localKey || retryingServers[s.endpoint]"
+                            <button @click="serverKeys[s.endpoint] = localKeys[s.endpoint]||''; retryWithKey(s)"
+                              :disabled="!(localKeys[s.endpoint]||'') || retryingServers[s.endpoint]"
                               class="btn-primary px-3 py-1.5 rounded-lg text-xs flex-shrink-0 disabled:opacity-40 flex items-center gap-1.5">
                               <span x-show="!retryingServers[s.endpoint]">Connect</span>
                               <template x-if="retryingServers[s.endpoint]">
@@ -6782,7 +6782,7 @@ _SETUP_HTML = """<!DOCTYPE html>
                               </template>
                             </button>
                           </div>
-                          <p x-show="retryErrors[s.endpoint] && localKey" class="text-xs text-red-400" x-text="retryErrors[s.endpoint]"></p>
+                          <p x-show="retryErrors[s.endpoint] && (localKeys[s.endpoint]||'')" class="text-xs text-red-400" x-text="retryErrors[s.endpoint]"></p>
                           <!-- Try without auth — hidden once we know auth is enforced -->
                           <button x-show="!authEnforcedServers[s.endpoint]"
                             @click="serverKeys[s.endpoint] = ''; retryWithKey(s)"
@@ -7771,6 +7771,7 @@ function setup() {
     retryErrors: {},
     serverKeys: {},
     authEnforcedServers: {},
+    localKeys: {},
     osPlatform: 'mac',
     copied: '',
 
