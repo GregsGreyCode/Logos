@@ -57,6 +57,11 @@
 - **VRAM state between tests must be explicit** — LM Studio: `POST /api/v1/models/unload` with `{"instance_id": model_id}`. Ollama: `POST /api/generate` with `{"model": model_id, "keep_alive": 0, "prompt": ""}`. Without this, each model loads on top of the previous one and throughput measurements for later models are degraded.
 - **`x-transition` on Alpine `x-show` can interfere with `max-height` overflow** — transitions using opacity/scale don't affect max-height, but the interaction with certain CSS classes can cause unexpected layout. Use explicit inline `style="max-height:Xrem;overflow-y:auto"` rather than Tailwind's `max-h-*` on transitioning elements.
 
+## Windows / Desktop Packaging
+
+- **`sys.executable` IS the frozen `.exe` — spawning it re-launches the launcher** — In a PyInstaller bundle, `sys.executable` is `Logos.exe`, not a Python interpreter. Calling `subprocess.Popen([sys.executable, "-m", "gateway.run", ...])` re-runs the full launcher (new browser window, new tray icon) instead of the gateway. Fix: add an `--agent-mode` flag the launcher detects early and handles without any UI; pass the port via `HERMES_PORT` env var instead of a `--port` CLI arg the subprocess won't parse.
+- **`sys.stdout` and `sys.stderr` are `None` on Windows GUI builds** — Windows desktop apps have no console, so Python sets both streams to `None`. Any `print()` call raises `AttributeError: 'NoneType' object has no attribute 'write'`. Must redirect to `io.TextIOWrapper(open(os.devnull, "wb"))` at process startup *before* any imported code can print — not just inside the agent wrapper.
+
 ## Security
 
 - **CSRF tokens required on all state-changing requests** — cookie auth alone is not enough. Every POST/PATCH needs a `X-CSRF-Token` header validated server-side.
