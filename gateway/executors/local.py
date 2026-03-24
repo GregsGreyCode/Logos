@@ -101,9 +101,19 @@ class LocalProcessExecutor:
         port = config.port if config.port else self._allocate_port(instances)
         url = f"http://127.0.0.1:{port}"
 
+        # Per-instance workspace sandbox — agents are confined to this directory.
+        workspace = _HERMES_HOME / "workspaces" / config.name
+        workspace.mkdir(parents=True, exist_ok=True)
+
         env = {**os.environ, "HERMES_INSTANCE_NAME": config.name, "HERMES_PORT": str(port)}
+        env["HERMES_HOME"] = str(_HERMES_HOME)
+        env["TERMINAL_CWD"] = str(workspace)   # agent's working directory
         if config.soul_name and config.soul_name != "default":
             env["HERMES_SOUL"] = config.soul_name
+        if config.toolsets:
+            env["HERMES_TOOLSETS"] = ",".join(config.toolsets)
+        if config.policy:
+            env["HERMES_POLICY_LEVEL"] = config.policy
 
         # When running as a frozen executable (Logos.exe), sys.executable is the
         # launcher itself.  Pass --agent-mode so the launcher skips its UI and
@@ -118,7 +128,7 @@ class LocalProcessExecutor:
 
         # On Windows use CREATE_DETACHED_PROCESS so the child survives if the
         # parent exits; on Unix start_new_session=True creates a new session leader.
-        _popen_kwargs: dict = {"env": env, "stdout": None, "stderr": None}
+        _popen_kwargs: dict = {"env": env, "stdout": None, "stderr": None, "cwd": str(workspace)}
         if sys.platform == "win32":
             # CREATE_DETACHED_PROCESS only defined on Windows (0x00000008)
             _popen_kwargs["creationflags"] = getattr(subprocess, "CREATE_DETACHED_PROCESS", 0x00000008)
@@ -139,6 +149,9 @@ class LocalProcessExecutor:
             "soul_name": config.soul_name,
             "model": config.model,
             "requester": config.requester,
+            "toolsets": config.toolsets or [],
+            "policy": config.policy or "",
+            "workspace": str(workspace),
         }
         instances.append(record)
         _save_instances(instances)
