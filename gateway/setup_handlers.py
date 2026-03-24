@@ -968,13 +968,36 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
                 # ── Warmup pass — ensures model is fully loaded before timing ──
                 # Result is discarded; this prevents the cold-start penalty from
                 # skewing pass 1 (seen as ~33% of real throughput on first model).
+                # llama.cpp with --sleep-idle-seconds wakes on the first real request
+                # and drops the connection while loading.  Retry up to 3× with a
+                # /health re-poll so we wait out the reload rather than giving up.
                 await send({"log": "  Warmup (loading model into memory)…"})
-                try:
-                    await _bench_run(0, "Reply with one word.", max_tokens=10)
-                    hint_task.cancel()
-                    await send({"log": "  Model ready."})
-                except Exception as _we:
-                    await send({"log": f"  Warmup failed ({str(_we)[:80]}), continuing anyway…"})
+                _warmup_ok = False
+                _max_warmup = 3 if server_type == "llamacpp" else 1
+                for _wa in range(_max_warmup):
+                    try:
+                        await _bench_run(0, "Reply with one word.", max_tokens=10)
+                        hint_task.cancel()
+                        await send({"log": "  Model ready."})
+                        _warmup_ok = True
+                        break
+                    except Exception as _we:
+                        if server_type == "llamacpp" and _wa < _max_warmup - 1:
+                            await send({"log": f"  Connection dropped (attempt {_wa+1}/{_max_warmup}) — model may be loading from sleep, re-checking…"})
+                            # Re-poll /health until loading is done before retry
+                            _hp_deadline = time.time() + 30
+                            while time.time() < _hp_deadline:
+                                try:
+                                    async with http.get(f"{base_url}/health", timeout=aiohttp.ClientTimeout(total=3)) as _hr2:
+                                        if _hr2.status == 200:
+                                            _hd2 = await _hr2.json(content_type=None)
+                                            if _hd2.get("status") == "ok":
+                                                break
+                                except Exception:
+                                    pass
+                                await asyncio.sleep(2)
+                        else:
+                            await send({"log": f"  Warmup failed ({str(_we)[:80]}), continuing anyway…"})
                 # Reset t0 so TTFT on pass 1 is measured from a hot-model start
                 t0 = time.time()
 
@@ -1112,8 +1135,14 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
                     },
                 }
             except Exception as exc:
-                err_msg = str(exc)
-                await send({"log": f"  ✗ Error: {err_msg[:200]}"})
+                if isinstance(exc, aiohttp.ServerDisconnectedError):
+                    if server_type == "llamacpp":
+                        err_msg = "Server disconnected — llama.cpp dropped the connection (model still loading or server ran out of memory). Check server logs."
+                    else:
+                        err_msg = "Server disconnected — connection closed unexpectedly. Is the model loaded?"
+                else:
+                    err_msg = str(exc)
+                await send({"log": f"  ✗ Error: {err_msg[:300]}"})
                 result = {"model": model_id, "tok_s": 0, "quality_pass": False, "ttft_ms": None, "approx": False, "endpoint": endpoint, "error": err_msg[:300]}
             finally:
                 hint_task.cancel()
