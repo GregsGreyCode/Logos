@@ -1290,9 +1290,140 @@ async def handle_setup_complete(request: web.Request) -> web.Response:
                 "If Logos runs in Kubernetes, use the node's LAN IP instead of localhost."
             )
 
+        # Auto-spawn first agent instance for local mode
+        if exec_env == "local":
+            import asyncio as _asyncio
+            _asyncio.get_event_loop().run_in_executor(
+                None, _auto_spawn_first_instance, agent_type, model
+            )
+
         if warning:
             return web.json_response({"ok": True, "warning": warning})
         return web.json_response({"ok": True})
     except Exception as exc:
         logger.exception("setup/complete failed: %s", exc)
         return web.json_response({"error": "internal_error", "detail": str(exc)[:300]}, status=500)
+
+
+def _auto_spawn_first_instance(soul_name: str, model: str) -> None:
+    """Spawn a single default agent instance after local-mode setup completes."""
+    try:
+        from gateway.executors.local import LocalProcessExecutor
+        from gateway.executors.base import InstanceConfig
+        executor = LocalProcessExecutor()
+        resources = executor.get_resources()
+        if not resources.get("can_spawn", True):
+            logger.warning("setup: skipping auto-spawn — %s", resources.get("reason", "low resources"))
+            return
+        cfg = InstanceConfig(name="default", soul_name=soul_name or "general", model=model)
+        instance = executor.spawn(cfg)
+        logger.info("setup: auto-spawned first instance %s on port %d (healthy=%s)",
+                    instance.name, instance.port, instance.healthy)
+    except Exception as exc:
+        logger.warning("setup: auto-spawn failed: %s", exc)
+
+
+# ---------------------------------------------------------------------------
+# LAN discovery — find existing Logos instances on the local network
+# ---------------------------------------------------------------------------
+
+_LOGOS_PORTS = [8080, 7860, 8000]   # ports to probe for Logos instances
+_DISCOVER_TIMEOUT = aiohttp.ClientTimeout(total=1.5)
+_DISCOVER_CONCURRENCY = 30
+_CONNECT_JSON = pathlib.Path(os.environ.get("HERMES_HOME", pathlib.Path.home() / ".logos")) / "connect.json"
+
+
+async def _probe_logos(session: aiohttp.ClientSession, url: str) -> dict | None:
+    """Return instance info if url hosts a Logos instance, else None."""
+    try:
+        async with session.get(f"{url}/health", timeout=_DISCOVER_TIMEOUT) as r:
+            if r.status != 200:
+                return None
+            data = await r.json(content_type=None)
+            if data.get("product") != "logos":
+                return None
+            return {
+                "url": url,
+                "setup_completed": data.get("setup_completed", False),
+                "uptime_s": data.get("uptime_s"),
+            }
+    except Exception:
+        return None
+
+
+async def handle_setup_discover(request: web.Request) -> web.Response:
+    """Scan local network for running Logos instances.
+
+    Returns a list of discovered instances. Scans:
+      - localhost on all LOGOS_PORTS
+      - local /24 subnet on port 8080
+    """
+    own_ips = _own_ips()
+    targets: list[str] = []
+
+    # Always check localhost variants first
+    for port in _LOGOS_PORTS:
+        for host in ("127.0.0.1", "localhost"):
+            targets.append(f"http://{host}:{port}")
+
+    # Scan local /24 subnet
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.connect(("8.8.8.8", 80))
+            own_ip = s.getsockname()[0]
+        prefix = ".".join(own_ip.split(".")[:3])
+        for i in range(1, 255):
+            host = f"{prefix}.{i}"
+            if host not in own_ips:
+                targets.append(f"http://{host}:8080")
+    except Exception:
+        pass
+
+    results = []
+    sem = asyncio.Semaphore(_DISCOVER_CONCURRENCY)
+
+    async def _bounded(url: str):
+        async with sem:
+            return await _probe_logos(session, url)
+
+    async with aiohttp.ClientSession() as session:
+        tasks = [_bounded(url) for url in targets]
+        for coro in asyncio.as_completed(tasks):
+            found = await coro
+            if found:
+                results.append(found)
+
+    return web.json_response({"instances": results})
+
+
+async def handle_setup_set_remote(request: web.Request) -> web.Response:
+    """Save a remote Logos URL so the launcher opens it instead of local mode.
+
+    Writes ~/.logos/connect.json with {"url": "..."}.
+    The launcher reads this on next start and skips the local gateway.
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "invalid_json"}, status=400)
+
+    url = (body.get("url") or "").strip().rstrip("/")
+    if not url:
+        return web.json_response({"error": "url required"}, status=400)
+
+    # Validate it's actually a Logos instance before saving
+    try:
+        async with aiohttp.ClientSession() as s:
+            async with s.get(f"{url}/health", timeout=_DISCOVER_TIMEOUT) as r:
+                if r.status != 200:
+                    return web.json_response({"error": "unreachable"}, status=400)
+                data = await r.json(content_type=None)
+                if data.get("product") != "logos":
+                    return web.json_response({"error": "not_logos"}, status=400)
+    except Exception as exc:
+        return web.json_response({"error": "unreachable", "detail": str(exc)[:200]}, status=400)
+
+    _CONNECT_JSON.parent.mkdir(parents=True, exist_ok=True)
+    _CONNECT_JSON.write_text(json.dumps({"url": url}, indent=2), encoding="utf-8")
+    logger.info("setup: saved remote connect URL: %s", url)
+    return web.json_response({"ok": True, "url": url})

@@ -6359,10 +6359,98 @@ _SETUP_HTML = """<!DOCTYPE html>
 
   <!-- Main content -->
   <main class="setup-content flex-1 flex items-start justify-center px-4 pt-6 pb-16">
-    <div class="w-full" :style="'max-width:' + ((step===0 && !introConfirmed) ? '58rem' : '34rem') + '; transition:max-width 0.4s cubic-bezier(0.4,0,0.2,1)'">
+    <div class="w-full" :style="'max-width:' + ((step===0 && setupMode === 'new' && !introConfirmed) ? '58rem' : '34rem') + '; transition:max-width 0.4s cubic-bezier(0.4,0,0.2,1)'">
+
+      <!-- ── Pre-step: New install vs Connect to existing ────────────── -->
+      <div x-show="step===0 && setupMode === null" x-transition.opacity.duration.300ms>
+        <div class="text-center mb-8">
+          <h1 class="text-2xl font-bold mb-2">Welcome to Logos</h1>
+          <p class="text-gray-400 text-sm">How would you like to get started?</p>
+        </div>
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 max-w-xl mx-auto">
+          <!-- New install -->
+          <button @click="setupMode = 'new'"
+            class="text-left p-6 rounded-2xl border border-gray-700 bg-gray-900 hover:border-indigo-500 hover:bg-gray-800/80 transition-all duration-200 group">
+            <div class="w-10 h-10 rounded-xl bg-indigo-950 border border-indigo-800 flex items-center justify-center mb-4 group-hover:bg-indigo-900 transition-colors">
+              <svg class="w-5 h-5 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 12h14M12 5l7 7-7 7"/>
+              </svg>
+            </div>
+            <div class="font-semibold text-white mb-1">Set up a new server</div>
+            <div class="text-xs text-gray-400 leading-relaxed">
+              First-time install. Configure inference, agents, and your account on this machine.
+            </div>
+          </button>
+          <!-- Connect to existing -->
+          <button @click="setupMode = 'connect'; startConnectScan()"
+            class="text-left p-6 rounded-2xl border border-gray-700 bg-gray-900 hover:border-indigo-500 hover:bg-gray-800/80 transition-all duration-200 group">
+            <div class="w-10 h-10 rounded-xl bg-indigo-950 border border-indigo-800 flex items-center justify-center mb-4 group-hover:bg-indigo-900 transition-colors">
+              <svg class="w-5 h-5 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1"/>
+              </svg>
+            </div>
+            <div class="font-semibold text-white mb-1">Connect to existing server</div>
+            <div class="text-xs text-gray-400 leading-relaxed">
+              Someone else runs the Logos server. Enter the URL or let us find it on your network.
+            </div>
+          </button>
+        </div>
+      </div>
+
+      <!-- ── Connect-to-existing flow ──────────────────────────────────── -->
+      <div x-show="step===0 && setupMode === 'connect'" x-cloak x-transition.opacity.duration.300ms>
+        <div class="text-center mb-6">
+          <h2 class="text-xl font-bold mb-2">Connect to a Logos server</h2>
+          <p class="text-gray-400 text-sm">We&rsquo;ll scan your local network, or you can enter a URL directly.</p>
+        </div>
+
+        <!-- LAN scan results -->
+        <div class="mb-5">
+          <div class="flex items-center gap-2 mb-3 text-xs text-gray-500 uppercase tracking-wider font-semibold">
+            <span>Nearby servers</span>
+            <span x-show="connectScanning" class="inline-block w-3 h-3 border border-indigo-500 border-t-transparent rounded-full animate-spin"></span>
+            <span x-show="!connectScanning && connectInstances.length === 0" class="text-gray-700">— none found</span>
+          </div>
+          <template x-if="connectInstances.length > 0">
+            <div class="space-y-2">
+              <template x-for="inst in connectInstances" :key="inst.url">
+                <button @click="connectUrl = inst.url"
+                  class="w-full text-left flex items-center justify-between px-4 py-3 rounded-xl border transition-all duration-150"
+                  :class="connectUrl === inst.url ? 'border-indigo-500 bg-indigo-950/40 text-white' : 'border-gray-700 bg-gray-900 hover:border-gray-600 text-gray-300'">
+                  <div>
+                    <div class="text-sm font-medium" x-text="inst.url"></div>
+                    <div class="text-xs text-gray-500 mt-0.5" x-text="inst.setup_completed ? 'Ready' : 'Needs setup'"></div>
+                  </div>
+                  <svg x-show="connectUrl === inst.url" class="w-4 h-4 text-indigo-400 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                    <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/>
+                  </svg>
+                </button>
+              </template>
+            </div>
+          </template>
+        </div>
+
+        <!-- Manual URL entry -->
+        <div class="mb-5">
+          <label class="block text-xs text-gray-500 uppercase tracking-wider font-semibold mb-2">Server URL</label>
+          <input x-model="connectUrl" type="url" placeholder="http://192.168.1.x:8080"
+            class="w-full bg-gray-900 border border-gray-700 rounded-xl px-4 py-3 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-indigo-500 transition-colors">
+        </div>
+
+        <div x-show="connectError" class="mb-4 px-4 py-3 rounded-xl bg-red-950/40 border border-red-800 text-red-400 text-sm" x-text="connectError"></div>
+
+        <div class="flex items-center gap-3">
+          <button @click="setupMode = null; connectError = ''" class="text-sm text-gray-500 hover:text-gray-300 transition-colors">&larr; Back</button>
+          <button @click="saveRemoteConnect()" :disabled="!connectUrl || connectSaving"
+            class="flex-1 py-3 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 disabled:cursor-not-allowed text-white font-semibold text-sm transition-all duration-200">
+            <span x-show="!connectSaving">Connect &rarr;</span>
+            <span x-show="connectSaving">Connecting&hellip;</span>
+          </button>
+        </div>
+      </div>
 
       <!-- ── Step 0a: Setup overview (wide intro) ─────────────────────── -->
-      <div x-show="step===0 && !introConfirmed" x-transition.opacity.duration.300ms>
+      <div x-show="step===0 && setupMode === 'new' && !introConfirmed" x-transition.opacity.duration.300ms>
         <div class="text-center mb-7">
           <h1 class="text-2xl font-bold mb-2">Welcome to Logos</h1>
           <p class="text-gray-400 text-sm">A control plane for agentic AI.</p>
@@ -6425,7 +6513,7 @@ _SETUP_HTML = """<!DOCTYPE html>
       </div>
 
       <!-- ── Step 0b: Track selection ──────────────────────────────────── -->
-      <div x-show="step===0 && introConfirmed" x-cloak x-transition.opacity.duration.300ms>
+      <div x-show="step===0 && setupMode === 'new' && introConfirmed" x-cloak x-transition.opacity.duration.300ms>
         <div class="text-center mb-6">
           <h2 class="text-xl font-bold mb-2">One decision shapes what follows</h2>
           <p class="text-gray-400 text-sm">Choose your inference path to begin.</p>
@@ -7459,6 +7547,16 @@ function setup() {
     step: 0,
     track: null,
 
+    // Pre-step: mode selection (null = choice screen, 'new' = new install, 'connect' = connect to existing)
+    setupMode: null,
+
+    // Connect-to-existing state
+    connectScanning: false,
+    connectInstances: [],
+    connectUrl: '',
+    connectError: '',
+    connectSaving: false,
+
     // Step 0 — intro panel
     introConfirmed: false,
     setupSteps: [
@@ -7742,6 +7840,44 @@ function setup() {
           setupUsername:          this.setupUsername,
         }));
       } catch {}
+    },
+
+    async startConnectScan() {
+      this.connectScanning = true;
+      this.connectInstances = [];
+      try {
+        const r = await fetch('/api/setup/discover');
+        const d = await r.json();
+        this.connectInstances = (d.instances || []).filter(i => i.setup_completed);
+        if (this.connectInstances.length === 1) this.connectUrl = this.connectInstances[0].url;
+      } catch {}
+      this.connectScanning = false;
+    },
+
+    async saveRemoteConnect() {
+      if (!this.connectUrl) return;
+      this.connectSaving = true;
+      this.connectError = '';
+      try {
+        const r = await fetch('/api/setup/set-remote', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ url: this.connectUrl }),
+        });
+        const d = await r.json();
+        if (!r.ok) {
+          const msg = d.error === 'unreachable' ? "Can't reach that server — check the URL and try again."
+                    : d.error === 'not_logos' ? "That URL doesn't look like a Logos server."
+                    : (d.detail || d.error || "Connection failed.");
+          this.connectError = msg;
+        } else {
+          // Redirect to the remote Logos instance
+          window.location.href = d.url;
+        }
+      } catch (e) {
+        this.connectError = "Network error — " + e.message;
+      }
+      this.connectSaving = false;
     },
 
     selectTrack(track) {
@@ -8968,8 +9104,11 @@ async def _handle_health(request: web.Request) -> web.Response:
     runner: Any = request.app["runner"]
     sessions = runner.session_store.list_sessions()
     uptime = int(time.time() - _start_time)
+    from gateway.auth.db import is_setup_completed as _isc
     return web.json_response({
         "status": "ok",
+        "product": "logos",
+        "setup_completed": _isc(),
         "sessions": len(sessions),
         "uptime_s": uptime,
         "platform_stats": getattr(runner, "_platform_stats", {}),
@@ -9732,7 +9871,9 @@ async def start_http_api(runner: Any, port: int = 8080) -> None:
     app.router.add_post("/api/setup/compare", _sh.handle_setup_compare)
     app.router.add_post("/api/setup/test-k8s", _sh.handle_setup_test_k8s)
     app.router.add_post("/api/setup/test",    _sh.handle_setup_test)
-    app.router.add_post("/api/setup/complete", _sh.handle_setup_complete)
+    app.router.add_post("/api/setup/complete",    _sh.handle_setup_complete)
+    app.router.add_get("/api/setup/discover",     _sh.handle_setup_discover)
+    app.router.add_post("/api/setup/set-remote",  _sh.handle_setup_set_remote)
     app.router.add_post("/api/setup/reset",
         require_csrf(require_permission("admin")(_handle_setup_reset)))
 
