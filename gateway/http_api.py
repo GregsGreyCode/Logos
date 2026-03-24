@@ -6618,7 +6618,7 @@ _SETUP_HTML = """<!DOCTYPE html>
       <!-- ── Step 1: Connect model server ───────────────────────────── -->
       <div x-show="step===1" x-cloak>
         <div class="mb-5">
-          <h2 class="text-xl font-bold mb-1">Choose where your agents will run</h2>
+          <h2 class="text-xl font-bold mb-1">Connect your model servers</h2>
           <p class="text-gray-400 text-sm">Logos scanned for local inference servers and found the results below. Select every server you want agents to route across, then continue to benchmark.</p>
         </div>
 
@@ -6645,7 +6645,7 @@ _SETUP_HTML = """<!DOCTYPE html>
                     <!-- Endpoint rows -->
                     <div class="space-y-2">
                       <template x-for="s in group.servers" :key="s.endpoint">
-                        <div class="flex items-start gap-3 pl-1">
+                        <div class="flex items-start gap-3 pl-1" x-data="{ localKey: '' }">
                           <button @click="toggleServer(s)"
                             :class="isServerSelected(s) ? 'bg-indigo-500 border-indigo-500' : 'border-gray-600 hover:border-gray-400 cursor-pointer'"
                             class="w-4 h-4 rounded border-2 flex items-center justify-center flex-shrink-0 mt-0.5 transition-all">
@@ -6683,15 +6683,23 @@ _SETUP_HTML = """<!DOCTYPE html>
                                   class="text-[10px] text-gray-700 hover:text-gray-500 transition-colors">Clear key</button>
                               </div>
                             </div>
-                            <!-- Auth required: key must be provided to connect -->
-                            <div x-show="s.status==='auth_required'" class="mt-2 space-y-1.5" x-data="{ localKey: '' }">
-                              <p class="text-xs text-gray-500">Authentication is enabled on this endpoint — enter the API key configured in LM Studio.</p>
+                            <!-- Auth required: enter key to connect -->
+                            <div x-show="s.status==='auth_required'" class="mt-2 space-y-2">
+                              <!-- Enforcement notice (shown after a no-key attempt failed) -->
+                              <div x-show="authEnforcedServers[s.endpoint]" class="flex items-start gap-2 p-2 rounded-lg bg-amber-950/40 border border-amber-800/50">
+                                <svg class="w-3.5 h-3.5 mt-0.5 shrink-0 text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/></svg>
+                                <span class="text-xs text-amber-300">This server requires an API key — connections without one are rejected.</span>
+                              </div>
                               <div class="flex gap-2">
-                                <input type="password" placeholder="Enter API key"
-                                  x-model="localKey"
+                                <input type="password" placeholder="API key (e.g. sk-lm-...)"
+                                  :value="localKey"
+                                  @input="localKey = $event.target.value"
+                                  @change="localKey = $event.target.value"
                                   @keydown.enter="serverKeys[s.endpoint] = localKey; retryWithKey(s)"
-                                  class="flex-1 bg-gray-950 border border-gray-700 rounded-lg px-3 py-1.5 text-xs text-white placeholder-gray-600 focus:outline-none focus:border-indigo-500 font-mono">
-                                <button @click="serverKeys[s.endpoint] = localKey; retryWithKey(s)" :disabled="!localKey || retryingServers[s.endpoint]"
+                                  :class="authEnforcedServers[s.endpoint] ? 'border-amber-700 focus:border-amber-500' : 'border-gray-700 focus:border-indigo-500'"
+                                  class="flex-1 bg-gray-950 border rounded-lg px-3 py-1.5 text-xs text-white placeholder-gray-600 focus:outline-none font-mono transition-colors">
+                                <button @click="serverKeys[s.endpoint] = localKey; retryWithKey(s)"
+                                  :disabled="!localKey || retryingServers[s.endpoint]"
                                   class="btn-primary px-3 py-1.5 rounded-lg text-xs flex-shrink-0 disabled:opacity-40 flex items-center gap-1.5">
                                   <span x-show="!retryingServers[s.endpoint]">Connect</span>
                                   <template x-if="retryingServers[s.endpoint]">
@@ -6699,9 +6707,14 @@ _SETUP_HTML = """<!DOCTYPE html>
                                   </template>
                                 </button>
                               </div>
-                              <p x-show="retryErrors[s.endpoint]" class="text-xs text-red-400" x-text="retryErrors[s.endpoint]"></p>
-                              <button @click="serverKeys[s.endpoint] = ''; retryWithKey(s)" :disabled="retryingServers[s.endpoint]"
-                                class="text-[10px] text-gray-700 hover:text-gray-500 disabled:opacity-40 transition-colors">Connect without authentication</button>
+                              <p x-show="retryErrors[s.endpoint] && localKey" class="text-xs text-red-400" x-text="retryErrors[s.endpoint]"></p>
+                              <!-- Try without auth — hidden once we know auth is enforced -->
+                              <button x-show="!authEnforcedServers[s.endpoint]"
+                                @click="serverKeys[s.endpoint] = ''; retryWithKey(s)"
+                                :disabled="retryingServers[s.endpoint]"
+                                class="w-full py-1.5 px-3 rounded-lg text-xs border border-gray-700 text-gray-400 hover:text-white hover:border-gray-500 disabled:opacity-40 transition-colors text-left">
+                                No API key? Try connecting without one &rarr;
+                              </button>
                             </div>
                           </div>
                         </div>
@@ -6719,7 +6732,7 @@ _SETUP_HTML = """<!DOCTYPE html>
               <div class="text-[10px] text-gray-500 uppercase tracking-wider font-semibold mb-2 px-1">Remote Servers</div>
               <div class="space-y-2">
                 <template x-for="s in remoteServers" :key="s.endpoint">
-                  <div class="p-4 rounded-xl border transition-all"
+                  <div class="p-4 rounded-xl border transition-all" x-data="{ localKey: '' }"
                     :class="isServerSelected(s) ? 'border-indigo-500/60 bg-indigo-950/20' : 'border-gray-700 bg-gray-900'">
                     <div class="flex items-start gap-3">
                       <button @click="toggleServer(s)"
@@ -6746,14 +6759,22 @@ _SETUP_HTML = """<!DOCTYPE html>
                         <div class="text-xs text-gray-600 font-mono mt-0.5 truncate" x-text="s.endpoint.replace('/v1','')"></div>
                         <div x-show="s.status==='up'" class="text-xs text-gray-600 mt-0.5"
                           x-text="s.models.length===0 ? 'No models loaded yet' : s.models.length + ' model' + (s.models.length!==1?'s':'') + ' ready'"></div>
-                        <div x-show="s.status==='auth_required'" class="mt-2 space-y-1.5" x-data="{ localKey: '' }">
-                          <p class="text-xs text-gray-500">This server requires an API key to connect.</p>
+                        <div x-show="s.status==='auth_required'" class="mt-2 space-y-2">
+                          <!-- Enforcement notice (shown after a no-key attempt failed) -->
+                          <div x-show="authEnforcedServers[s.endpoint]" class="flex items-start gap-2 p-2 rounded-lg bg-amber-950/40 border border-amber-800/50">
+                            <svg class="w-3.5 h-3.5 mt-0.5 shrink-0 text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/></svg>
+                            <span class="text-xs text-amber-300">This server requires an API key — connections without one are rejected.</span>
+                          </div>
                           <div class="flex gap-2">
-                            <input type="password" placeholder="Enter API key"
-                              x-model="localKey"
+                            <input type="password" placeholder="API key (e.g. sk-lm-...)"
+                              :value="localKey"
+                              @input="localKey = $event.target.value"
+                              @change="localKey = $event.target.value"
                               @keydown.enter="serverKeys[s.endpoint] = localKey; retryWithKey(s)"
-                              class="flex-1 bg-gray-950 border border-gray-700 rounded-lg px-3 py-1.5 text-xs text-white placeholder-gray-600 focus:outline-none focus:border-indigo-500 font-mono">
-                            <button @click="serverKeys[s.endpoint] = localKey; retryWithKey(s)" :disabled="!localKey || retryingServers[s.endpoint]"
+                              :class="authEnforcedServers[s.endpoint] ? 'border-amber-700 focus:border-amber-500' : 'border-gray-700 focus:border-indigo-500'"
+                              class="flex-1 bg-gray-950 border rounded-lg px-3 py-1.5 text-xs text-white placeholder-gray-600 focus:outline-none font-mono transition-colors">
+                            <button @click="serverKeys[s.endpoint] = localKey; retryWithKey(s)"
+                              :disabled="!localKey || retryingServers[s.endpoint]"
                               class="btn-primary px-3 py-1.5 rounded-lg text-xs flex-shrink-0 disabled:opacity-40 flex items-center gap-1.5">
                               <span x-show="!retryingServers[s.endpoint]">Connect</span>
                               <template x-if="retryingServers[s.endpoint]">
@@ -6761,8 +6782,14 @@ _SETUP_HTML = """<!DOCTYPE html>
                               </template>
                             </button>
                           </div>
-                          <p x-show="retryErrors[s.endpoint]" class="text-xs text-red-400" x-text="retryErrors[s.endpoint]"></p>
-                          <button @click="serverKeys[s.endpoint]=''; retryWithKey(s)" :disabled="retryingServers[s.endpoint]" class="text-xs text-gray-700 hover:text-gray-500 disabled:opacity-40 transition-colors">Connect without authentication (not recommended)</button>
+                          <p x-show="retryErrors[s.endpoint] && localKey" class="text-xs text-red-400" x-text="retryErrors[s.endpoint]"></p>
+                          <!-- Try without auth — hidden once we know auth is enforced -->
+                          <button x-show="!authEnforcedServers[s.endpoint]"
+                            @click="serverKeys[s.endpoint] = ''; retryWithKey(s)"
+                            :disabled="retryingServers[s.endpoint]"
+                            class="w-full py-1.5 px-3 rounded-lg text-xs border border-gray-700 text-gray-400 hover:text-white hover:border-gray-500 disabled:opacity-40 transition-colors text-left">
+                            No API key? Try connecting without one &rarr;
+                          </button>
                         </div>
                       </div>
                     </div>
@@ -7743,6 +7770,7 @@ function setup() {
     retryingServers: {},
     retryErrors: {},
     serverKeys: {},
+    authEnforcedServers: {},
     osPlatform: 'mac',
     copied: '',
 
@@ -8134,11 +8162,14 @@ function setup() {
           this.activeServer = this.selectedServers[0] || null;
         } else {
           const msg = result?.status === 'auth_required'
-            ? 'Incorrect API key — server still requires authentication.'
+            ? (key ? 'Incorrect API key — server still requires authentication.' : 'This server requires authentication — enter the API key above.')
             : result?.status === 'down'
             ? 'Server did not respond. Check it is still running.'
             : 'Could not connect. Check the key and try again.';
           this.retryErrors = { ...this.retryErrors, [ep]: msg };
+          if (result?.status === 'auth_required' && !key) {
+            this.authEnforcedServers = { ...this.authEnforcedServers, [ep]: true };
+          }
         }
       } catch(e) {
         this.retryErrors = { ...this.retryErrors, [ep]: 'Connection error: ' + e.message };
