@@ -200,10 +200,16 @@ def _local_subnet() -> str | None:
     return None
 
 
-async def _scan_host(session: aiohttp.ClientSession, ip: str) -> list[dict]:
-    """Check both model-server ports on a single IP; return found servers."""
+async def _scan_host(
+    session: aiohttp.ClientSession,
+    ip: str,
+    skip_ports: set[int] | None = None,
+) -> list[dict]:
+    """Check model-server ports on a single IP; return found servers."""
     found = []
     for port in _SCAN_PORTS:
+        if skip_ports and port in skip_ports:
+            continue
         result = await _probe_server(
             session, f"http://{ip}:{port}", api_key=None, timeout=_SCAN_TIMEOUT
         )
@@ -258,6 +264,13 @@ async def handle_setup_scan(request: web.Request) -> web.Response:
     Returns all discovered servers sorted by IP.  Localhost is always
     checked first and prepended to the results so it ranks highest.
     """
+    # The gateway itself listens on HERMES_PORT (default 8080).  Exclude it from
+    # the scan so Logos is never mistakenly identified as an "LM Studio (auth required)"
+    # server — the /v1/models endpoint is present on the gateway too (OpenAI-compat),
+    # and it returns 401 without a JWT, which looks identical to LM Studio with auth on.
+    own_port = int(os.environ.get("HERMES_PORT", request.url.port or 8080))
+    localhost_ports = [p for p in _SCAN_PORTS if p != own_port]
+
     subnet = _local_subnet()
     results: list[dict] = []
 
@@ -265,21 +278,22 @@ async def handle_setup_scan(request: web.Request) -> web.Response:
     async with aiohttp.ClientSession(connector=connector) as session:
         # Always check localhost first (covers Docker / WSL scenarios)
         local_results = await asyncio.gather(
-            _probe_server(session, "http://localhost:11434", None),
-            _probe_server(session, "http://localhost:1234", None),
-            _probe_server(session, "http://localhost:8080", None),
+            *[_probe_server(session, f"http://localhost:{p}", None) for p in localhost_ports]
         )
         for r in local_results:
             if r["status"] in ("up", "auth_required"):
                 results.append(r)
 
         if subnet:
+            own_ips = _own_ips()
             hosts = [f"{subnet}.{i}" for i in range(1, 255)]
             sem = asyncio.Semaphore(_SCAN_CONCURRENCY)
 
             async def probe_with_sem(ip: str) -> list[dict]:
                 async with sem:
-                    return await _scan_host(session, ip)
+                    # Skip the gateway's own port on this machine's LAN IPs
+                    skip = {own_port} if ip in own_ips else None
+                    return await _scan_host(session, ip, skip_ports=skip)
 
             batches = await asyncio.gather(*[probe_with_sem(h) for h in hosts])
             for batch in batches:

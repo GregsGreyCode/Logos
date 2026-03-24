@@ -6656,11 +6656,18 @@ _SETUP_HTML = """<!DOCTYPE html>
                               <div class="flex gap-2">
                                 <input type="password" placeholder="Enter API key"
                                   x-model="s._apiKey"
+                                  @keydown.enter="retryWithKey(s)"
                                   class="flex-1 bg-gray-950 border border-gray-700 rounded-lg px-3 py-1.5 text-xs text-white placeholder-gray-600 focus:outline-none focus:border-indigo-500 font-mono">
-                                <button @click="retryWithKey(s)" :disabled="!s._apiKey"
-                                  class="btn-primary px-3 py-1.5 rounded-lg text-xs flex-shrink-0 disabled:opacity-40">Connect</button>
+                                <button @click="retryWithKey(s)" :disabled="!s._apiKey || retryingServers[s.endpoint]"
+                                  class="btn-primary px-3 py-1.5 rounded-lg text-xs flex-shrink-0 disabled:opacity-40 flex items-center gap-1.5">
+                                  <span x-show="!retryingServers[s.endpoint]">Connect</span>
+                                  <template x-if="retryingServers[s.endpoint]">
+                                    <span class="flex items-center gap-1.5"><div class="w-3 h-3 border-2 border-white/40 border-t-white rounded-full animate-spin"></div>Connecting&hellip;</span>
+                                  </template>
+                                </button>
                               </div>
-                              <button @click="s._apiKey=''; retryWithKey(s)" class="text-xs text-gray-700 hover:text-gray-500 transition-colors">Connect without authentication (not recommended)</button>
+                              <p x-show="retryErrors[s.endpoint]" class="text-xs text-red-400" x-text="retryErrors[s.endpoint]"></p>
+                              <button @click="s._apiKey=''; retryWithKey(s)" :disabled="retryingServers[s.endpoint]" class="text-xs text-gray-700 hover:text-gray-500 disabled:opacity-40 transition-colors">Connect without authentication (not recommended)</button>
                             </div>
                           </div>
                         </div>
@@ -6710,11 +6717,18 @@ _SETUP_HTML = """<!DOCTYPE html>
                           <div class="flex gap-2">
                             <input type="password" placeholder="Enter API key"
                               x-model="s._apiKey"
+                              @keydown.enter="retryWithKey(s)"
                               class="flex-1 bg-gray-950 border border-gray-700 rounded-lg px-3 py-1.5 text-xs text-white placeholder-gray-600 focus:outline-none focus:border-indigo-500 font-mono">
-                            <button @click="retryWithKey(s)" :disabled="!s._apiKey"
-                              class="btn-primary px-3 py-1.5 rounded-lg text-xs flex-shrink-0 disabled:opacity-40">Connect</button>
+                            <button @click="retryWithKey(s)" :disabled="!s._apiKey || retryingServers[s.endpoint]"
+                              class="btn-primary px-3 py-1.5 rounded-lg text-xs flex-shrink-0 disabled:opacity-40 flex items-center gap-1.5">
+                              <span x-show="!retryingServers[s.endpoint]">Connect</span>
+                              <template x-if="retryingServers[s.endpoint]">
+                                <span class="flex items-center gap-1.5"><div class="w-3 h-3 border-2 border-white/40 border-t-white rounded-full animate-spin"></div>Connecting&hellip;</span>
+                              </template>
+                            </button>
                           </div>
-                          <button @click="s._apiKey=''; retryWithKey(s)" class="text-xs text-gray-700 hover:text-gray-500 transition-colors">Connect without authentication (not recommended)</button>
+                          <p x-show="retryErrors[s.endpoint]" class="text-xs text-red-400" x-text="retryErrors[s.endpoint]"></p>
+                          <button @click="s._apiKey=''; retryWithKey(s)" :disabled="retryingServers[s.endpoint]" class="text-xs text-gray-700 hover:text-gray-500 disabled:opacity-40 transition-colors">Connect without authentication (not recommended)</button>
                         </div>
                       </div>
                     </div>
@@ -7682,6 +7696,8 @@ function setup() {
     manualKey: '',
     manualProbing: false,
     manualError: '',
+    retryingServers: {},
+    retryErrors: {},
     osPlatform: 'mac',
     copied: '',
 
@@ -7867,8 +7883,10 @@ function setup() {
             this.track          = s.track ?? null;
             if (s.foundServers?.length) {
               this.foundServers    = s.foundServers;
-              this.selectedServers = s.selectedServers || [];
-              this.activeServer    = s.activeServer    || null;
+              // Only restore servers that are confirmed up — never restore auth_required
+              // servers (they'd contaminate the benchmark with unverified/wrong keys).
+              this.selectedServers = (s.selectedServers || []).filter(x => x.status === 'up');
+              this.activeServer    = this.selectedServers[0] || null;
               this.autoScanDone    = true;
             }
             if (s.compareDone) {
@@ -8044,23 +8062,40 @@ function setup() {
     },
 
     async retryWithKey(s) {
-      const base = s.endpoint.replace('/v1', '');
+      const ep = s.endpoint;
+      this.retryingServers = { ...this.retryingServers, [ep]: true };
+      this.retryErrors = { ...this.retryErrors, [ep]: '' };
+      const base = ep.replace('/v1', '');
       try {
-        const params = new URLSearchParams({ url: base, prefer: 'lmstudio', api_key: s._apiKey });
+        const params = new URLSearchParams({ url: base, prefer: s.type || 'lmstudio' });
+        if (s._apiKey) params.set('api_key', s._apiKey);
         const r = await fetch('/api/setup/probe?' + params, { credentials: 'include' });
         const d = await r.json();
         const result = (d.servers || [])[0];
         if (result && result.status === 'up') {
-          const idx = this.foundServers.findIndex(x => x.endpoint === s.endpoint);
-          if (idx >= 0) this.foundServers[idx] = { ...result, _apiKey: s._apiKey };
-          else this.foundServers.push({ ...result, _apiKey: s._apiKey });
-          const updated = this.foundServers[idx >= 0 ? idx : this.foundServers.length - 1];
-          if (!this.selectedServers.find(x => x.endpoint === updated.endpoint)) {
-            this.selectedServers.push(updated);
+          const updated = { ...result, _apiKey: s._apiKey };
+          const idx = this.foundServers.findIndex(x => x.endpoint === ep);
+          if (idx >= 0) this.foundServers.splice(idx, 1, updated);
+          else this.foundServers.push(updated);
+          if (!this.selectedServers.find(x => x.endpoint === ep)) {
+            this.selectedServers = [...this.selectedServers, updated];
+          } else {
+            const si = this.selectedServers.findIndex(x => x.endpoint === ep);
+            if (si >= 0) this.selectedServers.splice(si, 1, updated);
           }
           this.activeServer = this.selectedServers[0] || null;
+        } else {
+          const msg = result?.status === 'auth_required'
+            ? 'Incorrect API key — server still requires authentication.'
+            : result?.status === 'down'
+            ? 'Server did not respond. Check it is still running.'
+            : 'Could not connect. Check the key and try again.';
+          this.retryErrors = { ...this.retryErrors, [ep]: msg };
         }
-      } catch {}
+      } catch(e) {
+        this.retryErrors = { ...this.retryErrors, [ep]: 'Connection error: ' + e.message };
+      }
+      this.retryingServers = { ...this.retryingServers, [ep]: false };
     },
 
     async addManualServer() {
@@ -8200,6 +8235,10 @@ function setup() {
     },
 
     async runCompare() {
+      // Safety net: drop any auth_required servers that may have survived from
+      // localStorage. They were never verified, so benchmarking them would fail.
+      this.selectedServers = this.selectedServers.filter(s => s.status === 'up');
+      this.activeServer = this.selectedServers[0] || null;
       const models = this.getModels();
       try {
         if (!this.activeServer || !this.activeServer.endpoint) {
@@ -8431,6 +8470,12 @@ function setup() {
         const k = s.type || 'other';
         if (!map[k]) map[k] = { type: k, label: labels[k] || 'Local Server', servers: [] };
         map[k].servers.push(s);
+      }
+      // If a group already has at least one 'up' server, hide auth_required siblings —
+      // they're the same application on a different port, not a separate server.
+      for (const g of Object.values(map)) {
+        const hasUp = g.servers.some(s => s.status === 'up');
+        if (hasUp) g.servers = g.servers.filter(s => s.status === 'up');
       }
       return [...order.filter(k => map[k]), ...Object.keys(map).filter(k => !order.includes(k))].map(k => map[k]);
     },
