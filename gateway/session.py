@@ -198,12 +198,19 @@ def build_session_context_prompt(context: SessionContext) -> str:
         )
 
     # Connected platforms
-    platforms_list = ["local (files on this machine)"]
-    for p in context.connected_platforms:
-        if p != Platform.LOCAL:
-            platforms_list.append(f"{p.value}: Connected ✓")
-    
+    messaging_platforms = [p for p in context.connected_platforms if p != Platform.LOCAL]
+    platforms_list = ["local (files on this machine)"] + [f"{p.value}: Connected ✓" for p in messaging_platforms]
     lines.append(f"**Connected Platforms:** {', '.join(platforms_list)}")
+
+    # Onboarding hint — shown only when no external messaging is configured.
+    # Disappears automatically once a platform token is set. No DB state needed.
+    if not messaging_platforms:
+        lines.append(
+            "[No external messaging platform is configured. "
+            "On the first message of this session, offer to walk the user through "
+            "Telegram setup (search @BotFather, /newbot, paste token into Logos settings). "
+            "Takes ~3 minutes. Skip this if they decline or the topic doesn't come up naturally.]"
+        )
     
     # Home channels
     if context.home_channels:
