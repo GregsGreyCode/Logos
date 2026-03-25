@@ -7942,14 +7942,7 @@ _SETUP_HTML = """<!DOCTYPE html>
 
           <!-- Header -->
           <div class="mb-4">
-            <div class="flex items-center justify-between gap-3 mb-1">
-              <h2 class="text-xl font-bold" x-text="compareDone ? 'How your models performed' : 'Finding your best model\u2026'"></h2>
-              <button x-show="compareRunning && !compareDone"
-                @click="if (compareAbortController) { compareAbortController.abort(); }"
-                class="text-xs px-3 py-1.5 rounded border border-red-800 text-red-400 hover:text-red-300 hover:border-red-700 transition-colors shrink-0">
-                Stop
-              </button>
-            </div>
+            <h2 class="text-xl font-bold mb-1" x-text="compareDone ? 'How your models performed' : 'Finding your best model\u2026'"></h2>
             <p class="text-gray-400 text-sm" x-show="!compareDone">Testing available models on your hardware, grab a cuppa — this takes a moment.</p>
             <p class="text-gray-400 text-sm" x-show="compareDone">We&rsquo;ve pre-selected the best fit. You can override below.</p>
           </div>
@@ -7988,10 +7981,17 @@ _SETUP_HTML = """<!DOCTYPE html>
           <div class="space-y-5 mb-4">
             <template x-for="server in selectedServers" :key="server.endpoint">
               <div>
-                <!-- Server header — only shown when multiple servers are selected -->
-                <div x-show="selectedServers.length > 1" class="flex items-center gap-2 mb-2 pb-1.5 border-b border-gray-800/40">
+                <!-- Server header — always shown; stop button visible while this server is still being tested -->
+                <div class="flex items-center gap-2 mb-2 pb-1.5 border-b border-gray-800/40">
                   <span class="text-xs font-semibold text-gray-300" x-text="serverName(server)"></span>
-                  <span class="text-[11px] text-gray-600 font-mono" x-text="server.endpoint"></span>
+                  <span class="text-[11px] text-gray-600 font-mono truncate flex-1" x-text="server.endpoint"></span>
+                  <button
+                    x-show="compareRunning && !compareSkippedServers[server.endpoint] && compareTargetsForServer(server.endpoint).some(mid => !compareResults[mid])"
+                    @click.stop="stopServerBenchmark(server.endpoint)"
+                    class="text-[10px] px-1.5 py-0.5 rounded border border-red-900 text-red-500 hover:text-red-400 hover:border-red-700 transition-colors shrink-0 leading-tight">
+                    Stop
+                  </button>
+                  <span x-show="compareSkippedServers[server.endpoint]" class="text-[10px] text-gray-600 shrink-0">stopped</span>
                 </div>
 
                 <!-- Model rows for this server -->
@@ -8796,6 +8796,7 @@ function setup() {
 
     // Step 2 — auto-compare
     compareAbortController: null,
+    compareSkippedServers: {},   // ep → true when user stops that server
     compareRunning: false,
     compareDone: false,
     compareTargets: [],
@@ -9311,6 +9312,7 @@ function setup() {
       this.compareAbortController = new AbortController();
       this.compareRunning     = true;
       this.compareDone        = false;
+      this.compareSkippedServers  = {};
       this.compareTargets     = [];
       this.compareResults     = {};
       this.compareTesting         = null;
@@ -9324,6 +9326,16 @@ function setup() {
       this.compareExpanded        = null;
       this.compareTtftWarnings    = [];
       this.runCompare();
+    },
+
+    stopServerBenchmark(ep) {
+      this.compareSkippedServers = { ...this.compareSkippedServers, [ep]: true };
+      // Immediately mark all unresulted models on this server as skipped
+      const skipped = {};
+      for (const mid of this.compareTargetsForServer(ep)) {
+        if (!this.compareResults[mid]) skipped[mid] = { model: mid, skipped: true, error: 'Stopped' };
+      }
+      if (Object.keys(skipped).length) this.compareResults = { ...this.compareResults, ...skipped };
     },
 
     async retryModel(mid) {
@@ -9437,7 +9449,12 @@ function setup() {
             try {
               const ev = JSON.parse(line.slice(6));
               if (ev.targets)       { this.compareTargets = ev.targets; }
-              if (ev.testing)       { this.compareTesting = ev.testing; this.compareTestingEndpoint = ev.testing_endpoint || null; }
+              if (ev.testing) {
+                const ep = ev.testing_endpoint || null;
+                if (!ep || !this.compareSkippedServers[ep]) {
+                  this.compareTesting = ev.testing; this.compareTestingEndpoint = ep;
+                }
+              }
               if (ev.loading_model) { this.compareLoadingFor = ev.loading_model; }
               if (ev.log) {
                 this.compareLog = [...this.compareLog, ev.log];
@@ -9450,7 +9467,11 @@ function setup() {
               }
               if (ev.result) {
                 this.compareLoadingFor = null;
-                this.compareResults = { ...this.compareResults, [ev.result.model]: ev.result };
+                // Don't overwrite a skipped result with backend output for stopped servers
+                const existing = this.compareResults[ev.result.model];
+                if (!existing || !existing.skipped) {
+                  this.compareResults = { ...this.compareResults, [ev.result.model]: ev.result };
+                }
               }
               if (ev.done) {
                 this.compareRunning          = false;
