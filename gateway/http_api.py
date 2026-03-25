@@ -7413,6 +7413,7 @@ _SETUP_HTML = """<!DOCTYPE html>
                             <div class="flex items-center gap-1.5">
                               <div class="spinner-hue"><div class="w-3 h-3 border border-gray-700 border-t-indigo-400 rounded-full animate-spin"></div></div>
                               <span class="text-gray-500" x-text="compareLoadingFor === mid ? 'loading\u2026' : 'testing\u2026'"></span>
+                              <span x-show="compareTestingEndpoint" class="text-gray-700 text-[10px] font-mono truncate max-w-[120px]" x-text="compareTestingEndpoint ? (new URL(compareTestingEndpoint).host) : ''" :title="compareTestingEndpoint"></span>
                             </div>
                           </template>
                           <!-- Result -->
@@ -7552,7 +7553,11 @@ _SETUP_HTML = """<!DOCTYPE html>
             <!-- Loading model notice (global) -->
             <div x-show="compareLoadingFor" class="text-xs text-amber-400/80 px-1 flex items-center gap-1.5">
               <div class="spinner-hue"><div class="w-2.5 h-2.5 border border-amber-900 border-t-amber-400 rounded-full animate-spin"></div></div>
-              <span>Loading <span class="font-mono" x-text="compareLoadingFor"></span> into memory&hellip;</span>
+              <span>Loading <span class="font-mono" x-text="compareLoadingFor"></span>
+                <template x-if="compareTestingEndpoint">
+                  <span class="text-amber-600"> on <span class="font-mono" x-text="compareTestingEndpoint ? (new URL(compareTestingEndpoint).host) : ''"></span></span>
+                </template>
+                into memory&hellip;</span>
             </div>
           </div>
 
@@ -8148,6 +8153,7 @@ function setup() {
     compareTargets: [],
     compareResults: {},
     compareTesting: null,
+    compareTestingEndpoint: null,
     compareLoadingFor: null,
     compareRecommended: null,
     compareReason: '',
@@ -8657,8 +8663,9 @@ function setup() {
       this.compareDone        = false;
       this.compareTargets     = [];
       this.compareResults     = {};
-      this.compareTesting     = null;
-      this.compareLoadingFor  = null;
+      this.compareTesting         = null;
+      this.compareTestingEndpoint = null;
+      this.compareLoadingFor      = null;
       this.compareRecommended     = null;
       this.compareReason          = '';
       this.compareFastRecommended = null;
@@ -8700,7 +8707,7 @@ function setup() {
         if (!r.ok) {
           const errBody = await r.json().catch(() => ({ error: "HTTP " + r.status }));
           this.compareResults = { ...this.compareResults, [mid]: { model: mid, error: errBody.error || "HTTP " + r.status } };
-          this.compareTesting = null; return;
+          this.compareTesting = null; this.compareTestingEndpoint = null; return;
         }
         const reader = r.body.getReader(); const dec = new TextDecoder(); let buf = '';
         while (true) {
@@ -8720,6 +8727,7 @@ function setup() {
         this.compareResults = { ...this.compareResults, [mid]: { model: mid, error: String(err) } };
       }
       this.compareTesting = null;
+      this.compareTestingEndpoint = null;
       this.compareLoadingFor = null;
     },
 
@@ -8771,7 +8779,7 @@ function setup() {
             try {
               const ev = JSON.parse(line.slice(6));
               if (ev.targets)       { this.compareTargets = ev.targets; }
-              if (ev.testing)       { this.compareTesting = ev.testing; }
+              if (ev.testing)       { this.compareTesting = ev.testing; this.compareTestingEndpoint = ev.testing_endpoint || null; }
               if (ev.loading_model) { this.compareLoadingFor = ev.loading_model; }
               if (ev.log) {
                 this.compareLog = [...this.compareLog, ev.log];
@@ -8790,6 +8798,7 @@ function setup() {
                 this.compareRunning          = false;
                 this.compareDone             = true;
                 this.compareTesting          = null;
+                this.compareTestingEndpoint  = null;
                 this.compareLoadingFor       = null;
                 this.compareRecommended      = ev.recommendation;
                 this.compareReason           = ev.reason || '';
@@ -8819,8 +8828,9 @@ function setup() {
         if (this.compareRunning) {
           this.compareRunning    = false;
           this.compareDone       = true;
-          this.compareTesting    = null;
-          this.compareLoadingFor = null;
+          this.compareTesting         = null;
+          this.compareTestingEndpoint = null;
+          this.compareLoadingFor      = null;
           if (!this.compareReason) this.compareReason = 'Stream closed before comparison completed.';
         }
         // Ensure every selected server has a model assigned so the Continue button
