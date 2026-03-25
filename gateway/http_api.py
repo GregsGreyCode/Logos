@@ -7915,7 +7915,8 @@ _SETUP_HTML = """<!DOCTYPE html>
                         <div class="flex items-center gap-2 min-w-0 flex-wrap">
                           <!-- Global winner — shown regardless of which server row we're in -->
                           <span x-show="compareRecommended === mid && compareDone"
-                            class="spinner-hue text-[9px] px-1.5 py-0.5 rounded-full bg-indigo-900 text-indigo-300 border border-indigo-700 font-semibold uppercase tracking-wider flex-shrink-0">Best</span>
+                            class="spinner-hue text-[9px] px-1.5 py-0.5 rounded-full bg-indigo-900 text-indigo-300 border border-indigo-700 font-semibold uppercase tracking-wider flex-shrink-0"
+                            title="Highest overall score — pre-selected for you">Best</span>
                           <!-- Per-server pick — shown when this server's best is NOT the global winner -->
                           <span x-show="serverModelForServer(server.endpoint) === mid && compareRecommended !== mid && compareDone"
                             class="text-[9px] px-1.5 py-0.5 rounded-full bg-gray-800 text-gray-400 border border-gray-700 font-semibold uppercase tracking-wider flex-shrink-0"
@@ -8051,11 +8052,6 @@ _SETUP_HTML = """<!DOCTYPE html>
                             <span>Not selected: another model scored higher overall.</span>
                           </template>
                         </div>
-                        <!-- Use this model for this machine -->
-                        <button @click="pickServerModel(server.endpoint, mid); compareExpanded = null"
-                          class="text-[11px] text-indigo-400 hover:text-indigo-300 transition-colors">
-                          Use this model for this machine &rarr;
-                        </button>
                       </div>
                     </div>
                   </template>
