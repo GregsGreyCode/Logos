@@ -4487,7 +4487,7 @@ class GatewayRunner:
                 _run_error = _r.get("error")
                 finish_run(
                     _run_id,
-                    status="error" if _run_error else "completed",
+                    status="failed" if _run_error else "success",
                     final_response=_agent_final[:2000] if _agent_final else None,
                     error=str(_run_error)[:500] if _run_error else None,
                     api_calls=_r.get("api_calls", 0),
