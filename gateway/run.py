@@ -63,6 +63,11 @@ load_dotenv()
 # Bridge config.yaml values into the environment so os.getenv() picks them up.
 # config.yaml is authoritative for terminal settings — overrides .env.
 _config_path = _hermes_home / 'config.yaml'
+
+# Models confirmed loaded by this process — skip the check+load on subsequent messages.
+# LM Studio creates a :2 instance if /load is called while the model is running, so
+# we track our own loads and only call /load once per model per gateway lifetime.
+_LMS_CONFIRMED_LOADED: set[str] = set()
 if _config_path.exists():
     try:
         import yaml as _yaml
@@ -3768,27 +3773,32 @@ class GatewayRunner:
                         # Check if model is already loaded — avoid creating a second instance.
                         # LM Studio creates a new instance on every /load call regardless of
                         # whether the model is already running.
-                        _already_loaded = False
+                        _already_loaded = _lms_model in _LMS_CONFIRMED_LOADED
                         _loaded_ctx = 0
-                        try:
-                            async with _lms_http.get(
-                                f"{_lms_base}/api/v1/models",
-                                headers=_lms_headers,
-                                timeout=_aiohttp.ClientTimeout(total=5),
-                            ) as _gr:
-                                if _gr.status == 200:
-                                    _gd = await _gr.json(content_type=None)
-                                    for _inst in (_gd.get("data") or []):
-                                        _iid = (_inst.get("id") or "").lower()
-                                        if _iid == _lms_model.lower() or _lms_model.lower() in _iid:
-                                            _already_loaded = True
-                                            _loaded_ctx = int(_inst.get("max_context_length") or _inst.get("context_length") or 0)
-                                            break
-                        except Exception:
-                            pass
+                        if not _already_loaded:
+                            try:
+                                async with _lms_http.get(
+                                    f"{_lms_base}/api/v1/models",
+                                    headers=_lms_headers,
+                                    timeout=_aiohttp.ClientTimeout(total=5),
+                                ) as _gr:
+                                    if _gr.status == 200:
+                                        _gd = await _gr.json(content_type=None)
+                                        _model_lower = _lms_model.lower()
+                                        # Strip any :N suffix from returned IDs before comparing —
+                                        # a :2 instance means our model is running; treat as loaded.
+                                        for _inst in (_gd.get("data") or []):
+                                            _iid = re.sub(r":\d+$", "", (_inst.get("id") or "").lower())
+                                            if _iid == _model_lower or _model_lower in _iid or _iid in _model_lower:
+                                                _already_loaded = True
+                                                _loaded_ctx = int(_inst.get("max_context_length") or _inst.get("context_length") or 0)
+                                                break
+                            except Exception:
+                                pass
 
                         if _already_loaded and (_loaded_ctx == 0 or _loaded_ctx >= _ctx_sizes[0]):
                             # Already loaded with sufficient (or unknown) context — skip load
+                            _LMS_CONFIRMED_LOADED.add(_lms_model)
                             logger.debug("LM Studio: %s already loaded (ctx %s), skipping pre-load", _lms_model, _loaded_ctx or "?")
                         else:
                             # Not loaded or loaded with insufficient context — load/reload
@@ -3820,6 +3830,7 @@ class GatewayRunner:
                                                     _config_path.write_text(_lms_yaml.dump(_lms_cfg_now, default_flow_style=False, allow_unicode=True))
                                                 except Exception:
                                                     pass
+                                            _LMS_CONFIRMED_LOADED.add(_lms_model)
                                             break   # accepted — stop trying smaller sizes
                                         # Failed — unload before retrying smaller
                                         try:
