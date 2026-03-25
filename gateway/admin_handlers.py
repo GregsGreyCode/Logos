@@ -127,6 +127,8 @@ async def handle_machines_list(request: web.Request) -> web.Response:
     for m in machines:
         m["capabilities"]  = _caps_as_classes(auth_db.get_machine_capabilities(m["id"]))
         m["profile_count"] = auth_db.count_profiles_using_machine(m["id"])
+        # Never expose raw api_key — only signal whether one is stored
+        m["has_api_key"] = bool(m.pop("api_key", None))
     return web.json_response({"machines": machines})
 
 
@@ -173,7 +175,7 @@ async def handle_machines_patch(request: web.Request) -> web.Response:
     except Exception:
         return web.json_response({"error": "invalid_json"}, status=400)
 
-    updates = {k: body[k] for k in ("name", "endpoint_url", "description", "enabled", "default_model") if k in body}
+    updates = {k: body[k] for k in ("name", "endpoint_url", "description", "enabled", "default_model", "api_key") if k in body}
     if updates:
         auth_db.update_machine(mid, **updates)
         auth_db.write_audit_log(
@@ -184,6 +186,7 @@ async def handle_machines_patch(request: web.Request) -> web.Response:
 
     machine = auth_db.get_machine(mid)
     machine["capabilities"] = auth_db.get_machine_capabilities(mid)
+    machine["has_api_key"] = bool(machine.pop("api_key", None))
     return web.json_response({"machine": machine})
 
 
