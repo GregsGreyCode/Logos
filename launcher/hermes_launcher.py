@@ -483,17 +483,31 @@ def _apply_update(path: Path, icon) -> None:
     import subprocess
     try:
         icon.notify("Installing Logos update — this will take a moment.", "Logos Update")
-        time.sleep(1.5)
+        time.sleep(1.0)
+        # Stop the gateway first so it releases any open file handles.
+        _stop_gateway()
+        time.sleep(0.5)
+        # On Windows: force-kill any remaining logos.exe / logos-gateway.exe processes
+        # so the installer can replace locked files.  Best-effort — ignore failures.
+        if sys.platform == "win32":
+            for _proc_name in ("logos.exe", "logos-gateway.exe"):
+                try:
+                    subprocess.run(
+                        ["taskkill", "/F", "/T", "/IM", _proc_name],
+                        capture_output=True, timeout=5,
+                    )
+                except Exception:
+                    pass
+            time.sleep(0.5)
         kwargs: dict = {}
         if sys.platform == "win32":
             kwargs["creationflags"] = subprocess.DETACHED_PROCESS
         subprocess.Popen([str(path), "/SILENT", "/NORESTART"], **kwargs)
-        time.sleep(0.5)
+        time.sleep(0.3)
     except Exception as exc:
         _log(f"Update install failed: {exc}")
         icon.notify("Update failed — see logs.", "Logos Update")
         return
-    _stop_gateway()
     icon.stop()
 
 
