@@ -214,7 +214,25 @@ docker compose -f docker-compose.k3s.yml up -d
 
 ### External Kubernetes (`k8s/` manifests)
 
-Deploy Logos to an existing cluster. Agent pods run in the `hermes` namespace with full Kubernetes isolation. You can layer network policies and RBAC on top for production deployments. See [`k8s/README.md`](k8s/README.md) for deployment instructions.
+Deploy Logos to an existing cluster. Agent pods run in the `hermes` namespace with full Kubernetes isolation. You can layer network policies and RBAC on top for production deployments.
+
+**Quick start:**
+```bash
+# 1. Create the namespace and apply manifests
+kubectl apply -f k8s/
+
+# 2. Set required secrets
+kubectl create secret generic logos-secrets -n logos \
+  --from-literal=HERMES_JWT_SECRET=$(openssl rand -hex 32) \
+  --from-literal=OPENAI_API_KEY=<your-key>   # or whichever provider you use
+
+# 3. Check rollout
+kubectl rollout status deployment/logos -n logos
+```
+
+In the setup wizard, step 4: choose **Kubernetes → "Logos is inside the cluster"** and leave kubeconfig empty — the in-cluster service account is used automatically.
+
+See [`k8s/README.md`](k8s/README.md) for full manifest reference, ingress setup, and persistent volume configuration.
 
 ---
 
@@ -248,6 +266,20 @@ By default Logos binds to `0.0.0.0:8080`, making the dashboard reachable from an
 
 ## ⚡ Quick install
 
+**Which path is for me?**
+
+| I want to… | Use |
+|---|---|
+| Try Logos on Linux / macOS / WSL2 | [Bash installer](#bash-installer) |
+| Run on Windows without WSL2 | [Windows installer](#-windows-installer) |
+| Strongest self-hosted isolation (Linux host) | [Docker Compose + k3s](#docker-compose--k3s----docker-composek3syml-strongest-self-hosted-isolation) |
+| Standard Docker deployment | [Docker Compose](#docker-compose----docker-composeyml-recommended-for-most-users) |
+| Deploy to an existing Kubernetes cluster | [External Kubernetes](#external-kubernetes-k8s-manifests) |
+
+---
+
+### Bash installer
+
 > **Before running:** you can inspect the installer first:
 > ```bash
 > curl -fsSL https://raw.githubusercontent.com/GregsGreyCode/logos/main/scripts/install.sh | less
@@ -259,9 +291,32 @@ curl -fsSL https://raw.githubusercontent.com/GregsGreyCode/logos/main/scripts/in
 
 Works on Linux, macOS, and WSL2. Handles Python, Node.js, and dependencies automatically. No prerequisites except git.
 
+After the installer finishes:
+
+```bash
+# Add your API keys / JWT secret (open in any editor)
+nano ~/.logos/config.yaml   # or edit via the setup wizard at http://localhost:8080
+
+# Start Logos
+logos                       # or: python -m gateway.http_api
+```
+
+Open `http://localhost:8080` — the setup wizard launches automatically on first run.
+
 ### 🪟 Windows installer
 
-A native Windows installer (`.exe`) is available on the [GitHub Releases](https://github.com/GregsGreyCode/logos/releases) page. No WSL2 required — download, run, and Logos starts in the system tray.
+A native Windows installer (`.exe`) is available on the [GitHub Releases](https://github.com/GregsGreyCode/logos/releases) page. No WSL2 required.
+
+**What the installer does:**
+1. Installs a self-contained Python + Node.js environment under `%LOCALAPPDATA%\Logos`
+2. Creates a start menu entry and system tray icon
+3. Starts the Logos gateway automatically
+
+**After installation:**
+1. Logos opens in the system tray — right-click the icon to open the dashboard
+2. Navigate to `http://localhost:8080` in your browser
+3. The setup wizard launches automatically — it will prompt you for any API keys it needs
+4. Your configuration is saved to `%USERPROFILE%\.logos\config.yaml`
 
 ---
 
@@ -311,7 +366,16 @@ On first run, the setup wizard walks you through:
 5. Setting your policy level and workspace isolation mode
 6. Optionally connecting Telegram
 
-Your configuration lives in `~/.logos/config.yaml`.
+**Platform-specific choices in the wizard:**
+
+| Platform | Step 4 — Execution backend |
+|---|---|
+| Bare metal (Linux / macOS / Windows) | **Local** (default) |
+| Docker Compose | **Local** (agents run inside the container) |
+| Docker Compose + k3s | **Kubernetes → "Logos is outside the cluster"** |
+| External Kubernetes | **Kubernetes → "Logos is inside the cluster"** |
+
+Your configuration lives in `~/.logos/config.yaml` (Linux/macOS/WSL2) or `%USERPROFILE%\.logos\config.yaml` (Windows).
 
 ---
 
