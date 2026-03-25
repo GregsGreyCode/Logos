@@ -792,7 +792,7 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
 
     Events emitted:
       {"targets": [model_id, ...]}
-      {"testing": model_id}
+      {"testing": model_id, "testing_endpoint": endpoint}
       {"loading_model": model_id}
       {"log": "message"}
       {"result": {model, tok_s, quality_pass, ttft_ms, error?}}
@@ -929,7 +929,7 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
             server_type = spec["server_type"]
             base_url    = re.sub(r"/v1/?$", "", endpoint)
 
-            await send({"testing": model_id})
+            await send({"testing": model_id, "testing_endpoint": endpoint})
             type_label = {"lmstudio": "LM Studio", "ollama": "Ollama", "llamacpp": "llama.cpp"}.get(server_type, server_type)
             await send({"log": f"→ {model_id}  ({base_url})  [{type_label}]"})
 
