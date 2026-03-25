@@ -1210,7 +1210,7 @@ _ADMIN_HTML = """<!DOCTYPE html>
               @dragleave.prevent="chatDragOver=false"
               @drop.prevent="handleChatDrop($event)">
               <textarea x-model="chatInput"
-                @keydown.enter.exact.prevent="sendChat()"
+                @keydown.enter.prevent="if(!$event.shiftKey) sendChat()"
                 @input="autoResizeChat($el)"
                 x-ref="chatTextarea"
                 autocomplete="off"
@@ -1960,12 +1960,27 @@ _ADMIN_HTML = """<!DOCTYPE html>
             <div class="mb-3 space-y-2">
               <template x-for="(srv, ep) in capBenchServers" :key="ep">
                 <div class="flex items-center gap-2">
-                  <div class="text-xs text-gray-500 font-mono truncate flex-1" x-text="ep"></div>
-                  <div class="text-xs shrink-0"
+                  <div class="flex-1 min-w-0">
+                    <div class="text-xs text-gray-300 font-medium truncate" x-text="srv.machineName || ep"></div>
+                    <div class="text-[10px] text-gray-600 font-mono truncate" x-text="ep"></div>
+                  </div>
+                  <div class="text-xs shrink-0 text-right"
                     :class="srv.done ? (srv.error ? 'text-red-400' : 'text-green-400') : 'text-indigo-400 animate-pulse'"
                     x-text="srv.done ? (srv.error ? 'error' : (srv.best ? srv.best + ' · ' + (srv.score ?? '?') + '/6' : 'done')) : (srv.testing ? srv.testing.split(':')[0].slice(-20) + '…' : 'queued')"></div>
                 </div>
               </template>
+            </div>
+          </template>
+          <!-- Apply benchmark results -->
+          <template x-if="!capBenchRunning && Object.values(capBenchServers).some(s => s.done && s.best && s.machineId)">
+            <div class="flex items-center justify-between mt-2 mb-2 p-2.5 rounded-lg border border-gray-800 bg-gray-900/60">
+              <span class="text-xs text-gray-400">Save recommended models as machine defaults?</span>
+              <button @click="applyCapBenchResults()"
+                :disabled="capBenchApplying"
+                class="text-xs px-3 py-1 rounded border border-indigo-600 bg-indigo-900/40 text-indigo-300 hover:bg-indigo-800/50 disabled:opacity-40 transition-colors">
+                <span x-show="!capBenchApplying">Apply results</span>
+                <span x-show="capBenchApplying" class="animate-pulse">Saving…</span>
+              </button>
             </div>
           </template>
           <!-- Log stream -->
@@ -1974,7 +1989,13 @@ _ADMIN_HTML = """<!DOCTYPE html>
               <button @click="capBenchLogOpen=!capBenchLogOpen"
                 class="flex items-center gap-1.5 text-[11px] text-gray-600 hover:text-gray-400 transition-colors select-none">
                 <svg :class="capBenchLogOpen ? 'rotate-90' : ''" class="w-3 h-3 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
-                <span x-text="capBenchLogOpen ? 'Hide log' : 'Show log (' + capBenchLog.length + ' lines)'"></span>
+                <span x-text="capBenchLogOpen ? 'Hide debug log' : 'Show debug log (' + capBenchLog.length + ' lines)'"></span>
+              </button>
+              <button x-show="capBenchLogOpen" @click="navigator.clipboard.writeText(capBenchLog.join('\n')).then(()=>{ capBenchCopied=true; setTimeout(()=>capBenchCopied=false,2000); })"
+                class="flex items-center gap-1 text-[11px] transition-colors select-none"
+                :class="capBenchCopied ? 'text-green-400' : 'text-gray-600 hover:text-gray-400'">
+                <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
+                <span x-text="capBenchCopied ? 'Copied!' : 'Copy'"></span>
               </button>
             </div>
             <div x-show="capBenchLogOpen"
@@ -4263,9 +4284,11 @@ function app() {
     benchmarkNPrompts: 3,
     // capability benchmark (routing tab)
     capBenchRunning: false,
+    capBenchApplying: false,
     capBenchLog: [],
     capBenchLogOpen: false,
-    capBenchServers: {},   // ep → {done, error, testing, best, score}
+    capBenchCopied: false,
+    capBenchServers: {},   // ep → {done, error, testing, best, score, machineName, machineId}
     modelsLiveLoading: false,
     modelsLiveResult: null,
     // routing debug
@@ -5349,9 +5372,9 @@ function app() {
         }
       }));
 
-      // Initialise per-server status
+      // Initialise per-server status (include machine name for display)
       probeResults.forEach(p => {
-        this.capBenchServers = {...this.capBenchServers, [p.endpoint]: {done: false, error: false, testing: null, best: null, score: null}};
+        this.capBenchServers = {...this.capBenchServers, [p.endpoint]: {done: false, error: false, testing: null, best: null, score: null, machineName: p.machine.name, machineId: p.machine.id}};
       });
 
       const allModels = probeResults.flatMap(p =>
@@ -5410,9 +5433,17 @@ function app() {
                 }
               }
               if (ev.done) {
-                Object.keys(this.capBenchServers).forEach(ep => {
-                  this.capBenchServers = {...this.capBenchServers, [ep]: {...this.capBenchServers[ep], done: true}};
+                // Use the backend's composite-scored per-server recommendations
+                const perSrv = ev.per_server_recommendations || {};
+                const updated = {...this.capBenchServers};
+                Object.keys(updated).forEach(ep => {
+                  const rec = perSrv[ep] || perSrv[ep + '/v1'] || perSrv[ep.replace(/\/v1\/?$/, '')] || null;
+                  updated[ep] = {...updated[ep], done: true,
+                    best: (rec && rec.model) || updated[ep].best,
+                    score: updated[ep]._bestScore ?? updated[ep].score,
+                  };
                 });
+                this.capBenchServers = updated;
               }
             } catch(_) {}
           }
@@ -5421,6 +5452,25 @@ function app() {
         this.capBenchLog = [...this.capBenchLog, 'Error: ' + String(e)];
       }
       this.capBenchRunning = false;
+    },
+
+    async applyCapBenchResults() {
+      this.capBenchApplying = true;
+      try {
+        const saves = Object.values(this.capBenchServers)
+          .filter(s => s.done && s.best && s.machineId);
+        await Promise.all(saves.map(s =>
+          fetch('/admin/machines/' + s.machineId, {
+            method: 'PATCH', credentials: 'include',
+            headers: {'Content-Type':'application/json','X-CSRF-Token':getCsrfToken()},
+            body: JSON.stringify({default_model: s.best}),
+          })
+        ));
+        await this.loadAdminMachines();
+      } catch(e) {
+        console.error('applyCapBenchResults:', e);
+      }
+      this.capBenchApplying = false;
     },
 
     async runBenchmark() {
