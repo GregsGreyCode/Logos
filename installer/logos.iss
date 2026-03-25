@@ -11,6 +11,16 @@
 #ifndef MyAppVersion
   #define MyAppVersion "0.0.0"
 #endif
+; MyInstallName controls install dir and Start Menu group.
+; Canary builds override this: ISCC /DMyInstallName="Logos Canary"
+#ifndef MyInstallName
+  #define MyInstallName MyAppName
+#endif
+; MyAppId controls the Inno Setup AppId so canary installs alongside stable.
+; Canary builds override this: ISCC /DMyAppId="{CANARY-GUID}"
+#ifndef MyAppId
+  #define MyAppId "{E8A1F3D2-4B6C-4E7A-9F2B-3C5D8E1A0B4F}"
+#endif
 #define MyAppPublisher "gregsgreycode"
 #define MyAppURL "https://github.com/gregsgreycode/hermes"
 #define MyAppExeName "Logos.exe"
@@ -18,16 +28,16 @@
 #define MySourceDir "..\dist\Logos"
 
 [Setup]
-AppId={{E8A1F3D2-4B6C-4E7A-9F2B-3C5D8E1A0B4F}
-AppName={#MyAppName}
+AppId={#MyAppId}
+AppName={#MyInstallName}
 AppVersion={#MyAppVersion}
-AppVerName={#MyAppName}
+AppVerName={#MyInstallName}
 AppPublisher={#MyAppPublisher}
 AppPublisherURL={#MyAppURL}
 AppSupportURL={#MyAppURL}
 AppUpdatesURL={#MyAppURL}
-DefaultDirName={localappdata}\{#MyAppName}
-DefaultGroupName={#MyAppName}
+DefaultDirName={localappdata}\{#MyInstallName}
+DefaultGroupName={#MyInstallName}
 DisableProgramGroupPage=yes
 ; No UAC elevation required — installs to %LOCALAPPDATA%
 PrivilegesRequired=lowest

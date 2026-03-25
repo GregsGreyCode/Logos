@@ -184,7 +184,8 @@ from gateway.session import (
     build_session_context_prompt,
     build_session_key,
 )
-from gateway.delivery import DeliveryRouter, DeliveryTarget
+from gateway.delivery import DeliveryRouter
+from gateway.runs import start_run, finish_run
 from gateway.platforms.base import BasePlatformAdapter, MessageEvent, MessageType
 
 # Per-async-task session ID, propagated through the request path so every
@@ -4106,6 +4107,15 @@ class GatewayRunner:
                 "stuck": False,
             }
 
+        # Create the run record so the Runs tab shows this chat immediately
+        _run_id = start_run(
+            session_id=session_id,
+            user_id=auth_user_id,
+            user_message=message,
+            action_policy=action_policy,
+        )
+        _tool_calls_log: list = []
+
         def _step_callback_sync(iteration: int, tool_names: list) -> None:
             # Update live session status (dict writes are GIL-safe in CPython)
             if session_key and session_key in self._session_status:
@@ -4119,6 +4129,9 @@ class GatewayRunner:
                     recent.append(tool_name)
                     if len(recent) > 10:
                         recent.pop(0)
+            # Accumulate tool call log for the run record
+            for tool_name in (tool_names or []):
+                _tool_calls_log.append({"tool": tool_name, "preview": ""})
             try:
                 asyncio.run_coroutine_threadsafe(
                     _hooks_ref.emit("agent:step", {
@@ -4463,6 +4476,21 @@ class GatewayRunner:
             tracking_task.cancel()
             if session_key and session_key in self._running_agents:
                 del self._running_agents[session_key]
+
+            # Finish the run record
+            if _run_id:
+                _r = result_holder[0] or {}
+                _agent_final = _r.get("final_response") or ""
+                _run_error = _r.get("error")
+                finish_run(
+                    _run_id,
+                    status="error" if _run_error else "completed",
+                    final_response=_agent_final[:2000] if _agent_final else None,
+                    error=str(_run_error)[:500] if _run_error else None,
+                    api_calls=_r.get("api_calls", 0),
+                    model=_r.get("model"),
+                    tool_calls_log=_tool_calls_log or None,
+                )
 
             # Move completed session into the recent ring buffer
             if session_key and session_key in self._session_status:
