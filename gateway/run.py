@@ -3775,6 +3775,7 @@ class GatewayRunner:
                         # whether the model is already running.
                         _already_loaded = _lms_model in _LMS_CONFIRMED_LOADED
                         _loaded_ctx = 0
+                        _other_loaded: list[str] = []  # models in VRAM that are NOT the target
                         if not _already_loaded:
                             try:
                                 async with _lms_http.get(
@@ -3785,14 +3786,17 @@ class GatewayRunner:
                                     if _gr.status == 200:
                                         _gd = await _gr.json(content_type=None)
                                         _model_lower = _lms_model.lower()
-                                        # Strip any :N suffix from returned IDs before comparing —
-                                        # a :2 instance means our model is running; treat as loaded.
                                         for _inst in (_gd.get("data") or []):
-                                            _iid = re.sub(r":\d+$", "", (_inst.get("id") or "").lower())
+                                            _raw_iid = (_inst.get("id") or "")
+                                            # Strip any :N suffix from returned IDs before comparing —
+                                            # a :2 instance means our model is running; treat as loaded.
+                                            _iid = re.sub(r":\d+$", "", _raw_iid.lower())
                                             if _iid == _model_lower or _model_lower in _iid or _iid in _model_lower:
                                                 _already_loaded = True
                                                 _loaded_ctx = int(_inst.get("max_context_length") or _inst.get("context_length") or 0)
-                                                break
+                                            else:
+                                                # A different model is occupying VRAM — record it for eviction
+                                                _other_loaded.append(_raw_iid)
                             except Exception:
                                 pass
 
@@ -3801,6 +3805,22 @@ class GatewayRunner:
                             _LMS_CONFIRMED_LOADED.add(_lms_model)
                             logger.debug("LM Studio: %s already loaded (ctx %s), skipping pre-load", _lms_model, _loaded_ctx or "?")
                         else:
+                            # Evict any other models occupying VRAM before loading the target.
+                            # Without this, loading a new model alongside an existing one causes
+                            # OOM crashes (exit code 18446744072635812000 / CUDA OOM).
+                            for _other_id in _other_loaded:
+                                try:
+                                    async with _lms_http.post(
+                                        f"{_lms_base}/api/v1/models/unload",
+                                        headers=_lms_headers,
+                                        json={"instance_id": _other_id},
+                                        timeout=_aiohttp.ClientTimeout(total=10),
+                                    ):
+                                        pass
+                                    logger.debug("LM Studio: evicted %s before loading %s", _other_id, _lms_model)
+                                    _LMS_CONFIRMED_LOADED.discard(_other_id)
+                                except Exception:
+                                    pass
                             # Not loaded or loaded with insufficient context — load/reload
                             if _already_loaded:
                                 # Unload the insufficient-context instance first
