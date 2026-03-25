@@ -7928,7 +7928,8 @@ _SETUP_HTML = """<!DOCTYPE html>
               </summary>
               <ol class="mt-2 space-y-1.5 text-xs text-gray-400 list-none pl-4">
                 <li>1. Download a GGUF model from <span class="text-white font-medium">Hugging Face</span> (search for &ldquo;Q4_K_M GGUF&rdquo; variants of models like Qwen3 or Gemma3).</li>
-                <li>2. Restart llama-server with: <code class="text-indigo-300 font-mono">llama-server -m /path/to/model.gguf --port 8080</code></li>
+                <li>2. Restart llama-server with: <code class="text-indigo-300 font-mono">llama-server -m /path/to/model.gguf --port 8080 --ctx-size 32768</code></li>
+                <li class="text-gray-600">&rarr; <code class="font-mono">--ctx-size 32768</code> is important — the default (512&ndash;4096) is too small for the agent system prompt (~8K tokens). Use at least 16384.</li>
                 <li>3. Come back here and click Refresh.</li>
               </ol>
             </details>
