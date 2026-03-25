@@ -739,7 +739,7 @@ _ADMIN_HTML = """<!DOCTYPE html>
       @click="tab='sessions'; if(!clusterInstances.length) loadInstances()">Chats</button>
     <button class="pb-2 text-sm font-medium border-b-2 border-transparent"
       :class="tab==='instances'?'tab-active':'text-gray-400 hover:text-white'"
-      @click="tab='instances'; loadInstances(); loadSouls()">Agents</button>
+      @click="tab='instances'; loadInstances(); loadSouls(); loadToolsets()">Agents</button>
     <template x-if="can('view_runs')">
       <button class="pb-2 text-sm font-medium border-b-2 border-transparent"
         :class="tab==='runs'?'tab-active':'text-gray-400 hover:text-white'"
@@ -925,24 +925,6 @@ _ADMIN_HTML = """<!DOCTYPE html>
           <button x-show="inst.source === 'k8s' && (can('manage_instances') || authUser?.role === 'admin')"
             @click.stop="confirmDeleteInstance(inst.id.replace('k8s-', ''))"
             class="text-gray-700 hover:text-red-400 text-xs w-4 h-4 flex items-center justify-center" title="Delete instance">✕</button>
-        </div>
-      </template>
-      <template x-if="!showAddInstance">
-        <button @click="showAddInstance=true"
-          class="px-2 py-1 rounded-full text-xs text-gray-600 hover:text-gray-300 border border-dashed border-gray-700 hover:border-gray-600 transition-colors">
-          + Add agent
-        </button>
-      </template>
-      <template x-if="showAddInstance">
-        <div class="flex items-center gap-2 flex-wrap">
-          <input x-model="newInstanceName" placeholder="Name (e.g. Partner's Hermes)"
-            class="w-40 bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs text-white placeholder-gray-600 focus:outline-none focus:border-indigo-500">
-          <input x-model="newInstanceUrl" placeholder="http://192.168.1.x:30902"
-            class="w-48 bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs text-white placeholder-gray-600 focus:outline-none focus:border-indigo-500">
-          <button @click="addInstance()"
-            class="px-2 py-1 rounded bg-indigo-600 hover:bg-indigo-500 text-xs text-white font-medium">Add</button>
-          <button @click="showAddInstance=false; newInstanceName=''; newInstanceUrl=''"
-            class="text-gray-600 hover:text-gray-400 text-xs">✕</button>
         </div>
       </template>
     </div>
@@ -2494,6 +2476,39 @@ _ADMIN_HTML = """<!DOCTYPE html>
           <div class="text-xs text-gray-700 py-3">No additional agents running.</div>
         </template>
       </div>
+    </div>
+
+    <!-- Toolsets / available tools -->
+    <div class="mb-5">
+      <div class="flex items-center justify-between mb-3">
+        <div class="text-xs font-semibold text-gray-500 uppercase tracking-wider">
+          Available Tools
+          <span class="ml-1.5 text-gray-600 normal-case font-normal" x-text="toolsets.available ? '(' + toolsets.available.length + ' toolsets)' : ''"></span>
+        </div>
+        <button @click="loadToolsets()" class="text-gray-600 hover:text-gray-400 text-sm leading-none" title="Refresh">↺</button>
+      </div>
+      <template x-if="!toolsets.toolsets">
+        <div class="text-xs text-gray-700 py-2">Loading…</div>
+      </template>
+      <template x-if="toolsets.toolsets">
+        <div class="space-y-1.5">
+          <template x-for="[name, ts] in Object.entries(toolsets.toolsets || {}).sort(([a],[b]) => a.localeCompare(b))" :key="name">
+            <div class="flex items-start gap-3 px-3 py-2 rounded-lg bg-gray-900 border"
+              :class="ts.available ? 'border-gray-800' : 'border-red-900/30 opacity-60'">
+              <span class="w-1.5 h-1.5 rounded-full mt-1.5 shrink-0"
+                :class="ts.available ? 'bg-green-500' : 'bg-red-700'"></span>
+              <div class="min-w-0 flex-1">
+                <div class="text-xs font-mono text-gray-300" x-text="name"></div>
+                <div x-show="ts.description" class="text-xs text-gray-600 mt-0.5 leading-tight" x-text="ts.description"></div>
+                <div x-show="!ts.available && ts.requirements && ts.requirements.length" class="text-xs text-red-700 mt-0.5 font-mono" x-text="'needs: ' + ts.requirements.join(', ')"></div>
+              </div>
+              <span class="text-xs font-mono shrink-0 mt-0.5"
+                :class="ts.available ? 'text-gray-600' : 'text-red-800'"
+                x-text="(ts.tools || []).length + ' tools'"></span>
+            </div>
+          </template>
+        </div>
+      </template>
     </div>
 
     <!-- Pending queue -->
@@ -4098,6 +4113,7 @@ function app() {
     newInstanceUrl: '',
     // k8s instance management
     clusterInstances: [],
+    toolsets: {},
     clusterRes: {},
     instanceQueue: [],
     newInstanceRequester: '',
@@ -4617,7 +4633,14 @@ function app() {
       }).catch(() => {});
     },
 
-    // ── k8s Instances ─────────────────────────────────────────────
+    // ── k8s Instances + Toolsets ──────────────────────────────────
+
+    async loadToolsets() {
+      try {
+        const r = await fetch('/toolsets');
+        if (r.ok) this.toolsets = await r.json();
+      } catch(e) {}
+    },
 
     async loadInstances() {
       try {
@@ -9347,6 +9370,31 @@ async def _handle_status(request: web.Request) -> web.Response:
     })
 
 
+async def _handle_toolsets(request: web.Request) -> web.Response:
+    """Return available toolsets and per-tool availability for the current install."""
+    try:
+        from core.model_tools import check_tool_availability
+        from tools.registry import registry
+        available_ts, unavailable_info = check_tool_availability(quiet=True)
+        ts_meta = registry.get_available_toolsets()
+        # Enrich with description from core/toolsets.py TOOLSET_REGISTRY
+        try:
+            from core.toolsets import TOOLSET_REGISTRY
+            for name, meta in ts_meta.items():
+                reg_entry = TOOLSET_REGISTRY.get(name, {})
+                meta["description"] = reg_entry.get("description", "")
+                meta["tools"] = reg_entry.get("tools", meta.get("tools", []))
+        except Exception:
+            pass
+        return web.json_response({
+            "available": sorted(available_ts),
+            "toolsets": ts_meta,
+            "unavailable": unavailable_info,
+        })
+    except Exception as e:
+        return web.json_response({"error": str(e)}, status=500)
+
+
 async def _handle_canary_status(request: web.Request) -> web.Response:
     """Check if the canary pod is alive by probing its in-cluster health endpoint."""
     try:
@@ -10644,6 +10692,7 @@ async def start_http_api(runner: Any, port: int = 8080) -> None:
     app.router.add_put("/spawn-templates",         _handle_spawn_templates_put)
     app.router.add_delete("/spawn-templates/{id}", _handle_spawn_templates_delete)
     app.router.add_get("/status",        _handle_status)
+    app.router.add_get("/toolsets",      _handle_toolsets)
     app.router.add_get("/sessions",      _handle_sessions)
     app.router.add_post("/chat",               _handle_chat)
     app.router.add_post("/chat/transcribe",    require_csrf(_handle_transcribe))
