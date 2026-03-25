@@ -1,0 +1,28 @@
+id: general-lite
+slug: general-lite
+name: "General (Lite)"
+description: "Streamlined peer assistant for models with smaller context windows. Conversation, research, and writing — no heavy tool chains."
+category: general
+role_summary: "Lightweight general assistant optimised for constrained context windows."
+status: stable
+version: "1.0"
+created_by: community
+tags: [general, conversation, lite, low-context]
+
+toolsets:
+  enforced:
+    - memory
+  default_enabled:
+    - clarify
+    - session_search
+  optional:
+    - web
+    - todo
+    - file
+  forbidden:
+    - browser
+    - image_gen
+    - tts
+    - delegation
+    - terminal
+    - rl
