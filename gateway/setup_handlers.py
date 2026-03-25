@@ -1139,16 +1139,24 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
                         ) as _mr:
                             if _mr.status == 200:
                                 _md = await _mr.json(content_type=None)
+                                _model_id_lower = model_id.lower()
                                 for _m in _md.get("data", []):
-                                    if _m.get("id") == model_id:
+                                    _mid = (_m.get("id") or "").lower()
+                                    # LM Studio's native API IDs often include the
+                                    # quantisation suffix (.gguf) that the OpenAI-compat
+                                    # /v1/models endpoint strips.  Match on substring.
+                                    if _mid == _model_id_lower or _model_id_lower in _mid or _mid in _model_id_lower:
                                         _nc = _m.get("max_context_length")
                                         if isinstance(_nc, int) and _nc > 0:
                                             _native_ctx = _nc
+                                        await send({"log": f"  LM Studio model entry: id={_m.get('id')!r} max_context_length={_m.get('max_context_length')!r}"})
                                         break
-                    except Exception:
-                        pass
+                    except Exception as _me:
+                        await send({"log": f"  Could not read LM Studio model list: {str(_me)[:80]}"})
                     if _native_ctx:
                         await send({"log": f"  Native context (GGUF): {_native_ctx:,} tokens"})
+                    else:
+                        await send({"log": "  Native context: not found in model list — probing from 65536"})
                     # Step 2: probe downward from the native ceiling (or 65536 if unknown)
                     # to find the largest context this machine's VRAM can actually load.
                     await send({"log": "  Probing max loadable context window…"})
@@ -1682,10 +1690,8 @@ async def handle_setup_complete(request: web.Request) -> web.Response:
             if _config_path.exists():
                 with open(_config_path, encoding="utf-8") as _f:
                     _cfg = _yaml.safe_load(_f) or {}
-            if not os.getenv("HERMES_MODEL"):
-                _cfg["HERMES_MODEL"] = model
-            if not os.getenv("OPENAI_BASE_URL"):
-                _cfg["OPENAI_BASE_URL"] = endpoint
+            _cfg["HERMES_MODEL"] = model
+            _cfg["OPENAI_BASE_URL"] = endpoint
             # Persist the API key for the primary server so the agent authenticates.
             # Find it from the servers list; fall back to top-level api_key field.
             _primary_key = ""
@@ -1695,14 +1701,14 @@ async def handle_setup_complete(request: web.Request) -> web.Response:
                     break
             if not _primary_key:
                 _primary_key = (body.get("api_key") or "")
-            if _primary_key and _primary_key not in ("ollama", "") and not os.getenv("OPENAI_API_KEY"):
+            if _primary_key and _primary_key not in ("ollama", ""):
+                # Always write the key from setup — overwrite any stale key left
+                # from a previous session so the new LM Studio instance is used.
                 _cfg["OPENAI_API_KEY"] = _primary_key
                 os.environ["OPENAI_API_KEY"] = _primary_key  # live process picks it up immediately
-            # Always sync OPENAI_BASE_URL live so the agent uses it without a restart
-            if not os.getenv("OPENAI_BASE_URL"):
-                os.environ["OPENAI_BASE_URL"] = endpoint
-            if not os.getenv("HERMES_MODEL"):
-                os.environ["HERMES_MODEL"] = model
+            # Always sync live so the agent uses the new values without a restart
+            os.environ["OPENAI_BASE_URL"] = endpoint
+            os.environ["HERMES_MODEL"] = model
             # Persist the primary server type so the gateway can pre-load the model
             # with a sufficient context window before the first chat turn.
             _primary_server_type = ""
@@ -1710,7 +1716,7 @@ async def handle_setup_complete(request: web.Request) -> web.Response:
                 if (_srv.get("endpoint") or "").rstrip("/") == endpoint.rstrip("/"):
                     _primary_server_type = _srv.get("type") or ""
                     break
-            if _primary_server_type and not os.getenv("HERMES_SERVER_TYPE"):
+            if _primary_server_type:
                 _cfg["HERMES_SERVER_TYPE"] = _primary_server_type
                 os.environ["HERMES_SERVER_TYPE"] = _primary_server_type
             # Persist the chosen execution mode so restarts use the correct executor.
