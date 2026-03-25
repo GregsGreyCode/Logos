@@ -7116,6 +7116,10 @@ _SETUP_HTML = """<!DOCTYPE html>
                                       'text-red-400':    compareResults[mid].tok_s < 6,
                                     }"
                                     x-text="compareResults[mid].tok_s + ' tok/s'"></span>
+                                  <template x-if="compareResults[mid].max_context">
+                                    <span class="font-mono text-[10px] text-gray-500"
+                                      x-text="(compareResults[mid].max_context >= 1024 ? Math.round(compareResults[mid].max_context/1024)+'K' : compareResults[mid].max_context) + ' ctx'"></span>
+                                  </template>
                                   <span :class="compareResults[mid].quality_pass ? 'text-green-500' : 'text-yellow-600'"
                                     x-text="compareResults[mid].quality_pass ? '\u2713' : '\u26a0'"></span>
                                   <span x-show="compareDone" class="text-gray-700 text-[10px]"
@@ -7155,6 +7159,14 @@ _SETUP_HTML = """<!DOCTYPE html>
                           <div x-show="compareResults[mid]?.ttft_ms">
                             <span class="text-gray-600">TTFT</span>
                             <span class="ml-1.5 font-mono text-gray-300" x-text="compareResults[mid]?.ttft_ms + 'ms'"></span>
+                          </div>
+                          <div x-show="compareResults[mid]?.max_context">
+                            <span class="text-gray-600">Max context</span>
+                            <span class="ml-1.5 font-mono"
+                              :class="compareResults[mid]?.max_context >= 16384 ? 'text-green-400' : compareResults[mid]?.max_context >= 8192 ? 'text-yellow-400' : 'text-red-400'"
+                              x-text="compareResults[mid]?.max_context >= 1024 ? Math.round(compareResults[mid]?.max_context/1024)+'K tokens' : compareResults[mid]?.max_context+' tokens'"></span>
+                            <span class="ml-1 text-gray-600 text-[10px]"
+                              x-text="compareResults[mid]?.max_context >= 16384 ? '(full)' : compareResults[mid]?.max_context >= 8192 ? '(limited)' : '(very limited \u2014 may truncate agent context)'"></span>
                           </div>
                         </div>
                         <!-- Eval breakdown -->
