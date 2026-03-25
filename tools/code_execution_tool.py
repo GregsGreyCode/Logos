@@ -33,10 +33,9 @@ import uuid
 _IS_WINDOWS = platform.system() == "Windows"
 from typing import Any, Dict, List, Optional
 
-# Availability gate: UDS requires a POSIX OS
 logger = logging.getLogger(__name__)
 
-SANDBOX_AVAILABLE = sys.platform != "win32"
+SANDBOX_AVAILABLE = True  # TCP fallback means sandbox works on all platforms
 
 # The 7 tools allowed inside the sandbox. The intersection of this list
 # and the session's enabled tools determines which stubs are generated.
@@ -58,7 +57,6 @@ MAX_STDERR_BYTES = 10_000    # 10 KB
 
 
 def check_sandbox_requirements() -> bool:
-    """Code execution sandbox requires a POSIX OS for Unix domain sockets."""
     return SANDBOX_AVAILABLE
 
 
@@ -179,8 +177,13 @@ def retry(fn, max_attempts=3, delay=2):
 def _connect():
     global _sock
     if _sock is None:
-        _sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        _sock.connect(os.environ["HERMES_RPC_SOCKET"])
+        rpc_port = os.environ.get("HERMES_RPC_PORT")
+        if rpc_port:
+            _sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            _sock.connect(("127.0.0.1", int(rpc_port)))
+        else:
+            _sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            _sock.connect(os.environ["HERMES_RPC_SOCKET"])
         _sock.settimeout(300)
     return _sock
 
@@ -386,11 +389,14 @@ def execute_code(
 
     # --- Set up temp directory with hermes_tools.py and script.py ---
     tmpdir = tempfile.mkdtemp(prefix="hermes_sandbox_")
-    # Use /tmp on macOS to avoid the long /var/folders/... path that pushes
-    # Unix domain socket paths past the 104-byte macOS AF_UNIX limit.
-    # On Linux, tempfile.gettempdir() already returns /tmp.
-    _sock_tmpdir = "/tmp" if sys.platform == "darwin" else tempfile.gettempdir()
-    sock_path = os.path.join(_sock_tmpdir, f"hermes_rpc_{uuid.uuid4().hex}.sock")
+    # On Windows use a TCP loopback socket; on POSIX use a Unix domain socket.
+    # UDS is preferred on POSIX to avoid firewall/port conflicts and for the
+    # macOS 104-byte AF_UNIX path limit (we use /tmp to stay within it).
+    if _IS_WINDOWS:
+        sock_path = None
+    else:
+        _sock_tmpdir = "/tmp" if sys.platform == "darwin" else tempfile.gettempdir()
+        sock_path = os.path.join(_sock_tmpdir, f"hermes_rpc_{uuid.uuid4().hex}.sock")
 
     tool_call_log: list = []
     tool_call_counter = [0]  # mutable so the RPC thread can increment
@@ -408,9 +414,13 @@ def execute_code(
         with open(os.path.join(tmpdir, "script.py"), "w") as f:
             f.write(code)
 
-        # --- Start UDS server ---
-        server_sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        server_sock.bind(sock_path)
+        # --- Start RPC server (UDS on POSIX, TCP loopback on Windows) ---
+        if _IS_WINDOWS:
+            server_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            server_sock.bind(("127.0.0.1", 0))
+        else:
+            server_sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            server_sock.bind(sock_path)
         server_sock.listen(1)
 
         rpc_thread = threading.Thread(
@@ -438,7 +448,11 @@ def execute_code(
                 continue
             if any(k.startswith(p) for p in _SAFE_ENV_PREFIXES):
                 child_env[k] = v
-        child_env["HERMES_RPC_SOCKET"] = sock_path
+        if _IS_WINDOWS:
+            rpc_port = server_sock.getsockname()[1]
+            child_env["HERMES_RPC_PORT"] = str(rpc_port)
+        else:
+            child_env["HERMES_RPC_SOCKET"] = sock_path
         child_env["PYTHONDONTWRITEBYTECODE"] = "1"
         # Inject user's configured timezone so datetime.now() in sandboxed
         # code reflects the correct wall-clock time.
@@ -612,10 +626,11 @@ def execute_code(
             shutil.rmtree(tmpdir, ignore_errors=True)
         except Exception as e:
             logger.debug("Could not clean temp dir: %s", e, exc_info=True)
-        try:
-            os.unlink(sock_path)
-        except OSError as e:
-            logger.debug("Could not remove socket file: %s", e, exc_info=True)
+        if sock_path:
+            try:
+                os.unlink(sock_path)
+            except OSError as e:
+                logger.debug("Could not remove socket file: %s", e, exc_info=True)
 
 
 def _kill_process_group(proc, escalate: bool = False):
