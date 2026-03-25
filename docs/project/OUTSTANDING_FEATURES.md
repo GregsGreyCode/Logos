@@ -66,10 +66,6 @@ When evolution settings are saved with a new `schedule`, the old cron job is not
 
 ## Developer / Ops Tooling
 
-### `docker-compose.yml` for local/demo use
-**Source:** `docs/project/BUILD_AND_DEPLOY.md`
-No `docker-compose.yml` exists. Anyone wanting to run Logos locally without Kubernetes has no single-command option. A compose file with the gateway, a minimal config volume mount, and optional Ollama service would lower the barrier significantly.
-
 ### Smoke test script
 **Source:** `docs/project/BUILD_AND_DEPLOY.md`
 Post-deploy verification is entirely manual. A `scripts/smoke-test.sh` that hits `/health`, `/login`, and one authenticated endpoint would give CI a pass/fail signal after rollout.
