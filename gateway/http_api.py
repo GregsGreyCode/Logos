@@ -841,6 +841,35 @@ _ADMIN_HTML = """<!DOCTYPE html>
               </template>
             </div>
           </div>
+          <!-- Update available (launcher tray IPC) -->
+          <template x-if="authUser?.role === 'admin' && updateStatus.available">
+            <div class="px-4 py-3 border-t border-gray-800 space-y-2">
+              <div class="text-xs font-semibold text-indigo-300 flex items-center gap-1.5">
+                <span>↑</span><span x-text="'Logos ' + updateStatus.available + ' available'"></span>
+              </div>
+              <!-- Ready to install -->
+              <template x-if="updateStatus.ready">
+                <button @click="fetch('/update-trigger',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json','X-CSRF-Token':csrfToken},body:JSON.stringify({action:'install'})}).then(()=>{ updateStatus = {...updateStatus, installing: true} })"
+                  class="w-full text-left text-xs text-white bg-indigo-600 hover:bg-indigo-500 transition-colors rounded-lg px-3 py-1.5 font-medium">
+                  Install &amp; restart now
+                </button>
+              </template>
+              <!-- Downloading -->
+              <template x-if="updateStatus.downloading && !updateStatus.ready">
+                <div class="text-xs text-gray-500 flex items-center gap-1.5">
+                  <div class="w-2.5 h-2.5 border border-gray-700 border-t-indigo-400 rounded-full animate-spin"></div>
+                  Downloading…
+                </div>
+              </template>
+              <!-- Available, not yet downloading -->
+              <template x-if="!updateStatus.downloading && !updateStatus.ready">
+                <button @click="fetch('/update-trigger',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json','X-CSRF-Token':csrfToken},body:JSON.stringify({action:'download'})}).then(()=>{ updateStatus = {...updateStatus, downloading: true} })"
+                  class="w-full text-left text-xs text-indigo-400 hover:text-indigo-300 transition-colors">
+                  Download update…
+                </button>
+              </template>
+            </div>
+          </template>
           <!-- Admin: Re-run setup wizard -->
           <template x-if="authUser?.role === 'admin'">
             <div class="px-4 py-3 border-t border-gray-800">
@@ -4092,6 +4121,7 @@ function app() {
     theme: localStorage.getItem('hermes_theme') || 'midnight',
     themePickerOpen: false,
     accountMenuOpen: false,
+    updateStatus: { available: '', downloading: false, ready: false },
     changePwOpen: false,
     changePwCurrent: '',
     changePwNew: '',
@@ -4171,6 +4201,15 @@ function app() {
       // Delay enabling the chat input to prevent browser autofill from populating
       // it with saved login credentials immediately after a login redirect.
       setTimeout(() => { this.chatInputReady = true; }, 800);
+      // Poll for launcher update status every 60s (only meaningful on Windows tray build)
+      const _pollUpdate = async () => {
+        try {
+          const r = await fetch('/update-status', { credentials: 'same-origin' });
+          if (r.ok) this.updateStatus = await r.json();
+        } catch {}
+      };
+      _pollUpdate();
+      setInterval(_pollUpdate, 60_000);
       // Staggered first-load fade-in (set by login page on successful auth)
       try {
         if (sessionStorage.getItem('logos_fl') === '1') {
@@ -10517,6 +10556,38 @@ async def start_http_api(runner: Any, port: int = 8080) -> None:
     app.router.add_get("/admin/routing/log",      require_permission("view_audit_logs")(admin_handlers.handle_routing_log))
     app.router.add_post("/admin/setup",           _mm(require_csrf(admin_handlers.handle_setup_wizard)))
     app.router.add_get("/routing/preview",        admin_handlers.handle_routing_preview)
+
+    # ── Update status/trigger (launcher file-based IPC) ─────────────────
+    import json as _json
+    import pathlib as _up_pathlib
+
+    _HERMES_HOME_UPD = _up_pathlib.Path(os.environ.get("HERMES_HOME", str(_up_pathlib.Path.home() / ".hermes")))
+    _UPDATE_STATUS_FILE  = _HERMES_HOME_UPD / "update_status.json"
+    _UPDATE_TRIGGER_FILE = _HERMES_HOME_UPD / "update_trigger.json"
+
+    async def _handle_update_status(request: web.Request) -> web.Response:
+        try:
+            if _UPDATE_STATUS_FILE.exists():
+                data = _json.loads(_UPDATE_STATUS_FILE.read_text(encoding="utf-8"))
+                return web.json_response(data)
+        except Exception:
+            pass
+        return web.json_response({"available": "", "downloading": False, "ready": False, "ready_path": None})
+
+    async def _handle_update_trigger(request: web.Request) -> web.Response:
+        try:
+            body = await request.json()
+            action = body.get("action")
+            if action not in ("download", "install"):
+                return web.json_response({"error": "invalid action"}, status=400)
+            _UPDATE_TRIGGER_FILE.write_text(_json.dumps({"action": action}), encoding="utf-8")
+            return web.json_response({"ok": True})
+        except Exception as exc:
+            return web.json_response({"error": str(exc)}, status=500)
+
+    _mm_upd = require_permission("manage_machines")
+    app.router.add_get("/update-status",   _mm_upd(_handle_update_status))
+    app.router.add_post("/update-trigger", _mm_upd(require_csrf(_handle_update_trigger)))
 
     # Serve static assets (logo, etc.)
     import pathlib as _pathlib

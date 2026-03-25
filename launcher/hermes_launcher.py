@@ -384,6 +384,10 @@ def _log(msg: str) -> None:
 # Auto-update — Plan C: tray-driven background updater
 # ---------------------------------------------------------------------------
 
+_UPDATE_STATUS_PATH  = _HERMES_HOME / "update_status.json"
+_UPDATE_TRIGGER_PATH = _HERMES_HOME / "update_trigger.json"
+
+
 class _Upd:
     """Thread-safe update state.  All fields written under .lock."""
     lock = threading.Lock()
@@ -391,6 +395,23 @@ class _Upd:
     download_url: str = ""        # HTTPS URL to the LogosSetup-*.exe asset
     downloading: bool = False     # True while the .exe is streaming to disk
     ready_path: Path | None = None  # set once the download is complete
+
+
+def _write_update_status() -> None:
+    """Persist update state to a JSON file the gateway can read."""
+    import json as _json
+    try:
+        with _Upd.lock:
+            state = {
+                "available": _Upd.available,
+                "downloading": _Upd.downloading,
+                "ready": _Upd.ready_path is not None,
+                "ready_path": str(_Upd.ready_path) if _Upd.ready_path else None,
+            }
+        _HERMES_HOME.mkdir(parents=True, exist_ok=True)
+        _UPDATE_STATUS_PATH.write_text(_json.dumps(state), encoding="utf-8")
+    except Exception:
+        pass
 
 
 def _parse_version(v: str) -> tuple[int, ...]:
@@ -487,6 +508,7 @@ def _start_update_checker(icon) -> None:
                 with _Upd.lock:
                     _Upd.available = version
                     _Upd.download_url = url
+                _write_update_status()
                 _log(f"Update available: v{version}")
                 icon.notify(
                     f"Logos {version} is available. Open the tray menu to update.",
@@ -495,7 +517,45 @@ def _start_update_checker(icon) -> None:
                 _rebuild_menu(icon)
             time.sleep(24 * 3600)
 
+    def _trigger_loop():
+        """Poll for install trigger written by the gateway (browser-initiated update)."""
+        import json as _json
+        while True:
+            time.sleep(3)
+            try:
+                if _UPDATE_TRIGGER_PATH.exists():
+                    data = _json.loads(_UPDATE_TRIGGER_PATH.read_text(encoding="utf-8"))
+                    _UPDATE_TRIGGER_PATH.unlink(missing_ok=True)
+                    action = data.get("action")
+                    if action == "download":
+                        with _Upd.lock:
+                            v, u = _Upd.available, _Upd.download_url
+                        if v and u and not _Upd.downloading and not _Upd.ready_path:
+                            with _Upd.lock:
+                                _Upd.downloading = True
+                            _write_update_status()
+                            _rebuild_menu(icon)
+                            def _dl(_v=v, _u=u):
+                                p = _download_update(_v, _u, icon)
+                                with _Upd.lock:
+                                    _Upd.downloading = False
+                                    _Upd.ready_path = p
+                                _write_update_status()
+                                _rebuild_menu(icon)
+                            threading.Thread(target=_dl, daemon=True, name="logos-update-dl-ui").start()
+                    elif action == "install":
+                        with _Upd.lock:
+                            ready = _Upd.ready_path
+                        if ready:
+                            threading.Thread(
+                                target=_apply_update, args=(ready, icon),
+                                daemon=True, name="logos-update-apply-ui"
+                            ).start()
+            except Exception:
+                pass
+
     threading.Thread(target=_loop, daemon=True, name="logos-update-check").start()
+    threading.Thread(target=_trigger_loop, daemon=True, name="logos-update-trigger").start()
 
 
 def _rebuild_menu(icon) -> None:
@@ -532,6 +592,7 @@ def _rebuild_menu(icon) -> None:
             def _on_download(icon, item, _v=avail, _u=url):
                 with _Upd.lock:
                     _Upd.downloading = True
+                _write_update_status()
                 _rebuild_menu(icon)
 
                 def _dl(_v=_v, _u=_u):
@@ -539,6 +600,7 @@ def _rebuild_menu(icon) -> None:
                     with _Upd.lock:
                         _Upd.downloading = False
                         _Upd.ready_path = p
+                    _write_update_status()
                     if p:
                         icon.notify(
                             f"Logos {_v} ready. Click 'Install' in the tray menu.",
