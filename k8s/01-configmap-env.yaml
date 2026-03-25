@@ -10,3 +10,4 @@ data:
   OPENAI_BASE_URL: "http://ai-router.hermes.svc.cluster.local:9001/v1"
   HERMES_MODEL: "qwen/qwen3.5-9b"
   LLM_MODEL: "balanced"
+  HERMES_RUNTIME_MODE: "kubernetes"
