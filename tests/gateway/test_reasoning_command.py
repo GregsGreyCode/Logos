@@ -37,6 +37,9 @@ def _make_runner():
     runner._provider_routing = {}
     runner._fallback_model = None
     runner._running_agents = {}
+    runner._session_status = {}
+    import collections as _col
+    runner._recent_sessions = _col.deque(maxlen=20)
     runner.hooks = MagicMock()
     runner.hooks.emit = AsyncMock()
     runner.hooks.loaded_hooks = []
