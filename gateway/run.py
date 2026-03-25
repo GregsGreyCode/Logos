@@ -329,6 +329,15 @@ class GatewayRunner:
         # Key: session_key, Value: {"command": str, "pattern_key": str, ...}
         self._pending_approvals: Dict[str, Dict[str, Any]] = {}
 
+        # Live session tracking — populated per _run_agent call, read by /status.
+        # Key: session_key, Value: {platform, current_tool, tool_started_at,
+        #   session_started_at, tool_count, error_count, recent_tools, stuck}
+        self._session_status: Dict[str, Any] = {}
+
+        # Ring buffer of recently completed sessions (newest last), capped at 20.
+        import collections as _col
+        self._recent_sessions: _col.deque = _col.deque(maxlen=20)
+
         # Persistent Honcho managers keyed by gateway session key.
         # This preserves write_frequency="session" semantics across short-lived
         # per-message AIAgent instances.
@@ -4081,12 +4090,39 @@ class GatewayRunner:
         # Bridge sync step_callback → async hooks.emit for agent:step events
         _loop_for_step = asyncio.get_event_loop()
         _hooks_ref = self.hooks
+        _now = time.time
+        _platform_val = source.platform.value if source.platform else "unknown"
+
+        # Seed session_status entry so /status can see it immediately
+        if session_key:
+            self._session_status[session_key] = {
+                "platform": _platform_val,
+                "current_tool": "thinking…",
+                "tool_started_at": _now(),
+                "session_started_at": _now(),
+                "tool_count": 0,
+                "error_count": 0,
+                "recent_tools": [],
+                "stuck": False,
+            }
 
         def _step_callback_sync(iteration: int, tool_names: list) -> None:
+            # Update live session status (dict writes are GIL-safe in CPython)
+            if session_key and session_key in self._session_status:
+                tool_name = tool_names[0] if tool_names else "unknown"
+                entry = self._session_status[session_key]
+                entry["current_tool"] = tool_name
+                entry["tool_started_at"] = _now()
+                entry["tool_count"] = iteration
+                recent = entry["recent_tools"]
+                if not recent or recent[-1] != tool_name:
+                    recent.append(tool_name)
+                    if len(recent) > 10:
+                        recent.pop(0)
             try:
                 asyncio.run_coroutine_threadsafe(
                     _hooks_ref.emit("agent:step", {
-                        "platform": source.platform.value if source.platform else "",
+                        "platform": _platform_val,
                         "user_id": source.user_id,
                         "session_id": session_id,
                         "iteration": iteration,
@@ -4427,6 +4463,24 @@ class GatewayRunner:
             tracking_task.cancel()
             if session_key and session_key in self._running_agents:
                 del self._running_agents[session_key]
+
+            # Move completed session into the recent ring buffer
+            if session_key and session_key in self._session_status:
+                completed = self._session_status.pop(session_key)
+                import time as _t
+                _final = ""
+                if result_holder[0]:
+                    _txt = result_holder[0].get("final_response", "") or ""
+                    _final = _txt[:120].strip()
+                self._recent_sessions.append({
+                    "session_key": session_key,
+                    "platform": completed.get("platform", "unknown"),
+                    "current_tool": completed.get("current_tool", ""),
+                    "tool_count": completed.get("tool_count", 0),
+                    "elapsed_session_s": int(_t.time() - (completed.get("session_started_at") or _t.time())),
+                    "ended_at": _t.time(),
+                    "snippet": _final,
+                })
             
             # Wait for cancelled tasks
             for task in [progress_task, interrupt_monitor, tracking_task]:
