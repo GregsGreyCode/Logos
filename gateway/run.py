@@ -4107,11 +4107,14 @@ class GatewayRunner:
                 "stuck": False,
             }
 
-        # Create the run record so the Runs tab shows this chat immediately
+        # Create the run record so the Runs tab shows this chat immediately.
+        # Resolve model now so it shows in the list before the run completes.
+        _run_model_early = _resolve_gateway_model()
         _run_id = start_run(
             session_id=session_id,
             user_id=auth_user_id,
             user_message=message,
+            model=_run_model_early,
             action_policy=action_policy,
         )
         _tool_calls_log: list = []
