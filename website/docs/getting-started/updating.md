@@ -1,73 +1,51 @@
 ---
 sidebar_position: 3
 title: "Updating & Uninstalling"
-description: "How to update Hermes Agent to the latest version or uninstall it"
+description: "How to update Logos to the latest version or uninstall it"
 ---
 
 # Updating & Uninstalling
 
 ## Updating
 
-Update to the latest version with a single command:
+### Windows desktop app
+
+Logos checks for updates automatically in the background. When a new version is available:
+
+1. A notification appears in the system tray
+2. Open the tray menu or the **account menu** (top-right of the dashboard) — both show the available version
+3. Click **Download update…** to fetch the installer, then **Install & restart now** once it is ready
+
+Logos stops itself, releases all file locks, and launches the installer silently. It restarts automatically once the install completes.
+
+### Manual update (source install)
 
 ```bash
-hermes update
-```
-
-This pulls the latest code, updates dependencies, and prompts you to configure any new options that were added since your last update.
-
-:::tip
-`hermes update` automatically detects new configuration options and prompts you to add them. If you skipped that prompt, you can manually run `hermes config check` to see missing options, then `hermes config migrate` to interactively add them.
-:::
-
-### Updating from Messaging Platforms
-
-You can also update directly from Telegram, Discord, Slack, or WhatsApp by sending:
-
-```
-/update
-```
-
-This pulls the latest code, updates dependencies, and restarts the gateway.
-
-### Manual Update
-
-If you installed manually (not via the quick installer):
-
-```bash
-cd /path/to/hermes-agent
-export VIRTUAL_ENV="$(pwd)/venv"
-
-# Pull latest code and submodules
+cd /path/to/logos
 git pull origin main
 git submodule update --init --recursive
 
 # Reinstall (picks up new dependencies)
 uv pip install -e ".[all]"
-uv pip install -e "./mini-swe-agent"
-uv pip install -e "./tinker-atropos"
-
-# Check for new config options
-hermes config check
-hermes config migrate   # Interactively add any missing options
 ```
 
 ---
 
 ## Uninstalling
 
-```bash
-hermes uninstall
-```
+### Windows desktop app
 
-The uninstaller gives you the option to keep your configuration files (`~/.hermes/`) for a future reinstall.
+Use **Add or Remove Programs** → **Logos** → Uninstall. Your configuration files in `%USERPROFILE%\.hermes\` are kept by default.
 
-### Manual Uninstall
+### Source install
 
 ```bash
-rm -f ~/.local/bin/hermes
-rm -rf /path/to/hermes-agent
-rm -rf ~/.hermes            # Optional — keep if you plan to reinstall
+# Remove the virtual environment and source
+rm -rf /path/to/logos/venv
+rm -rf /path/to/logos
+
+# Optional — remove config and session data
+rm -rf ~/.hermes
 ```
 
 :::info

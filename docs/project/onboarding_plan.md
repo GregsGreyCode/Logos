@@ -21,7 +21,7 @@ Both tracks have full access to the gateway (Telegram, Discord, Slack, etc.), ru
 
 ---
 
-## Onboarding Flow (v0.3.53 — browser wizard at /setup)
+## Onboarding Flow (v0.4.82 — browser wizard at /setup)
 
 The setup wizard runs entirely in the browser. Wizard state is persisted to `localStorage` under the key `logos_setup_progress_v2` (1-hour TTL), so refreshing the page resumes from the current step without re-running benchmarks.
 
@@ -53,13 +53,17 @@ SSE streaming benchmark. Each candidate model runs:
 1. A warmup pass (discarded, avoids cold-start penalty)
 2. Three scored passes: prose × 2 + structured
 
-Four capability evaluations per model:
+Six capability evaluations per model:
 - Instruction following
-- Reasoning
-- JSON format
-- Tool selection
+- Reasoning (2-part)
+- Strict JSON format
+- Tool selection (2 scenarios)
+- Nested JSON schema
+- Multi-step reasoning
 
-Results display: tok/s, TTFT, eval breakdown. Rows are clickable to expand details and see why a model was or was not recommended. The wizard pre-selects the best balanced model; also highlights the fastest acceptable model if it differs.
+Models that pass ≥5/6 evaluations run an additional four hard evals (advanced tool routing, deep nested JSON, 5-step arithmetic, constrained instructions). Context window is detected from server metadata — LM Studio via `max_context_length` in `/api/v1/models`, Ollama via `/api/show`, llama.cpp via `/props` — and displayed per model.
+
+Results display: tok/s, TTFT, context window, eval breakdown. Clicking a result row immediately selects that model and expands the detail panel. The wizard pre-selects the best balanced model; also highlights the fastest acceptable model if it differs. If the selected model has fewer than 16,384 tokens of context, the wizard auto-suggests the General (Lite) soul in step 5.
 
 ---
 
@@ -72,16 +76,18 @@ Runtime picker. Hermes is available; other runtimes are shown as "coming soon". 
 ### Step 4 — Execution Target
 
 Two options:
-- **This machine** (local)
-- **Kubernetes** — in-cluster (auto-detected) or kubeconfig (textarea input)
+- **This machine** (local) — agent runs share the same OS context as Logos. Tool access is constrained by Logos policy, not OS-level sandboxing. A note is shown when this option is selected directing multi-user or untrusted-input deployments to use Kubernetes.
+- **Kubernetes** — in-cluster (auto-detected) or kubeconfig (textarea input). Each run spawns an isolated pod with its own filesystem, process space, and resource limits.
 
-A connectivity test is available. Namespace is auto-derived from the agent runtime chosen in step 4.
+A connectivity test is available. Namespace is auto-derived from the agent runtime chosen in step 3.
 
 ---
 
 ### Step 5 — Soul
 
-A 4×2 grid of 8 soul presets. Only the selected card hue-cycles. Each card shows an icon, name, description, and tool hints.
+A scrollable grid of soul presets. Only the selected card hue-cycles. Each card shows an icon, name, description, and tool hints. If the selected model has fewer than 16,384 tokens of context, an amber warning banner is shown and the **General (Lite)** soul is auto-selected and badged "Fits your model" — it has a smaller system-prompt footprint by design.
+
+Current souls: General, General (Lite), App Development, Homelab Investigator, Homelab Code Fix, News Anchor, Studying, and others.
 
 ---
 
@@ -95,7 +101,7 @@ Email, username, password, and confirm password. All fields are required. On sub
 
 Summary of all configuration from steps 0–6. Inline error display (no `alert()` calls). An endpoint reachability check warns if the model server is unreachable rather than blocking launch. Back navigation is available from this step.
 
-On `complete()`, `logos_setup_progress_v2` and `logos_setup_scan` are cleared from `localStorage`. The chosen model and endpoint are written to `config.yaml` (`HERMES_MODEL`, `OPENAI_BASE_URL`) so the agent uses them on next start — skipped if those env vars are already set (respects pre-configured k8s deployments). All selected inference servers are registered as machines in the routing database.
+On `complete()`, `logos_setup_progress_v2` and `logos_setup_scan` are cleared from `localStorage`. The chosen model, endpoint, API key, and server type are always written to `config.yaml` (`HERMES_MODEL`, `OPENAI_BASE_URL`, `OPENAI_API_KEY`, `HERMES_SERVER_TYPE`) — overwriting any stale values from a prior install so the new configuration takes effect immediately without a restart. Pre-configured k8s deployments should set these env vars explicitly; setup will write config.yaml but the env vars take precedence at runtime. All selected inference servers are registered as machines in the routing database.
 
 ---
 
@@ -109,17 +115,17 @@ On `complete()`, `logos_setup_progress_v2` and `logos_setup_scan` are cleared fr
 | Connect model servers — manual add | Done |
 | Scan result caching (10 min, localStorage) | Done |
 | Benchmark — SSE streaming, warmup pass, 3-pass median | Done |
-| Benchmark — 4 capability evals | Done |
+| Benchmark — 6 capability evals + 4 hard evals | Done |
 | Benchmark — pre-selects best balanced + fastest | Done |
 | Verify model step (removed — folded into benchmark + reachability check) | Removed in v0.3.44 |
 | Agent runtime picker | Done |
 | Execution target — local and Kubernetes | Done |
-| Soul preset grid (8 presets) | Done |
+| Soul preset grid (General, General Lite, App Dev, Homelab, etc.) | Done |
 | Admin account creation (step 7) | Done |
 | Review & launch with reachability check | Done |
 | Wizard state persistence (1hr, localStorage, key v2) | Done |
 | Multi-server benchmark + registration | Done — all selected servers benchmarked and registered |
-| Model written to config.yaml on complete | Done — agent picks up chosen model on next start |
+| Model/endpoint/key written to config.yaml on complete | Done — always overwrites stale values; live env patched immediately |
 | Back navigation from all steps | Done |
 | Frontier-first track | Not built — coming soon |
 | System check / hermes doctor step | Not built |
