@@ -6850,7 +6850,7 @@ _SETUP_HTML = """<!DOCTYPE html>
       <div x-show="step===1" x-cloak>
         <div class="mb-5">
           <h2 class="text-xl font-bold mb-1">Connect your model servers</h2>
-          <p class="text-gray-400 text-sm">Logos scanned for local inference servers and found the results below. Select every server you want agents to route across, then continue to benchmark.</p>
+          <p class="text-gray-400 text-sm">Logos scanned for local inference servers and found the results below. Select every server you want agents to route across, then continue to benchmark. <span class="text-gray-500">Click a server name to rename it.</span></p>
         </div>
 
         <!-- Scanning -->
@@ -6882,8 +6882,16 @@ _SETUP_HTML = """<!DOCTYPE html>
                           </svg>
                         </button>
                         <div class="flex-1 min-w-0">
-                          <div class="flex items-center gap-2 flex-wrap mb-0.5">
-                            <span class="text-sm font-semibold text-white" x-text="group.label"></span>
+                          <div class="flex items-center gap-2 flex-wrap mb-0.5" x-data="{ editing: false, draft: '' }">
+                            <span x-show="!editing" @click="editing=true; draft=s.customName||group.label"
+                              class="text-sm font-semibold text-white cursor-text hover:text-indigo-300 transition-colors"
+                              x-text="s.customName||group.label" title="Click to rename"></span>
+                            <input x-show="editing" x-model="draft" type="text"
+                              @blur="s.customName=draft.trim()||''; editing=false"
+                              @keydown.enter="s.customName=draft.trim()||''; editing=false"
+                              @keydown.escape="editing=false"
+                              x-init="$watch('editing', v => v && $nextTick(() => $el.focus()))"
+                              class="text-sm font-semibold bg-transparent border-b border-indigo-400 text-white focus:outline-none w-32">
                             <span class="text-xs font-mono text-gray-500" x-text="new URL(s.endpoint).hostname + ':' + new URL(s.endpoint).port"></span>
                           </div>
                           <div class="flex items-center gap-2 flex-wrap">
