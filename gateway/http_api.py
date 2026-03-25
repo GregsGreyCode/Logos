@@ -7884,7 +7884,7 @@ _SETUP_HTML = """<!DOCTYPE html>
           <!-- Header -->
           <div class="mb-4">
             <h2 class="text-xl font-bold mb-1" x-text="compareDone ? 'How your models performed' : 'Finding your best model\u2026'"></h2>
-            <p class="text-gray-400 text-sm" x-show="!compareDone">Testing available models on your hardware — this takes a moment.</p>
+            <p class="text-gray-400 text-sm" x-show="!compareDone">Testing available models on your hardware, grab a cuppa — this takes a moment.</p>
             <p class="text-gray-400 text-sm" x-show="compareDone">We&rsquo;ve pre-selected the best fit. You can override below.</p>
           </div>
 
