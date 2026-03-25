@@ -1959,11 +1959,17 @@ _ADMIN_HTML = """<!DOCTYPE html>
               <div class="text-xs font-semibold text-gray-300 mb-0.5">Capability Benchmark</div>
               <div class="text-xs text-gray-600">Runs capability evals (instruction, reasoning, JSON, tool call) against all registered machines in parallel.</div>
             </div>
-            <button @click="runCapabilityBenchmark()" :disabled="capBenchRunning"
-              class="text-xs px-3 py-1.5 rounded border border-gray-700 text-gray-400 hover:text-white transition-colors disabled:opacity-40 shrink-0 ml-4">
-              <span x-show="!capBenchRunning">Run Capability Benchmark</span>
-              <span x-show="capBenchRunning" class="animate-pulse">Running…</span>
-            </button>
+            <div class="flex items-center gap-2 shrink-0 ml-4">
+              <button x-show="capBenchRunning" @click="stopCapabilityBenchmark()"
+                class="text-xs px-3 py-1.5 rounded border border-red-800 text-red-400 hover:text-red-300 hover:border-red-700 transition-colors">
+                Stop
+              </button>
+              <button @click="runCapabilityBenchmark()" :disabled="capBenchRunning"
+                class="text-xs px-3 py-1.5 rounded border border-gray-700 text-gray-400 hover:text-white transition-colors disabled:opacity-40">
+                <span x-show="!capBenchRunning">Run Capability Benchmark</span>
+                <span x-show="capBenchRunning" class="animate-pulse">Running…</span>
+              </button>
+            </div>
           </div>
           <!-- Per-machine progress bars -->
           <template x-if="Object.keys(capBenchServers).length > 0">
@@ -4604,6 +4610,7 @@ function app() {
     // capability benchmark (routing tab)
     capBenchRunning: false,
     capBenchApplying: false,
+    capBenchAbortController: null,
     capBenchLog: [],
     capBenchLogOpen: false,
     capBenchCopied: false,
@@ -5751,11 +5758,16 @@ function app() {
       } catch(e) { console.error('reorder failed', e); }
     },
 
+    stopCapabilityBenchmark() {
+      if (this.capBenchAbortController) { this.capBenchAbortController.abort(); }
+    },
+
     async runCapabilityBenchmark() {
       if (this.capBenchRunning) return;
       const machines = (this.adminMachines || []).filter(m => m.endpoint_url);
       if (!machines.length) { this.capBenchLog = ['No registered machines with endpoints found.']; return; }
 
+      this.capBenchAbortController = new AbortController();
       this.capBenchRunning = true;
       this.capBenchLog = [];
       this.capBenchServers = {};
@@ -5794,7 +5806,7 @@ function app() {
       const fallback = probeResults[0];
       try {
         const r = await fetch('/api/setup/compare', {
-          method: 'POST', credentials: 'include',
+          method: 'POST', credentials: 'include', signal: this.capBenchAbortController.signal,
           headers: {'Content-Type':'application/json','X-CSRF-Token':getCsrfToken()},
           body: JSON.stringify({endpoint: fallback.endpoint, api_key: 'ollama', server_type: fallback.type, models: allModels}),
         });
@@ -5852,9 +5864,10 @@ function app() {
           }
         }
       } catch(e) {
-        this.capBenchLog = [...this.capBenchLog, 'Error: ' + String(e)];
+        if (e.name !== 'AbortError') this.capBenchLog = [...this.capBenchLog, 'Error: ' + String(e)];
       }
       this.capBenchRunning = false;
+      this.capBenchAbortController = null;
     },
 
     async applyCapBenchResults() {
@@ -7883,7 +7896,14 @@ _SETUP_HTML = """<!DOCTYPE html>
 
           <!-- Header -->
           <div class="mb-4">
-            <h2 class="text-xl font-bold mb-1" x-text="compareDone ? 'How your models performed' : 'Finding your best model\u2026'"></h2>
+            <div class="flex items-center justify-between gap-3 mb-1">
+              <h2 class="text-xl font-bold" x-text="compareDone ? 'How your models performed' : 'Finding your best model\u2026'"></h2>
+              <button x-show="compareRunning && !compareDone"
+                @click="if (compareAbortController) { compareAbortController.abort(); }"
+                class="text-xs px-3 py-1.5 rounded border border-red-800 text-red-400 hover:text-red-300 hover:border-red-700 transition-colors shrink-0">
+                Stop
+              </button>
+            </div>
             <p class="text-gray-400 text-sm" x-show="!compareDone">Testing available models on your hardware, grab a cuppa — this takes a moment.</p>
             <p class="text-gray-400 text-sm" x-show="compareDone">We&rsquo;ve pre-selected the best fit. You can override below.</p>
           </div>
@@ -8729,6 +8749,7 @@ function setup() {
     copied: '',
 
     // Step 2 — auto-compare
+    compareAbortController: null,
     compareRunning: false,
     compareDone: false,
     compareTargets: [],
@@ -9241,6 +9262,7 @@ function setup() {
         if (ep) this.serverModelSelections = { ...this.serverModelSelections, [ep]: m.id };
         return;
       }
+      this.compareAbortController = new AbortController();
       this.compareRunning     = true;
       this.compareDone        = false;
       this.compareTargets     = [];
@@ -9324,7 +9346,7 @@ function setup() {
           return;
         }
         const r = await fetch('/api/setup/compare', {
-          method: 'POST', credentials: 'include',
+          method: 'POST', credentials: 'include', signal: this.compareAbortController && this.compareAbortController.signal,
           headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken() },
           body: JSON.stringify({
             endpoint:    this.activeServer.endpoint,
@@ -9404,8 +9426,9 @@ function setup() {
           }
         }
       } catch (e) {
-        this.compareReason = 'Connection error: ' + e.message;
+        if (e.name !== 'AbortError') this.compareReason = 'Connection error: ' + e.message;
       } finally {
+        this.compareAbortController = null;
         // Always ensure we exit the "scanning" state — never leave the UI stuck
         if (this.compareRunning) {
           this.compareRunning    = false;
