@@ -22,7 +22,7 @@ Kubernetes manifests for the `hermes` namespace. Apply in filename order (00 →
 | `05-pvc.yaml` | PersistentVolumeClaim `hermes-pvc` | Primary instance persistent storage (5Gi, local-path) |
 | `05b-pvc-shared-memory.yaml` | PersistentVolumeClaim `hermes-shared-memory-pvc` | Shared memory PVC (1Gi) — primary writes, spawned instances read-only |
 | `06-deployment.yaml` | Deployment `hermes` | Hermes pod (stable) — readiness+liveness probes on `/health :8080`, `/work` emptyDir scratch volume, shared memory at `~/.hermes-shared` |
-| `07-service.yaml` | Service `hermes` | NodePort — port 80 (internal), port 8080 → NodePort **30902** (admin dashboard + chat) |
+| `07-service.yaml` | Service `hermes` | NodePort — port 80 → **30920** (main HTTP), port 8080 → **30910** (API/dashboard + chat) |
 | `08-serviceaccount.yaml` | ServiceAccount `hermes` | Service account used by Hermes pod for K8s API access |
 | `09-rbac.yaml` | ClusterRole + ClusterRoleBinding | Grants Hermes permission to manage Deployments, PVCs, ConfigMaps, and Services in the `hermes` namespace (required for spawning instances) |
 | `09-ai-router-deployment.yaml` | Deployment `ai-router` | ai-router pod |
@@ -146,7 +146,7 @@ Canary resources are half of stable (250m/512Mi requests, 2000m/2Gi limits).
 | Service | In-cluster DNS | External |
 |---------|---------------|----------|
 | ai-router | `http://ai-router.hermes.svc.cluster.local:9001` | `http://YOUR_K8S_NODE_IP:30901` |
-| hermes (HTTP API + dashboard) | `http://hermes.hermes.svc.cluster.local:8080` | `http://YOUR_K8S_NODE_IP:30902` |
+| hermes (HTTP API + dashboard) | `http://hermes.hermes.svc.cluster.local:8080` | `http://YOUR_K8S_NODE_IP:30910` |
 | hermes-canary | `http://hermes-canary.hermes.svc.cluster.local` | temporary — apply on demand |
 
 ## Secrets

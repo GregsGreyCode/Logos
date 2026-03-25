@@ -45,6 +45,16 @@ spec:
         - protocol: TCP
           port: 80
 
+    # Common local inference ports — needed for machine setup probes and health checks
+    # (Ollama: 11434, LM Studio: 1234, vLLM: 8000)
+    - ports:
+        - protocol: TCP
+          port: 1234
+        - protocol: TCP
+          port: 11434
+        - protocol: TCP
+          port: 8000
+
     # Internal cluster traffic to ai-router service (port 8080)
     - to:
         - podSelector:
