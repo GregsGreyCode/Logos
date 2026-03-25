@@ -1959,14 +1959,14 @@ _ADMIN_HTML = """<!DOCTYPE html>
           <template x-if="Object.keys(capBenchServers).length > 0">
             <div class="mb-3 space-y-2">
               <template x-for="(srv, ep) in capBenchServers" :key="ep">
-                <div class="flex items-center gap-2">
-                  <div class="flex-1 min-w-0">
+                <div class="flex items-start gap-2">
+                  <div class="shrink-0 w-28">
                     <div class="text-xs text-gray-300 font-medium truncate" x-text="srv.machineName || ep"></div>
                     <div class="text-[10px] text-gray-600 font-mono truncate" x-text="ep"></div>
                   </div>
-                  <div class="text-xs shrink-0 text-right"
+                  <div class="flex-1 text-xs break-all"
                     :class="srv.done ? (srv.error ? 'text-red-400' : 'text-green-400') : 'text-indigo-400 animate-pulse'"
-                    x-text="srv.done ? (srv.error ? 'error' : (srv.best ? srv.best + ' · ' + (srv.score ?? '?') + '/6' : 'done')) : (srv.testing ? srv.testing.split(':')[0].slice(-20) + '…' : 'queued')"></div>
+                    x-text="srv.done ? (srv.error ? 'error' : (srv.best ? srv.best + ' · ' + (srv.score ?? '?') + '/6' : 'done')) : (srv.testing ? srv.testing : 'queued')"></div>
                 </div>
               </template>
             </div>
