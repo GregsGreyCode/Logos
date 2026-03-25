@@ -2344,9 +2344,9 @@ _ADMIN_HTML = """<!DOCTYPE html>
     <div class="flex items-center gap-3 mb-5 px-3 py-2 rounded-lg border border-gray-800 bg-gray-900 text-xs flex-wrap">
       <button @click="loadInstances()" class="text-gray-600 hover:text-gray-400 text-sm leading-none shrink-0" title="Refresh">↺</button>
       <span class="text-gray-800 shrink-0 select-none">|</span>
-      <span x-show="clusterRes._error" class="text-red-500" x-text="(runtimeMode === 'kubernetes' ? 'k8s: ' : 'sys: ') + (clusterRes._error||'')"></span>
-      <!-- k8s: show used/total with bars -->
-      <template x-if="!clusterRes._error && clusterRes.total_cpu && runtimeMode === 'kubernetes'">
+      <span x-show="clusterRes._error" class="text-red-500" x-text="(clusterRes.total_cpu ? 'k8s: ' : 'sys: ') + (clusterRes._error||'')"></span>
+      <!-- k8s: used/total bars — shown when cluster provides total_cpu -->
+      <template x-if="!clusterRes._error && clusterRes.total_cpu">
         <div class="flex items-center gap-3 flex-wrap flex-1">
           <div class="flex items-center gap-1.5">
             <span class="text-gray-600">CPU</span>
@@ -2371,8 +2371,8 @@ _ADMIN_HTML = """<!DOCTYPE html>
             class="text-orange-400 ml-auto">⚠ Resources low — spawns will queue</span>
         </div>
       </template>
-      <!-- local: show psutil free resources -->
-      <template x-if="!clusterRes._error && runtimeMode !== 'kubernetes'">
+      <!-- local: psutil free resources — shown when executor returns free_cpu without total_cpu -->
+      <template x-if="!clusterRes._error && !clusterRes.total_cpu && clusterRes.free_cpu != null">
         <div class="flex items-center gap-3 flex-wrap flex-1">
           <div class="flex items-center gap-1.5">
             <span class="text-gray-600">CPU available</span>
@@ -2386,7 +2386,7 @@ _ADMIN_HTML = """<!DOCTYPE html>
           <span x-show="clusterRes.can_spawn === false" class="text-orange-400 ml-auto" x-text="'⚠ ' + (clusterRes.reason || 'Resources low')"></span>
         </div>
       </template>
-      <span x-show="!clusterRes._error && !clusterRes.total_cpu && !clusterRes.free_cpu && runtimeMode === 'kubernetes'" class="text-gray-600">Cluster data unavailable</span>
+      <span x-show="!clusterRes._error && !clusterRes.total_cpu && clusterRes.free_cpu == null" class="text-gray-600">System data unavailable</span>
     </div>
 
     <!-- Running agents -->
@@ -2434,10 +2434,10 @@ _ADMIN_HTML = """<!DOCTYPE html>
                     <select x-model="modelDraft"
                       class="bg-gray-800 border border-gray-700 rounded px-2 py-0.5 text-[11px] font-mono text-white focus:outline-none focus:border-indigo-500">
                       <option value="" disabled>— select model —</option>
-                      <template x-for="m in (adminMachines||[]).flatMap(m2 => (m2.models||[]).map(x=>x.id||x.name||x).filter(Boolean))" :key="m">
+                      <template x-for="m in allMachineModels" :key="m">
                         <option :value="m" x-text="m"></option>
                       </template>
-                      <option x-show="modelDraft && !(adminMachines||[]).flatMap(m2=>(m2.models||[]).map(x=>x.id||x.name||x)).includes(modelDraft)" :value="modelDraft" x-text="modelDraft"></option>
+                      <option x-show="modelDraft && !allMachineModels.includes(modelDraft)" :value="modelDraft" x-text="modelDraft"></option>
                     </select>
                     <button @click="modelSaving=true; modelErr=''; fetch('/api/model',{method:'PATCH',credentials:'include',headers:{'Content-Type':'application/json','X-CSRF-Token':getCsrfToken()},body:JSON.stringify({model:modelDraft})}).then(r=>r.json()).then(d=>{if(d.ok){status.current_model=d.model;changingModel=false;}else{modelErr=d.error||'Failed';}}).catch(e=>{modelErr=String(e);}).finally(()=>{modelSaving=false;})"
                       :disabled="modelSaving || !modelDraft"
@@ -4533,6 +4533,7 @@ function app() {
     approvalRequests: [],
     approvalsStatusFilter: 'pending',
     pendingApprovalCount: 0,
+    allMachineModels: [],
     adminMsg: null,
     // workflows
     workflows: [],
@@ -5040,6 +5041,19 @@ function app() {
       } catch(e) {
         this.clusterRes = { _error: String(e) };
       }
+      if (this.allMachineModels.length === 0) this.loadAllMachineModels();
+    },
+
+    async loadAllMachineModels() {
+      if (!this.adminMachines.length) await this.loadAdminMachines();
+      const results = await Promise.all(this.adminMachines.map(async m => {
+        try {
+          const r = await fetch('/api/setup/probe?url=' + encodeURIComponent(m.endpoint_url), {credentials:'include'});
+          const d = await r.json();
+          return (d.servers || []).flatMap(s => (s.models || []).map(mod => mod.id || mod.name)).filter(Boolean);
+        } catch(e) { return []; }
+      }));
+      this.allMachineModels = [...new Set(results.flat())];
     },
 
     async loadSpawnTemplates() {
