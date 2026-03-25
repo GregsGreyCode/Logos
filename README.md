@@ -117,18 +117,6 @@ Test agentic combinations, then modify, extend, and break the platform and its a
 
 ---
 
-## 🧩 Platform pillars
-
-| Pillar | What it does |
-|--------|-------------|
-| **Chat / Gateway** | Conversational agent over Telegram and HTTP; multi-session, streaming, always-on concurrent input |
-| **Policy & Trust** | Per-user action policies (write, exec, filesystem, provider, network, secret) with approval gates and provider trust enforcement |
-| **Run Auditability** | Every agent request produces a run record: tool timeline, policy snapshot, model used, output summary, clone-to-chat replay |
-| **Workspace Isolation** | Ephemeral per-run workspaces, filesystem path enforcement, dry-run simulation. True OS-level sandboxing requires container backends (Docker, Modal, etc.) |
-| **Evolution** | Agents propose platform improvements on a schedule; human reviews and decides; optional frontier AI consultation before committing |
-
----
-
 ## 🧬 The STAMP model
 
 Every run in Logos is defined by five dimensions:
