@@ -44,8 +44,18 @@ _SCAN_CONCURRENCY = 40
 
 
 def _own_ips() -> set[str]:
-    """Return all IPv4 addresses that refer to this machine (for dedup)."""
+    """Return all IPv4 addresses that refer to this machine (for dedup).
+
+    In Kubernetes the pod's cluster IP differs from the node's LAN IP, but
+    NODE_IP is injected via the downward API so we include it here — otherwise
+    port 8080 on the host node would not be skipped and Logos itself (or any
+    service on that port) would appear as a discovered model server.
+    """
     ips: set[str] = {"127.0.0.1", "localhost"}
+    # K8s: include the host node's LAN IP so own_port is skipped there too
+    node_ip = os.environ.get("NODE_IP", "").strip()
+    if node_ip:
+        ips.add(node_ip)
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
             s.connect(("8.8.8.8", 80))
