@@ -154,6 +154,10 @@ _gateway_loop: asyncio.AbstractEventLoop | None = None
 _gateway_thread: threading.Thread | None = None
 _gateway_lock = threading.Lock()
 
+# Browser window subprocess — tracked so Quit can close it.
+_browser_proc: "subprocess.Popen | None" = None
+_browser_lock = threading.Lock()
+
 
 def _start_gateway() -> None:
     global _gateway_loop, _gateway_thread
@@ -294,6 +298,25 @@ def _start_splash() -> socketserver.TCPServer | None:
         return None  # port in use — skip splash, fall back to direct URL
 
 
+def _close_browser() -> None:
+    """Terminate the tracked browser --app window if it is still running."""
+    global _browser_proc
+    with _browser_lock:
+        proc = _browser_proc
+        _browser_proc = None
+    if proc is None:
+        return
+    try:
+        if proc.poll() is None:  # still alive
+            proc.terminate()
+            try:
+                proc.wait(timeout=3)
+            except Exception:
+                proc.kill()
+    except Exception:
+        pass
+
+
 def _open_browser(url: str = _BASE_URL) -> None:
     """Open Logos as a standalone app window using Edge/Chrome --app mode.
     Falls back to a regular browser tab if neither is found.
@@ -327,10 +350,11 @@ def _open_browser(url: str = _BASE_URL) -> None:
         shutil.which("chromium") or "",
         shutil.which("msedge") or "",
     ]
+    global _browser_proc
     for path in candidates:
         if path and Path(path).exists():
             try:
-                subprocess.Popen([
+                proc = subprocess.Popen([
                     path,
                     f"--app={url}",
                     f"--user-data-dir={_profile_dir}",
@@ -339,6 +363,8 @@ def _open_browser(url: str = _BASE_URL) -> None:
                     "--disable-sync",
                     "--window-size=1280,800",
                 ])
+                with _browser_lock:
+                    _browser_proc = proc
                 return
             except Exception:
                 pass
@@ -545,6 +571,7 @@ def _rebuild_menu(icon) -> None:
         threading.Thread(target=_restart_gateway, daemon=True).start()
 
     def on_quit(icon, item):
+        _close_browser()
         _stop_gateway()
         _kill_instances()
         icon.stop()
@@ -828,6 +855,7 @@ def main() -> None:
 
     def _on_exit_signal(signum, frame):
         """Handle SIGTERM / SIGINT so the process exits cleanly from the outside."""
+        _close_browser()
         _stop_gateway()
         _kill_instances()
         sys.exit(0)
@@ -852,8 +880,9 @@ def main() -> None:
         except KeyboardInterrupt:
             pass
     finally:
-        # Ensure the gateway and any spawned instances are cleaned up regardless
-        # of how icon.run() returned (user Quit, Windows task manager, signal, etc.)
+        # Ensure the gateway, browser window, and any spawned instances are
+        # cleaned up regardless of how icon.run() returned.
+        _close_browser()
         _stop_gateway()
         _kill_instances()
 
