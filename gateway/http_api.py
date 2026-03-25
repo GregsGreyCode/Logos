@@ -9328,7 +9328,15 @@ function setup() {
     async retryModel(mid) {
       const allModels = this.getModels();
       const m = allModels.find(m => m.id === mid);
-      if (!m || this.compareTesting) return;
+      if (!m) return;
+      // Block if this exact model is already being tested.
+      // Allow if compareTesting is a model on a different server (that server is still
+      // running its own benchmark loop but this server's models are all done).
+      if (this.compareTesting) {
+        const testingModel = allModels.find(x => x.id === this.compareTesting);
+        const testingEndpoint = testingModel?._serverEndpoint || this.compareTestingEndpoint;
+        if (testingEndpoint === m._serverEndpoint || this.compareTesting === mid) return;
+      }
       const srv = this.selectedServers
         ? this.selectedServers.find(s => s.endpoint === m._serverEndpoint)
         : this.activeServer;
