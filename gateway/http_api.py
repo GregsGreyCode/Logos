@@ -7547,6 +7547,11 @@ _SETUP_HTML = """<!DOCTYPE html>
           </button>
         </div>
 
+        <!-- Local isolation note -->
+        <div x-show="execEnv === 'local'" x-transition.opacity class="mb-4 px-3 py-2.5 rounded-xl border border-gray-800 bg-gray-900/60 text-xs text-gray-500 leading-relaxed">
+          Agent runs share the same OS context as Logos. Tool use (file access, terminal, web) is constrained by Logos policy, not by OS-level sandboxing. For untrusted inputs or multi-user deployments, use Kubernetes instead.
+        </div>
+
         <!-- Kubernetes config (shown when k8s selected) -->
         <div x-show="execEnv === 'k8s'" x-transition.opacity class="mb-4 space-y-3">
           <div class="p-4 rounded-xl bg-gray-900 border border-gray-800 space-y-3">
