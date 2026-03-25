@@ -85,6 +85,9 @@ def _make_runner(adapter):
     runner._fallback_model = None
     runner._session_db = None
     runner._running_agents = {}
+    import collections as _col
+    runner._session_status = {}
+    runner._recent_sessions = _col.deque(maxlen=20)
     runner.hooks = SimpleNamespace(loaded_hooks=False)
     return runner
 

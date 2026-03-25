@@ -151,6 +151,9 @@ def test_gateway_run_agent_codex_path_handles_internal_401_refresh(monkeypatch):
     runner._provider_routing = {}
     runner._fallback_model = None
     runner._running_agents = {}
+    import collections as _col
+    runner._session_status = {}
+    runner._recent_sessions = _col.deque(maxlen=20)
     from unittest.mock import MagicMock, AsyncMock
     runner.hooks = MagicMock()
     runner.hooks.emit = AsyncMock()
