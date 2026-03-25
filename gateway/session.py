@@ -116,7 +116,7 @@ class SessionSource:
 class SessionContext:
     """
     Full context for a session, used for dynamic system prompt injection.
-    
+
     The agent receives this information to understand:
     - Where messages are coming from
     - What platforms are available
@@ -125,12 +125,16 @@ class SessionContext:
     source: SessionSource
     connected_platforms: List[Platform]
     home_channels: Dict[Platform, HomeChannel]
-    
+
     # Session metadata
     session_key: str = ""
     session_id: str = ""
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
+
+    # Deployment environment
+    runtime_mode: str = "local"   # "local" | "kubernetes"
+    host_platform: str = "linux"  # "linux" | "windows" | "darwin"
     
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -159,7 +163,12 @@ def build_session_context_prompt(context: SessionContext) -> str:
         "## Current Session Context",
         "",
     ]
-    
+
+    # Deployment environment
+    mode_label = "Kubernetes" if context.runtime_mode == "kubernetes" else "Local"
+    platform_label = {"windows": "Windows", "darwin": "macOS"}.get(context.host_platform, "Linux")
+    lines.append(f"**Deployment:** {mode_label} ({platform_label})")
+
     # Source info
     platform_name = context.source.platform.value.title()
     if context.source.platform == Platform.LOCAL:
@@ -820,10 +829,13 @@ def build_session_context(
         if home:
             home_channels[platform] = home
     
+    import sys as _sys
     context = SessionContext(
         source=source,
         connected_platforms=connected,
         home_channels=home_channels,
+        runtime_mode=os.environ.get("HERMES_RUNTIME_MODE", "local"),
+        host_platform="windows" if _sys.platform == "win32" else ("darwin" if _sys.platform == "darwin" else "linux"),
     )
     
     if session_entry:
