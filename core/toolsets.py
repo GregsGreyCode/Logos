@@ -56,6 +56,8 @@ _HERMES_CORE_TOOLS = [
     "clarify",
     # Log inspection & bug notes
     "log_inspector", "bug_notes",
+    # Workflow management
+    "workflow",
     # Code execution + delegation
     "execute_code", "delegate_task",
     # Cronjob management

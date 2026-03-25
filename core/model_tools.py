@@ -98,6 +98,7 @@ def _discover_tools():
         "tools.homeassistant_tool",
         "tools.log_inspector_tool",
         "tools.bug_notes_tool",
+        "tools.workflow_tool",
     ]
     import importlib
     for mod_name in _modules:
