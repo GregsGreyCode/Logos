@@ -5190,6 +5190,8 @@ class AIAgent:
                         'exceeds the limit', 'context window',
                         'request entity too large',  # OpenRouter/Nous 413 safety net
                         'prompt is too long',  # Anthropic: "prompt is too long: N tokens > M maximum"
+                        'kv cache full', 'slot unavailable',  # llama.cpp / llama-server
+                        'input is too long',  # llama.cpp alternate phrasing
                     ])
                     
                     if is_context_length_error:
