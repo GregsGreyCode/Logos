@@ -621,6 +621,17 @@ def _pick_compare_candidates(
     """
     _sizes = sizes or {}
 
+    # Deduplicate by base model name — strip spawned-instance suffixes like `:2`, `:3`
+    # so that a second Logos instance running the same model isn't benchmarked twice.
+    seen_base: set[str] = set()
+    deduped: list[str] = []
+    for mid in model_ids:
+        base = re.sub(r":\d+$", "", mid)
+        if base not in seen_base:
+            seen_base.add(base)
+            deduped.append(mid)
+    model_ids = deduped
+
     def _bucket(mid: str) -> str:
         sz = _parse_model_size_b(mid, _sizes.get(mid, 0.0))
         if sz == 0:   return "unknown"

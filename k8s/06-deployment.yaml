@@ -158,6 +158,11 @@ spec:
                 configMapKeyRef:
                   name: logos-config
                   key: LLM_MODEL
+            - name: HERMES_RUNTIME_MODE
+              valueFrom:
+                configMapKeyRef:
+                  name: logos-config
+                  key: HERMES_RUNTIME_MODE
             - name: OPENAI_API_KEY
               valueFrom:
                 secretKeyRef:
