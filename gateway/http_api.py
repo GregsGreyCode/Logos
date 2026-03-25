@@ -3699,7 +3699,7 @@ _ADMIN_HTML = """<!DOCTYPE html>
                   :class="_runStatusClass(run.status)"
                   x-text="run.status"></span>
               </td>
-              <td class="px-4 py-2 text-gray-400" x-text="run.user_id || '—'"></td>
+              <td class="px-4 py-2 text-gray-400" x-text="run.username || run.user_id || '—'"></td>
               <td class="px-4 py-2 text-gray-400 font-mono truncate max-w-[10rem]" x-text="run.model || '—'"></td>
               <td class="px-4 py-2 text-gray-500"
                 x-text="(run.tool_sequence && run.tool_sequence.length) ? run.tool_sequence.length + ' calls' : '0'"></td>
@@ -10707,13 +10707,21 @@ async def _handle_runs_list(request: web.Request) -> web.Response:
         limit=limit,
         offset=offset,
     )
-    # Parse JSON fields
+    # Parse JSON fields and resolve user_id → username
+    user_ids = {r["user_id"] for r in runs if r.get("user_id")}
+    user_map = {}
+    for uid in user_ids:
+        u = auth_db.get_user_by_id(uid)
+        if u:
+            user_map[uid] = u.get("username") or u.get("email") or uid
     for r in runs:
         for field in ("tool_sequence", "tool_detail", "approval_ids"):
             try:
                 r[field] = json.loads(r[field] or "[]")
             except Exception:
                 r[field] = []
+        if r.get("user_id"):
+            r["username"] = user_map.get(r["user_id"], r["user_id"])
     return web.json_response({"runs": runs, "total": total})
 
 

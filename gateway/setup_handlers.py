@@ -1269,6 +1269,25 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
 
                 r1, approx1 = await _bench_run_r(1, _BENCH_PROMPT)
                 await send({"log": f"  Pass 1 (prose): {r1:.1f} tok/s"})
+
+                # If TTFT looks anomalously high, re-measure once with a short
+                # prompt to check for a one-off spike (GC pause, partial load, etc.)
+                # Use the lower of the two values.
+                _ttft_pass1 = ttft_s
+                if _ttft_pass1 is not None and _ttft_pass1 > 2.0:
+                    await send({"log": f"  TTFT {_ttft_pass1*1000:.0f}ms — re-measuring once to verify…"})
+                    t0 = time.time()
+                    try:
+                        await _bench_run_r(1, "Hi", max_tokens=5)
+                        if ttft_s is not None and ttft_s < _ttft_pass1 * 0.6:
+                            await send({"log": f"  TTFT retry: {ttft_s*1000:.0f}ms — significantly lower, using this value"})
+                        else:
+                            _retry_ms = round(ttft_s * 1000) if ttft_s is not None else "?"
+                            await send({"log": f"  TTFT retry: {_retry_ms}ms — consistent, keeping original"})
+                            ttft_s = _ttft_pass1
+                    except Exception:
+                        ttft_s = _ttft_pass1
+
                 r2, approx2 = await _bench_run_r(2, _BENCH_PROMPT_STRUCT)
                 await send({"log": f"  Pass 2 (structured): {r2:.1f} tok/s"})
                 r3, approx3 = await _bench_run_r(3, _BENCH_PROMPT)
