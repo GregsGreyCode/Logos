@@ -1504,7 +1504,7 @@ _ADMIN_HTML = """<!DOCTYPE html>
                 :class="!m.enabled                                              ? 'bg-gray-700'
                        : m._probing                                             ? 'bg-gray-500 animate-pulse'
                        : !m._health                                             ? 'bg-gray-600'
-                       : m._health.status==='ok' && (_now - m._health_at) <= 60 ? 'bg-green-500'
+                       : m._health.status==='ok' && (_now - m._health_at) <= 300 ? 'bg-green-500'
                        : m._health.status==='ok'                                ? 'bg-yellow-500'
                        : 'bg-red-500'"></div>
 
@@ -1521,11 +1521,11 @@ _ADMIN_HTML = """<!DOCTYPE html>
                     <span class="text-xs px-1.5 py-0.5 rounded border font-mono"
                       :class="m._health.status!=='ok'
                         ? 'border-red-900 bg-red-950 text-red-400'
-                        : (_now - m._health_at) > 60
+                        : (_now - m._health_at) > 300
                         ? 'border-yellow-900 bg-yellow-950 text-yellow-500'
                         : 'border-green-800 bg-green-950 text-green-400'"
                       x-text="m._health.status==='ok'
-                        ? ((_now - m._health_at) > 60 ? 'zzz' : 'up')
+                        ? ((_now - m._health_at) > 300 ? 'zzz' : 'up')
                         : (m._health.http ? 'HTTP '+m._health.http : 'down')"></span>
                   </template>
                   <template x-if="m._probing">
@@ -1545,7 +1545,7 @@ _ADMIN_HTML = """<!DOCTYPE html>
                   <span class="text-xs text-gray-700 shrink-0"
                     x-text="!m._health_at ? 'never checked'
                            : (_now - m._health_at) < 5  ? 'just now'
-                           : (_now - m._health_at) < 60 ? ((_now - m._health_at) + 's ago')
+                           : (_now - m._health_at) < 60 ? (Math.round(_now - m._health_at) + 's ago')
                            : (Math.floor((_now - m._health_at)/60) + 'm ago')"></span>
                 </div>
 
@@ -4431,6 +4431,7 @@ function app() {
       setInterval(() => this.loadCanary(), 10000);
       setInterval(() => { this.clientNow = Date.now(); }, 1000);
       setInterval(() => { this._now = Math.floor(Date.now() / 1000); }, 15000);
+      setInterval(() => { if (this.tab === 'routing') this.probeAllMachines(); }, 90000);
       // Silently refresh access token before it expires.
       // Fire immediately on load so a near-expiry token is renewed right away,
       // then keep refreshing every 12 minutes (access token TTL is 15 minutes).
@@ -7438,7 +7439,8 @@ _SETUP_HTML = """<!DOCTYPE html>
                                       x-text="(compareResults[mid].max_context >= 1024 ? Math.round(compareResults[mid].max_context/1024)+'K' : compareResults[mid].max_context) + ' ctx' + (compareResults[mid].max_context < 16384 ? ' \u26a0' : '')"></span>
                                   </template>
                                   <span :class="compareResults[mid].quality_pass ? 'text-green-500' : 'text-yellow-600'"
-                                    x-text="compareResults[mid].quality_pass ? '\u2713' : '\u26a0'"></span>
+                                    :title="compareResults[mid].quality_pass ? 'Passed capability eval' : 'Low eval score — may struggle with agentic tasks'"
+                                    x-text="(compareResults[mid].eval?.score ?? (compareResults[mid].quality_pass ? '4+' : '?')) + '/6'"></span>
                                   <span x-show="compareDone" class="text-gray-700 text-[10px]"
                                     x-text="compareExpanded === mid ? '\u25b4' : '\u25be'"></span>
                                 </div>
