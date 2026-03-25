@@ -87,7 +87,7 @@ jobs:
             & $iscc `
               /DMyAppVersion=$version `
               "/DMyInstallName=Logos Canary" `
-              "/DMyAppId={C1A2E3B4-5F6D-7E8C-9A0B-1D2E3F4A5B6C}" `
+              /DMyAppId=C1A2E3B4-5F6D-7E8C-9A0B-1D2E3F4A5B6C `
               installer\logos.iss
           } else {
             Write-Host "Building stable installer for version $version"
