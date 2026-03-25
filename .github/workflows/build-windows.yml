@@ -3,7 +3,7 @@ name: Build Windows Installer
 on:
   push:
     tags:
-      - 'v*'          # e.g. v0.4.0 → builds + attaches to GitHub Release
+      - 'v*'          # e.g. v0.4.0 (stable) or v0.4.0-rc.1 (canary pre-release)
   workflow_dispatch:   # manual trigger from Actions tab (for testing)
 
 env:
@@ -33,7 +33,20 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # ── 2. Python ────────────────────────────────────────────────────────
+      # ── 2. Detect release channel ─────────────────────────────────────────
+      # Pre-release tags (vX.Y.Z-rc.N) build the canary installer.
+      # Stable tags (vX.Y.Z) build the main installer.
+      - name: Detect release channel
+        id: channel
+        run: |
+          $tag = "${{ github.ref_name }}"
+          if ($tag -match '-rc') {
+            "is_prerelease=true"  | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          } else {
+            "is_prerelease=false" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          }
+
+      # ── 3. Python ────────────────────────────────────────────────────────
       - name: Install uv
         uses: astral-sh/setup-uv@v5
 
@@ -48,29 +61,41 @@ jobs:
           "${{ github.workspace }}\.venv\Scripts" |
             Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
 
-      # ── 3. App dependencies ──────────────────────────────────────────────
+      # ── 4. App dependencies ──────────────────────────────────────────────
       - name: Install app dependencies
         run: pip install -e ".[messaging,cron,pty,mcp,acp]"
 
-      # ── 4. Desktop build tools ───────────────────────────────────────────
+      # ── 5. Desktop build tools ───────────────────────────────────────────
       # logos.ico is pre-built and committed — no SVG/cairo dependency at CI time.
       - name: Install desktop build tools
         run: pip install pyinstaller pystray Pillow
 
-      # ── 5. PyInstaller ───────────────────────────────────────────────────
+      # ── 6. PyInstaller ───────────────────────────────────────────────────
       - name: Build executable with PyInstaller
         run: pyinstaller launcher\hermes_launcher.spec --noconfirm
 
-      # ── 6. Inno Setup ────────────────────────────────────────────────────
+      # ── 7. Inno Setup ────────────────────────────────────────────────────
       - name: Build installer with Inno Setup
+        id: inno
         run: |
           $version = (Get-Content pyproject.toml | Select-String '^version\s*=\s*"(.+)"').Matches.Groups[1].Value
-          Write-Host "Building installer for version $version"
-          $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
-          & $iscc /DMyAppVersion=$version installer\logos.iss
+          $iscc    = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+          $isPrerelease = "${{ steps.channel.outputs.is_prerelease }}" -eq "true"
+
+          if ($isPrerelease) {
+            Write-Host "Building canary installer for version $version"
+            & $iscc `
+              /DMyAppVersion=$version `
+              "/DMyInstallName=Logos Canary" `
+              "/DMyAppId={C1A2E3B4-5F6D-7E8C-9A0B-1D2E3F4A5B6C}" `
+              installer\logos.iss
+          } else {
+            Write-Host "Building stable installer for version $version"
+            & $iscc /DMyAppVersion=$version installer\logos.iss
+          }
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-      # ── 7. Compute SHA256 hashes ─────────────────────────────────────────
+      # ── 8. Compute SHA256 hashes ─────────────────────────────────────────
       # Sidecar .sha256 files give users a machine-readable hash to verify.
       # The combined SHA256SUMS.txt is also uploaded to the Release.
       - name: Compute SHA256 hashes
@@ -96,7 +121,7 @@ jobs:
           "installer_hash=$installerHash" >> $env:GITHUB_OUTPUT
           "installer_name=$installerName" >> $env:GITHUB_OUTPUT
 
-      # ── 8. Upload artifact ───────────────────────────────────────────────
+      # ── 9. Upload artifact ───────────────────────────────────────────────
       - name: Upload installer artifact
         uses: actions/upload-artifact@v4
         with:
@@ -107,24 +132,27 @@ jobs:
             installer\output\SHA256SUMS.txt
           retention-days: 30
 
-      # ── 9. Attach to GitHub Release (tags only) ──────────────────────────
-      # Uploads installer + sidecar hash + SHA256SUMS.txt.
-      # The release body includes hashes and verification instructions so
-      # users can confirm binary integrity without trusting the download host.
+      # ── 10. Attach to GitHub Release (tags only) ──────────────────────────
+      # Pre-release tags → GitHub pre-release (prerelease: true).
+      # Stable tags → full release.
+      # Both upload installer + sidecar hash + SHA256SUMS.txt.
       - name: Upload to GitHub Release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_name }}
+          prerelease: ${{ steps.channel.outputs.is_prerelease == 'true' }}
           files: |
             installer\output\LogosSetup-*.exe
             installer\output\LogosSetup-*.exe.sha256
             installer\output\SHA256SUMS.txt
           fail_on_unmatched_files: true
           body: |
-            ## Logos ${{ github.ref_name }} — Windows Installer
+            ## Logos ${{ github.ref_name }} — Windows Installer${{ steps.channel.outputs.is_prerelease == 'true' && ' (Canary)' || '' }}
 
             Download **`${{ steps.hashes.outputs.installer_name }}`** from the assets below.
+
+            ${{ steps.channel.outputs.is_prerelease == 'true' && '> **Canary build** — pre-release for testing. Installs alongside stable as "Logos Canary" in a separate directory.' || '' }}
 
             ---
 
