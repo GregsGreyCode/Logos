@@ -1060,7 +1060,7 @@ _ADMIN_HTML = """<!DOCTYPE html>
                     <!-- Bottom bar: stats toggle (left) + copy (right) — only when stats available -->
                     <template x-if="msg.stats">
                       <div class="msg-bar bg-gray-800 rounded-b-xl border-t border-gray-700/40">
-                        <span class="msg-hint" @click.stop="statsOpen=!statsOpen">
+                        <span class="msg-hint" @click.stop="statsOpen=!statsOpen; if(statsOpen) $nextTick(()=>$root._scrollChat())">
                           <span x-text="statsOpen ? \'▴ hide stats\' : \'⋯ stats\'"></span>
                         </span>
                         <button class="msg-copy" :class="copied?\'copied\':\'\'"
@@ -1222,13 +1222,36 @@ _ADMIN_HTML = """<!DOCTYPE html>
                   :class="chatRenderMode==='mono'?'active':''">01 — Mono</button>
               </div>
             </div>
-            <!-- Text input -->
-            <div class="relative flex-1">
-              <input x-model="chatInput" @keydown.enter="sendChat()" autocomplete="off"
-                class="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-indigo-500 transition-colors pr-2"
-                :placeholder="micRecording ? ('Recording… ' + micCountdown + 's') : micTranscribing ? 'Transcribing…' : ('Message ' + (status.instance_name || 'Hermes') + '\u2026 (Enter to send)')"
+            <!-- Text input + drag-drop -->
+            <div class="relative flex-1"
+              @dragover.prevent="chatDragOver=true"
+              @dragleave.prevent="chatDragOver=false"
+              @drop.prevent="handleChatDrop($event)">
+              <textarea x-model="chatInput"
+                @keydown.enter.exact.prevent="sendChat()"
+                @keydown.enter.shift="/* allow newline */"
+                @input="autoResizeChat($el)"
+                x-ref="chatTextarea"
+                autocomplete="off"
+                rows="1"
+                class="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-indigo-500 transition-colors pr-2 resize-none overflow-y-auto"
+                :class="chatDragOver ? 'border-indigo-400 bg-indigo-950/30' : ''"
+                style="min-height:2.25rem;max-height:7rem;line-height:1.5;"
+                :placeholder="micRecording ? ('Recording… ' + micCountdown + 's') : micTranscribing ? 'Transcribing…' : ('Message ' + (status.instance_name || 'Hermes') + '\u2026 (Enter · Shift+Enter for newline)')"
                 :disabled="micTranscribing || activeInstance.k8s_status === 'starting'"
-                :readonly="!chatInputReady">
+                :readonly="!chatInputReady"></textarea>
+              <!-- Drag-drop overlay hint -->
+              <template x-if="chatDragOver">
+                <div class="absolute inset-0 flex items-center justify-center rounded-lg pointer-events-none text-xs text-indigo-300 font-medium">Drop image to attach</div>
+              </template>
+              <!-- Attached image preview -->
+              <template x-if="chatImageData">
+                <div class="absolute bottom-1.5 left-2 flex items-center gap-1 bg-gray-900 border border-gray-700 rounded px-2 py-0.5 text-xs text-gray-300">
+                  <img :src="chatImageData" class="h-5 w-5 rounded object-cover">
+                  <span x-text="chatImageName || 'image'"></span>
+                  <button @click.stop="chatImageData=null;chatImageName=null" class="ml-1 text-gray-500 hover:text-red-400">&times;</button>
+                </div>
+              </template>
               <!-- Success flash inside input -->
               <template x-if="micSuccess">
                 <span class="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-green-400 pointer-events-none">✓ captured</span>
@@ -1264,8 +1287,21 @@ _ADMIN_HTML = """<!DOCTYPE html>
       </div>
 
       <!-- Right panel: Live Executions -->
-      <div class="w-60 shrink-0 flex flex-col h-full items-center">
-        <div class="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3 shrink-0 w-full text-center">Live Executions</div>
+      <div class="shrink-0 flex flex-col h-full" :class="liveExecCollapsed ? 'w-8 items-center' : 'w-60 items-center'">
+        <div class="shrink-0 w-full flex items-center justify-between mb-3" :class="liveExecCollapsed ? 'flex-col gap-2' : ''">
+          <div x-show="!liveExecCollapsed" class="text-xs font-semibold text-gray-500 uppercase tracking-wider">Live Executions</div>
+          <button @click="liveExecCollapsed=!liveExecCollapsed"
+            class="text-gray-600 hover:text-gray-400 transition-colors"
+            :title="liveExecCollapsed ? 'Expand Live Executions' : 'Collapse Live Executions'">
+            <svg class="w-4 h-4 transition-transform" :class="liveExecCollapsed ? 'rotate-180' : ''" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M9 18l6-6-6-6"/>
+            </svg>
+          </button>
+        </div>
+        <div x-show="liveExecCollapsed" class="flex flex-col items-center gap-2 text-xs text-gray-700">
+          <span x-text="(status.active_sessions||[]).length" class="font-mono text-indigo-500 font-bold" x-show="(status.active_sessions||[]).length > 0"></span>
+        </div>
+        <div x-show="!liveExecCollapsed" class="w-full flex flex-col flex-1 min-h-0">
         <div class="exec-scroll space-y-3 w-full">
           <template x-if="(status.active_sessions||[]).length === 0">
             <div class="text-center text-gray-700 text-xs pt-8">No active sessions</div>
@@ -1344,6 +1380,7 @@ _ADMIN_HTML = """<!DOCTYPE html>
             </div>
           </div>
         </template>
+        </div><!-- /liveExecCollapsed wrapper -->
       </div>
 
     </div>
@@ -4010,6 +4047,10 @@ function app() {
     chatInput: '',
     chatInputReady: false,
     chatRenderMode: 'markdown',
+    chatDragOver: false,
+    chatImageData: null,
+    chatImageName: null,
+    liveExecCollapsed: false,
     micRecording: false,
     micTranscribing: false,
     micSuccess: false,
@@ -4965,6 +5006,20 @@ function app() {
 
     // ── Chat ──────────────────────────────────────────────────────
 
+    autoResizeChat(el) {
+      el.style.height = 'auto';
+      el.style.height = Math.min(el.scrollHeight, 112) + 'px'; // max ~7rem / ~4 lines
+    },
+
+    handleChatDrop(event) {
+      this.chatDragOver = false;
+      const file = (event.dataTransfer.files || [])[0];
+      if (!file || !file.type.startsWith('image/')) return;
+      const reader = new FileReader();
+      reader.onload = (e) => { this.chatImageData = e.target.result; this.chatImageName = file.name; };
+      reader.readAsDataURL(file);
+    },
+
     async sendChat() {
       const msg = this.chatInput.trim();
       if (!msg) return;
@@ -4979,6 +5034,9 @@ function app() {
       if (!chat) return;
 
       this.chatInput = '';
+      this.chatImageData = null;
+      this.chatImageName = null;
+      this.$nextTick(() => { const el = this.$refs.chatTextarea; if (el) { el.style.height = 'auto'; } });
 
       // Persist user message immediately
       chat.messages = [...chat.messages, { role: 'user', content: msg }];
@@ -5000,7 +5058,7 @@ function app() {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken() },
           credentials: 'same-origin',
-          body: JSON.stringify({ message: msg, session_id: chat.id }),
+          body: JSON.stringify({ message: msg, session_id: chat.id, image: this.chatImageData || undefined }),
         });
         if (r.status === 401) {
           chat.messages = [...chat.messages, { role: 'assistant', content: '\\u274c Session expired — please reload the page to log in again.' }];
@@ -5499,7 +5557,7 @@ function app() {
         if (this.clonePayload) {
           this.chatInput = this.clonePayload.user_message || '';
           this.tab = 'sessions';
-          this.$nextTick(() => this._scrollChat());
+          this.$nextTick(() => { this._scrollChat(); const el = this.$refs.chatTextarea; if (el) this.autoResizeChat(el); });
         }
       } catch(e) { console.error('clone failed', e); }
     },
