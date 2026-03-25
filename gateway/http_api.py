@@ -7514,22 +7514,42 @@ _SETUP_HTML = """<!DOCTYPE html>
             <span>Results depend on current server load. For accurate scores, avoid running other workloads on your inference machines during the benchmark.</span>
           </div>
 
-          <!-- Top pick recommendation -->
-          <div x-show="compareDone && compareRecommended"
-            class="mb-2 p-3 rounded-xl bg-indigo-950/40 border border-indigo-800 text-xs leading-relaxed space-y-1">
-            <div class="flex items-center gap-2 text-indigo-300 font-semibold text-[11px] uppercase tracking-wider">
-              <span>🎯</span><span>Top pick</span>
-              <span class="font-mono font-normal normal-case tracking-normal text-indigo-400" x-text="compareRecommended"></span>
+          <!-- Top pick — single server -->
+          <template x-if="compareDone && selectedServers.length <= 1 && compareRecommended">
+            <div class="mb-2 p-3 rounded-xl bg-indigo-950/40 border border-indigo-800 text-xs leading-relaxed space-y-1">
+              <div class="flex items-center gap-2 text-indigo-300 font-semibold text-[11px] uppercase tracking-wider">
+                <span>&#127919;</span><span>Top pick</span>
+                <span class="font-mono font-normal normal-case tracking-normal text-indigo-400" x-text="compareRecommended"></span>
+              </div>
+              <div class="text-indigo-200" x-text="compareReason"></div>
+              <div class="text-indigo-400/60 text-[10px]">Best overall for agent tasks — reasoning, tool use, and response quality.</div>
             </div>
-            <div class="text-indigo-200" x-text="compareReason"></div>
-            <div class="text-indigo-400/60 text-[10px]">Best overall for agent tasks — reasoning, tool use, and response quality.</div>
-          </div>
+          </template>
 
-          <!-- Speed pick (only shown when different from top pick) -->
+          <!-- Top pick — one box per server when multiple selected -->
+          <template x-if="compareDone && selectedServers.length > 1">
+            <div class="space-y-2 mb-2">
+              <template x-for="server in selectedServers" :key="server.endpoint">
+                <div x-show="compareServerRecs[server.endpoint]"
+                  class="p-3 rounded-xl bg-indigo-950/40 border border-indigo-800 text-xs leading-relaxed space-y-1">
+                  <div class="flex items-center gap-2 text-indigo-300 font-semibold text-[11px] uppercase tracking-wider flex-wrap">
+                    <span>&#127919;</span>
+                    <span x-text="serverName(server)"></span>
+                    <span class="font-normal text-indigo-500">top pick</span>
+                    <span class="font-mono font-normal normal-case tracking-normal text-indigo-400" x-text="(compareServerRecs[server.endpoint]||{}).model"></span>
+                  </div>
+                  <div class="text-indigo-200" x-text="(compareServerRecs[server.endpoint]||{}).reason"></div>
+                  <div class="text-indigo-400/60 text-[10px]">Best overall for agent tasks — reasoning, tool use, and response quality.</div>
+                </div>
+              </template>
+            </div>
+          </template>
+
+          <!-- Speed pick (global — only shown when different from top pick) -->
           <div x-show="compareDone && compareFastRecommended"
             class="mb-3 p-3 rounded-xl bg-gray-900/60 border border-gray-700 text-xs leading-relaxed space-y-1">
             <div class="flex items-center gap-2 text-gray-300 font-semibold text-[11px] uppercase tracking-wider">
-              <span>⚡</span><span>Speed pick</span>
+              <span>&#9889;</span><span>Speed pick</span>
               <span class="font-mono font-normal normal-case tracking-normal text-gray-400" x-text="compareFastRecommended"></span>
             </div>
             <div class="text-gray-400" x-text="compareFastReason"></div>
