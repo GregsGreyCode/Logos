@@ -682,10 +682,16 @@ def _rebuild_menu(icon) -> None:
         threading.Thread(target=_restart_gateway, daemon=True).start()
 
     def on_quit(icon, item):
-        _close_browser()
-        _stop_gateway()
-        _kill_instances()
+        # Stop the tray icon immediately so it looks responsive, then clean up
+        # in a background thread and force-exit so we don't double-shutdown via
+        # the finally block in main().
         icon.stop()
+        def _cleanup():
+            _close_browser()
+            _stop_gateway()
+            _kill_instances()
+            os._exit(0)
+        threading.Thread(target=_cleanup, daemon=True, name="logos-quit").start()
 
     icon.menu = pystray.Menu(
         *extra,

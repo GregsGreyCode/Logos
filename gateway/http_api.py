@@ -4118,7 +4118,7 @@ function getCsrfToken() {
 
 function app() {
   return {
-    tab: localStorage.getItem('hermes_tab') || 'sessions',
+    tab: 'sessions',
     status: { uptime_s: 0, instance_name: 'Hermes', active_sessions: [], recent_sessions: [] },
     agentAlive: null,
     agentEverConnected: false,   // true once first /status succeeds; gate for the error banner
@@ -4377,7 +4377,7 @@ function app() {
           });
         }
       } catch {}
-      this.$watch('tab',            val => localStorage.setItem('hermes_tab', val));
+
       this.$watch('routingTab',     val => localStorage.setItem('hermes_routing_tab', val));
       this.$watch('adminTab',       val => localStorage.setItem('hermes_admin_tab', val));
       // chatRenderMode intentionally not persisted — always defaults to markdown on load
