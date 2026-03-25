@@ -6702,23 +6702,21 @@ _SETUP_HTML = """<!DOCTYPE html>
                                 <svg class="w-3.5 h-3.5 mt-0.5 shrink-0 text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/></svg>
                                 <span class="text-xs text-amber-300">This server requires an API key — connections without one are rejected.</span>
                               </div>
-                              <div class="flex gap-2">
-                                <input type="password" placeholder="API key (e.g. sk-lm-...)"
-                                  :value="$data.localKeys[s.endpoint]||''"
-                                  @input="$data.localKeys = {...$data.localKeys, [s.endpoint]: $event.target.value}"
-                                  @change="$data.localKeys = {...$data.localKeys, [s.endpoint]: $event.target.value}"
-                                  @keydown.enter="serverKeys[s.endpoint] = $data.localKeys[s.endpoint]||''; retryWithKey(s)"
-                                  :class="authEnforcedServers[s.endpoint] ? 'border-amber-700 focus:border-amber-500' : 'border-gray-700 focus:border-indigo-500'"
-                                  class="flex-1 bg-gray-950 border rounded-lg px-3 py-1.5 text-xs text-white placeholder-gray-600 focus:outline-none font-mono transition-colors">
-                                <button @click="serverKeys[s.endpoint] = $data.localKeys[s.endpoint]||''; retryWithKey(s)"
-                                  :disabled="!($data.localKeys[s.endpoint]||'') || retryingServers[s.endpoint]"
-                                  class="btn-primary px-3 py-1.5 rounded-lg text-xs flex-shrink-0 disabled:opacity-40 flex items-center gap-1.5">
-                                  <span x-show="!retryingServers[s.endpoint]">Connect</span>
-                                  <template x-if="retryingServers[s.endpoint]">
-                                    <span class="flex items-center gap-1.5"><div class="w-3 h-3 border-2 border-white/40 border-t-white rounded-full animate-spin"></div>Connecting&hellip;</span>
-                                  </template>
-                                </button>
-                              </div>
+                              <input type="password" placeholder="API key (e.g. sk-lm-...)"
+                                :value="$data.localKeys[s.endpoint]||''"
+                                @input="$data.localKeys = {...$data.localKeys, [s.endpoint]: $event.target.value}"
+                                @change="$data.localKeys = {...$data.localKeys, [s.endpoint]: $event.target.value}"
+                                @keydown.enter="serverKeys[s.endpoint] = $data.localKeys[s.endpoint]||''; retryWithKey(s)"
+                                :class="authEnforcedServers[s.endpoint] ? 'border-amber-700 focus:border-amber-500' : 'border-gray-700 focus:border-indigo-500'"
+                                class="w-full bg-gray-950 border rounded-lg px-3 py-1.5 text-xs text-white placeholder-gray-600 focus:outline-none font-mono transition-colors">
+                              <p class="text-xs text-gray-600">
+                                <template x-if="retryingServers[s.endpoint]">
+                                  <span class="flex items-center gap-1.5 text-gray-500"><div class="w-2.5 h-2.5 border-2 border-gray-500/40 border-t-gray-400 rounded-full animate-spin"></div>Connecting&hellip;</span>
+                                </template>
+                                <template x-if="!retryingServers[s.endpoint]">
+                                  <span>Press Enter to test</span>
+                                </template>
+                              </p>
                               <p x-show="retryErrors[s.endpoint] && ($data.localKeys[s.endpoint]||'')" class="text-xs text-red-400" x-text="retryErrors[s.endpoint]"></p>
                               <!-- Try without auth — hidden once we know auth is enforced -->
                               <button x-show="!authEnforcedServers[s.endpoint]"
@@ -6777,23 +6775,21 @@ _SETUP_HTML = """<!DOCTYPE html>
                             <svg class="w-3.5 h-3.5 mt-0.5 shrink-0 text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/></svg>
                             <span class="text-xs text-amber-300">This server requires an API key — connections without one are rejected.</span>
                           </div>
-                          <div class="flex gap-2">
-                            <input type="password" placeholder="API key (e.g. sk-lm-...)"
-                              :value="$data.localKeys[s.endpoint]||''"
-                              @input="$data.localKeys = {...$data.localKeys, [s.endpoint]: $event.target.value}"
-                              @change="$data.localKeys = {...$data.localKeys, [s.endpoint]: $event.target.value}"
-                              @keydown.enter="serverKeys[s.endpoint] = $data.localKeys[s.endpoint]||''; retryWithKey(s)"
-                              :class="authEnforcedServers[s.endpoint] ? 'border-amber-700 focus:border-amber-500' : 'border-gray-700 focus:border-indigo-500'"
-                              class="flex-1 bg-gray-950 border rounded-lg px-3 py-1.5 text-xs text-white placeholder-gray-600 focus:outline-none font-mono transition-colors">
-                            <button @click="serverKeys[s.endpoint] = $data.localKeys[s.endpoint]||''; retryWithKey(s)"
-                              :disabled="!($data.localKeys[s.endpoint]||'') || retryingServers[s.endpoint]"
-                              class="btn-primary px-3 py-1.5 rounded-lg text-xs flex-shrink-0 disabled:opacity-40 flex items-center gap-1.5">
-                              <span x-show="!retryingServers[s.endpoint]">Connect</span>
-                              <template x-if="retryingServers[s.endpoint]">
-                                <span class="flex items-center gap-1.5"><div class="w-3 h-3 border-2 border-white/40 border-t-white rounded-full animate-spin"></div>Connecting&hellip;</span>
-                              </template>
-                            </button>
-                          </div>
+                          <input type="password" placeholder="API key (e.g. sk-lm-...)"
+                            :value="$data.localKeys[s.endpoint]||''"
+                            @input="$data.localKeys = {...$data.localKeys, [s.endpoint]: $event.target.value}"
+                            @change="$data.localKeys = {...$data.localKeys, [s.endpoint]: $event.target.value}"
+                            @keydown.enter="serverKeys[s.endpoint] = $data.localKeys[s.endpoint]||''; retryWithKey(s)"
+                            :class="authEnforcedServers[s.endpoint] ? 'border-amber-700 focus:border-amber-500' : 'border-gray-700 focus:border-indigo-500'"
+                            class="w-full bg-gray-950 border rounded-lg px-3 py-1.5 text-xs text-white placeholder-gray-600 focus:outline-none font-mono transition-colors">
+                          <p class="text-xs text-gray-600">
+                            <template x-if="retryingServers[s.endpoint]">
+                              <span class="flex items-center gap-1.5 text-gray-500"><div class="w-2.5 h-2.5 border-2 border-gray-500/40 border-t-gray-400 rounded-full animate-spin"></div>Connecting&hellip;</span>
+                            </template>
+                            <template x-if="!retryingServers[s.endpoint]">
+                              <span>Press Enter to test</span>
+                            </template>
+                          </p>
                           <p x-show="retryErrors[s.endpoint] && ($data.localKeys[s.endpoint]||'')" class="text-xs text-red-400" x-text="retryErrors[s.endpoint]"></p>
                           <!-- Try without auth — hidden once we know auth is enforced -->
                           <button x-show="!authEnforcedServers[s.endpoint]"
