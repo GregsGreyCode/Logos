@@ -2447,6 +2447,49 @@ _ADMIN_HTML = """<!DOCTYPE html>
           </div>
         </div>
 
+        <!-- Available Tools — scoped to the core agent above -->
+        <div class="px-3 py-2.5 rounded-lg bg-gray-900 border border-gray-800">
+          <div class="flex items-center justify-between mb-2">
+            <div class="text-xs font-semibold text-gray-600 uppercase tracking-wider">
+              Available Tools
+              <span class="ml-1.5 normal-case font-normal text-gray-700" x-text="toolsets.available ? '(' + toolsets.available.length + ' toolsets)' : ''"></span>
+            </div>
+            <button @click="loadToolsets()" class="text-gray-600 hover:text-gray-400 text-sm leading-none" title="Refresh">↺</button>
+          </div>
+          <template x-if="!toolsets.toolsets">
+            <div class="text-xs text-gray-700 py-1">Loading…</div>
+          </template>
+          <template x-if="toolsets.toolsets">
+            <div x-data="{ selectedTs: null }">
+              <div class="flex flex-wrap gap-1.5">
+                <template x-for="[name, ts] in Object.entries(toolsets.toolsets || {}).sort(([a],[b]) => a.localeCompare(b))" :key="name">
+                  <button @click="selectedTs = selectedTs === name ? null : name"
+                    class="flex items-center gap-1.5 px-2 py-1 rounded border text-xs font-mono transition-colors"
+                    :class="selectedTs === name
+                      ? 'border-indigo-600 bg-indigo-900/30 text-indigo-300'
+                      : ts.available
+                        ? 'border-gray-700 bg-gray-900 text-gray-400 hover:border-gray-500 hover:text-gray-300'
+                        : 'border-red-900/30 bg-gray-900 text-gray-600 opacity-50'">
+                    <span class="w-1.5 h-1.5 rounded-full shrink-0" :class="ts.available ? 'bg-green-500' : 'bg-red-700'"></span>
+                    <span x-text="name"></span>
+                  </button>
+                </template>
+              </div>
+              <template x-if="selectedTs && toolsets.toolsets[selectedTs]">
+                <div class="mt-2 p-2.5 rounded-lg border border-gray-800 bg-gray-900/60">
+                  <div x-show="toolsets.toolsets[selectedTs].description" class="text-[10px] text-gray-500 mb-1.5" x-text="toolsets.toolsets[selectedTs].description"></div>
+                  <div x-show="!toolsets.toolsets[selectedTs].available && (toolsets.toolsets[selectedTs].requirements||[]).length" class="text-[10px] text-red-700 font-mono mb-1.5" x-text="'needs: ' + (toolsets.toolsets[selectedTs].requirements||[]).join(', ')"></div>
+                  <div class="flex flex-wrap gap-1">
+                    <template x-for="tool in (toolsets.toolsets[selectedTs].tools || [])" :key="tool">
+                      <span class="text-[10px] font-mono px-1.5 py-0.5 rounded bg-gray-800 text-gray-500 border border-gray-700" x-text="tool"></span>
+                    </template>
+                  </div>
+                </div>
+              </template>
+            </div>
+          </template>
+        </div>
+
         <template x-for="inst in clusterInstances" :key="inst.name">
           <div class="flex items-center gap-3 px-3 py-2.5 rounded-lg bg-gray-900 border transition-colors"
             :class="inst.status==='running' ? 'border-gray-800' : 'border-yellow-900/50'">
@@ -2527,49 +2570,6 @@ _ADMIN_HTML = """<!DOCTYPE html>
           <div class="text-xs text-gray-700 py-3">No additional agents running.</div>
         </template>
       </div>
-    </div>
-
-    <!-- Toolsets / available tools -->
-    <div class="mb-5">
-      <div class="flex items-center justify-between mb-3">
-        <div class="text-xs font-semibold text-gray-500 uppercase tracking-wider">
-          Available Tools
-          <span class="ml-1.5 text-gray-600 normal-case font-normal" x-text="toolsets.available ? '(' + toolsets.available.length + ' toolsets)' : ''"></span>
-        </div>
-        <button @click="loadToolsets()" class="text-gray-600 hover:text-gray-400 text-sm leading-none" title="Refresh">↺</button>
-      </div>
-      <template x-if="!toolsets.toolsets">
-        <div class="text-xs text-gray-700 py-2">Loading…</div>
-      </template>
-      <template x-if="toolsets.toolsets">
-        <div x-data="{ selectedTs: null }">
-          <div class="flex flex-wrap gap-1.5">
-            <template x-for="[name, ts] in Object.entries(toolsets.toolsets || {}).sort(([a],[b]) => a.localeCompare(b))" :key="name">
-              <button @click="selectedTs = selectedTs === name ? null : name"
-                class="flex items-center gap-1.5 px-2 py-1 rounded border text-xs font-mono transition-colors"
-                :class="selectedTs === name
-                  ? 'border-indigo-600 bg-indigo-900/30 text-indigo-300'
-                  : ts.available
-                    ? 'border-gray-700 bg-gray-900 text-gray-400 hover:border-gray-500 hover:text-gray-300'
-                    : 'border-red-900/30 bg-gray-900 text-gray-600 opacity-50'">
-                <span class="w-1.5 h-1.5 rounded-full shrink-0" :class="ts.available ? 'bg-green-500' : 'bg-red-700'"></span>
-                <span x-text="name"></span>
-              </button>
-            </template>
-          </div>
-          <template x-if="selectedTs && toolsets.toolsets[selectedTs]">
-            <div class="mt-2 p-2.5 rounded-lg border border-gray-800 bg-gray-900/60">
-              <div x-show="toolsets.toolsets[selectedTs].description" class="text-[10px] text-gray-500 mb-1.5" x-text="toolsets.toolsets[selectedTs].description"></div>
-              <div x-show="!toolsets.toolsets[selectedTs].available && (toolsets.toolsets[selectedTs].requirements||[]).length" class="text-[10px] text-red-700 font-mono mb-1.5" x-text="'needs: ' + (toolsets.toolsets[selectedTs].requirements||[]).join(', ')"></div>
-              <div class="flex flex-wrap gap-1">
-                <template x-for="tool in (toolsets.toolsets[selectedTs].tools || [])" :key="tool">
-                  <span class="text-[10px] font-mono px-1.5 py-0.5 rounded bg-gray-800 text-gray-500 border border-gray-700" x-text="tool"></span>
-                </template>
-              </div>
-            </div>
-          </template>
-        </div>
-      </template>
     </div>
 
     <!-- Pending queue -->
