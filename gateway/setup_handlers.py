@@ -1854,6 +1854,34 @@ async def handle_setup_complete(request: web.Request) -> web.Response:
                 auth_db.update_user(user_id, **updates)
                 logger.info("setup: updated admin credentials for %s", user_id)
 
+        # Assign admin and any additional users to the default routing profile
+        from gateway.auth.password import hash_password as _hp
+        default_policy = next(
+            (p for p in auth_db.list_policies() if p.get("name") == "default"),
+            None,
+        ) or (auth_db.list_policies() or [None])[0]
+        if default_policy:
+            auth_db.assign_user_policy(user_id, default_policy["id"])
+
+        additional_users = body.get("additional_users") or []
+        for u in additional_users:
+            uname = (u.get("username") or "").strip()
+            uemail = (u.get("email") or "").strip()
+            upw = (u.get("password") or "").strip()
+            urole = (u.get("role") or "user").strip()
+            if not (uname and uemail and upw):
+                continue
+            try:
+                new_user = auth_db.create_user(
+                    email=uemail, username=uname,
+                    password_hash=_hp(upw), role=urole,
+                )
+                if default_policy:
+                    auth_db.assign_user_policy(new_user["id"], default_policy["id"])
+                logger.info("setup: created user %s (%s)", uname, urole)
+            except Exception as _ue:
+                logger.warning("setup: could not create user %s: %s", uname, _ue)
+
         auth_db.write_audit_log(
             user_id, "setup_completed",
             metadata={"endpoint": endpoint, "model": model},

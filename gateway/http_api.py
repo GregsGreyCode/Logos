@@ -8013,8 +8013,11 @@ _SETUP_HTML = """<!DOCTYPE html>
       <div x-show="step===6" x-cloak>
         <div class="mb-6">
           <h2 class="text-xl font-bold mb-1">Your account</h2>
-          <p class="text-gray-400 text-sm">Set your login credentials. You'll use these to sign in to Logos going forward.</p>
+          <p class="text-gray-400 text-sm">Set your login credentials. You can also add other users — each gets their own login and is assigned to the default routing profile.</p>
         </div>
+
+        <!-- Admin account -->
+        <div class="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">Admin account</div>
         <div class="space-y-3 mb-6">
           <div>
             <label class="block text-xs text-gray-500 mb-1.5">Email address</label>
@@ -8042,6 +8045,40 @@ _SETUP_HTML = """<!DOCTYPE html>
           <div x-show="setupPassword && setupPasswordConfirm && setupPassword !== setupPasswordConfirm"
             class="text-xs text-red-400 px-1">Passwords do not match.</div>
         </div>
+
+        <!-- Additional users -->
+        <div class="border-t border-gray-800 pt-5 mb-6">
+          <div class="flex items-center justify-between mb-3">
+            <div class="text-xs font-semibold text-gray-500 uppercase tracking-wider">Additional users <span class="text-gray-700 normal-case font-normal">(optional)</span></div>
+            <button @click="setupAdditionalUsers.push({username:'', email:'', password:'', role:'user'})"
+              class="text-xs text-indigo-400 hover:text-indigo-300 transition-colors">+ Add user</button>
+          </div>
+          <template x-if="setupAdditionalUsers.length === 0">
+            <p class="text-xs text-gray-700">Add household members or colleagues. Each gets their own login and the default routing profile — you can adjust this later in Routing → Profiles.</p>
+          </template>
+          <template x-for="(u, i) in setupAdditionalUsers" :key="i">
+            <div class="rounded-xl border border-gray-800 bg-gray-900/50 p-3 mb-2 space-y-2">
+              <div class="flex gap-2">
+                <input x-model="u.username" type="text" placeholder="Username"
+                  class="flex-1 bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-600 focus:border-indigo-500 focus:outline-none transition-colors" />
+                <input x-model="u.email" type="email" placeholder="Email"
+                  class="flex-1 bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-600 focus:border-indigo-500 focus:outline-none transition-colors" />
+              </div>
+              <div class="flex gap-2 items-center">
+                <input x-model="u.password" type="password" placeholder="Password (min 8 chars)"
+                  class="flex-1 bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-600 focus:border-indigo-500 focus:outline-none transition-colors" />
+                <select x-model="u.role"
+                  class="bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:border-indigo-500 focus:outline-none transition-colors">
+                  <option value="user">User</option>
+                  <option value="admin">Admin</option>
+                </select>
+                <button @click="setupAdditionalUsers.splice(i, 1)"
+                  class="text-gray-600 hover:text-red-400 transition-colors px-1 shrink-0" title="Remove">✕</button>
+              </div>
+            </div>
+          </template>
+        </div>
+
         <button @click="goNext()"
           :disabled="!setupEmail.trim() || !setupUsername.trim() || !setupPassword || setupPassword !== setupPasswordConfirm"
           class="btn-primary w-full py-2.5 rounded-xl text-sm">
@@ -8251,6 +8288,7 @@ function setup() {
     setupUsername: '',
     setupPassword: '',
     setupPasswordConfirm: '',
+    setupAdditionalUsers: [],  // [{username, email, password, role}]
 
     // Step 7 — pre-launch endpoint health
     step7ProbeStatus: null,   // null=unchecked, 'checking', 'ok', 'warn', 'error'
@@ -9334,6 +9372,8 @@ function setup() {
               name:              s.customName || s.name || '',
               recommended_model: this.serverModelSelections[s.endpoint] || (this.compareServerRecs[s.endpoint] || {}).model || null,
             })),
+            // Additional users to create and assign to default routing profile
+            additional_users: (this.setupAdditionalUsers || []).filter(u => u.username.trim() && u.email.trim() && u.password && u.password.length >= 8),
           }),
         });
         if (r.ok) {
