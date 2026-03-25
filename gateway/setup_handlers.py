@@ -114,7 +114,8 @@ async def _probe_server(
          Ollama.  If we reach here without step 1 succeeding → LM Studio
          (or another OpenAI-compat server).
     """
-    base = base_url.rstrip("/")
+    # Strip trailing /v1 so callers can pass either http://host:1234 or http://host:1234/v1
+    base = re.sub(r"/v1/?$", "", base_url.rstrip("/"))
     headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
 
     # ── Step 1: /api/version — definitive Ollama fingerprint ─────────────
@@ -231,9 +232,16 @@ async def handle_setup_probe(request: web.Request) -> web.Response:
               to skip the /api/tags check (LM Studio now responds to that endpoint
               in Ollama-compat mode, which would cause misclassification).
     """
-    raw_url = (request.query.get("url") or "").strip()
-    api_key = request.query.get("api_key") or None
-    prefer  = request.query.get("prefer") or "ollama"
+    raw_url    = (request.query.get("url") or "").strip()
+    api_key    = request.query.get("api_key") or None
+    prefer     = request.query.get("prefer") or "ollama"
+    machine_id = request.query.get("machine_id") or None
+
+    # If a machine_id is supplied, look up the stored key from the DB
+    if machine_id and not api_key:
+        m = auth_db.get_machine(machine_id)
+        if m:
+            api_key = m.get("api_key") or None
 
     async with aiohttp.ClientSession() as session:
         if raw_url:
@@ -803,16 +811,21 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
     if not fallback_endpoint or not raw_models:
         return web.json_response({"error": "endpoint and models required"}, status=400)
 
-    # Accept per-model specs [{id, endpoint, api_key, server_type}] or plain strings
+    # Accept per-model specs [{id, endpoint, api_key, server_type, machine_id?}] or plain strings
     model_specs: list[dict] = []
     for m in raw_models:
         if isinstance(m, str):
             model_specs.append({"id": m, "endpoint": fallback_endpoint, "api_key": fallback_key, "server_type": fallback_type})
         else:
+            raw_key = m.get("api_key") or fallback_key
+            # Resolve '__stored__' placeholder — look up the api_key from the machine DB record
+            if raw_key == "__stored__":
+                machine_rec = auth_db.get_machine(m.get("machine_id") or "")
+                raw_key = (machine_rec or {}).get("api_key") or "ollama"
             model_specs.append({
                 "id":          m["id"],
                 "endpoint":    (m.get("endpoint") or fallback_endpoint).rstrip("/"),
-                "api_key":     m.get("api_key") or fallback_key,
+                "api_key":     raw_key,
                 "server_type": m.get("server_type") or fallback_type,
             })
 

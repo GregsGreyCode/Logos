@@ -361,6 +361,8 @@ def _run_migrations() -> None:
             "ALTER TABLE agent_runs ADD COLUMN agent_id TEXT NOT NULL DEFAULT 'hermes'",
             # v5: machine default model
             "ALTER TABLE machines ADD COLUMN default_model TEXT",
+            # v6: machine api key (optional bearer token for auth-protected local servers)
+            "ALTER TABLE machines ADD COLUMN api_key TEXT",
         ):
             try:
                 conn.execute(stmt)
@@ -676,7 +678,7 @@ def reorder_machines(ordered_ids: list) -> None:
 
 
 def update_machine(machine_id: str, **fields) -> Optional[dict]:
-    allowed = {"name", "endpoint_url", "description", "enabled", "default_model"}
+    allowed = {"name", "endpoint_url", "description", "enabled", "default_model", "api_key"}
     updates = {k: v for k, v in fields.items() if k in allowed}
     if not updates:
         return get_machine(machine_id)

@@ -1537,6 +1537,9 @@ _ADMIN_HTML = """<!DOCTYPE html>
                 <template x-if="m.default_model">
                   <div class="text-xs text-gray-600 mt-0.5 font-mono">default: <span class="text-gray-500" x-text="m.default_model"></span></div>
                 </template>
+                <template x-if="m.has_api_key">
+                  <div class="text-xs text-green-700 mt-0.5">&#128274; API key set</div>
+                </template>
               </div>
 
               <!-- Action buttons -->
@@ -1580,9 +1583,36 @@ _ADMIN_HTML = """<!DOCTYPE html>
                       class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm text-white focus:border-[var(--accent)] focus:outline-none">
                   </div>
                   <div>
-                    <label class="text-xs text-gray-500 block mb-1">Default model</label>
-                    <input x-model="adminMachineEditForm.default_model" type="text" placeholder="e.g. qwen/qwen3.5-9b"
-                      class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm text-white focus:border-[var(--accent)] focus:outline-none font-mono">
+                    <label class="text-xs text-gray-500 block mb-1">Default model
+                      <span x-show="adminMachineModelsLoading" class="ml-1 text-gray-600 animate-pulse">probing…</span>
+                    </label>
+                    <template x-if="adminMachineModels.length > 0">
+                      <select x-model="adminMachineEditForm.default_model"
+                        class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm text-white focus:border-[var(--accent)] focus:outline-none font-mono">
+                        <option value="">— none —</option>
+                        <template x-for="mod in adminMachineModels" :key="mod">
+                          <option :value="mod" x-text="mod"></option>
+                        </template>
+                      </select>
+                    </template>
+                    <template x-if="adminMachineModels.length === 0">
+                      <input x-model="adminMachineEditForm.default_model" type="text" placeholder="e.g. qwen2.5:7b"
+                        class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm text-white focus:border-[var(--accent)] focus:outline-none font-mono">
+                    </template>
+                  </div>
+                  <div>
+                    <label class="text-xs text-gray-500 block mb-1">API key
+                      <span x-show="m.has_api_key && !adminMachineEditForm._keyChanged" class="ml-1 text-green-600 text-[10px]">&#128274; set</span>
+                    </label>
+                    <div class="flex gap-1.5">
+                      <input x-model="adminMachineEditForm._apiKeyInput" type="password"
+                        :placeholder="m.has_api_key ? &quot;enter new key to change&quot; : &quot;optional — leave blank if not required&quot;"
+                        @input="adminMachineEditForm._keyChanged = true"
+                        class="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm text-white focus:border-[var(--accent)] focus:outline-none font-mono">
+                      <button x-show="m.has_api_key" @click="adminMachineEditForm._apiKeyInput = ''; adminMachineEditForm._keyClear = true; adminMachineEditForm._keyChanged = false"
+                        class="text-xs px-2 py-1 rounded border border-red-900 text-red-600 hover:text-red-400 shrink-0"
+                        title="Remove stored key">Clear</button>
+                    </div>
                   </div>
                   <div class="col-span-2">
                     <label class="text-xs text-gray-500 block mb-1">Description</label>
@@ -4089,6 +4119,8 @@ function app() {
     adminMachineForm: {},
     adminMachineEditId: null,
     adminMachineEditForm: {},
+    adminMachineModels: [],
+    adminMachineModelsLoading: false,
     adminPolicyFormOpen: false,
     adminPolicyForm: {},
     adminPolicyEditId: null,
@@ -5156,13 +5188,14 @@ function app() {
       // Probe each machine for models (in parallel)
       const probeResults = await Promise.all(machines.map(async m => {
         try {
-          const r = await fetch('/api/setup/probe?url=' + encodeURIComponent(m.endpoint_url), {credentials:'include'});
+          const params = new URLSearchParams({url: m.endpoint_url, machine_id: m.id});
+          const r = await fetch('/api/setup/probe?' + params, {credentials:'include'});
           const d = await r.json();
           const servers = d.servers || [];
           const srv = servers[0] || {};
-          return { machine: m, endpoint: srv.endpoint || m.endpoint_url, type: srv.type || 'unknown', models: srv.models || [] };
+          return { machine: m, endpoint: srv.endpoint || m.endpoint_url, type: srv.type || 'unknown', models: srv.models || [], api_key: srv.status === 'up' ? (m.has_api_key ? '__stored__' : 'ollama') : 'ollama' };
         } catch(e) {
-          return { machine: m, endpoint: m.endpoint_url, type: 'unknown', models: [] };
+          return { machine: m, endpoint: m.endpoint_url, type: 'unknown', models: [], api_key: 'ollama' };
         }
       }));
 
@@ -5172,8 +5205,8 @@ function app() {
       });
 
       const allModels = probeResults.flatMap(p =>
-        p.models.length ? p.models.map(mod => ({id: mod.id || mod.name, endpoint: p.endpoint, api_key: 'ollama', server_type: p.type}))
-        : [{id: '__probe__', endpoint: p.endpoint, api_key: 'ollama', server_type: p.type}]
+        p.models.length ? p.models.map(mod => ({id: mod.id || mod.name, endpoint: p.endpoint, api_key: p.api_key, server_type: p.type, machine_id: p.machine.id}))
+        : [{id: '__probe__', endpoint: p.endpoint, api_key: p.api_key, server_type: p.type}]
       ).filter(m => m.id !== '__probe__');
 
       if (!allModels.length) {
@@ -5699,22 +5732,41 @@ function app() {
       } catch(e) { this._adminMsg(false, String(e)); }
     },
 
-    startEditMachine(m) {
+    async startEditMachine(m) {
       this.adminMachineEditId   = m.id;
-      this.adminMachineEditForm = { name: m.name, endpoint_url: m.endpoint_url, description: m.description || '', default_model: m.default_model || '' };
+      this.adminMachineModels   = [];
+      this.adminMachineEditForm = {
+        name: m.name, endpoint_url: m.endpoint_url,
+        description: m.description || '', default_model: m.default_model || '',
+        _apiKeyInput: '', _keyChanged: false, _keyClear: false,
+      };
+      // Probe machine endpoint to populate model dropdown
+      this.adminMachineModelsLoading = true;
+      try {
+        const r = await fetch('/api/setup/probe?url=' + encodeURIComponent(m.endpoint_url), {credentials:'include'});
+        const d = await r.json();
+        const models = (d.servers || []).flatMap(s => (s.models || []).map(mod => mod.id || mod.name)).filter(Boolean);
+        this.adminMachineModels = [...new Set(models)];
+      } catch(e) { /* leave empty — fallback to text input */ }
+      this.adminMachineModelsLoading = false;
     },
 
     cancelEditMachine() {
-      this.adminMachineEditId   = null;
-      this.adminMachineEditForm = {};
+      this.adminMachineEditId    = null;
+      this.adminMachineEditForm  = {};
+      this.adminMachineModels    = [];
     },
 
     async saveEditMachine(mid) {
       try {
+        const f = this.adminMachineEditForm;
+        const body = { name: f.name, endpoint_url: f.endpoint_url, description: f.description, default_model: f.default_model };
+        if (f._keyClear) body.api_key = '';
+        else if (f._keyChanged && f._apiKeyInput) body.api_key = f._apiKeyInput;
         const r = await fetch('/admin/machines/'+mid, {
           method:'PATCH', credentials:'include',
           headers:{'Content-Type':'application/json','X-CSRF-Token':getCsrfToken()},
-          body: JSON.stringify(this.adminMachineEditForm),
+          body: JSON.stringify(body),
         });
         const d = await r.json();
         if (!r.ok) { this._adminMsg(false, d.error || 'Save failed'); return; }
@@ -5724,6 +5776,7 @@ function app() {
           m.id===mid ? {...d.machine, capabilities: caps, profile_count: m.profile_count, _health: health} : m
         );
         this.adminMachineEditId = null;
+        this.adminMachineModels = [];
         this._adminMsg(true, 'Saved');
       } catch(e) { this._adminMsg(false, String(e)); }
     },
@@ -6706,95 +6759,92 @@ _SETUP_HTML = """<!DOCTYPE html>
           <template x-if="localServers.length > 0">
             <div>
               <div class="text-[10px] text-gray-500 uppercase tracking-wider font-semibold mb-2 px-1">Local Machine</div>
-              <div class="rounded-xl border border-gray-700 bg-gray-900 divide-y divide-gray-800">
+              <div class="space-y-2">
                 <template x-for="group in groupedLocalServers" :key="group.type">
-                  <div class="px-4 py-3">
-                    <!-- App label -->
-                    <div class="text-sm font-semibold text-white mb-2" x-text="group.label"></div>
-                    <!-- Endpoint rows -->
-                    <div class="space-y-2">
-                      <template x-for="s in group.servers" :key="s.endpoint">
-                        <div class="flex items-start gap-3 pl-1">
-                          <button @click="toggleServer(s)"
-                            :class="isServerSelected(s) ? 'bg-indigo-500 border-indigo-500' : 'border-gray-600 hover:border-gray-400 cursor-pointer'"
-                            class="w-4 h-4 rounded border-2 flex items-center justify-center flex-shrink-0 mt-0.5 transition-all">
-                            <svg x-show="isServerSelected(s)" class="w-2.5 h-2.5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/>
-                            </svg>
-                          </button>
-                          <div class="flex-1 min-w-0">
-                            <div class="flex items-center gap-2 flex-wrap">
-                              <span class="text-xs font-mono text-gray-400" x-text="new URL(s.endpoint).hostname + ':' + new URL(s.endpoint).port"></span>
-                              <span x-show="s.status==='up'" class="text-[10px] px-1.5 py-0.5 rounded-full bg-green-950 text-green-400 border border-green-900 font-medium">Running</span>
-                              <span x-show="s.status==='auth_required'" class="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-950 text-amber-400 border border-amber-800 font-medium">Auth required</span>
-                              <span x-show="s.status==='up' && s.models.length > 0" class="text-[10px] text-gray-600"
-                                x-text="s.models.length + ' model' + (s.models.length!==1?'s':'')"></span>
-                              <span x-show="s.status==='up' && s.models.length === 0" class="text-[10px] text-gray-600">No models loaded</span>
-                              <span x-show="s.status==='up' && serverKeys[s.endpoint]" class="text-[10px] text-green-500/70">&#128274; key set</span>
-                            </div>
-                            <!-- Optional API key for running servers (encrypts requests, not required) -->
-                            <div x-show="s.status==='up'" class="mt-1.5" x-data="{ showKey: false, keyTested: false }">
-                              <button @click="showKey = !showKey; keyTested = false" class="text-[10px] text-gray-600 hover:text-gray-400 transition-colors flex items-center gap-1">
-                                <svg class="w-2.5 h-2.5 transition-transform" :class="showKey ? 'rotate-90' : ''" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
-                                <span x-text="serverKeys[s.endpoint] ? 'API key set \u2014 change' : 'Add API key (optional)'"></span>
-                              </button>
-                              <div x-show="showKey" class="mt-1.5 space-y-1">
-                                <p class="text-[10px] text-gray-600">Encrypts requests to this server.</p>
-                                <div class="flex gap-2">
-                                  <input type="password" placeholder="API key"
-                                    x-model="serverKeys[s.endpoint]"
-                                    @keydown.enter="s._apiKey = serverKeys[s.endpoint]; keyTested = true; retryWithKey(s)"
-                                    class="flex-1 bg-gray-950 border border-gray-700 rounded-lg px-3 py-1.5 text-xs text-white placeholder-gray-600 focus:outline-none focus:border-indigo-500 font-mono">
-                                  <button @click="s._apiKey = serverKeys[s.endpoint]; keyTested = true; retryWithKey(s)"
-                                    class="btn-primary px-3 py-1.5 rounded-lg text-xs flex-shrink-0">Save</button>
+                  <template x-for="s in group.servers" :key="s.endpoint">
+                    <div class="p-4 rounded-xl border transition-all"
+                      :class="isServerSelected(s) ? 'border-indigo-500/60 bg-indigo-950/20' : 'border-gray-700 bg-gray-900'">
+                      <div class="flex items-start gap-3">
+                        <button @click="s.status==='up' && toggleServer(s)"
+                          :class="isServerSelected(s) ? 'bg-indigo-500 border-indigo-500' : s.status==='up' ? 'border-gray-600 hover:border-gray-400 cursor-pointer' : 'border-gray-700 cursor-default opacity-40'"
+                          class="w-5 h-5 rounded border-2 flex items-center justify-center flex-shrink-0 mt-0.5 transition-all">
+                          <svg x-show="isServerSelected(s)" class="w-3 h-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/>
+                          </svg>
+                        </button>
+                        <div class="flex-1 min-w-0">
+                          <div class="flex items-center gap-2 flex-wrap mb-0.5">
+                            <span class="text-sm font-semibold text-white" x-text="group.label"></span>
+                            <span class="text-xs font-mono text-gray-500" x-text="new URL(s.endpoint).hostname + ':' + new URL(s.endpoint).port"></span>
+                          </div>
+                          <div class="flex items-center gap-2 flex-wrap">
+                            <span x-show="s.status==='up'" class="text-[10px] px-1.5 py-0.5 rounded-full bg-green-950 text-green-400 border border-green-900 font-medium">Running</span>
+                            <span x-show="s.status==='auth_required'" class="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-950 text-amber-400 border border-amber-800 font-medium">Auth required</span>
+                            <span x-show="s.status==='up' && s.models.length > 0" class="text-[10px] text-gray-600"
+                              x-text="s.models.length + ' model' + (s.models.length!==1?'s':'')"></span>
+                            <span x-show="s.status==='up' && s.models.length === 0" class="text-[10px] text-gray-600">No models loaded</span>
+                            <span x-show="s.status==='up' && serverKeys[s.endpoint]" class="text-[10px] text-green-500/70">&#128274; key set</span>
+                          </div>
+                          <!-- Optional API key for running servers -->
+                          <div x-show="s.status==='up'" class="mt-1.5" x-data="{ showKey: false, keyTested: false }">
+                            <button @click="showKey = !showKey; keyTested = false" class="text-[10px] text-gray-600 hover:text-gray-400 transition-colors flex items-center gap-1">
+                              <svg class="w-2.5 h-2.5 transition-transform" :class="showKey ? 'rotate-90' : ''" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+                              <span x-text="serverKeys[s.endpoint] ? 'API key set \u2014 change' : 'Add API key (optional)'"></span>
+                            </button>
+                            <div x-show="showKey" class="mt-1.5 space-y-1">
+                              <p class="text-[10px] text-gray-600">Encrypts requests to this server.</p>
+                              <div class="flex gap-2">
+                                <input type="password" placeholder="API key"
+                                  x-model="serverKeys[s.endpoint]"
+                                  @keydown.enter="s._apiKey = serverKeys[s.endpoint]; keyTested = true; retryWithKey(s)"
+                                  class="flex-1 bg-gray-950 border border-gray-700 rounded-lg px-3 py-1.5 text-xs text-white placeholder-gray-600 focus:outline-none focus:border-indigo-500 font-mono">
+                                <button @click="s._apiKey = serverKeys[s.endpoint]; keyTested = true; retryWithKey(s)"
+                                  class="btn-primary px-3 py-1.5 rounded-lg text-xs flex-shrink-0">Save</button>
+                              </div>
+                              <template x-if="keyTested">
+                                <div class="pt-0.5">
+                                  <span x-show="retryingServers[s.endpoint]" class="text-[10px] text-gray-500 flex items-center gap-1"><div class="w-2 h-2 border border-gray-500/40 border-t-gray-400 rounded-full animate-spin"></div>Testing key&hellip;</span>
+                                  <span x-show="!retryingServers[s.endpoint] && !retryErrors[s.endpoint] && serverKeys[s.endpoint]" class="text-[10px] text-green-400">&#10003; Key set successfully</span>
+                                  <span x-show="!retryingServers[s.endpoint] && retryErrors[s.endpoint]" class="text-[10px] text-red-400" x-text="retryErrors[s.endpoint]"></span>
                                 </div>
-                                <template x-if="keyTested">
-                                  <div class="pt-0.5">
-                                    <span x-show="retryingServers[s.endpoint]" class="text-[10px] text-gray-500 flex items-center gap-1"><div class="w-2 h-2 border border-gray-500/40 border-t-gray-400 rounded-full animate-spin"></div>Testing key&hellip;</span>
-                                    <span x-show="!retryingServers[s.endpoint] && !retryErrors[s.endpoint] && serverKeys[s.endpoint]" class="text-[10px] text-green-400">&#10003; Key set successfully</span>
-                                    <span x-show="!retryingServers[s.endpoint] && retryErrors[s.endpoint]" class="text-[10px] text-red-400" x-text="retryErrors[s.endpoint]"></span>
-                                  </div>
-                                </template>
-                                <button x-show="serverKeys[s.endpoint]" @click="serverKeys[s.endpoint] = ''; s._apiKey = ''; keyTested = false"
-                                  class="text-[10px] text-gray-700 hover:text-gray-500 transition-colors">Clear key</button>
-                              </div>
-                            </div>
-                            <!-- Auth required: enter key to connect -->
-                            <div x-show="s.status==='auth_required'" class="mt-2 space-y-2">
-                              <!-- Enforcement notice (shown after a no-key attempt failed) -->
-                              <div x-show="authEnforcedServers[s.endpoint]" class="flex items-start gap-2 p-2 rounded-lg bg-amber-950/40 border border-amber-800/50">
-                                <svg class="w-3.5 h-3.5 mt-0.5 shrink-0 text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/></svg>
-                                <span class="text-xs text-amber-300">This server requires an API key — connections without one are rejected.</span>
-                              </div>
-                              <input type="password" placeholder="API key (e.g. sk-lm-...)"
-                                :value="$data.localKeys[s.endpoint]||''"
-                                @input="$data.localKeys = {...$data.localKeys, [s.endpoint]: $event.target.value}"
-                                @change="$data.localKeys = {...$data.localKeys, [s.endpoint]: $event.target.value}"
-                                @keydown.enter="serverKeys[s.endpoint] = $data.localKeys[s.endpoint]||''; retryWithKey(s)"
-                                :class="authEnforcedServers[s.endpoint] ? 'border-amber-700 focus:border-amber-500' : 'border-gray-700 focus:border-indigo-500'"
-                                class="w-full bg-gray-950 border rounded-lg px-3 py-1.5 text-xs text-white placeholder-gray-600 focus:outline-none font-mono transition-colors">
-                              <p class="text-xs text-gray-600">
-                                <template x-if="retryingServers[s.endpoint]">
-                                  <span class="flex items-center gap-1.5 text-gray-500"><div class="w-2.5 h-2.5 border-2 border-gray-500/40 border-t-gray-400 rounded-full animate-spin"></div>Connecting&hellip;</span>
-                                </template>
-                                <template x-if="!retryingServers[s.endpoint]">
-                                  <span>Press Enter to test</span>
-                                </template>
-                              </p>
-                              <p x-show="retryErrors[s.endpoint] && ($data.localKeys[s.endpoint]||'')" class="text-xs text-red-400" x-text="retryErrors[s.endpoint]"></p>
-                              <!-- Try without auth — hidden once we know auth is enforced -->
-                              <button x-show="!authEnforcedServers[s.endpoint]"
-                                @click="serverKeys[s.endpoint] = ''; retryWithKey(s)"
-                                :disabled="retryingServers[s.endpoint]"
-                                class="w-full py-1.5 px-3 rounded-lg text-xs border border-gray-700 text-gray-400 hover:text-white hover:border-gray-500 disabled:opacity-40 transition-colors text-left">
-                                No API key? Try connecting without one &rarr;
-                              </button>
+                              </template>
+                              <button x-show="serverKeys[s.endpoint]" @click="serverKeys[s.endpoint] = ''; s._apiKey = ''; keyTested = false"
+                                class="text-[10px] text-gray-700 hover:text-gray-500 transition-colors">Clear key</button>
                             </div>
                           </div>
+                          <!-- Auth required: enter key to connect -->
+                          <div x-show="s.status==='auth_required'" class="mt-2 space-y-2">
+                            <div x-show="authEnforcedServers[s.endpoint]" class="flex items-start gap-2 p-2 rounded-lg bg-amber-950/40 border border-amber-800/50">
+                              <svg class="w-3.5 h-3.5 mt-0.5 shrink-0 text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/></svg>
+                              <span class="text-xs text-amber-300">This server requires an API key — connections without one are rejected.</span>
+                            </div>
+                            <input type="password" placeholder="API key (e.g. sk-lm-...)"
+                              :value="$data.localKeys[s.endpoint]||''"
+                              @input="$data.localKeys = {...$data.localKeys, [s.endpoint]: $event.target.value}"
+                              @change="$data.localKeys = {...$data.localKeys, [s.endpoint]: $event.target.value}"
+                              @keydown.enter="serverKeys[s.endpoint] = $data.localKeys[s.endpoint]||''; retryWithKey(s)"
+                              :class="authEnforcedServers[s.endpoint] ? 'border-amber-700 focus:border-amber-500' : 'border-gray-700 focus:border-indigo-500'"
+                              class="w-full bg-gray-950 border rounded-lg px-3 py-1.5 text-xs text-white placeholder-gray-600 focus:outline-none font-mono transition-colors">
+                            <p class="text-xs text-gray-600">
+                              <template x-if="retryingServers[s.endpoint]">
+                                <span class="flex items-center gap-1.5 text-gray-500"><div class="w-2.5 h-2.5 border-2 border-gray-500/40 border-t-gray-400 rounded-full animate-spin"></div>Connecting&hellip;</span>
+                              </template>
+                              <template x-if="!retryingServers[s.endpoint]">
+                                <span>Press Enter to test</span>
+                              </template>
+                            </p>
+                            <p x-show="retryErrors[s.endpoint] && ($data.localKeys[s.endpoint]||'')" class="text-xs text-red-400" x-text="retryErrors[s.endpoint]"></p>
+                            <button x-show="!authEnforcedServers[s.endpoint]"
+                              @click="serverKeys[s.endpoint] = ''; retryWithKey(s)"
+                              :disabled="retryingServers[s.endpoint]"
+                              class="w-full py-1.5 px-3 rounded-lg text-xs border border-gray-700 text-gray-400 hover:text-white hover:border-gray-500 disabled:opacity-40 transition-colors text-left">
+                              No API key? Try connecting without one &rarr;
+                            </button>
+                          </div>
                         </div>
-                      </template>
+                      </div>
                     </div>
-                  </div>
+                  </template>
                 </template>
               </div>
             </div>
