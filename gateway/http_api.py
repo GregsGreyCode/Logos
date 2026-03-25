@@ -6890,7 +6890,7 @@ _SETUP_HTML = """<!DOCTYPE html>
       <div x-show="step===1" x-cloak>
         <div class="mb-5">
           <h2 class="text-xl font-bold mb-1">Connect your model servers</h2>
-          <p class="text-gray-400 text-sm">Logos scanned for local inference servers and found the results below. Select every server you want agents to route across, then continue to benchmark. <span class="text-gray-500">Click a server name to rename it.</span></p>
+          <p class="text-gray-400 text-sm">Logos scanned for local inference servers and found the results below. Select every server you want agents to route across, then continue to benchmark.</p>
         </div>
 
         <!-- Scanning -->
@@ -6903,6 +6903,8 @@ _SETUP_HTML = """<!DOCTYPE html>
 
         <!-- Results -->
         <div x-show="!autoScanning && autoScanDone" class="space-y-4">
+
+          <p class="text-xs text-gray-600">Click a server name to rename it.</p>
 
           <!-- LOCAL MACHINE -->
           <template x-if="localServers.length > 0">
