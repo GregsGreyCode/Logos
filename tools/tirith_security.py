@@ -612,9 +612,10 @@ def check_command_security(command: str) -> dict:
     fail_open = cfg["tirith_fail_open"]
 
     try:
+        _shell_args = [] if platform.system() == "Windows" else ["--shell", "posix"]
         result = subprocess.run(
             [tirith_path, "check", "--json", "--non-interactive",
-             "--shell", "posix", "--", command],
+             *_shell_args, "--", command],
             capture_output=True,
             text=True,
             timeout=timeout,

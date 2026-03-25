@@ -1721,7 +1721,13 @@ def cleanup_browser(task_id: Optional[str] = None) -> None:
                 if os.path.isfile(pid_file):
                     try:
                         daemon_pid = int(Path(pid_file).read_text().strip())
-                        os.kill(daemon_pid, signal.SIGTERM)
+                        if sys.platform == "win32":
+                            subprocess.run(
+                                ["taskkill", "/F", "/PID", str(daemon_pid)],
+                                capture_output=True,
+                            )
+                        else:
+                            os.kill(daemon_pid, signal.SIGTERM)
                         logger.debug("Killed daemon pid %s for %s", daemon_pid, session_name)
                     except (ProcessLookupError, ValueError, PermissionError, OSError):
                         logger.debug("Could not kill daemon pid for %s (already dead or inaccessible)", session_name)
