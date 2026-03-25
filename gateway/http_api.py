@@ -2521,31 +2521,31 @@ _ADMIN_HTML = """<!DOCTYPE html>
         <div class="text-xs text-gray-700 py-2">Loading…</div>
       </template>
       <template x-if="toolsets.toolsets">
-        <div class="space-y-1">
-          <template x-for="[name, ts] in Object.entries(toolsets.toolsets || {}).sort(([a],[b]) => a.localeCompare(b))" :key="name">
-            <details class="rounded-lg border group"
-              :class="ts.available ? 'border-gray-800 bg-gray-900' : 'border-red-900/30 bg-gray-900 opacity-60'">
-              <summary class="flex items-center gap-3 px-3 py-2 cursor-pointer list-none select-none">
-                <span class="w-1.5 h-1.5 rounded-full shrink-0"
-                  :class="ts.available ? 'bg-green-500' : 'bg-red-700'"></span>
-                <div class="min-w-0 flex-1">
-                  <div class="text-xs font-mono text-gray-300" x-text="name"></div>
-                  <div x-show="ts.description" class="text-xs text-gray-600 mt-0.5 leading-tight" x-text="ts.description"></div>
-                  <div x-show="!ts.available && ts.requirements && ts.requirements.length" class="text-xs text-red-700 mt-0.5 font-mono" x-text="'needs: ' + ts.requirements.join(', ')"></div>
-                </div>
-                <span class="text-xs font-mono shrink-0"
-                  :class="ts.available ? 'text-gray-600' : 'text-red-800'"
-                  x-text="(ts.tools || []).length + ' tool' + ((ts.tools||[]).length===1?'':'s')"></span>
-                <svg class="w-3 h-3 text-gray-700 shrink-0 transition-transform group-open:rotate-90" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
-              </summary>
-              <div x-show="(ts.tools||[]).length > 0" class="px-3 pb-2 pt-1 border-t border-gray-800/60">
-                <div class="flex flex-wrap gap-1 mt-1">
-                  <template x-for="tool in (ts.tools||[])" :key="tool">
-                    <span class="text-[10px] font-mono px-1.5 py-0.5 rounded bg-gray-800 text-gray-500 border border-gray-700" x-text="tool"></span>
-                  </template>
-                </div>
+        <div x-data="{ selectedTs: null }">
+          <div class="flex flex-wrap gap-1.5">
+            <template x-for="[name, ts] in Object.entries(toolsets.toolsets || {}).sort(([a],[b]) => a.localeCompare(b))" :key="name">
+              <button @click="selectedTs = selectedTs === name ? null : name"
+                class="flex items-center gap-1.5 px-2 py-1 rounded border text-xs font-mono transition-colors"
+                :class="selectedTs === name
+                  ? 'border-indigo-600 bg-indigo-900/30 text-indigo-300'
+                  : ts.available
+                    ? 'border-gray-700 bg-gray-900 text-gray-400 hover:border-gray-500 hover:text-gray-300'
+                    : 'border-red-900/30 bg-gray-900 text-gray-600 opacity-50'">
+                <span class="w-1.5 h-1.5 rounded-full shrink-0" :class="ts.available ? 'bg-green-500' : 'bg-red-700'"></span>
+                <span x-text="name"></span>
+              </button>
+            </template>
+          </div>
+          <template x-if="selectedTs && toolsets.toolsets[selectedTs]">
+            <div class="mt-2 p-2.5 rounded-lg border border-gray-800 bg-gray-900/60">
+              <div x-show="toolsets.toolsets[selectedTs].description" class="text-[10px] text-gray-500 mb-1.5" x-text="toolsets.toolsets[selectedTs].description"></div>
+              <div x-show="!toolsets.toolsets[selectedTs].available && (toolsets.toolsets[selectedTs].requirements||[]).length" class="text-[10px] text-red-700 font-mono mb-1.5" x-text="'needs: ' + (toolsets.toolsets[selectedTs].requirements||[]).join(', ')"></div>
+              <div class="flex flex-wrap gap-1">
+                <template x-for="tool in (toolsets.toolsets[selectedTs].tools || [])" :key="tool">
+                  <span class="text-[10px] font-mono px-1.5 py-0.5 rounded bg-gray-800 text-gray-500 border border-gray-700" x-text="tool"></span>
+                </template>
               </div>
-            </details>
+            </div>
           </template>
         </div>
       </template>
