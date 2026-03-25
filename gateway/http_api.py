@@ -739,7 +739,7 @@ _ADMIN_HTML = """<!DOCTYPE html>
       @click="tab='sessions'; if(!clusterInstances.length) loadInstances()">Chats</button>
     <button class="pb-2 text-sm font-medium border-b-2 border-transparent"
       :class="tab==='instances'?'tab-active':'text-gray-400 hover:text-white'"
-      @click="tab='instances'; loadInstances(); loadSouls(); loadToolsets()">Agents</button>
+      @click="tab='instances'; loadInstances(); loadSouls(); loadToolsets(); loadAdminMachines()">Agents</button>
     <template x-if="can('view_runs')">
       <button class="pb-2 text-sm font-medium border-b-2 border-transparent"
         :class="tab==='runs'?'tab-active':'text-gray-400 hover:text-white'"
@@ -1211,7 +1211,6 @@ _ADMIN_HTML = """<!DOCTYPE html>
               @drop.prevent="handleChatDrop($event)">
               <textarea x-model="chatInput"
                 @keydown.enter.exact.prevent="sendChat()"
-                @keydown.enter.shift="/* allow newline */"
                 @input="autoResizeChat($el)"
                 x-ref="chatTextarea"
                 autocomplete="off"
@@ -2371,29 +2370,60 @@ _ADMIN_HTML = """<!DOCTYPE html>
       <div class="space-y-1.5">
 
         <!-- Core gateway — always shown -->
-        <div class="flex items-center gap-3 px-3 py-2.5 rounded-lg bg-gray-900 border transition-colors"
-          :class="agentAlive === false ? 'border-red-900/50' : 'border-gray-800'">
-          <span class="w-1.5 h-1.5 rounded-full shrink-0"
-            :class="agentAlive === false ? 'bg-red-500' : agentAlive === null ? 'bg-gray-500 animate-pulse' : 'bg-green-500'"></span>
-          <div class="min-w-0 flex-1">
-            <div class="flex items-center gap-1.5 flex-wrap">
-              <span class="text-sm font-medium text-white" x-text="status.instance_name || 'Hermes'"></span>
-              <span class="text-xs px-1.5 py-0.5 rounded font-mono bg-indigo-950 text-indigo-300 border border-indigo-900">core</span>
+        <div class="px-3 py-2.5 rounded-lg bg-gray-900 border transition-colors"
+          :class="agentAlive === false ? 'border-red-900/50' : 'border-gray-800'"
+          x-data="{ changingModel: false, modelDraft: '', modelSaving: false, modelErr: '' }">
+          <div class="flex items-center gap-3">
+            <span class="w-1.5 h-1.5 rounded-full shrink-0"
+              :class="agentAlive === false ? 'bg-red-500' : agentAlive === null ? 'bg-gray-500 animate-pulse' : 'bg-green-500'"></span>
+            <div class="min-w-0 flex-1">
+              <div class="flex items-center gap-1.5 flex-wrap">
+                <span class="text-sm font-medium text-white" x-text="status.instance_name || 'Hermes'"></span>
+                <span class="text-xs px-1.5 py-0.5 rounded font-mono bg-indigo-950 text-indigo-300 border border-indigo-900">core</span>
+              </div>
+              <div class="flex items-center gap-2 mt-0.5 text-xs text-gray-700 font-mono flex-wrap">
+                <span x-text="status.uptime_s > 0 ? 'up ' + fmtUptime(status.uptime_s) : 'starting'"></span>
+                <template x-if="(status.active_sessions||[]).length > 0">
+                  <span><span class="text-gray-800">·</span><span class="text-indigo-500" x-text="(status.active_sessions||[]).length + ' active'"></span></span>
+                </template>
+                <template x-if="status.cpu_percent != null">
+                  <span><span class="text-gray-800">·</span><span :class="status.cpu_percent > 80 ? 'text-orange-500' : 'text-gray-600'" x-text="status.cpu_percent + '% CPU'"></span></span>
+                </template>
+                <template x-if="status.mem_mb != null">
+                  <span><span class="text-gray-800">·</span><span :class="status.mem_mb > 2048 ? 'text-orange-500' : 'text-gray-600'" x-text="status.mem_mb >= 1024 ? (status.mem_mb/1024).toFixed(1)+'GB' : status.mem_mb+'MB'"></span></span>
+                </template>
+              </div>
+              <!-- Current model + change inline -->
+              <div x-show="status.current_model" class="mt-1 flex items-center gap-1.5 flex-wrap">
+                <span x-show="!changingModel" class="text-[11px] font-mono text-gray-600" x-text="status.current_model"></span>
+                <button x-show="!changingModel" @click="changingModel=true; modelDraft=status.current_model; modelErr=''"
+                  class="text-[10px] text-gray-700 hover:text-gray-400 transition-colors">change</button>
+                <template x-if="changingModel">
+                  <div class="flex items-center gap-1.5 flex-wrap">
+                    <select x-model="modelDraft"
+                      class="bg-gray-800 border border-gray-700 rounded px-2 py-0.5 text-[11px] font-mono text-white focus:outline-none focus:border-indigo-500">
+                      <option value="" disabled>— select model —</option>
+                      <template x-for="m in (adminMachines||[]).flatMap(m2 => (m2.models||[]).map(x=>x.id||x.name||x).filter(Boolean))" :key="m">
+                        <option :value="m" x-text="m"></option>
+                      </template>
+                      <option x-show="modelDraft && !(adminMachines||[]).flatMap(m2=>(m2.models||[]).map(x=>x.id||x.name||x)).includes(modelDraft)" :value="modelDraft" x-text="modelDraft"></option>
+                    </select>
+                    <button @click="modelSaving=true; modelErr=''; fetch('/api/model',{method:'PATCH',credentials:'include',headers:{'Content-Type':'application/json','X-CSRF-Token':getCsrfToken()},body:JSON.stringify({model:modelDraft})}).then(r=>r.json()).then(d=>{if(d.ok){status.current_model=d.model;changingModel=false;}else{modelErr=d.error||'Failed';}}).catch(e=>{modelErr=String(e);}).finally(()=>{modelSaving=false;})"
+                      :disabled="modelSaving || !modelDraft"
+                      class="text-[10px] px-2 py-0.5 rounded bg-indigo-600 hover:bg-indigo-500 text-white disabled:opacity-40 transition-colors">
+                      <span x-show="!modelSaving">Save</span><span x-show="modelSaving">…</span>
+                    </button>
+                    <button @click="changingModel=false; modelErr=''" class="text-[10px] text-gray-700 hover:text-gray-400 transition-colors">cancel</button>
+                    <span x-show="modelErr" class="text-[10px] text-red-400 font-mono" x-text="modelErr"></span>
+                  </div>
+                </template>
+              </div>
             </div>
-            <div class="flex items-center gap-2 mt-0.5 text-xs text-gray-700 font-mono flex-wrap">
-              <span x-text="status.uptime_s > 0 ? 'up ' + fmtUptime(status.uptime_s) : 'starting'"></span>
-              <template x-if="(status.active_sessions||[]).length > 0">
-                <span>
-                  <span class="text-gray-800">·</span>
-                  <span class="text-indigo-500" x-text="(status.active_sessions||[]).length + ' active'"></span>
-                </span>
-              </template>
-            </div>
+            <button @click="switchInstance('self'); tab='sessions'"
+              class="text-xs px-2.5 py-1 rounded-lg bg-[var(--accent)] hover:opacity-90 text-white font-medium transition-colors shrink-0">
+              Chat →
+            </button>
           </div>
-          <button @click="switchInstance('self'); tab='sessions'"
-            class="text-xs px-2.5 py-1 rounded-lg bg-[var(--accent)] hover:opacity-90 text-white font-medium transition-colors">
-            Chat →
-          </button>
         </div>
 
         <template x-for="inst in clusterInstances" :key="inst.name">
@@ -2491,21 +2521,31 @@ _ADMIN_HTML = """<!DOCTYPE html>
         <div class="text-xs text-gray-700 py-2">Loading…</div>
       </template>
       <template x-if="toolsets.toolsets">
-        <div class="space-y-1.5">
+        <div class="space-y-1">
           <template x-for="[name, ts] in Object.entries(toolsets.toolsets || {}).sort(([a],[b]) => a.localeCompare(b))" :key="name">
-            <div class="flex items-start gap-3 px-3 py-2 rounded-lg bg-gray-900 border"
-              :class="ts.available ? 'border-gray-800' : 'border-red-900/30 opacity-60'">
-              <span class="w-1.5 h-1.5 rounded-full mt-1.5 shrink-0"
-                :class="ts.available ? 'bg-green-500' : 'bg-red-700'"></span>
-              <div class="min-w-0 flex-1">
-                <div class="text-xs font-mono text-gray-300" x-text="name"></div>
-                <div x-show="ts.description" class="text-xs text-gray-600 mt-0.5 leading-tight" x-text="ts.description"></div>
-                <div x-show="!ts.available && ts.requirements && ts.requirements.length" class="text-xs text-red-700 mt-0.5 font-mono" x-text="'needs: ' + ts.requirements.join(', ')"></div>
+            <details class="rounded-lg border group"
+              :class="ts.available ? 'border-gray-800 bg-gray-900' : 'border-red-900/30 bg-gray-900 opacity-60'">
+              <summary class="flex items-center gap-3 px-3 py-2 cursor-pointer list-none select-none">
+                <span class="w-1.5 h-1.5 rounded-full shrink-0"
+                  :class="ts.available ? 'bg-green-500' : 'bg-red-700'"></span>
+                <div class="min-w-0 flex-1">
+                  <div class="text-xs font-mono text-gray-300" x-text="name"></div>
+                  <div x-show="ts.description" class="text-xs text-gray-600 mt-0.5 leading-tight" x-text="ts.description"></div>
+                  <div x-show="!ts.available && ts.requirements && ts.requirements.length" class="text-xs text-red-700 mt-0.5 font-mono" x-text="'needs: ' + ts.requirements.join(', ')"></div>
+                </div>
+                <span class="text-xs font-mono shrink-0"
+                  :class="ts.available ? 'text-gray-600' : 'text-red-800'"
+                  x-text="(ts.tools || []).length + ' tool' + ((ts.tools||[]).length===1?'':'s')"></span>
+                <svg class="w-3 h-3 text-gray-700 shrink-0 transition-transform group-open:rotate-90" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+              </summary>
+              <div x-show="(ts.tools||[]).length > 0" class="px-3 pb-2 pt-1 border-t border-gray-800/60">
+                <div class="flex flex-wrap gap-1 mt-1">
+                  <template x-for="tool in (ts.tools||[])" :key="tool">
+                    <span class="text-[10px] font-mono px-1.5 py-0.5 rounded bg-gray-800 text-gray-500 border border-gray-700" x-text="tool"></span>
+                  </template>
+                </div>
               </div>
-              <span class="text-xs font-mono shrink-0 mt-0.5"
-                :class="ts.available ? 'text-gray-600' : 'text-red-800'"
-                x-text="(ts.tools || []).length + ' tools'"></span>
-            </div>
+            </details>
           </template>
         </div>
       </template>
@@ -7350,8 +7390,13 @@ _SETUP_HTML = """<!DOCTYPE html>
                         :class="compareDone && compareResults[mid] && !compareResults[mid].error && !(compareResults[mid].max_context && compareResults[mid].max_context < 16384) ? 'cursor-pointer hover:bg-white/5' : ''"
                         @click="if (compareDone && compareResults[mid] && !compareResults[mid].error && !(compareResults[mid].max_context && compareResults[mid].max_context < 16384)) { pickServerModel(server.endpoint, mid); compareExpanded = compareExpanded === mid ? null : mid; }">
                         <div class="flex items-center gap-2 min-w-0 flex-wrap">
-                          <span x-show="serverModelForServer(server.endpoint) === mid && compareDone"
+                          <!-- Global winner — shown regardless of which server row we're in -->
+                          <span x-show="compareRecommended === mid && compareDone"
                             class="spinner-hue text-[9px] px-1.5 py-0.5 rounded-full bg-indigo-900 text-indigo-300 border border-indigo-700 font-semibold uppercase tracking-wider flex-shrink-0">Best</span>
+                          <!-- Per-server pick — shown when this server's best is NOT the global winner -->
+                          <span x-show="serverModelForServer(server.endpoint) === mid && compareRecommended !== mid && compareDone"
+                            class="text-[9px] px-1.5 py-0.5 rounded-full bg-gray-800 text-gray-400 border border-gray-700 font-semibold uppercase tracking-wider flex-shrink-0"
+                            title="Best model on this server, but another server has a higher overall score">Server pick</span>
                           <span x-show="compareResults[mid]?.max_context && compareResults[mid].max_context < 16384 && compareDone"
                             class="text-[9px] px-1.5 py-0.5 rounded-full bg-red-950 text-red-400 border border-red-900 font-semibold uppercase tracking-wider flex-shrink-0"
                             title="Context window too small for agent use — system prompt alone is ~8K tokens">Not eligible</span>
@@ -8766,7 +8811,7 @@ function setup() {
                   }
                 }
                 if (ev.recommendation) {
-                  const m = models.find(x => x.id === ev.recommendation);
+                  const m = this.getModels().find(x => x.id === ev.recommendation);
                   if (m) this.pickModel(m);
                 }
                 this._saveProgress();
@@ -9389,13 +9434,54 @@ async def _handle_status(request: web.Request) -> web.Response:
     # Recent completed sessions (ring buffer, newest last)
     recent = list(getattr(runner, "_recent_sessions", []))
 
+    cpu_percent = None
+    mem_mb = None
+    try:
+        import psutil as _psutil
+        _proc = _psutil.Process()
+        cpu_percent = round(_proc.cpu_percent(interval=None), 1)
+        mem_mb = int(_proc.memory_info().rss / 1024 / 1024)
+    except Exception:
+        pass
+
+    current_model = os.getenv("HERMES_MODEL") or os.getenv("LLM_MODEL") or ""
+
     return web.json_response({
         "status": "ok",
         "uptime_s": uptime,
         "instance_name": _INSTANCE_NAME,
         "active_sessions": active,
         "recent_sessions": recent,
+        "current_model": current_model,
+        "cpu_percent": cpu_percent,
+        "mem_mb": mem_mb,
     })
+
+
+async def _handle_model_patch(request: web.Request) -> web.Response:
+    """PATCH /api/model — change the active model at runtime and persist to config.yaml."""
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "invalid_json"}, status=400)
+    new_model = (body.get("model") or "").strip()
+    if not new_model:
+        return web.json_response({"error": "model required"}, status=400)
+    _hermes_home = pathlib.Path(os.environ.get("HERMES_HOME") or (pathlib.Path.home() / ".logos"))
+    _config_path = _hermes_home / "config.yaml"
+    try:
+        import yaml as _yaml
+        _cfg: dict = {}
+        if _config_path.exists():
+            with open(_config_path, encoding="utf-8") as _f:
+                _cfg = _yaml.safe_load(_f) or {}
+        _cfg["HERMES_MODEL"] = new_model
+        os.environ["HERMES_MODEL"] = new_model
+        with open(_config_path, "w", encoding="utf-8") as _f:
+            _yaml.dump(_cfg, _f, default_flow_style=False, sort_keys=False)
+    except Exception as exc:
+        return web.json_response({"error": str(exc)}, status=500)
+    return web.json_response({"ok": True, "model": new_model})
 
 
 async def _handle_toolsets(request: web.Request) -> web.Response:
@@ -10732,6 +10818,7 @@ async def start_http_api(runner: Any, port: int = 8080) -> None:
     app.router.add_post("/proxy/benchmark",   _handle_proxy_benchmark)
     app.router.add_get("/internal/routing/claims",  _handle_routing_claims)
     app.router.add_post("/internal/routing/apply",  require_csrf(_handle_routing_apply))
+    app.router.add_patch("/api/model", require_csrf(_handle_model_patch))
 
     # ── Admin routes ───────────────────────────────────────────────────────
     _mm  = require_permission("manage_machines")

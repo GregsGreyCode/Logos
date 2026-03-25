@@ -1729,6 +1729,9 @@ async def handle_setup_complete(request: web.Request) -> web.Response:
                         m_obj["id"],
                         ["lightweight", "general", "coding", "reasoning", "vision", "embedding"],
                     )
+                    rec_model = (srv.get("recommended_model") or "").strip()
+                    if rec_model:
+                        auth_db.update_machine(m_obj["id"], default_model=rec_model)
                     machine_ids.append(m_obj["id"])
                 # Catch-all policy routing to first machine (user can tune later)
                 policy = auth_db.create_policy(
@@ -1745,6 +1748,13 @@ async def handle_setup_complete(request: web.Request) -> web.Response:
                 result = _seed.apply_single_machine_setup(endpoint)
                 if "error" in result and result["error"] != "machines_already_exist":
                     return web.json_response(result, status=409)
+                # Backfill default_model on the newly created machine
+                _single_rec = (body.get("model") or "").strip()
+                if _single_rec:
+                    for _m in auth_db.list_machines():
+                        if (_m.get("endpoint_url") or "").rstrip("/") == endpoint.rstrip("/"):
+                            auth_db.update_machine(_m["id"], default_model=_single_rec)
+                            break
 
         # Write chosen model + endpoint to config.yaml so the agent actually uses them.
         # Keys are bridged to env vars by run.py on startup (only if not already in env,
