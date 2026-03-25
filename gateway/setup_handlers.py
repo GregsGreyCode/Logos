@@ -1091,7 +1091,7 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
                 if server_type == "lmstudio":
                     _ctx_probe_headers = {"Authorization": f"Bearer {api_key}"} if api_key and api_key != "ollama" else {}
                     await send({"log": "  Probing max loadable context window…"})
-                    for _ctx_probe in [16384, 8192, 4096]:
+                    for _ctx_probe in [65536, 32768, 16384, 8192, 4096]:
                         # Unload first so we start from a clean slot
                         try:
                             await http.post(

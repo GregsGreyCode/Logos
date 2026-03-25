@@ -1195,7 +1195,7 @@ _ADMIN_HTML = """<!DOCTYPE html>
             </div>
             <!-- Text input -->
             <div class="relative flex-1">
-              <input x-model="chatInput" @keydown.enter="sendChat()"
+              <input x-model="chatInput" @keydown.enter="sendChat()" autocomplete="off"
                 class="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-indigo-500 transition-colors pr-2"
                 :placeholder="micRecording ? ('Recording… ' + micCountdown + 's') : micTranscribing ? 'Transcribing…' : ('Message ' + (status.instance_name || 'Hermes') + '\u2026 (Enter to send)')"
                 :disabled="micTranscribing || activeInstance.k8s_status === 'starting'">
@@ -1504,6 +1504,9 @@ _ADMIN_HTML = """<!DOCTYPE html>
                 <template x-if="m.description">
                   <div class="text-xs text-gray-700 mt-0.5" x-text="m.description"></div>
                 </template>
+                <template x-if="m.default_model">
+                  <div class="text-xs text-gray-600 mt-0.5 font-mono">default: <span class="text-gray-500" x-text="m.default_model"></span></div>
+                </template>
               </div>
 
               <!-- Action buttons -->
@@ -1546,6 +1549,11 @@ _ADMIN_HTML = """<!DOCTYPE html>
                     <input x-model="adminMachineEditForm.endpoint_url" type="text"
                       class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm text-white focus:border-[var(--accent)] focus:outline-none">
                   </div>
+                  <div>
+                    <label class="text-xs text-gray-500 block mb-1">Default model</label>
+                    <input x-model="adminMachineEditForm.default_model" type="text" placeholder="e.g. qwen/qwen3.5-9b"
+                      class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm text-white focus:border-[var(--accent)] focus:outline-none font-mono">
+                  </div>
                   <div class="col-span-2">
                     <label class="text-xs text-gray-500 block mb-1">Description</label>
                     <input x-model="adminMachineEditForm.description" type="text" placeholder="optional"
@@ -1562,20 +1570,30 @@ _ADMIN_HTML = """<!DOCTYPE html>
             </template>
 
             <!-- Capabilities row -->
-            <div class="border-t border-gray-800/60 px-4 py-2.5 flex items-center gap-4">
-              <span class="text-xs text-gray-700 shrink-0">Capabilities</span>
-              <div class="flex flex-wrap gap-2">
-                <template x-for="cls in ['lightweight','coding','general','reasoning','vision','embedding']" :key="cls">
-                  <label class="flex items-center gap-1 text-xs cursor-pointer select-none">
-                    <input type="checkbox"
-                      :checked="m.capabilities.includes(cls)"
-                      @change="toggleCapability(m, cls, $event.target.checked)"
-                      class="rounded border-gray-700 bg-gray-800 accent-[var(--accent)]">
-                    <span :class="m.capabilities.includes(cls) ? 'text-gray-300' : 'text-gray-600'"
-                      x-text="cls"></span>
-                  </label>
-                </template>
+            <div class="border-t border-gray-800/60 px-4 py-2.5">
+              <div class="flex items-center gap-4 mb-1.5">
+                <span class="text-xs text-gray-700 shrink-0">Capabilities</span>
+                <div class="flex flex-wrap gap-2">
+                  <template x-for="cls in ['lightweight','coding','general','reasoning','vision','embedding']" :key="cls">
+                    <label class="flex items-center gap-1 text-xs cursor-pointer select-none">
+                      <input type="checkbox"
+                        :checked="m.capabilities.includes(cls)"
+                        @change="toggleCapability(m, cls, $event.target.checked)"
+                        class="rounded border-gray-700 bg-gray-800 accent-[var(--accent)]">
+                      <span :class="m.capabilities.includes(cls) ? 'text-gray-300' : 'text-gray-600'"
+                        x-text="cls"></span>
+                    </label>
+                  </template>
+                </div>
               </div>
+              <!-- Warning when capabilities are limited -->
+              <template x-if="m.capabilities.length < 3">
+                <p class="text-[10px] text-amber-700 leading-relaxed">
+                  Only <span class="font-medium text-amber-600" x-text="m.capabilities.join(', ') || 'none'"></span> enabled.
+                  Requests for unchecked types will not route to this machine &mdash; they will fail unless another machine handles them.
+                  <span x-show="m.capabilities.length === 0" class="text-red-500 font-medium">No capabilities enabled — this machine will receive no traffic.</span>
+                </p>
+              </template>
             </div>
 
           </div>
@@ -5639,7 +5657,7 @@ function app() {
 
     startEditMachine(m) {
       this.adminMachineEditId   = m.id;
-      this.adminMachineEditForm = { name: m.name, endpoint_url: m.endpoint_url, description: m.description || '' };
+      this.adminMachineEditForm = { name: m.name, endpoint_url: m.endpoint_url, description: m.description || '', default_model: m.default_model || '' };
     },
 
     cancelEditMachine() {
@@ -6260,34 +6278,26 @@ _LOGIN_HTML = """<!DOCTYPE html>
             const d = await res.json().catch(() => ({}));
             clearTimeout(this._inactivityTimer);
             this.phase = 'loggedin';
-            const logoEl = document.querySelector('.logo-wrap');
-            const imgEl  = document.querySelector('.logo-img');
-            if (logoEl && imgEl) {
-              // Measure from the logo IMAGE (not the wrap, which includes the hint div below)
-              const wrapRect = logoEl.getBoundingClientRect();
-              const imgRect  = imgEl.getBoundingClientRect();
-              const fromCX   = imgRect.left + imgRect.width  / 2;
-              const fromCY   = imgRect.top  + imgRect.height / 2;
-              // Set transform-origin to the logo image centre so scale doesn't shift it
-              const originX  = imgRect.left - wrapRect.left + imgRect.width  / 2;
-              const originY  = imgRect.top  - wrapRect.top  + imgRect.height / 2;
-              logoEl.style.transformOrigin = `${originX}px ${originY}px`;
-              logoEl.style.transition = 'transform 0.9s cubic-bezier(0.4,0,0.2,1)';
+            // Wait two frames so Alpine commits the logo-up class removal before measuring
+            await new Promise(r => requestAnimationFrame(r));
+            await new Promise(r => requestAnimationFrame(r));
+            const imgEl = document.querySelector('.logo-img');
+            if (imgEl) {
+              const imgRect = imgEl.getBoundingClientRect();
+              const fromCX  = imgRect.left + imgRect.width  / 2;
+              const fromCY  = imgRect.top  + imgRect.height / 2;
+              imgEl.style.transformOrigin = 'center center';
+              imgEl.style.transition = 'transform 0.9s cubic-bezier(0.4,0,0.2,1)';
               if (d.setup_required) {
-                // Destination is /setup — centred 56px logo at pt-10
+                // Destination is /setup — centred 56px logo at pt-10 (toCY=68)
                 const toCX  = window.innerWidth / 2;
                 const toCY  = 68;
-                const scale = 56 / 100;
-                logoEl.style.transform = `translate(${toCX - fromCX}px, ${toCY - fromCY}px) scale(${scale.toFixed(4)})`;
+                imgEl.style.transform = `translate(${toCX - fromCX}px, ${toCY - fromCY}px) scale(${(56/100).toFixed(4)})`;
               } else {
-                // Destination is / — animate to nav logo (32×32, top-left of max-w-screen-xl)
-                const vw       = window.innerWidth;
-                const navLogoX = Math.max(0, (vw - 1280) / 2) + 16 + 16;
-                const navLogoY = 32;
-                const targetX  = navLogoX - fromCX;
-                // phase='loggedin' removes logo-up (translateY(-24px)) from wrap; compensate
-                const targetY  = navLogoY - fromCY - 24;
-                logoEl.style.transform = `translate(${targetX}px, ${targetY}px) scale(0.32)`;
+                // Destination is / — nav logo (32×32, top-left of max-w-screen-xl)
+                const toCX = Math.max(0, (window.innerWidth - 1280) / 2) + 32;
+                const toCY = 32;
+                imgEl.style.transform = `translate(${toCX - fromCX}px, ${toCY - fromCY}px) scale(0.32)`;
               }
             }
             // Signal the main page to do a staggered first-load fade-in
@@ -7117,8 +7127,9 @@ _SETUP_HTML = """<!DOCTYPE html>
                                     }"
                                     x-text="compareResults[mid].tok_s + ' tok/s'"></span>
                                   <template x-if="compareResults[mid].max_context">
-                                    <span class="font-mono text-[10px] text-gray-500"
-                                      x-text="(compareResults[mid].max_context >= 1024 ? Math.round(compareResults[mid].max_context/1024)+'K' : compareResults[mid].max_context) + ' ctx'"></span>
+                                    <span class="font-mono text-[10px]"
+                                      :class="compareResults[mid].max_context >= 16384 ? 'text-gray-500' : 'text-red-500'"
+                                      x-text="(compareResults[mid].max_context >= 1024 ? Math.round(compareResults[mid].max_context/1024)+'K' : compareResults[mid].max_context) + ' ctx' + (compareResults[mid].max_context < 16384 ? ' \u26a0' : '')"></span>
                                   </template>
                                   <span :class="compareResults[mid].quality_pass ? 'text-green-500' : 'text-yellow-600'"
                                     x-text="compareResults[mid].quality_pass ? '\u2713' : '\u26a0'"></span>
@@ -7163,10 +7174,10 @@ _SETUP_HTML = """<!DOCTYPE html>
                           <div x-show="compareResults[mid]?.max_context">
                             <span class="text-gray-600">Max context</span>
                             <span class="ml-1.5 font-mono"
-                              :class="compareResults[mid]?.max_context >= 16384 ? 'text-green-400' : compareResults[mid]?.max_context >= 8192 ? 'text-yellow-400' : 'text-red-400'"
+                              :class="compareResults[mid]?.max_context >= 32768 ? 'text-green-400' : compareResults[mid]?.max_context >= 16384 ? 'text-yellow-400' : 'text-red-400'"
                               x-text="compareResults[mid]?.max_context >= 1024 ? Math.round(compareResults[mid]?.max_context/1024)+'K tokens' : compareResults[mid]?.max_context+' tokens'"></span>
                             <span class="ml-1 text-gray-600 text-[10px]"
-                              x-text="compareResults[mid]?.max_context >= 16384 ? '(full)' : compareResults[mid]?.max_context >= 8192 ? '(limited)' : '(very limited \u2014 may truncate agent context)'"></span>
+                              x-text="compareResults[mid]?.max_context >= 32768 ? '(full)' : compareResults[mid]?.max_context >= 16384 ? '(limited \u2014 short conversations only)' : '(too small \u2014 agent system prompt exceeds this)'"></span>
                           </div>
                         </div>
                         <!-- Eval breakdown -->
@@ -7570,6 +7581,18 @@ _SETUP_HTML = """<!DOCTYPE html>
           <p class="text-gray-400 text-sm">A soul shapes how your agent thinks and communicates and is a starting point for its character. It works alongside the tools you enable &mdash; pick one that fits what you want for your first agent instance.</p>
         </div>
 
+        <!-- Context warning banner — shown when selected model has limited context -->
+        <div x-show="selectedModelMaxCtx && selectedModelMaxCtx < 16384" x-cloak
+          class="mb-4 px-3 py-2.5 rounded-xl border border-amber-800 bg-amber-950/40 flex items-start gap-2">
+          <span class="text-amber-400 text-sm shrink-0">⚠</span>
+          <p class="text-xs text-amber-300 leading-relaxed">
+            Your model has a
+            <span class="font-mono font-semibold" x-text="selectedModelMaxCtx >= 1024 ? Math.round(selectedModelMaxCtx/1024)+'K' : selectedModelMaxCtx"></span>
+            token context window. The agent system prompt uses ~8K tokens, leaving little room for conversation.
+            <span class="text-amber-200 font-medium">General (Lite) is recommended</span> — it has a smaller footprint and fewer tools.
+          </p>
+        </div>
+
         <!-- 4×2 grid — each card offset by 45° so the hue wave sweeps left→right -->
         <div class="grid grid-cols-2 gap-2 mb-6">
           <template x-for="(soul, idx) in soulOptions" :key="soul.slug">
@@ -7589,11 +7612,13 @@ _SETUP_HTML = """<!DOCTYPE html>
               </div>
               <!-- desc -->
               <p class="text-xs text-gray-300 leading-relaxed line-clamp-3" x-text="soul.desc"></p>
-              <!-- first-run hint -->
+              <!-- first-run hint / context recommendation -->
               <div class="mt-1.5 flex items-center gap-1.5 flex-wrap">
-                <span x-show="soul.firstRun"
+                <span x-show="soul.slug === 'general-lite' && selectedModelMaxCtx && selectedModelMaxCtx < 16384"
+                  class="text-[9px] px-1.5 py-0.5 rounded-full bg-amber-950 text-amber-300 border border-amber-800 font-semibold uppercase tracking-wider">Fits your model</span>
+                <span x-show="soul.firstRun && !(soul.slug === 'general-lite' && selectedModelMaxCtx && selectedModelMaxCtx < 16384)"
                   class="text-[9px] px-1.5 py-0.5 rounded-full bg-green-950 text-green-400 border border-green-900 font-semibold uppercase tracking-wider">Recommended</span>
-                <span x-show="!soul.firstRun"
+                <span x-show="!soul.firstRun && !(soul.slug === 'general-lite' && selectedModelMaxCtx && selectedModelMaxCtx < 16384)"
                   class="text-[9px] text-gray-600">best after initial setup</span>
               </div>
             </button>
@@ -7863,6 +7888,14 @@ function setup() {
         desc:     'All-round peer assistant — research, writing, analysis, conversation. Treats you like a capable adult.',
         tools:    ['Web search', 'File I/O', 'Code execution', 'Browsing'],
         firstRun: true,
+      },
+      {
+        slug:     'general-lite',
+        icon:     '◈',
+        name:     'General (Lite)',
+        desc:     'Same peer assistant character with a lighter tool footprint. Designed for models with smaller context windows.',
+        tools:    ['Memory', 'Session search'],
+        firstRun: false,
       },
       {
         slug:  'app-development',
@@ -8255,7 +8288,15 @@ function setup() {
       }
       if (this.step === 2) { await this._goStep(3); return; }
       if (this.step === 3) { await this._goStep(4); return; }
-      if (this.step === 4) { await this._goStep(5); return; }
+      if (this.step === 4) {
+        await this._goStep(5, () => {
+          // Auto-suggest General (Lite) if the selected model has limited context
+          if (this.selectedModelMaxCtx && this.selectedModelMaxCtx < 16384) {
+            this.selectedSoul = 'general-lite';
+          }
+        });
+        return;
+      }
       if (this.step === 5) { await this._goStep(6); return; }
       if (this.step === 6) { await this._goStep(7); return; }
     },
@@ -8647,6 +8688,12 @@ function setup() {
         const m = this.getModels().find(x => x.id === modelId);
         if (m) this.pickModel(m);
       }
+    },
+
+    // Max context of the currently-selected model (from benchmark results), or null
+    get selectedModelMaxCtx() {
+      if (!this.selectedModel || !this.compareResults) return null;
+      return this.compareResults[this.selectedModel]?.max_context ?? null;
     },
 
     // True once every selected server has a model assigned

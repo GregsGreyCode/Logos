@@ -173,7 +173,7 @@ async def handle_machines_patch(request: web.Request) -> web.Response:
     except Exception:
         return web.json_response({"error": "invalid_json"}, status=400)
 
-    updates = {k: body[k] for k in ("name", "endpoint_url", "description", "enabled") if k in body}
+    updates = {k: body[k] for k in ("name", "endpoint_url", "description", "enabled", "default_model") if k in body}
     if updates:
         auth_db.update_machine(mid, **updates)
         auth_db.write_audit_log(

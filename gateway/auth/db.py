@@ -359,6 +359,8 @@ def _run_migrations() -> None:
             "ALTER TABLE agent_runs ADD COLUMN workspace_path TEXT",
             # v4: multi-agent — which adapter produced this run
             "ALTER TABLE agent_runs ADD COLUMN agent_id TEXT NOT NULL DEFAULT 'hermes'",
+            # v5: machine default model
+            "ALTER TABLE machines ADD COLUMN default_model TEXT",
         ):
             try:
                 conn.execute(stmt)
@@ -674,7 +676,7 @@ def reorder_machines(ordered_ids: list) -> None:
 
 
 def update_machine(machine_id: str, **fields) -> Optional[dict]:
-    allowed = {"name", "endpoint_url", "description", "enabled"}
+    allowed = {"name", "endpoint_url", "description", "enabled", "default_model"}
     updates = {k: v for k, v in fields.items() if k in allowed}
     if not updates:
         return get_machine(machine_id)
