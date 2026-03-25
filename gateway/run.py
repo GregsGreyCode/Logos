@@ -3670,9 +3670,35 @@ class GatewayRunner:
             _lms_key   = os.getenv("OPENAI_API_KEY", "")
             if _lms_base and _lms_model:
                 _lms_headers = {"Authorization": f"Bearer {_lms_key}"} if _lms_key and _lms_key != "ollama" else {}
-                # Use previously discovered working size for this specific model
-                # as the first attempt, then fall back to smaller sizes.
-                # Keyed by model name so switching models doesn't reuse stale values.
+                # Known model context limits (substring-matched against model name,
+                # case-insensitive). Only lists models known to cap BELOW 16384.
+                # Persisted per-model config overrides this; both override the default
+                # cascade from 16384.
+                _LMS_KNOWN_CTX: list[tuple[str, int]] = [
+                    # Moonlight / small MoE models
+                    ("moonlight", 8192),
+                    # Phi-2 / Phi-1 family
+                    ("phi-2", 4096),
+                    ("phi-1", 4096),
+                    # TinyLlama
+                    ("tinyllama", 4096),
+                    # StableLM-2 1.6B
+                    ("stablelm-2-1", 4096),
+                    # Gemma 2B
+                    ("gemma-2b", 8192),
+                    # Qwen 1.5 / 2 with explicit 4K tag
+                    ("qwen1.5", 8192),
+                    # SmolLM
+                    ("smollm", 4096),
+                    # Mistral 7B v0.1 (original 8K window)
+                    ("mistral-7b-v0.1", 8192),
+                ]
+                _lms_name_lower = _lms_model.lower()
+
+                # Lookup order:
+                # 1. Persisted value from a previous successful load of this model
+                # 2. Known-model table (best-guess starting point)
+                # 3. Default cascade from 16384
                 try:
                     import yaml as _lms_yaml
                     _lms_cfg_now: dict = _lms_yaml.safe_load(_config_path.read_text(encoding="utf-8")) if _config_path.exists() else {}
@@ -3680,11 +3706,20 @@ class GatewayRunner:
                     _lms_cfg_now = {}
                 _lms_ctx_map: dict = _lms_cfg_now.get("lmstudio_context_lengths") or {}
                 _saved_ctx = int(_lms_ctx_map.get(_lms_model, 0) or 0)
+
                 _all_sizes = [16384, 8192, 4096]
                 if _saved_ctx and _saved_ctx in _all_sizes:
                     _ctx_sizes = [_saved_ctx] + [s for s in _all_sizes if s < _saved_ctx]
                 else:
-                    _ctx_sizes = _all_sizes
+                    # Check known-model table
+                    _known_ctx = next(
+                        (ctx for kw, ctx in _LMS_KNOWN_CTX if kw in _lms_name_lower),
+                        None,
+                    )
+                    if _known_ctx and _known_ctx in _all_sizes:
+                        _ctx_sizes = [_known_ctx] + [s for s in _all_sizes if s < _known_ctx]
+                    else:
+                        _ctx_sizes = _all_sizes
                 try:
                     async with _aiohttp.ClientSession() as _lms_http:
                         for _ctx in _ctx_sizes:
