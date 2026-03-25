@@ -7173,11 +7173,41 @@ _SETUP_HTML = """<!DOCTYPE html>
         <div x-show="getModels().length > 0">
 
           <!-- Header -->
-          <div class="mb-5">
+          <div class="mb-4">
             <h2 class="text-xl font-bold mb-1" x-text="compareDone ? 'How your models performed' : 'Finding your best model\u2026'"></h2>
             <p class="text-gray-400 text-sm" x-show="!compareDone">Testing available models on your hardware — this takes a moment.</p>
             <p class="text-gray-400 text-sm" x-show="compareDone">We&rsquo;ve pre-selected the best fit. You can override below.</p>
           </div>
+
+          <!-- Score legend — collapsed by default, expands on click -->
+          <details class="mb-4 group">
+            <summary class="text-[11px] text-gray-600 hover:text-gray-400 cursor-pointer list-none flex items-center gap-1.5 select-none">
+              <svg class="w-3 h-3 transition-transform group-open:rotate-90 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+              What do these scores mean?
+            </summary>
+            <div class="mt-2 p-3 rounded-xl border border-gray-800 bg-gray-900/60 space-y-2 text-xs text-gray-400">
+              <div>
+                <span class="font-semibold text-gray-300">tok/s</span> — tokens per second: how fast the model generates text.
+                Higher is better. Agent conversations feel sluggish below ~6 tok/s.
+                <span class="inline-flex gap-2 ml-1 font-mono">
+                  <span class="text-green-400">&ge;30 fast</span>
+                  <span class="text-indigo-400">15&ndash;29 good</span>
+                  <span class="text-yellow-400">6&ndash;14 usable</span>
+                  <span class="text-red-400">&lt;6 slow</span>
+                </span>
+              </div>
+              <div>
+                <span class="font-semibold text-gray-300">ctx</span> — context window: the maximum number of tokens the model can hold at once (your message + its reply + everything in between).
+                The agent system prompt alone uses <span class="font-mono text-white">~8K tokens</span>, so a model with an 8K context window has almost no room left for your conversation.
+                <span class="text-amber-400 font-medium">Models under 16K ctx are not eligible for recommendation</span> — they will show a <span class="text-red-400 font-mono">⚠</span> and cannot be selected as best.
+                If your model only supports 8K, use the <span class="text-white font-medium">General (Lite)</span> soul which has a smaller footprint.
+              </div>
+              <div>
+                <span class="font-semibold text-gray-300">&#10003; / &#9888;</span> — whether the model passed the quality eval (instruction following, reasoning, structured output, tool selection).
+                Models that fail the format or tool-call tests are de-prioritised because they will break agent loops.
+              </div>
+            </div>
+          </details>
 
           <!-- Per-server benchmark sections -->
           <div class="space-y-5 mb-4">
@@ -7193,14 +7223,21 @@ _SETUP_HTML = """<!DOCTYPE html>
                 <div class="space-y-2">
                   <template x-for="mid in compareTargetsForServer(server.endpoint)" :key="mid">
                     <div class="rounded-xl border transition-all duration-300 overflow-hidden"
-                      :class="serverModelForServer(server.endpoint) === mid && compareDone ? 'border-indigo-500 bg-indigo-950/20' : 'border-gray-800 bg-gray-900'">
+                      :class="compareResults[mid]?.max_context && compareResults[mid].max_context < 16384
+                        ? 'border-red-900/50 bg-gray-900 opacity-60'
+                        : serverModelForServer(server.endpoint) === mid && compareDone
+                          ? 'border-indigo-500 bg-indigo-950/20'
+                          : 'border-gray-800 bg-gray-900'">
                       <!-- Summary row — clickable once results are in; click selects and toggles detail -->
                       <div class="flex items-center justify-between px-3 py-2.5"
-                        :class="compareDone && compareResults[mid] && !compareResults[mid].error ? 'cursor-pointer hover:bg-white/5' : ''"
-                        @click="if (compareDone && compareResults[mid] && !compareResults[mid].error) { pickServerModel(server.endpoint, mid); compareExpanded = compareExpanded === mid ? null : mid; }">
+                        :class="compareDone && compareResults[mid] && !compareResults[mid].error && !(compareResults[mid].max_context && compareResults[mid].max_context < 16384) ? 'cursor-pointer hover:bg-white/5' : ''"
+                        @click="if (compareDone && compareResults[mid] && !compareResults[mid].error && !(compareResults[mid].max_context && compareResults[mid].max_context < 16384)) { pickServerModel(server.endpoint, mid); compareExpanded = compareExpanded === mid ? null : mid; }">
                         <div class="flex items-center gap-2 min-w-0 flex-wrap">
                           <span x-show="serverModelForServer(server.endpoint) === mid && compareDone"
                             class="spinner-hue text-[9px] px-1.5 py-0.5 rounded-full bg-indigo-900 text-indigo-300 border border-indigo-700 font-semibold uppercase tracking-wider flex-shrink-0">Best</span>
+                          <span x-show="compareResults[mid]?.max_context && compareResults[mid].max_context < 16384 && compareDone"
+                            class="text-[9px] px-1.5 py-0.5 rounded-full bg-red-950 text-red-400 border border-red-900 font-semibold uppercase tracking-wider flex-shrink-0"
+                            title="Context window too small for agent use — system prompt alone is ~8K tokens">Not eligible</span>
                           <span class="font-mono text-xs text-gray-200 truncate" x-text="mid"></span>
                         </div>
                         <div class="flex items-center gap-2 flex-shrink-0 ml-3 text-xs">
@@ -7232,7 +7269,8 @@ _SETUP_HTML = """<!DOCTYPE html>
                                     x-text="compareResults[mid].tok_s + ' tok/s'"></span>
                                   <template x-if="compareResults[mid].max_context">
                                     <span class="font-mono text-[10px]"
-                                      :class="compareResults[mid].max_context >= 16384 ? 'text-gray-500' : 'text-red-500'"
+                                      :class="compareResults[mid].max_context >= 16384 ? 'text-gray-500' : 'text-red-500 font-semibold'"
+                                      :title="compareResults[mid].max_context < 16384 ? 'Too small — agent system prompt uses ~8K tokens, leaving almost no room for conversation. Use General (Lite) soul if you must use this model.' : ''"
                                       x-text="(compareResults[mid].max_context >= 1024 ? Math.round(compareResults[mid].max_context/1024)+'K' : compareResults[mid].max_context) + ' ctx' + (compareResults[mid].max_context < 16384 ? ' \u26a0' : '')"></span>
                                   </template>
                                   <span :class="compareResults[mid].quality_pass ? 'text-green-500' : 'text-yellow-600'"
