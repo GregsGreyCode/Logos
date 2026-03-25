@@ -1198,7 +1198,8 @@ _ADMIN_HTML = """<!DOCTYPE html>
               <input x-model="chatInput" @keydown.enter="sendChat()" autocomplete="off"
                 class="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-indigo-500 transition-colors pr-2"
                 :placeholder="micRecording ? ('Recording… ' + micCountdown + 's') : micTranscribing ? 'Transcribing…' : ('Message ' + (status.instance_name || 'Hermes') + '\u2026 (Enter to send)')"
-                :disabled="micTranscribing || activeInstance.k8s_status === 'starting'">
+                :disabled="micTranscribing || activeInstance.k8s_status === 'starting'"
+                :readonly="!chatInputReady">
               <!-- Success flash inside input -->
               <template x-if="micSuccess">
                 <span class="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-green-400 pointer-events-none">✓ captured</span>
@@ -3948,6 +3949,7 @@ function app() {
     chats: [],
     activeChatId: null,
     chatInput: '',
+    chatInputReady: false,
     chatRenderMode: 'markdown',
     micRecording: false,
     micTranscribing: false,
@@ -4166,6 +4168,9 @@ function app() {
       document.documentElement.setAttribute('data-theme', this.theme);
       this.$watch('theme',      val => document.documentElement.setAttribute('data-theme', val));
       this.$watch('chatLoading', v => _setHueRate(v ? 30 : 6));
+      // Delay enabling the chat input to prevent browser autofill from populating
+      // it with saved login credentials immediately after a login redirect.
+      setTimeout(() => { this.chatInputReady = true; }, 800);
       // Staggered first-load fade-in (set by login page on successful auth)
       try {
         if (sessionStorage.getItem('logos_fl') === '1') {
@@ -6370,6 +6375,9 @@ _SETUP_HTML = """<!DOCTYPE html>
       pointer-events:none;
       animation:halo-fadein 0.8s ease 0.1s forwards;
     }
+    /* Skip fade-in when arriving via login transition — halo and orb are already "on" */
+    .setup-halo-instant{animation:none!important;opacity:0.14!important}
+    body.setup-instant-orb::before{animation:none!important;opacity:0.033!important}
     .btn-primary{
       background:linear-gradient(135deg,#6366f1 0%,#a855f7 100%);
       color:#fff;font-weight:500;cursor:pointer;
@@ -7090,10 +7098,10 @@ _SETUP_HTML = """<!DOCTYPE html>
                   <template x-for="mid in compareTargetsForServer(server.endpoint)" :key="mid">
                     <div class="rounded-xl border transition-all duration-300 overflow-hidden"
                       :class="serverModelForServer(server.endpoint) === mid && compareDone ? 'border-indigo-500 bg-indigo-950/20' : 'border-gray-800 bg-gray-900'">
-                      <!-- Summary row — clickable once results are in -->
+                      <!-- Summary row — clickable once results are in; click selects and toggles detail -->
                       <div class="flex items-center justify-between px-3 py-2.5"
                         :class="compareDone && compareResults[mid] && !compareResults[mid].error ? 'cursor-pointer hover:bg-white/5' : ''"
-                        @click="compareDone && compareResults[mid] && !compareResults[mid].error ? (compareExpanded = compareExpanded === mid ? null : mid) : null">
+                        @click="if (compareDone && compareResults[mid] && !compareResults[mid].error) { pickServerModel(server.endpoint, mid); compareExpanded = compareExpanded === mid ? null : mid; }">
                         <div class="flex items-center gap-2 min-w-0 flex-wrap">
                           <span x-show="serverModelForServer(server.endpoint) === mid && compareDone"
                             class="spinner-hue text-[9px] px-1.5 py-0.5 rounded-full bg-indigo-900 text-indigo-300 border border-indigo-700 font-semibold uppercase tracking-wider flex-shrink-0">Best</span>
@@ -8054,6 +8062,15 @@ function setup() {
           }
         } catch {}
       }
+
+      // If we arrived via the login→setup transition, logos_fl is already set.
+      // Skip the halo/orb bloom-in animations so the logo looks instantly "on".
+      try {
+        if (sessionStorage.getItem('logos_fl')) {
+          document.querySelector('.setup-halo')?.classList.add('setup-halo-instant');
+          document.body.classList.add('setup-instant-orb');
+        }
+      } catch {}
 
       // Watch fields set directly from templates
       this.$watch('selectedSoul',      () => this._saveProgress());

@@ -1083,23 +1083,87 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
                 # Reset t0 so TTFT on pass 1 is measured from a hot-model start
                 t0 = time.time()
 
-                # ── LM Studio: probe max loadable context window ───────────────
-                # The model may advertise 256K but VRAM/RAM limits how much the
-                # machine can actually load.  Try descending sizes; record the
-                # largest that LM Studio accepts with HTTP 200.
+                # ── Context window detection ───────────────────────────────────
+                # llama.cpp : reads n_ctx from /props (fixed at server startup).
+                # Ollama    : reads llama.context_length from /api/show GGUF metadata.
+                # LM Studio : reads max_context_length from /api/v1/models metadata,
+                #             then probes downward to find the VRAM-limited maximum.
+                #             The metadata ceiling prevents asking LM Studio to load a
+                #             model above its native context (which it accepts with 200
+                #             but silently caps or misconfigures).
                 max_context: int | None = None
-                if server_type == "lmstudio":
+                if server_type == "llamacpp":
+                    # llama.cpp reports its configured --ctx-size via GET /props
+                    try:
+                        async with http.get(
+                            f"{base_url}/props",
+                            timeout=aiohttp.ClientTimeout(total=4),
+                        ) as _pp:
+                            if _pp.status == 200:
+                                _pd = await _pp.json(content_type=None)
+                                _nc = _pd.get("n_ctx") or _pd.get("total_slots_n_ctx")
+                                if isinstance(_nc, int) and _nc > 0:
+                                    max_context = _nc
+                                    await send({"log": f"  Context window: {_nc:,} tokens (from /props)"})
+                    except Exception:
+                        pass
+                elif server_type == "ollama":
+                    # Ollama exposes GGUF metadata via /api/show — no probe needed.
+                    try:
+                        async with http.post(
+                            f"{base_url}/api/show",
+                            json={"name": model_id},
+                            timeout=aiohttp.ClientTimeout(total=8),
+                        ) as _sr:
+                            if _sr.status == 200:
+                                _sd = await _sr.json(content_type=None)
+                                _nc = (_sd.get("model_info") or {}).get("llama.context_length")
+                                if isinstance(_nc, int) and _nc > 0:
+                                    max_context = _nc
+                                    await send({"log": f"  Context window: {_nc:,} tokens (from model metadata)"})
+                    except Exception:
+                        pass
+                elif server_type == "lmstudio":
                     _ctx_probe_headers = {"Authorization": f"Bearer {api_key}"} if api_key and api_key != "ollama" else {}
+                    # Step 1: read native max_context_length from LM Studio's model list.
+                    # This comes from the GGUF file and is the authoritative ceiling —
+                    # LM Studio will accept load requests above this value with HTTP 200
+                    # but will internally cap or misconfigure the context.  Using the
+                    # metadata ceiling means we never probe above what the model supports.
+                    _native_ctx: int | None = None
+                    try:
+                        async with http.get(
+                            f"{base_url}/api/v1/models",
+                            headers=_ctx_probe_headers,
+                            timeout=aiohttp.ClientTimeout(total=5),
+                        ) as _mr:
+                            if _mr.status == 200:
+                                _md = await _mr.json(content_type=None)
+                                for _m in _md.get("data", []):
+                                    if _m.get("id") == model_id:
+                                        _nc = _m.get("max_context_length")
+                                        if isinstance(_nc, int) and _nc > 0:
+                                            _native_ctx = _nc
+                                        break
+                    except Exception:
+                        pass
+                    if _native_ctx:
+                        await send({"log": f"  Native context (GGUF): {_native_ctx:,} tokens"})
+                    # Step 2: probe downward from the native ceiling (or 65536 if unknown)
+                    # to find the largest context this machine's VRAM can actually load.
                     await send({"log": "  Probing max loadable context window…"})
-                    for _ctx_probe in [65536, 32768, 16384, 8192, 4096]:
+                    _all_probe_sizes = [65536, 32768, 16384, 8192, 4096]
+                    _probe_ceil = _native_ctx if _native_ctx else 65536
+                    for _ctx_probe in [s for s in _all_probe_sizes if s <= _probe_ceil]:
                         # Unload first so we start from a clean slot
                         try:
-                            await http.post(
+                            async with http.post(
                                 f"{base_url}/api/v1/models/unload",
                                 headers=_ctx_probe_headers,
-                                json={"model": model_id},
+                                json={"instance_id": model_id},
                                 timeout=aiohttp.ClientTimeout(total=8),
-                            )
+                            ):
+                                pass
                             await asyncio.sleep(0.5)
                         except Exception:
                             pass
@@ -1292,20 +1356,21 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
                 try:
                     if server_type == "lmstudio":
                         _unload_headers = {"Authorization": f"Bearer {api_key}"} if api_key and api_key != "ollama" else {}
-                        ur = await http.post(
+                        async with http.post(
                             f"{base_url}/api/v1/models/unload",
                             headers=_unload_headers,
                             json={"instance_id": model_id},
-                            timeout=aiohttp.ClientTimeout(total=5),
-                        )
-                        await send({"log": f"  Unloaded {model_id} (HTTP {ur.status})"})
+                            timeout=aiohttp.ClientTimeout(total=8),
+                        ) as ur:
+                            await send({"log": f"  Unloaded {model_id} (HTTP {ur.status})"})
+                        await asyncio.sleep(1.5)   # give LM Studio time to free VRAM before next load
                     elif server_type == "ollama":
-                        ur = await http.post(
+                        async with http.post(
                             f"{base_url}/api/generate",
                             json={"model": model_id, "keep_alive": 0, "prompt": ""},
-                            timeout=aiohttp.ClientTimeout(total=5),
-                        )
-                        await send({"log": f"  Unloaded {model_id} (HTTP {ur.status})"})
+                            timeout=aiohttp.ClientTimeout(total=8),
+                        ) as ur:
+                            await send({"log": f"  Unloaded {model_id} (HTTP {ur.status})"})
                 except Exception as ue:
                     await send({"log": f"  Unload skipped: {str(ue)[:60]}"})
 
