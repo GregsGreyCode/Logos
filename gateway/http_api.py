@@ -1457,9 +1457,37 @@ _ADMIN_HTML = """<!DOCTYPE html>
       <!-- Header -->
       <div class="flex items-center justify-between mb-4">
         <div class="text-sm font-semibold text-white">Machines</div>
-        <button @click="adminMachineForm={name:'',endpoint_url:'',description:''}; adminMachineFormOpen=!adminMachineFormOpen"
-          class="text-xs px-3 py-1.5 rounded-lg bg-[var(--accent)] text-white hover:opacity-90 transition-opacity">+ Register</button>
+        <div class="flex items-center gap-2">
+          <button @click="adminScanMachines()"
+            :disabled="adminScanRunning"
+            class="text-xs px-3 py-1.5 rounded-lg border border-gray-700 text-gray-400 hover:text-white transition-colors disabled:opacity-40">
+            <span x-show="!adminScanRunning">Scan</span>
+            <span x-show="adminScanRunning" class="animate-pulse">Scanning…</span>
+          </button>
+          <button @click="adminMachineForm={name:'',endpoint_url:'',description:''}; adminMachineFormOpen=!adminMachineFormOpen"
+            class="text-xs px-3 py-1.5 rounded-lg bg-[var(--accent)] text-white hover:opacity-90 transition-opacity">+ Register</button>
+        </div>
       </div>
+
+      <!-- Scan results — discovered servers not yet registered -->
+      <template x-if="adminScanResults.length > 0">
+        <div class="mb-4 p-3 rounded-xl border border-gray-800 bg-gray-900/60 space-y-2">
+          <div class="text-[11px] text-gray-500 font-medium mb-1">Discovered on network — not yet registered</div>
+          <template x-for="s in adminScanResults" :key="s.endpoint">
+            <div class="flex items-center justify-between gap-3 text-xs">
+              <div class="min-w-0">
+                <span class="text-gray-300 font-mono truncate" x-text="s.endpoint"></span>
+                <span class="ml-2 text-gray-600" x-text="s.type"></span>
+                <span x-show="s.status==='auth_required'" class="ml-1 text-amber-500">· auth required</span>
+              </div>
+              <button @click="adminMachineForm={name: s.type + '-' + s.endpoint.replace(/https?:\\/\\//, '').replace(/[^a-z0-9]/gi,'-'), endpoint_url: s.endpoint, description: ''}; adminMachineFormOpen=true; adminScanResults=adminScanResults.filter(x=>x.endpoint!==s.endpoint)"
+                class="shrink-0 text-xs px-2.5 py-1 rounded border border-gray-700 text-gray-400 hover:text-white transition-colors">
+                Add
+              </button>
+            </div>
+          </template>
+        </div>
+      </template>
 
       <!-- Register form -->
       <template x-if="adminMachineFormOpen">
@@ -4526,6 +4554,8 @@ function app() {
     adminRoutingLogLoading: false,
     adminUsers: [],
     adminMachines: [],
+    adminScanRunning: false,
+    adminScanResults: [],
     adminPolicies: [],
     adminActionPolicies: [],
     actionPolicyForm: {},
@@ -5713,6 +5743,21 @@ function app() {
         this.adminUsers = this.adminUsers.map(u => u.id===uid ? {...u, action_policy_id: policyId||null} : u);
         this._adminMsg(true, policyId ? "Action policy assigned." : "Action policy cleared.");
       } catch(e) { this._adminMsg(false, String(e)); }
+    },
+
+    async adminScanMachines() {
+      if (this.adminScanRunning) return;
+      this.adminScanRunning = true;
+      this.adminScanResults = [];
+      try {
+        const r = await fetch('/api/setup/scan', {credentials: 'include'});
+        const servers = await r.json();
+        const registeredEndpoints = new Set(this.adminMachines.map(m => m.endpoint_url));
+        this.adminScanResults = (servers || []).filter(s =>
+          s.status === 'up' || s.status === 'auth_required'
+        ).filter(s => !registeredEndpoints.has(s.endpoint));
+      } catch(e) { console.error('admin scan failed', e); }
+      this.adminScanRunning = false;
     },
 
     async loadAdminMachines() {
