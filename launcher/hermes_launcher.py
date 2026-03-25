@@ -235,25 +235,28 @@ def _kill_instances() -> None:
 
     # Catch --agent-mode processes that were spawned but not yet written to
     # instances.json (race between Popen and _save_instances on quit).
+    # wmic is deprecated/removed on Windows 11; use PowerShell Get-CimInstance instead.
     if sys.platform == "win32":
         try:
             import subprocess as _sp
             _r = _sp.run(
-                ["wmic", "process", "where",
-                 "name='Logos.exe' and commandline like '%--agent-mode%'",
-                 "get", "ProcessId", "/format:list"],
+                ["powershell", "-NoProfile", "-Command",
+                 "Get-CimInstance Win32_Process -Filter \"name='Logos.exe'\" "
+                 "| Where-Object { $_.CommandLine -like '*--agent-mode*' } "
+                 "| Select-Object -ExpandProperty ProcessId"],
                 capture_output=True, text=True, timeout=5,
             )
             _own_pid = os.getpid()
             for _line in _r.stdout.splitlines():
                 _line = _line.strip()
-                if _line.startswith("ProcessId="):
-                    try:
-                        _pid = int(_line.split("=", 1)[1])
-                        if _pid != _own_pid and _pid not in killed_pids:
-                            _sp.run(["taskkill", "/F", "/PID", str(_pid)], capture_output=True)
-                    except (ValueError, IndexError):
-                        pass
+                if not _line:
+                    continue
+                try:
+                    _pid = int(_line)
+                    if _pid != _own_pid and _pid not in killed_pids:
+                        _sp.run(["taskkill", "/F", "/PID", str(_pid)], capture_output=True)
+                except ValueError:
+                    pass
         except Exception:
             pass
 
@@ -682,16 +685,9 @@ def _rebuild_menu(icon) -> None:
         threading.Thread(target=_restart_gateway, daemon=True).start()
 
     def on_quit(icon, item):
-        # Stop the tray icon immediately so it looks responsive, then clean up
-        # in a background thread and force-exit so we don't double-shutdown via
-        # the finally block in main().
+        # Stop the tray icon so it disappears immediately; the finally block
+        # in main() handles cleanup exactly once when icon.run() returns.
         icon.stop()
-        def _cleanup():
-            _close_browser()
-            _stop_gateway()
-            _kill_instances()
-            os._exit(0)
-        threading.Thread(target=_cleanup, daemon=True, name="logos-quit").start()
 
     icon.menu = pystray.Menu(
         *extra,
