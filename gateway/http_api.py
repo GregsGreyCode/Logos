@@ -7592,17 +7592,6 @@ _SETUP_HTML = """<!DOCTYPE html>
             </div>
           </template>
 
-          <!-- Speed pick (global — only shown when different from top pick) -->
-          <div x-show="compareDone && compareFastRecommended"
-            class="mb-3 p-3 rounded-xl bg-gray-900/60 border border-gray-700 text-xs leading-relaxed space-y-1">
-            <div class="flex items-center gap-2 text-gray-300 font-semibold text-[11px] uppercase tracking-wider">
-              <span>&#9889;</span><span>Speed pick</span>
-              <span class="font-mono font-normal normal-case tracking-normal text-gray-400" x-text="compareFastRecommended"></span>
-            </div>
-            <div class="text-gray-400" x-text="compareFastReason"></div>
-            <div class="text-gray-600 text-[10px]">Faster responses — good for quick questions and high-volume use.</div>
-          </div>
-
           <!-- Server load notice -->
           <div x-show="compareDone" class="mb-3 text-[10px] text-gray-600 px-1 leading-relaxed">
             Scores reflect conditions at test time. A server handling other requests or services during testing may show lower throughput than usual.
