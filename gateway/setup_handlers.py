@@ -1083,6 +1083,53 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
                 # Reset t0 so TTFT on pass 1 is measured from a hot-model start
                 t0 = time.time()
 
+                # ── LM Studio: probe max loadable context window ───────────────
+                # The model may advertise 256K but VRAM/RAM limits how much the
+                # machine can actually load.  Try descending sizes; record the
+                # largest that LM Studio accepts with HTTP 200.
+                max_context: int | None = None
+                if server_type == "lmstudio":
+                    _ctx_probe_headers = {"Authorization": f"Bearer {api_key}"} if api_key and api_key != "ollama" else {}
+                    await send({"log": "  Probing max loadable context window…"})
+                    for _ctx_probe in [16384, 8192, 4096]:
+                        # Unload first so we start from a clean slot
+                        try:
+                            await http.post(
+                                f"{base_url}/api/v1/models/unload",
+                                headers=_ctx_probe_headers,
+                                json={"model": model_id},
+                                timeout=aiohttp.ClientTimeout(total=8),
+                            )
+                            await asyncio.sleep(0.5)
+                        except Exception:
+                            pass
+                        try:
+                            async with http.post(
+                                f"{base_url}/api/v1/models/load",
+                                headers=_ctx_probe_headers,
+                                json={"model": model_id, "context_length": _ctx_probe},
+                                timeout=aiohttp.ClientTimeout(total=30),
+                            ) as _cl:
+                                if _cl.status == 200:
+                                    max_context = _ctx_probe
+                                    await send({"log": f"  Context probe: {_ctx_probe:,} tokens ✓"})
+                                    break
+                                await send({"log": f"  Context probe: {_ctx_probe:,} — HTTP {_cl.status}, trying smaller…"})
+                        except Exception as _ce:
+                            await send({"log": f"  Context probe: {_ctx_probe:,} — {str(_ce)[:60]}, trying smaller…"})
+                    if max_context is None:
+                        await send({"log": "  Context probe: could not determine (model may not support load API)"})
+                    # Persist per-model result so runtime skips the probe
+                    if max_context:
+                        try:
+                            import yaml as _cp_yaml
+                            _cp_path = pathlib.Path(os.environ.get("HERMES_HOME", str(pathlib.Path.home() / ".hermes"))) / "config.yaml"
+                            _cp_cfg: dict = _cp_yaml.safe_load(_cp_path.read_text(encoding="utf-8")) if _cp_path.exists() else {}
+                            _cp_cfg.setdefault("lmstudio_context_lengths", {})[model_id] = max_context
+                            _cp_path.write_text(_cp_yaml.dump(_cp_cfg, default_flow_style=False, allow_unicode=True))
+                        except Exception:
+                            pass
+
                 # ── 3-pass speed benchmark, take median (discards outliers) ──
                 # Retry once on ServerDisconnectedError — llama.cpp and some other
                 # servers close the TCP connection immediately after each response.
@@ -1220,6 +1267,7 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
                 result: dict = {
                     "model": model_id, "tok_s": tok_s, "quality_pass": quality_pass,
                     "ttft_ms": ttft_ms, "approx": approx, "endpoint": endpoint,
+                    **({"max_context": max_context} if max_context else {}),
                     **({"size_b": spec.get("size_b")} if spec.get("size_b") else {}),
                     "eval": {
                         "instruction": instruct_pass, "reasoning": reason_pass,
