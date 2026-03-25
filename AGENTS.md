@@ -113,7 +113,7 @@ logos/                        ← repo root
 └── tinker-atropos/           # Git submodule (RL training)
 ```
 
-**User config:** `~/.hermes/config.yaml` (settings), `~/.hermes/.env` (API keys)
+**User config:** `~/.logos/config.yaml` (settings), `~/.logos/.env` (API keys)
 
 ## File Dependency Chain
 
@@ -179,10 +179,10 @@ Messages follow OpenAI format: `{"role": "system/user/assistant/tool", ...}`. Re
 
 - **Rich** for banner/panels, **prompt_toolkit** for input with autocomplete
 - **KawaiiSpinner** (`agent/display.py`) — animated faces during API calls, `┊` activity feed for tool results
-- Config loaded in `hermes_cli/main.py` from `~/.hermes/config.yaml`
+- Config loaded in `hermes_cli/main.py` from `~/.logos/config.yaml`
 - **Skin engine** (`hermes_cli/skin_engine.py`) — data-driven CLI theming; initialized from `display.skin` config key at startup; skins customize banner colors, spinner faces/verbs/wings, tool prefix, response box, branding text
 - Slash command dispatch lives in `hermes_cli/main.py`
-- Skill slash commands: `agent/skill_commands.py` scans `~/.hermes/skills/`, injects as **user message** (not system prompt) to preserve prompt caching
+- Skill slash commands: `agent/skill_commands.py` scans `~/.logos/skills/`, injects as **user message** (not system prompt) to preserve prompt caching
 
 ### Adding CLI Commands
 
@@ -231,7 +231,7 @@ The registry handles schema collection, dispatch, availability checking, and err
 
 ### config.yaml options:
 1. Add to `DEFAULT_CONFIG` in `hermes_cli/config.py`
-2. Bump `_config_version` (currently 5) to trigger migration for existing users
+2. Bump `_config_version` (currently 8) to trigger migration for existing users
 
 ### .env variables:
 1. Add to `OPTIONAL_ENV_VARS` in `hermes_cli/config.py` with metadata:
@@ -263,7 +263,7 @@ The skin engine (`hermes_cli/skin_engine.py`) provides data-driven CLI visual cu
 
 ```
 hermes_cli/skin_engine.py    # SkinConfig dataclass, built-in skins, YAML loader
-~/.hermes/skins/*.yaml       # User-installed custom skins (drop-in)
+~/.logos/skins/*.yaml        # User-installed custom skins (drop-in)
 ```
 
 - `init_skin_from_config()` — called at CLI startup, reads `display.skin` from config
@@ -316,7 +316,7 @@ Add to `_BUILTIN_SKINS` dict in `hermes_cli/skin_engine.py`:
 
 ### User skins (YAML)
 
-Users create `~/.hermes/skins/<name>.yaml`:
+Users create `~/.logos/skins/<name>.yaml`:
 
 ```yaml
 name: cyberpunk
@@ -420,8 +420,8 @@ When subagents overwrite this global, `execute_code` calls after delegation may 
 ### Import from `core.*`, not from root-level shims
 The canonical implementations live in `core/` (e.g. `core.state`, `core.model_tools`, `core.toolsets`, `core.clock`, `core.constants`). Root-level files like `hermes_state.py`, `model_tools.py`, `hermes_time.py` are thin re-export shims for backward compatibility — they work but add an indirection layer. New code should `from core.X import ...` directly.
 
-### Tests must not write to `~/.hermes/`
-The `_isolate_hermes_home` autouse fixture in `tests/conftest.py` redirects `HERMES_HOME` to a temp dir. Never hardcode `~/.hermes/` paths in tests.
+### Tests must not write to `~/.logos/`
+The `_isolate_hermes_home` autouse fixture in `tests/conftest.py` redirects `HERMES_HOME` to a temp dir. Never hardcode `~/.logos/` paths in tests.
 
 ---
 

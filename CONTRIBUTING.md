@@ -67,8 +67,8 @@ git clone --recurse-submodules https://github.com/GregsGreyCode/Logos.git
 cd Logos
 
 # Create venv with Python 3.11
-uv venv venv --python 3.11
-export VIRTUAL_ENV="$(pwd)/venv"
+uv venv .venv --python 3.11
+source .venv/bin/activate
 
 # Install with all extras (messaging, cron, CLI menus, dev tools)
 uv pip install -e ".[all,dev]"
@@ -82,12 +82,12 @@ npm install
 ### Configure for development
 
 ```bash
-mkdir -p ~/.hermes/{cron,sessions,logs,memories,skills}
-cp cli-config.yaml.example ~/.hermes/config.yaml
-touch ~/.hermes/.env
+mkdir -p ~/.logos/{cron,sessions,logs,memories,skills}
+cp cli-config.yaml.example ~/.logos/config.yaml
+touch ~/.logos/.env
 
 # Add at minimum an LLM provider key:
-echo 'OPENROUTER_API_KEY=sk-or-v1-your-key' >> ~/.hermes/.env
+echo 'OPENROUTER_API_KEY=sk-or-v1-your-key' >> ~/.logos/.env
 ```
 
 ### Run
@@ -95,7 +95,7 @@ echo 'OPENROUTER_API_KEY=sk-or-v1-your-key' >> ~/.hermes/.env
 ```bash
 # Symlink for global access
 mkdir -p ~/.local/bin
-ln -sf "$(pwd)/venv/bin/hermes" ~/.local/bin/hermes
+ln -sf "$(pwd)/.venv/bin/hermes" ~/.local/bin/hermes
 
 # Verify
 hermes doctor
@@ -178,7 +178,7 @@ logos/                        ← repo root
 │   ├── dev-setup.sh              # Local dev setup (after cloning)
 │   └── whatsapp-bridge/          # Node.js WhatsApp bridge (Baileys)
 │
-├── skills/                   # Bundled skills (copied to ~/.hermes/skills/ on install)
+├── skills/                   # Bundled skills (copied to ~/.logos/skills/ on install)
 ├── optional-skills/          # Official optional skills (discoverable via hub, not activated by default)
 ├── environments/             # RL training environments (Atropos integration)
 ├── k8s/                      # Kubernetes deployment manifests
@@ -189,19 +189,21 @@ logos/                        ← repo root
 └── AGENTS.md                 # Development guide for AI coding assistants
 ```
 
-### User configuration (stored in `~/.hermes/`)
+### User configuration (stored in `~/.logos/`)
 
 | Path | Purpose |
 |------|---------|
-| `~/.hermes/config.yaml` | Settings (model, terminal, toolsets, compression, etc.) |
-| `~/.hermes/.env` | API keys and secrets |
-| `~/.hermes/auth.json` | OAuth credentials (Nous Portal) |
-| `~/.hermes/skills/` | All active skills (bundled + hub-installed + agent-created) |
-| `~/.hermes/memories/` | Persistent memory (MEMORY.md, USER.md) |
-| `~/.hermes/state.db` | SQLite session database |
-| `~/.hermes/sessions/` | JSON session logs |
-| `~/.hermes/cron/` | Scheduled job data |
-| `~/.hermes/whatsapp/session/` | WhatsApp bridge credentials |
+| `~/.logos/config.yaml` | Settings (model, terminal, toolsets, compression, etc.) |
+| `~/.logos/.env` | API keys and secrets |
+| `~/.logos/auth.json` | OAuth credentials (Nous Portal) |
+| `~/.logos/skills/` | All active skills (bundled + hub-installed + agent-created) |
+| `~/.logos/memories/` | Persistent memory (MEMORY.md, USER.md) |
+| `~/.logos/state.db` | SQLite session database |
+| `~/.logos/sessions/` | JSON session logs |
+| `~/.logos/cron/` | Scheduled job data |
+| `~/.logos/whatsapp/session/` | WhatsApp bridge credentials |
+
+> **Note:** If you have an existing `~/.hermes/` directory from an older install, Logos migrates it automatically on first run.
 
 ---
 
@@ -228,7 +230,7 @@ User message → AIAgent._run_agent_loop()
 
 - **Self-registering tools**: Each tool file calls `registry.register()` at import time. `model_tools.py` triggers discovery by importing all tool modules.
 - **Toolset grouping**: Tools are grouped into toolsets (`web`, `terminal`, `file`, `browser`, etc.) that can be enabled/disabled per platform.
-- **Session persistence**: All conversations are stored in SQLite (`hermes_state.py`, SCHEMA v8) with full-text search and unique session titles. JSON logs go to `~/.hermes/sessions/`.
+- **Session persistence**: All conversations are stored in SQLite (`hermes_state.py`, SCHEMA v8) with full-text search and unique session titles. JSON logs go to `~/.logos/sessions/`.
 - **Ephemeral injection**: System prompts and prefill messages are injected at API call time, never persisted to the database or logs.
 - **Provider abstraction**: The agent works with any OpenAI-compatible API. Provider resolution happens at init time (Nous Portal OAuth, OpenRouter API key, or custom endpoint).
 - **Provider routing**: When using OpenRouter, `provider_routing` in config.yaml controls provider selection (sort by throughput/latency/price, allow/ignore specific providers, data retention policies). These are injected as `extra_body.provider` in API requests.
@@ -450,7 +452,7 @@ prerequisites:
   commands: [curl, jq]            # Advisory CLI checks
 ```
 
-Gateway and messaging sessions never collect secrets in-band; they instruct the user to run `hermes setup` or update `~/.hermes/.env` locally.
+Gateway and messaging sessions never collect secrets in-band; they instruct the user to run `hermes setup` or update `~/.logos/.env` locally.
 
 **When to declare required environment variables:**
 - The skill uses an API key or token that should be collected securely at load time
@@ -477,7 +479,7 @@ Hermes uses a data-driven skin system — no code changes needed to add a new sk
 
 **Option A: User skin (YAML file)**
 
-Create `~/.hermes/skins/<name>.yaml`:
+Create `~/.logos/skins/<name>.yaml`:
 
 ```yaml
 name: mytheme
@@ -657,8 +659,7 @@ test(tools): add unit tests for file_operations
 
 ## Community
 
-- **GitHub Discussions**: [github.com/GregsGreyCode/Logos/discussions](https://github.com/GregsGreyCode/Logos/discussions) — for questions, showcasing projects, and sharing skills
-- **GitHub Discussions**: For design proposals and architecture discussions
+- **GitHub Discussions**: [github.com/GregsGreyCode/Logos/discussions](https://github.com/GregsGreyCode/Logos/discussions) — for questions, showcasing projects, sharing skills, and architecture proposals
 - **Skills Hub**: Upload specialized skills to a registry and share them with the community
 
 ---
