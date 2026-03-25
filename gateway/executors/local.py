@@ -83,10 +83,20 @@ class LocalProcessExecutor:
         self.port_min, self.port_max = port_range
 
     def _allocate_port(self, instances: List[dict]) -> int:
+        import socket as _socket
         used = {inst.get("port") for inst in instances}
         for port in range(self.port_min, self.port_max + 1):
-            if port not in used:
+            if port in used:
+                continue
+            # Verify the port is actually free on the OS — the instances file
+            # can be stale if a process was killed without cleanup.
+            try:
+                with _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM) as s:
+                    s.setsockopt(_socket.SOL_SOCKET, _socket.SO_REUSEADDR, 1)
+                    s.bind(("127.0.0.1", port))
                 return port
+            except OSError:
+                continue
         raise RuntimeError(
             f"No free ports in range {self.port_min}–{self.port_max}. "
             f"Stop some instances first."

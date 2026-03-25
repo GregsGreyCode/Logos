@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
 def _user(request: web.Request) -> dict:
-    return request["user"]
+    return request["current_user"]
 
 
 def _require(request: web.Request, perm: str) -> None:
