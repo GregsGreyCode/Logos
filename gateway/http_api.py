@@ -2377,16 +2377,43 @@ _ADMIN_HTML = """<!DOCTYPE html>
       <span x-show="!clusterRes._error && !clusterRes.total_cpu && !clusterRes.free_cpu && runtimeMode === 'kubernetes'" class="text-gray-600">Cluster data unavailable</span>
     </div>
 
-    <!-- Running instances -->
+    <!-- Running agents -->
     <div class="mb-5">
       <div class="flex items-center justify-between mb-3">
         <div class="text-xs font-semibold text-gray-500 uppercase tracking-wider">
-          Running Instances
+          Running Agents
           <span x-show="clusterInstances.length > 0"
-            class="ml-1.5 text-gray-600 normal-case font-normal" x-text="'(' + clusterInstances.length + ')'"></span>
+            class="ml-1.5 text-gray-600 normal-case font-normal" x-text="'(' + (clusterInstances.length + 1) + ')'"></span>
         </div>
       </div>
       <div class="space-y-1.5">
+
+        <!-- Core gateway — always shown -->
+        <div class="flex items-center gap-3 px-3 py-2.5 rounded-lg bg-gray-900 border transition-colors"
+          :class="agentAlive === false ? 'border-red-900/50' : 'border-gray-800'">
+          <span class="w-1.5 h-1.5 rounded-full shrink-0"
+            :class="agentAlive === false ? 'bg-red-500' : agentAlive === null ? 'bg-gray-500 animate-pulse' : 'bg-green-500'"></span>
+          <div class="min-w-0 flex-1">
+            <div class="flex items-center gap-1.5 flex-wrap">
+              <span class="text-sm font-medium text-white" x-text="status.instance_name || 'Hermes'"></span>
+              <span class="text-xs px-1.5 py-0.5 rounded font-mono bg-indigo-950 text-indigo-300 border border-indigo-900">core</span>
+            </div>
+            <div class="flex items-center gap-2 mt-0.5 text-xs text-gray-700 font-mono flex-wrap">
+              <span x-text="status.uptime_s > 0 ? 'up ' + fmtUptime(status.uptime_s) : 'starting'"></span>
+              <template x-if="(status.active_sessions||[]).length > 0">
+                <span>
+                  <span class="text-gray-800">·</span>
+                  <span class="text-indigo-500" x-text="(status.active_sessions||[]).length + ' active'"></span>
+                </span>
+              </template>
+            </div>
+          </div>
+          <button @click="switchInstance('self'); tab='sessions'"
+            class="text-xs px-2.5 py-1 rounded-lg bg-[var(--accent)] hover:opacity-90 text-white font-medium transition-colors">
+            Chat →
+          </button>
+        </div>
+
         <template x-for="inst in clusterInstances" :key="inst.name">
           <div class="flex items-center gap-3 px-3 py-2.5 rounded-lg bg-gray-900 border transition-colors"
             :class="inst.status==='running' ? 'border-gray-800' : 'border-yellow-900/50'">
@@ -2464,7 +2491,7 @@ _ADMIN_HTML = """<!DOCTYPE html>
           </div>
         </template>
         <template x-if="clusterInstances.length === 0">
-          <div class="text-xs text-gray-700 py-3">No instances running.</div>
+          <div class="text-xs text-gray-700 py-3">No additional agents running.</div>
         </template>
       </div>
     </div>
@@ -4492,6 +4519,7 @@ function app() {
 
     switchInstance(id) {
       this.activeInstanceId = id;
+      this.agentAlive = null;
       this.status = { uptime_s: 0, instance_name: 'Hermes', active_sessions: [] };
       this.canary = { active: false };
       this.loadStatus();
