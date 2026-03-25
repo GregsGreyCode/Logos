@@ -1447,14 +1447,26 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
 
     valid = [r for r in results if not r.get("error") and r.get("tok_s", 0) > 0]
 
+    # Context window gate: agent system prompt is ~7 800 tokens; anything ≤ 8 192 ctx
+    # leaves essentially no room for conversation and must not be recommended.
+    # Models without a measured max_context (e.g. remote APIs) are allowed through.
+    _MIN_CTX = 16384
+    ctx_viable = [r for r in valid if r.get("max_context") is None or r["max_context"] >= _MIN_CTX]
+    ctx_limited = [r for r in valid if r.get("max_context") is not None and r["max_context"] < _MIN_CTX]
+    if ctx_limited:
+        names = ", ".join(r["model"] for r in ctx_limited)
+        await send({"log": f"⚠ Context too small for agent use (<{_MIN_CTX//1024}K): {names}"})
+    # Fall back to all valid if nothing clears the ctx bar (e.g. all are known-small)
+    ctx_pool = ctx_viable if ctx_viable else valid
+
     # Mandatory gates: JSON format + tool-call selection are critical for agent use.
-    # Models that pass both are ranked first; if none pass, fall back to all valid models.
-    gated = [r for r in valid if r.get("eval", {}).get("format") and r.get("eval", {}).get("tool_call")]
-    pool  = gated if gated else valid
+    # Models that pass both are ranked first; if none pass, fall back to all ctx-viable models.
+    gated = [r for r in ctx_pool if r.get("eval", {}).get("format") and r.get("eval", {}).get("tool_call")]
+    pool  = gated if gated else ctx_pool
     if gated:
-        await send({"log": f"{len(gated)}/{len(valid)} model(s) passed format+tool gates"})
-    elif valid:
-        await send({"log": "⚠ No model passed format+tool gates — ranking all valid models"})
+        await send({"log": f"{len(gated)}/{len(ctx_pool)} model(s) passed format+tool gates"})
+    elif ctx_pool:
+        await send({"log": "⚠ No model passed format+tool gates — ranking all viable models"})
 
     # Best balanced: highest composite score
     best = max(pool, key=_compare_score) if pool else None
@@ -1468,8 +1480,10 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
     per_server_recs: dict[str, dict] = {}
     for ep, group in server_groups.items():
         ep_valid = [r for r in valid if r.get("endpoint") == ep]
-        ep_gated = [r for r in ep_valid if r.get("eval", {}).get("format") and r.get("eval", {}).get("tool_call")]
-        ep_pool  = ep_gated if ep_gated else ep_valid
+        ep_ctx   = [r for r in ep_valid if r.get("max_context") is None or r["max_context"] >= _MIN_CTX]
+        ep_ctx   = ep_ctx if ep_ctx else ep_valid
+        ep_gated = [r for r in ep_ctx if r.get("eval", {}).get("format") and r.get("eval", {}).get("tool_call")]
+        ep_pool  = ep_gated if ep_gated else ep_ctx
         if ep_pool:
             ep_best = max(ep_pool, key=_compare_score)
             per_server_recs[ep] = {"model": ep_best["model"], "reason": _compare_reason(ep_best)}
