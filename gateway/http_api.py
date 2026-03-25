@@ -7140,6 +7140,16 @@ _SETUP_HTML = """<!DOCTYPE html>
     /* Skip fade-in when arriving via login transition — halo and orb are already "on" */
     .setup-halo-instant{animation:none!important;opacity:0.14!important}
     body.setup-instant-orb::before{animation:none!important;opacity:0.033!important}
+    /* Bump every Tailwind text utility one step up inside the setup flow */
+    .setup-scale .text-\[9px\],.setup-scale .text-\[10px\],.setup-scale .text-\[11px\]{font-size:0.75rem}
+    .setup-scale .text-xs{font-size:0.875rem}
+    .setup-scale .text-sm{font-size:1rem}
+    .setup-scale .text-base{font-size:1.125rem}
+    .setup-scale .text-lg{font-size:1.25rem}
+    .setup-scale .text-xl{font-size:1.5rem}
+    .setup-scale .text-2xl{font-size:1.75rem}
+    .setup-scale .text-3xl{font-size:2rem}
+    .setup-scale .text-4xl{font-size:2.5rem}
     .btn-primary{
       background:linear-gradient(135deg,#6366f1 0%,#a855f7 100%);
       color:#fff;font-weight:500;cursor:pointer;
@@ -7170,7 +7180,7 @@ _SETUP_HTML = """<!DOCTYPE html>
   </script>
 </head>
 <body class="min-h-screen text-white">
-<div x-data="setup()" x-init="init()" class="flex flex-col min-h-screen">
+<div x-data="setup()" x-init="init()" class="setup-scale flex flex-col min-h-screen">
 
   <!-- Header -->
   <header class="flex flex-col items-center pt-10 pb-4 gap-4" style="position:relative;z-index:1">
