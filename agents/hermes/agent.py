@@ -81,6 +81,7 @@ from core.constants import OPENROUTER_BASE_URL, OPENROUTER_MODELS_URL
 from agent.prompt_builder import (
     DEFAULT_AGENT_IDENTITY, PLATFORM_HINTS,
     MEMORY_GUIDANCE, SESSION_SEARCH_GUIDANCE, SKILLS_GUIDANCE,
+    build_local_model_guidance,
 )
 from agent.model_metadata import (
     fetch_model_metadata, get_model_context_length,
@@ -1827,6 +1828,31 @@ class AIAgent:
             tool_guidance.append(SKILLS_GUIDANCE)
         if tool_guidance:
             prompt_parts.append(" ".join(tool_guidance))
+
+        # Local model awareness: inject context-window guidance when running on
+        # a constrained local inference server (LM Studio, vLLM, Ollama, etc.)
+        _local_server_types = {"lmstudio", "ollama", "vllm", "llamacpp", "local"}
+        _server_type = os.environ.get("HERMES_SERVER_TYPE", "").lower()
+        if _server_type in _local_server_types:
+            from agent.model_metadata import get_model_context_length as _get_ctx_len
+            _ctx_len: int | None = None
+            try:
+                _ctx_model = os.environ.get("HERMES_MODEL", "") or os.environ.get("LLM_MODEL", "")
+                if _ctx_model:
+                    _ctx_len = _get_ctx_len(_ctx_model) or None
+                # Fall back to the persisted LM Studio probe result
+                if not _ctx_len:
+                    import yaml as _ctx_yaml
+                    from pathlib import Path as _P
+                    _ctx_cfg_path = _P(os.environ.get("HERMES_HOME", str(_P.home() / ".hermes"))) / "config.yaml"
+                    if _ctx_cfg_path.exists():
+                        _ctx_cfg = _ctx_yaml.safe_load(_ctx_cfg_path.read_text(encoding="utf-8")) or {}
+                        _ctx_map = _ctx_cfg.get("lmstudio_context_lengths") or {}
+                        if _ctx_model and _ctx_model in _ctx_map:
+                            _ctx_len = int(_ctx_map[_ctx_model])
+            except Exception:
+                pass
+            prompt_parts.append(build_local_model_guidance(_ctx_len))
 
         # Honcho CLI awareness: tell Hermes about its own management commands
         # so it can refer the user to them rather than reinventing answers.

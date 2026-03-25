@@ -88,6 +88,30 @@ SKILLS_GUIDANCE = (
     "skill with skill_manage so you can reuse it next time."
 )
 
+def build_local_model_guidance(context_length: int | None = None) -> str:
+    """Guidance injected when running on a local model with a constrained context window."""
+    ctx_note = f" (this model's context window is approximately {context_length:,} tokens)" if context_length else ""
+    return (
+        f"# Local model — constrained context window{ctx_note}\n"
+        "You are running on a local inference model, not a cloud API. "
+        "This has important implications:\n\n"
+        "**If a call fails or the model stops mid-response**, the most likely cause "
+        "is that the combined size of the system prompt, conversation history, tool "
+        "definitions, and your response exceeded the context window — not a network "
+        "error or a bug in the task itself.\n\n"
+        "To stay within limits:\n"
+        "- Keep your replies concise. Avoid long preambles, verbose explanations, or "
+        "repeating information already in the conversation.\n"
+        "- When reading files or web pages, extract only the relevant section rather "
+        "than returning the full content as a tool result.\n"
+        "- If a multi-step task is failing partway through, break it into smaller "
+        "independent turns instead of doing everything in one long chain.\n"
+        "- Prefer summarising large tool outputs before referencing them again later "
+        "in the same session.\n"
+        "- If you receive an incomplete or cut-off response from yourself, assume "
+        "context overflow and simplify the next request."
+    )
+
 PLATFORM_HINTS = {
     "whatsapp": (
         "You are on a text messaging communication platform, WhatsApp. "
