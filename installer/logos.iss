@@ -17,9 +17,10 @@
   #define MyInstallName MyAppName
 #endif
 ; MyAppId controls the Inno Setup AppId so canary installs alongside stable.
-; Canary builds override this: ISCC /DMyAppId="{CANARY-GUID}"
+; Pass the GUID *without* braces — they are added at the usage site.
+; Canary builds override this: ISCC /DMyAppId=C1A2E3B4-5F6D-7E8C-9A0B-1D2E3F4A5B6C
 #ifndef MyAppId
-  #define MyAppId "{E8A1F3D2-4B6C-4E7A-9F2B-3C5D8E1A0B4F}"
+  #define MyAppId "E8A1F3D2-4B6C-4E7A-9F2B-3C5D8E1A0B4F"
 #endif
 #define MyAppPublisher "gregsgreycode"
 #define MyAppURL "https://github.com/gregsgreycode/hermes"
@@ -28,7 +29,7 @@
 #define MySourceDir "..\dist\Logos"
 
 [Setup]
-AppId={#MyAppId}
+AppId={{{#MyAppId}}
 AppName={#MyInstallName}
 AppVersion={#MyAppVersion}
 AppVerName={#MyInstallName}
