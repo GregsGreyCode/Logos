@@ -2880,6 +2880,10 @@ _ADMIN_HTML = """<!DOCTYPE html>
         class="pb-2 text-sm font-medium"
         :class="adminTab==='routing-log'?'tab-active':'text-gray-500 hover:text-white'"
         @click="adminTab='routing-log'; if(can('manage_users') && !adminUsers.length) loadAdminUsers(); loadAdminRoutingLog()">Routing Log</button>
+      <button x-show="can('manage_action_policies')"
+        class="pb-2 text-sm font-medium"
+        :class="adminTab==='action-policies'?'tab-active':'text-gray-500 hover:text-white'"
+        @click="adminTab='action-policies'; loadAdminActionPolicies()">Action Policies</button>
       <button x-show="can('view_approvals')"
         class="pb-2 text-sm font-medium"
         :class="adminTab==='approvals'?'tab-active':'text-gray-500 hover:text-white'"
@@ -2953,6 +2957,7 @@ _ADMIN_HTML = """<!DOCTYPE html>
               <th class="text-left px-4 py-3 font-medium">Role</th>
               <th class="text-left px-4 py-3 font-medium">Status</th>
               <th class="text-left px-4 py-3 font-medium">Routing Profile</th>
+              <th class="text-left px-4 py-3 font-medium">Action Policy</th>
               <th class="text-left px-4 py-3 font-medium">Last Login</th>
               <th class="px-4 py-3"></th>
             </tr>
@@ -3015,6 +3020,18 @@ _ADMIN_HTML = """<!DOCTYPE html>
                   </select>
                 </td>
 
+                <!-- Action policy inline select -->
+                <td class="px-4 py-3">
+                  <select :value="u.action_policy_id || ''"
+                    @change="assignUserActionPolicy(u.id, $event.target.value || null)"
+                    class="bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs text-white focus:border-[var(--accent)] focus:outline-none max-w-[160px]">
+                    <option value="">— none —</option>
+                    <template x-for="ap in adminActionPolicies" :key="ap.id">
+                      <option :value="ap.id" x-text="ap.name"></option>
+                    </template>
+                  </select>
+                </td>
+
                 <!-- Last login -->
                 <td class="px-4 py-3 text-xs text-gray-600"
                   x-text="u.last_login ? new Date(u.last_login*1000).toLocaleString(undefined,{dateStyle:'short',timeStyle:'short'}) : 'never'">
@@ -3061,6 +3078,149 @@ _ADMIN_HTML = """<!DOCTYPE html>
           </template>
         </div>
       </template>
+    </div>
+
+    <!-- ── Action Policies sub-tab ── -->
+    <div x-show="adminTab==='action-policies' && can('manage_action_policies')">
+      <div class="flex items-center justify-between mb-4">
+        <div>
+          <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Action Policies</div>
+          <div class="text-xs text-gray-600 mt-0.5">Named permission presets — assign to users to control what agents can do on their behalf.</div>
+        </div>
+        <button @click="actionPolicyForm={name:'',description:'',network_policy:'internet_enabled',filesystem_policy:'workspace_only',exec_policy:'restricted',write_policy:'auto_apply',provider_policy:'any',secret_policy:'tool_only'}; actionPolicyFormOpen=true"
+          class="text-xs px-3 py-1.5 rounded-lg bg-[var(--accent)] text-white hover:opacity-90 transition-opacity">+ New Policy</button>
+      </div>
+
+      <!-- New / edit policy form -->
+      <template x-if="actionPolicyFormOpen">
+        <div class="bg-gray-900 border border-gray-700 rounded-xl p-4 mb-4">
+          <div class="text-xs font-semibold text-gray-400 mb-3" x-text="actionPolicyForm.id ? 'Edit Policy' : 'Create Policy'"></div>
+          <div class="grid grid-cols-2 gap-3 mb-3">
+            <div>
+              <label class="text-xs text-gray-500 block mb-1">Name</label>
+              <input x-model="actionPolicyForm.name" type="text" placeholder="e.g. strict, developer"
+                class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm text-white focus:border-[var(--accent)] focus:outline-none">
+            </div>
+            <div>
+              <label class="text-xs text-gray-500 block mb-1">Description</label>
+              <input x-model="actionPolicyForm.description" type="text" placeholder="Optional description"
+                class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm text-white focus:border-[var(--accent)] focus:outline-none">
+            </div>
+            <div>
+              <label class="text-xs text-gray-500 block mb-1">Write Policy</label>
+              <select x-model="actionPolicyForm.write_policy"
+                class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm text-white focus:border-[var(--accent)] focus:outline-none">
+                <option value="auto_apply">auto_apply — act without asking</option>
+                <option value="approval_required">approval_required — pause for confirmation</option>
+                <option value="dry_run">dry_run — no writes at all</option>
+              </select>
+            </div>
+            <div>
+              <label class="text-xs text-gray-500 block mb-1">Exec Policy</label>
+              <select x-model="actionPolicyForm.exec_policy"
+                class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm text-white focus:border-[var(--accent)] focus:outline-none">
+                <option value="none">none — no shell execution</option>
+                <option value="restricted">restricted — local terminal only</option>
+                <option value="full">full — unrestricted exec + SSH</option>
+              </select>
+            </div>
+            <div>
+              <label class="text-xs text-gray-500 block mb-1">Filesystem Policy</label>
+              <select x-model="actionPolicyForm.filesystem_policy"
+                class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm text-white focus:border-[var(--accent)] focus:outline-none">
+                <option value="read_only">read_only — no writes</option>
+                <option value="workspace_only">workspace_only — write to workspace only</option>
+                <option value="repo_scoped">repo_scoped — workspace + configured repos</option>
+                <option value="full">full — any path</option>
+              </select>
+            </div>
+            <div>
+              <label class="text-xs text-gray-500 block mb-1">Network Policy</label>
+              <select x-model="actionPolicyForm.network_policy"
+                class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm text-white focus:border-[var(--accent)] focus:outline-none">
+                <option value="local_only">local_only — LAN / in-cluster only</option>
+                <option value="allowlisted">allowlisted — explicit domain list</option>
+                <option value="internet_enabled">internet_enabled — unrestricted outbound</option>
+              </select>
+            </div>
+            <div>
+              <label class="text-xs text-gray-500 block mb-1">Provider Policy</label>
+              <select x-model="actionPolicyForm.provider_policy"
+                class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm text-white focus:border-[var(--accent)] focus:outline-none">
+                <option value="local_only">local_only — local inference only</option>
+                <option value="trusted_external">trusted_external — local + trusted cloud</option>
+                <option value="any">any — all providers</option>
+              </select>
+            </div>
+            <div>
+              <label class="text-xs text-gray-500 block mb-1">Secret Policy</label>
+              <select x-model="actionPolicyForm.secret_policy"
+                class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm text-white focus:border-[var(--accent)] focus:outline-none">
+                <option value="redacted">redacted — mask secrets in output</option>
+                <option value="tool_only">tool_only — usable in tool calls only</option>
+                <option value="unrestricted">unrestricted — no masking</option>
+              </select>
+            </div>
+          </div>
+          <div class="flex gap-2">
+            <button @click="saveActionPolicy()"
+              class="text-xs px-3 py-1.5 rounded-lg bg-[var(--accent)] text-white hover:opacity-90"
+              x-text="actionPolicyForm.id ? 'Save Changes' : 'Create Policy'"></button>
+            <button @click="actionPolicyFormOpen=false; actionPolicyForm={}"
+              class="text-xs px-3 py-1.5 rounded-lg border border-gray-700 text-gray-400 hover:text-white">Cancel</button>
+          </div>
+          <template x-if="actionPolicyMsg">
+            <div class="mt-2 text-xs px-3 py-2 rounded-lg"
+              :class="actionPolicyMsg.ok ? 'bg-green-950 text-green-300 border border-green-800' : 'bg-red-950 text-red-300 border border-red-800'"
+              x-text="actionPolicyMsg.text"></div>
+          </template>
+        </div>
+      </template>
+
+      <!-- Policy list -->
+      <div class="bg-gray-900 border border-gray-800 rounded-xl overflow-x-auto">
+        <table class="w-full text-sm">
+          <thead>
+            <tr class="border-b border-gray-800 text-xs text-gray-500">
+              <th class="text-left px-4 py-3 font-medium">Name</th>
+              <th class="text-left px-4 py-3 font-medium">Write</th>
+              <th class="text-left px-4 py-3 font-medium">Exec</th>
+              <th class="text-left px-4 py-3 font-medium">Filesystem</th>
+              <th class="text-left px-4 py-3 font-medium">Network</th>
+              <th class="px-4 py-3"></th>
+            </tr>
+          </thead>
+          <tbody>
+            <template x-for="ap in adminActionPolicies" :key="ap.id">
+              <tr class="border-b border-gray-800/50 hover:bg-gray-800/30 transition-colors">
+                <td class="px-4 py-3">
+                  <div class="text-white text-xs font-medium" x-text="ap.name"></div>
+                  <div class="text-gray-600 text-xs mt-0.5" x-text="ap.description"></div>
+                </td>
+                <td class="px-4 py-3">
+                  <span class="text-xs px-2 py-0.5 rounded-full"
+                    :class="ap.write_policy==='approval_required' ? 'bg-yellow-950 text-yellow-300' : ap.write_policy==='dry_run' ? 'bg-red-950 text-red-400' : 'bg-gray-800 text-gray-400'"
+                    x-text="ap.write_policy"></span>
+                </td>
+                <td class="px-4 py-3 text-xs text-gray-400" x-text="ap.exec_policy"></td>
+                <td class="px-4 py-3 text-xs text-gray-400" x-text="ap.filesystem_policy"></td>
+                <td class="px-4 py-3 text-xs text-gray-400" x-text="ap.network_policy"></td>
+                <td class="px-4 py-3 text-right">
+                  <div class="flex gap-2 justify-end">
+                    <button @click="actionPolicyForm={...ap}; actionPolicyFormOpen=true"
+                      class="text-xs text-gray-600 hover:text-white transition-colors">Edit</button>
+                    <button @click="deleteActionPolicy(ap.id)"
+                      class="text-xs text-red-800 hover:text-red-400 transition-colors">Delete</button>
+                  </div>
+                </td>
+              </tr>
+            </template>
+            <template x-if="adminActionPolicies.length===0">
+              <tr><td colspan="6" class="px-4 py-8 text-center text-xs text-gray-600">No action policies defined. Create one to restrict what agents can do for a user.</td></tr>
+            </template>
+          </tbody>
+        </table>
+      </div>
     </div>
 
     <!-- ── (Machines + Policies live under Routing tab) ── -->
@@ -4215,6 +4375,10 @@ function app() {
     adminUsers: [],
     adminMachines: [],
     adminPolicies: [],
+    adminActionPolicies: [],
+    actionPolicyForm: {},
+    actionPolicyFormOpen: false,
+    actionPolicyMsg: null,
     adminAuditLogs: [],
     adminRoutingLog: [],
     adminRoutingLogTotal: 0,
@@ -5256,7 +5420,7 @@ function app() {
     // ── Admin ──────────────────────────────────────────────────────────
 
     async loadAdminData() {
-      await Promise.all([this.loadAdminUsers(), this.loadAdminPolicies()]);
+      await Promise.all([this.loadAdminUsers(), this.loadAdminPolicies(), this.loadAdminActionPolicies()]);
     },
 
     async loadRoutingData() {
@@ -5303,6 +5467,72 @@ function app() {
         const d = await r.json();
         this.adminUsers = d.users || [];
       } catch(e) { this.adminUsers = []; }
+    },
+
+    async loadAdminActionPolicies() {
+      try {
+        const r = await fetch('/action-policies', {credentials:'include'});
+        const d = await r.json();
+        this.adminActionPolicies = d.action_policies || [];
+      } catch(e) { this.adminActionPolicies = []; }
+    },
+
+    async saveActionPolicy() {
+      this.actionPolicyMsg = null;
+      const f = this.actionPolicyForm;
+      if (!f.name || !f.name.trim()) { this.actionPolicyMsg={ok:false,text:"Name is required"}; return; }
+      try {
+        const isEdit = !!f.id;
+        const url = isEdit ? `/action-policies/${f.id}` : "/action-policies";
+        const method = isEdit ? "PATCH" : "POST";
+        const r = await fetch(url, {
+          method, credentials:"include",
+          headers:{"Content-Type":"application/json","X-CSRF-Token":getCsrfToken()},
+          body: JSON.stringify({
+            name: f.name.trim(), description: f.description||"",
+            network_policy: f.network_policy, filesystem_policy: f.filesystem_policy,
+            exec_policy: f.exec_policy, write_policy: f.write_policy,
+            provider_policy: f.provider_policy, secret_policy: f.secret_policy,
+          }),
+        });
+        const d = await r.json();
+        if (!r.ok) { this.actionPolicyMsg={ok:false,text:d.error||"Failed"}; return; }
+        const ap = d.action_policy;
+        if (isEdit) {
+          this.adminActionPolicies = this.adminActionPolicies.map(p => p.id===ap.id ? ap : p);
+        } else {
+          this.adminActionPolicies = [...this.adminActionPolicies, ap];
+        }
+        this.actionPolicyMsg = {ok:true, text: isEdit ? "Policy updated." : "Policy created."};
+        this.actionPolicyForm = {};
+        this.actionPolicyFormOpen = false;
+      } catch(e) { this.actionPolicyMsg={ok:false,text:String(e)}; }
+    },
+
+    async deleteActionPolicy(pid) {
+      if (!confirm("Delete this action policy? Users assigned to it will revert to no policy.")) return;
+      try {
+        const r = await fetch(`/action-policies/${pid}`, {
+          method:"DELETE", credentials:"include",
+          headers:{"X-CSRF-Token":getCsrfToken()},
+        });
+        if (!r.ok) { const d=await r.json(); alert(d.error||"Delete failed"); return; }
+        this.adminActionPolicies = this.adminActionPolicies.filter(p => p.id!==pid);
+        this.adminUsers = this.adminUsers.map(u => u.action_policy_id===pid ? {...u,action_policy_id:null} : u);
+      } catch(e) { alert(String(e)); }
+    },
+
+    async assignUserActionPolicy(uid, policyId) {
+      try {
+        const r = await fetch(`/users/${uid}/action-policy`, {
+          method:"PATCH", credentials:"include",
+          headers:{"Content-Type":"application/json","X-CSRF-Token":getCsrfToken()},
+          body: JSON.stringify({action_policy_id: policyId || null}),
+        });
+        if (!r.ok) { const d=await r.json(); this._adminMsg(false, d.error||"Failed"); return; }
+        this.adminUsers = this.adminUsers.map(u => u.id===uid ? {...u, action_policy_id: policyId||null} : u);
+        this._adminMsg(true, policyId ? "Action policy assigned." : "Action policy cleared.");
+      } catch(e) { this._adminMsg(false, String(e)); }
     },
 
     async loadAdminMachines() {
