@@ -189,12 +189,22 @@ def _start_gateway() -> None:
 
 
 def _stop_gateway() -> None:
+    # Ask the runner to stop gracefully (disconnects adapters, sets shutdown event).
+    # Fall back to loop.stop() if the import fails or the runner is already gone.
+    try:
+        from gateway.run import request_gateway_shutdown  # type: ignore
+        request_gateway_shutdown()
+    except Exception:
+        pass
+    # Wait up to 6 s for clean exit before force-stopping the loop.
+    if _gateway_thread:
+        _gateway_thread.join(timeout=6)
     with _gateway_lock:
         loop = _gateway_loop
     if loop and not loop.is_closed():
         loop.call_soon_threadsafe(loop.stop)
-    if _gateway_thread:
-        _gateway_thread.join(timeout=5)
+    if _gateway_thread and _gateway_thread.is_alive():
+        _gateway_thread.join(timeout=3)
 
 
 def _kill_instances() -> None:
@@ -202,25 +212,50 @@ def _kill_instances() -> None:
     import json
     import signal
     instances_file = _HERMES_HOME / "instances.json"
+    killed_pids: set = set()
     try:
-        if not instances_file.exists():
-            return
-        instances = json.loads(instances_file.read_text(encoding="utf-8"))
-        for inst in instances:
-            pid = inst.get("pid")
-            if not pid:
-                continue
-            try:
-                if sys.platform == "win32":
-                    import subprocess
-                    subprocess.run(["taskkill", "/F", "/PID", str(pid)], capture_output=True)
-                else:
-                    os.kill(pid, signal.SIGTERM)
-            except Exception:
-                pass
-        instances_file.write_text("[]", encoding="utf-8")
+        if instances_file.exists():
+            instances = json.loads(instances_file.read_text(encoding="utf-8"))
+            for inst in instances:
+                pid = inst.get("pid")
+                if not pid:
+                    continue
+                try:
+                    if sys.platform == "win32":
+                        import subprocess
+                        subprocess.run(["taskkill", "/F", "/PID", str(pid)], capture_output=True)
+                    else:
+                        os.kill(pid, signal.SIGTERM)
+                    killed_pids.add(pid)
+                except Exception:
+                    pass
+            instances_file.write_text("[]", encoding="utf-8")
     except Exception:
         pass
+
+    # Catch --agent-mode processes that were spawned but not yet written to
+    # instances.json (race between Popen and _save_instances on quit).
+    if sys.platform == "win32":
+        try:
+            import subprocess as _sp
+            _r = _sp.run(
+                ["wmic", "process", "where",
+                 "name='Logos.exe' and commandline like '%--agent-mode%'",
+                 "get", "ProcessId", "/format:list"],
+                capture_output=True, text=True, timeout=5,
+            )
+            _own_pid = os.getpid()
+            for _line in _r.stdout.splitlines():
+                _line = _line.strip()
+                if _line.startswith("ProcessId="):
+                    try:
+                        _pid = int(_line.split("=", 1)[1])
+                        if _pid != _own_pid and _pid not in killed_pids:
+                            _sp.run(["taskkill", "/F", "/PID", str(_pid)], capture_output=True)
+                    except (ValueError, IndexError):
+                        pass
+        except Exception:
+            pass
 
 
 def _restart_gateway() -> None:

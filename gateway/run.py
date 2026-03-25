@@ -218,8 +218,14 @@ def _resolve_runtime_agent_kwargs() -> dict:
     except Exception as exc:
         raise RuntimeError(format_runtime_provider_error(exc)) from exc
 
+    # Never pass an empty string as api_key — the OpenAI SDK sends
+    # "Authorization: Bearer <empty>" which causes LM Studio (and some
+    # other local servers) to return 401 "No cookie auth credentials found"
+    # even when authentication is disabled.  "not-needed" is the conventional
+    # placeholder accepted by all local inference servers when auth is off.
+    _key = runtime.get("api_key") or ""
     return {
-        "api_key": runtime.get("api_key"),
+        "api_key": _key if _key else "not-needed",
         "base_url": runtime.get("base_url"),
         "provider": runtime.get("provider"),
         "api_mode": runtime.get("api_mode"),
@@ -248,6 +254,30 @@ def _resolve_gateway_model() -> str:
     except Exception:
         pass
     return model
+
+
+# Module-level reference to the running gateway runner so the launcher
+# can request a graceful shutdown without abruptly stopping the event loop.
+_current_runner: Optional["GatewayRunner"] = None
+_current_loop: Optional[asyncio.AbstractEventLoop] = None
+
+
+def _set_current_runner(runner: Optional["GatewayRunner"]) -> None:
+    global _current_runner
+    _current_runner = runner
+
+
+def request_gateway_shutdown() -> None:
+    """Thread-safe: schedule runner.stop() from outside the event loop (e.g. launcher)."""
+    r = _current_runner
+    loop = _current_loop
+    if r is None or loop is None:
+        return
+    try:
+        if not loop.is_closed():
+            loop.call_soon_threadsafe(lambda: asyncio.create_task(r.stop()))
+    except Exception:
+        pass
 
 
 class GatewayRunner:
@@ -849,10 +879,13 @@ class GatewayRunner:
         self.adapters.clear()
         self._shutdown_all_gateway_honcho()
         self._shutdown_event.set()
-        
+        _set_current_runner(None)
+        global _current_loop
+        _current_loop = None
+
         from gateway.status import remove_pid_file
         remove_pid_file()
-        
+
         logger.info("Gateway stopped")
     
     async def wait_for_shutdown(self) -> None:
@@ -4170,7 +4203,27 @@ class GatewayRunner:
             _resolved_model = getattr(_agent, "model", None) if _agent else None
 
             if not final_response:
-                error_msg = f"⚠️ {result['error']}" if result.get("error") else "(No response generated)"
+                _err_raw = result.get("error", "")
+                if _err_raw:
+                    _err_lc = _err_raw.lower()
+                    if "cookie auth" in _err_lc or "no cookie" in _err_lc:
+                        error_msg = (
+                            "⚠️ LM Studio is requiring cookie authentication — "
+                            "this blocks server-side requests. "
+                            "Go to LM Studio → Developer → Require Authentication "
+                            "and disable it, then restart LM Studio."
+                        )
+                    elif "401" in _err_raw or "403" in _err_raw:
+                        _code_m = re.search(r"\b([45]\d\d)\b", _err_raw)
+                        _http_code = _code_m.group(1) if _code_m else "4xx"
+                        error_msg = (
+                            f"⚠️ Authentication error from the AI provider (HTTP {_http_code}). "
+                            "Check your API key in Setup, or disable authentication in your local server."
+                        )
+                    else:
+                        error_msg = f"⚠️ {_err_raw}"
+                else:
+                    error_msg = "(No response generated)"
                 return {
                     "final_response": error_msg,
                     "messages": result.get("messages", []),
@@ -4495,10 +4548,13 @@ async def start_gateway(config: Optional[GatewayConfig] = None, replace: bool = 
         backupCount=3,
     )
     from agent.redact import RedactingFormatter
-    # Apply the session filter to the root logger so every log record — from
-    # any module — gets session_id injected (defaults to '-' outside a request).
-    logging.getLogger().addFilter(_SessionFilter())
-    file_handler.setFormatter(RedactingFormatter('%(asctime)s %(levelname)s %(name)s [%(session_id)s]: %(message)s'))
+    # _SessionFilter must be on the handlers, not the root logger.
+    # Child loggers propagate records directly to the root's *handlers*,
+    # bypassing the root logger's filter() chain entirely.  Adding the filter
+    # to each handler guarantees session_id is always injected before format().
+    _sess_fmt = RedactingFormatter('%(asctime)s %(levelname)s %(name)s [%(session_id)s]: %(message)s')
+    file_handler.addFilter(_SessionFilter())
+    file_handler.setFormatter(_sess_fmt)
     logging.getLogger().addHandler(file_handler)
     logging.getLogger().setLevel(logging.INFO)
 
@@ -4509,16 +4565,22 @@ async def start_gateway(config: Optional[GatewayConfig] = None, replace: bool = 
         backupCount=2,
     )
     error_handler.setLevel(logging.WARNING)
-    error_handler.setFormatter(RedactingFormatter('%(asctime)s %(levelname)s %(name)s [%(session_id)s]: %(message)s'))
+    error_handler.addFilter(_SessionFilter())
+    error_handler.setFormatter(_sess_fmt)
     logging.getLogger().addHandler(error_handler)
 
     runner = GatewayRunner(config)
-    
+    _set_current_runner(runner)
+
+    # Store loop for cross-thread shutdown via request_gateway_shutdown()
+    global _current_loop
+    _current_loop = asyncio.get_running_loop()
+
     # Set up signal handlers
     def signal_handler():
         asyncio.create_task(runner.stop())
-    
-    loop = asyncio.get_event_loop()
+
+    loop = _current_loop
     for sig in (signal.SIGINT, signal.SIGTERM):
         try:
             loop.add_signal_handler(sig, signal_handler)

@@ -1189,11 +1189,44 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
                                 json={"model": model_id, "context_length": _ctx_probe},
                                 timeout=aiohttp.ClientTimeout(total=30),
                             ) as _cl:
-                                if _cl.status == 200:
-                                    max_context = _ctx_probe
-                                    await send({"log": f"  Context probe: {_ctx_probe:,} tokens ✓"})
-                                    break
-                                await send({"log": f"  Context probe: {_ctx_probe:,} — HTTP {_cl.status}, trying smaller…"})
+                                if _cl.status != 200:
+                                    await send({"log": f"  Context probe: {_ctx_probe:,} — HTTP {_cl.status}, trying smaller…"})
+                                    continue
+                            # LM Studio can return HTTP 200 but silently load the model in a
+                            # degraded state (red indicator in UI) when VRAM is insufficient.
+                            # Short prompts still succeed because they never fill the KV cache.
+                            # Verify by actually sending a payload sized to the probed context.
+                            await asyncio.sleep(1.0)
+                            _verify_ok = False
+                            try:
+                                _filler_unit = "The quick brown fox jumps over the lazy dog. "
+                                _target_chars = (_ctx_probe - 200) * 3  # ~3 chars/token
+                                _reps = max(1, _target_chars // len(_filler_unit))
+                                _filler = _filler_unit * _reps
+                                _v_headers = {**_ctx_probe_headers, "Content-Type": "application/json"}
+                                async with http.post(
+                                    f"{endpoint}/chat/completions",
+                                    headers=_v_headers,
+                                    json={
+                                        "model": model_id,
+                                        "messages": [{"role": "user", "content": _filler + "\n\nSay OK."}],
+                                        "max_tokens": 1,
+                                        "stream": False,
+                                    },
+                                    timeout=aiohttp.ClientTimeout(total=120),
+                                ) as _vr:
+                                    if _vr.status == 200:
+                                        _verify_ok = True
+                                        await send({"log": f"  Context verify: {_ctx_probe:,} tokens — full payload accepted ✓"})
+                                    else:
+                                        _vbody = (await _vr.text())[:120]
+                                        await send({"log": f"  Context verify: {_ctx_probe:,} — HTTP {_vr.status}: {_vbody}, trying smaller…"})
+                            except Exception as _ve:
+                                await send({"log": f"  Context verify: {_ctx_probe:,} — {str(_ve)[:80]}, trying smaller…"})
+                            if _verify_ok:
+                                max_context = _ctx_probe
+                                await send({"log": f"  Context probe: {_ctx_probe:,} tokens ✓"})
+                                break
                         except Exception as _ce:
                             await send({"log": f"  Context probe: {_ctx_probe:,} — {str(_ce)[:60]}, trying smaller…"})
                     if max_context is None:

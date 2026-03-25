@@ -157,5 +157,7 @@ class RedactingFormatter(logging.Formatter):
         super().__init__(fmt, datefmt, style, **kwargs)
 
     def format(self, record: logging.LogRecord) -> str:
+        if not hasattr(record, 'session_id'):
+            record.session_id = '-'
         original = super().format(record)
         return redact_sensitive_text(original)

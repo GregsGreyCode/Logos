@@ -6575,13 +6575,13 @@ _SETUP_HTML = """<!DOCTYPE html>
           <!-- Header text -->
           <div class="px-7 py-6 border-b border-gray-800/60">
             <div class="flex items-center justify-between gap-4 mb-1">
-              <div class="text-base font-semibold text-white" x-text="tldr ? 'what ur about to do' : 'What setup configures'"></div>
+              <div class="text-base font-semibold text-white" x-text="tldr ? &quot;What you're about to do&quot; : &quot;What setup configures&quot;"></div>
               <!-- TL;DR toggle — top-right of the card header -->
               <button @click="tldr=!tldr"
                 class="spinner-hue text-xs px-4 py-1.5 rounded-full border font-semibold tracking-wide transition-all flex-shrink-0"
                 :class="tldr ? 'bg-indigo-950 border-indigo-500 text-indigo-200' : 'bg-gray-900 border-gray-600 text-gray-400 hover:border-gray-400 hover:text-gray-200'"
                 title="Toggle TL;DR mode">
-                <span x-text="tldr ? '⚡ TL;DR ON' : 'Click here for TL;DR'"></span>
+                <span x-text="tldr ? 'TL;DR ON ⚡' : 'Click here for TL;DR'"></span>
               </button>
             </div>
             <div class="text-sm text-gray-500 mb-4" x-text="tldr ? 'Seven steps.' : 'Seven steps, from model discovery to launch.'"></div>
@@ -6733,22 +6733,29 @@ _SETUP_HTML = """<!DOCTYPE html>
                               <span x-show="s.status==='up' && serverKeys[s.endpoint]" class="text-[10px] text-green-500/70">&#128274; key set</span>
                             </div>
                             <!-- Optional API key for running servers (encrypts requests, not required) -->
-                            <div x-show="s.status==='up'" class="mt-1.5" x-data="{ showKey: false }">
-                              <button @click="showKey = !showKey" class="text-[10px] text-gray-600 hover:text-gray-400 transition-colors flex items-center gap-1">
+                            <div x-show="s.status==='up'" class="mt-1.5" x-data="{ showKey: false, keyTested: false }">
+                              <button @click="showKey = !showKey; keyTested = false" class="text-[10px] text-gray-600 hover:text-gray-400 transition-colors flex items-center gap-1">
                                 <svg class="w-2.5 h-2.5 transition-transform" :class="showKey ? 'rotate-90' : ''" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
                                 <span x-text="serverKeys[s.endpoint] ? 'API key set \u2014 change' : 'Add API key (optional)'"></span>
                               </button>
                               <div x-show="showKey" class="mt-1.5 space-y-1">
-                                <p class="text-[10px] text-gray-600">Encrypts requests to this server. Not required — works without one.</p>
+                                <p class="text-[10px] text-gray-600">Encrypts requests to this server.</p>
                                 <div class="flex gap-2">
                                   <input type="password" placeholder="API key"
                                     x-model="serverKeys[s.endpoint]"
-                                    @keydown.enter="s._apiKey = serverKeys[s.endpoint]; showKey = false"
+                                    @keydown.enter="s._apiKey = serverKeys[s.endpoint]; keyTested = true; retryWithKey(s)"
                                     class="flex-1 bg-gray-950 border border-gray-700 rounded-lg px-3 py-1.5 text-xs text-white placeholder-gray-600 focus:outline-none focus:border-indigo-500 font-mono">
-                                  <button @click="s._apiKey = serverKeys[s.endpoint]; showKey = false"
+                                  <button @click="s._apiKey = serverKeys[s.endpoint]; keyTested = true; retryWithKey(s)"
                                     class="btn-primary px-3 py-1.5 rounded-lg text-xs flex-shrink-0">Save</button>
                                 </div>
-                                <button x-show="serverKeys[s.endpoint]" @click="serverKeys[s.endpoint] = ''; s._apiKey = ''"
+                                <template x-if="keyTested">
+                                  <div class="pt-0.5">
+                                    <span x-show="retryingServers[s.endpoint]" class="text-[10px] text-gray-500 flex items-center gap-1"><div class="w-2 h-2 border border-gray-500/40 border-t-gray-400 rounded-full animate-spin"></div>Testing key&hellip;</span>
+                                    <span x-show="!retryingServers[s.endpoint] && !retryErrors[s.endpoint] && serverKeys[s.endpoint]" class="text-[10px] text-green-400">&#10003; Key set successfully</span>
+                                    <span x-show="!retryingServers[s.endpoint] && retryErrors[s.endpoint]" class="text-[10px] text-red-400" x-text="retryErrors[s.endpoint]"></span>
+                                  </div>
+                                </template>
+                                <button x-show="serverKeys[s.endpoint]" @click="serverKeys[s.endpoint] = ''; s._apiKey = ''; keyTested = false"
                                   class="text-[10px] text-gray-700 hover:text-gray-500 transition-colors">Clear key</button>
                               </div>
                             </div>
