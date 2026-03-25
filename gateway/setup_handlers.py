@@ -1137,11 +1137,16 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
                             headers=_ctx_probe_headers,
                             timeout=aiohttp.ClientTimeout(total=5),
                         ) as _mr:
+                            await send({"log": f"  Native API status: HTTP {_mr.status}"})
                             if _mr.status == 200:
                                 _md = await _mr.json(content_type=None)
+                                # LM Studio may return a list or a dict with a "data" key.
+                                _model_list = _md if isinstance(_md, list) else _md.get("data", [])
+                                await send({"log": f"  Native API model count: {len(_model_list)}"})
                                 _model_id_lower = model_id.lower()
-                                for _m in _md.get("data", []):
+                                for _m in _model_list:
                                     _mid = (_m.get("id") or "").lower()
+                                    await send({"log": f"  Native entry: id={_m.get('id')!r} max_context_length={_m.get('max_context_length')!r} keys={list(_m.keys())[:6]}"})
                                     # LM Studio's native API IDs often include the
                                     # quantisation suffix (.gguf) that the OpenAI-compat
                                     # /v1/models endpoint strips.  Match on substring.
@@ -1149,8 +1154,10 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
                                         _nc = _m.get("max_context_length")
                                         if isinstance(_nc, int) and _nc > 0:
                                             _native_ctx = _nc
-                                        await send({"log": f"  LM Studio model entry: id={_m.get('id')!r} max_context_length={_m.get('max_context_length')!r}"})
                                         break
+                            else:
+                                _raw = (await _mr.text())[:120]
+                                await send({"log": f"  Native API error body: {_raw}"})
                     except Exception as _me:
                         await send({"log": f"  Could not read LM Studio model list: {str(_me)[:80]}"})
                     if _native_ctx:
@@ -1701,11 +1708,12 @@ async def handle_setup_complete(request: web.Request) -> web.Response:
                     break
             if not _primary_key:
                 _primary_key = (body.get("api_key") or "")
-            if _primary_key and _primary_key not in ("ollama", ""):
-                # Always write the key from setup — overwrite any stale key left
-                # from a previous session so the new LM Studio instance is used.
-                _cfg["OPENAI_API_KEY"] = _primary_key
-                os.environ["OPENAI_API_KEY"] = _primary_key  # live process picks it up immediately
+            # Always write the key from setup — overwrite any stale key left
+            # from a previous session.  An empty key clears a stale wrong key
+            # (important for LM Studio which returns 401 when auth is enabled
+            # and the wrong key is sent).
+            _cfg["OPENAI_API_KEY"] = _primary_key
+            os.environ["OPENAI_API_KEY"] = _primary_key  # live process picks it up immediately
             # Always sync live so the agent uses the new values without a restart
             os.environ["OPENAI_BASE_URL"] = endpoint
             os.environ["HERMES_MODEL"] = model
