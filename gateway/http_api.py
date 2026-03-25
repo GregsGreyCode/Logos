@@ -718,6 +718,11 @@ _ADMIN_HTML = """<!DOCTYPE html>
   @keyframes fl-fade{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
   .fl-hidden{opacity:0}
   .fl-anim{animation:fl-fade 0.85s cubic-bezier(0.22,1,0.36,1) forwards}
+  /* Chat message enter animations */
+  @keyframes chat-bubble-in{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:none}}
+  @keyframes chat-bubble-in-first{from{opacity:0;transform:translateY(52px)}to{opacity:1;transform:none}}
+  .chat-msg-anim{animation:chat-bubble-in 0.32s cubic-bezier(0.22,1,0.36,1) both}
+  #chat-messages .chat-msg-anim:first-child{animation-name:chat-bubble-in-first;animation-duration:0.48s}
 </style>
 </head>
 <body class="bg-gray-950 text-gray-100 min-h-screen" x-data="app()" x-init="init()">
@@ -1023,7 +1028,7 @@ _ADMIN_HTML = """<!DOCTYPE html>
           <div id="chat-messages" class="chat-scroll px-4 py-3 space-y-3">
             <!-- Ghost logo — fades out on first message -->
             <div x-show="chatMessages.length === 0"
-                 x-transition:leave="transition ease-in duration-700"
+                 x-transition:leave="transition ease-out duration-500"
                  x-transition:leave-start="opacity-100"
                  x-transition:leave-end="opacity-0"
                  class="flex items-end justify-center pb-6 h-full pointer-events-none select-none"
@@ -1032,7 +1037,7 @@ _ADMIN_HTML = """<!DOCTYPE html>
                    style="width:100px;height:100px;object-fit:contain;filter:hue-rotate(var(--hue-deg,0deg));">
             </div>
             <template x-for="(msg,i) in chatMessages" :key="i">
-              <div :class="msg.role==='user' ? 'text-right' : 'text-left'">
+              <div class="chat-msg-anim" :class="msg.role==='user' ? 'text-right' : 'text-left'">
                 <!-- User messages: always plain bubble -->
                 <template x-if="msg.role==='user'">
                   <span class="inline-block max-w-3xl text-left px-3 py-2 rounded-xl text-sm leading-relaxed bg-indigo-700 text-white"
