@@ -200,6 +200,8 @@ hermes chat --model openrouter/meta-llama/llama-3.1-70b-instruct
 
 **Cause:** The conversation has grown too long for the model's context window.
 
+**Note on local models:** The Logos agent system prompt alone is approximately 7,800 tokens. Models with 8,192 tokens or less of context have almost no room left for actual conversation. **Local models need at least 16,384 tokens of context to be usable.** The setup benchmark measures and displays the actual loadable context window for each model — look for the `ctx` badge in the results.
+
 **Solution:**
 ```bash
 # Compress the current session
@@ -208,8 +210,11 @@ hermes chat --model openrouter/meta-llama/llama-3.1-70b-instruct
 # Or start a fresh session
 hermes chat
 
-# Use a model with a larger context window
+# Use a model with a larger context window (cloud)
 hermes chat --model openrouter/google/gemini-2.0-flash-001
+
+# For local models: choose one with ≥16K context in the Machines tab
+# or re-run the benchmark and select a model showing ≥16K ctx
 ```
 
 ---

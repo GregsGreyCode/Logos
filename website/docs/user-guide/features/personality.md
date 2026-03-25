@@ -1,15 +1,18 @@
 ---
 sidebar_position: 9
 title: "Personality & SOUL.md"
-description: "Customize Hermes Agent's personality with a global SOUL.md, built-in personalities, and custom persona definitions"
+description: "Customize Logos' personality with souls, a global SOUL.md, built-in personalities, and custom persona definitions"
 ---
 
 # Personality & SOUL.md
 
-Hermes Agent's personality is customizable, but there are two different layers that matter:
+Logos' personality is customizable at several layers:
 
-- `SOUL.md` — a durable persona file that lives in `HERMES_HOME` and is loaded automatically for that Hermes instance
+- **Souls** — chosen during setup (or changed anytime from the dashboard). A soul sets the agent's default behaviour, communication style, and enabled toolset. Built-in souls include General, General (Lite), App Development, Homelab Investigator, Homelab Code Fix, News Anchor, and others.
+- `SOUL.md` — a durable persona file that lives in `HERMES_HOME` and is injected into every session for that Logos instance. Fine-grained voice control on top of the chosen soul.
 - built-in or custom `/personality` presets — session-level system-prompt overlays
+
+**General (Lite)** is a soul designed for models with smaller context windows. It has fewer enabled tools by default, which keeps the system prompt shorter. The setup wizard automatically suggests it when the selected model has fewer than 16,384 tokens of context.
 
 If you want a stable default voice that follows you across sessions, `SOUL.md` is the right tool.
 
