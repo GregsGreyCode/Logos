@@ -1210,7 +1210,7 @@ _ADMIN_HTML = """<!DOCTYPE html>
               @dragleave.prevent="chatDragOver=false"
               @drop.prevent="handleChatDrop($event)">
               <textarea x-model="chatInput"
-                @keydown.enter.prevent="if(!$event.shiftKey) sendChat()"
+                @keydown.enter="if(!$event.shiftKey){ $event.preventDefault(); sendChat(); }"
                 @input="autoResizeChat($el)"
                 x-ref="chatTextarea"
                 autocomplete="off"
