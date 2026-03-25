@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
+import shutil
+import tempfile
 import time
+from urllib.parse import urlparse, urlunparse
 
 import aiohttp
 from aiohttp import web
@@ -198,6 +202,146 @@ async def handle_consult_frontier(request: web.Request) -> web.Response:
         proposal_id, frontier_model=model, frontier_output=output
     )
     return web.json_response({"model": model, "output": output})
+
+
+# ── Apply proposal ────────────────────────────────────────────────────────────
+
+async def _run_git(*args, cwd: str) -> tuple[int, str, str]:
+    """Run a git subcommand, return (returncode, stdout, stderr)."""
+    proc = await asyncio.create_subprocess_exec(
+        "git", *args,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+        cwd=cwd,
+    )
+    stdout, stderr = await proc.communicate()
+    return proc.returncode, stdout.decode(errors="replace"), stderr.decode(errors="replace")
+
+
+async def handle_apply_proposal(request: web.Request) -> web.Response:
+    """Clone the configured fork, apply the proposal diff, push a branch, optionally open a PR."""
+    _require(request, "decide_evolution")
+    proposal_id = request.match_info["id"]
+    proposal = auth_db.get_evolution_proposal(proposal_id)
+    if not proposal:
+        raise web.HTTPNotFound()
+
+    if proposal["status"] not in ("accepted",):
+        raise web.HTTPBadRequest(reason="Only accepted proposals can be applied")
+
+    diff_text = (proposal.get("diff_text") or "").strip()
+    if not diff_text:
+        raise web.HTTPBadRequest(reason="Proposal has no diff — nothing to apply")
+
+    settings = auth_db.get_evolution_settings()
+    remote_url = (settings.get("git_remote_url") or "").strip()
+    username   = (settings.get("git_username")   or "").strip()
+    pat        = (settings.get("git_pat")         or "").strip()
+    base_branch = (settings.get("git_base_branch") or "main").strip() or "main"
+
+    if not remote_url:
+        raise web.HTTPBadRequest(reason="Evolution git_remote_url not set in settings")
+    if not pat:
+        raise web.HTTPBadRequest(reason="Evolution git_pat not set in settings")
+
+    # Embed PAT in URL for auth (never logged)
+    parsed = urlparse(remote_url)
+    netloc = f"{username}:{pat}@{parsed.hostname}" if username else f"{pat}@{parsed.hostname}"
+    if parsed.port:
+        netloc += f":{parsed.port}"
+    auth_url = urlunparse(parsed._replace(netloc=netloc))
+
+    branch_name = f"evolution/{proposal_id[:8]}"
+    title   = proposal.get("title", "Evolution proposal")
+    summary = proposal.get("summary", "")
+
+    parent = tempfile.mkdtemp(prefix="evo_apply_")
+    repo_dir = os.path.join(parent, "repo")
+    try:
+        # 1. Shallow clone
+        rc, out, err = await _run_git(
+            "clone", "--depth=1", "--branch", base_branch, auth_url, repo_dir,
+            cwd=parent,
+        )
+        if rc != 0:
+            return web.json_response({"error": f"git clone failed: {err.strip()}"}, status=500)
+
+        # 2. Configure identity
+        await _run_git("config", "user.email", "evolution@logos.local", cwd=repo_dir)
+        await _run_git("config", "user.name",  "Logos Evolution",        cwd=repo_dir)
+
+        # 3. Create branch
+        rc, out, err = await _run_git("checkout", "-b", branch_name, cwd=repo_dir)
+        if rc != 0:
+            return web.json_response({"error": f"git checkout -b failed: {err.strip()}"}, status=500)
+
+        # 4. Write diff and apply
+        patch_path = os.path.join(parent, "proposal.patch")
+        with open(patch_path, "w", encoding="utf-8") as f:
+            f.write(diff_text)
+        rc, out, err = await _run_git(
+            "apply", "--allow-empty", "--whitespace=fix", patch_path,
+            cwd=repo_dir,
+        )
+        if rc != 0:
+            return web.json_response({"error": f"git apply failed: {err.strip()}"}, status=422)
+
+        # 5. Stage + commit
+        await _run_git("add", "-A", cwd=repo_dir)
+        commit_msg = f"{title}\n\n{summary}" if summary else title
+        rc, out, err = await _run_git("commit", "-m", commit_msg, cwd=repo_dir)
+        if rc != 0:
+            return web.json_response({"error": f"git commit failed: {err.strip()}"}, status=500)
+
+        # 6. Push
+        rc, out, err = await _run_git("push", "origin", branch_name, cwd=repo_dir)
+        if rc != 0:
+            return web.json_response({"error": f"git push failed: {err.strip()}"}, status=500)
+
+        # 7. Optionally create GitHub PR
+        pr_url = None
+        if "github.com" in remote_url:
+            path_parts = parsed.path.strip("/").replace(".git", "").split("/")
+            if len(path_parts) >= 2:
+                owner, repo = path_parts[-2], path_parts[-1]
+                try:
+                    async with aiohttp.ClientSession() as session:
+                        gh_headers = {
+                            "Authorization": f"Bearer {pat}",
+                            "Accept": "application/vnd.github+json",
+                            "X-GitHub-Api-Version": "2022-11-28",
+                        }
+                        payload = {
+                            "title": title,
+                            "body": summary or title,
+                            "head": branch_name,
+                            "base": base_branch,
+                        }
+                        async with session.post(
+                            f"https://api.github.com/repos/{owner}/{repo}/pulls",
+                            headers=gh_headers, json=payload, timeout=aiohttp.ClientTimeout(total=30),
+                        ) as resp:
+                            if resp.status == 201:
+                                pr_data = await resp.json()
+                                pr_url = pr_data.get("html_url")
+                except Exception as exc:
+                    logger.warning("GitHub PR creation failed: %s", exc)
+
+        # 8. Persist branch + PR url on proposal
+        updates = {"git_branch": branch_name, "status": "in_progress"}
+        if pr_url:
+            updates["git_pr_url"] = pr_url
+        auth_db.update_evolution_proposal(proposal_id, **updates)
+
+        return web.json_response({
+            "ok": True,
+            "branch": branch_name,
+            "pr_url": pr_url,
+            "message": f"Branch '{branch_name}' pushed." + (f" PR: {pr_url}" if pr_url else " No PR created (non-GitHub or API error)."),
+        })
+
+    finally:
+        shutil.rmtree(parent, ignore_errors=True)
 
 
 # ── Settings ───────────────────────────────────────────────────────────────────
