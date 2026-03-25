@@ -761,9 +761,14 @@ _ADMIN_HTML = """<!DOCTYPE html>
         @click="tab='evolution'; loadEvolutionProposals(); loadEvolutionSettings()">Evolution</button>
     </template>
     <template x-if="can('manage_users') || can('view_audit_logs')">
-      <button class="pb-2 text-sm font-medium border-b-2 border-transparent"
+      <button class="pb-2 text-sm font-medium border-b-2 border-transparent relative"
         :class="tab==='admin'?'tab-active':'text-gray-400 hover:text-white'"
-        @click="tab='admin'; if(!can('manage_users') && adminTab==='users') adminTab='audit'; if(adminTab==='routing-log') loadAdminRoutingLog(); else loadAdminData()">Admin</button>
+        @click="tab='admin'; if(!can('manage_users') && adminTab==='users') adminTab='audit'; if(adminTab==='routing-log') loadAdminRoutingLog(); else loadAdminData()">
+        Admin
+        <template x-if="pendingApprovalCount > 0">
+          <span class="absolute -top-1 -right-3 min-w-[16px] h-4 px-1 rounded-full bg-red-500 text-[9px] text-white font-bold flex items-center justify-center" x-text="pendingApprovalCount > 99 ? '99+' : pendingApprovalCount"></span>
+        </template>
+      </button>
     </template>
     <!-- Canary pill (inline, between Admin and Theme) -->
     <template x-if="canary.active">
@@ -2885,9 +2890,14 @@ _ADMIN_HTML = """<!DOCTYPE html>
         :class="adminTab==='action-policies'?'tab-active':'text-gray-500 hover:text-white'"
         @click="adminTab='action-policies'; loadAdminActionPolicies()">Action Policies</button>
       <button x-show="can('view_approvals')"
-        class="pb-2 text-sm font-medium"
+        class="pb-2 text-sm font-medium relative"
         :class="adminTab==='approvals'?'tab-active':'text-gray-500 hover:text-white'"
-        @click="adminTab='approvals'; loadApprovals()">Approvals</button>
+        @click="adminTab='approvals'; loadApprovals()">
+        Approvals
+        <template x-if="pendingApprovalCount > 0">
+          <span class="absolute -top-1 -right-3 min-w-[16px] h-4 px-1 rounded-full bg-red-500 text-[9px] text-white font-bold flex items-center justify-center" x-text="pendingApprovalCount > 99 ? '99+' : pendingApprovalCount"></span>
+        </template>
+      </button>
     </div>
 
     <!-- ── Users sub-tab ── -->
@@ -3636,12 +3646,124 @@ _ADMIN_HTML = """<!DOCTYPE html>
       <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Workflow Definitions</div>
       <div class="flex items-center gap-3">
         <button @click="loadWorkflows()" class="text-xs text-[var(--accent)] hover:opacity-80 flex items-center gap-1"><span>&#8635;</span> Refresh</button>
-        <button x-show="can('manage_workflows')" @click="wfNewFormOpen=true"
-          class="text-xs px-3 py-1.5 rounded-lg bg-[var(--accent)] text-white hover:opacity-90">+ Import JSON</button>
+        <template x-if="can('manage_workflows')">
+          <div class="flex items-center gap-2">
+            <button @click="wfBuilderOpen=true; wfNewFormOpen=false"
+              class="text-xs px-3 py-1.5 rounded-lg bg-[var(--accent)] text-white hover:opacity-90">+ Build</button>
+            <button @click="wfNewFormOpen=true; wfBuilderOpen=false"
+              class="text-xs px-3 py-1.5 rounded-lg border border-gray-700 text-gray-300 hover:text-white hover:border-gray-500">Import JSON</button>
+          </div>
+        </template>
       </div>
     </div>
 
-    <!-- Import form -->
+    <!-- Status message (shared) -->
+    <template x-if="wfMsg">
+      <div class="text-xs px-3 py-2 rounded-lg"
+        :class="wfMsg.ok ? 'bg-green-950 text-green-300 border border-green-800' : 'bg-red-950 text-red-300 border border-red-800'"
+        x-text="wfMsg.text"></div>
+    </template>
+
+    <!-- Visual builder -->
+    <template x-if="wfBuilderOpen">
+      <div class="bg-gray-900 border border-gray-700 rounded-xl p-5 space-y-4">
+        <div class="flex items-center justify-between">
+          <div class="text-xs font-semibold text-gray-300 uppercase tracking-wider">Build Workflow</div>
+          <button @click="wfBuilderOpen=false; wfBuilderSteps=[]" class="text-xs text-gray-500 hover:text-white">✕ Close</button>
+        </div>
+        <!-- Name & description -->
+        <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <div>
+            <label class="text-[10px] text-gray-500 uppercase tracking-wider block mb-1">Name *</label>
+            <input type="text" x-model="wfBuilderName" placeholder="My Workflow"
+              class="w-full text-xs bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-gray-200 focus:outline-none focus:border-[var(--accent)]" />
+          </div>
+          <div>
+            <label class="text-[10px] text-gray-500 uppercase tracking-wider block mb-1">Description</label>
+            <input type="text" x-model="wfBuilderDesc" placeholder="What this workflow does"
+              class="w-full text-xs bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-gray-200 focus:outline-none focus:border-[var(--accent)]" />
+          </div>
+        </div>
+        <!-- Steps -->
+        <div class="space-y-3">
+          <div class="flex items-center justify-between">
+            <div class="text-[10px] text-gray-500 uppercase tracking-wider">Steps</div>
+            <button @click="_wfBuilderNewStep()"
+              class="text-[10px] px-2 py-1 rounded border border-gray-700 text-gray-400 hover:border-[var(--accent)] hover:text-[var(--accent)]">+ Add Step</button>
+          </div>
+          <template x-if="wfBuilderSteps.length === 0">
+            <div class="text-xs text-gray-600 text-center py-4 border border-dashed border-gray-800 rounded-lg">No steps yet — click "+ Add Step" to begin</div>
+          </template>
+          <template x-for="(step, idx) in wfBuilderSteps" :key="idx">
+            <div class="bg-gray-800 border border-gray-700 rounded-xl p-3 space-y-2">
+              <div class="flex items-center justify-between mb-1">
+                <span class="text-[10px] font-semibold text-gray-400 uppercase tracking-wider" x-text="'Step ' + (idx+1)"></span>
+                <button @click="_wfBuilderRemoveStep(idx)" class="text-[10px] text-red-500 hover:text-red-400">Remove</button>
+              </div>
+              <div class="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                <div>
+                  <label class="text-[9px] text-gray-600 uppercase block mb-0.5">ID</label>
+                  <input type="text" x-model="step.step_id" placeholder="step_1"
+                    class="w-full text-[11px] bg-gray-900 border border-gray-700 rounded px-2 py-1 text-gray-200 focus:outline-none focus:border-[var(--accent)]" />
+                </div>
+                <div>
+                  <label class="text-[9px] text-gray-600 uppercase block mb-0.5">Type</label>
+                  <select x-model="step.step_type"
+                    class="w-full text-[11px] bg-gray-900 border border-gray-700 rounded px-2 py-1 text-gray-200 focus:outline-none focus:border-[var(--accent)]">
+                    <option value="inspect">inspect</option>
+                    <option value="reason">reason</option>
+                    <option value="propose">propose</option>
+                    <option value="apply">apply</option>
+                    <option value="validate">validate</option>
+                    <option value="approval">approval</option>
+                  </select>
+                </div>
+                <div>
+                  <label class="text-[9px] text-gray-600 uppercase block mb-0.5">Name</label>
+                  <input type="text" x-model="step.step_name" placeholder="Descriptive name"
+                    class="w-full text-[11px] bg-gray-900 border border-gray-700 rounded px-2 py-1 text-gray-200 focus:outline-none focus:border-[var(--accent)]" />
+                </div>
+                <div>
+                  <label class="text-[9px] text-gray-600 uppercase block mb-0.5">Timeout (s)</label>
+                  <input type="number" x-model.number="step.timeout_seconds" min="10" max="3600"
+                    class="w-full text-[11px] bg-gray-900 border border-gray-700 rounded px-2 py-1 text-gray-200 focus:outline-none focus:border-[var(--accent)]" />
+                </div>
+              </div>
+              <div>
+                <label class="text-[9px] text-gray-600 uppercase block mb-0.5">Prompt</label>
+                <textarea x-model="step.prompt" rows="2" placeholder="Instructions for the agent at this step…"
+                  class="w-full text-[11px] bg-gray-900 border border-gray-700 rounded px-2 py-1.5 text-gray-200 resize-none focus:outline-none focus:border-[var(--accent)]"></textarea>
+              </div>
+              <div class="grid grid-cols-1 gap-2 sm:grid-cols-3">
+                <div>
+                  <label class="text-[9px] text-gray-600 uppercase block mb-0.5">Tools (comma-separated)</label>
+                  <input type="text" x-model="step.tools" placeholder="web_search, terminal"
+                    class="w-full text-[11px] bg-gray-900 border border-gray-700 rounded px-2 py-1 text-gray-200 focus:outline-none focus:border-[var(--accent)]" />
+                </div>
+                <div>
+                  <label class="text-[9px] text-gray-600 uppercase block mb-0.5">Depends on (step IDs)</label>
+                  <input type="text" x-model="step.depends_on" placeholder="step_1, step_2"
+                    class="w-full text-[11px] bg-gray-900 border border-gray-700 rounded px-2 py-1 text-gray-200 focus:outline-none focus:border-[var(--accent)]" />
+                </div>
+                <div>
+                  <label class="text-[9px] text-gray-600 uppercase block mb-0.5">Parallel group</label>
+                  <input type="text" x-model="step.parallel_group" placeholder="group_a"
+                    class="w-full text-[11px] bg-gray-900 border border-gray-700 rounded px-2 py-1 text-gray-200 focus:outline-none focus:border-[var(--accent)]" />
+                </div>
+              </div>
+            </div>
+          </template>
+        </div>
+        <div class="flex justify-end gap-2 pt-2">
+          <button @click="wfBuilderOpen=false; wfBuilderSteps=[]"
+            class="text-xs px-3 py-1.5 rounded-lg border border-gray-700 text-gray-400 hover:text-white">Cancel</button>
+          <button @click="buildWorkflow()"
+            class="text-xs px-3 py-1.5 rounded-lg bg-[var(--accent)] text-white hover:opacity-90">Create Workflow</button>
+        </div>
+      </div>
+    </template>
+
+    <!-- Import JSON form -->
     <template x-if="wfNewFormOpen">
       <div class="bg-gray-900 border border-gray-700 rounded-xl p-4">
         <div class="text-xs font-semibold text-gray-400 mb-3">Import Workflow (JSON)</div>
@@ -3654,11 +3776,6 @@ _ADMIN_HTML = """<!DOCTYPE html>
           <button @click="importWorkflow()"
             class="text-xs px-3 py-1.5 rounded-lg bg-[var(--accent)] text-white hover:opacity-90">Import</button>
         </div>
-        <template x-if="wfMsg">
-          <div class="mt-2 text-xs px-3 py-2 rounded-lg"
-            :class="wfMsg.ok ? 'bg-green-950 text-green-300 border border-green-800' : 'bg-red-950 text-red-300 border border-red-800'"
-            x-text="wfMsg.text"></div>
-        </template>
       </div>
     </template>
 
@@ -4098,6 +4215,30 @@ _ADMIN_HTML = """<!DOCTYPE html>
               </div>
             </template>
 
+            <!-- Apply to Repo (accepted proposals with a diff) -->
+            <template x-if="can('decide_evolution') && p.status === 'accepted' && p.diff_text">
+              <div class="pt-2 border-t border-gray-800 space-y-2">
+                <div class="flex flex-wrap items-center gap-2">
+                  <button @click="applyProposal(p.id)"
+                    :disabled="evoApplyingId === p.id"
+                    class="px-3 py-1.5 rounded-lg text-xs font-medium bg-emerald-800 hover:bg-emerald-700 text-emerald-100 border border-emerald-700 disabled:opacity-50"
+                    x-text="evoApplyingId === p.id ? 'Applying…' : '⇪ Apply to Repo'"></button>
+                  <template x-if="p.git_branch">
+                    <span class="text-[10px] text-gray-500 font-mono" x-text="'branch: ' + p.git_branch"></span>
+                  </template>
+                  <template x-if="p.git_pr_url">
+                    <a :href="p.git_pr_url" target="_blank" rel="noopener"
+                      class="text-[10px] text-[var(--accent)] hover:underline">View PR ↗</a>
+                  </template>
+                </div>
+                <template x-if="evoApplyResult && evoApplyingId === null">
+                  <div class="text-[11px] px-3 py-2 rounded-lg"
+                    :class="evoApplyResult.ok ? 'bg-green-950 text-green-300 border border-green-800' : 'bg-red-950 text-red-300 border border-red-800'"
+                    x-text="evoApplyResult.text"></div>
+                </template>
+              </div>
+            </template>
+
             <!-- Question input -->
             <div x-show="evoAskingQuestion===p.id" class="space-y-2" @click.stop>
               <textarea x-model="evoQuestionText" rows="3" placeholder="Ask the agent a question about this proposal…"
@@ -4386,6 +4527,7 @@ function app() {
     adminRoutingLogUserFilter: '',
     approvalRequests: [],
     approvalsStatusFilter: 'pending',
+    pendingApprovalCount: 0,
     adminMsg: null,
     // workflows
     workflows: [],
@@ -4394,6 +4536,11 @@ function app() {
     selectedRun: null,
     wfNewFormOpen: false,
     wfImportJson: '',
+    wfBuilderOpen: false,
+    wfBuilderName: '',
+    wfBuilderDesc: '',
+    wfBuilderSteps: [],
+    wfBuilderMsg: null,
     wfMsg: null,
     // agent runs
     agentRuns: [],
@@ -4419,6 +4566,8 @@ function app() {
     evoConsultingFrontier: null,
     evoConsultModel: 'claude-opus-4-6',
     evoConsultResult: null,
+    evoApplyingId: null,
+    evoApplyResult: null,
     evoSettingsLoading: false,
     evolutionSettings: {},
     evoSettingsForm: {},
@@ -4619,6 +4768,11 @@ function app() {
       setInterval(() => { this.clientNow = Date.now(); }, 1000);
       setInterval(() => { this._now = Math.floor(Date.now() / 1000); }, 15000);
       setInterval(() => { if (this.tab === 'routing') this.probeAllMachines(); }, 90000);
+      // Poll for pending approvals to keep the badge up to date
+      if (this.can('view_approvals')) {
+        this._pollPendingApprovals();
+        setInterval(() => this._pollPendingApprovals(), 30_000);
+      }
       // Silently refresh access token before it expires.
       // Fire immediately on load so a near-expiry token is renewed right away,
       // then keep refreshing every 12 minutes (access token TTL is 15 minutes).
@@ -5756,6 +5910,15 @@ function app() {
       finally { this.adminRoutingLogLoading = false; }
     },
 
+    async _pollPendingApprovals() {
+      try {
+        const r = await fetch('/approvals?status=pending&limit=1', {credentials:'include'});
+        if (!r.ok) return;
+        const d = await r.json();
+        this.pendingApprovalCount = d.total ?? (d.approvals || []).length;
+      } catch(e) {}
+    },
+
     async loadApprovals() {
       try {
         const params = new URLSearchParams({ limit: 100 });
@@ -5791,6 +5954,61 @@ function app() {
         const d = await r.json();
         this.workflows = d.workflows || [];
       } catch(e) { this.workflows = []; }
+    },
+
+    _wfBuilderNewStep() {
+      this.wfBuilderSteps.push({
+        step_id: 'step_' + (this.wfBuilderSteps.length + 1),
+        step_type: 'reason',
+        step_name: '',
+        prompt: '',
+        tools: '',
+        timeout_seconds: 120,
+        depends_on: '',
+        parallel_group: '',
+        condition: '',
+      });
+    },
+    _wfBuilderRemoveStep(idx) {
+      this.wfBuilderSteps.splice(idx, 1);
+    },
+    async buildWorkflow() {
+      if (!this.wfBuilderName.trim()) { this._wfMsg(false, 'Name is required'); return; }
+      if (this.wfBuilderSteps.length === 0) { this._wfMsg(false, 'Add at least one step'); return; }
+      const steps = this.wfBuilderSteps.map(s => {
+        const step = {
+          step_id: s.step_id.trim() || ('step_' + (this.wfBuilderSteps.indexOf(s)+1)),
+          step_type: s.step_type,
+          step_name: s.step_name.trim() || s.step_id,
+          prompt: s.prompt.trim(),
+        };
+        if (s.tools.trim()) step.tools = s.tools.split(',').map(t => t.trim()).filter(Boolean);
+        if (s.timeout_seconds) step.timeout_seconds = parseInt(s.timeout_seconds) || 120;
+        if (s.depends_on.trim()) step.depends_on = s.depends_on.split(',').map(t => t.trim()).filter(Boolean);
+        if (s.parallel_group.trim()) step.parallel_group = s.parallel_group.trim();
+        if (s.condition.trim()) step.condition = s.condition.trim();
+        return step;
+      });
+      const payload = {name: this.wfBuilderName.trim(), description: this.wfBuilderDesc.trim(), steps};
+      try {
+        const r = await fetch('/workflows', {
+          method: 'POST',
+          headers: {'X-CSRF-Token': getCsrfToken(), 'Content-Type': 'application/json'},
+          credentials: 'include',
+          body: JSON.stringify(payload),
+        });
+        const d = await r.json();
+        if (r.ok) {
+          this._wfMsg(true, 'Workflow created: ' + d.workflow.name);
+          this.wfBuilderOpen = false;
+          this.wfBuilderName = '';
+          this.wfBuilderDesc = '';
+          this.wfBuilderSteps = [];
+          await this.loadWorkflows();
+        } else {
+          this._wfMsg(false, d.error || 'Create failed');
+        }
+      } catch(e) { this._wfMsg(false, String(e)); }
     },
 
     async importWorkflow() {
@@ -5990,6 +6208,28 @@ function app() {
         if (idx >= 0) this.evolutionProposals[idx] = updated;
         this.evoQuestionText = '';
       } catch(e) { alert('Action failed: ' + e.message); }
+    },
+
+    async applyProposal(id) {
+      this.evoApplyingId = id;
+      this.evoApplyResult = null;
+      try {
+        const r = await fetch(`/evolution/proposals/${id}/apply`, {
+          method: 'POST',
+          headers: {'X-CSRF-Token': getCsrfToken(), 'Content-Type': 'application/json'},
+          credentials: 'include',
+          body: JSON.stringify({}),
+        });
+        const d = await r.json();
+        if (r.ok && d.ok) {
+          this.evoApplyResult = {ok: true, text: d.message || 'Branch pushed successfully.'};
+          const idx = this.evolutionProposals.findIndex(p => p.id === id);
+          if (idx >= 0) this.evolutionProposals[idx].status = 'in_progress';
+        } else {
+          this.evoApplyResult = {ok: false, text: d.error || 'Apply failed'};
+        }
+      } catch(e) { this.evoApplyResult = {ok: false, text: String(e)}; }
+      this.evoApplyingId = null;
     },
 
     async consultFrontier(id) {
@@ -7693,7 +7933,6 @@ _SETUP_HTML = """<!DOCTYPE html>
                             <div class="flex items-center gap-1.5">
                               <div class="spinner-hue"><div class="w-3 h-3 border border-gray-700 border-t-indigo-400 rounded-full animate-spin"></div></div>
                               <span class="text-gray-500" x-text="compareLoadingFor === mid ? 'loading\u2026' : 'testing\u2026'"></span>
-                              <span x-show="compareTestingEndpoint" class="text-gray-700 text-[10px] font-mono truncate max-w-[120px]" x-text="compareTestingEndpoint ? (new URL(compareTestingEndpoint).host) : ''" :title="compareTestingEndpoint"></span>
                             </div>
                           </template>
                           <!-- Result -->
@@ -11230,6 +11469,7 @@ async def start_http_api(runner: Any, port: int = 8080) -> None:
     app.router.add_post("/evolution/proposals/{id}/decide", _dev(require_csrf(_eh.handle_decide_proposal)))
     app.router.add_post("/evolution/proposals/{id}/answer", _mev(require_csrf(_eh.handle_answer_question)))
     app.router.add_post("/evolution/proposals/{id}/consult", _dev(require_csrf(_eh.handle_consult_frontier)))
+    app.router.add_post("/evolution/proposals/{id}/apply",   _dev(require_csrf(_eh.handle_apply_proposal)))
     app.router.add_get("/evolution/settings",            _vev(_eh.handle_get_settings))
     app.router.add_patch("/evolution/settings",          _mev(require_csrf(_eh.handle_update_settings)))
 
