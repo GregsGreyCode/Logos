@@ -67,6 +67,14 @@
     .spinner-hue{filter:hue-rotate(var(--hue-deg,0deg));}
     .icon-hue{filter:hue-rotate(var(--hue-deg,0deg));}
     /* animation-delay set inline by JS to sync with login page cycle */
+    @keyframes bench-border-cycle {
+      0%   { box-shadow: 0 0 0 1px rgba(99,102,241,.55),  0 0 18px rgba(99,102,241,.18); }
+      25%  { box-shadow: 0 0 0 1px rgba(168,85,247,.55),  0 0 18px rgba(168,85,247,.18); }
+      50%  { box-shadow: 0 0 0 1px rgba(59,130,246,.55),  0 0 18px rgba(59,130,246,.18); }
+      75%  { box-shadow: 0 0 0 1px rgba(16,185,129,.45),  0 0 18px rgba(16,185,129,.14); }
+      100% { box-shadow: 0 0 0 1px rgba(99,102,241,.55),  0 0 18px rgba(99,102,241,.18); }
+    }
+    .bench-testing { animation: bench-border-cycle 3s ease-in-out infinite; }
   </style>
   <script>
     // Drive all hue-synced elements from a single rAF loop via --hue-deg.
@@ -827,19 +835,22 @@
                 <!-- Model rows for this server -->
                 <div class="space-y-2">
                   <template x-for="mid in compareTargetsForServer(server.endpoint)" :key="mid">
-                    <!-- Card only appears when its turn starts — hidden while queued -->
+                    <!-- Card appears when testing starts; cycling border shows active model -->
                     <div x-show="compareTesting[mid] || !!compareResults[mid]"
                          x-transition:enter="transition ease-out duration-500"
-                         x-transition:enter-start="opacity-0 translate-y-2"
-                         x-transition:enter-end="opacity-100 translate-y-0">
-                    <div class="rounded-xl border transition-all duration-500 overflow-hidden"
-                      :class="compareResults[mid]?.max_context && compareResults[mid].max_context < 16384
-                        ? 'border-red-900/50 bg-gray-900 opacity-60'
-                        : serverModelForServer(server.endpoint) === mid && compareDone
-                          ? 'border-indigo-500 bg-indigo-950/20'
-                          : compareTesting[mid]
-                            ? 'border-indigo-500/40 bg-gray-900 shadow-[0_0_14px_rgba(99,102,241,0.13)]'
-                            : 'border-gray-800 bg-gray-900'">
+                         x-transition:enter-start="opacity-0 translate-y-1"
+                         x-transition:enter-end="opacity-100 translate-y-0"
+                         class="rounded-xl border transition-colors duration-500 overflow-hidden"
+                         :class="[
+                           compareResults[mid]?.max_context && compareResults[mid].max_context < 16384
+                             ? 'border-red-900/50 bg-gray-900 opacity-60'
+                             : serverModelForServer(server.endpoint) === mid && compareDone
+                               ? 'border-indigo-500 bg-indigo-950/20'
+                               : compareResults[mid]
+                                 ? 'border-gray-800 bg-gray-900'
+                                 : 'border-transparent bg-gray-900',
+                           compareTesting[mid] && !compareResults[mid] ? 'bench-testing' : ''
+                         ]">
                       <!-- Summary row — clickable once results are in; click selects and toggles detail -->
                       <div class="flex items-center justify-between px-3 py-2.5"
                         :class="compareDone && compareResults[mid] && !compareResults[mid].error && !(compareResults[mid].max_context && compareResults[mid].max_context < 16384) ? 'cursor-pointer hover:bg-white/5' : ''"
@@ -990,7 +1001,6 @@
                         </div>
                       </div>
                     </div>
-                    </div><!-- end reveal wrapper -->
                   </template>
 
                   <!-- Progress indicator — follows below the last visible card while work is in progress -->
