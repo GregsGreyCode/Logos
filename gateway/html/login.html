@@ -1,0 +1,468 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Logos \u2014 Sign In</title>
+  <meta name="theme-color" content="#0d0d0d">
+  <link rel="icon" type="image/svg+xml" href="/static/logo.svg">
+  <link rel="shortcut icon" href="/favicon.ico">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+
+    html { background: #010409; }
+
+    body {
+      background-color: #010409;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+      background-image: radial-gradient(rgba(99,102,241,0.06) 1px, transparent 1px);
+      background-size: 28px 28px;
+    }
+
+    /* ── Ambient glow ─────────────────────────────────────────────────────
+       Huge blurred orb centred on the logo area. Colours synced to the
+       actual hue-rotate progression of the logo gradient (avg hue ~260°):
+         0°  → indigo, 60° → magenta, 120° → orange, 180° → yellow,
+         240° → green,  300° → cyan,   360° → back to indigo.          */
+    @keyframes ambient-color {
+      0%   { background: #6366f1; }
+      17%  { background: #d946ef; }
+      33%  { background: #f97316; }
+      50%  { background: #eab308; }
+      67%  { background: #22c55e; }
+      83%  { background: #06b6d4; }
+      100% { background: #6366f1; }
+    }
+    body::before {
+      content: '';
+      position: fixed;
+      top: 50%; left: 50%;
+      transform: translate(-50%, -50%);
+      width: 2400px; height: 2400px;
+      border-radius: 50%;
+      filter: blur(280px);
+      opacity: 0.038;
+      animation: ambient-color 60s linear infinite;
+      pointer-events: none;
+      z-index: 0;
+    }
+
+    [x-cloak] { display: none !important; }
+
+    /* ── Logo halo — driven by --hue-deg so it stays in sync with the logo */
+    .logo-halo {
+      position: absolute;
+      inset: -280px;
+      border-radius: 50%;
+      background: #6366f1;
+      filter: blur(160px) hue-rotate(var(--hue-deg, 0deg));
+      opacity: 0.16;
+      pointer-events: none;
+    }
+    @keyframes logo-fadein {
+      from { opacity: 0; }
+      to   { opacity: 1; }
+    }
+    .logo-wrap {
+      animation: logo-fadein 6s cubic-bezier(0.16,1,0.3,1) both;
+      /* spring upward when card reveals */
+      transition: transform 2.4s cubic-bezier(0.22, 1, 0.36, 1);
+    }
+    .logo-wrap.logo-up  { transform: translateY(-24px); }
+    /* Fast close when logging in */
+    .login-reveal.closing {
+      max-height: 0 !important; opacity: 0 !important;
+      transition: max-height 0.5s ease, opacity 0.35s ease !important;
+    }
+    .logo-img { filter: hue-rotate(var(--hue-deg, 0deg)) brightness(1.15); }
+
+    /* ── Splash → login reveal ─────────────────────────────────────────
+       max-height reserves the space so the logo floats up naturally.
+       The card itself slides in from below via its own transform — these
+       two motions run independently, giving an organic layered feel.     */
+    .login-reveal {
+      max-height: 0;
+      opacity: 0;
+      overflow: visible;
+      pointer-events: none;
+      clip-path: inset(0 -60px -100px -60px);
+      transition: max-height 2.8s cubic-bezier(0.22, 1, 0.36, 1),
+                  opacity    0.01s linear,
+                  clip-path  2.8s cubic-bezier(0.22, 1, 0.36, 1);
+    }
+    .login-reveal.open {
+      max-height: 700px;
+      opacity: 1;
+      pointer-events: auto;
+      clip-path: inset(-60px -60px -100px -60px);
+    }
+    /* Card enters from below on its own spring — delayed slightly */
+    .login-card {
+      transform: translateY(32px);
+      opacity: 0;
+      transition: transform 2s cubic-bezier(0.34, 1.4, 0.64, 1) 0.3s,
+                  opacity   1.4s ease 0.3s;
+    }
+    .login-reveal.open .login-card {
+      transform: translateY(0);
+      opacity: 1;
+    }
+    /* Footer text same entry */
+    .login-footer {
+      transform: translateY(16px);
+      opacity: 0;
+      transition: transform 2s cubic-bezier(0.34, 1.4, 0.64, 1) 0.7s,
+                  opacity   1.4s ease 0.7s;
+    }
+    .login-reveal.open .login-footer {
+      transform: translateY(0);
+      opacity: 1;
+    }
+
+    /* ── Hint pulse ── */
+    @keyframes hint-pulse {
+      0%, 100% { opacity: 0.35; }
+      50%       { opacity: 0.7; }
+    }
+    .hint-text {
+      animation: hint-pulse 4.8s ease-in-out infinite;
+      transition: opacity 1.6s ease;
+    }
+
+    /* ── Card ── */
+    .login-card {
+      background: rgba(10,18,35,0.85);
+      border: 1px solid rgba(99,102,241,0.1);
+      border-radius: 28px;
+      box-shadow:
+        0 0 0 1px rgba(255,255,255,0.03) inset,
+        0 1px 0   rgba(255,255,255,0.05) inset,
+        0 8px 32px rgba(0,0,0,0.5),
+        0 32px 64px rgba(0,0,0,0.3);
+      backdrop-filter: blur(12px);
+    }
+
+    /* ── Button ── */
+    .btn-signin {
+      width: 100%; padding: 11px; border-radius: 12px;
+      font-size: 0.875rem; font-weight: 500; color: #fff;
+      background: linear-gradient(135deg, #6366f1 0%, #a855f7 100%);
+      box-shadow: 0 1px 2px rgba(0,0,0,0.4), 0 0 0 1px rgba(99,102,241,0.3) inset;
+      transition: opacity 150ms ease, box-shadow 150ms ease, transform 80ms ease;
+      filter: hue-rotate(var(--hue-deg, 0deg)) brightness(1.15);
+      cursor: pointer;
+    }
+    .btn-signin:hover:not(:disabled) {
+      opacity: 0.92;
+      box-shadow: 0 1px 2px rgba(0,0,0,0.5), 0 0 28px rgba(168,85,247,0.25), 0 0 0 1px rgba(168,85,247,0.35) inset;
+    }
+    .btn-signin:active:not(:disabled) { transform: translateY(1px); opacity: 0.95; }
+    .btn-signin:disabled { opacity: 0.45; cursor: not-allowed; animation: none; }
+
+    /* ── Navigation progress bar ── */
+    @keyframes nav-progress{from{width:0%}to{width:100%}}
+    .nav-progress-hue{filter:hue-rotate(var(--hue-deg,0deg));}
+
+    /* ── Floating label inputs ── */
+    /* Hide browser-native password reveal eye (Edge/Chrome) — we have our own */
+    input[type="password"]::-ms-reveal,
+    input[type="password"]::-ms-clear { display: none !important; }
+    input::-webkit-credentials-auto-fill-button { display: none !important; }
+    .float-wrap { position: relative; }
+    .float-input {
+      width: 100%;
+      background: rgba(255,255,255,0.04);
+      border: 1px solid rgba(255,255,255,0.07);
+      border-radius: 12px;
+      padding: 14px 16px;
+      color: #f1f5f9; font-size: 0.875rem; outline: none;
+      caret-color: rgba(165,180,252,0.6);
+      transition: background 1.2s ease;
+    }
+    .float-input::placeholder { color: transparent; }
+    .float-input:hover  { background: rgba(255,255,255,0.055); }
+    .float-input:focus  {
+      background: rgba(0,0,0,0.25);
+    }
+    .float-input:-webkit-autofill,
+    .float-input:-webkit-autofill:hover,
+    .float-input:-webkit-autofill:focus {
+      -webkit-box-shadow: 0 0 0 1000px rgba(0,0,0,0.25) inset;
+      -webkit-text-fill-color: #f1f5f9;
+    }
+    .float-label {
+      position: absolute; left: 16px; top: 50%;
+      transform: translateY(-50%);
+      font-size: 0.875rem; color: rgba(148,163,184,0.4);
+      pointer-events: none;
+      transition: opacity 0.8s ease, color 0.8s ease;
+    }
+    /* hide when focused or has value */
+    .float-input:focus ~ .float-label,
+    .float-input:not(:placeholder-shown) ~ .float-label {
+      opacity: 0;
+    }
+  </style>
+</head>
+<body @click="toggle()" @mousemove.window.throttle.2000ms="resetInactivity()" @keydown.window="resetInactivity()" x-data="loginApp()" x-init="init()">
+
+  <!-- Main content — flex-centred by body -->
+  <div class="relative z-10 w-full px-5" style="max-width:400px;">
+
+    <!-- Logo — springs upward when card reveals -->
+    <div class="text-center logo-wrap" :class="{ 'logo-up': phase === 'login' }" style="padding-top:2vh; padding-bottom:1.5rem;">
+      <div class="relative inline-block">
+        <div class="logo-halo"></div>
+        <img src="/static/logo.svg" alt="Logos" class="logo-img relative mx-auto"
+             style="width:100px;height:100px;object-fit:contain;">
+      </div>
+      <!-- Hint — space always reserved so the logo doesn't shift when it appears -->
+      <div style="margin-top:calc(5rem + 50px);height:1.2rem;transition:opacity 0.6s ease;"
+           :style="(showHint && phase === 'splash') ? 'opacity:1' : 'opacity:0'">
+        <p class="hint-text"
+           style="font-size:0.78rem;color:rgba(148,163,184,0.5);letter-spacing:0.08em;">
+          click anywhere to continue
+        </p>
+      </div>
+    </div>
+
+    <!-- Reveal section — expands on activate(); static class prevents pre-Alpine flash -->
+    <div class="login-reveal" @click.stop :class="{ open: phase === 'login', closing: phase === 'loggedin' }">
+
+      <!-- Card -->
+      <div class="login-card px-7 py-7">
+        <form @submit.prevent="submit()" @click.stop class="space-y-5">
+
+          <div class="float-wrap">
+            <input id="identifier" x-model="identifier" type="text" required autocomplete="username"
+                   class="float-input" placeholder=" "/>
+            <label class="float-label" for="identifier">Email or Username</label>
+          </div>
+
+          <div x-data="{ show: false }" class="float-wrap">
+            <input id="password" x-model="password" :type="show ? 'text' : 'password'"
+                   required autocomplete="current-password"
+                   @keydown.enter.prevent="$el.closest('form').dispatchEvent(new Event('submit'))"
+                   class="float-input" style="padding-right:2.75rem;" placeholder=" "/>
+            <label class="float-label" for="password">Password</label>
+            <button type="button" @click.stop="show=!show" tabindex="-1"
+                    class="absolute right-3.5 top-1/2 -translate-y-1/2 p-0.5 transition-colors"
+                    style="color:rgba(100,116,139,0.6);"
+                    onmouseover="this.style.color='rgba(148,163,184,1)'"
+                    onmouseout="this.style.color='rgba(100,116,139,0.6)'">
+              <svg x-show="!show" xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
+                <path stroke-linecap="round" stroke-linejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/>
+              </svg>
+              <svg x-show="show" x-cloak xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21"/>
+              </svg>
+            </button>
+          </div>
+
+          <div x-show="error" x-cloak
+               style="background:rgba(239,68,68,0.07);border:1px solid rgba(239,68,68,0.18);border-radius:10px;padding:10px 14px;">
+            <p class="text-red-400 text-sm" x-text="error"></p>
+          </div>
+
+          <button type="submit" :disabled="loading" class="btn-signin mt-1">
+            <span x-show="!loading" x-text="needsSetup ? 'Get started' : 'Sign in'"></span>
+            <span x-show="loading" x-cloak class="flex items-center justify-center gap-2">
+              <svg class="animate-spin w-4 h-4 opacity-80" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"/>
+              </svg>
+              Signing in
+            </span>
+          </button>
+
+        </form>
+      </div>
+
+      <!-- Footer -->
+      <p class="login-footer text-center mt-6"
+         style="font-size:0.72rem;color:rgba(71,85,105,0.7);letter-spacing:0.05em;">
+        A self-hosted AI agent platform
+      </p>
+
+    </div><!-- /login-reveal -->
+  </div>
+
+  <!-- Version badge -->
+  <div style="position:fixed;bottom:16px;right:18px;z-index:50;
+              font-size:0.65rem;color:rgba(71,85,105,0.45);
+              letter-spacing:0.04em;font-family:ui-monospace,monospace;pointer-events:none;">
+    __VERSION_LABEL__
+  </div>
+
+  <!-- Navigation progress bar — appears when navigating to /setup or / -->
+  <div x-show="navigating" x-cloak style="position:fixed;bottom:0;left:0;right:0;height:2px;background:rgba(255,255,255,0.04);z-index:9999;pointer-events:none">
+    <div class="nav-progress-hue" style="height:100%;width:0%;background:linear-gradient(90deg,#6366f1,#a855f7);animation:nav-progress linear forwards;"
+         :style="`animation-duration:${navBarDur}ms`"></div>
+  </div>
+
+  <script src="https://unpkg.com/alpinejs@3/dist/cdn.min.js" defer></script>
+  <script>
+  function loginApp() {
+    return {
+      phase: 'splash',   // 'splash' | 'login' | 'setup' | 'loggedin'
+      showHint: false,
+      identifier: '', password: '', error: '', loading: false, needsSetup: false,
+      navigating: false, navBarDur: 2600,
+      _hintTimer: null,
+      _inactivityTimer: null,
+      _setupRedirectTimer: null,
+
+      init() {
+        fetch('/auth/me', { credentials: 'same-origin' })
+          .then(r => { if (r.ok) window.location.href = '/'; })
+          .catch(() => {});
+        fetch('/api/setup/status', { credentials: 'same-origin' })
+          .then(r => r.ok ? r.json() : null)
+          .then(d => { if (d && !d.completed) this.needsSetup = true; })
+          .catch(() => {});
+        this._hintTimer = setTimeout(() => { if (this.phase === 'splash') this.showHint = true; }, 1000);
+        // Drive hue for logo + button via rAF so they're always in sync
+        const tick = () => {
+          // Anchor hue to wall-clock time so every page load/refresh
+          // shows the same colour at the same real-world second.
+          const deg = ((Date.now() / 1000) * 6 % 360).toFixed(1);
+          document.documentElement.style.setProperty('--hue-deg', deg + 'deg');
+          requestAnimationFrame(tick);
+        };
+        requestAnimationFrame(tick);
+      },
+
+      activate() {
+        if (this.phase !== 'splash') { this.resetInactivity(); return; }
+        clearTimeout(this._hintTimer);
+        this.showHint = false;
+        if (this.needsSetup) {
+          this.phase = 'setup';
+          this.navigating = true; this.navBarDur = 2600;
+          // Animate the logo image to land on the setup page logo position.
+          // Measure from the image itself (not the wrap which includes the hint
+          // reservation below) so the "from" centre is accurate.
+          // Setup header: pt-10 (40px) + 56px logo → centre at y=68.
+          const logoWrap = document.querySelector('.logo-wrap');
+          const logoImg  = document.querySelector('.logo-img');
+          if (logoWrap && logoImg) {
+            const wrapRect = logoWrap.getBoundingClientRect();
+            const imgRect  = logoImg.getBoundingClientRect();
+            const fromCX   = imgRect.left + imgRect.width  / 2;
+            const fromCY   = imgRect.top  + imgRect.height / 2;
+            // transform-origin relative to wrap so scale anchors on the logo centre
+            const originX  = imgRect.left - wrapRect.left + imgRect.width  / 2;
+            const originY  = imgRect.top  - wrapRect.top  + imgRect.height / 2;
+            logoWrap.style.transformOrigin = `${originX}px ${originY}px`;
+            const toCX  = window.innerWidth / 2;
+            const toCY  = 68;
+            const scale = 56 / 100;
+            logoWrap.style.transform = `translate(${toCX - fromCX}px, ${toCY - fromCY}px) scale(${scale.toFixed(4)})`;
+          }
+          this._setupRedirectTimer = setTimeout(() => { // matches 2.4s logo transition + 200ms settle
+            // Freeze all animations before page handoff so nothing is mid-fade
+            document.querySelectorAll('.logo-wrap, .logo-halo, .logo-img').forEach(el => {
+              const computed = getComputedStyle(el);
+              el.style.filter    = computed.filter;
+              el.style.opacity   = computed.opacity;
+              el.style.animation = 'none';
+            });
+            // Also freeze the body ambient orb (body::before can't be targeted,
+            // so set animation-play-state which pauses it in place)
+            document.body.style.setProperty('animation-play-state', 'paused');
+            const elapsed = (performance.now() / 1000).toFixed(1);
+            window.location.href = `/setup?t=${elapsed}`;
+          }, 2600);
+        } else {
+          this.phase = 'login';
+          this._startInactivity();
+        }
+      },
+
+      toggle() {
+        if (this.phase === 'login') { this._revertSplash(); return; }
+        this.activate();
+      },
+
+      _startInactivity() {
+        clearTimeout(this._inactivityTimer);
+        this._inactivityTimer = setTimeout(() => this._revertSplash(), 30000);
+      },
+
+      resetInactivity() {
+        if (this.phase !== 'login') return;
+        this._startInactivity();
+      },
+
+      _revertSplash() {
+        this.phase = 'splash';
+        clearTimeout(this._hintTimer);
+        this._hintTimer = setTimeout(() => { if (this.phase === 'splash') this.showHint = true; }, 1000);
+      },
+
+      async submit() {
+        this.loading = true; this.error = '';
+        try {
+          const res = await fetch('/auth/login', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ identifier: this.identifier, password: this.password }),
+            credentials: 'same-origin',
+          });
+          if (res.ok) {
+            const d = await res.json().catch(() => ({}));
+            clearTimeout(this._inactivityTimer);
+            this.phase = 'loggedin';
+            // Wait two frames so Alpine commits the logo-up class removal before measuring
+            await new Promise(r => requestAnimationFrame(r));
+            await new Promise(r => requestAnimationFrame(r));
+            const imgEl = document.querySelector('.logo-img');
+            if (imgEl) {
+              const imgRect = imgEl.getBoundingClientRect();
+              const fromCX  = imgRect.left + imgRect.width  / 2;
+              const fromCY  = imgRect.top  + imgRect.height / 2;
+              imgEl.style.transformOrigin = 'center center';
+              imgEl.style.transition = 'transform 0.9s cubic-bezier(0.4,0,0.2,1)';
+              if (d.setup_required) {
+                // Destination is /setup — centred 56px logo at pt-10 (toCY=68)
+                const toCX  = window.innerWidth / 2;
+                const toCY  = 68;
+                imgEl.style.transform = `translate(${toCX - fromCX}px, ${toCY - fromCY}px) scale(${(56/100).toFixed(4)})`;
+              } else {
+                // Destination is / — nav logo (32×32, top-left of max-w-screen-xl)
+                const toCX = Math.max(0, (window.innerWidth - 1280) / 2) + 32;
+                const toCY = 32;
+                imgEl.style.transform = `translate(${toCX - fromCX}px, ${toCY - fromCY}px) scale(0.32)`;
+              }
+            }
+            // Signal the main page to do a staggered first-load fade-in
+            try { sessionStorage.setItem('logos_fl', '1'); } catch {}
+            this.navigating = true; this.navBarDur = 900;
+            await new Promise(r => setTimeout(r, 900));
+            window.location.href = d.setup_required ? '/setup' : '/';
+          } else {
+            const d = await res.json().catch(() => ({}));
+            this.error = ({
+              invalid_credentials: 'Invalid credentials.',
+              account_locked:      'Account locked \u2014 try again in a few minutes.',
+              rate_limited:        'Too many attempts \u2014 slow down.',
+              missing_fields:      'Username/email and password required.',
+            })[d.error] ?? 'Sign in failed. Please try again.';
+          }
+        } catch {
+          this.error = 'Connection error \u2014 is Logos running?';
+        } finally {
+          this.loading = false;
+        }
+      },
+    };
+  }
+  </script>
+</body>
+</html>
