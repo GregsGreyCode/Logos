@@ -697,6 +697,20 @@ def _pick_compare_candidates(
     return selected[:max_n]
 
 
+def _sanitize_for_json(obj: object) -> object:
+    """Replace non-finite floats (NaN/Infinity) with None so json.dumps produces
+    valid JSON.  Python's json module outputs bare NaN/Infinity by default which
+    JSON.parse() in browsers rejects, silently dropping the done event."""
+    import math as _math
+    if isinstance(obj, float):
+        return None if (_math.isnan(obj) or _math.isinf(obj)) else obj
+    if isinstance(obj, dict):
+        return {k: _sanitize_for_json(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_sanitize_for_json(v) for v in obj]
+    return obj
+
+
 def _compare_score(r: dict) -> float:
     """Composite score for ranking models within a gated candidate pool.
 
@@ -1590,16 +1604,25 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
                     f" — server may be under load"
                 )})
 
-    await send({
-        "done":                       True,
-        "recommendation":             best["model"] if best else None,
-        "reason":                     _compare_reason(best) if best else "Could not benchmark any models.",
-        "fast_recommendation":        fast_rec,
-        "fast_reason":                fast_reason,
-        "per_server_recommendations": per_server_recs,
-        "results":                    results,
-        "ttft_warnings":              ttft_warnings,
-    })
+    try:
+        await send(_sanitize_for_json({
+            "done":                       True,
+            "recommendation":             best["model"] if best else None,
+            "reason":                     _compare_reason(best) if best else "Could not benchmark any models.",
+            "fast_recommendation":        fast_rec,
+            "fast_reason":                fast_reason,
+            "per_server_recommendations": per_server_recs,
+            "results":                    results,
+            "ttft_warnings":              ttft_warnings,
+        }))
+    except Exception as _done_err:
+        logger.warning("handle_setup_compare: error sending done event: %s", _done_err)
+        try:
+            await send({"done": True, "recommendation": None,
+                        "reason": f"Error finalising benchmark: {_done_err}",
+                        "results": [], "per_server_recommendations": {}, "ttft_warnings": []})
+        except Exception:
+            pass
     return response
 
 
