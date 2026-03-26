@@ -418,6 +418,50 @@ def _log(msg: str) -> None:
         pass
 
 
+def _is_setup_completed() -> bool:
+    """Query the local gateway to check whether setup has been completed."""
+    import urllib.request as _ur
+    import json as _js
+    try:
+        with _ur.urlopen(f"{_BASE_URL}/api/setup/status", timeout=3) as r:
+            return _js.loads(r.read()).get("completed", False)
+    except Exception:
+        # Gateway unreachable — assume completed so we don't accidentally quit.
+        return True
+
+
+def _start_browser_watcher(icon) -> None:
+    """Watch the browser window process and decide what to do when it closes.
+
+    - Setup not yet completed (user is in /setup): close window → quit the app.
+      There is no agent running and nothing to keep in the background.
+    - Setup completed (agent configured): close window → minimise to tray.
+      The gateway keeps running; right-click → Quit to exit fully.
+    """
+    def _loop():
+        while True:
+            time.sleep(0.5)
+            with _browser_lock:
+                proc = _browser_proc
+            if proc is None:
+                continue
+            proc.wait()  # blocks until the browser window is closed by the user
+            # Check whether the user reopened the window before we reacted.
+            with _browser_lock:
+                if _browser_proc is not proc:
+                    # A new browser window is already open — watch that one.
+                    continue
+            # The tracked window just closed and no new one has opened.
+            if not _is_setup_completed():
+                _log("Browser closed during setup — quitting.")
+                icon.stop()
+                return
+            # Setup done: stay in tray, agent keeps running in the background.
+            _log("Browser window closed — minimised to tray.")
+
+    threading.Thread(target=_loop, daemon=True, name="logos-browser-watcher").start()
+
+
 # ---------------------------------------------------------------------------
 # Auto-update — Plan C: tray-driven background updater
 # ---------------------------------------------------------------------------
@@ -836,6 +880,7 @@ def _run_tray() -> None:
     _rebuild_menu(icon)
     _start_icon_animation(icon)
     _start_update_checker(icon)
+    _start_browser_watcher(icon)
     icon.run()
 
 
