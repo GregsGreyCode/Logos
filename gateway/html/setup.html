@@ -827,12 +827,16 @@
                 <!-- Model rows for this server -->
                 <div class="space-y-2">
                   <template x-for="mid in compareTargetsForServer(server.endpoint)" :key="mid">
-                    <div class="rounded-xl border transition-all duration-300 overflow-hidden"
+                    <div class="rounded-xl border transition-all duration-500 overflow-hidden"
                       :class="compareResults[mid]?.max_context && compareResults[mid].max_context < 16384
                         ? 'border-red-900/50 bg-gray-900 opacity-60'
                         : serverModelForServer(server.endpoint) === mid && compareDone
                           ? 'border-indigo-500 bg-indigo-950/20'
-                          : 'border-gray-800 bg-gray-900'">
+                          : compareTesting[mid]
+                            ? 'border-indigo-500/40 bg-gray-900 shadow-[0_0_14px_rgba(99,102,241,0.13)]'
+                            : compareResults[mid]
+                              ? 'border-gray-800 bg-gray-900'
+                              : 'border-gray-800/30 bg-gray-900 opacity-40'">
                       <!-- Summary row — clickable once results are in; click selects and toggles detail -->
                       <div class="flex items-center justify-between px-3 py-2.5"
                         :class="compareDone && compareResults[mid] && !compareResults[mid].error && !(compareResults[mid].max_context && compareResults[mid].max_context < 16384) ? 'cursor-pointer hover:bg-white/5' : ''"
@@ -849,7 +853,9 @@
                           <span x-show="compareResults[mid]?.max_context && compareResults[mid].max_context < 16384 && compareDone"
                             class="text-[9px] px-1.5 py-0.5 rounded-full bg-red-950 text-red-400 border border-red-900 font-semibold uppercase tracking-wider flex-shrink-0"
                             title="Context window too small for agent use — system prompt alone is ~8K tokens">Not eligible</span>
-                          <span class="font-mono text-xs text-gray-200 truncate" x-text="mid"></span>
+                          <span class="font-mono text-xs truncate transition-colors duration-300"
+                            :class="compareTesting[mid] ? 'text-white' : 'text-gray-200'"
+                            x-text="mid"></span>
                         </div>
                         <div class="flex items-center gap-2 flex-shrink-0 ml-3 text-xs">
                           <!-- Queued -->
@@ -858,49 +864,51 @@
                           <template x-if="compareTesting[mid]">
                             <div class="flex items-center gap-1.5">
                               <div class="spinner-hue"><div class="w-3 h-3 border border-gray-700 border-t-indigo-400 rounded-full animate-spin"></div></div>
-                              <span class="text-gray-500" x-text="compareLoadingFor[mid] ? 'loading\u2026' : 'testing\u2026'"></span>
+                              <span class="text-indigo-400/80" x-text="compareLoadingFor[mid] ? 'loading\u2026' : 'testing\u2026'"></span>
                             </div>
                           </template>
-                          <!-- Result -->
-                          <template x-if="compareResults[mid]">
-                            <div class="flex items-center gap-2">
-                              <template x-if="compareResults[mid].error">
-                                <span class="text-red-500 cursor-help underline decoration-dotted"
-                                  :title="compareResults[mid].error">error</span>
-                              </template>
-                              <template x-if="!compareResults[mid].error">
-                                <div class="flex items-center gap-2">
-                                  <span class="font-mono font-semibold"
-                                    :class="{
-                                      'text-green-400':  compareResults[mid].tok_s >= 30,
-                                      'text-indigo-400': compareResults[mid].tok_s >= 15 && compareResults[mid].tok_s < 30,
-                                      'text-yellow-400': compareResults[mid].tok_s >= 6  && compareResults[mid].tok_s < 15,
-                                      'text-red-400':    compareResults[mid].tok_s < 6,
-                                    }"
-                                    x-text="compareResults[mid].tok_s + ' tok/s'"></span>
-                                  <template x-if="compareResults[mid].max_context">
-                                    <span class="font-mono text-[10px]"
-                                      :class="compareResults[mid].max_context >= 16384 ? 'text-gray-500' : 'text-red-500 font-semibold'"
-                                      :title="compareResults[mid].max_context < 16384 ? 'Too small — agent system prompt uses ~8K tokens, leaving almost no room for conversation. Use General (Lite) soul if you must use this model.' : ''"
-                                      x-text="(compareResults[mid].max_context >= 1024 ? Math.round(compareResults[mid].max_context/1024)+'K' : compareResults[mid].max_context) + ' ctx' + (compareResults[mid].max_context < 16384 ? ' \u26a0' : '')"></span>
-                                  </template>
-                                  <span :class="compareResults[mid].quality_pass ? 'text-green-500' : 'text-yellow-600'"
-                                    :title="compareResults[mid].quality_pass ? 'Passed capability eval' : 'Low eval score — may struggle with agentic tasks'"
-                                    x-text="(compareResults[mid].eval?.score ?? (compareResults[mid].quality_pass ? '4+' : '?')) + '/6'"></span>
-                                  <span x-show="compareDone" class="text-gray-700 text-[10px]"
-                                    x-text="compareExpanded === mid ? '\u25b4' : '\u25be'"></span>
-                                </div>
-                              </template>
-                              <!-- Per-model retry — only shown once initial result is in -->
-                              <button x-show="compareResults[mid]"
-                                @click.stop="retryModel(mid)"
-                                :disabled="compareTesting[mid]"
-                                :class="compareTesting[mid] ? 'text-gray-800 cursor-default' : 'text-gray-700 hover:text-gray-400 cursor-pointer'"
-                                class="transition-colors" title="Re-test this model">
-                                <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
-                              </button>
-                            </div>
-                          </template>
+                          <!-- Result — fades + slides in from the right when it arrives -->
+                          <div x-show="compareResults[mid]"
+                            x-transition:enter="transition ease-out duration-500"
+                            x-transition:enter-start="opacity-0 translate-x-2"
+                            x-transition:enter-end="opacity-100 translate-x-0"
+                            class="flex items-center gap-2">
+                            <template x-if="compareResults[mid]?.error">
+                              <span class="text-red-500 cursor-help underline decoration-dotted"
+                                :title="compareResults[mid].error">error</span>
+                            </template>
+                            <template x-if="compareResults[mid] && !compareResults[mid].error">
+                              <div class="flex items-center gap-2">
+                                <span class="font-mono font-semibold"
+                                  :class="{
+                                    'text-green-400':  compareResults[mid].tok_s >= 30,
+                                    'text-indigo-400': compareResults[mid].tok_s >= 15 && compareResults[mid].tok_s < 30,
+                                    'text-yellow-400': compareResults[mid].tok_s >= 6  && compareResults[mid].tok_s < 15,
+                                    'text-red-400':    compareResults[mid].tok_s < 6,
+                                  }"
+                                  x-text="compareResults[mid].tok_s + ' tok/s'"></span>
+                                <template x-if="compareResults[mid].max_context">
+                                  <span class="font-mono text-[10px]"
+                                    :class="compareResults[mid].max_context >= 16384 ? 'text-gray-500' : 'text-red-500 font-semibold'"
+                                    :title="compareResults[mid].max_context < 16384 ? 'Too small — agent system prompt uses ~8K tokens, leaving almost no room for conversation. Use General (Lite) soul if you must use this model.' : ''"
+                                    x-text="(compareResults[mid].max_context >= 1024 ? Math.round(compareResults[mid].max_context/1024)+'K' : compareResults[mid].max_context) + ' ctx' + (compareResults[mid].max_context < 16384 ? ' \u26a0' : '')"></span>
+                                </template>
+                                <span :class="compareResults[mid].quality_pass ? 'text-green-500' : 'text-yellow-600'"
+                                  :title="compareResults[mid].quality_pass ? 'Passed capability eval' : 'Low eval score — may struggle with agentic tasks'"
+                                  x-text="(compareResults[mid].eval?.score ?? (compareResults[mid].quality_pass ? '4+' : '?')) + '/6'"></span>
+                                <span x-show="compareDone" class="text-gray-700 text-[10px]"
+                                  x-text="compareExpanded === mid ? '\u25b4' : '\u25be'"></span>
+                              </div>
+                            </template>
+                            <!-- Per-model retry — only shown once initial result is in -->
+                            <button x-show="compareResults[mid]"
+                              @click.stop="retryModel(mid)"
+                              :disabled="compareTesting[mid]"
+                              :class="compareTesting[mid] ? 'text-gray-800 cursor-default' : 'text-gray-700 hover:text-gray-400 cursor-pointer'"
+                              class="transition-colors" title="Re-test this model">
+                              <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+                            </button>
+                          </div>
                         </div>
                       </div>
                       <!-- Expanded detail panel -->
