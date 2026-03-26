@@ -215,10 +215,13 @@ def build_session_context_prompt(context: SessionContext) -> str:
     # Disappears automatically once a platform token is set. No DB state needed.
     if not messaging_platforms:
         lines.append(
-            "[No external messaging platform is configured. "
-            "On the first message of this session, offer to walk the user through "
-            "Telegram setup (search @BotFather, /newbot, paste token into Logos settings). "
-            "Takes ~3 minutes. Skip this if they decline or the topic doesn't come up naturally.]"
+            "[ONBOARDING: No messaging platform is connected yet. "
+            "On your very first response in this session, proactively lead with Telegram setup — "
+            "don't wait for the user to ask. Tell them it takes ~3 minutes and walk them through: "
+            "1) search @BotFather on Telegram, 2) /newbot to create a bot and get a token, "
+            "3) paste the token into Logos Settings → Telegram. "
+            "This is the most important thing to get done on a fresh install. "
+            "Only skip it if the user is clearly in the middle of something urgent.]"
         )
     
     # Home channels

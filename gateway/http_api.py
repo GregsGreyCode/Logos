@@ -5338,9 +5338,28 @@ function app() {
                 }
               }
               if (d.type === 'error') {
-                // Server-side agent/tool error — distinguish from transport failures
-                const label = d.error_class ? d.error_class + ': ' : '';
-                chat.messages = [...chat.messages, { role: 'assistant', content: '\\u274c Agent error: ' + label + d.content }];
+                // Server-side agent/tool error — parse into a human-readable message
+                const raw = d.content || '';
+                let friendly = raw;
+                const rawLower = raw.toLowerCase();
+                if (rawLower.includes('model has crashed') || (rawLower.includes('exit code:') && rawLower.includes('400'))) {
+                  friendly = '\u26a0\ufe0f Model crashed on the inference server. Retrying automatically \u2014 if this keeps happening, check LM Studio is running and the model loaded correctly.';
+                } else if (rawLower.includes('error code: 401') || rawLower.includes('invalid api key') || rawLower.includes('unauthorized')) {
+                  friendly = '\u274c Authentication failed \u2014 check the API key for your inference server in Settings.';
+                } else if (rawLower.includes('error code: 404') || rawLower.includes('model not found') || rawLower.includes('is not a valid model')) {
+                  friendly = '\u274c Model not found on the inference server. The model may have been unloaded or renamed.';
+                } else if (rawLower.includes('context') && (rawLower.includes('length') || rawLower.includes('too long') || rawLower.includes('maximum'))) {
+                  friendly = '\u274c Context window exceeded \u2014 the conversation is too long for this model. Start a new chat or switch to a model with a larger context window.';
+                } else if (rawLower.includes('connection') || rawLower.includes('refused') || rawLower.includes('unreachable') || rawLower.includes('timeout')) {
+                  friendly = '\u274c Could not reach the inference server. Check that LM Studio / Ollama is running and reachable.';
+                } else if (d.error_class) {
+                  // Strip LiteLLM boilerplate from the raw message for cleaner display
+                  const cleaned = raw.replace(/^.*?Error code:\s*\d+\s*-\s*/i, '').replace(/^\{.*?"error":\s*"([^"]+)".*\}$/s, '$1').trim();
+                  friendly = '\u274c ' + (cleaned || raw);
+                } else {
+                  friendly = '\u274c ' + raw;
+                }
+                chat.messages = [...chat.messages, { role: 'assistant', content: friendly, isError: true }];
                 this.chats = [...this.chats];
                 this._saveChats();
               }
@@ -7774,12 +7793,12 @@ _SETUP_HTML = """<!DOCTYPE html>
                         </div>
                         <div class="flex items-center gap-2 flex-shrink-0 ml-3 text-xs">
                           <!-- Queued -->
-                          <span x-show="compareTesting !== mid && !compareResults[mid]" class="text-gray-700">queued</span>
+                          <span x-show="!compareTesting[mid] && !compareResults[mid]" class="text-gray-700">queued</span>
                           <!-- Testing / loading -->
-                          <template x-if="compareTesting === mid">
+                          <template x-if="compareTesting[mid]">
                             <div class="flex items-center gap-1.5">
                               <div class="spinner-hue"><div class="w-3 h-3 border border-gray-700 border-t-indigo-400 rounded-full animate-spin"></div></div>
-                              <span class="text-gray-500" x-text="compareLoadingFor === mid ? 'loading\u2026' : 'testing\u2026'"></span>
+                              <span class="text-gray-500" x-text="compareLoadingFor[mid] ? 'loading\u2026' : 'testing\u2026'"></span>
                             </div>
                           </template>
                           <!-- Result -->
@@ -7815,8 +7834,8 @@ _SETUP_HTML = """<!DOCTYPE html>
                               <!-- Per-model retry — only shown once initial result is in -->
                               <button x-show="compareResults[mid]"
                                 @click.stop="retryModel(mid)"
-                                :disabled="compareTesting === mid"
-                                :class="compareTesting === mid ? 'text-gray-800 cursor-default' : 'text-gray-700 hover:text-gray-400 cursor-pointer'"
+                                :disabled="compareTesting[mid]"
+                                :class="compareTesting[mid] ? 'text-gray-800 cursor-default' : 'text-gray-700 hover:text-gray-400 cursor-pointer'"
                                 class="transition-colors" title="Re-test this model">
                                 <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
                               </button>
@@ -7911,15 +7930,17 @@ _SETUP_HTML = """<!DOCTYPE html>
               </div>
             </template>
 
-            <!-- Loading model notice (global) -->
-            <div x-show="compareLoadingFor" class="text-xs text-amber-400/80 px-1 flex items-center gap-1.5">
-              <div class="spinner-hue"><div class="w-2.5 h-2.5 border border-amber-900 border-t-amber-400 rounded-full animate-spin"></div></div>
-              <span>Loading <span class="font-mono" x-text="compareLoadingFor"></span>
-                <template x-if="compareTestingEndpoint">
-                  <span class="text-amber-600"> on <span class="font-mono" x-text="compareTestingEndpoint ? (new URL(compareTestingEndpoint).host) : ''"></span></span>
-                </template>
-                into memory&hellip;</span>
-            </div>
+            <!-- Loading model notices (one per server loading in parallel) -->
+            <template x-for="(ep, loadingMid) in compareLoadingFor" :key="loadingMid">
+              <div class="text-xs text-amber-400/80 px-1 flex items-center gap-1.5">
+                <div class="spinner-hue"><div class="w-2.5 h-2.5 border border-amber-900 border-t-amber-400 rounded-full animate-spin"></div></div>
+                <span>Loading <span class="font-mono" x-text="loadingMid"></span>
+                  <template x-if="ep">
+                    <span class="text-amber-600"> on <span class="font-mono" x-text="ep ? (new URL(ep).host) : ''"></span></span>
+                  </template>
+                  into memory&hellip;</span>
+              </div>
+            </template>
           </div>
 
           <!-- Load warning — shown while benchmark is running -->
@@ -8553,9 +8574,9 @@ function setup() {
     compareDone: false,
     compareTargets: [],
     compareResults: {},
-    compareTesting: null,
-    compareTestingEndpoint: null,
-    compareLoadingFor: null,
+    compareTesting: {},
+    compareTestingEndpoint: {},
+    compareLoadingFor: {},
     compareRecommended: null,
     compareReason: '',
     compareFastRecommended: null,
@@ -9068,9 +9089,9 @@ function setup() {
       this.compareBenchId         = null;
       this.compareTargets     = [];
       this.compareResults     = {};
-      this.compareTesting         = null;
-      this.compareTestingEndpoint = null;
-      this.compareLoadingFor      = null;
+      this.compareTesting         = {};
+      this.compareTestingEndpoint = {};
+      this.compareLoadingFor      = {};
       this.compareRecommended     = null;
       this.compareReason          = '';
       this.compareFastRecommended = null;
@@ -9104,12 +9125,13 @@ function setup() {
       const m = allModels.find(m => m.id === mid);
       if (!m) return;
       // Block if this exact model is already being tested.
-      // Allow if compareTesting is a model on a different server (that server is still
-      // running its own benchmark loop but this server's models are all done).
-      if (this.compareTesting) {
-        const testingModel = allModels.find(x => x.id === this.compareTesting);
-        const testingEndpoint = testingModel?._serverEndpoint || this.compareTestingEndpoint;
-        if (testingEndpoint === m._serverEndpoint || this.compareTesting === mid) return;
+      // Allow if all currently-testing models are on different servers (those servers are
+      // still running their own benchmark loops but this server's models are all done).
+      if (this.compareTesting[mid]) return;
+      for (const testingMid of Object.keys(this.compareTesting)) {
+        const testingModel = allModels.find(x => x.id === testingMid);
+        const testingEndpoint = testingModel?._serverEndpoint || this.compareTestingEndpoint[testingMid];
+        if (testingEndpoint === m._serverEndpoint) return;
       }
       const srv = this.selectedServers
         ? this.selectedServers.find(s => s.endpoint === m._serverEndpoint)
@@ -9119,8 +9141,10 @@ function setup() {
       const results = { ...this.compareResults };
       delete results[mid];
       this.compareResults = results;
-      this.compareTesting = mid;
-      this.compareLoadingFor = null;
+      this.compareTesting = {...this.compareTesting, [mid]: true};
+      this.compareTestingEndpoint = {...this.compareTestingEndpoint, [mid]: m._serverEndpoint || null};
+      const { [mid]: _l, ...restLoading } = this.compareLoadingFor;
+      this.compareLoadingFor = restLoading;
       try {
         const r = await fetch('/api/setup/compare', {
           method: 'POST', credentials: 'include',
@@ -9138,7 +9162,9 @@ function setup() {
         if (!r.ok) {
           const errBody = await r.json().catch(() => ({ error: "HTTP " + r.status }));
           this.compareResults = { ...this.compareResults, [mid]: { model: mid, error: errBody.error || "HTTP " + r.status } };
-          this.compareTesting = null; this.compareTestingEndpoint = null; return;
+          const { [mid]: _t, ...rT } = this.compareTesting; this.compareTesting = rT;
+          const { [mid]: _te, ...rTE } = this.compareTestingEndpoint; this.compareTestingEndpoint = rTE;
+          return;
         }
         const reader = r.body.getReader(); const dec = new TextDecoder(); let buf = '';
         while (true) {
@@ -9149,17 +9175,23 @@ function setup() {
             if (!line.startsWith('data: ')) continue;
             try {
               const ev = JSON.parse(line.slice(6));
-              if (ev.loading_model) { this.compareLoadingFor = ev.loading_model; }
-              if (ev.result) { this.compareLoadingFor = null; this.compareResults = { ...this.compareResults, [ev.result.model]: ev.result }; }
+              if (ev.loading_model) {
+                const ep = this.compareTestingEndpoint[ev.loading_model] || null;
+                this.compareLoadingFor = {...this.compareLoadingFor, [ev.loading_model]: ep};
+              }
+              if (ev.result) {
+                const { [ev.result.model]: _l, ...rL } = this.compareLoadingFor; this.compareLoadingFor = rL;
+                this.compareResults = { ...this.compareResults, [ev.result.model]: ev.result };
+              }
             } catch {}
           }
         }
       } catch(err) {
         this.compareResults = { ...this.compareResults, [mid]: { model: mid, error: String(err) } };
       }
-      this.compareTesting = null;
-      this.compareTestingEndpoint = null;
-      this.compareLoadingFor = null;
+      const { [mid]: _t, ...rT } = this.compareTesting; this.compareTesting = rT;
+      const { [mid]: _te, ...rTE } = this.compareTestingEndpoint; this.compareTestingEndpoint = rTE;
+      const { [mid]: _l, ...rL } = this.compareLoadingFor; this.compareLoadingFor = rL;
     },
 
     async runCompare() {
@@ -9214,10 +9246,14 @@ function setup() {
               if (ev.testing) {
                 const ep = ev.testing_endpoint || null;
                 if (!ep || !this.compareSkippedServers[ep]) {
-                  this.compareTesting = ev.testing; this.compareTestingEndpoint = ep;
+                  this.compareTesting = {...this.compareTesting, [ev.testing]: true};
+                  this.compareTestingEndpoint = {...this.compareTestingEndpoint, [ev.testing]: ep};
                 }
               }
-              if (ev.loading_model) { this.compareLoadingFor = ev.loading_model; }
+              if (ev.loading_model) {
+                const ep = this.compareTestingEndpoint[ev.loading_model] || null;
+                this.compareLoadingFor = {...this.compareLoadingFor, [ev.loading_model]: ep};
+              }
               if (ev.log) {
                 this.compareLog = [...this.compareLog, ev.log];
                 if (!this.compareLogPinned) {
@@ -9228,7 +9264,12 @@ function setup() {
                 }
               }
               if (ev.result) {
-                this.compareLoadingFor = null;
+                const { [ev.result.model]: _t, ...restTesting } = this.compareTesting;
+                this.compareTesting = restTesting;
+                const { [ev.result.model]: _te, ...restEndpoint } = this.compareTestingEndpoint;
+                this.compareTestingEndpoint = restEndpoint;
+                const { [ev.result.model]: _l, ...restLoading } = this.compareLoadingFor;
+                this.compareLoadingFor = restLoading;
                 // Don't overwrite a skipped result with backend output for stopped servers
                 const existing = this.compareResults[ev.result.model];
                 if (!existing || !existing.skipped) {
@@ -9238,9 +9279,9 @@ function setup() {
               if (ev.done) {
                 this.compareRunning          = false;
                 this.compareDone             = true;
-                this.compareTesting          = null;
-                this.compareTestingEndpoint  = null;
-                this.compareLoadingFor       = null;
+                this.compareTesting          = {};
+                this.compareTestingEndpoint  = {};
+                this.compareLoadingFor       = {};
                 this.compareRecommended      = ev.recommendation;
                 this.compareReason           = ev.reason || '';
                 this.compareFastRecommended  = ev.fast_recommendation || null;
@@ -9270,9 +9311,9 @@ function setup() {
         if (this.compareRunning) {
           this.compareRunning    = false;
           this.compareDone       = true;
-          this.compareTesting         = null;
-          this.compareTestingEndpoint = null;
-          this.compareLoadingFor      = null;
+          this.compareTesting         = {};
+          this.compareTestingEndpoint = {};
+          this.compareLoadingFor      = {};
           if (!this.compareReason) this.compareReason = 'Stream closed before comparison completed.';
         }
         // Ensure every selected server has a model assigned so the Continue button
