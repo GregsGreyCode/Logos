@@ -1932,11 +1932,17 @@ function setup() {
     },
 
     startOver() {
+      // Cancel any in-progress benchmark stream before resetting state
+      if (this.compareAbortController) {
+        this.compareAbortController.abort();
+        this.compareAbortController = null;
+      }
       try { localStorage.removeItem('logos_setup_progress_v2'); } catch {}
       this.step = 0; this.setupMode = null; this.introConfirmed = false; this.track = null;
       this.foundServers = []; this.selectedServers = []; this.activeServer = null; this.autoScanDone = false;
       this.compareTargets = []; this.compareResults = {}; this.compareRecommended = null;
-      this.compareFastRecommended = null; this.compareDone = false;
+      this.compareFastRecommended = null; this.compareDone = false; this.compareRunning = false;
+      this.compareTesting = {}; this.compareSkippedServers = {};
       this.selectedModel = null; this.execEnv = null; this.k8sMode = null;
       this.selectedSoul = null; this.selectedAgentType = null; this.setupEmail = ''; this.setupUsername = '';
     },
