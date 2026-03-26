@@ -453,12 +453,18 @@ def _start_browser_watcher(icon) -> None:
                     # A new browser window is already open — watch that one.
                     continue
             # The tracked window just closed and no new one has opened.
+            # Clear the proc reference so the loop doesn't spin on the dead process.
+            with _browser_lock:
+                global _browser_proc
+                if _browser_proc is proc:
+                    _browser_proc = None
             if not _is_setup_completed():
                 _log("Browser closed during setup — quitting.")
                 icon.stop()
                 return
             # Setup done: stay in tray, agent keeps running in the background.
             _log("Browser window closed — minimised to tray.")
+            time.sleep(1)
 
     threading.Thread(target=_loop, daemon=True, name="logos-browser-watcher").start()
 
