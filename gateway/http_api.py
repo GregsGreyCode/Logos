@@ -93,381 +93,19 @@ from gateway.executors.k8s_helpers import (
 # In-memory request queue for instances that couldn't spawn due to resource constraints
 _instance_queue: list[dict] = []
 
-# ── Soul Registry ─────────────────────────────────────────────────────────────
+# ── Soul Registry — re-exported from gateway.souls ────────────────────────────
+from gateway.souls import (  # noqa: E402
+    SoulManifest as SoulManifest,
+    load_souls as _load_souls,
+    get_soul_registry as _get_soul_registry,
+    validate_soul_overrides as _validate_soul_overrides,
+    compute_effective_toolsets as _compute_effective_toolsets,
+)
+# _SOUL_REGISTRY alias for the one place that accesses it directly (startup + admin page)
+import gateway.souls as _souls_module
 
 _SOULS_DIR = pathlib.Path(__file__).parent.parent / "souls"
 
-
-@dataclasses.dataclass
-class SoulManifest:
-    id: str
-    slug: str
-    name: str
-    description: str
-    category: str
-    role_summary: str
-    status: str          # "stable" | "experimental" | "deprecated"
-    version: str
-    created_by: str
-    tags: list
-    enforced_toolsets: list
-    default_enabled_toolsets: list
-    optional_toolsets: list
-    forbidden_toolsets: list
-    user_accessible: bool = True
-    soul_md: str = ""
-
-    def to_dict(self, include_soul_md: bool = False) -> dict:
-        d = {
-            "slug": self.slug,
-            "name": self.name,
-            "description": self.description,
-            "category": self.category,
-            "role_summary": self.role_summary,
-            "status": self.status,
-            "version": self.version,
-            "tags": self.tags,
-            "user_accessible": self.user_accessible,
-            "toolsets": {
-                "enforced": self.enforced_toolsets,
-                "default_enabled": self.default_enabled_toolsets,
-                "optional": self.optional_toolsets,
-                "forbidden": self.forbidden_toolsets,
-            },
-        }
-        if include_soul_md:
-            d["soul_md"] = self.soul_md
-        return d
-
-
-_SOUL_REGISTRY: dict[str, SoulManifest] = {}
-
-
-def _load_souls() -> dict[str, SoulManifest]:
-    """Load souls from the souls/ directory alongside the hermes-agent package."""
-    global _SOUL_REGISTRY
-    registry: dict[str, SoulManifest] = {}
-    if not _SOULS_DIR.exists():
-        logger.warning("Souls directory not found: %s", _SOULS_DIR)
-        _SOUL_REGISTRY = registry
-        return registry
-    for soul_dir in sorted(_SOULS_DIR.iterdir()):
-        if not soul_dir.is_dir():
-            continue
-        manifest_path = soul_dir / "soul.manifest.yaml"
-        soul_md_path = soul_dir / "soul.md"
-        if not manifest_path.exists():
-            continue
-        try:
-            data = yaml.safe_load(manifest_path.read_text()) or {}
-            toolsets = data.get("toolsets", {})
-            soul = SoulManifest(
-                id=data.get("id", soul_dir.name),
-                slug=data.get("slug", soul_dir.name),
-                name=data.get("name", soul_dir.name),
-                description=data.get("description", ""),
-                category=data.get("category", "general"),
-                role_summary=data.get("role_summary", ""),
-                status=data.get("status", "stable"),
-                version=str(data.get("version", "1.0")),
-                created_by=data.get("created_by", ""),
-                tags=data.get("tags", []),
-                enforced_toolsets=toolsets.get("enforced", []),
-                default_enabled_toolsets=toolsets.get("default_enabled", []),
-                optional_toolsets=toolsets.get("optional", []),
-                forbidden_toolsets=toolsets.get("forbidden", []),
-                user_accessible=data.get("user_accessible", True),
-                soul_md=soul_md_path.read_text() if soul_md_path.exists() else "",
-            )
-            registry[soul.slug] = soul
-        except Exception as e:
-            logger.warning("Failed to load soul from %s: %s", soul_dir, e)
-    _SOUL_REGISTRY = registry
-    logger.info("Loaded %d souls: %s", len(registry), list(registry.keys()))
-    return registry
-
-
-def _get_soul_registry() -> dict[str, SoulManifest]:
-    if not _SOUL_REGISTRY:
-        _load_souls()
-    return _SOUL_REGISTRY
-
-
-def _validate_soul_overrides(soul: SoulManifest, overrides: dict) -> None:
-    """Raise ValueError if overrides violate soul policy."""
-    to_remove = set(overrides.get("remove", []))
-    to_add = set(overrides.get("add", []))
-    for ts in to_remove:
-        if ts in soul.enforced_toolsets:
-            raise ValueError(f"cannot_remove_enforced:{ts}")
-    for ts in to_add:
-        if ts in soul.forbidden_toolsets:
-            raise ValueError(f"toolset_not_available:{ts}")
-        if ts not in soul.optional_toolsets:
-            raise ValueError(f"toolset_not_in_soul:{ts}")
-
-
-def _compute_effective_toolsets(soul: SoulManifest, overrides: dict) -> list[str]:
-    effective = set(soul.enforced_toolsets)
-    effective |= set(soul.default_enabled_toolsets)
-    effective -= set(overrides.get("remove", []))
-    effective |= set(overrides.get("add", []))
-    return sorted(effective)
-
-
-# ── Kubernetes helpers — see gateway/executors/k8s_helpers.py ────────────────
-# _k8s_clients, _cluster_resources, _list_hermes_instances, _delete_instance,
-# _safe_k8s_name, and all k8s constants are imported from k8s_helpers at the
-# top of this file. _spawn_instance (below) remains here because it depends on
-# soul/toolset resolution logic also in this module.
-
-
-def _spawn_instance(
-    requester: str,
-    soul_slug: str = "general",
-    tool_overrides: dict | None = None,
-    model_alias: str = "balanced",
-    machine_endpoint: str | None = None,
-    machine_name: str | None = None,
-    machine_id: str | None = None,
-) -> dict:
-    """Create Deployment + Service + PVC for a new named Hermes instance."""
-    core, apps = _k8s_clients()
-    dep_name = _safe_k8s_name(requester)
-    if tool_overrides is None:
-        tool_overrides = {}
-
-    # Resolve soul
-    registry = _get_soul_registry()
-    soul = registry.get(soul_slug) or registry.get("general")
-    if soul is None:
-        # Fallback: no souls loaded — create a bare SoulManifest
-        soul = SoulManifest(
-            id="general", slug="general", name="General", description="",
-            category="general", role_summary="", status="stable", version="1.0",
-            created_by="", tags=[], enforced_toolsets=[], default_enabled_toolsets=[],
-            optional_toolsets=[], forbidden_toolsets=[], soul_md="",
-        )
-    effective_toolsets = _compute_effective_toolsets(soul, tool_overrides)
-    # Name: "Soul · model" e.g. "Companion · balanced"
-    instance_name = soul.name + (" \u00b7 " + model_alias if model_alias and model_alias != "balanced" else "")
-
-    # PVC
-    pvc_name = f"{dep_name}-pvc"
-    try:
-        core.read_namespaced_persistent_volume_claim(pvc_name, _HERMES_NAMESPACE)
-    except Exception:
-        core.create_namespaced_persistent_volume_claim(
-            _HERMES_NAMESPACE,
-            {
-                "apiVersion": "v1",
-                "kind": "PersistentVolumeClaim",
-                "metadata": {"name": pvc_name, "namespace": _HERMES_NAMESPACE},
-                "spec": {
-                    "accessModes": ["ReadWriteOnce"],
-                    "storageClassName": "local-path",
-                    "resources": {"requests": {"storage": "1Gi"}},
-                },
-            },
-        )
-
-    # Service (NodePort auto-assigned)
-    svc_name = dep_name
-    try:
-        core.read_namespaced_service(svc_name, _HERMES_NAMESPACE)
-    except Exception:
-        core.create_namespaced_service(
-            _HERMES_NAMESPACE,
-            {
-                "apiVersion": "v1",
-                "kind": "Service",
-                "metadata": {"name": svc_name, "namespace": _HERMES_NAMESPACE, "labels": {"app": dep_name}},
-                "spec": {
-                    "type": "NodePort",
-                    "selector": {"app": dep_name},
-                    "ports": [{"port": 8080, "targetPort": 8080, "protocol": "TCP"}],
-                },
-            },
-        )
-
-    # Deployment
-    try:
-        apps.read_namespaced_deployment(dep_name, _HERMES_NAMESPACE)
-        return {"status": "exists", "name": dep_name}
-    except Exception:
-        pass
-
-    # Soul snapshot ConfigMap — created before the Deployment so it's available to the init container
-    snap_name = f"{dep_name}-soul-snap"
-    try:
-        core.create_namespaced_config_map(
-            _HERMES_NAMESPACE,
-            {
-                "apiVersion": "v1",
-                "kind": "ConfigMap",
-                "metadata": {
-                    "name": snap_name,
-                    "namespace": _HERMES_NAMESPACE,
-                    "labels": {
-                        "hermes.io/soul-snapshot": "true",
-                        "hermes.io/soul-slug": soul.slug,
-                        "hermes.io/instance": dep_name,
-                    },
-                },
-                "data": {
-                    "SOUL.md": soul.soul_md,
-                    "effective-toolsets.json": json.dumps(effective_toolsets),
-                },
-            },
-        )
-    except Exception as e:
-        from kubernetes.client.rest import ApiException as _ApiException
-        if not (isinstance(e, _ApiException) and e.status == 409):
-            raise  # 409 = already exists (partial retry), anything else is a real failure
-
-    dep = {
-        "apiVersion": "apps/v1",
-        "kind": "Deployment",
-        "metadata": {
-            "name": dep_name,
-            "namespace": _HERMES_NAMESPACE,
-            "labels": {
-                "app": dep_name,
-                "hermes.io/has-soul": "true",
-                "hermes.io/soul-slug": soul.slug,
-            },
-            "annotations": {
-                "hermes.io/soul-slug": soul.slug,
-                "hermes.io/soul-name": soul.name,
-                "hermes.io/soul-version": soul.version,
-                "hermes.io/soul-status": soul.status,
-                "hermes.io/soul-snapshot-ref": snap_name,
-                "hermes.io/effective-toolsets": json.dumps(effective_toolsets),
-                "hermes.io/tool-overrides": json.dumps(tool_overrides),
-                "hermes.io/requester": requester,
-                "hermes.io/model-alias":  model_alias,
-                **({"hermes.io/machine-id":   machine_id}   if machine_id   else {}),
-                **({"hermes.io/machine-name": machine_name} if machine_name else {}),
-                **({"hermes.io/machine-endpoint": machine_endpoint} if machine_endpoint else {}),
-            },
-        },
-        "spec": {
-            "replicas": 1,
-            "revisionHistoryLimit": 1,
-            "selector": {"matchLabels": {"app": dep_name}},
-            "template": {
-                "metadata": {"labels": {"app": dep_name}},
-                "spec": {
-                    "serviceAccountName": "hermes",
-                    "imagePullSecrets": [{"name": "ghcr-creds"}],
-                    "tolerations": [{"key": "node-role.kubernetes.io/control-plane", "operator": "Exists", "effect": "NoSchedule"}],
-                    "volumes": [
-                        {"name": "hermes-home", "persistentVolumeClaim": {"claimName": pvc_name}},
-                        {"name": "hermes-config-seed", "configMap": {"name": "hermes-config-yaml"}},
-                        {"name": "hermes-soul-snap", "configMap": {"name": snap_name}},
-                        {"name": "hermes-work", "emptyDir": {}},
-                        {"name": "hermes-shared-memory", "persistentVolumeClaim": {"claimName": "hermes-shared-memory-pvc", "readOnly": True}},
-                    ],
-                    "securityContext": {"fsGroup": 10001, "seccompProfile": {"type": "RuntimeDefault"}},
-                    # Affinity: prefer same node as the primary so the RWO shared-memory PVC
-                    # (local-path, ReadWriteOnce) can be mounted read-only by both pods.
-                    "affinity": {
-                        "podAffinity": {
-                            "preferredDuringSchedulingIgnoredDuringExecution": [{
-                                "weight": 100,
-                                "podAffinityTerm": {
-                                    "labelSelector": {"matchLabels": {"app": "hermes"}},
-                                    "topologyKey": "kubernetes.io/hostname",
-                                },
-                            }],
-                        }
-                    },
-                    "initContainers": [
-                        {
-                            "name": "fix-perms",
-                            "image": "busybox:1.36",
-                            "command": ["sh", "-c", "chown -R 10001:10001 /hermes-home && chmod 750 /hermes-home"],
-                            "volumeMounts": [{"name": "hermes-home", "mountPath": "/hermes-home"}],
-                            "securityContext": {"runAsUser": 0},
-                        },
-                        {
-                            "name": "seed-config",
-                            "image": "busybox:1.36",
-                            "command": ["sh", "-c", 'mkdir -p /hermes-home/memories && sed "s|\\${INSPECTOR_TOKEN}|${INSPECTOR_TOKEN}|g" /seed/config.yaml > /hermes-home/config.yaml && cp /soul-snap/SOUL.md /hermes-home/SOUL.md'],
-                            "env": [{"name": "INSPECTOR_TOKEN", "valueFrom": {"secretKeyRef": {"name": "hermes-secret", "key": "INSPECTOR_TOKEN"}}}],
-                            "volumeMounts": [
-                                {"name": "hermes-home", "mountPath": "/hermes-home"},
-                                {"name": "hermes-config-seed", "mountPath": "/seed", "readOnly": True},
-                                {"name": "hermes-soul-snap", "mountPath": "/soul-snap", "readOnly": True},
-                            ],
-                            "securityContext": {"runAsUser": 10001, "runAsNonRoot": True, "allowPrivilegeEscalation": False, "capabilities": {"drop": ["ALL"]}},
-                        },
-                    ],
-                    "containers": [{
-                        "name": "hermes",
-                        "image": "ghcr.io/gregsgreycode/hermes:latest",
-                        "ports": [{"name": "http", "containerPort": 8080}],
-                        "env": [
-                            {"name": "HOME", "value": "/home/hermes"},
-                            {"name": "HERMES_INSTANCE_NAME", "value": instance_name},
-                            {"name": "HERMES_LOG_LEVEL", "valueFrom": {"configMapKeyRef": {"name": "hermes-config", "key": "HERMES_LOG_LEVEL"}}},
-                            {"name": "HERMES_PORT", "valueFrom": {"configMapKeyRef": {"name": "hermes-config", "key": "HERMES_PORT"}}},
-                            {"name": "REQUEST_TIMEOUT_SECONDS", "valueFrom": {"configMapKeyRef": {"name": "hermes-config", "key": "REQUEST_TIMEOUT_SECONDS"}}},
-                            # OPENAI_BASE_URL: use resolved machine endpoint if available, else ConfigMap default
-                            *(
-                                [{"name": "OPENAI_BASE_URL", "value": machine_endpoint}]
-                                if machine_endpoint else
-                                [{"name": "OPENAI_BASE_URL", "valueFrom": {"configMapKeyRef": {"name": "hermes-config", "key": "OPENAI_BASE_URL"}}}]
-                            ),
-                            {"name": "HERMES_MODEL", "valueFrom": {"configMapKeyRef": {"name": "hermes-config", "key": "HERMES_MODEL"}}},
-                            {"name": "LLM_MODEL", "valueFrom": {"configMapKeyRef": {"name": "hermes-config", "key": "LLM_MODEL"}}},
-                            {"name": "OPENAI_API_KEY", "valueFrom": {"secretKeyRef": {"name": "hermes-secret", "key": "OPENAI_API_KEY"}}},
-                            {"name": "HERMES_INTERNAL_TOKEN", "valueFrom": {"secretKeyRef": {"name": "hermes-secret", "key": "HERMES_INTERNAL_TOKEN"}}},
-                            {"name": "TELEGRAM_BOT_TOKEN", "valueFrom": {"secretKeyRef": {"name": "hermes-telegram", "key": "TELEGRAM_BOT_TOKEN"}}},
-                            {"name": "TELEGRAM_ALLOWED_USERS", "value": "8754717106"},
-                            {"name": "TELEGRAM_HOME_CHANNEL", "value": "-5152225827"},
-                            {"name": "TELEGRAM_HOME_CHANNEL_NAME", "value": "Homelab Notifications"},
-                        ],
-                        "volumeMounts": [
-                            {"name": "hermes-home", "mountPath": "/home/hermes/.hermes"},
-                            {"name": "hermes-work", "mountPath": "/work"},
-                            {"name": "hermes-shared-memory", "mountPath": "/home/hermes/.hermes-shared", "readOnly": True},
-                        ],
-                        "readinessProbe": {"httpGet": {"path": "/health", "port": 8080}, "initialDelaySeconds": 15, "periodSeconds": 15, "failureThreshold": 3},
-                        "livenessProbe": {"httpGet": {"path": "/health", "port": 8080}, "initialDelaySeconds": 30, "periodSeconds": 30, "failureThreshold": 3},
-                        "resources": {
-                            "requests": {"cpu": _INSTANCE_CPU_REQUEST, "memory": _INSTANCE_MEM_REQUEST},
-                            "limits": {"cpu": _INSTANCE_CPU_LIMIT, "memory": _INSTANCE_MEM_LIMIT},
-                        },
-                        "securityContext": {"allowPrivilegeEscalation": False, "runAsNonRoot": True, "runAsUser": 10001, "readOnlyRootFilesystem": False, "capabilities": {"drop": ["ALL"]}},
-                    }],
-                },
-            },
-        },
-    }
-    apps.create_namespaced_deployment(_HERMES_NAMESPACE, dep)
-    logger.info(json.dumps({
-        "event": "instance_spawned",
-        "instance": dep_name,
-        "requester": requester,
-        "soul_slug": soul.slug,
-        "soul_version": soul.version,
-        "effective_toolsets": effective_toolsets,
-        "tool_overrides": tool_overrides,
-        "snapshot_ref": snap_name,
-    }))
-    return {
-        "status": "created",
-        "name": dep_name,
-        "instance_name": instance_name,
-        "soul": {
-            "slug": soul.slug,
-            "name": soul.name,
-            "version": soul.version,
-            "effective_toolsets": effective_toolsets,
-            "snapshot_ref": snap_name,
-        },
-    }
 
 
 # Stable epoch for hue-cycle phase-locking across all browser tabs and the tray icon.
@@ -952,28 +590,67 @@ _ADMIN_HTML = """<!DOCTYPE html>
           title="Spawn or manage agent instances">
           <span>＋</span><span>Add Agent</span>
         </button>
+        <!-- Platform filter pills -->
+        <div class="flex gap-1 mb-2 flex-wrap">
+          <button @click="setSidebarFilter('web')"
+            class="px-2 py-0.5 rounded-full text-xs font-medium transition-colors"
+            :class="sidebarFilter==='web' ? 'bg-indigo-700 text-white' : 'bg-gray-800 text-gray-400 hover:text-gray-200'">Web</button>
+          <button @click="setSidebarFilter('telegram')"
+            class="px-2 py-0.5 rounded-full text-xs font-medium transition-colors"
+            :class="sidebarFilter==='telegram' ? 'bg-indigo-700 text-white' : 'bg-gray-800 text-gray-400 hover:text-gray-200'">📱 TG</button>
+          <button @click="setSidebarFilter('discord')"
+            class="px-2 py-0.5 rounded-full text-xs font-medium transition-colors"
+            :class="sidebarFilter==='discord' ? 'bg-indigo-700 text-white' : 'bg-gray-800 text-gray-400 hover:text-gray-200'">💬 DC</button>
+        </div>
         <div class="sidebar-scroll space-y-1 pr-1">
-          <template x-for="chat in chats" :key="chat.id">
-            <div class="group relative px-3 py-2 rounded-lg border cursor-pointer transition-colors select-none"
-                 :class="activeChatId===chat.id
-                   ? 'bg-indigo-950 border-indigo-700'
-                   : 'bg-gray-900 border-gray-800 hover:border-gray-700'"
-                 @click="switchChat(chat.id)">
-              <div class="pr-4">
-                <div class="text-xs font-medium truncate"
-                     :class="activeChatId===chat.id ? 'text-indigo-200' : 'text-gray-300'"
-                     x-text="chat.name"></div>
-              </div>
-              <div class="flex items-center justify-between mt-0.5 pr-4">
-                <span class="text-xs text-gray-600" x-text="fmtChatTime(chat.updated_at)"></span>
-                <template x-if="(chat.messages||[]).length > 0">
-                  <span class="shrink-0 text-xs font-mono rounded px-1 py-0 leading-tight"
-                    :class="activeChatId===chat.id ? 'bg-indigo-800 text-indigo-300' : 'bg-gray-800 text-gray-500'"
-                    x-text="(chat.messages||[]).length"></span>
-                </template>
-              </div>
-              <button class="absolute top-2 right-2 opacity-0 group-hover:opacity-100 text-gray-600 hover:text-red-400 text-xs transition-opacity leading-none w-4 h-4 flex items-center justify-center"
-                      @click.stop="deleteChat(chat.id)">✕</button>
+          <!-- Web chats (localStorage) -->
+          <template x-if="sidebarFilter === 'web'">
+            <div class="space-y-1">
+              <template x-for="chat in chats" :key="chat.id">
+                <div class="group relative px-3 py-2 rounded-lg border cursor-pointer transition-colors select-none"
+                     :class="activeChatId===chat.id
+                       ? 'bg-indigo-950 border-indigo-700'
+                       : 'bg-gray-900 border-gray-800 hover:border-gray-700'"
+                     @click="switchChat(chat.id)">
+                  <div class="pr-4">
+                    <div class="text-xs font-medium truncate"
+                         :class="activeChatId===chat.id ? 'text-indigo-200' : 'text-gray-300'"
+                         x-text="chat.name"></div>
+                  </div>
+                  <div class="flex items-center justify-between mt-0.5 pr-4">
+                    <span class="text-xs text-gray-600" x-text="fmtChatTime(chat.updated_at)"></span>
+                    <template x-if="(chat.messages||[]).length > 0">
+                      <span class="shrink-0 text-xs font-mono rounded px-1 py-0 leading-tight"
+                        :class="activeChatId===chat.id ? 'bg-indigo-800 text-indigo-300' : 'bg-gray-800 text-gray-500'"
+                        x-text="(chat.messages||[]).length"></span>
+                    </template>
+                  </div>
+                  <button class="absolute top-2 right-2 opacity-0 group-hover:opacity-100 text-gray-600 hover:text-red-400 text-xs transition-opacity leading-none w-4 h-4 flex items-center justify-center"
+                          @click.stop="deleteChat(chat.id)">✕</button>
+                </div>
+              </template>
+            </div>
+          </template>
+          <!-- Platform sessions (server-side: Telegram, Discord, etc.) -->
+          <template x-if="sidebarFilter !== 'web'">
+            <div class="space-y-1">
+              <div x-show="platformSessionsLoading" class="text-xs text-gray-600 px-2 py-1 animate-pulse">Loading…</div>
+              <div x-show="!platformSessionsLoading && platformSessions.length === 0" class="text-xs text-gray-600 px-2 py-3 text-center">No sessions found</div>
+              <template x-for="ps in platformSessions" :key="ps.session_id">
+                <div class="group relative px-3 py-2 rounded-lg border cursor-pointer transition-colors select-none"
+                     :class="activePlatformSessionId===ps.session_id
+                       ? 'bg-indigo-950 border-indigo-700'
+                       : 'bg-gray-900 border-gray-800 hover:border-gray-700'"
+                     @click="viewPlatformSession(ps)">
+                  <div class="text-xs font-medium truncate"
+                       :class="activePlatformSessionId===ps.session_id ? 'text-indigo-200' : 'text-gray-300'"
+                       x-text="ps.display_name || ps.session_key"></div>
+                  <div class="flex items-center justify-between mt-0.5">
+                    <span class="text-xs text-gray-600" x-text="fmtChatTime(new Date(ps.updated_at).getTime())"></span>
+                    <span class="text-xs text-gray-600" x-text="platformIcon(ps.platform)"></span>
+                  </div>
+                </div>
+              </template>
             </div>
           </template>
         </div>
@@ -1112,13 +789,10 @@ _ADMIN_HTML = """<!DOCTYPE html>
                 <span class="logos-wake-dot"></span>
                 <span class="logos-wake-dot"></span>
               </div>
-              <!-- thinking state: classic bounce, hue-cycles with logo -->
-              <div x-show="!isWakingUp" class="flex gap-1">
-                <span class="w-1.5 h-1.5 rounded-full animate-bounce icon-hue" style="background:#6366f1;animation-delay:0ms"></span>
-                <span class="w-1.5 h-1.5 rounded-full animate-bounce icon-hue" style="background:#6366f1;animation-delay:150ms"></span>
-                <span class="w-1.5 h-1.5 rounded-full animate-bounce icon-hue" style="background:#6366f1;animation-delay:300ms"></span>
+              <!-- thinking state: hermes-style animated phrase -->
+              <div x-show="!isWakingUp" class="flex items-center gap-1.5">
+                <span class="font-mono text-indigo-400 text-xs tabular-nums" x-text="thinkingText"></span>
               </div>
-              <span x-text="(status.instance_name||'Hermes') + ' is thinking\u2026'"></span>
             </div>
             <!-- Instance starting guard -->
             <div x-show="!chatLoading && activeInstance && activeInstance.k8s_status === 'starting'" x-cloak
@@ -4487,6 +4161,12 @@ function app() {
     canary: { active: false },
     chats: [],
     activeChatId: null,
+    sidebarFilter: 'web',
+    platformSessions: [],
+    platformSessionsLoading: false,
+    activePlatformSessionId: null,
+    thinkingText: 'thinking\u2026',
+    _thinkingTimer: null,
     chatInput: '',
     chatInputReady: false,
     chatRenderMode: 'markdown',
@@ -4732,7 +4412,7 @@ function app() {
       // Apply saved theme immediately; watch for reactive changes
       document.documentElement.setAttribute('data-theme', this.theme);
       this.$watch('theme',      val => document.documentElement.setAttribute('data-theme', val));
-      this.$watch('chatLoading', v => _setHueRate(v ? 30 : 6));
+      this.$watch('chatLoading', v => { _setHueRate(v ? 30 : 6); if (v) this._startThinkingAnim(); else this._stopThinkingAnim(); });
       // Delay enabling the chat input to prevent browser autofill from populating
       // it with saved login credentials immediately after a login redirect.
       setTimeout(() => { this.chatInputReady = true; }, 800);
@@ -4997,7 +4677,78 @@ function app() {
     },
 
     _saveChats() {
-      try { localStorage.setItem('hermes_chats', JSON.stringify(this.chats)); } catch(_) {}
+      try {
+        // Exclude platform sessions (injected from server, not owned by web)
+        const toSave = this.chats.filter(c => !c._platform);
+        localStorage.setItem('hermes_chats', JSON.stringify(toSave));
+      } catch(_) {}
+    },
+
+    // ── Sidebar platform filter ────────────────────────────────────
+
+    setSidebarFilter(filter) {
+      this.sidebarFilter = filter;
+      this.activePlatformSessionId = null;
+      if (filter !== 'web') {
+        this.loadPlatformSessions(filter);
+      }
+    },
+
+    async loadPlatformSessions(platform) {
+      this.platformSessionsLoading = true;
+      this.platformSessions = [];
+      try {
+        const r = await fetch('/api/platform-sessions?platform=' + encodeURIComponent(platform), {
+          credentials: 'same-origin',
+        });
+        if (r.ok) this.platformSessions = await r.json();
+      } catch(e) { /* ignore */ }
+      finally { this.platformSessionsLoading = false; }
+    },
+
+    async viewPlatformSession(ps) {
+      this.activePlatformSessionId = ps.session_id;
+      try {
+        const r = await fetch('/api/platform-sessions/' + encodeURIComponent(ps.session_id) + '/messages', {
+          credentials: 'same-origin',
+        });
+        if (!r.ok) return;
+        const messages = await r.json();
+        const name = (ps.display_name || ps.session_key || ps.session_id).slice(0, 40);
+        const tempChat = {
+          id: ps.session_id,
+          name: name,
+          messages,
+          created_at: new Date(ps.created_at).getTime(),
+          updated_at: new Date(ps.updated_at).getTime(),
+          _platform: ps.platform,
+        };
+        const idx = this.chats.findIndex(c => c.id === ps.session_id);
+        if (idx >= 0) { this.chats[idx] = tempChat; } else { this.chats = [tempChat, ...this.chats]; }
+        this.activeChatId = ps.session_id;
+        this._scrollChat();
+      } catch(e) { console.error('viewPlatformSession:', e); }
+    },
+
+    // ── Hermes-style thinking animation ───────────────────────────
+
+    _startThinkingAnim() {
+      const SPINNERS = ['🌑','🌒','🌓','🌔','🌕','🌖','🌗','🌘'];
+      const KAWAII = ['(｡•́︿•̀｡)','(◔_◔)','(⌐■_■)','ヽ(>∀<☆)☆','ಠ_ಠ','(¬‿¬)','٩(◕‿◕｡)۶','(≧◡≦)'];
+      const VERBS = ['pondering','mulling','reasoning','computing','synthesizing','formulating','brainstorming','reflecting','musing','deliberating'];
+      let frame = 0;
+      const kIdx = Math.floor(Math.random() * KAWAII.length);
+      const vIdx = Math.floor(Math.random() * VERBS.length);
+      this._thinkingTimer = setInterval(() => {
+        const spin = SPINNERS[frame % SPINNERS.length];
+        this.thinkingText = spin + ' ' + KAWAII[kIdx] + ' ' + VERBS[vIdx] + '\u2026';
+        frame++;
+      }, 120);
+    },
+
+    _stopThinkingAnim() {
+      if (this._thinkingTimer) { clearInterval(this._thinkingTimer); this._thinkingTimer = null; }
+      this.thinkingText = 'thinking\u2026';
     },
 
     newChat() {
@@ -8797,6 +8548,7 @@ function setup() {
     // Step 2 — auto-compare
     compareAbortController: null,
     compareSkippedServers: {},   // ep → true when user stops that server
+    compareBenchId: null,
     compareRunning: false,
     compareDone: false,
     compareTargets: [],
@@ -9313,6 +9065,7 @@ function setup() {
       this.compareRunning     = true;
       this.compareDone        = false;
       this.compareSkippedServers  = {};
+      this.compareBenchId         = null;
       this.compareTargets     = [];
       this.compareResults     = {};
       this.compareTesting         = null;
@@ -9336,6 +9089,14 @@ function setup() {
         if (!this.compareResults[mid]) skipped[mid] = { model: mid, skipped: true, error: 'Stopped' };
       }
       if (Object.keys(skipped).length) this.compareResults = { ...this.compareResults, ...skipped };
+      // Signal backend to skip remaining models for this server
+      if (this.compareBenchId) {
+        fetch('/api/setup/compare/cancel-server', {
+          method: 'POST', credentials: 'include',
+          headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken() },
+          body: JSON.stringify({ bench_id: this.compareBenchId, endpoint: ep }),
+        }).catch(() => {});
+      }
     },
 
     async retryModel(mid) {
@@ -9448,6 +9209,7 @@ function setup() {
             if (!line.startsWith('data: ')) continue;
             try {
               const ev = JSON.parse(line.slice(6));
+              if (ev.bench_id)      { this.compareBenchId = ev.bench_id; }
               if (ev.targets)       { this.compareTargets = ev.targets; }
               if (ev.testing) {
                 const ep = ev.testing_endpoint || null;
@@ -10504,20 +10266,20 @@ async def _handle_instances_post(request: web.Request) -> web.Response:
         logger.info("Instance request queued for %s: %s", requester, headroom_reason)
         return web.json_response({"status": "queued", "requester": requester, "reason": headroom_reason})
 
-    # Spawn — k8s uses _spawn_instance directly (soul/toolset logic lives here);
-    # local mode uses executor.spawn() with a lightweight InstanceConfig.
     try:
+        from gateway.executors.base import InstanceConfig as _IC
+        _ic = _IC(
+            name=_safe_k8s_name(requester),
+            soul_name=soul_slug,
+            model=model_alias,
+            requester=requester,
+            tool_overrides=tool_overrides or {},
+            machine_endpoint=resolved_endpoint,
+            machine_name=resolved_machine_name,
+            machine_id=resolved_machine_id,
+        )
+        spawned = await loop.run_in_executor(None, executor.spawn, _ic)
         if _RUNTIME_MODE == "local":
-            from gateway.executors.base import InstanceConfig as _IC
-            spawned = await loop.run_in_executor(
-                None, executor.spawn,
-                _IC(
-                    name=_safe_k8s_name(requester),
-                    soul_name=soul_slug,
-                    model=model_alias,
-                    requester=requester,
-                ),
-            )
             result = {
                 "status": "created" if spawned.healthy else "starting",
                 "name": spawned.name,
@@ -10525,11 +10287,12 @@ async def _handle_instances_post(request: web.Request) -> web.Response:
                 "instance_name": f"Hermes for {requester}",
             }
         else:
-            result = await loop.run_in_executor(
-                None, _spawn_instance,
-                requester, soul_slug, tool_overrides,
-                model_alias, resolved_endpoint, resolved_machine_name, resolved_machine_id,
-            )
+            result = {
+                "status": "exists" if spawned.url == "" and not spawned.healthy else "created",
+                "name": spawned.name,
+                "instance_name": spawned.soul_name,
+                "soul": {"slug": spawned.soul_name, "name": spawned.soul_name},
+            }
     except Exception as e:
         logger.exception("Failed to spawn instance for %s", requester)
         return web.json_response({"error": "spawn_failed", "message": str(e)}, status=500)
@@ -10711,7 +10474,7 @@ async def _handle_health_ready(request: web.Request) -> web.Response:
         ok = False
 
     # Soul registry — must have loaded at least one soul
-    souls = _SOUL_REGISTRY
+    souls = _souls_module._SOUL_REGISTRY
     if souls:
         checks["souls"] = f"ok ({len(souls)} loaded)"
     else:
@@ -10731,6 +10494,37 @@ async def _handle_sessions(request: web.Request) -> web.Response:
     runner: Any = request.app["runner"]
     sessions = runner.session_store.list_sessions()
     return web.json_response([s.to_dict() for s in sessions])
+
+
+async def _handle_api_platform_sessions(request: web.Request) -> web.Response:
+    """GET /api/platform-sessions?platform=telegram — list server-side sessions by platform."""
+    current_user = request.get("current_user") or {}
+    if current_user.get("role", "viewer") not in ("admin", "operator"):
+        raise web.HTTPForbidden()
+    platform_filter = request.rel_url.query.get("platform")
+    runner: Any = request.app["runner"]
+    sessions = runner.session_store.list_sessions()
+    if platform_filter:
+        sessions = [s for s in sessions if s.platform and s.platform.value == platform_filter]
+    else:
+        sessions = [s for s in sessions if s.platform and s.platform.value not in ("local",)]
+    return web.json_response([s.to_dict() for s in sessions])
+
+
+async def _handle_api_session_messages(request: web.Request) -> web.Response:
+    """GET /api/platform-sessions/{session_id}/messages — load transcript for a session."""
+    current_user = request.get("current_user") or {}
+    if current_user.get("role", "viewer") not in ("admin", "operator"):
+        raise web.HTTPForbidden()
+    session_id = request.match_info["session_id"]
+    runner: Any = request.app["runner"]
+    messages = runner.session_store.load_transcript(session_id)
+    filtered = [
+        {"role": m["role"], "content": m.get("content") or ""}
+        for m in messages
+        if m.get("role") in ("user", "assistant") and m.get("content")
+    ]
+    return web.json_response(filtered)
 
 
 async def _handle_transcribe(request: web.Request) -> web.Response:
@@ -11455,6 +11249,7 @@ async def start_http_api(runner: Any, port: int = 8080) -> None:
     app.router.add_get("/api/setup/status",   _handle_setup_status)
     app.router.add_post("/api/setup/pull",    _sh.handle_setup_pull)
     app.router.add_post("/api/setup/compare", _sh.handle_setup_compare)
+    app.router.add_post("/api/setup/compare/cancel-server", _sh.handle_setup_compare_cancel_server)
     app.router.add_post("/api/setup/test-k8s", _sh.handle_setup_test_k8s)
     app.router.add_post("/api/setup/test",    _sh.handle_setup_test)
     app.router.add_post("/api/setup/complete",    _sh.handle_setup_complete)
@@ -11501,6 +11296,8 @@ async def start_http_api(runner: Any, port: int = 8080) -> None:
     app.router.add_get("/status",        _handle_status)
     app.router.add_get("/toolsets",      _handle_toolsets)
     app.router.add_get("/sessions",      _handle_sessions)
+    app.router.add_get("/api/platform-sessions", _handle_api_platform_sessions)
+    app.router.add_get("/api/platform-sessions/{session_id}/messages", _handle_api_session_messages)
     app.router.add_post("/chat",               _handle_chat)
     app.router.add_post("/chat/transcribe",    require_csrf(_handle_transcribe))
     app.router.add_route("OPTIONS", "/chat",   _handle_index)
@@ -11663,7 +11460,15 @@ async def start_http_api(runner: Any, port: int = 8080) -> None:
                 if headroom.can_spawn:
                     req = _instance_queue.pop(0)
                     logger.info("Retrying queued instance for %s", req["requester"])
-                    await loop.run_in_executor(None, _spawn_instance, req["requester"])
+                    from gateway.executors.base import InstanceConfig as _IC
+                    await loop.run_in_executor(
+                        None, _executor.spawn,
+                        _IC(
+                            name=_safe_k8s_name(req["requester"]),
+                            soul_name=req.get("soul_slug", "general"),
+                            requester=req["requester"],
+                        ),
+                    )
             except Exception as e:
                 logger.warning("Queue retry failed: %s", e)
 

@@ -145,11 +145,6 @@ spec:
                 secretKeyRef:
                   name: logos-secret
                   key: HERMES_JWT_SECRET
-            - name: TELEGRAM_BOT_TOKEN
-              valueFrom:
-                secretKeyRef:
-                  name: logos-canary-telegram
-                  key: TELEGRAM_BOT_TOKEN
             - name: HERMES_ADMIN_EMAIL
               valueFrom:
                 secretKeyRef:
@@ -165,12 +160,6 @@ spec:
                 secretKeyRef:
                   name: logos-canary-admin
                   key: HERMES_ADMIN_NAME
-            - name: TELEGRAM_ALLOWED_USERS
-              value: "8754717106"
-            - name: TELEGRAM_HOME_CHANNEL
-              value: "-5152225827"
-            - name: TELEGRAM_HOME_CHANNEL_NAME
-              value: "Homelab Notifications"
 
           volumeMounts:
             - name: logos-home

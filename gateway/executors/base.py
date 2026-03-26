@@ -21,6 +21,11 @@ class InstanceConfig:
     port: int = 0                   # 0 = allocate automatically
     toolsets: List[str] = field(default_factory=list)
     policy: str = ""                # policy level passed to child (e.g. WORKSPACE_ONLY)
+    # k8s-specific: resolved before passing to KubernetesExecutor
+    tool_overrides: dict = field(default_factory=dict)
+    machine_endpoint: Optional[str] = None
+    machine_name: Optional[str] = None
+    machine_id: Optional[str] = None
 
 
 @dataclass
