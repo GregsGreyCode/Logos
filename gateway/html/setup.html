@@ -812,6 +812,9 @@
                 <span class="font-semibold text-gray-300">&#10003; / &#9888;</span> — whether the model passed the quality eval (instruction following, reasoning, structured output, tool selection).
                 Models that fail the format or tool-call tests are de-prioritised because they will break agent loops.
               </div>
+              <div class="text-gray-600 border-t border-gray-800 pt-2">
+                Results depend on current server load. For accurate scores, avoid running other workloads on your inference machines during the benchmark.
+              </div>
             </div>
           </details>
 
@@ -888,8 +891,10 @@
                             x-transition:enter-end="opacity-100 translate-x-0"
                             class="flex items-center gap-2">
                             <template x-if="compareResults[mid]?.error">
-                              <span class="text-red-500 cursor-help underline decoration-dotted"
-                                :title="compareResults[mid].error">error</span>
+                              <span class="cursor-help underline decoration-dotted"
+                                :class="String(compareResults[mid].error).includes('400') ? 'text-gray-500' : 'text-red-500'"
+                                :title="compareResults[mid].error"
+                                x-text="String(compareResults[mid].error).includes('400') ? 'can\'t test' : 'error'"></span>
                             </template>
                             <template x-if="compareResults[mid] && !compareResults[mid].error">
                               <div class="flex items-center gap-2">
@@ -1004,7 +1009,7 @@
                   </template>
 
                   <!-- Progress indicator — follows below the last visible card while work is in progress -->
-                  <div x-show="compareRunning && !compareSkippedServers[server.endpoint] && compareTargetsForServer(server.endpoint).some(mid => !compareResults[mid])"
+                  <div x-show="compareRunning && !compareSkippedServers[server.endpoint] && compareTargetsForServer(server.endpoint).filter(mid => !compareResults[mid] && !compareTesting[mid]).length > 0"
                        class="flex items-center gap-2 py-2.5 text-gray-600 text-sm">
                     <div class="spinner-hue"><div class="w-3 h-3 border border-gray-700 border-t-indigo-400 rounded-full animate-spin"></div></div>
                     <span x-text="compareTargetsForServer(server.endpoint).filter(mid => !compareResults[mid] && !compareTesting[mid]).length + ' model' + (compareTargetsForServer(server.endpoint).filter(mid => !compareResults[mid] && !compareTesting[mid]).length === 1 ? '' : 's') + ' remaining\u2026'"></span>
@@ -1013,27 +1018,9 @@
               </div>
             </template>
 
-            <!-- Loading model notices (one per server loading in parallel) -->
-            <template x-for="(ep, loadingMid) in compareLoadingFor" :key="loadingMid">
-              <div class="text-xs text-amber-400/80 px-1 flex items-center gap-1.5">
-                <div class="spinner-hue"><div class="w-2.5 h-2.5 border border-amber-900 border-t-amber-400 rounded-full animate-spin"></div></div>
-                <span>Loading <span class="font-mono" x-text="loadingMid"></span>
-                  <template x-if="ep">
-                    <span class="text-amber-600"> on <span class="font-mono" x-text="ep ? (new URL(ep).host) : ''"></span></span>
-                  </template>
-                  into memory&hellip;</span>
-              </div>
-            </template>
           </div>
 
-          <!-- Load warning — shown while benchmark is running -->
-          <div x-show="compareRunning"
-            class="mb-3 p-2.5 rounded-xl bg-gray-900/50 border border-gray-800 text-[11px] text-gray-500 flex items-start gap-2">
-            <span class="mt-0.5 flex-shrink-0">⚠</span>
-            <span>Results depend on current server load. For accurate scores, avoid running other workloads on your inference machines during the benchmark.</span>
-          </div>
-
-          <!-- Top pick — single server -->
+<!-- Top pick — single server -->
           <template x-if="compareDone && selectedServers.length <= 1 && compareRecommended">
             <div class="mb-2 p-3 rounded-xl bg-indigo-950/40 border border-indigo-800 text-xs leading-relaxed space-y-1">
               <div class="flex items-center gap-2 text-indigo-300 font-semibold text-[11px] uppercase tracking-wider">
@@ -2273,7 +2260,7 @@ function setup() {
         while (true) {
           const { done, value } = await reader.read(); if (done) break;
           buf += dec.decode(value, { stream: true });
-          const lines = buf.split('\\n'); buf = lines.pop();
+          const lines = buf.split('\n'); buf = lines.pop();
           for (const line of lines) {
             if (!line.startsWith('data: ')) continue;
             try {
@@ -2345,7 +2332,7 @@ function setup() {
           // trailing \n in the last TCP chunk.
           buf += streamDone ? dec.decode(new Uint8Array(), { stream: false })
                             : dec.decode(chunk, { stream: true });
-          const lines = buf.split('\\n'); buf = lines.pop();
+          const lines = buf.split('\n'); buf = lines.pop();
           for (const line of lines) {
             if (!line.startsWith('data: ')) continue;
             try {
@@ -2662,7 +2649,7 @@ function setup() {
           const { done, value } = await reader.read();
           if (done) break;
           buf += dec.decode(value, { stream: true });
-          const lines = buf.split('\\n'); buf = lines.pop();
+          const lines = buf.split('\n'); buf = lines.pop();
           for (const line of lines) {
             if (!line.startsWith('data: ')) continue;
             try {
@@ -2722,7 +2709,7 @@ function setup() {
           const { done, value } = await reader.read();
           if (done) break;
           buf += dec.decode(value, { stream: true });
-          const lines = buf.split('\\n'); buf = lines.pop();
+          const lines = buf.split('\n'); buf = lines.pop();
           for (const line of lines) {
             if (!line.startsWith('data: ')) continue;
             try {
