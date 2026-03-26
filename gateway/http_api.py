@@ -120,9 +120,9 @@ _html_dir = (
     if getattr(_sys, "frozen", False)
     else Path(__file__).parent / "html"
 )
-_ADMIN_HTML  = (_html_dir / "main_app.html").read_text()
-_LOGIN_HTML  = (_html_dir / "login.html").read_text()
-_SETUP_HTML  = (_html_dir / "setup.html").read_text()
+_ADMIN_HTML  = (_html_dir / "main_app.html").read_text(encoding="utf-8")
+_LOGIN_HTML  = (_html_dir / "login.html").read_text(encoding="utf-8")
+_SETUP_HTML  = (_html_dir / "setup.html").read_text(encoding="utf-8")
 
 
 def _check_auth(request: web.Request) -> bool:
