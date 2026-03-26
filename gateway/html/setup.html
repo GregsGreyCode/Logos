@@ -827,6 +827,11 @@
                 <!-- Model rows for this server -->
                 <div class="space-y-2">
                   <template x-for="mid in compareTargetsForServer(server.endpoint)" :key="mid">
+                    <!-- Card only appears when its turn starts — hidden while queued -->
+                    <div x-show="compareTesting[mid] || !!compareResults[mid]"
+                         x-transition:enter="transition ease-out duration-500"
+                         x-transition:enter-start="opacity-0 translate-y-2"
+                         x-transition:enter-end="opacity-100 translate-y-0">
                     <div class="rounded-xl border transition-all duration-500 overflow-hidden"
                       :class="compareResults[mid]?.max_context && compareResults[mid].max_context < 16384
                         ? 'border-red-900/50 bg-gray-900 opacity-60'
@@ -834,9 +839,7 @@
                           ? 'border-indigo-500 bg-indigo-950/20'
                           : compareTesting[mid]
                             ? 'border-indigo-500/40 bg-gray-900 shadow-[0_0_14px_rgba(99,102,241,0.13)]'
-                            : compareResults[mid]
-                              ? 'border-gray-800 bg-gray-900'
-                              : 'border-gray-800/30 bg-gray-900 opacity-40'">
+                            : 'border-gray-800 bg-gray-900'">
                       <!-- Summary row — clickable once results are in; click selects and toggles detail -->
                       <div class="flex items-center justify-between px-3 py-2.5"
                         :class="compareDone && compareResults[mid] && !compareResults[mid].error && !(compareResults[mid].max_context && compareResults[mid].max_context < 16384) ? 'cursor-pointer hover:bg-white/5' : ''"
@@ -987,12 +990,14 @@
                         </div>
                       </div>
                     </div>
+                    </div><!-- end reveal wrapper -->
                   </template>
 
-                  <!-- Waiting to start for this server -->
-                  <div x-show="compareTargetsForServer(server.endpoint).length === 0 && compareRunning" class="flex items-center gap-2 py-2 text-gray-600 text-sm">
+                  <!-- Progress indicator — follows below the last visible card while work is in progress -->
+                  <div x-show="compareRunning && !compareSkippedServers[server.endpoint] && compareTargetsForServer(server.endpoint).some(mid => !compareResults[mid])"
+                       class="flex items-center gap-2 py-2.5 text-gray-600 text-sm">
                     <div class="spinner-hue"><div class="w-3 h-3 border border-gray-700 border-t-indigo-400 rounded-full animate-spin"></div></div>
-                    <span>Scanning models&hellip;</span>
+                    <span x-text="compareTargetsForServer(server.endpoint).filter(mid => !compareResults[mid] && !compareTesting[mid]).length + ' model' + (compareTargetsForServer(server.endpoint).filter(mid => !compareResults[mid] && !compareTesting[mid]).length === 1 ? '' : 's') + ' remaining\u2026'"></span>
                   </div>
                 </div>
               </div>
