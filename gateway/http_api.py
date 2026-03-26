@@ -9160,7 +9160,7 @@ function setup() {
       this.compareResults = results;
       this.compareTesting = {...this.compareTesting, [mid]: true};
       this.compareTestingEndpoint = {...this.compareTestingEndpoint, [mid]: m._serverEndpoint || null};
-      const { [mid]: _l, ...restLoading } = this.compareLoadingFor;
+      const { [mid]: _l0, ...restLoading } = this.compareLoadingFor;
       this.compareLoadingFor = restLoading;
       try {
         const r = await fetch('/api/setup/compare', {
@@ -9208,7 +9208,7 @@ function setup() {
       }
       const { [mid]: _t, ...rT } = this.compareTesting; this.compareTesting = rT;
       const { [mid]: _te, ...rTE } = this.compareTestingEndpoint; this.compareTestingEndpoint = rTE;
-      const { [mid]: _l, ...rL } = this.compareLoadingFor; this.compareLoadingFor = rL;
+      const { [mid]: _l1, ...rL } = this.compareLoadingFor; this.compareLoadingFor = rL;
     },
 
     async runCompare() {
