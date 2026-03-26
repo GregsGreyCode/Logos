@@ -590,28 +590,67 @@ _ADMIN_HTML = """<!DOCTYPE html>
           title="Spawn or manage agent instances">
           <span>＋</span><span>Add Agent</span>
         </button>
+        <!-- Platform filter pills -->
+        <div class="flex gap-1 mb-2 flex-wrap">
+          <button @click="setSidebarFilter('web')"
+            class="px-2 py-0.5 rounded-full text-xs font-medium transition-colors"
+            :class="sidebarFilter==='web' ? 'bg-indigo-700 text-white' : 'bg-gray-800 text-gray-400 hover:text-gray-200'">Web</button>
+          <button @click="setSidebarFilter('telegram')"
+            class="px-2 py-0.5 rounded-full text-xs font-medium transition-colors"
+            :class="sidebarFilter==='telegram' ? 'bg-indigo-700 text-white' : 'bg-gray-800 text-gray-400 hover:text-gray-200'">📱 TG</button>
+          <button @click="setSidebarFilter('discord')"
+            class="px-2 py-0.5 rounded-full text-xs font-medium transition-colors"
+            :class="sidebarFilter==='discord' ? 'bg-indigo-700 text-white' : 'bg-gray-800 text-gray-400 hover:text-gray-200'">💬 DC</button>
+        </div>
         <div class="sidebar-scroll space-y-1 pr-1">
-          <template x-for="chat in chats" :key="chat.id">
-            <div class="group relative px-3 py-2 rounded-lg border cursor-pointer transition-colors select-none"
-                 :class="activeChatId===chat.id
-                   ? 'bg-indigo-950 border-indigo-700'
-                   : 'bg-gray-900 border-gray-800 hover:border-gray-700'"
-                 @click="switchChat(chat.id)">
-              <div class="pr-4">
-                <div class="text-xs font-medium truncate"
-                     :class="activeChatId===chat.id ? 'text-indigo-200' : 'text-gray-300'"
-                     x-text="chat.name"></div>
-              </div>
-              <div class="flex items-center justify-between mt-0.5 pr-4">
-                <span class="text-xs text-gray-600" x-text="fmtChatTime(chat.updated_at)"></span>
-                <template x-if="(chat.messages||[]).length > 0">
-                  <span class="shrink-0 text-xs font-mono rounded px-1 py-0 leading-tight"
-                    :class="activeChatId===chat.id ? 'bg-indigo-800 text-indigo-300' : 'bg-gray-800 text-gray-500'"
-                    x-text="(chat.messages||[]).length"></span>
-                </template>
-              </div>
-              <button class="absolute top-2 right-2 opacity-0 group-hover:opacity-100 text-gray-600 hover:text-red-400 text-xs transition-opacity leading-none w-4 h-4 flex items-center justify-center"
-                      @click.stop="deleteChat(chat.id)">✕</button>
+          <!-- Web chats (localStorage) -->
+          <template x-if="sidebarFilter === 'web'">
+            <div class="space-y-1">
+              <template x-for="chat in chats" :key="chat.id">
+                <div class="group relative px-3 py-2 rounded-lg border cursor-pointer transition-colors select-none"
+                     :class="activeChatId===chat.id
+                       ? 'bg-indigo-950 border-indigo-700'
+                       : 'bg-gray-900 border-gray-800 hover:border-gray-700'"
+                     @click="switchChat(chat.id)">
+                  <div class="pr-4">
+                    <div class="text-xs font-medium truncate"
+                         :class="activeChatId===chat.id ? 'text-indigo-200' : 'text-gray-300'"
+                         x-text="chat.name"></div>
+                  </div>
+                  <div class="flex items-center justify-between mt-0.5 pr-4">
+                    <span class="text-xs text-gray-600" x-text="fmtChatTime(chat.updated_at)"></span>
+                    <template x-if="(chat.messages||[]).length > 0">
+                      <span class="shrink-0 text-xs font-mono rounded px-1 py-0 leading-tight"
+                        :class="activeChatId===chat.id ? 'bg-indigo-800 text-indigo-300' : 'bg-gray-800 text-gray-500'"
+                        x-text="(chat.messages||[]).length"></span>
+                    </template>
+                  </div>
+                  <button class="absolute top-2 right-2 opacity-0 group-hover:opacity-100 text-gray-600 hover:text-red-400 text-xs transition-opacity leading-none w-4 h-4 flex items-center justify-center"
+                          @click.stop="deleteChat(chat.id)">✕</button>
+                </div>
+              </template>
+            </div>
+          </template>
+          <!-- Platform sessions (server-side: Telegram, Discord, etc.) -->
+          <template x-if="sidebarFilter !== 'web'">
+            <div class="space-y-1">
+              <div x-show="platformSessionsLoading" class="text-xs text-gray-600 px-2 py-1 animate-pulse">Loading…</div>
+              <div x-show="!platformSessionsLoading && platformSessions.length === 0" class="text-xs text-gray-600 px-2 py-3 text-center">No sessions found</div>
+              <template x-for="ps in platformSessions" :key="ps.session_id">
+                <div class="group relative px-3 py-2 rounded-lg border cursor-pointer transition-colors select-none"
+                     :class="activePlatformSessionId===ps.session_id
+                       ? 'bg-indigo-950 border-indigo-700'
+                       : 'bg-gray-900 border-gray-800 hover:border-gray-700'"
+                     @click="viewPlatformSession(ps)">
+                  <div class="text-xs font-medium truncate"
+                       :class="activePlatformSessionId===ps.session_id ? 'text-indigo-200' : 'text-gray-300'"
+                       x-text="ps.display_name || ps.session_key"></div>
+                  <div class="flex items-center justify-between mt-0.5">
+                    <span class="text-xs text-gray-600" x-text="fmtChatTime(new Date(ps.updated_at).getTime())"></span>
+                    <span class="text-xs text-gray-600" x-text="platformIcon(ps.platform)"></span>
+                  </div>
+                </div>
+              </template>
             </div>
           </template>
         </div>
@@ -750,13 +789,10 @@ _ADMIN_HTML = """<!DOCTYPE html>
                 <span class="logos-wake-dot"></span>
                 <span class="logos-wake-dot"></span>
               </div>
-              <!-- thinking state: classic bounce, hue-cycles with logo -->
-              <div x-show="!isWakingUp" class="flex gap-1">
-                <span class="w-1.5 h-1.5 rounded-full animate-bounce icon-hue" style="background:#6366f1;animation-delay:0ms"></span>
-                <span class="w-1.5 h-1.5 rounded-full animate-bounce icon-hue" style="background:#6366f1;animation-delay:150ms"></span>
-                <span class="w-1.5 h-1.5 rounded-full animate-bounce icon-hue" style="background:#6366f1;animation-delay:300ms"></span>
+              <!-- thinking state: hermes-style animated phrase -->
+              <div x-show="!isWakingUp" class="flex items-center gap-1.5">
+                <span class="font-mono text-indigo-400 text-xs tabular-nums" x-text="thinkingText"></span>
               </div>
-              <span x-text="(status.instance_name||'Hermes') + ' is thinking\u2026'"></span>
             </div>
             <!-- Instance starting guard -->
             <div x-show="!chatLoading && activeInstance && activeInstance.k8s_status === 'starting'" x-cloak
@@ -4125,6 +4161,12 @@ function app() {
     canary: { active: false },
     chats: [],
     activeChatId: null,
+    sidebarFilter: 'web',
+    platformSessions: [],
+    platformSessionsLoading: false,
+    activePlatformSessionId: null,
+    thinkingText: 'thinking\u2026',
+    _thinkingTimer: null,
     chatInput: '',
     chatInputReady: false,
     chatRenderMode: 'markdown',
@@ -4370,7 +4412,7 @@ function app() {
       // Apply saved theme immediately; watch for reactive changes
       document.documentElement.setAttribute('data-theme', this.theme);
       this.$watch('theme',      val => document.documentElement.setAttribute('data-theme', val));
-      this.$watch('chatLoading', v => _setHueRate(v ? 30 : 6));
+      this.$watch('chatLoading', v => { _setHueRate(v ? 30 : 6); if (v) this._startThinkingAnim(); else this._stopThinkingAnim(); });
       // Delay enabling the chat input to prevent browser autofill from populating
       // it with saved login credentials immediately after a login redirect.
       setTimeout(() => { this.chatInputReady = true; }, 800);
@@ -4635,7 +4677,78 @@ function app() {
     },
 
     _saveChats() {
-      try { localStorage.setItem('hermes_chats', JSON.stringify(this.chats)); } catch(_) {}
+      try {
+        // Exclude platform sessions (injected from server, not owned by web)
+        const toSave = this.chats.filter(c => !c._platform);
+        localStorage.setItem('hermes_chats', JSON.stringify(toSave));
+      } catch(_) {}
+    },
+
+    // ── Sidebar platform filter ────────────────────────────────────
+
+    setSidebarFilter(filter) {
+      this.sidebarFilter = filter;
+      this.activePlatformSessionId = null;
+      if (filter !== 'web') {
+        this.loadPlatformSessions(filter);
+      }
+    },
+
+    async loadPlatformSessions(platform) {
+      this.platformSessionsLoading = true;
+      this.platformSessions = [];
+      try {
+        const r = await fetch('/api/platform-sessions?platform=' + encodeURIComponent(platform), {
+          credentials: 'same-origin',
+        });
+        if (r.ok) this.platformSessions = await r.json();
+      } catch(e) { /* ignore */ }
+      finally { this.platformSessionsLoading = false; }
+    },
+
+    async viewPlatformSession(ps) {
+      this.activePlatformSessionId = ps.session_id;
+      try {
+        const r = await fetch('/api/platform-sessions/' + encodeURIComponent(ps.session_id) + '/messages', {
+          credentials: 'same-origin',
+        });
+        if (!r.ok) return;
+        const messages = await r.json();
+        const name = (ps.display_name || ps.session_key || ps.session_id).slice(0, 40);
+        const tempChat = {
+          id: ps.session_id,
+          name: name,
+          messages,
+          created_at: new Date(ps.created_at).getTime(),
+          updated_at: new Date(ps.updated_at).getTime(),
+          _platform: ps.platform,
+        };
+        const idx = this.chats.findIndex(c => c.id === ps.session_id);
+        if (idx >= 0) { this.chats[idx] = tempChat; } else { this.chats = [tempChat, ...this.chats]; }
+        this.activeChatId = ps.session_id;
+        this._scrollChat();
+      } catch(e) { console.error('viewPlatformSession:', e); }
+    },
+
+    // ── Hermes-style thinking animation ───────────────────────────
+
+    _startThinkingAnim() {
+      const SPINNERS = ['🌑','🌒','🌓','🌔','🌕','🌖','🌗','🌘'];
+      const KAWAII = ['(｡•́︿•̀｡)','(◔_◔)','(⌐■_■)','ヽ(>∀<☆)☆','ಠ_ಠ','(¬‿¬)','٩(◕‿◕｡)۶','(≧◡≦)'];
+      const VERBS = ['pondering','mulling','reasoning','computing','synthesizing','formulating','brainstorming','reflecting','musing','deliberating'];
+      let frame = 0;
+      const kIdx = Math.floor(Math.random() * KAWAII.length);
+      const vIdx = Math.floor(Math.random() * VERBS.length);
+      this._thinkingTimer = setInterval(() => {
+        const spin = SPINNERS[frame % SPINNERS.length];
+        this.thinkingText = spin + ' ' + KAWAII[kIdx] + ' ' + VERBS[vIdx] + '\u2026';
+        frame++;
+      }, 120);
+    },
+
+    _stopThinkingAnim() {
+      if (this._thinkingTimer) { clearInterval(this._thinkingTimer); this._thinkingTimer = null; }
+      this.thinkingText = 'thinking\u2026';
     },
 
     newChat() {
@@ -10383,6 +10496,37 @@ async def _handle_sessions(request: web.Request) -> web.Response:
     return web.json_response([s.to_dict() for s in sessions])
 
 
+async def _handle_api_platform_sessions(request: web.Request) -> web.Response:
+    """GET /api/platform-sessions?platform=telegram — list server-side sessions by platform."""
+    current_user = request.get("current_user") or {}
+    if current_user.get("role", "viewer") not in ("admin", "operator"):
+        raise web.HTTPForbidden()
+    platform_filter = request.rel_url.query.get("platform")
+    runner: Any = request.app["runner"]
+    sessions = runner.session_store.list_sessions()
+    if platform_filter:
+        sessions = [s for s in sessions if s.platform and s.platform.value == platform_filter]
+    else:
+        sessions = [s for s in sessions if s.platform and s.platform.value not in ("local",)]
+    return web.json_response([s.to_dict() for s in sessions])
+
+
+async def _handle_api_session_messages(request: web.Request) -> web.Response:
+    """GET /api/platform-sessions/{session_id}/messages — load transcript for a session."""
+    current_user = request.get("current_user") or {}
+    if current_user.get("role", "viewer") not in ("admin", "operator"):
+        raise web.HTTPForbidden()
+    session_id = request.match_info["session_id"]
+    runner: Any = request.app["runner"]
+    messages = runner.session_store.load_transcript(session_id)
+    filtered = [
+        {"role": m["role"], "content": m.get("content") or ""}
+        for m in messages
+        if m.get("role") in ("user", "assistant") and m.get("content")
+    ]
+    return web.json_response(filtered)
+
+
 async def _handle_transcribe(request: web.Request) -> web.Response:
     """POST /chat/transcribe — accept a webm/wav/ogg audio blob, return transcript."""
     try:
@@ -11152,6 +11296,8 @@ async def start_http_api(runner: Any, port: int = 8080) -> None:
     app.router.add_get("/status",        _handle_status)
     app.router.add_get("/toolsets",      _handle_toolsets)
     app.router.add_get("/sessions",      _handle_sessions)
+    app.router.add_get("/api/platform-sessions", _handle_api_platform_sessions)
+    app.router.add_get("/api/platform-sessions/{session_id}/messages", _handle_api_session_messages)
     app.router.add_post("/chat",               _handle_chat)
     app.router.add_post("/chat/transcribe",    require_csrf(_handle_transcribe))
     app.router.add_route("OPTIONS", "/chat",   _handle_index)
