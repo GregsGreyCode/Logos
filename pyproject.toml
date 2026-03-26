@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "logos"
-version = "0.5.35"
+version = "0.5.36"
 description = "A self-hosted agent platform — inference routing, multi-model benchmarking, and policy-governed agent runs across local and cloud hardware"
 readme = "README.md"
 requires-python = ">=3.11"
