@@ -441,6 +441,20 @@ def _start_browser_watcher(icon) -> None:
     """
     def _loop():
         global _browser_proc
+        # Don't watch until the gateway is fully ready. On Windows, Edge's
+        # --app launcher subprocess can exit quickly (it hands off to an
+        # existing browser instance), which would otherwise trigger a
+        # false-positive quit during startup.
+        _gateway_ready.wait()
+        # Discard any stale process that already exited while we were waiting
+        # (i.e. the Edge/Chrome launcher relay process — the actual browser
+        # window is still open, just tracked by a child process we don't own).
+        with _browser_lock:
+            stale = _browser_proc
+        if stale is not None and stale.poll() is not None:
+            with _browser_lock:
+                if _browser_proc is stale:
+                    _browser_proc = None
         while True:
             time.sleep(0.5)
             with _browser_lock:
