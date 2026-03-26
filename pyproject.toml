@@ -100,3 +100,8 @@ markers = [
     "integration: marks tests requiring external services (API keys, Modal, etc.)",
 ]
 addopts = "-m 'not integration' -n auto"
+filterwarnings = [
+    # aiohttp transports call self._loop in __del__ after the test event loop has
+    # been torn down; this is a known aiohttp/asyncio cleanup race, not a real bug.
+    "ignore::pytest.PytestUnraisableExceptionWarning",
+]
