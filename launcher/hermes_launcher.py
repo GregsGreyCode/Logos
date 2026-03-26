@@ -108,7 +108,7 @@ p.err{{color:#ef4444;margin-top:16px;font-size:13px;line-height:1.5}}
   <p id="msg">Starting up&hellip;</p>
 </div>
 <script>
-var deadline = Date.now() + 90000;
+var deadline = Date.now() + 20000;
 (function poll(){{
   if(Date.now() > deadline){{
     document.getElementById("ring").style.animationPlayState="paused";
@@ -178,7 +178,8 @@ def _start_gateway() -> None:
             # start if the PID file exists but the process is gone.
             loop.run_until_complete(start_gateway(None, replace=True))
         except Exception as exc:
-            _log(f"Gateway error: {exc}")
+            import traceback
+            _log(f"Gateway error: {exc}\n{traceback.format_exc()}")
         finally:
             loop.close()
             with _gateway_lock:
