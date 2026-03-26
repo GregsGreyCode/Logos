@@ -6695,7 +6695,7 @@ _LOGIN_HTML = """<!DOCTYPE html>
              style="width:100px;height:100px;object-fit:contain;">
       </div>
       <!-- Hint — space always reserved so the logo doesn't shift when it appears -->
-      <div style="margin-top:5rem;height:1.2rem;transition:opacity 0.6s ease;"
+      <div style="margin-top:calc(5rem + 50px);height:1.2rem;transition:opacity 0.6s ease;"
            :style="(showHint && phase === 'splash') ? 'opacity:1' : 'opacity:0'">
         <p class="hint-text"
            style="font-size:0.78rem;color:rgba(148,163,184,0.5);letter-spacing:0.08em;">
@@ -7036,16 +7036,19 @@ _SETUP_HTML = """<!DOCTYPE html>
       <img src="/static/logo.svg" class="setup-logo relative" style="width:56px;height:56px;object-fit:contain;">
     </div>
     <!-- Step indicator — visible from step 1 onward -->
-    <div x-show="step > 0" x-transition.opacity class="spinner-hue flex items-center gap-1">
-      <template x-for="i in [1,2,3,4,5,6,7]" :key="i">
-        <div class="flex items-center gap-1">
-          <div class="w-2 h-2 rounded-full transition-all duration-500"
-               :class="step > i ? 'bg-indigo-400 cursor-pointer hover:scale-125' : step === i ? 'bg-indigo-500 scale-125' : 'bg-gray-700'"
-               @click="goTo(i)" :title="step > i ? 'Go back to step ' + i : ''"></div>
-          <div x-show="i < 7" class="w-4 h-px transition-colors duration-500"
-               :class="step > i ? 'bg-indigo-600' : 'bg-gray-700'"></div>
-        </div>
-      </template>
+    <div x-show="step > 0" x-transition.opacity class="flex flex-col items-center gap-2">
+      <div class="spinner-hue flex items-center gap-1">
+        <template x-for="i in [1,2,3,4,5,6,7]" :key="i">
+          <div class="flex items-center gap-1">
+            <div class="w-2 h-2 rounded-full transition-all duration-500"
+                 :class="step > i ? 'bg-indigo-400 cursor-pointer hover:scale-125' : step === i ? 'bg-indigo-500 scale-125' : 'bg-gray-700'"
+                 @click="goTo(i)" :title="step > i ? 'Go back to step ' + i : ''"></div>
+            <div x-show="i < 7" class="w-4 h-px transition-colors duration-500"
+                 :class="step > i ? 'bg-indigo-600' : 'bg-gray-700'"></div>
+          </div>
+        </template>
+      </div>
+      <button @click="startOver()" class="text-[10px] text-gray-700 hover:text-gray-500 transition-colors leading-none">↩ start over</button>
     </div>
   </header>
 
@@ -8760,6 +8763,9 @@ function setup() {
             this.step           = s.step || 0;
             this.introConfirmed = s.introConfirmed ?? (this.step > 0);
             this.track          = s.track ?? null;
+            // Restore setupMode — steps 1-7 are always part of the 'new' flow.
+            if (s.setupMode) this.setupMode = s.setupMode;
+            else if (this.step > 0) this.setupMode = 'new';
             if (s.foundServers?.length) {
               this.foundServers    = s.foundServers;
               // Restore up + auth_required servers (user explicitly selected them).
@@ -8834,6 +8840,7 @@ function setup() {
           ts:                     Date.now(),
           serverTs:               this._serverTs,
           step:                   this.step,
+          setupMode:              this.setupMode,
           introConfirmed:         this.introConfirmed,
           track:                  this.track,
           foundServers:           this.foundServers,
@@ -8857,6 +8864,16 @@ function setup() {
           setupUsername:          this.setupUsername,
         }));
       } catch {}
+    },
+
+    startOver() {
+      try { localStorage.removeItem('logos_setup_progress_v2'); } catch {}
+      this.step = 0; this.setupMode = null; this.introConfirmed = false; this.track = null;
+      this.foundServers = []; this.selectedServers = []; this.activeServer = null; this.autoScanDone = false;
+      this.compareTargets = []; this.compareResults = {}; this.compareRecommended = null;
+      this.compareFastRecommended = null; this.compareDone = false;
+      this.selectedModel = null; this.execEnv = null; this.k8sMode = null;
+      this.selectedSoul = null; this.selectedAgentType = null; this.setupEmail = ''; this.setupUsername = '';
     },
 
     async startConnectScan() {
