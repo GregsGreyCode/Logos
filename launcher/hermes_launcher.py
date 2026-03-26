@@ -440,6 +440,7 @@ def _start_browser_watcher(icon) -> None:
       The gateway keeps running; right-click → Quit to exit fully.
     """
     def _loop():
+        global _browser_proc
         while True:
             time.sleep(0.5)
             with _browser_lock:
@@ -452,12 +453,8 @@ def _start_browser_watcher(icon) -> None:
                 if _browser_proc is not proc:
                     # A new browser window is already open — watch that one.
                     continue
-            # The tracked window just closed and no new one has opened.
-            # Clear the proc reference so the loop doesn't spin on the dead process.
-            with _browser_lock:
-                global _browser_proc
-                if _browser_proc is proc:
-                    _browser_proc = None
+                # Clear the reference so the loop doesn't spin on the dead process.
+                _browser_proc = None
             if not _is_setup_completed():
                 _log("Browser closed during setup — quitting.")
                 icon.stop()
