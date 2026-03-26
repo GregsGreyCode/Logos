@@ -1,0 +1,229 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: logos
+  namespace: logos-dev
+  labels:
+    app: logos
+spec:
+  replicas: 1
+  revisionHistoryLimit: 2
+  selector:
+    matchLabels:
+      app: logos
+  template:
+    metadata:
+      labels:
+        app: logos
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+        prometheus.io/path: "/metrics"
+    spec:
+      serviceAccountName: logos
+
+      imagePullSecrets:
+        - name: ghcr-creds
+
+      tolerations:
+        - key: "node-role.kubernetes.io/control-plane"
+          operator: "Exists"
+          effect: "NoSchedule"
+
+      volumes:
+        - name: logos-home
+          persistentVolumeClaim:
+            claimName: logos-pvc
+        - name: logos-config-seed
+          configMap:
+            name: logos-config-yaml
+        - name: logos-work
+          emptyDir: {}
+        - name: logos-shared-memory
+          persistentVolumeClaim:
+            claimName: logos-shared-memory-pvc
+
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+        fsGroup: 10001
+
+      initContainers:
+        - name: fix-perms
+          image: busybox:1.36
+          command:
+            - sh
+            - -c
+            - |
+              chown -R 10001:10001 /logos-home
+              chmod 750 /logos-home
+              mkdir -p /hermes-shared/memories
+              chown -R 10001:10001 /hermes-shared
+              chmod 750 /hermes-shared
+          volumeMounts:
+            - name: logos-home
+              mountPath: /logos-home
+            - name: logos-shared-memory
+              mountPath: /hermes-shared
+          securityContext:
+            runAsUser: 0
+
+        - name: seed-config
+          image: busybox:1.36
+          command:
+            - sh
+            - -c
+            - |
+              mkdir -p /logos-home/memories
+              sed "s|\${INSPECTOR_TOKEN}|${INSPECTOR_TOKEN}|g" /seed/config.yaml > /logos-home/config.yaml
+              cp /seed/SOUL.md /logos-home/SOUL.md
+              echo "config.yaml and SOUL.md seeded from ConfigMap"
+          env:
+            - name: INSPECTOR_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: logos-secret
+                  key: INSPECTOR_TOKEN
+          volumeMounts:
+            - name: logos-home
+              mountPath: /logos-home
+            - name: logos-config-seed
+              mountPath: /seed
+              readOnly: true
+          securityContext:
+            runAsUser: 10001
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+
+      containers:
+        - name: logos
+          image: ghcr.io/gregsgreycode/logos:canary
+          imagePullPolicy: Always
+          ports:
+            - name: http
+              containerPort: 8080
+
+          env:
+            - name: HOME
+              value: /home/hermes
+            - name: NODE_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.hostIP
+            - name: HERMES_LOG_LEVEL
+              valueFrom:
+                configMapKeyRef:
+                  name: logos-config
+                  key: HERMES_LOG_LEVEL
+            - name: HERMES_PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: logos-config
+                  key: HERMES_PORT
+            - name: REQUEST_TIMEOUT_SECONDS
+              valueFrom:
+                configMapKeyRef:
+                  name: logos-config
+                  key: REQUEST_TIMEOUT_SECONDS
+            - name: OPENAI_BASE_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: logos-config
+                  key: OPENAI_BASE_URL
+            - name: HERMES_MODEL
+              valueFrom:
+                configMapKeyRef:
+                  name: logos-config
+                  key: HERMES_MODEL
+            - name: LLM_MODEL
+              valueFrom:
+                configMapKeyRef:
+                  name: logos-config
+                  key: LLM_MODEL
+            - name: HERMES_RUNTIME_MODE
+              valueFrom:
+                configMapKeyRef:
+                  name: logos-config
+                  key: HERMES_RUNTIME_MODE
+            - name: HERMES_WIPE_ON_START
+              valueFrom:
+                configMapKeyRef:
+                  name: logos-config
+                  key: HERMES_WIPE_ON_START
+            - name: OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: logos-secret
+                  key: OPENAI_API_KEY
+            - name: HERMES_INTERNAL_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: logos-secret
+                  key: HERMES_INTERNAL_TOKEN
+            - name: HERMES_ADMIN_EMAIL
+              valueFrom:
+                secretKeyRef:
+                  name: logos-secret
+                  key: HERMES_ADMIN_EMAIL
+            - name: HERMES_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: logos-secret
+                  key: HERMES_ADMIN_PASSWORD
+            - name: TELEGRAM_BOT_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: logos-telegram
+                  key: TELEGRAM_BOT_TOKEN
+            - name: TELEGRAM_ALLOWED_USERS
+              value: "123456789"
+            - name: TELEGRAM_HOME_CHANNEL
+              value: "-5152225827"
+            - name: TELEGRAM_HOME_CHANNEL_NAME
+              value: "Homelab Notifications"
+            - name: HERMES_INSTANCE_NAME
+              value: "Hermes Dev"
+
+          volumeMounts:
+            - name: logos-home
+              mountPath: /home/hermes/.logos
+            - name: logos-work
+              mountPath: /work
+            - name: logos-shared-memory
+              mountPath: /home/hermes/.logos-shared
+
+          readinessProbe:
+            httpGet:
+              path: /health/ready
+              port: 8080
+            initialDelaySeconds: 15
+            periodSeconds: 15
+            failureThreshold: 3
+
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            failureThreshold: 3
+
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "2Gi"
+            limits:
+              cpu: "4000m"
+              memory: "8Gi"
+
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            runAsUser: 10001
+            readOnlyRootFilesystem: false
+            capabilities:
+              drop:
+                - ALL

@@ -1,0 +1,160 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: logos-config-yaml
+  namespace: logos-dev
+data:
+  config.yaml: |
+    # ── Hermes runtime config (dev) ───────────────────────────────────────────
+    # Mounted at /home/hermes/.logos/config.yaml inside the pod.
+
+    delegation:
+      model: "brain"
+
+    memory:
+      memory_enabled: true
+      user_profile_enabled: true
+      shared_write_dir: /home/hermes/.logos-shared/memories
+      shared_memory_dir: /home/hermes/.logos-shared/memories
+
+    platform_toolsets:
+      telegram:
+        - web
+        - file
+        - terminal
+        - memory
+        - todo
+        - skills
+        - clarify
+        - session_search
+        - delegation
+        - mcp-homelab-base
+        - mcp-homelab-extended
+        - mcp-homelab-operator
+        - mcp-homelab-socraticode
+        - mcp-homelab-claude
+        - mcp-homelab-lgtm-base
+        - mcp-homelab-lgtm-extended
+        - mcp-homelab-ssh
+
+    mcp_servers:
+      homelab-base:
+        url: http://YOUR_DOCKER_HOST_IP:8200/mcp
+        transport: streamable-http
+        headers:
+          Authorization: "Bearer ${INSPECTOR_TOKEN}"
+        tools:
+          resources: false
+          prompts: false
+          include:
+            - docker_list_containers
+            - prom_query
+
+      homelab-extended:
+        url: http://YOUR_DOCKER_HOST_IP:8200/mcp
+        transport: streamable-http
+        headers:
+          Authorization: "Bearer ${INSPECTOR_TOKEN}"
+        tools:
+          resources: false
+          prompts: false
+          include:
+            - docker_get_logs
+            - files_tree
+            - files_read
+            - proxmox_vms
+
+      homelab-socraticode:
+        url: http://YOUR_DOCKER_HOST_IP:8500/mcp
+        transport: streamable-http
+        tools:
+          resources: false
+          prompts: false
+          include:
+            - codebase_search
+            - codebase_graph_query
+            - codebase_context
+            - codebase_context_search
+            - codebase_status
+
+      homelab-claude:
+        url: http://YOUR_DOCKER_HOST_IP:8600/mcp
+        transport: streamable-http
+        tools:
+          resources: false
+          prompts: false
+          include:
+            - claude_task
+            - claude_review
+
+      homelab-lgtm-base:
+        url: http://YOUR_DOCKER_HOST_IP:8700/mcp
+        transport: streamable-http
+        headers:
+          Authorization: "Bearer ${LGTM_MCP_TOKEN}"
+        tools:
+          resources: false
+          prompts: false
+          include:
+            - prometheus_list_targets
+            - prometheus_list_alerts
+            - loki_query
+            - grafana_list_dashboards
+
+      homelab-lgtm-extended:
+        url: http://YOUR_DOCKER_HOST_IP:8700/mcp
+        transport: streamable-http
+        headers:
+          Authorization: "Bearer ${LGTM_MCP_TOKEN}"
+        tools:
+          resources: false
+          prompts: false
+          include:
+            - grafana_get_dashboard
+            - grafana_list_datasources
+            - grafana_list_folders
+            - prometheus_list_rules
+            - alertmanager_list_alerts
+            - alertmanager_list_silences
+            - alertmanager_get_config
+            - loki_label_names
+            - loki_label_values
+
+      homelab-ssh:
+        url: http://YOUR_DOCKER_HOST_IP:8701/mcp
+        transport: streamable-http
+        headers:
+          Authorization: "Bearer ${SSH_MCP_TOKEN}"
+        tools:
+          resources: false
+          prompts: false
+          include:
+            - ssh_list_hosts
+            - ssh_exec
+            - ssh_read_file
+
+      homelab-operator:
+        url: http://YOUR_DOCKER_HOST_IP:8400/mcp
+        transport: streamable-http
+        tools:
+          resources: false
+          prompts: false
+          include:
+            - files_write
+            - git_status_tool
+            - git_diff_tool
+            - git_commit_tool
+            - git_push_tool
+            - docker_build_tool
+            - docker_push_tool
+            - kubectl_apply_tool
+            - kubectl_rollout_restart_tool
+            - kubectl_rollout_status_tool
+            - kubectl_delete_deployment_tool
+
+  SOUL.md: |
+    # Logos (Dev)
+
+    You are an AI assistant running on Logos Dev — a development instance used for testing and iteration. Treat this as a sandbox: experimentation is encouraged, stability is secondary to learning.
+
+    Same voice as production Hermes. Same rules. The only difference is that this instance may be running pre-release code.

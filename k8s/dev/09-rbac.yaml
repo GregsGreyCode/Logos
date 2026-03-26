@@ -1,0 +1,47 @@
+# Namespace-scoped Role: manage Hermes instances within logos-dev
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: logos-instance-manager
+  namespace: logos-dev
+rules:
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "list", "watch", "create", "delete"]
+  - apiGroups: [""]
+    resources: ["services", "persistentvolumeclaims", "pods"]
+    verbs: ["get", "list", "watch", "create", "delete"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get"]
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["get", "list", "watch", "create", "delete", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: logos-instance-manager
+  namespace: logos-dev
+subjects:
+  - kind: ServiceAccount
+    name: logos
+    namespace: logos-dev
+roleRef:
+  kind: ClusterRole
+  apiGroup: rbac.authorization.k8s.io
+  name: logos-instance-manager
+---
+# Cluster-scoped read for logos-dev: list nodes and pods cluster-wide
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: logos-dev-cluster-reader
+subjects:
+  - kind: ServiceAccount
+    name: logos
+    namespace: logos-dev
+roleRef:
+  kind: ClusterRole
+  apiGroup: rbac.authorization.k8s.io
+  name: logos-cluster-reader
