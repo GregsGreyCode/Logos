@@ -179,16 +179,13 @@ async def _handle_setup_reset(request: web.Request) -> web.Response:
 async def _handle_index(request: web.Request) -> web.Response:
     from gateway.auth.db import is_setup_completed
     if not is_setup_completed():
-        raise web.HTTPFound("/setup")
+        raise web.HTTPFound("/login")
     inject = f'<script>window.__LOGOS__={{isCanary:{str(_IS_CANARY).lower()},runtimeMode:"{_RUNTIME_MODE}"}};window._hueEpochMs={_HUE_EPOCH_MS};</script>'
     html = _ADMIN_HTML.replace("</head>", inject + "</head>", 1)
     return web.Response(text=html, content_type="text/html")
 
 
 async def _handle_login_page(request: web.Request) -> web.Response:
-    from gateway.auth.db import is_setup_completed
-    if not is_setup_completed():
-        raise web.HTTPFound("/setup")
     html = _LOGIN_HTML.replace("__VERSION_LABEL__", _VERSION_LABEL)
     return web.Response(text=html, content_type="text/html")
 
