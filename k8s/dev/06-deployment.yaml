@@ -2,7 +2,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: logos
-  namespace: logos
+  namespace: logos-dev
   labels:
     app: logos
 spec:
@@ -31,21 +31,14 @@ spec:
           effect: "NoSchedule"
 
       volumes:
-        # PVC backed by local-path-provisioner (rancher/local-path-provisioner).
-        # Stores ~/.hermes/: memory, SOUL.md, skills, runtime config changes.
-        # Persists across pod restarts. Tied to the node where the pod is scheduled.
         - name: logos-home
           persistentVolumeClaim:
             claimName: logos-pvc
         - name: logos-config-seed
           configMap:
             name: logos-config-yaml
-        # Scratch space for Hermes to write reports, docs, research output.
-        # Ephemeral — cleared on pod restart. For persistent output use operator git_commit.
         - name: logos-work
           emptyDir: {}
-        # Shared memory written by primary instances, mounted read-only by spawned instances.
-        # Primary mounts this read-write so it can update MEMORY.md / USER.md here.
         - name: logos-shared-memory
           persistentVolumeClaim:
             claimName: logos-shared-memory-pvc
@@ -53,12 +46,9 @@ spec:
       securityContext:
         seccompProfile:
           type: RuntimeDefault
-        # Ensures the PVC is chowned to this GID on mount so runAsUser 10001 can write
         fsGroup: 10001
 
       initContainers:
-        # Step 1: Fix ownership on the PVC root so user 10001 can write.
-        # local-path-provisioner creates the directory as root — this corrects it.
         - name: fix-perms
           image: busybox:1.36
           command:
@@ -78,9 +68,6 @@ spec:
           securityContext:
             runAsUser: 0
 
-        # Step 2: Seed config.yaml from ConfigMap into PVC.
-        # ConfigMap is source-of-truth for MCP config; runs as hermes user.
-        # PVC gives Hermes a writable home for memory, SOUL.md, skills, runtime config.
         - name: seed-config
           image: busybox:1.36
           command:
@@ -113,7 +100,7 @@ spec:
 
       containers:
         - name: logos
-          image: ghcr.io/gregsgreycode/logos:latest
+          image: ghcr.io/gregsgreycode/logos:canary
           imagePullPolicy: Always
           ports:
             - name: http
@@ -122,8 +109,6 @@ spec:
           env:
             - name: HOME
               value: /home/hermes
-            # Inject node LAN IP so the setup wizard's network scan uses the
-            # correct /24 subnet rather than the pod's CNI address.
             - name: NODE_IP
               valueFrom:
                 fieldRef:
@@ -163,6 +148,11 @@ spec:
                 configMapKeyRef:
                   name: logos-config
                   key: HERMES_RUNTIME_MODE
+            - name: HERMES_WIPE_ON_START
+              valueFrom:
+                configMapKeyRef:
+                  name: logos-config
+                  key: HERMES_WIPE_ON_START
             - name: OPENAI_API_KEY
               valueFrom:
                 secretKeyRef:
@@ -173,11 +163,6 @@ spec:
                 secretKeyRef:
                   name: logos-secret
                   key: HERMES_INTERNAL_TOKEN
-            - name: HERMES_JWT_SECRET
-              valueFrom:
-                secretKeyRef:
-                  name: logos-secret
-                  key: HERMES_JWT_SECRET
             - name: HERMES_ADMIN_EMAIL
               valueFrom:
                 secretKeyRef:
@@ -200,7 +185,7 @@ spec:
             - name: TELEGRAM_HOME_CHANNEL_NAME
               value: "Homelab Notifications"
             - name: HERMES_INSTANCE_NAME
-              value: "Hermes"
+              value: "Hermes Dev"
 
           volumeMounts:
             - name: logos-home
