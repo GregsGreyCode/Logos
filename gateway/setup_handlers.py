@@ -54,18 +54,29 @@ def _own_ips() -> set[str]:
     NODE_IP is injected via the downward API so we include it here — otherwise
     port 8080 on the host node would not be skipped and Logos itself (or any
     service on that port) would appear as a discovered model server.
+
+    On Windows with multiple NICs (VPN, Docker bridge, etc.) gethostbyname_ex
+    returns all bound addresses, which is more complete than getaddrinfo alone.
     """
     ips: set[str] = {"127.0.0.1", "localhost"}
     # K8s: include the host node's LAN IP so own_port is skipped there too
     node_ip = os.environ.get("NODE_IP", "").strip()
     if node_ip:
         ips.add(node_ip)
+    # Primary route IP — reliable for single-NIC machines
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
             s.connect(("8.8.8.8", 80))
             ips.add(s.getsockname()[0])
     except Exception:
         pass
+    # All addresses bound to this hostname — catches multi-NIC, VPN, Docker
+    try:
+        _, _, addrs = socket.gethostbyname_ex(socket.gethostname())
+        ips.update(addrs)
+    except Exception:
+        pass
+    # getaddrinfo as a final sweep
     try:
         for info in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET):
             ips.add(info[4][0])
