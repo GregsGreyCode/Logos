@@ -22,6 +22,7 @@ import pathlib
 import re
 import socket
 import time
+import uuid
 
 import aiohttp
 from aiohttp import web
@@ -36,6 +37,9 @@ from gateway.auth.tokens import (
 )
 
 logger = logging.getLogger(__name__)
+
+# bench_id → set of endpoints the user has requested to skip mid-benchmark
+_bench_cancels: dict[str, set[str]] = {}
 
 _PROBE_TIMEOUT = aiohttp.ClientTimeout(total=4)
 _SCAN_TIMEOUT  = aiohttp.ClientTimeout(total=1)   # aggressive — we're sweeping 254 hosts
@@ -857,6 +861,9 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
     })
     await response.prepare(request)
 
+    bench_id = str(uuid.uuid4())
+    _bench_cancels[bench_id] = set()
+
     async def send(data: dict) -> None:
         await response.write(f"data: {json.dumps(data)}\n\n".encode())
 
@@ -891,7 +898,7 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
 
     candidates = [m for group in server_groups.values() for m in group]
     n_servers = len(server_groups)
-    await send({"targets": [c["id"] for c in candidates]})
+    await send({"bench_id": bench_id, "targets": [c["id"] for c in candidates]})
     await send({"log": (
         f"Testing {len(candidates)} model{'s' if len(candidates) != 1 else ''} "
         f"across {n_servers} server{'s' if n_servers != 1 else ''}"
@@ -949,6 +956,14 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
             api_key     = spec["api_key"]
             server_type = spec["server_type"]
             base_url    = re.sub(r"/v1/?$", "", endpoint)
+
+            # Check if user clicked Stop on this server mid-benchmark
+            if endpoint in _bench_cancels.get(bench_id, set()):
+                result = {"model": model_id, "endpoint": endpoint, "skipped": True, "error": "Stopped by user"}
+                async with results_lock:
+                    results.append(result)
+                await send({"result": result})
+                continue
 
             await send({"testing": model_id, "testing_endpoint": endpoint})
             type_label = {"lmstudio": "LM Studio", "ollama": "Ollama", "llamacpp": "llama.cpp"}.get(server_type, server_type)
@@ -1284,7 +1299,7 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
                 async def _bench_run_r(pass_num: int, prompt: str, max_tokens: int = 120) -> tuple[float, bool]:
                     try:
                         return await _bench_run(pass_num, prompt, max_tokens)
-                    except aiohttp.ServerDisconnectedError:
+                    except (aiohttp.ServerDisconnectedError, aiohttp.ClientOSError):
                         await asyncio.sleep(0.5)
                         return await _bench_run(pass_num, prompt, max_tokens)
 
@@ -1479,11 +1494,14 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
                 results.append(result)
             await send({"result": result})
 
-    async with aiohttp.ClientSession() as session:
-        await asyncio.gather(*[
-            _test_server_group(group, session)
-            for group in server_groups.values()
-        ])
+    try:
+        async with aiohttp.ClientSession() as session:
+            await asyncio.gather(*[
+                _test_server_group(group, session)
+                for group in server_groups.values()
+            ])
+    finally:
+        _bench_cancels.pop(bench_id, None)
 
     valid = [r for r in results if not r.get("error") and r.get("tok_s", 0) > 0]
 
@@ -2118,3 +2136,19 @@ async def handle_setup_set_remote(request: web.Request) -> web.Response:
     _CONNECT_JSON.write_text(json.dumps({"url": url}, indent=2), encoding="utf-8")
     logger.info("setup: saved remote connect URL: %s", url)
     return web.json_response({"ok": True, "url": url})
+
+
+async def handle_setup_compare_cancel_server(request: web.Request) -> web.Response:
+    """Mark a server endpoint as cancelled for an in-progress benchmark.
+
+    Body: {"bench_id": "...", "endpoint": "http://..."}
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "invalid_json"}, status=400)
+    bench_id = body.get("bench_id", "")
+    endpoint = (body.get("endpoint") or "").rstrip("/")
+    if bench_id in _bench_cancels:
+        _bench_cancels[bench_id].add(endpoint)
+    return web.json_response({"ok": True})

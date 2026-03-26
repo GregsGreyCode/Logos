@@ -8,9 +8,7 @@
 #   5a. PROMOTE: update image tag in 06-deployment.yaml → kubectl apply → kubectl rollout restart
 #   5b. ROLLBACK: kubectl delete -f 10-logos-canary-deployment.yaml
 #
-# Requires: logos-canary-telegram secret (separate test bot token).
-# Create with: ./scripts/create-k8s-secrets.sh --canary
-#
+# Telegram is intentionally disabled — only the prod deployment handles Telegram.
 # This file is meant to be applied temporarily and then deleted.
 # Do not leave it running alongside stable indefinitely.
 apiVersion: apps/v1
@@ -144,12 +142,6 @@ spec:
                 secretKeyRef:
                   name: logos-secret
                   key: HERMES_JWT_SECRET
-            # Separate test bot — avoids conflict with the live Telegram bot
-            - name: TELEGRAM_BOT_TOKEN
-              valueFrom:
-                secretKeyRef:
-                  name: logos-canary-telegram
-                  key: TELEGRAM_BOT_TOKEN
             # Canary-only admin credentials — from hermes-canary-admin secret (12-hermes-canary-admin-secret.yaml)
             # Kept separate so canary has known/documented login credentials independent of stable.
             - name: HERMES_ADMIN_EMAIL
@@ -167,12 +159,6 @@ spec:
                 secretKeyRef:
                   name: logos-canary-admin
                   key: HERMES_ADMIN_NAME
-            - name: TELEGRAM_ALLOWED_USERS
-              value: "8754717106"
-            - name: TELEGRAM_HOME_CHANNEL
-              value: "-5152225827"
-            - name: TELEGRAM_HOME_CHANNEL_NAME
-              value: "Homelab Notifications"
 
           volumeMounts:
             - name: logos-home
