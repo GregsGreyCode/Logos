@@ -87,7 +87,15 @@ def _own_ips() -> set[str]:
 
 def _dedup_servers(results: list[dict]) -> list[dict]:
     """Deduplicate server list, collapsing LAN-IP entries that duplicate a
-    localhost entry on the same port (same physical machine, different address)."""
+    localhost entry on the same port (same physical machine, different address).
+
+    Also applies a port-preference rule: if the same host is found on both
+    port 8080 and port 1234, only 1234 is kept (LM Studio's canonical port).
+    Port 8080 on a host that already has 1234 is almost certainly the same
+    LM Studio instance responding on its secondary/proxy port.
+    """
+    from urllib.parse import urlparse as _up
+
     own = _own_ips()
     # Build a set of ports already covered by a localhost/loopback entry
     local_ports: set[int] = set()
@@ -95,10 +103,20 @@ def _dedup_servers(results: list[dict]) -> list[dict]:
         if r.get("status") not in ("up", "auth_required"):
             continue
         try:
-            from urllib.parse import urlparse
-            p = urlparse(r["endpoint"])
+            p = _up(r["endpoint"])
             if p.hostname in ("localhost", "127.0.0.1"):
                 local_ports.add(p.port)
+        except Exception:
+            pass
+
+    # Build per-host port set so we can apply the 8080→1234 preference rule
+    host_ports: dict[str, set[int]] = {}
+    for r in results:
+        if r.get("status") not in ("up", "auth_required"):
+            continue
+        try:
+            p = _up(r["endpoint"])
+            host_ports.setdefault(p.hostname, set()).add(p.port)
         except Exception:
             pass
 
@@ -108,12 +126,14 @@ def _dedup_servers(results: list[dict]) -> list[dict]:
         ep = r["endpoint"]
         if ep in seen:
             continue
-        # Skip a LAN-IP entry for this machine if localhost already covers the same port
         try:
-            from urllib.parse import urlparse
-            p = urlparse(ep)
+            p = _up(ep)
+            # Skip a LAN-IP entry for this machine if localhost already covers the same port
             if p.hostname in own and p.hostname not in ("localhost", "127.0.0.1") and p.port in local_ports:
-                continue  # already represented by localhost:PORT
+                continue
+            # If this host is on both 8080 and 1234, drop the 8080 entry
+            if p.port == 8080 and 1234 in host_ports.get(p.hostname, set()):
+                continue
         except Exception:
             pass
         seen.add(ep)
