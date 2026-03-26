@@ -11225,7 +11225,11 @@ async def start_http_api(runner: Any, port: int = 8080) -> None:
     # K8s sets HERMES_JWT_SECRET via a k8s Secret; local desktop/CLI installs
     # never set it.  Generate once, persist to ~/.logos/.jwt_secret so tokens
     # survive gateway restarts without forcing re-login every time.
-    if not os.environ.get("HERMES_JWT_SECRET"):
+    # Also treat the known template placeholder as unset — k8s/02-secret.yaml ships
+    # with REPLACE_WITH_JWT_SECRET so a fresh cluster with un-edited secrets gets a
+    # real random value rather than the publicly-known placeholder.
+    _KNOWN_JWT_PLACEHOLDERS = {"", "REPLACE_WITH_JWT_SECRET", "replace_with_jwt_secret"}
+    if os.environ.get("HERMES_JWT_SECRET", "") in _KNOWN_JWT_PLACEHOLDERS:
         import secrets as _secrets
         _jwt_secret_path = hermes_home / ".jwt_secret"
         if _jwt_secret_path.exists():
