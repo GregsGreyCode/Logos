@@ -112,7 +112,14 @@ _SOULS_DIR = pathlib.Path(__file__).parent.parent / "souls"
 _HUE_EPOCH_MS: int = int(time.time() * 1000)
 
 
-_html_dir    = Path(__file__).parent / "html"
+# When running as a PyInstaller frozen executable, __file__ points inside the
+# zip archive and "html/" must be resolved via sys._MEIPASS instead.
+import sys as _sys
+_html_dir = (
+    Path(_sys._MEIPASS) / "gateway" / "html"
+    if getattr(_sys, "frozen", False)
+    else Path(__file__).parent / "html"
+)
 _ADMIN_HTML  = (_html_dir / "main_app.html").read_text()
 _LOGIN_HTML  = (_html_dir / "login.html").read_text()
 _SETUP_HTML  = (_html_dir / "setup.html").read_text()

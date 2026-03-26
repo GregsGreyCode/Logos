@@ -31,6 +31,9 @@ a = Analysis(
         (str(ROOT / "hermes_cli" / "config.py"), "hermes_cli"),
         # Tray icon — must be bundled so pystray can find it when frozen
         (str(ROOT / "launcher" / "logos.ico"), "launcher"),
+        # HTML templates — extracted from http_api.py in Phase 1 refactor.
+        # Must be bundled so Path(__file__).parent / "html" resolves correctly.
+        (str(ROOT / "gateway" / "html"), "gateway/html"),
         # pyproject.toml — read by the launcher to know its own version for
         # update checks and by the gateway to populate _APP_VERSION.
         (str(ROOT / "pyproject.toml"), "."),
