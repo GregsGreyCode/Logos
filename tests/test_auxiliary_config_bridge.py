@@ -286,7 +286,7 @@ class TestCLIDefaultsHaveAuxiliaryKeys:
         # carries over keys from file_config that aren't in defaults.
         # So auxiliary config from config.yaml gets merged even though
         # cli.py's defaults dict doesn't define it.
-        import cli as _cli_mod
+        import hermes_cli.cli as _cli_mod
         source = Path(_cli_mod.__file__).read_text()
         assert "auxiliary_config = defaults.get(\"auxiliary\"" in source
         assert "AUXILIARY_VISION_PROVIDER" in source

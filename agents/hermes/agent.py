@@ -4388,7 +4388,7 @@ class AIAgent:
         self._run_recorder = None
         if self._session_db:
             try:
-                from runs import RunRecorder, TRIGGER_USER
+                from core.runs import RunRecorder, TRIGGER_USER
                 _run_id = str(uuid.uuid4())
                 self._run_recorder = RunRecorder(
                     db=self._session_db,
@@ -5895,7 +5895,7 @@ class AIAgent:
         # ── Finalise run record ─────────────────────────────────────────────
         if self._run_recorder:
             try:
-                from runs import (STATUS_COMPLETED, STATUS_FAILED,
+                from core.runs import (STATUS_COMPLETED, STATUS_FAILED,
                                   STATUS_INTERRUPTED, STATUS_MAX_ITERATIONS)
                 if interrupted:
                     _run_status = STATUS_INTERRUPTED

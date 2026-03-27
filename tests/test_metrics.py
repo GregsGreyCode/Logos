@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 from core.state import SessionDB
-from metrics import MetricsEngine, _pct, _percentile
+from core.metrics import MetricsEngine, _pct, _percentile
 
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────

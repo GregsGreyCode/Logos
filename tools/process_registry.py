@@ -716,7 +716,7 @@ class ProcessRegistry:
                         })
             
             # Atomic write to avoid corruption on crash
-            from utils import atomic_json_write
+            from core.utils import atomic_json_write
             atomic_json_write(CHECKPOINT_PATH, entries)
         except Exception as e:
             logger.debug("Failed to write checkpoint file: %s", e, exc_info=True)
@@ -767,7 +767,7 @@ class ProcessRegistry:
 
         # Clear the checkpoint (will be rewritten as processes finish)
         try:
-            from utils import atomic_json_write
+            from core.utils import atomic_json_write
             atomic_json_write(CHECKPOINT_PATH, [])
         except Exception as e:
             logger.debug("Could not clear checkpoint file: %s", e, exc_info=True)

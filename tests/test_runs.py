@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from core.state import SessionDB
-from runs import (
+from core.runs import (
     RunRecorder,
     RunReplayer,
     STATUS_COMPLETED,

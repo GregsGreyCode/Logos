@@ -1025,7 +1025,7 @@ _COMMENTED_SECTIONS = """
 
 def save_config(config: Dict[str, Any]):
     """Save configuration to ~/.hermes/config.yaml."""
-    from utils import atomic_yaml_write
+    from core.utils import atomic_yaml_write
 
     ensure_hermes_home()
     config_path = get_config_path()

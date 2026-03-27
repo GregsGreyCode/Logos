@@ -111,8 +111,8 @@ def test_model_command_uses_runtime_access_token_for_codex_list(monkeypatch):
 
 def _make_cli(model="anthropic/claude-opus-4.6", **kwargs):
     """Create a HermesCLI with minimal mocking."""
-    import cli as _cli_mod
-    from cli import HermesCLI
+    import hermes_cli.cli as _cli_mod
+    from hermes_cli.cli import HermesCLI
 
     _clean_config = {
         "model": {
@@ -126,7 +126,7 @@ def _make_cli(model="anthropic/claude-opus-4.6", **kwargs):
     }
     clean_env = {"LLM_MODEL": "", "HERMES_MAX_ITERATIONS": ""}
     with (
-        patch("cli.get_tool_definitions", return_value=[]),
+        patch("hermes_cli.cli.get_tool_definitions", return_value=[]),
         patch.dict("os.environ", clean_env, clear=False),
         patch.dict(_cli_mod.__dict__, {"CLI_CONFIG": _clean_config}),
     ):
@@ -187,7 +187,7 @@ class TestNormalizeModelForProvider:
 
     def test_default_model_replaced(self):
         """The untouched default (anthropic/claude-opus-4.6) gets swapped."""
-        import cli as _cli_mod
+        import hermes_cli.cli as _cli_mod
         _clean_config = {
             "model": {
                 "default": "anthropic/claude-opus-4.6",
@@ -200,11 +200,11 @@ class TestNormalizeModelForProvider:
         }
         # Don't pass model= so _model_is_default is True
         with (
-            patch("cli.get_tool_definitions", return_value=[]),
+            patch("hermes_cli.cli.get_tool_definitions", return_value=[]),
             patch.dict("os.environ", {"LLM_MODEL": "", "HERMES_MAX_ITERATIONS": ""}, clear=False),
             patch.dict(_cli_mod.__dict__, {"CLI_CONFIG": _clean_config}),
         ):
-            from cli import HermesCLI
+            from hermes_cli.cli import HermesCLI
             cli = HermesCLI()
 
         assert cli._model_is_default is True
@@ -219,7 +219,7 @@ class TestNormalizeModelForProvider:
 
     def test_default_fallback_when_api_fails(self):
         """Default model falls back to gpt-5.3-codex when API unreachable."""
-        import cli as _cli_mod
+        import hermes_cli.cli as _cli_mod
         _clean_config = {
             "model": {
                 "default": "anthropic/claude-opus-4.6",
@@ -231,11 +231,11 @@ class TestNormalizeModelForProvider:
             "terminal": {"env_type": "local"},
         }
         with (
-            patch("cli.get_tool_definitions", return_value=[]),
+            patch("hermes_cli.cli.get_tool_definitions", return_value=[]),
             patch.dict("os.environ", {"LLM_MODEL": "", "HERMES_MAX_ITERATIONS": ""}, clear=False),
             patch.dict(_cli_mod.__dict__, {"CLI_CONFIG": _clean_config}),
         ):
-            from cli import HermesCLI
+            from hermes_cli.cli import HermesCLI
             cli = HermesCLI()
 
         with patch(
