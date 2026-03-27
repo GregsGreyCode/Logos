@@ -619,13 +619,13 @@
                     <template x-if="msg.stats">
                       <div class="msg-bar bg-gray-800 rounded-b-xl border-t border-gray-700/40">
                         <span class="msg-hint" @click.stop="statsOpen=!statsOpen; if(statsOpen) $nextTick(()=>$root._scrollChat())">
-                          <span x-text="statsOpen ? \'▴ hide stats\' : \'⋯ stats\'"></span>
+                          <span x-text="statsOpen ? '\u25B4 hide stats' : '\u22EF stats'"></span>
                         </span>
-                        <button class="msg-copy" :class="copied?\'copied\':\'\'"
+                        <button class="msg-copy" :class="copied ? 'copied' : ''"
                           @click.stop="navigator.clipboard.writeText(msg.content).then(()=>{copied=true;setTimeout(()=>copied=false,1500)})"
                           title="Copy response">
                           <svg width="11" height="11" viewBox="0 0 16 16" fill="none"><rect x="5" y="5" width="9" height="9" rx="2" stroke="currentColor" stroke-width="1.5"/><path d="M3 10V3a2 2 0 012-2h7" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
-                          <span x-text="copied?\'✓ copied\':\'copy\'"></span>
+                          <span x-text="copied ? '\u2713 copied' : 'copy'"></span>
                         </button>
                       </div>
                     </template>
@@ -635,27 +635,27 @@
                         <template x-if="msg.stats.model">
                           <div class="msg-stats-row">
                             <span class="msg-stats-label">model</span>
-                            <span class="msg-stats-val" x-text="msg.stats.model.split(\'/\').pop()"></span>
+                            <span class="msg-stats-val" x-text="msg.stats.model.split('/').pop()"></span>
                           </div>
                         </template>
                         <div class="msg-stats-row">
                           <span class="msg-stats-label">context</span>
-                          <span class="msg-stats-val" x-text="fmtTokens(msg.stats.prompt_tokens || 0) + \' tok\'"></span>
+                          <span class="msg-stats-val" x-text="fmtTokens(msg.stats.prompt_tokens || 0) + ' tok'"></span>
                         </div>
                         <div class="msg-stats-row">
                           <span class="msg-stats-label">time</span>
-                          <span class="msg-stats-val" x-text="(msg.stats.elapsed_s || 0) + \'s\'"></span>
+                          <span class="msg-stats-val" x-text="(msg.stats.elapsed_s || 0) + 's'"></span>
                         </div>
                         <template x-if="(msg.stats.elapsed_s || 0) > 0 && (msg.stats.prompt_tokens || 0) > 0">
                           <div class="msg-stats-row">
                             <span class="msg-stats-label">speed</span>
-                            <span class="msg-stats-val" x-text="Math.round((msg.stats.prompt_tokens / msg.stats.elapsed_s)) + \' tok/s\'"></span>
+                            <span class="msg-stats-val" x-text="Math.round(msg.stats.prompt_tokens / msg.stats.elapsed_s) + ' tok/s'"></span>
                           </div>
                         </template>
                         <template x-if="(msg.stats.tools_available || 0) > 0">
                           <div class="msg-stats-row">
                             <span class="msg-stats-label">tools</span>
-                            <span class="msg-stats-val" x-text="(msg.stats.tools_used > 0 ? msg.stats.tools_used + \' used / \' : \'\') + msg.stats.tools_available + \' loaded\'"></span>
+                            <span class="msg-stats-val" x-text="(msg.stats.tools_used > 0 ? msg.stats.tools_used + ' used / ' : '') + msg.stats.tools_available + ' loaded'"></span>
                           </div>
                         </template>
                         <template x-if="(msg.stats.api_calls || 0) > 1">
@@ -754,7 +754,7 @@
           </div>
 
           <!-- Input -->
-          <div class="px-4 py-3 border-t border-gray-800 flex gap-2 shrink-0" style="align-items:flex-end;">
+          <div class="px-4 py-3 border-t border-gray-800 flex gap-2 shrink-0 items-end">
             <!-- Render mode drop-up -->
             <div class="render-dropup" x-data="{open:false}" @click.away="open=false">
               <button @click="open=!open"
@@ -789,9 +789,9 @@
                 x-ref="chatTextarea"
                 autocomplete="off"
                 rows="1"
-                class="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-indigo-500 transition-colors pr-2 resize-none overflow-y-auto"
+                class="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-indigo-500 transition-colors pr-2 resize-none overflow-y-auto"
                 :class="chatDragOver ? 'border-indigo-400 bg-indigo-950/30' : ''"
-                style="height:38px;min-height:38px;max-height:7rem;line-height:1.35;padding-top:8px;padding-bottom:8px;"
+                style="min-height:38px;max-height:7rem;line-height:1.4;"
                 :placeholder="micRecording ? ('Recording… ' + micCountdown + 's') : micTranscribing ? 'Transcribing…' : ('Message ' + (status.instance_name || 'Hermes') + '\u2026 (Enter · Shift+Enter for newline)')"
                 :disabled="micTranscribing || activeInstance.k8s_status === 'starting'"
                 :readonly="!chatInputReady"></textarea>
@@ -5165,7 +5165,10 @@ function app() {
           }
         }
         this.prevActiveSessions = [...(this.status.active_sessions||[])];
-      } catch(e) { console.error('status poll failed', e); this.agentAlive = false; }
+      } catch(e) {
+        if (this.agentEverConnected) console.warn('status poll failed:', e.message);
+        this.agentAlive = false;
+      }
     },
 
     async loadRouterState() {
@@ -5304,8 +5307,8 @@ function app() {
     // ── Chat ──────────────────────────────────────────────────────
 
     autoResizeChat(el) {
-      el.style.height = '38px'; // reset to single-line height
-      el.style.height = Math.min(el.scrollHeight, 112) + 'px'; // max ~7rem / ~4 lines
+      el.style.height = '0';  // collapse to measure true scrollHeight
+      el.style.height = Math.max(38, Math.min(el.scrollHeight, 112)) + 'px';
     },
 
     handleChatDrop(event) {
