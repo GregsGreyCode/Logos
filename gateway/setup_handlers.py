@@ -2275,10 +2275,13 @@ def _openshell_exe() -> str:
     """Return path to the openshell binary, checking PATH and ~/.hermes/bin."""
     found = _shutil.which("openshell")
     if found:
+        logger.debug("openshell_exe: found on PATH at %s", found)
         return found
     local = _HERMES_BIN_DIR / ("openshell.exe" if _sys.platform == "win32" else "openshell")
     if local.exists():
+        logger.debug("openshell_exe: found in hermes bin at %s", local)
         return str(local)
+    logger.debug("openshell_exe: not found (checked PATH and %s)", _HERMES_BIN_DIR)
     return ""
 
 
@@ -2287,29 +2290,40 @@ def _docker_running() -> dict:
     Return {running, installed, desktop_path} describing Docker state.
     Tries the Docker socket/pipe first; falls back to ``docker info`` subprocess.
     """
+    logger.debug("docker_running: probing Docker daemon (platform=%s)", _sys.platform)
+
     # Windows: Docker Desktop uses a named pipe, not a Unix socket.
     # pathlib.Path.exists() does NOT work for \\.\pipe\ device-namespace paths —
-    # use ctypes CreateFileW to actually probe the pipe, then fall back to a
-    # tasklist process check so we don't depend on docker.exe being on PATH.
+    # use ctypes CreateFileW to actually probe the pipe.  Set restype=c_void_p so
+    # the full pointer-sized HANDLE is returned (default c_int truncates on 64-bit).
+    # Also check ERROR_PIPE_BUSY (231): pipe exists but all slots occupied = running.
     if _sys.platform == "win32":
         # 1. Try to open the named pipe directly (most reliable)
         try:
             import ctypes as _ct
             _k32 = _ct.windll.kernel32
+            _k32.CreateFileW.restype = _ct.c_void_p   # HANDLE is pointer-sized
+            _INVALID = 2 ** (8 * _ct.sizeof(_ct.c_void_p)) - 1  # all-bits-set
             _h = _k32.CreateFileW(
                 r"\\.\pipe\docker_engine",
                 0x80000000,   # GENERIC_READ
                 0, None, 3,   # OPEN_EXISTING
                 0, None,
             )
-            # INVALID_HANDLE_VALUE is -1 (0xFFFFFFFF as c_int); 0 also invalid
-            if _h not in (0, -1, 0xFFFFFFFF):
+            _last_err = _k32.GetLastError()
+            logger.debug("docker_running: named pipe probe handle=%r GetLastError=%d", _h, _last_err)
+            if _h is not None and _h not in (0, _INVALID):
                 _k32.CloseHandle(_h)
+                logger.info("docker_running: Docker detected via named pipe \\.\pipe\docker_engine")
                 return {"running": True, "installed": True, "desktop_path": ""}
-        except Exception:
-            pass
+            if _last_err == 231:  # ERROR_PIPE_BUSY — pipe exists but all slots occupied
+                logger.info("docker_running: Docker detected via ERROR_PIPE_BUSY on named pipe")
+                return {"running": True, "installed": True, "desktop_path": ""}
+            logger.debug("docker_running: named pipe not available (err=%d)", _last_err)
+        except Exception as _e:
+            logger.warning("docker_running: named pipe check raised %s: %s", type(_e).__name__, _e)
 
-        # 2. Check if Docker daemon process is actually running
+        # 2. Check if Docker daemon process is actually running via tasklist
         try:
             _tl = _subprocess.run(
                 ["tasklist", "/FI", "IMAGENAME eq com.docker.proxy.exe",
@@ -2317,19 +2331,24 @@ def _docker_running() -> dict:
                 capture_output=True, text=True, timeout=5,
                 creationflags=0x08000000,  # CREATE_NO_WINDOW
             )
+            logger.debug("docker_running: tasklist stdout=%r", _tl.stdout[:200])
             if "com.docker.proxy.exe" in _tl.stdout.lower():
+                logger.info("docker_running: Docker detected via com.docker.proxy.exe process")
                 return {"running": True, "installed": True, "desktop_path": ""}
-        except Exception:
-            pass
+            logger.debug("docker_running: com.docker.proxy.exe not found in tasklist")
+        except Exception as _e:
+            logger.warning("docker_running: tasklist check raised %s: %s", type(_e).__name__, _e)
 
     # Try unix socket (Linux / macOS / Docker Desktop with socket proxy enabled)
     sock_paths = ["/var/run/docker.sock", "/run/docker.sock"]
     for sp in sock_paths:
         if pathlib.Path(sp).exists():
+            logger.info("docker_running: Docker detected via unix socket %s", sp)
             return {"running": True, "installed": True, "desktop_path": ""}
 
     # Resolve docker executable — PATH first, then well-known Windows install locations
     docker_exe = _shutil.which("docker")
+    logger.debug("docker_running: docker on PATH: %r", docker_exe)
     if not docker_exe and _sys.platform == "win32":
         _pf  = os.environ.get("PROGRAMFILES",  r"C:\Program Files")
         _pf86= os.environ.get("PROGRAMFILES(X86)", r"C:\Program Files (x86)")
@@ -2345,8 +2364,10 @@ def _docker_running() -> dict:
             pathlib.Path(_pf)   / "Docker" / "cli-plugins" / "docker.exe",
         ]
         for _c in _win_candidates:
+            logger.debug("docker_running: checking candidate %s (exists=%s)", _c, _c.exists())
             if _c.exists():
                 docker_exe = str(_c)
+                logger.info("docker_running: found docker.exe at %s", docker_exe)
                 break
 
     if docker_exe:
@@ -2355,25 +2376,34 @@ def _docker_running() -> dict:
                 [docker_exe, "info", "--format", "{{.ServerVersion}}"],
                 capture_output=True, text=True, timeout=5,
             )
+            logger.debug("docker_running: `docker info` rc=%d stdout=%r stderr=%r",
+                         r.returncode, r.stdout[:100], r.stderr[:200])
             if r.returncode == 0:
+                logger.info("docker_running: Docker daemon running (version=%s)", r.stdout.strip())
                 return {"running": True, "installed": True, "desktop_path": ""}
-        except Exception:
-            pass
+            logger.warning("docker_running: `docker info` failed rc=%d stderr=%s",
+                           r.returncode, r.stderr.strip()[:300])
+        except Exception as _e:
+            logger.warning("docker_running: `docker info` raised %s: %s", type(_e).__name__, _e)
 
         # Docker installed but daemon not running — try to find Desktop executable
         desktop = ""
         if _sys.platform == "win32":
             lad = os.environ.get("LOCALAPPDATA", "")
             candidate = pathlib.Path(lad) / "Docker" / "Docker Desktop.exe"
+            logger.debug("docker_running: Desktop exe candidate %s (exists=%s)",
+                         candidate, candidate.exists())
             if candidate.exists():
                 desktop = str(candidate)
         elif _sys.platform == "darwin":
             candidate = pathlib.Path("/Applications/Docker.app/Contents/MacOS/Docker")
             if candidate.exists():
                 desktop = str(candidate)
+        logger.info("docker_running: Docker installed but not running (desktop_path=%r)", desktop)
         return {"running": False, "installed": True, "desktop_path": desktop}
 
     # Nothing found
+    logger.warning("docker_running: Docker not found — no socket, no pipe, no docker executable")
     return {"running": False, "installed": False, "desktop_path": ""}
 
 
@@ -2381,14 +2411,20 @@ def _sandbox_image_exists() -> bool:
     """Return True if the logos-hermes-sandbox Docker image is present locally."""
     docker_exe = _shutil.which("docker")
     if not docker_exe:
+        logger.debug("sandbox_image_exists: docker not on PATH, skipping image check")
         return False
     try:
         r = _subprocess.run(
             [docker_exe, "image", "inspect", _OPENSHELL_IMAGE, "--format", "{{.Id}}"],
             capture_output=True, text=True, timeout=10,
         )
-        return r.returncode == 0
-    except Exception:
+        if r.returncode == 0:
+            logger.debug("sandbox_image_exists: image %s found", _OPENSHELL_IMAGE)
+            return True
+        logger.debug("sandbox_image_exists: image %s not found (rc=%d)", _OPENSHELL_IMAGE, r.returncode)
+        return False
+    except Exception as _e:
+        logger.warning("sandbox_image_exists: raised %s: %s", type(_e).__name__, _e)
         return False
 
 
