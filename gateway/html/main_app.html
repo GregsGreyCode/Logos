@@ -693,7 +693,7 @@
 
           <!-- Agent unreachable banner -->
           <template x-if="agentAlive === false && agentEverConnected && !chatLoading">
-            <div class="mx-3 mt-2 mb-1 px-3 py-2 rounded-lg bg-red-950/60 border border-red-900/60 flex items-center gap-2 text-xs text-red-400 shrink-0">
+            <div class="mx-4 mt-2 mb-1 px-3 py-2 rounded-lg bg-red-950/60 border border-red-900/60 flex items-center gap-2 text-xs text-red-400 shrink-0">
               <span>&#9888;</span>
               <span>Agent is not responding &mdash; check that your model server is running, then wait a moment for reconnection.</span>
             </div>
@@ -701,7 +701,7 @@
 
           <!-- Active tool bar -->
           <template x-if="chatLoading && webSession">
-            <div class="mx-3 mb-2 px-3 py-1.5 rounded-lg bg-gray-800 border border-gray-700 flex items-center gap-2 text-xs shrink-0">
+            <div class="mx-4 mb-2 px-3 py-1.5 rounded-lg bg-gray-800 border border-gray-700 flex items-center gap-2 text-xs shrink-0">
               <span class="animate-spin text-indigo-400">&#9881;</span>
               <span class="font-mono text-gray-300" x-text="webSession.current_tool"></span>
               <span class="text-gray-600" x-text="'(' + elapsed(webSession.tool_started_at) + 's)'"></span>
@@ -713,7 +713,7 @@
           </template>
 
           <!-- Stats row -->
-          <div class="px-4 py-2 border-t border-gray-800 flex items-center gap-3 text-xs text-gray-600 shrink-0 flex-wrap">
+          <div class="px-4 py-2 border-t border-gray-800/60 flex items-center gap-3 text-xs text-gray-600 shrink-0 flex-wrap">
             <template x-if="chatStats">
               <span class="flex items-center gap-1">
                 <span>⏱</span>
@@ -758,7 +758,8 @@
             <!-- Render mode drop-up -->
             <div class="render-dropup" x-data="{open:false}" @click.away="open=false">
               <button @click="open=!open"
-                class="flex items-center gap-1 px-2.5 py-2 rounded-lg border text-xs font-medium transition-colors"
+                class="flex items-center gap-1 px-2.5 rounded-lg border text-xs font-medium transition-colors"
+                style="height:38px;"
                 :class="open
                   ? 'border-[var(--accent)] bg-[var(--accent-bg)] text-[var(--accent-light)]'
                   : 'border-gray-700 bg-gray-800 text-gray-500 hover:text-gray-300 hover:border-gray-600'"
@@ -790,7 +791,7 @@
                 rows="1"
                 class="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-indigo-500 transition-colors pr-2 resize-none overflow-y-auto"
                 :class="chatDragOver ? 'border-indigo-400 bg-indigo-950/30' : ''"
-                style="min-height:2.25rem;max-height:7rem;line-height:1.5;"
+                style="min-height:38px;max-height:7rem;line-height:1.35;"
                 :placeholder="micRecording ? ('Recording… ' + micCountdown + 's') : micTranscribing ? 'Transcribing…' : ('Message ' + (status.instance_name || 'Hermes') + '\u2026 (Enter · Shift+Enter for newline)')"
                 :disabled="micTranscribing || activeInstance.k8s_status === 'starting'"
                 :readonly="!chatInputReady"></textarea>
@@ -814,7 +815,8 @@
             <!-- Mic button — between input and Send -->
             <button @click="toggleMic()" :disabled="micTranscribing"
               :title="micRecording ? 'Stop recording (or wait for 90s limit)' : 'Voice input — up to 90 seconds'"
-              class="px-2.5 py-2 rounded-lg border text-sm transition-colors disabled:opacity-40"
+              class="px-2.5 rounded-lg border text-sm transition-colors disabled:opacity-40"
+              style="height:38px;"
               :class="micRecording
                 ? 'mic-recording border-red-700 bg-red-900 text-red-300'
                 : micTranscribing
@@ -833,7 +835,8 @@
               </template>
             </button>
             <button @click="sendChat()" :disabled="activeInstance.k8s_status === 'starting'"
-              class="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 px-4 py-2 rounded-lg text-sm font-medium transition-colors">
+              class="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 px-4 rounded-lg text-sm font-medium transition-colors"
+              style="height:38px;">
               Send
             </button>
           </div>
@@ -4739,30 +4742,30 @@ function app() {
       const SPINNERS = ['🌑','🌒','🌓','🌔','🌕','🌖','🌗','🌘'];
       const KAWAII = ['(｡•́︿•̀｡)','(◔_◔)','(⌐■_■)','ヽ(>∀<☆)☆','ಠ_ಠ','(¬‿¬)','٩(◕‿◕｡)۶','(≧◡≦)'];
       const VERBS = ['pondering','mulling','reasoning','computing','synthesizing','formulating','brainstorming','reflecting','musing','deliberating'];
-      let frame = 0, phraseFrame = 0;
+      let frame = 0;
       let kIdx = Math.floor(Math.random() * KAWAII.length);
       let vIdx = Math.floor(Math.random() * VERBS.length);
-      // Moon spinner ticks every 80ms; phrase changes every 3s (≈37 ticks)
-      const PHRASE_TICKS = Math.round(3000 / 80);
-      const startedAt = Date.now();
-      // If a short-message response hasn't arrived after 15s, show waking-from-sleep indicator
+      // Tick every 800ms — calm enough to read, fast enough to feel alive.
+      // Phrase (kawaii + verb) rotates every 4 ticks (~3.2s).
+      const TICK_MS = 800;
+      const PHRASE_TICKS = 4;
+      // If a response hasn't arrived after 15s, show waking-from-sleep indicator
       this._wakingUpTimer = setTimeout(() => { this.isWakingUp = true; }, 15000);
+      // Show immediately so there's no blank frame
+      this.thinkingText = SPINNERS[0] + ' ' + KAWAII[kIdx] + ' ' + VERBS[vIdx] + '\u2026';
       this._thinkingTimer = setInterval(() => {
+        frame++;
         const spin = SPINNERS[frame % SPINNERS.length];
-        // Only update the phrase if no recent server status overrode it
         if (!this._statusOverride) {
+          if (frame % PHRASE_TICKS === 0) {
+            kIdx = (kIdx + 1 + Math.floor(Math.random() * (KAWAII.length - 1))) % KAWAII.length;
+            vIdx = (vIdx + 1 + Math.floor(Math.random() * (VERBS.length - 1))) % VERBS.length;
+          }
           this.thinkingText = spin + ' ' + KAWAII[kIdx] + ' ' + VERBS[vIdx] + '\u2026';
         } else {
           this.thinkingText = spin + ' ' + this._statusOverride;
         }
-        frame++;
-        phraseFrame++;
-        if (phraseFrame >= PHRASE_TICKS) {
-          phraseFrame = 0;
-          kIdx = (kIdx + 1 + Math.floor(Math.random() * (KAWAII.length - 1))) % KAWAII.length;
-          vIdx = (vIdx + 1 + Math.floor(Math.random() * (VERBS.length - 1))) % VERBS.length;
-        }
-      }, 80);
+      }, TICK_MS);
     },
 
     _stopThinkingAnim() {
@@ -4770,46 +4773,39 @@ function app() {
       if (this._statusOverrideTimer) { clearTimeout(this._statusOverrideTimer); this._statusOverrideTimer = null; }
       if (this._wakingUpTimer) { clearTimeout(this._wakingUpTimer); this._wakingUpTimer = null; }
       this._statusOverride = null;
-      this._statusOverrideStart = null;
-      this._statusOverrideNext = null;
+      this._statusOverridePending = null;
+      this._statusOverrideGate = false;
       this.thinkingText = 'thinking\u2026';
     },
 
     // Called when the backend streams a status event.
-    // Each message is shown for at least 3 seconds; newer messages are queued
-    // and shown in order so the user always gets to read what Hermes is doing.
+    // Only the latest status is kept; displayed for at least 1.5s so the
+    // user can read it.  Rapid-fire status events are coalesced — only the
+    // most recent one is shown when the gate window expires.
     _setStatusOverride(text) {
-      const MIN_MS = 3000;
-      if (!this._statusOverride) {
-        // Nothing showing — display immediately
-        this._statusOverride = text;
-        this._statusOverrideStart = Date.now();
-        this._statusOverrideNext = null;
-        if (this._statusOverrideTimer) clearTimeout(this._statusOverrideTimer);
-        this._statusOverrideTimer = setTimeout(() => this._advanceStatusOverride(), MIN_MS);
-      } else {
-        // Something already showing — queue the latest message (replace any pending)
-        this._statusOverrideNext = text;
-        // Ensure the advance timer is running (it might have fired already)
-        if (!this._statusOverrideTimer) {
-          const elapsed = Date.now() - (this._statusOverrideStart || 0);
-          const remaining = Math.max(0, MIN_MS - elapsed);
-          this._statusOverrideTimer = setTimeout(() => this._advanceStatusOverride(), remaining);
-        }
-      }
+      const MIN_MS = 1500;
+      // Always record the latest incoming text
+      this._statusOverridePending = text;
+      if (this._statusOverrideGate) return; // gate is active — pending will be picked up
+      // Gate is open — show immediately and start the gate
+      this._statusOverride = text;
+      this._statusOverridePending = null;
+      this._statusOverrideGate = true;
+      if (this._statusOverrideTimer) clearTimeout(this._statusOverrideTimer);
+      this._statusOverrideTimer = setTimeout(() => this._advanceStatusOverride(), MIN_MS);
     },
 
     _advanceStatusOverride() {
       this._statusOverrideTimer = null;
-      if (this._statusOverrideNext !== null) {
-        this._statusOverride = this._statusOverrideNext;
-        this._statusOverrideStart = Date.now();
-        this._statusOverrideNext = null;
-        this._statusOverrideTimer = setTimeout(() => this._advanceStatusOverride(), 3000);
-      } else {
-        this._statusOverride = null;
-        this._statusOverrideStart = null;
+      this._statusOverrideGate = false;
+      if (this._statusOverridePending !== null) {
+        // A newer status arrived while gated — show it and re-gate
+        this._statusOverride = this._statusOverridePending;
+        this._statusOverridePending = null;
+        this._statusOverrideGate = true;
+        this._statusOverrideTimer = setTimeout(() => this._advanceStatusOverride(), 1500);
       }
+      // If no pending, keep current override showing until next event or animation clears it
     },
 
     newChat() {
