@@ -204,7 +204,11 @@ def merge_policies(*policies: Optional[ActionPolicy]) -> ActionPolicy:
 # Tool categorisation
 # ---------------------------------------------------------------------------
 
-# Canonical action type strings used in approval_requests.action_type
+# Canonical action type strings stored in approval_requests.action_type.
+# Used by categorise_tool() to classify tool calls, and by the approval UI
+# to display human-readable labels.  The MCP access type is injected via
+# action_type_override in create_policy_approval_request() because MCP
+# access requests are not regular tool calls.
 ACTION_FILE_WRITE   = "file_write"
 ACTION_GIT_MUTATION = "git_mutation"
 ACTION_KUBECTL      = "kubectl_mutation"
@@ -212,7 +216,7 @@ ACTION_DOCKER       = "docker_mutation"
 ACTION_SSH_EXEC     = "ssh_exec"
 ACTION_EXEC         = "exec"
 ACTION_EXTERNAL_API = "external_api"
-ACTION_MCP_ACCESS   = "mcp_access"   # gateway MCP server access request
+ACTION_MCP_ACCESS   = "mcp_access"   # gateway MCP server access request (tools/mcp_access_tool.py)
 ACTION_OTHER        = "other"
 
 _TOOL_ACTION_MAP: dict[str, str] = {

@@ -108,6 +108,7 @@ Test agentic combinations, then modify, extend, and break the platform and its a
 - **Live execution view** — watch in real time which tools the agent calls, its chain of reasoning, and elapsed time per step
 - **AI routing layer** — routes requests across machines based on model class, availability, and per-user priority profiles
 - **Parallel sub-agents** — spawn sub-agents via delegation or Mixture-of-Agents, each with independent tool policies and model selection
+- **MCP gateway** — centralized Model Context Protocol server management; MCP servers boot once in the gateway, agents request access dynamically with per-category approval tiers
 - **Memory system** — agent-curated persistent memory, FTS5 session search with LLM summarisation, autonomous skill creation
 - **Scheduling** — cron jobs with Telegram delivery
 - **Workflow engine** — JSON-defined task graphs with DAG execution, parallel steps, conditional branching, and human approval gates
@@ -523,6 +524,110 @@ POST   /evolution/proposals/{id}/decide  # accept / decline / question
 POST   /evolution/proposals/{id}/consult # consult a frontier model
 PATCH  /evolution/settings               # update settings
 ```
+
+---
+
+## 🔌 MCP Gateway
+
+Logos runs a **centralized MCP (Model Context Protocol) gateway** inside the gateway process. MCP servers boot once at startup and are shared across all agent sessions — no per-agent subprocess spawning, no config duplication into sandboxes.
+
+### Why centralized?
+
+The per-agent subprocess model breaks in two critical scenarios:
+- **OpenShell sandbox**: the sandbox container has no access to `~/.logos/config.yaml`, so MCP servers can never start inside it.
+- **k8s pods**: each pod would need its own MCP server subprocesses, multiplying resource use by session count.
+
+The centralized gateway solves both: agents connect over HTTP regardless of where they're running.
+
+### How it works
+
+```
+Agent (any executor)
+    │
+    │  tools: request_mcp_access("filesystem")
+    │
+    ▼
+Gateway policy check
+    │
+    ├─ auto_approve category  → granted immediately
+    ├─ user_approve category  → approval prompt sent to user
+    └─ admin_approve category → requires admin to approve
+    │
+    ▼
+Grant issued → agent receives MCP tools for that server
+    │
+    │  tool calls routed via HTTP
+    ▼
+/mcp/{server-name}  (JSON-RPC proxy in gateway)
+    │
+    ▼
+MCP server subprocess (boots once at gateway start)
+```
+
+### Configuration (`~/.logos/config.yaml`)
+
+```yaml
+mcp_servers:
+  filesystem:
+    command: npx
+    args: ["-y", "@modelcontextprotocol/server-filesystem", "/home/user/projects"]
+    category: local            # controls approval tier
+    description: "Read and write files in ~/projects"
+
+  github:
+    command: npx
+    args: ["-y", "@modelcontextprotocol/server-github"]
+    env:
+      GITHUB_PERSONAL_ACCESS_TOKEN: "${GITHUB_TOKEN}"
+    category: external
+    description: "GitHub issue and PR management"
+
+mcp_policy:
+  auto_approve:  [local]       # granted without prompting the user
+  user_approve:  [external]    # user sees an approval request
+  admin_approve: [privileged]  # only an admin account can approve
+  # deny:        [dangerous]   # always blocked
+```
+
+**`category`** is a free-form label you assign to each server — the `mcp_policy` block maps categories to approval tiers. Any server whose category isn't listed defaults to `user_approve`.
+
+### How agents request access
+
+Agents have two MCP tools always available (in the `mcp-gateway` toolset):
+
+| Tool | What it does |
+|------|-------------|
+| `get_mcp_catalogue` | Lists all configured MCP servers, their descriptions, and the approval tier |
+| `request_mcp_access` | Requests access to a specific server by name |
+
+When `request_mcp_access("filesystem")` is called:
+1. The gateway checks the server's category against `mcp_policy`.
+2. **`auto_approve`**: access granted immediately; MCP tools injected into the session.
+3. **`user_approve`**: an approval card appears in the web dashboard or Telegram; the agent pauses and resumes when you respond.
+4. **`admin_approve`**: same flow, but only an admin-role account can approve.
+
+### Cross-platform URL routing
+
+The gateway automatically resolves the right endpoint URL based on where the agent is running:
+
+| Execution mode | Agent connects to |
+|---|---|
+| Local process (bare metal / Docker) | `http://127.0.0.1:{mcp_port}/mcp/{name}` |
+| OpenShell sandbox | `http://host.docker.internal:{mcp_port}/mcp/{name}` |
+| Kubernetes pod | `http://logos-gateway.{ns}.svc.cluster.local:{mcp_port}/mcp/{name}` |
+
+The port defaults to `8081` and can be overridden with `HERMES_MCP_PORT`.
+
+### Management API
+
+```
+GET    /api/mcp/catalogue                  # list configured servers + policy tiers
+GET    /api/mcp/status                     # which servers are running, which failed
+POST   /api/mcp/grants/{session_id}/{srv}  # admin: manually grant access
+DELETE /api/mcp/grants/{session_id}/{srv}  # admin: revoke access
+```
+
+Grants are in-memory and reset on gateway restart.
 
 ---
 

@@ -157,7 +157,11 @@ async def handle_mcp_proxy(request: web.Request) -> web.Response:
             raise web.HTTPUnauthorized(reason="Missing X-Session-Id header or session_id query param")
         raise web.HTTPForbidden(reason=f"MCP access to '{server_name}' not granted for this session")
 
-    # GET → SSE stream stub (keepalive for streamablehttp_client notification channel)
+    # GET → SSE stream stub.  The MCP streamablehttp_client opens a GET for
+    # server-sent events (notification channel).  Without this stub, the
+    # client's handshake fails with a connection error.  We acknowledge with
+    # a comment line and then send periodic pings to keep the connection alive
+    # until the client disconnects.
     if request.method == "GET":
         resp = web.StreamResponse(headers={
             "Content-Type":  "text/event-stream",

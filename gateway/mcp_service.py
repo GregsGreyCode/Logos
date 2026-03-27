@@ -84,6 +84,10 @@ class MCPGatewayService:
             logger.warning("mcp_service: mcp package not installed — MCP gateway service disabled")
             return
 
+        # MCP servers use a dedicated event loop (managed by mcp_tool.py) because
+        # the MCP SDK's stdio transport creates its own asyncio subprocesses which
+        # conflict with the gateway's main aiohttp loop.  We bridge via
+        # run_in_executor → _run_on_mcp_loop to dispatch from here.
         _ensure_mcp_loop()
 
         async def _start_all():
@@ -99,6 +103,7 @@ class MCPGatewayService:
                 else:
                     logger.info("mcp_service: started '%s' (%d tools)", name, len(result))
 
+        # Bridge: aiohttp loop → thread pool → MCP dedicated loop
         loop = asyncio.get_event_loop()
         await loop.run_in_executor(None, lambda: _run_on_mcp_loop(_start_all(), timeout=120))
 
@@ -246,7 +251,12 @@ class MCPGatewayService:
             return _err(-32603, str(exc))
 
     async def _dispatch_to_session(self, server, method: str, params: dict):
-        """Translate a JSON-RPC method call into an MCP ClientSession call."""
+        """Translate a JSON-RPC method call into an MCP ClientSession call.
+
+        Each branch maps a JSON-RPC method string to the corresponding MCP
+        ClientSession async call, then converts the SDK result objects (which
+        use attrs/pydantic) into plain dicts for JSON serialisation.
+        """
         session = server.session
 
         if method == "initialize":
