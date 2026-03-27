@@ -4226,16 +4226,18 @@ class GatewayRunner:
             # Inject approved MCP toolsets for this session.
             # Grants are stored in mcp_access when the user approves an access request.
             # We add the corresponding mcp-{name} toolset here so tools appear this turn.
+            # NOTE: we must not reassign `enabled_toolsets` here because it is a
+            # closure variable from _run_agent — reassigning would make Python treat
+            # it as local to run_sync(), causing UnboundLocalError on the read.
+            _effective_toolsets = list(enabled_toolsets)
             try:
                 from gateway.mcp_access import get_grants as _get_mcp_grants
                 _mcp_grants = _get_mcp_grants(session_id)
                 if _mcp_grants:
-                    _ts = list(enabled_toolsets)
                     for _mcp_server in _mcp_grants:
                         _mcp_ts = f"mcp-{_mcp_server}"
-                        if _mcp_ts not in _ts:
-                            _ts.append(_mcp_ts)
-                    enabled_toolsets = _ts
+                        if _mcp_ts not in _effective_toolsets:
+                            _effective_toolsets.append(_mcp_ts)
             except Exception:
                 pass
 
@@ -4245,7 +4247,7 @@ class GatewayRunner:
                 max_iterations=max_iterations,
                 quiet_mode=True,
                 verbose_logging=False,
-                enabled_toolsets=enabled_toolsets,
+                enabled_toolsets=_effective_toolsets,
                 ephemeral_system_prompt=combined_ephemeral or None,
                 prefill_messages=self._prefill_messages or None,
                 reasoning_config=reasoning_config,
