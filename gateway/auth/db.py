@@ -497,6 +497,31 @@ def update_user(user_id: str, **fields) -> Optional[dict]:
     return get_user_by_id(user_id)
 
 
+def delete_user(user_id: str) -> bool:
+    """Delete a user account and all directly-owned data.
+
+    Preserves audit_log rows (anonymised) so the audit trail remains intact.
+    Returns True if a user row was actually deleted.
+    """
+    with _conn() as conn:
+        conn.execute("DELETE FROM refresh_tokens WHERE user_id = ?", (user_id,))
+        conn.execute("DELETE FROM user_settings WHERE user_id = ?", (user_id,))
+        conn.execute("DELETE FROM users WHERE id = ?", (user_id,))
+        return conn.total_changes > 0
+
+
+def reset_user_data(user_id: str) -> None:
+    """Wipe a user's run history and invalidate their active sessions.
+
+    Clears agent_runs rows so the Runs tab is empty for that user,
+    and deletes refresh_tokens so any current browser sessions are
+    invalidated on next refresh.  User account and settings are kept.
+    """
+    with _conn() as conn:
+        conn.execute("DELETE FROM agent_runs WHERE user_id = ?", (user_id,))
+        conn.execute("DELETE FROM refresh_tokens WHERE user_id = ?", (user_id,))
+
+
 def list_users(
     page: int = 1,
     limit: int = 20,

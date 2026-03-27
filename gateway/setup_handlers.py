@@ -134,6 +134,11 @@ def _dedup_servers(results: list[dict]) -> list[dict]:
             # If this host is on both 8080 and 1234, drop the 8080 entry
             if p.port == 8080 and 1234 in host_ports.get(p.hostname, set()):
                 continue
+            # If this host is on both 11434 and 1234, drop the 11434 entry.
+            # LM Studio now exposes an Ollama-compat endpoint on :11434; prefer
+            # its native :1234 API so the same server isn't benchmarked twice.
+            if p.port == 11434 and 1234 in host_ports.get(p.hostname, set()):
+                continue
         except Exception:
             pass
         seen.add(ep)
@@ -2280,16 +2285,36 @@ def _openshell_exe() -> str:
 def _docker_running() -> dict:
     """
     Return {running, installed, desktop_path} describing Docker state.
-    Tries the Docker socket first; falls back to ``docker info`` subprocess.
+    Tries the Docker socket/pipe first; falls back to ``docker info`` subprocess.
     """
+    # Windows: Docker Desktop uses a named pipe, not a Unix socket
+    if _sys.platform == "win32":
+        try:
+            if pathlib.Path(r"\\.\pipe\docker_engine").exists():
+                return {"running": True, "installed": True, "desktop_path": ""}
+        except Exception:
+            pass
+
     # Try unix socket (Linux / macOS / Docker Desktop with socket proxy enabled)
     sock_paths = ["/var/run/docker.sock", "/run/docker.sock"]
     for sp in sock_paths:
         if pathlib.Path(sp).exists():
             return {"running": True, "installed": True, "desktop_path": ""}
 
-    # Try subprocess
+    # Resolve docker executable — PATH first, then well-known Windows install locations
     docker_exe = _shutil.which("docker")
+    if not docker_exe and _sys.platform == "win32":
+        _pf  = os.environ.get("PROGRAMFILES",  r"C:\Program Files")
+        _lad = os.environ.get("LOCALAPPDATA",  "")
+        _win_candidates = [
+            pathlib.Path(_pf)  / "Docker" / "Docker" / "resources" / "bin" / "docker.exe",
+            pathlib.Path(_lad) / "Programs" / "Docker" / "Docker" / "resources" / "bin" / "docker.exe",
+        ]
+        for _c in _win_candidates:
+            if _c.exists():
+                docker_exe = str(_c)
+                break
+
     if docker_exe:
         try:
             r = _subprocess.run(
