@@ -2282,20 +2282,7 @@ def _docker_running() -> dict:
     Return {running, installed, desktop_path} describing Docker state.
     Tries the Docker socket first; falls back to ``docker info`` subprocess.
     """
-    import socket as _sock
-
-    # Fast path — TCP to Docker Desktop on Windows (named-pipe proxy)
-    if _sys.platform == "win32":
-        try:
-            s = _sock.socket(_sock.AF_INET, _sock.SOCK_STREAM)
-            s.settimeout(1)
-            s.connect(("localhost", 2375))
-            s.close()
-            return {"running": True, "installed": True, "desktop_path": ""}
-        except Exception:
-            pass
-
-    # Try unix socket
+    # Try unix socket (Linux / macOS / Docker Desktop with socket proxy enabled)
     sock_paths = ["/var/run/docker.sock", "/run/docker.sock"]
     for sp in sock_paths:
         if pathlib.Path(sp).exists():
@@ -2344,6 +2331,28 @@ def _sandbox_image_exists() -> bool:
         return r.returncode == 0
     except Exception:
         return False
+
+
+async def handle_setup_launch_docker(request: web.Request) -> web.Response:
+    """
+    POST /api/setup/launch-docker
+
+    Attempt to launch Docker Desktop on the host machine.
+    Returns {ok, error} — non-blocking, the client should poll env-probe to
+    detect when the daemon comes up.
+    """
+    info = _docker_running()
+    desktop = info.get("desktop_path", "")
+    if not desktop:
+        return web.json_response({"ok": False, "error": "Docker Desktop executable not found"})
+    try:
+        if _sys.platform == "win32":
+            _subprocess.Popen([desktop], creationflags=getattr(_subprocess, "DETACHED_PROCESS", 0x00000008))
+        else:
+            _subprocess.Popen([desktop])
+        return web.json_response({"ok": True})
+    except Exception as exc:
+        return web.json_response({"ok": False, "error": str(exc)})
 
 
 async def handle_setup_env_probe(request: web.Request) -> web.Response:
@@ -2533,12 +2542,25 @@ def _build_sandbox_image() -> tuple[bool, str]:
     if dockerfile is None:
         return False, "Dockerfile.openshell-sandbox not found in package"
 
+    # When running from a frozen .exe, _MEIPASS is a temp directory that persists
+    # only while the process is alive — but the Docker daemon is a separate process
+    # that runs the build asynchronously.  Copy the Dockerfile to a stable location
+    # inside ~/.hermes so Docker can always find it.
+    stable_dir = _HERMES_BIN_DIR.parent / "openshell-build"
+    stable_dir.mkdir(parents=True, exist_ok=True)
+    stable_dockerfile = stable_dir / "Dockerfile"
+    try:
+        import shutil as _shutil2
+        _shutil2.copy2(str(dockerfile), str(stable_dockerfile))
+    except Exception as exc:
+        return False, f"Could not stage Dockerfile: {exc}"
+
     try:
         r = _subprocess.run(
             [docker_exe, "build",
-             "-f", str(dockerfile),
+             "-f", str(stable_dockerfile),
              "-t", _OPENSHELL_IMAGE,
-             str(dockerfile.parent)],
+             str(stable_dir)],
             capture_output=True, text=True, timeout=600,   # 10 min for first build
         )
         if r.returncode == 0:
