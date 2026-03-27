@@ -234,7 +234,7 @@ def _rpc_server_loop(
     Accept one client connection and dispatch tool-call requests until
     the client disconnects or the call limit is reached.
     """
-    from model_tools import handle_function_call
+    from core.model_tools import handle_function_call
 
     conn = None
     try:

@@ -384,7 +384,7 @@ def _session_browse_picker(sessions: list) -> Optional[str]:
 def _resolve_last_cli_session() -> Optional[str]:
     """Look up the most recent CLI session ID from SQLite. Returns None if unavailable."""
     try:
-        from hermes_state import SessionDB
+        from core.state import SessionDB
         db = SessionDB()
         sessions = db.search_sessions(source="cli", limit=1)
         db.close()
@@ -403,7 +403,7 @@ def _resolve_session_by_name_or_id(name_or_id: str) -> Optional[str]:
     - Falls back to the other method if the first doesn't match.
     """
     try:
-        from hermes_state import SessionDB
+        from core.state import SessionDB
         db = SessionDB()
 
         # Try as exact session ID first
@@ -2901,7 +2901,7 @@ For more help on a command:
     def cmd_sessions(args):
         import json as _json
         try:
-            from hermes_state import SessionDB
+            from core.state import SessionDB
             db = SessionDB()
         except Exception as e:
             print(f"Error: Could not open session database: {e}")
@@ -3042,7 +3042,7 @@ For more help on a command:
 
     def cmd_insights(args):
         try:
-            from hermes_state import SessionDB
+            from core.state import SessionDB
             from agent.insights import InsightsEngine
 
             db = SessionDB()

@@ -328,7 +328,7 @@ def _platform_toolset_summary(config: dict, platforms: Optional[List[str]] = Non
 
 def _get_platform_tools(config: dict, platform: str) -> Set[str]:
     """Resolve which individual toolset names are enabled for a platform."""
-    from toolsets import resolve_toolset, TOOLSETS
+    from core.toolsets import resolve_toolset, TOOLSETS
 
     platform_toolsets = config.get("platform_toolsets", {})
     toolset_names = platform_toolsets.get(platform)

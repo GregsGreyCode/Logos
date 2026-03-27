@@ -210,7 +210,7 @@ def _create_approval_request(
 def _register():
     try:
         from tools.registry import registry
-        from toolsets import create_custom_toolset
+        from core.toolsets import create_custom_toolset
 
         schema = {
             "name": _TOOL_NAME,

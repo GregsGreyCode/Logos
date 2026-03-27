@@ -40,7 +40,7 @@ class TestFlushDeduplication:
 
     def test_flush_writes_only_new_messages(self):
         """First flush writes all new messages, second flush writes none."""
-        from hermes_state import SessionDB
+        from core.state import SessionDB
 
         with tempfile.TemporaryDirectory() as tmpdir:
             db_path = Path(tmpdir) / "test.db"
@@ -70,7 +70,7 @@ class TestFlushDeduplication:
 
     def test_flush_writes_incrementally(self):
         """Messages added between flushes are written exactly once."""
-        from hermes_state import SessionDB
+        from core.state import SessionDB
 
         with tempfile.TemporaryDirectory() as tmpdir:
             db_path = Path(tmpdir) / "test.db"
@@ -99,7 +99,7 @@ class TestFlushDeduplication:
 
     def test_persist_session_multiple_calls_no_duplication(self):
         """Multiple _persist_session calls don't duplicate DB entries."""
-        from hermes_state import SessionDB
+        from core.state import SessionDB
 
         with tempfile.TemporaryDirectory() as tmpdir:
             db_path = Path(tmpdir) / "test.db"
@@ -126,7 +126,7 @@ class TestFlushDeduplication:
 
     def test_flush_reset_after_compression(self):
         """After compression creates a new session, flush index resets."""
-        from hermes_state import SessionDB
+        from core.state import SessionDB
 
         with tempfile.TemporaryDirectory() as tmpdir:
             db_path = Path(tmpdir) / "test.db"
@@ -173,7 +173,7 @@ class TestAppendToTranscriptSkipDb:
     def _make_store(self, tmp_path):
         from gateway.config import GatewayConfig
         from gateway.session import SessionStore
-        from hermes_state import SessionDB
+        from core.state import SessionDB
         config = GatewayConfig()
         with patch("gateway.session.SessionStore._ensure_loaded"):
             s = SessionStore(sessions_dir=tmp_path, config=config)
