@@ -419,8 +419,17 @@
             const d = await res.json().catch(() => ({}));
             clearTimeout(this._inactivityTimer);
             this.phase = 'loggedin';
-            // Wait two frames so Alpine commits the logo-up class removal before measuring
+            // Wait two frames so Alpine commits the logo-up class removal
             await new Promise(r => requestAnimationFrame(r));
+            await new Promise(r => requestAnimationFrame(r));
+            // Snap logo-wrap to rest instantly — its 2.4s transition back from
+            // logo-up would still be running, which causes fromCY to be measured
+            // at the wrong position and the logo to land 24px too low.
+            const logoWrap = document.querySelector('.logo-wrap');
+            if (logoWrap) {
+              logoWrap.style.transition = 'none';
+              logoWrap.style.transform  = 'none';
+            }
             await new Promise(r => requestAnimationFrame(r));
             const imgEl = document.querySelector('.logo-img');
             if (imgEl) {
@@ -435,9 +444,12 @@
                 const toCY  = 68;
                 imgEl.style.transform = `translate(${toCX - fromCX}px, ${toCY - fromCY}px) scale(${(56/100).toFixed(4)})`;
               } else {
-                // Destination is / — nav logo (32×32, top-left of max-w-screen-xl)
-                const toCX = Math.max(0, (window.innerWidth - 1280) / 2) + 32;
-                const toCY = 32;
+                // Destination is / — use the actual rendered nav logo position stored by main_app.html,
+                // falling back to the CSS-computed estimate if not yet available.
+                const storedCX = parseFloat(localStorage.getItem('logos_nav_logo_cx') || '0');
+                const storedCY = parseFloat(localStorage.getItem('logos_nav_logo_cy') || '0');
+                const toCX = storedCX || (Math.max(0, (window.innerWidth - 1280) / 2) + 32);
+                const toCY = storedCY || 32;
                 imgEl.style.transform = `translate(${toCX - fromCX}px, ${toCY - fromCY}px) scale(0.32)`;
               }
             }

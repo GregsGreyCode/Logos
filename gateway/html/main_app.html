@@ -255,10 +255,11 @@
 <div class="max-w-screen-xl mx-auto px-4 pt-4 pb-0" style="position:relative;z-index:10">
 
   <!-- Tabs + theme swatches -->
-  <div class="flex items-end gap-6 border-b border-gray-800 mb-3 relative z-40" data-fl="0">
+  <div class="flex items-end gap-6 border-b border-gray-800 mb-3 relative z-40">
     <!-- Logos brand mark — matches the logo.svg the login page animates to this position -->
-    <div class="pb-2 shrink-0 flex items-center gap-2">
-      <img src="/static/logo.svg" alt="Logos"
+    <!-- data-fl-logo: on first-load after login, fade in instantly (no translateY so the swap illusion works) -->
+    <div class="pb-2 shrink-0 flex items-center gap-2" data-fl-logo>
+      <img id="nav-logo-img" src="/static/logo.svg" alt="Logos"
            style="height:32px;width:32px;flex-shrink:0;object-fit:contain;filter:hue-rotate(var(--hue-deg,0deg)) drop-shadow(0 0 6px rgba(99,102,241,0.35));">
       <template x-if="isCanary">
         <span class="px-2 py-0.5 rounded-full text-[10px] font-bold tracking-widest uppercase border border-yellow-500 bg-yellow-950 text-yellow-400 self-center">canary</span>
@@ -332,6 +333,7 @@
                 'bg-gray-800 text-gray-500':   true
               }"
               x-text="authUser.role"></div>
+            <div x-show="appVersion" class="text-[10px] text-gray-600 mt-1 font-mono" x-text="appVersion"></div>
           </div>
           <!-- Change password -->
           <div class="px-4 py-3 border-b border-gray-800" x-show="!changePwOpen">
@@ -4108,6 +4110,7 @@ function app() {
     authPermissions: [],
     isCanary: window.__LOGOS__?.isCanary || false,
     runtimeMode: window.__LOGOS__?.runtimeMode || 'kubernetes',
+    appVersion: window.__LOGOS__?.version || '',
     // routing
     routingTab: localStorage.getItem('hermes_routing_tab') || 'machines',
     // admin
@@ -4312,10 +4315,29 @@ function app() {
       };
       _pollUpdate();
       setInterval(_pollUpdate, 60_000);
+      // Store the nav logo's exact rendered position so login.html can target it precisely.
+      const _storeNavLogoPos = () => {
+        try {
+          const navLogo = document.getElementById('nav-logo-img');
+          if (navLogo) {
+            const r = navLogo.getBoundingClientRect();
+            localStorage.setItem('logos_nav_logo_cx', String(r.left + r.width / 2));
+            localStorage.setItem('logos_nav_logo_cy', String(r.top  + r.height / 2));
+          }
+        } catch {}
+      };
+      requestAnimationFrame(_storeNavLogoPos);
+      window.addEventListener('resize', _storeNavLogoPos, { passive: true });
       // Staggered first-load fade-in (set by login page on successful auth)
       try {
         if (sessionStorage.getItem('logos_fl') === '1') {
           sessionStorage.removeItem('logos_fl');
+          // Nav logo: instant fade-in so the swap illusion with login animation works
+          document.querySelectorAll('[data-fl-logo]').forEach(el => {
+            el.style.opacity = '0';
+            setTimeout(() => { el.style.transition = 'opacity 0.15s'; el.style.opacity = '1'; }, 16);
+          });
+          // Other elements: staggered fade-in with slight upward slide
           document.querySelectorAll('[data-fl]').forEach(el => {
             el.classList.add('fl-hidden');
             const delay = parseFloat(el.dataset.fl) * 0.35;
@@ -4436,8 +4458,7 @@ function app() {
         credentials: 'same-origin',
       });
       if (r.ok) {
-        alert('Setup wizard re-enabled. It will appear on next login.');
-        this.accountMenuOpen = false;
+        window.location.href = '/setup';
       } else {
         alert('Failed to reset setup state.');
       }
@@ -4623,19 +4644,43 @@ function app() {
       const SPINNERS = ['🌑','🌒','🌓','🌔','🌕','🌖','🌗','🌘'];
       const KAWAII = ['(｡•́︿•̀｡)','(◔_◔)','(⌐■_■)','ヽ(>∀<☆)☆','ಠ_ಠ','(¬‿¬)','٩(◕‿◕｡)۶','(≧◡≦)'];
       const VERBS = ['pondering','mulling','reasoning','computing','synthesizing','formulating','brainstorming','reflecting','musing','deliberating'];
-      let frame = 0;
-      const kIdx = Math.floor(Math.random() * KAWAII.length);
-      const vIdx = Math.floor(Math.random() * VERBS.length);
+      let frame = 0, phraseFrame = 0;
+      let kIdx = Math.floor(Math.random() * KAWAII.length);
+      let vIdx = Math.floor(Math.random() * VERBS.length);
+      // Moon spinner ticks every 80ms; phrase changes every 3s (≈37 ticks)
+      const PHRASE_TICKS = Math.round(3000 / 80);
       this._thinkingTimer = setInterval(() => {
         const spin = SPINNERS[frame % SPINNERS.length];
-        this.thinkingText = spin + ' ' + KAWAII[kIdx] + ' ' + VERBS[vIdx] + '\u2026';
+        // Only update the phrase if no recent server status overrode it
+        if (!this._statusOverride) {
+          this.thinkingText = spin + ' ' + KAWAII[kIdx] + ' ' + VERBS[vIdx] + '\u2026';
+        } else {
+          this.thinkingText = spin + ' ' + this._statusOverride;
+        }
         frame++;
-      }, 120);
+        phraseFrame++;
+        if (phraseFrame >= PHRASE_TICKS) {
+          phraseFrame = 0;
+          kIdx = (kIdx + 1 + Math.floor(Math.random() * (KAWAII.length - 1))) % KAWAII.length;
+          vIdx = (vIdx + 1 + Math.floor(Math.random() * (VERBS.length - 1))) % VERBS.length;
+        }
+      }, 80);
     },
 
     _stopThinkingAnim() {
       if (this._thinkingTimer) { clearInterval(this._thinkingTimer); this._thinkingTimer = null; }
+      this._statusOverride = null;
       this.thinkingText = 'thinking\u2026';
+    },
+
+    // Called when the backend streams a status event — shown for 3 seconds
+    _setStatusOverride(text) {
+      this._statusOverride = text;
+      if (this._statusOverrideTimer) clearTimeout(this._statusOverrideTimer);
+      this._statusOverrideTimer = setTimeout(() => {
+        this._statusOverride = null;
+        this._statusOverrideTimer = null;
+      }, 3000);
     },
 
     newChat() {
@@ -5200,12 +5245,13 @@ function app() {
           const { done, value } = await reader.read();
           if (done) break;
           buf += dec.decode(value, { stream: true });
-          const lines = buf.split('\\n');
+          const lines = buf.split('\n');
           buf = lines.pop();
           for (const line of lines) {
             if (!line.startsWith('data:')) continue;
             try {
               const d = JSON.parse(line.slice(5).trim());
+              if (d.type === 'status') { this._setStatusOverride(d.text || d.content || ''); }
               if (d.type === 'message') { reply = d.content; this.isWakingUp = false; }
               if (d.type === 'done') {
                 msgStats = {
@@ -5520,7 +5566,7 @@ function app() {
           const {done, value} = await reader.read();
           if (done) break;
           buf += dec.decode(value, {stream: true});
-          const lines = buf.split('\\n'); buf = lines.pop();
+          const lines = buf.split('\n'); buf = lines.pop();
           for (const line of lines) {
             if (!line.startsWith('data: ')) continue;
             try {

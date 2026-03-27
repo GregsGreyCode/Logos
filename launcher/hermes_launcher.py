@@ -855,7 +855,7 @@ def _start_icon_animation(icon) -> None:
         import urllib.request as _ur
         import json as _js
         try:
-            with _ur.urlopen("http://127.0.0.1:4444/api/hue", timeout=2) as r:
+            with _ur.urlopen(f"http://127.0.0.1:{_PORT}/api/hue", timeout=2) as r:
                 return _js.loads(r.read())["epoch_ms"] / 1000.0
         except Exception:
             return time.time()
