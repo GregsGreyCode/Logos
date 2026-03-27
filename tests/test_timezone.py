@@ -156,7 +156,7 @@ class TestCodeExecutionTZ:
         import json as _json
         os.environ["HERMES_TIMEZONE"] = "Asia/Kolkata"
 
-        with patch("model_tools.handle_function_call", side_effect=self._mock_handle):
+        with patch("core.model_tools.handle_function_call", side_effect=self._mock_handle):
             result = _json.loads(self._execute_code(
                 code='import os; print(os.environ.get("TZ", "NOT_SET"))',
                 task_id="tz-test",
@@ -170,7 +170,7 @@ class TestCodeExecutionTZ:
         import json as _json
         os.environ.pop("HERMES_TIMEZONE", None)
 
-        with patch("model_tools.handle_function_call", side_effect=self._mock_handle):
+        with patch("core.model_tools.handle_function_call", side_effect=self._mock_handle):
             result = _json.loads(self._execute_code(
                 code='import os; print(os.environ.get("TZ", "NOT_SET"))',
                 task_id="tz-test-empty",
@@ -184,7 +184,7 @@ class TestCodeExecutionTZ:
         import json as _json
         os.environ["HERMES_TIMEZONE"] = "Asia/Kolkata"
 
-        with patch("model_tools.handle_function_call", side_effect=self._mock_handle):
+        with patch("core.model_tools.handle_function_call", side_effect=self._mock_handle):
             result = _json.loads(self._execute_code(
                 code='import os; print(os.environ.get("HERMES_TIMEZONE", "NOT_SET"))',
                 task_id="tz-leak-test",

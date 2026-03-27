@@ -47,7 +47,7 @@ class TestToolResolution:
         """enabled_toolsets=['terminal', 'file'] should produce 6 tools."""
         if not self._has_minisweagent():
             pytest.skip("minisweagent not installed (git submodule update --init)")
-        from model_tools import get_tool_definitions
+        from core.model_tools import get_tool_definitions
         tools = get_tool_definitions(
             enabled_toolsets=["terminal", "file"],
             quiet_mode=True,
@@ -60,7 +60,7 @@ class TestToolResolution:
         """The terminal tool must be present (not silently dropped)."""
         if not self._has_minisweagent():
             pytest.skip("minisweagent not installed (git submodule update --init)")
-        from model_tools import get_tool_definitions
+        from core.model_tools import get_tool_definitions
         tools = get_tool_definitions(
             enabled_toolsets=["terminal", "file"],
             quiet_mode=True,

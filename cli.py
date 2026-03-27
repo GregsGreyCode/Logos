@@ -1271,7 +1271,7 @@ class HermesCLI:
         # Initialize SQLite session store early so /title works before first message
         self._session_db = None
         try:
-            from hermes_state import SessionDB
+            from core.state import SessionDB
             self._session_db = SessionDB()
         except Exception:
             pass
@@ -1511,7 +1511,7 @@ class HermesCLI:
         # Initialize SQLite session store for CLI sessions (if not already done in __init__)
         if self._session_db is None:
             try:
-                from hermes_state import SessionDB
+                from core.state import SessionDB
                 self._session_db = SessionDB()
             except Exception as e:
                 logger.debug("SQLite session store not available: %s", e)
@@ -2868,7 +2868,7 @@ class HermesCLI:
                     if self._session_db:
                         # Sanitize the title early so feedback matches what gets stored
                         try:
-                            from hermes_state import SessionDB
+                            from core.state import SessionDB
                             new_title = SessionDB.sanitize_title(raw_title)
                         except ValueError as e:
                             _cprint(f"  {e}")
@@ -3451,7 +3451,7 @@ class HermesCLI:
     def _handle_runs_command(self, command: str = "/runs"):
         """Handle /runs [<run_id> | replay <id> | clone <id>] command."""
         try:
-            from hermes_state import SessionDB
+            from core.state import SessionDB
             from runs import RunReplayer, fmt_status, fmt_duration, fmt_ts, fmt_run_id_short
         except ImportError as exc:
             print(f"  Run auditability module not available: {exc}")
@@ -3811,7 +3811,7 @@ class HermesCLI:
         db = self._session_db
         if db is None:
             try:
-                from hermes_state import SessionDB
+                from core.state import SessionDB
                 db = SessionDB()
             except Exception:
                 pass
@@ -4023,7 +4023,7 @@ class HermesCLI:
         db = self._session_db
         if db is None:
             try:
-                from hermes_state import SessionDB
+                from core.state import SessionDB
                 db = SessionDB()
             except Exception as exc:
                 print(f"  Metrics unavailable: {exc}")
@@ -4063,7 +4063,7 @@ class HermesCLI:
                 i += 1
 
         try:
-            from hermes_state import SessionDB
+            from core.state import SessionDB
             from agent.insights import InsightsEngine
 
             db = SessionDB()

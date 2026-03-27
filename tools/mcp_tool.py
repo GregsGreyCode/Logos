@@ -1403,7 +1403,7 @@ async def _discover_and_register_server(name: str, config: dict) -> List[str]:
     Returns list of registered tool names.
     """
     from tools.registry import registry
-    from toolsets import create_custom_toolset
+    from core.toolsets import create_custom_toolset
 
     connect_timeout = config.get("connect_timeout", _DEFAULT_CONNECT_TIMEOUT)
     server = await asyncio.wait_for(
@@ -1571,7 +1571,7 @@ def discover_mcp_tools() -> List[str]:
 
     if all_tools:
         # Dynamically inject into all hermes-* platform toolsets
-        from toolsets import TOOLSETS
+        from core.toolsets import TOOLSETS
         for ts_name, ts in TOOLSETS.items():
             if ts_name.startswith("hermes-"):
                 for tool_name in all_tools:
@@ -1748,7 +1748,7 @@ def inject_mcp_server_for_session(
     # on the next agent turn without requiring a restart
     if registered:
         try:
-            from toolsets import TOOLSETS
+            from core.toolsets import TOOLSETS
             for ts_name, ts in TOOLSETS.items():
                 if ts_name.startswith("hermes-"):
                     for tool_name in registered:

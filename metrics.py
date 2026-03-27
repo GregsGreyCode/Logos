@@ -17,7 +17,7 @@ Prometheus compatibility:
 
 Usage:
   from metrics import MetricsEngine
-  from hermes_state import SessionDB
+  from core.state import SessionDB
 
   db = SessionDB()
   engine = MetricsEngine(db)
