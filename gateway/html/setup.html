@@ -1268,11 +1268,25 @@
               </div>
             </template>
 
-            <!-- ──── Windows: Docker detected but OpenShell not supported ── -->
+            <!-- ──── Docker sandbox mode (no OpenShell) ── -->
             <template x-if="sandboxProbe.docker_running && sandboxProbe.openshell_supported === false">
-              <div class="mb-4 px-3 py-2.5 rounded-xl border border-blue-900/40 bg-blue-950/10 text-xs text-blue-300/80 leading-relaxed space-y-1">
-                <div class="font-semibold text-blue-300">Docker is running, but sandbox mode is not yet available on Windows</div>
-                <div>Docker Desktop was detected and is working. However, the OpenShell sandbox engine &mdash; which manages container isolation and security policies &mdash; does not yet ship a Windows release. Agents will run in-process for now. Kubernetes sandboxing is available as an alternative if you have a cluster.</div>
+              <div class="mb-3 p-4 rounded-xl border transition-all"
+                :class="sandboxProbe.docker_sandbox_ready ? 'border-green-800 bg-green-950/20' : sandboxProbe.image_present ? 'border-green-800 bg-green-950/20' : 'border-blue-900/40 bg-blue-950/10'">
+                <div class="flex items-start gap-3">
+                  <div class="w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0 text-sm font-bold"
+                    :class="sandboxProbe.docker_sandbox_ready || sandboxProbe.image_present ? 'bg-green-900 text-green-300' : 'bg-blue-900 text-blue-300'">
+                    <span x-text="sandboxProbe.docker_sandbox_ready || sandboxProbe.image_present ? '✓' : 'i'"></span>
+                  </div>
+                  <div class="flex-1">
+                    <div class="flex items-center gap-2 flex-wrap">
+                      <span class="text-sm font-semibold text-white">Container sandbox</span>
+                      <span x-show="sandboxProbe.docker_sandbox_ready" class="text-[9px] px-1.5 py-0.5 rounded-full bg-green-900 text-green-300 border border-green-700 font-semibold uppercase tracking-wider">Ready</span>
+                      <span x-show="!sandboxProbe.docker_sandbox_ready && !sandboxProbe.image_present" class="text-[9px] px-1.5 py-0.5 rounded-full bg-blue-900 text-blue-300 border border-blue-700 font-semibold uppercase tracking-wider">Available</span>
+                    </div>
+                    <p class="text-xs text-gray-500 mt-0.5" x-show="sandboxProbe.docker_sandbox_ready">Docker Desktop is running and the sandbox image is built. Agents will run in isolated containers.</p>
+                    <p class="text-xs text-gray-500 mt-0.5" x-show="!sandboxProbe.docker_sandbox_ready">Docker Desktop is running. Agents can run in isolated containers with their own filesystem. This is reduced isolation compared to OpenShell (no egress policy enforcement) but significantly safer than in-process execution.</p>
+                  </div>
+                </div>
               </div>
             </template>
 
@@ -1299,13 +1313,13 @@
             </template>
 
             <!-- ──────────────────────── AUTO-SETUP BUTTON / PROGRESS ── -->
-            <template x-if="sandboxProbe.docker_running && !sandboxProbe.sandbox_ready && sandboxProbe.openshell_supported !== false">
+            <template x-if="sandboxProbe.docker_running && !sandboxProbe.sandbox_ready && !(sandboxProbe.openshell_supported === false && sandboxProbe.docker_sandbox_ready)">
               <div class="mb-4">
                 <button @click="runSandboxSetup()"
                   :disabled="sandboxSetupRunning"
                   class="w-full py-2.5 rounded-xl text-sm font-medium border transition-all"
                   :class="sandboxSetupRunning ? 'border-green-800 bg-green-950/20 text-green-400 cursor-not-allowed' : 'border-green-700 bg-green-900/30 text-green-300 hover:bg-green-900/50'">
-                  <span x-show="!sandboxSetupRunning">&#9651; Set up safe sandbox automatically</span>
+                  <span x-show="!sandboxSetupRunning">&#9651; Set up sandbox automatically</span>
                   <span x-show="sandboxSetupRunning" class="flex items-center justify-center gap-2">
                     <div class="w-3.5 h-3.5 border border-green-600 border-t-green-300 rounded-full animate-spin"></div>
                     Setting up sandbox&hellip;
@@ -1327,10 +1341,17 @@
               </div>
             </template>
 
-            <!-- ──── All green: sandbox ready ── -->
+            <!-- ──── All green: full sandbox ready (OpenShell) ── -->
             <template x-if="sandboxProbe.sandbox_ready">
               <div class="mb-4 px-3 py-2.5 rounded-xl border border-green-800 bg-green-950/20 text-xs text-green-300 leading-relaxed">
-                &#9651; <span class="font-semibold">Sandbox mode enabled.</span> Each agent run will get its own isolated container with policy-enforced network access. Your host filesystem and credentials are protected.
+                &#9651; <span class="font-semibold">Full sandbox mode enabled.</span> Each agent run gets its own isolated container with policy-enforced network access. Your host filesystem and credentials are protected.
+              </div>
+            </template>
+
+            <!-- ──── Docker sandbox ready (no OpenShell) ── -->
+            <template x-if="!sandboxProbe.sandbox_ready && sandboxProbe.docker_sandbox_ready && execEnv === 'docker'">
+              <div class="mb-4 px-3 py-2.5 rounded-xl border border-green-800 bg-green-950/20 text-xs text-green-300 leading-relaxed">
+                &#9651; <span class="font-semibold">Container sandbox enabled.</span> Each agent run gets its own isolated Docker container. Host filesystem access is blocked. Network policy enforcement is not active &mdash; agents can make outbound requests.
               </div>
             </template>
 
@@ -1344,7 +1365,7 @@
 
             <!-- ──── Kubernetes option ── -->
             <div class="mb-4">
-              <button @click="execEnv = (execEnv === 'k8s' ? (sandboxProbe.sandbox_ready ? 'openshell' : 'local') : 'k8s'); if (execEnv === 'k8s') { k8sTestResult = null; k8sTestError = ''; }"
+              <button @click="execEnv = (execEnv === 'k8s' ? (sandboxProbe.sandbox_ready ? 'openshell' : sandboxProbe.docker_sandbox_ready ? 'docker' : 'local') : 'k8s'); if (execEnv === 'k8s') { k8sTestResult = null; k8sTestError = ''; }"
                 class="w-full text-left p-3 rounded-xl border text-xs transition-all"
                 :class="execEnv === 'k8s' ? 'border-indigo-500 bg-indigo-950/30' : 'border-gray-800 bg-gray-900 hover:border-gray-700'">
                 <div class="flex items-center gap-2">
@@ -1404,11 +1425,12 @@
             <button @click="goNext()"
               :disabled="sandboxSetupRunning || (execEnv === 'openshell' && !sandboxProbe.sandbox_ready && sandboxProbe.docker_running && !sandboxSetupDone) || (execEnv === 'k8s' && k8sMode === 'kubeconfig' && k8sTestResult !== 'ok')"
               class="btn-primary w-full py-2.5 rounded-xl text-sm disabled:opacity-40 disabled:cursor-not-allowed">
-              <span x-show="execEnv === 'openshell' && sandboxProbe.sandbox_ready">Continue with sandboxed agents &rarr;</span>
+              <span x-show="execEnv === 'openshell' && sandboxProbe.sandbox_ready">Continue with full sandbox &rarr;</span>
               <span x-show="execEnv === 'openshell' && !sandboxProbe.sandbox_ready && sandboxSetupDone" class="text-red-400">Setup failed &mdash; continue in-process &rarr;</span>
+              <span x-show="execEnv === 'docker'">Continue with container sandbox &rarr;</span>
               <span x-show="execEnv === 'k8s' && (k8sMode === 'incluster' || k8sTestResult === 'ok')">Continue with Kubernetes &rarr;</span>
               <span x-show="execEnv === 'k8s' && k8sMode === 'kubeconfig' && k8sTestResult !== 'ok'" class="text-gray-500">Test connection to continue &rarr;</span>
-              <span x-show="(execEnv !== 'openshell' && execEnv !== 'k8s') || (!sandboxProbe.docker_running && !sandboxSetupDone && execEnv !== 'k8s')">Continue <span x-show="!sandboxProbe.docker_running && execEnv !== 'k8s'" class="text-red-400">(in-process)</span> &rarr;</span>
+              <span x-show="execEnv === 'local'">Continue <span x-show="!sandboxProbe.docker_running" class="text-red-400">(in-process, no isolation)</span> &rarr;</span>
             </button>
           </div>
         </template>
@@ -1595,7 +1617,7 @@
           </div>
           <div class="flex justify-between text-sm py-2.5">
             <span class="text-gray-500">Execution</span>
-            <span class="text-white font-medium" x-text="execEnv === 'k8s' ? 'Kubernetes (' + (k8sMode === 'incluster' ? 'automatic' : 'kubeconfig') + ')' : execEnv === 'openshell' ? 'OpenShell sandbox' : 'Local'"></span>
+            <span class="text-white font-medium" x-text="execEnv === 'k8s' ? 'Kubernetes (' + (k8sMode === 'incluster' ? 'automatic' : 'kubeconfig') + ')' : execEnv === 'openshell' ? 'Full sandbox (OpenShell)' : execEnv === 'docker' ? 'Container sandbox (Docker)' : 'Local process (no isolation)'"></span>
           </div>
           <div x-show="execEnv === 'k8s'" class="flex justify-between text-sm py-2.5">
             <span class="text-gray-500">Namespace</span>
@@ -1864,19 +1886,24 @@ function setup() {
       try {
         const r = await fetch('/api/setup/env-probe');
         this.sandboxProbe = await r.json();
-        // Auto-select execEnv based on what's available
+        // Auto-select execEnv based on what's available (best → worst)
         if (this.sandboxProbe.sandbox_ready) {
+          // Full OpenShell sandbox — best isolation
           this.execEnv = 'openshell';
         } else if (this.sandboxProbe.docker_running && this.sandboxProbe.openshell_supported !== false) {
-          // Docker is running and OpenShell is supported — default to openshell path
+          // Docker + OpenShell supported but not yet set up — guide user to set up
           this.execEnv = 'openshell';
+        } else if (this.sandboxProbe.docker_running) {
+          // Docker available but OpenShell unsupported (Windows) — use Docker sandbox
+          this.execEnv = 'docker';
         } else {
-          // Windows with Docker but no OpenShell support, or no Docker at all
+          // No Docker at all — fall back to in-process
           this.execEnv = 'local';
         }
       } catch(e) {
         this.sandboxProbe = { docker_running: false, docker_installed: false,
-                               openshell_present: false, image_present: false, sandbox_ready: false };
+                               openshell_present: false, image_present: false, sandbox_ready: false,
+                               docker_sandbox_ready: false, openshell_supported: true };
         // Only reset to local if no explicit choice has been made (e.g. k8s)
         if (!this.execEnv || this.execEnv === 'openshell') this.execEnv = 'local';
       } finally {
@@ -1914,6 +1941,9 @@ function setup() {
                 if (ev.sandbox_ready) {
                   this.execEnv = 'openshell';
                   if (this.sandboxProbe) this.sandboxProbe.sandbox_ready = true;
+                } else if (ev.docker_sandbox_ready) {
+                  this.execEnv = 'docker';
+                  if (this.sandboxProbe) this.sandboxProbe.docker_sandbox_ready = true;
                 }
               } else {
                 // Update existing entry or push new

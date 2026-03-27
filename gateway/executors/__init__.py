@@ -3,7 +3,9 @@ Executor abstraction for agent instance management.
 
 Selects the appropriate backend at startup based on runtime.mode config:
   - "kubernetes" — spawn instances as k8s Deployments (server/homelab default)
-  - "local"      — spawn instances as supervised local processes (desktop/no-cluster)
+  - "openshell"  — spawn as OpenShell sandboxes (full policy enforcement)
+  - "docker"     — spawn as plain Docker containers (container isolation, no policy engine)
+  - "local"      — spawn as supervised local processes (no isolation, desktop fallback)
 """
 
 from .base import InstanceExecutor, InstanceConfig, SpawnedInstance, ResourceHeadroom
@@ -25,6 +27,9 @@ def build_executor(mode: str) -> "InstanceExecutor":
     elif mode == "openshell":
         from .openshell import OpenShellExecutor
         return OpenShellExecutor()
+    elif mode == "docker":
+        from .docker import DockerSandboxExecutor
+        return DockerSandboxExecutor()
     else:
         from .local import LocalProcessExecutor
         return LocalProcessExecutor()

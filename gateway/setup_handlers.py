@@ -1929,6 +1929,8 @@ async def handle_setup_complete(request: web.Request) -> web.Response:
                     _cfg["HERMES_RUNTIME_MODE"] = "kubernetes"
                 elif exec_env == "openshell":
                     _cfg["HERMES_RUNTIME_MODE"] = "openshell"
+                elif exec_env == "docker":
+                    _cfg["HERMES_RUNTIME_MODE"] = "docker"
                 else:
                     _cfg["HERMES_RUNTIME_MODE"] = "local"
             # For k8s-kubeconfig mode, also write the kubeconfig to a file so
@@ -2486,16 +2488,21 @@ async def handle_setup_env_probe(request: web.Request) -> web.Response:
     # OpenShell only ships Linux and macOS binaries — not available on Windows
     openshell_supported = _platform.system() != "Windows"
 
+    # Docker sandbox (container-only, no OpenShell) is available on any platform
+    # where Docker is running and the sandbox image exists.
+    docker_sandbox_ready = docker_info["running"] and image_present
+
     return web.json_response({
-        "platform":             _OS_MAP.get(_platform.system(), _platform.system().lower()),
-        "docker_running":       docker_info["running"],
-        "docker_installed":     docker_info["installed"],
-        "docker_desktop_path":  docker_info.get("desktop_path", ""),
-        "openshell_present":    bool(openshell_exe),
-        "openshell_path":       openshell_exe,
-        "openshell_supported":  openshell_supported,
-        "image_present":        image_present,
-        "sandbox_ready":        docker_info["running"] and bool(openshell_exe) and image_present,
+        "platform":              _OS_MAP.get(_platform.system(), _platform.system().lower()),
+        "docker_running":        docker_info["running"],
+        "docker_installed":      docker_info["installed"],
+        "docker_desktop_path":   docker_info.get("desktop_path", ""),
+        "openshell_present":     bool(openshell_exe),
+        "openshell_path":        openshell_exe,
+        "openshell_supported":   openshell_supported,
+        "image_present":         image_present,
+        "sandbox_ready":         docker_info["running"] and bool(openshell_exe) and image_present,
+        "docker_sandbox_ready":  docker_sandbox_ready,
     })
 
 
@@ -2526,13 +2533,29 @@ async def handle_setup_sandbox_setup(request: web.Request) -> web.Response:
     loop = asyncio.get_event_loop()
 
     # ── Platform gate: OpenShell only supports Linux and macOS ───────────
+    # On Windows (or other unsupported platforms), skip OpenShell and use
+    # Docker-only sandbox mode instead: just build the image.
     if _platform.system() == "Windows":
         await emit("openshell_install", "skip",
-                    "OpenShell is not yet available for Windows. "
-                    "Docker was detected, but sandboxed agent execution requires OpenShell to manage containers. "
-                    "Agents will run in-process for now.")
-        await emit("done", "error", sandbox_ready=False,
-                    reason="openshell_unsupported_platform")
+                    "OpenShell is not available on Windows. "
+                    "Setting up Docker container sandbox instead (reduced isolation).")
+
+        # Build the Docker-only sandbox image
+        image_ok = await loop.run_in_executor(None, _sandbox_image_exists)
+        if image_ok:
+            await emit("image_build", "ok", f"Image '{_OPENSHELL_IMAGE}' already present")
+        else:
+            await emit("image_build", "running", f"Building '{_OPENSHELL_IMAGE}' image (this takes ~2 minutes)…")
+            build_ok, build_err = await loop.run_in_executor(
+                None, lambda: _build_sandbox_image(dockerfile_name="Dockerfile.docker-sandbox"))
+            if build_ok:
+                await emit("image_build", "ok", "Image built successfully")
+            else:
+                await emit("image_build", "error", f"Build failed: {build_err}")
+                await emit("done", "error", sandbox_ready=False)
+                return resp
+
+        await emit("done", "ok", sandbox_ready=False, docker_sandbox_ready=True)
         return resp
 
     # ── Step 1: install openshell if missing ──────────────────────────────
@@ -2646,13 +2669,17 @@ def _install_openshell() -> tuple[str, str]:
         return "", str(exc)
 
 
-def _build_sandbox_image() -> tuple[bool, str]:
+def _build_sandbox_image(dockerfile_name: str = "Dockerfile.openshell-sandbox") -> tuple[bool, str]:
     """
     Build the logos-hermes-sandbox Docker image.
 
-    Looks for Dockerfile.openshell-sandbox relative to the package root
-    (works both in development and inside a frozen .exe where files are
-    extracted to a temp directory).
+    Args:
+        dockerfile_name: Which Dockerfile to use.  "Dockerfile.openshell-sandbox"
+            for full OpenShell mode, "Dockerfile.docker-sandbox" for Docker-only.
+
+    Looks for the Dockerfile relative to the package root (works both in
+    development and inside a frozen .exe where files are extracted to a
+    temp directory).
     """
     docker_exe = _shutil.which("docker")
     if not docker_exe:
@@ -2666,13 +2693,13 @@ def _build_sandbox_image() -> tuple[bool, str]:
 
     dockerfile = None
     for root in roots:
-        candidate = root / "Dockerfile.openshell-sandbox"
+        candidate = root / dockerfile_name
         if candidate.exists():
             dockerfile = candidate
             break
 
     if dockerfile is None:
-        return False, "Dockerfile.openshell-sandbox not found in package"
+        return False, f"{dockerfile_name} not found in package"
 
     # When running from a frozen .exe, _MEIPASS is a temp directory that persists
     # only while the process is alive — but the Docker daemon is a separate process
