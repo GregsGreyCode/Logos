@@ -610,22 +610,29 @@ def create_policy_approval_request(
     policy_id: Optional[str] = None,
     user_id: Optional[str] = None,
     expires_in: int = 300,
+    action_type_override: Optional[str] = None,
 ) -> str:
     """Persist a pending approval request and return its ID.
 
     Called by the agent loop when check_policy_for_tool returns
     requires_approval=True.  The returned ID is surfaced to the user so they
     can approve via /approvals/{id}/approve or the web UI.
+
+    Args:
+        action_type_override: If provided, use this action_type instead of
+            the value derived from categorise_tool(tool_name).  Used by MCP
+            access requests which are not regular tool calls.
     """
     try:
         from gateway.auth import db as auth_db
         from gateway.auth.policy import categorise_tool
+        action_type = action_type_override or categorise_tool(tool_name)
         row = auth_db.create_approval_request(
             session_id=session_id,
             tool_name=tool_name,
             tool_args=json.dumps(tool_args, default=str),
             tool_args_hash=_args_hash(tool_args),
-            action_type=categorise_tool(tool_name),
+            action_type=action_type,
             user_id=user_id,
             policy_id=policy_id,
             expires_in=expires_in,

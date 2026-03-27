@@ -212,6 +212,7 @@ ACTION_DOCKER       = "docker_mutation"
 ACTION_SSH_EXEC     = "ssh_exec"
 ACTION_EXEC         = "exec"
 ACTION_EXTERNAL_API = "external_api"
+ACTION_MCP_ACCESS   = "mcp_access"   # gateway MCP server access request
 ACTION_OTHER        = "other"
 
 _TOOL_ACTION_MAP: dict[str, str] = {

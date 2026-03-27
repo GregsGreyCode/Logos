@@ -4222,6 +4222,23 @@ class GatewayRunner:
             honcho_manager, honcho_config = self._get_or_create_gateway_honcho(session_key)
             reasoning_config = self._load_reasoning_config()
             self._reasoning_config = reasoning_config
+
+            # Inject approved MCP toolsets for this session.
+            # Grants are stored in mcp_access when the user approves an access request.
+            # We add the corresponding mcp-{name} toolset here so tools appear this turn.
+            try:
+                from gateway.mcp_access import get_grants as _get_mcp_grants
+                _mcp_grants = _get_mcp_grants(session_id)
+                if _mcp_grants:
+                    _ts = list(enabled_toolsets)
+                    for _mcp_server in _mcp_grants:
+                        _mcp_ts = f"mcp-{_mcp_server}"
+                        if _mcp_ts not in _ts:
+                            _ts.append(_mcp_ts)
+                    enabled_toolsets = _ts
+            except Exception:
+                pass
+
             agent = AIAgent(
                 model=model,
                 **runtime_kwargs,

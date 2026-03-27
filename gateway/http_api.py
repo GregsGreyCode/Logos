@@ -1099,6 +1099,30 @@ async def _handle_approvals_approve(request: web.Request) -> web.Response:
         target_type="approval_request", target_id=approval_id,
         metadata={"note": note},
     )
+
+    # ── MCP access grant hook ──────────────────────────────────────────────
+    # If this approval was for an MCP server access request, grant the session
+    # access and inject the server's tools so they appear on the next agent turn.
+    try:
+        from gateway.auth.policy import ACTION_MCP_ACCESS
+        if updated.get("action_type") == ACTION_MCP_ACCESS:
+            import json as _json
+            meta = _json.loads(updated.get("tool_args") or "{}")
+            _srv_name = meta.get("server_name")
+            _sess_id  = updated.get("session_id")
+            _mcp_svc  = request.app.get("mcp_service")
+            if _srv_name and _sess_id and _mcp_svc:
+                from gateway.mcp_access import grant_access as _grant
+                from tools.mcp_tool import inject_mcp_server_for_session as _inject
+                _grant(_sess_id, _srv_name)
+                _url = _mcp_svc.get_server_url(_srv_name, "local")
+                await asyncio.get_event_loop().run_in_executor(
+                    None, _inject, _srv_name, _url
+                )
+                logger.info("mcp approval hook: granted session=%s server=%s", _sess_id, _srv_name)
+    except Exception as _mcp_hook_err:
+        logger.warning("mcp approval hook error: %s", _mcp_hook_err)
+
     return web.json_response({"approved": True, "approval_id": approval_id})
 
 
@@ -1607,6 +1631,26 @@ async def start_http_api(runner: Any, port: int = 8080) -> None:
     app["executor"] = build_executor(_RUNTIME_MODE)
     logger.info("Instance executor: %s (runtime_mode=%s)", type(app["executor"]).__name__, _RUNTIME_MODE)
 
+    # ── Centralized MCP gateway service ────────────────────────────────────
+    # Boots all configured MCP servers once and exposes them over HTTP so
+    # agents in any executor mode (local, OpenShell, k8s) can connect via URL.
+    try:
+        from gateway.mcp_service import MCPGatewayService, load_mcp_gateway_config
+        import gateway as _gw_module
+        _mcp_cfg = load_mcp_gateway_config()
+        _mcp_svc = MCPGatewayService(_mcp_cfg)
+        app["mcp_service"] = _mcp_svc
+        # Expose via module-level ref so mcp_access_tool.py can reach it
+        _gw_module._mcp_service_ref = _mcp_svc
+        import os as _os
+        _os.environ["HERMES_GATEWAY_MCP"] = "1"
+        asyncio.ensure_future(_mcp_svc.start())
+        logger.info("MCP gateway service initialised (%d server(s) configured)",
+                    len(_mcp_cfg.get("mcp_servers") or {}))
+    except Exception as _mcp_err:
+        logger.warning("MCP gateway service failed to initialise: %s", _mcp_err)
+        app["mcp_service"] = None
+
     # Workflow engine — lazily imported to avoid circular deps at module load.
     try:
         from workflows.engine import WorkflowEngine as _WFEngine
@@ -1634,6 +1678,16 @@ async def start_http_api(runner: Any, port: int = 8080) -> None:
 
     # ── Authenticated routes ───────────────────────────────────────────────
     from gateway import setup_handlers as _sh
+    # ── MCP gateway routes ─────────────────────────────────────────────────
+    from gateway import mcp_handlers as _mch
+    app.router.add_get("/api/mcp/catalogue",                    _mch.handle_catalogue)
+    app.router.add_get("/api/mcp/status",                       _mch.handle_mcp_status)
+    app.router.add_post("/api/mcp/grants/{session_id}/{server}", _mch.handle_grant)
+    app.router.add_delete("/api/mcp/grants/{session_id}/{server}", _mch.handle_revoke)
+    # StreamableHTTP proxy — catch-all for /mcp/{name} and /mcp/{name}/...
+    app.router.add_route("*", r"/mcp/{server_name}",           _mch.handle_mcp_proxy)
+    app.router.add_route("*", r"/mcp/{server_name}/{tail:.*}", _mch.handle_mcp_proxy)
+
     app.router.add_get("/setup",              _handle_setup_page)
     app.router.add_get("/api/setup/probe",    _sh.handle_setup_probe)
     app.router.add_get("/api/setup/scan",     _sh.handle_setup_scan)
