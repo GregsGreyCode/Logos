@@ -401,6 +401,15 @@ def get_user_by_email(email: str) -> Optional[dict]:
         return dict(row) if row else None
 
 
+def get_primary_admin() -> Optional[dict]:
+    """Return the original (oldest) admin user — used by setup to identify the seeded account."""
+    with _conn() as conn:
+        row = conn.execute(
+            "SELECT * FROM users WHERE role = 'admin' ORDER BY created_at ASC LIMIT 1"
+        ).fetchone()
+        return dict(row) if row else None
+
+
 def get_user_by_username(username: str) -> Optional[dict]:
     with _conn() as conn:
         row = conn.execute(
