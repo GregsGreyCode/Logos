@@ -224,11 +224,12 @@ def _resolve_runtime_agent_kwargs() -> dict:
     except Exception as exc:
         raise RuntimeError(format_runtime_provider_error(exc)) from exc
 
-    # Never pass an empty string as api_key — the OpenAI SDK sends
-    # "Authorization: Bearer <empty>" which causes LM Studio (and some
-    # other local servers) to return 401 "No cookie auth credentials found"
-    # even when authentication is disabled.  "not-needed" is the conventional
-    # placeholder accepted by all local inference servers when auth is off.
+    # The OpenAI Python SDK requires a non-empty api_key string (raises
+    # OpenAIError if None or "").  "not-needed" is the standard placeholder
+    # for local inference servers that don't require authentication —
+    # widely used across the OpenAI-compatible ecosystem (Ollama, LM Studio
+    # with auth disabled, llama.cpp, vLLM, etc.).  When auth IS enabled,
+    # the real key from .env/config.yaml is used instead.
     _key = runtime.get("api_key") or ""
     return {
         "api_key": _key if _key else "not-needed",
@@ -4197,8 +4198,10 @@ class GatewayRunner:
             if self._ephemeral_system_prompt:
                 combined_ephemeral = (combined_ephemeral + "\n\n" + self._ephemeral_system_prompt).strip()
 
-            # Re-read .env and config for fresh credentials (gateway is long-lived,
-            # keys may change without restart).
+            # Re-read .env for fresh credentials (gateway is long-lived — keys
+            # may change without restart via the setup wizard or manual edits).
+            # config.yaml is bridged to env at startup and by /model, /provider
+            # commands — manual config.yaml edits require a gateway restart.
             try:
                 load_dotenv(_env_path, override=True, encoding="utf-8")
             except UnicodeDecodeError:
