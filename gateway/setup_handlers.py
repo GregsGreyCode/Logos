@@ -1942,10 +1942,13 @@ async def handle_setup_complete(request: web.Request) -> web.Response:
         # Save model preference on the admin user.
         # During first-run setup the browser has no session yet, so we look up
         # the seeded admin account directly rather than reading current_user.
-        admin_users, _ = auth_db.list_users(page=1, limit=1, role="admin")
-        if not admin_users:
+        # Use get_primary_admin() (oldest admin by created_at) so that re-runs
+        # always target the original seeded account, not a newer admin that was
+        # created as an "additional user" during a previous setup run.
+        primary_admin = auth_db.get_primary_admin()
+        if not primary_admin:
             return web.json_response({"error": "no_admin_user"}, status=500)
-        user_id = admin_users[0]["id"]
+        user_id = primary_admin["id"]
         agent_type   = (body.get("agent_type") or "general").strip()
         exec_env     = (body.get("exec_env") or "local").strip()
         k8s_ns       = (body.get("k8s_namespace") or "hermes").strip()
@@ -1959,16 +1962,21 @@ async def handle_setup_complete(request: web.Request) -> web.Response:
             auth_db.set_platform_feature_flag("k8s_kubeconfig", kubeconfig)
         auth_db.mark_setup_completed()
 
-        # Update admin account credentials if the user customised them
+        # Update admin account credentials if the user customised them.
+        # Skip fields that are already set to the submitted value to avoid
+        # spurious UNIQUE constraint errors when re-running setup unchanged.
         setup_email    = (body.get("setup_email") or "").strip()
         setup_username = (body.get("setup_username") or "").strip()
         setup_password = (body.get("setup_password") or "").strip()
         if setup_email or setup_username or setup_password:
             from gateway.auth.password import hash_password as _hp
             updates = {}
-            if setup_email:    updates["email"]         = setup_email
-            if setup_username: updates["username"]       = setup_username
-            if setup_password: updates["password_hash"]  = _hp(setup_password)
+            if setup_email    and setup_email    != primary_admin.get("email", ""):
+                updates["email"] = setup_email
+            if setup_username and setup_username != primary_admin.get("username", ""):
+                updates["username"] = setup_username
+            if setup_password:
+                updates["password_hash"] = _hp(setup_password)
             if updates:
                 try:
                     auth_db.update_user(user_id, **updates)
@@ -1976,10 +1984,14 @@ async def handle_setup_complete(request: web.Request) -> web.Response:
                 except Exception as _upd_err:
                     _err_str = str(_upd_err).lower()
                     if "unique" in _err_str and "username" in _err_str:
+                        conflicting = auth_db.get_user_by_username(setup_username)
+                        detail = (
+                            f"Username '{setup_username}' is already used by account "
+                            f"'{conflicting['email']}'. Remove that account in Admin → Users first, "
+                            f"or choose a different username."
+                        ) if conflicting else f"Username '{setup_username}' is already taken."
                         return web.json_response(
-                            {"error": "username_taken",
-                             "detail": f"Username '{setup_username}' is already taken by another account."},
-                            status=409,
+                            {"error": "username_taken", "detail": detail}, status=409,
                         )
                     if "unique" in _err_str and "email" in _err_str:
                         return web.json_response(
