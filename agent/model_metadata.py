@@ -32,6 +32,8 @@ CONTEXT_PROBE_TIERS = [
     128_000,
     64_000,
     32_000,
+    16_000,
+    8_000,
 ]
 
 DEFAULT_CONTEXT_LENGTHS = {
@@ -184,6 +186,7 @@ def parse_context_limit_from_error(error_msg: str) -> Optional[int]:
     error_lower = error_msg.lower()
     # Pattern: look for numbers near context-related keywords
     patterns = [
+        r'n_ctx[:\s]+(\d{4,})',                 # llama.cpp/LM Studio: "n_ctx: 16384"
         r'(?:max(?:imum)?|limit)\s*(?:context\s*)?(?:length|size|window)?\s*(?:is|of|:)?\s*(\d{4,})',
         r'context\s*(?:length|size|window)\s*(?:is|of|:)?\s*(\d{4,})',
         r'(\d{4,})\s*(?:token)?\s*(?:context|limit)',

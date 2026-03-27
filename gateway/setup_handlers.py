@@ -555,9 +555,16 @@ def _strip_think(text: str) -> str:
 
     Qwen3 and similar models emit a chain-of-thought block before the real answer.
     Removing it lets the eval checks see only the final response.
+
+    Also handles *truncated* think blocks (no closing tag) — if max_tokens cut the
+    stream off mid-think, everything from <think> onwards is reasoning noise, not
+    the answer. Strip it so the caller sees an empty string and retries.
     """
     text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL | re.IGNORECASE)
     text = re.sub(r"<thinking>.*?</thinking>", "", text, flags=re.DOTALL | re.IGNORECASE)
+    # Unclosed blocks — truncated mid-think
+    text = re.sub(r"<think>.*$", "", text, flags=re.DOTALL | re.IGNORECASE)
+    text = re.sub(r"<thinking>.*$", "", text, flags=re.DOTALL | re.IGNORECASE)
     return text.strip()
 
 
@@ -1416,7 +1423,7 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
                 instruct_pass, instruct_resp = await _eval_once(
                     _INSTRUCT_PROMPT,
                     lambda t: all(c in t for c in _INSTRUCT_CHECKS),
-                    600,
+                    2048,
                 )
                 await send({"log": f"    {'✓' if instruct_pass else '✗'} instruction following"})
                 if not instruct_pass:
@@ -1427,7 +1434,7 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
                 reason_pass, reason_resp = await _eval_once(
                     _REASON_PROMPT,
                     lambda t: all(c in t for c in _REASON_CHECKS),
-                    600,
+                    2048,
                 )
                 await send({"log": f"    {'✓' if reason_pass else '✗'} reasoning"})
                 if not reason_pass:
@@ -1435,25 +1442,25 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
                     await _log_eval_detail(_REASON_PROMPT, reason_resp, missing)
 
                 await send({"log": "  Eval 3/6: strict JSON format…"})
-                format_pass, format_resp = await _eval_once(_FORMAT_PROMPT, _eval_format, 600)
+                format_pass, format_resp = await _eval_once(_FORMAT_PROMPT, _eval_format, 2048)
                 await send({"log": f"    {'✓' if format_pass else '✗'} JSON format"})
                 if not format_pass:
                     await _log_eval_detail(_FORMAT_PROMPT, format_resp)
 
                 await send({"log": "  Eval 4/6: tool selection (2 scenarios)…"})
-                tool_pass, tool_resp = await _eval_once(_TOOL_PROMPT, _eval_tool_call, 600)
+                tool_pass, tool_resp = await _eval_once(_TOOL_PROMPT, _eval_tool_call, 2048)
                 await send({"log": f"    {'✓' if tool_pass else '✗'} tool selection"})
                 if not tool_pass:
                     await _log_eval_detail(_TOOL_PROMPT, tool_resp)
 
                 await send({"log": "  Eval 5/6: nested JSON schema…"})
-                nested_json_pass, nested_resp = await _eval_once(_NESTED_JSON_PROMPT, _eval_nested_json, 600)
+                nested_json_pass, nested_resp = await _eval_once(_NESTED_JSON_PROMPT, _eval_nested_json, 2048)
                 await send({"log": f"    {'✓' if nested_json_pass else '✗'} nested JSON"})
                 if not nested_json_pass:
                     await _log_eval_detail(_NESTED_JSON_PROMPT, nested_resp)
 
                 await send({"log": "  Eval 6/6: multi-step reasoning…"})
-                multihop_pass, multihop_resp = await _eval_once(_MULTIHOP_PROMPT, _eval_multihop, 600)
+                multihop_pass, multihop_resp = await _eval_once(_MULTIHOP_PROMPT, _eval_multihop, 2048)
                 await send({"log": f"    {'✓' if multihop_pass else '✗'} multi-step reasoning"})
                 if not multihop_pass:
                     expected = _MULTIHOP_CHECK
@@ -1467,18 +1474,18 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
                 hard_eval: dict = {}
                 if tests_passed >= 5:
                     await send({"log": "  ★ Hard evals (model passed ≥5/6 — running advanced tests)…"})
-                    h1_pass, _ = await _eval_once(_HARD_TOOL_PROMPT, _eval_hard_tool, 600)
+                    h1_pass, _ = await _eval_once(_HARD_TOOL_PROMPT, _eval_hard_tool, 2048)
                     await send({"log": f"    {'✓' if h1_pass else '✗'} hard tool routing (4 scenarios, 5 tools)"})
 
-                    h2_pass, _ = await _eval_once(_HARD_JSON_PROMPT, _eval_hard_json, 600)
+                    h2_pass, _ = await _eval_once(_HARD_JSON_PROMPT, _eval_hard_json, 2048)
                     await send({"log": f"    {'✓' if h2_pass else '✗'} deep nested JSON (array of objects)"})
 
-                    h3_pass, h3_resp = await _eval_once(_HARD_REASON_PROMPT, lambda t: _HARD_REASON_CHECK in t, 600)
+                    h3_pass, h3_resp = await _eval_once(_HARD_REASON_PROMPT, lambda t: _HARD_REASON_CHECK in t, 2048)
                     await send({"log": f"    {'✓' if h3_pass else '✗'} 5-step arithmetic (expected {_HARD_REASON_CHECK})"})
                     if not h3_pass:
                         await _log_eval_detail(_HARD_REASON_PROMPT, h3_resp, [f"expected '{_HARD_REASON_CHECK}'"])
 
-                    h4_pass, _ = await _eval_once(_HARD_INSTRUCT_PROMPT, _eval_hard_instruct, 600)
+                    h4_pass, _ = await _eval_once(_HARD_INSTRUCT_PROMPT, _eval_hard_instruct, 2048)
                     await send({"log": f"    {'✓' if h4_pass else '✗'} constrained instructions (include+exclude)"})
 
                     hard_score = sum([h1_pass, h2_pass, h3_pass, h4_pass])

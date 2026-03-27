@@ -90,9 +90,9 @@ def set_auth_cookies(response, access_token: str, refresh_token: str) -> None:
 
 
 def clear_auth_cookies(response) -> None:
-    for name, path in [
-        ("access_token",  "/"),
-        ("refresh_token", "/auth/refresh"),
-        ("csrf_token",    "/"),
+    for name, path, http_only in [
+        ("access_token",  "/",            True),
+        ("refresh_token", "/auth/refresh", True),
+        ("csrf_token",    "/",            False),  # must match creation flag so browser deletes it
     ]:
-        response.headers.add("Set-Cookie", _cookie(name, "", path, 0, http_only=True))
+        response.headers.add("Set-Cookie", _cookie(name, "", path, 0, http_only=http_only))

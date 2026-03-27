@@ -141,7 +141,10 @@ def _ensure_admin_exists() -> None:
     if not admin_email or not admin_pass:
         return
     try:
-        if auth_db.get_user_by_email(admin_email):
+        # Skip if any admin user already exists — the admin may have changed their
+        # email during setup, so checking by email alone would re-create a duplicate.
+        _, total = auth_db.list_users(page=1, limit=1, role="admin")
+        if total > 0:
             return
         auth_db.create_user(
             email=admin_email,
@@ -180,7 +183,7 @@ async def _handle_index(request: web.Request) -> web.Response:
     from gateway.auth.db import is_setup_completed
     if not is_setup_completed():
         raise web.HTTPFound("/login")
-    inject = f'<script>window.__LOGOS__={{isCanary:{str(_IS_CANARY).lower()},runtimeMode:"{_RUNTIME_MODE}"}};window._hueEpochMs={_HUE_EPOCH_MS};</script>'
+    inject = f'<script>window.__LOGOS__={{isCanary:{str(_IS_CANARY).lower()},runtimeMode:"{_RUNTIME_MODE}",version:"{_VERSION_LABEL}"}};window._hueEpochMs={_HUE_EPOCH_MS};</script>'
     html = _ADMIN_HTML.replace("</head>", inject + "</head>", 1)
     return web.Response(text=html, content_type="text/html")
 
@@ -1644,7 +1647,7 @@ async def start_http_api(runner: Any, port: int = 8080) -> None:
     app.router.add_get("/api/setup/discover",     _sh.handle_setup_discover)
     app.router.add_post("/api/setup/set-remote",  _sh.handle_setup_set_remote)
     app.router.add_post("/api/setup/reset",
-        require_csrf(require_permission("admin")(_handle_setup_reset)))
+        require_csrf(require_permission("manage_platform")(_handle_setup_reset)))
 
     app.router.add_get("/",              _handle_index)
     app.router.add_get("/auth/me",       handle_me)

@@ -356,8 +356,12 @@ def tick(verbose: bool = True) -> int:
             fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
         elif msvcrt:
             msvcrt.locking(lock_fd.fileno(), msvcrt.LK_NBLCK, 1)
-    except (OSError, IOError):
-        logger.debug("Tick skipped — another instance holds the lock")
+    except (OSError, IOError) as _lock_err:
+        import errno as _errno
+        if _lock_err.errno in (_errno.EWOULDBLOCK, _errno.EAGAIN, _errno.EACCES):
+            logger.debug("Tick skipped — another instance holds the lock")
+        else:
+            logger.warning("Tick skipped — could not acquire lock: %s", _lock_err)
         if lock_fd is not None:
             lock_fd.close()
         return 0
