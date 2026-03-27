@@ -4682,6 +4682,9 @@ function app() {
       let vIdx = Math.floor(Math.random() * VERBS.length);
       // Moon spinner ticks every 80ms; phrase changes every 3s (≈37 ticks)
       const PHRASE_TICKS = Math.round(3000 / 80);
+      const startedAt = Date.now();
+      // If a short-message response hasn't arrived after 15s, show waking-from-sleep indicator
+      this._wakingUpTimer = setTimeout(() => { this.isWakingUp = true; }, 15000);
       this._thinkingTimer = setInterval(() => {
         const spin = SPINNERS[frame % SPINNERS.length];
         // Only update the phrase if no recent server status overrode it
@@ -4702,18 +4705,49 @@ function app() {
 
     _stopThinkingAnim() {
       if (this._thinkingTimer) { clearInterval(this._thinkingTimer); this._thinkingTimer = null; }
+      if (this._statusOverrideTimer) { clearTimeout(this._statusOverrideTimer); this._statusOverrideTimer = null; }
+      if (this._wakingUpTimer) { clearTimeout(this._wakingUpTimer); this._wakingUpTimer = null; }
       this._statusOverride = null;
+      this._statusOverrideStart = null;
+      this._statusOverrideNext = null;
       this.thinkingText = 'thinking\u2026';
     },
 
-    // Called when the backend streams a status event — shown for 3 seconds
+    // Called when the backend streams a status event.
+    // Each message is shown for at least 3 seconds; newer messages are queued
+    // and shown in order so the user always gets to read what Hermes is doing.
     _setStatusOverride(text) {
-      this._statusOverride = text;
-      if (this._statusOverrideTimer) clearTimeout(this._statusOverrideTimer);
-      this._statusOverrideTimer = setTimeout(() => {
+      const MIN_MS = 3000;
+      if (!this._statusOverride) {
+        // Nothing showing — display immediately
+        this._statusOverride = text;
+        this._statusOverrideStart = Date.now();
+        this._statusOverrideNext = null;
+        if (this._statusOverrideTimer) clearTimeout(this._statusOverrideTimer);
+        this._statusOverrideTimer = setTimeout(() => this._advanceStatusOverride(), MIN_MS);
+      } else {
+        // Something already showing — queue the latest message (replace any pending)
+        this._statusOverrideNext = text;
+        // Ensure the advance timer is running (it might have fired already)
+        if (!this._statusOverrideTimer) {
+          const elapsed = Date.now() - (this._statusOverrideStart || 0);
+          const remaining = Math.max(0, MIN_MS - elapsed);
+          this._statusOverrideTimer = setTimeout(() => this._advanceStatusOverride(), remaining);
+        }
+      }
+    },
+
+    _advanceStatusOverride() {
+      this._statusOverrideTimer = null;
+      if (this._statusOverrideNext !== null) {
+        this._statusOverride = this._statusOverrideNext;
+        this._statusOverrideStart = Date.now();
+        this._statusOverrideNext = null;
+        this._statusOverrideTimer = setTimeout(() => this._advanceStatusOverride(), 3000);
+      } else {
         this._statusOverride = null;
-        this._statusOverrideTimer = null;
-      }, 3000);
+        this._statusOverrideStart = null;
+      }
     },
 
     newChat() {

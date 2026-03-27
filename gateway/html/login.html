@@ -455,8 +455,9 @@
                 // falling back to the CSS-computed estimate if not yet available.
                 const storedCX = parseFloat(localStorage.getItem('logos_nav_logo_cx') || '0');
                 const storedCY = parseFloat(localStorage.getItem('logos_nav_logo_cy') || '0');
-                const toCX = storedCX || (Math.max(0, (window.innerWidth - 1280) / 2) + 32);
-                const toCY = storedCY || 32;
+                // Validate stored values are plausible for a fixed top-left nav logo
+                const toCX = (storedCX > 8 && storedCX < 500) ? storedCX : (Math.max(0, (window.innerWidth - 1280) / 2) + 32);
+                const toCY = (storedCY > 0 && storedCY < 80)  ? storedCY : 32;
                 imgEl.style.transform = `translate(${toCX - fromCX}px, ${toCY - fromCY}px) scale(0.32)`;
               }
             }
