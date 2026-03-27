@@ -255,6 +255,27 @@ See [`k8s/README.md`](k8s/README.md) for full manifest reference, ingress setup,
 
 ---
 
+### 🛡️ Defense layers
+
+Agent security is defense-in-depth — multiple independent layers, not a single boundary:
+
+| Layer | What it does | Where it runs |
+|-------|-------------|---------------|
+| **Workspace scoping** | Restricts file read/write to the agent's workspace directory. Symlink-safe (`realpath` before access check). | All modes |
+| **Toolset enforcement** | Agents can only call tools in their enabled toolset. Validated at agent init and registry dispatch. | All modes |
+| **API key filtering** | Terminal subprocesses don't receive provider API keys (`OPENAI_API_KEY`, etc.). Built from provider registry. | All modes |
+| **Command review** | Regex patterns catch common destructive shell commands (`rm -rf /`, `DROP TABLE`, `chmod 777`, etc.). Prompts for approval before execution. | All modes |
+| **Tirith scanning** | Pre-execution semantic analysis of shell commands for content-level threats (homograph URLs, pipe-to-interpreter, terminal injection). Auto-installed from [GitHub releases](https://github.com/sheeki03/tirith). | Linux, macOS |
+| **Container isolation** | Agent runs in a Docker container with `--cap-drop=ALL`, `--security-opt=no-new-privileges`, no host filesystem mounts. | Container sandbox, OpenShell, k8s |
+| **Egress policy** | Declarative YAML policy controls which network destinations the agent can reach. | OpenShell only |
+| **NetworkPolicy** | Kubernetes-native network restriction. Agent pods can only reach DNS, HTTPS, the gateway, and inference server ports. | k8s only |
+
+**Command review** catches obvious destructive patterns but is bypassable with interpreter one-liners (e.g. `python -c "import shutil; ..."`). It is a convenience layer, not a security boundary. The real protection comes from workspace scoping (all modes), container isolation (Docker/k8s modes), and egress policies (OpenShell/k8s).
+
+**Tirith** is not available on Windows. When absent, the command review regex patterns are the only pre-execution check. On Linux/macOS, Tirith is auto-downloaded at startup and provides deeper analysis.
+
+---
+
 ### 🔑 Secrets and auth
 
 **`HERMES_JWT_SECRET`**
