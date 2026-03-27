@@ -31,26 +31,25 @@ Run on a $5 VPS, a homelab Kubernetes cluster, or serverless infrastructure. Dur
                         │              Logos Platform               │
                         │                                          │
   Telegram ─────────►  │  Gateway / Router                        │
-  Web Dashboard ──────► │    │                                     │
-  ACP (IDE) ──────────► │    ▼                                     │
+  Web Dashboard ──────► │    ├── MCP Gateway ──► MCP Servers       │
+  ACP (IDE) ──────────► │    │    (runs inside     (filesystem,    │
+                        │    │     gateway)          GitHub, etc.)  │
+                        │    ▼                                     │
                         │  Auth & Policy Layer                     │
                         │    │                                     │
                         │    ▼                                     │
                         │  Agent Runtime (e.g. Hermes)             │
-                        │    │          │          │               │
-                        │    ▼          ▼          ▼               │
-                        │  Tools    Sub-agents   MCP Gateway       │
-                        │    │          │          │               │
-                        │    │          │          ▼               │
-                        │    │          │        MCP Servers       │
-                        │    │          │        (filesystem,      │
-                        │    │          │         GitHub, etc.)    │
-                        │    └────┬─────┘                          │
-                        │         ▼                                │
-                        │  Model Router                            │
-                        │    │         │         │                 │
-                        └────┼─────────┼─────────┼────────────────┘
-                             ▼         ▼         ▼
+                        │    │          │                          │
+                        │    ▼          ▼                          │
+                        │  Tools    Sub-agents                     │
+                        │    │          │    ▲                     │
+                        │    └────┬─────┘    │ request_mcp_access  │
+                        │         │          │ (HTTP to gateway)   │
+                        │         ▼          │                     │
+                        │  Model Router      │                     │
+                        │    │         │     │                     │
+                        └────┼─────────┼─────┼────────────────────┘
+                             ▼         ▼
                           Local     Anthropic  OpenRouter
                           (Ollama)  (Claude)   (200+ models)
 ```
@@ -148,21 +147,46 @@ The soul lives in `SOUL.md`, editable without a restart. Tools are scoped per pl
 
 ### Isolation modes at a glance
 
-| Mode | How it's run | Isolation boundary | Agents can reach… |
-|------|-------------|-------------------|-------------------|
-| **Bare metal — local** | `pip install logos` / Windows `.exe` | OS process boundary | Your user's home directory and whatever that user can reach on the host |
-| **Docker Compose** | `docker-compose.yml` | Container boundary | Files/processes _inside_ the container only; the host filesystem is not mounted |
-| **Docker Compose + k3s** | `docker-compose.k3s.yml` | Kubernetes pod boundary | A fresh pod with its own filesystem and network namespace per agent |
-| **External Kubernetes** | `k8s/` manifests | Kubernetes pod + RBAC boundary | Pod resources only; network policies and RBAC apply |
+| Mode | How it's run | Isolation boundary | Network policy | Agents can reach… |
+|------|-------------|-------------------|----------------|-------------------|
+| **Local process** | `pip install logos` / Windows `.exe` | OS process boundary | None | Your user's home directory and whatever that user can reach on the host |
+| **Container sandbox** | Docker Desktop (Windows/macOS) | Docker container boundary | None (outbound unrestricted) | Files inside the container only; host filesystem not mounted |
+| **Full sandbox (OpenShell)** | Docker + OpenShell CLI (Linux/macOS) | Docker container + egress policy | OpenShell YAML policy enforcement | Container-only filesystem; outbound restricted to policy allowlist |
+| **Docker Compose** | `docker-compose.yml` | Container boundary | None | Files/processes _inside_ the container only; the host filesystem is not mounted |
+| **Docker Compose + k3s** | `docker-compose.k3s.yml` | Kubernetes pod boundary | K8s NetworkPolicy capable | A fresh pod with its own filesystem and network namespace per agent |
+| **External Kubernetes** | `k8s/` manifests | Kubernetes pod + RBAC boundary | K8s NetworkPolicy capable | Pod resources only; network policies and RBAC apply |
 
-### Bare metal (Windows / Linux / macOS)
+### Local process (Windows / Linux / macOS) — fallback
 
 Agents run as child processes of the gateway, inheriting the same user account. There is **no additional sandbox** beyond normal OS process isolation. An agent that calls the terminal tool can read and write anything your user account can.
+
+This is the **last-resort fallback** when neither Docker nor Kubernetes is available. The setup wizard clearly labels this mode.
 
 **Mitigations:**
 - Keep policy level at `WORKSPACE_ONLY` or lower to restrict filesystem access to the working directory.
 - Run Logos under a dedicated low-privilege user account, not your daily-driver account.
-- The Windows `.exe` installer creates a sandboxed Node/Python environment, but it still runs as your Windows user.
+
+### Container sandbox (Windows with Docker Desktop)
+
+When Docker Desktop is available but the OpenShell CLI is not (currently the case on **Windows**, where OpenShell does not ship binaries), Logos can still run agents inside Docker containers. Each agent gets its own isolated container with:
+
+- Separate filesystem (host filesystem not mounted)
+- `--cap-drop=ALL` (no Linux capabilities)
+- `--security-opt=no-new-privileges`
+- Localhost-only port binding
+- Auto-cleanup on exit (`--rm`)
+
+**What this mode does NOT provide:** egress policy enforcement. Agents can make outbound network requests to any destination. If your use case requires network restriction, use Kubernetes with NetworkPolicy or wait for OpenShell Windows support.
+
+### Full sandbox — OpenShell (Linux / macOS)
+
+The strongest desktop isolation. OpenShell manages Docker containers with a declarative YAML policy layer that controls:
+
+- Which network destinations agents can reach (egress allowlist)
+- GPU passthrough for local inference
+- Container lifecycle and resource limits
+
+**Platform support:** Linux and macOS only. OpenShell does not currently ship Windows binaries. The setup wizard detects this automatically and offers Container sandbox mode as the Windows alternative.
 
 ### Docker Compose — `docker-compose.yml` (recommended for most users)
 
@@ -312,6 +336,8 @@ A native Windows installer (`.exe`) is available on the [GitHub Releases](https:
 2. Navigate to `http://localhost:8080` in your browser
 3. The setup wizard launches automatically — it will prompt you for any API keys it needs
 4. Your configuration is saved to `%USERPROFILE%\.logos\config.yaml`
+
+**Sandbox on Windows:** If Docker Desktop is installed, the setup wizard offers **Container sandbox** mode — each agent runs in its own isolated Docker container. Without Docker, agents run in-process (local process mode). OpenShell is not yet available on Windows.
 
 ---
 
