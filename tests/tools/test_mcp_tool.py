@@ -295,7 +295,7 @@ class TestDiscoverAndRegister:
 
         mock_create = MagicMock()
         with patch("tools.mcp_tool._connect_server", side_effect=fake_connect), \
-             patch("toolsets.create_custom_toolset", mock_create):
+             patch("core.toolsets.create_custom_toolset", mock_create):
             asyncio.run(
                 _discover_and_register_server("myserver", {"command": "test"})
             )
@@ -492,7 +492,7 @@ class TestToolsetInjection:
              patch("tools.mcp_tool._servers", fresh_servers), \
              patch("tools.mcp_tool._load_mcp_config", return_value=fake_config), \
              patch("tools.mcp_tool._connect_server", side_effect=fake_connect), \
-             patch("toolsets.TOOLSETS", fake_toolsets):
+             patch("core.toolsets.TOOLSETS", fake_toolsets):
             from tools.mcp_tool import discover_mcp_tools
             result = discover_mcp_tools()
 
@@ -538,7 +538,7 @@ class TestToolsetInjection:
              patch("tools.mcp_tool._servers", fresh_servers), \
              patch("tools.mcp_tool._load_mcp_config", return_value=fake_config), \
              patch("tools.mcp_tool._connect_server", side_effect=flaky_connect), \
-             patch("toolsets.TOOLSETS", fake_toolsets):
+             patch("core.toolsets.TOOLSETS", fake_toolsets):
             from tools.mcp_tool import discover_mcp_tools
             result = discover_mcp_tools()
 
@@ -580,7 +580,7 @@ class TestToolsetInjection:
              patch("tools.mcp_tool._servers", fresh_servers), \
              patch("tools.mcp_tool._load_mcp_config", return_value=fake_config), \
              patch("tools.mcp_tool._connect_server", side_effect=flaky_connect), \
-             patch("toolsets.TOOLSETS", fake_toolsets):
+             patch("core.toolsets.TOOLSETS", fake_toolsets):
             from tools.mcp_tool import discover_mcp_tools
 
             # First call: good connects, broken fails
@@ -2473,7 +2473,7 @@ class TestMCPSelectiveToolLoading:
         async def run():
             with patch("tools.mcp_tool._connect_server", side_effect=fake_connect), \
                  patch("tools.registry.registry", mock_registry), \
-                 patch("toolsets.create_custom_toolset"):
+                 patch("core.toolsets.create_custom_toolset"):
                 return await _discover_and_register_server(name, config)
 
         try:
@@ -2597,7 +2597,7 @@ class TestMCPSelectiveToolLoading:
         async def run():
             with patch("tools.mcp_tool._connect_server", side_effect=fake_connect), \
                  patch("tools.registry.registry", mock_registry), \
-                 patch("toolsets.create_custom_toolset"):
+                 patch("core.toolsets.create_custom_toolset"):
                 return await _discover_and_register_server(
                     "ink_existing",
                     {"url": "https://mcp.example.com", "tools": {"include": ["create_service"]}},
@@ -2624,7 +2624,7 @@ class TestMCPSelectiveToolLoading:
         async def run():
             with patch("tools.mcp_tool._connect_server", side_effect=fake_connect), \
                  patch("tools.registry.registry", mock_registry), \
-                 patch("toolsets.create_custom_toolset", mock_create):
+                 patch("core.toolsets.create_custom_toolset", mock_create):
                 return await _discover_and_register_server(
                     "ink_none",
                     {
@@ -2668,7 +2668,7 @@ class TestMCPSelectiveToolLoading:
              patch("tools.mcp_tool._servers", {}), \
              patch("tools.mcp_tool._load_mcp_config", return_value=fake_config), \
              patch("tools.mcp_tool._connect_server", side_effect=fake_connect), \
-             patch("toolsets.TOOLSETS", fake_toolsets):
+             patch("core.toolsets.TOOLSETS", fake_toolsets):
             result = discover_mcp_tools()
 
         assert connect_called == []

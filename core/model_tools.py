@@ -212,7 +212,7 @@ def get_tool_definitions(
                     print(f"⚠️  Unknown toolset: {toolset_name}")
 
     elif disabled_toolsets:
-        from toolsets import get_all_toolsets
+        from core.toolsets import get_all_toolsets
         for ts_name in get_all_toolsets():
             tools_to_include.update(resolve_toolset(ts_name))
 
@@ -231,7 +231,7 @@ def get_tool_definitions(
                 if not quiet_mode:
                     print(f"⚠️  Unknown toolset: {toolset_name}")
     else:
-        from toolsets import get_all_toolsets
+        from core.toolsets import get_all_toolsets
         for ts_name in get_all_toolsets():
             tools_to_include.update(resolve_toolset(ts_name))
 
