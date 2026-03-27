@@ -2287,10 +2287,37 @@ def _docker_running() -> dict:
     Return {running, installed, desktop_path} describing Docker state.
     Tries the Docker socket/pipe first; falls back to ``docker info`` subprocess.
     """
-    # Windows: Docker Desktop uses a named pipe, not a Unix socket
+    # Windows: Docker Desktop uses a named pipe, not a Unix socket.
+    # pathlib.Path.exists() does NOT work for \\.\pipe\ device-namespace paths —
+    # use ctypes CreateFileW to actually probe the pipe, then fall back to a
+    # tasklist process check so we don't depend on docker.exe being on PATH.
     if _sys.platform == "win32":
+        # 1. Try to open the named pipe directly (most reliable)
         try:
-            if pathlib.Path(r"\\.\pipe\docker_engine").exists():
+            import ctypes as _ct
+            _k32 = _ct.windll.kernel32
+            _h = _k32.CreateFileW(
+                r"\\.\pipe\docker_engine",
+                0x80000000,   # GENERIC_READ
+                0, None, 3,   # OPEN_EXISTING
+                0, None,
+            )
+            # INVALID_HANDLE_VALUE is -1 (0xFFFFFFFF as c_int); 0 also invalid
+            if _h not in (0, -1, 0xFFFFFFFF):
+                _k32.CloseHandle(_h)
+                return {"running": True, "installed": True, "desktop_path": ""}
+        except Exception:
+            pass
+
+        # 2. Check if Docker daemon process is actually running
+        try:
+            _tl = _subprocess.run(
+                ["tasklist", "/FI", "IMAGENAME eq com.docker.proxy.exe",
+                 "/FO", "CSV", "/NH"],
+                capture_output=True, text=True, timeout=5,
+                creationflags=0x08000000,  # CREATE_NO_WINDOW
+            )
+            if "com.docker.proxy.exe" in _tl.stdout.lower():
                 return {"running": True, "installed": True, "desktop_path": ""}
         except Exception:
             pass
@@ -2305,10 +2332,17 @@ def _docker_running() -> dict:
     docker_exe = _shutil.which("docker")
     if not docker_exe and _sys.platform == "win32":
         _pf  = os.environ.get("PROGRAMFILES",  r"C:\Program Files")
+        _pf86= os.environ.get("PROGRAMFILES(X86)", r"C:\Program Files (x86)")
         _lad = os.environ.get("LOCALAPPDATA",  "")
         _win_candidates = [
-            pathlib.Path(_pf)  / "Docker" / "Docker" / "resources" / "bin" / "docker.exe",
-            pathlib.Path(_lad) / "Programs" / "Docker" / "Docker" / "resources" / "bin" / "docker.exe",
+            # System-wide install (most common for Docker Desktop)
+            pathlib.Path(_pf)   / "Docker" / "Docker" / "resources" / "bin" / "docker.exe",
+            # Per-user install (Docker Desktop 4.x non-admin)
+            pathlib.Path(_lad)  / "Programs" / "Docker" / "Docker" / "resources" / "bin" / "docker.exe",
+            # Alternate system path
+            pathlib.Path(_pf86) / "Docker" / "Docker" / "resources" / "bin" / "docker.exe",
+            # Standalone Docker CLI (without Desktop)
+            pathlib.Path(_pf)   / "Docker" / "cli-plugins" / "docker.exe",
         ]
         for _c in _win_candidates:
             if _c.exists():
