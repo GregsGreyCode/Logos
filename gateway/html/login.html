@@ -218,7 +218,7 @@
     }
   </style>
 </head>
-<body @click="toggle($event)" @mousemove.window.throttle.2000ms="resetInactivity()" @keydown.window="resetInactivity()" x-data="loginApp()" x-init="init()">
+<body @click="toggle($event)" x-data="loginApp()" x-init="init()">
 
   <!-- Main content — flex-centred by body -->
   <div class="relative z-10 w-full px-5" style="max-width:400px;">
@@ -324,7 +324,6 @@
       identifier: '', password: '', error: '', loading: false, needsSetup: false,
       navigating: false, navBarDur: 2600,
       _hintTimer: null,
-      _inactivityTimer: null,
       _setupRedirectTimer: null,
 
       init() {
@@ -359,7 +358,7 @@
       },
 
       activate() {
-        if (this.phase !== 'splash') { this.resetInactivity(); return; }
+        if (this.phase !== 'splash') return;
         clearTimeout(this._hintTimer);
         clearTimeout(this._setupAutoTimer);
         this.showHint = false;
@@ -402,36 +401,14 @@
           }, 2600);
         } else {
           this.phase = 'login';
-          this._startInactivity();
         }
       },
 
       toggle(e) {
-        if (this.phase === 'login') {
-          // Browser autofill overlays (e.g. Chrome's credential chip) fire synthetic
-          // clicks at body level, bypassing @click.stop on the form. Ignore any click
-          // whose target is inside the login panel or a form element.
-          if (e?.target?.closest?.('.login-reveal, form')) return;
-          this._revertSplash();
-          return;
-        }
+        // Once the login card is visible, clicks outside it do nothing.
+        // The card stays until the user submits or the page navigates.
+        if (this.phase === 'login') return;
         this.activate();
-      },
-
-      _startInactivity() {
-        clearTimeout(this._inactivityTimer);
-        this._inactivityTimer = setTimeout(() => this._revertSplash(), 30000);
-      },
-
-      resetInactivity() {
-        if (this.phase !== 'login') return;
-        this._startInactivity();
-      },
-
-      _revertSplash() {
-        this.phase = 'splash';
-        clearTimeout(this._hintTimer);
-        this._hintTimer = setTimeout(() => { if (this.phase === 'splash') this.showHint = true; }, 1000);
       },
 
       async submit() {
@@ -445,7 +422,6 @@
           });
           if (res.ok) {
             const d = await res.json().catch(() => ({}));
-            clearTimeout(this._inactivityTimer);
             this.phase = 'loggedin';
             // Fade the entire page out, then navigate
             document.body.classList.add('fade-out');
