@@ -99,6 +99,9 @@ def _discover_tools():
         "tools.log_inspector_tool",
         "tools.bug_notes_tool",
         "tools.workflow_tool",
+        # Gateway MCP access tool — request_mcp_access + get_mcp_catalogue
+        # Always registered so agents can request MCP access regardless of mode.
+        "tools.mcp_access_tool",
     ]
     import importlib
     for mod_name in _modules:
@@ -110,12 +113,18 @@ def _discover_tools():
 
 _discover_tools()
 
-# MCP tool discovery (external MCP servers from config)
-try:
-    from tools.mcp_tool import discover_mcp_tools
-    discover_mcp_tools()
-except Exception as e:
-    logger.debug("MCP tool discovery failed: %s", e)
+# MCP tool discovery (external MCP servers from config).
+# Skipped when HERMES_GATEWAY_MCP=1 because the gateway service manages server
+# lifecycles centrally — agents connect via HTTP rather than spawning subprocesses.
+import os as _os
+if _os.getenv("HERMES_GATEWAY_MCP") != "1":
+    try:
+        from tools.mcp_tool import discover_mcp_tools
+        discover_mcp_tools()
+    except Exception as e:
+        logger.debug("MCP tool discovery failed: %s", e)
+else:
+    logger.debug("MCP gateway mode active — skipping local mcp_tool discovery")
 
 
 # =============================================================================

@@ -80,6 +80,11 @@ async def auth_middleware(request: web.Request, handler):
     if path in _PUBLIC_PATHS or path.startswith("/static/"):
         return await handler(request)
 
+    # MCP proxy handles its own auth (bearer token + session grant check).
+    # Skip cookie-redirect logic so agent HTTP clients don't get a 302.
+    if path.startswith("/mcp/"):
+        return await handler(request)
+
     user = get_user_from_request(request)
     if user is TOKEN_EXPIRED:
         # Token present but expired — client should refresh, not re-authenticate

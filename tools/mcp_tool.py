@@ -1684,3 +1684,79 @@ def _stop_mcp_loop():
         if thread is not None:
             thread.join(timeout=5)
         loop.close()
+
+
+# ---------------------------------------------------------------------------
+# Gateway-mode: inject a single approved HTTP server into the registry
+# ---------------------------------------------------------------------------
+
+def inject_mcp_server_for_session(
+    server_name: str,
+    server_url: str,
+) -> List[str]:
+    """Connect to a gateway-managed MCP server via HTTP and register its tools.
+
+    Called after an access grant is approved (either auto or user-approved).
+    Registers the server's tools into the global ToolRegistry under the
+    ``mcp-{server_name}`` toolset so they are available on the next agent turn.
+
+    This is the gateway-mode equivalent of ``_discover_and_register_server``
+    for a single HTTP server.  Idempotent — if the server is already connected
+    under this name, returns the existing registered tool names.
+
+    Args:
+        server_name: Logical name of the MCP server (e.g. "filesystem").
+        server_url:  HTTP URL exposed by the gateway (/mcp/{name}).
+
+    Returns:
+        List of registered tool names (prefixed, e.g. "mcp_filesystem_read_file").
+    """
+    if not _MCP_AVAILABLE:
+        logger.warning("inject_mcp_server_for_session: mcp package not installed")
+        return []
+
+    with _lock:
+        if server_name in _servers:
+            existing = _servers[server_name]
+            return list(getattr(existing, "_registered_tool_names", []))
+
+    _ensure_mcp_loop()
+
+    config = {"url": server_url}
+
+    registered: List[str] = []
+
+    async def _inject():
+        return await _discover_and_register_server(server_name, config)
+
+    try:
+        registered = _run_on_mcp_loop(_inject(), timeout=30)
+    except Exception as exc:
+        logger.warning(
+            "inject_mcp_server_for_session: failed to connect '%s' at %s: %s",
+            server_name, server_url, exc,
+        )
+        return []
+
+    # Inject into all hermes-* platform toolsets so the tools appear automatically
+    if registered:
+        try:
+            from toolsets import TOOLSETS
+            for ts_name, ts in TOOLSETS.items():
+                if ts_name.startswith("hermes-"):
+                    for tool_name in registered:
+                        if tool_name not in ts["tools"]:
+                            ts["tools"].append(tool_name)
+        except Exception:
+            pass
+
+    logger.info(
+        "inject_mcp_server_for_session: '%s' registered %d tool(s)",
+        server_name, len(registered),
+    )
+    return registered
+
+
+def get_registered_mcp_toolset_name(server_name: str) -> str:
+    """Return the toolset name for a registered MCP server (mcp-{name})."""
+    return f"mcp-{server_name}"
