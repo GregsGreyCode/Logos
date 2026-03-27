@@ -59,13 +59,17 @@ logos/                        ← repo root
 │   ├── browser_tool.py       # Browserbase browser automation
 │   ├── code_execution_tool.py # execute_code sandbox
 │   ├── delegate_tool.py      # Subagent delegation
-│   ├── mcp_tool.py           # MCP client
+│   ├── mcp_tool.py           # MCP client — stdio/HTTP transport, tool registration
+│   ├── mcp_access_tool.py    # request_mcp_access + get_mcp_catalogue (gateway MCP)
 │   └── environments/         # Terminal backends (local, docker, ssh, modal, daytona, singularity)
 │
 ├── gateway/                  # HTTP API, auth, web UI, messaging gateway
 │   ├── run.py                # GatewayRunner — main loop, message dispatch
 │   ├── session.py            # SessionStore — conversation persistence
 │   ├── http_api.py           # Web dashboard API
+│   ├── mcp_service.py        # MCPGatewayService — centralized MCP server lifecycle
+│   ├── mcp_handlers.py       # aiohttp routes for /mcp/{name} proxy + /api/mcp/*
+│   ├── mcp_access.py         # Per-session MCP access grant registry
 │   ├── auth/                 # Auth + policy enforcement
 │   └── platforms/            # Adapters: telegram, discord, slack, whatsapp, homeassistant, signal
 │
@@ -252,6 +256,69 @@ The registry handles schema collection, dispatch, availability checking, and err
 | Config load at startup | CLI mode | `hermes_cli/main.py` |
 | `load_config()` | `hermes tools`, `hermes setup` | `hermes_cli/config.py` |
 | Direct YAML load | Gateway | `gateway/run.py` |
+
+---
+
+## MCP Gateway (Centralized MCP Server Management)
+
+When `HERMES_GATEWAY_MCP=1` (set automatically at gateway startup), MCP servers run once in the gateway process rather than as per-agent subprocesses. This is required for OpenShell sandbox and k8s pod deployments where agents cannot spawn their own MCP servers.
+
+### Architecture
+
+```
+gateway/mcp_service.py      # MCPGatewayService — boots servers, JSON-RPC proxy, policy tiers
+gateway/mcp_handlers.py     # aiohttp route handlers for /mcp/{name} and /api/mcp/*
+gateway/mcp_access.py       # Per-session grant registry (in-memory, thread-safe)
+tools/mcp_access_tool.py    # Agent-facing tools: request_mcp_access, get_mcp_catalogue
+gateway/auth/policy.py      # ACTION_MCP_ACCESS action type for approval requests
+```
+
+### How it works
+
+1. `http_api.py` reads `mcp_servers` + `mcp_policy` from config, creates `MCPGatewayService`, calls `await service.start()`.
+2. The service boots each configured MCP server via `tools/mcp_tool._discover_and_register_server` on the dedicated MCP event loop.
+3. A module-level reference `gateway._mcp_service_ref` is set so `mcp_access_tool.py` can reach the service without circular imports.
+4. `HERMES_GATEWAY_MCP=1` is set, which skips local `discover_mcp_tools()` in `core/model_tools.py`.
+5. Agents always have `request_mcp_access` and `get_mcp_catalogue` tools (from the `mcp-gateway` toolset).
+6. When an agent calls `request_mcp_access("filesystem")`:
+   - The tool reads `session_id` from `kwargs` (injected by `registry.dispatch`).
+   - Looks up the server's category in the catalogue.
+   - Checks `mcp_policy` for the approval tier (`auto_approve`, `user_approve`, `admin_approve`, `deny`).
+   - Auto: calls `mcp_access.grant_access()` immediately.
+   - User/Admin: calls `create_policy_approval_request()` with `action_type_override=ACTION_MCP_ACCESS`.
+7. On approval (via web UI or Telegram), `http_api._handle_approvals_approve` calls `grant_access()` + `inject_mcp_server_for_session()`.
+8. On the next agent turn, `gateway/run.py:run_sync()` reads `mcp_access.get_grants(session_id)` and appends `mcp-{name}` to `enabled_toolsets`.
+
+### Key env vars
+
+| Var | Purpose |
+|-----|---------|
+| `HERMES_GATEWAY_MCP` | Set to `1` by gateway; gates local vs. centralized MCP mode |
+| `HERMES_MCP_PORT` | Port for the MCP proxy (default: 8081) |
+| `HERMES_INTERNAL_TOKEN` | Bearer token for machine-to-machine MCP proxy auth |
+
+### URL resolution
+
+Agents connect to the gateway MCP proxy at different URLs depending on execution mode:
+- **Local process**: `http://127.0.0.1:{port}/mcp/{name}`
+- **OpenShell sandbox**: `http://host.docker.internal:{port}/mcp/{name}`
+- **Kubernetes pod**: `http://logos-gateway.{ns}.svc.cluster.local:{port}/mcp/{name}`
+
+### Config format
+
+```yaml
+mcp_servers:
+  filesystem:
+    command: npx
+    args: ["-y", "@modelcontextprotocol/server-filesystem", "/home/user"]
+    category: local
+    description: "Read and write files"
+
+mcp_policy:
+  auto_approve:  [local]
+  user_approve:  [external]
+  admin_approve: [privileged]
+```
 
 ---
 

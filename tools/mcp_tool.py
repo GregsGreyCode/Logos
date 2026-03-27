@@ -6,7 +6,7 @@ Connects to external MCP servers via stdio or HTTP/StreamableHTTP transport,
 discovers their tools, and registers them into the hermes-agent tool registry
 so the agent can call them like any built-in tool.
 
-Configuration is read from ~/.hermes/config.yaml under the ``mcp_servers`` key.
+Configuration is read from ~/.logos/config.yaml under the ``mcp_servers`` key.
 The ``mcp`` Python package is optional -- if not installed, this module is a
 no-op and logs a debug message.
 
@@ -1715,13 +1715,18 @@ def inject_mcp_server_for_session(
         logger.warning("inject_mcp_server_for_session: mcp package not installed")
         return []
 
+    # Idempotent: if already connected, return the existing tool names
     with _lock:
         if server_name in _servers:
             existing = _servers[server_name]
             return list(getattr(existing, "_registered_tool_names", []))
 
+    # Ensure the dedicated MCP event loop is running (same loop used by
+    # MCPGatewayService.start for consistency)
     _ensure_mcp_loop()
 
+    # Build a minimal config dict — only "url" is needed for HTTP transport;
+    # _discover_and_register_server detects HTTP mode from the presence of "url"
     config = {"url": server_url}
 
     registered: List[str] = []
@@ -1729,6 +1734,7 @@ def inject_mcp_server_for_session(
     async def _inject():
         return await _discover_and_register_server(server_name, config)
 
+    # Bridge from sync context → MCP dedicated loop via _run_on_mcp_loop
     try:
         registered = _run_on_mcp_loop(_inject(), timeout=30)
     except Exception as exc:
@@ -1739,6 +1745,7 @@ def inject_mcp_server_for_session(
         return []
 
     # Inject into all hermes-* platform toolsets so the tools appear automatically
+    # on the next agent turn without requiring a restart
     if registered:
         try:
             from toolsets import TOOLSETS

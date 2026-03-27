@@ -1,6 +1,8 @@
 # MCP Redesign: Centralized Gateway Service with Dynamic Access Approval
 
-## Problem with the Current Architecture
+> **Status: Implemented** — shipped in v0.5.73. See `gateway/mcp_service.py`, `gateway/mcp_handlers.py`, `gateway/mcp_access.py`, and `tools/mcp_access_tool.py`.
+
+## Problem with the Previous Architecture
 
 MCP servers currently run as subprocess children of each agent process:
 
