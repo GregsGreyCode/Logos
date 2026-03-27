@@ -14,8 +14,8 @@
 | Process termination | ✅ SIGTERM / SIGKILL | ✅ `taskkill /F` | |
 | Port allocation | ✅ K8s service discovery | ✅ Pool 8081–8199 | |
 | Resource limits | ✅ K8s CPU/memory enforced | ⚠️ psutil soft limits | |
-| Workspace isolation | ✅ K8s pod volumes | ✅ `~/.hermes/workspaces/` | |
-| Instance persistence | ✅ K8s etcd | ✅ `~/.hermes/instances.json` | |
+| Workspace isolation | ✅ K8s pod volumes | ✅ `~/.logos/workspaces/` | |
+| Instance persistence | ✅ K8s etcd | ✅ `~/.logos/instances.json` | |
 | Health checks | ✅ K8s probes + `/health` | ✅ HTTP `/health` polling | |
 
 ---
@@ -29,7 +29,7 @@
 | Background `/tmp` processes | ✅ nohup | ❌ Not available | Windows uses detached subprocess |
 | Git Bash detection | N/A | ✅ Auto-finds in ProgramFiles | Falls back to `HERMES_GIT_BASH_PATH` |
 | Code execution tool | ✅ | ✅ | Windows requires Git Bash for inline execution |
-| Process registry (crash recovery) | ✅ | ✅ | Both checkpoint to `~/.hermes/processes.json` |
+| Process registry (crash recovery) | ✅ | ✅ | Both checkpoint to `~/.logos/processes.json` |
 
 ---
 
@@ -117,7 +117,7 @@
 | Tray launcher | pystray + PyInstaller bundle | ✅ |
 | Installer | Inno Setup (`LogosSetup-{version}.exe`) | ✅ |
 | Port isolation | LocalProcessExecutor pool 8081–8199 | ✅ |
-| Instance tracking | `~/.hermes/instances.json` | ✅ |
+| Instance tracking | `~/.logos/instances.json` | ✅ |
 | No `signal.SIGKILL` | Falls back to taskkill for force-kill | ✅ |
 
 ---

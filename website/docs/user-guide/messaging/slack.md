@@ -146,7 +146,7 @@ Member IDs look like `U01ABC2DEF3`. You need your own Member ID at minimum.
 
 ## Step 7: Configure Hermes
 
-Add the following to your `~/.hermes/.env` file:
+Add the following to your `~/.logos/.env` file:
 
 ```bash
 # Required
@@ -266,7 +266,7 @@ the gateway will **deny all messages** by default as a safety measure. Never sha
 treat them like passwords.
 :::
 
-- Tokens should be stored in `~/.hermes/.env` (file permissions `600`)
+- Tokens should be stored in `~/.logos/.env` (file permissions `600`)
 - Rotate tokens periodically via the Slack app settings
 - Audit who has access to your Hermes config directory
 - Socket Mode means no public endpoint is exposed — one less attack surface

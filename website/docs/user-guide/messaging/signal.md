@@ -108,7 +108,7 @@ Select **Signal** from the platform menu. The wizard will:
 
 ### Manual Configuration
 
-Add to `~/.hermes/.env`:
+Add to `~/.logos/.env`:
 
 ```bash
 # Required

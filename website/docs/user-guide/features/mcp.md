@@ -26,7 +26,7 @@ If you have ever wanted Hermes to use a tool that already exists somewhere else,
 pip install hermes-agent[mcp]
 ```
 
-2. Add an MCP server to `~/.hermes/config.yaml`:
+2. Add an MCP server to `~/.logos/config.yaml`:
 
 ```yaml
 mcp_servers:
@@ -90,7 +90,7 @@ Use HTTP servers when:
 
 ## Basic configuration reference
 
-Hermes reads MCP config from `~/.hermes/config.yaml` under `mcp_servers`.
+Hermes reads MCP config from `~/.logos/config.yaml` under `mcp_servers`.
 
 ### Common keys
 

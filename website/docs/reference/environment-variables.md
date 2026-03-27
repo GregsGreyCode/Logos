@@ -6,7 +6,7 @@ description: "Complete reference of all environment variables used by Hermes Age
 
 # Environment Variables Reference
 
-All variables go in `~/.hermes/.env`. You can also set them with `hermes config set VAR value`.
+All variables go in `~/.logos/.env`. You can also set them with `hermes config set VAR value`.
 
 ## LLM Providers
 
@@ -95,7 +95,7 @@ All variables go in `~/.hermes/.env`. You can also set them with `hermes config 
 | `TERMINAL_CONTAINER_MEMORY` | Memory in MB (default: 5120) |
 | `TERMINAL_CONTAINER_DISK` | Disk in MB (default: 51200) |
 | `TERMINAL_CONTAINER_PERSISTENT` | Persist container filesystem across sessions (default: `true`) |
-| `TERMINAL_SANDBOX_DIR` | Host directory for workspaces and overlays (default: `~/.hermes/sandboxes/`) |
+| `TERMINAL_SANDBOX_DIR` | Host directory for workspaces and overlays (default: `~/.logos/sandboxes/`) |
 
 ## Messaging
 
@@ -175,7 +175,7 @@ All variables go in `~/.hermes/.env`. You can also set them with `hermes config 
 
 ## Provider Routing (config.yaml only)
 
-These go in `~/.hermes/config.yaml` under the `provider_routing` section:
+These go in `~/.logos/config.yaml` under the `provider_routing` section:
 
 | Key | Description |
 |-----|-------------|

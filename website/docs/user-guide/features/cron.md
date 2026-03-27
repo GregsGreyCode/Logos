@@ -48,7 +48,7 @@ hermes cron status         # Check if gateway is running
 
 The scheduler runs as a background thread inside the gateway process. On each tick (every 60 seconds):
 
-1. It loads all jobs from `~/.hermes/cron/jobs.json`
+1. It loads all jobs from `~/.logos/cron/jobs.json`
 2. Checks each enabled job's `next_run_at` against the current time
 3. For each due job, spawns a fresh `AIAgent` session with the job's prompt
 4. The agent runs to completion with full tool access
@@ -56,7 +56,7 @@ The scheduler runs as a background thread inside the gateway process. On each ti
 6. The job's run count is incremented and next run time computed
 7. Jobs that hit their repeat limit are auto-removed
 
-A **file-based lock** (`~/.hermes/cron/.tick.lock`) prevents duplicate execution if multiple processes overlap (e.g., gateway + manual tick).
+A **file-based lock** (`~/.logos/cron/.tick.lock`) prevents duplicate execution if multiple processes overlap (e.g., gateway + manual tick).
 
 :::info
 Even if no messaging platforms are configured, the gateway stays running for cron. A file lock prevents duplicate execution if multiple processes overlap.
@@ -69,7 +69,7 @@ When scheduling jobs, you specify where the output goes:
 | Option | Description | Example |
 |--------|-------------|---------|
 | `"origin"` | Back to where the job was created | Default on messaging platforms |
-| `"local"` | Save to local files only (`~/.hermes/cron/output/`) | Default on CLI |
+| `"local"` | Save to local files only (`~/.logos/cron/output/`) | Default on CLI |
 | `"telegram"` | Telegram home channel | Uses `TELEGRAM_HOME_CHANNEL` env var |
 | `"discord"` | Discord home channel | Uses `DISCORD_HOME_CHANNEL` env var |
 | `"telegram:123456"` | Specific Telegram chat by ID | For directing output to a specific chat |
@@ -248,7 +248,7 @@ The agent can also manage jobs conversationally:
 
 ## Job Storage
 
-Jobs are stored as JSON in `~/.hermes/cron/jobs.json`. Output from job runs is saved to `~/.hermes/cron/output/{job_id}/{timestamp}.md`.
+Jobs are stored as JSON in `~/.logos/cron/jobs.json`. Output from job runs is saved to `~/.logos/cron/output/{job_id}/{timestamp}.md`.
 
 The storage uses atomic file writes (temp file + rename) to prevent corruption from concurrent access.
 

@@ -97,7 +97,7 @@ Select **Telegram** when prompted. The wizard asks for your bot token and allowe
 
 ### Option B: Manual Configuration
 
-Add the following to `~/.hermes/.env`:
+Add the following to `~/.logos/.env`:
 
 ```bash
 TELEGRAM_BOT_TOKEN=123456789:ABCdefGHIjklMNOpqrSTUvwxYZ
@@ -116,7 +116,7 @@ The bot should come online within seconds. Send it a message on Telegram to veri
 
 Use the `/sethome` command in any Telegram chat (DM or group) to designate it as the **home channel**. Scheduled tasks (cron jobs) deliver their results to this channel.
 
-You can also set it manually in `~/.hermes/.env`:
+You can also set it manually in `~/.logos/.env`:
 
 ```bash
 TELEGRAM_HOME_CHANNEL=-1001234567890
@@ -131,7 +131,7 @@ Group chat IDs are negative numbers (e.g., `-1001234567890`). Your personal DM c
 
 ### Incoming Voice (Speech-to-Text)
 
-Voice messages you send on Telegram are automatically transcribed using OpenAI's Whisper API and injected as text into the conversation. This requires `VOICE_TOOLS_OPENAI_KEY` in `~/.hermes/.env`.
+Voice messages you send on Telegram are automatically transcribed using OpenAI's Whisper API and injected as text into the conversation. This requires `VOICE_TOOLS_OPENAI_KEY` in `~/.logos/.env`.
 
 ### Outgoing Voice (Text-to-Speech)
 
@@ -173,7 +173,7 @@ Hermes Agent works in Telegram group chats with a few considerations:
 | Bot not responding at all | Verify `TELEGRAM_BOT_TOKEN` is correct. Check `hermes gateway` logs for errors. |
 | Bot responds with "unauthorized" | Your user ID is not in `TELEGRAM_ALLOWED_USERS`. Double-check with @userinfobot. |
 | Bot ignores group messages | Privacy mode is likely on. Disable it (Step 3) or make the bot a group admin. **Remember to remove and re-add the bot after changing privacy.** |
-| Voice messages not transcribed | Check that `VOICE_TOOLS_OPENAI_KEY` is set and valid in `~/.hermes/.env`. |
+| Voice messages not transcribed | Check that `VOICE_TOOLS_OPENAI_KEY` is set and valid in `~/.logos/.env`. |
 | Voice replies are files, not bubbles | Install `ffmpeg` (needed for Edge TTS Opus conversion). |
 | Bot token revoked/invalid | Generate a new token via `/revoke` then `/newbot` or `/token` in BotFather. Update your `.env` file. |
 

@@ -24,7 +24,7 @@ Key implementation files:
 ```text
 hermes acp / hermes-acp / python -m acp_adapter
   -> acp_adapter.entry.main()
-  -> load ~/.hermes/.env
+  -> load ~/.logos/.env
   -> configure stderr logging
   -> construct HermesACPAgent
   -> acp.run_agent(agent)

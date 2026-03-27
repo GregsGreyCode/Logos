@@ -6,7 +6,7 @@ Hermes can automatically snapshot your working directory before making file chan
 
 When enabled, Hermes takes a **one-time snapshot** at the start of each conversation turn before the first file-modifying operation (`write_file` or `patch`). This creates a point-in-time backup you can restore to at any time.
 
-Under the hood, checkpoints use a **shadow git repository** stored at `~/.hermes/checkpoints/`. This is completely separate from your project's git — no `.git` directory is created in your project, and your own git history is never touched.
+Under the hood, checkpoints use a **shadow git repository** stored at `~/.logos/checkpoints/`. This is completely separate from your project's git — no `.git` directory is created in your project, and your own git history is never touched.
 
 ## Enabling Checkpoints
 
@@ -19,7 +19,7 @@ hermes --checkpoints
 ### Permanently (config.yaml)
 
 ```yaml
-# ~/.hermes/config.yaml
+# ~/.logos/config.yaml
 checkpoints:
   enabled: true
   max_snapshots: 50  # max checkpoints per directory (default: 50)
@@ -94,4 +94,4 @@ Git is very efficient at storing diffs. For most projects, checkpoint data is ne
 No — git must be available on your PATH. If it's not installed, checkpoints silently disable.
 
 **Can I roll back across sessions?**
-Yes! Checkpoints persist in `~/.hermes/checkpoints/` and survive across sessions. You can roll back to a checkpoint from yesterday.
+Yes! Checkpoints persist in `~/.logos/checkpoints/` and survive across sessions. You can roll back to a checkpoint from yesterday.

@@ -6,7 +6,7 @@ description: "Catalog of bundled skills that ship with Hermes Agent"
 
 # Bundled Skills Catalog
 
-Hermes ships with a large built-in skill library copied into `~/.hermes/skills/` on install. This page catalogs the bundled skills that live in the repository under `skills/`.
+Hermes ships with a large built-in skill library copied into `~/.logos/skills/` on install. This page catalogs the bundled skills that live in the repository under `skills/`.
 
 ## apple
 

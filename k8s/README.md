@@ -1,20 +1,31 @@
-# hermes_deployment
+# Logos Kubernetes Deployment
 
 > **Security model** — For a full explanation of isolation boundaries, what agents can/cannot reach in each deployment mode, and how secrets are handled, see the [Security & deployment model](../README.md#-security--deployment-model) section in the main README.
 
+## Namespace architecture
+
+Logos uses two namespaces:
+
+| Namespace | Purpose |
+|-----------|---------|
+| `logos` | The gateway process — HTTP API, dashboard, auth, routing, MCP service |
+| `hermes` | Agent instances — each spawned agent runs as a Deployment or Job here |
+
+This split isolates agent workloads from the gateway. The `logos` service account has RBAC permissions in both namespaces: it manages its own resources in `logos` and creates/deletes agent instances in `hermes`.
+
 ### RBAC footprint
 
-`09-rbac.yaml` grants the `hermes` ServiceAccount permission to create and delete Deployments, Services, PVCs, and ConfigMaps in the `hermes` namespace. This is required for spawning additional agent instances from the dashboard. It is intentionally namespace-scoped — Hermes cannot create resources in other namespaces or read cluster-wide secrets. Review this role before applying to a shared cluster.
+`09-rbac.yaml` grants the `logos` ServiceAccount permission to manage Deployments, Services, PVCs, Jobs, and Pods in both the `logos` and `hermes` namespaces. It also grants cluster-wide read access to nodes and pods (for resource metrics). This is intentionally scoped — the service account cannot create resources in other namespaces or read cluster-wide secrets. Review this role before applying to a shared cluster.
 
 ---
 
-Kubernetes manifests for the `hermes` namespace. Apply in filename order (00 → 11).
+Kubernetes manifests. Apply in filename order (00 → 11).
 
 ## Manifests
 
 | File | Kind | Purpose |
 |------|------|---------|
-| `00-namespace.yaml` | Namespace | Creates the `hermes` namespace |
+| `00-namespace.yaml` | Namespace | Creates the `logos` and `hermes` namespaces |
 | `01-configmap-env.yaml` | ConfigMap `hermes-config` | Hermes env vars (model, URL, log level) |
 | `02-secret.yaml` | Secret `hermes-secret` | API keys and internal token (placeholder — real values applied separately) |
 | `03-configmap-hermes-config.yaml` | ConfigMap `hermes-config-yaml` | Full Hermes runtime config — MCP servers, SOUL.md, tool tiers |

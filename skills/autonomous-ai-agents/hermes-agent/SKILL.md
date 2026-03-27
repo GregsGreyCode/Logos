@@ -30,7 +30,7 @@ Run additional Hermes Agent processes as autonomous subprocesses. Unlike `delega
 ## Prerequisites
 
 - `hermes` CLI installed and on PATH
-- API key configured in `~/.hermes/.env`
+- API key configured in `~/.logos/.env`
 
 ### Installation
 

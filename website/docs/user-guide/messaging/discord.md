@@ -156,7 +156,7 @@ Select **Discord** when prompted, then paste your bot token and user ID when ask
 
 ### Option B: Manual Configuration
 
-Add the following to your `~/.hermes/.env` file:
+Add the following to your `~/.logos/.env` file:
 
 ```bash
 # Required
@@ -191,7 +191,7 @@ Type `/sethome` in any Discord channel where the bot is present. That channel be
 
 ### Manual Configuration
 
-Add these to your `~/.hermes/.env`:
+Add these to your `~/.logos/.env`:
 
 ```bash
 DISCORD_HOME_CHANNEL=123456789012345678
@@ -249,7 +249,7 @@ Hermes Agent supports Discord voice messages:
 
 **Cause**: Your User ID isn't in `DISCORD_ALLOWED_USERS`.
 
-**Fix**: Add your User ID to `DISCORD_ALLOWED_USERS` in `~/.hermes/.env` and restart the gateway.
+**Fix**: Add your User ID to `DISCORD_ALLOWED_USERS` in `~/.logos/.env` and restart the gateway.
 
 ## Security
 

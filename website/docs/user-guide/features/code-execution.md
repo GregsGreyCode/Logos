@@ -138,7 +138,7 @@ print(json.dumps(report, indent=2))
 All limits are configurable via `config.yaml`:
 
 ```yaml
-# In ~/.hermes/config.yaml
+# In ~/.logos/config.yaml
 code_execution:
   timeout: 300       # Max seconds per script (default: 300)
   max_tool_calls: 50 # Max tool calls per execution (default: 50)

@@ -75,7 +75,7 @@ class InstanceExecutor(Protocol):
 `LocalProcessExecutor`:
 - Allocates ports from `runtime.local_port_range` (default `[8081, 8199]`)
 - Starts each instance as `subprocess.Popen(["python", "-m", "gateway.run", "--port", str(port)])`
-- Tracks PIDs + ports in `~/.hermes/instances.json`
+- Tracks PIDs + ports in `~/.logos/instances.json`
 - Uses `psutil` for resource headroom instead of cluster metrics
 - Health-polls `http://127.0.0.1:{port}/health` before marking instance ready
 
@@ -141,7 +141,7 @@ Tauri (Rust shell + webview) — eliminates the "embed Python" overhead, produce
 ### Phase 3 — LocalProcessExecutor (done)
 - [x] Implement port allocation from pool
 - [x] Implement `spawn()` — `subprocess.Popen` + PID tracking
-- [x] Implement `list_instances()` — read `~/.hermes/instances.json` + health check + per-process psutil CPU/RAM
+- [x] Implement `list_instances()` — read `~/.logos/instances.json` + health check + per-process psutil CPU/RAM
 - [x] Implement `delete_instance()` — SIGTERM + SIGKILL fallback + cleanup
 - [x] Implement `get_headroom()` — psutil CPU/RAM with 1-core / 1-GB thresholds
 - [x] Implement `get_resources()` — system-wide free CPU + RAM for UI resource bar

@@ -38,8 +38,8 @@ The gateway process is responsible for:
 The gateway has a multi-source config model:
 
 - environment variables
-- `~/.hermes/gateway.json`
-- selected bridged values from `~/.hermes/config.yaml`
+- `~/.logos/gateway.json`
+- selected bridged values from `~/.logos/config.yaml`
 
 ## Session routing
 

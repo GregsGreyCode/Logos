@@ -18,10 +18,10 @@ Conversational style and visual style are separate concepts:
 ```bash
 /skin                # show the current skin and list available skins
 /skin ares           # switch to a built-in skin
-/skin mytheme        # switch to a custom skin from ~/.hermes/skins/mytheme.yaml
+/skin mytheme        # switch to a custom skin from ~/.logos/skins/mytheme.yaml
 ```
 
-Or set the default skin in `~/.hermes/config.yaml`:
+Or set the default skin in `~/.logos/config.yaml`:
 
 ```yaml
 display:
@@ -51,7 +51,7 @@ display:
 
 ## Custom skins
 
-Create YAML files under `~/.hermes/skins/`. User skins inherit missing values from the built-in `default` skin.
+Create YAML files under `~/.logos/skins/`. User skins inherit missing values from the built-in `default` skin.
 
 ```yaml
 name: cyberpunk

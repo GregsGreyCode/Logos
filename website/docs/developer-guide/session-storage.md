@@ -19,7 +19,7 @@ Primary files:
 The primary store lives at:
 
 ```text
-~/.hermes/state.db
+~/.logos/state.db
 ```
 
 It contains:

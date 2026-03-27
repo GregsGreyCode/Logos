@@ -15,7 +15,7 @@ Automatic filesystem snapshots before destructive file operations, with user-fac
 ## Architecture
 
 ```
-~/.hermes/checkpoints/
+~/.logos/checkpoints/
   {sha256(abs_dir)[:16]}/       # Shadow git repo per working directory
     HEAD, refs/, objects/...    # Standard git internals
     HERMES_WORKDIR              # Original dir path (for display)
@@ -122,7 +122,7 @@ Add to `DEFAULT_CONFIG` in `hermes_cli/config.py`:
 
 User enables with:
 ```yaml
-# ~/.hermes/config.yaml
+# ~/.logos/config.yaml
 checkpoints: true
 ```
 
