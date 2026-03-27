@@ -1,0 +1,35 @@
+# Default OpenShell egress policy for Hermes agent sandboxes.
+#
+# This policy is applied automatically to every sandbox created by
+# OpenShellExecutor.  It allows outbound access to common model endpoints
+# (Ollama, LM Studio, OpenAI-compatible APIs) while blocking everything else.
+#
+# Hot-reloadable at runtime:
+#   openshell policy set <sandbox-name> --policy openshell_default.yaml --wait
+#
+# See: https://docs.nvidia.com/openshell/latest/policies/
+
+version: "1"
+
+network:
+  # Allow outbound to local model servers (Ollama / LM Studio / vLLM)
+  - action: allow
+    destination: "host.docker.internal"
+    ports: [11434, 1234, 8000, 8080, 8081]
+    methods: [GET, POST]
+
+  # Allow localhost model servers (when running alongside gateway)
+  - action: allow
+    destination: "127.0.0.1"
+    ports: [11434, 1234, 8000]
+    methods: [GET, POST]
+
+  # Allow DNS resolution
+  - action: allow
+    destination: "*"
+    ports: [53]
+    protocol: udp
+
+  # Block everything else outbound
+  - action: deny
+    destination: "*"

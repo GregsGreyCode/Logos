@@ -22,6 +22,9 @@ def build_executor(mode: str) -> "InstanceExecutor":
     if mode == "kubernetes":
         from .kubernetes import KubernetesExecutor
         return KubernetesExecutor()
+    elif mode == "openshell":
+        from .openshell import OpenShellExecutor
+        return OpenShellExecutor()
     else:
         from .local import LocalProcessExecutor
         return LocalProcessExecutor()

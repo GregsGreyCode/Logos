@@ -1,0 +1,41 @@
+# Hermes agent sandbox image for OpenShell
+#
+# Build:
+#   docker build -f Dockerfile.openshell-sandbox -t logos-hermes-sandbox .
+#
+# Usage (via OpenShellExecutor — handled automatically):
+#   openshell sandbox create --name hermes-X --from logos-hermes-sandbox --detach
+#
+# The Hermes gateway starts on port 8080 inside the sandbox.
+# OpenShellExecutor forwards a host port (8200-8299) to this via SSH tunnel.
+
+# OpenShell base sandbox image (community catalog)
+FROM ghcr.io/nvidia/openshell/sandbox:latest
+
+# ── System dependencies ────────────────────────────────────────────────────
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3.11 \
+    python3-pip \
+    python3.11-venv \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# ── Install Logos/Hermes ────────────────────────────────────────────────────
+WORKDIR /app
+COPY pyproject.toml ./
+COPY . .
+
+RUN python3.11 -m pip install --no-cache-dir -e ".[messaging]"
+
+# ── Runtime config ─────────────────────────────────────────────────────────
+ENV HERMES_PORT=8080
+ENV HERMES_HOME=/hermes
+RUN mkdir -p /hermes
+
+# ── Entrypoint ─────────────────────────────────────────────────────────────
+# OpenShell runs the CMD as the container's main process.
+# HERMES_INSTANCE_NAME, HERMES_SOUL, HERMES_TOOLSETS etc. are injected
+# by OpenShellExecutor via --env flags at sandbox creation time.
+CMD ["python3.11", "-m", "gateway.run"]
+
+EXPOSE 8080
