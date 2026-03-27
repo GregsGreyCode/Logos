@@ -1254,10 +1254,13 @@
                   </p>
                   <!-- Actions when Docker is not running but installed -->
                   <template x-if="!sandboxProbe.docker_running && sandboxProbe.docker_installed && sandboxProbe.docker_desktop_path">
-                    <button @click="fetch('/api/setup/sandbox-setup', {method:'POST', headers:{'X-CSRF-Token':getCsrfToken()}, credentials:'same-origin'}).then(()=>setTimeout(()=>probeSandbox(),3000))"
-                      class="mt-2 px-3 py-1 rounded-lg bg-yellow-900/40 border border-yellow-700 text-xs text-yellow-300 hover:bg-yellow-900/60 transition-colors">
-                      Launch Docker Desktop
-                    </button>
+                    <div class="mt-2 flex items-center gap-2">
+                      <button @click="fetch('/api/setup/launch-docker', {method:'POST', headers:{'X-CSRF-Token':getCsrfToken()}, credentials:'same-origin'}).then(()=>setTimeout(()=>probeSandbox(),4000))"
+                        class="px-3 py-1 rounded-lg bg-yellow-900/40 border border-yellow-700 text-xs text-yellow-300 hover:bg-yellow-900/60 transition-colors">
+                        Launch Docker Desktop
+                      </button>
+                      <button @click="probeSandbox()" class="text-xs text-gray-500 hover:text-gray-300 underline">Re-check</button>
+                    </div>
                   </template>
                   <!-- Link when Docker not installed -->
                   <template x-if="!sandboxProbe.docker_installed">
@@ -1422,10 +1425,11 @@
             </details>
 
             <button @click="goNext()"
-              :disabled="execEnv === 'openshell' && !sandboxProbe.sandbox_ready && sandboxProbe.docker_running"
+              :disabled="sandboxSetupRunning || (execEnv === 'openshell' && !sandboxProbe.sandbox_ready && sandboxProbe.docker_running && !sandboxSetupDone)"
               class="btn-primary w-full py-2.5 rounded-xl text-sm disabled:opacity-40 disabled:cursor-not-allowed">
               <span x-show="execEnv === 'openshell' && sandboxProbe.sandbox_ready">Continue with sandboxed agents &rarr;</span>
-              <span x-show="execEnv !== 'openshell' || !sandboxProbe.docker_running">Continue <span x-show="!sandboxProbe.docker_running" class="text-yellow-400/70">(in-process)</span> &rarr;</span>
+              <span x-show="execEnv === 'openshell' && !sandboxProbe.sandbox_ready && sandboxSetupDone" class="text-red-400">Setup failed — continue in-process &rarr;</span>
+              <span x-show="execEnv !== 'openshell' || (!sandboxProbe.docker_running && !sandboxSetupDone)">Continue <span x-show="!sandboxProbe.docker_running" class="text-yellow-400/70">(in-process)</span> &rarr;</span>
             </button>
           </div>
         </template>
@@ -1896,7 +1900,8 @@ function setup() {
       } catch(e) {
         this.sandboxProbe = { docker_running: false, docker_installed: false,
                                openshell_present: false, image_present: false, sandbox_ready: false };
-        this.execEnv = 'local';
+        // Only reset to local if no explicit choice has been made (e.g. k8s)
+        if (!this.execEnv || this.execEnv === 'openshell') this.execEnv = 'local';
       } finally {
         this.sandboxProbing = false;
       }
@@ -1905,6 +1910,7 @@ function setup() {
     async runSandboxSetup() {
       this.sandboxSetupRunning = true;
       this.sandboxSetupLog = [];
+      this.sandboxSetupDone = false;
       try {
         const r = await fetch('/api/setup/sandbox-setup', {
           method: 'POST',
