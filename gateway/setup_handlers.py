@@ -2265,10 +2265,17 @@ import urllib.request as _urllib_request
 _OPENSHELL_IMAGE  = os.getenv("LOGOS_OPENSHELL_IMAGE", "logos-hermes-sandbox")
 _HERMES_BIN_DIR   = pathlib.Path(os.getenv("HERMES_HOME", pathlib.Path.home() / ".hermes")) / "bin"
 
-# GitHub release asset naming: openshell-{os}-{arch}[.exe]
+# GitHub release asset naming (actual): openshell-{arch}-{os-triple}.tar.gz
+# e.g. openshell-x86_64-unknown-linux-musl.tar.gz, openshell-aarch64-apple-darwin.tar.gz
 _OS_MAP   = {"Windows": "windows", "Linux": "linux", "Darwin": "darwin"}
 _ARCH_MAP = {"AMD64": "x86_64", "x86_64": "x86_64", "ARM64": "aarch64", "aarch64": "aarch64"}
 _OPENSHELL_RELEASES = "https://github.com/NVIDIA/OpenShell/releases/latest/download"
+# Maps (platform.system(), arch) → GitHub release asset suffix (after "openshell-")
+_OPENSHELL_ASSET_MAP = {
+    ("Linux",  "x86_64"):  "x86_64-unknown-linux-musl",
+    ("Linux",  "aarch64"): "aarch64-unknown-linux-musl",
+    ("Darwin", "aarch64"): "aarch64-apple-darwin",
+}
 
 
 def _openshell_exe() -> str:
@@ -2476,6 +2483,9 @@ async def handle_setup_env_probe(request: web.Request) -> web.Response:
     if docker_info["running"]:
         image_present = await loop.run_in_executor(None, _sandbox_image_exists)
 
+    # OpenShell only ships Linux and macOS binaries — not available on Windows
+    openshell_supported = _platform.system() != "Windows"
+
     return web.json_response({
         "platform":             _OS_MAP.get(_platform.system(), _platform.system().lower()),
         "docker_running":       docker_info["running"],
@@ -2483,6 +2493,7 @@ async def handle_setup_env_probe(request: web.Request) -> web.Response:
         "docker_desktop_path":  docker_info.get("desktop_path", ""),
         "openshell_present":    bool(openshell_exe),
         "openshell_path":       openshell_exe,
+        "openshell_supported":  openshell_supported,
         "image_present":        image_present,
         "sandbox_ready":        docker_info["running"] and bool(openshell_exe) and image_present,
     })
@@ -2513,6 +2524,16 @@ async def handle_setup_sandbox_setup(request: web.Request) -> web.Response:
         await resp.write(f"data: {payload}\n\n".encode())
 
     loop = asyncio.get_event_loop()
+
+    # ── Platform gate: OpenShell only supports Linux and macOS ───────────
+    if _platform.system() == "Windows":
+        await emit("openshell_install", "skip",
+                    "OpenShell is not yet available for Windows. "
+                    "Docker was detected, but sandboxed agent execution requires OpenShell to manage containers. "
+                    "Agents will run in-process for now.")
+        await emit("done", "error", sandbox_ready=False,
+                    reason="openshell_unsupported_platform")
+        return resp
 
     # ── Step 1: install openshell if missing ──────────────────────────────
     openshell_path = await loop.run_in_executor(None, _openshell_exe)
@@ -2588,20 +2609,36 @@ def _install_openshell() -> tuple[str, str]:
         except Exception:
             pass
 
-    # 3. Download binary from GitHub releases
-    os_name  = _OS_MAP.get(_platform.system(), "linux")
+    # 3. Download binary from GitHub releases (tar.gz archive)
     arch_raw = _platform.machine()
     arch     = _ARCH_MAP.get(arch_raw, "x86_64")
-    ext      = ".exe" if _sys.platform == "win32" else ""
-    filename = f"openshell-{os_name}-{arch}{ext}"
-    url      = f"{_OPENSHELL_RELEASES}/{filename}"
-    dest     = _HERMES_BIN_DIR / filename.replace(f"-{os_name}-{arch}", "")  # → openshell[.exe]
+    asset_key = (_platform.system(), arch)
+    asset_suffix = _OPENSHELL_ASSET_MAP.get(asset_key)
+    if not asset_suffix:
+        return "", f"No OpenShell binary available for {_platform.system()}/{arch_raw}"
+
+    archive_name = f"openshell-{asset_suffix}.tar.gz"
+    url = f"{_OPENSHELL_RELEASES}/{archive_name}"
+    dest = _HERMES_BIN_DIR / "openshell"
 
     try:
+        import tarfile as _tarfile
+        import tempfile as _tempfile
         logger.info("Downloading openshell from %s", url)
-        _urllib_request.urlretrieve(url, str(dest))
-        if _sys.platform != "win32":
-            dest.chmod(0o755)
+        with _tempfile.NamedTemporaryFile(suffix=".tar.gz", delete=False) as tmp:
+            _urllib_request.urlretrieve(url, tmp.name)
+            with _tarfile.open(tmp.name, "r:gz") as tf:
+                # Find the openshell binary inside the archive
+                for member in tf.getmembers():
+                    basename = pathlib.Path(member.name).name
+                    if basename == "openshell" and member.isfile():
+                        member.name = "openshell"  # flatten path
+                        tf.extract(member, str(_HERMES_BIN_DIR))
+                        break
+                else:
+                    return "", f"Could not find 'openshell' binary inside {archive_name}"
+            os.unlink(tmp.name)
+        dest.chmod(0o755)
         # Add ~/.hermes/bin to PATH for this process so _openshell_exe finds it
         os.environ["PATH"] = str(_HERMES_BIN_DIR) + os.pathsep + os.environ.get("PATH", "")
         return str(dest), ""

@@ -1247,7 +1247,7 @@
             </div>
 
             <!-- ──────────────────────────────────── OPENSHELL CLI ── -->
-            <template x-if="sandboxProbe.docker_running">
+            <template x-if="sandboxProbe.docker_running && sandboxProbe.openshell_supported !== false">
               <div class="mb-3 p-4 rounded-xl border transition-all"
                 :class="sandboxProbe.openshell_present ? 'border-green-800 bg-green-950/20' : 'border-gray-800 bg-gray-900'">
                 <div class="flex items-start gap-3">
@@ -1268,8 +1268,16 @@
               </div>
             </template>
 
+            <!-- ──── Windows: Docker detected but OpenShell not supported ── -->
+            <template x-if="sandboxProbe.docker_running && sandboxProbe.openshell_supported === false">
+              <div class="mb-4 px-3 py-2.5 rounded-xl border border-blue-900/40 bg-blue-950/10 text-xs text-blue-300/80 leading-relaxed space-y-1">
+                <div class="font-semibold text-blue-300">Docker is running, but sandbox mode is not yet available on Windows</div>
+                <div>Docker Desktop was detected and is working. However, the OpenShell sandbox engine &mdash; which manages container isolation and security policies &mdash; does not yet ship a Windows release. Agents will run in-process for now. Kubernetes sandboxing is available as an alternative if you have a cluster.</div>
+              </div>
+            </template>
+
             <!-- ──────────────────────────────── SANDBOX IMAGE ── -->
-            <template x-if="sandboxProbe.docker_running">
+            <template x-if="sandboxProbe.docker_running && sandboxProbe.openshell_supported !== false">
               <div class="mb-4 p-4 rounded-xl border transition-all"
                 :class="sandboxProbe.image_present ? 'border-green-800 bg-green-950/20' : 'border-gray-800 bg-gray-900'">
                 <div class="flex items-start gap-3">
@@ -1291,7 +1299,7 @@
             </template>
 
             <!-- ──────────────────────── AUTO-SETUP BUTTON / PROGRESS ── -->
-            <template x-if="sandboxProbe.docker_running && !sandboxProbe.sandbox_ready">
+            <template x-if="sandboxProbe.docker_running && !sandboxProbe.sandbox_ready && sandboxProbe.openshell_supported !== false">
               <div class="mb-4">
                 <button @click="runSandboxSetup()"
                   :disabled="sandboxSetupRunning"
@@ -1859,11 +1867,11 @@ function setup() {
         // Auto-select execEnv based on what's available
         if (this.sandboxProbe.sandbox_ready) {
           this.execEnv = 'openshell';
-        } else if (this.sandboxProbe.docker_running) {
-          // Docker is running but setup not complete — default to openshell path
-          // (user can still switch to local or k8s)
+        } else if (this.sandboxProbe.docker_running && this.sandboxProbe.openshell_supported !== false) {
+          // Docker is running and OpenShell is supported — default to openshell path
           this.execEnv = 'openshell';
         } else {
+          // Windows with Docker but no OpenShell support, or no Docker at all
           this.execEnv = 'local';
         }
       } catch(e) {
@@ -1900,16 +1908,18 @@ function setup() {
             if (!line) continue;
             try {
               const ev = JSON.parse(line);
-              // Update existing entry or push new
-              const idx = this.sandboxSetupLog.findIndex(e => e.step === ev.step);
-              if (idx >= 0) { this.sandboxSetupLog[idx] = ev; this.sandboxSetupLog = [...this.sandboxSetupLog]; }
-              else { this.sandboxSetupLog = [...this.sandboxSetupLog, ev]; }
               if (ev.step === 'done') {
+                // Done is metadata, not a visible progress row
                 this.sandboxSetupDone = true;
                 if (ev.sandbox_ready) {
                   this.execEnv = 'openshell';
                   if (this.sandboxProbe) this.sandboxProbe.sandbox_ready = true;
                 }
+              } else {
+                // Update existing entry or push new
+                const idx = this.sandboxSetupLog.findIndex(e => e.step === ev.step);
+                if (idx >= 0) { this.sandboxSetupLog[idx] = ev; this.sandboxSetupLog = [...this.sandboxSetupLog]; }
+                else { this.sandboxSetupLog = [...this.sandboxSetupLog, ev]; }
               }
             } catch(_) {}
           }
