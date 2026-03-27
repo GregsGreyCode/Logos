@@ -33,6 +33,41 @@ roleRef:
   apiGroup: rbac.authorization.k8s.io
   name: logos-instance-manager
 ---
+# Same Role in the hermes namespace — agent instances (deployments, jobs, pods)
+# run here, so the logos SA needs identical permissions in both namespaces.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: logos-instance-manager
+  namespace: hermes
+rules:
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "list", "watch", "create", "delete"]
+  - apiGroups: [""]
+    resources: ["services", "persistentvolumeclaims", "pods"]
+    verbs: ["get", "list", "watch", "create", "delete"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get"]
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["get", "list", "watch", "create", "delete", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: logos-instance-manager
+  namespace: hermes
+subjects:
+  - kind: ServiceAccount
+    name: logos
+    namespace: logos
+roleRef:
+  kind: Role
+  apiGroup: rbac.authorization.k8s.io
+  name: logos-instance-manager
+---
 # Cluster-scoped read: list nodes (capacity) and pods cluster-wide (usage)
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
