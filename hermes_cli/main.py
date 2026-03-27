@@ -492,7 +492,7 @@ def cmd_chat(args):
         os.environ["HERMES_YOLO_MODE"] = "1"
 
     # Import and run the CLI
-    from cli import main as cli_main
+    from hermes_cli.cli import main as cli_main
     
     # Build kwargs from args
     kwargs = {

@@ -1,7 +1,7 @@
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
-from cli import HermesCLI, _rich_text_from_ansi
+from hermes_cli.cli import HermesCLI, _rich_text_from_ansi
 from hermes_cli.skin_engine import get_active_skin, set_active_skin
 
 
@@ -79,7 +79,7 @@ class TestCliSkinPromptIntegration:
     def test_handle_skin_command_refreshes_live_tui(self, capsys):
         cli = _make_cli_stub()
 
-        with patch("cli.save_config_value", return_value=True):
+        with patch("hermes_cli.cli.save_config_value", return_value=True):
             cli._handle_skin_command("/skin ares")
 
         output = capsys.readouterr().out

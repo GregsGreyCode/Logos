@@ -21,7 +21,7 @@ class TestParseReasoningConfig(unittest.TestCase):
     """Verify _parse_reasoning_config handles all effort levels."""
 
     def _parse(self, effort):
-        from cli import _parse_reasoning_config
+        from hermes_cli.cli import _parse_reasoning_config
         return _parse_reasoning_config(effort)
 
     def test_none_disables(self):
@@ -100,7 +100,7 @@ class TestHandleReasoningCommand(unittest.TestCase):
 
     def test_effort_level_sets_config(self):
         """Setting an effort level should update reasoning_config."""
-        from cli import _parse_reasoning_config
+        from hermes_cli.cli import _parse_reasoning_config
         stub = self._make_cli()
         arg = "high"
         parsed = _parse_reasoning_config(arg)
@@ -108,7 +108,7 @@ class TestHandleReasoningCommand(unittest.TestCase):
         self.assertEqual(stub.reasoning_config, {"enabled": True, "effort": "high"})
 
     def test_effort_none_disables_reasoning(self):
-        from cli import _parse_reasoning_config
+        from hermes_cli.cli import _parse_reasoning_config
         stub = self._make_cli()
         parsed = _parse_reasoning_config("none")
         stub.reasoning_config = parsed
@@ -116,7 +116,7 @@ class TestHandleReasoningCommand(unittest.TestCase):
 
     def test_invalid_argument_rejected(self):
         """Invalid arguments should be rejected (parsed returns None)."""
-        from cli import _parse_reasoning_config
+        from hermes_cli.cli import _parse_reasoning_config
         parsed = _parse_reasoning_config("turbo")
         self.assertIsNone(parsed)
 
