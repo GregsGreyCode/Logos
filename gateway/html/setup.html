@@ -1327,79 +1327,80 @@
             </template>
 
             <!-- ──── Docker not available: in-process warning ── -->
-            <template x-if="!sandboxProbe.docker_running">
+            <template x-if="!sandboxProbe.docker_running && execEnv !== 'k8s'">
               <div class="mb-4 px-3 py-2.5 rounded-xl border border-yellow-900/40 bg-yellow-950/10 text-xs text-yellow-300/80 leading-relaxed space-y-1">
-                <div class="font-semibold text-yellow-300">Running in-process (less safe)</div>
-                <div>Without Docker, agents run inside the same process as Logos with no OS-level isolation. They can access your filesystem and make network requests subject only to Logos policy. This is fine for personal use, but for untrusted inputs or shared machines, Docker sandboxing is strongly recommended.</div>
+                <div class="font-semibold text-yellow-300">No sandbox available</div>
+                <div>Without Docker or Kubernetes, agents run in the same process as Logos with no OS-level isolation. They can access your filesystem and make network requests subject only to Logos policy rules. This is fine for personal use on a trusted machine, but <span class="text-yellow-200 font-medium">Docker or Kubernetes is strongly recommended</span> for shared environments or untrusted inputs.</div>
               </div>
             </template>
 
-            <!-- ──── Advanced: K8s option ── -->
-            <details class="mb-4">
-              <summary class="text-xs text-gray-600 cursor-pointer hover:text-gray-400 select-none">Advanced: use a Kubernetes cluster instead</summary>
-              <div class="mt-3 space-y-3">
-                <button @click="execEnv = (execEnv === 'k8s' ? (sandboxProbe.sandbox_ready ? 'openshell' : 'local') : 'k8s')"
-                  class="w-full text-left p-3 rounded-xl border text-xs transition-all"
-                  :class="execEnv === 'k8s' ? 'border-indigo-500 bg-indigo-950/30' : 'border-gray-800 bg-gray-900 hover:border-gray-700'">
-                  <div class="flex items-center gap-2">
-                    <span class="font-mono font-bold text-gray-400">k8s</span>
-                    <span class="font-semibold text-white">Kubernetes cluster</span>
-                    <span x-show="execEnv === 'k8s'" class="text-[9px] px-1.5 py-0.5 rounded-full bg-indigo-900 text-indigo-300 border border-indigo-700 font-semibold uppercase tracking-wider">Selected</span>
-                  </div>
-                  <p class="text-gray-500 mt-1">Each agent run spawns a dedicated Kubernetes Job — isolated pod with its own filesystem and resource limits.</p>
-                </button>
+            <!-- ──── Kubernetes option ── -->
+            <div class="mb-4">
+              <button @click="execEnv = (execEnv === 'k8s' ? (sandboxProbe.sandbox_ready ? 'openshell' : 'local') : 'k8s'); if (execEnv === 'k8s') { k8sTestResult = null; k8sTestError = ''; }"
+                class="w-full text-left p-3 rounded-xl border text-xs transition-all"
+                :class="execEnv === 'k8s' ? 'border-indigo-500 bg-indigo-950/30' : 'border-gray-800 bg-gray-900 hover:border-gray-700'">
+                <div class="flex items-center gap-2">
+                  <span class="w-5 h-5 shrink-0 flex items-center justify-center rounded-full text-[10px] font-bold"
+                    :class="execEnv === 'k8s' ? 'bg-indigo-900 text-indigo-300' : 'bg-gray-800 text-gray-500'">K</span>
+                  <span class="font-semibold text-white">Kubernetes</span>
+                  <span x-show="execEnv === 'k8s'" class="text-[9px] px-1.5 py-0.5 rounded-full bg-indigo-900 text-indigo-300 border border-indigo-700 font-semibold uppercase tracking-wider">Selected</span>
+                </div>
+                <p class="text-gray-500 mt-1">Each agent run spawns a dedicated Kubernetes pod with its own filesystem, network namespace, and resource limits. Strongest isolation.</p>
+              </button>
 
-                <div x-show="execEnv === 'k8s'" class="p-3 rounded-xl bg-gray-900 border border-gray-800 space-y-3">
-                  <div class="flex gap-2">
-                    <button @click="k8sMode = 'incluster'"
-                      class="flex-1 py-1.5 rounded-lg text-xs font-medium transition-colors"
-                      :class="k8sMode === 'incluster' ? 'bg-indigo-900 text-indigo-200 border border-indigo-700' : 'bg-gray-800 text-gray-400 border border-gray-700 hover:border-gray-600'">
-                      Logos is in the cluster
-                    </button>
-                    <button @click="k8sMode = 'kubeconfig'"
-                      class="flex-1 py-1.5 rounded-lg text-xs font-medium transition-colors"
-                      :class="k8sMode === 'kubeconfig' ? 'bg-indigo-900 text-indigo-200 border border-indigo-700' : 'bg-gray-800 text-gray-400 border border-gray-700 hover:border-gray-600'">
-                      Logos is outside the cluster
-                    </button>
-                  </div>
-                  <div x-show="k8sMode === 'incluster'" class="text-xs text-gray-500">Uses the service account token mounted in the Logos pod — no credentials needed.</div>
-                  <div x-show="k8sMode === 'kubeconfig'" class="text-xs text-gray-500">Paste a kubeconfig so Logos can reach the cluster API.</div>
-                  <div x-show="k8sMode === 'kubeconfig'"
-                       @dragover.prevent="$el.classList.add('border-indigo-600')"
-                       @dragleave="$el.classList.remove('border-indigo-600')"
-                       @drop.prevent="$el.classList.remove('border-indigo-600'); $event.dataTransfer.files[0] && $event.dataTransfer.files[0].text().then(t => kubeconfig = t)"
-                       class="border-2 border-dashed border-gray-700 rounded-lg p-2 transition-colors">
-                    <label class="block text-xs text-gray-500 mb-1">
-                      Paste kubeconfig or <span class="text-indigo-400 cursor-pointer hover:text-indigo-300 underline" @click="$refs.kubeconfigFile.click()">browse</span>
-                    </label>
-                    <input type="file" x-ref="kubeconfigFile" accept=".yaml,.yml,.conf,text/plain" class="hidden"
-                           @change="$event.target.files[0] && $event.target.files[0].text().then(t => { kubeconfig = t; $event.target.value = ''; })">
-                    <textarea x-model="kubeconfig" rows="5" placeholder="apiVersion: v1&#10;kind: Config&#10;..."
-                      class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-xs text-white placeholder-gray-600 font-mono focus:outline-none focus:border-indigo-500 resize-none"
-                      style="box-sizing:border-box;"></textarea>
-                  </div>
-                  <div class="flex items-center gap-3">
-                    <button @click="testK8s()" :disabled="k8sTesting || (k8sMode === 'kubeconfig' && !kubeconfig.trim())"
-                      class="px-3 py-1.5 rounded-lg border border-gray-700 hover:border-gray-500 text-xs text-gray-300 transition-colors disabled:opacity-40">
-                      <span x-show="!k8sTesting">Test connection</span>
-                      <span x-show="k8sTesting" class="flex items-center gap-1.5">
-                        <div class="w-3 h-3 border border-gray-600 border-t-indigo-400 rounded-full animate-spin"></div>
-                        Testing&hellip;
-                      </span>
-                    </button>
-                    <span x-show="k8sTestResult === 'ok'" class="text-xs text-green-400">&#x2713; Connected</span>
-                    <span x-show="k8sTestResult === 'error'" class="text-xs text-red-400" x-text="k8sTestError"></span>
-                  </div>
+              <div x-show="execEnv === 'k8s'" x-cloak class="mt-2 p-3 rounded-xl bg-gray-900 border border-gray-800 space-y-3">
+                <div class="text-[11px] font-medium text-gray-400 mb-1">How does Logos connect to the cluster?</div>
+                <div class="flex gap-2">
+                  <button @click="k8sMode = 'incluster'; k8sTestResult = null; k8sTestError = '';"
+                    class="flex-1 py-1.5 rounded-lg text-xs font-medium transition-colors"
+                    :class="k8sMode === 'incluster' ? 'bg-indigo-900 text-indigo-200 border border-indigo-700' : 'bg-gray-800 text-gray-400 border border-gray-700 hover:border-gray-600'">
+                    Automatic (in-cluster)
+                  </button>
+                  <button @click="k8sMode = 'kubeconfig'; k8sTestResult = null; k8sTestError = '';"
+                    class="flex-1 py-1.5 rounded-lg text-xs font-medium transition-colors"
+                    :class="k8sMode === 'kubeconfig' ? 'bg-indigo-900 text-indigo-200 border border-indigo-700' : 'bg-gray-800 text-gray-400 border border-gray-700 hover:border-gray-600'">
+                    Kubeconfig file
+                  </button>
+                </div>
+                <div x-show="k8sMode === 'incluster'" class="text-xs text-gray-500">Logos is running as a pod in the cluster. Authentication uses the mounted service account token &mdash; no credentials needed.</div>
+                <div x-show="k8sMode === 'kubeconfig'" class="text-xs text-gray-500">Logos is running outside the cluster (e.g. on your laptop or a separate VM). Provide a kubeconfig file so Logos can reach the Kubernetes API.</div>
+                <div x-show="k8sMode === 'kubeconfig'"
+                     @dragover.prevent="$el.classList.add('border-indigo-600')"
+                     @dragleave="$el.classList.remove('border-indigo-600')"
+                     @drop.prevent="$el.classList.remove('border-indigo-600'); $event.dataTransfer.files[0] && $event.dataTransfer.files[0].text().then(t => kubeconfig = t)"
+                     class="border-2 border-dashed border-gray-700 rounded-lg p-2 transition-colors">
+                  <label class="block text-xs text-gray-500 mb-1">
+                    Paste kubeconfig or <span class="text-indigo-400 cursor-pointer hover:text-indigo-300 underline" @click="$refs.kubeconfigFile.click()">browse</span>
+                  </label>
+                  <input type="file" x-ref="kubeconfigFile" accept=".yaml,.yml,.conf,text/plain" class="hidden"
+                         @change="$event.target.files[0] && $event.target.files[0].text().then(t => { kubeconfig = t; $event.target.value = ''; })">
+                  <textarea x-model="kubeconfig" rows="5" placeholder="apiVersion: v1&#10;kind: Config&#10;..."
+                    class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-xs text-white placeholder-gray-600 font-mono focus:outline-none focus:border-indigo-500 resize-none"
+                    style="box-sizing:border-box;"></textarea>
+                </div>
+                <div class="flex items-center gap-3">
+                  <button @click="testK8s()" :disabled="k8sTesting || (k8sMode === 'kubeconfig' && !kubeconfig.trim())"
+                    class="px-3 py-1.5 rounded-lg border border-gray-700 hover:border-gray-500 text-xs text-gray-300 transition-colors disabled:opacity-40">
+                    <span x-show="!k8sTesting">Test connection</span>
+                    <span x-show="k8sTesting" class="flex items-center gap-1.5">
+                      <div class="w-3 h-3 border border-gray-600 border-t-indigo-400 rounded-full animate-spin"></div>
+                      Testing&hellip;
+                    </span>
+                  </button>
+                  <span x-show="k8sTestResult === 'ok'" class="text-xs text-green-400">&#x2713; Connected</span>
+                  <span x-show="k8sTestResult === 'error'" class="text-xs text-red-400" x-text="k8sTestError"></span>
                 </div>
               </div>
-            </details>
+            </div>
 
             <button @click="goNext()"
-              :disabled="sandboxSetupRunning || (execEnv === 'openshell' && !sandboxProbe.sandbox_ready && sandboxProbe.docker_running && !sandboxSetupDone)"
+              :disabled="sandboxSetupRunning || (execEnv === 'openshell' && !sandboxProbe.sandbox_ready && sandboxProbe.docker_running && !sandboxSetupDone) || (execEnv === 'k8s' && k8sMode === 'kubeconfig' && k8sTestResult !== 'ok')"
               class="btn-primary w-full py-2.5 rounded-xl text-sm disabled:opacity-40 disabled:cursor-not-allowed">
               <span x-show="execEnv === 'openshell' && sandboxProbe.sandbox_ready">Continue with sandboxed agents &rarr;</span>
-              <span x-show="execEnv === 'openshell' && !sandboxProbe.sandbox_ready && sandboxSetupDone" class="text-red-400">Setup failed — continue in-process &rarr;</span>
-              <span x-show="execEnv !== 'openshell' || (!sandboxProbe.docker_running && !sandboxSetupDone)">Continue <span x-show="!sandboxProbe.docker_running" class="text-red-400">(in-process)</span> &rarr;</span>
+              <span x-show="execEnv === 'openshell' && !sandboxProbe.sandbox_ready && sandboxSetupDone" class="text-red-400">Setup failed &mdash; continue in-process &rarr;</span>
+              <span x-show="execEnv === 'k8s' && (k8sMode === 'incluster' || k8sTestResult === 'ok')">Continue with Kubernetes &rarr;</span>
+              <span x-show="execEnv === 'k8s' && k8sMode === 'kubeconfig' && k8sTestResult !== 'ok'" class="text-gray-500">Test connection to continue &rarr;</span>
+              <span x-show="(execEnv !== 'openshell' && execEnv !== 'k8s') || (!sandboxProbe.docker_running && !sandboxSetupDone && execEnv !== 'k8s')">Continue <span x-show="!sandboxProbe.docker_running && execEnv !== 'k8s'" class="text-red-400">(in-process)</span> &rarr;</span>
             </button>
           </div>
         </template>
@@ -1586,7 +1587,7 @@
           </div>
           <div class="flex justify-between text-sm py-2.5">
             <span class="text-gray-500">Execution</span>
-            <span class="text-white font-medium" x-text="execEnv === 'k8s' ? 'Kubernetes (' + (k8sMode === 'incluster' ? 'in-cluster' : 'external') + ')' : execEnv === 'openshell' ? 'OpenShell sandbox' : 'Local'"></span>
+            <span class="text-white font-medium" x-text="execEnv === 'k8s' ? 'Kubernetes (' + (k8sMode === 'incluster' ? 'automatic' : 'kubeconfig') + ')' : execEnv === 'openshell' ? 'OpenShell sandbox' : 'Local'"></span>
           </div>
           <div x-show="execEnv === 'k8s'" class="flex justify-between text-sm py-2.5">
             <span class="text-gray-500">Namespace</span>
@@ -1675,7 +1676,7 @@ function setup() {
       { n: 1, name: 'Connect inference servers',  tag: 'detects',    desc: 'Logos scans your local network for Ollama and LM Studio. You can also add remote servers — on a LAN, VPC, or cloud VM — using a custom address. No Logos installation is needed on the inference machine.', tldrDesc: 'Logos finds your models (Ollama, LM Studio) or you add one manually.' },
       { n: 2, name: 'Benchmark models',       tag: 'measures',   desc: 'Candidate models run 6 eval tests: instruction following, reasoning, JSON format, tool selection, nested JSON, and multi-step arithmetic. The best fit is pre-selected; you can override freely.', tldrDesc: 'Each model runs a few tests. Logos picks the best one by default.' },
       { n: 3, name: 'Agent runtime',          tag: 'configures', desc: 'Choose which agent engine handles your sessions. Hermes is available now; additional runtimes plug in as they are released.', tldrDesc: 'Choose what runs your agents (Hermes for now).' },
-      { n: 4, name: 'Agent sandbox',           tag: 'secures',    desc: 'Logos scans your environment and automatically enables sandboxed agent execution if Docker is available. Each agent run gets its own isolated container with policy-enforced network access — preventing file leakage and unauthorised outbound calls. Falls back to in-process if Docker is not installed.', tldrDesc: 'Logos checks for Docker and sets up safe sandboxed agents automatically.' },
+      { n: 4, name: 'Agent sandbox',           tag: 'secures',    desc: 'Choose how agent code runs: Docker containers for local sandboxing, Kubernetes pods for production-grade isolation, or in-process as a fallback. Logos auto-detects what\u2019s available and recommends the safest option.', tldrDesc: 'Choose where agents run — Docker, Kubernetes, or in-process.' },
       { n: 5, name: 'Soul',                   tag: 'configures', desc: "A soul defines the agent's communication style and default behaviour. It is a starting point — editable at any time from the dashboard.", tldrDesc: 'Sets how the agent behaves. You can change it anytime.' },
       { n: 6, name: 'Your account',           tag: 'secures',    desc: 'Set the email, username, and password for the admin account that protects the dashboard and API.', tldrDesc: 'Create a login to secure your setup.' },
       { n: 7, name: 'Review & launch',        tag: 'confirms',   desc: 'Review every setting, confirm the model endpoint is reachable, and launch the platform.', tldrDesc: 'Check everything, then start Logos.' },
