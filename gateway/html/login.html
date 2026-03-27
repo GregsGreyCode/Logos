@@ -333,7 +333,18 @@
           .catch(() => {});
         fetch('/api/setup/status', { credentials: 'same-origin' })
           .then(r => r.ok ? r.json() : null)
-          .then(d => { if (d && !d.completed) this.needsSetup = true; })
+          .then(d => {
+            if (d && !d.completed) {
+              this.needsSetup = true;
+              // First boot: skip the splash and go straight to setup
+              this._setupAutoTimer = setTimeout(() => {
+                if (this.phase === 'splash') {
+                  document.body.classList.add('fade-out');
+                  setTimeout(() => { window.location.href = '/setup'; }, 600);
+                }
+              }, 1500);
+            }
+          })
           .catch(() => {});
         this._hintTimer = setTimeout(() => { if (this.phase === 'splash') this.showHint = true; }, 1000);
         // Drive hue for logo + button via rAF so they're always in sync
@@ -350,6 +361,7 @@
       activate() {
         if (this.phase !== 'splash') { this.resetInactivity(); return; }
         clearTimeout(this._hintTimer);
+        clearTimeout(this._setupAutoTimer);
         this.showHint = false;
         if (this.needsSetup) {
           this.phase = 'setup';
