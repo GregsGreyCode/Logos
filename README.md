@@ -8,6 +8,8 @@
   <a href="https://github.com/GregsGreyCode/Logos/issues">Open an issue</a> if you hit a bug.
 </p>
 
+> **Release history note:** v0.4 shipped 57 tagged patch releases (v0.4.26–v0.4.105) before graduating to v0.5. Pre-v0.5 tags have been removed from GitHub to keep the releases page clean; the commit history is fully intact.
+
 ---
 
 **A self-hosted platform for agentic AI.**
