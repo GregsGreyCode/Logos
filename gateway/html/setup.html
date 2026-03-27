@@ -1427,7 +1427,8 @@
         <!-- Soul grid — General is the only selectable option on first run.
              The remaining cards are shown as a teaser, fading out top-to-bottom. -->
         <div class="relative mb-6">
-          <div class="grid grid-cols-2 gap-2">
+          <div class="grid grid-cols-2 gap-2"
+            style="-webkit-mask-image:linear-gradient(to bottom,black 40%,transparent 100%);mask-image:linear-gradient(to bottom,black 40%,transparent 100%);">
             <template x-for="(soul, idx) in soulOptions.slice(0, 5)" :key="soul.slug">
               <button
                 @click="soul.slug === 'general' && (selectedSoul = soul.slug)"
@@ -1464,9 +1465,6 @@
               </button>
             </template>
           </div>
-          <!-- Gradient fade — masks the lower soul cards to create a teaser effect -->
-          <div class="absolute inset-x-0 bottom-0 h-48 pointer-events-none"
-            style="background: linear-gradient(to bottom, transparent, #010409 85%)"></div>
         </div>
 
         <div x-show="selectedSoul" x-transition.opacity>
