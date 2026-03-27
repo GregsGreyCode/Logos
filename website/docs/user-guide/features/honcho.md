@@ -15,7 +15,7 @@ Hermes has two memory systems that can work together or be configured separately
 
 | Feature | Built-in Memory | Honcho Memory |
 |---------|----------------|---------------|
-| Storage | Local files (`~/.hermes/memories/`) | Cloud-hosted Honcho API |
+| Storage | Local files (`~/.logos/memories/`) | Cloud-hosted Honcho API |
 | Scope | Agent-level notes and user profile | Deep user modeling via dialectic reasoning |
 | Persistence | Across sessions on same machine | Across sessions, machines, and platforms |
 | Query | Injected into system prompt automatically | Prefetched + on-demand via tools |
@@ -193,7 +193,7 @@ Multiple Honcho-enabled tools share `~/.honcho/config.json`. Each tool writes on
 
 Resolution: `hosts.<tool>` field > root-level field > default. In this example, both tools share the root `apiKey` and `peerName`, but each has its own `aiPeer` and workspace settings.
 
-### Hermes Config (`~/.hermes/config.yaml`)
+### Hermes Config (`~/.logos/config.yaml`)
 
 Intentionally minimal — most configuration comes from `~/.honcho/config.json`:
 
@@ -333,7 +333,7 @@ Walks through converting an OpenClaw native Honcho setup to the shared `~/.honch
 Honcho can build a representation of the AI assistant over time (via `observe_me=True`). You can also seed the AI peer explicitly:
 
 ```bash
-hermes honcho identity ~/.hermes/SOUL.md
+hermes honcho identity ~/.logos/SOUL.md
 ```
 
 This uploads the file content through Honcho's observation pipeline. The AI peer representation is then injected into the system prompt alongside the user's, giving the agent awareness of its own accumulated identity.

@@ -90,7 +90,7 @@ An agent that can execute shell commands can escape via subshells, eval, heredoc
 Any process on the host can POST to the gateway HTTP endpoint and inject messages. No token, no mutual TLS, no peer validation. Acceptable on a fully trusted homelab network; not acceptable in any internet-exposed or multi-tenant deployment.
 
 **Signal/WhatsApp credentials in plaintext environment.**
-Signal account number and WhatsApp session tokens are stored as environment variables or in `~/.hermes/`. No encryption at rest. Host compromise = full access to those messaging identities.
+Signal account number and WhatsApp session tokens are stored as environment variables or in `~/.logos/`. No encryption at rest. Host compromise = full access to those messaging identities.
 
 **SOUL.md as an injection surface.**
 SOUL.md is injected directly into the LLM system prompt (`agent/prompt_builder.py:55`). A compromised or maliciously crafted SOUL.md can direct the agent to exfiltrate data, approve dangerous commands, or bypass policy — bounded only by the active toolset. The injection detection in `prompt_builder.py:20-55` has known gaps: unicode homoglyphs, base64-encoded instructions, YAML anchors, and subshell-wrapped secrets are not caught.
@@ -178,7 +178,7 @@ A simple token bucket per `(platform, user_id)` pair, stored in a `Dict[str, Deq
 The router (`k8s/05-ai-router-main-py.yaml`) currently health-checks backends but has no failure-rate circuit. Add a per-backend rolling window of the last N requests with success/fail outcomes. If failure rate exceeds a threshold (e.g. >50% in last 10 requests), mark the backend as `OPEN` (skip it for 30s), then transition to `HALF_OPEN` (try one request), and back to `CLOSED` on success. The state can live in memory (resets on pod restart) — it doesn't need persistence. Python's `pybreaker` library implements this cleanly, or it's ~50 lines to write inline.
 
 **Encrypted credential storage**
-Environment variables are readable by any process with access to the pod's `/proc`. The practical fix for K8s: use Sealed Secrets (kubeseal) to encrypt the `02-secret.yaml` values at rest in git; they're decrypted only inside the cluster by the sealed-secrets controller. For the bare-metal install path, `~/.hermes/` credentials could be encrypted with `age` or `GPG` and decrypted at startup — but this adds a key management problem (where does the decryption key live?). For a personal homelab, host-level security (encrypted disk, limited SSH access) is a pragmatic substitute.
+Environment variables are readable by any process with access to the pod's `/proc`. The practical fix for K8s: use Sealed Secrets (kubeseal) to encrypt the `02-secret.yaml` values at rest in git; they're decrypted only inside the cluster by the sealed-secrets controller. For the bare-metal install path, `~/.logos/` credentials could be encrypted with `age` or `GPG` and decrypted at startup — but this adds a key management problem (where does the decryption key live?). For a personal homelab, host-level security (encrypted disk, limited SSH access) is a pragmatic substitute.
 
 ---
 
@@ -247,7 +247,7 @@ Environment variables are readable by any process with access to the pod's `/pro
 ### Security
 
 **MCP stdio servers run with full user permissions on install-script deployments.**
-`scripts/install.sh` is a bare-metal host install — no Docker, no namespacing. Any MCP stdio server configured in `~/.hermes/config.yaml` (e.g. `npx -y @modelcontextprotocol/server-filesystem`) spawns as a subprocess of the Hermes Python process with the installing user's full filesystem and network access. The Docker path (`Dockerfile`) provides a container boundary and a non-root `hermes` user (uid 10001), so MCP subprocesses are scoped to mounted paths. Anyone installing via the script who configures a broad filesystem MCP path exposes their entire home directory to LLM-directed tool calls. This should be documented explicitly, and the install script should default users toward the Docker path for any non-personal deployment.
+`scripts/install.sh` is a bare-metal host install — no Docker, no namespacing. Any MCP stdio server configured in `~/.logos/config.yaml` (e.g. `npx -y @modelcontextprotocol/server-filesystem`) spawns as a subprocess of the Hermes Python process with the installing user's full filesystem and network access. The Docker path (`Dockerfile`) provides a container boundary and a non-root `hermes` user (uid 10001), so MCP subprocesses are scoped to mounted paths. Anyone installing via the script who configures a broad filesystem MCP path exposes their entire home directory to LLM-directed tool calls. This should be documented explicitly, and the install script should default users toward the Docker path for any non-personal deployment.
 
 **`npx -y` MCP server invocations are a supply chain risk.**
 Stdio MCP servers configured with `command: npx` and `args: ["-y", "..."]` download and execute npm packages at runtime without version pinning. A typosquatted or compromised package runs immediately with user-level permissions. All npx-based MCP server configs should pin to a specific version (e.g. `@modelcontextprotocol/server-filesystem@1.2.3`) and ideally verify package integrity before execution.
@@ -255,8 +255,8 @@ Stdio MCP servers configured with `command: npx` and `args: ["-y", "..."]` downl
 **Prompt injection via MCP tool results can trigger tool calls.**
 The agent receives content from MCP tool results and external channels (web pages, files, messages) and acts on it. A malicious MCP server response or injected file content can direct the agent to call other tools — including destructive ones — without the user initiating it. MCP tool filtering (`tools.include` whitelists) reduces the callable surface but does not prevent injection; it only limits what an injected instruction can reach. The gateway auth boundary (who can message the agent) is the most important control here.
 
-**MCP config (`~/.hermes/config.yaml`) stores API credentials in plaintext adjacent to a broad filesystem MCP path.**
-If the filesystem MCP server is configured with a path that includes `~/.hermes/`, the agent can read its own config file and exfiltrate API keys to any connected channel or tool. The config path should be explicitly excluded from any filesystem MCP scope.
+**MCP config (`~/.logos/config.yaml`) stores API credentials in plaintext adjacent to a broad filesystem MCP path.**
+If the filesystem MCP server is configured with a path that includes `~/.logos/`, the agent can read its own config file and exfiltrate API keys to any connected channel or tool. The config path should be explicitly excluded from any filesystem MCP scope.
 
 **K8s secret manifest uses `stringData`.**
 `k8s/02-secret.yaml:7` — the Secret uses `stringData`, meaning values are committed as plaintext YAML. ✅ *Warning banner added at top of file.* The long-term fix is Sealed Secrets or SOPS — until then the file must never be committed with real values filled in.

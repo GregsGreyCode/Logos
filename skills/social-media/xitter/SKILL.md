@@ -92,11 +92,11 @@ If the user wants the least brittle long-term setup, use this skill. If they wan
 
 `x-cli` looks for credentials in `~/.config/x-cli/.env`.
 
-If you already keep your X credentials in `~/.hermes/.env`, the cleanest setup is:
+If you already keep your X credentials in `~/.logos/.env`, the cleanest setup is:
 
 ```bash
 mkdir -p ~/.config/x-cli
-ln -sf ~/.hermes/.env ~/.config/x-cli/.env
+ln -sf ~/.logos/.env ~/.config/x-cli/.env
 ```
 
 Or create a dedicated file:
@@ -192,7 +192,7 @@ Recommended defaults:
 - **403 oauth1-permissions**: regenerate the access token after enabling `Read and write`.
 - **Reply restrictions**: X restricts many programmatic replies. `tweet quote` is often more reliable than `tweet reply`.
 - **Rate limits**: expect per-endpoint limits and cooldown windows.
-- **Credential drift**: if you rotate tokens in `~/.hermes/.env`, make sure `~/.config/x-cli/.env` still points at the current file.
+- **Credential drift**: if you rotate tokens in `~/.logos/.env`, make sure `~/.config/x-cli/.env` still points at the current file.
 
 ## Notes
 

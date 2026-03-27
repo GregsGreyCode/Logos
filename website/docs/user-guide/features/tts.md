@@ -25,12 +25,12 @@ Convert text to speech with three providers:
 | Telegram | Voice bubble (plays inline) | Opus `.ogg` |
 | Discord | Audio file attachment | MP3 |
 | WhatsApp | Audio file attachment | MP3 |
-| CLI | Saved to `~/.hermes/audio_cache/` | MP3 |
+| CLI | Saved to `~/.logos/audio_cache/` | MP3 |
 
 ### Configuration
 
 ```yaml
-# In ~/.hermes/config.yaml
+# In ~/.logos/config.yaml
 tts:
   provider: "edge"              # "edge" | "elevenlabs" | "openai"
   edge:
@@ -83,7 +83,7 @@ Local transcription works out of the box — no API key needed. The `faster-whis
 ### Configuration
 
 ```yaml
-# In ~/.hermes/config.yaml
+# In ~/.logos/config.yaml
 stt:
   provider: "local"           # "local" (free, faster-whisper) | "openai" (API)
   local:

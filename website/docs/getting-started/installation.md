@@ -155,18 +155,18 @@ npm install
 
 ```bash
 # Create the directory structure
-mkdir -p ~/.hermes/{cron,sessions,logs,memories,skills,pairing,hooks,image_cache,audio_cache,whatsapp/session}
+mkdir -p ~/.logos/{cron,sessions,logs,memories,skills,pairing,hooks,image_cache,audio_cache,whatsapp/session}
 
 # Copy the example config file
-cp cli-config.yaml.example ~/.hermes/config.yaml
+cp cli-config.yaml.example ~/.logos/config.yaml
 
 # Create an empty .env file for API keys
-touch ~/.hermes/.env
+touch ~/.logos/.env
 ```
 
 ### Step 7: Add Your API Keys
 
-Open `~/.hermes/.env` and add at minimum an LLM provider key:
+Open `~/.logos/.env` and add at minimum an LLM provider key:
 
 ```bash
 # Required — at least one LLM provider:
@@ -242,10 +242,10 @@ uv pip install -e "./tinker-atropos"
 npm install  # optional, for browser tools and WhatsApp
 
 # Configure
-mkdir -p ~/.hermes/{cron,sessions,logs,memories,skills,pairing,hooks,image_cache,audio_cache,whatsapp/session}
-cp cli-config.yaml.example ~/.hermes/config.yaml
-touch ~/.hermes/.env
-echo 'OPENROUTER_API_KEY=sk-or-v1-your-key' >> ~/.hermes/.env
+mkdir -p ~/.logos/{cron,sessions,logs,memories,skills,pairing,hooks,image_cache,audio_cache,whatsapp/session}
+cp cli-config.yaml.example ~/.logos/config.yaml
+touch ~/.logos/.env
+echo 'OPENROUTER_API_KEY=sk-or-v1-your-key' >> ~/.logos/.env
 
 # Make hermes available globally
 mkdir -p ~/.local/bin

@@ -203,7 +203,7 @@ logos/                        ← repo root
 | `~/.logos/cron/` | Scheduled job data |
 | `~/.logos/whatsapp/session/` | WhatsApp bridge credentials |
 
-> **Note:** If you have an existing `~/.hermes/` directory from an older install, Logos migrates it automatically on first run.
+> **Note:** If you have an existing `~/.logos/` directory from an older install, Logos migrates it automatically on first run.
 
 ---
 

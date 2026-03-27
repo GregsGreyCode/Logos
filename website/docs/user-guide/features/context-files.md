@@ -73,7 +73,7 @@ This is a Next.js 14 web application with a Python FastAPI backend.
 
 **Location:**
 
-- `~/.hermes/SOUL.md`
+- `~/.logos/SOUL.md`
 - or `$HERMES_HOME/SOUL.md` if you run Hermes with a custom home directory
 
 Important details:

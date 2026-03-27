@@ -50,22 +50,22 @@ The agent will use the `openclaw-migration` skill to:
 ### `user-data` preset
 | Item | Source | Destination |
 |------|--------|-------------|
-| SOUL.md | `~/.openclaw/workspace/SOUL.md` | `~/.hermes/SOUL.md` |
-| Memory entries | `~/.openclaw/workspace/MEMORY.md` | `~/.hermes/memories/MEMORY.md` |
-| User profile | `~/.openclaw/workspace/USER.md` | `~/.hermes/memories/USER.md` |
-| Skills | `~/.openclaw/workspace/skills/` | `~/.hermes/skills/openclaw-imports/` |
-| Command allowlist | `~/.openclaw/workspace/exec_approval_patterns.yaml` | Merged into `~/.hermes/config.yaml` |
-| Messaging settings | `~/.openclaw/config.yaml` (TELEGRAM_ALLOWED_USERS, MESSAGING_CWD) | `~/.hermes/.env` |
-| TTS assets | `~/.openclaw/workspace/tts/` | `~/.hermes/tts/` |
+| SOUL.md | `~/.openclaw/workspace/SOUL.md` | `~/.logos/SOUL.md` |
+| Memory entries | `~/.openclaw/workspace/MEMORY.md` | `~/.logos/memories/MEMORY.md` |
+| User profile | `~/.openclaw/workspace/USER.md` | `~/.logos/memories/USER.md` |
+| Skills | `~/.openclaw/workspace/skills/` | `~/.logos/skills/openclaw-imports/` |
+| Command allowlist | `~/.openclaw/workspace/exec_approval_patterns.yaml` | Merged into `~/.logos/config.yaml` |
+| Messaging settings | `~/.openclaw/config.yaml` (TELEGRAM_ALLOWED_USERS, MESSAGING_CWD) | `~/.logos/.env` |
+| TTS assets | `~/.openclaw/workspace/tts/` | `~/.logos/tts/` |
 
 ### `full` preset (adds to `user-data`)
 | Item | Source | Destination |
 |------|--------|-------------|
-| Telegram bot token | `~/.openclaw/config.yaml` | `~/.hermes/.env` |
-| OpenRouter API key | `~/.openclaw/.env` or config | `~/.hermes/.env` |
-| OpenAI API key | `~/.openclaw/.env` or config | `~/.hermes/.env` |
-| Anthropic API key | `~/.openclaw/.env` or config | `~/.hermes/.env` |
-| ElevenLabs API key | `~/.openclaw/.env` or config | `~/.hermes/.env` |
+| Telegram bot token | `~/.openclaw/config.yaml` | `~/.logos/.env` |
+| OpenRouter API key | `~/.openclaw/.env` or config | `~/.logos/.env` |
+| OpenAI API key | `~/.openclaw/.env` or config | `~/.logos/.env` |
+| Anthropic API key | `~/.openclaw/.env` or config | `~/.logos/.env` |
+| ElevenLabs API key | `~/.openclaw/.env` or config | `~/.logos/.env` |
 
 Only these 6 allowlisted secrets are ever imported. Other credentials are skipped and reported.
 
@@ -73,10 +73,10 @@ Only these 6 allowlisted secrets are ever imported. Other credentials are skippe
 
 By default, the migration **will not overwrite** existing Hermes data:
 
-- **SOUL.md** — skipped if one already exists in `~/.hermes/`
+- **SOUL.md** — skipped if one already exists in `~/.logos/`
 - **Memory entries** — skipped if memories already exist (to avoid duplicates)
 - **Skills** — skipped if a skill with the same name already exists
-- **API keys** — skipped if the key is already set in `~/.hermes/.env`
+- **API keys** — skipped if the key is already set in `~/.logos/.env`
 
 To overwrite conflicts, use `--overwrite`. The migration creates backups before overwriting.
 
@@ -90,7 +90,7 @@ Every migration (including dry runs) produces a report showing:
 - **Skipped items** — items not found in the source
 - **Errors** — items that failed to import
 
-For execute runs, the full report is saved to `~/.hermes/migration/openclaw/<timestamp>/`.
+For execute runs, the full report is saved to `~/.logos/migration/openclaw/<timestamp>/`.
 
 ## Troubleshooting
 

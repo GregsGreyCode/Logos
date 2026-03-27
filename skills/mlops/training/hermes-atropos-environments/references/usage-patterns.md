@@ -11,7 +11,7 @@ training server.
 ### Step 1: Run 1 trajectory
 
 ```bash
-cd ~/.hermes/hermes-agent
+cd ~/.logos/hermes-agent
 source .venv/bin/activate
 
 python environments/your_env.py process \

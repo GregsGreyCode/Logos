@@ -26,7 +26,7 @@ Before starting, make sure you have:
 
 - **Hermes Agent installed** on a server or VPS (not your laptop — the bot needs to stay running). Follow the [installation guide](/getting-started/learning-path) if you haven't yet.
 - **A Telegram account** for yourself (the bot owner)
-- **An LLM provider configured** — at minimum, an API key for OpenAI, Anthropic, or another supported provider in `~/.hermes/.env`
+- **An LLM provider configured** — at minimum, an API key for OpenAI, Anthropic, or another supported provider in `~/.logos/.env`
 
 :::tip
 A $5/month VPS is plenty for running the gateway. Hermes itself is lightweight — the LLM API calls are what cost money, and those happen remotely.
@@ -93,7 +93,7 @@ This walks you through everything with arrow-key selection. Pick **Telegram**, p
 
 ### Option B: Manual Configuration
 
-Add these lines to `~/.hermes/.env`:
+Add these lines to `~/.logos/.env`:
 
 ```bash
 # Telegram bot token from BotFather
@@ -164,7 +164,7 @@ sudo loginctl enable-linger $USER
 # macOS — manage the service
 launchctl start ai.hermes.gateway
 launchctl stop ai.hermes.gateway
-tail -f ~/.hermes/logs/gateway.log
+tail -f ~/.logos/logs/gateway.log
 ```
 
 ### Verify It's Running
@@ -186,7 +186,7 @@ Now let's give your teammates access. There are two approaches.
 Collect each team member's Telegram user ID (have them message [@userinfobot](https://t.me/userinfobot)) and add them as a comma-separated list:
 
 ```bash
-# In ~/.hermes/.env
+# In ~/.logos/.env
 TELEGRAM_ALLOWED_USERS=123456789,987654321,555555555
 ```
 
@@ -250,7 +250,7 @@ A **home channel** is where the bot delivers cron job results and proactive mess
 
 **Option 1:** Use the `/sethome` command in any Telegram group or chat where the bot is a member.
 
-**Option 2:** Set it manually in `~/.hermes/.env`:
+**Option 2:** Set it manually in `~/.logos/.env`:
 
 ```bash
 TELEGRAM_HOME_CHANNEL=-1001234567890
@@ -261,7 +261,7 @@ To find a channel ID, add [@userinfobot](https://t.me/userinfobot) to the group 
 
 ### Configure Tool Progress Display
 
-Control how much detail the bot shows when using tools. In `~/.hermes/config.yaml`:
+Control how much detail the bot shows when using tools. In `~/.logos/config.yaml`:
 
 ```yaml
 display:
@@ -279,7 +279,7 @@ Users can also change this per-session with the `/verbose` command in chat.
 
 ### Set Up a Personality with SOUL.md
 
-Customize how the bot communicates by editing `~/.hermes/SOUL.md`:
+Customize how the bot communicates by editing `~/.logos/SOUL.md`:
 
 For a full guide, see [Use SOUL.md with Hermes](/docs/guides/use-soul-with-hermes).
 
@@ -296,7 +296,7 @@ before guessing at solutions.
 If your team works on specific projects, create context files so the bot knows your stack:
 
 ```markdown
-<!-- ~/.hermes/AGENTS.md -->
+<!-- ~/.logos/AGENTS.md -->
 # Team Context
 - We use Python 3.12 with FastAPI and SQLAlchemy
 - Frontend is React with TypeScript
@@ -363,12 +363,12 @@ Cron job prompts run in completely fresh sessions with no memory of prior conver
 On a shared team bot, use Docker as the terminal backend so agent commands run in a container instead of on your host:
 
 ```bash
-# In ~/.hermes/.env
+# In ~/.logos/.env
 TERMINAL_BACKEND=docker
 TERMINAL_DOCKER_IMAGE=nikolaik/python-nodejs:python3.11-nodejs20
 ```
 
-Or in `~/.hermes/config.yaml`:
+Or in `~/.logos/config.yaml`:
 
 ```yaml
 terminal:
@@ -390,7 +390,7 @@ hermes gateway status
 journalctl --user -u hermes-gateway -f
 
 # Watch live logs (macOS)
-tail -f ~/.hermes/logs/gateway.log
+tail -f ~/.logos/logs/gateway.log
 ```
 
 ### Keep Hermes Updated
@@ -406,11 +406,11 @@ hermes gateway stop && hermes gateway start
 
 | What | Location |
 |------|----------|
-| Gateway logs | `journalctl --user -u hermes-gateway` (Linux) or `~/.hermes/logs/gateway.log` (macOS) |
-| Cron job output | `~/.hermes/cron/output/{job_id}/{timestamp}.md` |
-| Cron job definitions | `~/.hermes/cron/jobs.json` |
-| Pairing data | `~/.hermes/pairing/` |
-| Session history | `~/.hermes/sessions/` |
+| Gateway logs | `journalctl --user -u hermes-gateway` (Linux) or `~/.logos/logs/gateway.log` (macOS) |
+| Cron job output | `~/.logos/cron/output/{job_id}/{timestamp}.md` |
+| Cron job definitions | `~/.logos/cron/jobs.json` |
+| Pairing data | `~/.logos/pairing/` |
+| Session history | `~/.logos/sessions/` |
 
 ---
 

@@ -15,7 +15,7 @@ The auth system uses:
 - **Email + password** login (Argon2id hashing)
 - **httpOnly JWT cookies** for sessions (15-minute access tokens, 7-day rotating refresh tokens)
 - **CSRF double-submit** protection on all mutations
-- **SQLite** for user and token storage (`~/.hermes/auth.db`)
+- **SQLite** for user and token storage (`~/.logos/auth.db`)
 - **4 fixed roles** mapping to permission sets
 
 All routes except `/health` and `/login` require an authenticated session. Unauthenticated browser requests are redirected to `/login` automatically.
@@ -241,7 +241,7 @@ The `/health` endpoint is always public — no auth required.
 
 ## Database
 
-Auth data lives in `~/.hermes/auth.db` alongside the existing `state.db`. Tables:
+Auth data lives in `~/.logos/auth.db` alongside the existing `state.db`. Tables:
 
 | Table | Contents |
 |-------|----------|
@@ -255,7 +255,7 @@ The database uses WAL mode and foreign key constraints. It is never deleted on r
 
 ## Kubernetes Notes
 
-The auth DB is stored on the same PVC as the rest of Hermes state (`hermes-pvc` → `~/.hermes/`). It persists across pod restarts and upgrades — no migration step needed.
+The auth DB is stored on the same PVC as the rest of Hermes state (`hermes-pvc` → `~/.logos/`). It persists across pod restarts and upgrades — no migration step needed.
 
 `HERMES_COOKIE_SECURE` defaults to `false` for HTTP LAN deployments. Set it to `true` when running behind an HTTPS reverse proxy:
 
