@@ -1,0 +1,50 @@
+# Hermes agent sandbox image — Docker-only mode (no OpenShell dependency)
+#
+# Build:
+#   docker build -f Dockerfile.docker-sandbox -t logos-hermes-sandbox .
+#
+# Usage (via DockerSandboxExecutor — handled automatically):
+#   docker run -d --rm --name hermes-X -p 127.0.0.1:8200:8080 logos-hermes-sandbox
+#
+# This image is functionally equivalent to the OpenShell sandbox image but
+# uses a standard python:3.11-slim base instead of the OpenShell sandbox
+# base, so it works on all platforms that have Docker (including Windows).
+
+FROM python:3.11-slim
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    curl \
+    git \
+ && rm -rf /var/lib/apt/lists/*
+
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh
+ENV PATH="/root/.local/bin:$PATH"
+
+# Install dependencies first (cached layer)
+COPY pyproject.toml ./
+RUN uv venv venv --python 3.11 --clear
+ENV VIRTUAL_ENV="/app/venv"
+ENV PATH="/app/venv/bin:$PATH"
+ENV PYTHONPATH="/app"
+RUN uv pip install ".[messaging]" || true
+
+# Copy source
+COPY . /app/
+RUN uv pip install -e ".[messaging]"
+
+# Non-root user for reduced privilege
+RUN useradd -m -d /home/hermes -u 10001 hermes \
+ && mkdir -p /home/hermes/.hermes/{sessions,logs,memories,skills} \
+ && chown -R 10001:10001 /home/hermes /app
+USER hermes
+ENV HOME=/home/hermes
+ENV HERMES_HOME=/home/hermes/.hermes
+
+# Runtime defaults — overridden by DockerSandboxExecutor via -e flags
+ENV HERMES_PORT=8080
+EXPOSE 8080
+
+CMD ["python", "-m", "gateway.run"]
