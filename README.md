@@ -27,25 +27,29 @@ Run on a $5 VPS, a homelab Kubernetes cluster, or serverless infrastructure. Dur
 ## ⚙️ How it works
 
 ```
-                        ┌─────────────────────────────────────┐
-                        │             Logos Platform           │
-                        │                                      │
-  Telegram ─────────►  │  Gateway / Router                    │
-  Web Dashboard ──────► │    │                                 │
-  ACP (IDE) ──────────► │    ▼                                 │
-                        │  Auth & Policy Layer                 │
-                        │    │                                 │
-                        │    ▼                                 │
-                        │  Agent Runtime (e.g. Hermes)         │
-                        │    │          │                      │
-                        │    ▼          ▼                      │
-                        │  Tools     Sub-agents                │
-                        │    │          │                      │
-                        │    └────┬─────┘                      │
-                        │         ▼                            │
-                        │  Model Router                        │
-                        │    │         │         │             │
-                        └────┼─────────┼─────────┼────────────┘
+                        ┌──────────────────────────────────────────┐
+                        │              Logos Platform               │
+                        │                                          │
+  Telegram ─────────►  │  Gateway / Router                        │
+  Web Dashboard ──────► │    │                                     │
+  ACP (IDE) ──────────► │    ▼                                     │
+                        │  Auth & Policy Layer                     │
+                        │    │                                     │
+                        │    ▼                                     │
+                        │  Agent Runtime (e.g. Hermes)             │
+                        │    │          │          │               │
+                        │    ▼          ▼          ▼               │
+                        │  Tools    Sub-agents   MCP Gateway       │
+                        │    │          │          │               │
+                        │    │          │          ▼               │
+                        │    │          │        MCP Servers       │
+                        │    │          │        (filesystem,      │
+                        │    │          │         GitHub, etc.)    │
+                        │    └────┬─────┘                          │
+                        │         ▼                                │
+                        │  Model Router                            │
+                        │    │         │         │                 │
+                        └────┼─────────┼─────────┼────────────────┘
                              ▼         ▼         ▼
                           Local     Anthropic  OpenRouter
                           (Ollama)  (Claude)   (200+ models)
