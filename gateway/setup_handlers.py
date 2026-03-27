@@ -1920,7 +1920,12 @@ async def handle_setup_complete(request: web.Request) -> web.Response:
             # Only written if not already forced via env var (k8s deployments set
             # HERMES_RUNTIME_MODE explicitly and must not be overridden by setup).
             if not os.getenv("HERMES_RUNTIME_MODE"):
-                _cfg["HERMES_RUNTIME_MODE"] = "kubernetes" if exec_env == "k8s" else "local"
+                if exec_env == "k8s":
+                    _cfg["HERMES_RUNTIME_MODE"] = "kubernetes"
+                elif exec_env == "openshell":
+                    _cfg["HERMES_RUNTIME_MODE"] = "openshell"
+                else:
+                    _cfg["HERMES_RUNTIME_MODE"] = "local"
             # For k8s-kubeconfig mode, also write the kubeconfig to a file so
             # k8s_clients() can pick it up via load_kube_config() on the next start.
             _kube_raw = kubeconfig if exec_env == "k8s" and kubeconfig else ""
@@ -2068,8 +2073,8 @@ async def handle_setup_complete(request: web.Request) -> web.Response:
         autologin_ok = False
         access_token = raw_refresh = rtk_hash = None
         try:
-            admin_email = admin_users[0].get("email", "")
-            admin_role  = admin_users[0].get("role", "admin")
+            admin_email = primary_admin.get("email", "")
+            admin_role  = primary_admin.get("role", "admin")
             # Re-fetch in case credentials were just updated above
             updated_user = auth_db.get_user_by_id(user_id)
             if updated_user:

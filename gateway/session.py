@@ -133,7 +133,7 @@ class SessionContext:
     updated_at: Optional[datetime] = None
 
     # Deployment environment
-    runtime_mode: str = "local"   # "local" | "kubernetes"
+    runtime_mode: str = "local"   # "local" | "kubernetes" | "openshell"
     host_platform: str = "linux"  # "linux" | "windows" | "darwin"
     
     def to_dict(self) -> Dict[str, Any]:
@@ -165,7 +165,7 @@ def build_session_context_prompt(context: SessionContext) -> str:
     ]
 
     # Deployment environment
-    mode_label = "Kubernetes" if context.runtime_mode == "kubernetes" else "Local"
+    mode_label = {"kubernetes": "Kubernetes", "openshell": "OpenShell"}.get(context.runtime_mode, "Local")
     platform_label = {"windows": "Windows", "darwin": "macOS"}.get(context.host_platform, "Linux")
     lines.append(f"**Deployment:** {mode_label} ({platform_label})")
 
