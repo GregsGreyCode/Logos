@@ -25,7 +25,7 @@ Prerequisites
 ─────────────
 - Docker Desktop (or daemon) running.
 - ``openshell`` installed: ``curl -LsSf https://raw.githubusercontent.com/NVIDIA/OpenShell/main/install.sh | sh``
-- The Hermes sandbox image built: ``docker build -f Dockerfile.openshell-sandbox -t logos-hermes-sandbox .``
+- The Hermes sandbox image built: ``docker build -f docker/Dockerfile.openshell-sandbox -t logos-hermes-sandbox .``
 
 Runtime mode
 ────────────
