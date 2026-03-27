@@ -1,3 +1,0 @@
-# Compatibility shim — canonical location is core.trajectory_compressor
-# Migrate imports to: from core.trajectory_compressor import ...
-from core.trajectory_compressor import *  # noqa: F401, F403
