@@ -754,7 +754,7 @@
           </div>
 
           <!-- Input -->
-          <div class="px-4 py-3 border-t border-gray-800 flex gap-2 shrink-0 items-end">
+          <div class="px-4 py-3 border-t border-gray-800 flex gap-2 shrink-0" style="align-items:flex-end;">
             <!-- Render mode drop-up -->
             <div class="render-dropup" x-data="{open:false}" @click.away="open=false">
               <button @click="open=!open"
@@ -789,9 +789,9 @@
                 x-ref="chatTextarea"
                 autocomplete="off"
                 rows="1"
-                class="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-indigo-500 transition-colors pr-2 resize-none overflow-y-auto"
+                class="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-indigo-500 transition-colors pr-2 resize-none overflow-y-auto"
                 :class="chatDragOver ? 'border-indigo-400 bg-indigo-950/30' : ''"
-                style="min-height:38px;max-height:7rem;line-height:1.35;"
+                style="height:38px;min-height:38px;max-height:7rem;line-height:1.35;padding-top:8px;padding-bottom:8px;"
                 :placeholder="micRecording ? ('Recording… ' + micCountdown + 's') : micTranscribing ? 'Transcribing…' : ('Message ' + (status.instance_name || 'Hermes') + '\u2026 (Enter · Shift+Enter for newline)')"
                 :disabled="micTranscribing || activeInstance.k8s_status === 'starting'"
                 :readonly="!chatInputReady"></textarea>
@@ -5304,7 +5304,7 @@ function app() {
     // ── Chat ──────────────────────────────────────────────────────
 
     autoResizeChat(el) {
-      el.style.height = 'auto';
+      el.style.height = '38px'; // reset to single-line height
       el.style.height = Math.min(el.scrollHeight, 112) + 'px'; // max ~7rem / ~4 lines
     },
 
