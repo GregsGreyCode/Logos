@@ -51,7 +51,8 @@ logos/                        ← repo root
 │
 ├── tools/                    # Tool implementations (one file per tool)
 │   ├── registry.py           # Central tool registry (schemas, handlers, dispatch)
-│   ├── approval.py           # Dangerous command detection
+│   ├── approval.py           # Dangerous command detection (regex patterns)
+│   ├── tirith_security.py    # Tirith pre-exec scanner (semantic command analysis, Linux/macOS)
 │   ├── terminal_tool.py      # Terminal orchestration
 │   ├── process_registry.py   # Background process management
 │   ├── file_tools.py         # File read/write/search/patch
