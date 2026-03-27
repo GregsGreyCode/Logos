@@ -234,7 +234,7 @@
             </div>
             <div class="text-sm text-gray-500 mb-4" x-text="tldr ? 'Seven steps.' : 'Seven steps, from model discovery to launch.'"></div>
             <p class="text-sm text-gray-500 leading-relaxed" x-show="!tldr">
-              Setup establishes how Logos routes inference, which models and runtimes are available, and what operating boundaries apply to agent runs.
+              Setup connects your models, benchmarks them, configures where agents run and how safely they're sandboxed, and secures your account.
               These choices define the platform&rsquo;s initial profile. Everything here can be adjusted from the dashboard after launch.
             </p>
             <p class="text-sm text-gray-500 leading-relaxed" x-show="tldr" x-cloak>
@@ -274,11 +274,11 @@
             <div class="text-base font-semibold text-white mb-1" x-text="tldr ? 'When done' : 'When complete'"></div>
             <p class="text-sm text-gray-500 leading-relaxed" x-show="!tldr">
               You&rsquo;ll have a fully configured platform: inference routed to a benchmarked local model,
-              an agent runtime and soul selected, and a secured admin account.
-              The platform is ready for agent runs.
+              agent runs sandboxed with policy-enforced isolation (or in-process if Docker isn&rsquo;t available),
+              a soul selected, and a secured admin account. The platform is ready for agent runs.
             </p>
             <p class="text-sm text-gray-500 leading-relaxed" x-show="tldr" x-cloak>
-              Logos is running, your model is connected, and you have a login. You&rsquo;re ready to go.
+              Logos is running, your model is connected, agents are sandboxed, and you have a login. You&rsquo;re ready to go.
             </p>
           </div>
         </div>
@@ -1707,7 +1707,7 @@ function setup() {
       { n: 1, name: 'Connect inference servers',  tag: 'detects',    desc: 'Logos scans your local network for Ollama and LM Studio. You can also add remote servers — on a LAN, VPC, or cloud VM — using a custom address. No Logos installation is needed on the inference machine.', tldrDesc: 'Logos finds your models (Ollama, LM Studio) or you add one manually.' },
       { n: 2, name: 'Benchmark models',       tag: 'measures',   desc: 'Candidate models run 6 eval tests: instruction following, reasoning, JSON format, tool selection, nested JSON, and multi-step arithmetic. The best fit is pre-selected; you can override freely.', tldrDesc: 'Each model runs a few tests. Logos picks the best one by default.' },
       { n: 3, name: 'Agent runtime',          tag: 'configures', desc: 'Choose which agent engine handles your sessions. Hermes is available now; additional runtimes plug in as they are released.', tldrDesc: 'Choose what runs your agents (Hermes for now).' },
-      { n: 4, name: 'Execution target',       tag: 'configures', desc: 'Decide where agent processes run — in-process alongside Logos, or as isolated Kubernetes Jobs. Affects resource isolation, scaling, and where logs appear.', tldrDesc: 'Choose where agents run: Local (simple) or Isolated (more control).' },
+      { n: 4, name: 'Agent sandbox',           tag: 'secures',    desc: 'Logos scans your environment and automatically enables sandboxed agent execution if Docker is available. Each agent run gets its own isolated container with policy-enforced network access — preventing file leakage and unauthorised outbound calls. Falls back to in-process if Docker is not installed.', tldrDesc: 'Logos checks for Docker and sets up safe sandboxed agents automatically.' },
       { n: 5, name: 'Soul',                   tag: 'configures', desc: "A soul defines the agent's communication style and default behaviour. It is a starting point — editable at any time from the dashboard.", tldrDesc: 'Sets how the agent behaves. You can change it anytime.' },
       { n: 6, name: 'Your account',           tag: 'secures',    desc: 'Set the email, username, and password for the admin account that protects the dashboard and API.', tldrDesc: 'Create a login to secure your setup.' },
       { n: 7, name: 'Review & launch',        tag: 'confirms',   desc: 'Review every setting, confirm the model endpoint is reachable, and launch the platform.', tldrDesc: 'Check everything, then start Logos.' },
