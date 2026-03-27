@@ -2,3 +2,10 @@ apiVersion: v1
 kind: Namespace
 metadata:
   name: logos
+---
+# Agent instances (deployments, jobs, pods) run in the hermes namespace,
+# separate from the logos gateway for workload isolation.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: hermes

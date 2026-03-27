@@ -117,11 +117,23 @@ def safe_k8s_name(requester: str) -> str:
 # ── Cluster resource query ────────────────────────────────────────────────────
 
 def cluster_resources() -> dict:
-    """Return total allocatable and currently requested CPU/RAM across the cluster."""
-    core, _ = k8s_clients()
+    """Return total allocatable and currently requested CPU/RAM across the cluster.
+
+    Returns zeroed metrics if the k8s API is unreachable or RBAC denies access.
+    """
+    _EMPTY = {"total_cpu": 0, "total_mem": 0, "used_cpu": 0, "used_mem": 0, "free_cpu": 0, "free_mem": 0}
+    try:
+        core, _ = k8s_clients()
+    except Exception:
+        return _EMPTY
 
     total_cpu = total_mem = 0.0
-    for node in core.list_node().items:
+    try:
+        nodes = core.list_node().items
+    except Exception as exc:
+        logger.warning("cluster_resources: cannot list nodes: %s", exc)
+        return _EMPTY
+    for node in nodes:
         alloc = node.status.allocatable or {}
         total_cpu += parse_cpu(alloc.get("cpu", "0"))
         total_mem += parse_mem(alloc.get("memory", "0"))
@@ -148,11 +160,24 @@ def cluster_resources() -> dict:
 # ── Instance list ─────────────────────────────────────────────────────────────
 
 def list_hermes_instances() -> list[dict]:
-    """List Deployments in the hermes namespace that are Hermes instances."""
-    _, apps = k8s_clients()
-    core, _ = k8s_clients()
+    """List Deployments in the hermes namespace that are Hermes instances.
+
+    Returns an empty list (rather than raising) if the namespace doesn't exist
+    or the service account lacks RBAC permissions — the dashboard will simply
+    show "no instances" instead of an error.
+    """
+    try:
+        _, apps = k8s_clients()
+        core, _ = k8s_clients()
+    except Exception:
+        return []
     result = []
-    for dep in apps.list_namespaced_deployment(HERMES_NAMESPACE).items:
+    try:
+        deps = apps.list_namespaced_deployment(HERMES_NAMESPACE).items
+    except Exception as exc:
+        logger.warning("list_hermes_instances: cannot list deployments in %s: %s", HERMES_NAMESPACE, exc)
+        return []
+    for dep in deps:
         name = dep.metadata.name
         if not name.startswith("hermes"):
             continue
