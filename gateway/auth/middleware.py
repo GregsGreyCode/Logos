@@ -32,6 +32,12 @@ _PUBLIC_PATHS = frozenset({
     "/api/setup/test",
     "/api/setup/test-k8s",
     "/api/setup/complete",
+    "/api/setup/env-probe",
+    "/api/setup/sandbox-setup",
+    "/api/setup/launch-docker",
+    "/api/setup/discover",
+    "/api/setup/set-remote",
+    "/api/setup/compare/cancel-server",
     "/setup",
 })
 
