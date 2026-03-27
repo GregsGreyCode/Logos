@@ -2547,7 +2547,7 @@ async def handle_setup_sandbox_setup(request: web.Request) -> web.Response:
         else:
             await emit("image_build", "running", f"Building '{_OPENSHELL_IMAGE}' image (this takes ~2 minutes)…")
             build_ok, build_err = await loop.run_in_executor(
-                None, lambda: _build_sandbox_image(dockerfile_name="Dockerfile.docker-sandbox"))
+                None, lambda: _build_sandbox_image(dockerfile_name="docker/Dockerfile.docker-sandbox"))
             if build_ok:
                 await emit("image_build", "ok", "Image built successfully")
             else:
@@ -2669,13 +2669,13 @@ def _install_openshell() -> tuple[str, str]:
         return "", str(exc)
 
 
-def _build_sandbox_image(dockerfile_name: str = "Dockerfile.openshell-sandbox") -> tuple[bool, str]:
+def _build_sandbox_image(dockerfile_name: str = "docker/Dockerfile.openshell-sandbox") -> tuple[bool, str]:
     """
     Build the logos-hermes-sandbox Docker image.
 
     Args:
-        dockerfile_name: Which Dockerfile to use.  "Dockerfile.openshell-sandbox"
-            for full OpenShell mode, "Dockerfile.docker-sandbox" for Docker-only.
+        dockerfile_name: Which Dockerfile to use.  "docker/Dockerfile.openshell-sandbox"
+            for full OpenShell mode, "docker/Dockerfile.docker-sandbox" for Docker-only.
 
     Looks for the Dockerfile relative to the package root (works both in
     development and inside a frozen .exe where files are extracted to a
