@@ -209,7 +209,7 @@
     }
   </style>
 </head>
-<body @click="toggle()" @mousemove.window.throttle.2000ms="resetInactivity()" @keydown.window="resetInactivity()" x-data="loginApp()" x-init="init()">
+<body @click="toggle($event)" @mousemove.window.throttle.2000ms="resetInactivity()" @keydown.window="resetInactivity()" x-data="loginApp()" x-init="init()">
 
   <!-- Main content — flex-centred by body -->
   <div class="relative z-10 w-full px-5" style="max-width:400px;">
@@ -385,8 +385,15 @@
         }
       },
 
-      toggle() {
-        if (this.phase === 'login') { this._revertSplash(); return; }
+      toggle(e) {
+        if (this.phase === 'login') {
+          // Browser autofill overlays (e.g. Chrome's credential chip) fire synthetic
+          // clicks at body level, bypassing @click.stop on the form. Ignore any click
+          // whose target is inside the login panel or a form element.
+          if (e?.target?.closest?.('.login-reveal, form')) return;
+          this._revertSplash();
+          return;
+        }
         this.activate();
       },
 
