@@ -1970,8 +1970,24 @@ async def handle_setup_complete(request: web.Request) -> web.Response:
             if setup_username: updates["username"]       = setup_username
             if setup_password: updates["password_hash"]  = _hp(setup_password)
             if updates:
-                auth_db.update_user(user_id, **updates)
-                logger.info("setup: updated admin credentials for %s", user_id)
+                try:
+                    auth_db.update_user(user_id, **updates)
+                    logger.info("setup: updated admin credentials for %s", user_id)
+                except Exception as _upd_err:
+                    _err_str = str(_upd_err).lower()
+                    if "unique" in _err_str and "username" in _err_str:
+                        return web.json_response(
+                            {"error": "username_taken",
+                             "detail": f"Username '{setup_username}' is already taken by another account."},
+                            status=409,
+                        )
+                    if "unique" in _err_str and "email" in _err_str:
+                        return web.json_response(
+                            {"error": "email_taken",
+                             "detail": f"Email '{setup_email}' is already registered to another account."},
+                            status=409,
+                        )
+                    raise
 
         # Assign admin and any additional users to the default routing profile
         from gateway.auth.password import hash_password as _hp
