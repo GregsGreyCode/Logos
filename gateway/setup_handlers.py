@@ -2246,3 +2246,303 @@ async def handle_setup_compare_cancel_server(request: web.Request) -> web.Respon
     if bench_id in _bench_cancels:
         _bench_cancels[bench_id].add(endpoint)
     return web.json_response({"ok": True})
+
+
+# ── OpenShell / sandbox auto-detect and auto-setup ─────────────────────────
+
+import platform as _platform
+import shutil as _shutil
+import subprocess as _subprocess
+import sys as _sys
+import urllib.request as _urllib_request
+
+
+_OPENSHELL_IMAGE  = os.getenv("LOGOS_OPENSHELL_IMAGE", "logos-hermes-sandbox")
+_HERMES_BIN_DIR   = pathlib.Path(os.getenv("HERMES_HOME", pathlib.Path.home() / ".hermes")) / "bin"
+
+# GitHub release asset naming: openshell-{os}-{arch}[.exe]
+_OS_MAP   = {"Windows": "windows", "Linux": "linux", "Darwin": "darwin"}
+_ARCH_MAP = {"AMD64": "x86_64", "x86_64": "x86_64", "ARM64": "aarch64", "aarch64": "aarch64"}
+_OPENSHELL_RELEASES = "https://github.com/NVIDIA/OpenShell/releases/latest/download"
+
+
+def _openshell_exe() -> str:
+    """Return path to the openshell binary, checking PATH and ~/.hermes/bin."""
+    found = _shutil.which("openshell")
+    if found:
+        return found
+    local = _HERMES_BIN_DIR / ("openshell.exe" if _sys.platform == "win32" else "openshell")
+    if local.exists():
+        return str(local)
+    return ""
+
+
+def _docker_running() -> dict:
+    """
+    Return {running, installed, desktop_path} describing Docker state.
+    Tries the Docker socket first; falls back to ``docker info`` subprocess.
+    """
+    import socket as _sock
+
+    # Fast path — TCP to Docker Desktop on Windows (named-pipe proxy)
+    if _sys.platform == "win32":
+        try:
+            s = _sock.socket(_sock.AF_INET, _sock.SOCK_STREAM)
+            s.settimeout(1)
+            s.connect(("localhost", 2375))
+            s.close()
+            return {"running": True, "installed": True, "desktop_path": ""}
+        except Exception:
+            pass
+
+    # Try unix socket
+    sock_paths = ["/var/run/docker.sock", "/run/docker.sock"]
+    for sp in sock_paths:
+        if pathlib.Path(sp).exists():
+            return {"running": True, "installed": True, "desktop_path": ""}
+
+    # Try subprocess
+    docker_exe = _shutil.which("docker")
+    if docker_exe:
+        try:
+            r = _subprocess.run(
+                [docker_exe, "info", "--format", "{{.ServerVersion}}"],
+                capture_output=True, text=True, timeout=5,
+            )
+            if r.returncode == 0:
+                return {"running": True, "installed": True, "desktop_path": ""}
+        except Exception:
+            pass
+
+        # Docker installed but daemon not running — try to find Desktop executable
+        desktop = ""
+        if _sys.platform == "win32":
+            lad = os.environ.get("LOCALAPPDATA", "")
+            candidate = pathlib.Path(lad) / "Docker" / "Docker Desktop.exe"
+            if candidate.exists():
+                desktop = str(candidate)
+        elif _sys.platform == "darwin":
+            candidate = pathlib.Path("/Applications/Docker.app/Contents/MacOS/Docker")
+            if candidate.exists():
+                desktop = str(candidate)
+        return {"running": False, "installed": True, "desktop_path": desktop}
+
+    # Nothing found
+    return {"running": False, "installed": False, "desktop_path": ""}
+
+
+def _sandbox_image_exists() -> bool:
+    """Return True if the logos-hermes-sandbox Docker image is present locally."""
+    docker_exe = _shutil.which("docker")
+    if not docker_exe:
+        return False
+    try:
+        r = _subprocess.run(
+            [docker_exe, "image", "inspect", _OPENSHELL_IMAGE, "--format", "{{.Id}}"],
+            capture_output=True, text=True, timeout=10,
+        )
+        return r.returncode == 0
+    except Exception:
+        return False
+
+
+async def handle_setup_env_probe(request: web.Request) -> web.Response:
+    """
+    GET /api/setup/env-probe
+
+    Returns the current sandbox readiness state so the setup wizard can
+    decide whether to recommend OpenShell or fall back to in-process.
+
+    Response shape:
+      {
+        platform:          "windows" | "linux" | "darwin",
+        docker_running:    bool,
+        docker_installed:  bool,
+        docker_desktop_path: str,   # non-empty = Docker Desktop found but not running
+        openshell_present: bool,
+        openshell_path:    str,
+        image_present:     bool,
+        sandbox_ready:     bool,    # true when all three are green
+      }
+    """
+    loop = asyncio.get_event_loop()
+    docker_info   = await loop.run_in_executor(None, _docker_running)
+    openshell_exe = await loop.run_in_executor(None, _openshell_exe)
+    image_present = False
+    if docker_info["running"]:
+        image_present = await loop.run_in_executor(None, _sandbox_image_exists)
+
+    return web.json_response({
+        "platform":             _OS_MAP.get(_platform.system(), _platform.system().lower()),
+        "docker_running":       docker_info["running"],
+        "docker_installed":     docker_info["installed"],
+        "docker_desktop_path":  docker_info.get("desktop_path", ""),
+        "openshell_present":    bool(openshell_exe),
+        "openshell_path":       openshell_exe,
+        "image_present":        image_present,
+        "sandbox_ready":        docker_info["running"] and bool(openshell_exe) and image_present,
+    })
+
+
+async def handle_setup_sandbox_setup(request: web.Request) -> web.Response:
+    """
+    POST /api/setup/sandbox-setup   (SSE stream)
+
+    Attempts to automatically:
+      1. Install the openshell CLI (tries uv, pip, then binary download)
+      2. Build the logos-hermes-sandbox Docker image
+
+    Streams progress as SSE events:
+      data: {"step": "openshell_install", "status": "running"|"ok"|"error", "msg": "..."}
+      data: {"step": "image_build",       "status": "running"|"ok"|"error", "msg": "..."}
+      data: {"step": "done",              "status": "ok"|"error",           "sandbox_ready": bool}
+    """
+    resp = web.StreamResponse(headers={
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache",
+        "X-Accel-Buffering": "no",
+    })
+    await resp.prepare(request)
+
+    async def emit(step: str, status: str, msg: str = "", **extra):
+        payload = json.dumps({"step": step, "status": status, "msg": msg, **extra})
+        await resp.write(f"data: {payload}\n\n".encode())
+
+    loop = asyncio.get_event_loop()
+
+    # ── Step 1: install openshell if missing ──────────────────────────────
+    openshell_path = await loop.run_in_executor(None, _openshell_exe)
+    if openshell_path:
+        await emit("openshell_install", "ok", f"openshell found at {openshell_path}")
+    else:
+        await emit("openshell_install", "running", "Installing openshell CLI…")
+        installed_path, err = await loop.run_in_executor(None, _install_openshell)
+        if installed_path:
+            await emit("openshell_install", "ok", f"Installed to {installed_path}")
+        else:
+            await emit("openshell_install", "error", f"Could not install openshell: {err}")
+            await emit("done", "error", sandbox_ready=False)
+            return resp
+
+    # ── Step 2: build sandbox image if missing ────────────────────────────
+    image_ok = await loop.run_in_executor(None, _sandbox_image_exists)
+    if image_ok:
+        await emit("image_build", "ok", f"Image '{_OPENSHELL_IMAGE}' already present")
+    else:
+        await emit("image_build", "running", f"Building '{_OPENSHELL_IMAGE}' image (this takes ~2 minutes)…")
+        build_ok, build_err = await loop.run_in_executor(None, _build_sandbox_image)
+        if build_ok:
+            await emit("image_build", "ok", "Image built successfully")
+        else:
+            await emit("image_build", "error", f"Build failed: {build_err}")
+            await emit("done", "error", sandbox_ready=False)
+            return resp
+
+    await emit("done", "ok", sandbox_ready=True)
+    return resp
+
+
+def _install_openshell() -> tuple[str, str]:
+    """
+    Try to install the openshell CLI.  Returns (path, "") on success or
+    ("", error_message) on failure.
+
+    Tries in order:
+      1. uv tool install openshell  (isolated, preferred)
+      2. pip install openshell       (system / venv)
+      3. Download binary from GitHub releases
+    """
+    _HERMES_BIN_DIR.mkdir(parents=True, exist_ok=True)
+
+    # 1. uv
+    uv_exe = _shutil.which("uv")
+    if uv_exe:
+        try:
+            r = _subprocess.run(
+                [uv_exe, "tool", "install", "-U", "openshell"],
+                capture_output=True, text=True, timeout=120,
+            )
+            if r.returncode == 0:
+                found = _shutil.which("openshell")
+                if found:
+                    return found, ""
+        except Exception:
+            pass
+
+    # 2. pip (use the Python that's running Logos)
+    pip_python = _sys.executable if not getattr(_sys, "frozen", False) else None
+    if pip_python:
+        try:
+            r = _subprocess.run(
+                [pip_python, "-m", "pip", "install", "--quiet", "--upgrade", "openshell"],
+                capture_output=True, text=True, timeout=120,
+            )
+            if r.returncode == 0:
+                found = _shutil.which("openshell")
+                if found:
+                    return found, ""
+        except Exception:
+            pass
+
+    # 3. Download binary from GitHub releases
+    os_name  = _OS_MAP.get(_platform.system(), "linux")
+    arch_raw = _platform.machine()
+    arch     = _ARCH_MAP.get(arch_raw, "x86_64")
+    ext      = ".exe" if _sys.platform == "win32" else ""
+    filename = f"openshell-{os_name}-{arch}{ext}"
+    url      = f"{_OPENSHELL_RELEASES}/{filename}"
+    dest     = _HERMES_BIN_DIR / filename.replace(f"-{os_name}-{arch}", "")  # → openshell[.exe]
+
+    try:
+        logger.info("Downloading openshell from %s", url)
+        _urllib_request.urlretrieve(url, str(dest))
+        if _sys.platform != "win32":
+            dest.chmod(0o755)
+        # Add ~/.hermes/bin to PATH for this process so _openshell_exe finds it
+        os.environ["PATH"] = str(_HERMES_BIN_DIR) + os.pathsep + os.environ.get("PATH", "")
+        return str(dest), ""
+    except Exception as exc:
+        return "", str(exc)
+
+
+def _build_sandbox_image() -> tuple[bool, str]:
+    """
+    Build the logos-hermes-sandbox Docker image.
+
+    Looks for Dockerfile.openshell-sandbox relative to the package root
+    (works both in development and inside a frozen .exe where files are
+    extracted to a temp directory).
+    """
+    docker_exe = _shutil.which("docker")
+    if not docker_exe:
+        return False, "docker not found on PATH"
+
+    # Find Dockerfile — check package root, then sys._MEIPASS (PyInstaller temp)
+    roots = [pathlib.Path(__file__).parent.parent]
+    meipass = getattr(_sys, "_MEIPASS", None)
+    if meipass:
+        roots.insert(0, pathlib.Path(meipass))
+
+    dockerfile = None
+    for root in roots:
+        candidate = root / "Dockerfile.openshell-sandbox"
+        if candidate.exists():
+            dockerfile = candidate
+            break
+
+    if dockerfile is None:
+        return False, "Dockerfile.openshell-sandbox not found in package"
+
+    try:
+        r = _subprocess.run(
+            [docker_exe, "build",
+             "-f", str(dockerfile),
+             "-t", _OPENSHELL_IMAGE,
+             str(dockerfile.parent)],
+            capture_output=True, text=True, timeout=600,   # 10 min for first build
+        )
+        if r.returncode == 0:
+            return True, ""
+        return False, (r.stderr or r.stdout or "unknown error").strip()[-500:]
+    except Exception as exc:
+        return False, str(exc)

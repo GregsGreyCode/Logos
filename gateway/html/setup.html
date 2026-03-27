@@ -1219,170 +1219,216 @@
       <!-- ── Step 4: Where to run agents ───────────────────────────── -->
       <div x-show="step===4" x-cloak>
         <div class="mb-5">
-          <h2 class="text-xl font-bold mb-1">Where to run agents</h2>
-          <p class="text-gray-400 text-sm">Choose where agent tasks execute. This affects isolation between sessions, resource limits, and how Logos scales.</p>
+          <h2 class="text-xl font-bold mb-1">Agent sandbox</h2>
+          <p class="text-gray-400 text-sm">Logos is scanning your environment to choose the safest way to run agents.</p>
         </div>
 
-        <div class="space-y-2 mb-4">
-          <!-- In-process (local) -->
-          <button @click="execEnv = 'local'"
-            class="w-full text-left p-4 rounded-xl border transition-all duration-200"
-            :class="execEnv === 'local' ? 'border-indigo-500 bg-indigo-950/30 spinner-hue' : 'border-gray-800 bg-gray-900 hover:border-gray-700'">
-            <div class="flex items-start gap-3">
-              <div class="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0 mt-0.5 text-lg transition-colors"
-                :class="execEnv === 'local' ? 'bg-indigo-900 border border-indigo-700' : 'bg-gray-800 border border-gray-700'">
-                <svg class="w-4 h-4" :class="execEnv==='local' ? 'text-indigo-300' : 'text-gray-500'" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/>
-                </svg>
-              </div>
-              <div class="flex-1">
-                <div class="flex items-center gap-2 mb-0.5">
-                  <span class="text-sm font-semibold text-white">In-process</span>
-                  <span x-show="execEnv === 'local'" class="text-[9px] px-1.5 py-0.5 rounded-full bg-indigo-900 text-indigo-300 border border-indigo-700 font-semibold uppercase tracking-wider">Selected</span>
-                </div>
-                <p class="text-xs text-gray-400">Agent runs execute as threads inside the Logos process — whether that is a Windows app, a Linux install, or a Docker container. Simple setup, no extra infrastructure.</p>
-                <p class="text-xs text-gray-600 mt-1">All concurrent sessions share the same process boundary and resource ceiling. Workspace isolation is handled by Logos internally, not at the OS level.</p>
-                <div class="mt-2 flex flex-wrap gap-3 text-[10px] text-gray-600">
-                  <span>~600 MB–1 GB RAM per agent run (shared pool)</span>
-                  <span>&middot; 0.5–2 CPU cores (spikes during tool use)</span>
-                  <span>&middot; model load on inference machine</span>
-                </div>
-              </div>
-            </div>
-          </button>
+        <!-- ── Probing spinner ── -->
+        <div x-show="sandboxProbing" class="flex items-center gap-2 text-sm text-gray-500 mb-4">
+          <div class="w-4 h-4 border border-gray-600 border-t-indigo-400 rounded-full animate-spin"></div>
+          Scanning environment&hellip;
+        </div>
 
-          <!-- Kubernetes -->
-          <button @click="execEnv = 'k8s'"
-            class="w-full text-left p-4 rounded-xl border transition-all duration-200"
-            :class="execEnv === 'k8s' ? 'border-indigo-500 bg-indigo-950/30 spinner-hue' : 'border-gray-800 bg-gray-900 hover:border-gray-700'">
-            <div class="flex items-start gap-3">
-              <div class="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0 mt-0.5 text-base transition-colors font-bold"
-                :class="execEnv === 'k8s' ? 'bg-indigo-900 border border-indigo-700 text-indigo-300' : 'bg-gray-800 border border-gray-700 text-gray-500'">k8s</div>
-              <div class="flex-1">
-                <div class="flex items-center gap-2 mb-0.5">
-                  <span class="text-sm font-semibold text-white">Kubernetes cluster</span>
-                  <span x-show="execEnv === 'k8s'" class="text-[9px] px-1.5 py-0.5 rounded-full bg-indigo-900 text-indigo-300 border border-indigo-700 font-semibold uppercase tracking-wider">Selected</span>
+        <!-- ── Probe result cards ── -->
+        <template x-if="sandboxProbe && !sandboxProbing">
+          <div>
+            <!-- ──────────────────────────────────────── DOCKER RUNNING ── -->
+            <div class="mb-3 p-4 rounded-xl border transition-all"
+              :class="sandboxProbe.docker_running ? 'border-green-800 bg-green-950/20' : 'border-gray-800 bg-gray-900'">
+              <div class="flex items-start gap-3">
+                <div class="w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0 text-sm font-bold"
+                  :class="sandboxProbe.docker_running ? 'bg-green-900 text-green-300' : 'bg-gray-800 text-gray-500'">
+                  <span x-text="sandboxProbe.docker_running ? '✓' : '✗'"></span>
                 </div>
-                <p class="text-xs text-gray-400">Each agent run spawns a dedicated Kubernetes Job — a fully isolated pod with its own filesystem, process space, and resource limits.</p>
-                <p class="text-xs text-gray-600 mt-1">Works whether Logos itself runs inside the cluster or externally (Windows, Docker, bare metal). Choose the connection mode below.</p>
-                <div class="mt-2 flex flex-wrap gap-3 text-[10px] text-gray-600">
-                  <span>500m CPU · 2 Gi memory (requests)</span>
-                  <span>&middot; 4 CPU / 8 Gi (limits)</span>
-                </div>
-              </div>
-            </div>
-          </button>
-
-          <!-- OpenShell -->
-          <button @click="execEnv = 'openshell'"
-            class="w-full text-left p-4 rounded-xl border transition-all duration-200"
-            :class="execEnv === 'openshell' ? 'border-green-600 bg-green-950/20 spinner-hue' : 'border-gray-800 bg-gray-900 hover:border-gray-700'">
-            <div class="flex items-start gap-3">
-              <div class="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0 mt-0.5 text-sm transition-colors font-bold"
-                :class="execEnv === 'openshell' ? 'bg-green-900 border border-green-700 text-green-300' : 'bg-gray-800 border border-gray-700 text-gray-500'">&#9651;</div>
-              <div class="flex-1">
-                <div class="flex items-center gap-2 mb-0.5">
-                  <span class="text-sm font-semibold text-white">OpenShell sandbox</span>
-                  <span class="text-[9px] px-1.5 py-0.5 rounded-full bg-green-950 text-green-400 border border-green-800 font-semibold uppercase tracking-wider">Recommended</span>
-                  <span x-show="execEnv === 'openshell'" class="text-[9px] px-1.5 py-0.5 rounded-full bg-indigo-900 text-indigo-300 border border-indigo-700 font-semibold uppercase tracking-wider">Selected</span>
-                </div>
-                <p class="text-xs text-gray-400">Each agent run gets its own policy-governed sandbox — isolated container with declarative egress rules that prevent data exfiltration. Powered by <span class="text-green-400">NVIDIA OpenShell</span>.</p>
-                <p class="text-xs text-gray-600 mt-1">Works on Windows, macOS, and Linux with only Docker installed. No separate Kubernetes cluster needed — OpenShell manages its own K3s runtime internally.</p>
-                <div class="mt-2 flex flex-wrap gap-3 text-[10px] text-gray-600">
-                  <span>Requires: Docker + <span class="font-mono text-gray-500">openshell</span> CLI</span>
-                  <span>&middot; GPU passthrough optional</span>
-                  <span>&middot; Hot-reloadable network policy</span>
+                <div class="flex-1">
+                  <div class="flex items-center gap-2 flex-wrap">
+                    <span class="text-sm font-semibold" :class="sandboxProbe.docker_running ? 'text-green-300' : 'text-white'">Docker Desktop</span>
+                    <span x-show="sandboxProbe.docker_running" class="text-[9px] px-1.5 py-0.5 rounded-full bg-green-900 text-green-300 border border-green-700 font-semibold uppercase tracking-wider">Running</span>
+                    <span x-show="!sandboxProbe.docker_running && sandboxProbe.docker_installed" class="text-[9px] px-1.5 py-0.5 rounded-full bg-yellow-900/60 text-yellow-400 border border-yellow-800 font-semibold uppercase tracking-wider">Installed but not running</span>
+                    <span x-show="!sandboxProbe.docker_installed" class="text-[9px] px-1.5 py-0.5 rounded-full bg-red-950 text-red-400 border border-red-900 font-semibold uppercase tracking-wider">Not installed</span>
+                  </div>
+                  <p x-show="sandboxProbe.docker_running" class="text-xs text-gray-500 mt-0.5">Docker is running. Sandboxed agents are available.</p>
+                  <p x-show="!sandboxProbe.docker_running && sandboxProbe.docker_installed" class="text-xs text-gray-500 mt-0.5">Docker Desktop is installed but not running.</p>
+                  <p x-show="!sandboxProbe.docker_installed" class="text-xs text-gray-500 mt-0.5">
+                    Docker Desktop is required for sandboxed agents. Without it, agents run in-process — which is less safe.
+                  </p>
+                  <!-- Actions when Docker is not running but installed -->
+                  <template x-if="!sandboxProbe.docker_running && sandboxProbe.docker_installed && sandboxProbe.docker_desktop_path">
+                    <button @click="fetch('/api/setup/sandbox-setup', {method:'POST', headers:{'X-CSRF-Token':getCsrfToken()}, credentials:'same-origin'}).then(()=>setTimeout(()=>probeSandbox(),3000))"
+                      class="mt-2 px-3 py-1 rounded-lg bg-yellow-900/40 border border-yellow-700 text-xs text-yellow-300 hover:bg-yellow-900/60 transition-colors">
+                      Launch Docker Desktop
+                    </button>
+                  </template>
+                  <!-- Link when Docker not installed -->
+                  <template x-if="!sandboxProbe.docker_installed">
+                    <div class="mt-2 flex items-center gap-2">
+                      <a href="https://www.docker.com/products/docker-desktop/" target="_blank"
+                        class="px-3 py-1 rounded-lg bg-indigo-900/40 border border-indigo-700 text-xs text-indigo-300 hover:bg-indigo-900/60 transition-colors">
+                        Download Docker Desktop &rarr;
+                      </a>
+                      <button @click="probeSandbox()" class="text-xs text-gray-500 hover:text-gray-300 underline">Re-check</button>
+                    </div>
+                  </template>
                 </div>
               </div>
             </div>
-          </button>
-        </div>
 
-        <!-- Local isolation note -->
-        <div x-show="execEnv === 'local'" x-transition.opacity class="mb-4 px-3 py-2.5 rounded-xl border border-gray-800 bg-gray-900/60 text-xs text-gray-500 leading-relaxed">
-          Agent runs share the same OS context as Logos. Tool use (file access, terminal, web) is constrained by Logos policy, not by OS-level sandboxing. For untrusted inputs or multi-user deployments, use Kubernetes or OpenShell instead.
-        </div>
+            <!-- ──────────────────────────────────── OPENSHELL CLI ── -->
+            <template x-if="sandboxProbe.docker_running">
+              <div class="mb-3 p-4 rounded-xl border transition-all"
+                :class="sandboxProbe.openshell_present ? 'border-green-800 bg-green-950/20' : 'border-gray-800 bg-gray-900'">
+                <div class="flex items-start gap-3">
+                  <div class="w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0 text-sm font-bold"
+                    :class="sandboxProbe.openshell_present ? 'bg-green-900 text-green-300' : 'bg-gray-800 text-gray-500'">
+                    <span x-text="sandboxProbe.openshell_present ? '✓' : '✗'"></span>
+                  </div>
+                  <div class="flex-1">
+                    <div class="flex items-center gap-2 flex-wrap">
+                      <span class="text-sm font-semibold" :class="sandboxProbe.openshell_present ? 'text-green-300' : 'text-white'">OpenShell CLI</span>
+                      <span x-show="sandboxProbe.openshell_present" class="text-[9px] px-1.5 py-0.5 rounded-full bg-green-900 text-green-300 border border-green-700 font-semibold uppercase tracking-wider">Ready</span>
+                      <span x-show="!sandboxProbe.openshell_present" class="text-[9px] px-1.5 py-0.5 rounded-full bg-gray-800 text-gray-400 border border-gray-700 font-semibold uppercase tracking-wider">Not installed</span>
+                    </div>
+                    <p x-show="sandboxProbe.openshell_present" class="text-xs text-gray-500 mt-0.5" x-text="'Found at ' + sandboxProbe.openshell_path"></p>
+                    <p x-show="!sandboxProbe.openshell_present" class="text-xs text-gray-500 mt-0.5">The OpenShell policy engine needs to be installed. Logos can do this automatically.</p>
+                  </div>
+                </div>
+              </div>
+            </template>
 
-        <!-- OpenShell prerequisites note -->
-        <div x-show="execEnv === 'openshell'" x-transition.opacity class="mb-4 px-3 py-2.5 rounded-xl border border-green-900/40 bg-green-950/20 text-xs text-green-300/70 leading-relaxed space-y-1.5">
-          <div><span class="font-semibold text-green-300">Prerequisites</span> — Docker must be running, and the OpenShell CLI must be installed:</div>
-          <div class="font-mono text-[11px] bg-black/40 px-2 py-1.5 rounded border border-green-900/30 text-green-400 select-all">curl -LsSf https://raw.githubusercontent.com/NVIDIA/OpenShell/main/install.sh | sh</div>
-          <div>Build the Hermes sandbox image once: <span class="font-mono text-green-400 text-[11px]">docker build -f Dockerfile.openshell-sandbox -t logos-hermes-sandbox .</span></div>
-          <div class="text-green-300/50">Policy files live in <span class="font-mono">gateway/policies/</span> and can be hot-reloaded on running sandboxes at any time.</div>
-        </div>
+            <!-- ──────────────────────────────── SANDBOX IMAGE ── -->
+            <template x-if="sandboxProbe.docker_running">
+              <div class="mb-4 p-4 rounded-xl border transition-all"
+                :class="sandboxProbe.image_present ? 'border-green-800 bg-green-950/20' : 'border-gray-800 bg-gray-900'">
+                <div class="flex items-start gap-3">
+                  <div class="w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0 text-sm font-bold"
+                    :class="sandboxProbe.image_present ? 'bg-green-900 text-green-300' : 'bg-gray-800 text-gray-500'">
+                    <span x-text="sandboxProbe.image_present ? '✓' : '✗'"></span>
+                  </div>
+                  <div class="flex-1">
+                    <div class="flex items-center gap-2 flex-wrap">
+                      <span class="text-sm font-semibold" :class="sandboxProbe.image_present ? 'text-green-300' : 'text-white'">Hermes sandbox image</span>
+                      <span x-show="sandboxProbe.image_present" class="text-[9px] px-1.5 py-0.5 rounded-full bg-green-900 text-green-300 border border-green-700 font-semibold uppercase tracking-wider">Built</span>
+                      <span x-show="!sandboxProbe.image_present" class="text-[9px] px-1.5 py-0.5 rounded-full bg-gray-800 text-gray-400 border border-gray-700 font-semibold uppercase tracking-wider">Not built</span>
+                    </div>
+                    <p x-show="sandboxProbe.image_present" class="text-xs text-gray-500 mt-0.5">logos-hermes-sandbox image is ready.</p>
+                    <p x-show="!sandboxProbe.image_present" class="text-xs text-gray-500 mt-0.5">The agent sandbox container image needs to be built once (~2 min). Logos will handle this automatically.</p>
+                  </div>
+                </div>
+              </div>
+            </template>
 
-        <!-- Kubernetes config (shown when k8s selected) -->
-        <div x-show="execEnv === 'k8s'" x-transition.opacity class="mb-4 space-y-3">
-          <div class="p-4 rounded-xl bg-gray-900 border border-gray-800 space-y-3">
-            <!-- Mode selector -->
-            <div class="flex gap-2">
-              <button @click="k8sMode = 'incluster'"
-                class="flex-1 py-1.5 rounded-lg text-xs font-medium transition-colors"
-                :class="k8sMode === 'incluster' ? 'bg-indigo-900 text-indigo-200 border border-indigo-700 spinner-hue' : 'bg-gray-800 text-gray-400 border border-gray-700 hover:border-gray-600'">
-                Logos is in the cluster
-              </button>
-              <button @click="k8sMode = 'kubeconfig'"
-                class="flex-1 py-1.5 rounded-lg text-xs font-medium transition-colors"
-                :class="k8sMode === 'kubeconfig' ? 'bg-indigo-900 text-indigo-200 border border-indigo-700 spinner-hue' : 'bg-gray-800 text-gray-400 border border-gray-700 hover:border-gray-600'">
-                Logos is outside the cluster
-              </button>
-            </div>
+            <!-- ──────────────────────── AUTO-SETUP BUTTON / PROGRESS ── -->
+            <template x-if="sandboxProbe.docker_running && !sandboxProbe.sandbox_ready">
+              <div class="mb-4">
+                <button @click="runSandboxSetup()"
+                  :disabled="sandboxSetupRunning"
+                  class="w-full py-2.5 rounded-xl text-sm font-medium border transition-all"
+                  :class="sandboxSetupRunning ? 'border-green-800 bg-green-950/20 text-green-400 cursor-not-allowed' : 'border-green-700 bg-green-900/30 text-green-300 hover:bg-green-900/50'">
+                  <span x-show="!sandboxSetupRunning">&#9651; Set up safe sandbox automatically</span>
+                  <span x-show="sandboxSetupRunning" class="flex items-center justify-center gap-2">
+                    <div class="w-3.5 h-3.5 border border-green-600 border-t-green-300 rounded-full animate-spin"></div>
+                    Setting up sandbox&hellip;
+                  </span>
+                </button>
 
-            <!-- Mode description -->
-            <div x-show="k8sMode === 'incluster'" class="text-xs text-gray-500 leading-relaxed">
-              Logos is deployed as a pod inside your Kubernetes cluster. It authenticates using the service account token automatically mounted in its pod — no credentials or cluster address needed.
-            </div>
-            <div x-show="k8sMode === 'kubeconfig'" class="text-xs text-gray-500 leading-relaxed">
-              Logos is running outside the cluster — on a PC, in a standalone Docker container, or on a server. Paste a kubeconfig below so Logos can reach the cluster API to spawn agent Jobs there.
-            </div>
+                <!-- Progress log -->
+                <template x-if="sandboxSetupLog.length > 0">
+                  <div class="mt-2 space-y-1">
+                    <template x-for="entry in sandboxSetupLog" :key="entry.step">
+                      <div class="flex items-start gap-2 px-3 py-1.5 rounded-lg text-xs"
+                        :class="entry.status === 'ok' ? 'bg-green-950/30 text-green-400' : entry.status === 'error' ? 'bg-red-950/30 text-red-400' : 'bg-gray-900 text-gray-400'">
+                        <span x-text="entry.status === 'ok' ? '✓' : entry.status === 'error' ? '✗' : '…'" class="flex-shrink-0 font-mono"></span>
+                        <span x-text="entry.msg || entry.step"></span>
+                      </div>
+                    </template>
+                  </div>
+                </template>
+              </div>
+            </template>
 
-            <!-- Auto namespace (read-only) -->
-            <div class="flex items-center gap-2">
-              <span class="text-xs text-gray-500">Namespace</span>
-              <span class="font-mono text-xs text-indigo-300 bg-indigo-950/40 border border-indigo-900 px-2 py-0.5 rounded" x-text="selectedAgentType || 'hermes'"></span>
-              <span class="text-xs text-gray-600">— derived from agent runtime</span>
-            </div>
+            <!-- ──── All green: sandbox ready ── -->
+            <template x-if="sandboxProbe.sandbox_ready">
+              <div class="mb-4 px-3 py-2.5 rounded-xl border border-green-800 bg-green-950/20 text-xs text-green-300 leading-relaxed">
+                &#9651; <span class="font-semibold">Sandbox mode enabled.</span> Each agent run will get its own isolated container with policy-enforced network access. Your host filesystem and credentials are protected.
+              </div>
+            </template>
 
-            <!-- Kubeconfig paste / drag-and-drop / browse -->
-            <div x-show="k8sMode === 'kubeconfig'"
-                 @dragover.prevent="$el.classList.add('border-indigo-600')"
-                 @dragleave="$el.classList.remove('border-indigo-600')"
-                 @drop.prevent="$el.classList.remove('border-indigo-600'); $event.dataTransfer.files[0] && $event.dataTransfer.files[0].text().then(t => kubeconfig = t)"
-                 class="border-2 border-dashed border-gray-700 rounded-lg p-2 transition-colors">
-              <label class="block text-xs text-gray-500 mb-1">
-                Paste kubeconfig YAML, drag-and-drop a file here, or
-                <span class="text-indigo-400 cursor-pointer hover:text-indigo-300 underline" @click="$refs.kubeconfigFile.click()">browse</span>
-                <span class="text-gray-600">(contains cluster address and credentials)</span>
-              </label>
-              <input type="file" x-ref="kubeconfigFile" accept=".yaml,.yml,.conf,text/plain" class="hidden"
-                     @change="$event.target.files[0] && $event.target.files[0].text().then(t => { kubeconfig = t; $event.target.value = ''; })">
-              <textarea x-model="kubeconfig" rows="6" placeholder="apiVersion: v1&#10;kind: Config&#10;..."
-                class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-xs text-white placeholder-gray-600 font-mono focus:outline-none focus:border-indigo-500 resize-none appearance-none"
-                style="box-sizing:border-box;"></textarea>
-            </div>
+            <!-- ──── Docker not available: in-process warning ── -->
+            <template x-if="!sandboxProbe.docker_running">
+              <div class="mb-4 px-3 py-2.5 rounded-xl border border-yellow-900/40 bg-yellow-950/10 text-xs text-yellow-300/80 leading-relaxed space-y-1">
+                <div class="font-semibold text-yellow-300">Running in-process (less safe)</div>
+                <div>Without Docker, agents run inside the same process as Logos with no OS-level isolation. They can access your filesystem and make network requests subject only to Logos policy. This is fine for personal use, but for untrusted inputs or shared machines, Docker sandboxing is strongly recommended.</div>
+              </div>
+            </template>
 
-            <!-- Test connection button + result -->
-            <div class="flex items-center gap-3">
-              <button @click="testK8s()"
-                :disabled="k8sTesting || (k8sMode === 'kubeconfig' && !kubeconfig.trim())"
-                class="px-3 py-1.5 rounded-lg border border-gray-700 hover:border-gray-500 text-xs text-gray-300 transition-colors disabled:opacity-40">
-                <span x-show="!k8sTesting">Test connection</span>
-                <span x-show="k8sTesting" class="flex items-center gap-1.5">
-                  <div class="w-3 h-3 border border-gray-600 border-t-indigo-400 rounded-full animate-spin"></div>
-                  Testing&hellip;
-                </span>
-              </button>
-              <span x-show="k8sTestResult === 'ok'" class="text-xs text-green-400">&#x2713; Connected to namespace <span class="font-mono" x-text="selectedAgentType || 'hermes'"></span></span>
-              <span x-show="k8sTestResult === 'error'" class="text-xs text-red-400" x-text="k8sTestError"></span>
-            </div>
+            <!-- ──── Advanced: K8s option ── -->
+            <details class="mb-4">
+              <summary class="text-xs text-gray-600 cursor-pointer hover:text-gray-400 select-none">Advanced: use a Kubernetes cluster instead</summary>
+              <div class="mt-3 space-y-3">
+                <button @click="execEnv = (execEnv === 'k8s' ? (sandboxProbe.sandbox_ready ? 'openshell' : 'local') : 'k8s')"
+                  class="w-full text-left p-3 rounded-xl border text-xs transition-all"
+                  :class="execEnv === 'k8s' ? 'border-indigo-500 bg-indigo-950/30' : 'border-gray-800 bg-gray-900 hover:border-gray-700'">
+                  <div class="flex items-center gap-2">
+                    <span class="font-mono font-bold text-gray-400">k8s</span>
+                    <span class="font-semibold text-white">Kubernetes cluster</span>
+                    <span x-show="execEnv === 'k8s'" class="text-[9px] px-1.5 py-0.5 rounded-full bg-indigo-900 text-indigo-300 border border-indigo-700 font-semibold uppercase tracking-wider">Selected</span>
+                  </div>
+                  <p class="text-gray-500 mt-1">Each agent run spawns a dedicated Kubernetes Job — isolated pod with its own filesystem and resource limits.</p>
+                </button>
+
+                <div x-show="execEnv === 'k8s'" class="p-3 rounded-xl bg-gray-900 border border-gray-800 space-y-3">
+                  <div class="flex gap-2">
+                    <button @click="k8sMode = 'incluster'"
+                      class="flex-1 py-1.5 rounded-lg text-xs font-medium transition-colors"
+                      :class="k8sMode === 'incluster' ? 'bg-indigo-900 text-indigo-200 border border-indigo-700' : 'bg-gray-800 text-gray-400 border border-gray-700 hover:border-gray-600'">
+                      Logos is in the cluster
+                    </button>
+                    <button @click="k8sMode = 'kubeconfig'"
+                      class="flex-1 py-1.5 rounded-lg text-xs font-medium transition-colors"
+                      :class="k8sMode === 'kubeconfig' ? 'bg-indigo-900 text-indigo-200 border border-indigo-700' : 'bg-gray-800 text-gray-400 border border-gray-700 hover:border-gray-600'">
+                      Logos is outside the cluster
+                    </button>
+                  </div>
+                  <div x-show="k8sMode === 'incluster'" class="text-xs text-gray-500">Uses the service account token mounted in the Logos pod — no credentials needed.</div>
+                  <div x-show="k8sMode === 'kubeconfig'" class="text-xs text-gray-500">Paste a kubeconfig so Logos can reach the cluster API.</div>
+                  <div x-show="k8sMode === 'kubeconfig'"
+                       @dragover.prevent="$el.classList.add('border-indigo-600')"
+                       @dragleave="$el.classList.remove('border-indigo-600')"
+                       @drop.prevent="$el.classList.remove('border-indigo-600'); $event.dataTransfer.files[0] && $event.dataTransfer.files[0].text().then(t => kubeconfig = t)"
+                       class="border-2 border-dashed border-gray-700 rounded-lg p-2 transition-colors">
+                    <label class="block text-xs text-gray-500 mb-1">
+                      Paste kubeconfig or <span class="text-indigo-400 cursor-pointer hover:text-indigo-300 underline" @click="$refs.kubeconfigFile.click()">browse</span>
+                    </label>
+                    <input type="file" x-ref="kubeconfigFile" accept=".yaml,.yml,.conf,text/plain" class="hidden"
+                           @change="$event.target.files[0] && $event.target.files[0].text().then(t => { kubeconfig = t; $event.target.value = ''; })">
+                    <textarea x-model="kubeconfig" rows="5" placeholder="apiVersion: v1&#10;kind: Config&#10;..."
+                      class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-xs text-white placeholder-gray-600 font-mono focus:outline-none focus:border-indigo-500 resize-none"
+                      style="box-sizing:border-box;"></textarea>
+                  </div>
+                  <div class="flex items-center gap-3">
+                    <button @click="testK8s()" :disabled="k8sTesting || (k8sMode === 'kubeconfig' && !kubeconfig.trim())"
+                      class="px-3 py-1.5 rounded-lg border border-gray-700 hover:border-gray-500 text-xs text-gray-300 transition-colors disabled:opacity-40">
+                      <span x-show="!k8sTesting">Test connection</span>
+                      <span x-show="k8sTesting" class="flex items-center gap-1.5">
+                        <div class="w-3 h-3 border border-gray-600 border-t-indigo-400 rounded-full animate-spin"></div>
+                        Testing&hellip;
+                      </span>
+                    </button>
+                    <span x-show="k8sTestResult === 'ok'" class="text-xs text-green-400">&#x2713; Connected</span>
+                    <span x-show="k8sTestResult === 'error'" class="text-xs text-red-400" x-text="k8sTestError"></span>
+                  </div>
+                </div>
+              </div>
+            </details>
+
+            <button @click="goNext()"
+              :disabled="execEnv === 'openshell' && !sandboxProbe.sandbox_ready && sandboxProbe.docker_running"
+              class="btn-primary w-full py-2.5 rounded-xl text-sm disabled:opacity-40 disabled:cursor-not-allowed">
+              <span x-show="execEnv === 'openshell' && sandboxProbe.sandbox_ready">Continue with sandboxed agents &rarr;</span>
+              <span x-show="execEnv !== 'openshell' || !sandboxProbe.docker_running">Continue <span x-show="!sandboxProbe.docker_running" class="text-yellow-400/70">(in-process)</span> &rarr;</span>
+            </button>
           </div>
-        </div>
-
-        <div x-show="execEnv" x-transition.opacity>
-          <button @click="goNext()" class="btn-primary w-full py-2.5 rounded-xl text-sm">
-            Continue &rarr;
-          </button>
-        </div>
+        </template>
       </div>
 
       <!-- ── Step 5: Choose a soul ───────────────────────────────────── -->
@@ -1817,13 +1863,90 @@ function setup() {
       },
     ],
 
-    // Step 5 — execution environment
+    // Step 4 — execution environment
     execEnv: 'local',
     k8sMode: 'incluster',
     kubeconfig: '',
     k8sTesting: false,
     k8sTestResult: null,
     k8sTestError: '',
+
+    // Step 4 — sandbox auto-detect state
+    sandboxProbe: null,        // null = not yet probed
+    sandboxProbing: false,
+    sandboxSetupRunning: false,
+    sandboxSetupLog: [],       // [{step, status, msg}]
+    sandboxSetupDone: false,
+
+    async probeSandbox() {
+      this.sandboxProbing = true;
+      try {
+        const r = await fetch('/api/setup/env-probe');
+        this.sandboxProbe = await r.json();
+        // Auto-select execEnv based on what's available
+        if (this.sandboxProbe.sandbox_ready) {
+          this.execEnv = 'openshell';
+        } else if (this.sandboxProbe.docker_running) {
+          // Docker is running but setup not complete — default to openshell path
+          // (user can still switch to local or k8s)
+          this.execEnv = 'openshell';
+        } else {
+          this.execEnv = 'local';
+        }
+      } catch(e) {
+        this.sandboxProbe = { docker_running: false, docker_installed: false,
+                               openshell_present: false, image_present: false, sandbox_ready: false };
+        this.execEnv = 'local';
+      } finally {
+        this.sandboxProbing = false;
+      }
+    },
+
+    async runSandboxSetup() {
+      this.sandboxSetupRunning = true;
+      this.sandboxSetupLog = [];
+      try {
+        const r = await fetch('/api/setup/sandbox-setup', {
+          method: 'POST',
+          headers: { 'X-CSRF-Token': getCsrfToken() },
+          credentials: 'same-origin',
+        });
+        const reader = r.body.getReader();
+        const dec = new TextDecoder();
+        let buf = '';
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buf += dec.decode(value, { stream: true });
+          const parts = buf.split('\n\n');
+          buf = parts.pop();
+          for (const part of parts) {
+            const line = part.replace(/^data: /, '').trim();
+            if (!line) continue;
+            try {
+              const ev = JSON.parse(line);
+              // Update existing entry or push new
+              const idx = this.sandboxSetupLog.findIndex(e => e.step === ev.step);
+              if (idx >= 0) { this.sandboxSetupLog[idx] = ev; this.sandboxSetupLog = [...this.sandboxSetupLog]; }
+              else { this.sandboxSetupLog = [...this.sandboxSetupLog, ev]; }
+              if (ev.step === 'done') {
+                this.sandboxSetupDone = true;
+                if (ev.sandbox_ready) {
+                  this.execEnv = 'openshell';
+                  if (this.sandboxProbe) this.sandboxProbe.sandbox_ready = true;
+                }
+              }
+            } catch(_) {}
+          }
+        }
+      } catch(e) {
+        this.sandboxSetupLog = [...this.sandboxSetupLog, { step: 'done', status: 'error', msg: String(e) }];
+      } finally {
+        this.sandboxSetupRunning = false;
+        // Re-probe to get fresh state
+        await this.probeSandbox();
+      }
+    },
 
     // Step 6
     completing: false,
@@ -2185,7 +2308,7 @@ function setup() {
         return;
       }
       if (this.step === 2) { await this._goStep(3); return; }
-      if (this.step === 3) { await this._goStep(4); return; }
+      if (this.step === 3) { await this._goStep(4, () => { this.probeSandbox(); }); return; }
       if (this.step === 4) {
         await this._goStep(5, () => {
           // Auto-suggest General (Lite) if the selected model has limited context
