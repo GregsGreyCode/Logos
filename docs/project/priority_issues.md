@@ -74,6 +74,8 @@ The README says "Kubernetes pod + RBAC boundary" but RBAC governs API access, no
 
 If an MCP server subprocess crashes (OOM, segfault, npm error), it stays dead. `is_connected()` checks `server.session is not None` but there's no health monitoring loop or automatic restart. Recovery requires a full gateway restart.
 
+**Status:** RESOLVED in v0.5.87 — `handle_jsonrpc()` now auto-restarts a dead server on the first request that finds it disconnected. Added `restart_server()` method to `MCPGatewayService`.
+
 **Severity:** MEDIUM — affects MCP users only, clear error returned to agents.
 
 ---
@@ -82,9 +84,11 @@ If an MCP server subprocess crashes (OOM, segfault, npm error), it stays dead. `
 
 **File:** `gateway/run.py:234`
 
-When no API key is configured, the code sends `api_key="not-needed"` to the OpenAI SDK, which sends `Authorization: Bearer not-needed` to the inference server. This works because LM Studio currently ignores invalid tokens when auth is disabled, but it's a fragile assumption.
+When no API key is configured, the code sends `api_key="not-needed"` to the OpenAI SDK, which sends `Authorization: Bearer not-needed` to the inference server.
 
-**Severity:** LOW — works today, should be replaced with proper auth detection.
+**Status:** NOT AN ISSUE — The OpenAI Python SDK requires a non-empty `api_key` string (raises `OpenAIError` if `None` or `""`). `"not-needed"` is the standard placeholder used across the OpenAI-compatible ecosystem (Ollama docs, LM Studio defaults, llama.cpp). All tested servers ignore invalid bearer tokens when auth is disabled. Comment updated to document the reasoning.
+
+**Severity:** LOW — correct as implemented.
 
 ---
 
@@ -92,9 +96,11 @@ When no API key is configured, the code sends `api_key="not-needed"` to the Open
 
 **File:** `gateway/run.py:64-148`
 
-`.env` is reloaded before each chat request, but `config.yaml` is only read at startup. The settings UI doesn't indicate that changes require a restart.
+`.env` is reloaded before each chat request (`override=True`), but `config.yaml` is only bridged to `os.environ` at startup.
 
-**Severity:** LOW — UX issue, not a safety issue.
+**Status:** ACCEPTABLE — The setup wizard and `/model` command both write to config.yaml AND set `os.environ` immediately, so changes via the UI take effect without restart. Only manual file edits require a restart. Comment added to the reload section documenting this. Priority order: `.env` (override=True) > `os.environ` (runtime /model changes) > `config.yaml` (startup bridge).
+
+**Severity:** LOW — UX issue, not a safety issue. Only affects manual file editors.
 
 ---
 
@@ -104,4 +110,12 @@ When no API key is configured, the code sends `api_key="not-needed"` to the Open
 
 `max_iterations=90` is the only guard against runaway API spend. No per-user budget, no cost warning, no circuit breaker. A complex prompt on a frontier model could generate significant costs in one turn.
 
-**Severity:** MEDIUM — financial risk for self-hosted users with cloud API keys.
+**Existing mitigations:**
+- `max_iterations` configurable via `HERMES_MAX_ITERATIONS` env var or `agent.max_turns` in config.yaml
+- `IterationBudget` shared across parent + subagents (prevents subagent sprawl)
+- Budget pressure system warns the LLM at 70% and 90% of iteration limit
+- Token counts are tracked and reported in per-message stats
+
+**Remaining gap:** No dollar-amount cost estimation or per-user monthly budget. Requires model pricing data (available from OpenRouter API for cloud models, not applicable for local models). This is a feature request, not a bug.
+
+**Severity:** MEDIUM — financial risk for cloud API users, but guarded by configurable iteration limit.

@@ -165,6 +165,34 @@ class MCPGatewayService:
             server = self._servers.get(name)
         return server is not None and getattr(server, "session", None) is not None
 
+    async def restart_server(self, name: str) -> bool:
+        """Restart a crashed MCP server by name. Returns True on success."""
+        cfg = self._servers_cfg.get(name)
+        if not cfg or cfg.get("enabled", True) is False:
+            return False
+        try:
+            from tools.mcp_tool import _ensure_mcp_loop, _discover_and_register_server, _run_on_mcp_loop
+            _ensure_mcp_loop()
+
+            async def _restart():
+                return await _discover_and_register_server(name, cfg)
+
+            loop = asyncio.get_event_loop()
+            result = await loop.run_in_executor(None, lambda: _run_on_mcp_loop(_restart(), timeout=60))
+
+            # Update server snapshot
+            from tools.mcp_tool import _servers as _mcp_servers, _lock as _mcp_lock
+            with _mcp_lock:
+                with self._lock:
+                    if name in _mcp_servers:
+                        self._servers[name] = _mcp_servers[name]
+
+            logger.info("mcp_service: restarted '%s' (%d tools)", name, len(result))
+            return True
+        except Exception as exc:
+            logger.warning("mcp_service: failed to restart '%s': %s", name, exc)
+            return False
+
     # ------------------------------------------------------------------
     # Policy
     # ------------------------------------------------------------------
@@ -234,7 +262,14 @@ class MCPGatewayService:
             server = self._servers.get(server_name)
 
         if server is None or getattr(server, "session", None) is None:
-            return _err(-32000, f"MCP server '{server_name}' is not connected")
+            # Auto-reconnect: try to restart the crashed server once before giving up
+            logger.info("mcp_service: server '%s' is disconnected — attempting auto-restart", server_name)
+            restarted = await self.restart_server(server_name)
+            if restarted:
+                with self._lock:
+                    server = self._servers.get(server_name)
+            if server is None or getattr(server, "session", None) is None:
+                return _err(-32000, f"MCP server '{server_name}' is not connected (auto-restart failed)")
 
         try:
             from tools.mcp_tool import _run_on_mcp_loop
