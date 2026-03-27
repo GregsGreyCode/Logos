@@ -203,32 +203,122 @@ def parse_context_limit_from_error(error_msg: str) -> Optional[int]:
     return None
 
 
+def _get_config_context_length(model: str) -> Optional[int]:
+    """Check config.yaml for VRAM-validated context lengths from the setup benchmark.
+
+    The setup wizard probes each model by actually loading it at decreasing
+    context sizes and verifying with a full-payload request.  The result is
+    the largest context the user's hardware can actually serve — not the
+    model's theoretical max.
+
+    Stored under ``lmstudio_context_lengths`` in config.yaml (applies to all
+    OpenAI-compatible local backends, not just LM Studio).
+    """
+    try:
+        hermes_home = Path(os.environ.get("HERMES_HOME", Path.home() / ".hermes"))
+        config_path = hermes_home / "config.yaml"
+        if not config_path.exists():
+            return None
+        cfg = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+        ctx_map = cfg.get("lmstudio_context_lengths") or {}
+        # Exact match first
+        if model in ctx_map:
+            return int(ctx_map[model])
+        # Fuzzy match (model ID may include or omit quantisation suffixes)
+        model_lower = model.lower()
+        for cfg_model, length in ctx_map.items():
+            cfg_lower = cfg_model.lower()
+            if cfg_lower in model_lower or model_lower in cfg_lower:
+                return int(length)
+    except Exception:
+        pass
+    return None
+
+
+def _query_server_context_length(model: str, base_url: str) -> Optional[int]:
+    """Query the inference server's /v1/models endpoint for context length.
+
+    OpenAI-compatible servers (LM Studio, llama.cpp, vLLM, etc.) expose
+    model metadata including context window size.  This is a runtime probe
+    — slower than cache but always accurate for the currently loaded model.
+    """
+    if not base_url:
+        return None
+    try:
+        import httpx
+        # Try with common auth patterns
+        headers = {}
+        api_key = os.environ.get("OPENAI_API_KEY") or os.environ.get("LM_API_KEY", "")
+        if api_key:
+            headers["Authorization"] = f"Bearer {api_key}"
+        resp = httpx.get(f"{base_url}/v1/models", headers=headers, timeout=5)
+        if resp.status_code != 200:
+            return None
+        data = resp.json()
+        models = data if isinstance(data, list) else data.get("data", [])
+        model_lower = model.lower()
+        for m in models:
+            mid = (m.get("id") or "").lower()
+            if mid == model_lower or model_lower in mid or mid in model_lower:
+                # Different servers use different field names
+                ctx = (m.get("max_context_length")       # LM Studio native
+                       or m.get("context_length")         # some servers
+                       or m.get("max_model_len")          # vLLM
+                       or m.get("context_window"))        # others
+                if isinstance(ctx, int) and ctx > 0:
+                    logger.info("Server reports context length for %s: %s tokens", model, f"{ctx:,}")
+                    return ctx
+    except Exception as exc:
+        logger.debug("Could not query server context length: %s", exc)
+    return None
+
+
 def get_model_context_length(model: str, base_url: str = "") -> int:
     """Get the context length for a model.
 
     Resolution order:
-    1. Persistent cache (previously discovered via probing)
-    2. OpenRouter API metadata
-    3. Hardcoded DEFAULT_CONTEXT_LENGTHS (fuzzy match)
-    4. First probe tier (2M) — will be narrowed on first context error
+    1. Persistent probe cache (previously discovered via runtime probing)
+    2. Config.yaml benchmark results (VRAM-validated by setup wizard)
+    3. Live query to inference server /v1/models endpoint
+    4. OpenRouter API metadata (for cloud models)
+    5. Hardcoded DEFAULT_CONTEXT_LENGTHS (fuzzy match)
+    6. First probe tier (2M) — will be narrowed on first context error
     """
     # 1. Check persistent cache (model+provider)
     if base_url:
         cached = get_cached_context_length(model, base_url)
         if cached is not None:
+            logger.debug("Context length for %s: %d (from probe cache)", model, cached)
             return cached
 
-    # 2. OpenRouter API metadata
+    # 2. Config.yaml benchmark results (VRAM-validated)
+    config_ctx = _get_config_context_length(model)
+    if config_ctx is not None:
+        logger.info("Context length for %s: %s tokens (from setup benchmark)", model, f"{config_ctx:,}")
+        # Also cache it for faster lookups
+        if base_url:
+            save_context_length(model, base_url, config_ctx)
+        return config_ctx
+
+    # 3. Live query to the inference server
+    if base_url:
+        server_ctx = _query_server_context_length(model, base_url)
+        if server_ctx is not None:
+            save_context_length(model, base_url, server_ctx)
+            return server_ctx
+
+    # 4. OpenRouter API metadata (cloud models)
     metadata = fetch_model_metadata()
     if model in metadata:
         return metadata[model].get("context_length", 128000)
 
-    # 3. Hardcoded defaults (fuzzy match)
+    # 5. Hardcoded defaults (fuzzy match)
     for default_model, length in DEFAULT_CONTEXT_LENGTHS.items():
         if default_model in model or model in default_model:
             return length
 
-    # 4. Unknown model — start at highest probe tier
+    # 6. Unknown model — start at highest probe tier
+    logger.warning("No context length info for %s — starting at probe tier %s", model, f"{CONTEXT_PROBE_TIERS[0]:,}")
     return CONTEXT_PROBE_TIERS[0]
 
 
