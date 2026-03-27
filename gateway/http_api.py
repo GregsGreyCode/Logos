@@ -1644,8 +1644,10 @@ async def start_http_api(runner: Any, port: int = 8080) -> None:
     app.router.add_post("/api/setup/test-k8s", _sh.handle_setup_test_k8s)
     app.router.add_post("/api/setup/test",    _sh.handle_setup_test)
     app.router.add_post("/api/setup/complete",    _sh.handle_setup_complete)
-    app.router.add_get("/api/setup/discover",     _sh.handle_setup_discover)
-    app.router.add_post("/api/setup/set-remote",  _sh.handle_setup_set_remote)
+    app.router.add_get("/api/setup/discover",       _sh.handle_setup_discover)
+    app.router.add_post("/api/setup/set-remote",   _sh.handle_setup_set_remote)
+    app.router.add_get("/api/setup/env-probe",     _sh.handle_setup_env_probe)
+    app.router.add_post("/api/setup/sandbox-setup", _sh.handle_setup_sandbox_setup)
     app.router.add_post("/api/setup/reset",
         require_csrf(require_permission("manage_platform")(_handle_setup_reset)))
 
