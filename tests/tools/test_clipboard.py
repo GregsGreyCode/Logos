@@ -655,7 +655,7 @@ class TestPreprocessImagesWithVision:
     @pytest.fixture
     def cli(self):
         """Minimal HermesCLI with mocked internals."""
-        with patch("cli.load_cli_config") as mock_cfg:
+        with patch("hermes_cli.cli.load_cli_config") as mock_cfg:
             mock_cfg.return_value = {
                 "model": {"default": "test/model", "base_url": "http://x", "provider": "auto"},
                 "terminal": {"timeout": 60},
@@ -668,8 +668,8 @@ class TestPreprocessImagesWithVision:
                 "delegation": {},
             }
             with patch.dict("os.environ", {"OPENROUTER_API_KEY": "test-key"}):
-                with patch("cli.CLI_CONFIG", mock_cfg.return_value):
-                    from cli import HermesCLI
+                with patch("hermes_cli.cli.CLI_CONFIG", mock_cfg.return_value):
+                    from hermes_cli.cli import HermesCLI
                     cli_obj = HermesCLI.__new__(HermesCLI)
                     # Manually init just enough state
                     cli_obj._attached_images = []
@@ -767,7 +767,7 @@ class TestTryAttachClipboardImage:
 
     @pytest.fixture
     def cli(self):
-        from cli import HermesCLI
+        from hermes_cli.cli import HermesCLI
         cli_obj = HermesCLI.__new__(HermesCLI)
         cli_obj._attached_images = []
         cli_obj._image_counter = 0

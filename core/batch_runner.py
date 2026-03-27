@@ -701,7 +701,7 @@ class BatchRunner:
         """
         checkpoint_data["last_updated"] = datetime.now().isoformat()
 
-        from utils import atomic_json_write
+        from core.utils import atomic_json_write
         if lock:
             with lock:
                 atomic_json_write(self.checkpoint_file, checkpoint_data)

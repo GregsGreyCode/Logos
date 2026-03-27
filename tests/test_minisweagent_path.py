@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from minisweagent_path import discover_minisweagent_src
+from core.minisweagent_path import discover_minisweagent_src
 
 
 def test_discover_minisweagent_src_in_current_checkout(tmp_path):

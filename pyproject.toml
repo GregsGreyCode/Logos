@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "logos"
-version = "0.5.92"
+version = "0.5.93"
 description = "A self-hosted agent platform — inference routing, multi-model benchmarking, and policy-governed agent runs across local and cloud hardware"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -89,10 +89,10 @@ hermes-agent = "agents.hermes.agent:main"
 hermes-acp = "acp_adapter.entry:main"
 
 [tool.setuptools]
-py-modules = ["batch_runner", "cli", "mini_swe_runner", "rl_cli", "utils", "metrics", "runs", "minisweagent_path"]
+py-modules = ["mini_swe_runner", "rl_cli"]
 
 [tool.setuptools.packages.find]
-include = ["agent", "agents", "agents.*", "tools", "tools.*", "hermes_cli", "gateway", "gateway.*", "cron", "honcho_integration", "acp_adapter"]
+include = ["agent", "agents", "agents.*", "tools", "tools.*", "hermes_cli", "hermes_cli.*", "gateway", "gateway.*", "core", "core.*", "cron", "honcho_integration", "acp_adapter"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

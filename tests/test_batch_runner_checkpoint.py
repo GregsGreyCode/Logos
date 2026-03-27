@@ -12,7 +12,7 @@ import pytest
 import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from batch_runner import BatchRunner
+from core.batch_runner import BatchRunner
 
 
 @pytest.fixture

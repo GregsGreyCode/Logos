@@ -3452,7 +3452,7 @@ class HermesCLI:
         """Handle /runs [<run_id> | replay <id> | clone <id>] command."""
         try:
             from core.state import SessionDB
-            from runs import RunReplayer, fmt_status, fmt_duration, fmt_ts, fmt_run_id_short
+            from core.runs import RunReplayer, fmt_status, fmt_duration, fmt_ts, fmt_run_id_short
         except ImportError as exc:
             print(f"  Run auditability module not available: {exc}")
             return
@@ -3493,7 +3493,7 @@ class HermesCLI:
 
     def _runs_list(self, db, status: str = None, source: str = None):
         """Print a table of recent runs."""
-        from runs import RunReplayer, fmt_status, fmt_duration, fmt_ts, fmt_run_id_short
+        from core.runs import RunReplayer, fmt_status, fmt_duration, fmt_ts, fmt_run_id_short
 
         replayer = RunReplayer(db)
         runs = replayer.list_runs(source=source, status=status, limit=25)
@@ -3589,7 +3589,7 @@ class HermesCLI:
 
     def _runs_detail(self, db, run_id_prefix: str):
         """Show detailed view of a single run including tool timeline."""
-        from runs import RunReplayer, fmt_status, fmt_duration, fmt_ts, fmt_run_id_short
+        from core.runs import RunReplayer, fmt_status, fmt_duration, fmt_ts, fmt_run_id_short
 
         replayer = RunReplayer(db)
 
@@ -3717,7 +3717,7 @@ class HermesCLI:
 
     def _runs_replay(self, db, run_id_prefix: str):
         """Replay a previous run: re-submit the same user message."""
-        from runs import RunReplayer
+        from core.runs import RunReplayer
 
         replayer = RunReplayer(db)
 
@@ -3760,7 +3760,7 @@ class HermesCLI:
 
     def _runs_clone(self, db, run_id_prefix: str):
         """Clone a run: start a fresh session pre-filled with the prior prompt."""
-        from runs import RunReplayer
+        from core.runs import RunReplayer
 
         replayer = RunReplayer(db)
         run = self._resolve_run(replayer, run_id_prefix)
@@ -4030,7 +4030,7 @@ class HermesCLI:
                 return
 
         try:
-            from metrics import MetricsEngine
+            from core.metrics import MetricsEngine
             engine = MetricsEngine(db)
         except ImportError as exc:
             print(f"  Metrics module not available: {exc}")

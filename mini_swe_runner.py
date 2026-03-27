@@ -44,7 +44,7 @@ load_dotenv()
 
 # Add mini-swe-agent to path if not installed. In git worktrees the populated
 # submodule may live in the main checkout rather than the worktree itself.
-from minisweagent_path import ensure_minisweagent_on_path
+from core.minisweagent_path import ensure_minisweagent_on_path
 
 ensure_minisweagent_on_path(Path(__file__).resolve().parent)
 
