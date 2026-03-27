@@ -438,6 +438,47 @@ async def handle_policy_rules_put(request: web.Request) -> web.Response:
     return web.json_response({"rules": auth_db.get_policy_rules(pid)})
 
 
+# ── User delete / reset ──────────────────────────────────────────────────────
+
+async def handle_users_delete(request: web.Request) -> web.Response:
+    """DELETE /users/{id} — remove a user account (admin only, cannot self-delete)."""
+    uid = request.match_info["id"]
+    caller = request["current_user"]
+
+    if uid == caller["sub"]:
+        return web.json_response({"error": "cannot_delete_self"}, status=400)
+
+    user = auth_db.get_user_by_id(uid)
+    if not user:
+        raise web.HTTPNotFound(reason="user_not_found")
+
+    auth_db.delete_user(uid)
+    auth_db.write_audit_log(
+        caller["sub"], "delete_user",
+        target_type="user", target_id=uid,
+        metadata={"username": user.get("username", "")},
+        ip_address=request.remote,
+    )
+    return web.Response(status=204)
+
+
+async def handle_users_reset(request: web.Request) -> web.Response:
+    """POST /users/{id}/reset — wipe run history and invalidate sessions for a user."""
+    uid = request.match_info["id"]
+    caller = request["current_user"]
+
+    if not auth_db.get_user_by_id(uid):
+        raise web.HTTPNotFound(reason="user_not_found")
+
+    auth_db.reset_user_data(uid)
+    auth_db.write_audit_log(
+        caller["sub"], "reset_user_data",
+        target_type="user", target_id=uid,
+        ip_address=request.remote,
+    )
+    return web.json_response({"ok": True})
+
+
 # ── User → Policy assignment ──────────────────────────────────────────────────
 
 async def handle_user_policy_patch(request: web.Request) -> web.Response:

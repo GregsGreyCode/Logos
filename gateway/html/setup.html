@@ -860,14 +860,10 @@
                         :class="compareDone && compareResults[mid] && !compareResults[mid].error && !(compareResults[mid].max_context && compareResults[mid].max_context < 16384) ? 'cursor-pointer hover:bg-white/5' : ''"
                         @click="if (compareDone && compareResults[mid] && !compareResults[mid].error && !(compareResults[mid].max_context && compareResults[mid].max_context < 16384)) { pickServerModel(server.endpoint, mid); compareExpanded = compareExpanded === mid ? null : mid; }">
                         <div class="flex items-center gap-2 min-w-0 flex-wrap">
-                          <!-- Global winner — shown regardless of which server row we're in -->
-                          <span x-show="compareRecommended === mid && compareDone"
-                            class="spinner-hue text-[9px] px-1.5 py-0.5 rounded-full bg-indigo-900 text-indigo-300 border border-indigo-700 font-semibold uppercase tracking-wider flex-shrink-0"
-                            title="Highest overall score — pre-selected for you">Best</span>
-                          <!-- Per-server pick — shown when this server's best is NOT the global winner -->
-                          <span x-show="serverModelForServer(server.endpoint) === mid && compareRecommended !== mid && compareDone"
-                            class="text-[9px] px-1.5 py-0.5 rounded-full bg-gray-800 text-gray-400 border border-gray-700 font-semibold uppercase tracking-wider flex-shrink-0"
-                            title="Best model on this server, but another server has a higher overall score">Server pick</span>
+                          <!-- Default — shown when this model is the server's pick and has a valid result -->
+                          <span x-show="serverModelForServer(server.endpoint) === mid && compareDone && compareResults[mid] && !compareResults[mid].error && !compareResults[mid].skipped"
+                            class="text-[9px] px-1.5 py-0.5 rounded-full bg-indigo-900 text-indigo-300 border border-indigo-700 font-semibold uppercase tracking-wider flex-shrink-0"
+                            title="Selected as the default model for this server">Default</span>
                           <span x-show="compareResults[mid]?.max_context && compareResults[mid].max_context < 16384 && compareDone"
                             class="text-[9px] px-1.5 py-0.5 rounded-full bg-red-950 text-red-400 border border-red-900 font-semibold uppercase tracking-wider flex-shrink-0"
                             title="Context window too small for agent use — system prompt alone is ~8K tokens">Not eligible</span>
@@ -985,6 +981,10 @@
                             <span class="text-gray-400">Tool selection</span>
                           </div>
                         </div>
+                        <!-- Why selected (if this is the default for this server) -->
+                        <div x-show="serverModelForServer(server.endpoint) === mid && compareDone && compareResults[mid] && !compareResults[mid].error && !compareResults[mid].skipped"
+                          class="text-[11px] text-indigo-300/70 pt-0.5"
+                          x-text="selectedServers.length > 1 ? ((compareServerRecs[server.endpoint]||{}).reason || '') : compareReason"></div>
                         <!-- Why not selected (if not the best for this server) -->
                         <div x-show="serverModelForServer(server.endpoint) !== mid && compareDone" class="text-[11px] text-gray-600 pt-0.5">
                           <template x-if="compareResults[mid]?.eval?.score < 3">
@@ -1020,37 +1020,6 @@
             </template>
 
           </div>
-
-<!-- Top pick — single server -->
-          <template x-if="compareDone && selectedServers.length <= 1 && compareRecommended">
-            <div class="mb-2 p-3 rounded-xl bg-indigo-950/40 border border-indigo-800 text-xs leading-relaxed space-y-1">
-              <div class="flex items-center gap-2 text-indigo-300 font-semibold text-[11px] uppercase tracking-wider">
-                <span>&#127919;</span><span>Top pick</span>
-                <span class="font-mono font-normal normal-case tracking-normal text-indigo-400" x-text="compareRecommended"></span>
-              </div>
-              <div class="text-indigo-200" x-text="compareReason"></div>
-              <div class="text-indigo-400/60 text-[10px]">Best overall for agent tasks — reasoning, tool use, and response quality.</div>
-            </div>
-          </template>
-
-          <!-- Top pick — one box per server when multiple selected -->
-          <template x-if="compareDone && selectedServers.length > 1">
-            <div class="space-y-2 mb-2">
-              <template x-for="server in selectedServers" :key="server.endpoint">
-                <div x-show="compareServerRecs[server.endpoint]"
-                  class="p-3 rounded-xl bg-indigo-950/40 border border-indigo-800 text-xs leading-relaxed space-y-1">
-                  <div class="flex items-center gap-2 text-indigo-300 font-semibold text-[11px] uppercase tracking-wider flex-wrap">
-                    <span>&#127919;</span>
-                    <span x-text="serverName(server)"></span>
-                    <span class="font-normal text-indigo-500">top pick</span>
-                    <span class="font-mono font-normal normal-case tracking-normal text-indigo-400" x-text="(compareServerRecs[server.endpoint]||{}).model"></span>
-                  </div>
-                  <div class="text-indigo-200" x-text="(compareServerRecs[server.endpoint]||{}).reason"></div>
-                  <div class="text-indigo-400/60 text-[10px]">Best overall for agent tasks — reasoning, tool use, and response quality.</div>
-                </div>
-              </template>
-            </div>
-          </template>
 
           <!-- Server load notice -->
           <div x-show="compareDone" class="mb-3 text-[10px] text-gray-600 px-1 leading-relaxed">
@@ -1430,7 +1399,7 @@
               class="btn-primary w-full py-2.5 rounded-xl text-sm disabled:opacity-40 disabled:cursor-not-allowed">
               <span x-show="execEnv === 'openshell' && sandboxProbe.sandbox_ready">Continue with sandboxed agents &rarr;</span>
               <span x-show="execEnv === 'openshell' && !sandboxProbe.sandbox_ready && sandboxSetupDone" class="text-red-400">Setup failed — continue in-process &rarr;</span>
-              <span x-show="execEnv !== 'openshell' || (!sandboxProbe.docker_running && !sandboxSetupDone)">Continue <span x-show="!sandboxProbe.docker_running" class="text-yellow-400/70">(in-process)</span> &rarr;</span>
+              <span x-show="execEnv !== 'openshell' || (!sandboxProbe.docker_running && !sandboxSetupDone)">Continue <span x-show="!sandboxProbe.docker_running" class="text-red-400">(in-process)</span> &rarr;</span>
             </button>
           </div>
         </template>
@@ -2372,12 +2341,22 @@ function setup() {
 
     stopServerBenchmark(ep) {
       this.compareSkippedServers = { ...this.compareSkippedServers, [ep]: true };
-      // Immediately mark all unresulted models on this server as skipped
+      // Immediately mark all unresulted models on this server as skipped and
+      // clear any in-flight "testing…" state so the label disappears right away.
       const skipped = {};
+      const newTesting        = { ...this.compareTesting };
+      const newTestingEndpoint = { ...this.compareTestingEndpoint };
+      const newLoadingFor     = { ...this.compareLoadingFor };
       for (const mid of this.compareTargetsForServer(ep)) {
         if (!this.compareResults[mid]) skipped[mid] = { model: mid, skipped: true, error: 'Stopped' };
+        delete newTesting[mid];
+        delete newTestingEndpoint[mid];
+        delete newLoadingFor[mid];
       }
       if (Object.keys(skipped).length) this.compareResults = { ...this.compareResults, ...skipped };
+      this.compareTesting         = newTesting;
+      this.compareTestingEndpoint = newTestingEndpoint;
+      this.compareLoadingFor      = newLoadingFor;
       // Signal backend to skip remaining models for this server
       if (this.compareBenchId) {
         fetch('/api/setup/compare/cancel-server', {

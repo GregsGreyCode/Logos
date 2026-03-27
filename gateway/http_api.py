@@ -1668,6 +1668,14 @@ async def start_http_api(runner: Any, port: int = 8080) -> None:
         "/users/{id}",
         require_permission("manage_users")(require_csrf(handle_users_patch)),
     )
+    app.router.add_delete(
+        "/users/{id}",
+        require_permission("manage_users")(require_csrf(admin_handlers.handle_users_delete)),
+    )
+    app.router.add_post(
+        "/users/{id}/reset",
+        require_permission("manage_users")(require_csrf(admin_handlers.handle_users_reset)),
+    )
     app.router.add_get(
         "/audit-logs",
         require_permission("view_audit_logs")(handle_audit_logs),
