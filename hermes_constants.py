@@ -1,3 +1,0 @@
-# Compatibility shim — canonical location is core.constants
-# Migrate imports to: from core.constants import ...
-from core.constants import *  # noqa: F401, F403
