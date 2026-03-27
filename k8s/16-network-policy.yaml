@@ -114,3 +114,78 @@ spec:
           port: 1234
         - protocol: TCP
           port: 8000
+
+---
+# NetworkPolicy for agent instance pods in the hermes namespace.
+#
+# Agent pods execute arbitrary tool calls including terminal commands.
+# Without this policy, a prompt-injected agent could scan the cluster
+# network, reach internal services, or exfiltrate data to any endpoint.
+#
+# Allowed:  DNS, HTTPS (model APIs, web tools), HTTP to logos gateway
+#           (MCP proxy, approvals, health checks), inference server ports.
+# Blocked:  Kubernetes API (6443), cross-namespace services, node
+#           metadata (169.254.x.x), inter-agent communication, all
+#           other ports.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: hermes-agent-pods
+  namespace: hermes
+spec:
+  podSelector: {}  # applies to ALL pods in hermes namespace
+  policyTypes:
+    - Ingress
+    - Egress
+
+  ingress:
+    # Allow traffic from logos gateway (health checks, chat proxy)
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: logos
+          podSelector:
+            matchLabels:
+              app: logos
+      ports:
+        - protocol: TCP
+          port: 8080
+
+  egress:
+    # DNS resolution (required for all outbound calls)
+    - ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+
+    # HTTPS to external APIs (model providers, web tools)
+    - ports:
+        - protocol: TCP
+          port: 443
+
+    # HTTP to logos gateway (MCP proxy, approvals, status callbacks)
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: logos
+          podSelector:
+            matchLabels:
+              app: logos
+      ports:
+        - protocol: TCP
+          port: 8080
+
+    # HTTP for local inference backends
+    - ports:
+        - protocol: TCP
+          port: 80
+
+    # Common local inference ports (Ollama: 11434, LM Studio: 1234, vLLM: 8000)
+    - ports:
+        - protocol: TCP
+          port: 1234
+        - protocol: TCP
+          port: 11434
+        - protocol: TCP
+          port: 8000
