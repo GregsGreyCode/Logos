@@ -298,8 +298,8 @@ class TestContextProbeTiers:
     def test_first_tier_is_2m(self):
         assert CONTEXT_PROBE_TIERS[0] == 2_000_000
 
-    def test_last_tier_is_32k(self):
-        assert CONTEXT_PROBE_TIERS[-1] == 32_000
+    def test_last_tier_is_8k(self):
+        assert CONTEXT_PROBE_TIERS[-1] == 8_000
 
 
 class TestGetNextProbeTier:
@@ -312,11 +312,14 @@ class TestGetNextProbeTier:
     def test_from_128k(self):
         assert get_next_probe_tier(128_000) == 64_000
 
-    def test_from_32k_returns_none(self):
-        assert get_next_probe_tier(32_000) is None
+    def test_from_32k_returns_16k(self):
+        assert get_next_probe_tier(32_000) == 16_000
+
+    def test_from_8k_returns_none(self):
+        assert get_next_probe_tier(8_000) is None
 
     def test_from_below_min_returns_none(self):
-        assert get_next_probe_tier(16_000) is None
+        assert get_next_probe_tier(4_000) is None
 
     def test_from_arbitrary_value(self):
         assert get_next_probe_tier(300_000) == 200_000
