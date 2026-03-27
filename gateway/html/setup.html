@@ -1441,10 +1441,12 @@
           <div>
             <label class="block text-xs text-gray-500 mb-1.5">Confirm password</label>
             <input x-model="setupPasswordConfirm" type="password" placeholder="&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;"
-              @keydown.enter="setupEmail.trim() && setupUsername.trim() && setupPassword && setupPassword === setupPasswordConfirm && goNext()"
+              @keydown.enter="setupEmail.trim() && setupUsername.trim() && setupPassword && setupPassword.length >= 8 && setupPassword === setupPasswordConfirm && goNext()"
               class="w-full bg-gray-900 border border-gray-700 rounded-xl px-3 py-2.5 text-sm focus:border-indigo-500 focus:outline-none transition-colors" />
           </div>
-          <div x-show="setupPassword && setupPasswordConfirm && setupPassword !== setupPasswordConfirm"
+          <div x-show="setupPassword && setupPassword.length < 8"
+            class="text-xs text-red-400 px-1">Password must be at least 8 characters.</div>
+          <div x-show="setupPassword && setupPassword.length >= 8 && setupPasswordConfirm && setupPassword !== setupPasswordConfirm"
             class="text-xs text-red-400 px-1">Passwords do not match.</div>
         </div>
 
@@ -1468,7 +1470,8 @@
               </div>
               <div class="flex gap-2 items-center">
                 <input x-model="u.password" type="password" placeholder="Password (min 8 chars)"
-                  class="flex-1 bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-600 focus:border-indigo-500 focus:outline-none transition-colors" />
+                  :class="u.password && u.password.length < 8 ? 'border-red-600' : 'border-gray-700'"
+                  class="flex-1 bg-gray-900 border rounded-lg px-3 py-2 text-sm text-white placeholder-gray-600 focus:border-indigo-500 focus:outline-none transition-colors" />
                 <select x-model="u.role"
                   class="bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:border-indigo-500 focus:outline-none transition-colors">
                   <option value="user">User</option>
@@ -1482,7 +1485,7 @@
         </div>
 
         <button @click="goNext()"
-          :disabled="!setupEmail.trim() || !setupUsername.trim() || !setupPassword || setupPassword !== setupPasswordConfirm"
+          :disabled="!setupEmail.trim() || !setupUsername.trim() || !setupPassword || setupPassword.length < 8 || setupPassword !== setupPasswordConfirm"
           class="btn-primary w-full py-2.5 rounded-xl text-sm">
           Continue &rarr;
         </button>
@@ -1542,7 +1545,7 @@
             <span x-show="step7ProbeStatus === 'ok'" class="shrink-0 mt-0.5">&#10003;</span>
             <span x-show="step7ProbeStatus === 'warn' || step7ProbeStatus === 'error'" class="shrink-0 mt-0.5">&#9888;</span>
             <span x-text="step7ProbeStatus === 'checking' ? 'Checking model server\u2026'
-                        : step7ProbeStatus === 'ok' ? 'Model server is reachable and ready.'
+                        : step7ProbeStatus === 'ok' ? 'Model server and agent are reachable and ready.'
                         : step7ProbeMsg || 'Model server did not respond.'"></span>
           </div>
         </template>
