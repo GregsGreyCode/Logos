@@ -4208,6 +4208,13 @@ class GatewayRunner:
                 load_dotenv(_env_path, override=True, encoding="latin-1")
             except Exception:
                 pass
+            # Inject tool credentials from DB (set via /api/services/keys UI).
+            # Only sets keys NOT already in os.environ, so .env takes priority.
+            try:
+                from gateway.services import inject_credentials
+                inject_credentials()
+            except Exception:
+                pass
 
             model = _resolve_gateway_model()
 

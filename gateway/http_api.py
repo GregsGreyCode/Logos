@@ -157,6 +157,68 @@ def _ensure_admin_exists() -> None:
         logger.warning("Failed to seed admin account: %s", exc)
 
 
+# ── Unified Services (tool credentials) ──────────────────────────────────
+
+async def _handle_services_catalogue(request: web.Request) -> web.Response:
+    """GET /api/services — unified catalogue of MCP servers + tool integrations."""
+    from gateway.services import get_tool_integrations
+    mcp_servers = []
+    try:
+        svc = request.app.get("mcp_service")
+        if svc:
+            mcp_servers = svc.get_catalogue()
+    except Exception:
+        pass
+    return web.json_response({
+        "mcp_servers": mcp_servers,
+        "tool_integrations": get_tool_integrations(),
+    })
+
+
+async def _handle_services_set_key(request: web.Request) -> web.Response:
+    """POST /api/services/keys — set a tool credential (admin only)."""
+    user = request.get("current_user", {})
+    if user.get("role") not in ("admin",):
+        raise web.HTTPForbidden(text='{"error":"admin_required"}', content_type="application/json")
+    body = await request.json()
+    env_var = (body.get("env_var") or "").strip()
+    value = (body.get("value") or "").strip()
+    if not env_var or not value:
+        return web.json_response({"ok": False, "error": "env_var and value required"}, status=400)
+    from gateway.services import set_credential, get_tool_integrations
+    set_credential(env_var, value)
+    return web.json_response({"ok": True, "integrations": get_tool_integrations()})
+
+
+async def _handle_services_delete_key(request: web.Request) -> web.Response:
+    """DELETE /api/services/keys — remove a tool credential (admin only)."""
+    user = request.get("current_user", {})
+    if user.get("role") not in ("admin",):
+        raise web.HTTPForbidden(text='{"error":"admin_required"}', content_type="application/json")
+    body = await request.json()
+    env_var = (body.get("env_var") or "").strip()
+    if not env_var:
+        return web.json_response({"ok": False, "error": "env_var required"}, status=400)
+    from gateway.services import delete_credential, get_tool_integrations
+    delete_credential(env_var)
+    return web.json_response({"ok": True, "integrations": get_tool_integrations()})
+
+
+async def _handle_services_validate_key(request: web.Request) -> web.Response:
+    """POST /api/services/validate — test a credential with a real API call."""
+    user = request.get("current_user", {})
+    if user.get("role") not in ("admin",):
+        raise web.HTTPForbidden(text='{"error":"admin_required"}', content_type="application/json")
+    body = await request.json()
+    env_var = (body.get("env_var") or "").strip()
+    value = (body.get("value") or "").strip()
+    if not env_var or not value:
+        return web.json_response({"ok": False, "message": "env_var and value required"}, status=400)
+    from gateway.services import validate_credential
+    result = await validate_credential(env_var, value)
+    return web.json_response(result)
+
+
 async def _handle_setup_page(request: web.Request) -> web.Response:
     from gateway.auth.db import is_setup_completed
     if is_setup_completed():
@@ -1650,6 +1712,15 @@ async def start_http_api(runner: Any, port: int = 8080) -> None:
         logger.warning("MCP gateway service failed to initialise: %s", _mcp_err)
         app["mcp_service"] = None
 
+    # ── Inject tool credentials from DB into os.environ ────────────────
+    try:
+        from gateway.services import inject_credentials
+        _n_creds = inject_credentials()
+        if _n_creds:
+            logger.info("Injected %d tool credential(s) from DB", _n_creds)
+    except Exception as _cred_err:
+        logger.debug("Could not inject credentials: %s", _cred_err)
+
     # Workflow engine — lazily imported to avoid circular deps at module load.
     try:
         from workflows.engine import WorkflowEngine as _WFEngine
@@ -1686,6 +1757,12 @@ async def start_http_api(runner: Any, port: int = 8080) -> None:
     # StreamableHTTP proxy — catch-all for /mcp/{name} and /mcp/{name}/...
     app.router.add_route("*", r"/mcp/{server_name}",           _mch.handle_mcp_proxy)
     app.router.add_route("*", r"/mcp/{server_name}/{tail:.*}", _mch.handle_mcp_proxy)
+
+    # ── Unified Services (tool credentials + MCP catalogue) ────────────
+    app.router.add_get("/api/services",       _handle_services_catalogue)
+    app.router.add_post("/api/services/keys", _handle_services_set_key)
+    app.router.add_delete("/api/services/keys", _handle_services_delete_key)
+    app.router.add_post("/api/services/validate", _handle_services_validate_key)
 
     app.router.add_get("/setup",              _handle_setup_page)
     app.router.add_get("/api/setup/probe",    _sh.handle_setup_probe)
