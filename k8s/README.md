@@ -29,14 +29,12 @@ Kubernetes manifests. Apply in filename order (00 → 11).
 | `01-configmap-env.yaml` | ConfigMap `hermes-config` | Hermes env vars (model, URL, log level) |
 | `02-secret.yaml` | Secret `hermes-secret` | API keys and internal token (placeholder — real values applied separately) |
 | `03-configmap-hermes-config.yaml` | ConfigMap `hermes-config-yaml` | Full Hermes runtime config — MCP servers, SOUL.md, tool tiers |
-| `04-ai-router-service.yaml` | Service `ai-router` | NodePort `30901` (host access) + ClusterIP (in-cluster) |
 | `05-pvc.yaml` | PersistentVolumeClaim `hermes-pvc` | Primary instance persistent storage (5Gi, local-path) |
 | `05b-pvc-shared-memory.yaml` | PersistentVolumeClaim `hermes-shared-memory-pvc` | Shared memory PVC (1Gi) — primary writes, spawned instances read-only |
 | `06-deployment.yaml` | Deployment `hermes` | Hermes pod (stable) — readiness+liveness probes on `/health :8080`, `/work` emptyDir scratch volume, shared memory at `~/.hermes-shared` |
 | `07-service.yaml` | Service `hermes` | NodePort — port 80 → **30920** (main HTTP), port 8080 → **30910** (API/dashboard + chat) |
 | `08-serviceaccount.yaml` | ServiceAccount `hermes` | Service account used by Hermes pod for K8s API access |
 | `09-rbac.yaml` | ClusterRole + ClusterRoleBinding | Grants Hermes permission to manage Deployments, PVCs, ConfigMaps, and Services in the `hermes` namespace (required for spawning instances) |
-| `09-ai-router-deployment.yaml` | Deployment `ai-router` | ai-router pod |
 | `10-hermes-canary-deployment.yaml` | Deployment `hermes-canary` | Canary pod for self-update testing — apply temporarily, delete after promote/rollback |
 | `11-hermes-canary-service.yaml` | Service `hermes-canary` | In-cluster service for smoke-testing the canary |
 | `12-hermes-canary-admin-secret.yaml` | Secret `hermes-canary-admin` | Canary-only admin credentials (template — fill in password before applying) |
@@ -72,20 +70,20 @@ kubectl get pods,svc,deployment -n hermes
 # Tail Hermes logs
 kubectl logs -n hermes deployment/hermes -f
 
-# Tail ai-router logs
-kubectl logs -n hermes deployment/ai-router -f
+# Tail logos gateway logs
+kubectl logs -n logos deployment/logos -f
 
 # Update routing config (edit providers.yaml, then:)
 ./scripts/apply-providers.sh
-kubectl rollout restart deployment/ai-router -n hermes
+kubectl rollout restart deployment/logos -n logos
 
 # Update Hermes MCP config or SOUL.md (no image rebuild)
 kubectl apply -f hosts/k8s/k8_files/hermes_deployment/03-configmap-hermes-config.yaml
 kubectl rollout restart deployment/hermes -n hermes
 
 # Force redeploy both
-kubectl rollout restart deployment/hermes deployment/ai-router -n hermes
-kubectl rollout status deployment/hermes deployment/ai-router -n hermes
+kubectl rollout restart deployment/logos -n logos
+kubectl rollout status deployment/logos -n logos
 ```
 
 ## Soul Registry
@@ -156,7 +154,6 @@ Canary resources are half of stable (250m/512Mi requests, 2000m/2Gi limits).
 
 | Service | In-cluster DNS | External |
 |---------|---------------|----------|
-| ai-router | `http://ai-router.hermes.svc.cluster.local:9001` | `http://YOUR_K8S_NODE_IP:30901` |
 | hermes (HTTP API + dashboard) | `http://hermes.hermes.svc.cluster.local:8080` | `http://YOUR_K8S_NODE_IP:30910` |
 | hermes-canary | `http://hermes-canary.hermes.svc.cluster.local` | temporary — apply on demand |
 

@@ -26,7 +26,7 @@ data:
     # vs ~65 tools × 450 tokens = ~29,250 tokens with logos-telegram default
     # ── Delegation ───────────────────────────────────────────────────────────
     # Subagents spawned via delegate_task use this model override.
-    # "brain" routes via ai-router to qwen3-coder-next (larger reasoning model).
+    # "brain" routes to a larger reasoning model via the Routing tab.
     # Remove or change to use a different model for delegated work.
     delegation:
       model: "brain"
@@ -275,7 +275,7 @@ data:
     To read files from the homelab repo: use `files_tree` and `files_read` (inspector MCP tools). The inspector container has `/home/user/homelab-infra` mounted as `/repo`. Always use `/repo/...` paths with these tools:
     - `/repo/hosts/ai/hermes/hermes-agent/` — Hermes source code
     - `/repo/hosts/k8s/k8_files/hermes_deployment/` — k8s manifests
-    - `/repo/hosts/ai/router/` — ai-router source
+    - Model routing is managed via the Routing tab in the dashboard
 
     When using socraticode tools (`codebase_search`, `codebase_context`, etc.), pass `projectPath: "/repo"`. Use `codebase_status` to check indexing is complete before searching.
 
@@ -293,7 +293,7 @@ data:
     | Monitoring VM | YOUR_HOST_IP | Grafana :3200, Loki :3100, Prometheus :9090, Alertmanager :9093 |
     | k8s control plane | YOUR_HOST_IP | Talos — also runs workloads via toleration |
     | k8s worker 1 | YOUR_HOST_IP | Talos |
-    | k8s worker 2 | YOUR_HOST_IP | Talos — ai-router NodePort here :30901 |
+    | k8s worker 2 | YOUR_HOST_IP | Talos |
     | Proxmox | YOUR_HOST_IP | Hypervisor + NFS (backups-hdd) |
     | Windows GPU | YOUR_HOST_IP | LM Studio :1234, Alloy log shipping |
 
@@ -391,7 +391,7 @@ data:
 
     | Root | Use for | Persists? | Examples |
     |------|---------|-----------|---------|
-    | `/repo/...` | Anything that belongs in git — config, code, docs, k8s manifests | Yes (git) | `/repo/hosts/ai/router/main.py` |
+    | `/repo/...` | Anything that belongs in git — config, code, docs, k8s manifests | Yes (git) | `/repo/k8s/06-deployment.yaml` |
     | `/work/...` | Scratch space — intermediate output, scan results, drafts the user may want to read this session | No (cleared on restart) | `/work/scan-results.md` |
     | `/logs/...` | Debug output, error logs, tool traces | No (cleared on restart) | `/logs/debug-run.log` |
 
@@ -427,7 +427,7 @@ data:
 
     ## Model aliases
 
-    These are the `/model` options routing through the ai-router. Use `/model <alias>` to switch.
+    These are the `/model` options managed via the Routing tab. Use `/model <alias>` to switch.
 
     | Alias | Best for | Backend |
     |-------|----------|---------|
