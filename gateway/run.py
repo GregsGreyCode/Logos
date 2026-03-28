@@ -3756,16 +3756,35 @@ class GatewayRunner:
                 _lms_ctx_map: dict = _lms_cfg_now.get("lmstudio_context_lengths") or {}
                 _saved_ctx = int(_lms_ctx_map.get(_lms_model, 0) or 0)
 
-                _all_sizes = [16384, 8192, 4096]
-                if _saved_ctx and _saved_ctx in _all_sizes:
+                # n_parallel: how many concurrent requests the server handles.
+                # More slots = more parallel users but less context per request.
+                # Default 2 (covers most homelab use). Configurable in config.yaml
+                # under lmstudio.n_parallel or via the dashboard.
+                _n_parallel = 2  # default: 2 slots
+                try:
+                    _lms_parallel_cfg = (_lms_cfg_now.get("lmstudio") or {}).get("n_parallel")
+                    if _lms_parallel_cfg and isinstance(_lms_parallel_cfg, int) and _lms_parallel_cfg >= 1:
+                        _n_parallel = _lms_parallel_cfg
+                except Exception:
+                    pass
+
+                # Build context size cascade from the benchmark value.
+                # The benchmark stores the total model context (e.g. 65536).
+                # We try that first, then step down.  Smaller fallbacks for
+                # models with known limitations.
+                _all_sizes = [65536, 32768, 16384, 8192, 4096]
+                if _saved_ctx and _saved_ctx > 0:
+                    # Start from the benchmark value, include smaller fallbacks
                     _ctx_sizes = [_saved_ctx] + [s for s in _all_sizes if s < _saved_ctx]
+                    # Deduplicate while preserving order
+                    _ctx_sizes = list(dict.fromkeys(_ctx_sizes))
                 else:
                     # Check known-model table
                     _known_ctx = next(
                         (ctx for kw, ctx in _LMS_KNOWN_CTX if kw in _lms_name_lower),
                         None,
                     )
-                    if _known_ctx and _known_ctx in _all_sizes:
+                    if _known_ctx:
                         _ctx_sizes = [_known_ctx] + [s for s in _all_sizes if s < _known_ctx]
                     else:
                         _ctx_sizes = _all_sizes
@@ -3804,6 +3823,29 @@ class GatewayRunner:
                         if _already_loaded and (_loaded_ctx == 0 or _loaded_ctx >= _ctx_sizes[0]):
                             # Already loaded with sufficient (or unknown) context — skip load
                             _LMS_CONFIRMED_LOADED.add(_lms_model)
+                            # Warn if the loaded context seems to be per-slot limited
+                            _desired_per_slot = _ctx_sizes[0] // max(_n_parallel, 1) if _ctx_sizes else 0
+                            if _loaded_ctx > 0 and _desired_per_slot > 0:
+                                # Detect slot splitting: if loaded context is exactly total/N,
+                                # the user's LM Studio is splitting across N parallel slots
+                                for _guess_slots in (2, 3, 4, 6, 8):
+                                    if _loaded_ctx == _ctx_sizes[0] // _guess_slots:
+                                        _usable = _loaded_ctx
+                                        logger.warning(
+                                            "LM Studio: %s loaded with %d total context split across %d parallel slots "
+                                            "= %d tokens per request. The system prompt + tools need ~17K tokens. "
+                                            "Consider reducing parallel slots in LM Studio settings or restarting "
+                                            "Logos to reload with n_parallel=%d.",
+                                            _lms_model, _ctx_sizes[0], _guess_slots, _usable, _n_parallel,
+                                        )
+                                        # Update the saved context to the per-slot value so the
+                                        # compressor uses the right limit
+                                        try:
+                                            _lms_cfg_now.setdefault("lmstudio_context_lengths", {})[_lms_model] = _usable
+                                            _config_path.write_text(_lms_yaml.dump(_lms_cfg_now, default_flow_style=False, allow_unicode=True))
+                                        except Exception:
+                                            pass
+                                        break
                             logger.debug("LM Studio: %s already loaded (ctx %s), skipping pre-load", _lms_model, _loaded_ctx or "?")
                         else:
                             # Evict any other models occupying VRAM before loading the target.
@@ -3837,18 +3879,40 @@ class GatewayRunner:
                                     pass
                             for _ctx in _ctx_sizes:
                                 try:
+                                    _load_params = {
+                                        "model": _lms_model,
+                                        "context_length": _ctx,
+                                    }
+                                    # Pass n_parallel to control per-slot context.
+                                    # context_per_slot = context_length / n_parallel
+                                    if _n_parallel >= 1:
+                                        _load_params["n_parallel"] = _n_parallel
+                                    _per_slot = _ctx // max(_n_parallel, 1)
+                                    logger.info(
+                                        "LM Studio: loading %s ctx=%d n_parallel=%d (per-slot=%d)",
+                                        _lms_model, _ctx, _n_parallel, _per_slot,
+                                    )
                                     async with _lms_http.post(
                                         f"{_lms_base}/api/v1/models/load",
                                         headers=_lms_headers,
-                                        json={"model": _lms_model, "context_length": _ctx},
+                                        json=_load_params,
                                         timeout=_aiohttp.ClientTimeout(total=30),
                                     ) as _lr:
                                         if _lr.status == 200:
-                                            # Persist working context for this model
-                                            if _ctx != _saved_ctx:
+                                            # Persist the PER-SLOT context for this model.
+                                            # This is what a single request actually gets.
+                                            # context_length / n_parallel = usable tokens.
+                                            _effective_ctx = _ctx // max(_n_parallel, 1)
+                                            if _effective_ctx != _saved_ctx:
                                                 try:
-                                                    _lms_cfg_now.setdefault("lmstudio_context_lengths", {})[_lms_model] = _ctx
+                                                    _lms_cfg_now.setdefault("lmstudio_context_lengths", {})[_lms_model] = _effective_ctx
+                                                    # Also store the total + parallel config for reference
+                                                    _lms_cfg_now.setdefault("lmstudio", {})["n_parallel"] = _n_parallel
                                                     _config_path.write_text(_lms_yaml.dump(_lms_cfg_now, default_flow_style=False, allow_unicode=True))
+                                                    logger.info(
+                                                        "LM Studio: persisted per-slot context %d for %s (total=%d, slots=%d)",
+                                                        _effective_ctx, _lms_model, _ctx, _n_parallel,
+                                                    )
                                                 except Exception:
                                                     pass
                                             _LMS_CONFIRMED_LOADED.add(_lms_model)

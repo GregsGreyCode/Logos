@@ -169,9 +169,28 @@ async def _handle_services_catalogue(request: web.Request) -> web.Response:
             mcp_servers = svc.get_catalogue()
     except Exception:
         pass
+    # Read inference settings from config
+    inference_cfg = {}
+    try:
+        import yaml as _yaml
+        _hermes_home = Path(os.environ.get("HERMES_HOME") or (Path.home() / ".logos"))
+        _cfg_path = _hermes_home / "config.yaml"
+        if _cfg_path.exists():
+            _cfg = _yaml.safe_load(_cfg_path.read_text(encoding="utf-8")) or {}
+            _lms = _cfg.get("lmstudio") or {}
+            inference_cfg = {
+                "n_parallel": _lms.get("n_parallel", 2),
+                "server_type": os.environ.get("HERMES_SERVER_TYPE", ""),
+                "model": os.environ.get("HERMES_MODEL", ""),
+                "base_url": os.environ.get("OPENAI_BASE_URL", ""),
+            }
+    except Exception:
+        pass
+
     return web.json_response({
         "mcp_servers": mcp_servers,
         "tool_integrations": get_tool_integrations(),
+        "inference": inference_cfg,
     })
 
 
@@ -202,6 +221,31 @@ async def _handle_services_delete_key(request: web.Request) -> web.Response:
     from gateway.services import delete_credential, get_tool_integrations
     delete_credential(env_var)
     return web.json_response({"ok": True, "integrations": get_tool_integrations()})
+
+
+async def _handle_services_inference(request: web.Request) -> web.Response:
+    """POST /api/services/inference — save inference server settings (n_parallel, etc.)."""
+    user = request.get("current_user", {})
+    if user.get("role") not in ("admin",):
+        raise web.HTTPForbidden(text='{"error":"admin_required"}', content_type="application/json")
+    body = await request.json()
+    n_parallel = body.get("n_parallel")
+    if not isinstance(n_parallel, int) or n_parallel < 1 or n_parallel > 16:
+        return web.json_response({"ok": False, "error": "n_parallel must be 1-16"}, status=400)
+    # Save to config.yaml
+    try:
+        import yaml as _yaml
+        _hermes_home = Path(os.environ.get("HERMES_HOME") or (Path.home() / ".logos"))
+        _cfg_path = _hermes_home / "config.yaml"
+        _cfg = {}
+        if _cfg_path.exists():
+            _cfg = _yaml.safe_load(_cfg_path.read_text(encoding="utf-8")) or {}
+        _cfg.setdefault("lmstudio", {})["n_parallel"] = n_parallel
+        _cfg_path.write_text(_yaml.dump(_cfg, default_flow_style=False, allow_unicode=True))
+        logger.info("services: n_parallel set to %d", n_parallel)
+        return web.json_response({"ok": True, "n_parallel": n_parallel})
+    except Exception as exc:
+        return web.json_response({"ok": False, "error": str(exc)}, status=500)
 
 
 async def _handle_services_validate_key(request: web.Request) -> web.Response:
@@ -1763,6 +1807,7 @@ async def start_http_api(runner: Any, port: int = 8080) -> None:
     app.router.add_post("/api/services/keys", _handle_services_set_key)
     app.router.add_delete("/api/services/keys", _handle_services_delete_key)
     app.router.add_post("/api/services/validate", _handle_services_validate_key)
+    app.router.add_post("/api/services/inference", _handle_services_inference)
 
     app.router.add_get("/setup",              _handle_setup_page)
     app.router.add_get("/api/setup/probe",    _sh.handle_setup_probe)
