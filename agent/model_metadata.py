@@ -67,6 +67,10 @@ DEFAULT_CONTEXT_LENGTHS = {
     "qwen3-8b": 32768,
     "qwen3-4b": 32768,
     "qwen3-14b": 32768,
+    "qwen3.5-9b": 32768,
+    "qwen3.5-4b": 32768,
+    "qwen3.5-14b": 32768,
+    "qwen3.5-32b": 32768,
     "glm-4.7": 202752,
     "glm-5": 202752,
     "glm-4.5": 131072,
@@ -187,8 +191,10 @@ def parse_context_limit_from_error(error_msg: str) -> Optional[int]:
     # Pattern: look for numbers near context-related keywords
     patterns = [
         r'n_ctx[:\s]+(\d{4,})',                 # llama.cpp/LM Studio: "n_ctx: 16384"
-        r'(?:max(?:imum)?|limit)\s*(?:context\s*)?(?:length|size|window)?\s*(?:is|of|:)?\s*(\d{4,})',
-        r'context\s*(?:length|size|window)\s*(?:is|of|:)?\s*(\d{4,})',
+        r'context_length_exceeded[:\s]+(\d{4,})', # Anthropic: "context_length_exceeded: 131072"
+        r'context\s*size\s*\(?(\d{4,})',        # LM Studio: "context size (16384 tokens)"
+        r'(?:max(?:imum)?|limit)\s*(?:context\s*)?(?:length|size|window)?\s*(?:is|of|:)?\s*\(?(\d{4,})',
+        r'context\s*(?:length|size|window)\s*(?:is|of|:)?\s*\(?(\d{4,})',
         r'(\d{4,})\s*(?:token)?\s*(?:context|limit)',
         r'>\s*(\d{4,})\s*(?:max|limit|token)',  # "250000 tokens > 200000 maximum"
         r'(\d{4,})\s*(?:max(?:imum)?)\b',  # "200000 maximum"
