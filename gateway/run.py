@@ -3797,6 +3797,8 @@ class GatewayRunner:
                         _loaded_ctx = 0
                         _other_loaded: list[str] = []  # models in VRAM that are NOT the target
                         if not _already_loaded:
+                            # Always query the server on first check — _LMS_CONFIRMED_LOADED
+                            # only persists within this process lifetime.
                             try:
                                 async with _lms_http.get(
                                     f"{_lms_base}/api/v1/models",
@@ -3814,13 +3816,25 @@ class GatewayRunner:
                                             if _iid == _model_lower or _model_lower in _iid or _iid in _model_lower:
                                                 _already_loaded = True
                                                 _loaded_ctx = int(_inst.get("max_context_length") or _inst.get("context_length") or 0)
+                                                logger.info(
+                                                    "LM Studio: found %s already loaded (id=%s, ctx=%s)",
+                                                    _lms_model, _raw_iid, _loaded_ctx or "unknown",
+                                                )
                                             else:
                                                 # A different model is occupying VRAM — record it for eviction
                                                 _other_loaded.append(_raw_iid)
+                                                logger.debug("LM Studio: other model in VRAM: %s", _raw_iid)
                             except Exception:
                                 pass
 
-                        if _already_loaded and (_loaded_ctx == 0 or _loaded_ctx >= _ctx_sizes[0]):
+                        # Skip reload if:
+                        # - Model is confirmed loaded (from previous check or this query)
+                        # - AND context is unknown (0) or sufficient for our target
+                        # The target is _ctx_sizes[0] which is the total model context.
+                        # We don't need to reload just to change n_parallel — that
+                        # requires an unload+reload cycle which is disruptive.
+                        _skip_reload = _already_loaded and (_loaded_ctx == 0 or _loaded_ctx >= _ctx_sizes[0])
+                        if _skip_reload:
                             # Already loaded with sufficient (or unknown) context — skip load
                             _LMS_CONFIRMED_LOADED.add(_lms_model)
                             # Warn if the loaded context seems to be per-slot limited
@@ -3846,8 +3860,12 @@ class GatewayRunner:
                                         except Exception:
                                             pass
                                         break
-                            logger.debug("LM Studio: %s already loaded (ctx %s), skipping pre-load", _lms_model, _loaded_ctx or "?")
+                            logger.info("LM Studio: %s already loaded (ctx=%s), skipping pre-load", _lms_model, _loaded_ctx or "?")
                         else:
+                            logger.info(
+                                "LM Studio: need to load %s (already_loaded=%s, loaded_ctx=%s, target_ctx=%s, n_parallel=%d)",
+                                _lms_model, _already_loaded, _loaded_ctx or "?", _ctx_sizes[0] if _ctx_sizes else "?", _n_parallel,
+                            )
                             # Evict any other models occupying VRAM before loading the target.
                             # Without this, loading a new model alongside an existing one causes
                             # OOM crashes (exit code 18446744072635812000 / CUDA OOM).
