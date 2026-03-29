@@ -177,7 +177,7 @@ async def _handle_services_catalogue(request: web.Request) -> web.Response:
     inference_cfg = {}
     try:
         import yaml as _yaml
-        _hermes_home = Path(os.environ.get("HERMES_HOME") or (Path.home() / ".logos"))
+        _hermes_home = Path(os.environ.get("LOGOS_HOME") or os.environ.get("HERMES_HOME") or str(Path.home() / ".logos"))
         _cfg_path = _hermes_home / "config.yaml"
         if _cfg_path.exists():
             _cfg = _yaml.safe_load(_cfg_path.read_text(encoding="utf-8")) or {}
@@ -239,7 +239,7 @@ async def _handle_services_inference(request: web.Request) -> web.Response:
     # Save to config.yaml
     try:
         import yaml as _yaml
-        _hermes_home = Path(os.environ.get("HERMES_HOME") or (Path.home() / ".logos"))
+        _hermes_home = Path(os.environ.get("LOGOS_HOME") or os.environ.get("HERMES_HOME") or str(Path.home() / ".logos"))
         _cfg_path = _hermes_home / "config.yaml"
         _cfg = {}
         if _cfg_path.exists():
@@ -410,7 +410,7 @@ async def _handle_model_patch(request: web.Request) -> web.Response:
     new_model = (body.get("model") or "").strip()
     if not new_model:
         return web.json_response({"error": "model required"}, status=400)
-    _hermes_home = pathlib.Path(os.environ.get("HERMES_HOME") or (pathlib.Path.home() / ".logos"))
+    _hermes_home = pathlib.Path(os.environ.get("LOGOS_HOME") or os.environ.get("HERMES_HOME") or str(pathlib.Path.home() / ".logos"))
     _config_path = _hermes_home / "config.yaml"
     try:
         import yaml as _yaml
@@ -1679,7 +1679,7 @@ async def start_http_api(runner: Any, port: int = 8080) -> None:
 
     # Initialise auth DB alongside existing Logos state
     global _hermes_home
-    hermes_home = Path(os.environ.get("HERMES_HOME") or (Path.home() / ".logos"))
+    hermes_home = Path(os.environ.get("LOGOS_HOME") or os.environ.get("HERMES_HOME") or str(Path.home() / ".logos"))
     _hermes_home = hermes_home
     auth_db.init_db(hermes_home)
 
@@ -1988,7 +1988,7 @@ async def start_http_api(runner: Any, port: int = 8080) -> None:
     import json as _json
     import pathlib as _up_pathlib
 
-    _HERMES_HOME_UPD = _up_pathlib.Path(os.environ.get("HERMES_HOME", str(_up_pathlib.Path.home() / ".hermes")))
+    _HERMES_HOME_UPD = _up_pathlib.Path(os.environ.get("LOGOS_HOME") or os.environ.get("HERMES_HOME") or str(_up_pathlib.Path.home() / ".logos"))
     _UPDATE_STATUS_FILE  = _HERMES_HOME_UPD / "update_status.json"
     _UPDATE_TRIGGER_FILE = _HERMES_HOME_UPD / "update_trigger.json"
 

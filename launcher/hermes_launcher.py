@@ -42,9 +42,13 @@ multiprocessing.freeze_support()
 _PORT = int(os.environ.get("LOGOS_PORT", "8080"))
 _BASE_URL = f"http://127.0.0.1:{_PORT}"
 _HEALTH_URL = f"{_BASE_URL}/health"
-_HERMES_HOME = Path(os.environ.get("HERMES_HOME", Path.home() / ".logos"))
+_HERMES_HOME = Path(
+    os.environ.get("LOGOS_HOME")
+    or os.environ.get("HERMES_HOME")
+    or str(Path.home() / ".logos")
+)
 # Pin into os.environ so the in-process gateway import sees the same path.
-os.environ.setdefault("HERMES_HOME", str(_HERMES_HOME))
+os.environ.setdefault("LOGOS_HOME", str(_HERMES_HOME))
 _CONNECT_JSON = _HERMES_HOME / "connect.json"
 _LOG_PATH = _HERMES_HOME / "logs" / "logos.log"
 _UPDATES_DIR = _HERMES_HOME / "updates"

@@ -32,7 +32,7 @@ spec:
 
       volumes:
         # PVC backed by local-path-provisioner (rancher/local-path-provisioner).
-        # Stores ~/.hermes/: memory, SOUL.md, skills, runtime config changes.
+        # Stores ~/.logos/: memory, SOUL.md, skills, runtime config changes.
         # Persists across pod restarts. Tied to the node where the pod is scheduled.
         - name: logos-home
           persistentVolumeClaim:
@@ -67,14 +67,14 @@ spec:
             - |
               chown -R 10001:10001 /logos-home
               chmod 750 /logos-home
-              mkdir -p /hermes-shared/memories
-              chown -R 10001:10001 /hermes-shared
-              chmod 750 /hermes-shared
+              mkdir -p /logos-shared/memories
+              chown -R 10001:10001 /logos-shared
+              chmod 750 /logos-shared
           volumeMounts:
             - name: logos-home
               mountPath: /logos-home
             - name: logos-shared-memory
-              mountPath: /hermes-shared
+              mountPath: /logos-shared
           securityContext:
             runAsUser: 0
 
@@ -124,7 +124,7 @@ spec:
 
           env:
             - name: HOME
-              value: /home/hermes
+              value: /home/logos
             # Inject node LAN IP so the setup wizard's network scan uses the
             # correct /24 subnet rather than the pod's CNI address.
             - name: NODE_IP
@@ -207,11 +207,11 @@ spec:
 
           volumeMounts:
             - name: logos-home
-              mountPath: /home/hermes/.logos
+              mountPath: /home/logos/.logos
             - name: logos-work
               mountPath: /work
             - name: logos-shared-memory
-              mountPath: /home/hermes/.logos-shared
+              mountPath: /home/logos/.logos-shared
 
           readinessProbe:
             httpGet:

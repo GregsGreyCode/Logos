@@ -30,7 +30,7 @@ import yaml
 # Load .env from ~/.hermes/.env first, then project root as dev fallback
 from dotenv import load_dotenv
 
-_hermes_home = Path(os.getenv("HERMES_HOME", Path.home() / ".hermes"))
+_hermes_home = Path(os.getenv("LOGOS_HOME") or os.getenv("HERMES_HOME") or str(Path.home() / ".logos"))
 _user_env = _hermes_home / ".env"
 _project_env = Path(__file__).parent / '.env'
 

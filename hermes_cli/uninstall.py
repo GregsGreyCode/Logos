@@ -35,7 +35,7 @@ def get_project_root() -> Path:
 
 def get_hermes_home() -> Path:
     """Get the Hermes home directory (~/.hermes)."""
-    return Path(os.getenv("HERMES_HOME", Path.home() / ".hermes"))
+    return Path(os.getenv("LOGOS_HOME") or os.getenv("HERMES_HOME") or str(Path.home() / ".logos"))
 
 
 def find_shell_configs() -> list:
