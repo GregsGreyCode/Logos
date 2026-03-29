@@ -1827,6 +1827,7 @@ async def start_http_api(runner: Any, port: int = 8080) -> None:
     app.router.add_post("/api/setup/set-remote",   _sh.handle_setup_set_remote)
     app.router.add_get("/api/setup/env-probe",       _sh.handle_setup_env_probe)
     app.router.add_post("/api/setup/sandbox-setup",  _sh.handle_setup_sandbox_setup)
+    app.router.add_post("/api/setup/k3s-install",    _sh.handle_setup_k3s_install)
     app.router.add_post("/api/setup/launch-docker",  _sh.handle_setup_launch_docker)
     app.router.add_post("/api/setup/reset",
         require_csrf(require_permission("manage_platform")(_handle_setup_reset)))
