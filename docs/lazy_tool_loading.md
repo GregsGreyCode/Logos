@@ -1,6 +1,6 @@
 # Lazy Tool Loading — Design Doc
 
-> **Status:** Design — addresses the 17K token tool schema problem
+> **Status:** Implemented in v0.6.3. Phase 1 (core/extended split) and Phase 2 (context-aware auto-enable) are complete. Phase 3 (soul-driven selection) infrastructure exists but needs wiring.
 
 ## Problem
 
