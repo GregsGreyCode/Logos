@@ -617,7 +617,9 @@ class AIAgent:
         # Get available tools with filtering.
         # Lazy mode: when context is tight (≤32K), start with core tools only.
         # The agent can call request_tools() to load more when needed.
-        _ctx_for_lazy = self.context_compressor.context_length if hasattr(self, 'context_compressor') else 128000
+        # Note: context_compressor isn't initialized yet at this point in __init__,
+        # so query context length directly from model metadata.
+        _ctx_for_lazy = get_model_context_length(self.model, base_url=self.base_url)
         _use_lazy = _ctx_for_lazy <= 32768
         self._lazy_tools = _use_lazy
         self._enabled_toolsets = enabled_toolsets
@@ -927,14 +929,38 @@ class AIAgent:
             return ""
         return re.sub(r'<think>.*?</think>', '', content, flags=re.DOTALL)
 
-    def _looks_like_codex_intermediate_ack(
+    _ACK_FUTURE_RE = re.compile(
+        r"\b(i[\u0027\u2018\u2019]ll|i will|let me|i can do that|i can help with that|i[\u0027\u2018\u2019]m going to)\b",
+        re.IGNORECASE,
+    )
+    _ACK_ACTION_MARKERS = (
+        "look into", "look at", "inspect", "scan", "check", "analyz",
+        "review", "explore", "read", "open", "run", "test", "fix",
+        "debug", "search", "find", "walkthrough", "report back",
+        "summarize", "try", "attempt", "investigate", "examine",
+    )
+    _ACK_WORKSPACE_MARKERS = (
+        "directory", "current directory", "current dir", "cwd", "repo",
+        "repository", "codebase", "project", "folder", "filesystem",
+        "file tree", "files", "path", "code", "implementation", "source",
+    )
+
+    def _looks_like_intermediate_ack(
         self,
         user_message: str,
         assistant_content: str,
         messages: List[Dict[str, Any]],
+        strict: bool = True,
     ) -> bool:
-        """Detect a planning/ack message that should continue instead of ending the turn."""
-        if any(isinstance(msg, dict) and msg.get("role") == "tool" for msg in messages):
+        """Detect a planning/ack message that should continue instead of ending the turn.
+
+        Args:
+            strict: When True (codex_responses mode), only fires if no tools
+                    have been used yet in the conversation. When False
+                    (chat_completions), fires even after prior tool use since
+                    small models commonly narrate intent without calling tools.
+        """
+        if strict and any(isinstance(msg, dict) and msg.get("role") == "tool" for msg in messages):
             return False
 
         assistant_text = self._strip_think_blocks(assistant_content or "").strip().lower()
@@ -943,60 +969,29 @@ class AIAgent:
         if len(assistant_text) > 1200:
             return False
 
-        has_future_ack = bool(
-            re.search(r"\b(i['’]ll|i will|let me|i can do that|i can help with that)\b", assistant_text)
-        )
-        if not has_future_ack:
+        if not self._ACK_FUTURE_RE.search(assistant_text):
             return False
-
-        action_markers = (
-            "look into",
-            "look at",
-            "inspect",
-            "scan",
-            "check",
-            "analyz",
-            "review",
-            "explore",
-            "read",
-            "open",
-            "run",
-            "test",
-            "fix",
-            "debug",
-            "search",
-            "find",
-            "walkthrough",
-            "report back",
-            "summarize",
-        )
-        workspace_markers = (
-            "directory",
-            "current directory",
-            "current dir",
-            "cwd",
-            "repo",
-            "repository",
-            "codebase",
-            "project",
-            "folder",
-            "filesystem",
-            "file tree",
-            "files",
-            "path",
-        )
 
         user_text = (user_message or "").strip().lower()
         user_targets_workspace = (
-            any(marker in user_text for marker in workspace_markers)
+            any(marker in user_text for marker in self._ACK_WORKSPACE_MARKERS)
             or "~/" in user_text
             or "/" in user_text
         )
-        assistant_mentions_action = any(marker in assistant_text for marker in action_markers)
+        assistant_mentions_action = any(marker in assistant_text for marker in self._ACK_ACTION_MARKERS)
         assistant_targets_workspace = any(
-            marker in assistant_text for marker in workspace_markers
+            marker in assistant_text for marker in self._ACK_WORKSPACE_MARKERS
         )
         return (user_targets_workspace or assistant_targets_workspace) and assistant_mentions_action
+
+    def _looks_like_codex_intermediate_ack(
+        self,
+        user_message: str,
+        assistant_content: str,
+        messages: List[Dict[str, Any]],
+    ) -> bool:
+        """Backward-compat wrapper — strict mode for codex_responses."""
+        return self._looks_like_intermediate_ack(user_message, assistant_content, messages, strict=True)
     
     
     def _extract_reasoning(self, assistant_message) -> Optional[str]:
@@ -4582,6 +4577,7 @@ class AIAgent:
         final_response = None
         interrupted = False
         codex_ack_continuations = 0
+        ack_continuations = 0  # continuation nudges for all API modes
         length_continue_retries = 0
         truncated_response_prefix = ""
         
@@ -5804,6 +5800,44 @@ class AIAgent:
                         continue
 
                     codex_ack_continuations = 0
+
+                    # General continuation nudge (all API modes, including
+                    # chat_completions for local models). Uses strict=False so
+                    # it fires even after prior tool use — small models commonly
+                    # narrate "I'll try X" without actually calling the tool.
+                    if (
+                        self.api_mode != "codex_responses"
+                        and self.valid_tool_names
+                        and ack_continuations < 2
+                        and self._looks_like_intermediate_ack(
+                            user_message=user_message,
+                            assistant_content=final_response,
+                            messages=messages,
+                            strict=False,
+                        )
+                    ):
+                        ack_continuations += 1
+                        self._vprint(
+                            f"{self.log_prefix}🔄 Model acknowledged but didn't use tools — "
+                            f"nudging to continue ({ack_continuations}/2)",
+                            force=True,
+                        )
+                        interim_msg = self._build_assistant_message(assistant_message, "incomplete")
+                        messages.append(interim_msg)
+
+                        continue_msg = {
+                            "role": "user",
+                            "content": (
+                                "[System: You described what you intend to do but did not call any "
+                                "tools. Use your tools now to complete the task. Do not narrate — act.]"
+                            ),
+                        }
+                        messages.append(continue_msg)
+                        self._session_messages = messages
+                        self._save_session_log(messages)
+                        continue
+
+                    ack_continuations = 0
 
                     if truncated_response_prefix:
                         final_response = truncated_response_prefix + final_response
