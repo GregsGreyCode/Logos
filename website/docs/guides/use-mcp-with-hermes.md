@@ -1,12 +1,12 @@
 ---
 sidebar_position: 5
 title: "Use MCP with Hermes"
-description: "A practical guide to connecting MCP servers to Hermes Agent, filtering their tools, and using them safely in real workflows"
+description: "A practical guide to connecting MCP servers to Logos, filtering their tools, and using them safely in real workflows"
 ---
 
 # Use MCP with Hermes
 
-This guide shows how to actually use MCP with Hermes Agent in day-to-day workflows.
+This guide shows how to actually use MCP with Logos in day-to-day workflows.
 
 If the feature page explains what MCP is, this guide is about how to get value from it quickly and safely.
 
@@ -38,7 +38,7 @@ That last part matters. Good MCP usage is not just “connect everything.” It 
 ## Step 1: install MCP support
 
 ```bash
-pip install hermes-agent[mcp]
+pip install logos[mcp]
 ```
 
 For npm-based servers, make sure Node.js and `npx` are available.

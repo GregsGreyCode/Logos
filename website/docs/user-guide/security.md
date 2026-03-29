@@ -6,7 +6,7 @@ description: "Security model, dangerous command approval, user authorization, co
 
 # Security
 
-Hermes Agent is designed with a defense-in-depth security model. This page covers every security boundary — from command approval to container isolation to user authorization on messaging platforms.
+Logos is designed with a defense-in-depth security model. This page covers every security boundary — from command approval to container isolation to user authorization on messaging platforms.
 
 ## Overview
 
@@ -91,7 +91,7 @@ command_allowlist:
 These patterns are loaded at startup and silently approved in all future sessions.
 
 :::tip
-Use `hermes config edit` to review or remove patterns from your permanent allowlist.
+Use `logos config edit` to review or remove patterns from your permanent allowlist.
 :::
 
 ## User Authorization (Gateway)
@@ -148,7 +148,7 @@ For more flexible authorization, Hermes includes a code-based pairing system. In
 
 1. An unknown user sends a DM to the bot
 2. The bot replies with an 8-character pairing code
-3. The bot owner runs `hermes pairing approve <platform> <code>` on the CLI
+3. The bot owner runs `logos pairing approve <platform> <code>` on the CLI
 4. The user is permanently approved for that platform
 
 **Security features** (based on OWASP + NIST SP 800-63-4 guidance):
@@ -168,16 +168,16 @@ For more flexible authorization, Hermes includes a code-based pairing system. In
 
 ```bash
 # List pending and approved users
-hermes pairing list
+logos pairing list
 
 # Approve a pairing code
-hermes pairing approve telegram ABC12DEF
+logos pairing approve telegram ABC12DEF
 
 # Revoke a user's access
-hermes pairing revoke telegram 123456789
+logos pairing revoke telegram 123456789
 
 # Clear all pending codes
-hermes pairing clear-pending
+logos pairing clear-pending
 ```
 
 **Storage:** Pairing data is stored in `~/.logos/pairing/` with per-platform JSON files:
@@ -301,7 +301,7 @@ Blocked files show a warning:
 7. **Set `MESSAGING_CWD`** — don't let the agent operate from sensitive directories
 8. **Run as non-root** — never run the gateway as root
 9. **Monitor logs** — check `~/.logos/logs/` for unauthorized access attempts
-10. **Keep updated** — run `hermes update` regularly for security patches
+10. **Keep updated** — run `logos update` regularly for security patches
 
 ### Securing API Keys
 

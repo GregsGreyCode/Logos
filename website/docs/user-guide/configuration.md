@@ -1,7 +1,7 @@
 ---
 sidebar_position: 2
 title: "Configuration"
-description: "Configure Hermes Agent — config.yaml, providers, models, API keys, and more"
+description: "Configure Logos — config.yaml, providers, models, API keys, and more"
 ---
 
 # Configuration
@@ -26,20 +26,20 @@ All settings are stored in the `~/.logos/` directory for easy access.
 ## Managing Configuration
 
 ```bash
-hermes config              # View current configuration
-hermes config edit         # Open config.yaml in your editor
-hermes config set KEY VAL  # Set a specific value
-hermes config check        # Check for missing options (after updates)
-hermes config migrate      # Interactively add missing options
+logos config              # View current configuration
+logos config edit         # Open config.yaml in your editor
+logos config set KEY VAL  # Set a specific value
+logos config check        # Check for missing options (after updates)
+logos config migrate      # Interactively add missing options
 
 # Examples:
-hermes config set model anthropic/claude-opus-4
-hermes config set terminal.backend docker
-hermes config set OPENROUTER_API_KEY sk-or-...  # Saves to .env
+logos config set model anthropic/claude-opus-4
+logos config set terminal.backend docker
+logos config set OPENROUTER_API_KEY sk-or-...  # Saves to .env
 ```
 
 :::tip
-The `hermes config set` command automatically routes values to the right file — API keys are saved to `.env`, everything else to `config.yaml`.
+The `logos config set` command automatically routes values to the right file — API keys are saved to `.env`, everything else to `config.yaml`.
 :::
 
 ## Configuration Precedence
@@ -57,13 +57,13 @@ Secrets (API keys, bot tokens, passwords) go in `.env`. Everything else (model, 
 
 ## Inference Providers
 
-You need at least one way to connect to an LLM. Use `hermes model` to switch providers and models interactively, or configure directly:
+You need at least one way to connect to an LLM. Use `logos model` to switch providers and models interactively, or configure directly:
 
 | Provider | Setup |
 |----------|-------|
-| **Nous Portal** | `hermes model` (OAuth, subscription-based) |
-| **OpenAI Codex** | `hermes model` (ChatGPT OAuth, uses Codex models) |
-| **Anthropic** | `hermes model` (API key, setup-token, or Claude Code auto-detect) |
+| **Nous Portal** | `logos model` (OAuth, subscription-based) |
+| **OpenAI Codex** | `logos model` (ChatGPT OAuth, uses Codex models) |
+| **Anthropic** | `logos model` (API key, setup-token, or Claude Code auto-detect) |
 | **OpenRouter** | `OPENROUTER_API_KEY` in `~/.logos/.env` |
 | **z.ai / GLM** | `GLM_API_KEY` in `~/.logos/.env` (provider: `zai`) |
 | **Kimi / Moonshot** | `KIMI_API_KEY` in `~/.logos/.env` (provider: `kimi-coding`) |
@@ -72,7 +72,7 @@ You need at least one way to connect to an LLM. Use `hermes model` to switch pro
 | **Custom Endpoint** | `OPENAI_BASE_URL` + `OPENAI_API_KEY` in `~/.logos/.env` |
 
 :::info Codex Note
-The OpenAI Codex provider authenticates via device code (open a URL, enter a code). Hermes stores the resulting credentials in its own auth store under `~/.logos/auth.json` and can import existing Codex CLI credentials from `~/.codex/auth.json` when present. No Codex CLI installation is required.
+The OpenAI Codex provider authenticates via device code (open a URL, enter a code). Logos stores the resulting credentials in its own auth store under `~/.logos/auth.json` and can import existing Codex CLI credentials from `~/.codex/auth.json` when present. No Codex CLI installation is required.
 :::
 
 :::warning
@@ -140,7 +140,7 @@ Base URLs can be overridden with `GLM_BASE_URL`, `KIMI_BASE_URL`, `MINIMAX_BASE_
 
 ## Custom & Self-Hosted LLM Providers
 
-Hermes Agent works with **any OpenAI-compatible API endpoint**. If a server implements `/v1/chat/completions`, you can point Hermes at it. This means you can use local models, GPU inference servers, multi-provider routers, or any third-party API.
+Logos works with **any OpenAI-compatible API endpoint**. If a server implements `/v1/chat/completions`, you can point Logos at it. This means you can use local models, GPU inference servers, multi-provider routers, or any third-party API.
 
 ### General Setup
 
@@ -148,7 +148,7 @@ Two ways to configure a custom endpoint:
 
 **Interactive (recommended):**
 ```bash
-hermes model
+logos model
 # Select "Custom endpoint (self-hosted / VLLM / etc.)"
 # Enter: API base URL, API key, Model name
 ```
@@ -357,7 +357,7 @@ LLM_MODEL=meta-llama/Llama-3.1-70B-Instruct-Turbo
 | **Chinese AI models** | z.ai (GLM), Kimi/Moonshot, or MiniMax (first-class providers) |
 
 :::tip
-You can switch between providers at any time with `hermes model` — no restart required. Your conversation history, memory, and skills carry over regardless of which provider you use.
+You can switch between providers at any time with `logos model` — no restart required. Your conversation history, memory, and skills carry over regardless of which provider you use.
 :::
 
 ## Optional API Keys
@@ -374,7 +374,7 @@ You can switch between providers at any time with `hermes model` — no restart 
 
 ### Self-Hosting Firecrawl
 
-By default, Hermes uses the [Firecrawl cloud API](https://firecrawl.dev/) for web search and scraping. If you prefer to run Firecrawl locally, you can point Hermes at a self-hosted instance instead.
+By default, Logos uses the [Firecrawl cloud API](https://firecrawl.dev/) for web search and scraping. If you prefer to run Firecrawl locally, you can point Logos at a self-hosted instance instead.
 
 **What you get:** No API key required, no rate limits, no per-page costs, full data sovereignty.
 
@@ -390,9 +390,9 @@ By default, Hermes uses the [Firecrawl cloud API](https://firecrawl.dev/) for we
    docker compose up -d
    ```
 
-2. Point Hermes at your instance (no API key needed):
+2. Point Logos at your instance (no API key needed):
    ```bash
-   hermes config set FIRECRAWL_API_URL http://localhost:3002
+   logos config set FIRECRAWL_API_URL http://localhost:3002
    ```
 
 You can also set both `FIRECRAWL_API_KEY` and `FIRECRAWL_API_URL` if your self-hosted instance has authentication enabled.
@@ -451,7 +451,7 @@ If terminal commands fail immediately or the terminal tool is reported as disabl
     ```
     If this fails, fix your Docker installation or switch back to the local backend:
     ```bash
-    hermes config set terminal.backend local
+    logos config set terminal.backend local
     ```
 
 - **SSH backend**
@@ -553,7 +553,7 @@ Budget pressure is enabled by default. The agent sees warnings naturally as part
 
 ## Auxiliary Models
 
-Hermes uses lightweight "auxiliary" models for side tasks like image analysis, web page summarization, and browser screenshot analysis. By default, these use **Gemini Flash** via OpenRouter or Nous Portal — you don't need to configure anything.
+Logos uses lightweight "auxiliary" models for side tasks like image analysis, web page summarization, and browser screenshot analysis. By default, these use **Gemini Flash** via OpenRouter or Nous Portal — you don't need to configure anything.
 
 To use a different model, add an `auxiliary` section to `~/.logos/config.yaml`:
 
@@ -592,8 +592,8 @@ AUXILIARY_VISION_MODEL=openai/gpt-4o
 |----------|-------------|-------------|
 | `"auto"` | Best available (default). Vision tries OpenRouter → Nous → Codex. | — |
 | `"openrouter"` | Force OpenRouter — routes to any model (Gemini, GPT-4o, Claude, etc.) | `OPENROUTER_API_KEY` |
-| `"nous"` | Force Nous Portal | `hermes login` |
-| `"codex"` | Force Codex OAuth (ChatGPT account). Supports vision (gpt-5.3-codex). | `hermes model` → Codex |
+| `"nous"` | Force Nous Portal | `logos login` |
+| `"codex"` | Force Codex OAuth (ChatGPT account). Supports vision (gpt-5.3-codex). | `logos model` → Codex |
 | `"main"` | Use your custom endpoint (`OPENAI_BASE_URL` + `OPENAI_API_KEY`). Works with OpenAI, local models, or any OpenAI-compatible API. | `OPENAI_BASE_URL` + `OPENAI_API_KEY` |
 
 ### Common Setups
@@ -656,7 +656,7 @@ You can also configure auxiliary models via environment variables instead of `co
 | Compression model | `CONTEXT_COMPRESSION_MODEL` |
 
 :::tip
-Run `hermes config` to see your current auxiliary model settings. Overrides only show up when they differ from the defaults.
+Run `logos config` to see your current auxiliary model settings. Overrides only show up when they differ from the defaults.
 :::
 
 ## Reasoning Effort
@@ -732,13 +732,13 @@ Define custom commands that run shell commands without invoking the LLM — zero
 quick_commands:
   status:
     type: exec
-    command: systemctl status hermes-agent
+    command: systemctl status logos-gateway
   disk:
     type: exec
     command: df -h /
   update:
     type: exec
-    command: cd ~/.logos/hermes-agent && git pull && pip install -e .
+    command: cd ~/.logos/logos && git pull && pip install -e .
   gpu:
     type: exec
     command: nvidia-smi --query-gpu=name,utilization.gpu,memory.used,memory.total --format=csv,noheader
@@ -826,18 +826,18 @@ clarify:
 
 ## Context Files (SOUL.md, AGENTS.md)
 
-Hermes uses two different context scopes:
+Logos uses two different context scopes:
 
 | File | Purpose | Scope |
 |------|---------|-------|
 | `AGENTS.md` | Project-specific instructions, coding conventions | Working directory / project tree |
-| `SOUL.md` | Default persona for this Hermes instance | `~/.logos/SOUL.md` or `$HERMES_HOME/SOUL.md` |
+| `SOUL.md` | Default persona for this Logos instance | `~/.logos/SOUL.md` or `$LOGOS_HOME/SOUL.md` |
 | `.cursorrules` | Cursor IDE rules (also detected) | Working directory |
 | `.cursor/rules/*.mdc` | Cursor rule files (also detected) | Working directory |
 
 - **AGENTS.md** is hierarchical: if subdirectories also have AGENTS.md, all are combined.
-- **SOUL.md** is now global to the Hermes instance and is loaded only from `HERMES_HOME`.
-- Hermes automatically seeds a default `SOUL.md` if one does not already exist.
+- **SOUL.md** is now global to the Logos instance and is loaded only from `LOGOS_HOME`.
+- Logos automatically seeds a default `SOUL.md` if one does not already exist.
 - An empty `SOUL.md` contributes nothing to the system prompt.
 - All loaded context files are capped at 20,000 characters with smart truncation.
 

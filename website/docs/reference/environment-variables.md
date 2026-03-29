@@ -1,12 +1,12 @@
 ---
 sidebar_position: 2
 title: "Environment Variables"
-description: "Complete reference of all environment variables used by Hermes Agent"
+description: "Complete reference of all environment variables used by Logos"
 ---
 
 # Environment Variables Reference
 
-All variables go in `~/.logos/.env`. You can also set them with `hermes config set VAR value`.
+All variables go in `~/.logos/.env`. You can also set them with `logos config set VAR value`.
 
 ## LLM Providers
 
@@ -32,7 +32,7 @@ All variables go in `~/.logos/.env`. You can also set them with `hermes config s
 | `HERMES_MODEL` | Preferred model name (checked before `LLM_MODEL`, used by gateway) |
 | `LLM_MODEL` | Default model name (fallback when not set in config.yaml) |
 | `VOICE_TOOLS_OPENAI_KEY` | OpenAI key for TTS and voice transcription (separate from custom endpoint) |
-| `HERMES_HOME` | Override Hermes config directory (default: `~/.hermes`) |
+| `LOGOS_HOME` | Override Logos config directory (default: `~/.logos`) |
 
 ## Provider Auth (OAuth)
 
@@ -187,5 +187,5 @@ These go in `~/.logos/config.yaml` under the `provider_routing` section:
 | `data_collection` | `"allow"` (default) or `"deny"` to exclude data-storing providers |
 
 :::tip
-Use `hermes config set` to set environment variables — it automatically saves them to the right file (`.env` for secrets, `config.yaml` for everything else).
+Use `logos config set` to set environment variables — it automatically saves them to the right file (`.env` for secrets, `config.yaml` for everything else).
 :::

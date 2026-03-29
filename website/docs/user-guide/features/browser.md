@@ -7,7 +7,7 @@ sidebar_position: 5
 
 # Browser Automation
 
-Hermes Agent includes a full browser automation toolset that can run in two modes:
+Logos includes a full browser automation toolset that can run in two modes:
 
 - **Browserbase cloud mode** via [Browserbase](https://browserbase.com) for managed cloud browsers and anti-bot tooling
 - **Local browser mode** via the `agent-browser` CLI and a local Chromium installation
@@ -73,7 +73,7 @@ npm install
 ```
 
 :::info
-The `browser` toolset must be included in your config's `toolsets` list or enabled via `hermes config set toolsets '["hermes-cli", "browser"]'`.
+The `browser` toolset must be included in your config's `toolsets` list or enabled via `logos config set toolsets '["hermes-cli", "browser"]'`.
 :::
 
 ## Available Tools
@@ -83,7 +83,7 @@ The `browser` toolset must be included in your config's `toolsets` list or enabl
 Navigate to a URL. Must be called before any other browser tool. Initializes the Browserbase session.
 
 ```
-Navigate to https://github.com/NousResearch
+Navigate to https://github.com/GregsGreyCode
 ```
 
 :::tip

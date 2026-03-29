@@ -30,7 +30,7 @@ Set `memoryMode` to `honcho` to use Honcho exclusively. See [Memory Modes](#memo
 ### Interactive Setup
 
 ```bash
-hermes honcho setup
+logos honcho setup
 ```
 
 The setup wizard walks through API key, peer names, workspace, memory mode, write frequency, recall mode, and session strategy. It offers to install `honcho-ai` if missing.
@@ -69,12 +69,12 @@ Honcho reads from `~/.honcho/config.json` (shared across all Honcho-enabled appl
 }
 ```
 
-`apiKey` lives at the root because it is a shared credential across all Honcho-enabled tools. All other settings are scoped under `hosts.hermes`. The `hermes honcho setup` wizard writes this structure automatically.
+`apiKey` lives at the root because it is a shared credential across all Honcho-enabled tools. All other settings are scoped under `hosts.hermes`. The `logos honcho setup` wizard writes this structure automatically.
 
 Or set the API key as an environment variable:
 
 ```bash
-hermes config set HONCHO_API_KEY your-key
+logos config set HONCHO_API_KEY your-key
 ```
 
 :::info
@@ -289,27 +289,27 @@ Parameters:
 ## CLI Commands
 
 ```
-hermes honcho setup                        # Interactive setup wizard
-hermes honcho status                       # Show config and connection status
-hermes honcho sessions                     # List directory → session name mappings
-hermes honcho map <name>                   # Map current directory to a session name
-hermes honcho peer                         # Show peer names and dialectic settings
-hermes honcho peer --user NAME             # Set user peer name
-hermes honcho peer --ai NAME               # Set AI peer name
-hermes honcho peer --reasoning LEVEL       # Set dialectic reasoning level
-hermes honcho mode                         # Show current memory mode
-hermes honcho mode [hybrid|honcho|local]   # Set memory mode
-hermes honcho tokens                       # Show token budget settings
-hermes honcho tokens --context N           # Set context token cap
-hermes honcho tokens --dialectic N         # Set dialectic char cap
-hermes honcho identity                     # Show AI peer identity
-hermes honcho identity <file>              # Seed AI peer identity from file (SOUL.md, etc.)
-hermes honcho migrate                      # Migration guide: OpenClaw → Hermes + Honcho
+logos honcho setup                        # Interactive setup wizard
+logos honcho status                       # Show config and connection status
+logos honcho sessions                     # List directory → session name mappings
+logos honcho map <name>                   # Map current directory to a session name
+logos honcho peer                         # Show peer names and dialectic settings
+logos honcho peer --user NAME             # Set user peer name
+logos honcho peer --ai NAME               # Set AI peer name
+logos honcho peer --reasoning LEVEL       # Set dialectic reasoning level
+logos honcho mode                         # Show current memory mode
+logos honcho mode [hybrid|honcho|local]   # Set memory mode
+logos honcho tokens                       # Show token budget settings
+logos honcho tokens --context N           # Set context token cap
+logos honcho tokens --dialectic N         # Set dialectic char cap
+logos honcho identity                     # Show AI peer identity
+logos honcho identity <file>              # Seed AI peer identity from file (SOUL.md, etc.)
+logos honcho migrate                      # Migration guide: OpenClaw → Hermes + Honcho
 ```
 
 ### Doctor Integration
 
-`hermes doctor` includes a Honcho section that validates config, API key, and connection status.
+`logos doctor` includes a Honcho section that validates config, API key, and connection status.
 
 ## Migration
 
@@ -323,7 +323,7 @@ When Honcho activates on an instance with existing local history, migration runs
 ### From OpenClaw
 
 ```bash
-hermes honcho migrate
+logos honcho migrate
 ```
 
 Walks through converting an OpenClaw native Honcho setup to the shared `~/.honcho/config.json` format.
@@ -333,13 +333,13 @@ Walks through converting an OpenClaw native Honcho setup to the shared `~/.honch
 Honcho can build a representation of the AI assistant over time (via `observe_me=True`). You can also seed the AI peer explicitly:
 
 ```bash
-hermes honcho identity ~/.logos/SOUL.md
+logos honcho identity ~/.logos/SOUL.md
 ```
 
 This uploads the file content through Honcho's observation pipeline. The AI peer representation is then injected into the system prompt alongside the user's, giving the agent awareness of its own accumulated identity.
 
 ```bash
-hermes honcho identity --show
+logos honcho identity --show
 ```
 
 Shows the current AI peer representation from Honcho.

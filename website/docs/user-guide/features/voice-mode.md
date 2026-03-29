@@ -1,18 +1,18 @@
 ---
 sidebar_position: 10
 title: "Voice Mode"
-description: "Real-time voice conversations with Hermes Agent — CLI, Telegram, Discord (DMs, text channels, and voice channels)"
+description: "Real-time voice conversations with Logos — CLI, Telegram, Discord (DMs, text channels, and voice channels)"
 ---
 
 # Voice Mode
 
-Hermes Agent supports full voice interaction across CLI and messaging platforms. Talk to the agent using your microphone, hear spoken replies, and have live voice conversations in Discord voice channels.
+Logos supports full voice interaction across CLI and messaging platforms. Talk to the agent using your microphone, hear spoken replies, and have live voice conversations in Discord voice channels.
 
 ## Prerequisites
 
 Before using voice features, make sure you have:
 
-1. **Hermes Agent installed** — `pip install hermes-agent` (see [Getting Started](../../getting-started.md))
+1. **Logos installed** — `pip install logos` (see [Getting Started](../../getting-started.md))
 2. **An LLM provider configured** — set `OPENAI_API_KEY`, `OPENAI_BASE_URL`, and `LLM_MODEL` in `~/.logos/.env`
 3. **A working base setup** — run `hermes` to verify the agent responds to text before enabling voice
 
@@ -34,16 +34,16 @@ The `~/.logos/` directory and default `config.yaml` are created automatically th
 
 ```bash
 # CLI voice mode (microphone + audio playback)
-pip install hermes-agent[voice]
+pip install logos[voice]
 
 # Discord + Telegram messaging (includes discord.py[voice] for VC support)
-pip install hermes-agent[messaging]
+pip install logos[messaging]
 
 # Premium TTS (ElevenLabs)
-pip install hermes-agent[tts-premium]
+pip install logos[tts-premium]
 
 # Everything at once
-pip install hermes-agent[all]
+pip install logos[all]
 ```
 
 | Extra | Packages | Required For |
@@ -163,8 +163,8 @@ If you haven't set up your messaging bots yet, see the platform-specific guides:
 Start the gateway to connect to your messaging platforms:
 
 ```bash
-hermes gateway        # Start the gateway (connects to configured platforms)
-hermes gateway setup  # Interactive setup wizard for first-time configuration
+logos gateway        # Start the gateway (connects to configured platforms)
+logos gateway setup  # Interactive setup wizard for first-time configuration
 ```
 
 ### Discord: Channels vs DMs
@@ -308,7 +308,7 @@ DISCORD_ALLOWED_USERS=your-user-id
 ### Start the Gateway
 
 ```bash
-hermes gateway        # Start with existing configuration
+logos gateway        # Start with existing configuration
 ```
 
 The bot should come online in Discord within a few seconds.
