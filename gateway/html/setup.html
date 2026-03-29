@@ -223,7 +223,7 @@
           <!-- Header text -->
           <div class="px-7 py-6 border-b border-gray-800/60">
             <div class="flex items-center justify-between gap-4 mb-1">
-              <div class="text-base font-semibold text-white" x-text="tldr ? &quot;What you're about to do&quot; : &quot;What setup configures&quot;"></div>
+              <div class="text-base font-semibold text-white" x-text="tldr ? &quot;What you're about to do:&quot; : &quot;What setup configures&quot;"></div>
               <!-- TL;DR toggle — top-right of the card header -->
               <button @click="tldr=!tldr"
                 class="spinner-hue text-xs px-4 py-1.5 rounded-full border font-semibold tracking-wide transition-all flex-shrink-0"
@@ -1701,7 +1701,7 @@ function setup() {
 
     // Step 0 — intro panel
     introConfirmed: false,
-    tldr: false,
+    tldr: true,
     setupSteps: [
       { n: 1, name: 'Connect inference servers',  tag: 'detects',    desc: 'Logos scans your local network for Ollama and LM Studio. You can also add remote servers — on a LAN, VPC, or cloud VM — using a custom address. No Logos installation is needed on the inference machine.', tldrDesc: 'Logos finds your models (Ollama, LM Studio) or you add one manually.' },
       { n: 2, name: 'Benchmark models',       tag: 'measures',   desc: 'Candidate models run 6 eval tests: instruction following, reasoning, JSON format, tool selection, nested JSON, and multi-step arithmetic. The best fit is pre-selected; you can override freely.', tldrDesc: 'Each model runs a few tests. Logos picks the best one by default.' },
