@@ -614,12 +614,23 @@ class AIAgent:
             if fb_p and fb_m and not self.quiet_mode:
                 print(f"🔄 Fallback model: {fb_m} ({fb_p})")
 
-        # Get available tools with filtering
+        # Get available tools with filtering.
+        # Lazy mode: when context is tight (≤32K), start with core tools only.
+        # The agent can call request_tools() to load more when needed.
+        _ctx_for_lazy = self.context_compressor.context_length if hasattr(self, 'context_compressor') else 128000
+        _use_lazy = _ctx_for_lazy <= 32768
+        self._lazy_tools = _use_lazy
+        self._enabled_toolsets = enabled_toolsets
+        self._disabled_toolsets = disabled_toolsets
         self.tools = get_tool_definitions(
             enabled_toolsets=enabled_toolsets,
             disabled_toolsets=disabled_toolsets,
             quiet_mode=self.quiet_mode,
+            lazy=_use_lazy,
+            session_id=self.session_id,
         )
+        if _use_lazy and not self.quiet_mode:
+            print(f"💡 Lazy tool loading (context {_ctx_for_lazy:,} ≤ 32K): {len(self.tools)} core tools loaded. Use request_tools() for more.")
         
         # Show tool configuration and store valid tool names for validation
         self.valid_tool_names = set()
@@ -1641,6 +1652,8 @@ class AIAgent:
             enabled_toolsets=enabled_toolsets,
             disabled_toolsets=disabled_toolsets,
             quiet_mode=True,
+            lazy=self._lazy_tools,
+            session_id=self.session_id,
         )
         self.valid_tool_names = {
             tool["function"]["name"] for tool in self.tools
@@ -3629,7 +3642,7 @@ class AIAgent:
             )
         else:
             from tools.registry import registry as _registry
-            return _registry.dispatch(
+            _result = _registry.dispatch(
                 function_name, function_args,
                 policy=self._action_policy,
                 session_id=self.session_id,
@@ -3638,6 +3651,22 @@ class AIAgent:
                 task_id=effective_task_id,
                 enabled_tools=list(self.valid_tool_names) if self.valid_tool_names else None,
             )
+            # Lazy tool loading: if request_tools was called, refresh the tool
+            # list so newly granted tools appear in the next API call.
+            if function_name == "request_tools" and self._lazy_tools and self.session_id:
+                try:
+                    self.tools = get_tool_definitions(
+                        enabled_toolsets=self._enabled_toolsets,
+                        disabled_toolsets=self._disabled_toolsets,
+                        quiet_mode=True,
+                        lazy=True,
+                        session_id=self.session_id,
+                    )
+                    self.valid_tool_names = {t["function"]["name"] for t in self.tools}
+                    logger.info("request_tools: refreshed tool list → %d tools", len(self.tools))
+                except Exception:
+                    pass
+            return _result
 
     def _execute_tool_calls_concurrent(self, assistant_message, messages: list, effective_task_id: str, api_call_count: int = 0) -> None:
         """Execute multiple tool calls concurrently using a thread pool.
