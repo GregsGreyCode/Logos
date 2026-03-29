@@ -3226,5 +3226,10 @@ For more help on a command:
         parser.print_help()
 
 
+def main_agent():
+    """Entry point for the ``hermes`` agent CLI — alias for main()."""
+    main()
+
+
 if __name__ == "__main__":
     main()
