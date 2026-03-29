@@ -180,7 +180,7 @@ class TestRecordSessionsConfig:
     """browser.record_sessions config option."""
 
     def test_default_config_has_record_sessions(self):
-        from hermes_cli.config import DEFAULT_CONFIG
+        from logos_cli.config import DEFAULT_CONFIG
 
         browser_cfg = DEFAULT_CONFIG.get("browser", {})
         assert "record_sessions" in browser_cfg

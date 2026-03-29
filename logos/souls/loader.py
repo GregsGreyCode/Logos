@@ -1,6 +1,6 @@
 """Logos souls — soul loading and persona management.
 
-Decouples SOUL.md management from hermes_cli.config so any Logos agent
+Decouples SOUL.md management from logos_cli.config so any Logos agent
 can load and update the agent persona without pulling in the full CLI.
 
 A "soul" is the agent's persona defined in SOUL.md — a markdown document
@@ -31,7 +31,7 @@ def load_soul(home: Path, create_default: bool = True) -> str:
     """Load the SOUL.md content for a Hermes home directory.
 
     If SOUL.md does not exist and *create_default* is True, seeds the
-    default soul template (same as hermes_cli.config._ensure_default_soul_md).
+    default soul template (same as logos_cli.config._ensure_default_soul_md).
 
     Returns the SOUL.md text, or ``""`` if the file is unavailable.
     """
@@ -40,7 +40,7 @@ def load_soul(home: Path, create_default: bool = True) -> str:
         if not create_default:
             return ""
         try:
-            from hermes_cli.default_soul import DEFAULT_SOUL_MD
+            from logos_cli.default_soul import DEFAULT_SOUL_MD
             soul_path.parent.mkdir(parents=True, exist_ok=True)
             soul_path.write_text(DEFAULT_SOUL_MD, encoding="utf-8")
             try:

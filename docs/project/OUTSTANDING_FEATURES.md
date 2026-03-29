@@ -12,7 +12,7 @@ The wizard's Step 0 shows a "Frontier-first" track (Anthropic, OpenAI, OpenRoute
 
 ### `hermes doctor` system check step
 **Source:** `docs/project/onboarding_plan.md`
-The plan calls for a system check step early in the wizard that surfaces blockers (missing env vars, unreachable endpoints, insufficient disk) before the user spends time on model/platform config. `hermes_cli/doctor.py` exists as a CLI command but is not integrated into the `/setup` wizard flow.
+The plan calls for a system check step early in the wizard that surfaces blockers (missing env vars, unreachable endpoints, insufficient disk) before the user spends time on model/platform config. `logos_cli/doctor.py` exists as a CLI command but is not integrated into the `/setup` wizard flow.
 
 ### Messaging platform setup flow
 **Source:** `docs/project/onboarding_plan.md`

@@ -37,7 +37,7 @@ class TestSaveModelChoiceAlwaysDict:
     def test_string_model_becomes_dict(self, config_home):
         """When config.model is a plain string, _save_model_choice must
         convert it to a dict so provider can be set afterwards."""
-        from hermes_cli.auth import _save_model_choice
+        from logos_cli.auth import _save_model_choice
 
         _save_model_choice("kimi-k2.5")
 
@@ -55,7 +55,7 @@ class TestSaveModelChoiceAlwaysDict:
         (config_home / "config.yaml").write_text(
             "model:\n  default: old-model\n  provider: openrouter\n"
         )
-        from hermes_cli.auth import _save_model_choice
+        from logos_cli.auth import _save_model_choice
 
         _save_model_choice("new-model")
 
@@ -70,7 +70,7 @@ class TestProviderPersistsAfterModelSave:
     def test_api_key_provider_saved_when_model_was_string(self, config_home, monkeypatch):
         """_model_flow_api_key_provider must persist the provider even when
         config.model started as a plain string."""
-        from hermes_cli.auth import PROVIDER_REGISTRY
+        from logos_cli.auth import PROVIDER_REGISTRY
 
         pconfig = PROVIDER_REGISTRY.get("kimi-coding")
         if not pconfig:
@@ -79,13 +79,13 @@ class TestProviderPersistsAfterModelSave:
         # Simulate: user has a Kimi API key, model was a string
         monkeypatch.setenv("KIMI_API_KEY", "sk-kimi-test-key")
 
-        from hermes_cli.main import _model_flow_api_key_provider
-        from hermes_cli.config import load_config
+        from logos_cli.main import _model_flow_api_key_provider
+        from logos_cli.config import load_config
 
         # Mock the model selection prompt to return "kimi-k2.5"
         # Also mock input() for the base URL prompt and builtins.input
-        with patch("hermes_cli.auth._prompt_model_selection", return_value="kimi-k2.5"), \
-             patch("hermes_cli.auth.deactivate_provider"), \
+        with patch("logos_cli.auth._prompt_model_selection", return_value="kimi-k2.5"), \
+             patch("logos_cli.auth.deactivate_provider"), \
              patch("builtins.input", return_value=""):
             _model_flow_api_key_provider(load_config(), "kimi-coding", "old-model")
 

@@ -76,7 +76,7 @@ from pathlib import Path
 from typing import Dict, Any, List, Optional, Set, Tuple
 
 import yaml
-from hermes_cli.config import load_env, _ENV_VAR_NAME_RE
+from logos_cli.config import load_env, _ENV_VAR_NAME_RE
 from tools.registry import registry
 
 logger = logging.getLogger(__name__)
@@ -521,7 +521,7 @@ def _get_disabled_skill_names() -> Set[str]:
     """
     import os
     try:
-        from hermes_cli.config import load_config
+        from logos_cli.config import load_config
         config = load_config()
         skills_cfg = config.get("skills", {})
         resolved_platform = os.getenv("HERMES_PLATFORM")
@@ -538,7 +538,7 @@ def _is_skill_disabled(name: str, platform: str = None) -> bool:
     """Check if a skill is disabled in config."""
     import os
     try:
-        from hermes_cli.config import load_config
+        from logos_cli.config import load_config
         config = load_config()
         skills_cfg = config.get("skills", {})
         resolved_platform = platform or os.getenv("HERMES_PLATFORM")

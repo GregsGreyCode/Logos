@@ -440,7 +440,7 @@ def build_context_files_prompt(cwd: Optional[str] = None) -> str:
 
     # SOUL.md from HERMES_HOME only
     try:
-        from hermes_cli.config import ensure_hermes_home
+        from logos_cli.config import ensure_hermes_home
         ensure_hermes_home()
     except Exception as e:
         logger.debug("Could not ensure HERMES_HOME before loading SOUL.md: %s", e)

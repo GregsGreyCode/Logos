@@ -8,7 +8,7 @@ description: "Complete reference for interactive CLI and messaging slash command
 
 Hermes has two slash-command surfaces:
 
-- **Interactive CLI slash commands** — handled by `cli.py` / `hermes_cli/commands.py`
+- **Interactive CLI slash commands** — handled by `cli.py` / `logos_cli/commands.py`
 - **Messaging slash commands** — handled by `gateway/run.py`
 
 Installed skills are also exposed as dynamic slash commands on both surfaces.

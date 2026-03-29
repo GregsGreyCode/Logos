@@ -2,7 +2,7 @@
 
 from unittest.mock import patch
 
-from hermes_cli.cli import HermesCLI
+from logos_cli.cli import HermesCLI
 
 
 class TestCLILoadingIndicator:

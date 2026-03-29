@@ -84,8 +84,8 @@ all = [
 ]
 
 [project.scripts]
-logos = "hermes_cli.main:main"
-hermes = "hermes_cli.main:main_agent"
+logos = "logos_cli.main:main"
+hermes = "logos_cli.main:main_agent"
 hermes-agent = "agents.hermes.agent:main"
 logos-acp = "acp_adapter.entry:main"
 
@@ -93,7 +93,7 @@ logos-acp = "acp_adapter.entry:main"
 py-modules = []
 
 [tool.setuptools.packages.find]
-include = ["agent", "agents", "agents.*", "tools", "tools.*", "hermes_cli", "hermes_cli.*", "gateway", "gateway.*", "core", "core.*", "cron", "honcho_integration", "acp_adapter"]
+include = ["agent", "agents", "agents.*", "tools", "tools.*", "logos_cli", "logos_cli.*", "gateway", "gateway.*", "core", "core.*", "cron", "honcho_integration", "acp_adapter"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

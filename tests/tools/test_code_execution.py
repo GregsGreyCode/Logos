@@ -699,7 +699,7 @@ class TestExecuteCodeEdgeCases(unittest.TestCase):
 class TestLoadConfig(unittest.TestCase):
     def test_returns_empty_dict_when_cli_config_unavailable(self):
         from tools.code_execution_tool import _load_config
-        with patch.dict("sys.modules", {"hermes_cli.cli": None}):
+        with patch.dict("sys.modules", {"logos_cli.cli": None}):
             result = _load_config()
             self.assertIsInstance(result, dict)
 
@@ -707,7 +707,7 @@ class TestLoadConfig(unittest.TestCase):
         from tools.code_execution_tool import _load_config
         mock_cli = MagicMock()
         mock_cli.CLI_CONFIG = {"code_execution": {"timeout": 120, "max_tool_calls": 10}}
-        with patch.dict("sys.modules", {"hermes_cli.cli": mock_cli}):
+        with patch.dict("sys.modules", {"logos_cli.cli": mock_cli}):
             result = _load_config()
         self.assertIsInstance(result, dict)
 

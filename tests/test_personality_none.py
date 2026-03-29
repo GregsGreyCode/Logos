@@ -9,7 +9,7 @@ import yaml
 class TestCLIPersonalityNone:
 
     def _make_cli(self, personalities=None):
-        from hermes_cli.cli import HermesCLI
+        from logos_cli.cli import HermesCLI
         cli = HermesCLI.__new__(HermesCLI)
         cli.personalities = personalities or {
             "helpful": "You are helpful.",
@@ -22,37 +22,37 @@ class TestCLIPersonalityNone:
 
     def test_none_clears_system_prompt(self):
         cli = self._make_cli()
-        with patch("hermes_cli.cli.save_config_value", return_value=True):
+        with patch("logos_cli.cli.save_config_value", return_value=True):
             cli._handle_personality_command("/personality none")
         assert cli.system_prompt == ""
 
     def test_default_clears_system_prompt(self):
         cli = self._make_cli()
-        with patch("hermes_cli.cli.save_config_value", return_value=True):
+        with patch("logos_cli.cli.save_config_value", return_value=True):
             cli._handle_personality_command("/personality default")
         assert cli.system_prompt == ""
 
     def test_neutral_clears_system_prompt(self):
         cli = self._make_cli()
-        with patch("hermes_cli.cli.save_config_value", return_value=True):
+        with patch("logos_cli.cli.save_config_value", return_value=True):
             cli._handle_personality_command("/personality neutral")
         assert cli.system_prompt == ""
 
     def test_none_forces_agent_reinit(self):
         cli = self._make_cli()
-        with patch("hermes_cli.cli.save_config_value", return_value=True):
+        with patch("logos_cli.cli.save_config_value", return_value=True):
             cli._handle_personality_command("/personality none")
         assert cli.agent is None
 
     def test_none_saves_to_config(self):
         cli = self._make_cli()
-        with patch("hermes_cli.cli.save_config_value", return_value=True) as mock_save:
+        with patch("logos_cli.cli.save_config_value", return_value=True) as mock_save:
             cli._handle_personality_command("/personality none")
         mock_save.assert_called_once_with("agent.system_prompt", "")
 
     def test_known_personality_still_works(self):
         cli = self._make_cli()
-        with patch("hermes_cli.cli.save_config_value", return_value=True):
+        with patch("logos_cli.cli.save_config_value", return_value=True):
             cli._handle_personality_command("/personality helpful")
         assert cli.system_prompt == "You are helpful."
 
@@ -149,7 +149,7 @@ class TestPersonalityDictFormat:
     """Test dict-format custom personalities with description, tone, style."""
 
     def _make_cli(self, personalities):
-        from hermes_cli.cli import HermesCLI
+        from logos_cli.cli import HermesCLI
         cli = HermesCLI.__new__(HermesCLI)
         cli.personalities = personalities
         cli.system_prompt = ""
@@ -166,7 +166,7 @@ class TestPersonalityDictFormat:
                 "style": "concise",
             }
         })
-        with patch("hermes_cli.cli.save_config_value", return_value=True):
+        with patch("logos_cli.cli.save_config_value", return_value=True):
             cli._handle_personality_command("/personality coder")
         assert "You are an expert programmer." in cli.system_prompt
 
@@ -177,7 +177,7 @@ class TestPersonalityDictFormat:
                 "tone": "technical and precise",
             }
         })
-        with patch("hermes_cli.cli.save_config_value", return_value=True):
+        with patch("logos_cli.cli.save_config_value", return_value=True):
             cli._handle_personality_command("/personality coder")
         assert "Tone: technical and precise" in cli.system_prompt
 
@@ -188,18 +188,18 @@ class TestPersonalityDictFormat:
                 "style": "use code examples",
             }
         })
-        with patch("hermes_cli.cli.save_config_value", return_value=True):
+        with patch("logos_cli.cli.save_config_value", return_value=True):
             cli._handle_personality_command("/personality coder")
         assert "Style: use code examples" in cli.system_prompt
 
     def test_string_personality_still_works(self):
         cli = self._make_cli({"helper": "You are helpful."})
-        with patch("hermes_cli.cli.save_config_value", return_value=True):
+        with patch("logos_cli.cli.save_config_value", return_value=True):
             cli._handle_personality_command("/personality helper")
         assert cli.system_prompt == "You are helpful."
 
     def test_resolve_prompt_dict_no_tone_no_style(self):
-        from hermes_cli.cli import HermesCLI
+        from logos_cli.cli import HermesCLI
         result = HermesCLI._resolve_personality_prompt({
             "description": "A helper",
             "system_prompt": "You are helpful.",
@@ -207,6 +207,6 @@ class TestPersonalityDictFormat:
         assert result == "You are helpful."
 
     def test_resolve_prompt_string(self):
-        from hermes_cli.cli import HermesCLI
+        from logos_cli.cli import HermesCLI
         result = HermesCLI._resolve_personality_prompt("You are helpful.")
         assert result == "You are helpful."

@@ -718,7 +718,7 @@ def _resolve_manager_config() -> Tuple[Path, float]:
 
     if base_dir is None or ttl_hours is None:
         try:
-            from hermes_cli.config import load_config
+            from logos_cli.config import load_config
             cfg = load_config()
             ws_cfg = cfg.get("workspace", {})
             if base_dir is None:
@@ -747,7 +747,7 @@ def load_workspace_policy_from_config() -> Tuple[FilesystemPolicy, WritePolicy, 
     """
     defaults = (FilesystemPolicy.FULL_ACCESS, WritePolicy.FULL_WRITE, 24.0, [])
     try:
-        from hermes_cli.config import load_config
+        from logos_cli.config import load_config
         cfg = load_config()
         ws_cfg = cfg.get("workspace", {})
 

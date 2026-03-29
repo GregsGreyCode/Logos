@@ -12,7 +12,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from hermes_cli.config import get_hermes_home
+from logos_cli.config import get_hermes_home
 
 logger = logging.getLogger(__name__)
 

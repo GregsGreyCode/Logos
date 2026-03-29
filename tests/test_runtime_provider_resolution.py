@@ -1,4 +1,4 @@
-from hermes_cli import runtime_provider as rp
+from logos_cli import runtime_provider as rp
 
 
 def test_resolve_runtime_provider_codex(monkeypatch):

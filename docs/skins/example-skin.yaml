@@ -6,7 +6,7 @@
 # All fields are optional — missing values inherit from the default skin.
 # Activate with: /skin <name>  or  display.skin: <name> in config.yaml
 #
-# See hermes_cli/skin_engine.py for the full schema reference.
+# See logos_cli/skin_engine.py for the full schema reference.
 # ============================================================================
 
 # Required: unique skin name (used in /skin command and config)

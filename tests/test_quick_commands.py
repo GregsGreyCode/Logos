@@ -17,7 +17,7 @@ class TestCLIQuickCommands:
         return str(call_arg)
 
     def _make_cli(self, quick_commands):
-        from hermes_cli.cli import HermesCLI
+        from logos_cli.cli import HermesCLI
         cli = HermesCLI.__new__(HermesCLI)
         cli.config = {"quick_commands": quick_commands}
         cli.console = MagicMock()
@@ -64,7 +64,7 @@ class TestCLIQuickCommands:
     def test_quick_command_takes_priority_over_skill_commands(self):
         """Quick commands must be checked before skill slash commands."""
         cli = self._make_cli({"mygif": {"type": "exec", "command": "echo overridden"}})
-        with patch("hermes_cli.cli._skill_commands", {"/mygif": {"name": "gif-search"}}):
+        with patch("logos_cli.cli._skill_commands", {"/mygif": {"name": "gif-search"}}):
             cli.process_command("/mygif")
         cli.console.print.assert_called_once()
         printed = self._printed_plain(cli.console.print.call_args[0][0])

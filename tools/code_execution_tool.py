@@ -668,7 +668,7 @@ def _kill_process_group(proc, escalate: bool = False):
 def _load_config() -> dict:
     """Load code_execution config from CLI_CONFIG if available."""
     try:
-        from hermes_cli.cli import CLI_CONFIG
+        from logos_cli.cli import CLI_CONFIG
         return CLI_CONFIG.get("code_execution", {})
     except Exception:
         return {}

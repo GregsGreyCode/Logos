@@ -1,8 +1,8 @@
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
-from hermes_cli.cli import HermesCLI, _rich_text_from_ansi
-from hermes_cli.skin_engine import get_active_skin, set_active_skin
+from logos_cli.cli import HermesCLI, _rich_text_from_ansi
+from logos_cli.skin_engine import get_active_skin, set_active_skin
 
 
 def _make_cli_stub():
@@ -53,7 +53,7 @@ class TestCliSkinPromptIntegration:
         cli = _make_cli_stub()
         cli._secret_state = {"response_queue": object()}
 
-        with patch("hermes_cli.skin_engine.get_active_prompt_symbol", return_value="⚔ "):
+        with patch("logos_cli.skin_engine.get_active_prompt_symbol", return_value="⚔ "):
             assert cli._get_tui_prompt_fragments() == [("class:sudo-prompt", "🔑 ⚔ ")]
 
     def test_build_tui_style_dict_uses_skin_overrides(self):
@@ -79,7 +79,7 @@ class TestCliSkinPromptIntegration:
     def test_handle_skin_command_refreshes_live_tui(self, capsys):
         cli = _make_cli_stub()
 
-        with patch("hermes_cli.cli.save_config_value", return_value=True):
+        with patch("logos_cli.cli.save_config_value", return_value=True):
             cli._handle_skin_command("/skin ares")
 
         output = capsys.readouterr().out

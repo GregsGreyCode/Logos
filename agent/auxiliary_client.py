@@ -41,7 +41,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from openai import OpenAI
 
-from hermes_cli.config import get_hermes_home
+from logos_cli.config import get_hermes_home
 from core.constants import OPENROUTER_BASE_URL
 
 logger = logging.getLogger(__name__)
@@ -344,7 +344,7 @@ def _nous_base_url() -> str:
 def _read_codex_access_token() -> Optional[str]:
     """Read a valid Codex OAuth access token from Hermes auth store (~/.hermes/auth.json)."""
     try:
-        from hermes_cli.auth import _read_codex_tokens
+        from logos_cli.auth import _read_codex_tokens
         data = _read_codex_tokens()
         tokens = data.get("tokens", {})
         access_token = tokens.get("access_token")
@@ -363,7 +363,7 @@ def _resolve_api_key_provider() -> Tuple[Optional[OpenAI], Optional[str]]:
     or (None, None) if none are configured.
     """
     try:
-        from hermes_cli.auth import PROVIDER_REGISTRY
+        from logos_cli.auth import PROVIDER_REGISTRY
     except ImportError:
         logger.debug("Could not import PROVIDER_REGISTRY for API-key fallback")
         return None, None
@@ -451,7 +451,7 @@ def _read_main_model() -> str:
     if from_env:
         return from_env.strip()
     try:
-        from hermes_cli.config import load_config
+        from logos_cli.config import load_config
         cfg = load_config()
         model_cfg = cfg.get("model", {})
         if isinstance(model_cfg, str) and model_cfg.strip():
@@ -675,9 +675,9 @@ def resolve_provider_client(
 
     # ── API-key providers from PROVIDER_REGISTRY ─────────────────────
     try:
-        from hermes_cli.auth import PROVIDER_REGISTRY, _resolve_kimi_base_url
+        from logos_cli.auth import PROVIDER_REGISTRY, _resolve_kimi_base_url
     except ImportError:
-        logger.debug("hermes_cli.auth not available for provider %s", provider)
+        logger.debug("logos_cli.auth not available for provider %s", provider)
         return None, None
 
     pconfig = PROVIDER_REGISTRY.get(provider)
@@ -902,7 +902,7 @@ def _resolve_task_provider_model(
 
         # Read from config file
         try:
-            from hermes_cli.config import load_config
+            from logos_cli.config import load_config
             config = load_config()
         except ImportError:
             return "auto", model

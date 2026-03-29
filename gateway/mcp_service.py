@@ -384,7 +384,7 @@ class MCPGatewayService:
 def load_mcp_gateway_config() -> dict:
     """Load mcp_servers + mcp_policy from ~/.logos/config.yaml."""
     try:
-        from hermes_cli.config import load_config
+        from logos_cli.config import load_config
         return load_config()
     except Exception as exc:
         logger.debug("mcp_service: could not load config: %s", exc)

@@ -113,7 +113,7 @@ This means:
 
 ### Config
 
-Add to `DEFAULT_CONFIG` in `hermes_cli/config.py`:
+Add to `DEFAULT_CONFIG` in `logos_cli/config.py`:
 
 ```python
 "checkpoints": False,          # Enable filesystem checkpoints before destructive ops
@@ -183,7 +183,7 @@ Also respects the project's `.gitignore` if present (shadow repo can read it via
 |------|--------|
 | `tools/checkpoint_manager.py` | **NEW** — CheckpointManager class (adapted from PR #559) |
 | `run_agent.py` | Add CheckpointManager init + trigger in `_execute_tool_calls()` |
-| `hermes_cli/config.py` | Add `checkpoints` + `checkpoint_max_snapshots` to DEFAULT_CONFIG |
+| `logos_cli/config.py` | Add `checkpoints` + `checkpoint_max_snapshots` to DEFAULT_CONFIG |
 | `cli.py` | Add `/rollback` slash command handler |
 | `gateway/run.py` | Add `/rollback` slash command handler |
 | `tests/tools/test_checkpoint_manager.py` | **NEW** — tests (adapted from PR #559's tests) |
@@ -211,7 +211,7 @@ Also respects the project's `.gitignore` if present (shadow repo can read it via
 
 1. `tools/checkpoint_manager.py` — core class with take/list/restore/prune
 2. `tests/tools/test_checkpoint_manager.py` — tests
-3. `hermes_cli/config.py` — config keys
+3. `logos_cli/config.py` — config keys
 4. `run_agent.py` — integration (init + trigger)
 5. `cli.py` — `/rollback` slash command
 6. `gateway/run.py` — `/rollback` slash command

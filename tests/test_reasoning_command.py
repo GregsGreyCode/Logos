@@ -21,7 +21,7 @@ class TestParseReasoningConfig(unittest.TestCase):
     """Verify _parse_reasoning_config handles all effort levels."""
 
     def _parse(self, effort):
-        from hermes_cli.cli import _parse_reasoning_config
+        from logos_cli.cli import _parse_reasoning_config
         return _parse_reasoning_config(effort)
 
     def test_none_disables(self):
@@ -100,7 +100,7 @@ class TestHandleReasoningCommand(unittest.TestCase):
 
     def test_effort_level_sets_config(self):
         """Setting an effort level should update reasoning_config."""
-        from hermes_cli.cli import _parse_reasoning_config
+        from logos_cli.cli import _parse_reasoning_config
         stub = self._make_cli()
         arg = "high"
         parsed = _parse_reasoning_config(arg)
@@ -108,7 +108,7 @@ class TestHandleReasoningCommand(unittest.TestCase):
         self.assertEqual(stub.reasoning_config, {"enabled": True, "effort": "high"})
 
     def test_effort_none_disables_reasoning(self):
-        from hermes_cli.cli import _parse_reasoning_config
+        from logos_cli.cli import _parse_reasoning_config
         stub = self._make_cli()
         parsed = _parse_reasoning_config("none")
         stub.reasoning_config = parsed
@@ -116,7 +116,7 @@ class TestHandleReasoningCommand(unittest.TestCase):
 
     def test_invalid_argument_rejected(self):
         """Invalid arguments should be rejected (parsed returns None)."""
-        from hermes_cli.cli import _parse_reasoning_config
+        from logos_cli.cli import _parse_reasoning_config
         parsed = _parse_reasoning_config("turbo")
         self.assertIsNone(parsed)
 
@@ -434,7 +434,7 @@ class TestConfigDefault(unittest.TestCase):
     """Verify config default for show_reasoning."""
 
     def test_default_config_has_show_reasoning(self):
-        from hermes_cli.config import DEFAULT_CONFIG
+        from logos_cli.config import DEFAULT_CONFIG
         display = DEFAULT_CONFIG.get("display", {})
         self.assertIn("show_reasoning", display)
         self.assertFalse(display["show_reasoning"])
@@ -444,7 +444,7 @@ class TestCommandRegistered(unittest.TestCase):
     """Verify /reasoning is in the COMMANDS dict."""
 
     def test_reasoning_in_commands(self):
-        from hermes_cli.commands import COMMANDS
+        from logos_cli.commands import COMMANDS
         self.assertIn("/reasoning", COMMANDS)
 
 
