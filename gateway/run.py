@@ -60,23 +60,57 @@ if _env_path.exists():
 # Also try project .env as fallback
 load_dotenv()
 
-# Bridge config.yaml values into the environment so os.getenv() picks them up.
-# config.yaml is authoritative for terminal settings — overrides .env.
+# Bridge config into the environment so os.getenv() picks them up.
+# Two-file strategy:
+#   config-base.yaml — infra-managed (k8s ConfigMap), overwritten each restart
+#   config.yaml      — runtime-managed (setup wizard writes API keys, model, etc.)
+# Base is loaded first, then runtime overlays on top. Runtime wins on conflict.
 _config_path = _hermes_home / 'config.yaml'
+_config_base_path = _hermes_home / 'config-base.yaml'
 
 # Models confirmed loaded by this process — skip the check+load on subsequent messages.
 # LM Studio creates a :2 instance if /load is called while the model is running, so
 # we track our own loads and only call /load once per model per gateway lifetime.
 _LMS_CONFIRMED_LOADED: set[str] = set()
-if _config_path.exists():
-    try:
-        import yaml as _yaml
-        with open(_config_path, encoding="utf-8") as _f:
+
+def _deep_merge(base: dict, overlay: dict) -> dict:
+    """Merge overlay into base. Overlay values win; dicts are merged recursively."""
+    merged = base.copy()
+    for key, val in overlay.items():
+        if key in merged and isinstance(merged[key], dict) and isinstance(val, dict):
+            merged[key] = _deep_merge(merged[key], val)
+        else:
+            merged[key] = val
+    return merged
+
+# Load and merge config files
+_cfg: dict = {}
+try:
+    import yaml as _yaml
+    if _config_base_path.exists():
+        with open(_config_base_path, encoding="utf-8") as _f:
             _cfg = _yaml.safe_load(_f) or {}
-        # Top-level simple values (fallback only — don't override .env)
+    if _config_path.exists():
+        with open(_config_path, encoding="utf-8") as _f:
+            _runtime_cfg = _yaml.safe_load(_f) or {}
+        _cfg = _deep_merge(_cfg, _runtime_cfg)
+except Exception:
+    pass
+
+# Env var values that are placeholders — config.yaml should override these.
+_PLACEHOLDER_ENV_VALUES = frozenset({"local", "not-needed", "dummy", "placeholder", "none", "changeme", ""})
+
+if _cfg:
+    try:
+        # Top-level simple values — set env if not present or if the current
+        # value is a known placeholder (e.g. OPENAI_API_KEY="local" from k8s secret).
         for _key, _val in _cfg.items():
-            if isinstance(_val, (str, int, float, bool)) and _key not in os.environ:
-                os.environ[_key] = str(_val)
+            if isinstance(_val, (str, int, float, bool)):
+                _str_val = str(_val).strip()
+                _existing = os.environ.get(_key, "")
+                if not _existing or _existing.strip().lower() in _PLACEHOLDER_ENV_VALUES:
+                    if _str_val and _str_val.lower() not in _PLACEHOLDER_ENV_VALUES:
+                        os.environ[_key] = _str_val
         # Terminal config is nested — bridge to TERMINAL_* env vars.
         # config.yaml overrides .env for these since it's the documented config path.
         _terminal_cfg = _cfg.get("terminal", {})
