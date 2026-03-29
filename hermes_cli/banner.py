@@ -103,7 +103,7 @@ def get_available_skills() -> Dict[str, List[str]]:
     """Scan ~/.hermes/skills/ and return skills grouped by category."""
     import os
 
-    hermes_home = Path(os.getenv("HERMES_HOME", Path.home() / ".hermes"))
+    hermes_home = Path(os.getenv("LOGOS_HOME") or os.getenv("HERMES_HOME") or str(Path.home() / ".logos"))
     skills_dir = hermes_home / "skills"
     skills_by_category = {}
 
@@ -139,7 +139,7 @@ def check_for_updates() -> Optional[int]:
     ``~/.hermes/.update_check``).  Returns the number of commits behind,
     or ``None`` if the check fails or isn't applicable.
     """
-    hermes_home = Path(os.getenv("HERMES_HOME", Path.home() / ".hermes"))
+    hermes_home = Path(os.getenv("LOGOS_HOME") or os.getenv("HERMES_HOME") or str(Path.home() / ".logos"))
     repo_dir = hermes_home / "hermes-agent"
     cache_file = hermes_home / ".update_check"
 

@@ -37,7 +37,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from cron.jobs import get_due_jobs, mark_job_run, save_job_output
 
 # Resolve Hermes home directory (respects HERMES_HOME override)
-_hermes_home = Path(os.getenv("HERMES_HOME", Path.home() / ".hermes"))
+_hermes_home = Path(os.getenv("LOGOS_HOME") or os.getenv("HERMES_HOME") or str(Path.home() / ".logos"))
 
 # File-based lock prevents concurrent ticks from gateway + daemon + systemd timer
 _LOCK_DIR = _hermes_home / "cron"

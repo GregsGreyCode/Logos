@@ -64,7 +64,7 @@ _COMMAND_SPINNER_FRAMES = ("⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧
 from dotenv import load_dotenv
 from core.constants import OPENROUTER_BASE_URL
 
-_hermes_home = Path(os.getenv("HERMES_HOME", Path.home() / ".hermes"))
+_hermes_home = Path(os.getenv("LOGOS_HOME") or os.getenv("HERMES_HOME") or str(Path.home() / ".logos"))
 _user_env = _hermes_home / ".env"
 _project_env = Path(__file__).parent / '.env'
 if _user_env.exists():
@@ -823,7 +823,7 @@ def _get_available_skills() -> Dict[str, List[str]]:
     """
     import os
     
-    hermes_home = Path(os.getenv("HERMES_HOME", Path.home() / ".hermes"))
+    hermes_home = Path(os.getenv("LOGOS_HOME") or os.getenv("HERMES_HOME") or str(Path.home() / ".logos"))
     skills_dir = hermes_home / "skills"
     skills_by_category = {}
     
@@ -1858,7 +1858,7 @@ class HermesCLI:
         """
         from hermes_cli.clipboard import save_clipboard_image
 
-        img_dir = Path(os.getenv("HERMES_HOME", Path.home() / ".hermes")) / "images"
+        img_dir = Path(os.getenv("LOGOS_HOME") or os.getenv("HERMES_HOME") or str(Path.home() / ".logos")) / "images"
         self._image_counter += 1
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
         img_path = img_dir / f"clip_{ts}_{self._image_counter}.png"

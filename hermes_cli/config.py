@@ -1,15 +1,15 @@
 """
-Configuration management for Hermes Agent.
+Configuration management for Logos.
 
-Config files are stored in ~/.hermes/ for easy access:
-- ~/.hermes/config.yaml  - All settings (model, toolsets, terminal, etc.)
-- ~/.hermes/.env         - API keys and secrets
+Config files are stored in ~/.logos/ for easy access:
+- ~/.logos/config.yaml  - All settings (model, toolsets, terminal, etc.)
+- ~/.logos/.env         - API keys and secrets
 
 This module provides:
-- hermes config          - Show current configuration
-- hermes config edit     - Open config in editor
-- hermes config set      - Set a specific value
-- hermes config wizard   - Re-run setup wizard
+- logos config          - Show current configuration
+- logos config edit     - Open config in editor
+- logos config set      - Set a specific value
+- logos config wizard   - Re-run setup wizard
 """
 
 import os
@@ -36,9 +36,34 @@ from hermes_cli.default_soul import DEFAULT_SOUL_MD
 # Config paths
 # =============================================================================
 
-def get_hermes_home() -> Path:
-    """Get the Hermes home directory (~/.hermes)."""
-    return Path(os.getenv("HERMES_HOME", Path.home() / ".hermes"))
+def get_logos_home() -> Path:
+    """Get the Logos home directory (~/.logos).
+
+    Checks LOGOS_HOME first, then HERMES_HOME (legacy), then defaults to ~/.logos.
+    Automatically migrates ~/.hermes → ~/.logos on first call if needed.
+    """
+    home = Path(
+        os.getenv("LOGOS_HOME")
+        or os.getenv("HERMES_HOME")
+        or str(Path.home() / ".logos")
+    )
+    # Auto-migrate legacy ~/.hermes → ~/.logos
+    if (
+        "LOGOS_HOME" not in os.environ
+        and "HERMES_HOME" not in os.environ
+        and not (Path.home() / ".logos").exists()
+        and (Path.home() / ".hermes").exists()
+    ):
+        try:
+            (Path.home() / ".hermes").rename(Path.home() / ".logos")
+            home = Path.home() / ".logos"
+        except OSError:
+            pass  # cross-device rename or permissions — leave both in place
+    return home
+
+
+# Backward-compatible alias
+get_hermes_home = get_logos_home
 
 def get_config_path() -> Path:
     """Get the main config file path."""
@@ -70,7 +95,7 @@ def _secure_file(path):
 
 
 def _ensure_default_soul_md(home: Path) -> None:
-    """Seed a default SOUL.md into HERMES_HOME if the user doesn't have one yet."""
+    """Seed a default SOUL.md into LOGOS_HOME if the user doesn't have one yet."""
     soul_path = home / "SOUL.md"
     if soul_path.exists():
         return
@@ -78,9 +103,9 @@ def _ensure_default_soul_md(home: Path) -> None:
     _secure_file(soul_path)
 
 
-def ensure_hermes_home():
-    """Ensure ~/.hermes directory structure exists with secure permissions."""
-    home = get_hermes_home()
+def ensure_logos_home():
+    """Ensure ~/.logos directory structure exists with secure permissions."""
+    home = get_logos_home()
     home.mkdir(parents=True, exist_ok=True)
     _secure_dir(home)
     for subdir in ("cron", "sessions", "logs", "memories"):
@@ -88,6 +113,10 @@ def ensure_hermes_home():
         d.mkdir(parents=True, exist_ok=True)
         _secure_dir(d)
     _ensure_default_soul_md(home)
+
+
+# Backward-compatible alias
+ensure_hermes_home = ensure_logos_home
 
 
 # =============================================================================

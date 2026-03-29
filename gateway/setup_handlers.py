@@ -1305,7 +1305,7 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
                     if max_context:
                         try:
                             import yaml as _cp_yaml
-                            _cp_path = pathlib.Path(os.environ.get("HERMES_HOME", str(pathlib.Path.home() / ".hermes"))) / "config.yaml"
+                            _cp_path = pathlib.Path(os.environ.get("LOGOS_HOME") or os.environ.get("HERMES_HOME") or str(pathlib.Path.home() / ".logos")) / "config.yaml"
                             _cp_cfg: dict = _cp_yaml.safe_load(_cp_path.read_text(encoding="utf-8")) if _cp_path.exists() else {}
                             _cp_cfg.setdefault("ollama_context_lengths", {})[model_id] = max_context
                             _cp_path.write_text(_cp_yaml.dump(_cp_cfg, default_flow_style=False, allow_unicode=True))
@@ -1423,7 +1423,7 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
                     if max_context:
                         try:
                             import yaml as _cp_yaml
-                            _cp_path = pathlib.Path(os.environ.get("HERMES_HOME", str(pathlib.Path.home() / ".hermes"))) / "config.yaml"
+                            _cp_path = pathlib.Path(os.environ.get("LOGOS_HOME") or os.environ.get("HERMES_HOME") or str(pathlib.Path.home() / ".logos")) / "config.yaml"
                             _cp_cfg: dict = _cp_yaml.safe_load(_cp_path.read_text(encoding="utf-8")) if _cp_path.exists() else {}
                             _cp_cfg.setdefault("lmstudio_context_lengths", {})[model_id] = max_context
                             _cp_path.write_text(_cp_yaml.dump(_cp_cfg, default_flow_style=False, allow_unicode=True))
@@ -1969,7 +1969,7 @@ async def handle_setup_complete(request: web.Request) -> web.Response:
         # Write chosen model + endpoint to config.yaml so the agent actually uses them.
         # Keys are bridged to env vars by run.py on startup (only if not already in env,
         # so pre-configured k8s deployments with explicit env vars are not overridden).
-        _hermes_home = pathlib.Path(os.environ.get("HERMES_HOME") or (pathlib.Path.home() / ".logos"))
+        _hermes_home = pathlib.Path(os.environ.get("LOGOS_HOME") or os.environ.get("HERMES_HOME") or str(pathlib.Path.home() / ".logos"))
         _config_path = _hermes_home / "config.yaml"
         try:
             import yaml as _yaml
@@ -2226,7 +2226,7 @@ def _auto_spawn_first_instance(soul_name: str, model: str) -> None:
 _LOGOS_PORTS = [8080, 7860, 8000]   # ports to probe for Logos instances
 _DISCOVER_TIMEOUT = aiohttp.ClientTimeout(total=1.5)
 _DISCOVER_CONCURRENCY = 30
-_CONNECT_JSON = pathlib.Path(os.environ.get("HERMES_HOME", pathlib.Path.home() / ".logos")) / "connect.json"
+_CONNECT_JSON = pathlib.Path(os.environ.get("LOGOS_HOME") or os.environ.get("HERMES_HOME") or str(pathlib.Path.home() / ".logos")) / "connect.json"
 
 
 async def _probe_logos(session: aiohttp.ClientSession, url: str) -> dict | None:
@@ -2364,7 +2364,7 @@ import urllib.request as _urllib_request
 
 
 _OPENSHELL_IMAGE  = os.getenv("LOGOS_OPENSHELL_IMAGE", "logos-hermes-sandbox")
-_HERMES_BIN_DIR   = pathlib.Path(os.getenv("HERMES_HOME", pathlib.Path.home() / ".hermes")) / "bin"
+_HERMES_BIN_DIR   = pathlib.Path(os.getenv("LOGOS_HOME") or os.getenv("HERMES_HOME") or str(pathlib.Path.home() / ".logos")) / "bin"
 
 # GitHub release asset naming (actual): openshell-{arch}-{os-triple}.tar.gz
 # e.g. openshell-x86_64-unknown-linux-musl.tar.gz, openshell-aarch64-apple-darwin.tar.gz

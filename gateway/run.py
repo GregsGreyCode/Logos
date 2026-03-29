@@ -33,13 +33,14 @@ from typing import Dict, Optional, Any, List
 # Add parent directory to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-# Resolve home directory (respects HERMES_HOME override; defaults to ~/.logos).
+# Resolve home directory (respects LOGOS_HOME / HERMES_HOME override; defaults to ~/.logos).
 # Migration: if ~/.logos does not yet exist but ~/.hermes does (legacy Linux/macOS
 # installations), rename ~/.hermes → ~/.logos so existing data is preserved.
 _default_logos_home = Path.home() / ".logos"
 _legacy_hermes_home = Path.home() / ".hermes"
 if (
-    "HERMES_HOME" not in os.environ
+    "LOGOS_HOME" not in os.environ
+    and "HERMES_HOME" not in os.environ
     and not _default_logos_home.exists()
     and _legacy_hermes_home.exists()
 ):
@@ -47,7 +48,11 @@ if (
         _legacy_hermes_home.rename(_default_logos_home)
     except OSError:
         pass  # cross-device rename or permissions — leave both in place
-_hermes_home = Path(os.getenv("HERMES_HOME", _default_logos_home))
+_hermes_home = Path(
+    os.getenv("LOGOS_HOME")
+    or os.getenv("HERMES_HOME")
+    or str(_default_logos_home)
+)
 
 # Load environment variables from ~/.logos/.env first
 from dotenv import load_dotenv

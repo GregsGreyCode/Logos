@@ -506,7 +506,7 @@ _active_skin_name: str = "default"
 
 def _skins_dir() -> Path:
     """User skins directory."""
-    home = Path(os.getenv("HERMES_HOME", Path.home() / ".hermes"))
+    home = Path(os.getenv("LOGOS_HOME") or os.getenv("HERMES_HOME") or str(Path.home() / ".logos"))
     return home / "skins"
 
 

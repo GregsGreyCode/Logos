@@ -44,7 +44,7 @@ def _load_env() -> None:
     """Load .env from HERMES_HOME (default ``~/.hermes``)."""
     from dotenv import load_dotenv
 
-    hermes_home = Path(os.getenv("HERMES_HOME", Path.home() / ".hermes"))
+    hermes_home = Path(os.getenv("LOGOS_HOME") or os.getenv("HERMES_HOME") or str(Path.home() / ".logos"))
     env_file = hermes_home / ".env"
     if env_file.exists():
         try:

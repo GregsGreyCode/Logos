@@ -1,7 +1,7 @@
 """
 Gateway subcommand for hermes CLI.
 
-Handles: hermes gateway [run|start|stop|restart|status|install|uninstall|setup]
+Handles: logos gateway [run|start|stop|restart|status|install|uninstall|setup]
 """
 
 import asyncio
@@ -13,7 +13,7 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).parent.parent.resolve()
 
-from hermes_cli.config import get_env_value, get_hermes_home, save_env_value
+from hermes_cli.config import get_env_value, get_logos_home, save_env_value
 from hermes_cli.setup import (
     print_header, print_info, print_success, print_warning, print_error,
     prompt, prompt_choice, prompt_yes_no,
@@ -31,6 +31,8 @@ def find_gateway_pids() -> list:
     patterns = [
         "hermes_cli.main gateway",
         "hermes gateway",
+        "logos gateway",
+        "logos_cli.main gateway",
         "gateway/run.py",
     ]
 
@@ -119,8 +121,8 @@ def is_windows() -> bool:
 # Service Configuration
 # =============================================================================
 
-SERVICE_NAME = "hermes-gateway"
-SERVICE_DESCRIPTION = "Hermes Agent Gateway - Messaging Platform Integration"
+SERVICE_NAME = "logos-gateway"
+SERVICE_DESCRIPTION = "Logos Gateway - Agent Platform Service"
 
 
 def get_systemd_unit_path() -> Path:
@@ -189,7 +191,7 @@ def print_systemd_linger_guidance() -> None:
         print("  sudo loginctl enable-linger $USER")
 
 def get_launchd_plist_path() -> Path:
-    return Path.home() / "Library" / "LaunchAgents" / "ai.hermes.gateway.plist"
+    return Path.home() / "Library" / "LaunchAgents" / "ai.logos.gateway.plist"
 
 def get_python_path() -> str:
     if is_windows():
@@ -201,13 +203,16 @@ def get_python_path() -> str:
     return sys.executable
 
 def get_hermes_cli_path() -> str:
-    """Get the path to the hermes CLI."""
-    # Check if installed via pip
+    """Get the path to the logos CLI."""
+    # Check if installed via pip (prefer logos, fall back to hermes)
     import shutil
+    logos_bin = shutil.which("logos")
+    if logos_bin:
+        return logos_bin
     hermes_bin = shutil.which("hermes")
     if hermes_bin:
         return hermes_bin
-    
+
     # Fallback to direct module execution
     return f"{get_python_path()} -m hermes_cli.main"
 
@@ -275,7 +280,7 @@ def refresh_systemd_unit_if_needed() -> bool:
 
     unit_path.write_text(generate_systemd_unit(), encoding="utf-8")
     subprocess.run(["systemctl", "--user", "daemon-reload"], check=True)
-    print("↻ Updated gateway service definition to match the current Hermes install")
+    print("↻ Updated gateway service definition to match the current Logos install")
     return True
 
 
@@ -298,8 +303,8 @@ def systemd_install(force: bool = False):
     print("✓ Service installed and enabled!")
     print()
     print("Next steps:")
-    print(f"  hermes gateway start              # Start the service")
-    print(f"  hermes gateway status             # Check status")
+    print(f"  logos gateway start              # Start the service")
+    print(f"  logos gateway status             # Check status")
     print(f"  journalctl --user -u {SERVICE_NAME} -f  # View logs")
     print()
     print_systemd_linger_guidance()
@@ -338,12 +343,12 @@ def systemd_status(deep: bool = False):
     unit_path = get_systemd_unit_path()
     if not unit_path.exists():
         print("✗ Gateway service is not installed")
-        print("  Run: hermes gateway install")
+        print("  Run: logos gateway install")
         return
 
     if not systemd_unit_is_current():
         print("⚠ Installed gateway service definition is outdated")
-        print("  Run: hermes gateway restart  # auto-refreshes the unit")
+        print("  Run: logos gateway restart  # auto-refreshes the unit")
         print()
     
     # Show detailed status first
@@ -365,7 +370,7 @@ def systemd_status(deep: bool = False):
         print("✓ Gateway service is running")
     else:
         print("✗ Gateway service is stopped")
-        print("  Run: hermes gateway start")
+        print("  Run: logos gateway start")
 
     if deep:
         print_systemd_linger_guidance()
@@ -393,7 +398,7 @@ def systemd_status(deep: bool = False):
 def generate_launchd_plist() -> str:
     python_path = get_python_path()
     working_dir = str(PROJECT_ROOT)
-    log_dir = get_hermes_home() / "logs"
+    log_dir = get_logos_home() / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
     
     return f"""<?xml version="1.0" encoding="UTF-8"?>
@@ -401,7 +406,7 @@ def generate_launchd_plist() -> str:
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>ai.hermes.gateway</string>
+    <string>ai.logos.gateway</string>
     
     <key>ProgramArguments</key>
     <array>
@@ -451,8 +456,8 @@ def launchd_install(force: bool = False):
     print("✓ Service installed and loaded!")
     print()
     print("Next steps:")
-    print("  hermes gateway status             # Check status")
-    print("  tail -f ~/.hermes/logs/gateway.log  # View logs")
+    print("  logos gateway status             # Check status")
+    print("  tail -f ~/.logos/logs/gateway.log  # View logs")
 
 def launchd_uninstall():
     plist_path = get_launchd_plist_path()
@@ -465,11 +470,11 @@ def launchd_uninstall():
     print("✓ Service uninstalled")
 
 def launchd_start():
-    subprocess.run(["launchctl", "start", "ai.hermes.gateway"], check=True)
+    subprocess.run(["launchctl", "start", "ai.logos.gateway"], check=True)
     print("✓ Service started")
 
 def launchd_stop():
-    subprocess.run(["launchctl", "stop", "ai.hermes.gateway"], check=True)
+    subprocess.run(["launchctl", "stop", "ai.logos.gateway"], check=True)
     print("✓ Service stopped")
 
 def launchd_restart():
@@ -478,7 +483,7 @@ def launchd_restart():
 
 def launchd_status(deep: bool = False):
     result = subprocess.run(
-        ["launchctl", "list", "ai.hermes.gateway"],
+        ["launchctl", "list", "ai.logos.gateway"],
         capture_output=True,
         text=True
     )
@@ -490,7 +495,7 @@ def launchd_status(deep: bool = False):
         print("✗ Gateway service is not loaded")
     
     if deep:
-        log_file = get_hermes_home() / "logs" / "gateway.log"
+        log_file = get_logos_home() / "logs" / "gateway.log"
         if log_file.exists():
             print()
             print("Recent logs:")
@@ -817,7 +822,7 @@ def _is_service_running() -> bool:
         return result.stdout.strip() == "active"
     elif is_macos() and get_launchd_plist_path().exists():
         result = subprocess.run(
-            ["launchctl", "list", "ai.hermes.gateway"],
+            ["launchctl", "list", "ai.logos.gateway"],
             capture_output=True, text=True
         )
         return result.returncode == 0

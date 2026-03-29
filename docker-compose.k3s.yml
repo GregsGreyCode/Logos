@@ -130,7 +130,7 @@ services:
       LOGOS_AGENT_IMAGE: "${LOGOS_IMAGE:-logos:local}"
 
     volumes:
-      - logos-data:/home/hermes/.hermes
+      - logos-data:/home/logos/.logos
       - kubeconfig:/kube:ro   # read-only — k3s-init wrote the patched config
 
     healthcheck:

@@ -52,7 +52,7 @@ _session_workspaces: dict[str, Path] = {}
 # run_id → workspace Path
 _run_workspaces: dict[str, Path] = {}
 
-_HERMES_HOME = Path(os.getenv("HERMES_HOME", str(Path.home() / ".hermes")))
+_HERMES_HOME = Path(os.getenv("LOGOS_HOME") or os.getenv("HERMES_HOME") or str(Path.home() / ".logos"))
 _WORKSPACES_ROOT = _HERMES_HOME / "workspaces"
 
 # TTL is configurable via HERMES_WORKSPACE_TTL_HOURS env var (default 24h).

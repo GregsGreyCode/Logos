@@ -59,7 +59,7 @@ services:
 
     volumes:
       # Persists: auth DB, memory, sessions, logs, skills, config.yaml
-      - logos-data:/home/hermes/.hermes
+      - logos-data:/home/logos/.logos
 
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:8080/health"]

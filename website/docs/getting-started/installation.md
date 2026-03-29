@@ -1,46 +1,54 @@
 ---
 sidebar_position: 2
 title: "Installation"
-description: "Install Hermes Agent on Linux, macOS, or WSL2"
+description: "Install Logos on Linux, macOS, WSL2, or Windows"
 ---
 
 # Installation
 
-Get Hermes Agent up and running in under two minutes with the one-line installer, or follow the manual steps for full control.
+Get Logos up and running with the one-line installer, the Windows desktop app, or a fully manual install.
 
 ## Quick Install
 
 ### Linux / macOS / WSL2
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/GregsGreyCode/logos/main/scripts/install.sh | bash
 ```
 
-:::warning Windows
-Native Windows is **not supported**. Please install [WSL2](https://learn.microsoft.com/en-us/windows/wsl/install) and run Hermes Agent from there. The install command above works inside WSL2.
+The installer handles everything automatically — all dependencies (Python, Node.js, ripgrep, ffmpeg), the repo clone, virtual environment, global `logos` and `hermes` command setup, and LLM provider configuration.
+
+### Windows Desktop App
+
+Download the `.exe` installer from the [releases page](https://github.com/GregsGreyCode/logos/releases). The desktop app:
+
+- Runs the gateway with a LocalProcessExecutor (no Docker or WSL required)
+- Includes a system tray icon with auto-update notifications
+- Stores configuration in `%USERPROFILE%\.logos\`
+
+:::tip WSL2 Alternative
+If you prefer the full Linux experience on Windows, install [WSL2](https://learn.microsoft.com/en-us/windows/wsl/install) and use the Linux installer above. This gives you access to all execution backends including Docker and Kubernetes.
 :::
-
-### What the Installer Does
-
-The installer handles everything automatically — all dependencies (Python, Node.js, ripgrep, ffmpeg), the repo clone, virtual environment, global `hermes` command setup, and LLM provider configuration. By the end, you're ready to chat.
 
 ### After Installation
 
-Reload your shell and start chatting:
+Reload your shell and launch the gateway:
 
 ```bash
 source ~/.bashrc   # or: source ~/.zshrc
-hermes             # Start chatting!
+logos gateway      # Start the Logos gateway + web dashboard
 ```
 
-To reconfigure individual settings later, use the dedicated commands:
+Open http://localhost:8080 in your browser. You're running.
+
+To reconfigure settings later:
 
 ```bash
-hermes model          # Choose your LLM provider and model
-hermes tools          # Configure which tools are enabled
-hermes gateway setup  # Set up messaging platforms
-hermes config set     # Set individual config values
-hermes setup          # Or run the full setup wizard to configure everything at once
+logos model          # Choose your LLM provider and model
+logos tools          # Configure which tools are enabled
+logos gateway setup  # Set up messaging platforms
+logos config set     # Set individual config values
+logos setup          # Or run the full setup wizard
 ```
 
 ---
@@ -70,8 +78,8 @@ If you prefer full control over the installation process, follow these steps.
 Clone with `--recurse-submodules` to pull the required submodules:
 
 ```bash
-git clone --recurse-submodules https://github.com/NousResearch/hermes-agent.git
-cd hermes-agent
+git clone --recurse-submodules https://github.com/GregsGreyCode/logos.git
+cd logos
 ```
 
 If you already cloned without `--recurse-submodules`:
@@ -90,7 +98,7 @@ uv venv venv --python 3.11
 ```
 
 :::tip
-You do **not** need to activate the venv to use `hermes`. The entry point has a hardcoded shebang pointing to the venv Python, so it works globally once symlinked.
+You do **not** need to activate the venv. The entry points have hardcoded shebangs pointing to the venv Python, so they work globally once symlinked.
 :::
 
 ### Step 3: Install Python Dependencies
@@ -103,7 +111,7 @@ export VIRTUAL_ENV="$(pwd)/venv"
 uv pip install -e ".[all]"
 ```
 
-If you only want the core agent (no Telegram/Discord/cron support):
+If you only want the core agent (no messaging, MCP, or cloud support):
 ```bash
 uv pip install -e "."
 ```
@@ -114,20 +122,20 @@ uv pip install -e "."
 | Extra | What it adds | Install command |
 |-------|-------------|-----------------|
 | `all` | Everything below | `uv pip install -e ".[all]"` |
-| `messaging` | Telegram & Discord gateway | `uv pip install -e ".[messaging]"` |
+| `messaging` | Telegram, Discord & Slack gateway adapters | `uv pip install -e ".[messaging]"` |
 | `cron` | Cron expression parsing for scheduled tasks | `uv pip install -e ".[cron]"` |
 | `cli` | Terminal menu UI for setup wizard | `uv pip install -e ".[cli]"` |
 | `modal` | Modal cloud execution backend | `uv pip install -e ".[modal]"` |
 | `tts-premium` | ElevenLabs premium voices | `uv pip install -e ".[tts-premium]"` |
 | `pty` | PTY terminal support | `uv pip install -e ".[pty]"` |
 | `honcho` | AI-native memory (Honcho integration) | `uv pip install -e ".[honcho]"` |
-| `mcp` | Model Context Protocol support | `uv pip install -e ".[mcp]"` |
+| `mcp` | Model Context Protocol server/client support | `uv pip install -e ".[mcp]"` |
 | `homeassistant` | Home Assistant integration | `uv pip install -e ".[homeassistant]"` |
-| `acp` | ACP editor integration support | `uv pip install -e ".[acp]"` |
-| `slack` | Slack messaging | `uv pip install -e ".[slack]"` |
+| `acp` | ACP editor integration (VS Code, Zed, JetBrains) | `uv pip install -e ".[acp]"` |
+| `slack` | Slack messaging platform | `uv pip install -e ".[slack]"` |
 | `dev` | pytest & test utilities | `uv pip install -e ".[dev]"` |
 
-You can combine extras: `uv pip install -e ".[messaging,cron]"`
+You can combine extras: `uv pip install -e ".[messaging,cron,mcp]"`
 
 </details>
 
@@ -164,6 +172,10 @@ cp cli-config.yaml.example ~/.logos/config.yaml
 touch ~/.logos/.env
 ```
 
+:::info Upgrading from an older install?
+If you have an existing `~/.hermes` directory, the gateway automatically migrates it to `~/.logos` on first startup. You can also set `LOGOS_HOME` (or legacy `HERMES_HOME`) to override the location.
+:::
+
 ### Step 7: Add Your API Keys
 
 Open `~/.logos/.env` and add at minimum an LLM provider key:
@@ -179,13 +191,14 @@ FAL_KEY=your-fal-key                   # Image generation (FLUX)
 
 Or set them via the CLI:
 ```bash
-hermes config set OPENROUTER_API_KEY sk-or-v1-your-key-here
+logos config set OPENROUTER_API_KEY sk-or-v1-your-key-here
 ```
 
-### Step 8: Add `hermes` to Your PATH
+### Step 8: Add `logos` and `hermes` to Your PATH
 
 ```bash
 mkdir -p ~/.local/bin
+ln -sf "$(pwd)/venv/bin/logos" ~/.local/bin/logos
 ln -sf "$(pwd)/venv/bin/hermes" ~/.local/bin/hermes
 ```
 
@@ -205,17 +218,18 @@ fish_add_path $HOME/.local/bin
 ### Step 9: Configure Your Provider
 
 ```bash
-hermes model       # Select your LLM provider and model
+logos model       # Select your LLM provider and model
 ```
 
-### Step 10: Verify the Installation
+### Step 10: Verify and Launch
 
 ```bash
-hermes version    # Check that the command is available
-hermes doctor     # Run diagnostics to verify everything is working
-hermes status     # Check your configuration
-hermes chat -q "Hello! What tools do you have available?"
+logos version    # Check that the command is available
+logos doctor     # Run diagnostics to verify everything is working
+logos gateway    # Launch the gateway + web dashboard
 ```
+
+Open http://localhost:8080 to verify the dashboard loads.
 
 ---
 
@@ -228,8 +242,8 @@ For those who just want the commands:
 curl -LsSf https://astral.sh/uv/install.sh | sh
 
 # Clone & enter
-git clone --recurse-submodules https://github.com/NousResearch/hermes-agent.git
-cd hermes-agent
+git clone --recurse-submodules https://github.com/GregsGreyCode/logos.git
+cd logos
 
 # Create venv with Python 3.11
 uv venv venv --python 3.11
@@ -247,13 +261,60 @@ cp cli-config.yaml.example ~/.logos/config.yaml
 touch ~/.logos/.env
 echo 'OPENROUTER_API_KEY=sk-or-v1-your-key' >> ~/.logos/.env
 
-# Make hermes available globally
+# Make logos + hermes available globally
 mkdir -p ~/.local/bin
+ln -sf "$(pwd)/venv/bin/logos" ~/.local/bin/logos
 ln -sf "$(pwd)/venv/bin/hermes" ~/.local/bin/hermes
 
-# Verify
-hermes doctor
-hermes
+# Launch
+logos doctor
+logos gateway
+```
+
+---
+
+## Deployment Options
+
+The gateway spawns agent instances using a pluggable executor. Choose based on your environment:
+
+### Desktop / Development
+
+The gateway runs locally and spawns agents as supervised subprocesses:
+
+```bash
+logos gateway    # Starts on :8080, uses LocalProcessExecutor
+```
+
+No Docker or Kubernetes required. This is what the Windows desktop app does.
+
+### Docker Compose (recommended for most self-hosted setups)
+
+```bash
+docker compose up -d
+```
+
+The Dockerfile entry point is `logos gateway run` — the container runs the gateway, which then spawns isolated agent instances via the configured executor.
+
+### Kubernetes
+
+Logos includes K8s manifests for pod-per-agent isolation with RBAC and NetworkPolicy:
+
+```bash
+kubectl apply -f k8s/
+```
+
+In Kubernetes mode (`HERMES_RUNTIME_MODE=kubernetes`), the gateway creates a separate Deployment, Service, PVC, and ConfigMap for each agent instance — full pod-level isolation.
+
+See the [Deployment Guide](../user-guide/deployment.md) for production configuration details.
+
+### Gateway as a System Service
+
+For bare-metal or VM installs where you want the gateway to survive reboots:
+
+```bash
+logos gateway install   # Install as systemd (Linux) or launchd (macOS) service
+logos gateway start     # Start the service
+logos gateway status    # Check it's running
 ```
 
 ---
@@ -262,8 +323,10 @@ hermes
 
 | Problem | Solution |
 |---------|----------|
-| `hermes: command not found` | Reload your shell (`source ~/.bashrc`) or check PATH |
-| `API key not set` | Run `hermes model` to configure your provider, or `hermes config set OPENROUTER_API_KEY your_key` |
-| Missing config after update | Run `hermes config check` then `hermes config migrate` |
+| `logos: command not found` | Reload your shell (`source ~/.bashrc`) or check PATH |
+| `API key not set` | Run `logos model` to configure your provider, or `logos config set OPENROUTER_API_KEY your_key` |
+| Missing config after update | Run `logos config check` then `logos config migrate` |
+| Gateway won't start | Check port 8080 isn't in use: `lsof -i :8080` |
+| Docker executor fails | Ensure Docker is running and your user is in the `docker` group |
 
-For more diagnostics, run `hermes doctor` — it will tell you exactly what's missing and how to fix it.
+For more diagnostics, run `logos doctor` — it will tell you exactly what's missing and how to fix it.
