@@ -928,13 +928,31 @@ def _normalize_max_turns_config(config: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def load_config() -> Dict[str, Any]:
-    """Load configuration from ~/.hermes/config.yaml."""
+    """Load configuration from config-base.yaml (infra) + config.yaml (runtime).
+
+    Two-file strategy:
+      config-base.yaml — infra-managed (k8s ConfigMap seed), overwritten each restart
+      config.yaml      — runtime-managed (setup wizard, /model, /provider commands)
+    Base is loaded first, then runtime overlays on top.  Runtime wins on conflict.
+    """
     import copy
     ensure_hermes_home()
+    hermes_home = get_hermes_home()
     config_path = get_config_path()
-    
+    config_base_path = hermes_home / "config-base.yaml"
+
     config = copy.deepcopy(DEFAULT_CONFIG)
-    
+
+    # 1. Load infra base config (MCP servers, platform toolsets, etc.)
+    if config_base_path.exists():
+        try:
+            with open(config_base_path, encoding="utf-8") as f:
+                base_config = yaml.safe_load(f) or {}
+            config = _deep_merge(config, base_config)
+        except Exception as e:
+            print(f"Warning: Failed to load config-base.yaml: {e}")
+
+    # 2. Overlay runtime config (API keys, model, endpoint, user prefs)
     if config_path.exists():
         try:
             with open(config_path, encoding="utf-8") as f:
@@ -949,8 +967,8 @@ def load_config() -> Dict[str, Any]:
 
             config = _deep_merge(config, user_config)
         except Exception as e:
-            print(f"Warning: Failed to load config: {e}")
-    
+            print(f"Warning: Failed to load config.yaml: {e}")
+
     return _normalize_max_turns_config(config)
 
 
