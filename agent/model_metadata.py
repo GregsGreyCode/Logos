@@ -124,7 +124,7 @@ def fetch_model_metadata(force_refresh: bool = False) -> Dict[str, Dict[str, Any
 
 def _get_context_cache_path() -> Path:
     """Return path to the persistent context length cache file."""
-    hermes_home = Path(os.environ.get("HERMES_HOME", Path.home() / ".hermes"))
+    hermes_home = Path(os.environ.get("LOGOS_HOME") or os.environ.get("HERMES_HOME") or str(Path.home() / ".logos"))
     return hermes_home / "context_length_cache.yaml"
 
 
@@ -221,7 +221,7 @@ def _get_config_context_length(model: str) -> Optional[int]:
     OpenAI-compatible local backends, not just LM Studio).
     """
     try:
-        hermes_home = Path(os.environ.get("HERMES_HOME", Path.home() / ".hermes"))
+        hermes_home = Path(os.environ.get("LOGOS_HOME") or os.environ.get("HERMES_HOME") or str(Path.home() / ".logos"))
         config_path = hermes_home / "config.yaml"
         if not config_path.exists():
             return None

@@ -883,7 +883,7 @@ def setup_model_provider(config: dict):
         import yaml
 
         config_path = (
-            Path(os.environ.get("HERMES_HOME", Path.home() / ".hermes")) / "config.yaml"
+            Path(os.environ.get("LOGOS_HOME") or os.environ.get("HERMES_HOME") or str(Path.home() / ".logos")) / "config.yaml"
         )
         try:
             disk_cfg = {}
@@ -946,7 +946,7 @@ def setup_model_provider(config: dict):
             import yaml
 
             config_path = (
-                Path(os.environ.get("HERMES_HOME", Path.home() / ".hermes"))
+                Path(os.environ.get("LOGOS_HOME") or os.environ.get("HERMES_HOME") or str(Path.home() / ".logos"))
                 / "config.yaml"
             )
             try:

@@ -1,19 +1,19 @@
 #!/bin/bash
 # ============================================================================
-# Hermes Agent Setup Script
+# Logos Setup Script
 # ============================================================================
 # Quick setup for developers who cloned the repo manually.
 # Uses uv for fast Python provisioning and package management.
 #
 # Usage:
-#   ./setup-hermes.sh
+#   ./dev-setup.sh
 #
 # This script:
 # 1. Installs uv if not present
 # 2. Creates a virtual environment with Python 3.11 via uv
 # 3. Installs all dependencies (main package + submodules)
 # 4. Creates .env from template (if not exists)
-# 5. Symlinks the 'hermes' CLI command into ~/.local/bin
+# 5. Symlinks the 'logos' and 'hermes' CLI commands into ~/.local/bin
 # 6. Runs the setup wizard (optional)
 # ============================================================================
 
@@ -32,7 +32,7 @@ cd "$SCRIPT_DIR"
 PYTHON_VERSION="3.11"
 
 echo ""
-echo -e "${CYAN}⚕ Hermes Agent Setup${NC}"
+echo -e "${CYAN}⚕ Logos Setup${NC}"
 echo ""
 
 # ============================================================================
@@ -61,7 +61,7 @@ else
         elif [ -x "$HOME/.cargo/bin/uv" ]; then
             UV_CMD="$HOME/.cargo/bin/uv"
         fi
-        
+
         if [ -n "$UV_CMD" ]; then
             UV_VERSION=$($UV_CMD --version 2>/dev/null)
             echo -e "${GREEN}✓${NC} uv installed ($UV_VERSION)"
@@ -158,7 +158,7 @@ else
     echo
     if [[ $REPLY =~ ^[Yy]$ ]] || [[ -z $REPLY ]]; then
         INSTALLED=false
-        
+
         # Check if sudo is available
         if command -v sudo &> /dev/null && sudo -n true 2>/dev/null; then
             if command -v apt &> /dev/null; then
@@ -167,18 +167,18 @@ else
                 sudo dnf install -y ripgrep && INSTALLED=true
             fi
         fi
-        
+
         # Try brew (no sudo needed)
         if [ "$INSTALLED" = false ] && command -v brew &> /dev/null; then
             brew install ripgrep && INSTALLED=true
         fi
-        
+
         # Try cargo (no sudo needed)
         if [ "$INSTALLED" = false ] && command -v cargo &> /dev/null; then
             echo -e "${CYAN}→${NC} Trying cargo install (no sudo required)..."
             cargo install ripgrep && INSTALLED=true
         fi
-        
+
         if [ "$INSTALLED" = true ]; then
             echo -e "${GREEN}✓${NC} ripgrep installed"
         else
@@ -205,13 +205,18 @@ else
 fi
 
 # ============================================================================
-# PATH setup — symlink hermes into ~/.local/bin
+# PATH setup — symlink logos + hermes into ~/.local/bin
 # ============================================================================
 
-echo -e "${CYAN}→${NC} Setting up hermes command..."
+echo -e "${CYAN}→${NC} Setting up logos and hermes commands..."
+
+mkdir -p "$HOME/.local/bin"
+
+LOGOS_BIN="$SCRIPT_DIR/venv/bin/logos"
+ln -sf "$LOGOS_BIN" "$HOME/.local/bin/logos"
+echo -e "${GREEN}✓${NC} Symlinked logos → ~/.local/bin/logos"
 
 HERMES_BIN="$SCRIPT_DIR/venv/bin/hermes"
-mkdir -p "$HOME/.local/bin"
 ln -sf "$HERMES_BIN" "$HOME/.local/bin/hermes"
 echo -e "${GREEN}✓${NC} Symlinked hermes → ~/.local/bin/hermes"
 
@@ -236,11 +241,11 @@ fi
 if [ -n "$SHELL_CONFIG" ]; then
     # Touch the file just in case it doesn't exist yet but was selected
     touch "$SHELL_CONFIG" 2>/dev/null || true
-    
+
     if ! echo "$PATH" | tr ':' '\n' | grep -q "^$HOME/.local/bin$"; then
         if ! grep -q '\.local/bin' "$SHELL_CONFIG" 2>/dev/null; then
             echo "" >> "$SHELL_CONFIG"
-            echo "# Hermes Agent — ensure ~/.local/bin is on PATH" >> "$SHELL_CONFIG"
+            echo "# Logos — ensure ~/.local/bin is on PATH" >> "$SHELL_CONFIG"
             echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$SHELL_CONFIG"
             echo -e "${GREEN}✓${NC} Added ~/.local/bin to PATH in $SHELL_CONFIG"
         else
@@ -252,20 +257,20 @@ if [ -n "$SHELL_CONFIG" ]; then
 fi
 
 # ============================================================================
-# Seed bundled skills into ~/.hermes/skills/
+# Seed bundled skills into ~/.logos/skills/
 # ============================================================================
 
-HERMES_SKILLS_DIR="${HERMES_HOME:-$HOME/.hermes}/skills"
-mkdir -p "$HERMES_SKILLS_DIR"
+LOGOS_SKILLS_DIR="${LOGOS_HOME:-${HERMES_HOME:-$HOME/.logos}}/skills"
+mkdir -p "$LOGOS_SKILLS_DIR"
 
 echo ""
-echo "Syncing bundled skills to ~/.hermes/skills/ ..."
+echo "Syncing bundled skills to ~/.logos/skills/ ..."
 if "$SCRIPT_DIR/venv/bin/python" "$SCRIPT_DIR/tools/skills_sync.py" 2>/dev/null; then
     echo -e "${GREEN}✓${NC} Skills synced"
 else
     # Fallback: copy if sync script fails (missing deps, etc.)
     if [ -d "$SCRIPT_DIR/skills" ]; then
-        cp -rn "$SCRIPT_DIR/skills/"* "$HERMES_SKILLS_DIR/" 2>/dev/null || true
+        cp -rn "$SCRIPT_DIR/skills/"* "$LOGOS_SKILLS_DIR/" 2>/dev/null || true
         echo -e "${GREEN}✓${NC} Skills copied"
     fi
 fi
@@ -283,16 +288,19 @@ echo "  1. Reload your shell:"
 echo "     source $SHELL_CONFIG"
 echo ""
 echo "  2. Run the setup wizard to configure API keys:"
-echo "     hermes setup"
+echo "     logos setup"
 echo ""
-echo "  3. Start chatting:"
+echo "  3. Launch the gateway (web dashboard at http://localhost:8080):"
+echo "     logos gateway"
+echo ""
+echo "  4. Or start a local chat session:"
 echo "     hermes"
 echo ""
 echo "Other commands:"
-echo "  hermes status        # Check configuration"
-echo "  hermes gateway install # Install gateway service (messaging + cron)"
-echo "  hermes cron list     # View scheduled jobs"
-echo "  hermes doctor        # Diagnose issues"
+echo "  logos status              # Check configuration"
+echo "  logos gateway install     # Install gateway service (messaging + cron)"
+echo "  logos cron list           # View scheduled jobs"
+echo "  logos doctor              # Diagnose issues"
 echo ""
 
 # Ask if they want to run setup wizard now

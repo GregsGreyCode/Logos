@@ -26,7 +26,7 @@ except ImportError:
 # Configuration
 # =============================================================================
 
-HERMES_DIR = Path(os.getenv("HERMES_HOME", Path.home() / ".hermes"))
+HERMES_DIR = Path(os.getenv("LOGOS_HOME") or os.getenv("HERMES_HOME") or str(Path.home() / ".logos"))
 CRON_DIR = HERMES_DIR / "cron"
 JOBS_FILE = CRON_DIR / "jobs.json"
 OUTPUT_DIR = CRON_DIR / "output"

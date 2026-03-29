@@ -29,11 +29,11 @@ RUN uv pip install -e ".[all]"
 RUN if [ -f "./mini-swe-agent/pyproject.toml" ]; then uv pip install -e "./mini-swe-agent"; fi
 RUN if [ -f "./tinker-atropos/pyproject.toml" ]; then uv pip install -e "./tinker-atropos"; fi
 
-RUN useradd -m -d /home/hermes -u 10001 hermes \
- && mkdir -p /home/hermes/.hermes/{cron,sessions,logs,memories,skills,pairing,hooks,image_cache,audio_cache,whatsapp/session} \
- && chown -R 10001:10001 /home/hermes
+RUN useradd -m -d /home/logos -u 10001 logos \
+ && mkdir -p /home/logos/.logos/{cron,sessions,logs,memories,skills,pairing,hooks,image_cache,audio_cache,whatsapp/session} \
+ && chown -R 10001:10001 /home/logos
 
-ENV HOME=/home/hermes
+ENV HOME=/home/logos
 
 # Build-time SHA baked in — passed via: docker buildx build --build-arg BUILD_SHA=$(git rev-parse --short HEAD)
 ARG BUILD_SHA=unknown
@@ -41,4 +41,4 @@ ENV BUILD_SHA=${BUILD_SHA}
 
 EXPOSE 8080
 
-CMD ["hermes", "gateway", "run"]
+CMD ["logos", "gateway", "run"]

@@ -1,46 +1,31 @@
 #!/usr/bin/env python3
 """
-Hermes CLI - Main entry point.
+Logos CLI - Main entry point for the Logos platform.
 
-Usage:
+The ``logos`` command is the platform CLI — gateway, config, setup, admin.
+The ``hermes`` command is the agent CLI — local chat, session resume.
+
+Usage (platform — ``logos``):
+    logos gateway              # Run gateway in foreground
+    logos gateway start        # Start gateway as service
+    logos gateway stop         # Stop gateway service
+    logos gateway setup        # Configure messaging platforms
+    logos setup                # Interactive setup wizard
+    logos model                # Select default model
+    logos config               # View configuration
+    logos doctor               # Check configuration and dependencies
+    logos tools                # Configure which tools are enabled
+    logos skills               # Search, install, manage skills
+    logos update               # Update to latest version
+    logos version              # Show version
+
+Usage (agent — ``hermes``):
     hermes                     # Interactive chat (default)
     hermes chat                # Interactive chat
-    hermes gateway             # Run gateway in foreground
-    hermes gateway start       # Start gateway as service
-    hermes gateway stop        # Stop gateway service
-    hermes gateway status      # Show gateway status
-    hermes gateway install     # Install gateway service
-    hermes gateway uninstall   # Uninstall gateway service
-    hermes setup               # Interactive setup wizard
-    hermes logout              # Clear stored authentication
-    hermes status              # Show status of all components
-    hermes cron                # Manage cron jobs
-    hermes cron list           # List cron jobs
-    hermes cron status         # Check if cron scheduler is running
-    hermes doctor              # Check configuration and dependencies
-    hermes honcho setup                    # Configure Honcho AI memory integration
-    hermes honcho status                   # Show Honcho config and connection status
-    hermes honcho sessions                 # List directory → session name mappings
-    hermes honcho map <name>               # Map current directory to a session name
-    hermes honcho peer                     # Show peer names and dialectic settings
-    hermes honcho peer --user NAME         # Set user peer name
-    hermes honcho peer --ai NAME           # Set AI peer name
-    hermes honcho peer --reasoning LEVEL   # Set dialectic reasoning level
-    hermes honcho mode                     # Show current memory mode
-    hermes honcho mode [hybrid|honcho|local]  # Set memory mode
-    hermes honcho tokens                   # Show token budget settings
-    hermes honcho tokens --context N       # Set session.context() token cap
-    hermes honcho tokens --dialectic N     # Set dialectic result char cap
-    hermes honcho identity                 # Show AI peer identity representation
-    hermes honcho identity <file>          # Seed AI peer identity from a file (SOUL.md etc.)
-    hermes honcho migrate                  # Step-by-step migration guide: OpenClaw native → Hermes + Honcho
-    hermes version             Show version
-    hermes update              Update to latest version
-    hermes uninstall           Uninstall Hermes Agent
-    hermes acp                 Run as an ACP server for editor integration
-    hermes sessions browse     Interactive session picker with search
-
-    hermes claw migrate --dry-run  # Preview migration without changes
+    hermes -c                  # Resume the most recent session
+    hermes -c "my project"     # Resume a session by name
+    hermes chat -q "Hello"     # Single query mode
+    hermes sessions browse     # Interactive session picker
 """
 
 import argparse
@@ -54,9 +39,9 @@ from typing import Optional
 PROJECT_ROOT = Path(__file__).parent.parent.resolve()
 sys.path.insert(0, str(PROJECT_ROOT))
 
-# Load .env from ~/.hermes/.env first, then project root as dev fallback
+# Load .env from ~/.logos/.env first, then project root as dev fallback
 from dotenv import load_dotenv
-from hermes_cli.config import get_env_path, get_hermes_home
+from hermes_cli.config import get_env_path, get_logos_home
 _user_env = get_env_path()
 if _user_env.exists():
     try:
@@ -65,8 +50,8 @@ if _user_env.exists():
         load_dotenv(dotenv_path=_user_env, encoding="latin-1")
 load_dotenv(dotenv_path=PROJECT_ROOT / '.env', override=False)
 
-# Point mini-swe-agent at ~/.hermes/ so it shares our config
-os.environ.setdefault("MSWEA_GLOBAL_CONFIG_DIR", str(get_hermes_home()))
+# Point mini-swe-agent at ~/.logos/ so it shares our config
+os.environ.setdefault("MSWEA_GLOBAL_CONFIG_DIR", str(get_logos_home()))
 os.environ.setdefault("MSWEA_SILENT_STARTUP", "1")
 
 import logging
@@ -2249,34 +2234,35 @@ def _coalesce_session_name_args(argv: list) -> list:
 
 
 def main():
-    """Main entry point for hermes CLI."""
+    """Main entry point for the ``logos`` platform CLI."""
     parser = argparse.ArgumentParser(
-        prog="hermes",
-        description="Hermes Agent - AI assistant with tool-calling capabilities",
+        prog="logos",
+        description="Logos — self-hosted AI agent platform",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-    hermes                        Start interactive chat
-    hermes chat -q "Hello"        Single query mode
-    hermes -c                     Resume the most recent session
-    hermes -c "my project"        Resume a session by name (latest in lineage)
-    hermes --resume <session_id>  Resume a specific session by ID
-    hermes setup                  Run setup wizard
-    hermes logout                 Clear stored authentication
-    hermes model                  Select default model
-    hermes config                 View configuration
-    hermes config edit            Edit config in $EDITOR
-    hermes config set model gpt-4 Set a config value
-    hermes gateway                Run messaging gateway
-    hermes -w                     Start in isolated git worktree
-    hermes gateway install        Install as system service
-    hermes sessions list          List past sessions
-    hermes sessions browse        Interactive session picker
-    hermes sessions rename ID T   Rename/title a session
-    hermes update                 Update to latest version
+    logos gateway                  Launch the gateway + web dashboard
+    logos gateway start            Run gateway as a background service
+    logos gateway setup            Configure messaging platforms
+    logos setup                    Run setup wizard
+    logos model                    Select default model
+    logos config                   View configuration
+    logos config edit              Edit config in $EDITOR
+    logos config set model gpt-4   Set a config value
+    logos doctor                   Diagnose issues
+    logos tools                    Configure enabled tools
+    logos skills search k8s        Search for skills
+    logos sessions list            List past sessions
+    logos sessions browse          Interactive session picker
+    logos update                   Update to latest version
+
+For local agent chat, use the ``hermes`` command:
+    hermes                         Start interactive chat
+    hermes -c                      Resume the most recent session
+    hermes chat -q "Hello"         Single query mode
 
 For more help on a command:
-    hermes <command> --help
+    logos <command> --help
 """
     )
     
@@ -3227,8 +3213,148 @@ For more help on a command:
 
 
 def main_agent():
-    """Entry point for the ``hermes`` agent CLI — alias for main()."""
-    main()
+    """Entry point for the ``hermes`` agent CLI (local chat only).
+
+    This is a thin wrapper that exposes only the chat-related subset of the
+    full ``logos`` CLI: interactive chat, session resume, and session browsing.
+    """
+    parser = argparse.ArgumentParser(
+        prog="hermes",
+        description="Hermes — local AI agent chat",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+    hermes                        Start interactive chat
+    hermes chat -q "Hello"        Single query mode
+    hermes -c                     Resume the most recent session
+    hermes -c "my project"        Resume a session by name
+    hermes --resume <session_id>  Resume a specific session by ID
+    hermes -w                     Start in isolated git worktree
+    hermes sessions browse        Interactive session picker
+
+For platform management (gateway, config, setup, etc.) use the ``logos`` command:
+    logos gateway                  Launch the gateway + web dashboard
+    logos setup                    Run setup wizard
+    logos doctor                   Diagnose issues
+"""
+    )
+
+    parser.add_argument("--version", "-V", action="store_true", help="Show version and exit")
+    parser.add_argument("--resume", "-r", metavar="SESSION", default=None,
+                        help="Resume a previous session by ID or title")
+    parser.add_argument("--continue", "-c", dest="continue_last", nargs="?", const=True,
+                        default=None, metavar="SESSION_NAME",
+                        help="Resume a session by name, or the most recent if no name given")
+    parser.add_argument("--worktree", "-w", action="store_true", default=False,
+                        help="Run in an isolated git worktree (for parallel agents)")
+    parser.add_argument("--yolo", action="store_true", default=False,
+                        help="Bypass all dangerous command approval prompts (use at your own risk)")
+    parser.add_argument("--pass-session-id", action="store_true", default=False,
+                        help="Include the session ID in the agent's system prompt")
+
+    subparsers = parser.add_subparsers(dest="command", help="Command to run")
+
+    # chat command
+    chat_parser = subparsers.add_parser("chat", help="Interactive chat with the agent")
+    chat_parser.add_argument("-q", "--query", help="Single query (non-interactive mode)")
+    chat_parser.add_argument("-m", "--model", help="Model to use")
+    chat_parser.add_argument("-t", "--toolsets", help="Comma-separated toolsets to enable")
+    chat_parser.add_argument("--provider", choices=["auto", "openrouter", "nous", "openai-codex",
+                             "anthropic", "zai", "kimi-coding", "minimax", "minimax-cn"],
+                             default=None, help="Inference provider")
+    chat_parser.add_argument("-v", "--verbose", action="store_true")
+    chat_parser.add_argument("-Q", "--quiet", action="store_true",
+                             help="Quiet mode for programmatic use")
+    chat_parser.add_argument("--resume", "-r", metavar="SESSION_ID",
+                             help="Resume a previous session by ID")
+    chat_parser.add_argument("--continue", "-c", dest="continue_last", nargs="?", const=True,
+                             default=None, metavar="SESSION_NAME",
+                             help="Resume a session by name, or the most recent if no name given")
+    chat_parser.add_argument("--worktree", "-w", action="store_true", default=False,
+                             help="Run in an isolated git worktree")
+    chat_parser.add_argument("--checkpoints", action="store_true", default=False,
+                             help="Enable filesystem checkpoints before destructive file operations")
+    chat_parser.add_argument("--yolo", action="store_true", default=False,
+                             help="Bypass all dangerous command approval prompts")
+    chat_parser.add_argument("--pass-session-id", action="store_true", default=False,
+                             help="Include the session ID in the agent's system prompt")
+    chat_parser.set_defaults(func=cmd_chat)
+
+    # sessions command (browse only)
+    sessions_parser = subparsers.add_parser("sessions", help="Session management")
+    sessions_sub = sessions_parser.add_subparsers(dest="sessions_action")
+    browse_parser = sessions_sub.add_parser("browse",
+                                            help="Interactive session picker — browse, search, and resume")
+    browse_parser.add_argument("--source", help="Filter by source")
+    browse_parser.add_argument("--limit", type=int, default=50)
+
+    def _cmd_sessions_agent(args):
+        """Handle sessions subcommand in agent CLI."""
+        if getattr(args, "sessions_action", None) == "browse":
+            from core.state import SessionDB
+            db = SessionDB()
+            sessions = db.list_sessions_rich(
+                source=getattr(args, "source", None),
+                limit=getattr(args, "limit", 50) or 50,
+            )
+            db.close()
+            if not sessions:
+                print("No sessions found.")
+                return
+            selected_id = _session_browse_picker(sessions)
+            if not selected_id:
+                print("Cancelled.")
+                return
+            print(f"Resuming session: {selected_id}")
+            import shutil
+            hermes_bin = shutil.which("hermes")
+            if hermes_bin:
+                os.execvp(hermes_bin, ["hermes", "--resume", selected_id])
+            else:
+                os.execvp(sys.executable,
+                          [sys.executable, "-m", "hermes_cli.main", "--resume", selected_id])
+        else:
+            sessions_parser.print_help()
+
+    sessions_parser.set_defaults(func=_cmd_sessions_agent)
+
+    # Parse and execute
+    _processed_argv = _coalesce_session_name_args(sys.argv[1:])
+    args = parser.parse_args(_processed_argv)
+
+    if args.version:
+        cmd_version(args)
+        return
+
+    if (args.resume or args.continue_last) and args.command is None:
+        args.command = "chat"
+        args.query = None
+        args.model = None
+        args.provider = None
+        args.toolsets = None
+        args.verbose = False
+        if not hasattr(args, "worktree"):
+            args.worktree = False
+        cmd_chat(args)
+        return
+
+    if args.command is None:
+        args.query = None
+        args.model = None
+        args.provider = None
+        args.toolsets = None
+        args.verbose = False
+        args.resume = None
+        args.continue_last = None
+        if not hasattr(args, "worktree"):
+            args.worktree = False
+        cmd_chat(args)
+        return
+
+    if hasattr(args, "func"):
+        args.func(args)
+    else:
+        parser.print_help()
 
 
 if __name__ == "__main__":
