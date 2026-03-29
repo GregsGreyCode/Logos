@@ -327,21 +327,24 @@
       _setupRedirectTimer: null,
 
       init() {
-        fetch('/auth/me', { credentials: 'same-origin' })
-          .then(r => { if (r.ok) window.location.href = '/'; })
-          .catch(() => {});
+        // Check setup status first — if setup isn't done, go to /setup
+        // regardless of auth state (prevents redirect loop: /login → / → /login)
         fetch('/api/setup/status', { credentials: 'same-origin' })
           .then(r => r.ok ? r.json() : null)
           .then(d => {
             if (d && !d.completed) {
               this.needsSetup = true;
-              // First boot: skip the splash and go straight to setup
               this._setupAutoTimer = setTimeout(() => {
                 if (this.phase === 'splash') {
                   document.body.classList.add('fade-out');
                   setTimeout(() => { window.location.href = '/setup'; }, 600);
                 }
               }, 1500);
+            } else {
+              // Setup is done — check if already authenticated
+              fetch('/auth/me', { credentials: 'same-origin' })
+                .then(r => { if (r.ok) window.location.href = '/'; })
+                .catch(() => {});
             }
           })
           .catch(() => {});
