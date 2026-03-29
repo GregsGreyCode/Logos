@@ -85,13 +85,22 @@ class ToolRegistry:
         """Return OpenAI-format tool schemas for the requested tool names.
 
         Only tools whose ``check_fn()`` returns True (or have no check_fn)
+        AND whose ``requires_env`` keys are all present in os.environ
         are included.
         """
+        import os as _os
         result = []
         for name in sorted(tool_names):
             entry = self._tools.get(name)
             if not entry:
                 continue
+            # Skip tools with unmet environment requirements
+            if entry.requires_env:
+                missing = [k for k in entry.requires_env if not _os.environ.get(k)]
+                if missing:
+                    if not quiet:
+                        logger.debug("Tool %s unavailable (missing env: %s)", name, missing)
+                    continue
             if entry.check_fn:
                 try:
                     if not entry.check_fn():

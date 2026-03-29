@@ -102,6 +102,8 @@ def _discover_tools():
         # Gateway MCP access tool — request_mcp_access + get_mcp_catalogue
         # Always registered so agents can request MCP access regardless of mode.
         "tools.mcp_access_tool",
+        # Lazy tool loading — request_tools meta-tool for on-demand tool injection.
+        "tools.request_tools_tool",
     ]
     import importlib
     for mod_name in _modules:
@@ -178,6 +180,8 @@ def get_tool_definitions(
     enabled_toolsets: List[str] = None,
     disabled_toolsets: List[str] = None,
     quiet_mode: bool = False,
+    lazy: bool = False,
+    session_id: str = None,
 ) -> List[Dict[str, Any]]:
     """
     Get tool definitions for model API calls with toolset-based filtering.
@@ -188,6 +192,9 @@ def get_tool_definitions(
         enabled_toolsets: Only include tools from these toolsets.
         disabled_toolsets: Exclude tools from these toolsets (if enabled_toolsets is None).
         quiet_mode: Suppress status prints.
+        lazy: If True, only return core tools + request_tools + session-granted tools.
+              Extended tools are loaded on demand via request_tools().
+        session_id: Session ID for looking up dynamically granted tools.
 
     Returns:
         Filtered list of OpenAI-format tool definitions.
@@ -235,7 +242,26 @@ def get_tool_definitions(
         for ts_name in get_all_toolsets():
             tools_to_include.update(resolve_toolset(ts_name))
 
-    # Ask the registry for schemas (only returns tools whose check_fn passes)
+    # Lazy mode: restrict to core tools + request_tools + session-granted tools.
+    # Core tools are always included even if they're not in the platform toolset.
+    if lazy and tools_to_include:
+        from tools.request_tools_tool import CORE_TOOLS, get_granted_tools
+        _core = set(CORE_TOOLS)
+        _core.add("request_tools")       # always include the meta-tool
+        _core.add("request_mcp_access")  # always include MCP access
+        _core.add("get_mcp_catalogue")   # always include MCP catalogue
+        if session_id:
+            _core |= set(get_granted_tools(session_id))
+        # Keep only core + granted tools from the enabled set, plus force-include
+        # the meta-tools even if they're not in the platform toolset.
+        _allowed = (tools_to_include & _core) | {"request_tools", "request_mcp_access", "get_mcp_catalogue"}
+        _full_count = len(tools_to_include)
+        tools_to_include = _allowed
+        if not quiet_mode:
+            logger.info("Lazy tool loading: %d → %d tools (extended available via request_tools)", _full_count, len(tools_to_include))
+
+    # Ask the registry for schemas (only returns tools whose check_fn passes
+    # and whose requires_env keys are present)
     filtered_tools = registry.get_definitions(tools_to_include, quiet=quiet_mode)
 
     # Rebuild execute_code schema to only list sandbox tools that are actually
