@@ -8,6 +8,7 @@ Endpoints:
   POST /api/setup/test     — SSE: full benchmark of selected model
   POST /api/setup/complete — save machine config and mark setup done
   POST /api/setup/test-k8s   — test Kubernetes connectivity
+  POST /api/setup/k3s-install — SSE: install k3s on bare Linux host
 
 Probe query params:
   url      — base URL to probe, e.g. http://192.168.1.50:11434  (omit for localhost auto-scan)
@@ -2280,6 +2281,22 @@ _OPENSHELL_ASSET_MAP = {
 }
 
 
+def _k3s_status() -> dict:
+    """Return {installed: bool, running: bool} describing k3s state on this host."""
+    installed = bool(_shutil.which("k3s"))
+    running = False
+    if installed:
+        try:
+            r = _subprocess.run(
+                ["k3s", "kubectl", "get", "nodes"],
+                capture_output=True, timeout=10,
+            )
+            running = r.returncode == 0
+        except Exception:
+            pass
+    return {"installed": installed, "running": running}
+
+
 def _openshell_exe() -> str:
     """Return path to the openshell binary, checking PATH and ~/.hermes/bin."""
     found = _shutil.which("openshell")
@@ -2481,6 +2498,7 @@ async def handle_setup_env_probe(request: web.Request) -> web.Response:
     loop = asyncio.get_event_loop()
     docker_info   = await loop.run_in_executor(None, _docker_running)
     openshell_exe = await loop.run_in_executor(None, _openshell_exe)
+    k3s_info      = await loop.run_in_executor(None, _k3s_status)
     image_present = False
     if docker_info["running"]:
         image_present = await loop.run_in_executor(None, _sandbox_image_exists)
@@ -2503,7 +2521,150 @@ async def handle_setup_env_probe(request: web.Request) -> web.Response:
         "image_present":         image_present,
         "sandbox_ready":         docker_info["running"] and bool(openshell_exe) and image_present,
         "docker_sandbox_ready":  docker_sandbox_ready,
+        "k3s_installed":         k3s_info["installed"],
+        "k3s_running":           k3s_info["running"],
     })
+
+
+async def handle_setup_k3s_install(request: web.Request) -> web.Response:
+    """
+    POST /api/setup/k3s-install   (SSE stream)
+
+    Installs k3s on a bare Linux host, waits for it to become ready,
+    creates the agent namespace, and returns the kubeconfig.
+
+    Streams progress as SSE events:
+      data: {"step": "k3s_install",      "status": "running"|"ok"|"error"|"skip", "msg": "..."}
+      data: {"step": "k3s_wait",         "status": "running"|"ok"|"error",        "msg": "..."}
+      data: {"step": "namespace_create", "status": "running"|"ok"|"error",        "msg": "..."}
+      data: {"step": "done",             "status": "ok"|"error", "kubeconfig": "..."}
+    """
+    resp = web.StreamResponse(headers={
+        "Content-Type":     "text/event-stream",
+        "Cache-Control":    "no-cache",
+        "X-Accel-Buffering": "no",
+    })
+    await resp.prepare(request)
+
+    async def emit(step: str, status: str, msg: str = "", **extra):
+        payload = json.dumps({"step": step, "status": status, "msg": msg, **extra})
+        await resp.write(f"data: {payload}\n\n".encode())
+
+    loop = asyncio.get_event_loop()
+
+    # ── Gate: Linux only ──
+    if _platform.system() != "Linux":
+        await emit("k3s_install", "error", "k3s is only supported on Linux")
+        await emit("done", "error")
+        return resp
+
+    # ── Step 1: Install k3s (skip if already running) ──
+    k3s = await loop.run_in_executor(None, _k3s_status)
+    if k3s["running"]:
+        await emit("k3s_install", "skip", "k3s is already running")
+    elif k3s["installed"]:
+        # Installed but not running — try to start it
+        await emit("k3s_install", "running", "k3s is installed but not running, starting service...")
+        def _start_k3s():
+            try:
+                r = _subprocess.run(
+                    ["sudo", "systemctl", "start", "k3s"],
+                    capture_output=True, text=True, timeout=30,
+                )
+                return r.returncode == 0, r.stderr.strip()
+            except Exception as e:
+                return False, str(e)
+        ok, err = await loop.run_in_executor(None, _start_k3s)
+        if ok:
+            await emit("k3s_install", "ok", "k3s service started")
+        else:
+            await emit("k3s_install", "error", f"Failed to start k3s: {err}")
+            await emit("done", "error")
+            return resp
+    else:
+        await emit("k3s_install", "running", "Installing k3s (this may take a minute)...")
+        def _install_k3s():
+            try:
+                r = _subprocess.run(
+                    ["sh", "-c",
+                     "curl -sfL https://get.k3s.io | "
+                     "INSTALL_K3S_EXEC='server --disable=traefik --disable=servicelb "
+                     "--write-kubeconfig-mode=644' sh -"],
+                    capture_output=True, text=True, timeout=300,
+                )
+                return r.returncode == 0, r.stdout.strip(), r.stderr.strip()
+            except Exception as e:
+                return False, "", str(e)
+        ok, stdout, stderr = await loop.run_in_executor(None, _install_k3s)
+        if ok:
+            await emit("k3s_install", "ok", "k3s installed successfully")
+        else:
+            await emit("k3s_install", "error", f"Installation failed: {stderr[:300]}")
+            await emit("done", "error")
+            return resp
+
+    # ── Step 2: Wait for k3s to become ready ──
+    await emit("k3s_wait", "running", "Waiting for k3s to be ready...")
+    _kube_path = "/etc/rancher/k3s/k3s.yaml"
+    def _wait_k3s_ready():
+        for _ in range(60):  # up to ~120s
+            if not os.path.exists(_kube_path):
+                time.sleep(2)
+                continue
+            try:
+                r = _subprocess.run(
+                    ["k3s", "kubectl", "get", "nodes"],
+                    capture_output=True, text=True, timeout=10,
+                )
+                if r.returncode == 0 and "Ready" in r.stdout:
+                    return True, ""
+            except Exception:
+                pass
+            time.sleep(2)
+        return False, "Timed out waiting for k3s to become ready"
+    ready, err = await loop.run_in_executor(None, _wait_k3s_ready)
+    if ready:
+        await emit("k3s_wait", "ok", "k3s cluster is ready")
+    else:
+        await emit("k3s_wait", "error", err)
+        await emit("done", "error")
+        return resp
+
+    # ── Step 3: Create hermes namespace ──
+    await emit("namespace_create", "running", "Creating hermes namespace...")
+    def _create_namespace():
+        try:
+            r = _subprocess.run(
+                ["k3s", "kubectl", "create", "namespace", "hermes",
+                 "--dry-run=client", "-o", "yaml"],
+                capture_output=True, text=True, timeout=10,
+            )
+            if r.returncode != 0:
+                return False, r.stderr.strip()
+            r2 = _subprocess.run(
+                ["k3s", "kubectl", "apply", "-f", "-"],
+                input=r.stdout, capture_output=True, text=True, timeout=10,
+            )
+            return r2.returncode == 0, r2.stderr.strip()
+        except Exception as e:
+            return False, str(e)
+    ns_ok, ns_err = await loop.run_in_executor(None, _create_namespace)
+    if ns_ok:
+        await emit("namespace_create", "ok", "hermes namespace ready")
+    else:
+        await emit("namespace_create", "error", f"Failed to create namespace: {ns_err}")
+        await emit("done", "error")
+        return resp
+
+    # ── Step 4: Read kubeconfig ──
+    try:
+        kubeconfig = pathlib.Path(_kube_path).read_text(encoding="utf-8")
+    except Exception as e:
+        await emit("done", "error", msg=f"Could not read kubeconfig: {e}")
+        return resp
+
+    await emit("done", "ok", kubeconfig=kubeconfig)
+    return resp
 
 
 async def handle_setup_sandbox_setup(request: web.Request) -> web.Response:
