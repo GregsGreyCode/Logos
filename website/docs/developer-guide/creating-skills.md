@@ -1,12 +1,12 @@
 ---
 sidebar_position: 3
 title: "Creating Skills"
-description: "How to create skills for Hermes Agent — SKILL.md format, guidelines, and publishing"
+description: "How to create skills for Logos — SKILL.md format, guidelines, and publishing"
 ---
 
 # Creating Skills
 
-Skills are the preferred way to add new capabilities to Hermes Agent. They're easier to create than tools, require no code changes to the agent, and can be shared with the community.
+Skills are the preferred way to add new capabilities to Logos. They're easier to create than tools, require no code changes to the agent, and can be shared with the community.
 
 ## Should it be a Skill or a Tool?
 
@@ -138,16 +138,16 @@ Bundled skills (in `skills/`) ship with every Hermes install. They should be **b
 - Document handling, web research, common dev workflows, system administration
 - Used regularly by a wide range of people
 
-If your skill is official and useful but not universally needed (e.g., a paid service integration, a heavyweight dependency), put it in **`optional-skills/`** — it ships with the repo, is discoverable via `hermes skills browse` (labeled "official"), and installs with builtin trust.
+If your skill is official and useful but not universally needed (e.g., a paid service integration, a heavyweight dependency), put it in **`optional-skills/`** — it ships with the repo, is discoverable via `logos skills browse` (labeled "official"), and installs with builtin trust.
 
-If your skill is specialized, community-contributed, or niche, it's better suited for a **Skills Hub** — upload it to a registry and share it via `hermes skills install`.
+If your skill is specialized, community-contributed, or niche, it's better suited for a **Skills Hub** — upload it to a registry and share it via `logos skills install`.
 
 ## Publishing Skills
 
 ### To the Skills Hub
 
 ```bash
-hermes skills publish skills/my-skill --to github --repo owner/repo
+logos skills publish skills/my-skill --to github --repo owner/repo
 ```
 
 ### To a Custom Repository
@@ -155,7 +155,7 @@ hermes skills publish skills/my-skill --to github --repo owner/repo
 Add your repo as a tap:
 
 ```bash
-hermes skills tap add owner/repo
+logos skills tap add owner/repo
 ```
 
 Users can then search and install from your repository.

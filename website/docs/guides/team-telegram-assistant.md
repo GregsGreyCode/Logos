@@ -6,7 +6,7 @@ description: "Step-by-step guide to setting up a Telegram bot that your whole te
 
 # Set Up a Team Telegram Assistant
 
-This tutorial walks you through setting up a Telegram bot powered by Hermes Agent that multiple team members can use. By the end, your team will have a shared AI assistant they can message for help with code, research, system administration, and anything else — secured with per-user authorization.
+This tutorial walks you through setting up a Telegram bot powered by Logos that multiple team members can use. By the end, your team will have a shared AI assistant they can message for help with code, research, system administration, and anything else — secured with per-user authorization.
 
 ## What We're Building
 
@@ -24,7 +24,7 @@ A Telegram bot that:
 
 Before starting, make sure you have:
 
-- **Hermes Agent installed** on a server or VPS (not your laptop — the bot needs to stay running). Follow the [installation guide](/getting-started/learning-path) if you haven't yet.
+- **Logos installed** on a server or VPS (not your laptop — the bot needs to stay running). Follow the [installation guide](/getting-started/learning-path) if you haven't yet.
 - **A Telegram account** for yourself (the bot owner)
 - **An LLM provider configured** — at minimum, an API key for OpenAI, Anthropic, or another supported provider in `~/.logos/.env`
 
@@ -57,7 +57,7 @@ Every Telegram bot starts with **@BotFather** — Telegram's official bot for cr
    ```
    Choose your bot, then enter something like:
    ```
-   Team AI assistant powered by Hermes Agent. DM me for help with code, research, debugging, and more.
+   Team AI assistant powered by Logos. DM me for help with code, research, debugging, and more.
    ```
 
 5. **Set bot commands** (optional — gives users a command menu):
@@ -86,7 +86,7 @@ You have two options: the interactive setup wizard (recommended) or manual confi
 ### Option A: Interactive Setup (Recommended)
 
 ```bash
-hermes gateway setup
+logos gateway setup
 ```
 
 This walks you through everything with arrow-key selection. Pick **Telegram**, paste your bot token, and enter your user ID when prompted.
@@ -124,7 +124,7 @@ Telegram user IDs are permanent numbers like `123456789`. They're different from
 Run the gateway in the foreground first to make sure everything works:
 
 ```bash
-hermes gateway
+logos gateway
 ```
 
 You should see output like:
@@ -142,19 +142,19 @@ Open Telegram, find your bot, and send it a message. If it replies, you're in bu
 For a persistent deployment that survives reboots:
 
 ```bash
-hermes gateway install
+logos gateway install
 ```
 
 This creates a **systemd** service (Linux) or **launchd** service (macOS) that runs automatically.
 
 ```bash
 # Linux — manage the service
-hermes gateway start
-hermes gateway stop
-hermes gateway status
+logos gateway start
+logos gateway stop
+logos gateway status
 
 # View live logs
-journalctl --user -u hermes-gateway -f
+journalctl --user -u logos-gateway -f
 
 # Keep running after SSH logout
 sudo loginctl enable-linger $USER
@@ -170,7 +170,7 @@ tail -f ~/.logos/logs/gateway.log
 ### Verify It's Running
 
 ```bash
-hermes gateway status
+logos gateway status
 ```
 
 Then send a test message to your bot on Telegram. You should get a response within a few seconds.
@@ -193,7 +193,7 @@ TELEGRAM_ALLOWED_USERS=123456789,987654321,555555555
 Restart the gateway after changes:
 
 ```bash
-hermes gateway stop && hermes gateway start
+logos gateway stop && logos gateway start
 ```
 
 ### Approach B: DM Pairing (Recommended for Teams)
@@ -210,7 +210,7 @@ DM pairing is more flexible — you don't need to collect user IDs upfront. Here
 
 3. **You approve it** on the server:
    ```bash
-   hermes pairing approve telegram XKGH5N7P
+   logos pairing approve telegram XKGH5N7P
    ```
 
 4. **They're in** — the bot immediately starts responding to their messages
@@ -219,13 +219,13 @@ DM pairing is more flexible — you don't need to collect user IDs upfront. Here
 
 ```bash
 # See all pending and approved users
-hermes pairing list
+logos pairing list
 
 # Revoke someone's access
-hermes pairing revoke telegram 987654321
+logos pairing revoke telegram 987654321
 
 # Clear expired pending codes
-hermes pairing clear-pending
+logos pairing clear-pending
 ```
 
 :::tip
@@ -342,8 +342,8 @@ partitions above 80%, containers that have restarted, or high memory usage.
 
 ```bash
 # From the CLI
-hermes cron list          # View all scheduled jobs
-hermes cron status        # Check if scheduler is running
+logos cron list          # View all scheduled jobs
+logos cron status        # Check if scheduler is running
 
 # From Telegram chat
 /cron list                # View jobs
@@ -384,10 +384,10 @@ This way, even if someone asks the bot to run something destructive, your host s
 
 ```bash
 # Check if the gateway is running
-hermes gateway status
+logos gateway status
 
 # Watch live logs (Linux)
-journalctl --user -u hermes-gateway -f
+journalctl --user -u logos-gateway -f
 
 # Watch live logs (macOS)
 tail -f ~/.logos/logs/gateway.log
@@ -398,15 +398,15 @@ tail -f ~/.logos/logs/gateway.log
 From Telegram, send `/update` to the bot — it will pull the latest version and restart. Or from the server:
 
 ```bash
-hermes update
-hermes gateway stop && hermes gateway start
+logos update
+logos gateway stop && logos gateway start
 ```
 
 ### Log Locations
 
 | What | Location |
 |------|----------|
-| Gateway logs | `journalctl --user -u hermes-gateway` (Linux) or `~/.logos/logs/gateway.log` (macOS) |
+| Gateway logs | `journalctl --user -u logos-gateway` (Linux) or `~/.logos/logs/gateway.log` (macOS) |
 | Cron job output | `~/.logos/cron/output/{job_id}/{timestamp}.md` |
 | Cron job definitions | `~/.logos/cron/jobs.json` |
 | Pairing data | `~/.logos/pairing/` |

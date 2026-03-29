@@ -1,7 +1,7 @@
 ---
 sidebar_position: 3
 title: "FAQ & Troubleshooting"
-description: "Frequently asked questions and solutions to common issues with Hermes Agent"
+description: "Frequently asked questions and solutions to common issues with Logos"
 ---
 
 # FAQ & Troubleshooting
@@ -14,7 +14,7 @@ Quick answers and fixes for the most common questions and issues.
 
 ### What LLM providers work with Hermes?
 
-Hermes Agent works with any OpenAI-compatible API. Supported providers include:
+Logos works with any OpenAI-compatible API. Supported providers include:
 
 - **[OpenRouter](https://openrouter.ai/)** — access hundreds of models through one API key (recommended for flexibility)
 - **Nous Portal** — Nous Research's own inference endpoint
@@ -26,39 +26,39 @@ Hermes Agent works with any OpenAI-compatible API. Supported providers include:
 - **MiniMax** — global and China endpoints
 - **Local models** — via [Ollama](https://ollama.com/), [vLLM](https://docs.vllm.ai/), [llama.cpp](https://github.com/ggerganov/llama.cpp), [SGLang](https://github.com/sgl-project/sglang), or any OpenAI-compatible server
 
-Set your provider with `hermes model` or by editing `~/.logos/.env`. See the [Environment Variables](./environment-variables.md) reference for all provider keys.
+Set your provider with `logos model` or by editing `~/.logos/.env`. See the [Environment Variables](./environment-variables.md) reference for all provider keys.
 
 ### Does it work on Windows?
 
-**Not natively.** Hermes Agent requires a Unix-like environment. On Windows, install [WSL2](https://learn.microsoft.com/en-us/windows/wsl/install) and run Hermes from inside it. The standard install command works perfectly in WSL2:
+**Not natively.** Logos requires a Unix-like environment. On Windows, install [WSL2](https://learn.microsoft.com/en-us/windows/wsl/install) and run Hermes from inside it. The standard install command works perfectly in WSL2:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/GregsGreyCode/logos/main/scripts/install.sh | bash
 ```
 
 ### Is my data sent anywhere?
 
-API calls go **only to the LLM provider you configure** (e.g., OpenRouter, your local Ollama instance). Hermes Agent does not collect telemetry, usage data, or analytics. Your conversations, memory, and skills are stored locally in `~/.logos/`.
+API calls go **only to the LLM provider you configure** (e.g., OpenRouter, your local Ollama instance). Logos does not collect telemetry, usage data, or analytics. Your conversations, memory, and skills are stored locally in `~/.logos/`.
 
 ### Can I use it offline / with local models?
 
 Yes. Point Hermes at any local OpenAI-compatible server:
 
 ```bash
-hermes config set OPENAI_BASE_URL http://localhost:11434/v1  # Ollama
-hermes config set OPENAI_API_KEY ollama                       # Any non-empty value
-hermes config set HERMES_MODEL llama3.1
+logos config set OPENAI_BASE_URL http://localhost:11434/v1  # Ollama
+logos config set OPENAI_API_KEY ollama                       # Any non-empty value
+logos config set HERMES_MODEL llama3.1
 ```
 
 This works with Ollama, vLLM, llama.cpp server, SGLang, LocalAI, and others. See the [Configuration guide](../user-guide/configuration.md) for details.
 
 ### How much does it cost?
 
-Hermes Agent itself is **free and open-source** (MIT license). You pay only for the LLM API usage from your chosen provider. Local models are completely free to run.
+Logos itself is **free and open-source** (MIT license). You pay only for the LLM API usage from your chosen provider. Local models are completely free to run.
 
 ### Can multiple people use one instance?
 
-Yes. The [messaging gateway](../user-guide/messaging/index.md) lets multiple users interact with the same Hermes Agent instance via Telegram, Discord, Slack, WhatsApp, or Home Assistant. Access is controlled through allowlists (specific user IDs) and DM pairing (first user to message claims access).
+Yes. The [messaging gateway](../user-guide/messaging/index.md) lets multiple users interact with the same Logos instance via Telegram, Discord, Slack, WhatsApp, or Home Assistant. Access is controlled through allowlists (specific user IDs) and DM pairing (first user to message claims access).
 
 ### What's the difference between memory and skills?
 
@@ -144,7 +144,7 @@ source ~/.bashrc
 # If you previously installed with sudo, clean up:
 sudo rm /usr/local/bin/hermes
 # Then re-run the standard installer
-curl -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/GregsGreyCode/logos/main/scripts/install.sh | bash
 ```
 
 ---
@@ -158,13 +158,13 @@ curl -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scri
 **Solution:**
 ```bash
 # Check which keys are set
-hermes config get OPENROUTER_API_KEY
+logos config get OPENROUTER_API_KEY
 
 # Re-configure your provider
-hermes model
+logos model
 
 # Or set directly
-hermes config set OPENROUTER_API_KEY sk-or-v1-xxxxxxxxxxxx
+logos config set OPENROUTER_API_KEY sk-or-v1-xxxxxxxxxxxx
 ```
 
 :::warning
@@ -178,10 +178,10 @@ Make sure the key matches the provider. An OpenAI key won't work with OpenRouter
 **Solution:**
 ```bash
 # List available models for your provider
-hermes models
+logos model
 
 # Set a valid model
-hermes config set HERMES_MODEL openrouter/nous/hermes-3-llama-3.1-70b
+logos config set HERMES_MODEL openrouter/nous/hermes-3-llama-3.1-70b
 
 # Or specify per-session
 hermes chat --model openrouter/meta-llama/llama-3.1-70b-instruct
@@ -194,7 +194,7 @@ hermes chat --model openrouter/meta-llama/llama-3.1-70b-instruct
 **Solution:** Wait a moment and retry. For sustained usage, consider:
 - Upgrading your provider plan
 - Switching to a different model or provider
-- Using `hermes chat --provider <alternative>` to route to a different backend
+- Using `hermes chat --provider <alternative>` to route to a different backend temporarily
 
 #### Context length exceeded
 
@@ -270,13 +270,13 @@ docker run hello-world
 **Solution:**
 ```bash
 # Check if the gateway is running
-hermes gateway status
+logos gateway status
 
 # Start the gateway
-hermes gateway start
+logos gateway start
 
 # Check logs for errors
-hermes gateway logs
+logos gateway logs
 ```
 
 #### Messages not delivering
@@ -284,8 +284,8 @@ hermes gateway logs
 **Cause:** Network issues, bot token expired, or platform webhook misconfiguration.
 
 **Solution:**
-- Verify your bot token is valid with `hermes gateway setup`
-- Check gateway logs: `hermes gateway logs`
+- Verify your bot token is valid with `logos gateway setup`
+- Check gateway logs: `logos gateway logs`
 - For webhook-based platforms (Slack, WhatsApp), ensure your server is publicly accessible
 
 #### Allowlist confusion — who can talk to the bot?
@@ -309,13 +309,13 @@ Configure in `~/.logos/config.yaml` under your gateway's settings. See the [Mess
 **Solution:**
 ```bash
 # Install messaging dependencies
-pip install hermes-agent[telegram]   # or [discord], [slack], [whatsapp]
+pip install logos[telegram]   # or [discord], [slack], [whatsapp]
 
 # Check for port conflicts
 lsof -i :8080
 
 # Verify configuration
-hermes config show
+logos config show
 ```
 
 ---
@@ -376,7 +376,7 @@ hermes chat --continue
 **Solution:**
 ```bash
 # Ensure MCP dependencies are installed
-pip install hermes-agent[mcp]
+pip install logos[mcp]
 
 # For npm-based servers, ensure Node.js is available
 node --version
@@ -407,7 +407,7 @@ mcp_servers:
 
 ```bash
 # Verify MCP servers are configured
-hermes config show | grep -A 12 mcp_servers
+logos config show | grep -A 12 mcp_servers
 
 # Restart Hermes or reload MCP after config changes
 hermes chat
@@ -437,6 +437,5 @@ If an MCP server crashes mid-request, Hermes will report a timeout. Check the se
 
 If your issue isn't covered here:
 
-1. **Search existing issues:** [GitHub Issues](https://github.com/NousResearch/hermes-agent/issues)
-2. **Ask the community:** [Nous Research Discord](https://discord.gg/nousresearch)
-3. **File a bug report:** Include your OS, Python version (`python3 --version`), Hermes version (`hermes --version`), and the full error message
+1. **Search existing issues:** [GitHub Issues](https://github.com/GregsGreyCode/logos/issues)
+2. **File a bug report:** Include your OS, Python version (`python3 --version`), Hermes version (`hermes --version`), and the full error message

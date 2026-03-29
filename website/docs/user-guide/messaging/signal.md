@@ -1,7 +1,7 @@
 ---
 sidebar_position: 6
 title: "Signal"
-description: "Set up Hermes Agent as a Signal messenger bot via signal-cli daemon"
+description: "Set up Logos as a Signal messenger bot via signal-cli daemon"
 ---
 
 # Signal Setup
@@ -95,7 +95,7 @@ curl http://127.0.0.1:8080/api/v1/check
 The easiest way:
 
 ```bash
-hermes gateway setup
+logos gateway setup
 ```
 
 Select **Signal** from the platform menu. The wizard will:
@@ -126,8 +126,8 @@ SIGNAL_HOME_CHANNEL=+1234567890                  # Default delivery target for c
 Then start the gateway:
 
 ```bash
-hermes gateway              # Foreground
-hermes gateway install      # Install as a system service
+logos gateway              # Foreground
+logos gateway install      # Install as a system service
 ```
 
 ---
@@ -139,7 +139,7 @@ hermes gateway install      # Install as a system service
 DM access follows the same pattern as all other Hermes platforms:
 
 1. **`SIGNAL_ALLOWED_USERS` set** → only those users can message
-2. **No allowlist set** → unknown users get a DM pairing code (approve via `hermes pairing approve signal CODE`)
+2. **No allowlist set** → unknown users get a DM pairing code (approve via `logos pairing approve signal CODE`)
 3. **`SIGNAL_ALLOW_ALL_USERS=true`** → anyone can message (use with caution)
 
 ### Group Access

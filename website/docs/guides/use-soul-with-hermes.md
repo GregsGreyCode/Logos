@@ -1,7 +1,7 @@
 ---
 sidebar_position: 6
 title: "Use SOUL.md with Hermes"
-description: "How to use SOUL.md to shape Hermes Agent's default voice, what belongs there, and how it differs from AGENTS.md and /personality"
+description: "How to use SOUL.md to shape the Logos agent's default voice, what belongs there, and how it differs from AGENTS.md and /personality"
 ---
 
 # Use SOUL.md with Hermes
@@ -50,7 +50,7 @@ Hermes now uses only the global SOUL file for the current instance:
 If you run Hermes with a custom home directory, it becomes:
 
 ```text
-$HERMES_HOME/SOUL.md
+$LOGOS_HOME/SOUL.md
 ```
 
 ## First-run behavior
@@ -65,7 +65,7 @@ Important:
 
 ## How Hermes uses it
 
-When Hermes starts a session, it reads `SOUL.md` from `HERMES_HOME`, scans it for prompt-injection patterns, truncates it if needed, and injects the content directly into the prompt.
+When Hermes starts a session, it reads `SOUL.md` from `LOGOS_HOME`, scans it for prompt-injection patterns, truncates it if needed, and injects the content directly into the prompt.
 
 No wrapper language is added around the file.
 
@@ -238,7 +238,7 @@ That iterative approach works better than trying to design the perfect personali
 ### I edited SOUL.md but Hermes still sounds the same
 
 Check:
-- you edited `~/.logos/SOUL.md` or `$HERMES_HOME/SOUL.md`
+- you edited `~/.logos/SOUL.md` or `$LOGOS_HOME/SOUL.md`
 - not some repo-local `SOUL.md`
 - the file is not empty
 - your session was restarted after the edit

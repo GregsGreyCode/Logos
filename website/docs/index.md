@@ -45,10 +45,10 @@ It's not a chatbot wrapper or a single-model assistant. It's a **platform** — 
 - **A closed learning loop** — Agent-curated memory with periodic nudges, autonomous skill creation, skill self-improvement during use, FTS5 cross-session recall with LLM summarization, and [Honcho](https://github.com/plastic-labs/honcho) dialectic user modeling
 - **Runs anywhere, not just your laptop** — 6 terminal backends: local, Docker, SSH, Daytona, Singularity, Modal. Daytona and Modal offer serverless persistence — your environment hibernates when idle, costing nearly nothing
 - **Lives where you do** — CLI, Telegram, Discord, Slack, WhatsApp, all from one gateway
-- **Built by model trainers** — Created by [Nous Research](https://nousresearch.com), the lab behind Hermes, Nomos, and Psyche. Works with [Nous Portal](https://portal.nousresearch.com), [OpenRouter](https://openrouter.ai), OpenAI, or any endpoint
+- **Provider agnostic** — Works with [OpenRouter](https://openrouter.ai), [Nous Portal](https://portal.nousresearch.com), Anthropic, OpenAI, or any OpenAI-compatible endpoint
 - **Scheduled automations** — Built-in cron with delivery to any platform
 - **Delegates & parallelizes** — Spawn isolated subagents for parallel workstreams. Programmatic Tool Calling via `execute_code` collapses multi-step pipelines into single inference calls
 - **Open standard skills** — Compatible with [agentskills.io](https://agentskills.io). Skills are portable, shareable, and community-contributed via the Skills Hub
 - **Full web control** — Search, extract, browse, vision, image generation, TTS
 - **MCP support** — Connect to any MCP server for extended tool capabilities
-- **Research-ready** — Batch processing, trajectory export, RL training with Atropos. Built by [Nous Research](https://nousresearch.com) — the lab behind Hermes, Nomos, and Psyche models
+- **Research-ready** — Batch processing, trajectory export, RL training with Atropos

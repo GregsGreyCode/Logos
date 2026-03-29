@@ -22,7 +22,7 @@ Key implementation files:
 ## Boot flow
 
 ```text
-hermes acp / hermes-acp / python -m acp_adapter
+logos acp / hermes-acp / python -m acp_adapter
   -> acp_adapter.entry.main()
   -> load ~/.logos/.env
   -> configure stderr logging
@@ -178,5 +178,5 @@ ACP temporarily installs an approval callback on the terminal tool during prompt
 
 - `tests/acp/` — ACP test suite
 - `toolsets.py` — `hermes-acp` toolset definition
-- `logos_cli/main.py` — `hermes acp` CLI subcommand
+- `logos_cli/main.py` — `logos acp` CLI subcommand
 - `pyproject.toml` — `[acp]` optional dependency + `hermes-acp` script

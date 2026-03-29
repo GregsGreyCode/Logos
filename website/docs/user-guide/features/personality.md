@@ -9,7 +9,7 @@ description: "Customize Logos' personality with souls, a global SOUL.md, built-i
 Logos' personality is customizable at several layers:
 
 - **Souls** — chosen during setup (or changed anytime from the dashboard). A soul sets the agent's default behaviour, communication style, and enabled toolset. Built-in souls include General, General (Lite), App Development, Homelab Investigator, Homelab Code Fix, News Anchor, and others.
-- `SOUL.md` — a durable persona file that lives in `HERMES_HOME` and is injected into every session for that Logos instance. Fine-grained voice control on top of the chosen soul.
+- `SOUL.md` — a durable persona file that lives in `LOGOS_HOME` and is injected into every session for that Logos instance. Fine-grained voice control on top of the chosen soul.
 - built-in or custom `/personality` presets — session-level system-prompt overlays
 
 **General (Lite)** is a soul designed for models with smaller context windows. It has fewer enabled tools by default, which keeps the system prompt shorter. The setup wizard automatically suggests it when the selected model has fewer than 16,384 tokens of context.
@@ -24,17 +24,17 @@ Hermes now seeds a default `SOUL.md` automatically in:
 ~/.logos/SOUL.md
 ```
 
-More precisely, it uses the current instance's `HERMES_HOME`, so if you run Hermes with a custom home directory, it will use:
+More precisely, it uses the current instance's `LOGOS_HOME`, so if you run Hermes with a custom home directory, it will use:
 
 ```text
-$HERMES_HOME/SOUL.md
+$LOGOS_HOME/SOUL.md
 ```
 
 ### Important behavior
 
 - Hermes creates a starter `SOUL.md` automatically if one does not exist yet
 - Existing user `SOUL.md` files are never overwritten
-- Hermes loads `SOUL.md` only from `HERMES_HOME`
+- Hermes loads `SOUL.md` only from `LOGOS_HOME`
 - Hermes does not look in the current working directory for `SOUL.md`
 - If `SOUL.md` exists but is empty, Hermes adds nothing from it to the prompt
 - If `SOUL.md` has content, that content is injected verbatim after security scanning and truncation
@@ -46,7 +46,7 @@ That makes `SOUL.md` a true per-user or per-instance default personality, not a 
 
 This keeps personality predictable.
 
-If Hermes loaded `SOUL.md` from whatever directory you happened to launch it in, your personality could change unexpectedly between projects. By loading only from `HERMES_HOME`, the personality belongs to the Hermes instance itself.
+If Hermes loaded `SOUL.md` from whatever directory you happened to launch it in, your personality could change unexpectedly between projects. By loading only from `LOGOS_HOME`, the personality belongs to the Hermes instance itself.
 
 That also makes it easier to teach users:
 - "Edit `~/.logos/SOUL.md` to change Hermes' default personality."
@@ -62,7 +62,7 @@ For most users:
 If you use a custom home:
 
 ```bash
-$HERMES_HOME/SOUL.md
+$LOGOS_HOME/SOUL.md
 ```
 
 ## What should go in SOUL.md?

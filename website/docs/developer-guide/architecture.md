@@ -1,35 +1,36 @@
 ---
 sidebar_position: 1
 title: "Architecture"
-description: "Hermes Agent internals — major subsystems, execution paths, and where to read next"
+description: "Logos internals — major subsystems, execution paths, and where to read next"
 ---
 
 # Architecture
 
-This page is the top-level map of Hermes Agent internals. The project has grown beyond a single monolithic loop, so the best way to understand it is by subsystem.
+This page is the top-level map of Logos internals. The project is composed of the Logos gateway (the platform control plane) and the Hermes agent runtime, plus supporting subsystems.
 
 ## High-level structure
 
 ```text
-hermes-agent/
-├── run_agent.py              # AIAgent core loop
-├── cli.py                    # interactive terminal UI
-├── model_tools.py            # tool discovery/orchestration
-├── toolsets.py               # tool groupings and presets
-├── hermes_state.py           # SQLite session/state database
-├── batch_runner.py           # batch trajectory generation
-│
+logos/
+├── agents/hermes/agent.py    # AIAgent core loop (Hermes runtime)
+├── core/                     # shared domain: state, metrics, toolsets, model_tools, batch_runner
+├── logos_cli/                # platform CLI: gateway, setup, config, doctor, auth, models
+├── tools/                    # 47 tool implementations and terminal environments
+├── gateway/                  # always-on HTTP server, web dashboard, executors, messaging adapters
+│   ├── html/                 # web dashboard (login, main app, setup wizard)
+│   ├── executors/            # agent isolation backends (kubernetes, docker, openshell, local)
+│   ├── platforms/            # messaging adapters (telegram, discord, slack, whatsapp, signal, email)
+│   └── auth/                 # JWT auth, RBAC, audit logging
 ├── agent/                    # prompt building, compression, caching, metadata, trajectories
-├── logos_cli/               # command entrypoints, auth, setup, models, config, doctor
-├── tools/                    # tool implementations and terminal environments
-├── gateway/                  # messaging gateway, session routing, delivery, pairing, hooks
 ├── cron/                     # scheduled job storage and scheduler
 ├── honcho_integration/       # Honcho memory integration
 ├── acp_adapter/              # ACP editor integration server
-├── acp_registry/             # ACP registry manifest + icon
-├── environments/             # Hermes RL / benchmark environment framework
+├── workflows/                # DAG-based workflow engine
+├── launcher/                 # Windows desktop launcher (system tray)
+├── environments/             # RL / benchmark environment framework
 ├── skills/                   # bundled skills
 ├── optional-skills/          # official optional skills
+├── k8s/                      # Kubernetes deployment manifests
 └── tests/                    # test suite
 ```
 
@@ -52,7 +53,7 @@ If you are new to the codebase, read in this order:
 
 ### Agent loop
 
-The core synchronous orchestration engine is `AIAgent` in `run_agent.py`.
+The core synchronous orchestration engine is `AIAgent` in `agents/hermes/agent.py`.
 
 It is responsible for:
 
@@ -69,7 +70,7 @@ See [Agent Loop Internals](./agent-loop.md).
 
 Prompt-building logic is split between:
 
-- `run_agent.py`
+- `agents/hermes/agent.py`
 - `agent/prompt_builder.py`
 - `agent/prompt_caching.py`
 - `agent/context_compressor.py`
@@ -81,7 +82,7 @@ See:
 
 ### Provider/runtime resolution
 
-Hermes has a shared runtime provider resolver used by CLI, gateway, cron, ACP, and auxiliary calls.
+Logos has a shared runtime provider resolver used by CLI, gateway, cron, ACP, and auxiliary calls.
 
 See [Provider Runtime Resolution](./provider-runtime.md).
 
@@ -139,7 +140,7 @@ Several cross-cutting design themes appear throughout the codebase:
 
 ## Implementation notes
 
-The older mental model of Hermes as “one OpenAI-compatible chat loop plus some tools” is no longer sufficient. Current Hermes includes:
+The older mental model of “one OpenAI-compatible chat loop plus some tools” is no longer sufficient. Logos includes:
 
 - multiple API modes
 - auxiliary model routing

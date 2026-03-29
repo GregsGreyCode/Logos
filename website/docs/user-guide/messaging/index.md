@@ -42,7 +42,7 @@ Each platform adapter receives messages, routes them through a per-chat session 
 The easiest way to configure messaging platforms is the interactive wizard:
 
 ```bash
-hermes gateway setup        # Interactive setup for all messaging platforms
+logos gateway setup        # Interactive setup for all messaging platforms
 ```
 
 This walks you through configuring each platform with arrow-key selection, shows which platforms are already configured, and offers to start/restart the gateway when done.
@@ -50,12 +50,12 @@ This walks you through configuring each platform with arrow-key selection, shows
 ## Gateway Commands
 
 ```bash
-hermes gateway              # Run in foreground
-hermes gateway setup        # Configure messaging platforms interactively
-hermes gateway install      # Install as systemd service (Linux) / launchd (macOS)
-hermes gateway start        # Start the service
-hermes gateway stop         # Stop the service
-hermes gateway status       # Check service status
+logos gateway              # Run in foreground
+logos gateway setup        # Configure messaging platforms interactively
+logos gateway install      # Install as systemd service (Linux) / launchd (macOS)
+logos gateway start        # Start the service
+logos gateway stop         # Stop the service
+logos gateway status       # Check service status
 ```
 
 ## Chat Commands (Inside Messaging)
@@ -80,7 +80,7 @@ hermes gateway status       # Check service status
 | `/rollback [number]` | List or restore filesystem checkpoints |
 | `/background <prompt>` | Run a prompt in a separate background session |
 | `/reload-mcp` | Reload MCP servers from config |
-| `/update` | Update Hermes Agent to the latest version |
+| `/update` | Update Logos to the latest version |
 | `/help` | Show available commands |
 | `/<skill-name>` | Invoke any installed skill |
 
@@ -136,11 +136,11 @@ Instead of manually configuring user IDs, unknown users receive a one-time pairi
 ```bash
 # The user sees: "Pairing code: XKGH5N7P"
 # You approve them with:
-hermes pairing approve telegram XKGH5N7P
+logos pairing approve telegram XKGH5N7P
 
 # Other pairing commands:
-hermes pairing list          # View pending + approved users
-hermes pairing revoke telegram 123456789  # Remove access
+logos pairing list          # View pending + approved users
+logos pairing revoke telegram 123456789  # Remove access
 ```
 
 Pairing codes expire after 1 hour, are rate-limited, and use cryptographic randomness.
@@ -177,11 +177,11 @@ When enabled, the bot sends status messages as it works:
 ### Linux (systemd)
 
 ```bash
-hermes gateway install               # Install as user service
-systemctl --user start hermes-gateway
-systemctl --user stop hermes-gateway
-systemctl --user status hermes-gateway
-journalctl --user -u hermes-gateway -f
+logos gateway install               # Install as user service
+systemctl --user start logos-gateway
+systemctl --user stop logos-gateway
+systemctl --user status logos-gateway
+journalctl --user -u logos-gateway -f
 
 # Enable lingering (keeps running after logout)
 sudo loginctl enable-linger $USER
@@ -190,9 +190,9 @@ sudo loginctl enable-linger $USER
 ### macOS (launchd)
 
 ```bash
-hermes gateway install
-launchctl start ai.hermes.gateway
-launchctl stop ai.hermes.gateway
+logos gateway install
+launchctl start ai.logos.gateway
+launchctl stop ai.logos.gateway
 tail -f ~/.logos/logs/gateway.log
 ```
 

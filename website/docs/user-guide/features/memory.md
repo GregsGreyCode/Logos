@@ -1,12 +1,12 @@
 ---
 sidebar_position: 3
 title: "Persistent Memory"
-description: "How Hermes Agent remembers across sessions — MEMORY.md, USER.md, and session search"
+description: "How Logos remembers across sessions — MEMORY.md, USER.md, and session search"
 ---
 
 # Persistent Memory
 
-Hermes Agent has bounded, curated memory that persists across sessions. This lets it remember your preferences, your projects, your environment, and things it has learned.
+Logos has bounded, curated memory that persists across sessions. This lets it remember your preferences, your projects, your environment, and things it has learned.
 
 ## How It Works
 
@@ -212,7 +212,7 @@ memory:
 For deeper, AI-generated user understanding that works across sessions and platforms, you can enable [Honcho Memory](./honcho.md). Honcho runs alongside built-in memory in `hybrid` mode (the default) — `MEMORY.md` and `USER.md` stay as-is, and Honcho adds a persistent user modeling layer on top.
 
 ```bash
-hermes honcho setup
+logos honcho setup
 ```
 
 See the [Honcho Memory](./honcho.md) docs for full configuration, tools, and CLI reference.

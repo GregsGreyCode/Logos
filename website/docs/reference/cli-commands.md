@@ -1,7 +1,7 @@
 ---
 sidebar_position: 1
 title: "CLI Commands Reference"
-description: "Authoritative reference for Hermes terminal commands and command families"
+description: "Authoritative reference for Logos terminal commands and command families"
 ---
 
 # CLI Commands Reference
@@ -32,26 +32,26 @@ hermes [global-options] <command> [subcommand/options]
 | Command | Purpose |
 |---------|---------|
 | `hermes chat` | Interactive or one-shot chat with the agent. |
-| `hermes model` | Interactively choose the default provider and model. |
-| `hermes gateway` | Run or manage the messaging gateway service. |
-| `hermes setup` | Interactive setup wizard for all or part of the configuration. |
-| `hermes whatsapp` | Configure and pair the WhatsApp bridge. |
-| `hermes login` / `logout` | Authenticate with OAuth-backed providers. |
-| `hermes status` | Show agent, auth, and platform status. |
-| `hermes cron` | Inspect and tick the cron scheduler. |
-| `hermes doctor` | Diagnose config and dependency issues. |
-| `hermes config` | Show, edit, migrate, and query configuration files. |
-| `hermes pairing` | Approve or revoke messaging pairing codes. |
-| `hermes skills` | Browse, install, publish, audit, and configure skills. |
-| `hermes honcho` | Manage Honcho cross-session memory integration. |
-| `hermes acp` | Run Hermes as an ACP server for editor integration. |
-| `hermes tools` | Configure enabled tools per platform. |
+| `logos model` | Interactively choose the default provider and model. |
+| `logos gateway` | Run or manage the messaging gateway service. |
+| `logos setup` | Interactive setup wizard for all or part of the configuration. |
+| `logos whatsapp` | Configure and pair the WhatsApp bridge. |
+| `logos login` / `logout` | Authenticate with OAuth-backed providers. |
+| `logos status` | Show agent, auth, and platform status. |
+| `logos cron` | Inspect and tick the cron scheduler. |
+| `logos doctor` | Diagnose config and dependency issues. |
+| `logos config` | Show, edit, migrate, and query configuration files. |
+| `logos pairing` | Approve or revoke messaging pairing codes. |
+| `logos skills` | Browse, install, publish, audit, and configure skills. |
+| `logos honcho` | Manage Honcho cross-session memory integration. |
+| `logos acp` | Run Hermes as an ACP server for editor integration. |
+| `logos tools` | Configure enabled tools per platform. |
 | `hermes sessions` | Browse, export, prune, rename, and delete sessions. |
-| `hermes insights` | Show token/cost/activity analytics. |
-| `hermes claw` | OpenClaw migration helpers. |
-| `hermes version` | Show version information. |
-| `hermes update` | Pull latest code and reinstall dependencies. |
-| `hermes uninstall` | Remove Hermes from the system. |
+| `logos insights` | Show token/cost/activity analytics. |
+| `logos claw` | OpenClaw migration helpers. |
+| `logos version` | Show version information. |
+| `logos update` | Pull latest code and reinstall dependencies. |
+| `logos uninstall` | Remove Hermes from the system. |
 
 ## `hermes chat`
 
@@ -86,12 +86,12 @@ hermes chat --quiet -q "Return only JSON"
 hermes chat --worktree -q "Review this repo and open a PR"
 ```
 
-## `hermes model`
+## `logos model`
 
 Interactive provider + model selector.
 
 ```bash
-hermes model
+logos model
 ```
 
 Use this when you want to:
@@ -100,10 +100,10 @@ Use this when you want to:
 - pick from provider-specific model lists
 - save the new default into config
 
-## `hermes gateway`
+## `logos gateway`
 
 ```bash
-hermes gateway <subcommand>
+logos gateway <subcommand>
 ```
 
 Subcommands:
@@ -119,10 +119,10 @@ Subcommands:
 | `uninstall` | Remove the installed service. |
 | `setup` | Interactive messaging-platform setup. |
 
-## `hermes setup`
+## `logos setup`
 
 ```bash
-hermes setup [model|terminal|gateway|tools|agent] [--non-interactive] [--reset]
+logos setup [model|terminal|gateway|tools|agent] [--non-interactive] [--reset]
 ```
 
 Use the full wizard or jump into one section:
@@ -142,19 +142,19 @@ Options:
 | `--non-interactive` | Use defaults / environment values without prompts. |
 | `--reset` | Reset configuration to defaults before setup. |
 
-## `hermes whatsapp`
+## `logos whatsapp`
 
 ```bash
-hermes whatsapp
+logos whatsapp
 ```
 
 Runs the WhatsApp pairing/setup flow, including mode selection and QR-code pairing.
 
-## `hermes login` / `hermes logout`
+## `logos login` / `logos logout`
 
 ```bash
-hermes login [--provider nous|openai-codex] [--portal-url ...] [--inference-url ...]
-hermes logout [--provider nous|openai-codex]
+logos login [--provider nous|openai-codex] [--portal-url ...] [--inference-url ...]
+logos logout [--provider nous|openai-codex]
 ```
 
 `login` supports:
@@ -167,10 +167,10 @@ Useful options for `login`:
 - `--ca-bundle <pem>`
 - `--insecure`
 
-## `hermes status`
+## `logos status`
 
 ```bash
-hermes status [--all] [--deep]
+logos status [--all] [--deep]
 ```
 
 | Option | Description |
@@ -178,10 +178,10 @@ hermes status [--all] [--deep]
 | `--all` | Show all details in a shareable redacted format. |
 | `--deep` | Run deeper checks that may take longer. |
 
-## `hermes cron`
+## `logos cron`
 
 ```bash
-hermes cron <list|status|tick>
+logos cron <list|status|tick>
 ```
 
 | Subcommand | Description |
@@ -190,20 +190,20 @@ hermes cron <list|status|tick>
 | `status` | Check whether the cron scheduler is running. |
 | `tick` | Run due jobs once and exit. |
 
-## `hermes doctor`
+## `logos doctor`
 
 ```bash
-hermes doctor [--fix]
+logos doctor [--fix]
 ```
 
 | Option | Description |
 |--------|-------------|
 | `--fix` | Attempt automatic repairs where possible. |
 
-## `hermes config`
+## `logos config`
 
 ```bash
-hermes config <subcommand>
+logos config <subcommand>
 ```
 
 Subcommands:
@@ -218,10 +218,10 @@ Subcommands:
 | `check` | Check for missing or stale config. |
 | `migrate` | Add newly introduced options interactively. |
 
-## `hermes pairing`
+## `logos pairing`
 
 ```bash
-hermes pairing <list|approve|revoke|clear-pending>
+logos pairing <list|approve|revoke|clear-pending>
 ```
 
 | Subcommand | Description |
@@ -231,10 +231,10 @@ hermes pairing <list|approve|revoke|clear-pending>
 | `revoke <platform> <user-id>` | Revoke a user's access. |
 | `clear-pending` | Clear pending pairing codes. |
 
-## `hermes skills`
+## `logos skills`
 
 ```bash
-hermes skills <subcommand>
+logos skills <subcommand>
 ```
 
 Subcommands:
@@ -256,18 +256,18 @@ Subcommands:
 Common examples:
 
 ```bash
-hermes skills browse
-hermes skills browse --source official
-hermes skills search kubernetes
-hermes skills inspect official/security/1password
-hermes skills install official/migration/openclaw-migration
-hermes skills config
+logos skills browse
+logos skills browse --source official
+logos skills search kubernetes
+logos skills inspect official/security/1password
+logos skills install official/migration/openclaw-migration
+logos skills config
 ```
 
-## `hermes honcho`
+## `logos honcho`
 
 ```bash
-hermes honcho <subcommand>
+logos honcho <subcommand>
 ```
 
 Subcommands:
@@ -284,10 +284,10 @@ Subcommands:
 | `identity` | Seed or show the AI peer identity representation. |
 | `migrate` | Migration guide from openclaw-honcho to Hermes Honcho. |
 
-## `hermes acp`
+## `logos acp`
 
 ```bash
-hermes acp
+logos acp
 ```
 
 Starts Hermes as an ACP (Agent Client Protocol) stdio server for editor integration.
@@ -307,10 +307,10 @@ pip install -e '.[acp]'
 
 See [ACP Editor Integration](../user-guide/features/acp.md) and [ACP Internals](../developer-guide/acp-internals.md).
 
-## `hermes tools`
+## `logos tools`
 
 ```bash
-hermes tools [--summary]
+logos tools [--summary]
 ```
 
 | Option | Description |
@@ -337,10 +337,10 @@ Subcommands:
 | `stats` | Show session-store statistics. |
 | `rename <session-id> <title>` | Set or change a session title. |
 
-## `hermes insights`
+## `logos insights`
 
 ```bash
-hermes insights [--days N] [--source platform]
+logos insights [--days N] [--source platform]
 ```
 
 | Option | Description |
@@ -348,10 +348,10 @@ hermes insights [--days N] [--source platform]
 | `--days <n>` | Analyze the last `n` days (default: 30). |
 | `--source <platform>` | Filter by source such as `cli`, `telegram`, or `discord`. |
 
-## `hermes claw`
+## `logos claw`
 
 ```bash
-hermes claw migrate
+logos claw migrate
 ```
 
 Used to migrate settings, memories, skills, and keys from OpenClaw to Hermes.
@@ -360,9 +360,9 @@ Used to migrate settings, memories, skills, and keys from OpenClaw to Hermes.
 
 | Command | Description |
 |---------|-------------|
-| `hermes version` | Print version information. |
-| `hermes update` | Pull latest changes and reinstall dependencies. |
-| `hermes uninstall [--full] [--yes]` | Remove Hermes, optionally deleting all config/data. |
+| `logos version` | Print version information. |
+| `logos update` | Pull latest changes and reinstall dependencies. |
+| `logos uninstall [--full] [--yes]` | Remove Hermes, optionally deleting all config/data. |
 
 ## See also
 

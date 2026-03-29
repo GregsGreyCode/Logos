@@ -37,11 +37,11 @@ The agent will use the `schedule_cronjob` tool to set it up.
 **Cron execution is handled by the gateway daemon.** The gateway ticks the scheduler every 60 seconds, running any due jobs in isolated agent sessions:
 
 ```bash
-hermes gateway install     # Install as system service (recommended)
-hermes gateway             # Or run in foreground
+logos gateway install     # Install as system service (recommended)
+logos gateway             # Or run in foreground
 
-hermes cron list           # View scheduled jobs
-hermes cron status         # Check if gateway is running
+logos cron list           # View scheduled jobs
+logos cron status         # Check if gateway is running
 ```
 
 ### The Gateway Scheduler
@@ -234,8 +234,8 @@ schedule_cronjob(
 
 ```bash
 # CLI commands
-hermes cron list           # View all scheduled jobs
-hermes cron status         # Check if the scheduler is running
+logos cron list           # View all scheduled jobs
+logos cron status         # Check if the scheduler is running
 
 # Slash commands (inside chat)
 /cron list

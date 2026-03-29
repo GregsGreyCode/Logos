@@ -1,7 +1,7 @@
 ---
 sidebar_position: 1
 title: "Tools & Toolsets"
-description: "Overview of Hermes Agent's tools — what's available, how toolsets work, and terminal backends"
+description: "Overview of Logos' tools — what's available, how toolsets work, and terminal backends"
 ---
 
 # Tools & Toolsets
@@ -34,10 +34,10 @@ For the authoritative code-derived registry, see [Built-in Tools Reference](/doc
 hermes chat --toolsets "web,terminal"
 
 # See all available tools
-hermes tools
+logos tools
 
 # Configure tools per platform (interactive)
-hermes tools
+logos tools
 ```
 
 Common toolsets include `web`, `terminal`, `file`, `browser`, `vision`, `image_gen`, `moa`, `skills`, `tts`, `todo`, `memory`, `session_search`, `cronjob`, `code_execution`, `delegation`, `clarify`, `honcho`, `homeassistant`, and `rl`.
@@ -97,8 +97,8 @@ TERMINAL_SSH_KEY=~/.ssh/id_rsa
 apptainer build ~/python.sif docker://python:3.11-slim
 
 # Configure
-hermes config set terminal.backend singularity
-hermes config set terminal.singularity_image ~/python.sif
+logos config set terminal.backend singularity
+logos config set terminal.singularity_image ~/python.sif
 ```
 
 ### Modal (Serverless Cloud)
@@ -106,7 +106,7 @@ hermes config set terminal.singularity_image ~/python.sif
 ```bash
 uv pip install "swe-rex[modal]"
 modal setup
-hermes config set terminal.backend modal
+logos config set terminal.backend modal
 ```
 
 ### Container Resources
