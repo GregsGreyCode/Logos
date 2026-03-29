@@ -50,7 +50,11 @@ from gateway.session import SessionSource, build_session_context, build_session_
 logger = logging.getLogger(__name__)
 
 _start_time: float = 0.0
-_hermes_home: Path = Path(os.environ.get("HERMES_HOME") or (Path.home() / ".logos"))
+_hermes_home: Path = Path(
+    os.environ.get("LOGOS_HOME")
+    or os.environ.get("HERMES_HOME")
+    or str(Path.home() / ".logos")
+)
 _AI_ROUTER_BASE = os.environ.get(
     "AI_ROUTER_BASE",
     "http://ai-router.hermes.svc.cluster.local:9001",
