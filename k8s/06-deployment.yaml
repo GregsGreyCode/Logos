@@ -88,9 +88,12 @@ spec:
             - -c
             - |
               mkdir -p /logos-home/memories
-              sed "s|\${INSPECTOR_TOKEN}|${INSPECTOR_TOKEN}|g" /seed/config.yaml > /logos-home/config.yaml
+              # Write ConfigMap config to config-base.yaml (infra-managed).
+              # config.yaml is runtime-owned (setup wizard writes API keys,
+              # model, endpoint there) and must NOT be overwritten.
+              sed "s|\${INSPECTOR_TOKEN}|${INSPECTOR_TOKEN}|g" /seed/config.yaml > /logos-home/config-base.yaml
               cp /seed/SOUL.md /logos-home/SOUL.md
-              echo "config.yaml and SOUL.md seeded from ConfigMap"
+              echo "config-base.yaml and SOUL.md seeded from ConfigMap"
           env:
             - name: INSPECTOR_TOKEN
               valueFrom:
