@@ -1847,7 +1847,7 @@ def _update_via_zip(args):
     from urllib.request import urlretrieve
     
     branch = "main"
-    zip_url = f"https://github.com/NousResearch/hermes-agent/archive/refs/heads/{branch}.zip"
+    zip_url = f"https://github.com/GregsGreyCode/Logos/archive/refs/heads/{branch}.zip"
     
     print("→ Downloading latest version...")
     try:
@@ -2022,7 +2022,7 @@ def cmd_update(args):
             use_zip_update = True
         else:
             print("✗ Not a git repository. Please reinstall:")
-            print("  curl -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh | bash")
+            print("  git clone https://github.com/GregsGreyCode/Logos.git && cd Logos && pip install -e .")
             sys.exit(1)
     
     # On Windows, git can fail with "unable to write loose object file: Invalid argument"
