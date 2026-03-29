@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from hermes_cli.auth import (
+from logos_cli.auth import (
     AuthError,
     DEFAULT_CODEX_BASE_URL,
     PROVIDER_REGISTRY,
@@ -95,7 +95,7 @@ def test_resolve_codex_runtime_credentials_refreshes_expiring_token(tmp_path, mo
         called["count"] += 1
         return {"access_token": "access-new", "refresh_token": "refresh-new"}
 
-    monkeypatch.setattr("hermes_cli.auth._refresh_codex_auth_tokens", _fake_refresh)
+    monkeypatch.setattr("logos_cli.auth._refresh_codex_auth_tokens", _fake_refresh)
 
     resolved = resolve_codex_runtime_credentials()
 
@@ -114,7 +114,7 @@ def test_resolve_codex_runtime_credentials_force_refresh(tmp_path, monkeypatch):
         called["count"] += 1
         return {"access_token": "access-forced", "refresh_token": "refresh-new"}
 
-    monkeypatch.setattr("hermes_cli.auth._refresh_codex_auth_tokens", _fake_refresh)
+    monkeypatch.setattr("logos_cli.auth._refresh_codex_auth_tokens", _fake_refresh)
 
     resolved = resolve_codex_runtime_credentials(force_refresh=True, refresh_if_expiring=False)
 

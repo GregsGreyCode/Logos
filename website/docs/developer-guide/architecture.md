@@ -20,7 +20,7 @@ hermes-agent/
 ├── batch_runner.py           # batch trajectory generation
 │
 ├── agent/                    # prompt building, compression, caching, metadata, trajectories
-├── hermes_cli/               # command entrypoints, auth, setup, models, config, doctor
+├── logos_cli/               # command entrypoints, auth, setup, models, config, doctor
 ├── tools/                    # tool implementations and terminal environments
 ├── gateway/                  # messaging gateway, session routing, delivery, pairing, hooks
 ├── cron/                     # scheduled job storage and scheduler

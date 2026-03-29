@@ -503,7 +503,7 @@ class AIAgent:
                     'run_agent',            # agent runner internals
                     'trajectory_compressor',
                     'cron',                 # scheduler (only relevant in daemon mode)
-                    'hermes_cli',           # CLI helpers
+                    'logos_cli',           # CLI helpers
                 ]:
                     logging.getLogger(quiet_logger).setLevel(logging.ERROR)
         
@@ -742,7 +742,7 @@ class AIAgent:
         self._memory_flush_min_turns = 6
         if not skip_memory:
             try:
-                from hermes_cli.config import load_config as _load_mem_config
+                from logos_cli.config import load_config as _load_mem_config
                 mem_config = _load_mem_config().get("memory", {})
                 self._memory_enabled = mem_config.get("memory_enabled", False)
                 self._user_profile_enabled = mem_config.get("user_profile_enabled", False)
@@ -838,7 +838,7 @@ class AIAgent:
         # Skills config: nudge interval for skill creation reminders
         self._skill_nudge_interval = 15
         try:
-            from hermes_cli.config import load_config as _load_skills_config
+            from logos_cli.config import load_config as _load_skills_config
             skills_config = _load_skills_config().get("skills", {})
             self._skill_nudge_interval = int(skills_config.get("creation_nudge_interval", 15))
         except Exception:
@@ -1629,7 +1629,7 @@ class AIAgent:
         honcho_sess = self._honcho.get_or_create(self._honcho_session_key)
         if not honcho_sess.messages:
             try:
-                from hermes_cli.config import get_hermes_home
+                from logos_cli.config import get_hermes_home
 
                 mem_dir = str(get_hermes_home() / "memories")
                 self._honcho.migrate_memory_files(
@@ -2618,7 +2618,7 @@ class AIAgent:
             return False
 
         try:
-            from hermes_cli.auth import resolve_codex_runtime_credentials
+            from logos_cli.auth import resolve_codex_runtime_credentials
 
             creds = resolve_codex_runtime_credentials(force_refresh=force)
         except Exception as exc:
@@ -2655,7 +2655,7 @@ class AIAgent:
             return False
 
         try:
-            from hermes_cli.auth import resolve_nous_runtime_credentials
+            from logos_cli.auth import resolve_nous_runtime_credentials
 
             creds = resolve_nous_runtime_credentials(
                 min_key_ttl_seconds=max(60, int(os.getenv("HERMES_NOUS_MIN_KEY_TTL_SECONDS", "1800"))),

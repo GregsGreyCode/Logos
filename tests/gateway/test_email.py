@@ -344,12 +344,12 @@ class TestGatewaySetup(unittest.TestCase):
     """Verify email in gateway setup wizard."""
 
     def test_email_in_platforms_list(self):
-        from hermes_cli.gateway import _PLATFORMS
+        from logos_cli.gateway import _PLATFORMS
         keys = [p["key"] for p in _PLATFORMS]
         self.assertIn("email", keys)
 
     def test_email_has_setup_vars(self):
-        from hermes_cli.gateway import _PLATFORMS
+        from logos_cli.gateway import _PLATFORMS
         email_platform = next(p for p in _PLATFORMS if p["key"] == "email")
         var_names = [v["name"] for v in email_platform["vars"]]
         self.assertIn("EMAIL_ADDRESS", var_names)

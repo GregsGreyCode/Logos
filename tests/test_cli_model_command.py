@@ -2,7 +2,7 @@
 
 from unittest.mock import patch, MagicMock
 
-from hermes_cli.cli import HermesCLI
+from logos_cli.cli import HermesCLI
 
 
 class TestModelCommand:
@@ -21,9 +21,9 @@ class TestModelCommand:
     def test_valid_model_from_api_saved_to_config(self, capsys):
         cli_obj = self._make_cli()
 
-        with patch("hermes_cli.models.fetch_api_models",
+        with patch("logos_cli.models.fetch_api_models",
                    return_value=["anthropic/claude-sonnet-4.5", "openai/gpt-5.4"]), \
-             patch("hermes_cli.cli.save_config_value", return_value=True) as save_mock:
+             patch("logos_cli.cli.save_config_value", return_value=True) as save_mock:
             cli_obj.process_command("/model anthropic/claude-sonnet-4.5")
 
         output = capsys.readouterr().out
@@ -34,9 +34,9 @@ class TestModelCommand:
     def test_unlisted_model_accepted_with_warning(self, capsys):
         cli_obj = self._make_cli()
 
-        with patch("hermes_cli.models.fetch_api_models",
+        with patch("logos_cli.models.fetch_api_models",
                    return_value=["anthropic/claude-opus-4.6"]), \
-             patch("hermes_cli.cli.save_config_value") as save_mock:
+             patch("logos_cli.cli.save_config_value") as save_mock:
             cli_obj.process_command("/model anthropic/fake-model")
 
         output = capsys.readouterr().out
@@ -46,8 +46,8 @@ class TestModelCommand:
     def test_api_unreachable_accepts_and_persists(self, capsys):
         cli_obj = self._make_cli()
 
-        with patch("hermes_cli.models.fetch_api_models", return_value=None), \
-             patch("hermes_cli.cli.save_config_value") as save_mock:
+        with patch("logos_cli.models.fetch_api_models", return_value=None), \
+             patch("logos_cli.cli.save_config_value") as save_mock:
             cli_obj.process_command("/model anthropic/claude-sonnet-next")
 
         output = capsys.readouterr().out
@@ -58,9 +58,9 @@ class TestModelCommand:
     def test_no_slash_model_accepted_with_warning(self, capsys):
         cli_obj = self._make_cli()
 
-        with patch("hermes_cli.models.fetch_api_models",
+        with patch("logos_cli.models.fetch_api_models",
                    return_value=["openai/gpt-5.4"]) as fetch_mock, \
-             patch("hermes_cli.cli.save_config_value") as save_mock:
+             patch("logos_cli.cli.save_config_value") as save_mock:
             cli_obj.process_command("/model gpt-5.4")
 
         output = capsys.readouterr().out
@@ -70,9 +70,9 @@ class TestModelCommand:
     def test_validation_crash_falls_back_to_save(self, capsys):
         cli_obj = self._make_cli()
 
-        with patch("hermes_cli.models.validate_requested_model",
+        with patch("logos_cli.models.validate_requested_model",
                    side_effect=RuntimeError("boom")), \
-             patch("hermes_cli.cli.save_config_value", return_value=True) as save_mock:
+             patch("logos_cli.cli.save_config_value", return_value=True) as save_mock:
             cli_obj.process_command("/model anthropic/claude-sonnet-4.5")
 
         output = capsys.readouterr().out
@@ -95,14 +95,14 @@ class TestModelCommand:
     def test_provider_colon_model_switches_provider(self, capsys):
         cli_obj = self._make_cli()
 
-        with patch("hermes_cli.runtime_provider.resolve_runtime_provider", return_value={
+        with patch("logos_cli.runtime_provider.resolve_runtime_provider", return_value={
                  "provider": "zai",
                  "api_key": "zai-key",
                  "base_url": "https://api.z.ai/api/paas/v4",
              }), \
-             patch("hermes_cli.models.fetch_api_models",
+             patch("logos_cli.models.fetch_api_models",
                    return_value=["glm-5", "glm-4.7"]), \
-             patch("hermes_cli.cli.save_config_value", return_value=True) as save_mock:
+             patch("logos_cli.cli.save_config_value", return_value=True) as save_mock:
             cli_obj.process_command("/model zai:glm-5")
 
         output = capsys.readouterr().out
@@ -117,7 +117,7 @@ class TestModelCommand:
     def test_provider_switch_fails_on_bad_credentials(self, capsys):
         cli_obj = self._make_cli()
 
-        with patch("hermes_cli.runtime_provider.resolve_runtime_provider",
+        with patch("logos_cli.runtime_provider.resolve_runtime_provider",
                    side_effect=Exception("No API key found")):
             cli_obj.process_command("/model nous:hermes-3")
 

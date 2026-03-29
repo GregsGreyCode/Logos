@@ -28,7 +28,7 @@ a = Analysis(
         # Soul files
         (str(ROOT / "souls"), "souls"),
         # Default config template
-        (str(ROOT / "hermes_cli" / "config.py"), "hermes_cli"),
+        (str(ROOT / "logos_cli" / "config.py"), "logos_cli"),
         # Tray icon — must be bundled so pystray can find it when frozen
         (str(ROOT / "launcher" / "logos.ico"), "launcher"),
         # HTML templates — extracted from http_api.py in Phase 1 refactor.

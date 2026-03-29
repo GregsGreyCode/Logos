@@ -69,7 +69,7 @@ def _load_security_config() -> dict:
         "tirith_fail_open": True,
     }
     try:
-        from hermes_cli.config import load_config
+        from logos_cli.config import load_config
         cfg = load_config().get("security", {}) or {}
     except Exception:
         cfg = {}
@@ -103,7 +103,7 @@ _MARKER_TTL = 86400  # 24 hours
 def _get_hermes_home() -> str:
     """Return the Hermes home directory, respecting HERMES_HOME env var.
 
-    Matches the convention used throughout the codebase (hermes_cli.config,
+    Matches the convention used throughout the codebase (logos_cli.config,
     cli.py, gateway/run.py, etc.) so tirith state stays inside the active
     profile and tests get automatic isolation via conftest's HERMES_HOME
     monkeypatch.

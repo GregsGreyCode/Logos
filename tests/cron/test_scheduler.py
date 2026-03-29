@@ -120,7 +120,7 @@ class TestRunJobSessionPersistence:
              patch("dotenv.load_dotenv"), \
              patch("core.state.SessionDB", return_value=fake_db), \
              patch(
-                 "hermes_cli.runtime_provider.resolve_runtime_provider",
+                 "logos_cli.runtime_provider.resolve_runtime_provider",
                  return_value={
                      "api_key": "test-key",
                      "base_url": "https://example.invalid/v1",

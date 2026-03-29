@@ -76,6 +76,6 @@ tool_prefix: "▏"
 
 ## Operational notes
 
-- Built-in skins load from `hermes_cli/skin_engine.py`.
+- Built-in skins load from `logos_cli/skin_engine.py`.
 - Unknown skins automatically fall back to `default`.
 - `/skin` updates the active CLI theme immediately for the current session.

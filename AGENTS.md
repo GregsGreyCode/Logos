@@ -36,7 +36,7 @@ logos/                        ← repo root
 │   ├── redact.py             # PII redaction helpers
 │   └── trajectory.py         # Trajectory saving helpers
 │
-├── hermes_cli/               # Platform CLI entry point
+├── logos_cli/               # Platform CLI entry point
 │   ├── main.py               # Entry point — all `hermes` subcommands
 │   ├── config.py             # DEFAULT_CONFIG, OPTIONAL_ENV_VARS, migration
 │   ├── commands.py           # Slash command definitions + SlashCommandCompleter
@@ -180,20 +180,20 @@ Messages follow OpenAI format: `{"role": "system/user/assistant/tool", ...}`. Re
 
 ---
 
-## CLI Architecture (hermes_cli/main.py)
+## CLI Architecture (logos_cli/main.py)
 
 - **Rich** for banner/panels, **prompt_toolkit** for input with autocomplete
 - **KawaiiSpinner** (`agent/display.py`) — animated faces during API calls, `┊` activity feed for tool results
-- Config loaded in `hermes_cli/main.py` from `~/.logos/config.yaml`
-- **Skin engine** (`hermes_cli/skin_engine.py`) — data-driven CLI theming; initialized from `display.skin` config key at startup; skins customize banner colors, spinner faces/verbs/wings, tool prefix, response box, branding text
-- Slash command dispatch lives in `hermes_cli/main.py`
+- Config loaded in `logos_cli/main.py` from `~/.logos/config.yaml`
+- **Skin engine** (`logos_cli/skin_engine.py`) — data-driven CLI theming; initialized from `display.skin` config key at startup; skins customize banner colors, spinner faces/verbs/wings, tool prefix, response box, branding text
+- Slash command dispatch lives in `logos_cli/main.py`
 - Skill slash commands: `agent/skill_commands.py` scans `~/.logos/skills/`, injects as **user message** (not system prompt) to preserve prompt caching
 
 ### Adding CLI Commands
 
-1. Add to `COMMANDS` dict in `hermes_cli/commands.py`
-2. Add handler in `hermes_cli/main.py`
-3. For persistent settings, use `save_config_value()` in `hermes_cli/config.py`
+1. Add to `COMMANDS` dict in `logos_cli/commands.py`
+2. Add handler in `logos_cli/main.py`
+3. For persistent settings, use `save_config_value()` in `logos_cli/config.py`
 
 ---
 
@@ -235,11 +235,11 @@ The registry handles schema collection, dispatch, availability checking, and err
 ## Adding Configuration
 
 ### config.yaml options:
-1. Add to `DEFAULT_CONFIG` in `hermes_cli/config.py`
+1. Add to `DEFAULT_CONFIG` in `logos_cli/config.py`
 2. Bump `_config_version` (currently 8) to trigger migration for existing users
 
 ### .env variables:
-1. Add to `OPTIONAL_ENV_VARS` in `hermes_cli/config.py` with metadata:
+1. Add to `OPTIONAL_ENV_VARS` in `logos_cli/config.py` with metadata:
 ```python
 "NEW_API_KEY": {
     "description": "What it's for",
@@ -254,8 +254,8 @@ The registry handles schema collection, dispatch, availability checking, and err
 
 | Loader | Used by | Location |
 |--------|---------|----------|
-| Config load at startup | CLI mode | `hermes_cli/main.py` |
-| `load_config()` | `hermes tools`, `hermes setup` | `hermes_cli/config.py` |
+| Config load at startup | CLI mode | `logos_cli/main.py` |
+| `load_config()` | `hermes tools`, `hermes setup` | `logos_cli/config.py` |
 | Direct YAML load | Gateway | `gateway/run.py` |
 
 ---
@@ -325,12 +325,12 @@ mcp_policy:
 
 ## Skin/Theme System
 
-The skin engine (`hermes_cli/skin_engine.py`) provides data-driven CLI visual customization. Skins are **pure data** — no code changes needed to add a new skin.
+The skin engine (`logos_cli/skin_engine.py`) provides data-driven CLI visual customization. Skins are **pure data** — no code changes needed to add a new skin.
 
 ### Architecture
 
 ```
-hermes_cli/skin_engine.py    # SkinConfig dataclass, built-in skins, YAML loader
+logos_cli/skin_engine.py    # SkinConfig dataclass, built-in skins, YAML loader
 ~/.logos/skins/*.yaml        # User-installed custom skins (drop-in)
 ```
 
@@ -369,7 +369,7 @@ hermes_cli/skin_engine.py    # SkinConfig dataclass, built-in skins, YAML loader
 
 ### Adding a built-in skin
 
-Add to `_BUILTIN_SKINS` dict in `hermes_cli/skin_engine.py`:
+Add to `_BUILTIN_SKINS` dict in `logos_cli/skin_engine.py`:
 
 ```python
 "mytheme": {
@@ -477,7 +477,7 @@ in config.yaml (or `HERMES_BACKGROUND_NOTIFICATIONS` env var):
 ## Known Pitfalls
 
 ### DO NOT use `simple_term_menu` for interactive menus
-Rendering bugs in tmux/iTerm2 — ghosting on scroll. Use `curses` (stdlib) instead. See `hermes_cli/tools_config.py` for the pattern.
+Rendering bugs in tmux/iTerm2 — ghosting on scroll. Use `curses` (stdlib) instead. See `logos_cli/tools_config.py` for the pattern.
 
 ### DO NOT use `\033[K` (ANSI erase-to-EOL) in spinner/display code
 Leaks as literal `?[K` text under `prompt_toolkit`'s `patch_stdout`. Use space-padding: `f"\r{line}{' ' * pad}"`.

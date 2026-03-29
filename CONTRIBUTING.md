@@ -129,7 +129,7 @@ logos/                        ← repo root
 │   ├── model_metadata.py         # Model context lengths, token estimation
 │   └── trajectory.py             # Trajectory saving helpers
 │
-├── hermes_cli/               # Platform CLI command implementations
+├── logos_cli/               # Platform CLI command implementations
 │   ├── main.py                   # Entry point, argument parsing, command dispatch
 │   ├── config.py                 # Config management, migration, env var definitions
 │   ├── setup.py                  # Interactive setup wizard
@@ -513,13 +513,13 @@ All fields are optional — missing values inherit from the default skin.
 
 **Option B: Built-in skin**
 
-Add to `_BUILTIN_SKINS` dict in `hermes_cli/skin_engine.py`. Use the same schema as above but as a Python dict. Built-in skins ship with the package and are always available.
+Add to `_BUILTIN_SKINS` dict in `logos_cli/skin_engine.py`. Use the same schema as above but as a Python dict. Built-in skins ship with the package and are always available.
 
 **Activating:**
 - CLI: `/skin mytheme` or set `display.skin: mytheme` in config.yaml
 - Config: `display: { skin: mytheme }`
 
-See `hermes_cli/skin_engine.py` for the full schema and existing skins as examples.
+See `logos_cli/skin_engine.py` for the full schema and existing skins as examples.
 
 ---
 

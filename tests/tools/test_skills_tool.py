@@ -963,7 +963,7 @@ Do the legacy thing.
         monkeypatch.delenv("TENOR_API_KEY", raising=False)
 
         def fake_secret_callback(var_name, prompt, metadata=None):
-            from hermes_cli.config import save_env_value
+            from logos_cli.config import save_env_value
 
             save_env_value(var_name, "captured-value")
             return {
@@ -990,7 +990,7 @@ Do the legacy thing.
                     "    prompt: Tenor API key\n"
                 ),
             )
-            from hermes_cli.config import save_env_value
+            from logos_cli.config import save_env_value
 
             save_env_value("TENOR_API_KEY", "")
             raw = skill_view("gif-search")

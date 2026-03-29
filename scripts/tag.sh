@@ -38,8 +38,8 @@ echo "$CURRENT → $NEW ($TAG)"
 # Bump pyproject.toml
 sed -i "s/^version = \".*\"/version = \"$NEW\"/" "$PYPROJECT"
 
-# Also bump hermes_cli/__init__.py if it has __version__
-INIT="hermes_cli/__init__.py"
+# Also bump logos_cli/__init__.py if it has __version__
+INIT="logos_cli/__init__.py"
 if [ -f "$INIT" ] && grep -q '__version__' "$INIT"; then
   sed -i "s/__version__ = \".*\"/__version__ = \"$NEW\"/" "$INIT"
   git add "$INIT"
