@@ -257,7 +257,11 @@ def _query_server_context_length(model: str, base_url: str) -> Optional[int]:
         api_key = os.environ.get("OPENAI_API_KEY") or os.environ.get("LM_API_KEY", "")
         if api_key:
             headers["Authorization"] = f"Bearer {api_key}"
-        resp = httpx.get(f"{base_url}/v1/models", headers=headers, timeout=5)
+        # Strip trailing /v1 to avoid double path (/v1/v1/models)
+        _url = base_url.rstrip("/")
+        if _url.endswith("/v1"):
+            _url = _url[:-3]
+        resp = httpx.get(f"{_url}/v1/models", headers=headers, timeout=5)
         if resp.status_code != 200:
             return None
         data = resp.json()
@@ -313,10 +317,16 @@ def get_model_context_length(model: str, base_url: str = "") -> int:
             save_context_length(model, base_url, server_ctx)
             return server_ctx
 
-    # 4. OpenRouter API metadata (cloud models)
-    metadata = fetch_model_metadata()
-    if model in metadata:
-        return metadata[model].get("context_length", 128000)
+    # 4. OpenRouter API metadata (cloud models only)
+    # Skip for local/private servers — OpenRouter reports cloud context sizes
+    # (e.g. 256K) that don't match the local model's actual VRAM-limited context.
+    _is_local = base_url and any(
+        h in base_url for h in ("localhost", "127.0.0.1", "192.168.", "10.", "172.16.")
+    )
+    if not _is_local:
+        metadata = fetch_model_metadata()
+        if model in metadata:
+            return metadata[model].get("context_length", 128000)
 
     # 5. Hardcoded defaults (fuzzy match)
     for default_model, length in DEFAULT_CONTEXT_LENGTHS.items():
