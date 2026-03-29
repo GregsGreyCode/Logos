@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "logos"
-version = "0.6.12"
+version = "0.6.13"
 description = "A self-hosted agent platform — inference routing, multi-model benchmarking, and policy-governed agent runs across local and cloud hardware"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -84,9 +84,10 @@ all = [
 ]
 
 [project.scripts]
-hermes = "hermes_cli.main:main"
+logos = "hermes_cli.main:main"
+hermes = "hermes_cli.main:main_agent"
 hermes-agent = "agents.hermes.agent:main"
-hermes-acp = "acp_adapter.entry:main"
+logos-acp = "acp_adapter.entry:main"
 
 [tool.setuptools]
 py-modules = []
