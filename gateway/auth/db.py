@@ -334,6 +334,31 @@ CREATE TABLE IF NOT EXISTS evolution_settings (
     updated_at           INTEGER NOT NULL
 );
 INSERT OR IGNORE INTO evolution_settings (id, updated_at) VALUES (1, unixepoch() * 1000);
+
+CREATE TABLE IF NOT EXISTS mcp_servers (
+    id              TEXT PRIMARY KEY,
+    name            TEXT UNIQUE NOT NULL,
+    catalogue_id    TEXT,
+    source          TEXT NOT NULL DEFAULT 'ui'
+                        CHECK (source IN ('ui', 'external')),
+    status          TEXT NOT NULL DEFAULT 'pending'
+                        CHECK (status IN ('pending', 'deploying', 'running', 'stopped', 'error', 'external')),
+    deploy_mode     TEXT NOT NULL DEFAULT 'external'
+                        CHECK (deploy_mode IN ('k8s', 'external')),
+    url             TEXT,
+    token           TEXT,
+    k8s_namespace   TEXT,
+    k8s_image       TEXT,
+    config_json     TEXT NOT NULL DEFAULT '{}',
+    tools_filter    TEXT NOT NULL DEFAULT '{}',
+    category        TEXT NOT NULL DEFAULT 'general',
+    description     TEXT,
+    auto_wire       INTEGER NOT NULL DEFAULT 1,
+    enabled         INTEGER NOT NULL DEFAULT 1,
+    created_at      INTEGER NOT NULL,
+    updated_at      INTEGER NOT NULL,
+    last_error      TEXT
+);
 """
 
 
@@ -1736,3 +1761,96 @@ def update_evolution_settings(**fields) -> dict:
             list(updates.values()),
         )
     return get_evolution_settings()
+
+
+# ── MCP managed servers ─────────────────────────────────────────────────────
+
+
+def list_mcp_servers() -> list[dict]:
+    """Return all managed MCP servers ordered by name."""
+    with _conn() as conn:
+        rows = conn.execute(
+            "SELECT * FROM mcp_servers ORDER BY name"
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def get_mcp_server(server_id: str) -> dict | None:
+    """Return a single MCP server by ID, or None."""
+    with _conn() as conn:
+        row = conn.execute(
+            "SELECT * FROM mcp_servers WHERE id=?", (server_id,)
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def get_mcp_server_by_name(name: str) -> dict | None:
+    """Return a single MCP server by name, or None."""
+    with _conn() as conn:
+        row = conn.execute(
+            "SELECT * FROM mcp_servers WHERE name=?", (name,)
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def create_mcp_server(
+    *,
+    name: str,
+    catalogue_id: str | None = None,
+    source: str = "ui",
+    deploy_mode: str = "external",
+    url: str | None = None,
+    token: str | None = None,
+    k8s_namespace: str | None = None,
+    k8s_image: str | None = None,
+    config_json: str = "{}",
+    tools_filter: str = "{}",
+    category: str = "general",
+    description: str | None = None,
+    auto_wire: bool = True,
+) -> dict:
+    """Create a new managed MCP server record."""
+    server_id = f"mcp_{uuid.uuid4().hex[:20]}"
+    now = int(time.time() * 1000)
+    with _conn() as conn:
+        conn.execute(
+            """INSERT INTO mcp_servers
+               (id, name, catalogue_id, source, status, deploy_mode,
+                url, token, k8s_namespace, k8s_image,
+                config_json, tools_filter, category, description,
+                auto_wire, enabled, created_at, updated_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,?,?)""",
+            (server_id, name, catalogue_id, source,
+             "external" if deploy_mode == "external" else "pending",
+             deploy_mode, url, token, k8s_namespace, k8s_image,
+             config_json, tools_filter, category, description,
+             1 if auto_wire else 0, now, now),
+        )
+    return get_mcp_server(server_id)
+
+
+def update_mcp_server(server_id: str, **fields) -> dict | None:
+    """Update fields on an MCP server record."""
+    allowed = {
+        "name", "status", "url", "token", "k8s_namespace", "k8s_image",
+        "config_json", "tools_filter", "category", "description",
+        "auto_wire", "enabled", "last_error", "deploy_mode",
+    }
+    updates = {k: v for k, v in fields.items() if k in allowed}
+    if not updates:
+        return get_mcp_server(server_id)
+    updates["updated_at"] = int(time.time() * 1000)
+    set_clause = ", ".join(f"{k}=?" for k in updates)
+    with _conn() as conn:
+        conn.execute(
+            f"UPDATE mcp_servers SET {set_clause} WHERE id=?",
+            [*updates.values(), server_id],
+        )
+    return get_mcp_server(server_id)
+
+
+def delete_mcp_server(server_id: str) -> bool:
+    """Delete an MCP server record. Returns True if a row was deleted."""
+    with _conn() as conn:
+        cursor = conn.execute("DELETE FROM mcp_servers WHERE id=?", (server_id,))
+    return cursor.rowcount > 0

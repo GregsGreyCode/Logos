@@ -34,7 +34,7 @@ roleRef:
   name: logos-instance-manager
 ---
 # Same Role in the hermes namespace — agent instances (deployments, jobs, pods)
-# run here, so the logos SA needs identical permissions in both namespaces.
+# and MCP tool servers run here, so the logos SA needs these permissions.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
@@ -43,13 +43,21 @@ metadata:
 rules:
   - apiGroups: ["apps"]
     resources: ["deployments"]
-    verbs: ["get", "list", "watch", "create", "delete"]
+    verbs: ["get", "list", "watch", "create", "delete", "update"]
   - apiGroups: [""]
     resources: ["services", "persistentvolumeclaims", "pods"]
     verbs: ["get", "list", "watch", "create", "delete"]
   - apiGroups: [""]
     resources: ["pods/log"]
     verbs: ["get"]
+  # Secrets — MCP server env vars (API tokens, credentials)
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "list", "create", "delete", "update"]
+  # ConfigMaps — MCP server non-secret config
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "list", "create", "delete", "update"]
   - apiGroups: ["batch"]
     resources: ["jobs"]
     verbs: ["get", "list", "watch", "create", "delete", "patch"]

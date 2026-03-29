@@ -1802,6 +1802,10 @@ async def start_http_api(runner: Any, port: int = 8080) -> None:
     app.router.add_route("*", r"/mcp/{server_name}",           _mch.handle_mcp_proxy)
     app.router.add_route("*", r"/mcp/{server_name}/{tail:.*}", _mch.handle_mcp_proxy)
 
+    # ── Tools tab — MCP server management ────────────────────────────
+    from gateway import mcp_management as _mcm
+    _mcm.register_routes(app)
+
     # ── Unified Services (tool credentials + MCP catalogue) ────────────
     app.router.add_get("/api/services",       _handle_services_catalogue)
     app.router.add_post("/api/services/keys", _handle_services_set_key)

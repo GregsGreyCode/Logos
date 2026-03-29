@@ -288,6 +288,11 @@
     </template>
     <template x-if="can('manage_machines')">
       <button class="pb-2 text-sm font-medium border-b-2 border-transparent"
+        :class="tab==='tools'?'tab-active':'text-gray-400 hover:text-white'"
+        @click="tab='tools'; loadToolsTab()">Tools</button>
+    </template>
+    <template x-if="can('manage_machines')">
+      <button class="pb-2 text-sm font-medium border-b-2 border-transparent"
         :class="tab==='services'?'tab-active':'text-gray-400 hover:text-white'"
         @click="tab='services'; loadServices()">Services</button>
     </template>
@@ -2478,6 +2483,143 @@
 
   </div>
 
+  <!-- ── Tools Tab ────────────────────────────────────────────────── -->
+  <div x-show="tab==='tools'" x-cloak class="space-y-6">
+
+    <!-- Section: Deployed MCP Servers -->
+    <div>
+      <div class="flex items-center justify-between mb-3">
+        <h2 class="text-sm font-semibold text-white">MCP Tool Servers</h2>
+        <button @click="toolsShowCatalogue = !toolsShowCatalogue"
+          class="text-xs px-3 py-1.5 rounded-lg border border-indigo-700 bg-indigo-900/30 text-indigo-300 hover:bg-indigo-900/50 transition-colors">
+          <span x-text="toolsShowCatalogue ? 'Hide catalogue' : '+ Add server'"></span>
+        </button>
+      </div>
+
+      <!-- Server list -->
+      <div x-show="toolsServers.length > 0" class="space-y-2">
+        <template x-for="srv in toolsServers" :key="srv.id">
+          <div class="p-3 rounded-xl border transition-all"
+            :class="srv.status === 'running' || srv.status === 'external' ? 'border-gray-700 bg-gray-900' : srv.status === 'error' ? 'border-red-900 bg-red-950/20' : 'border-gray-800 bg-gray-900/60'">
+            <div class="flex items-center justify-between gap-3">
+              <div class="flex items-center gap-2 min-w-0">
+                <span class="w-2 h-2 rounded-full flex-shrink-0"
+                  :class="srv.status === 'running' || srv.status === 'external' ? 'bg-green-400' : srv.status === 'deploying' || srv.status === 'pending' ? 'bg-yellow-400 animate-pulse' : srv.status === 'error' ? 'bg-red-400' : 'bg-gray-600'"></span>
+                <span class="text-sm font-medium text-white truncate" x-text="srv.name"></span>
+                <span class="text-[9px] px-1.5 py-0.5 rounded-full border font-medium uppercase tracking-wider flex-shrink-0"
+                  :class="srv.source === 'config' ? 'bg-gray-800 text-gray-500 border-gray-700' : srv.deploy_mode === 'k8s' ? 'bg-indigo-950 text-indigo-400 border-indigo-800' : 'bg-gray-800 text-gray-400 border-gray-700'"
+                  x-text="srv.source === 'config' ? 'config' : srv.deploy_mode === 'k8s' ? 'k8s' : 'external'"></span>
+              </div>
+              <div class="flex items-center gap-2 flex-shrink-0">
+                <span x-show="srv.tool_count" class="text-[10px] text-gray-500" x-text="srv.tool_count + ' tools'"></span>
+                <template x-if="!srv.readonly">
+                  <div class="flex items-center gap-1">
+                    <button @click="restartToolsServer(srv.id)" class="text-[10px] text-gray-500 hover:text-gray-300" title="Restart">&#x21bb;</button>
+                    <button @click="deleteToolsServer(srv.id, srv.name)" class="text-[10px] text-red-500/60 hover:text-red-400" title="Delete">&#x2715;</button>
+                  </div>
+                </template>
+              </div>
+            </div>
+            <div x-show="srv.description" class="text-xs text-gray-500 mt-1 truncate" x-text="srv.description"></div>
+            <div x-show="srv.last_error" class="text-xs text-red-400 mt-1" x-text="srv.last_error"></div>
+          </div>
+        </template>
+      </div>
+
+      <div x-show="toolsServers.length === 0 && !toolsLoading" class="text-center py-8 text-sm text-gray-500">
+        No MCP servers configured. Click "Add server" to browse the catalogue.
+      </div>
+    </div>
+
+    <!-- Section: Catalogue (expandable) -->
+    <div x-show="toolsShowCatalogue" x-cloak>
+      <h3 class="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">Catalogue</h3>
+
+      <!-- Add External Server -->
+      <div class="mb-3 p-3 rounded-xl border border-gray-800 bg-gray-900/60">
+        <div class="text-xs font-medium text-gray-300 mb-2">Add external server</div>
+        <div class="grid grid-cols-3 gap-2">
+          <input x-model="toolsExtName" type="text" placeholder="Name"
+            class="col-span-1 px-2 py-1.5 rounded-lg bg-gray-800 border border-gray-700 text-xs text-white placeholder-gray-600 focus:outline-none focus:border-indigo-500">
+          <input x-model="toolsExtUrl" type="text" placeholder="http://host:port/mcp"
+            class="col-span-1 px-2 py-1.5 rounded-lg bg-gray-800 border border-gray-700 text-xs text-white placeholder-gray-600 focus:outline-none focus:border-indigo-500">
+          <input x-model="toolsExtToken" type="password" placeholder="Token (optional)"
+            class="col-span-1 px-2 py-1.5 rounded-lg bg-gray-800 border border-gray-700 text-xs text-white placeholder-gray-600 focus:outline-none focus:border-indigo-500">
+        </div>
+        <button @click="addExternalServer()" :disabled="!toolsExtName.trim() || !toolsExtUrl.trim()"
+          class="mt-2 px-3 py-1.5 rounded-lg border border-gray-700 bg-gray-800 text-xs text-gray-300 hover:border-gray-500 transition-colors disabled:opacity-40">
+          Add external &rarr;
+        </button>
+      </div>
+
+      <!-- Catalogue grid -->
+      <div class="grid grid-cols-2 gap-2">
+        <template x-for="cat in toolsCatalogue" :key="cat.catalogue_id">
+          <button @click="toolsDeployTarget = cat; toolsDeployConfig = {}; cat.config_schema.forEach(f => { if (f.default) toolsDeployConfig[f.key] = f.default })"
+            class="text-left p-3 rounded-xl border border-gray-800 bg-gray-900 hover:border-indigo-600 transition-all group">
+            <div class="text-sm font-medium text-white mb-0.5" x-text="cat.name"></div>
+            <div class="text-[10px] text-gray-500 leading-relaxed" x-text="cat.description"></div>
+            <div class="flex items-center gap-2 mt-2">
+              <span class="text-[9px] px-1.5 py-0.5 rounded-full bg-indigo-950 text-indigo-400 border border-indigo-800" x-text="cat.category"></span>
+              <span class="text-[10px] text-gray-600" x-text="(cat.default_tools||[]).length + ' tools'"></span>
+            </div>
+          </button>
+        </template>
+      </div>
+    </div>
+
+    <!-- Deploy config modal -->
+    <template x-if="toolsDeployTarget">
+      <div class="p-4 rounded-xl border border-indigo-700 bg-indigo-950/20">
+        <div class="flex items-center justify-between mb-3">
+          <div>
+            <div class="text-sm font-semibold text-white" x-text="'Deploy: ' + toolsDeployTarget.name"></div>
+            <div class="text-[10px] text-gray-500" x-text="toolsDeployTarget.description"></div>
+          </div>
+          <button @click="toolsDeployTarget = null" class="text-gray-500 hover:text-gray-300 text-sm">&times;</button>
+        </div>
+
+        <!-- Config form -->
+        <div class="space-y-2 mb-3">
+          <template x-for="field in toolsDeployTarget.config_schema" :key="field.key">
+            <div>
+              <label class="text-xs text-gray-400 mb-0.5 block">
+                <span x-text="field.label"></span>
+                <span x-show="field.required" class="text-red-400">*</span>
+              </label>
+              <template x-if="field.type === 'json'">
+                <textarea x-model="toolsDeployConfig[field.key]" rows="3"
+                  :placeholder="field.placeholder || ''"
+                  class="w-full px-2 py-1.5 rounded-lg bg-gray-800 border border-gray-700 text-xs text-white placeholder-gray-600 font-mono focus:outline-none focus:border-indigo-500 resize-none"></textarea>
+              </template>
+              <template x-if="field.type !== 'json'">
+                <input :type="field.type === 'secret' ? 'password' : field.type === 'number' ? 'number' : 'text'"
+                  x-model="toolsDeployConfig[field.key]"
+                  :placeholder="field.placeholder || field.default || ''"
+                  class="w-full px-2 py-1.5 rounded-lg bg-gray-800 border border-gray-700 text-xs text-white placeholder-gray-600 focus:outline-none focus:border-indigo-500">
+              </template>
+              <div x-show="field.description" class="text-[10px] text-gray-600 mt-0.5" x-text="field.description"></div>
+            </div>
+          </template>
+        </div>
+
+        <div class="flex items-center gap-2">
+          <button @click="deployFromCatalogue()" :disabled="toolsDeploying"
+            class="px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-medium transition-colors disabled:opacity-40">
+            <span x-show="!toolsDeploying">Deploy to cluster &rarr;</span>
+            <span x-show="toolsDeploying" class="flex items-center gap-1.5">
+              <div class="w-3 h-3 border border-white/30 border-t-white rounded-full animate-spin"></div>
+              Deploying&hellip;
+            </span>
+          </button>
+          <button @click="toolsDeployTarget = null" class="px-3 py-2 rounded-lg text-xs text-gray-400 hover:text-gray-200">Cancel</button>
+          <span x-show="toolsDeployError" class="text-xs text-red-400" x-text="toolsDeployError"></span>
+        </div>
+      </div>
+    </template>
+
+  </div>
+
   <!-- ── Services Tab ──────────────────────────────────────────────── -->
   <div x-show="tab==='services'" x-cloak class="space-y-6">
     <div class="flex items-center justify-between mb-2">
@@ -4331,6 +4473,18 @@ function app() {
     prevActiveSessions: [],
     completedSessions: {},
     adminRoutingLogLoading: false,
+    // Tools tab
+    toolsServers: [],
+    toolsCatalogue: [],
+    toolsLoading: false,
+    toolsShowCatalogue: false,
+    toolsDeployTarget: null,
+    toolsDeployConfig: {},
+    toolsDeploying: false,
+    toolsDeployError: '',
+    toolsExtName: '',
+    toolsExtUrl: '',
+    toolsExtToken: '',
     // Services tab
     servicesMcp: [],
     servicesTools: [],
@@ -5603,6 +5757,84 @@ function app() {
 
     async loadAdminData() {
       await Promise.all([this.loadAdminUsers(), this.loadAdminPolicies(), this.loadAdminActionPolicies()]);
+    },
+
+    // ── Tools tab methods ──────────────────────────────────────────────
+    async loadToolsTab() {
+      this.toolsLoading = true;
+      try {
+        const [srvRes, catRes] = await Promise.all([
+          fetch('/api/tools/servers', {credentials: 'include'}),
+          fetch('/api/tools/catalogue', {credentials: 'include'}),
+        ]);
+        if (srvRes.ok) this.toolsServers = (await srvRes.json()).servers || [];
+        if (catRes.ok) this.toolsCatalogue = (await catRes.json()).catalogue || [];
+      } catch(e) { console.warn('loadToolsTab failed:', e.message); }
+      finally { this.toolsLoading = false; }
+    },
+    async deployFromCatalogue() {
+      if (!this.toolsDeployTarget) return;
+      this.toolsDeploying = true;
+      this.toolsDeployError = '';
+      try {
+        const r = await fetch('/api/tools/servers', {
+          method: 'POST', credentials: 'include',
+          headers: {'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken()},
+          body: JSON.stringify({
+            name: this.toolsDeployTarget.catalogue_id,
+            catalogue_id: this.toolsDeployTarget.catalogue_id,
+            deploy_mode: 'k8s',
+            config: this.toolsDeployConfig,
+          }),
+        });
+        const d = await r.json();
+        if (r.ok) {
+          this.toolsDeployTarget = null;
+          this.toolsDeployConfig = {};
+          this.toolsShowCatalogue = false;
+          await this.loadToolsTab();
+        } else {
+          this.toolsDeployError = d.error || 'Deploy failed';
+        }
+      } catch(e) { this.toolsDeployError = e.message; }
+      finally { this.toolsDeploying = false; }
+    },
+    async addExternalServer() {
+      try {
+        const r = await fetch('/api/tools/servers', {
+          method: 'POST', credentials: 'include',
+          headers: {'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken()},
+          body: JSON.stringify({
+            name: this.toolsExtName.trim(),
+            deploy_mode: 'external',
+            url: this.toolsExtUrl.trim(),
+            token: this.toolsExtToken.trim(),
+          }),
+        });
+        if (r.ok) {
+          this.toolsExtName = ''; this.toolsExtUrl = ''; this.toolsExtToken = '';
+          await this.loadToolsTab();
+        }
+      } catch(e) { console.warn('addExternalServer failed:', e.message); }
+    },
+    async restartToolsServer(id) {
+      try {
+        await fetch(`/api/tools/servers/${id}/restart`, {
+          method: 'POST', credentials: 'include',
+          headers: {'X-CSRF-Token': getCsrfToken()},
+        });
+        await this.loadToolsTab();
+      } catch(e) { console.warn('restart failed:', e.message); }
+    },
+    async deleteToolsServer(id, name) {
+      if (!confirm(`Remove MCP server "${name}"? This will undeploy it from the cluster.`)) return;
+      try {
+        await fetch(`/api/tools/servers/${id}`, {
+          method: 'DELETE', credentials: 'include',
+          headers: {'X-CSRF-Token': getCsrfToken()},
+        });
+        await this.loadToolsTab();
+      } catch(e) { console.warn('delete failed:', e.message); }
     },
 
     async loadServices() {
