@@ -41,6 +41,8 @@ logger = logging.getLogger(__name__)
 
 # bench_id → set of endpoints the user has requested to skip mid-benchmark
 _bench_cancels: dict[str, set[str]] = {}
+# bench_id → {endpoint: {model, server_type, api_key, base_url}} tracking currently-loaded model
+_bench_active: dict[str, dict[str, dict]] = {}
 
 _PROBE_TIMEOUT = aiohttp.ClientTimeout(total=4)
 _SCAN_TIMEOUT  = aiohttp.ClientTimeout(total=1)   # aggressive — we're sweeping 254 hosts
@@ -870,6 +872,30 @@ async def _stream_chat(
     return text, ttft or 0.0, time.time() - t0, tok_count
 
 
+async def _unload_model(base_url: str, model_id: str, server_type: str, api_key: str) -> None:
+    """Best-effort unload a model from an inference server to free VRAM."""
+    try:
+        headers = {"Authorization": f"Bearer {api_key}"} if api_key and api_key != "ollama" else {}
+        async with aiohttp.ClientSession() as sess:
+            if server_type == "lmstudio":
+                async with sess.post(
+                    f"{base_url}/api/v1/models/unload",
+                    headers=headers,
+                    json={"instance_id": model_id},
+                    timeout=aiohttp.ClientTimeout(total=8),
+                ):
+                    pass
+            elif server_type == "ollama":
+                async with sess.post(
+                    f"{base_url}/api/generate",
+                    json={"model": model_id, "keep_alive": 0, "prompt": ""},
+                    timeout=aiohttp.ClientTimeout(total=8),
+                ):
+                    pass
+    except Exception:
+        pass  # best-effort — don't propagate errors
+
+
 async def handle_setup_compare(request: web.Request) -> web.Response:
     """SSE: quick-benchmark up to 4 candidate models and recommend the best one.
 
@@ -921,6 +947,7 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
 
     bench_id = str(uuid.uuid4())
     _bench_cancels[bench_id] = set()
+    _bench_active[bench_id] = {}
 
     async def send(data: dict) -> None:
         await response.write(f"data: {json.dumps(data)}\n\n".encode())
@@ -1024,6 +1051,12 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
                 continue
 
             await send({"testing": model_id, "testing_endpoint": endpoint})
+            # Track which model is currently loaded on this endpoint so cancel can unload it
+            if bench_id in _bench_active:
+                _bench_active[bench_id][endpoint] = {
+                    "model": model_id, "server_type": server_type,
+                    "api_key": api_key, "base_url": base_url,
+                }
             type_label = {"lmstudio": "LM Studio", "ollama": "Ollama", "llamacpp": "llama.cpp"}.get(server_type, server_type)
             await send({"log": f"→ {model_id}  ({base_url})  [{type_label}]"})
 
@@ -1215,7 +1248,11 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
                     except Exception:
                         pass
                 elif server_type == "ollama":
-                    # Ollama exposes GGUF metadata via /api/show — no probe needed.
+                    # Ollama exposes the model's native context ceiling via /api/show,
+                    # but defaults to 2048 at runtime.  We read the ceiling first, then
+                    # probe downward to find the largest num_ctx the machine's VRAM can
+                    # actually handle — same approach as LM Studio.
+                    _ollama_native_ctx: int | None = None
                     try:
                         async with http.post(
                             f"{base_url}/api/show",
@@ -1226,10 +1263,54 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
                                 _sd = await _sr.json(content_type=None)
                                 _nc = (_sd.get("model_info") or {}).get("llama.context_length")
                                 if isinstance(_nc, int) and _nc > 0:
-                                    max_context = _nc
-                                    await send({"log": f"  Context window: {_nc:,} tokens (from model metadata)"})
+                                    _ollama_native_ctx = _nc
+                                    await send({"log": f"  Native context (GGUF): {_nc:,} tokens"})
                     except Exception:
                         pass
+                    # Probe downward from native ceiling to find the largest
+                    # num_ctx the machine's VRAM can actually handle.  Ollama's
+                    # native /api/generate accepts num_ctx as an option — use it
+                    # instead of the OpenAI-compat endpoint which ignores the param.
+                    await send({"log": "  Probing max loadable context window…"})
+                    _ollama_probe_sizes = [65536, 32768, 16384, 8192, 4096]
+                    _ollama_ceil = _ollama_native_ctx or 65536
+                    for _ctx_probe in [s for s in _ollama_probe_sizes if s <= _ollama_ceil]:
+                        try:
+                            async with http.post(
+                                f"{base_url}/api/generate",
+                                json={
+                                    "model": model_id,
+                                    "prompt": "Say OK.",
+                                    "options": {"num_ctx": _ctx_probe},
+                                    "stream": False,
+                                },
+                                timeout=aiohttp.ClientTimeout(total=90),
+                            ) as _vr:
+                                if _vr.status == 200:
+                                    max_context = _ctx_probe
+                                    await send({"log": f"  Context probe: {_ctx_probe:,} tokens ✓"})
+                                    break
+                                else:
+                                    await send({"log": f"  Context probe: {_ctx_probe:,} — HTTP {_vr.status}, trying smaller…"})
+                        except Exception as _ce:
+                            await send({"log": f"  Context probe: {_ctx_probe:,} — {str(_ce)[:60]}, trying smaller…"})
+                    if max_context is None:
+                        # All probes failed — fall back to metadata value
+                        if _ollama_native_ctx:
+                            max_context = _ollama_native_ctx
+                            await send({"log": f"  Context probe: could not verify — using metadata ({_ollama_native_ctx:,})"})
+                        else:
+                            await send({"log": "  Context probe: could not determine context window"})
+                    # Persist probed context so runtime can use it
+                    if max_context:
+                        try:
+                            import yaml as _cp_yaml
+                            _cp_path = pathlib.Path(os.environ.get("HERMES_HOME", str(pathlib.Path.home() / ".hermes"))) / "config.yaml"
+                            _cp_cfg: dict = _cp_yaml.safe_load(_cp_path.read_text(encoding="utf-8")) if _cp_path.exists() else {}
+                            _cp_cfg.setdefault("ollama_context_lengths", {})[model_id] = max_context
+                            _cp_path.write_text(_cp_yaml.dump(_cp_cfg, default_flow_style=False, allow_unicode=True))
+                        except Exception:
+                            pass
                 elif server_type == "lmstudio":
                     _ctx_probe_headers = {"Authorization": f"Bearer {api_key}"} if api_key and api_key != "ollama" else {}
                     # Step 1: read native max_context_length from LM Studio's model list.
@@ -1547,6 +1628,9 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
                             await send({"log": f"  Unloaded {model_id} (HTTP {ur.status})"})
                 except Exception as ue:
                     await send({"log": f"  Unload skipped: {str(ue)[:60]}"})
+                # Clear active tracking — model is now unloaded
+                if bench_id in _bench_active:
+                    _bench_active[bench_id].pop(endpoint, None)
 
             async with results_lock:
                 results.append(result)
@@ -1560,6 +1644,7 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
             ])
     finally:
         _bench_cancels.pop(bench_id, None)
+        _bench_active.pop(bench_id, None)
 
     valid = [r for r in results if not r.get("error") and r.get("tok_s", 0) > 0]
 
@@ -2243,6 +2328,10 @@ async def handle_setup_set_remote(request: web.Request) -> web.Response:
 async def handle_setup_compare_cancel_server(request: web.Request) -> web.Response:
     """Mark a server endpoint as cancelled for an in-progress benchmark.
 
+    Also unloads the currently-loaded model on that endpoint (if any) so
+    VRAM is freed immediately rather than waiting for the benchmark loop
+    to reach the next iteration.
+
     Body: {"bench_id": "...", "endpoint": "http://..."}
     """
     try:
@@ -2253,6 +2342,15 @@ async def handle_setup_compare_cancel_server(request: web.Request) -> web.Respon
     endpoint = (body.get("endpoint") or "").rstrip("/")
     if bench_id in _bench_cancels:
         _bench_cancels[bench_id].add(endpoint)
+
+    # Best-effort unload of whatever model is currently loaded on this endpoint
+    active = (_bench_active.get(bench_id) or {}).get(endpoint)
+    if active:
+        asyncio.ensure_future(_unload_model(
+            active["base_url"], active["model"],
+            active["server_type"], active.get("api_key", ""),
+        ))
+
     return web.json_response({"ok": True})
 
 

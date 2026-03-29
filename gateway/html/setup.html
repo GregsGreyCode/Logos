@@ -2077,6 +2077,18 @@ function setup() {
     },
 
     startOver() {
+      // Cancel all active servers so the backend unloads models from VRAM
+      if (this.compareBenchId && this.compareRunning) {
+        for (const s of (this.selectedServers || [])) {
+          if (!this.compareSkippedServers[s.endpoint]) {
+            fetch('/api/setup/compare/cancel-server', {
+              method: 'POST', credentials: 'include',
+              headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken() },
+              body: JSON.stringify({ bench_id: this.compareBenchId, endpoint: s.endpoint }),
+            }).catch(() => {});
+          }
+        }
+      }
       // Cancel any in-progress benchmark stream before resetting state
       if (this.compareAbortController) {
         this.compareAbortController.abort();
