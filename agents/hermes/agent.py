@@ -622,12 +622,14 @@ class AIAgent:
         self._lazy_tools = _use_lazy
         self._enabled_toolsets = enabled_toolsets
         self._disabled_toolsets = disabled_toolsets
+        # session_id is set later in __init__ — pass None here; the rebuild
+        # after Honcho init (line ~1651) will use the real session_id.
         self.tools = get_tool_definitions(
             enabled_toolsets=enabled_toolsets,
             disabled_toolsets=disabled_toolsets,
             quiet_mode=self.quiet_mode,
             lazy=_use_lazy,
-            session_id=self.session_id,
+            session_id=getattr(self, 'session_id', None),
         )
         if _use_lazy and not self.quiet_mode:
             print(f"💡 Lazy tool loading (context {_ctx_for_lazy:,} ≤ 32K): {len(self.tools)} core tools loaded. Use request_tools() for more.")
