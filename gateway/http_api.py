@@ -1588,6 +1588,7 @@ async def _handle_chat(request: web.Request) -> web.StreamResponse:
         "tools_used":      result.get("tools_used", 0),
         "tools_available": len(result.get("tools", [])),
         "model":           result.get("model", ""),
+        "tool_detail":     result.get("tool_detail", []),
     })
     return resp
 

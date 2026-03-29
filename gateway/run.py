@@ -4563,6 +4563,7 @@ class GatewayRunner:
                 "api_calls": result_holder[0].get("api_calls", 0) if result_holder[0] else 0,
                 "tools": tools_holder[0] or [],
                 "tools_used": tools_used_count[0],
+                "tool_detail": _tool_calls_log or [],
                 "history_offset": len(agent_history),
                 "last_prompt_tokens": _last_prompt_toks,
                 "model": _resolved_model,

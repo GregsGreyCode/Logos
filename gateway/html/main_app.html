@@ -269,42 +269,17 @@
       :class="tab==='sessions'?'tab-active':'text-gray-400 hover:text-white'"
       @click="tab='sessions'; if(!clusterInstances.length) loadInstances()">Chats</button>
     <button class="pb-2 text-sm font-medium border-b-2 border-transparent"
-      :class="tab==='instances'?'tab-active':'text-gray-400 hover:text-white'"
-      @click="tab='instances'; loadInstances(); loadSouls(); loadToolsets(); loadAdminMachines()">Agents</button>
-    <template x-if="can('view_runs')">
+      :class="tab==='agents'?'tab-active':'text-gray-400 hover:text-white'"
+      @click="tab='agents'; loadInstances(); loadSouls(); loadToolsets(); loadAdminMachines()">Agents</button>
+    <template x-if="can('manage_machines') || can('manage_profiles') || can('view_routing_debug') || can('view_evolution')">
       <button class="pb-2 text-sm font-medium border-b-2 border-transparent"
-        :class="tab==='runs'?'tab-active':'text-gray-400 hover:text-white'"
-        @click="tab='runs'; loadAgentRuns()">Runs</button>
+        :class="tab==='infra'?'tab-active':'text-gray-400 hover:text-white'"
+        @click="tab='infra'; loadAdminMachines(); loadRoutingData()">Infra</button>
     </template>
-    <template x-if="can('view_workflows')">
-      <button class="pb-2 text-sm font-medium border-b-2 border-transparent"
-        :class="tab==='workflows'?'tab-active':'text-gray-400 hover:text-white'"
-        @click="tab='workflows'; loadWorkflows()">Workflows</button>
-    </template>
-    <template x-if="can('manage_machines') || can('manage_profiles') || can('view_routing_debug')">
-      <button class="pb-2 text-sm font-medium border-b-2 border-transparent"
-        :class="tab==='routing'?'tab-active':'text-gray-400 hover:text-white'"
-        @click="tab='routing'; loadRoutingData()">Routing</button>
-    </template>
-    <template x-if="can('manage_machines')">
-      <button class="pb-2 text-sm font-medium border-b-2 border-transparent"
-        :class="tab==='tools'?'tab-active':'text-gray-400 hover:text-white'"
-        @click="tab='tools'; loadToolsTab()">Tools</button>
-    </template>
-    <template x-if="can('manage_machines')">
-      <button class="pb-2 text-sm font-medium border-b-2 border-transparent"
-        :class="tab==='services'?'tab-active':'text-gray-400 hover:text-white'"
-        @click="tab='services'; loadServices()">Services</button>
-    </template>
-    <template x-if="can('view_evolution')">
-      <button class="pb-2 text-sm font-medium border-b-2 border-transparent"
-        :class="tab==='evolution'?'tab-active':'text-gray-400 hover:text-white'"
-        @click="tab='evolution'; loadEvolutionProposals(); loadEvolutionSettings()">Evolution</button>
-    </template>
-    <template x-if="can('manage_users') || can('view_audit_logs')">
+    <template x-if="can('manage_users') || can('view_audit_logs') || can('manage_workflows') || can('view_runs')">
       <button class="pb-2 text-sm font-medium border-b-2 border-transparent relative"
         :class="tab==='admin'?'tab-active':'text-gray-400 hover:text-white'"
-        @click="tab='admin'; if(!can('manage_users') && adminTab==='users') adminTab='audit'; if(adminTab==='routing-log') loadAdminRoutingLog(); else loadAdminData()">
+        @click="tab='admin'; loadAdminData()">
         Admin
         <template x-if="pendingApprovalCount > 0">
           <span class="absolute -top-1 -right-3 min-w-[16px] h-4 px-1 rounded-full bg-red-500 text-[9px] text-white font-bold flex items-center justify-center" x-text="pendingApprovalCount > 99 ? '99+' : pendingApprovalCount"></span>
@@ -456,7 +431,7 @@
             @click="switchInstance(inst.id)">
             <!-- Core badge for the always-on base instance -->
             <span x-show="inst.id === 'self'"
-              class="text-[10px] font-bold tracking-wider uppercase px-1 py-0.5 rounded bg-indigo-900 text-indigo-300 mr-0.5">Core</span>
+              class="text-[10px] font-bold tracking-wider uppercase px-1 py-0.5 rounded bg-indigo-900 text-indigo-300 mr-0.5">Gateway</span>
             <span x-text="inst.id === 'self' ? 'Hermes' : inst.name"></span>
             <!-- Status dot -->
             <span x-show="activeInstanceId === inst.id && inst.k8s_status !== 'stopped'"
@@ -484,7 +459,7 @@
           class="w-full mb-2 px-3 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-sm rounded-lg font-medium transition-colors flex items-center justify-center gap-2">
           <span>＋</span><span>New Chat</span>
         </button>
-        <button @click="tab='instances'; loadInstances(); loadSouls()"
+        <button @click="tab='agents'; loadInstances(); loadSouls()"
           class="w-full mb-3 px-3 py-1.5 bg-gray-900 hover:bg-gray-800 text-gray-500 hover:text-gray-300 text-xs rounded-lg transition-colors flex items-center justify-center gap-1.5 border border-gray-800 hover:border-gray-700"
           title="Spawn or manage agent instances">
           <span>＋</span><span>Add Agent</span>
@@ -564,7 +539,7 @@
 
             <!-- Row 1: Core badge + name + status dot (after name, like chips) + chat ID + canary -->
             <div class="flex items-center gap-2 pb-1.5">
-              <span class="text-[10px] font-bold tracking-wider uppercase px-1 py-0.5 rounded bg-indigo-900 text-indigo-300 shrink-0">Core</span>
+              <span class="text-[10px] font-bold tracking-wider uppercase px-1 py-0.5 rounded bg-indigo-900 text-indigo-300 shrink-0">Gateway</span>
               <span class="font-semibold text-white" x-text="status.instance_name || 'Hermes'"></span>
               <span class="w-2 h-2 rounded-full shrink-0"
                 :class="chatLoading ? 'bg-indigo-500 animate-pulse icon-hue' : agentAlive === false ? 'bg-red-500' : agentAlive === null ? 'bg-gray-600 animate-pulse' : 'bg-green-500'"
@@ -576,26 +551,40 @@
               </template>
             </div>
 
-            <!-- Row 2: soul + routing context chips (k8s instances only) -->
-            <template x-if="activeInstance.soul || activeInstance.model_alias">
-              <div class="flex items-center gap-1.5 pb-1.5 flex-wrap">
-                <template x-if="activeInstance.soul">
-                  <span class="text-xs px-1.5 py-0.5 rounded font-mono bg-indigo-950 text-indigo-300 border border-indigo-900"
-                    x-text="activeInstance.soul.name"></span>
-                </template>
-                <template x-if="activeInstance.model_alias">
-                  <span class="text-xs px-1.5 py-0.5 rounded font-mono border"
-                    :class="activeInstance.machine_name
-                      ? 'bg-[var(--accent-subtle)] text-[var(--accent)] border-[var(--accent)]/40'
-                      : 'bg-gray-800 text-gray-500 border-gray-700'"
-                    x-text="activeInstance.model_alias + (activeInstance.machine_name ? ' → ' + activeInstance.machine_name : '')"></span>
-                </template>
-                <template x-if="activeInstance.k8s_status && activeInstance.k8s_status !== 'running'">
-                  <span class="text-xs px-1.5 py-0.5 rounded border border-yellow-900 bg-yellow-950 text-yellow-500 font-medium"
-                    x-text="activeInstance.k8s_status"></span>
-                </template>
-              </div>
-            </template>
+            <!-- Row 2: STAMP governance chips -->
+            <div class="flex items-center gap-1.5 pb-1.5 flex-wrap">
+              <!-- S: Persona -->
+              <template x-if="activeInstance.soul">
+                <span class="text-[10px] px-1.5 py-0.5 rounded font-mono bg-indigo-950 text-indigo-300 border border-indigo-900"
+                  :title="'Persona'" x-text="'S:' + activeInstance.soul.name"></span>
+              </template>
+              <!-- T: Tools -->
+              <template x-if="webSession && webSession.tool_count > 0">
+                <span class="text-[10px] px-1.5 py-0.5 rounded font-mono bg-gray-800 text-gray-400 border border-gray-700"
+                  :title="'Tools used this session'" x-text="'T:' + webSession.tool_count + ' used'"></span>
+              </template>
+              <template x-if="!webSession || !webSession.tool_count">
+                <span class="text-[10px] px-1.5 py-0.5 rounded font-mono bg-gray-800 text-gray-600 border border-gray-700"
+                  :title="'Tools available'" x-text="'T:' + (chatStats?.tool_count || 0) + ' loaded'"></span>
+              </template>
+              <!-- M: Model → Server -->
+              <template x-if="activeInstance.model_alias || status.current_model">
+                <span class="text-[10px] px-1.5 py-0.5 rounded font-mono border"
+                  :class="activeInstance.machine_name
+                    ? 'bg-[var(--accent-subtle)] text-[var(--accent)] border-[var(--accent)]/40'
+                    : 'bg-gray-800 text-gray-500 border-gray-700'"
+                  :title="'Model routing'"
+                  x-text="'M:' + (activeInstance.model_alias || status.current_model || '?') + (activeInstance.machine_name ? ' → ' + activeInstance.machine_name : '')"></span>
+              </template>
+              <!-- P: Policy -->
+              <span class="text-[10px] px-1.5 py-0.5 rounded font-mono bg-emerald-950 text-emerald-400 border border-emerald-900"
+                :title="'Action policy'" x-text="'P:' + (activeInstance.action_policy || 'default')"></span>
+              <!-- k8s status -->
+              <template x-if="activeInstance.k8s_status && activeInstance.k8s_status !== 'running'">
+                <span class="text-[10px] px-1.5 py-0.5 rounded border border-yellow-900 bg-yellow-950 text-yellow-500 font-medium"
+                  x-text="activeInstance.k8s_status"></span>
+              </template>
+            </div>
 
 
           </div>
@@ -672,6 +661,19 @@
                           <div class="msg-stats-row">
                             <span class="msg-stats-label">calls</span>
                             <span class="msg-stats-val" x-text="msg.stats.api_calls"></span>
+                          </div>
+                        </template>
+                        <!-- Inline tool trace -->
+                        <template x-if="msg.stats.tool_detail && msg.stats.tool_detail.length > 0">
+                          <div class="mt-1.5 pt-1.5 border-t border-gray-700/50">
+                            <div class="text-[9px] text-gray-600 uppercase tracking-wider mb-1">Tool calls</div>
+                            <template x-for="(t, ti) in msg.stats.tool_detail" :key="ti">
+                              <div class="flex items-start gap-1.5 text-[10px] leading-relaxed">
+                                <span class="text-gray-600 font-mono shrink-0" x-text="(ti+1) + '.'"></span>
+                                <span class="text-[var(--accent)] font-mono" x-text="t.tool"></span>
+                                <span x-show="t.preview" class="text-gray-600 truncate" x-text="t.preview"></span>
+                              </div>
+                            </template>
                           </div>
                         </template>
                       </div>
@@ -954,7 +956,30 @@
   </div>
 
   <!-- ── Routing Tab ───────────────────────────────────────────────── -->
-  <div x-show="tab==='routing'" x-cloak>
+  <div x-show="tab==='infra'" x-cloak>
+
+    <!-- Infra sub-tabs -->
+    <div class="flex gap-4 mb-4 border-b border-gray-800">
+      <button class="pb-2 text-xs font-medium border-b-2 transition-colors"
+        :class="infraTab==='servers' ? 'border-[var(--accent)] text-white' : 'border-transparent text-gray-500 hover:text-gray-300'"
+        @click="infraTab='servers'; localStorage.setItem('logos_infra_tab','servers'); loadAdminMachines()">Servers</button>
+      <button class="pb-2 text-xs font-medium border-b-2 transition-colors"
+        :class="infraTab==='routing' ? 'border-[var(--accent)] text-white' : 'border-transparent text-gray-500 hover:text-gray-300'"
+        @click="infraTab='routing'; localStorage.setItem('logos_infra_tab','routing'); loadRoutingData()">Routing</button>
+      <template x-if="can('manage_machines')">
+        <button class="pb-2 text-xs font-medium border-b-2 transition-colors"
+          :class="infraTab==='tools' ? 'border-[var(--accent)] text-white' : 'border-transparent text-gray-500 hover:text-gray-300'"
+          @click="infraTab='tools'; localStorage.setItem('logos_infra_tab','tools'); loadToolsTab(); loadServices()">Tools</button>
+      </template>
+      <template x-if="can('view_evolution')">
+        <button class="pb-2 text-xs font-medium border-b-2 transition-colors"
+          :class="infraTab==='proposals' ? 'border-[var(--accent)] text-white' : 'border-transparent text-gray-500 hover:text-gray-300'"
+          @click="infraTab='proposals'; localStorage.setItem('logos_infra_tab','proposals'); loadEvolutionProposals(); loadEvolutionSettings()">Proposals</button>
+      </template>
+    </div>
+
+    <!-- ── Servers sub-tab (was: Machines) ── -->
+    <div x-show="infraTab==='servers'">
 
     <!-- ── Machines section ── -->
     <div x-show="can('manage_machines')" class="mb-8">
@@ -1295,6 +1320,11 @@
         </template>
       </div>
     </div>
+
+    </div><!-- /Servers sub-tab -->
+
+    <!-- ── Routing sub-tab ── -->
+    <div x-show="infraTab==='routing'">
 
     <!-- ── Profiles section ── -->
     <div x-show="can('manage_profiles')" class="mb-8">
@@ -1945,10 +1975,30 @@
     </div><!-- /debugOpen -->
     </div><!-- /debug section -->
 
-  </div><!-- /routing tab -->
+    </div><!-- /Routing sub-tab -->
+
+    <!-- Tools + Services + Proposals content rendered below via x-show conditions -->
+
+  </div><!-- /infra tab -->
 
   <!-- ── Instances Tab (kubernetes mode only) ─────────────────────── -->
-  <div x-show="tab==='instances'" x-cloak>
+  <div x-show="tab==='agents'" x-cloak>
+
+    <!-- Agents sub-tabs -->
+    <div class="flex gap-4 mb-4 border-b border-gray-800">
+      <button class="pb-2 text-xs font-medium border-b-2 transition-colors"
+        :class="agentsTab==='running' ? 'border-[var(--accent)] text-white' : 'border-transparent text-gray-500 hover:text-gray-300'"
+        @click="agentsTab='running'; localStorage.setItem('logos_agents_tab','running')">Running</button>
+      <button class="pb-2 text-xs font-medium border-b-2 transition-colors"
+        :class="agentsTab==='personas' ? 'border-[var(--accent)] text-white' : 'border-transparent text-gray-500 hover:text-gray-300'"
+        @click="agentsTab='personas'; localStorage.setItem('logos_agents_tab','personas'); loadSouls()">Personas</button>
+      <button class="pb-2 text-xs font-medium border-b-2 transition-colors"
+        :class="agentsTab==='toolsets' ? 'border-[var(--accent)] text-white' : 'border-transparent text-gray-500 hover:text-gray-300'"
+        @click="agentsTab='toolsets'; localStorage.setItem('logos_agents_tab','toolsets'); loadToolsets()">Toolsets</button>
+    </div>
+
+    <!-- ── Running sub-tab ── -->
+    <div x-show="agentsTab==='running'">
 
     <!-- Resource bar — adapts to k8s (cluster totals) or local (psutil free) -->
     <div class="flex items-center gap-3 mb-5 px-3 py-2 rounded-lg border border-gray-800 bg-gray-900 text-xs flex-wrap">
@@ -2020,7 +2070,7 @@
             <div class="min-w-0 flex-1">
               <div class="flex items-center gap-1.5 flex-wrap">
                 <span class="text-sm font-medium text-white" x-text="status.instance_name || 'Hermes'"></span>
-                <span class="text-xs px-1.5 py-0.5 rounded font-mono bg-indigo-950 text-indigo-300 border border-indigo-900">core</span>
+                <span class="text-xs px-1.5 py-0.5 rounded font-mono bg-indigo-950 text-indigo-300 border border-indigo-900">gateway</span>
               </div>
               <div class="flex items-center gap-2 mt-0.5 text-xs text-gray-700 font-mono flex-wrap">
                 <span x-text="status.uptime_s > 0 ? 'up ' + fmtUptime(status.uptime_s) : 'starting'"></span>
@@ -2481,10 +2531,69 @@
       </div>
     </div>
 
+    </div><!-- /Running sub-tab -->
+
+    <!-- ── Personas sub-tab ── -->
+    <div x-show="agentsTab==='personas'" class="space-y-4">
+      <div class="flex items-center justify-between mb-2">
+        <h2 class="text-sm font-semibold text-white">Personas</h2>
+        <button @click="loadSouls()" class="text-xs text-gray-500 hover:text-gray-300">Refresh</button>
+      </div>
+      <p class="text-xs text-gray-500 mb-4">A persona shapes how an agent thinks, communicates, and which tools it defaults to. Select one when spawning a new instance.</p>
+      <template x-if="!souls.length">
+        <div class="text-xs text-gray-600 py-4 text-center">No personas loaded.</div>
+      </template>
+      <div class="space-y-2">
+        <template x-for="s in souls" :key="s.name">
+          <div class="p-3 rounded-xl border border-gray-800 bg-gray-900">
+            <div class="flex items-center gap-2 mb-1">
+              <span class="text-sm font-medium text-white" x-text="s.name"></span>
+              <span x-show="s.version" class="text-[9px] px-1.5 py-0.5 rounded-full bg-gray-800 text-gray-500 border border-gray-700 font-mono" x-text="s.version"></span>
+              <span x-show="s.stability === 'experimental'" class="text-[9px] px-1.5 py-0.5 rounded-full bg-yellow-950 text-yellow-400 border border-yellow-800 font-semibold uppercase tracking-wider">Experimental</span>
+            </div>
+            <div x-show="s.description" class="text-xs text-gray-500" x-text="s.description"></div>
+            <div x-show="s.default_tools && s.default_tools.length" class="mt-2 flex flex-wrap gap-1">
+              <template x-for="t in (s.default_tools || [])" :key="t">
+                <span class="text-[10px] px-1.5 py-0.5 rounded bg-gray-800 text-gray-500 border border-gray-700 font-mono" x-text="t"></span>
+              </template>
+            </div>
+          </div>
+        </template>
+      </div>
+    </div>
+
+    <!-- ── Toolsets sub-tab ── -->
+    <div x-show="agentsTab==='toolsets'" class="space-y-4">
+      <div class="flex items-center justify-between mb-2">
+        <h2 class="text-sm font-semibold text-white">Toolsets</h2>
+        <button @click="loadToolsets()" class="text-xs text-gray-500 hover:text-gray-300">Refresh</button>
+      </div>
+      <p class="text-xs text-gray-500 mb-4">Tool bundles that can be attached to agent instances. Each toolset groups related capabilities.</p>
+      <template x-if="!toolsets.available || !toolsets.available.length">
+        <div class="text-xs text-gray-600 py-4 text-center">No toolsets loaded.</div>
+      </template>
+      <div class="space-y-2">
+        <template x-for="ts in (toolsets.available || [])" :key="ts.name">
+          <div class="p-3 rounded-xl border border-gray-800 bg-gray-900">
+            <div class="flex items-center gap-2 mb-1">
+              <span class="text-sm font-medium text-white" x-text="ts.name"></span>
+              <span class="text-[10px] text-gray-600 font-mono" x-text="(ts.tools || []).length + ' tools'"></span>
+            </div>
+            <div x-show="ts.description" class="text-xs text-gray-500" x-text="ts.description"></div>
+            <div x-show="ts.tools && ts.tools.length" class="mt-2 flex flex-wrap gap-1">
+              <template x-for="t in (ts.tools || [])" :key="t">
+                <span class="text-[10px] px-1.5 py-0.5 rounded bg-gray-800 text-gray-500 border border-gray-700 font-mono" x-text="t"></span>
+              </template>
+            </div>
+          </div>
+        </template>
+      </div>
+    </div>
+
   </div>
 
   <!-- ── Tools Tab ────────────────────────────────────────────────── -->
-  <div x-show="tab==='tools'" x-cloak class="space-y-6">
+  <div x-show="tab==='infra' && infraTab==='tools'" x-cloak class="space-y-6">
 
     <!-- Section: Deployed MCP Servers -->
     <div>
@@ -2621,7 +2730,7 @@
   </div>
 
   <!-- ── Services Tab ──────────────────────────────────────────────── -->
-  <div x-show="tab==='services'" x-cloak class="space-y-6">
+  <div x-show="tab==='infra' && infraTab==='tools'" x-cloak class="space-y-6" style="margin-top:1.5rem">
     <div class="flex items-center justify-between mb-2">
       <h2 class="text-sm font-semibold text-white">Services &amp; Integrations</h2>
       <button @click="loadServices()" class="text-xs text-gray-500 hover:text-gray-300">Refresh</button>
@@ -2751,18 +2860,22 @@
         class="pb-2 text-sm font-medium"
         :class="adminTab==='users'?'tab-active':'text-gray-500 hover:text-white'"
         @click="adminTab='users'; loadAdminUsers()">Users</button>
+      <button x-show="can('manage_action_policies')"
+        class="pb-2 text-sm font-medium"
+        :class="adminTab==='action-policies'?'tab-active':'text-gray-500 hover:text-white'"
+        @click="adminTab='action-policies'; loadAdminActionPolicies()">Security</button>
+      <button x-show="can('view_workflows') || can('manage_workflows')"
+        class="pb-2 text-sm font-medium"
+        :class="adminTab==='workflows'?'tab-active':'text-gray-500 hover:text-white'"
+        @click="adminTab='workflows'; loadWorkflows()">Workflows</button>
+      <button x-show="can('view_runs')"
+        class="pb-2 text-sm font-medium"
+        :class="adminTab==='runs'?'tab-active':'text-gray-500 hover:text-white'"
+        @click="adminTab='runs'; loadAgentRuns()">Runs</button>
       <button x-show="can('view_audit_logs')"
         class="pb-2 text-sm font-medium"
         :class="adminTab==='audit'?'tab-active':'text-gray-500 hover:text-white'"
         @click="adminTab='audit'; loadAdminAudit()">Audit Log</button>
-      <button x-show="can('view_audit_logs')"
-        class="pb-2 text-sm font-medium"
-        :class="adminTab==='routing-log'?'tab-active':'text-gray-500 hover:text-white'"
-        @click="adminTab='routing-log'; if(can('manage_users') && !adminUsers.length) loadAdminUsers(); loadAdminRoutingLog()">Routing Log</button>
-      <button x-show="can('manage_action_policies')"
-        class="pb-2 text-sm font-medium"
-        :class="adminTab==='action-policies'?'tab-active':'text-gray-500 hover:text-white'"
-        @click="adminTab='action-policies'; loadAdminActionPolicies()">Action Policies</button>
       <button x-show="can('view_approvals')"
         class="pb-2 text-sm font-medium relative"
         :class="adminTab==='approvals'?'tab-active':'text-gray-500 hover:text-white'"
@@ -3387,7 +3500,7 @@
     </div>
 
     <!-- ── Routing Log sub-tab ── -->
-    <div x-show="adminTab==='routing-log' && can('view_audit_logs')">
+    <div x-show="tab==='infra' && infraTab==='routing' && can('view_audit_logs')">
       <div class="flex items-center justify-between mb-4 gap-3 flex-wrap">
         <div class="flex items-center gap-3">
           <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Routing Log</div>
@@ -3561,7 +3674,7 @@
   </div>
 
   <!-- ── Workflows Tab ────────────────────────────────────────────── -->
-  <div x-show="tab==='workflows'" x-cloak class="p-6 max-w-5xl mx-auto space-y-6">
+  <div x-show="tab==='admin' && adminTab==='workflows'" x-cloak class="p-6 max-w-5xl mx-auto space-y-6">
 
     <!-- Header row -->
     <div class="flex items-center justify-between">
@@ -3855,7 +3968,7 @@
   </div>
 
   <!-- ── Runs Tab ─────────────────────────────────────────────────────── -->
-  <div x-show="tab==='runs'" x-cloak class="p-6 max-w-5xl mx-auto space-y-6">
+  <div x-show="tab==='admin' && adminTab==='runs'" x-cloak class="p-6 max-w-5xl mx-auto space-y-6">
 
     <!-- Header row -->
     <div class="flex items-center justify-between">
@@ -4000,8 +4113,8 @@
 
   </div>
 
-  <!-- ── Evolution Tab ────────────────────────────────────────────────── -->
-  <div x-show="tab==='evolution'" x-cloak class="p-6 max-w-5xl mx-auto space-y-6">
+  <!-- ── Proposals (was: Evolution) ─────────────────────────────────── -->
+  <div x-show="tab==='infra' && infraTab==='proposals'" x-cloak class="p-6 max-w-5xl mx-auto space-y-6">
 
     <!-- Sub-nav -->
     <div class="flex items-center gap-5 border-b border-gray-800 pb-2">
@@ -4211,7 +4324,7 @@
 
     <!-- ── Settings panel ──────────────────────────────────── -->
     <div x-show="evoPanel==='settings'" class="space-y-6">
-      <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Evolution Settings</div>
+      <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Proposal Settings</div>
 
       <!-- Loading -->
       <div x-show="evoSettingsLoading" class="text-center text-gray-600 py-12 text-sm">Loading…</div>
@@ -4461,7 +4574,11 @@ function app() {
     isCanary: window.__LOGOS__?.isCanary || false,
     runtimeMode: window.__LOGOS__?.runtimeMode || 'kubernetes',
     appVersion: window.__LOGOS__?.version || '',
-    // routing
+    // agents sub-tabs
+    agentsTab: localStorage.getItem('logos_agents_tab') || 'running',
+    // infra sub-tabs
+    infraTab: localStorage.getItem('logos_infra_tab') || 'servers',
+    // routing (used within infra > routing)
     routingTab: localStorage.getItem('hermes_routing_tab') || 'machines',
     // admin
     adminTab: localStorage.getItem('hermes_admin_tab') || 'users',
@@ -5677,6 +5794,7 @@ function app() {
                   tools_used:      d.tools_used       || 0,
                   tools_available: d.tools_available  || d.tool_count || 0,
                   model:           d.model            || '',
+                  tool_detail:     d.tool_detail      || [],
                 };
                 // Cache for the bottom stats bar — persists after session ends
                 this._lastChatStats = {...this._lastChatStats, [chat.id]: {
