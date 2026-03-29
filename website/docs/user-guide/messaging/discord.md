@@ -1,12 +1,12 @@
 ---
 sidebar_position: 3
 title: "Discord"
-description: "Set up Hermes Agent as a Discord bot"
+description: "Set up Logos as a Discord bot"
 ---
 
 # Discord Setup
 
-Hermes Agent integrates with Discord as a bot, letting you chat with your AI assistant through direct messages or server channels. The bot receives your messages, processes them through the Hermes Agent pipeline (including tool use, memory, and reasoning), and responds in real time. It supports text, voice messages, file attachments, and slash commands.
+Logos integrates with Discord as a bot, letting you chat with your AI assistant through direct messages or server channels. The bot receives your messages, processes them through the Logos pipeline (including tool use, memory, and reasoning), and responds in real time. It supports text, voice messages, file attachments, and slash commands.
 
 This guide walks you through the full setup process — from creating your bot on Discord's Developer Portal to sending your first message.
 
@@ -14,7 +14,7 @@ This guide walks you through the full setup process — from creating your bot o
 
 1. Go to the [Discord Developer Portal](https://discord.com/developers/applications) and sign in with your Discord account.
 2. Click **New Application** in the top-right corner.
-3. Enter a name for your application (e.g., "Hermes Agent") and accept the Developer Terms of Service.
+3. Enter a name for your application (e.g., "Logos") and accept the Developer Terms of Service.
 4. Click **Create**.
 
 You'll land on the **General Information** page. Note the **Application ID** — you'll need it later to build the invite URL.
@@ -57,7 +57,7 @@ Click **Save Changes** at the bottom of the page.
 
 ## Step 4: Get the Bot Token
 
-The bot token is the credential Hermes Agent uses to log in as your bot. Still on the **Bot** page:
+The bot token is the credential Logos uses to log in as your bot. Still on the **Bot** page:
 
 1. Under the **Token** section, click **Reset Token**.
 2. If you have two-factor authentication enabled on your Discord account, enter your 2FA code.
@@ -129,7 +129,7 @@ After authorizing, the bot will appear in your server's member list (it will sho
 
 ## Step 7: Find Your Discord User ID
 
-Hermes Agent uses your Discord User ID to control who can interact with the bot. To find it:
+Logos uses your Discord User ID to control who can interact with the bot. To find it:
 
 1. Open Discord (desktop or web app).
 2. Go to **Settings** → **Advanced** → toggle **Developer Mode** to **ON**.
@@ -142,14 +142,14 @@ Your User ID is a long number like `284102345871466496`.
 Developer Mode also lets you copy **Channel IDs** and **Server IDs** the same way — right-click the channel or server name and select Copy ID. You'll need a Channel ID if you want to set a home channel manually.
 :::
 
-## Step 8: Configure Hermes Agent
+## Step 8: Configure Logos
 
 ### Option A: Interactive Setup (Recommended)
 
 Run the guided setup command:
 
 ```bash
-hermes gateway setup
+logos gateway setup
 ```
 
 Select **Discord** when prompted, then paste your bot token and user ID when asked.
@@ -172,13 +172,13 @@ DISCORD_ALLOWED_USERS=284102345871466496
 Once configured, start the Discord gateway:
 
 ```bash
-hermes gateway
+logos gateway
 ```
 
 The bot should come online in Discord within a few seconds. Send it a message — either a DM or in a channel it can see — to test.
 
 :::tip
-You can run `hermes gateway` in the background or as a systemd service for persistent operation. See the deployment docs for details.
+You can run `logos gateway` in the background or as a systemd service for persistent operation. See the deployment docs for details.
 :::
 
 ## Home Channel
@@ -208,7 +208,7 @@ Replace the ID with the actual channel ID (right-click → Copy Channel ID with 
 
 ## Voice Messages
 
-Hermes Agent supports Discord voice messages:
+Logos supports Discord voice messages:
 
 - **Incoming voice messages** are automatically transcribed using Whisper (requires `GROQ_API_KEY` or `VOICE_TOOLS_OPENAI_KEY` to be set in your environment).
 - **Text-to-speech**: Use `/voice tts` to have the bot send spoken audio responses alongside text replies.
@@ -243,7 +243,7 @@ Hermes Agent supports Discord voice messages:
 
 **Cause**: The Hermes gateway isn't running, or the token is incorrect.
 
-**Fix**: Check that `hermes gateway` is running. Verify `DISCORD_BOT_TOKEN` in your `.env` file. If you recently reset the token, update it.
+**Fix**: Check that `logos gateway` is running. Verify `DISCORD_BOT_TOKEN` in your `.env` file. If you recently reset the token, update it.
 
 ### "User not allowed" / Bot ignores you
 
@@ -257,4 +257,4 @@ Hermes Agent supports Discord voice messages:
 Always set `DISCORD_ALLOWED_USERS` to restrict who can interact with the bot. Without it, the gateway denies all users by default as a safety measure. Only add User IDs of people you trust — authorized users have full access to the agent's capabilities, including tool use and system access.
 :::
 
-For more information on securing your Hermes Agent deployment, see the [Security Guide](../security.md).
+For more information on securing your Logos deployment, see the [Security Guide](../security.md).

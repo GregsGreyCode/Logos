@@ -1,12 +1,12 @@
 ---
 sidebar_position: 4
 title: "MCP (Model Context Protocol)"
-description: "Connect Hermes Agent to external tool servers via MCP — and control exactly which MCP tools Hermes loads"
+description: "Connect Logos to external tool servers via MCP — and control exactly which MCP tools Hermes loads"
 ---
 
 # MCP (Model Context Protocol)
 
-MCP lets Hermes Agent connect to external tool servers so the agent can use tools that live outside Hermes itself — GitHub, databases, file systems, browser stacks, internal APIs, and more.
+MCP lets Logos connect to external tool servers so the agent can use tools that live outside Hermes itself — GitHub, databases, file systems, browser stacks, internal APIs, and more.
 
 If you have ever wanted Hermes to use a tool that already exists somewhere else, MCP is usually the cleanest way to do it.
 
@@ -23,7 +23,7 @@ If you have ever wanted Hermes to use a tool that already exists somewhere else,
 1. Install MCP support:
 
 ```bash
-pip install hermes-agent[mcp]
+pip install logos[mcp]
 ```
 
 2. Add an MCP server to `~/.logos/config.yaml`:
@@ -374,7 +374,7 @@ Inspect the project root and explain the directory layout.
 Check:
 
 ```bash
-pip install hermes-agent[mcp]
+pip install logos[mcp]
 node --version
 npx --version
 ```

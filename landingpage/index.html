@@ -53,18 +53,12 @@
         <div class="nav-links">
           <a href="#install">Install</a>
           <a href="#features">Features</a>
-          <a href="/docs/">Docs</a>
+          <a href="/Logos/docs/">Docs</a>
           <a
-            href="https://github.com/NousResearch/hermes-agent"
+            href="https://github.com/GregsGreyCode/Logos"
             target="_blank"
             rel="noopener"
             >GitHub</a
-          >
-          <a
-            href="https://discord.gg/NousResearch"
-            target="_blank"
-            rel="noopener"
-            >Discord</a
           >
         </div>
         <button
@@ -80,18 +74,12 @@
         <div class="nav-mobile" id="nav-mobile">
           <a href="#install" onclick="toggleMobileNav()">Install</a>
           <a href="#features" onclick="toggleMobileNav()">Features</a>
-          <a href="/docs/">Docs</a>
+          <a href="/Logos/docs/">Docs</a>
           <a
-            href="https://github.com/NousResearch/hermes-agent"
+            href="https://github.com/GregsGreyCode/Logos"
             target="_blank"
             rel="noopener"
             >GitHub</a
-          >
-          <a
-            href="https://discord.gg/NousResearch"
-            target="_blank"
-            rel="noopener"
-            >Discord</a
           >
         </div>
       </div>
@@ -148,7 +136,7 @@
               <span class="install-prompt" id="install-prompt">$</span>
               <code id="install-command"
                 >curl -fsSL
-                https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh
+                https://raw.githubusercontent.com/GregsGreyCode/logos/main/scripts/install.sh
                 | bash</code
               >
               <button
@@ -234,12 +222,12 @@
                     class="copy-btn"
                     id="step1-copy"
                     onclick="copyText(this)"
-                    data-text="curl -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh | bash"
+                    data-text="curl -fsSL https://raw.githubusercontent.com/GregsGreyCode/logos/main/scripts/install.sh | bash"
                   >
                     Copy
                   </button>
                 </div>
-                <pre><code id="step1-command">curl -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh | bash</code></pre>
+                <pre><code id="step1-command">curl -fsSL https://raw.githubusercontent.com/GregsGreyCode/logos/main/scripts/install.sh | bash</code></pre>
               </div>
               <p class="step-note" id="step1-note">
                 Installs uv, Python 3.11, clones the repo, sets up everything.
@@ -258,16 +246,16 @@
                   <button
                     class="copy-btn"
                     onclick="copyText(this)"
-                    data-text="hermes setup"
+                    data-text="logos setup"
                   >
                     Copy
                   </button>
                 </div>
                 <pre><code><span class="code-comment"># Interactive setup wizard</span>
-hermes setup
+logos setup
 
 <span class="code-comment"># Or choose your model</span>
-hermes model</code></pre>
+logos model</code></pre>
               </div>
               <p class="step-note">
                 Connect to Nous Portal (OAuth), OpenRouter (API key), or your
@@ -311,19 +299,19 @@ hermes model</code></pre>
                   <button
                     class="copy-btn"
                     onclick="copyText(this)"
-                    data-text="hermes gateway setup"
+                    data-text="logos gateway setup"
                   >
                     Copy
                   </button>
                 </div>
                 <pre><code><span class="code-comment"># Interactive gateway setup wizard</span>
-hermes gateway setup
+logos gateway setup
 
 <span class="code-comment"># Start the messaging gateway</span>
-hermes gateway
+logos gateway
 
 <span class="code-comment"># Install as a system service</span>
-hermes gateway install</code></pre>
+logos gateway install</code></pre>
               </div>
               <p class="step-note">
                 Walk through connecting Telegram, Discord, Slack, or WhatsApp.
@@ -342,12 +330,12 @@ hermes gateway install</code></pre>
                   <button
                     class="copy-btn"
                     onclick="copyText(this)"
-                    data-text="hermes update"
+                    data-text="logos update"
                   >
                     Copy
                   </button>
                 </div>
-                <pre><code>hermes update</code></pre>
+                <pre><code>logos update</code></pre>
               </div>
               <p class="step-note">
                 Pulls the latest changes and reinstalls dependencies. Run

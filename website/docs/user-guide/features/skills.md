@@ -133,7 +133,7 @@ required_environment_variables:
     required_for: full functionality
 ```
 
-When a missing value is encountered, Hermes asks for it securely only when the skill is actually loaded in the local CLI. You can skip setup and keep using the skill. Messaging surfaces never ask for secrets in chat — they tell you to use `hermes setup` or `~/.logos/.env` locally instead.
+When a missing value is encountered, Hermes asks for it securely only when the skill is actually loaded in the local CLI. You can skip setup and keep using the skill. Messaging surfaces never ask for secrets in chat — they tell you to use `logos setup` or `~/.logos/.env` locally instead.
 
 ## Skill Directory Structure
 
@@ -190,17 +190,17 @@ The `patch` action is preferred for updates — it's more token-efficient than `
 Browse, search, install, and manage skills from online registries and official optional skills:
 
 ```bash
-hermes skills browse                     # Browse all hub skills (official first)
-hermes skills browse --source official   # Browse only official optional skills
-hermes skills search kubernetes          # Search all sources
-hermes skills install openai/skills/k8s  # Install with security scan
-hermes skills inspect openai/skills/k8s  # Preview before installing
-hermes skills list --source hub          # List hub-installed skills
-hermes skills audit                      # Re-scan all hub skills
-hermes skills uninstall k8s              # Remove a hub skill
-hermes skills publish skills/my-skill --to github --repo owner/repo
-hermes skills snapshot export setup.json # Export skill config
-hermes skills tap add myorg/skills-repo  # Add a custom source
+logos skills browse                     # Browse all hub skills (official first)
+logos skills browse --source official   # Browse only official optional skills
+logos skills search kubernetes          # Search all sources
+logos skills install openai/skills/k8s  # Install with security scan
+logos skills inspect openai/skills/k8s  # Preview before installing
+logos skills list --source hub          # List hub-installed skills
+logos skills audit                      # Re-scan all hub skills
+logos skills uninstall k8s              # Remove a hub skill
+logos skills publish skills/my-skill --to github --repo owner/repo
+logos skills snapshot export setup.json # Export skill config
+logos skills tap add myorg/skills-repo  # Add a custom source
 ```
 
 All hub-installed skills go through a **security scanner** that checks for data exfiltration, prompt injection, destructive commands, and other threats.

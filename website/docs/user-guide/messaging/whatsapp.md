@@ -1,7 +1,7 @@
 ---
 sidebar_position: 5
 title: "WhatsApp"
-description: "Set up Hermes Agent as a WhatsApp bot via the built-in Baileys bridge"
+description: "Set up Logos as a WhatsApp bot via the built-in Baileys bridge"
 ---
 
 # WhatsApp Setup
@@ -42,7 +42,7 @@ Unlike older browser-driven bridges, the current Baileys-based bridge does **not
 ## Step 1: Run the Setup Wizard
 
 ```bash
-hermes whatsapp
+logos whatsapp
 ```
 
 The wizard will:
@@ -82,7 +82,7 @@ After getting the number:
 
 1. Install WhatsApp on a phone (or use WhatsApp Business app with dual-SIM)
 2. Register the new number with WhatsApp
-3. Run `hermes whatsapp` and scan the QR code from that WhatsApp account
+3. Run `logos whatsapp` and scan the QR code from that WhatsApp account
 
 ---
 
@@ -100,8 +100,8 @@ WHATSAPP_ALLOWED_USERS=15551234567         # Comma-separated phone numbers (with
 Then start the gateway:
 
 ```bash
-hermes gateway              # Foreground
-hermes gateway install      # Install as a system service
+logos gateway              # Foreground
+logos gateway install      # Install as a system service
 ```
 
 The gateway starts the WhatsApp bridge automatically using the saved session.
@@ -124,7 +124,7 @@ If the session breaks (phone reset, WhatsApp update, manually unlinked), you'll 
 errors in the gateway logs. To fix it:
 
 ```bash
-hermes whatsapp
+logos whatsapp
 ```
 
 This generates a fresh QR code. Scan it again and the session is re-established. The gateway
@@ -139,7 +139,7 @@ Hermes supports voice on WhatsApp:
 
 - **Incoming:** Voice messages (`.ogg` opus) are automatically transcribed using Whisper (requires `VOICE_TOOLS_OPENAI_KEY`)
 - **Outgoing:** TTS responses are sent as MP3 audio file attachments
-- Agent responses are prefixed with "⚕ **Hermes Agent**" for easy identification
+- Agent responses are prefixed with "⚕ **Logos**" for easy identification
 
 ---
 
@@ -148,9 +148,9 @@ Hermes supports voice on WhatsApp:
 | Problem | Solution |
 |---------|----------|
 | **QR code not scanning** | Ensure terminal is wide enough (60+ columns). Try a different terminal. Make sure you're scanning from the correct WhatsApp account (bot number, not personal). |
-| **QR code expires** | QR codes refresh every ~20 seconds. If it times out, restart `hermes whatsapp`. |
+| **QR code expires** | QR codes refresh every ~20 seconds. If it times out, restart `logos whatsapp`. |
 | **Session not persisting** | Check that `~/.logos/whatsapp/session` exists and is writable. If containerized, mount it as a persistent volume. |
-| **Logged out unexpectedly** | WhatsApp unlinks devices after long inactivity. Keep the phone on and connected to the network, then re-pair with `hermes whatsapp` if needed. |
+| **Logged out unexpectedly** | WhatsApp unlinks devices after long inactivity. Keep the phone on and connected to the network, then re-pair with `logos whatsapp` if needed. |
 | **Bridge crashes or reconnect loops** | Restart the gateway, update Hermes, and re-pair if the session was invalidated by a WhatsApp protocol change. |
 | **Bot stops working after WhatsApp update** | Update Hermes to get the latest bridge version, then re-pair. |
 | **Messages not being received** | Verify `WHATSAPP_ALLOWED_USERS` includes the sender's number (with country code, no `+` or spaces). |
