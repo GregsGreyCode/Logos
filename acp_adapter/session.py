@@ -165,8 +165,8 @@ class SessionManager:
             return self._agent_factory()
 
         from agents.hermes.agent import AIAgent
-        from hermes_cli.config import load_config
-        from hermes_cli.runtime_provider import resolve_runtime_provider
+        from logos_cli.config import load_config
+        from logos_cli.runtime_provider import resolve_runtime_provider
 
         config = load_config()
         model_cfg = config.get("model")

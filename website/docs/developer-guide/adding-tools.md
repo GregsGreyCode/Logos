@@ -182,7 +182,7 @@ Some tools (`todo`, `memory`, `session_search`, `delegate_task`) need access to 
 
 ## Optional: Setup Wizard Integration
 
-If your tool requires an API key, add it to `hermes_cli/config.py`:
+If your tool requires an API key, add it to `logos_cli/config.py`:
 
 ```python
 OPTIONAL_ENV_VARS = {
@@ -203,6 +203,6 @@ OPTIONAL_ENV_VARS = {
 - [ ] Added to appropriate toolset in `toolsets.py`
 - [ ] Discovery import added to `model_tools.py`
 - [ ] Handler returns JSON strings, errors returned as `{"error": "..."}`
-- [ ] Optional: API key added to `OPTIONAL_ENV_VARS` in `hermes_cli/config.py`
+- [ ] Optional: API key added to `OPTIONAL_ENV_VARS` in `logos_cli/config.py`
 - [ ] Optional: Added to `toolset_distributions.py` for batch processing
 - [ ] Tested with `hermes chat -q "Use the weather tool for London"`

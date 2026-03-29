@@ -16,8 +16,8 @@ Hermes has a shared provider runtime resolver used across:
 
 Primary implementation:
 
-- `hermes_cli/runtime_provider.py`
-- `hermes_cli/auth.py`
+- `logos_cli/runtime_provider.py`
+- `logos_cli/auth.py`
 - `agent/auxiliary_client.py`
 
 ## Resolution precedence

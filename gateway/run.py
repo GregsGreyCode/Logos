@@ -251,7 +251,7 @@ logger = logging.getLogger(__name__)
 
 def _resolve_runtime_agent_kwargs() -> dict:
     """Resolve provider credentials for gateway-created AIAgent instances."""
-    from hermes_cli.runtime_provider import (
+    from logos_cli.runtime_provider import (
         resolve_runtime_provider,
         format_runtime_provider_error,
     )
@@ -1952,7 +1952,7 @@ class GatewayRunner:
     async def _handle_model_command(self, event: MessageEvent) -> str:
         """Handle /model command - show or change the current model."""
         import yaml
-        from hermes_cli.models import (
+        from logos_cli.models import (
             parse_model_input,
             validate_requested_model,
             curated_models_for_provider,
@@ -1983,7 +1983,7 @@ class GatewayRunner:
         current_provider = normalize_provider(current_provider)
         if current_provider == "auto":
             try:
-                from hermes_cli.auth import resolve_provider as _resolve_provider
+                from logos_cli.auth import resolve_provider as _resolve_provider
                 current_provider = _resolve_provider(current_provider)
             except Exception:
                 current_provider = "openrouter"
@@ -2021,7 +2021,7 @@ class GatewayRunner:
         base_url = "https://openrouter.ai/api/v1"
         if provider_changed:
             try:
-                from hermes_cli.runtime_provider import resolve_runtime_provider
+                from logos_cli.runtime_provider import resolve_runtime_provider
                 runtime = resolve_runtime_provider(requested=target_provider)
                 api_key = runtime.get("api_key", "")
                 base_url = runtime.get("base_url", "")
@@ -2031,7 +2031,7 @@ class GatewayRunner:
         else:
             # Use current provider's base_url from config or registry
             try:
-                from hermes_cli.runtime_provider import resolve_runtime_provider
+                from logos_cli.runtime_provider import resolve_runtime_provider
                 runtime = resolve_runtime_provider(requested=current_provider)
                 api_key = runtime.get("api_key", "")
                 base_url = runtime.get("base_url", "")
@@ -2092,7 +2092,7 @@ class GatewayRunner:
     async def _handle_provider_command(self, event: MessageEvent) -> str:
         """Handle /provider command - show available providers."""
         import yaml
-        from hermes_cli.models import (
+        from logos_cli.models import (
             list_available_providers,
             normalize_provider,
             _PROVIDER_LABELS,
@@ -2114,7 +2114,7 @@ class GatewayRunner:
         current_provider = normalize_provider(current_provider)
         if current_provider == "auto":
             try:
-                from hermes_cli.auth import resolve_provider as _resolve_provider
+                from logos_cli.auth import resolve_provider as _resolve_provider
                 current_provider = _resolve_provider(current_provider)
             except Exception:
                 current_provider = "openrouter"

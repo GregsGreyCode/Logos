@@ -934,7 +934,7 @@ def _load_mcp_config() -> Dict[str, dict]:
     ``timeout`` and ``connect_timeout`` overrides.
     """
     try:
-        from hermes_cli.config import load_config
+        from logos_cli.config import load_config
         config = load_config()
         servers = config.get("mcp_servers")
         if not servers or not isinstance(servers, dict):

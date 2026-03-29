@@ -14,7 +14,7 @@
 | Package name (pyproject.toml) | `logos` |
 | Installed CLI commands | `hermes`, `hermes-agent`, `hermes-acp` |
 | Egg-info name | `hermes_agent` |
-| Primary entry point | `hermes_cli.main:main` → `hermes gateway run` |
+| Primary entry point | `logos_cli.main:main` → `hermes gateway run` |
 | Submodules | `mini-swe-agent`, `tinker-atropos` |
 | Python version | 3.11+ |
 
@@ -24,7 +24,7 @@
 |------|---------------|-------|
 | `gateway/` | **Definitely Logos** | HTTP API, auth, web UI, session management |
 | `tools/` | **Definitely Logos** | All agent tools (approval, file, terminal, etc.) |
-| `hermes_cli/` | **Definitely Logos** | Main platform CLI (named hermes, but is Logos's CLI) |
+| `logos_cli/` | **Definitely Logos** | Main platform CLI (named hermes, but is Logos's CLI) |
 | `cron/` | **Definitely Logos** | Cron scheduler for agent jobs |
 | `honcho_integration/` | **Definitely Logos** | Honcho AI memory integration |
 | `acp_adapter/` | **Definitely Logos** | ACP protocol server (VS Code, Zed, JetBrains) |
@@ -61,7 +61,7 @@
 | `agents/hermes/` | **Work-in-progress** | ⚠️ Refactored agent importing stale core.* — see Section 2.4 |
 | `environments/` | **Likely hermes-agent** | RL/Atropos training environments |
 | `hermes` (root script) | **Legacy** | Moved to `archive/hermes-origin/hermes` |
-| `cli.py` | **Active production — hermes-agent origin** | `hermes_cli/main.py:cmd_chat()` imports it directly. It IS the interactive REPL engine. Not archiveable. Long-term: move to `hermes_cli/chat.py`. |
+| `cli.py` | **Active production — hermes-agent origin** | `logos_cli/main.py:cmd_chat()` imports it directly. It IS the interactive REPL engine. Not archiveable. Long-term: move to `logos_cli/chat.py`. |
 | `hermes_agent.egg-info/` | **Build artifact** | Should be gitignored |
 | `datagen-config-examples/` | **Likely hermes-agent** | Data generation scripts/configs |
 | `landingpage/nous-logo.png` | **Legacy** | Old Nous Research logo |
@@ -72,7 +72,7 @@
 | `AGENTS.md` | **Needs update** | Says "Hermes Agent - Development Guide" |
 | `CONTRIBUTING.md` | **Needs update** | Says "Contributing to Hermes Agent" |
 | `setup-hermes.sh` | **Likely hermes-agent** | Developer setup script |
-| `cli-config.yaml.example` | **Ambiguous** | Config example — check if it matches hermes_cli config |
+| `cli-config.yaml.example` | **Ambiguous** | Config example — check if it matches logos_cli config |
 
 ---
 
@@ -82,7 +82,7 @@
 
 ```
 CMD: hermes gateway run
-  → hermes_cli/main.py:main()
+  → logos_cli/main.py:main()
     → gateway.run.GatewayRunner.start()
       → (per platform) Telegram / Discord / Slack / Web adapters
         → gateway/run.py: from run_agent import AIAgent
@@ -97,8 +97,8 @@ CMD: hermes gateway run
 
 ```
 hermes chat / hermes [no args]
-  → hermes_cli/main.py:main()
-    → hermes_cli/runtime_provider.py
+  → logos_cli/main.py:main()
+    → logos_cli/runtime_provider.py
       → run_agent.py: AIAgent (same runtime)
         → hermes_state.py
         → model_tools.py
@@ -147,8 +147,8 @@ These are files that originated directly from the hermes-agent codebase. They re
 | File | Why it's hermes-agent origin | Current usage |
 |------|------------------------------|--------------|
 | `run_agent.py` | Core AIAgent loop — the hermes-agent runtime | Imported by `gateway/run.py` (5 places) and `acp_adapter` |
-| `hermes_state.py` | SQLite state store, named "Hermes" | Imported across gateway, hermes_cli, tools, tests (50+ sites) |
-| `hermes_constants.py` | Constants file named "Hermes" | Imported by hermes_cli |
+| `hermes_state.py` | SQLite state store, named "Hermes" | Imported across gateway, logos_cli, tools, tests (50+ sites) |
+| `hermes_constants.py` | Constants file named "Hermes" | Imported by logos_cli |
 | `hermes_time.py` | Clock named "Hermes" | Used by run_agent.py |
 | `model_tools.py` | Tool definitions for hermes agent loop | Used by run_agent.py |
 | `toolsets.py` | Toolset definitions | Used by run_agent.py |
@@ -166,8 +166,8 @@ These are files that originated directly from the hermes-agent codebase. They re
 
 | File | Why it's legacy |
 |------|----------------|
-| `hermes` (root script) | 13-line launcher: `from cli import main; fire.Fire(main)`. Superseded by pyproject.toml `hermes = "hermes_cli.main:main"` |
-| `cli.py` | Old standalone CLI ("Hermes Agent CLI"). `hermes_cli/main.py` is the current successor. Used by the `hermes` root script but not by the installed `hermes` command. |
+| `hermes` (root script) | 13-line launcher: `from cli import main; fire.Fire(main)`. Superseded by pyproject.toml `hermes = "logos_cli.main:main"` |
+| `cli.py` | Old standalone CLI ("Hermes Agent CLI"). `logos_cli/main.py` is the current successor. Used by the `hermes` root script but not by the installed `hermes` command. |
 | `core/state.py` | Stale v4 copy of `hermes_state.py` (canonical is v8) |
 | `core/toolsets.py` | Stale copy missing `bug_notes` toolset |
 | `agents/hermes/agent.py` | Partially-refactored agent using stale `core.*` — not yet production-ready |
@@ -189,11 +189,11 @@ These are files that originated directly from the hermes-agent codebase. They re
 
 | Path | Why unclear | Recommended action |
 |------|-------------|-------------------|
-| `cli.py` | Described as CLI, but may have features not yet in `hermes_cli/main.py`. Large file. | Deep-read both; diff capabilities before archiving |
+| `cli.py` | Described as CLI, but may have features not yet in `logos_cli/main.py`. Large file. | Deep-read both; diff capabilities before archiving |
 | `agents/hermes/` | Work-in-progress refactor — partially useful, partially broken | Review after `core/` is synced; may become the future production agent |
 | `datagen-config-examples/` | Data generation examples — are these used? | Check if referenced by scripts or docs |
 | `plans/checkpoint-rollback.md` | Implementation plan — is this done or pending? | Check if `tools/checkpoint_manager.py` covers this |
-| `cli-config.yaml.example` | Config example — does it match current `hermes_cli` config schema? | Verify schema match |
+| `cli-config.yaml.example` | Config example — does it match current `logos_cli` config schema? | Verify schema match |
 | `data/` | Directory exists but appeared empty in listing | Verify contents; may be gitignored data |
 | `environments/benchmarks` | Benchmark environments — active or abandoned? | Check if used in CI or by Atropos |
 | `environments/terminal_test_env` | Test environment — active or archived? | Check if referenced by tests |
@@ -218,7 +218,7 @@ These are files that originated directly from the hermes-agent codebase. They re
 ### 5.3 Legacy launchers
 
 - `hermes` (root script) — superseded by pyproject.toml entry point
-- `cli.py` — likely superseded by `hermes_cli/main.py`
+- `cli.py` — likely superseded by `logos_cli/main.py`
 
 ### 5.4 Old branding
 
@@ -258,7 +258,7 @@ logos/                              ← repo root
 ├── gateway/                        ← HTTP API, auth, web UI (keep as-is)
 ├── agent/                          ← Runtime adapters (keep as-is)
 ├── tools/                          ← All agent tools (keep as-is)
-├── hermes_cli/                     ← Platform CLI (keep; rename to logos_cli/ eventually)
+├── logos_cli/                     ← Platform CLI (keep; rename to logos_cli/ eventually)
 ├── cron/                           ← Cron scheduler (keep as-is)
 ├── honcho_integration/             ← Honcho memory (keep as-is)
 ├── acp_adapter/                    ← ACP protocol adapter (keep as-is)
@@ -307,7 +307,7 @@ logos/                              ← repo root
 
 ### Root-level files to KEEP in place (runtime dependency)
 
-These root-level files are imported by `gateway/run.py`, `hermes_cli/`, and the full runtime. They should stay until all import sites are updated to use `core.*`:
+These root-level files are imported by `gateway/run.py`, `logos_cli/`, and the full runtime. They should stay until all import sites are updated to use `core.*`:
 
 - `run_agent.py`
 - `hermes_state.py`
@@ -382,7 +382,7 @@ Once `core/` is synced, migrate import sites in this order (least risky first):
 1. `tests/` — update test imports from `hermes_state` → `core.state`, etc.
 2. `tools/` — update tool imports
 3. `cron/` — update cron imports
-4. `hermes_cli/` — update CLI imports
+4. `logos_cli/` — update CLI imports
 5. `gateway/` — update gateway imports (most risk — test after each)
 6. `run_agent.py` — update agent imports (test the full agent loop after)
 
@@ -407,7 +407,7 @@ Once `core/` is fully synced and import sites are migrated:
    - etc.
 2. Update pyproject.toml `py-modules` to remove now-moved files
 3. Create `agents/hermes/pyproject.toml` for future submodule extraction
-4. Consider renaming `hermes_cli/` → `logos_cli/` and entry `hermes` → `logos`
+4. Consider renaming `logos_cli/` → `logos_cli/` and entry `hermes` → `logos`
 
 ---
 
@@ -432,7 +432,7 @@ gateway/                Full gateway server
   chat_handlers.py      Message processing
   auth/                 Auth + policy
   platforms/            Telegram, Discord, Slack, Web
-hermes_cli/             CLI entry point
+logos_cli/             CLI entry point
   main.py               `hermes` command
   runtime_provider.py   Provider resolution
   ...

@@ -1,4 +1,5 @@
 [console_scripts]
-hermes = hermes_cli.main:main
-hermes-acp = acp_adapter.entry:main
+hermes = logos_cli.main:main_agent
 hermes-agent = agents.hermes.agent:main
+logos = logos_cli.main:main
+logos-acp = acp_adapter.entry:main

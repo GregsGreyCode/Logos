@@ -1337,7 +1337,7 @@ class TestNousCredentialRefresh:
             return _RebuiltClient()
 
         monkeypatch.setattr(
-            "hermes_cli.auth.resolve_nous_runtime_credentials", _fake_resolve
+            "logos_cli.auth.resolve_nous_runtime_credentials", _fake_resolve
         )
 
         agent.client = _ExistingClient()
@@ -1899,7 +1899,7 @@ class TestSafeWriter:
                 patch("agents.hermes.agent.get_tool_definitions", return_value=_make_tool_defs("web_search")),
                 patch("agents.hermes.agent.check_toolset_requirements", return_value={}),
                 patch("agents.hermes.agent.OpenAI"),
-                patch("hermes_cli.config.load_config", return_value={"memory": {}}),
+                patch("logos_cli.config.load_config", return_value={"memory": {}}),
                 patch("honcho_integration.client.HonchoClientConfig.from_global_config", return_value=hcfg),
                 patch("honcho_integration.client.get_honcho_client", side_effect=RuntimeError("boom")),
             ):

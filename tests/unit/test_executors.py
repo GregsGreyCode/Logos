@@ -524,19 +524,19 @@ class TestLocalProcessExecutorGetHeadroom:
 
 class TestConfigRuntimeSection:
     def test_runtime_section_exists(self):
-        from hermes_cli.config import DEFAULT_CONFIG
+        from logos_cli.config import DEFAULT_CONFIG
         assert "runtime" in DEFAULT_CONFIG
 
     def test_runtime_mode_default_is_local(self):
-        from hermes_cli.config import DEFAULT_CONFIG
+        from logos_cli.config import DEFAULT_CONFIG
         assert DEFAULT_CONFIG["runtime"]["mode"] == "local"
 
     def test_runtime_port_range_exists(self):
-        from hermes_cli.config import DEFAULT_CONFIG
+        from logos_cli.config import DEFAULT_CONFIG
         assert "local_port_range" in DEFAULT_CONFIG["runtime"]
 
     def test_config_version_is_8(self):
-        from hermes_cli.config import DEFAULT_CONFIG
+        from logos_cli.config import DEFAULT_CONFIG
         assert DEFAULT_CONFIG["_config_version"] == 8
 
 

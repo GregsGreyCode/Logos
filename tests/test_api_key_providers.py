@@ -12,7 +12,7 @@ if "dotenv" not in sys.modules:
     fake_dotenv.load_dotenv = lambda *args, **kwargs: None
     sys.modules["dotenv"] = fake_dotenv
 
-from hermes_cli.auth import (
+from logos_cli.auth import (
     PROVIDER_REGISTRY,
     ProviderConfig,
     resolve_provider,
@@ -287,7 +287,7 @@ class TestRuntimeProviderResolution:
 
     def test_runtime_zai(self, monkeypatch):
         monkeypatch.setenv("GLM_API_KEY", "glm-key")
-        from hermes_cli.runtime_provider import resolve_runtime_provider
+        from logos_cli.runtime_provider import resolve_runtime_provider
         result = resolve_runtime_provider(requested="zai")
         assert result["provider"] == "zai"
         assert result["api_mode"] == "chat_completions"
@@ -296,7 +296,7 @@ class TestRuntimeProviderResolution:
 
     def test_runtime_kimi(self, monkeypatch):
         monkeypatch.setenv("KIMI_API_KEY", "kimi-key")
-        from hermes_cli.runtime_provider import resolve_runtime_provider
+        from logos_cli.runtime_provider import resolve_runtime_provider
         result = resolve_runtime_provider(requested="kimi-coding")
         assert result["provider"] == "kimi-coding"
         assert result["api_mode"] == "chat_completions"
@@ -304,14 +304,14 @@ class TestRuntimeProviderResolution:
 
     def test_runtime_minimax(self, monkeypatch):
         monkeypatch.setenv("MINIMAX_API_KEY", "mm-key")
-        from hermes_cli.runtime_provider import resolve_runtime_provider
+        from logos_cli.runtime_provider import resolve_runtime_provider
         result = resolve_runtime_provider(requested="minimax")
         assert result["provider"] == "minimax"
         assert result["api_key"] == "mm-key"
 
     def test_runtime_auto_detects_api_key_provider(self, monkeypatch):
         monkeypatch.setenv("KIMI_API_KEY", "auto-kimi-key")
-        from hermes_cli.runtime_provider import resolve_runtime_provider
+        from logos_cli.runtime_provider import resolve_runtime_provider
         result = resolve_runtime_provider(requested="auto")
         assert result["provider"] == "kimi-coding"
         assert result["api_key"] == "auto-kimi-key"
@@ -324,23 +324,23 @@ class TestRuntimeProviderResolution:
 class TestHasAnyProviderConfigured:
 
     def test_glm_key_counts(self, monkeypatch, tmp_path):
-        from hermes_cli import config as config_module
+        from logos_cli import config as config_module
         monkeypatch.setenv("GLM_API_KEY", "test-key")
         hermes_home = tmp_path / ".hermes"
         hermes_home.mkdir()
         monkeypatch.setattr(config_module, "get_env_path", lambda: hermes_home / ".env")
         monkeypatch.setattr(config_module, "get_hermes_home", lambda: hermes_home)
-        from hermes_cli.main import _has_any_provider_configured
+        from logos_cli.main import _has_any_provider_configured
         assert _has_any_provider_configured() is True
 
     def test_minimax_key_counts(self, monkeypatch, tmp_path):
-        from hermes_cli import config as config_module
+        from logos_cli import config as config_module
         monkeypatch.setenv("MINIMAX_API_KEY", "test-key")
         hermes_home = tmp_path / ".hermes"
         hermes_home.mkdir()
         monkeypatch.setattr(config_module, "get_env_path", lambda: hermes_home / ".env")
         monkeypatch.setattr(config_module, "get_hermes_home", lambda: hermes_home)
-        from hermes_cli.main import _has_any_provider_configured
+        from logos_cli.main import _has_any_provider_configured
         assert _has_any_provider_configured() is True
 
 

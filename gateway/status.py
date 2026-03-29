@@ -57,7 +57,7 @@ def _looks_like_gateway_process(pid: int) -> bool:
         return True
 
     patterns = (
-        "hermes_cli.main gateway",
+        "logos_cli.main gateway",
         "hermes gateway",
         "gateway/run.py",
     )
