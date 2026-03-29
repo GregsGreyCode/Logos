@@ -794,9 +794,9 @@
                 x-ref="chatTextarea"
                 autocomplete="off"
                 rows="1"
-                class="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-indigo-500 transition-colors resize-none"
+                class="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-indigo-500 transition-colors resize-none"
                 :class="chatDragOver ? 'border-indigo-400 bg-indigo-950/30' : ''"
-                style="min-height:38px;max-height:7rem;line-height:1.4;overflow-y:hidden;"
+                style="height:38px;min-height:38px;max-height:7rem;line-height:20px;overflow-y:hidden;padding-top:8px;padding-bottom:8px;"
                 :placeholder="micRecording ? ('Recording… ' + micCountdown + 's') : micTranscribing ? 'Transcribing…' : ('Message ' + (status.instance_name || 'Hermes') + '\u2026 (Enter · Shift+Enter for newline)')"
                 :disabled="micTranscribing || activeInstance.k8s_status === 'starting'"
                 :readonly="!chatInputReady"></textarea>
