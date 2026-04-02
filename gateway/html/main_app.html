@@ -270,7 +270,7 @@
       @click="tab='sessions'; if(!clusterInstances.length) loadInstances()">Chats</button>
     <button class="pb-2 text-sm font-medium border-b-2 border-transparent"
       :class="tab==='agents'?'tab-active':'text-gray-400 hover:text-white'"
-      @click="tab='agents'; loadInstances(); loadSouls(); loadToolsets(); loadAdminMachines()">Agents</button>
+      @click="tab='agents'; loadInstances(); loadSouls(); loadAdminMachines()">Agents</button>
     <template x-if="can('manage_machines') || can('manage_profiles') || can('view_routing_debug') || can('view_evolution')">
       <button class="pb-2 text-sm font-medium border-b-2 border-transparent"
         :class="tab==='infra'?'tab-active':'text-gray-400 hover:text-white'"
@@ -2008,21 +2008,8 @@
   <!-- ── Instances Tab (kubernetes mode only) ─────────────────────── -->
   <div x-show="tab==='agents'" x-cloak>
 
-    <!-- Agents sub-tabs -->
-    <div class="flex gap-4 mb-4 border-b border-gray-800">
-      <button class="pb-2 text-xs font-medium border-b-2 transition-colors"
-        :class="agentsTab==='running' ? 'border-[var(--accent)] text-white' : 'border-transparent text-gray-500 hover:text-gray-300'"
-        @click="agentsTab='running'; localStorage.setItem('logos_agents_tab','running')">Running</button>
-      <button class="pb-2 text-xs font-medium border-b-2 transition-colors"
-        :class="agentsTab==='personas' ? 'border-[var(--accent)] text-white' : 'border-transparent text-gray-500 hover:text-gray-300'"
-        @click="agentsTab='personas'; localStorage.setItem('logos_agents_tab','personas'); loadSouls()">Personas</button>
-      <button class="pb-2 text-xs font-medium border-b-2 transition-colors"
-        :class="agentsTab==='toolsets' ? 'border-[var(--accent)] text-white' : 'border-transparent text-gray-500 hover:text-gray-300'"
-        @click="agentsTab='toolsets'; localStorage.setItem('logos_agents_tab','toolsets'); loadToolsets()">Toolsets</button>
-    </div>
-
-    <!-- ── Running sub-tab ── -->
-    <div x-show="agentsTab==='running'">
+    <!-- ── Running agents ── -->
+    <div>
 
     <!-- Resource bar — adapts to k8s (cluster totals) or local (psutil free) -->
     <div class="flex items-center gap-3 mb-5 px-3 py-2 rounded-lg border border-gray-800 bg-gray-900 text-xs flex-wrap">
@@ -2555,64 +2542,7 @@
       </div>
     </div>
 
-    </div><!-- /Running sub-tab -->
-
-    <!-- ── Personas sub-tab ── -->
-    <div x-show="agentsTab==='personas'" class="space-y-4">
-      <div class="flex items-center justify-between mb-2">
-        <h2 class="text-sm font-semibold text-white">Personas</h2>
-        <button @click="loadSouls()" class="text-xs text-gray-500 hover:text-gray-300">Refresh</button>
-      </div>
-      <p class="text-xs text-gray-500 mb-4">A persona shapes how an agent thinks, communicates, and which tools it defaults to. Select one when spawning a new instance.</p>
-      <template x-if="!souls.length">
-        <div class="text-xs text-gray-600 py-4 text-center">No personas loaded.</div>
-      </template>
-      <div class="space-y-2">
-        <template x-for="s in souls" :key="s.name">
-          <div class="p-3 rounded-xl border border-gray-800 bg-gray-900">
-            <div class="flex items-center gap-2 mb-1">
-              <span class="text-sm font-medium text-white" x-text="s.name"></span>
-              <span x-show="s.version" class="text-[9px] px-1.5 py-0.5 rounded-full bg-gray-800 text-gray-500 border border-gray-700 font-mono" x-text="s.version"></span>
-              <span x-show="s.stability === 'experimental'" class="text-[9px] px-1.5 py-0.5 rounded-full bg-yellow-950 text-yellow-400 border border-yellow-800 font-semibold uppercase tracking-wider">Experimental</span>
-            </div>
-            <div x-show="s.description" class="text-xs text-gray-500" x-text="s.description"></div>
-            <div x-show="s.default_tools && s.default_tools.length" class="mt-2 flex flex-wrap gap-1">
-              <template x-for="t in (s.default_tools || [])" :key="t">
-                <span class="text-[10px] px-1.5 py-0.5 rounded bg-gray-800 text-gray-500 border border-gray-700 font-mono" x-text="t"></span>
-              </template>
-            </div>
-          </div>
-        </template>
-      </div>
-    </div>
-
-    <!-- ── Toolsets sub-tab ── -->
-    <div x-show="agentsTab==='toolsets'" class="space-y-4">
-      <div class="flex items-center justify-between mb-2">
-        <h2 class="text-sm font-semibold text-white">Toolsets</h2>
-        <button @click="loadToolsets()" class="text-xs text-gray-500 hover:text-gray-300">Refresh</button>
-      </div>
-      <p class="text-xs text-gray-500 mb-4">Tool bundles that can be attached to agent instances. Each toolset groups related capabilities.</p>
-      <template x-if="!toolsets.available || !toolsets.available.length">
-        <div class="text-xs text-gray-600 py-4 text-center">No toolsets loaded.</div>
-      </template>
-      <div class="space-y-2">
-        <template x-for="ts in (toolsets.available || [])" :key="ts.name">
-          <div class="p-3 rounded-xl border border-gray-800 bg-gray-900">
-            <div class="flex items-center gap-2 mb-1">
-              <span class="text-sm font-medium text-white" x-text="ts.name"></span>
-              <span class="text-[10px] text-gray-600 font-mono" x-text="(ts.tools || []).length + ' tools'"></span>
-            </div>
-            <div x-show="ts.description" class="text-xs text-gray-500" x-text="ts.description"></div>
-            <div x-show="ts.tools && ts.tools.length" class="mt-2 flex flex-wrap gap-1">
-              <template x-for="t in (ts.tools || [])" :key="t">
-                <span class="text-[10px] px-1.5 py-0.5 rounded bg-gray-800 text-gray-500 border border-gray-700 font-mono" x-text="t"></span>
-              </template>
-            </div>
-          </div>
-        </template>
-      </div>
-    </div>
+    </div><!-- /Running agents -->
 
   </div>
 
@@ -4598,7 +4528,7 @@ function app() {
     runtimeMode: window.__LOGOS__?.runtimeMode || 'kubernetes',
     appVersion: window.__LOGOS__?.version || '',
     // agents sub-tabs
-    agentsTab: localStorage.getItem('logos_agents_tab') || 'running',
+    agentsTab: 'running',  // kept for compat; sub-tabs removed
     // infra sub-tabs
     infraTab: localStorage.getItem('logos_infra_tab') || 'servers',
     // routing (used within infra > routing)
