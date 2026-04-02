@@ -3838,6 +3838,7 @@ class GatewayRunner:
                         if not _already_loaded:
                             # Always query the server on first check — _LMS_CONFIRMED_LOADED
                             # only persists within this process lifetime.
+                            _models_check_failed = False
                             try:
                                 async with _lms_http.get(
                                     f"{_lms_base}/api/v1/models",
@@ -3863,8 +3864,29 @@ class GatewayRunner:
                                                 # A different model is occupying VRAM — record it for eviction
                                                 _other_loaded.append(_raw_iid)
                                                 logger.debug("LM Studio: other model in VRAM: %s", _raw_iid)
-                            except Exception:
-                                pass
+                                    else:
+                                        _models_check_failed = True
+                                        logger.warning(
+                                            "LM Studio: /api/v1/models returned %d — "
+                                            "cannot verify loaded models (auth issue?)",
+                                            _gr.status,
+                                        )
+                            except Exception as _models_exc:
+                                _models_check_failed = True
+                                logger.warning("LM Studio: /api/v1/models failed: %s", _models_exc)
+
+                            # If the management API is unreachable (auth, network) but we
+                            # have a benchmark-confirmed context length, trust it and skip
+                            # the load cascade.  The model is likely already loaded in LM
+                            # Studio by the user — retrying /load will just fail too.
+                            if _models_check_failed and _saved_ctx > 0:
+                                logger.info(
+                                    "LM Studio: management API unavailable but benchmark "
+                                    "confirms %s with %d ctx — assuming loaded, skipping pre-load",
+                                    _lms_model, _saved_ctx,
+                                )
+                                _already_loaded = True
+                                _loaded_ctx = _saved_ctx
 
                         # Skip reload if:
                         # - Model is confirmed loaded (from previous check or this query)
@@ -3974,6 +3996,15 @@ class GatewayRunner:
                                                     pass
                                             _LMS_CONFIRMED_LOADED.add(_lms_model)
                                             break   # accepted — stop trying smaller sizes
+                                        # Log the actual failure reason
+                                        try:
+                                            _lr_body = await _lr.text()
+                                        except Exception:
+                                            _lr_body = ""
+                                        logger.warning(
+                                            "LM Studio: /api/v1/models/load returned %d for ctx=%d: %s",
+                                            _lr.status, _ctx, _lr_body[:200],
+                                        )
                                         # Failed — unload before retrying smaller
                                         try:
                                             async with _lms_http.post(
@@ -3985,10 +4016,11 @@ class GatewayRunner:
                                                 pass
                                         except Exception:
                                             pass
-                                except Exception:
+                                except Exception as _load_exc:
+                                    logger.warning("LM Studio: /api/v1/models/load exception for ctx=%d: %s", _ctx, _load_exc)
                                     break   # network error — don't retry
-                except Exception:
-                    pass
+                except Exception as _preload_exc:
+                    logger.warning("LM Studio: pre-load failed: %s", _preload_exc)
 
         # Determine toolset based on platform.
         # Check config.yaml for per-platform overrides, fallback to hardcoded defaults.
