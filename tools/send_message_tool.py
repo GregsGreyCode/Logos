@@ -447,6 +447,10 @@ def _check_send_message():
     platform = os.getenv("HERMES_SESSION_PLATFORM", "")
     if platform and platform != "local":
         return True
+    # In k8s or gateway foreground mode, the agent runs inside the gateway
+    # process itself — there's no PID file, but the gateway is alive.
+    if os.getenv("HERMES_RUNTIME_MODE") == "kubernetes":
+        return True
     try:
         from gateway.status import is_gateway_running
         return is_gateway_running()
