@@ -1483,6 +1483,49 @@ async def _handle_chat(request: web.Request) -> web.StreamResponse:
     message = body.get("message", "")
     session_id = body.get("session_id", "http-default")
 
+    # --- Process file attachments ---
+    raw_attachments = body.get("attachments") or []
+    # Legacy single-image support
+    legacy_image = body.get("image")
+    if legacy_image and not raw_attachments:
+        raw_attachments = [{"data": legacy_image, "name": "image.png", "type": "image/png"}]
+
+    media_urls: list[str] = []
+    media_types: list[str] = []
+    if raw_attachments:
+        import base64
+        from gateway.platforms.base import (
+            cache_image_from_bytes,
+            cache_audio_from_bytes,
+            cache_document_from_bytes,
+        )
+        _ATTACH_MAX = 5
+        _ATTACH_MAX_SIZE = 10 * 1024 * 1024  # 10 MB
+        for att in raw_attachments[:_ATTACH_MAX]:
+            data_url = att.get("data", "")
+            att_name = att.get("name", "file")
+            att_type = att.get("type", "application/octet-stream")
+            # Decode base64 data URL: "data:<mime>;base64,<payload>"
+            if ";base64," not in data_url:
+                continue
+            payload = data_url.split(";base64,", 1)[1]
+            try:
+                raw_bytes = base64.b64decode(payload)
+            except Exception:
+                continue
+            if len(raw_bytes) > _ATTACH_MAX_SIZE:
+                continue
+            # Cache to disk using existing helpers
+            ext = os.path.splitext(att_name)[1] or ".bin"
+            if att_type.startswith("image/"):
+                cached = cache_image_from_bytes(raw_bytes, ext)
+            elif att_type.startswith("audio/"):
+                cached = cache_audio_from_bytes(raw_bytes, ext)
+            else:
+                cached = cache_document_from_bytes(raw_bytes, att_name)
+            media_urls.append(cached)
+            media_types.append(att_type)
+
     # Use authenticated identity; fall back to body fields for backwards-compat
     auth_user = request.get("current_user") or {}
     user_name = (
@@ -1553,6 +1596,12 @@ async def _handle_chat(request: web.Request) -> web.StreamResponse:
                 break
 
     await send_event({"type": "start"})
+
+    # Enrich message with attachment analysis (vision, transcription, doc context)
+    if media_urls:
+        message = await runner._enrich_message_with_attachments(
+            message, media_urls, media_types,
+        )
 
     heartbeat = asyncio.ensure_future(heartbeat_loop())
     result = {}
