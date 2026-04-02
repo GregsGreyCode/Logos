@@ -929,6 +929,74 @@ class AIAgent:
             return ""
         return re.sub(r'<think>.*?</think>', '', content, flags=re.DOTALL)
 
+    # Regex for Qwen-style native <tool_call> XML blocks.
+    # Matches both JSON-style: {"name": ..., "arguments": ...}
+    # and parameter-style: <function=name><parameter=k>v</parameter></function>
+    _NATIVE_TOOL_CALL_RE = re.compile(
+        r'<tool_call>\s*(.*?)\s*</tool_call>', re.DOTALL
+    )
+
+    def _parse_native_tool_calls(self, content: str) -> List[SimpleNamespace]:
+        """Extract native <tool_call> XML from content that models like Qwen
+        embed directly in their output (sometimes inside <think> blocks) when
+        the backend doesn't convert them to structured tool_calls.
+
+        Returns a list of SimpleNamespace objects matching the shape expected
+        by the tool-call handling path (id, type, function.name, function.arguments).
+        """
+        if not content:
+            return []
+
+        matches = self._NATIVE_TOOL_CALL_RE.findall(content)
+        if not matches:
+            return []
+
+        parsed = []
+        for raw in matches:
+            raw = raw.strip()
+
+            # --- Format 1: JSON  {"name": "...", "arguments": {...}} ---
+            # Also handles single-quoted JSON that small models sometimes emit.
+            try:
+                blob = json.loads(raw.replace("'", '"'))
+                name = blob.get("name", "")
+                arguments = blob.get("arguments", {})
+                if name:
+                    parsed.append(SimpleNamespace(
+                        id=f"native_{uuid.uuid4().hex[:8]}",
+                        type="function",
+                        function=SimpleNamespace(
+                            name=name,
+                            arguments=json.dumps(arguments) if not isinstance(arguments, str) else arguments,
+                        ),
+                    ))
+                    continue
+            except (json.JSONDecodeError, AttributeError):
+                pass
+
+            # --- Format 2: XML  <function=name><parameter=k>v</parameter>... ---
+            fn_match = re.match(r'<function=(\w+)>(.*)', raw, re.DOTALL)
+            if fn_match:
+                fn_name = fn_match.group(1)
+                body = fn_match.group(2)
+                params = {}
+                for pm in re.finditer(r'<parameter=(\w+)>(.*?)</parameter>', body, re.DOTALL):
+                    params[pm.group(1)] = pm.group(2).strip()
+                parsed.append(SimpleNamespace(
+                    id=f"native_{uuid.uuid4().hex[:8]}",
+                    type="function",
+                    function=SimpleNamespace(
+                        name=fn_name,
+                        arguments=json.dumps(params),
+                    ),
+                ))
+                continue
+
+            # Unrecognised format — skip silently
+            logger.debug("Skipping unrecognised native tool_call format: %s", raw[:120])
+
+        return parsed
+
     _ACK_FUTURE_RE = re.compile(
         r"\b(i[\u0027\u2018\u2019]ll|i will|let me|i can do that|i can help with that|i[\u0027\u2018\u2019]m going to)\b",
         re.IGNORECASE,
@@ -5680,7 +5748,48 @@ class AIAgent:
                 else:
                     # No tool calls - this is the final response
                     final_response = assistant_message.content or ""
-                    
+
+                    # --- Native tool-call rescue ---
+                    # Some models (e.g. Qwen 3.x on LM Studio) embed <tool_call> XML
+                    # directly in their content (often inside <think> blocks) instead
+                    # of using the structured tool_calls API field.  Detect and re-route.
+                    _native_tcs = self._parse_native_tool_calls(final_response)
+                    # Only keep calls to tools that actually exist
+                    _native_tcs = [tc for tc in _native_tcs if tc.function.name in self.valid_tool_names]
+                    if _native_tcs:
+                        self._vprint(f"{self.log_prefix}🔧 Recovered {len(_native_tcs)} native <tool_call>(s) from content")
+                        # Graft the parsed calls onto the message so the normal
+                        # tool-call path handles them.
+                        assistant_message.tool_calls = _native_tcs
+                        # Strip the raw XML from content so it doesn't leak to the user
+                        _cleaned = re.sub(r'<tool_call>.*?</tool_call>', '', final_response, flags=re.DOTALL)
+                        _cleaned = self._strip_think_blocks(_cleaned).strip()
+                        assistant_message.content = _cleaned or ""
+                        # Jump back to the tool-call branch (top of while loop will
+                        # re-evaluate assistant_message.tool_calls)
+                        # Build and append the assistant message, then execute tools
+                        assistant_msg = self._build_assistant_message(assistant_message, finish_reason)
+                        messages.append(assistant_msg)
+                        _msg_count_before_tools = len(messages)
+                        self._execute_tool_calls(assistant_message, messages, effective_task_id, api_call_count)
+                        _compressor = self.context_compressor
+                        _new_tool_msgs = messages[_msg_count_before_tools:]
+                        _new_chars = sum(len(str(m.get("content", "") or "")) for m in _new_tool_msgs)
+                        _estimated_next_prompt = (
+                            _compressor.last_prompt_tokens
+                            + _compressor.last_completion_tokens
+                            + _new_chars // 3
+                        )
+                        if self.compression_enabled and _compressor.should_compress(_estimated_next_prompt):
+                            messages, active_system_prompt = self._compress_context(
+                                messages, system_message,
+                                approx_tokens=self.context_compressor.last_prompt_tokens,
+                                task_id=effective_task_id,
+                            )
+                        self._session_messages = messages
+                        self._save_session_log(messages)
+                        continue
+
                     # Check if response only has think block with no actual content after it
                     if not self._has_content_after_think_block(final_response):
                         # If the previous turn already delivered real content alongside
