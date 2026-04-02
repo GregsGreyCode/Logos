@@ -1597,83 +1597,30 @@ class GatewayRunner:
                     context_prompt += f"\n\n{vc_context}"
 
         # -----------------------------------------------------------------
-        # Auto-analyze images sent by the user
-        #
-        # If the user attached image(s), we run the vision tool eagerly so
-        # the conversation model always receives a text description.  The
-        # local file path is also included so the model can re-examine the
-        # image later with a more targeted question via vision_analyze.
-        #
-        # We filter to image paths only (by media_type) so that non-image
-        # attachments (documents, audio, etc.) are not sent to the vision
-        # tool even when they appear in the same message.
+        # Auto-enrich attachments (images → vision, audio → transcription,
+        # documents → context notes).  Platform adapters provide media_urls
+        # and media_types on the MessageEvent; for PHOTO/VOICE/AUDIO message
+        # types without explicit MIME types, synthesize them so the shared
+        # enrichment pipeline handles them correctly.
         # -----------------------------------------------------------------
         message_text = event.text or ""
         if event.media_urls:
-            image_paths = []
+            # Synthesize media_types from message type when not provided
+            media_types = list(event.media_types) if event.media_types else []
             for i, path in enumerate(event.media_urls):
-                # Check media_types if available; otherwise infer from message type
-                mtype = event.media_types[i] if i < len(event.media_types) else ""
-                is_image = (
-                    mtype.startswith("image/")
-                    or event.message_type == MessageType.PHOTO
-                )
-                if is_image:
-                    image_paths.append(path)
-            if image_paths:
-                message_text = await self._enrich_message_with_vision(
-                    message_text, image_paths
-                )
-        
-        # -----------------------------------------------------------------
-        # Auto-transcribe voice/audio messages sent by the user
-        # -----------------------------------------------------------------
-        if event.media_urls:
-            audio_paths = []
-            for i, path in enumerate(event.media_urls):
-                mtype = event.media_types[i] if i < len(event.media_types) else ""
-                is_audio = (
-                    mtype.startswith("audio/")
-                    or event.message_type in (MessageType.VOICE, MessageType.AUDIO)
-                )
-                if is_audio:
-                    audio_paths.append(path)
-            if audio_paths:
-                message_text = await self._enrich_message_with_transcription(
-                    message_text, audio_paths
-                )
-
-        # -----------------------------------------------------------------
-        # Enrich document messages with context notes for the agent
-        # -----------------------------------------------------------------
-        if event.media_urls and event.message_type == MessageType.DOCUMENT:
-            for i, path in enumerate(event.media_urls):
-                mtype = event.media_types[i] if i < len(event.media_types) else ""
-                if not (mtype.startswith("application/") or mtype.startswith("text/")):
-                    continue
-                # Extract display filename by stripping the doc_{uuid12}_ prefix
-                import os as _os
-                basename = _os.path.basename(path)
-                # Format: doc_<12hex>_<original_filename>
-                parts = basename.split("_", 2)
-                display_name = parts[2] if len(parts) >= 3 else basename
-                # Sanitize to prevent prompt injection via filenames
-                import re as _re
-                display_name = _re.sub(r'[^\w.\- ]', '_', display_name)
-
-                if mtype.startswith("text/"):
-                    context_note = (
-                        f"[The user sent a text document: '{display_name}'. "
-                        f"Its content has been included below. "
-                        f"The file is also saved at: {path}]"
-                    )
-                else:
-                    context_note = (
-                        f"[The user sent a document: '{display_name}'. "
-                        f"The file is saved at: {path}. "
-                        f"Ask the user what they'd like you to do with it.]"
-                    )
-                message_text = f"{context_note}\n\n{message_text}"
+                if i >= len(media_types) or not media_types[i]:
+                    # Infer from message type
+                    if event.message_type == MessageType.PHOTO:
+                        media_types.append("image/unknown")
+                    elif event.message_type in (MessageType.VOICE, MessageType.AUDIO):
+                        media_types.append("audio/unknown")
+                    elif event.message_type == MessageType.DOCUMENT:
+                        media_types.append("application/octet-stream")
+                    else:
+                        media_types.append("")
+            message_text = await self._enrich_message_with_attachments(
+                message_text, event.media_urls, media_types
+            )
 
         try:
             # Emit agent:start hook
@@ -3500,6 +3447,89 @@ class GatewayRunner:
             if var in os.environ:
                 del os.environ[var]
     
+    async def _enrich_message_with_attachments(
+        self,
+        message_text: str,
+        media_urls: List[str],
+        media_types: List[str],
+    ) -> str:
+        """Enrich a user message with auto-analyzed images, transcribed audio,
+        and document context notes.
+
+        This is the shared enrichment pipeline used by both platform adapters
+        (via _handle_message) and the HTTP /chat endpoint.
+
+        Args:
+            message_text: The original user message text.
+            media_urls: List of cached file paths for attachments.
+            media_types: Parallel list of MIME types for each attachment.
+
+        Returns:
+            The enriched message text with descriptions/transcriptions prepended.
+        """
+        if not media_urls:
+            return message_text
+
+        # --- Images: auto-analyze with vision tool ---
+        image_paths = []
+        for i, path in enumerate(media_urls):
+            mtype = media_types[i] if i < len(media_types) else ""
+            if mtype.startswith("image/"):
+                image_paths.append(path)
+        if image_paths:
+            message_text = await self._enrich_message_with_vision(
+                message_text, image_paths
+            )
+
+        # --- Audio: auto-transcribe ---
+        audio_paths = []
+        for i, path in enumerate(media_urls):
+            mtype = media_types[i] if i < len(media_types) else ""
+            if mtype.startswith("audio/"):
+                audio_paths.append(path)
+        if audio_paths:
+            message_text = await self._enrich_message_with_transcription(
+                message_text, audio_paths
+            )
+
+        # --- Documents and code files: inject context notes ---
+        for i, path in enumerate(media_urls):
+            mtype = media_types[i] if i < len(media_types) else ""
+            if mtype.startswith("image/") or mtype.startswith("audio/"):
+                continue  # already handled above
+            if not (mtype.startswith("application/") or mtype.startswith("text/")):
+                continue
+            basename = os.path.basename(path)
+            # Strip doc_{uuid12}_ prefix from cached filenames
+            parts = basename.split("_", 2)
+            display_name = parts[2] if len(parts) >= 3 else basename
+            display_name = re.sub(r'[^\w.\- ]', '_', display_name)
+
+            if mtype.startswith("text/") or mtype == "application/json":
+                # Read and inject text content (capped at 8000 chars)
+                try:
+                    content = open(path, "r", errors="replace").read()
+                    if len(content) > 8000:
+                        content = content[:8000] + "\n\n[... truncated — full file at: " + path + "]"
+                    context_note = (
+                        f"[The user attached a file: '{display_name}'. "
+                        f"Its content is below. Full file at: {path}]\n\n{content}"
+                    )
+                except Exception:
+                    context_note = (
+                        f"[The user attached a file: '{display_name}'. "
+                        f"The file is saved at: {path}]"
+                    )
+            else:
+                context_note = (
+                    f"[The user attached a document: '{display_name}'. "
+                    f"The file is saved at: {path}. "
+                    f"Use appropriate tools to read or analyze it.]"
+                )
+            message_text = f"{context_note}\n\n{message_text}"
+
+        return message_text
+
     async def _enrich_message_with_vision(
         self,
         user_text: str,
