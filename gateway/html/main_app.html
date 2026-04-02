@@ -768,7 +768,7 @@
           <!-- Input -->
           <div class="px-4 py-3 border-t border-gray-800 flex gap-2 shrink-0 items-end">
             <!-- Render mode drop-up -->
-            <div class="render-dropup" x-data="{open:false}" @click.away="open=false">
+            <div class="render-dropup self-end" x-data="{open:false}" @click.away="open=false">
               <button @click="open=!open"
                 class="flex items-center gap-1 px-2.5 rounded-lg border text-xs font-medium transition-colors"
                 style="height:38px;"
@@ -791,7 +791,7 @@
               </div>
             </div>
             <!-- Text input + drag-drop -->
-            <div class="relative flex-1"
+            <div class="relative flex-1 self-end"
               @dragover.prevent="chatDragOver=true"
               @dragleave.prevent="chatDragOver=false"
               @drop.prevent="handleChatDrop($event)">
@@ -801,9 +801,9 @@
                 x-ref="chatTextarea"
                 autocomplete="off"
                 rows="1"
-                class="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-indigo-500 transition-colors resize-none"
+                class="block w-full bg-gray-800 border border-gray-700 rounded-lg px-4 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-indigo-500 transition-colors resize-none"
                 :class="chatDragOver ? 'border-indigo-400 bg-indigo-950/30' : ''"
-                style="height:38px;min-height:38px;max-height:7rem;line-height:20px;overflow-y:hidden;padding-top:8px;padding-bottom:8px;"
+                style="height:38px;min-height:38px;max-height:7rem;line-height:20px;overflow-y:hidden;padding-top:8px;padding-bottom:8px;vertical-align:bottom;"
                 :placeholder="micRecording ? ('Recording… ' + micCountdown + 's') : micTranscribing ? 'Transcribing…' : ('Message ' + (status.instance_name || 'Hermes') + '\u2026 (Enter · Shift+Enter for newline)')"
                 :disabled="micTranscribing || activeInstance.k8s_status === 'starting'"
                 :readonly="!chatInputReady"></textarea>
@@ -827,7 +827,7 @@
             <!-- Mic button — between input and Send -->
             <button @click="toggleMic()" :disabled="micTranscribing"
               :title="micRecording ? 'Stop recording (or wait for 90s limit)' : 'Voice input — up to 90 seconds'"
-              class="px-2.5 rounded-lg border text-sm transition-colors disabled:opacity-40"
+              class="self-end px-2.5 rounded-lg border text-sm transition-colors disabled:opacity-40"
               style="height:38px;"
               :class="micRecording
                 ? 'mic-recording border-red-700 bg-red-900 text-red-300'
@@ -847,7 +847,7 @@
               </template>
             </button>
             <button @click="sendChat()" :disabled="activeInstance.k8s_status === 'starting'"
-              class="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 px-4 rounded-lg text-sm font-medium transition-colors"
+              class="self-end bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 px-4 rounded-lg text-sm font-medium transition-colors"
               style="height:38px;">
               Send
             </button>
