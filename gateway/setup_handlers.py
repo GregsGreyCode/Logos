@@ -1966,6 +1966,21 @@ async def handle_setup_complete(request: web.Request) -> web.Response:
                             auth_db.update_machine(_m["id"], default_model=_single_rec)
                             break
 
+        # Save model preference on the admin user.
+        # During first-run setup the browser has no session yet, so we look up
+        # the seeded admin account directly rather than reading current_user.
+        # Use get_primary_admin() (oldest admin by created_at) so that re-runs
+        # always target the original seeded account, not a newer admin that was
+        # created as an "additional user" during a previous setup run.
+        primary_admin = auth_db.get_primary_admin()
+        if not primary_admin:
+            return web.json_response({"error": "no_admin_user"}, status=500)
+        user_id = primary_admin["id"]
+        agent_type   = (body.get("agent_type") or "general").strip()
+        exec_env     = (body.get("exec_env") or "local").strip()
+        k8s_ns       = (body.get("k8s_namespace") or "hermes").strip()
+        kubeconfig   = (body.get("kubeconfig") or "").strip()
+
         # Write chosen model + endpoint to config.yaml so the agent actually uses them.
         # Keys are bridged to env vars by run.py on startup (only if not already in env,
         # so pre-configured k8s deployments with explicit env vars are not overridden).
@@ -2036,21 +2051,6 @@ async def handle_setup_complete(request: web.Request) -> web.Response:
                         model, _cfg.get("HERMES_RUNTIME_MODE", "(env)"))
         except Exception as _cfg_err:
             logger.warning("setup: could not write model to config.yaml: %s", _cfg_err)
-
-        # Save model preference on the admin user.
-        # During first-run setup the browser has no session yet, so we look up
-        # the seeded admin account directly rather than reading current_user.
-        # Use get_primary_admin() (oldest admin by created_at) so that re-runs
-        # always target the original seeded account, not a newer admin that was
-        # created as an "additional user" during a previous setup run.
-        primary_admin = auth_db.get_primary_admin()
-        if not primary_admin:
-            return web.json_response({"error": "no_admin_user"}, status=500)
-        user_id = primary_admin["id"]
-        agent_type   = (body.get("agent_type") or "general").strip()
-        exec_env     = (body.get("exec_env") or "local").strip()
-        k8s_ns       = (body.get("k8s_namespace") or "hermes").strip()
-        kubeconfig   = (body.get("kubeconfig") or "").strip()
 
         auth_db.ensure_user_settings(user_id)
         auth_db.update_user_settings(user_id, default_model=model, default_soul=agent_type)
