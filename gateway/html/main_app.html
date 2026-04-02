@@ -790,6 +790,21 @@
                   :class="chatRenderMode==='mono'?'active':''">01 — Mono</button>
               </div>
             </div>
+            <!-- Attach button -->
+            <input type="file" multiple x-ref="fileInput" class="hidden"
+              accept="image/*,text/*,application/pdf,application/json,.py,.js,.ts,.tsx,.jsx,.rs,.go,.java,.c,.cpp,.h,.rb,.sh,.yaml,.yml,.toml,.xml,.html,.css,.csv,.log,.md,.docx,.xlsx,.pptx"
+              @change="handleFileSelect($event)">
+            <button @click="$refs.fileInput.click()"
+              class="self-end flex items-center px-2.5 rounded-lg border text-sm transition-colors"
+              style="height:38px;"
+              :class="chatAttachments.length
+                ? 'border-indigo-600 bg-indigo-950 text-indigo-300'
+                : 'border-gray-700 bg-gray-800 text-gray-500 hover:text-gray-300 hover:border-gray-600'"
+              title="Attach files (images, code, documents)">
+              <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"/>
+              </svg>
+            </button>
             <!-- Text input + drag-drop -->
             <div class="relative flex-1 self-end"
               @dragover.prevent="chatDragOver=true"
@@ -809,14 +824,23 @@
                 :readonly="!chatInputReady"></textarea>
               <!-- Drag-drop overlay hint -->
               <template x-if="chatDragOver">
-                <div class="absolute inset-0 flex items-center justify-center rounded-lg pointer-events-none text-xs text-indigo-300 font-medium">Drop image to attach</div>
+                <div class="absolute inset-0 flex items-center justify-center rounded-lg pointer-events-none text-xs text-indigo-300 font-medium">Drop files to attach</div>
               </template>
-              <!-- Attached image preview -->
-              <template x-if="chatImageData">
-                <div class="absolute bottom-1.5 left-2 flex items-center gap-1 bg-gray-900 border border-gray-700 rounded px-2 py-0.5 text-xs text-gray-300">
-                  <img :src="chatImageData" class="h-5 w-5 rounded object-cover">
-                  <span x-text="chatImageName || 'image'"></span>
-                  <button @click.stop="chatImageData=null;chatImageName=null" class="ml-1 text-gray-500 hover:text-red-400">&times;</button>
+              <!-- Attached files preview strip -->
+              <template x-if="chatAttachments.length > 0">
+                <div class="absolute bottom-1.5 left-2 right-2 flex items-center gap-1.5 overflow-x-auto">
+                  <template x-for="(att, idx) in chatAttachments" :key="idx">
+                    <div class="flex items-center gap-1 bg-gray-900 border border-gray-700 rounded px-2 py-0.5 text-xs text-gray-300 shrink-0">
+                      <template x-if="att.type.startsWith('image/')">
+                        <img :src="att.data" class="h-5 w-5 rounded object-cover">
+                      </template>
+                      <template x-if="!att.type.startsWith('image/')">
+                        <svg class="w-3.5 h-3.5 text-gray-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+                      </template>
+                      <span x-text="att.name.length > 18 ? att.name.slice(0,15) + '\u2026' : att.name"></span>
+                      <button @click.stop="chatAttachments.splice(idx, 1)" class="ml-0.5 text-gray-500 hover:text-red-400">&times;</button>
+                    </div>
+                  </template>
                 </div>
               </template>
               <!-- Success flash inside input -->
@@ -4522,8 +4546,7 @@ function app() {
     chatInputReady: false,
     chatRenderMode: 'markdown',
     chatDragOver: false,
-    chatImageData: null,
-    chatImageName: null,
+    chatAttachments: [],
     liveExecCollapsed: false,
     _lastChatStats: {},
     micRecording: false,
@@ -5716,13 +5739,52 @@ function app() {
       el.style.overflowY = el.scrollHeight > 112 ? 'auto' : 'hidden';
     },
 
+    _ATTACH_ALLOWED_EXT: new Set([
+      'py','js','ts','tsx','jsx','rs','go','java','c','cpp','h','rb','sh',
+      'yaml','yml','toml','xml','html','css','csv','log','md','json',
+      'docx','xlsx','pptx','txt',
+    ]),
+    _ATTACH_MAX_SIZE: 10 * 1024 * 1024,  // 10 MB per file
+    _ATTACH_MAX_FILES: 5,
+
+    _isAllowedFile(file) {
+      if (file.type && (file.type.startsWith('image/') || file.type.startsWith('text/')
+          || file.type === 'application/pdf' || file.type === 'application/json')) return true;
+      const ext = (file.name || '').split('.').pop().toLowerCase();
+      return this._ATTACH_ALLOWED_EXT.has(ext);
+    },
+
+    _addAttachments(files) {
+      for (const file of files) {
+        if (this.chatAttachments.length >= this._ATTACH_MAX_FILES) break;
+        if (file.size > this._ATTACH_MAX_SIZE) continue;
+        if (!this._isAllowedFile(file)) continue;
+        const reader = new FileReader();
+        reader.onload = (e) => {
+          if (this.chatAttachments.length >= this._ATTACH_MAX_FILES) return;
+          this.chatAttachments = [...this.chatAttachments, {
+            data: e.target.result,
+            name: file.name,
+            type: file.type || 'application/octet-stream',
+            size: file.size,
+          }];
+        };
+        reader.readAsDataURL(file);
+      }
+    },
+
     handleChatDrop(event) {
       this.chatDragOver = false;
-      const file = (event.dataTransfer.files || [])[0];
-      if (!file || !file.type.startsWith('image/')) return;
-      const reader = new FileReader();
-      reader.onload = (e) => { this.chatImageData = e.target.result; this.chatImageName = file.name; };
-      reader.readAsDataURL(file);
+      const files = Array.from(event.dataTransfer.files || []);
+      if (!files.length) return;
+      this._addAttachments(files);
+    },
+
+    handleFileSelect(event) {
+      const files = Array.from(event.target.files || []);
+      if (!files.length) return;
+      this._addAttachments(files);
+      event.target.value = '';  // reset so re-selecting same file works
     },
 
     async sendChat() {
@@ -5739,12 +5801,14 @@ function app() {
       if (!chat) return;
 
       this.chatInput = '';
-      this.chatImageData = null;
-      this.chatImageName = null;
+      const pendingAttachments = this.chatAttachments.length ? this.chatAttachments.map(a => ({data: a.data, name: a.name, type: a.type})) : undefined;
+      this.chatAttachments = [];
       this.$nextTick(() => { const el = this.$refs.chatTextarea; if (el) { el.style.height = 'auto'; } });
 
       // Persist user message immediately
-      chat.messages = [...chat.messages, { role: 'user', content: msg }];
+      const userMsg = { role: 'user', content: msg };
+      if (pendingAttachments) userMsg.attachments = pendingAttachments.map(a => ({name: a.name, type: a.type}));
+      chat.messages = [...chat.messages, userMsg];
       if (chat.name === 'New conversation') {
         chat.name = msg.length > 35 ? msg.slice(0, 32) + '\\u2026' : msg;
       }
@@ -5763,7 +5827,7 @@ function app() {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken() },
           credentials: 'same-origin',
-          body: JSON.stringify({ message: msg, session_id: chat.id, image: this.chatImageData || undefined }),
+          body: JSON.stringify({ message: msg, session_id: chat.id, attachments: pendingAttachments }),
         });
         if (r.status === 401) {
           chat.messages = [...chat.messages, { role: 'assistant', content: '\\u274c Session expired — please reload the page to log in again.' }];
