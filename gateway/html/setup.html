@@ -1703,14 +1703,7 @@ function setup() {
     pullProgress: 0,
     pullStatus: '',
     pullError: null,
-    ollamaModelCatalog: [
-      { id: 'qwen3:9b',           name: 'Qwen 3 9B',           size: '5.8 GB', ram: '16 GB system RAM',           desc: 'Strong reasoning, great at following instructions. Best default for most setups.', recommended: true  },
-      { id: 'llama3.2:3b',        name: 'Llama 3.2 3B',        size: '2.0 GB', ram: '8 GB system RAM',            desc: 'Fast and lightweight. Use this on machines with less RAM.',                       recommended: false },
-      { id: 'llama3.1:8b',        name: 'Llama 3.1 8B',        size: '4.9 GB', ram: '16 GB system RAM',           desc: 'Solid all-rounder with good reasoning.',                                          recommended: false },
-      { id: 'qwen2.5-coder:7b',   name: 'Qwen 2.5 Coder 7B',  size: '4.7 GB', ram: '16 GB system RAM',           desc: 'Excellent for coding and technical questions.',                                   recommended: false },
-      { id: 'gemma2:9b',          name: 'Gemma 2 9B',          size: '5.4 GB', ram: '16 GB system RAM',           desc: "Google\u2019s efficient model, strong instruction following.",                   recommended: false },
-      { id: 'llama3.1:70b',       name: 'Llama 3.1 70B',       size: '40 GB',  ram: '48 GB+ system RAM — CPU+GPU hybrid works (e.g. 64 GB RAM + 16 GB VRAM)',           desc: 'Near-frontier quality. Hybrid CPU+GPU mode gives ~2–5 tok/s — great for research and long-form tasks.', recommended: false },
-    ],
+    ollamaModelCatalog: [],
 
     // Step 3
     testResponse: '',
@@ -2042,6 +2035,11 @@ function setup() {
       this.$watch('step', val => { if (val === 7) this.$nextTick(() => this._probeForStep7()); });
       // Also trigger immediately if progress restored us directly to step 7
       if (this.step === 7) this.$nextTick(() => this._probeForStep7());
+
+      // Load model catalog from server (falls back to empty if unavailable)
+      fetch('/api/model-catalog').then(r => r.ok ? r.json() : []).then(catalog => {
+        if (Array.isArray(catalog) && catalog.length) this.ollamaModelCatalog = catalog;
+      }).catch(() => {});
     },
 
     _saveProgress() {

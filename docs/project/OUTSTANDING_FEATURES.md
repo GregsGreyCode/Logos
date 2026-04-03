@@ -38,13 +38,7 @@ The wizard's Step 3 runtime picker has a disabled "More agents — Coming soon" 
 
 ## Executor / Instance Management
 
-### LocalProcessExecutor — Phase 3
-**Source:** `docs/project/WINDOWS_DESKTOP.md`
-`gateway/executors/local.py` skeleton exists but the implementation is incomplete: port allocation from pool, `spawn()` via `subprocess.Popen`, `list_instances()` with PID tracking, `delete_instance()` with SIGTERM, and `get_headroom()` via psutil are all TODO. Required for agent instance management in local/Windows mode.
-
-### KubernetesExecutor.spawn() — Phase 4
-**Source:** `docs/project/WINDOWS_DESKTOP.md`, `gateway/executors/kubernetes.py`
-`KubernetesExecutor.spawn()` raises `NotImplementedError`. `_spawn_instance()` in `http_api.py` is still called directly rather than through the executor. The full extraction of spawn/list/delete/headroom from `http_api.py` into `gateway/executors/kubernetes.py` is incomplete.
+*LocalProcessExecutor and KubernetesExecutor are fully implemented — moved to Recently Completed.*
 
 ---
 
@@ -66,17 +60,17 @@ When evolution settings are saved with a new `schedule`, the old cron job is not
 
 ## Developer / Ops Tooling
 
-### Smoke test script
+### ~~Smoke test script~~ RESOLVED
 **Source:** `docs/project/BUILD_AND_DEPLOY.md`
-Post-deploy verification is entirely manual. A `scripts/smoke-test.sh` that hits `/health`, `/login`, and one authenticated endpoint would give CI a pass/fail signal after rollout.
+Implemented as `scripts/smoke-test.sh`. Tests: `/health`, `/healthz`, `/health/ready`, `/login`, `/status`, `/souls`, bad-creds rejection, unauthenticated instance list. Pass/fail exit code for CI.
 
 ### Canary → production promotion script
 **Source:** `docs/project/BUILD_AND_DEPLOY.md`
 Promoting from canary to production requires manually re-tagging the image and applying the production deployment manifest. A `scripts/promote.sh` that handles re-tagging and rolling restart would reduce deploy risk.
 
-### Dynamic Ollama model catalog
+### ~~Dynamic Ollama model catalog~~ RESOLVED
 **Source:** `docs/project/CRITIQUE.md`
-The model picker in the UI is backed by a static JavaScript array hardcoded in `gateway/http_api.py`. The plan is to serve this from a versioned YAML/JSON file (or fetch from a community registry) with the hardcoded list as fallback, so new models appear without a code change.
+Extracted hardcoded model array from `setup.html` into `gateway/model_catalog.yaml`. Served via `GET /api/model-catalog` endpoint. Setup wizard fetches dynamically at init with empty-array fallback. New models can be added by editing the YAML file — no code change needed.
 
 ### Network-accessible `logos` CLI
 **Source:** `docs/project/CRITIQUE.md`
@@ -94,9 +88,9 @@ The ACP adapter is implemented and documented in `docs/acp-setup.md`, but the se
 **Source:** `docs/project/CRITIQUE.md`, `tools/handoff_tool.py`
 `policy_scope="restricted"` and `"read_only"` are enforced only by appending an instruction to the subagent's system prompt — a polite request, not a hard constraint. The actual toolset passed to the child agent is not filtered, so a restricted agent still has access to write tools. Real enforcement requires filtering the toolset at spawn time.
 
-### Kubernetes NetworkPolicy
+### ~~Kubernetes NetworkPolicy~~ RESOLVED
 **Source:** `docs/project/CRITIQUE.md`
-No `NetworkPolicy` manifest exists in `k8s/`. All Hermes pods can reach all other pods and make arbitrary outbound connections. A NetworkPolicy restricting egress to known endpoints (model servers, configured platforms) would meaningfully reduce the blast radius of a compromised agent.
+NetworkPolicy manifest exists at `k8s/16-network-policy.yaml` covering both `logos` and `hermes` namespaces. Restricts egress to DNS, HTTPS, and local inference ports. Apply with `kubectl apply -f k8s/16-network-policy.yaml`.
 
 ### Windows code signing
 **Source:** `.github/workflows/build-windows.yml`, `SECURITY.md`
@@ -129,3 +123,35 @@ The following files are listed in the cleanup backlog and are still at repo root
 ### Import migration: `hermes_*` shims → `core.*`
 **Source:** `docs/project/REPO_STRUCTURE.md`, `AGENTS.md`
 Multiple production files still import from root-level compatibility shims (`hermes_state`, `hermes_constants`, `hermes_time`) rather than `core.*`. Known sites include `gateway/mirror.py`, `gateway/session.py`, `gateway/run.py`, `metrics.py`, `tools/code_execution_tool.py`, `tools/mcp_tool.py`, `tools/session_search_tool.py`, `cli.py`. In progress but not complete.
+
+---
+
+## Recently Completed (2026-04-03)
+
+### DockerSandboxExecutor test coverage and file locking
+**Source:** `docs/project/priority_issues.md` Issue #1
+Added cross-platform file locking to `gateway/executors/docker.py` to prevent race conditions on concurrent spawns. Added 32 unit tests covering spawn, list, delete, port allocation, container detection, headroom, and lock verification. Docker executor is no longer zero-coverage.
+
+### Multi-instance agent support
+**Source:** `docs/project/MULTI_AGENT_MEMORY.md` Phase 1
+Users can now spawn multiple named agent instances. Each instance gets an `instance_label` (defaults to soul slug), producing unique k8s names like `hermes-greg-researcher`. Per-user instance limit of 5. Each agent has isolated storage via per-instance `HERMES_HOME`.
+
+### Per-agent knowledge base (RAG)
+**Source:** `docs/project/MULTI_AGENT_MEMORY.md` Phase 2
+Each agent instance has a persistent knowledge base with semantic search. Documents are chunked, embedded via Ollama (`nomic-embed-text`), and stored as JSONL. Search uses in-process numpy cosine similarity. Three tools: `knowledge_ingest`, `knowledge_search`, `knowledge_manage` in the `knowledge` toolset.
+
+### Instance management UI and API
+**Source:** `docs/project/MULTI_AGENT_MEMORY.md` Phase 3
+REST API endpoints for reading/writing agent memory (`MEMORY.md`, `USER.md`, `bug_notes.md`), knowledge base CRUD, and semantic search preview. Web UI inspector panel with tabs for Memory, User Profile, Knowledge (with ingest + search), and Bug Notes. Accessible via "inspect" button on each instance card.
+
+### Session auto-ingest to knowledge base
+**Source:** `docs/project/MULTI_AGENT_MEMORY.md` Phase 2e
+When `knowledge.auto_ingest_sessions` is enabled in config, agent session transcripts are automatically chunked, embedded, and ingested into the agent's knowledge base when the session expires. Only substantive assistant responses (>50 chars) are kept. Gated by minimum message count (`auto_ingest_min_messages`, default 8).
+
+### LocalProcessExecutor and KubernetesExecutor — fully implemented
+**Source:** `docs/project/WINDOWS_DESKTOP.md`
+Both executors are complete with spawn, list, delete, get_headroom, and get_resources. LocalProcessExecutor has full unit test coverage. KubernetesExecutor uses `config.name` from the API layer. The outstanding features doc entries were stale.
+
+### Memory transfer / fork agent
+**Source:** `docs/project/MULTI_AGENT_MEMORY.md` Phase 3c
+Fork an agent's memory and/or knowledge base to another instance via `POST /instances/{name}/fork`. Copies `MEMORY.md` and the entire `knowledge/` directory. Available from the inspector panel's Memory tab. Source instance is not modified.
