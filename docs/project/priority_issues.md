@@ -4,20 +4,15 @@
 
 ---
 
-## 1. DockerSandboxExecutor has zero test coverage
+## 1. ~~DockerSandboxExecutor has zero test coverage~~ RESOLVED
 
-**File:** `gateway/executors/docker.py` (273 lines)
-**Tests:** None found in `tests/`
+**File:** `gateway/executors/docker.py`
+**Resolved:** 2026-04-03
 
-This is the **only sandbox option on Windows**. The executor has:
-- A port allocation race condition (concurrent spawns could grab the same port)
-- No file locking on the state persistence file (`~/.logos/docker_instances.json`)
-- No integration test for the spawn → health-check → delete lifecycle
-- `container_id` parsing assumes Docker stdout format (`result.stdout.strip()[:12]`)
-
-**Risk:** Windows users get an untested sandbox path. Failures will be discovered in production.
-
-**Severity:** HIGH — this is the primary Windows isolation path.
+- Added cross-platform file locking (`fcntl`/`msvcrt`) around all state read-modify-write cycles
+- Added 32 unit tests covering spawn, list, delete, port allocation, container detection, headroom, and lock verification
+- Port allocation race condition fixed by the file lock
+- Total executor test count: 79 (was 34)
 
 ---
 
