@@ -1279,8 +1279,8 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
                     # native /api/generate accepts num_ctx as an option — use it
                     # instead of the OpenAI-compat endpoint which ignores the param.
                     await send({"log": "  Probing max loadable context window…"})
-                    _ollama_probe_sizes = [65536, 32768, 16384, 8192, 4096]
-                    _ollama_ceil = _ollama_native_ctx or 65536
+                    _ollama_probe_sizes = [262144, 131072, 65536, 32768, 16384, 8192, 4096]
+                    _ollama_ceil = _ollama_native_ctx or 262144
                     for _ctx_probe in [s for s in _ollama_probe_sizes if s <= _ollama_ceil]:
                         try:
                             async with http.post(
@@ -1358,12 +1358,12 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
                     if _native_ctx:
                         await send({"log": f"  Native context (GGUF): {_native_ctx:,} tokens"})
                     else:
-                        await send({"log": "  Native context: not found in model list — probing from 65536"})
+                        await send({"log": "  Native context: not found in model list — probing from 262144"})
                     # Step 2: probe downward from the native ceiling (or 65536 if unknown)
                     # to find the largest context this machine's VRAM can actually load.
                     await send({"log": "  Probing max loadable context window…"})
-                    _all_probe_sizes = [65536, 32768, 16384, 8192, 4096]
-                    _probe_ceil = _native_ctx if _native_ctx else 65536
+                    _all_probe_sizes = [262144, 131072, 65536, 32768, 16384, 8192, 4096]
+                    _probe_ceil = _native_ctx if _native_ctx else 262144
                     for _ctx_probe in [s for s in _all_probe_sizes if s <= _probe_ceil]:
                         # Unload first so we start from a clean slot
                         try:
