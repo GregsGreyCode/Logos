@@ -964,7 +964,13 @@ async def _handle_instances_delete(request: web.Request) -> web.Response:
 # ── Instance management API (memory, knowledge, config) ─────────────────────
 
 def _instance_home(name: str) -> Path:
-    """Resolve the HERMES_HOME directory for a named instance."""
+    """Resolve the HERMES_HOME directory for a named instance.
+
+    The primary gateway agent ('hermes') uses _hermes_home directly.
+    Spawned instances live under _hermes_home/instances/{name}/.
+    """
+    if name == "hermes":
+        return _hermes_home
     return _hermes_home / "instances" / name
 
 
