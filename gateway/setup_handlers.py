@@ -1142,38 +1142,93 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
             eval_details = {}
             has_reasoning = False
 
-            try:
-                await send({"log": "  Running combined eval..."})
+            async def _stream_chat(prompt: str, label: str = "eval") -> dict | None:
+                """Call /api/v1/chat with streaming, forward progress to the UI.
+
+                Returns the final result dict from chat.end, or None on failure.
+                Sends live progress: model loading, prompt processing, reasoning/message deltas.
+                """
                 async with http_session.post(
                     f"{base_url}/api/v1/chat",
                     headers=_headers,
-                    json={"model": model_id, "input": combined_prompt, "temperature": 0, "max_output_tokens": 2048, "store": False},
-                    timeout=aiohttp.ClientTimeout(total=120),
-                ) as cr:
-                    if cr.status != 200:
-                        err_text = await cr.text()
-                        await send({"log": f"  Chat failed: HTTP {cr.status} — {err_text[:100]}"})
+                    json={"model": model_id, "input": prompt, "temperature": 0,
+                          "max_output_tokens": 2048, "store": False, "stream": True},
+                    timeout=aiohttp.ClientTimeout(total=180),
+                ) as sr:
+                    if sr.status != 200:
+                        err_text = await sr.text()
+                        await send({"log": f"  Chat failed: HTTP {sr.status} — {err_text[:100]}"})
                         return None
 
-                    cd = await cr.json(content_type=None)
-                    stats = cd.get("stats", {})
-                    tok_s = round(stats.get("tokens_per_second", 0), 1)
-                    ttft_ms = round(stats.get("time_to_first_token_seconds", 0) * 1000)
+                    _result = None
+                    _reasoning_toks = 0
+                    _message_toks = 0
+                    _last_progress_log = ""
+                    async for line in sr.content:
+                        line = line.decode("utf-8", errors="replace").strip()
+                        if not line.startswith("data:"):
+                            continue
+                        try:
+                            ev = json.loads(line[5:].strip())
+                        except Exception:
+                            continue
+                        etype = ev.get("type", "")
 
-                    await send({"log": f"  Speed: {tok_s} tok/s · TTFT: {ttft_ms}ms"})
+                        if etype == "model_load.progress":
+                            pct = round(ev.get("progress", 0) * 100)
+                            _msg = f"  Loading model... {pct}%"
+                            if _msg != _last_progress_log:
+                                await send({"log": _msg, "progress": True})
+                                _last_progress_log = _msg
 
-                    # Parse the response — prefer message output, fall back to reasoning
-                    output_text = ""
-                    message_text = ""
-                    has_reasoning = False
-                    for item in cd.get("output", []):
-                        if item.get("type") == "message":
-                            message_text += item.get("content", "")
-                        elif item.get("type") == "reasoning":
-                            output_text += item.get("content", "")
-                            has_reasoning = True
-                    # Use message text if available, otherwise full output
-                    output_text = message_text or output_text
+                        elif etype == "prompt_processing.progress":
+                            pct = round(ev.get("progress", 0) * 100)
+                            _msg = f"  Processing prompt... {pct}%"
+                            if _msg != _last_progress_log:
+                                await send({"log": _msg, "progress": True})
+                                _last_progress_log = _msg
+
+                        elif etype == "reasoning.delta":
+                            _reasoning_toks += 1
+                            if _reasoning_toks % 50 == 0:
+                                await send({"log": f"  Thinking... ({_reasoning_toks} tokens)", "progress": True})
+
+                        elif etype == "message.delta":
+                            _message_toks += 1
+
+                        elif etype == "chat.end":
+                            _result = ev.get("result", {})
+
+                        elif etype == "error":
+                            err_info = ev.get("error", {})
+                            await send({"log": f"  Error: {err_info.get('message', 'unknown')}"})
+
+                    return _result
+
+            try:
+                await send({"log": "  Running combined eval..."})
+                cd = await _stream_chat(combined_prompt, "eval")
+                if cd is None:
+                    return None
+
+                stats = cd.get("stats", {})
+                tok_s = round(stats.get("tokens_per_second", 0), 1)
+                ttft_ms = round(stats.get("time_to_first_token_seconds", 0) * 1000)
+
+                await send({"log": f"  Speed: {tok_s} tok/s · TTFT: {ttft_ms}ms"})
+
+                # Parse the response — prefer message output, fall back to reasoning
+                output_text = ""
+                message_text = ""
+                has_reasoning = False
+                for item in cd.get("output", []):
+                    if item.get("type") == "message":
+                        message_text += item.get("content", "")
+                    elif item.get("type") == "reasoning":
+                        output_text += item.get("content", "")
+                        has_reasoning = True
+                # Use message text if available, otherwise full output
+                output_text = message_text or output_text
 
                     # Try to parse as JSON — thinking models may prefix with reasoning text
                     try:
@@ -1251,49 +1306,42 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
                     '"bottles":1440}'
                 )
                 try:
-                    async with http_session.post(
-                        f"{base_url}/api/v1/chat",
-                        headers=_headers,
-                        json={"model": model_id, "input": hard_prompt, "temperature": 0, "max_output_tokens": 2048, "store": False},
-                        timeout=aiohttp.ClientTimeout(total=120),
-                    ) as hr:
-                        if hr.status == 200:
-                            hd = await hr.json(content_type=None)
-                            h_msg = ""
-                            h_reason = ""
-                            for item in hd.get("output", []):
-                                if item.get("type") == "message":
-                                    h_msg += item.get("content", "")
-                                elif item.get("type") == "reasoning":
-                                    h_reason += item.get("content", "")
-                            h_text = h_msg or h_reason
+                    hd = await _stream_chat(hard_prompt, "hard")
+                    if hd:
+                        h_msg = ""
+                        h_reason = ""
+                        for item in hd.get("output", []):
+                            if item.get("type") == "message":
+                                h_msg += item.get("content", "")
+                            elif item.get("type") == "reasoning":
+                                h_reason += item.get("content", "")
+                        h_text = h_msg or h_reason
+                        try:
+                            h_cleaned = re.sub(r"```[a-z]*\n?", "", h_text).strip().rstrip("`")
                             try:
-                                h_cleaned = re.sub(r"```[a-z]*\n?", "", h_text).strip().rstrip("`")
-                                # Try direct parse, fall back to regex extraction
-                                try:
-                                    json.loads(h_cleaned)
-                                except json.JSONDecodeError:
-                                    _hj = re.search(r'\{[^{}]*(?:\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}[^{}]*)*\}', h_cleaned)
-                                    if _hj:
-                                        h_cleaned = _hj.group()
-                                h_obj = json.loads(h_cleaned)
+                                json.loads(h_cleaned)
+                            except json.JSONDecodeError:
+                                _hj = re.search(r'\{[^{}]*(?:\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}[^{}]*)*\}', h_cleaned)
+                                if _hj:
+                                    h_cleaned = _hj.group()
+                            h_obj = json.loads(h_cleaned)
 
-                                tools = h_obj.get("tools", {})
-                                h1 = tools.get("A") == "search_web" and tools.get("B") == "run_code" and tools.get("C") == "read_file" and tools.get("D") == "send_email"
-                                await send({"log": f"    {'✓' if h1 else '✗'} hard tool routing"})
+                            tools = h_obj.get("tools", {})
+                            h1 = tools.get("A") == "search_web" and tools.get("B") == "run_code" and tools.get("C") == "read_file" and tools.get("D") == "send_email"
+                            await send({"log": f"    {'✓' if h1 else '✗'} hard tool routing"})
 
-                                nested = h_obj.get("nested", {})
-                                h2 = isinstance(nested.get("results"), list) and len(nested.get("results", [])) > 0
-                                await send({"log": f"    {'✓' if h2 else '✗'} deep nested JSON"})
+                            nested = h_obj.get("nested", {})
+                            h2 = isinstance(nested.get("results"), list) and len(nested.get("results", [])) > 0
+                            await send({"log": f"    {'✓' if h2 else '✗'} deep nested JSON"})
 
-                                h3 = str(h_obj.get("bottles")) == "1440"
-                                await send({"log": f"    {'✓' if h3 else '✗'} 5-step arithmetic (got {h_obj.get('bottles')})"})
+                            h3 = str(h_obj.get("bottles")) == "1440"
+                            await send({"log": f"    {'✓' if h3 else '✗'} 5-step arithmetic (got {h_obj.get('bottles')})"})
 
-                                hard_score = sum([h1, h2, h3])
-                                await send({"log": f"  ★ Hard eval: {hard_score}/3"})
-                                hard_eval = {"hard_tool": h1, "hard_json": h2, "hard_reasoning": h3, "score": hard_score}
-                            except Exception:
-                                await send({"log": f"    ✗ Hard eval JSON parse failed"})
+                            hard_score = sum([h1, h2, h3])
+                            await send({"log": f"  ★ Hard eval: {hard_score}/3"})
+                            hard_eval = {"hard_tool": h1, "hard_json": h2, "hard_reasoning": h3, "score": hard_score}
+                        except Exception:
+                            await send({"log": f"    ✗ Hard eval JSON parse failed"})
                 except Exception as e:
                     await send({"log": f"  Hard eval failed: {str(e)[:60]}"})
 
@@ -1317,64 +1365,58 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
                     '"items":[{"name":"alpha","priority":1},{"name":"beta","priority":2},{"name":"gamma","priority":3}],"count":3}'
                 )
                 try:
-                    async with http_session.post(
-                        f"{base_url}/api/v1/chat",
-                        headers=_headers,
-                        json={"model": model_id, "input": agent_prompt, "temperature": 0, "max_output_tokens": 2048, "store": False},
-                        timeout=aiohttp.ClientTimeout(total=120),
-                    ) as ar:
-                        if ar.status == 200:
-                            ad = await ar.json(content_type=None)
-                            a_msg = ""
-                            a_reason = ""
-                            for item in ad.get("output", []):
-                                if item.get("type") == "message":
-                                    a_msg += item.get("content", "")
-                                elif item.get("type") == "reasoning":
-                                    a_reason += item.get("content", "")
-                            a_text = a_msg or a_reason
+                    ad = await _stream_chat(agent_prompt, "agent")
+                    if ad:
+                        a_msg = ""
+                        a_reason = ""
+                        for item in ad.get("output", []):
+                            if item.get("type") == "message":
+                                a_msg += item.get("content", "")
+                            elif item.get("type") == "reasoning":
+                                a_reason += item.get("content", "")
+                        a_text = a_msg or a_reason
+                        try:
+                            a_cleaned = re.sub(r"```[a-z]*\n?", "", a_text).strip().rstrip("`")
                             try:
-                                a_cleaned = re.sub(r"```[a-z]*\n?", "", a_text).strip().rstrip("`")
-                                try:
-                                    a_obj = json.loads(a_cleaned)
-                                except json.JSONDecodeError:
-                                    _aj = re.search(r'\{[^{}]*(?:\{[^{}]*(?:\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}[^{}]*)*\}[^{}]*)*\}', a_cleaned)
-                                    if _aj:
-                                        a_obj = json.loads(_aj.group())
-                                    else:
-                                        raise
+                                a_obj = json.loads(a_cleaned)
+                            except json.JSONDecodeError:
+                                _aj = re.search(r'\{[^{}]*(?:\{[^{}]*(?:\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}[^{}]*)*\}[^{}]*)*\}', a_cleaned)
+                                if _aj:
+                                    a_obj = json.loads(_aj.group())
+                                else:
+                                    raise
 
-                                # Agent test 1: Tool call format
-                                tc = a_obj.get("tool_calls", [])
-                                a1 = (isinstance(tc, list) and len(tc) > 0
-                                      and tc[0].get("name") == "web_search"
-                                      and isinstance(tc[0].get("arguments", {}).get("query"), str)
-                                      and "london" in tc[0]["arguments"]["query"].lower())
-                                await send({"log": f"    {'✓' if a1 else '✗'} tool call format"})
+                            # Agent test 1: Tool call format
+                            tc = a_obj.get("tool_calls", [])
+                            a1 = (isinstance(tc, list) and len(tc) > 0
+                                  and tc[0].get("name") == "web_search"
+                                  and isinstance(tc[0].get("arguments", {}).get("query"), str)
+                                  and "london" in tc[0]["arguments"]["query"].lower())
+                            await send({"log": f"    {'✓' if a1 else '✗'} tool call format"})
 
-                                # Agent test 2: Persona adherence
-                                pirate = str(a_obj.get("pirate", "")).lower()
-                                a2 = ("arrr" in pirate and "4" in pirate and "hello" not in pirate)
-                                await send({"log": f"    {'✓' if a2 else '✗'} persona adherence"})
+                            # Agent test 2: Persona adherence
+                            pirate = str(a_obj.get("pirate", "")).lower()
+                            a2 = ("arrr" in pirate and "4" in pirate and "hello" not in pirate)
+                            await send({"log": f"    {'✓' if a2 else '✗'} persona adherence"})
 
-                                # Agent test 3: Multi-constraint output
-                                items = a_obj.get("items", [])
-                                count = a_obj.get("count")
-                                a3_checks = (
-                                    isinstance(items, list) and len(items) == 3
-                                    and count == 3
-                                    and all(isinstance(i.get("name"), str) and i["name"].islower() and " " not in i["name"] for i in items)
-                                    and all(isinstance(i.get("priority"), int) and 1 <= i["priority"] <= 5 for i in items)
-                                    and len(set(i["priority"] for i in items)) == 3  # all different
-                                    and items == sorted(items, key=lambda i: i["priority"])  # sorted ascending
-                                )
-                                await send({"log": f"    {'✓' if a3_checks else '✗'} multi-constraint output"})
+                            # Agent test 3: Multi-constraint output
+                            items = a_obj.get("items", [])
+                            count = a_obj.get("count")
+                            a3_checks = (
+                                isinstance(items, list) and len(items) == 3
+                                and count == 3
+                                and all(isinstance(i.get("name"), str) and i["name"].islower() and " " not in i["name"] for i in items)
+                                and all(isinstance(i.get("priority"), int) and 1 <= i["priority"] <= 5 for i in items)
+                                and len(set(i["priority"] for i in items)) == 3  # all different
+                                and items == sorted(items, key=lambda i: i["priority"])  # sorted ascending
+                            )
+                            await send({"log": f"    {'✓' if a3_checks else '✗'} multi-constraint output"})
 
-                                agent_score = sum([a1, a2, a3_checks])
-                                await send({"log": f"  ★★ Agent eval: {agent_score}/3"})
-                                agent_eval = {"tool_call": a1, "persona": a2, "constrained": a3_checks, "score": agent_score}
-                            except Exception as _ae:
-                                await send({"log": f"    ✗ Agent eval JSON parse failed: {str(_ae)[:60]}"})
+                            agent_score = sum([a1, a2, a3_checks])
+                            await send({"log": f"  ★★ Agent eval: {agent_score}/3"})
+                            agent_eval = {"tool_call": a1, "persona": a2, "constrained": a3_checks, "score": agent_score}
+                        except Exception as _ae:
+                            await send({"log": f"    ✗ Agent eval JSON parse failed: {str(_ae)[:60]}"})
                 except Exception as e:
                     await send({"log": f"  Agent eval failed: {str(e)[:60]}"})
 
