@@ -1196,7 +1196,7 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
                         await send({"log": f"    {'✓' if e1 else '✗'} instruction following"})
 
                         # Eval 2: reasoning (speed calculation) — accept 60 or 60.0
-                        e2 = str(obj.get("speed")).rstrip("0").rstrip(".") == "60"
+                        e2 = float(obj.get("speed", 0)) == 60.0
                         eval_details["reasoning"] = e2
                         await send({"log": f"    {'✓' if e2 else '✗'} reasoning (speed={obj.get('speed')})"})
 
