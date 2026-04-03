@@ -2568,7 +2568,9 @@ function setup() {
       // Drop servers that are down; keep 'up' and user-selected 'auth_required' (they chose it).
       this.selectedServers = this.selectedServers.filter(s => s.status === 'up' || s.status === 'auth_required');
       this.activeServer = this.selectedServers[0] || null;
-      const models = this.getModels();
+      // Filter out models flagged as too large for "Test All" — user can still
+      // test them individually with the per-model Test button.
+      const models = this.getModels().filter(m => !m._tooLarge);
       try {
         if (!this.activeServer || !this.activeServer.endpoint) {
           this.compareReason = 'No server selected — go back to step 1 and pick a model server.';
