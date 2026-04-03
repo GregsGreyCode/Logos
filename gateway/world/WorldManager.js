@@ -105,24 +105,31 @@ export class WorldManager {
     }
 
     // Add or update agents
-    instances.forEach((inst, index) => {
+    instances.forEach(async (inst, index) => {
       const existing = this.agents.get(inst.name);
       if (existing) {
         // Update state for lerp
         existing.inst = inst;
         existing.index = index;
         existing.total = instances.length;
-      } else {
-        // Create new agent character
-        const char = createAgentCharacter(PIXI, inst, index, instances.length);
-        char.on('pointertap', () => this.onAgentClick(inst.name));
-        this.agentLayer.addChild(char);
-        this.agents.set(inst.name, {
-          container: char,
-          inst,
-          index,
-          total: instances.length,
-        });
+      } else if (!this.agents.has(inst.name)) {
+        // Mark as pending to prevent duplicate creation
+        this.agents.set(inst.name, { container: null, inst, index, total: instances.length });
+        try {
+          const char = await createAgentCharacter(PIXI, inst, index, instances.length);
+          if (this._destroyed) return;
+          char.on('pointertap', () => this.onAgentClick(inst.name));
+          this.agentLayer.addChild(char);
+          this.agents.set(inst.name, {
+            container: char,
+            inst,
+            index,
+            total: instances.length,
+          });
+        } catch (e) {
+          console.warn('Failed to create agent character:', inst.name, e);
+          this.agents.delete(inst.name);
+        }
       }
     });
   }
@@ -130,7 +137,9 @@ export class WorldManager {
   _tick() {
     // Smooth position updates
     for (const entry of this.agents.values()) {
-      updateAgentCharacter(entry.container, entry.inst, entry.index, entry.total);
+      if (entry.container) {
+        updateAgentCharacter(entry.container, entry.inst, entry.index, entry.total);
+      }
     }
   }
 
