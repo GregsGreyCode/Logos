@@ -2818,6 +2818,8 @@ function setup() {
     allServersHaveModel() {
       // Allow continuing as soon as every server has a model selected —
       // don't require the full benchmark to finish first.
+      // Also require selectedModel to be set (the primary model for the install).
+      if (!this.selectedModel) return false;
       return this.selectedServers.length > 0 && this.selectedServers.every(s => !!this.serverModelForServer(s.endpoint));
     },
 
