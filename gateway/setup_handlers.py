@@ -2628,6 +2628,8 @@ async def handle_setup_env_probe(request: web.Request) -> web.Response:
         "docker_sandbox_ready":  docker_sandbox_ready,
         "k3s_installed":         k3s_info["installed"],
         "k3s_running":           k3s_info["running"],
+        # In-cluster detection: if KUBERNETES_SERVICE_HOST is set, we're a pod
+        "in_cluster":            bool(os.environ.get("KUBERNETES_SERVICE_HOST")),
     })
 
 
