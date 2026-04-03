@@ -1140,13 +1140,14 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
             ttft_ms = 0
             eval_score = 0
             eval_details = {}
+            has_reasoning = False
 
             try:
                 await send({"log": "  Running combined eval..."})
                 async with http_session.post(
                     f"{base_url}/api/v1/chat",
                     headers=_headers,
-                    json={"model": model_id, "input": combined_prompt, "temperature": 0, "max_output_tokens": 512, "store": False, "reasoning": "off"},
+                    json={"model": model_id, "input": combined_prompt, "temperature": 0, "max_output_tokens": 512, "store": False},
                     timeout=aiohttp.ClientTimeout(total=120),
                 ) as cr:
                     if cr.status != 200:
@@ -1164,11 +1165,13 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
                     # Parse the response — prefer message output, fall back to reasoning
                     output_text = ""
                     message_text = ""
+                    has_reasoning = False
                     for item in cd.get("output", []):
                         if item.get("type") == "message":
                             message_text += item.get("content", "")
                         elif item.get("type") == "reasoning":
                             output_text += item.get("content", "")
+                            has_reasoning = True
                     # Use message text if available, otherwise full output
                     output_text = message_text or output_text
 
@@ -1250,7 +1253,7 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
                     async with http_session.post(
                         f"{base_url}/api/v1/chat",
                         headers=_headers,
-                        json={"model": model_id, "input": hard_prompt, "temperature": 0, "max_output_tokens": 512, "store": False, "reasoning": "off"},
+                        json={"model": model_id, "input": hard_prompt, "temperature": 0, "max_output_tokens": 512, "store": False},
                         timeout=aiohttp.ClientTimeout(total=120),
                     ) as hr:
                         if hr.status == 200:
@@ -1312,6 +1315,7 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
                 "quality_pass": quality_pass,
                 "eval": {"score": eval_score, **eval_details},
                 "hard_eval": hard_eval if hard_eval else None,
+                "has_reasoning": has_reasoning,
                 "native_api": True,
             }
 
