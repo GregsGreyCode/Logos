@@ -3902,7 +3902,7 @@ class GatewayRunner:
                 # The benchmark stores the total model context (e.g. 65536).
                 # We try that first, then step down.  Smaller fallbacks for
                 # models with known limitations.
-                _all_sizes = [65536, 32768, 16384, 8192, 4096]
+                _all_sizes = [262144, 131072, 65536, 32768, 16384, 8192, 4096]
                 if _saved_ctx and _saved_ctx > 0:
                     # Start from the benchmark value, include smaller fallbacks
                     _ctx_sizes = [_saved_ctx] + [s for s in _all_sizes if s < _saved_ctx]
