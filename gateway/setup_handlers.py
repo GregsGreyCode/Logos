@@ -982,11 +982,18 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
 
     server_groups: dict[str, list[dict]] = _dd(list)
     for ep, specs in per_server_specs.items():
+        # Test all requested models — no automatic filtering.
+        # The frontend controls which models to test (individual or "test all").
+        # Sort: instruct/chat models first, then by size (larger first for quality).
         ep_sizes = _ollama_sizes.get(ep, {})
-        ep_candidate_ids = set(_pick_compare_candidates([s["id"] for s in specs], sizes=ep_sizes))
-        for s in specs:
-            if s["id"] in ep_candidate_ids:
-                server_groups[ep].append(s)
+        def _sort_key(s):
+            name = s["id"].lower()
+            is_specialized = any(kw in name for kw in ("coder", "code", "math", "vision", "ocr"))
+            sz = _parse_model_size_b(s["id"], ep_sizes.get(s["id"], 0.0))
+            return (is_specialized, -sz)  # general first, larger first
+        sorted_specs = sorted(specs, key=_sort_key)
+        for s in sorted_specs:
+            server_groups[ep].append(s)
 
     candidates = [m for group in server_groups.values() for m in group]
     n_servers = len(server_groups)
