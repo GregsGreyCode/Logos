@@ -1965,16 +1965,48 @@ async def _handle_chat(request: web.Request) -> web.StreamResponse:
     result = {}
     t_agent_start = time.time()
     try:
-        result = await runner._run_agent(
-            message=message,
-            context_prompt=context_prompt,
-            history=history,
-            source=source,
-            session_id=session_entry.session_id,
-            session_key=session_key,
-            action_policy=_action_policy,
-            auth_user_id=_auth_user_id,
-        )
+        # Check if a worker is connected for this agent
+        target_worker = body.get("worker_id", "")
+        worker_registry = request.app.get("worker_registry")
+        worker_entry = worker_registry.get(target_worker) if worker_registry and target_worker else None
+
+        if worker_entry and worker_entry.healthy and not worker_entry.ws.closed:
+            # Dispatch to connected worker
+            import uuid as _uuid
+            _model = os.environ.get("HERMES_MODEL", "")
+            _base_url = os.environ.get("OPENAI_BASE_URL", "")
+            _api_key = os.environ.get("OPENAI_API_KEY", os.environ.get("ANTHROPIC_API_KEY", "not-needed"))
+            task_payload = {
+                "type": "run_conversation",
+                "task_id": str(_uuid.uuid4()),
+                "session_id": session_entry.session_id,
+                "session_key": session_key,
+                "message": message,
+                "history": history,
+                "context_prompt": context_prompt,
+                "model": _model,
+                "model_kwargs": {"api_key": _api_key, "base_url": _base_url},
+                "toolsets": worker_entry.toolsets or ["hermes-cli"],
+                "max_iterations": int(os.environ.get("HERMES_MAX_ITERATIONS", "90")),
+            }
+            worker_result = await worker_registry.dispatch_task(target_worker, task_payload, timeout=300)
+            result = {
+                "final_response": worker_result.get("final_response", ""),
+                "api_calls": worker_result.get("api_calls", 0),
+                "tools_used": worker_result.get("tools_used", []),
+            }
+        else:
+            # Run locally (primary gateway agent or no worker connected)
+            result = await runner._run_agent(
+                message=message,
+                context_prompt=context_prompt,
+                history=history,
+                source=source,
+                session_id=session_entry.session_id,
+                session_key=session_key,
+                action_policy=_action_policy,
+                auth_user_id=_auth_user_id,
+            )
         final = result.get("final_response", "")
         await send_event({"type": "message", "content": final})
     except Exception as exc:

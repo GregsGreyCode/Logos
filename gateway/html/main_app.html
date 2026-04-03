@@ -4675,6 +4675,7 @@ function app() {
   return {
     tab: 'sessions',
     worldManager: null,
+    _connectedWorkers: [],
     status: { uptime_s: 0, instance_name: 'Hermes', active_sessions: [], recent_sessions: [] },
     agentAlive: null,
     agentEverConnected: false,   // true once first /status succeeds; gate for the error banner
@@ -5063,7 +5064,7 @@ function app() {
       }
       // Scroll to bottom after Alpine renders the restored messages
       this.$nextTick(() => this._scrollChat());
-      await Promise.all([this.loadStatus(), this.loadRouterState(), this.loadCanary(), this.loadInstances(), this.loadSpawnTemplates()]);
+      await Promise.all([this.loadStatus(), this.loadRouterState(), this.loadCanary(), this.loadInstances(), this.loadSpawnTemplates(), this.loadWorkers()]);
       // Pre-fill requester for non-admins; load user list for admins
       if (this.authUser) {
         if (this.authUser.role === 'admin') {
@@ -5228,7 +5229,18 @@ function app() {
           machine_name: null,
           k8s_status:   i.status       || null,
         }));
-      this.chatAgents = [self, ...k8s, ...local, ...this.manualAgents];
+      // Workers connected via WebSocket — chat goes through gateway with worker_id
+      const workers = (this._connectedWorkers || []).map(w => ({
+        id:           'worker-' + w.worker_id,
+        name:         w.instance_label || w.worker_id,
+        url:          '',  // route through gateway
+        source:       'worker',
+        editable:     false,
+        worker_id:    w.worker_id,
+        soul:         { name: w.soul, slug: w.soul },
+        k8s_status:   w.healthy ? 'running' : 'starting',
+      }));
+      this.chatAgents = [self, ...workers, ...k8s, ...local, ...this.manualAgents];
     },
 
     switchInstance(id) {
@@ -5498,9 +5510,21 @@ function app() {
         node_port: null,
         source: 'self',
       });
-      // Spawned instances
+      // Spawned instances (old-style full gateways)
       for (const inst of (this.clusterInstances || [])) {
         agents.push(inst);
+      }
+      // Connected workers
+      for (const w of (this._connectedWorkers || [])) {
+        agents.push({
+          name: w.worker_id,
+          instance_name: w.instance_label || w.worker_id,
+          instance_label: w.instance_label,
+          status: w.healthy ? 'running' : 'starting',
+          k8s_status: w.healthy ? 'running' : 'starting',
+          soul: { name: w.soul, slug: w.soul },
+          source: 'worker',
+        });
       }
       return agents;
     },
@@ -5538,6 +5562,17 @@ function app() {
         this.worldManager.destroy();
         this.worldManager = null;
       }
+    },
+
+    async loadWorkers() {
+      try {
+        const r = await fetch('/api/workers', { credentials: 'same-origin' });
+        if (r.ok) {
+          const d = await r.json();
+          this._connectedWorkers = d.workers || [];
+          this._buildChatAgents();
+        }
+      } catch(e) {}
     },
 
     async loadToolsets() {
@@ -6204,7 +6239,14 @@ function app() {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken() },
           credentials: 'same-origin',
-          body: JSON.stringify({ message: msg, session_id: chat.id, attachments: pendingAttachments }),
+          body: JSON.stringify({
+            message: msg,
+            session_id: chat.id,
+            attachments: pendingAttachments,
+            // If talking to a specific worker (not the primary gateway), include worker_id
+            // so the gateway dispatches to the right worker process
+            worker_id: this.activeInstance?.worker_id || undefined,
+          }),
         });
         if (r.status === 401) {
           chat.messages = [...chat.messages, { role: 'assistant', content: '\\u274c Session expired — please reload the page to log in again.' }];
