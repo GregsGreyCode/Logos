@@ -420,7 +420,7 @@
   <div x-show="tab==='world'" x-cloak style="height:calc(100vh - 84px); position: relative;">
     <div id="agent-world" style="width:100%; height:100%; border-radius:12px; overflow:hidden;"></div>
     <!-- Empty state overlay -->
-    <div x-show="clusterInstances.length === 0 && tab === 'world'"
+    <div x-show="false"
       class="absolute inset-0 flex items-center justify-center pointer-events-none">
       <div class="text-center pointer-events-auto">
         <div class="text-gray-600 text-sm mb-2">No agents running</div>
@@ -5483,25 +5483,56 @@ function app() {
 
     // ── Agent World ─────────────────────────────────────────────
 
+    _worldAgentList() {
+      // Build a unified list: the primary gateway agent + all spawned instances
+      const agents = [];
+      // Primary "self" agent — the gateway itself
+      const selfName = this.status?.instance_name || 'Hermes';
+      agents.push({
+        name: 'hermes',
+        instance_name: selfName,
+        instance_label: '',
+        status: 'running',
+        k8s_status: 'running',
+        soul: { name: 'Primary', slug: 'general' },
+        node_port: null,
+        source: 'self',
+      });
+      // Spawned instances
+      for (const inst of (this.clusterInstances || [])) {
+        agents.push(inst);
+      }
+      return agents;
+    },
+
     async initWorld() {
-      if (this.worldManager) return; // already initialized
+      if (this.worldManager) {
+        // Already initialized — just sync
+        this.worldManager.syncAgents(this._worldAgentList());
+        return;
+      }
       const el = document.getElementById('agent-world');
       if (!el || typeof PIXI === 'undefined') return;
 
       // Dynamic import of world modules
       const { WorldManager } = await import('/world/WorldManager.js');
       this.worldManager = new WorldManager(el, {
-        onAgentClick: (name) => this.openInspector(name),
+        onAgentClick: (name) => {
+          if (name === 'hermes') return; // primary agent has no inspector (it IS the gateway)
+          this.openInspector(name);
+        },
       });
 
-      // Sync current instances
-      if (this.clusterInstances.length) {
-        this.worldManager.syncAgents(this.clusterInstances);
-      }
+      // Sync current agents
+      this.worldManager.syncAgents(this._worldAgentList());
 
       // Watch for instance changes
-      this.$watch('clusterInstances', (instances) => {
-        if (this.worldManager) this.worldManager.syncAgents(instances);
+      this.$watch('clusterInstances', () => {
+        if (this.worldManager) this.worldManager.syncAgents(this._worldAgentList());
+      });
+      // Also watch status changes (for the primary agent name)
+      this.$watch('status', () => {
+        if (this.worldManager) this.worldManager.syncAgents(this._worldAgentList());
       });
     },
 
