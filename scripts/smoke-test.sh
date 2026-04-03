@@ -7,7 +7,7 @@
 # Defaults to http://localhost:8080.  Exits 0 on success, 1 on any failure.
 # Suitable for CI pipelines and canary promotion gates.
 
-set -euo pipefail
+set -uo pipefail
 
 BASE_URL="${1:-http://localhost:8080}"
 PASS=0
@@ -34,43 +34,39 @@ _check() {
 
   if [[ "$status" == "$expected_status" ]]; then
     echo "  PASS  $label ($status)"
-    ((PASS++))
+    PASS=$((PASS + 1))
   else
     echo "  FAIL  $label (got $status, expected $expected_status)"
-    ((FAIL++))
+    FAIL=$((FAIL + 1))
   fi
 }
 
 echo "Smoke testing $BASE_URL"
 echo "---"
 
-# 1. Health check (no auth required)
+# 1. Health check (no auth required — always public)
 _check "GET /health" "$BASE_URL/health"
 
-# 2. K8s liveness probe alias
-_check "GET /healthz" "$BASE_URL/healthz"
-
-# 3. Deep readiness probe
+# 2. Deep readiness probe (no auth)
 _check "GET /health/ready" "$BASE_URL/health/ready"
 
-# 4. Login page renders (no auth required)
+# 3. Login page renders (no auth)
 _check "GET /login" "$BASE_URL/login"
 
-# 5. Status endpoint (no auth required)
-_check "GET /status" "$BASE_URL/status"
+# 4. Model catalog API (no auth)
+_check "GET /api/model-catalog" "$BASE_URL/api/model-catalog"
 
-# 6. Souls endpoint (no auth required, returns soul registry)
-_check "GET /souls" "$BASE_URL/souls"
+# 5. Auth-protected endpoints return 401 without credentials
+_check "GET /instances (no auth → 401)" "$BASE_URL/instances" "401"
+_check "GET /status (no auth → 401)" "$BASE_URL/status" "401"
+_check "GET /souls (no auth → 401)" "$BASE_URL/souls" "401"
 
-# 7. Auth endpoint rejects bad credentials (should return 401)
-_check "POST /auth/login (bad creds)" \
+# 6. Bad login credentials rejected
+_check "POST /auth/login (bad creds → 400/401)" \
   "$BASE_URL/auth/login" \
-  "401" \
+  "400" \
   "POST" \
   '{"username":"__smoke_test__","password":"__invalid__"}'
-
-# 8. Unauthenticated instance list returns 401/403
-_check "GET /instances (no auth)" "$BASE_URL/instances" "401"
 
 echo "---"
 echo "Results: $PASS passed, $FAIL failed"

@@ -89,6 +89,8 @@ spec:
           env:
             - name: HOME
               value: /home/hermes
+            - name: HERMES_HOME
+              value: /home/hermes/.hermes
             # Inject node LAN IP so the setup wizard's network scan uses the
             # correct /24 subnet rather than the pod's CNI address.
             - name: NODE_IP
