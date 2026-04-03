@@ -2599,6 +2599,7 @@ function setup() {
                 endpoint:    m._serverEndpoint || this.activeServer.endpoint,
                 api_key:     (srv && srv._apiKey) || m._apiKey || this.activeServer._apiKey || 'ollama',
                 server_type: m._serverType     || this.activeServer.type || 'unknown',
+                max_context_length: m._maxCtx || m.max_context_length || 0,
               };
             }),
           }),
