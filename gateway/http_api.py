@@ -1970,7 +1970,7 @@ async def _handle_chat(request: web.Request) -> web.StreamResponse:
         worker_registry = request.app.get("worker_registry")
         worker_entry = worker_registry.get(target_worker) if worker_registry and target_worker else None
 
-        if worker_entry and worker_entry.healthy and not worker_entry.ws.closed:
+        if worker_entry and worker_entry.healthy and (worker_entry.is_local or (worker_entry.ws and not worker_entry.ws.closed)):
             # Dispatch to connected worker
             import uuid as _uuid
             _model = os.environ.get("HERMES_MODEL", "")
