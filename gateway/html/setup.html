@@ -3058,11 +3058,12 @@ function setup() {
 
     async _fadeOutPage() {
       // Fade the entire setup page out before navigating — mirrors the page-fadein on load.
+      // Also fade the header (step dots, logo halo) since it's a sibling of .setup-content.
       const content = document.querySelector('.setup-content');
-      if (content) {
-        content.classList.add('setup-fadeout');
-        await new Promise(r => setTimeout(r, 460));
-      }
+      const header = document.querySelector('header');
+      if (content) content.classList.add('setup-fadeout');
+      if (header) header.classList.add('setup-fadeout');
+      await new Promise(r => setTimeout(r, 460));
     },
 
     async complete() {
