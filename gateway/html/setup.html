@@ -891,8 +891,17 @@
                             x-text="mid"></span>
                         </div>
                         <div class="flex items-center gap-2 flex-shrink-0 ml-3 text-xs">
-                          <!-- Queued -->
-                          <span x-show="!compareTesting[mid] && !compareResults[mid]" class="text-gray-700">queued</span>
+                          <!-- Size estimate + not tested -->
+                          <template x-if="!compareTesting[mid] && !compareResults[mid]">
+                            <div class="flex items-center gap-2">
+                              <span x-show="getModels().find(m => m.id === mid)?._paramB"
+                                class="text-[10px] font-mono"
+                                :class="getModels().find(m => m.id === mid)?._tooLarge ? 'text-red-500' : 'text-gray-600'"
+                                x-text="(getModels().find(m => m.id === mid)?._paramB || '?') + 'B · ~' + (getModels().find(m => m.id === mid)?._estMinGB || '?') + 'GB'"></span>
+                              <span x-show="getModels().find(m => m.id === mid)?._tooLarge"
+                                class="text-[9px] text-red-500">may not fit</span>
+                            </div>
+                          </template>
                           <!-- Testing / loading -->
                           <template x-if="compareTesting[mid]">
                             <div class="flex items-center gap-1.5">
@@ -2709,15 +2718,31 @@ function setup() {
     getModels() {
       const seen = new Set();
       const out = [];
-      // Embedding-only models can't do chat completions — exclude from benchmarks
       const embedKeywords = ['embed', 'bge-', 'e5-', 'gte-'];
       for (const s of this.selectedServers) {
         for (const m of (s.models || [])) {
           const lower = (m.id || m.name || '').toLowerCase();
           const isEmbed = embedKeywords.some(kw => lower.includes(kw));
-          if (!seen.has(m.id) && !isEmbed) { seen.add(m.id); out.push({ ...m, _serverEndpoint: s.endpoint, _serverType: s.type }); }
+          if (!seen.has(m.id) && !isEmbed) {
+            // Estimate if model fits in system memory
+            // Parse param count from name (e.g. "70b", "122b", "3b")
+            const paramMatch = lower.match(/(\d+\.?\d*)b/);
+            const paramB = paramMatch ? parseFloat(paramMatch[1]) : 0;
+            // File size from server (Ollama provides this in bytes)
+            const fileSizeGB = (m.size || 0) / 1e9;
+            // Estimate minimum RAM needed: file size + ~2GB overhead, or ~0.6GB per billion params
+            const estMinGB = fileSizeGB > 0 ? fileSizeGB + 2 : (paramB * 0.6 + 2);
+            // Flag models that are likely too large (>80GB estimated)
+            // We don't have runtime memory info, so use a generous 80GB threshold
+            // that covers most homelab setups. Models flagged can still be tested.
+            const entry = { ...m, _serverEndpoint: s.endpoint, _serverType: s.type, _paramB: paramB, _estMinGB: Math.round(estMinGB), _tooLarge: estMinGB > 80 };
+            seen.add(m.id);
+            out.push(entry);
+          }
         }
       }
+      // Sort: smaller models first (more likely to fit and run fast)
+      out.sort((a, b) => (a._paramB || 999) - (b._paramB || 999));
       return out;
     },
 
