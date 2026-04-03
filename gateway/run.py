@@ -5110,25 +5110,19 @@ async def start_gateway(config: Optional[GatewayConfig] = None, replace: bool = 
         except NotImplementedError:
             pass
     
-    # Start the HTTP API FIRST so the health endpoint responds during
-    # platform adapter startup (which can block for 60+ seconds on session
-    # flushes, TTS synthesis, etc.). This prevents liveness probe failures.
+    # Start the gateway (platform adapters, hooks, session recovery)
+    success = await runner.start()
+    if not success:
+        return False
+
+    # Start the HTTP API + dashboard server alongside the platform adapters
     http_port = int(os.getenv("HERMES_PORT", "8080"))
     try:
         from gateway.http_api import start_http_api
         asyncio.create_task(start_http_api(runner, http_port))
-        # Give the HTTP server a moment to bind the port
-        await asyncio.sleep(1)
-        logger.info("HTTP API scheduled on port %d", http_port)
+        logger.info("HTTP API task scheduled on port %d", http_port)
     except Exception as _http_err:
         logger.warning("HTTP API failed to start: %s", _http_err)
-
-    # Now start the gateway (platform adapters, hooks, session recovery).
-    # This can take 60+ seconds due to session flushes and TTS synthesis,
-    # but the HTTP health endpoint is already responding.
-    success = await runner.start()
-    if not success:
-        return False
 
     # Write PID file so CLI can detect gateway is running
     import atexit
