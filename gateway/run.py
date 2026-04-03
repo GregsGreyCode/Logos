@@ -3890,7 +3890,7 @@ class GatewayRunner:
                 # More slots = more parallel users but less context per request.
                 # Default 2 (covers most homelab use). Configurable in config.yaml
                 # under lmstudio.n_parallel or via the dashboard.
-                _n_parallel = 2  # default: 2 slots
+                _n_parallel = 1  # default: 1 slot = full context for single user
                 try:
                     _lms_parallel_cfg = (_lms_cfg_now.get("lmstudio") or {}).get("n_parallel")
                     if _lms_parallel_cfg and isinstance(_lms_parallel_cfg, int) and _lms_parallel_cfg >= 1:
