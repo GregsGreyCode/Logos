@@ -2462,6 +2462,7 @@ function setup() {
               if (ev.result) {
                 const { [ev.result.model]: _l, ...rL } = this.compareLoadingFor; this.compareLoadingFor = rL;
                 this.compareResults = { ...this.compareResults, [ev.result.model]: ev.result };
+                if (this.compareStoppingMsg) this.compareStoppingMsg = '';
               }
             } catch {}
           }
