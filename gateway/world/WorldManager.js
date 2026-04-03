@@ -48,9 +48,14 @@ export class WorldManager {
         events: this.app.renderer.events,
       });
       this.viewport.drag().pinch().wheel({ smooth: 5 }).decelerate();
-      this.viewport.clampZoom({ minScale: 0.5, maxScale: 4 });
+      this.viewport.clampZoom({ minScale: 0.8, maxScale: 6 });
       this.viewport.clamp({ direction: 'all' });
-      // Center on the world
+      // Fit world to screen, then center
+      const fitScale = Math.min(
+        (containerEl.clientWidth || 600) / WORLD_W,
+        (containerEl.clientHeight || 400) / WORLD_H,
+      ) * 0.9;
+      this.viewport.setZoom(Math.max(fitScale, 0.8));
       this.viewport.moveCenter(WORLD_W / 2, WORLD_H / 2);
       this.app.stage.addChild(this.viewport);
       this.worldContainer = this.viewport;
