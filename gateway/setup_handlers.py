@@ -1085,10 +1085,14 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
             # ── Step 1: Load model and get actual config ──────────────────
             max_context = None
             try:
-                # Load at the model's known max context (from /api/v1/models metadata)
+                # Load at HALF the model's max context for benchmarking.
+                # Max context is recorded from metadata but loading at full max
+                # kills tok/s due to KV cache overhead. Half gives realistic perf
+                # with plenty of room for agent use.
                 _load_json = {"model": model_id, "flash_attention": True, "echo_load_config": True}
-                if known_max_ctx > 0:
-                    _load_json["context_length"] = known_max_ctx
+                _bench_ctx = min(known_max_ctx // 2, 65536) if known_max_ctx > 0 else 0
+                if _bench_ctx > 0:
+                    _load_json["context_length"] = _bench_ctx
                 _load_timeout = max(120, known_max_ctx // 1000) if known_max_ctx else 120
                 async with http_session.post(
                     f"{base_url}/api/v1/models/load",
@@ -1099,10 +1103,13 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
                     if lr.status == 200:
                         lr_data = await lr.json(content_type=None)
                         lc = (lr_data.get("load_config") or {})
-                        max_context = lc.get("context_length")
+                        _loaded_ctx = lc.get("context_length")
                         load_time = lr_data.get("load_time_seconds")
-                        if max_context:
-                            await send({"log": f"  Loaded with {max_context:,} context (flash_attention=on)"})
+                        # Record native max from metadata, loaded context from echo
+                        max_context = known_max_ctx or _loaded_ctx
+                        if _loaded_ctx:
+                            _native_label = f" (native max: {known_max_ctx:,})" if known_max_ctx and known_max_ctx != _loaded_ctx else ""
+                            await send({"log": f"  Loaded with {_loaded_ctx:,} context{_native_label} (flash_attention=on)"})
                         if load_time:
                             await send({"log": f"  Load time: {load_time:.1f}s"})
                     else:
@@ -1139,7 +1146,7 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
                 async with http_session.post(
                     f"{base_url}/api/v1/chat",
                     headers=_headers,
-                    json={"model": model_id, "input": combined_prompt, "temperature": 0, "max_output_tokens": 512, "store": False},
+                    json={"model": model_id, "input": combined_prompt, "temperature": 0, "max_output_tokens": 512, "store": False, "reasoning": "off"},
                     timeout=aiohttp.ClientTimeout(total=120),
                 ) as cr:
                     if cr.status != 200:
@@ -1154,16 +1161,30 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
 
                     await send({"log": f"  Speed: {tok_s} tok/s · TTFT: {ttft_ms}ms"})
 
-                    # Parse the response — collect both message and reasoning output
+                    # Parse the response — prefer message output, fall back to reasoning
                     output_text = ""
+                    message_text = ""
                     for item in cd.get("output", []):
-                        if item.get("type") in ("message", "reasoning"):
+                        if item.get("type") == "message":
+                            message_text += item.get("content", "")
+                        elif item.get("type") == "reasoning":
                             output_text += item.get("content", "")
+                    # Use message text if available, otherwise full output
+                    output_text = message_text or output_text
 
-                    # Try to parse as JSON and check each eval
+                    # Try to parse as JSON — thinking models may prefix with reasoning text
                     try:
                         cleaned = re.sub(r"```[a-z]*\n?", "", output_text).strip().rstrip("`")
-                        obj = json.loads(cleaned)
+                        # Try direct parse first
+                        try:
+                            obj = json.loads(cleaned)
+                        except json.JSONDecodeError:
+                            # Extract the first JSON object from the text
+                            _json_match = re.search(r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}', cleaned)
+                            if _json_match:
+                                obj = json.loads(_json_match.group())
+                            else:
+                                raise
 
                         # Eval 1: instruction following
                         words = obj.get("words", [])
@@ -1229,17 +1250,28 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
                     async with http_session.post(
                         f"{base_url}/api/v1/chat",
                         headers=_headers,
-                        json={"model": model_id, "input": hard_prompt, "temperature": 0, "max_output_tokens": 512, "store": False},
+                        json={"model": model_id, "input": hard_prompt, "temperature": 0, "max_output_tokens": 512, "store": False, "reasoning": "off"},
                         timeout=aiohttp.ClientTimeout(total=120),
                     ) as hr:
                         if hr.status == 200:
                             hd = await hr.json(content_type=None)
-                            h_text = ""
+                            h_msg = ""
+                            h_reason = ""
                             for item in hd.get("output", []):
-                                if item.get("type") in ("message", "reasoning"):
-                                    h_text += item.get("content", "")
+                                if item.get("type") == "message":
+                                    h_msg += item.get("content", "")
+                                elif item.get("type") == "reasoning":
+                                    h_reason += item.get("content", "")
+                            h_text = h_msg or h_reason
                             try:
                                 h_cleaned = re.sub(r"```[a-z]*\n?", "", h_text).strip().rstrip("`")
+                                # Try direct parse, fall back to regex extraction
+                                try:
+                                    json.loads(h_cleaned)
+                                except json.JSONDecodeError:
+                                    _hj = re.search(r'\{[^{}]*(?:\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}[^{}]*)*\}', h_cleaned)
+                                    if _hj:
+                                        h_cleaned = _hj.group()
                                 h_obj = json.loads(h_cleaned)
 
                                 tools = h_obj.get("tools", {})
