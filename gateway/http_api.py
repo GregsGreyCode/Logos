@@ -1989,7 +1989,30 @@ async def _handle_chat(request: web.Request) -> web.StreamResponse:
                 "toolsets": worker_entry.toolsets or ["hermes-cli"],
                 "max_iterations": int(os.environ.get("HERMES_MAX_ITERATIONS", "90")),
             }
-            worker_result = await worker_registry.dispatch_task(target_worker, task_payload, timeout=300)
+            # Stream callback — forward worker events to client SSE
+            async def _on_worker_stream(event):
+                etype = event.get("type")
+                if etype == "tool_progress":
+                    await send_event({
+                        "type": "tool_progress",
+                        "tool": event.get("tool", ""),
+                        "preview": event.get("preview", ""),
+                    })
+                elif etype == "token":
+                    await send_event({
+                        "type": "token",
+                        "content": event.get("content", ""),
+                    })
+                elif etype == "thinking":
+                    await send_event({
+                        "type": "thinking",
+                        "content": event.get("content", ""),
+                    })
+
+            worker_result = await worker_registry.dispatch_task(
+                target_worker, task_payload, timeout=300,
+                on_stream_event=_on_worker_stream,
+            )
             result = {
                 "final_response": worker_result.get("final_response", ""),
                 "api_calls": worker_result.get("api_calls", 0),
