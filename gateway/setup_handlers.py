@@ -1230,57 +1230,57 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
                 # Use message text if available, otherwise full output
                 output_text = message_text or output_text
 
-                    # Try to parse as JSON — thinking models may prefix with reasoning text
+                # Try to parse as JSON — thinking models may prefix with reasoning text
+                try:
+                    cleaned = re.sub(r"```[a-z]*\n?", "", output_text).strip().rstrip("`")
+                    # Try direct parse first
                     try:
-                        cleaned = re.sub(r"```[a-z]*\n?", "", output_text).strip().rstrip("`")
-                        # Try direct parse first
-                        try:
-                            obj = json.loads(cleaned)
-                        except json.JSONDecodeError:
-                            # Extract the first JSON object from the text
-                            _json_match = re.search(r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}', cleaned)
-                            if _json_match:
-                                obj = json.loads(_json_match.group())
-                            else:
-                                raise
+                        obj = json.loads(cleaned)
+                    except json.JSONDecodeError:
+                        # Extract the first JSON object from the text
+                        _json_match = re.search(r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}', cleaned)
+                        if _json_match:
+                            obj = json.loads(_json_match.group())
+                        else:
+                            raise
 
-                        # Eval 1: instruction following
-                        words = obj.get("words", [])
-                        e1 = isinstance(words, list) and all(w in words for w in ["ALPHA", "BETA", "GAMMA"])
-                        eval_details["instruction"] = e1
-                        await send({"log": f"    {'✓' if e1 else '✗'} instruction following"})
+                    # Eval 1: instruction following
+                    words = obj.get("words", [])
+                    e1 = isinstance(words, list) and all(w in words for w in ["ALPHA", "BETA", "GAMMA"])
+                    eval_details["instruction"] = e1
+                    await send({"log": f"    {'✓' if e1 else '✗'} instruction following"})
 
-                        # Eval 2: reasoning (speed calculation) — accept 60 or 60.0
-                        e2 = float(obj.get("speed", 0)) == 60.0
-                        eval_details["reasoning"] = e2
-                        await send({"log": f"    {'✓' if e2 else '✗'} reasoning (speed={obj.get('speed')})"})
+                    # Eval 2: reasoning (speed calculation) — accept 60 or 60.0
+                    e2 = float(obj.get("speed", 0)) == 60.0
+                    eval_details["reasoning"] = e2
+                    await send({"log": f"    {'✓' if e2 else '✗'} reasoning (speed={obj.get('speed')})"})
 
-                        # Eval 3: arithmetic
-                        e3 = str(obj.get("arithmetic")) == "88"
-                        eval_details["arithmetic"] = e3
-                        await send({"log": f"    {'✓' if e3 else '✗'} arithmetic (got {obj.get('arithmetic')})"})
+                    # Eval 3: arithmetic
+                    e3 = str(obj.get("arithmetic")) == "88"
+                    eval_details["arithmetic"] = e3
+                    await send({"log": f"    {'✓' if e3 else '✗'} arithmetic (got {obj.get('arithmetic')})"})
 
-                        # Eval 4: tool selection
-                        e4 = obj.get("tool_a") == "search_web" and obj.get("tool_b") == "run_code"
-                        eval_details["tool_select"] = e4
-                        await send({"log": f"    {'✓' if e4 else '✗'} tool selection"})
+                    # Eval 4: tool selection
+                    e4 = obj.get("tool_a") == "search_web" and obj.get("tool_b") == "run_code"
+                    eval_details["tool_select"] = e4
+                    await send({"log": f"    {'✓' if e4 else '✗'} tool selection"})
 
-                        # Eval 5: multi-step reasoning
-                        e5 = str(obj.get("oranges")) == "120"
-                        eval_details["multi_step"] = e5
-                        await send({"log": f"    {'✓' if e5 else '✗'} multi-step (oranges={obj.get('oranges')})"})
+                    # Eval 5: multi-step reasoning
+                    e5 = str(obj.get("oranges")) == "120"
+                    eval_details["multi_step"] = e5
+                    await send({"log": f"    {'✓' if e5 else '✗'} multi-step (oranges={obj.get('oranges')})"})
 
-                        # Eval 6: JSON format (we got valid JSON = pass)
-                        e6 = True
-                        eval_details["json_format"] = e6
-                        await send({"log": f"    ✓ JSON format"})
+                    # Eval 6: JSON format (we got valid JSON = pass)
+                    e6 = True
+                    eval_details["json_format"] = e6
+                    await send({"log": f"    ✓ JSON format"})
 
-                        eval_score = sum([e1, e2, e3, e4, e5, e6])
+                    eval_score = sum([e1, e2, e3, e4, e5, e6])
 
-                    except (json.JSONDecodeError, Exception) as parse_err:
-                        await send({"log": f"    ✗ JSON parse failed: {str(parse_err)[:60]}"})
-                        await send({"log": f"    Response: {output_text[:200]}"})
-                        eval_score = 0
+                except (json.JSONDecodeError, Exception) as parse_err:
+                    await send({"log": f"    ✗ JSON parse failed: {str(parse_err)[:60]}"})
+                    await send({"log": f"    Response: {output_text[:200]}"})
+                    eval_score = 0
 
             except Exception as e:
                 await send({"log": f"  Chat eval failed: {str(e)[:80]}"})
