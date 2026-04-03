@@ -2908,9 +2908,9 @@
     </div>
 
     <!-- Inference Server Settings -->
-    <div x-data="{nParallel: 2, saving: false, saved: false}" x-init="
+    <div x-data="{nParallel: 1, saving: false, saved: false}" x-init="
       fetch('/api/services', {credentials:'include'}).then(r=>r.json()).then(d=>{
-        if(d.inference) nParallel = d.inference.n_parallel || 2;
+        if(d.inference) nParallel = d.inference.n_parallel || 1;
       }).catch(()=>{})
     ">
       <h3 class="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Inference Server</h3>
@@ -2919,12 +2919,10 @@
           <label class="text-gray-400 w-32 shrink-0">Parallel slots</label>
           <select x-model.number="nParallel"
             class="bg-gray-900 border border-gray-600 rounded px-2 py-1 text-xs text-white focus:outline-none focus:border-indigo-500">
-            <option value="1">1 (max context per request)</option>
-            <option value="2">2 (recommended for 1-2 users)</option>
-            <option value="3">3</option>
-            <option value="4">4 (LM Studio default)</option>
-            <option value="6">6</option>
-            <option value="8">8</option>
+            <option value="1">1 user — full context window</option>
+            <option value="2">2 users — half context each</option>
+            <option value="3">3 users — third context each</option>
+            <option value="4">4 users — quarter context each</option>
           </select>
           <button @click="saving=true; saved=false; fetch('/api/services/inference',{method:'POST',credentials:'include',headers:{'Content-Type':'application/json','X-CSRF-Token':getCsrfToken()},body:JSON.stringify({n_parallel:nParallel})}).then(r=>r.json()).then(d=>{saved=d.ok;saving=false;setTimeout(()=>saved=false,2000)}).catch(()=>{saving=false})"
             :disabled="saving"
@@ -2934,7 +2932,7 @@
             <span x-show="saved" class="text-green-400">Saved</span>
           </button>
         </div>
-        <p class="text-gray-600">How many requests the model server handles concurrently. Each slot gets <span class="text-gray-400 font-mono" x-text="'1/' + nParallel"></span> of the total context window. Fewer slots = more context per request. Takes effect on next model load.</p>
+        <p class="text-gray-600">Each concurrent user gets <span class="text-white font-mono" x-text="'1/' + nParallel"></span> of the model's context window. <span class="text-yellow-400" x-show="nParallel > 1">Adding users reduces context per conversation.</span> Takes effect on next model load.</p>
       </div>
     </div>
 

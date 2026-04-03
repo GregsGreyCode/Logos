@@ -1074,7 +1074,7 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
                     async with http.post(
                         f"{base_url}/api/v1/models/load",
                         headers=_auth_headers,
-                        json={"model": model_id, "context_length": 4096},
+                        json={"model": model_id, "context_length": 4096, "n_parallel": 1},
                         timeout=aiohttp.ClientTimeout(total=5),
                     ) as lr:
                         if lr.status == 200:
@@ -1381,7 +1381,7 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
                             async with http.post(
                                 f"{base_url}/api/v1/models/load",
                                 headers=_ctx_probe_headers,
-                                json={"model": model_id, "context_length": _ctx_probe},
+                                json={"model": model_id, "context_length": _ctx_probe, "n_parallel": 1},
                                 timeout=aiohttp.ClientTimeout(total=30),
                             ) as _cl:
                                 if _cl.status != 200:
