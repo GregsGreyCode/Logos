@@ -2732,9 +2732,9 @@ function setup() {
             const totalMatch = lower.match(/(\d+\.?\d*)b(?!-)/);  // "122b" = total params
             const activeB = moeMatch ? parseFloat(moeMatch[1]) : 0;
             const totalB = totalMatch ? parseFloat(totalMatch[1]) : 0;
-            // For MoE: use active params for memory estimate (that's what's loaded)
-            // For dense: use total params
-            const effectiveB = activeB > 0 ? activeB : totalB;
+            // MoE models still load ALL params into memory — active count only
+            // affects compute per token, not memory. Use total for size estimate.
+            const effectiveB = totalB || activeB;
             const displayB = totalB || activeB;  // show total for display
             const isMoE = activeB > 0 && totalB > activeB;
             // File size from server (Ollama provides this in bytes)
@@ -2742,14 +2742,14 @@ function setup() {
             // Estimate minimum RAM needed: file size + ~2GB overhead, or ~0.6GB per billion active params
             const estMinGB = fileSizeGB > 0 ? fileSizeGB + 2 : (effectiveB * 0.6 + 2);
             // Flag models that are likely too large (>80GB estimated)
-            const entry = { ...m, _serverEndpoint: s.endpoint, _serverType: s.type, _paramB: displayB, _activeB: activeB, _effectiveB: effectiveB, _isMoE: isMoE, _estMinGB: Math.round(estMinGB), _tooLarge: estMinGB > 80 };
+            const entry = { ...m, _serverEndpoint: s.endpoint, _serverType: s.type, _paramB: displayB, _activeB: activeB, _effectiveB: effectiveB, _isMoE: isMoE, _estMinGB: Math.round(estMinGB), _tooLarge: estMinGB > 60 };
             seen.add(m.id);
             out.push(entry);
           }
         }
       }
-      // Sort: smaller effective size first (more likely to fit and run fast)
-      out.sort((a, b) => (a._effectiveB || 999) - (b._effectiveB || 999));
+      // Sort: smaller models first (by estimated GB, most likely to fit and run fast)
+      out.sort((a, b) => (a._estMinGB || 999) - (b._estMinGB || 999));
       return out;
     },
 
