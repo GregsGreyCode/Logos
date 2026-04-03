@@ -417,18 +417,35 @@
   </div>
 
   <!-- ── World Tab ────────────────────────────────────────────────── -->
-  <div x-show="tab==='world'" x-cloak style="height:calc(100vh - 84px); position: relative;">
-    <div id="agent-world" style="width:100%; height:100%; border-radius:12px; overflow:hidden;"></div>
-    <!-- Empty state overlay -->
-    <div x-show="false"
-      class="absolute inset-0 flex items-center justify-center pointer-events-none">
-      <div class="text-center pointer-events-auto">
-        <div class="text-gray-600 text-sm mb-2">No agents running</div>
-        <button @click="tab='agents'; loadSouls()"
-          class="text-xs px-3 py-1.5 rounded-lg border border-indigo-700 bg-indigo-900/30 text-indigo-300 hover:bg-indigo-900/50 transition-colors">
-          Spawn an agent
+  <div x-show="tab==='world'" x-cloak style="height:calc(100vh - 84px);" class="flex gap-4">
+    <!-- World canvas — constrained, not fullscreen -->
+    <div class="flex-1 flex items-center justify-center" style="min-width:0;">
+      <div id="agent-world" style="width:100%; max-width:640px; height:100%; max-height:640px; border-radius:12px; overflow:hidden; border:1px solid rgba(255,255,255,0.05);"></div>
+    </div>
+    <!-- Agent list sidebar -->
+    <div class="w-64 shrink-0 space-y-2 overflow-y-auto py-2" style="max-height:calc(100vh - 84px);">
+      <div class="text-xs font-semibold text-gray-600 uppercase tracking-wider mb-2">Agents</div>
+      <template x-for="agent in _worldAgentList()" :key="agent.name">
+        <button @click="openInspector(agent.name)"
+          class="w-full text-left px-3 py-2 rounded-lg border border-gray-800 hover:border-gray-600 transition-colors bg-gray-900">
+          <div class="flex items-center gap-2">
+            <span class="w-2 h-2 rounded-full shrink-0"
+              :class="agent.status === 'running' ? 'bg-green-500' : 'bg-yellow-500 animate-pulse'"></span>
+            <span class="text-sm text-white font-medium truncate" x-text="agent.instance_name || agent.name"></span>
+          </div>
+          <div class="flex items-center gap-2 mt-1">
+            <span x-show="agent.soul?.name" class="text-[10px] font-mono text-indigo-400" x-text="agent.soul?.name"></span>
+            <span x-show="agent.instance_label" class="text-[10px] font-mono text-emerald-400" x-text="agent.instance_label"></span>
+            <span class="text-[10px] text-gray-600" x-text="agent.source === 'worker' ? 'worker' : agent.source"></span>
+          </div>
         </button>
-      </div>
+      </template>
+      <template x-if="_worldAgentList().length === 0">
+        <div class="text-xs text-gray-700 py-3 text-center">
+          No agents running.
+          <button @click="tab='agents'; loadSouls()" class="text-indigo-400 hover:underline block mt-1">Spawn one</button>
+        </div>
+      </template>
     </div>
   </div>
 
@@ -5240,7 +5257,9 @@ function app() {
         soul:         { name: w.soul, slug: w.soul },
         k8s_status:   w.healthy ? 'running' : 'starting',
       }));
-      this.chatAgents = [self, ...workers, ...k8s, ...local, ...this.manualAgents];
+      // Only show "self" if the primary agent isn't already in the workers list
+      const hasPrimaryWorker = workers.some(w => w.worker_id === 'hermes');
+      this.chatAgents = [...(hasPrimaryWorker ? [] : [self]), ...workers, ...k8s, ...local, ...this.manualAgents];
     },
 
     switchInstance(id) {
