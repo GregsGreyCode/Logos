@@ -470,10 +470,10 @@
                 ? (inst.soul.name + (inst.model_alias ? ' \u00b7 ' + inst.model_alias + (inst.machine_name ? ' \u2192 ' + inst.machine_name : '') : ''))
                 : inst.url || ''"
             @click="switchInstance(inst.id)">
-            <!-- Core badge for the always-on base instance -->
-            <span x-show="inst.id === 'self'"
-              class="text-[10px] font-bold tracking-wider uppercase px-1 py-0.5 rounded bg-indigo-900 text-indigo-300 mr-0.5">Gateway</span>
-            <span x-text="inst.id === 'self' ? 'Hermes' : inst.name"></span>
+            <!-- Agent/worker badge -->
+            <span x-show="inst.id === 'self' || inst.source === 'worker'"
+              class="text-[10px] font-bold tracking-wider uppercase px-1 py-0.5 rounded bg-emerald-900 text-emerald-300 mr-0.5">Agent</span>
+            <span x-text="inst.name"></span>
             <!-- Status dot -->
             <span x-show="activeInstanceId === inst.id && inst.k8s_status !== 'stopped'"
               class="w-1.5 h-1.5 bg-green-400 rounded-full ml-0.5 shrink-0"></span>
@@ -580,7 +580,7 @@
 
             <!-- Row 1: Core badge + name + status dot (after name, like chips) + chat ID + canary -->
             <div class="flex items-center gap-2 pb-1.5">
-              <span class="text-[10px] font-bold tracking-wider uppercase px-1 py-0.5 rounded bg-indigo-900 text-indigo-300 shrink-0">Gateway</span>
+              <span class="text-[10px] font-bold tracking-wider uppercase px-1 py-0.5 rounded bg-emerald-900 text-emerald-300 shrink-0">Agent</span>
               <span class="font-semibold text-white" x-text="status.instance_name || 'Hermes'"></span>
               <span class="w-2 h-2 rounded-full shrink-0"
                 :class="chatLoading ? 'bg-indigo-500 animate-pulse icon-hue' : agentAlive === false ? 'bg-red-500' : agentAlive === null ? 'bg-gray-600 animate-pulse' : 'bg-green-500'"
@@ -2112,7 +2112,7 @@
       </div>
       <div class="space-y-1.5">
 
-        <!-- Core gateway — always shown -->
+        <!-- Primary agent -->
         <div class="px-3 py-2.5 rounded-lg bg-gray-900 border transition-colors"
           :class="agentAlive === false ? 'border-red-900/50' : 'border-gray-800'"
           x-data="{ changingModel: false, modelDraft: '', modelSaving: false, modelErr: '' }">
@@ -2121,20 +2121,8 @@
               :class="agentAlive === false ? 'bg-red-500' : agentAlive === null ? 'bg-gray-500 animate-pulse' : 'bg-green-500'"></span>
             <div class="min-w-0 flex-1">
               <div class="flex items-center gap-1.5 flex-wrap">
+                <span class="text-xs px-1.5 py-0.5 rounded font-mono bg-emerald-950 text-emerald-300 border border-emerald-900">agent</span>
                 <span class="text-sm font-medium text-white" x-text="status.instance_name || 'Hermes'"></span>
-                <span class="text-xs px-1.5 py-0.5 rounded font-mono bg-indigo-950 text-indigo-300 border border-indigo-900">gateway</span>
-              </div>
-              <div class="flex items-center gap-2 mt-0.5 text-xs text-gray-700 font-mono flex-wrap">
-                <span x-text="status.uptime_s > 0 ? 'up ' + fmtUptime(status.uptime_s) : 'starting'"></span>
-                <template x-if="(status.active_sessions||[]).length > 0">
-                  <span><span class="text-gray-800">·</span><span class="text-indigo-500" x-text="(status.active_sessions||[]).length + ' active'"></span></span>
-                </template>
-                <template x-if="status.cpu_percent != null">
-                  <span><span class="text-gray-800">·</span><span :class="status.cpu_percent > 80 ? 'text-orange-500' : 'text-gray-600'" x-text="status.cpu_percent + '% CPU'"></span></span>
-                </template>
-                <template x-if="status.mem_mb != null">
-                  <span><span class="text-gray-800">·</span><span :class="status.mem_mb > 2048 ? 'text-orange-500' : 'text-gray-600'" x-text="status.mem_mb >= 1024 ? (status.mem_mb/1024).toFixed(1)+'GB' : status.mem_mb+'MB'"></span></span>
-                </template>
               </div>
               <!-- Current model + change inline -->
               <div x-show="status.current_model" class="mt-1 flex items-center gap-1.5 flex-wrap">
@@ -2162,10 +2150,14 @@
                 </template>
               </div>
             </div>
-            <button @click="switchInstance('self'); tab='sessions'"
-              class="text-xs px-2.5 py-1 rounded-lg bg-[var(--accent)] hover:opacity-90 text-white font-medium transition-colors shrink-0">
-              Chat →
-            </button>
+            <div class="flex items-center gap-1.5 shrink-0">
+              <button @click="openInspector('hermes')"
+                class="text-xs px-2 py-1 rounded border border-gray-800 text-gray-600 hover:border-emerald-700 hover:text-emerald-400 transition-colors font-mono">inspect</button>
+              <button @click="switchInstance('self'); tab='sessions'"
+                class="text-xs px-2.5 py-1 rounded-lg bg-[var(--accent)] hover:opacity-90 text-white font-medium transition-colors">
+                Chat →
+              </button>
+            </div>
           </div>
         </div>
 
