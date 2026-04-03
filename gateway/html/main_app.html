@@ -5210,10 +5210,20 @@ function app() {
     },
 
     switchInstance(id) {
+      // Save current chats before switching
+      this._saveChats();
       this.activeInstanceId = id;
       this.agentAlive = null;
       this.status = { uptime_s: 0, instance_name: 'Hermes', active_sessions: [] };
       this.canary = { active: false };
+      // Load chats scoped to the new instance
+      this.chats = this._loadChats();
+      if (this.chats.length === 0) {
+        this.newChat();
+      } else {
+        this.activeChatId = this.chats[0].id;
+      }
+      this.$nextTick(() => this._scrollChat());
       this.loadStatus();
       this.loadCanary();
     },
@@ -5240,9 +5250,25 @@ function app() {
 
     // ── Chat persistence ──────────────────────────────────────────
 
+    _chatStorageKey() {
+      // Scope chats per-instance so each agent has its own conversation history
+      const id = this.activeInstanceId || 'self';
+      return 'hermes_chats_' + id;
+    },
+
     _loadChats() {
       try {
-        const stored = JSON.parse(localStorage.getItem('hermes_chats') || '[]');
+        // Try instance-scoped key first, fall back to legacy global key
+        const key = this._chatStorageKey();
+        let stored = JSON.parse(localStorage.getItem(key) || 'null');
+        if (!stored && key !== 'hermes_chats_self') {
+          // No instance-scoped chats yet — don't inherit from another instance
+          return [];
+        }
+        if (!stored) {
+          // Self instance: migrate from legacy key if it exists
+          stored = JSON.parse(localStorage.getItem('hermes_chats') || '[]');
+        }
         return Array.isArray(stored) ? stored : [];
       } catch(_) { return []; }
     },
@@ -5251,7 +5277,7 @@ function app() {
       try {
         // Exclude platform sessions (injected from server, not owned by web)
         const toSave = this.chats.filter(c => !c._platform);
-        localStorage.setItem('hermes_chats', JSON.stringify(toSave));
+        localStorage.setItem(this._chatStorageKey(), JSON.stringify(toSave));
       } catch(_) {}
     },
 

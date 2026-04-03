@@ -58,6 +58,17 @@ class KubernetesExecutor:
             " \u00b7 " + config.model if config.model and config.model != "balanced" else ""
         )
 
+        # ── Early-exit if Deployment already exists ───────────────────────────
+        # Check BEFORE creating any resources to avoid wasted PVC/Service creation.
+        try:
+            apps.read_namespaced_deployment(dep_name, HERMES_NAMESPACE)
+            return SpawnedInstance(
+                name=dep_name, url="", port=0, source="k8s",
+                soul_name=soul.slug, model=config.model, requester=config.requester,
+            )
+        except Exception:
+            pass
+
         # ── PVC ───────────────────────────────────────────────────────────────
         pvc_name = f"{dep_name}-pvc"
         try:
@@ -99,16 +110,6 @@ class KubernetesExecutor:
                     },
                 },
             )
-
-        # ── Early-exit if Deployment already exists ───────────────────────────
-        try:
-            apps.read_namespaced_deployment(dep_name, HERMES_NAMESPACE)
-            return SpawnedInstance(
-                name=dep_name, url="", port=0, source="k8s",
-                soul_name=soul.slug, model=config.model, requester=config.requester,
-            )
-        except Exception:
-            pass
 
         # ── Soul snapshot ConfigMap ───────────────────────────────────────────
         snap_name = f"{dep_name}-soul-snap"
