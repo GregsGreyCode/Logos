@@ -894,10 +894,10 @@
                           <!-- Size estimate + not tested -->
                           <template x-if="!compareTesting[mid] && !compareResults[mid]">
                             <div class="flex items-center gap-2">
-                              <span x-show="getModels().find(m => m.id === mid)?._paramB"
+                              <span x-show="getModels().find(m => m.id === mid)?._paramB || getModels().find(m => m.id === mid)?._activeB"
                                 class="text-[10px] font-mono"
                                 :class="getModels().find(m => m.id === mid)?._tooLarge ? 'text-red-500' : 'text-gray-600'"
-                                x-text="(getModels().find(m => m.id === mid)?._paramB || '?') + 'B · ~' + (getModels().find(m => m.id === mid)?._estMinGB || '?') + 'GB'"></span>
+                                x-text="(() => { const mm = getModels().find(m => m.id === mid); if (!mm) return ''; let s = mm._isMoE ? mm._paramB + 'B ('+mm._activeB+'B active)' : (mm._paramB || '?') + 'B'; return s + ' · ~' + (mm._estMinGB || '?') + 'GB'; })()"></span>
                               <span x-show="getModels().find(m => m.id === mid)?._tooLarge"
                                 class="text-[9px] text-red-500">may not fit</span>
                             </div>
@@ -2727,24 +2727,29 @@ function setup() {
           const isEmbed = embedKeywords.some(kw => lower.includes(kw));
           if (!seen.has(m.id) && !isEmbed) {
             // Estimate if model fits in system memory
-            // Parse param count from name (e.g. "70b", "122b", "3b")
-            const paramMatch = lower.match(/(\d+\.?\d*)b/);
-            const paramB = paramMatch ? parseFloat(paramMatch[1]) : 0;
+            // Parse param count — prefer active params for MoE models (e.g. "122b-a10b" → 10B active)
+            const moeMatch = lower.match(/a(\d+\.?\d*)b/);  // "a10b" = 10B active experts
+            const totalMatch = lower.match(/(\d+\.?\d*)b(?!-)/);  // "122b" = total params
+            const activeB = moeMatch ? parseFloat(moeMatch[1]) : 0;
+            const totalB = totalMatch ? parseFloat(totalMatch[1]) : 0;
+            // For MoE: use active params for memory estimate (that's what's loaded)
+            // For dense: use total params
+            const effectiveB = activeB > 0 ? activeB : totalB;
+            const displayB = totalB || activeB;  // show total for display
+            const isMoE = activeB > 0 && totalB > activeB;
             // File size from server (Ollama provides this in bytes)
             const fileSizeGB = (m.size || 0) / 1e9;
-            // Estimate minimum RAM needed: file size + ~2GB overhead, or ~0.6GB per billion params
-            const estMinGB = fileSizeGB > 0 ? fileSizeGB + 2 : (paramB * 0.6 + 2);
+            // Estimate minimum RAM needed: file size + ~2GB overhead, or ~0.6GB per billion active params
+            const estMinGB = fileSizeGB > 0 ? fileSizeGB + 2 : (effectiveB * 0.6 + 2);
             // Flag models that are likely too large (>80GB estimated)
-            // We don't have runtime memory info, so use a generous 80GB threshold
-            // that covers most homelab setups. Models flagged can still be tested.
-            const entry = { ...m, _serverEndpoint: s.endpoint, _serverType: s.type, _paramB: paramB, _estMinGB: Math.round(estMinGB), _tooLarge: estMinGB > 80 };
+            const entry = { ...m, _serverEndpoint: s.endpoint, _serverType: s.type, _paramB: displayB, _activeB: activeB, _effectiveB: effectiveB, _isMoE: isMoE, _estMinGB: Math.round(estMinGB), _tooLarge: estMinGB > 80 };
             seen.add(m.id);
             out.push(entry);
           }
         }
       }
-      // Sort: smaller models first (more likely to fit and run fast)
-      out.sort((a, b) => (a._paramB || 999) - (b._paramB || 999));
+      // Sort: smaller effective size first (more likely to fit and run fast)
+      out.sort((a, b) => (a._effectiveB || 999) - (b._effectiveB || 999));
       return out;
     },
 
