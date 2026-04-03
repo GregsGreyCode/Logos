@@ -305,6 +305,20 @@ DEFAULT_CONFIG = {
         "provider": "",    # e.g. "openrouter" (empty = inherit parent provider + credentials)
     },
 
+    # Per-agent knowledge base (RAG) — semantic search over ingested documents.
+    # Embeddings are generated via an OpenAI-compatible endpoint (Ollama default).
+    # Search uses in-process numpy cosine similarity, no external vector DB.
+    "knowledge": {
+        "embedding_model": "nomic-embed-text",   # Ollama model for embeddings
+        "embedding_endpoint": None,               # None = http://localhost:11434/v1
+        "embedding_api_key": None,                # None = "not-needed" (local Ollama)
+        "chunk_size": 512,                        # characters per chunk
+        "chunk_overlap": 64,                      # overlap between chunks
+        "max_chunks": 10_000,                     # per-agent capacity (~5M chars)
+        "auto_ingest_sessions": False,            # save session transcripts to knowledge base on expiry
+        "auto_ingest_min_messages": 8,            # minimum messages to consider a session worth ingesting
+    },
+
     # Ephemeral prefill messages file — JSON list of {role, content} dicts
     # injected at the start of every API call for few-shot priming.
     # Never saved to sessions, logs, or trajectories.

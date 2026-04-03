@@ -108,9 +108,14 @@ def parse_mem(s: str) -> int:
     return int(s)
 
 
-def safe_k8s_name(requester: str) -> str:
-    """Convert a requester string to a valid k8s Deployment name."""
-    name = re.sub(r"[^a-z0-9]+", "-", requester.lower()).strip("-")
+def safe_k8s_name(requester: str, label: str = "") -> str:
+    """Convert a requester string (and optional instance label) to a valid k8s name.
+
+    When *label* is provided the result is ``hermes-{requester}-{label}``
+    (sanitised, max 52 chars).  This allows multiple instances per user.
+    """
+    raw = f"{requester}-{label}" if label else requester
+    name = re.sub(r"[^a-z0-9]+", "-", raw.lower()).strip("-")
     return f"hermes-{name}"[:52]  # k8s name limit is 63 chars
 
 

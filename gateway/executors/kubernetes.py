@@ -40,7 +40,7 @@ class KubernetesExecutor:
     def spawn(self, config: InstanceConfig) -> SpawnedInstance:
         """Create Deployment + Service + PVC + soul ConfigMap for a new agent instance."""
         core, apps = k8s_clients()
-        dep_name = safe_k8s_name(config.requester)
+        dep_name = config.name  # already sanitised by the API layer via safe_k8s_name()
         tool_overrides = config.tool_overrides or {}
 
         # ── Soul resolution ───────────────────────────────────────────────────

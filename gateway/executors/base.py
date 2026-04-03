@@ -18,6 +18,7 @@ class InstanceConfig:
     soul_name: str = "default"
     model: str = ""
     requester: str = ""
+    instance_label: str = ""        # user-chosen label (e.g. "researcher")
     port: int = 0                   # 0 = allocate automatically
     toolsets: List[str] = field(default_factory=list)
     policy: str = ""                # policy level passed to child (e.g. WORKSPACE_ONLY)

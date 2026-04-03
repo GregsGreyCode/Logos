@@ -115,8 +115,16 @@ class LocalProcessExecutor:
         workspace = _HERMES_HOME / "workspaces" / config.name
         workspace.mkdir(parents=True, exist_ok=True)
 
+        # Each agent gets its own HERMES_HOME so memories, notes, and config
+        # are isolated.  The shared user profile lives in _HERMES_HOME/shared/.
+        instance_home = _HERMES_HOME / "instances" / config.name
+        (instance_home / "memories").mkdir(parents=True, exist_ok=True)
+
         env = {**os.environ, "HERMES_INSTANCE_NAME": config.name, "HERMES_PORT": str(port)}
-        env["HERMES_HOME"] = str(_HERMES_HOME)
+        env["HERMES_HOME"] = str(instance_home)
+        shared_home = _HERMES_HOME / "shared"
+        shared_home.mkdir(parents=True, exist_ok=True)
+        env["HERMES_SHARED_HOME"] = str(shared_home)
         env["TERMINAL_CWD"] = str(workspace)   # agent's working directory
         if config.soul_name and config.soul_name != "default":
             env["HERMES_SOUL"] = config.soul_name
@@ -159,6 +167,7 @@ class LocalProcessExecutor:
             "soul_name": config.soul_name,
             "model": config.model,
             "requester": config.requester,
+            "instance_label": config.instance_label,
             "toolsets": config.toolsets or [],
             "policy": config.policy or "",
             "workspace": str(workspace),
