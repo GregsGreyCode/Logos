@@ -119,7 +119,7 @@
 
   <!-- Main content -->
   <main class="setup-content flex-1 flex items-start justify-center px-4 pt-6 pb-16">
-    <div class="w-full" :style="'max-width:' + ((step===0 && setupMode === 'new' && !introConfirmed) ? '58rem' : '34rem') + '; transition:max-width 0.4s cubic-bezier(0.4,0,0.2,1)'">
+    <div class="w-full" :style="'max-width:' + ((step===0 && setupMode === 'new' && !introConfirmed) ? '58rem' : step===2 ? '44rem' : '34rem') + '; transition:max-width 0.4s cubic-bezier(0.4,0,0.2,1)'">
     <!-- Step content — opacity controlled by stepFading for a clean fade-out/fade-in between steps -->
     <div :style="{opacity: stepFading ? 0 : 1, transition: 'opacity 0.18s ease'}" style="will-change:opacity">
 
@@ -998,14 +998,14 @@
                                   x-text="compareExpanded === mid ? '\u25b4' : '\u25be'"></span>
                               </div>
                             </template>
-                            <!-- Test button — shown when model hasn't been tested yet -->
-                            <button x-show="!compareResults[mid] && !compareTesting[mid]"
+                            <!-- Test button — shown when model hasn't been tested yet; hidden during bulk benchmark on this server -->
+                            <button x-show="!compareResults[mid] && !compareTesting[mid] && !compareRunning"
                               @click.stop="testSingleModel(mid)"
                               class="text-[10px] px-2 py-0.5 rounded border border-indigo-700 text-indigo-400 hover:text-indigo-300 hover:border-indigo-500 transition-colors">
                               Test
                             </button>
-                            <!-- Re-test button — shown once initial result is in -->
-                            <button x-show="compareResults[mid]"
+                            <!-- Re-test button — shown once initial result is in; hidden during bulk benchmark -->
+                            <button x-show="compareResults[mid] && !compareRunning"
                               @click.stop="retryModel(mid)"
                               :disabled="compareTesting[mid]"
                               :class="compareTesting[mid] ? 'text-gray-800 cursor-default' : 'text-gray-700 hover:text-gray-400 cursor-pointer'"
