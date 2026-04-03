@@ -585,8 +585,69 @@ class GatewayRunner:
                     tmp_agent._honcho.shutdown()
                 except Exception:
                     pass
+
+            # ── Auto-ingest session transcript into knowledge base ────
+            self._auto_ingest_session(old_session_id, msgs)
+
         except Exception as e:
             logger.debug("Pre-reset memory flush failed for session %s: %s", old_session_id, e)
+
+    def _auto_ingest_session(self, session_id: str, msgs: list):
+        """Optionally ingest the session transcript into the knowledge base.
+
+        Gated by knowledge.auto_ingest_sessions config flag.  Extracts
+        assistant responses (the substantive content) and ingests them as a
+        single knowledge source named after the session.
+        """
+        try:
+            from logos_cli.config import load_config
+            cfg = load_config().get("knowledge", {})
+        except Exception:
+            return
+
+        if not cfg.get("auto_ingest_sessions", False):
+            return
+
+        min_messages = cfg.get("auto_ingest_min_messages", 8)
+        if len(msgs) < min_messages:
+            return
+
+        # Extract assistant turns — these contain the substantive analysis,
+        # explanations, code reviews, research findings etc.
+        parts = []
+        for m in msgs:
+            if m.get("role") == "assistant" and m.get("content"):
+                content = m["content"].strip()
+                if len(content) > 50:  # skip trivial responses
+                    parts.append(content)
+
+        if not parts:
+            return
+
+        transcript_text = "\n\n---\n\n".join(parts)
+        source_name = f"session-{session_id[:12]}"
+
+        try:
+            from tools.knowledge_store import KnowledgeStore
+            store = KnowledgeStore(
+                knowledge_dir=_hermes_home / "knowledge",
+                embedding_model=cfg.get("embedding_model", "nomic-embed-text"),
+                embedding_endpoint=cfg.get("embedding_endpoint"),
+                embedding_api_key=cfg.get("embedding_api_key"),
+                chunk_size=cfg.get("chunk_size", 512),
+                chunk_overlap=cfg.get("chunk_overlap", 64),
+                max_chunks=cfg.get("max_chunks", 10_000),
+            )
+            result = store.ingest(transcript_text, source_name=source_name, source_type="session")
+            if result.get("success"):
+                logger.info(
+                    "Auto-ingested session %s into knowledge base (%d chunks)",
+                    session_id[:12], result.get("chunk_count", 0),
+                )
+            else:
+                logger.debug("Auto-ingest skipped for session %s: %s", session_id[:12], result.get("error"))
+        except Exception as exc:
+            logger.debug("Auto-ingest failed for session %s: %s", session_id[:12], exc)
 
     async def _async_flush_memories(self, old_session_id: str):
         """Run the sync memory flush in a thread pool so it won't block the event loop."""
