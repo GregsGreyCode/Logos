@@ -2438,6 +2438,10 @@ async def start_http_api(runner: Any, port: int = 8080) -> None:
         _static_dir = _pathlib.Path(__file__).parent.parent / "assets"
     if _static_dir.exists():
         app.router.add_static("/static", str(_static_dir), show_index=False)
+    # Agent World JS modules
+    _world_dir = _pathlib.Path(__file__).parent / "world"
+    if _world_dir.exists():
+        app.router.add_static("/world", str(_world_dir), show_index=False)
 
     app_runner = web.AppRunner(app)
     await app_runner.setup()
