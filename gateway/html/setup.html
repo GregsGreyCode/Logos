@@ -2612,9 +2612,13 @@ function setup() {
     getModels() {
       const seen = new Set();
       const out = [];
+      // Embedding-only models can't do chat completions — exclude from benchmarks
+      const embedKeywords = ['embed', 'bge-', 'e5-', 'gte-'];
       for (const s of this.selectedServers) {
         for (const m of (s.models || [])) {
-          if (!seen.has(m.id)) { seen.add(m.id); out.push({ ...m, _serverEndpoint: s.endpoint, _serverType: s.type }); }
+          const lower = (m.id || m.name || '').toLowerCase();
+          const isEmbed = embedKeywords.some(kw => lower.includes(kw));
+          if (!seen.has(m.id) && !isEmbed) { seen.add(m.id); out.push({ ...m, _serverEndpoint: s.endpoint, _serverType: s.type }); }
         }
       }
       return out;
