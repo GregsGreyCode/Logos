@@ -4619,7 +4619,68 @@ class GatewayRunner:
             
             result = agent.run_conversation(message, conversation_history=agent_history, task_id=session_id)
             result_holder[0] = result
-            
+
+            # ── Auto-upscale context on context errors ────────────────────
+            # If the agent failed due to context length, and we're below the
+            # model's native max, reload at a higher context and retry once.
+            _err = result.get("error", "")
+            _ctx_error_phrases = [
+                "context length exceeded", "cannot compress further",
+                "context size", "maximum context", "too many tokens",
+                "payload too large", "prompt is too long",
+            ]
+            if _err and any(p in _err.lower() for p in _ctx_error_phrases):
+                _current_ctx = getattr(agent.context_compressor, "context_length", 0) if hasattr(agent, "context_compressor") else 0
+                # Fetch model's native max context via sync HTTP
+                _model_max = 0
+                try:
+                    import requests as _req
+                    _retry_base = os.environ.get("OPENAI_BASE_URL", "").replace("/v1", "")
+                    _retry_key = os.environ.get("OPENAI_API_KEY", "not-needed")
+                    _retry_headers = {"Authorization": f"Bearer {_retry_key}"} if _retry_key and _retry_key != "not-needed" else {}
+                    _rr = _req.get(f"{_retry_base}/api/v1/models", headers=_retry_headers, timeout=5)
+                    if _rr.status_code == 200:
+                        for _rm in _rr.json().get("models", []):
+                            if model and _rm.get("key", "").lower() == model.lower():
+                                _model_max = _rm.get("max_context_length", 0)
+                                break
+                except Exception:
+                    pass
+
+                _upscale_target = min(_model_max, 131072) if _model_max else 0
+                if _upscale_target and _upscale_target > _current_ctx * 1.5:
+                    logger.info(
+                        "Context error at %d tokens — reloading model at %d (native max: %d)",
+                        _current_ctx, _upscale_target, _model_max,
+                    )
+                    try:
+                        _rl = _req.post(
+                            f"{_retry_base}/api/v1/models/load",
+                            headers=_retry_headers,
+                            json={"model": model, "context_length": _upscale_target, "flash_attention": True},
+                            timeout=120,
+                        )
+                        if _rl.status_code == 200:
+                            logger.info("Model reloaded at %d context — retrying agent", _upscale_target)
+                            agent2 = AIAgent(
+                                model=model,
+                                **runtime_kwargs,
+                                max_iterations=max_iterations,
+                                quiet_mode=True,
+                                verbose_logging=False,
+                                enabled_toolsets=_effective_toolsets,
+                                ephemeral_system_prompt=combined_ephemeral or None,
+                                reasoning_config=reasoning_config,
+                                session_id=session_id,
+                                platform=platform_key,
+                                fallback_model=self._fallback_model,
+                            )
+                            agent_holder[0] = agent2
+                            result = agent2.run_conversation(message, conversation_history=agent_history, task_id=session_id)
+                            result_holder[0] = result
+                    except Exception as _reload_exc:
+                        logger.warning("Context upscale reload failed: %s", _reload_exc)
+
             # Return final response, or a message if something went wrong
             final_response = result.get("final_response")
 
