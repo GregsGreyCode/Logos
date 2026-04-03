@@ -443,13 +443,85 @@ async def _handle_toolsets(request: web.Request) -> web.Response:
                 meta["tools"] = reg_entry.get("tools", meta.get("tools", []))
         except Exception:
             pass
+        # Include which toolsets are currently enabled in config
+        try:
+            from logos_cli.config import load_config
+            cfg = load_config()
+            enabled = cfg.get("toolsets", ["hermes-cli"])
+            # Resolve the enabled toolset(s) to individual toolset names
+            from core.toolsets import resolve_toolset
+            enabled_tools = set()
+            for ts_name in (enabled if isinstance(enabled, list) else [enabled]):
+                try:
+                    enabled_tools.update(resolve_toolset(ts_name))
+                except Exception:
+                    pass
+        except Exception:
+            enabled = ["hermes-cli"]
+            enabled_tools = set()
         return web.json_response({
             "available": sorted(available_ts),
             "toolsets": ts_meta,
             "unavailable": unavailable_info,
+            "enabled_toolsets": enabled if isinstance(enabled, list) else [enabled],
+            "enabled_tools": sorted(enabled_tools),
         })
     except Exception as e:
         return web.json_response({"error": str(e)}, status=500)
+
+
+@require_csrf
+async def _handle_toolsets_toggle(request: web.Request) -> web.Response:
+    """POST /api/toolsets/toggle — enable or disable a toolset in the active config.
+
+    Body: { "toolset": "knowledge", "enabled": true }
+
+    Updates the config.yaml toolsets list. The change takes effect on the next
+    agent session (existing sessions keep their current toolset).
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "invalid_json"}, status=400)
+
+    toolset_name = (body.get("toolset") or "").strip()
+    enabled = body.get("enabled", True)
+
+    if not toolset_name:
+        return web.json_response({"error": "toolset is required"}, status=400)
+
+    import yaml as _yaml
+    _home = pathlib.Path(
+        os.environ.get("LOGOS_HOME")
+        or os.environ.get("HERMES_HOME")
+        or str(pathlib.Path.home() / ".logos")
+    )
+    _config_path = _home / "config.yaml"
+
+    try:
+        _cfg: dict = {}
+        if _config_path.exists():
+            with open(_config_path, encoding="utf-8") as _f:
+                _cfg = _yaml.safe_load(_f) or {}
+
+        current = _cfg.get("toolsets", ["hermes-cli"])
+        if not isinstance(current, list):
+            current = [current]
+
+        if enabled and toolset_name not in current:
+            current.append(toolset_name)
+        elif not enabled and toolset_name in current:
+            current.remove(toolset_name)
+
+        _cfg["toolsets"] = current
+
+        with open(_config_path, "w", encoding="utf-8") as _f:
+            _yaml.dump(_cfg, _f, default_flow_style=False, sort_keys=False)
+
+    except Exception as exc:
+        return web.json_response({"error": str(exc)}, status=500)
+
+    return web.json_response({"ok": True, "toolsets": current})
 
 
 async def _handle_canary_status(request: web.Request) -> web.Response:
@@ -631,9 +703,13 @@ async def _handle_instances_get(request: web.Request) -> web.Response:
         for i in inst:
             slug = i.get("soul_name", "")
             soul_obj = registry.get(slug)
-            normalized.append({
+            _label = i.get("instance_label", "")
+        _req = i.get("requester") or i.get("name", "")
+        normalized.append({
                 "name":          i.get("name", ""),
-                "instance_name": f"Hermes for {i.get('requester') or i.get('name', '')}",
+                "instance_name": f"{_req} · {_label}" if _label else f"Hermes for {_req}",
+                "requester":     _req,
+                "instance_label": _label,
                 "soul":          {"name": soul_obj.name, "slug": slug, "status": soul_obj.status}
                                  if soul_obj else {"name": slug or "default", "slug": slug, "status": "stable"},
                 "model_alias":   i.get("model", ""),
@@ -674,6 +750,18 @@ async def _handle_instances_post(request: web.Request) -> web.Response:
     tool_overrides = body.get("tool_overrides") or {}
     model_alias = (body.get("model_alias") or "balanced").strip()
     machine_id_override = body.get("machine_id") or None
+    instance_label = (body.get("instance_label") or "").strip()
+
+    # Validate instance_label: lowercase alphanumeric + hyphens, max 32 chars
+    if instance_label:
+        import re as _re
+        sanitised = _re.sub(r"[^a-z0-9-]", "", instance_label.lower())
+        if sanitised != instance_label or len(instance_label) > 32:
+            return web.json_response(
+                {"error": "invalid_label",
+                 "message": "Instance label must be lowercase alphanumeric with hyphens, max 32 chars"},
+                status=400,
+            )
 
     # Validate soul and overrides before checking resources
     registry = _get_soul_registry()
@@ -758,17 +846,33 @@ async def _handle_instances_post(request: web.Request) -> web.Response:
         headroom_reason = f"executor unavailable: {e}"
 
     if not can_spawn_now:
-        _instance_queue.append({"requester": requester, "soul_slug": soul_slug, "reason": headroom_reason, "requested_at": time.time()})
+        _instance_queue.append({"requester": requester, "soul_slug": soul_slug, "instance_label": instance_label or soul_slug, "reason": headroom_reason, "requested_at": time.time()})
         logger.info("Instance request queued for %s: %s", requester, headroom_reason)
         return web.json_response({"status": "queued", "requester": requester, "reason": headroom_reason})
 
+    # Per-user instance limit
+    max_instances = 5
+    try:
+        existing = await loop.run_in_executor(None, executor.list_instances)
+        user_instances = [i for i in existing if (i.get("requester") or "").lower() == requester.lower()]
+        if len(user_instances) >= max_instances:
+            return web.json_response({
+                "error": "instance_limit",
+                "message": f"You already have {len(user_instances)} instances (limit: {max_instances}). Delete one before spawning another.",
+            }, status=400)
+    except Exception:
+        pass  # don't block spawn if list_instances fails
+
     try:
         from gateway.executors.base import InstanceConfig as _IC
+        # Default label to soul slug so each soul gets a distinct instance
+        effective_label = instance_label or soul_slug
         _ic = _IC(
-            name=_safe_k8s_name(requester),
+            name=_safe_k8s_name(requester, effective_label),
             soul_name=soul_slug,
             model=model_alias,
             requester=requester,
+            instance_label=effective_label,
             tool_overrides=tool_overrides or {},
             machine_endpoint=resolved_endpoint,
             machine_name=resolved_machine_name,
@@ -783,12 +887,16 @@ async def _handle_instances_post(request: web.Request) -> web.Response:
                 "instance_name": f"Hermes for {requester}",
             }
         else:
+            is_exists = spawned.url == "" and not spawned.healthy
             result = {
-                "status": "exists" if spawned.url == "" and not spawned.healthy else "created",
+                "status": "exists" if is_exists else "created",
                 "name": spawned.name,
                 "instance_name": spawned.soul_name,
+                "instance_label": effective_label,
                 "soul": {"slug": spawned.soul_name, "name": spawned.soul_name},
             }
+            if is_exists:
+                result["message"] = f"An instance named '{effective_label}' already exists for {requester}. Choose a different name or delete the existing one."
     except Exception as e:
         logger.exception("Failed to spawn instance for %s", requester)
         return web.json_response({"error": "spawn_failed", "message": str(e)}, status=500)
@@ -822,7 +930,7 @@ async def _handle_instances_post(request: web.Request) -> web.Response:
     await asyncio.sleep(1)
     try:
         instances = await loop.run_in_executor(None, executor.list_instances)
-        dep_name = _safe_k8s_name(requester)
+        dep_name = _ic.name
         match = next((i for i in instances if i["name"] == dep_name), {})
         result["node_port"] = match.get("node_port")
         result["instance_name"] = match.get("instance_name", f"Hermes for {requester}")
@@ -851,6 +959,227 @@ async def _handle_instances_delete(request: web.Request) -> web.Response:
         ip_address=request.remote,
     )
     return web.json_response({"status": "deleted", "name": name})
+
+
+# ── Instance management API (memory, knowledge, config) ─────────────────────
+
+def _instance_home(name: str) -> Path:
+    """Resolve the HERMES_HOME directory for a named instance."""
+    return _hermes_home / "instances" / name
+
+
+@require_permission("view_instances")
+async def _handle_instance_memory_get(request: web.Request) -> web.Response:
+    """GET /instances/{name}/memory — read all memory files for an instance."""
+    name = request.match_info["name"]
+    home = _instance_home(name)
+    memories_dir = home / "memories"
+    shared_dir = _hermes_home / "shared"
+
+    def _read_safe(path: Path) -> str:
+        try:
+            return path.read_text(encoding="utf-8") if path.exists() else ""
+        except Exception:
+            return ""
+
+    return web.json_response({
+        "instance": name,
+        "memory": _read_safe(memories_dir / "MEMORY.md"),
+        "user_profile": _read_safe(shared_dir / "USER.md"),
+        "bug_notes": _read_safe(home / "bug_notes.md"),
+    })
+
+
+@require_permission("view_instances")
+@require_csrf
+async def _handle_instance_memory_put(request: web.Request) -> web.Response:
+    """PUT /instances/{name}/memory — update a memory target for an instance."""
+    name = request.match_info["name"]
+    home = _instance_home(name)
+    memories_dir = home / "memories"
+    shared_dir = _hermes_home / "shared"
+
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "invalid_json"}, status=400)
+
+    target = body.get("target", "")
+    content = body.get("content", "")
+
+    if target == "memory":
+        memories_dir.mkdir(parents=True, exist_ok=True)
+        (memories_dir / "MEMORY.md").write_text(content, encoding="utf-8")
+    elif target == "user_profile":
+        shared_dir.mkdir(parents=True, exist_ok=True)
+        (shared_dir / "USER.md").write_text(content, encoding="utf-8")
+    elif target == "bug_notes":
+        home.mkdir(parents=True, exist_ok=True)
+        (home / "bug_notes.md").write_text(content, encoding="utf-8")
+    else:
+        return web.json_response(
+            {"error": "invalid_target", "message": "Target must be: memory, user_profile, bug_notes"},
+            status=400,
+        )
+
+    return web.json_response({"status": "updated", "target": target, "instance": name})
+
+
+@require_permission("view_instances")
+async def _handle_instance_knowledge_get(request: web.Request) -> web.Response:
+    """GET /instances/{name}/knowledge — list sources and stats."""
+    name = request.match_info["name"]
+    home = _instance_home(name)
+
+    from tools.knowledge_store import KnowledgeStore
+    store = KnowledgeStore(knowledge_dir=home / "knowledge")
+    sources = store.list_sources()
+    stats = store.stats()
+
+    return web.json_response({
+        "instance": name,
+        "sources": sources.get("sources", []),
+        "stats": stats,
+    })
+
+
+@require_permission("view_instances")
+@require_csrf
+async def _handle_instance_knowledge_ingest(request: web.Request) -> web.Response:
+    """POST /instances/{name}/knowledge/ingest — ingest a document."""
+    name = request.match_info["name"]
+    home = _instance_home(name)
+
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "invalid_json"}, status=400)
+
+    source_name = (body.get("source_name") or "").strip()
+    content = body.get("content", "")
+
+    if not source_name:
+        return web.json_response({"error": "source_name is required"}, status=400)
+    if not content:
+        return web.json_response({"error": "content is required"}, status=400)
+
+    from tools.knowledge_store import KnowledgeStore
+    try:
+        from logos_cli.config import load_config
+        cfg = load_config().get("knowledge", {})
+    except Exception:
+        cfg = {}
+
+    store = KnowledgeStore(
+        knowledge_dir=home / "knowledge",
+        embedding_model=cfg.get("embedding_model", "nomic-embed-text"),
+        embedding_endpoint=cfg.get("embedding_endpoint"),
+        chunk_size=cfg.get("chunk_size", 512),
+        chunk_overlap=cfg.get("chunk_overlap", 64),
+        max_chunks=cfg.get("max_chunks", 10_000),
+    )
+    result = store.ingest(content, source_name=source_name, source_type="upload")
+
+    status_code = 200 if result.get("success") else 400
+    return web.json_response(result, status=status_code)
+
+
+@require_permission("view_instances")
+@require_csrf
+async def _handle_instance_knowledge_delete(request: web.Request) -> web.Response:
+    """DELETE /instances/{name}/knowledge/{source} — remove a knowledge source."""
+    name = request.match_info["name"]
+    source = request.match_info["source"]
+    home = _instance_home(name)
+
+    from tools.knowledge_store import KnowledgeStore
+    store = KnowledgeStore(knowledge_dir=home / "knowledge")
+    result = store.remove_source(source)
+
+    status_code = 200 if result.get("success") else 404
+    return web.json_response(result, status=status_code)
+
+
+@require_permission("view_instances")
+async def _handle_instance_knowledge_search(request: web.Request) -> web.Response:
+    """GET /instances/{name}/knowledge/search?q=... — semantic search preview."""
+    name = request.match_info["name"]
+    query = request.query.get("q", "").strip()
+    home = _instance_home(name)
+
+    if not query:
+        return web.json_response({"error": "query parameter 'q' is required"}, status=400)
+
+    from tools.knowledge_store import KnowledgeStore
+    try:
+        from logos_cli.config import load_config
+        cfg = load_config().get("knowledge", {})
+    except Exception:
+        cfg = {}
+
+    store = KnowledgeStore(
+        knowledge_dir=home / "knowledge",
+        embedding_model=cfg.get("embedding_model", "nomic-embed-text"),
+        embedding_endpoint=cfg.get("embedding_endpoint"),
+    )
+    result = store.search(query, top_k=int(request.query.get("top_k", "5")))
+    return web.json_response(result)
+
+
+@require_permission("view_instances")
+@require_csrf
+async def _handle_instance_fork(request: web.Request) -> web.Response:
+    """POST /instances/{name}/fork — copy memory and/or knowledge to another instance.
+
+    Body: { "target_instance": "hermes-greg-coder", "copy_memory": true, "copy_knowledge": true }
+    """
+    source_name = request.match_info["name"]
+    source_home = _instance_home(source_name)
+
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "invalid_json"}, status=400)
+
+    target_name = (body.get("target_instance") or "").strip()
+    copy_memory = body.get("copy_memory", True)
+    copy_knowledge = body.get("copy_knowledge", True)
+
+    if not target_name:
+        return web.json_response({"error": "target_instance is required"}, status=400)
+    if target_name == source_name:
+        return web.json_response({"error": "Cannot fork an instance onto itself"}, status=400)
+
+    target_home = _instance_home(target_name)
+    copied = []
+
+    import shutil
+
+    # Copy MEMORY.md
+    if copy_memory:
+        src_mem = source_home / "memories" / "MEMORY.md"
+        if src_mem.exists():
+            tgt_mem_dir = target_home / "memories"
+            tgt_mem_dir.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(str(src_mem), str(tgt_mem_dir / "MEMORY.md"))
+            copied.append("MEMORY.md")
+
+    # Copy knowledge base
+    if copy_knowledge:
+        src_knowledge = source_home / "knowledge"
+        if src_knowledge.exists() and any(src_knowledge.iterdir()):
+            tgt_knowledge = target_home / "knowledge"
+            if tgt_knowledge.exists():
+                shutil.rmtree(str(tgt_knowledge))
+            shutil.copytree(str(src_knowledge), str(tgt_knowledge))
+            copied.append("knowledge/")
+
+    return web.json_response({
+        "status": "forked",
+        "source": source_name,
+        "target": target_name,
+        "copied": copied,
+    })
 
 
 def _spawn_templates_path() -> Path:
@@ -982,6 +1311,29 @@ async def _handle_health_ready(request: web.Request) -> web.Response:
         {"status": "ready" if ok else "not_ready", "checks": checks},
         status=status,
     )
+
+
+_MODEL_CATALOG_PATH = Path(__file__).parent / "model_catalog.yaml"
+_model_catalog_cache: list | None = None
+
+
+async def _handle_model_catalog(request: web.Request) -> web.Response:
+    """GET /api/model-catalog — return the Ollama model catalog.
+
+    Loads from gateway/model_catalog.yaml on first call (cached).
+    Falls back to an empty list if the file is missing.
+    """
+    global _model_catalog_cache
+    if _model_catalog_cache is None:
+        try:
+            import yaml
+            _model_catalog_cache = yaml.safe_load(
+                _MODEL_CATALOG_PATH.read_text(encoding="utf-8")
+            ) or []
+        except Exception as exc:
+            logger.warning("Failed to load model catalog: %s", exc)
+            _model_catalog_cache = []
+    return web.json_response(_model_catalog_cache)
 
 
 async def _handle_sessions(request: web.Request) -> web.Response:
@@ -1838,6 +2190,7 @@ async def start_http_api(runner: Any, port: int = 8080) -> None:
     app.router.add_get("/api/hue",       _handle_hue)          # public — tray icon phase-lock
     app.router.add_get("/chat_logo.png", _handle_logo)
     app.router.add_get("/login",         _handle_login_page)
+    app.router.add_get("/api/model-catalog", _handle_model_catalog)
 
     # ── Auth routes (no cookie required) ───────────────────────────────────
     app.router.add_post("/auth/login",   handle_login)
@@ -1926,11 +2279,20 @@ async def start_http_api(runner: Any, port: int = 8080) -> None:
     )
     app.router.add_post("/instances",    _handle_instances_post)
     app.router.add_delete("/instances/{name}", _handle_instances_delete)
+    # Instance management (memory, knowledge, config)
+    app.router.add_get("/instances/{name}/memory",              _handle_instance_memory_get)
+    app.router.add_put("/instances/{name}/memory",              _handle_instance_memory_put)
+    app.router.add_get("/instances/{name}/knowledge",           _handle_instance_knowledge_get)
+    app.router.add_post("/instances/{name}/knowledge/ingest",   _handle_instance_knowledge_ingest)
+    app.router.add_delete("/instances/{name}/knowledge/{source}", _handle_instance_knowledge_delete)
+    app.router.add_get("/instances/{name}/knowledge/search",    _handle_instance_knowledge_search)
+    app.router.add_post("/instances/{name}/fork",               _handle_instance_fork)
     app.router.add_get("/spawn-templates",         _handle_spawn_templates_get)
     app.router.add_put("/spawn-templates",         _handle_spawn_templates_put)
     app.router.add_delete("/spawn-templates/{id}", _handle_spawn_templates_delete)
     app.router.add_get("/status",        _handle_status)
     app.router.add_get("/toolsets",      _handle_toolsets)
+    app.router.add_post("/api/toolsets/toggle", _handle_toolsets_toggle)
     app.router.add_get("/sessions",      _handle_sessions)
     app.router.add_get("/api/platform-sessions", _handle_api_platform_sessions)
     app.router.add_get("/api/platform-sessions/{session_id}/messages", _handle_api_session_messages)
@@ -2097,12 +2459,14 @@ async def start_http_api(runner: Any, port: int = 8080) -> None:
                     req = _instance_queue.pop(0)
                     logger.info("Retrying queued instance for %s", req["requester"])
                     from gateway.executors.base import InstanceConfig as _IC
+                    _qlabel = req.get("instance_label") or req.get("soul_slug", "general")
                     await loop.run_in_executor(
                         None, _executor.spawn,
                         _IC(
-                            name=_safe_k8s_name(req["requester"]),
+                            name=_safe_k8s_name(req["requester"], _qlabel),
                             soul_name=req.get("soul_slug", "general"),
                             requester=req["requester"],
+                            instance_label=_qlabel,
                         ),
                     )
             except Exception as e:
