@@ -974,6 +974,7 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
                 "endpoint":    (m.get("endpoint") or fallback_endpoint).rstrip("/"),
                 "api_key":     raw_key,
                 "server_type": m.get("server_type") or fallback_type,
+                "max_context_length": m.get("max_context_length", 0),
             })
 
     response = web.StreamResponse(headers={
@@ -1067,6 +1068,7 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
         async def _bench_model_lmstudio_native(
             model_id: str, base_url: str, api_key: str, endpoint: str,
             http_session: aiohttp.ClientSession,
+            known_max_ctx: int = 0,
         ) -> dict | None:
             """Benchmark a model using LM Studio's native /api/v1/chat endpoint.
 
@@ -1083,12 +1085,16 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
             # ── Step 1: Load model and get actual config ──────────────────
             max_context = None
             try:
-                # Try loading at the model's native max context
+                # Load at the model's known max context (from /api/v1/models metadata)
+                _load_json = {"model": model_id, "flash_attention": True, "echo_load_config": True}
+                if known_max_ctx > 0:
+                    _load_json["context_length"] = known_max_ctx
+                _load_timeout = max(120, known_max_ctx // 1000) if known_max_ctx else 120
                 async with http_session.post(
                     f"{base_url}/api/v1/models/load",
                     headers=_headers,
-                    json={"model": model_id, "flash_attention": True, "echo_load_config": True},
-                    timeout=aiohttp.ClientTimeout(total=120),
+                    json=_load_json,
+                    timeout=aiohttp.ClientTimeout(total=_load_timeout),
                 ) as lr:
                     if lr.status == 200:
                         lr_data = await lr.json(content_type=None)
@@ -1148,10 +1154,10 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
 
                     await send({"log": f"  Speed: {tok_s} tok/s · TTFT: {ttft_ms}ms"})
 
-                    # Parse the response to evaluate quality
+                    # Parse the response — collect both message and reasoning output
                     output_text = ""
                     for item in cd.get("output", []):
-                        if item.get("type") == "message":
+                        if item.get("type") in ("message", "reasoning"):
                             output_text += item.get("content", "")
 
                     # Try to parse as JSON and check each eval
@@ -1165,8 +1171,8 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
                         eval_details["instruction"] = e1
                         await send({"log": f"    {'✓' if e1 else '✗'} instruction following"})
 
-                        # Eval 2: reasoning (speed calculation)
-                        e2 = str(obj.get("speed")) == "60"
+                        # Eval 2: reasoning (speed calculation) — accept 60 or 60.0
+                        e2 = str(obj.get("speed")).rstrip("0").rstrip(".") == "60"
                         eval_details["reasoning"] = e2
                         await send({"log": f"    {'✓' if e2 else '✗'} reasoning (speed={obj.get('speed')})"})
 
@@ -1230,7 +1236,7 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
                             hd = await hr.json(content_type=None)
                             h_text = ""
                             for item in hd.get("output", []):
-                                if item.get("type") == "message":
+                                if item.get("type") in ("message", "reasoning"):
                                     h_text += item.get("content", "")
                             try:
                                 h_cleaned = re.sub(r"```[a-z]*\n?", "", h_text).strip().rstrip("`")
@@ -1312,8 +1318,11 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
 
             # LM Studio: use native /api/v1/chat for fast benchmark (2-3 calls vs ~12)
             if server_type == "lmstudio":
+                # Pass known max context from model metadata (if available)
+                _known_ctx = spec.get("max_context_length", 0)
                 native_result = await _bench_model_lmstudio_native(
                     model_id, base_url, api_key, endpoint, http,
+                    known_max_ctx=_known_ctx,
                 )
                 if native_result is not None:
                     # Native benchmark succeeded — skip the legacy OpenAI-compat path
