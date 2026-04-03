@@ -692,6 +692,13 @@ def _pick_compare_candidates(
             deduped.append(mid)
     model_ids = deduped
 
+    # Exclude embedding-only models — they can't do chat completions.
+    _EMBED_KEYWORDS = {"embed", "embedding", "nomic-embed", "bge-", "e5-", "gte-"}
+    model_ids = [
+        mid for mid in model_ids
+        if not any(kw in mid.lower() for kw in _EMBED_KEYWORDS)
+    ]
+
     def _bucket(mid: str) -> str:
         sz = _parse_model_size_b(mid, _sizes.get(mid, 0.0))
         if sz == 0:   return "unknown"
