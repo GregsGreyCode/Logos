@@ -1378,11 +1378,14 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
                         except Exception:
                             pass
                         try:
+                            # Scale timeout with context size — large KV cache allocation
+                            # can take 60-120s on CPU-only or memory-constrained machines.
+                            _load_timeout = max(60, _ctx_probe // 1000)  # ~60s for 64K, ~131s for 131K, ~262s for 262K
                             async with http.post(
                                 f"{base_url}/api/v1/models/load",
                                 headers=_ctx_probe_headers,
                                 json={"model": model_id, "context_length": _ctx_probe, "n_parallel": 1},
-                                timeout=aiohttp.ClientTimeout(total=30),
+                                timeout=aiohttp.ClientTimeout(total=_load_timeout),
                             ) as _cl:
                                 if _cl.status != 200:
                                     await send({"log": f"  Context probe: {_ctx_probe:,} — HTTP {_cl.status}, trying smaller…"})
@@ -1391,7 +1394,9 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
                             # degraded state (red indicator in UI) when VRAM is insufficient.
                             # Short prompts still succeed because they never fill the KV cache.
                             # Verify by actually sending a payload sized to the probed context.
-                            await asyncio.sleep(1.0)
+                            # Longer pause for larger contexts — KV cache init takes time.
+                            _init_pause = max(2.0, _ctx_probe / 32768)  # 2s for 32K, 4s for 131K, 8s for 262K
+                            await asyncio.sleep(_init_pause)
                             _verify_ok = False
                             try:
                                 _filler_unit = "The quick brown fox jumps over the lazy dog. "
