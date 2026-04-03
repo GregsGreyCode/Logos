@@ -857,8 +857,8 @@
                          ]">
                       <!-- Summary row — clickable once results are in; click selects and toggles detail -->
                       <div class="flex items-center justify-between px-3 py-2.5"
-                        :class="compareDone && compareResults[mid] && !compareResults[mid].error && !(compareResults[mid].max_context && compareResults[mid].max_context < 16384) ? 'cursor-pointer hover:bg-white/5' : ''"
-                        @click="if (compareDone && compareResults[mid] && !compareResults[mid].error && !(compareResults[mid].max_context && compareResults[mid].max_context < 16384)) { pickServerModel(server.endpoint, mid); compareExpanded = compareExpanded === mid ? null : mid; }">
+                        :class="compareDone && compareResults[mid] && (!compareResults[mid].error || compareResults[mid].skipped) && !(compareResults[mid].max_context && compareResults[mid].max_context < 16384) ? 'cursor-pointer hover:bg-white/5' : ''"
+                        @click="if (compareDone && compareResults[mid] && (!compareResults[mid].error || compareResults[mid].skipped) && !(compareResults[mid].max_context && compareResults[mid].max_context < 16384)) { pickServerModel(server.endpoint, mid); compareExpanded = compareExpanded === mid ? null : mid; }">
                         <div class="flex items-center gap-2 min-w-0 flex-wrap">
                           <!-- Default — shown when this model is the server's pick and has a valid result -->
                           <span x-show="serverModelForServer(server.endpoint) === mid && compareDone && compareResults[mid] && !compareResults[mid].error && !compareResults[mid].skipped"
@@ -2354,7 +2354,14 @@ function setup() {
       const newTestingEndpoint = { ...this.compareTestingEndpoint };
       const newLoadingFor     = { ...this.compareLoadingFor };
       for (const mid of this.compareTargetsForServer(ep)) {
-        if (!this.compareResults[mid]) skipped[mid] = { model: mid, skipped: true, error: 'Stopped' };
+        // Only mark as skipped if the model has NO result yet, or has an
+        // incomplete/error result.  Models that already have a valid result
+        // (successful test) keep their result intact — the user just stopped
+        // further testing on this server, not invalidated prior results.
+        const existing = this.compareResults[mid];
+        if (!existing || existing.error) {
+          skipped[mid] = { model: mid, skipped: true, error: 'Stopped' };
+        }
         delete newTesting[mid];
         delete newTestingEndpoint[mid];
         delete newLoadingFor[mid];
@@ -2363,6 +2370,13 @@ function setup() {
       this.compareTesting         = newTesting;
       this.compareTestingEndpoint = newTestingEndpoint;
       this.compareLoadingFor      = newLoadingFor;
+      // If all servers are now stopped/skipped, mark benchmark as done
+      // so model selection and the Continue button become available.
+      const allSkipped = this.selectedServers.every(s => this.compareSkippedServers[s.endpoint]);
+      if (allSkipped && !this.compareDone) {
+        this.compareDone = true;
+        this.compareRunning = false;
+      }
       // Signal backend to skip remaining models for this server
       if (this.compareBenchId) {
         fetch('/api/setup/compare/cancel-server', {
