@@ -3898,16 +3898,38 @@ class GatewayRunner:
                 except Exception:
                     pass
 
-                # Build context size cascade from the benchmark value.
-                # The benchmark stores the total model context (e.g. 65536).
-                # We try that first, then step down.  Smaller fallbacks for
-                # models with known limitations.
+                # Query LM Studio native API for model's max context length.
+                # This is the same metadata the benchmark uses — real data, no guessing.
+                _native_max_ctx = 0
+                try:
+                    async with _aiohttp.ClientSession() as _meta_http:
+                        _meta_headers = {"Authorization": f"Bearer {_lms_key}"} if _lms_key and _lms_key != "not-needed" else {}
+                        async with _meta_http.get(
+                            f"{_lms_base}/api/v1/models",
+                            headers=_meta_headers,
+                            timeout=_aiohttp.ClientTimeout(total=5),
+                        ) as _meta_r:
+                            if _meta_r.status == 200:
+                                _meta_data = await _meta_r.json(content_type=None)
+                                for _m in _meta_data.get("models", []):
+                                    if _m.get("key", "").lower() == _lms_model.lower():
+                                        _native_max_ctx = _m.get("max_context_length", 0)
+                                        break
+                except Exception:
+                    pass
+
+                # Build context size: prefer saved benchmark value, then native metadata,
+                # then known-model table, then cascade.
+                # Load at half of known max for balance between context and performance.
                 _all_sizes = [262144, 131072, 65536, 32768, 16384, 8192, 4096]
-                if _saved_ctx and _saved_ctx > 0:
-                    # Start from the benchmark value, include smaller fallbacks
-                    _ctx_sizes = [_saved_ctx] + [s for s in _all_sizes if s < _saved_ctx]
-                    # Deduplicate while preserving order
+                _best_ctx = _saved_ctx or _native_max_ctx
+                if _best_ctx and _best_ctx > 0:
+                    # Use half of known max for good performance, with fallbacks
+                    _target = min(_best_ctx // 2, 65536) if _best_ctx > 32768 else _best_ctx
+                    _ctx_sizes = [_target] + [s for s in _all_sizes if s < _target]
                     _ctx_sizes = list(dict.fromkeys(_ctx_sizes))
+                    if _native_max_ctx:
+                        logger.info("LM Studio: %s native max context: %d, loading at %d", _lms_model, _native_max_ctx, _target)
                 else:
                     # Check known-model table
                     _known_ctx = next(
@@ -4065,11 +4087,12 @@ class GatewayRunner:
                                         "LM Studio: loading %s ctx=%d n_parallel=%d (per-slot=%d)",
                                         _lms_model, _ctx, _n_parallel, _per_slot,
                                     )
+                                    _load_timeout = max(60, _ctx // 1000) if _ctx else 60
                                     async with _lms_http.post(
                                         f"{_lms_base}/api/v1/models/load",
                                         headers=_lms_headers,
                                         json=_load_params,
-                                        timeout=_aiohttp.ClientTimeout(total=30),
+                                        timeout=_aiohttp.ClientTimeout(total=_load_timeout),
                                     ) as _lr:
                                         if _lr.status == 200:
                                             # Read actual applied config from echo_load_config
