@@ -857,8 +857,8 @@
                          ]">
                       <!-- Summary row — clickable once results are in; click selects and toggles detail -->
                       <div class="flex items-center justify-between px-3 py-2.5"
-                        :class="compareDone && compareResults[mid] && (!compareResults[mid].error || compareResults[mid].skipped) && !(compareResults[mid].max_context && compareResults[mid].max_context < 16384) ? 'cursor-pointer hover:bg-white/5' : ''"
-                        @click="if (compareDone && compareResults[mid] && (!compareResults[mid].error || compareResults[mid].skipped) && !(compareResults[mid].max_context && compareResults[mid].max_context < 16384)) { pickServerModel(server.endpoint, mid); compareExpanded = compareExpanded === mid ? null : mid; }">
+                        :class="compareResults[mid] && !compareResults[mid].error && !(compareResults[mid].max_context && compareResults[mid].max_context < 16384) ? 'cursor-pointer hover:bg-white/5' : ''"
+                        @click="if (compareResults[mid] && !compareResults[mid].error && !(compareResults[mid].max_context && compareResults[mid].max_context < 16384)) { pickServerModel(server.endpoint, mid); compareExpanded = compareExpanded === mid ? null : mid; }">
                         <div class="flex items-center gap-2 min-w-0 flex-wrap">
                           <!-- Default — shown when this model is the server's pick and has a valid result -->
                           <span x-show="serverModelForServer(server.endpoint) === mid && compareDone && compareResults[mid] && !compareResults[mid].error && !compareResults[mid].skipped"
@@ -1073,7 +1073,7 @@
           </div>
 
           <!-- Continue (only shown after comparison completes) -->
-          <div x-show="compareDone && allServersHaveModel()" x-transition.opacity>
+          <div x-show="allServersHaveModel()" x-transition.opacity>
             <button @click="goNext()"
               class="btn-primary w-full py-2.5 rounded-xl text-sm"
               x-text="selectedServers.length > 1 ? 'Confirm model assignments \u2192' : 'Confirm default model \u2192'">
@@ -2799,7 +2799,8 @@ function setup() {
 
     // True once every selected server has a model assigned
     allServersHaveModel() {
-      if (!this.compareDone) return false;
+      // Allow continuing as soon as every server has a model selected —
+      // don't require the full benchmark to finish first.
       return this.selectedServers.length > 0 && this.selectedServers.every(s => !!this.serverModelForServer(s.endpoint));
     },
 
