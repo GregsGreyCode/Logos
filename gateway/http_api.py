@@ -2148,6 +2148,11 @@ async def start_http_api(runner: Any, port: int = 8080) -> None:
     app["executor"] = build_executor(_RUNTIME_MODE)
     logger.info("Instance executor: %s (runtime_mode=%s)", type(app["executor"]).__name__, _RUNTIME_MODE)
 
+    # Worker registry — tracks connected agent workers via WebSocket
+    from gateway.worker_registry import WorkerRegistry
+    worker_registry = WorkerRegistry()
+    app["worker_registry"] = worker_registry
+
     # ── Centralized MCP gateway service ────────────────────────────────────
     # Boots all configured MCP servers once and exposes them over HTTP so
     # agents in any executor mode (local, OpenShell, k8s) can connect via URL.
@@ -2293,6 +2298,11 @@ async def start_http_api(runner: Any, port: int = 8080) -> None:
     app.router.add_delete("/instances/{name}/knowledge/{source}", _handle_instance_knowledge_delete)
     app.router.add_get("/instances/{name}/knowledge/search",    _handle_instance_knowledge_search)
     app.router.add_post("/instances/{name}/fork",               _handle_instance_fork)
+    # Worker WebSocket + REST
+    app.router.add_get("/ws/worker", worker_registry.handle_ws)
+    app.router.add_get("/api/workers", lambda r: web.json_response(
+        {"workers": r.app["worker_registry"].list_workers()}
+    ))
     app.router.add_get("/spawn-templates",         _handle_spawn_templates_get)
     app.router.add_put("/spawn-templates",         _handle_spawn_templates_put)
     app.router.add_delete("/spawn-templates/{id}", _handle_spawn_templates_delete)

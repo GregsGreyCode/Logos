@@ -26,6 +26,7 @@ _PUBLIC_PATHS = frozenset({
     "/chat_logo.png",
     "/favicon.ico",
     "/api/model-catalog",
+    "/ws/worker",
     "/api/setup/status",
     "/api/setup/scan",
     "/api/setup/probe",

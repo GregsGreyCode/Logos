@@ -504,6 +504,31 @@ def cmd_gateway(args):
     gateway_command(args)
 
 
+def cmd_worker(args):
+    """Worker management commands."""
+    import asyncio
+
+    subcmd = getattr(args, "worker_command", None) or "run"
+    if subcmd == "run":
+        connect_url = getattr(args, "connect", None)
+        name = getattr(args, "name", None)
+        if not connect_url or not name:
+            print("Error: --connect and --name are required for 'logos worker run'")
+            return
+        print(f"Starting worker '{name}' → {connect_url}")
+        from gateway.worker import run_worker
+        asyncio.run(run_worker(
+            gateway_url=connect_url,
+            name=name,
+            soul=getattr(args, "soul", "general"),
+            instance_label=getattr(args, "label", ""),
+            requester=getattr(args, "requester", ""),
+        ))
+    else:
+        print(f"Unknown worker command: {subcmd}")
+        print("Usage: logos worker run --connect URL --name NAME")
+
+
 def cmd_whatsapp(args):
     """Set up WhatsApp: choose mode, configure, install bridge, pair via QR."""
     import os
@@ -2433,7 +2458,31 @@ For more help on a command:
     gateway_setup = gateway_subparsers.add_parser("setup", help="Configure messaging platforms")
 
     gateway_parser.set_defaults(func=cmd_gateway)
-    
+
+    # =========================================================================
+    # worker command
+    # =========================================================================
+    worker_parser = subparsers.add_parser(
+        "worker",
+        help="Agent worker management",
+        description="Run a lightweight agent worker that connects to a Logos gateway",
+    )
+    worker_subparsers = worker_parser.add_subparsers(dest="worker_command")
+
+    worker_run = worker_subparsers.add_parser("run", help="Run worker in foreground")
+    worker_run.add_argument("--connect", required=True,
+                            help="Gateway WebSocket URL (e.g. ws://gateway:8080/ws/worker)")
+    worker_run.add_argument("--name", required=True,
+                            help="Worker ID (e.g. hermes-greg-researcher)")
+    worker_run.add_argument("--soul", default="general",
+                            help="Soul slug for this worker (default: general)")
+    worker_run.add_argument("--label", default="",
+                            help="Instance label (e.g. researcher)")
+    worker_run.add_argument("--requester", default="",
+                            help="Requester name")
+
+    worker_parser.set_defaults(func=cmd_worker)
+
     # =========================================================================
     # setup command
     # =========================================================================
