@@ -2185,6 +2185,35 @@ async def start_http_api(runner: Any, port: int = 8080) -> None:
     worker_registry = WorkerRegistry()
     app["worker_registry"] = worker_registry
 
+    # Register the primary agent as a local (in-process) worker.
+    # This makes it visible in the World tab and chat selector as a real agent,
+    # separate from the gateway infrastructure.
+    async def _primary_agent_run(task: dict) -> dict:
+        """Run the primary agent's AIAgent loop for a dispatched task."""
+        loop = asyncio.get_event_loop()
+        result = await runner._run_agent(
+            message=task.get("message", ""),
+            context_prompt=task.get("context_prompt", ""),
+            history=task.get("history", []),
+            source=None,
+            session_id=task.get("session_id", ""),
+            session_key=task.get("session_key", ""),
+        )
+        return {
+            "final_response": result.get("final_response", ""),
+            "api_calls": result.get("api_calls", 0),
+            "tools_used": result.get("tools_used", []),
+        }
+
+    _instance_name = os.environ.get("HERMES_INSTANCE_NAME", "Hermes")
+    worker_registry.register_local(
+        worker_id="hermes",
+        run_fn=_primary_agent_run,
+        soul="general",
+        toolsets=["hermes-cli"],
+        instance_label=_instance_name,
+    )
+
     # ── Centralized MCP gateway service ────────────────────────────────────
     # Boots all configured MCP servers once and exposes them over HTTP so
     # agents in any executor mode (local, OpenShell, k8s) can connect via URL.

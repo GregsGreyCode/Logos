@@ -25,9 +25,9 @@ HEARTBEAT_TIMEOUT = 90  # seconds — mark unhealthy after this
 
 @dataclass
 class WorkerEntry:
-    """A connected agent worker."""
+    """A connected agent worker (remote via WebSocket or local in-process)."""
     worker_id: str
-    ws: web.WebSocketResponse
+    ws: Optional[web.WebSocketResponse] = None  # None for local/in-process workers
     soul: str = "general"
     toolsets: list = field(default_factory=list)
     instance_label: str = ""
@@ -36,9 +36,13 @@ class WorkerEntry:
     registered_at: float = 0.0
     last_heartbeat: float = 0.0
     current_task_id: Optional[str] = None
+    is_local: bool = False        # True for the primary in-process agent
+    run_fn: Any = None            # For local workers: callable(task) -> result
 
     @property
     def healthy(self) -> bool:
+        if self.is_local:
+            return True  # local workers are always healthy
         return (time.time() - self.last_heartbeat) < HEARTBEAT_TIMEOUT
 
     def to_dict(self) -> dict:
@@ -152,16 +156,46 @@ class WorkerRegistry:
 
         return ws
 
+    def register_local(
+        self,
+        worker_id: str,
+        run_fn,
+        soul: str = "general",
+        toolsets: list | None = None,
+        instance_label: str = "",
+    ):
+        """Register an in-process worker (the primary agent).
+
+        *run_fn* is an async callable(task_dict) -> result_dict that runs
+        the AIAgent loop directly, without WebSocket transport.
+        """
+        now = time.time()
+        self._workers[worker_id] = WorkerEntry(
+            worker_id=worker_id,
+            ws=None,
+            soul=soul,
+            toolsets=toolsets or [],
+            instance_label=instance_label,
+            registered_at=now,
+            last_heartbeat=now,
+            is_local=True,
+            run_fn=run_fn,
+        )
+        logger.info("Local worker registered: %s (soul=%s)", worker_id, soul)
+
     async def dispatch_task(
         self, worker_id: str, task: dict, timeout: float = 300
     ) -> dict:
         """Dispatch a task to a worker and wait for the result.
 
-        Returns the task_result dict from the worker, or raises TimeoutError.
+        For local workers, calls run_fn directly.
+        For remote workers, sends via WebSocket and awaits the result Future.
         """
         entry = self._workers.get(worker_id)
-        if not entry or entry.ws.closed:
+        if not entry:
             raise ConnectionError(f"Worker {worker_id} not connected")
+        if not entry.is_local and (not entry.ws or entry.ws.closed):
+            raise ConnectionError(f"Worker {worker_id} WebSocket closed")
         if entry.status == "busy":
             raise RuntimeError(f"Worker {worker_id} is busy with task {entry.current_task_id}")
 
@@ -169,19 +203,25 @@ class WorkerRegistry:
         entry.status = "busy"
         entry.current_task_id = task_id
 
-        # Create a future to receive the result
-        result_future: asyncio.Future = asyncio.get_event_loop().create_future()
-        self._pending_tasks[task_id] = result_future
-
         try:
-            await entry.ws.send_json(task)
-            return await asyncio.wait_for(result_future, timeout=timeout)
+            if entry.is_local and entry.run_fn:
+                # In-process: call directly
+                result = await entry.run_fn(task)
+                return result
+            else:
+                # Remote: WebSocket dispatch
+                result_future: asyncio.Future = asyncio.get_event_loop().create_future()
+                self._pending_tasks[task_id] = result_future
+                try:
+                    await entry.ws.send_json(task)
+                    return await asyncio.wait_for(result_future, timeout=timeout)
+                finally:
+                    self._pending_tasks.pop(task_id, None)
         except asyncio.TimeoutError:
-            entry.status = "idle"
-            entry.current_task_id = None
             raise TimeoutError(f"Worker {worker_id} did not respond within {timeout}s")
         finally:
-            self._pending_tasks.pop(task_id, None)
+            entry.status = "idle"
+            entry.current_task_id = None
 
     async def send_to_worker(self, worker_id: str, message: dict) -> bool:
         """Send a message to a specific worker. Returns False if not connected."""

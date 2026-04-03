@@ -5496,26 +5496,15 @@ function app() {
     // ── Agent World ─────────────────────────────────────────────
 
     _worldAgentList() {
-      // Build a unified list: the primary gateway agent + all spawned instances
+      // Build a unified list from all sources:
+      // - Connected workers (includes the primary in-process agent "hermes")
+      // - Spawned instances (old-style full gateways, being phased out)
       const agents = [];
-      // Primary "self" agent — the gateway itself
-      const selfName = this.status?.instance_name || 'Hermes';
-      agents.push({
-        name: 'hermes',
-        instance_name: selfName,
-        instance_label: '',
-        status: 'running',
-        k8s_status: 'running',
-        soul: { name: 'Primary', slug: 'general' },
-        node_port: null,
-        source: 'self',
-      });
-      // Spawned instances (old-style full gateways)
-      for (const inst of (this.clusterInstances || [])) {
-        agents.push(inst);
-      }
-      // Connected workers
+      const seen = new Set();
+
+      // Workers (local + remote) — these are the real agents
       for (const w of (this._connectedWorkers || [])) {
+        seen.add(w.worker_id);
         agents.push({
           name: w.worker_id,
           instance_name: w.instance_label || w.worker_id,
@@ -5526,6 +5515,27 @@ function app() {
           source: 'worker',
         });
       }
+
+      // Spawned instances not already covered by workers
+      for (const inst of (this.clusterInstances || [])) {
+        if (!seen.has(inst.name)) {
+          agents.push(inst);
+        }
+      }
+
+      // Fallback: if no workers loaded yet, show primary as a placeholder
+      if (!seen.has('hermes') && agents.length === 0) {
+        agents.push({
+          name: 'hermes',
+          instance_name: this.status?.instance_name || 'Hermes',
+          instance_label: '',
+          status: 'running',
+          k8s_status: 'running',
+          soul: { name: 'General', slug: 'general' },
+          source: 'self',
+        });
+      }
+
       return agents;
     },
 
