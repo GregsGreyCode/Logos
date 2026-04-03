@@ -1232,7 +1232,8 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
                 return None
 
             quality_pass = eval_score >= 4
-            await send({"log": f"  {'✓' if quality_pass else '⚠'} {tok_s} tok/s · {eval_score}/6 eval · {max_context and (str(max_context // 1024) + 'K ctx') or '? ctx'}"})
+            _ctx_label = f"{max_context // 1024}K ctx" if max_context else "? ctx"
+            await send({"log": f"  {'✓' if quality_pass else '⚠'} {tok_s} tok/s · {eval_score}/6 eval · {_ctx_label}"})
 
             # ── Step 3: Hard evals (if passed ≥5/6) ───────────────────────
             hard_eval = {}
@@ -1296,6 +1297,87 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
                 except Exception as e:
                     await send({"log": f"  Hard eval failed: {str(e)[:60]}"})
 
+            # ── Step 4: Agent evals (if hard ≥2/3) ─────────────────────
+            agent_eval = {}
+            if hard_eval.get("score", 0) >= 2:
+                await send({"log": "  ★★ Agent evals (model passed hard tier)..."})
+                agent_prompt = (
+                    'Complete ALL tasks. Reply with ONLY valid JSON, no other text.\n\n'
+                    '1. TOOL_CALL: You have this tool: {"name":"web_search","parameters":{"type":"object",'
+                    '"properties":{"query":{"type":"string"}},"required":["query"]}}\n'
+                    '   The user says: "What is the weather in London today?"\n'
+                    '   Put a tool_calls array with one entry: {"name":"<tool>","arguments":{"query":"<your query>"}}\n\n'
+                    '2. PERSONA: You are a pirate. End every sentence with "arrr". '
+                    'Do NOT use the word "hello". Greet me and tell me what 2+2 is. Put the response in "pirate".\n\n'
+                    '3. CONSTRAINED: Create a "items" array of exactly 3 objects. Each has "name" (lowercase single word) '
+                    'and "priority" (integer 1-5). All priorities must be different. Sort by priority ascending. '
+                    'Add a "count" key with the number of items.\n\n'
+                    '{"tool_calls":[{"name":"web_search","arguments":{"query":"weather London today"}}],'
+                    '"pirate":"Ahoy matey, 2 plus 2 be 4 arrr",'
+                    '"items":[{"name":"alpha","priority":1},{"name":"beta","priority":2},{"name":"gamma","priority":3}],"count":3}'
+                )
+                try:
+                    async with http_session.post(
+                        f"{base_url}/api/v1/chat",
+                        headers=_headers,
+                        json={"model": model_id, "input": agent_prompt, "temperature": 0, "max_output_tokens": 2048, "store": False},
+                        timeout=aiohttp.ClientTimeout(total=120),
+                    ) as ar:
+                        if ar.status == 200:
+                            ad = await ar.json(content_type=None)
+                            a_msg = ""
+                            a_reason = ""
+                            for item in ad.get("output", []):
+                                if item.get("type") == "message":
+                                    a_msg += item.get("content", "")
+                                elif item.get("type") == "reasoning":
+                                    a_reason += item.get("content", "")
+                            a_text = a_msg or a_reason
+                            try:
+                                a_cleaned = re.sub(r"```[a-z]*\n?", "", a_text).strip().rstrip("`")
+                                try:
+                                    a_obj = json.loads(a_cleaned)
+                                except json.JSONDecodeError:
+                                    _aj = re.search(r'\{[^{}]*(?:\{[^{}]*(?:\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}[^{}]*)*\}[^{}]*)*\}', a_cleaned)
+                                    if _aj:
+                                        a_obj = json.loads(_aj.group())
+                                    else:
+                                        raise
+
+                                # Agent test 1: Tool call format
+                                tc = a_obj.get("tool_calls", [])
+                                a1 = (isinstance(tc, list) and len(tc) > 0
+                                      and tc[0].get("name") == "web_search"
+                                      and isinstance(tc[0].get("arguments", {}).get("query"), str)
+                                      and "london" in tc[0]["arguments"]["query"].lower())
+                                await send({"log": f"    {'✓' if a1 else '✗'} tool call format"})
+
+                                # Agent test 2: Persona adherence
+                                pirate = str(a_obj.get("pirate", "")).lower()
+                                a2 = ("arrr" in pirate and "4" in pirate and "hello" not in pirate)
+                                await send({"log": f"    {'✓' if a2 else '✗'} persona adherence"})
+
+                                # Agent test 3: Multi-constraint output
+                                items = a_obj.get("items", [])
+                                count = a_obj.get("count")
+                                a3_checks = (
+                                    isinstance(items, list) and len(items) == 3
+                                    and count == 3
+                                    and all(isinstance(i.get("name"), str) and i["name"].islower() and " " not in i["name"] for i in items)
+                                    and all(isinstance(i.get("priority"), int) and 1 <= i["priority"] <= 5 for i in items)
+                                    and len(set(i["priority"] for i in items)) == 3  # all different
+                                    and items == sorted(items, key=lambda i: i["priority"])  # sorted ascending
+                                )
+                                await send({"log": f"    {'✓' if a3_checks else '✗'} multi-constraint output"})
+
+                                agent_score = sum([a1, a2, a3_checks])
+                                await send({"log": f"  ★★ Agent eval: {agent_score}/3"})
+                                agent_eval = {"tool_call": a1, "persona": a2, "constrained": a3_checks, "score": agent_score}
+                            except Exception as _ae:
+                                await send({"log": f"    ✗ Agent eval JSON parse failed: {str(_ae)[:60]}"})
+                except Exception as e:
+                    await send({"log": f"  Agent eval failed: {str(e)[:60]}"})
+
             # Persist context length
             if max_context:
                 try:
@@ -1315,6 +1397,7 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
                 "quality_pass": quality_pass,
                 "eval": {"score": eval_score, **eval_details},
                 "hard_eval": hard_eval if hard_eval else None,
+                "agent_eval": agent_eval if agent_eval else None,
                 "has_reasoning": has_reasoning,
                 "native_api": True,
             }
