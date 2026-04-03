@@ -1,6 +1,6 @@
 # Benchmark Model Selection Redesign
 
-**Status:** Planning  
+**Status:** Implemented  
 **Created:** 2026-04-03  
 **Problem:** The new "test all" benchmark includes models that fail to load,
 are too large, or are embedding-only. The old system filtered silently.
@@ -69,43 +69,35 @@ from model names.
 2. Then by `size_bytes` ascending (smallest first, fastest to test)
 3. Within same size tier: prefer instruct/chat variants
 
-## Implementation plan
+## Implementation status
 
-### Phase 1 — Fetch rich metadata during server scan
+### Phase 1 — Rich metadata from server scan — DONE
 
-When probing a server, if it's LM Studio, also fetch `/api/v1/models` and
-store the rich metadata alongside the basic model list. Pass this through
-to the frontend.
+Server probe fetches `/api/v1/models` for LM Studio servers. Returns:
+type, size_bytes, max_context_length, params_string, quantization,
+trained_for_tool_use, vision per model.
 
-**Backend change** (`setup_handlers.py`):
-- In the server probe function, if type is "lmstudio", also call
-  `/api/v1/models` and merge metadata into the model entries
-- Return: `{id, name, type, size_bytes, params_string, max_context_length,
-  quantization, capabilities, format}`
+### Phase 2 — Frontend uses real metadata — DONE
 
-### Phase 2 — Frontend uses real metadata for filtering
+`getModels()` filters by type, size_bytes, max_context_length. Shows
+real file size, quant level, max context, tool_use/vision badges.
+Models sorted tool_use first, then smallest first.
 
-**Frontend change** (`setup.html`):
-- `getModels()` uses `type` field to exclude embeddings (not name matching)
-- Uses `size_bytes` for real size display (not param count heuristic)
-- Uses `max_context_length` to pre-flag models with <16K context
-- Shows `trained_for_tool_use` and `vision` as badges
-- "Test All" respects hard + soft filters
+### Phase 3 — Native LM Studio benchmark — DONE
 
-### Phase 3 — Ollama equivalent
+Uses `/api/v1/chat` for 2-3 calls instead of ~12:
+1. Load with `echo_load_config` → actual context + flash_attention
+2. Combined eval via native chat → tok/s + TTFT + 6 evals in one call
+3. Hard eval (if ≥5/6) → 3 advanced tests
+Falls back to OpenAI-compatible path for Ollama/llama.cpp.
 
-Ollama's `/api/tags` returns `{name, size, details: {parameter_size, family,
-quantization_level}}`. Map these to the same schema.
+### Phase 4 — Ollama equivalent — TODO
 
-### Phase 4 — Server RAM detection (optional)
+Map Ollama `/api/tags` response to the same metadata schema.
 
-For LM Studio: `/api/v1/system/info` may return system info.
-For Ollama: `/api/version` doesn't help, but we can estimate from the models
-that are already loaded (if any are loaded at a large context, the server
-has at least that much RAM).
+### Phase 5 — Server RAM detection — TODO
 
-Alternatively: ask the user during setup what RAM their inference server has.
-Or: try to load the model and see if it fails (current approach, but slow).
+Ask during setup or detect from loaded model sizes.
 
 ## Key decision
 

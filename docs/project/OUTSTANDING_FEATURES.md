@@ -152,6 +152,10 @@ When `knowledge.auto_ingest_sessions` is enabled in config, agent session transc
 **Source:** `docs/project/WINDOWS_DESKTOP.md`
 Both executors are complete with spawn, list, delete, get_headroom, and get_resources. LocalProcessExecutor has full unit test coverage. KubernetesExecutor uses `config.name` from the API layer. The outstanding features doc entries were stale.
 
+### Benchmark redesign — native LM Studio API
+**Source:** `docs/project/BENCHMARK_REDESIGN.md`
+Replaced the 12-call legacy benchmark with 2-3 calls using LM Studio's native `/api/v1/chat` (returns tok/s and TTFT in response stats) and `/api/v1/models` (returns type, size_bytes, max_context_length, tool_use, vision). Models filtered by real metadata instead of name heuristics. Combined eval prompt tests 6 capabilities in a single call. Falls back to OpenAI-compatible path for non-LM Studio servers.
+
 ### Memory transfer / fork agent
 **Source:** `docs/project/MULTI_AGENT_MEMORY.md` Phase 3c
 Fork an agent's memory and/or knowledge base to another instance via `POST /instances/{name}/fork`. Copies `MEMORY.md` and the entire `knowledge/` directory. Available from the inspector panel's Memory tab. Source instance is not modified.
