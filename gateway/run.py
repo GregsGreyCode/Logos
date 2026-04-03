@@ -4052,9 +4052,12 @@ class GatewayRunner:
                                     _load_params = {
                                         "model": _lms_model,
                                         "context_length": _ctx,
+                                        "flash_attention": True,
+                                        "echo_load_config": True,
                                     }
-                                    # Pass n_parallel to control per-slot context.
-                                    # context_per_slot = context_length / n_parallel
+                                    # n_parallel is not supported by LM Studio's load API
+                                    # (configured in LM Studio settings, not via API)
+                                    # Keep the param for reference but it's silently ignored.
                                     if _n_parallel >= 1:
                                         _load_params["n_parallel"] = _n_parallel
                                     _per_slot = _ctx // max(_n_parallel, 1)
@@ -4069,6 +4072,15 @@ class GatewayRunner:
                                         timeout=_aiohttp.ClientTimeout(total=30),
                                     ) as _lr:
                                         if _lr.status == 200:
+                                            # Read actual applied config from echo_load_config
+                                            try:
+                                                _lr_data = await _lr.json(content_type=None)
+                                                _applied = (_lr_data.get("load_config") or {}).get("context_length")
+                                                if _applied and _applied != _ctx:
+                                                    logger.info("LM Studio: requested ctx=%d, applied ctx=%d", _ctx, _applied)
+                                                    _ctx = _applied
+                                            except Exception:
+                                                pass
                                             # Persist the PER-SLOT context for this model.
                                             # This is what a single request actually gets.
                                             # context_length / n_parallel = usable tokens.

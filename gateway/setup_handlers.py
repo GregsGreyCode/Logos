@@ -1104,7 +1104,7 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
                     async with http.post(
                         f"{base_url}/api/v1/models/load",
                         headers=_auth_headers,
-                        json={"model": model_id, "context_length": 4096, "n_parallel": 1},
+                        json={"model": model_id, "context_length": 4096, "flash_attention": True, "echo_load_config": True},
                         timeout=aiohttp.ClientTimeout(total=5),
                     ) as lr:
                         if lr.status == 200:
@@ -1414,12 +1414,26 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
                             async with http.post(
                                 f"{base_url}/api/v1/models/load",
                                 headers=_ctx_probe_headers,
-                                json={"model": model_id, "context_length": _ctx_probe, "n_parallel": 1},
+                                json={
+                                    "model": model_id,
+                                    "context_length": _ctx_probe,
+                                    "flash_attention": True,
+                                    "echo_load_config": True,
+                                },
                                 timeout=aiohttp.ClientTimeout(total=_load_timeout),
                             ) as _cl:
                                 if _cl.status != 200:
                                     await send({"log": f"  Context probe: {_ctx_probe:,} — HTTP {_cl.status}, trying smaller…"})
                                     continue
+                                # Read the actual config that was applied
+                                try:
+                                    _load_resp = await _cl.json(content_type=None)
+                                    _applied_ctx = (_load_resp.get("load_config") or {}).get("context_length")
+                                    if _applied_ctx and _applied_ctx < _ctx_probe:
+                                        await send({"log": f"  Context probe: requested {_ctx_probe:,} but LM Studio applied {_applied_ctx:,} — using that"})
+                                        _ctx_probe = _applied_ctx
+                                except Exception:
+                                    pass
                             # LM Studio can return HTTP 200 but silently load the model in a
                             # degraded state (red indicator in UI) when VRAM is insufficient.
                             # Short prompts still succeed because they never fill the KV cache.
