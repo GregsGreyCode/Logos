@@ -1147,7 +1147,7 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
                 async with http_session.post(
                     f"{base_url}/api/v1/chat",
                     headers=_headers,
-                    json={"model": model_id, "input": combined_prompt, "temperature": 0, "max_output_tokens": 512, "store": False},
+                    json={"model": model_id, "input": combined_prompt, "temperature": 0, "max_output_tokens": 2048, "store": False},
                     timeout=aiohttp.ClientTimeout(total=120),
                 ) as cr:
                     if cr.status != 200:
@@ -1253,7 +1253,7 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
                     async with http_session.post(
                         f"{base_url}/api/v1/chat",
                         headers=_headers,
-                        json={"model": model_id, "input": hard_prompt, "temperature": 0, "max_output_tokens": 512, "store": False},
+                        json={"model": model_id, "input": hard_prompt, "temperature": 0, "max_output_tokens": 2048, "store": False},
                         timeout=aiohttp.ClientTimeout(total=120),
                     ) as hr:
                         if hr.status == 200:
@@ -1356,6 +1356,10 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
             if server_type == "lmstudio":
                 # Pass known max context from model metadata (if available)
                 _known_ctx = spec.get("max_context_length", 0)
+                if _known_ctx:
+                    await send({"log": f"  Model metadata: max_context={_known_ctx:,}"})
+                else:
+                    await send({"log": f"  No max_context metadata — LM Studio will use its default"})
                 native_result = await _bench_model_lmstudio_native(
                     model_id, base_url, api_key, endpoint, http,
                     known_max_ctx=_known_ctx,
