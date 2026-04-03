@@ -975,6 +975,17 @@
                                 <span :class="compareResults[mid].quality_pass ? 'text-green-500' : 'text-yellow-600'"
                                   :title="compareResults[mid].quality_pass ? 'Passed capability eval' : 'Low eval score — may struggle with agentic tasks'"
                                   x-text="(compareResults[mid].eval?.score ?? (compareResults[mid].quality_pass ? '4+' : '?')) + '/6'"></span>
+                                <span x-show="(compareResults[mid].hard_eval?.score ?? compareResults[mid].eval?.hard?.score) != null"
+                                  class="text-[10px] text-amber-500"
+                                  :title="(() => { const h = compareResults[mid].hard_eval || compareResults[mid].eval?.hard || {}; const total = Object.values(h).filter(v => v === true || v === false).length || '?'; return 'Hard eval: ' + h.score + '/' + total; })()"
+                                  x-text="'\u2605' + (compareResults[mid].hard_eval?.score ?? compareResults[mid].eval?.hard?.score)"></span>
+                                <span x-show="compareResults[mid].agent_eval?.score != null"
+                                  class="text-[10px] text-purple-400" :title="'Agent eval: ' + compareResults[mid].agent_eval.score + '/3'"
+                                  x-text="'\u2605\u2605' + compareResults[mid].agent_eval.score"></span>
+                                <span x-show="compareResults[mid].tool_use || getModels().find(m => m.id === mid)?._toolUse"
+                                  class="text-[9px] px-1 py-0.5 rounded bg-emerald-950 text-emerald-400 border border-emerald-900">tools</span>
+                                <span x-show="compareResults[mid].vision || getModels().find(m => m.id === mid)?._vision"
+                                  class="text-[9px] px-1 py-0.5 rounded bg-indigo-950 text-indigo-400 border border-indigo-900">vision</span>
                                 <span x-show="compareDone" class="text-gray-700 text-[10px]"
                                   x-text="compareExpanded === mid ? '\u25b4' : '\u25be'"></span>
                               </div>
@@ -2616,9 +2627,9 @@ function setup() {
       // Drop servers that are down; keep 'up' and user-selected 'auth_required' (they chose it).
       this.selectedServers = this.selectedServers.filter(s => s.status === 'up' || s.status === 'auth_required');
       this.activeServer = this.selectedServers[0] || null;
-      // Filter out models flagged as too large for "Test All" — user can still
-      // test them individually with the per-model Test button.
-      const models = this.getModels().filter(m => !m._tooLarge);
+      // Filter out models flagged as too large and secondary instances (id
+      // ending in :N) for "Test All" — user can still test them individually.
+      const models = this.getModels().filter(m => !m._tooLarge && !/:\d+$/.test(m.id));
       try {
         if (!this.activeServer || !this.activeServer.endpoint) {
           this.compareReason = 'No server selected — go back to step 1 and pick a model server.';
@@ -2641,6 +2652,8 @@ function setup() {
                 api_key:     (srv && srv._apiKey) || m._apiKey || this.activeServer._apiKey || 'ollama',
                 server_type: m._serverType     || this.activeServer.type || 'unknown',
                 max_context_length: m._maxCtx || m.max_context_length || 0,
+                tool_use:    m._toolUse || false,
+                vision:      m._vision || false,
               };
             }),
           }),

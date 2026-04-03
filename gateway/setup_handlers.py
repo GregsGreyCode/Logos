@@ -787,7 +787,8 @@ def _sanitize_for_json(obj: object) -> object:
 def _compare_score(r: dict) -> float:
     """Composite score for ranking models within a gated candidate pool.
 
-    Weights: eval capability 60%, throughput 20%, TTFT 15%, model size 5%.
+    Weights: eval capability 50%, throughput 20%, TTFT 15%, model size 5%,
+    advanced evals 5%, capability metadata 5%.
     JSON format and tool-call are handled as mandatory gates before ranking
     (see handle_setup_compare), not as score components here.
     """
@@ -801,10 +802,23 @@ def _compare_score(r: dict) -> float:
     ttft_ms    = r.get("ttft_ms")
     # TTFT score: ≤500ms→1.0, ≥4000ms→0.0
     ttft_score = max(0.0, min(1.0, (4000 - ttft_ms) / 3500)) if ttft_ms is not None else 0.5
-    # Penalise domain-specific models (coder, math, vision) — not good everyday agent defaults
+    # Advanced eval bonus: hard + agent tiers reward models that passed higher bars
+    hard_score  = (r.get("hard_eval") or r.get("eval", {}).get("hard") or {}).get("score", 0)
+    agent_score = (r.get("agent_eval") or {}).get("score", 0)
+    hard_max    = 4 if r.get("eval", {}).get("hard") else 3  # compat=4, native=3
+    advanced    = (hard_score / max(hard_max, 1) * 0.6 + agent_score / 3 * 0.4) if (hard_score or agent_score) else 0
+    # Capability metadata bonus: models reporting tool_use/vision via server API
+    caps_bonus = 0.0
+    if r.get("tool_use"):
+        caps_bonus += 0.035  # tool use is critical for an agent platform
+    if r.get("vision"):
+        caps_bonus += 0.015  # vision is a nice-to-have
+    # Penalise domain-specific models (coder, math) — not good everyday agent defaults
+    # Vision-capable models are no longer penalised since vision is a useful capability
     name_lower = r["model"].lower()
-    specialized_penalty = -0.15 if any(kw in name_lower for kw in _SPECIALIZED_KEYWORDS) else 0.0
-    return 0.60 * eval_frac + 0.20 * speed + 0.15 * ttft_score + size_b + specialized_penalty
+    _PENALISED_KEYWORDS = {"coder", "code", "math", "ocr", "embed", "search"}
+    specialized_penalty = -0.15 if any(kw in name_lower for kw in _PENALISED_KEYWORDS) else 0.0
+    return 0.50 * eval_frac + 0.20 * speed + 0.15 * ttft_score + 0.05 * advanced + size_b + caps_bonus + specialized_penalty
 
 
 def _compare_reason(best: dict) -> str:
@@ -1514,6 +1528,11 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
                     known_max_ctx=_known_ctx,
                 )
                 if native_result is not None:
+                    # Carry capability metadata from discovery into the result
+                    if spec.get("tool_use"):
+                        native_result["tool_use"] = True
+                    if spec.get("vision"):
+                        native_result["vision"] = True
                     # Native benchmark succeeded — skip the legacy OpenAI-compat path
                     async with results_lock:
                         results.append(native_result)
@@ -2086,6 +2105,8 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
                     "ttft_ms": ttft_ms, "approx": approx, "endpoint": endpoint,
                     **({"max_context": max_context} if max_context else {}),
                     **({"size_b": spec.get("size_b")} if spec.get("size_b") else {}),
+                    **({"tool_use": True} if spec.get("tool_use") else {}),
+                    **({"vision": True} if spec.get("vision") else {}),
                     "eval": {
                         "instruction": instruct_pass, "reasoning": reason_pass,
                         "format": format_pass, "tool_call": tool_pass,
