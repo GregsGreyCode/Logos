@@ -2746,7 +2746,7 @@ function setup() {
           const paramMatch = (m.params_string || lower).match(/(\d+\.?\d*)\s*b/i);
           const paramB = paramMatch ? parseFloat(paramMatch[1]) : 0;
           const estGB = sizeGB > 0.1 ? sizeGB : (paramB > 0 ? paramB * 0.6 : 0);
-          const tooLarge = estGB > 60;
+          const tooLarge = estGB > 50;
 
           // Context: use real max_context_length from API
           const maxCtx = m.max_context_length || 0;
