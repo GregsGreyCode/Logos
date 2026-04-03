@@ -1083,6 +1083,11 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
             _headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"} if api_key and api_key != "ollama" else {"Content-Type": "application/json"}
 
             # ── Step 1: Load model and get actual config ──────────────────
+            def _phase(step: str, **kw) -> dict:
+                """Build a phase event dict for this model."""
+                return {"phase": {"model": model_id, "step": step, **kw}}
+
+            await send(_phase("loading"))
             max_context = None
             try:
                 # Load at HALF the model's max context for benchmarking.
@@ -1163,6 +1168,7 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
                     _result = None
                     _reasoning_toks = 0
                     _message_toks = 0
+                    _gen_start = None
                     _last_progress_log = ""
                     async for line in sr.content:
                         line = line.decode("utf-8", errors="replace").strip()
@@ -1178,23 +1184,40 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
                             pct = round(ev.get("progress", 0) * 100)
                             _msg = f"  Loading model... {pct}%"
                             if _msg != _last_progress_log:
-                                await send({"log": _msg, "progress": True})
+                                await send({"log": _msg, "progress": True,
+                                            **_phase("loading", progress=ev.get("progress", 0))})
                                 _last_progress_log = _msg
 
                         elif etype == "prompt_processing.progress":
                             pct = round(ev.get("progress", 0) * 100)
                             _msg = f"  Processing prompt... {pct}%"
                             if _msg != _last_progress_log:
-                                await send({"log": _msg, "progress": True})
+                                await send({"log": _msg, "progress": True,
+                                            **_phase("generating")})
                                 _last_progress_log = _msg
+                            if _gen_start is None:
+                                _gen_start = time.time()
 
                         elif etype == "reasoning.delta":
                             _reasoning_toks += 1
+                            if _gen_start is None:
+                                _gen_start = time.time()
                             if _reasoning_toks % 50 == 0:
                                 await send({"log": f"  Thinking... ({_reasoning_toks} tokens)", "progress": True})
+                            if _reasoning_toks % 20 == 0 and _gen_start:
+                                _elapsed = time.time() - _gen_start
+                                if _elapsed > 0.1:
+                                    await send(_phase("generating", tok_s=round(_reasoning_toks / _elapsed, 1)))
 
                         elif etype == "message.delta":
                             _message_toks += 1
+                            if _gen_start is None:
+                                _gen_start = time.time()
+                            _total_toks = _reasoning_toks + _message_toks
+                            if _message_toks % 20 == 0 and _gen_start:
+                                _elapsed = time.time() - _gen_start
+                                if _elapsed > 0.1:
+                                    await send(_phase("generating", tok_s=round(_total_toks / _elapsed, 1)))
 
                         elif etype == "chat.end":
                             _result = ev.get("result", {})
@@ -1231,6 +1254,7 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
                 output_text = message_text or output_text
 
                 # Try to parse as JSON — thinking models may prefix with reasoning text
+                await send(_phase("scoring", eval_label="1/6"))
                 try:
                     cleaned = re.sub(r"```[a-z]*\n?", "", output_text).strip().rstrip("`")
                     # Try direct parse first
@@ -1293,7 +1317,7 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
             # ── Step 3: Hard evals (if passed ≥5/6) ───────────────────────
             hard_eval = {}
             if eval_score >= 5:
-                await send({"log": "  ★ Hard evals..."})
+                await send({"log": "  ★ Hard evals...", **_phase("scoring", eval_label="hard")})
                 hard_prompt = (
                     'Complete ALL tasks. Reply with ONLY valid JSON.\n\n'
                     '1. TOOLS: You have "search_web","run_code","read_file","send_email","query_db".\n'
@@ -1348,7 +1372,7 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
             # ── Step 4: Agent evals (if hard ≥2/3) ─────────────────────
             agent_eval = {}
             if hard_eval.get("score", 0) >= 2:
-                await send({"log": "  ★★ Agent evals (model passed hard tier)..."})
+                await send({"log": "  ★★ Agent evals (model passed hard tier)...", **_phase("scoring", eval_label="agent")})
                 agent_prompt = (
                     'Complete ALL tasks. Reply with ONLY valid JSON, no other text.\n\n'
                     '1. TOOL_CALL: You have this tool: {"name":"web_search","parameters":{"type":"object",'
@@ -1529,6 +1553,10 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
                     await send({"log": f"  Load request failed: {str(_le)[:80]}"})
 
 
+            def _phase(step: str, **kw) -> dict:
+                return {"phase": {"model": model_id, "step": step, **kw}}
+
+            await send(_phase("loading"))  # indeterminate loading for compat path
             t0                   = time.time()
             ttft_s: float | None = None
 
@@ -1651,7 +1679,7 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
                     try:
                         await _bench_run(0, "Reply with one word.", max_tokens=10)
                         hint_task.cancel()
-                        await send({"log": "  Model ready."})
+                        await send({"log": "  Model ready.", **_phase("generating")})
                         _warmup_ok = True
                         break
                     except Exception as _we:
@@ -1913,7 +1941,7 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
                         return await _bench_run(pass_num, prompt, max_tokens)
 
                 r1, approx1 = await _bench_run_r(1, _BENCH_PROMPT)
-                await send({"log": f"  Pass 1 (prose): {r1:.1f} tok/s"})
+                await send({"log": f"  Pass 1 (prose): {r1:.1f} tok/s", **_phase("generating", tok_s=round(r1, 1))})
 
                 # If TTFT looks anomalously high, re-measure once with a short
                 # prompt to check for a one-off spike (GC pause, partial load, etc.)
@@ -1934,9 +1962,9 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
                         ttft_s = _ttft_pass1
 
                 r2, approx2 = await _bench_run_r(2, _BENCH_PROMPT_STRUCT)
-                await send({"log": f"  Pass 2 (structured): {r2:.1f} tok/s"})
+                await send({"log": f"  Pass 2 (structured): {r2:.1f} tok/s", **_phase("generating", tok_s=round(r2, 1))})
                 r3, approx3 = await _bench_run_r(3, _BENCH_PROMPT)
-                await send({"log": f"  Pass 3 (prose): {r3:.1f} tok/s"})
+                await send({"log": f"  Pass 3 (prose): {r3:.1f} tok/s", **_phase("generating", tok_s=round(r3, 1))})
 
                 tok_s   = round(sorted([r1, r2, r3])[1])   # median of 3
                 approx  = approx1 and approx2 and approx3
@@ -1976,7 +2004,7 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
                     if missing:
                         await send({"log": f"      missing: {', '.join(missing)}"})
 
-                await send({"log": "  Eval 1/6: instruction following…"})
+                await send({"log": "  Eval 1/6: instruction following…", **_phase("scoring", eval_label="1/6")})
                 instruct_pass, instruct_resp = await _eval_once(
                     _INSTRUCT_PROMPT,
                     lambda t: all(c in t for c in _INSTRUCT_CHECKS),
@@ -1987,7 +2015,7 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
                     missing = [c for c in _INSTRUCT_CHECKS if c not in instruct_resp]
                     await _log_eval_detail(_INSTRUCT_PROMPT, instruct_resp, missing)
 
-                await send({"log": "  Eval 2/6: reasoning (2-part)…"})
+                await send({"log": "  Eval 2/6: reasoning (2-part)…", **_phase("scoring", eval_label="2/6")})
                 reason_pass, reason_resp = await _eval_once(
                     _REASON_PROMPT,
                     lambda t: all(c in t for c in _REASON_CHECKS),
@@ -1998,25 +2026,25 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
                     missing = [c for c in _REASON_CHECKS if c not in reason_resp]
                     await _log_eval_detail(_REASON_PROMPT, reason_resp, missing)
 
-                await send({"log": "  Eval 3/6: strict JSON format…"})
+                await send({"log": "  Eval 3/6: strict JSON format…", **_phase("scoring", eval_label="3/6")})
                 format_pass, format_resp = await _eval_once(_FORMAT_PROMPT, _eval_format, 2048)
                 await send({"log": f"    {'✓' if format_pass else '✗'} JSON format"})
                 if not format_pass:
                     await _log_eval_detail(_FORMAT_PROMPT, format_resp)
 
-                await send({"log": "  Eval 4/6: tool selection (2 scenarios)…"})
+                await send({"log": "  Eval 4/6: tool selection (2 scenarios)…", **_phase("scoring", eval_label="4/6")})
                 tool_pass, tool_resp = await _eval_once(_TOOL_PROMPT, _eval_tool_call, 2048)
                 await send({"log": f"    {'✓' if tool_pass else '✗'} tool selection"})
                 if not tool_pass:
                     await _log_eval_detail(_TOOL_PROMPT, tool_resp)
 
-                await send({"log": "  Eval 5/6: nested JSON schema…"})
+                await send({"log": "  Eval 5/6: nested JSON schema…", **_phase("scoring", eval_label="5/6")})
                 nested_json_pass, nested_resp = await _eval_once(_NESTED_JSON_PROMPT, _eval_nested_json, 2048)
                 await send({"log": f"    {'✓' if nested_json_pass else '✗'} nested JSON"})
                 if not nested_json_pass:
                     await _log_eval_detail(_NESTED_JSON_PROMPT, nested_resp)
 
-                await send({"log": "  Eval 6/6: multi-step reasoning…"})
+                await send({"log": "  Eval 6/6: multi-step reasoning…", **_phase("scoring", eval_label="6/6")})
                 multihop_pass, multihop_resp = await _eval_once(_MULTIHOP_PROMPT, _eval_multihop, 2048)
                 await send({"log": f"    {'✓' if multihop_pass else '✗'} multi-step reasoning"})
                 if not multihop_pass:
@@ -2030,7 +2058,7 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
                 # ── Secondary (hard) evals — only run if model passed ≥5/6 ──
                 hard_eval: dict = {}
                 if tests_passed >= 5:
-                    await send({"log": "  ★ Hard evals (model passed ≥5/6 — running advanced tests)…"})
+                    await send({"log": "  ★ Hard evals (model passed ≥5/6 — running advanced tests)…", **_phase("scoring", eval_label="hard")})
                     h1_pass, _ = await _eval_once(_HARD_TOOL_PROMPT, _eval_hard_tool, 2048)
                     await send({"log": f"    {'✓' if h1_pass else '✗'} hard tool routing (4 scenarios, 5 tools)"})
 
