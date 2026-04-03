@@ -60,6 +60,7 @@ class WorkerRegistry:
 
     def __init__(self):
         self._workers: Dict[str, WorkerEntry] = {}
+        self._pending_tasks: Dict[str, asyncio.Future] = {}
 
     @property
     def workers(self) -> Dict[str, WorkerEntry]:
@@ -121,12 +122,15 @@ class WorkerRegistry:
                             w.status = data.get("status", w.status)
 
                     elif msg_type == "task_result":
-                        # Worker sending back results — Phase 2
                         if worker_id and worker_id in self._workers:
                             w = self._workers[worker_id]
                             w.status = "idle"
                             w.current_task_id = None
-                            # TODO Phase 2: forward result to the waiting client
+                            # Resolve the pending dispatch_task future
+                            task_id = data.get("task_id", "")
+                            fut = self._pending_tasks.get(task_id)
+                            if fut and not fut.done():
+                                fut.set_result(data)
 
                     elif msg_type == "token":
                         # Streaming token from worker — Phase 3
@@ -147,6 +151,37 @@ class WorkerRegistry:
                 logger.info("Worker disconnected: %s", worker_id)
 
         return ws
+
+    async def dispatch_task(
+        self, worker_id: str, task: dict, timeout: float = 300
+    ) -> dict:
+        """Dispatch a task to a worker and wait for the result.
+
+        Returns the task_result dict from the worker, or raises TimeoutError.
+        """
+        entry = self._workers.get(worker_id)
+        if not entry or entry.ws.closed:
+            raise ConnectionError(f"Worker {worker_id} not connected")
+        if entry.status == "busy":
+            raise RuntimeError(f"Worker {worker_id} is busy with task {entry.current_task_id}")
+
+        task_id = task.get("task_id", "")
+        entry.status = "busy"
+        entry.current_task_id = task_id
+
+        # Create a future to receive the result
+        result_future: asyncio.Future = asyncio.get_event_loop().create_future()
+        self._pending_tasks[task_id] = result_future
+
+        try:
+            await entry.ws.send_json(task)
+            return await asyncio.wait_for(result_future, timeout=timeout)
+        except asyncio.TimeoutError:
+            entry.status = "idle"
+            entry.current_task_id = None
+            raise TimeoutError(f"Worker {worker_id} did not respond within {timeout}s")
+        finally:
+            self._pending_tasks.pop(task_id, None)
 
     async def send_to_worker(self, worker_id: str, message: dict) -> bool:
         """Send a message to a specific worker. Returns False if not connected."""
