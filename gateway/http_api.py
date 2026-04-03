@@ -2234,7 +2234,7 @@ async def start_http_api(runner: Any, port: int = 8080) -> None:
         run_fn=_primary_agent_run,
         soul="general",
         toolsets=["hermes-cli"],
-        instance_label=_instance_name,
+        instance_label=f"{_instance_name} Agent",
     )
 
     # ── Centralized MCP gateway service ────────────────────────────────────
