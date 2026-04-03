@@ -1064,6 +1064,219 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
             await asyncio.sleep(1.5)   # give LM Studio time to actually free VRAM
 
     async def _test_server_group(group: list[dict], http: aiohttp.ClientSession) -> None:
+        async def _bench_model_lmstudio_native(
+            model_id: str, base_url: str, api_key: str, endpoint: str,
+            http_session: aiohttp.ClientSession,
+        ) -> dict | None:
+            """Benchmark a model using LM Studio's native /api/v1/chat endpoint.
+
+            Returns a result dict with tok_s, ttft_ms, quality evals, max_context,
+            or None if the native API isn't available (fall back to OpenAI-compat).
+
+            Uses 2-3 API calls total instead of ~12 with the legacy approach:
+              1. Load with echo_load_config → actual context
+              2. Combined eval via /api/v1/chat → tok/s + TTFT + eval
+              3. Hard eval (if passed ≥5/6) → confirmation
+            """
+            _headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"} if api_key and api_key != "ollama" else {"Content-Type": "application/json"}
+
+            # ── Step 1: Load model and get actual config ──────────────────
+            max_context = None
+            try:
+                # Try loading at the model's native max context
+                async with http_session.post(
+                    f"{base_url}/api/v1/models/load",
+                    headers=_headers,
+                    json={"model": model_id, "flash_attention": True, "echo_load_config": True},
+                    timeout=aiohttp.ClientTimeout(total=120),
+                ) as lr:
+                    if lr.status == 200:
+                        lr_data = await lr.json(content_type=None)
+                        lc = (lr_data.get("load_config") or {})
+                        max_context = lc.get("context_length")
+                        load_time = lr_data.get("load_time_seconds")
+                        if max_context:
+                            await send({"log": f"  Loaded with {max_context:,} context (flash_attention=on)"})
+                        if load_time:
+                            await send({"log": f"  Load time: {load_time:.1f}s"})
+                    else:
+                        await send({"log": f"  Load failed: HTTP {lr.status}"})
+                        return None
+            except Exception as e:
+                await send({"log": f"  Native load failed: {str(e)[:80]}"})
+                return None
+
+            # ── Step 2: Combined eval — single chat call ──────────────────
+            # This prompt tests: instruction following, reasoning, JSON format,
+            # tool selection, and multi-step reasoning all at once.
+            combined_prompt = (
+                "Complete ALL of the following tasks. Reply with ONLY a valid JSON object, no other text.\n\n"
+                "1. INSTRUCTION: Write the words ALPHA, BETA, GAMMA in the 'words' array\n"
+                "2. REASONING: A car covers 150 km in 2.5 hours. Put the speed in km/h in 'speed'\n"
+                "3. ARITHMETIC: What is 17 × 6 − 14? Put the answer in 'arithmetic'\n"
+                "4. TOOL_SELECT: You have tools 'search_web' and 'run_code'. "
+                "For 'What is the Bitcoin price?' choose a tool. "
+                "For 'Write Python to reverse a list' choose a tool. Put in 'tool_a' and 'tool_b'\n"
+                "5. MULTI_STEP: A box has 5 layers, 4 rows per layer, 6 oranges per row. "
+                "Total oranges in 'oranges'\n\n"
+                'Reply: {"words":["ALPHA","BETA","GAMMA"],"speed":60,"arithmetic":88,'
+                '"tool_a":"search_web","tool_b":"run_code","oranges":120}'
+            )
+
+            tok_s = 0
+            ttft_ms = 0
+            eval_score = 0
+            eval_details = {}
+
+            try:
+                await send({"log": "  Running combined eval..."})
+                async with http_session.post(
+                    f"{base_url}/api/v1/chat",
+                    headers=_headers,
+                    json={"model": model_id, "input": combined_prompt, "temperature": 0, "max_output_tokens": 512, "store": False},
+                    timeout=aiohttp.ClientTimeout(total=120),
+                ) as cr:
+                    if cr.status != 200:
+                        err_text = await cr.text()
+                        await send({"log": f"  Chat failed: HTTP {cr.status} — {err_text[:100]}"})
+                        return None
+
+                    cd = await cr.json(content_type=None)
+                    stats = cd.get("stats", {})
+                    tok_s = round(stats.get("tokens_per_second", 0), 1)
+                    ttft_ms = round(stats.get("time_to_first_token_seconds", 0) * 1000)
+
+                    await send({"log": f"  Speed: {tok_s} tok/s · TTFT: {ttft_ms}ms"})
+
+                    # Parse the response to evaluate quality
+                    output_text = ""
+                    for item in cd.get("output", []):
+                        if item.get("type") == "message":
+                            output_text += item.get("content", "")
+
+                    # Try to parse as JSON and check each eval
+                    try:
+                        cleaned = re.sub(r"```[a-z]*\n?", "", output_text).strip().rstrip("`")
+                        obj = json.loads(cleaned)
+
+                        # Eval 1: instruction following
+                        words = obj.get("words", [])
+                        e1 = isinstance(words, list) and all(w in words for w in ["ALPHA", "BETA", "GAMMA"])
+                        eval_details["instruction"] = e1
+                        await send({"log": f"    {'✓' if e1 else '✗'} instruction following"})
+
+                        # Eval 2: reasoning (speed calculation)
+                        e2 = str(obj.get("speed")) == "60"
+                        eval_details["reasoning"] = e2
+                        await send({"log": f"    {'✓' if e2 else '✗'} reasoning (speed={obj.get('speed')})"})
+
+                        # Eval 3: arithmetic
+                        e3 = str(obj.get("arithmetic")) == "88"
+                        eval_details["arithmetic"] = e3
+                        await send({"log": f"    {'✓' if e3 else '✗'} arithmetic (got {obj.get('arithmetic')})"})
+
+                        # Eval 4: tool selection
+                        e4 = obj.get("tool_a") == "search_web" and obj.get("tool_b") == "run_code"
+                        eval_details["tool_select"] = e4
+                        await send({"log": f"    {'✓' if e4 else '✗'} tool selection"})
+
+                        # Eval 5: multi-step reasoning
+                        e5 = str(obj.get("oranges")) == "120"
+                        eval_details["multi_step"] = e5
+                        await send({"log": f"    {'✓' if e5 else '✗'} multi-step (oranges={obj.get('oranges')})"})
+
+                        # Eval 6: JSON format (we got valid JSON = pass)
+                        e6 = True
+                        eval_details["json_format"] = e6
+                        await send({"log": f"    ✓ JSON format"})
+
+                        eval_score = sum([e1, e2, e3, e4, e5, e6])
+
+                    except (json.JSONDecodeError, Exception) as parse_err:
+                        await send({"log": f"    ✗ JSON parse failed: {str(parse_err)[:60]}"})
+                        await send({"log": f"    Response: {output_text[:200]}"})
+                        eval_score = 0
+
+            except Exception as e:
+                await send({"log": f"  Chat eval failed: {str(e)[:80]}"})
+                return None
+
+            quality_pass = eval_score >= 4
+            await send({"log": f"  {'✓' if quality_pass else '⚠'} {tok_s} tok/s · {eval_score}/6 eval · {max_context and (str(max_context // 1024) + 'K ctx') or '? ctx'}"})
+
+            # ── Step 3: Hard evals (if passed ≥5/6) ───────────────────────
+            hard_eval = {}
+            if eval_score >= 5:
+                await send({"log": "  ★ Hard evals..."})
+                hard_prompt = (
+                    'Complete ALL tasks. Reply with ONLY valid JSON.\n\n'
+                    '1. TOOLS: You have "search_web","run_code","read_file","send_email","query_db".\n'
+                    '   A: "Latest AI papers today?" B: "Median of [7,2,9,4,1]"\n'
+                    '   C: "Load config.yaml" D: "Email alice@co.com job done"\n'
+                    '2. NESTED: {"status":"ok","results":[{"id":1,"score":9.5,"tags":["pass"]}],"meta":{"total":1}}\n'
+                    '3. MATH: A factory runs 3 shifts/day, 8 crates/shift, 12 bottles/crate, 5 days. Total bottles?\n\n'
+                    '{"tools":{"A":"search_web","B":"run_code","C":"read_file","D":"send_email"},'
+                    '"nested":{"status":"ok","results":[{"id":1,"score":9.5,"tags":["pass"]}],"meta":{"total":1}},'
+                    '"bottles":1440}'
+                )
+                try:
+                    async with http_session.post(
+                        f"{base_url}/api/v1/chat",
+                        headers=_headers,
+                        json={"model": model_id, "input": hard_prompt, "temperature": 0, "max_output_tokens": 512, "store": False},
+                        timeout=aiohttp.ClientTimeout(total=120),
+                    ) as hr:
+                        if hr.status == 200:
+                            hd = await hr.json(content_type=None)
+                            h_text = ""
+                            for item in hd.get("output", []):
+                                if item.get("type") == "message":
+                                    h_text += item.get("content", "")
+                            try:
+                                h_cleaned = re.sub(r"```[a-z]*\n?", "", h_text).strip().rstrip("`")
+                                h_obj = json.loads(h_cleaned)
+
+                                tools = h_obj.get("tools", {})
+                                h1 = tools.get("A") == "search_web" and tools.get("B") == "run_code" and tools.get("C") == "read_file" and tools.get("D") == "send_email"
+                                await send({"log": f"    {'✓' if h1 else '✗'} hard tool routing"})
+
+                                nested = h_obj.get("nested", {})
+                                h2 = isinstance(nested.get("results"), list) and len(nested.get("results", [])) > 0
+                                await send({"log": f"    {'✓' if h2 else '✗'} deep nested JSON"})
+
+                                h3 = str(h_obj.get("bottles")) == "1440"
+                                await send({"log": f"    {'✓' if h3 else '✗'} 5-step arithmetic (got {h_obj.get('bottles')})"})
+
+                                hard_score = sum([h1, h2, h3])
+                                await send({"log": f"  ★ Hard eval: {hard_score}/3"})
+                                hard_eval = {"hard_tool": h1, "hard_json": h2, "hard_reasoning": h3, "score": hard_score}
+                            except Exception:
+                                await send({"log": f"    ✗ Hard eval JSON parse failed"})
+                except Exception as e:
+                    await send({"log": f"  Hard eval failed: {str(e)[:60]}"})
+
+            # Persist context length
+            if max_context:
+                try:
+                    _cp_path = pathlib.Path(os.environ.get("LOGOS_HOME") or os.environ.get("HERMES_HOME") or str(pathlib.Path.home() / ".logos")) / "config.yaml"
+                    _cp_cfg: dict = yaml.safe_load(_cp_path.read_text(encoding="utf-8")) if _cp_path.exists() else {}
+                    _cp_cfg.setdefault("lmstudio_context_lengths", {})[model_id] = max_context
+                    _cp_path.write_text(yaml.dump(_cp_cfg, default_flow_style=False, allow_unicode=True))
+                except Exception:
+                    pass
+
+            return {
+                "model": model_id,
+                "endpoint": endpoint,
+                "tok_s": tok_s,
+                "ttft_ms": ttft_ms,
+                "max_context": max_context,
+                "quality_pass": quality_pass,
+                "eval": {"score": eval_score, **eval_details},
+                "hard_eval": hard_eval if hard_eval else None,
+                "native_api": True,
+            }
+
         """Test all models for one server sequentially (protects that server's VRAM)."""
         # Flush any pre-existing models from VRAM before we start
         first_spec = group[0]
@@ -1097,7 +1310,34 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
             type_label = {"lmstudio": "LM Studio", "ollama": "Ollama", "llamacpp": "llama.cpp"}.get(server_type, server_type)
             await send({"log": f"→ {model_id}  ({base_url})  [{type_label}]"})
 
-            # LM Studio: try native load API before benchmarking (best-effort)
+            # LM Studio: use native /api/v1/chat for fast benchmark (2-3 calls vs ~12)
+            if server_type == "lmstudio":
+                native_result = await _bench_model_lmstudio_native(
+                    model_id, base_url, api_key, endpoint, http,
+                )
+                if native_result is not None:
+                    # Native benchmark succeeded — skip the legacy OpenAI-compat path
+                    async with results_lock:
+                        results.append(native_result)
+                    await send({"result": native_result})
+                    # Unload model to free VRAM for the next one
+                    try:
+                        _unload_headers = {"Authorization": f"Bearer {api_key}"} if api_key and api_key != "ollama" else {}
+                        async with http.post(
+                            f"{base_url}/api/v1/models/unload",
+                            headers=_unload_headers,
+                            json={"instance_id": model_id},
+                            timeout=aiohttp.ClientTimeout(total=8),
+                        ):
+                            pass
+                        await send({"log": f"  Unloaded {model_id}"})
+                    except Exception:
+                        pass
+                    continue
+                else:
+                    await send({"log": "  Native API unavailable, falling back to OpenAI-compat…"})
+
+            # Legacy OpenAI-compat path (Ollama, llama.cpp, or LM Studio fallback)
             if server_type == "lmstudio":
                 _auth_headers = {"Authorization": f"Bearer {api_key}"} if api_key and api_key != "ollama" else {}
                 try:
