@@ -195,7 +195,26 @@ class AgentWorker:
         max_iterations = task.get("max_iterations", 90)
         ephemeral_prompt = task.get("context_prompt", "")
         session_id = task.get("session_id", "")
+        task_id = task.get("task_id", "")
         reasoning_config = task.get("reasoning_config")
+
+        # Stream callback — sends tool progress and thinking events to the
+        # gateway via WebSocket so the user sees real-time updates.
+        def _progress_callback(tool_name: str, preview: str = None, args: dict = None):
+            if self._ws and not self._ws.closed:
+                event = {
+                    "type": "tool_progress",
+                    "task_id": task_id,
+                    "tool": tool_name,
+                    "preview": preview or tool_name,
+                }
+                # Schedule the send on the event loop (we're in a thread)
+                try:
+                    asyncio.get_event_loop().call_soon_threadsafe(
+                        lambda: asyncio.ensure_future(self._ws.send_json(event))
+                    )
+                except Exception:
+                    pass
 
         agent = AIAgent(
             model=model,
@@ -208,6 +227,7 @@ class AgentWorker:
             ephemeral_system_prompt=ephemeral_prompt or None,
             reasoning_config=reasoning_config,
             session_id=session_id,
+            tool_progress_callback=_progress_callback,
         )
         self._current_agent = agent
 

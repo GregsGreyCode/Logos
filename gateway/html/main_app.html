@@ -6278,6 +6278,25 @@ function app() {
             try {
               const d = JSON.parse(line.slice(5).trim());
               if (d.type === 'status') { this._setStatusOverride(d.text || d.content || ''); }
+              if (d.type === 'tool_progress') {
+                // Live tool progress from worker
+                this.isWakingUp = false;
+                this._setStatusOverride(d.preview || d.tool || 'Working...');
+              }
+              if (d.type === 'token') {
+                // Streaming token from worker
+                this.isWakingUp = false;
+                reply += (d.content || '');
+                // Update message in-place for live typing effect
+                const lastMsg = chat.messages[chat.messages.length - 1];
+                if (lastMsg && lastMsg.role === 'assistant' && lastMsg._streaming) {
+                  lastMsg.content = reply;
+                  this.chats = [...this.chats];
+                } else {
+                  chat.messages = [...chat.messages, { role: 'assistant', content: reply, _streaming: true }];
+                }
+                this._scrollChat();
+              }
               if (d.type === 'message') { reply = d.content; this.isWakingUp = false; }
               if (d.type === 'done') {
                 msgStats = {

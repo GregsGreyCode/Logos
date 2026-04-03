@@ -65,6 +65,7 @@ class WorkerRegistry:
     def __init__(self):
         self._workers: Dict[str, WorkerEntry] = {}
         self._pending_tasks: Dict[str, asyncio.Future] = {}
+        self._task_streams: Dict[str, asyncio.Queue] = {}  # task_id → event queue
 
     @property
     def workers(self) -> Dict[str, WorkerEntry]:
@@ -136,13 +137,15 @@ class WorkerRegistry:
                             if fut and not fut.done():
                                 fut.set_result(data)
 
-                    elif msg_type == "token":
-                        # Streaming token from worker — Phase 3
-                        pass
-
-                    elif msg_type == "tool_progress":
-                        # Tool progress from worker — Phase 3
-                        pass
+                    elif msg_type in ("token", "tool_progress", "thinking"):
+                        # Stream events to the waiting gateway consumer
+                        task_id = data.get("task_id", "")
+                        q = self._task_streams.get(task_id)
+                        if q:
+                            try:
+                                q.put_nowait(data)
+                            except asyncio.QueueFull:
+                                pass  # drop if consumer is slow
 
                 elif msg.type in (web.WSMsgType.ERROR, web.WSMsgType.CLOSE):
                     break
@@ -184,12 +187,16 @@ class WorkerRegistry:
         logger.info("Local worker registered: %s (soul=%s)", worker_id, soul)
 
     async def dispatch_task(
-        self, worker_id: str, task: dict, timeout: float = 300
+        self, worker_id: str, task: dict, timeout: float = 300,
+        on_stream_event=None,
     ) -> dict:
         """Dispatch a task to a worker and wait for the result.
 
         For local workers, calls run_fn directly.
         For remote workers, sends via WebSocket and awaits the result Future.
+
+        *on_stream_event*: optional async callback(event_dict) called for each
+        streaming event (token, tool_progress, thinking) from the worker.
         """
         entry = self._workers.get(worker_id)
         if not entry:
@@ -205,20 +212,61 @@ class WorkerRegistry:
 
         try:
             if entry.is_local and entry.run_fn:
-                # In-process: call directly
+                # In-process: call directly (streaming handled by gateway's own SSE)
                 result = await entry.run_fn(task)
                 return result
             else:
-                # Remote: WebSocket dispatch
+                # Remote: WebSocket dispatch with streaming
                 result_future: asyncio.Future = asyncio.get_event_loop().create_future()
                 self._pending_tasks[task_id] = result_future
+
+                # Set up stream queue for intermediate events
+                stream_queue: asyncio.Queue = asyncio.Queue(maxsize=500)
+                self._task_streams[task_id] = stream_queue
+
                 try:
                     await entry.ws.send_json(task)
-                    return await asyncio.wait_for(result_future, timeout=timeout)
+
+                    # Consume stream events while waiting for final result
+                    deadline = asyncio.get_event_loop().time() + timeout
+                    while not result_future.done():
+                        remaining = deadline - asyncio.get_event_loop().time()
+                        if remaining <= 0:
+                            raise TimeoutError(f"Worker {worker_id} did not respond within {timeout}s")
+
+                        # Drain any queued stream events
+                        while not stream_queue.empty():
+                            event = stream_queue.get_nowait()
+                            if on_stream_event:
+                                try:
+                                    await on_stream_event(event)
+                                except Exception:
+                                    pass
+
+                        # Short wait for more events or the final result
+                        try:
+                            await asyncio.wait_for(
+                                asyncio.shield(result_future),
+                                timeout=min(0.1, remaining),
+                            )
+                        except asyncio.TimeoutError:
+                            continue  # not done yet, keep polling
+
+                    # Drain any remaining events
+                    while not stream_queue.empty():
+                        event = stream_queue.get_nowait()
+                        if on_stream_event:
+                            try:
+                                await on_stream_event(event)
+                            except Exception:
+                                pass
+
+                    return result_future.result()
                 finally:
                     self._pending_tasks.pop(task_id, None)
+                    self._task_streams.pop(task_id, None)
         except asyncio.TimeoutError:
-            raise TimeoutError(f"Worker {worker_id} did not respond within {timeout}s")
+            raise
         finally:
             entry.status = "idle"
             entry.current_task_id = None
