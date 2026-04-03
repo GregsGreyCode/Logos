@@ -1315,8 +1315,9 @@
                   <div class="flex items-center gap-2 flex-wrap">
                     <span class="text-sm font-semibold text-white">Kubernetes</span>
                     <span x-show="execEnv === 'k8s'" class="text-[9px] px-1.5 py-0.5 rounded-full bg-indigo-900 text-indigo-300 border border-indigo-700 font-semibold uppercase tracking-wider">Selected</span>
+                    <span x-show="sandboxProbe?.in_cluster" class="text-[9px] px-1.5 py-0.5 rounded-full bg-emerald-900 text-emerald-300 border border-emerald-700 font-semibold uppercase tracking-wider">Detected</span>
                   </div>
-                  <p class="text-xs text-gray-500 mt-1 leading-relaxed">Each agent run spawns a dedicated pod with its own filesystem, network namespace, and resource limits. Strongest isolation.</p>
+                  <p class="text-xs text-gray-500 mt-1 leading-relaxed" x-text="sandboxProbe?.in_cluster ? 'Logos is running as a pod in this cluster. In-cluster authentication is automatic — no credentials needed.' : 'Each agent run spawns a dedicated pod with its own filesystem, network namespace, and resource limits. Strongest isolation.'"></p>
                 </div>
               </div>
             </button>
@@ -1830,7 +1831,13 @@ function setup() {
         const r = await fetch('/api/setup/env-probe');
         this.sandboxProbe = await r.json();
         // Auto-select execEnv based on what's available (best → worst)
-        if (this.sandboxProbe.k3s_running) {
+        if (this.sandboxProbe.in_cluster) {
+          // Already running as a pod in k8s — use in-cluster auth automatically
+          this.execEnv = 'k8s';
+          this.k8sMode = 'incluster';
+          // Auto-test the connection
+          this.testK8s();
+        } else if (this.sandboxProbe.k3s_running) {
           // k3s already running on Linux — use it, auto-fetch kubeconfig
           this.execEnv = 'k3s';
           this.installK3s();  // will skip install, read kubeconfig, and auto-test
