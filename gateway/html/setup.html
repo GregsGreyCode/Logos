@@ -798,7 +798,7 @@
                 Testing...
               </span>
             </button>
-            <span class="text-xs text-gray-600" x-text="getModels().length + ' models available'"></span>
+            <span class="text-xs text-gray-600" x-text="getModels().filter(m => !m._tooLarge).length + ' of ' + getModels().length + ' models eligible'"></span>
           </div>
 
           <!-- Score legend — collapsed by default, expands on click -->
@@ -891,15 +891,22 @@
                             x-text="mid"></span>
                         </div>
                         <div class="flex items-center gap-2 flex-shrink-0 ml-3 text-xs">
-                          <!-- Size estimate + not tested -->
+                          <!-- Model info — shown when not tested yet -->
                           <template x-if="!compareTesting[mid] && !compareResults[mid]">
                             <div class="flex items-center gap-2">
-                              <span x-show="getModels().find(m => m.id === mid)?._paramB || getModels().find(m => m.id === mid)?._activeB"
+                              <span x-show="getModels().find(m => m.id === mid)?._sizeGB"
                                 class="text-[10px] font-mono"
                                 :class="getModels().find(m => m.id === mid)?._tooLarge ? 'text-red-500' : 'text-gray-600'"
-                                x-text="(() => { const mm = getModels().find(m => m.id === mid); if (!mm) return ''; let s = mm._isMoE ? mm._paramB + 'B ('+mm._activeB+'B active)' : (mm._paramB || '?') + 'B'; return s + ' · ~' + (mm._estMinGB || '?') + 'GB'; })()"></span>
+                                x-text="(() => { const mm = getModels().find(m => m.id === mid); if (!mm) return ''; let parts = []; if (mm._paramStr) parts.push(mm._paramStr); if (mm._sizeGB) parts.push(mm._sizeGB + 'GB'); if (mm._quant) parts.push(mm._quant); return parts.join(' · '); })()"></span>
+                              <span x-show="getModels().find(m => m.id === mid)?._toolUse"
+                                class="text-[9px] px-1 py-0.5 rounded bg-emerald-950 text-emerald-400 border border-emerald-900">tools</span>
+                              <span x-show="getModels().find(m => m.id === mid)?._vision"
+                                class="text-[9px] px-1 py-0.5 rounded bg-indigo-950 text-indigo-400 border border-indigo-900">vision</span>
+                              <span x-show="getModels().find(m => m.id === mid)?._maxCtx"
+                                class="text-[10px] font-mono text-gray-700"
+                                x-text="(() => { const ctx = getModels().find(m => m.id === mid)?._maxCtx || 0; return ctx >= 1024 ? Math.round(ctx/1024) + 'K ctx' : ctx + ' ctx'; })()"></span>
                               <span x-show="getModels().find(m => m.id === mid)?._tooLarge"
-                                class="text-[9px] text-red-500">may not fit</span>
+                                class="text-[9px] text-red-500">too large</span>
                             </div>
                           </template>
                           <!-- Testing / loading -->
@@ -2720,36 +2727,49 @@ function setup() {
     getModels() {
       const seen = new Set();
       const out = [];
-      const embedKeywords = ['embed', 'bge-', 'e5-', 'gte-'];
       for (const s of this.selectedServers) {
         for (const m of (s.models || [])) {
-          const lower = (m.id || m.name || '').toLowerCase();
-          const isEmbed = embedKeywords.some(kw => lower.includes(kw));
-          if (!seen.has(m.id) && !isEmbed) {
-            // Estimate if model fits in system memory
-            // Parse param count — prefer active params for MoE models (e.g. "122b-a10b" → 10B active)
-            const moeMatch = lower.match(/a(\d+\.?\d*)b/);  // "a10b" = 10B active experts
-            const totalMatch = lower.match(/(\d+\.?\d*)b(?!-)/);  // "122b" = total params
-            const activeB = moeMatch ? parseFloat(moeMatch[1]) : 0;
-            const totalB = totalMatch ? parseFloat(totalMatch[1]) : 0;
-            // MoE models still load ALL params into memory — active count only
-            // affects compute per token, not memory. Use total for size estimate.
-            const effectiveB = totalB || activeB;
-            const displayB = totalB || activeB;  // show total for display
-            const isMoE = activeB > 0 && totalB > activeB;
-            // File size from server (Ollama provides this in bytes)
-            const fileSizeGB = (m.size || 0) / 1e9;
-            // Estimate minimum RAM needed: file size + ~2GB overhead, or ~0.6GB per billion active params
-            const estMinGB = fileSizeGB > 0 ? fileSizeGB + 2 : (effectiveB * 0.6 + 2);
-            // Flag models that are likely too large (>80GB estimated)
-            const entry = { ...m, _serverEndpoint: s.endpoint, _serverType: s.type, _paramB: displayB, _activeB: activeB, _effectiveB: effectiveB, _isMoE: isMoE, _estMinGB: Math.round(estMinGB), _tooLarge: estMinGB > 60 };
-            seen.add(m.id);
-            out.push(entry);
-          }
+          if (seen.has(m.id)) continue;
+          seen.add(m.id);
+
+          // Hard filter: skip embedding models (use real type field or fallback to name)
+          const modelType = m.type || 'llm';
+          if (modelType === 'embedding') continue;
+          const lower = (m.id || '').toLowerCase();
+          if (!m.type && ['embed', 'bge-', 'e5-', 'gte-'].some(kw => lower.includes(kw))) continue;
+
+          // Hard filter: skip models with max context < 8192 (can't fit agent system prompt)
+          if (m.max_context_length && m.max_context_length < 8192) continue;
+
+          // Size: use real size_bytes from API, or estimate from param name
+          const sizeGB = (m.size || 0) / 1e9;
+          const paramMatch = (m.params_string || lower).match(/(\d+\.?\d*)\s*b/i);
+          const paramB = paramMatch ? parseFloat(paramMatch[1]) : 0;
+          const estGB = sizeGB > 0.1 ? sizeGB : (paramB > 0 ? paramB * 0.6 : 0);
+          const tooLarge = estGB > 60;
+
+          // Context: use real max_context_length from API
+          const maxCtx = m.max_context_length || 0;
+
+          out.push({
+            ...m,
+            _serverEndpoint: s.endpoint,
+            _serverType: s.type,
+            _sizeGB: Math.round(estGB * 10) / 10,
+            _paramStr: m.params_string || (paramB > 0 ? paramB + 'B' : null),
+            _maxCtx: maxCtx,
+            _toolUse: m.tool_use === true,
+            _vision: m.vision === true,
+            _quant: m.quantization || null,
+            _tooLarge: tooLarge,
+          });
         }
       }
-      // Sort: smaller models first (by estimated GB, most likely to fit and run fast)
-      out.sort((a, b) => (a._estMinGB || 999) - (b._estMinGB || 999));
+      // Sort: tool_use models first, then by file size ascending
+      out.sort((a, b) => {
+        if (a._toolUse !== b._toolUse) return a._toolUse ? -1 : 1;
+        return (a._sizeGB || 999) - (b._sizeGB || 999);
+      });
       return out;
     },
 

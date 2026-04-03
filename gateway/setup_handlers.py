@@ -203,8 +203,6 @@ async def _probe_server(
                     for m in data.get("data", [])
                 ]
                 # ── Step 3: Distinguish llama.cpp from LM Studio ──────────
-                # llama.cpp exposes /health returning {"status": "ok"|"loading"}.
-                # LM Studio does not have this endpoint.
                 server_type = "lmstudio"
                 try:
                     async with session.get(
@@ -217,6 +215,39 @@ async def _probe_server(
                                 server_type = "llamacpp"
                 except Exception:
                     pass
+
+                # ── Step 4: Fetch rich metadata from LM Studio native API ──
+                # /api/v1/models returns type, size_bytes, max_context_length,
+                # capabilities (tool_use, vision), quantization, params_string.
+                if server_type == "lmstudio":
+                    try:
+                        async with session.get(
+                            f"{base}/api/v1/models", headers=headers,
+                            timeout=aiohttp.ClientTimeout(total=5),
+                        ) as mr:
+                            if mr.status == 200:
+                                meta = await mr.json(content_type=None)
+                                meta_map = {m["key"]: m for m in meta.get("models", [])}
+                                enriched = []
+                                for m in models:
+                                    rich = meta_map.get(m["id"], {})
+                                    caps = rich.get("capabilities", {})
+                                    enriched.append({
+                                        "id": m["id"],
+                                        "name": rich.get("display_name") or m["id"],
+                                        "size": rich.get("size_bytes", 0),
+                                        "type": rich.get("type", "llm"),
+                                        "params_string": rich.get("params_string"),
+                                        "max_context_length": rich.get("max_context_length", 0),
+                                        "quantization": rich.get("quantization", {}).get("name"),
+                                        "tool_use": caps.get("trained_for_tool_use", False),
+                                        "vision": caps.get("vision", False),
+                                        "format": rich.get("format"),
+                                    })
+                                models = enriched
+                    except Exception:
+                        pass  # fall back to basic model list
+
                 return {"type": server_type, "endpoint": f"{base}/v1", "status": "up", "models": models}
             if r.status == 401:
                 return {"type": "lmstudio", "endpoint": f"{base}/v1", "status": "auth_required", "models": []}
