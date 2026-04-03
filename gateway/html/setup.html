@@ -779,28 +779,34 @@
         <!-- Models available: auto-compare -->
         <div x-show="getModels().length > 0">
 
-          <!-- Header -->
-          <div class="mb-4">
-            <h2 class="text-xl font-bold mb-1" x-text="compareDone ? 'How your models performed' : compareRunning ? 'Testing models\u2026' : 'Benchmark your models'"></h2>
-            <p class="text-gray-400 text-sm" x-show="!compareRunning && !compareDone">Test models individually or run all benchmarks at once. Select a model once you see results you like.</p>
-            <p class="text-gray-400 text-sm" x-show="compareRunning">Testing on your hardware — you can select a model as soon as one passes.</p>
-            <p class="text-gray-400 text-sm" x-show="compareDone">Select your preferred model below.</p>
-          </div>
-
-          <!-- Test All button — shown before and during benchmark -->
-          <div class="flex items-center gap-3 mb-4" x-show="!compareDone">
-            <button @click="runCompare()" :disabled="compareRunning"
-              x-show="!compareRunning"
-              class="px-4 py-2 rounded-xl text-sm font-medium bg-indigo-600 hover:bg-indigo-500 text-white transition-colors">
-              Test all models
-            </button>
-            <button x-show="compareRunning"
-              @click="selectedServers.forEach(s => { if (!compareSkippedServers[s.endpoint]) stopServerBenchmark(s.endpoint); })"
-              class="px-4 py-2 rounded-xl text-sm font-medium border border-red-900 text-red-400 hover:text-red-300 hover:border-red-700 transition-colors flex items-center gap-2">
-              <span class="w-3.5 h-3.5 border-2 border-gray-600 border-t-indigo-400 rounded-full animate-spin"></span>
-              Stop
-            </button>
-            <span class="text-xs text-gray-600" x-text="getModels().filter(m => !m._tooLarge).length + ' of ' + getModels().length + ' models eligible'"></span>
+          <!-- Header with action button on the right -->
+          <div class="flex items-start justify-between gap-3 mb-4">
+            <div>
+              <h2 class="text-xl font-bold mb-1" x-text="compareDone ? 'How your models performed' : compareRunning ? 'Testing models\u2026' : 'Benchmark your models'"></h2>
+              <p class="text-gray-400 text-sm" x-show="!compareRunning && !compareDone">Test models individually or run all benchmarks at once. Select a model once you see results you like.</p>
+              <p class="text-gray-400 text-sm" x-show="compareRunning">Testing on your hardware — you can select a model as soon as one passes.</p>
+              <p class="text-gray-400 text-sm" x-show="compareDone">Select your preferred model below.</p>
+            </div>
+            <div class="flex-shrink-0 pt-0.5">
+              <!-- Test All -->
+              <button x-show="!compareRunning && !compareDone" @click="runCompare()"
+                class="px-4 py-2 rounded-xl text-sm font-medium bg-indigo-600 hover:bg-indigo-500 text-white transition-colors">
+                Test all models
+              </button>
+              <!-- Stop -->
+              <button x-show="compareRunning"
+                @click="selectedServers.forEach(s => { if (!compareSkippedServers[s.endpoint]) stopServerBenchmark(s.endpoint); })"
+                class="px-3 py-1.5 rounded-lg text-xs font-medium border border-red-900 text-red-400 hover:text-red-300 hover:border-red-700 transition-colors flex items-center gap-1.5">
+                <span class="w-3 h-3 border-2 border-gray-600 border-t-indigo-400 rounded-full animate-spin"></span>
+                Stop
+              </button>
+              <!-- Re-run -->
+              <button x-show="compareDone" @click="startCompare()"
+                class="px-3 py-1.5 rounded-lg text-xs font-medium border border-gray-700 text-gray-400 hover:text-gray-200 hover:border-gray-500 transition-colors flex items-center gap-1.5">
+                <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+                Re-run
+              </button>
+            </div>
           </div>
 
           <!-- Score legend — collapsed by default, expands on click -->
@@ -1151,7 +1157,6 @@
                 </template>
               </div>
             </details>
-            <button @click="startCompare()" class="text-xs text-gray-600 hover:text-gray-400 transition-colors">&#8635; Re-run comparison</button>
           </div>
 
           <!-- Continue (only shown after comparison completes) -->
