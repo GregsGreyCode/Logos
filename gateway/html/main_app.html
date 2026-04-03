@@ -11,6 +11,8 @@
 <script src="https://cdn.jsdelivr.net/npm/marked@9/marked.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/dompurify@3/dist/purify.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.6/Sortable.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/pixi.js@7/dist/pixi.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/pixi-viewport@5/dist/viewport.min.js"></script>
 <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
 <style>
   [x-cloak]{display:none!important}
@@ -266,6 +268,9 @@
       </template>
     </div>
     <button class="pb-2 text-sm font-medium border-b-2 border-transparent"
+      :class="tab==='world'?'tab-active':'text-gray-400 hover:text-white'"
+      @click="tab='world'; loadInstances(); initWorld()">World</button>
+    <button class="pb-2 text-sm font-medium border-b-2 border-transparent"
       :class="tab==='sessions'?'tab-active':'text-gray-400 hover:text-white'"
       @click="tab='sessions'; if(!clusterInstances.length) loadInstances()">Chats</button>
     <button class="pb-2 text-sm font-medium border-b-2 border-transparent"
@@ -409,6 +414,22 @@
         </div>
       </div>
     </template>
+  </div>
+
+  <!-- ── World Tab ────────────────────────────────────────────────── -->
+  <div x-show="tab==='world'" x-cloak style="height:calc(100vh - 84px); position: relative;">
+    <div id="agent-world" style="width:100%; height:100%; border-radius:12px; overflow:hidden;"></div>
+    <!-- Empty state overlay -->
+    <div x-show="clusterInstances.length === 0 && tab === 'world'"
+      class="absolute inset-0 flex items-center justify-center pointer-events-none">
+      <div class="text-center pointer-events-auto">
+        <div class="text-gray-600 text-sm mb-2">No agents running</div>
+        <button @click="tab='agents'; loadSouls()"
+          class="text-xs px-3 py-1.5 rounded-lg border border-indigo-700 bg-indigo-900/30 text-indigo-300 hover:bg-indigo-900/50 transition-colors">
+          Spawn an agent
+        </button>
+      </div>
+    </div>
   </div>
 
   <!-- ── Chats Tab ────────────────────────────────────────────────── -->
@@ -4653,6 +4674,7 @@ function getCsrfToken() {
 function app() {
   return {
     tab: 'sessions',
+    worldManager: null,
     status: { uptime_s: 0, instance_name: 'Hermes', active_sessions: [], recent_sessions: [] },
     agentAlive: null,
     agentEverConnected: false,   // true once first /status succeeds; gate for the error banner
@@ -5458,6 +5480,37 @@ function app() {
     },
 
     // ── k8s Instances + Toolsets ──────────────────────────────────
+
+    // ── Agent World ─────────────────────────────────────────────
+
+    async initWorld() {
+      if (this.worldManager) return; // already initialized
+      const el = document.getElementById('agent-world');
+      if (!el || typeof PIXI === 'undefined') return;
+
+      // Dynamic import of world modules
+      const { WorldManager } = await import('/world/WorldManager.js');
+      this.worldManager = new WorldManager(el, {
+        onAgentClick: (name) => this.openInspector(name),
+      });
+
+      // Sync current instances
+      if (this.clusterInstances.length) {
+        this.worldManager.syncAgents(this.clusterInstances);
+      }
+
+      // Watch for instance changes
+      this.$watch('clusterInstances', (instances) => {
+        if (this.worldManager) this.worldManager.syncAgents(instances);
+      });
+    },
+
+    destroyWorld() {
+      if (this.worldManager) {
+        this.worldManager.destroy();
+        this.worldManager = null;
+      }
+    },
 
     async loadToolsets() {
       try {
