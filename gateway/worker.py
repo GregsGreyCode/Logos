@@ -137,21 +137,34 @@ class AgentWorker:
             logger.info("Registration confirmed by gateway")
 
         elif msg_type == "run_conversation":
-            # Phase 2: execute AIAgent task
-            logger.info("Received task: %s (Phase 2 — not yet implemented)", data.get("task_id"))
+            task_id = data.get("task_id", "")
+            logger.info("Received task %s: %s", task_id, (data.get("message", ""))[:80])
             self._status = "busy"
-            # TODO Phase 2: create AIAgent, run conversation, stream results
-            await ws.send_json({
-                "type": "task_result",
-                "task_id": data.get("task_id"),
-                "status": "error",
-                "error": "Worker task execution not yet implemented (Phase 2)",
-            })
-            self._status = "idle"
+            self._current_agent = None
+            try:
+                result = await self._execute_task(data)
+                await ws.send_json({
+                    "type": "task_result",
+                    "task_id": task_id,
+                    "status": "done",
+                    **result,
+                })
+            except Exception as exc:
+                logger.exception("Task %s failed", task_id)
+                await ws.send_json({
+                    "type": "task_result",
+                    "task_id": task_id,
+                    "status": "error",
+                    "error": str(exc),
+                })
+            finally:
+                self._status = "idle"
+                self._current_agent = None
 
         elif msg_type == "interrupt":
-            # Phase 3: interrupt running agent
             logger.info("Interrupt received for task %s", data.get("task_id"))
+            if self._current_agent and hasattr(self._current_agent, "interrupt"):
+                self._current_agent.interrupt(data.get("new_message", ""))
 
         elif msg_type == "shutdown":
             logger.info("Shutdown requested by gateway")
@@ -159,6 +172,58 @@ class AgentWorker:
 
         elif msg_type == "error":
             logger.warning("Gateway error: %s", data.get("message"))
+
+    async def _execute_task(self, task: dict) -> dict:
+        """Run AIAgent.run_conversation() in a thread pool.
+
+        The gateway sends everything the agent needs: message, history,
+        model config, toolsets.  We create an ephemeral AIAgent, run it,
+        and return the result dict.
+        """
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(None, self._run_agent_sync, task)
+
+    def _run_agent_sync(self, task: dict) -> dict:
+        """Synchronous agent execution — runs in a thread."""
+        from agents.hermes.agent import AIAgent
+
+        message = task.get("message", "")
+        history = task.get("history", [])
+        model = task.get("model", "")
+        model_kwargs = task.get("model_kwargs", {})
+        toolsets = task.get("toolsets", self.toolsets or ["hermes-cli"])
+        max_iterations = task.get("max_iterations", 90)
+        ephemeral_prompt = task.get("context_prompt", "")
+        session_id = task.get("session_id", "")
+        reasoning_config = task.get("reasoning_config")
+
+        agent = AIAgent(
+            model=model,
+            api_key=model_kwargs.get("api_key", "not-needed"),
+            base_url=model_kwargs.get("base_url"),
+            max_iterations=max_iterations,
+            quiet_mode=True,
+            verbose_logging=False,
+            enabled_toolsets=toolsets,
+            ephemeral_system_prompt=ephemeral_prompt or None,
+            reasoning_config=reasoning_config,
+            session_id=session_id,
+        )
+        self._current_agent = agent
+
+        result = agent.run_conversation(
+            message,
+            conversation_history=history,
+            task_id=session_id,
+        )
+
+        return {
+            "final_response": result.get("final_response", ""),
+            "api_calls": result.get("api_calls", 0),
+            "tools_used": result.get("tools_used", []),
+            "messages": result.get("messages", []),
+            "error": result.get("error", ""),
+        }
 
     def _shutdown(self):
         """Signal the worker to shut down gracefully."""
