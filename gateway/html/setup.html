@@ -781,9 +781,24 @@
 
           <!-- Header -->
           <div class="mb-4">
-            <h2 class="text-xl font-bold mb-1" x-text="compareDone ? 'How your models performed' : 'Finding your best model\u2026'"></h2>
-            <p class="text-gray-400 text-sm" x-show="!compareDone">Testing available models on your hardware, grab a cuppa — this takes a moment.</p>
-            <p class="text-gray-400 text-sm" x-show="compareDone">We&rsquo;ve pre-selected the best fit. You can override below.</p>
+            <h2 class="text-xl font-bold mb-1" x-text="compareDone ? 'How your models performed' : compareRunning ? 'Testing models\u2026' : 'Benchmark your models'"></h2>
+            <p class="text-gray-400 text-sm" x-show="!compareRunning && !compareDone">Test models individually or run all benchmarks at once. Select a model once you see results you like.</p>
+            <p class="text-gray-400 text-sm" x-show="compareRunning">Testing on your hardware — you can select a model as soon as one passes.</p>
+            <p class="text-gray-400 text-sm" x-show="compareDone">Select your preferred model below.</p>
+          </div>
+
+          <!-- Test All button — shown before and during benchmark -->
+          <div class="flex items-center gap-3 mb-4" x-show="!compareDone">
+            <button @click="runCompare()" :disabled="compareRunning"
+              class="px-4 py-2 rounded-xl text-sm font-medium transition-colors"
+              :class="compareRunning ? 'bg-gray-800 text-gray-500 cursor-not-allowed' : 'bg-indigo-600 hover:bg-indigo-500 text-white'">
+              <span x-show="!compareRunning">Test all models</span>
+              <span x-show="compareRunning" class="flex items-center gap-2">
+                <span class="w-3.5 h-3.5 border-2 border-gray-600 border-t-indigo-400 rounded-full animate-spin"></span>
+                Testing...
+              </span>
+            </button>
+            <span class="text-xs text-gray-600" x-text="getModels().length + ' models available'"></span>
           </div>
 
           <!-- Score legend — collapsed by default, expands on click -->
@@ -843,8 +858,8 @@
                 <!-- Model rows for this server -->
                 <div class="space-y-2">
                   <template x-for="mid in compareTargetsForServer(server.endpoint)" :key="mid">
-                    <!-- Card appears when testing starts; cycling border shows active model -->
-                    <div x-show="compareTesting[mid] || !!compareResults[mid]"
+                    <!-- Card — always visible so user can pick which to test -->
+                    <div
                          x-transition:enter="transition ease-out duration-500"
                          x-transition:enter-start="opacity-0 translate-y-1"
                          x-transition:enter-end="opacity-100 translate-y-0"
@@ -920,7 +935,13 @@
                                   x-text="compareExpanded === mid ? '\u25b4' : '\u25be'"></span>
                               </div>
                             </template>
-                            <!-- Per-model retry — only shown once initial result is in -->
+                            <!-- Test button — shown when model hasn't been tested yet -->
+                            <button x-show="!compareResults[mid] && !compareTesting[mid]"
+                              @click.stop="testSingleModel(mid)"
+                              class="text-[10px] px-2 py-0.5 rounded border border-indigo-700 text-indigo-400 hover:text-indigo-300 hover:border-indigo-500 transition-colors">
+                              Test
+                            </button>
+                            <!-- Re-test button — shown once initial result is in -->
                             <button x-show="compareResults[mid]"
                               @click.stop="retryModel(mid)"
                               :disabled="compareTesting[mid]"
@@ -2475,6 +2496,65 @@ function setup() {
       const { [mid]: _l1, ...rL } = this.compareLoadingFor; this.compareLoadingFor = rL;
     },
 
+    async testSingleModel(modelId) {
+      // Test a single model by running the compare with just that one model
+      const model = this.getModels().find(m => m.id === modelId);
+      if (!model) return;
+      const server = this.selectedServers.find(s => s.endpoint === model._serverEndpoint) || this.activeServer;
+      if (!server) return;
+
+      this.compareTesting = { ...this.compareTesting, [modelId]: true };
+      this.compareTestingEndpoint = { ...this.compareTestingEndpoint, [modelId]: server.endpoint };
+
+      try {
+        const r = await fetch('/api/setup/compare', {
+          method: 'POST', credentials: 'include',
+          headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken() },
+          body: JSON.stringify({
+            endpoint:    server.endpoint,
+            api_key:     server._apiKey || 'ollama',
+            server_type: server.type || 'unknown',
+            models: [{
+              id:          modelId,
+              endpoint:    server.endpoint,
+              api_key:     server._apiKey || 'ollama',
+              server_type: server.type || 'unknown',
+            }],
+          }),
+        });
+        if (!r.ok) return;
+        const reader = r.body.getReader();
+        const dec = new TextDecoder();
+        let buf = '';
+        let streamDone = false;
+        while (!streamDone) {
+          let chunk;
+          ({ done: streamDone, value: chunk } = await reader.read());
+          buf += streamDone ? dec.decode(new Uint8Array(), { stream: false })
+                            : dec.decode(chunk, { stream: true });
+          const lines = buf.split('\n'); buf = lines.pop();
+          for (const line of lines) {
+            if (!line.startsWith('data: ')) continue;
+            try {
+              const ev = JSON.parse(line.slice(6));
+              if (ev.log) console.log('[single-test]', ev.log);
+              if (ev.result) {
+                this.compareResults = { ...this.compareResults, [ev.result.model]: ev.result };
+                if (this.compareStoppingMsg) this.compareStoppingMsg = '';
+              }
+            } catch {}
+          }
+        }
+      } catch(e) {
+        console.error('Single model test failed:', e);
+      } finally {
+        const { [modelId]: _, ...rest } = this.compareTesting;
+        this.compareTesting = rest;
+        const { [modelId]: _e, ...restEp } = this.compareTestingEndpoint;
+        this.compareTestingEndpoint = restEp;
+      }
+    },
+
     async runCompare() {
       // Drop servers that are down; keep 'up' and user-selected 'auth_required' (they chose it).
       this.selectedServers = this.selectedServers.filter(s => s.status === 'up' || s.status === 'auth_required');
@@ -2789,7 +2869,11 @@ function setup() {
     // Models in compareTargets that belong to a given server endpoint
     compareTargetsForServer(ep) {
       const models = this.getModels();
-      const byEp = new Set(models.filter(m => m._serverEndpoint === ep).map(m => m.id));
+      const epModels = models.filter(m => m._serverEndpoint === ep).map(m => m.id);
+      // Before any benchmark runs, show all models for this server.
+      // Once targets are set by the backend, show only those.
+      if (this.compareTargets.length === 0) return epModels;
+      const byEp = new Set(epModels);
       return this.compareTargets.filter(mid => byEp.has(mid));
     },
 
