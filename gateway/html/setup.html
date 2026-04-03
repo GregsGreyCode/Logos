@@ -833,7 +833,11 @@
                     class="text-[10px] px-1.5 py-0.5 rounded border border-red-900 text-red-500 hover:text-red-400 hover:border-red-700 transition-colors shrink-0 leading-tight">
                     Stop
                   </button>
-                  <span x-show="compareSkippedServers[server.endpoint]" class="text-[10px] text-gray-600 shrink-0">stopped</span>
+                  <span x-show="compareSkippedServers[server.endpoint] && !compareStoppingMsg" class="text-[10px] text-gray-600 shrink-0">stopped</span>
+                  <span x-show="compareSkippedServers[server.endpoint] && compareStoppingMsg" class="text-[10px] text-yellow-500 shrink-0 flex items-center gap-1">
+                    <span class="w-2.5 h-2.5 border border-yellow-600 border-t-yellow-300 rounded-full animate-spin"></span>
+                    <span x-text="compareStoppingMsg"></span>
+                  </span>
                 </div>
 
                 <!-- Model rows for this server -->
@@ -1682,6 +1686,7 @@ function setup() {
     // Step 2 — auto-compare
     compareAbortController: null,
     compareSkippedServers: {},   // ep → true when user stops that server
+    compareStoppingMsg: '',      // shown while waiting for in-flight test to finish
     compareBenchId: null,
     compareRunning: false,
     compareDone: false,
@@ -2354,6 +2359,7 @@ function setup() {
 
     stopServerBenchmark(ep) {
       this.compareSkippedServers = { ...this.compareSkippedServers, [ep]: true };
+      this.compareStoppingMsg = 'Waiting for current test to finish\u2026';
       // Immediately mark all unresulted models on this server as skipped and
       // clear any in-flight "testing…" state so the label disappears right away.
       const skipped = {};
@@ -2555,10 +2561,13 @@ function setup() {
                 if (!existing || !existing.skipped) {
                   this.compareResults = { ...this.compareResults, [ev.result.model]: ev.result };
                 }
+                // Clear the "waiting" message once the in-flight test completes
+                if (this.compareStoppingMsg) this.compareStoppingMsg = '';
               }
               if (ev.done) {
                 this.compareRunning          = false;
                 this.compareDone             = true;
+                this.compareStoppingMsg      = '';
                 this.compareTesting          = {};
                 this.compareTestingEndpoint  = {};
                 this.compareLoadingFor       = {};
@@ -3047,20 +3056,7 @@ function setup() {
     },
 
     async _flyLogoToNav() {
-      // Animate the setup logo from its current top-centre position to the
-      // nav logo position on the main page (top-left, 32×32).
-      // Nav logo centre: containerLeft + px-4(16) + half-logo(16), y=32.
-      const logoEl = document.querySelector('.setup-logo');
-      if (!logoEl) return;
-      const r = logoEl.getBoundingClientRect();
-      const fromCX = r.left + r.width / 2;
-      const fromCY = r.top  + r.height / 2;
-      const toCX   = Math.max(0, (window.innerWidth - 1280) / 2) + 32;
-      const toCY   = 32;
-      logoEl.style.transition = 'transform 0.9s cubic-bezier(0.4,0,0.2,1)';
-      logoEl.style.transformOrigin = 'center center';
-      logoEl.style.transform = `translate(${toCX - fromCX}px, ${toCY - fromCY}px) scale(${(32/56).toFixed(4)})`;
-      await new Promise(r => setTimeout(r, 900));
+      // No-op — logo fades out with the rest of the page now
     },
 
     async _fadeOutPage() {
