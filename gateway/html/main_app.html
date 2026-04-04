@@ -709,16 +709,34 @@
                           <div class="mt-1.5 pt-1.5 border-t border-gray-700/50">
                             <div class="text-[9px] text-gray-600 uppercase tracking-wider mb-1">Tool calls</div>
                             <template x-for="(t, ti) in msg.stats.tool_detail" :key="ti">
-                              <div class="flex items-start gap-1.5 text-[10px] leading-relaxed">
-                                <span class="text-gray-600 font-mono shrink-0" x-text="(ti+1) + '.'"></span>
+                              <div class="flex items-center gap-1.5 text-[10px] leading-relaxed">
+                                <span class="shrink-0" :class="t.ok === false ? 'text-red-400' : 'text-green-500/70'"
+                                  x-text="t.ok === false ? '\u2717' : '\u2713'"></span>
                                 <span class="text-[var(--accent)] font-mono" x-text="t.tool"></span>
-                                <span x-show="t.preview" class="text-gray-600 truncate" x-text="t.preview"></span>
+                                <span x-show="t.preview" class="text-gray-600 truncate max-w-[180px]" x-text="t.preview"></span>
+                                <span x-show="t.ms" class="text-gray-700 ml-auto" x-text="(t.ms / 1000).toFixed(1) + 's'"></span>
                               </div>
                             </template>
                           </div>
                         </template>
                       </div>
                     </template>
+                  </div>
+                </template>
+              </div>
+            </template>
+            <!-- Live tool call cards -->
+            <template x-if="chatLoading && _liveToolOrder.length > 0">
+              <div class="space-y-1 mb-2">
+                <template x-for="cid in _liveToolOrder" :key="cid">
+                  <div class="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-gray-800/80 border border-gray-700/50 text-xs">
+                    <span x-show="_liveTools[cid]?.status === 'running'" class="w-3 h-3 border border-gray-600 border-t-indigo-400 rounded-full animate-spin flex-shrink-0"></span>
+                    <span x-show="_liveTools[cid]?.status === 'done'" class="text-green-500 flex-shrink-0">&check;</span>
+                    <span x-show="_liveTools[cid]?.status === 'error'" class="text-red-400 flex-shrink-0">&cross;</span>
+                    <span class="font-mono text-indigo-400" x-text="_liveTools[cid]?.tool"></span>
+                    <span class="text-gray-500 truncate max-w-[220px]" x-show="_liveTools[cid]?.preview" x-text="_liveTools[cid]?.preview"></span>
+                    <span class="text-gray-600 ml-auto flex-shrink-0" x-show="_liveTools[cid]?.duration_ms != null"
+                      x-text="(_liveTools[cid]?.duration_ms / 1000).toFixed(1) + 's'"></span>
                   </div>
                 </template>
               </div>
@@ -4714,6 +4732,8 @@ function app() {
     _micChunks: [],
     _micTimer: null,
     loadingChatId: null,
+    _liveTools: {},       // { [call_id]: {tool, preview, status, duration_ms} }
+    _liveToolOrder: [],   // [call_id, ...] in order of appearance
     lastResponseAt: null,
     isWakingUp: false,
     lastRefresh: '',
@@ -6291,9 +6311,30 @@ function app() {
               const d = JSON.parse(line.slice(5).trim());
               if (d.type === 'status') { this._setStatusOverride(d.text || d.content || ''); }
               if (d.type === 'tool_progress') {
-                // Live tool progress from worker
+                // Live tool progress from worker (legacy)
                 this.isWakingUp = false;
                 this._setStatusOverride(d.preview || d.tool || 'Working...');
+              }
+              if (d.type === 'tool_start') {
+                this.isWakingUp = false;
+                const id = d.call_id;
+                this._liveTools = {...this._liveTools, [id]: {
+                    tool: d.tool, preview: d.preview || '',
+                    status: 'running', duration_ms: null
+                }};
+                this._liveToolOrder = [...this._liveToolOrder, id];
+                this._setStatusOverride(d.preview || d.tool || 'Working...');
+                this._scrollChat();
+              }
+              if (d.type === 'tool_end') {
+                const prev = this._liveTools[d.call_id];
+                if (prev) {
+                    this._liveTools = {...this._liveTools, [d.call_id]: {
+                        ...prev,
+                        status: d.success ? 'done' : 'error',
+                        duration_ms: d.duration_ms,
+                    }};
+                }
               }
               if (d.type === 'token') {
                 // Streaming token from worker
@@ -6311,6 +6352,8 @@ function app() {
               }
               if (d.type === 'message') { reply = d.content; this.isWakingUp = false; }
               if (d.type === 'done') {
+                this._liveTools = {};
+                this._liveToolOrder = [];
                 msgStats = {
                   elapsed_s:       d.elapsed_s       || null,
                   prompt_tokens:   d.prompt_tokens    || 0,

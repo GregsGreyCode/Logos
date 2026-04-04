@@ -3820,6 +3820,7 @@ class GatewayRunner:
         session_key: str = None,
         action_policy=None,
         auth_user_id: str = None,
+        http_sse_queue: "asyncio.Queue | None" = None,
     ) -> Dict[str, Any]:
         """
         Run the agent with the given message and context.
@@ -4218,12 +4219,31 @@ class GatewayRunner:
         last_progress_msg = [None]  # Track last message for dedup
         repeat_count = [0]  # How many times the same message repeated
         tools_used_count = [0]  # Actual tool calls made this turn
+        _call_counter = [0]
 
         def progress_callback(tool_name: str, preview: str = None, args: dict = None):
-            """Callback invoked by agent when a tool is called."""
+            """Callback invoked by agent when a tool is about to execute."""
             tools_used_count[0] += 1
+            _call_counter[0] += 1
+            call_id = _call_counter[0]
+
+            # Accumulate tool call log for the run record
+            _tool_calls_log.append({"tool": tool_name, "preview": (preview or "")[:80]})
+
+            # Emit structured tool_start event for HTTP SSE clients
+            if http_sse_queue is not None:
+                try:
+                    http_sse_queue.put_nowait({
+                        "type": "tool_start",
+                        "call_id": call_id,
+                        "tool": tool_name,
+                        "preview": (preview or "")[:80],
+                    })
+                except Exception:
+                    pass
+
             if not progress_queue:
-                return
+                return call_id
             
             # "new" mode: only report when tool changes
             if progress_mode == "new" and tool_name == last_tool[0]:
@@ -4281,7 +4301,7 @@ class GatewayRunner:
                     args_str = args_str[:197] + "..."
                 msg = f"{emoji} {tool_name}({list(args.keys())})\n{args_str}"
                 progress_queue.put(msg)
-                return
+                return call_id
             
             if preview:
                 # Truncate preview to keep messages clean
@@ -4299,11 +4319,12 @@ class GatewayRunner:
                 # Update the last line in progress_lines with a counter
                 # via a special "dedup" queue message.
                 progress_queue.put(("__dedup__", msg, repeat_count[0]))
-                return
+                return call_id
             last_progress_msg[0] = msg
             repeat_count[0] = 0
-            
+
             progress_queue.put(msg)
+            return call_id
         
         # Background task to send progress messages
         # Accumulates tool lines into a single message that gets edited
@@ -4430,6 +4451,30 @@ class GatewayRunner:
         )
         _tool_calls_log: list = []
 
+        def tool_complete_callback(tool_name: str, call_id, success: bool, duration_ms: float, error: str = None):
+            """Callback invoked by agent after a tool finishes executing."""
+            # Enrich the most recent matching entry in _tool_calls_log
+            for entry in reversed(_tool_calls_log):
+                if entry.get("tool") == tool_name and "ok" not in entry:
+                    entry["ok"] = success
+                    entry["ms"] = round(duration_ms, 1)
+                    if error:
+                        entry["err"] = (error or "")[:100]
+                    break
+            # Emit structured tool_end event for HTTP SSE clients
+            if http_sse_queue is not None:
+                try:
+                    http_sse_queue.put_nowait({
+                        "type": "tool_end",
+                        "call_id": call_id,
+                        "tool": tool_name,
+                        "success": success,
+                        "duration_ms": round(duration_ms, 1),
+                        "error": (error or "")[:100] if error else None,
+                    })
+                except Exception:
+                    pass
+
         def _step_callback_sync(iteration: int, tool_names: list) -> None:
             # Update live session status (dict writes are GIL-safe in CPython)
             if session_key and session_key in self._session_status:
@@ -4443,9 +4488,7 @@ class GatewayRunner:
                     recent.append(tool_name)
                     if len(recent) > 10:
                         recent.pop(0)
-            # Accumulate tool call log for the run record
-            for tool_name in (tool_names or []):
-                _tool_calls_log.append({"tool": tool_name, "preview": ""})
+            # Note: _tool_calls_log is now populated by progress_callback (with preview)
             try:
                 asyncio.run_coroutine_threadsafe(
                     _hooks_ref.emit("agent:step", {
@@ -4547,7 +4590,8 @@ class GatewayRunner:
                 provider_require_parameters=pr.get("require_parameters", False),
                 provider_data_collection=pr.get("data_collection"),
                 session_id=session_id,
-                tool_progress_callback=progress_callback if tool_progress_enabled else None,
+                tool_progress_callback=progress_callback,
+                tool_complete_callback=tool_complete_callback,
                 step_callback=_step_callback_sync if _hooks_ref.loaded_hooks else None,
                 platform=platform_key,
                 honcho_session_key=session_key,

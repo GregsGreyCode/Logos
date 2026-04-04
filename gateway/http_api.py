@@ -1962,6 +1962,29 @@ async def _handle_chat(request: web.Request) -> web.StreamResponse:
         )
 
     heartbeat = asyncio.ensure_future(heartbeat_loop())
+
+    # Queue for structured tool_start/tool_end events from the agent thread
+    http_sse_queue = asyncio.Queue()
+
+    async def drain_tool_events():
+        """Forward tool events from the agent thread to the SSE stream."""
+        while True:
+            try:
+                evt = await asyncio.wait_for(http_sse_queue.get(), timeout=0.5)
+                await send_event(evt)
+            except asyncio.TimeoutError:
+                continue
+            except asyncio.CancelledError:
+                # Drain remaining events before exiting
+                while not http_sse_queue.empty():
+                    try:
+                        await send_event(http_sse_queue.get_nowait())
+                    except Exception:
+                        break
+                return
+
+    drain_task = asyncio.ensure_future(drain_tool_events())
+
     result = {}
     t_agent_start = time.time()
     try:
@@ -1992,7 +2015,9 @@ async def _handle_chat(request: web.Request) -> web.StreamResponse:
             # Stream callback — forward worker events to client SSE
             async def _on_worker_stream(event):
                 etype = event.get("type")
-                if etype == "tool_progress":
+                if etype in ("tool_start", "tool_end"):
+                    await send_event(event)
+                elif etype == "tool_progress":
                     await send_event({
                         "type": "tool_progress",
                         "tool": event.get("tool", ""),
@@ -2029,6 +2054,7 @@ async def _handle_chat(request: web.Request) -> web.StreamResponse:
                 session_key=session_key,
                 action_policy=_action_policy,
                 auth_user_id=_auth_user_id,
+                http_sse_queue=http_sse_queue,
             )
         final = result.get("final_response", "")
         await send_event({"type": "message", "content": final})
@@ -2041,6 +2067,11 @@ async def _handle_chat(request: web.Request) -> web.StreamResponse:
         await send_event({"type": "error", "content": err_str, "error_class": type(exc).__name__})
     finally:
         heartbeat.cancel()
+        drain_task.cancel()
+        try:
+            await drain_task
+        except asyncio.CancelledError:
+            pass
 
     await send_event({
         "type":            "done",
