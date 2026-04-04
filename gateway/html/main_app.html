@@ -725,22 +725,6 @@
                 </template>
               </div>
             </template>
-            <!-- Live tool call cards -->
-            <template x-if="chatLoading && _liveToolOrder.length > 0">
-              <div class="space-y-1 mb-2">
-                <template x-for="cid in _liveToolOrder" :key="cid">
-                  <div class="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-gray-800/80 border border-gray-700/50 text-xs">
-                    <span x-show="_liveTools[cid]?.status === 'running'" class="w-3 h-3 border border-gray-600 border-t-indigo-400 rounded-full animate-spin flex-shrink-0"></span>
-                    <span x-show="_liveTools[cid]?.status === 'done'" class="text-green-500 flex-shrink-0">&check;</span>
-                    <span x-show="_liveTools[cid]?.status === 'error'" class="text-red-400 flex-shrink-0">&cross;</span>
-                    <span class="font-mono text-indigo-400" x-text="_liveTools[cid]?.tool"></span>
-                    <span class="text-gray-500 truncate max-w-[220px]" x-show="_liveTools[cid]?.preview" x-text="_liveTools[cid]?.preview"></span>
-                    <span class="text-gray-600 ml-auto flex-shrink-0" x-show="_liveTools[cid]?.duration_ms != null"
-                      x-text="(_liveTools[cid]?.duration_ms / 1000).toFixed(1) + 's'"></span>
-                  </div>
-                </template>
-              </div>
-            </template>
             <!-- Thinking / wake dots -->
             <div x-show="chatLoading && !webSession" class="flex items-center gap-2 text-gray-500 text-sm">
               <!-- wake state: breathe-pulse -->
@@ -978,9 +962,25 @@
                   <span class="text-red-600 ml-1"><span x-text="s.error_count"></span> err</span>
                 </template>
               </div>
-              <template x-if="s.recent_tools && s.recent_tools.length > 1">
+              <template x-if="s.recent_tools && s.recent_tools.length > 1 && _liveToolOrder.length === 0">
                 <div class="mt-1.5 text-xs text-gray-700 font-mono truncate"
                   x-text="s.recent_tools.slice(-3).join(' \\u2192 ')"></div>
+              </template>
+              <!-- Live tool call list (from SSE events) -->
+              <template x-if="s.session_key && s.session_key.includes(activeChatId||'__none__') && _liveToolOrder.length > 0">
+                <div class="mt-2 space-y-0.5 max-h-40 overflow-y-auto thin-scroll">
+                  <template x-for="cid in _liveToolOrder" :key="cid">
+                    <div class="flex items-center gap-1.5 text-[10px] leading-relaxed">
+                      <span x-show="_liveTools[cid]?.status === 'running'" class="w-2.5 h-2.5 border border-gray-600 border-t-indigo-400 rounded-full animate-spin flex-shrink-0"></span>
+                      <span x-show="_liveTools[cid]?.status === 'done'" class="text-green-500/70 flex-shrink-0">&check;</span>
+                      <span x-show="_liveTools[cid]?.status === 'error'" class="text-red-400 flex-shrink-0">&cross;</span>
+                      <span class="font-mono text-indigo-400 truncate" x-text="_liveTools[cid]?.tool"></span>
+                      <span class="text-gray-600 truncate max-w-[80px]" x-show="_liveTools[cid]?.preview" x-text="_liveTools[cid]?.preview"></span>
+                      <span class="text-gray-700 ml-auto flex-shrink-0" x-show="_liveTools[cid]?.duration_ms != null"
+                        x-text="(_liveTools[cid]?.duration_ms / 1000).toFixed(1) + 's'"></span>
+                    </div>
+                  </template>
+                </div>
               </template>
             </div>
           </template>
@@ -6255,6 +6255,8 @@ function app() {
       if (!chat) return;
 
       this.chatInput = '';
+      this._liveTools = {};
+      this._liveToolOrder = [];
       const pendingAttachments = this.chatAttachments.length ? this.chatAttachments.map(a => ({data: a.data, name: a.name, type: a.type})) : undefined;
       this.chatAttachments = [];
       this.$nextTick(() => { const el = this.$refs.chatTextarea; if (el) { el.style.height = 'auto'; } });
@@ -6352,8 +6354,8 @@ function app() {
               }
               if (d.type === 'message') { reply = d.content; this.isWakingUp = false; }
               if (d.type === 'done') {
-                this._liveTools = {};
-                this._liveToolOrder = [];
+                // Keep _liveTools visible so the user can inspect what happened
+                // (cleared on next sendChat instead)
                 msgStats = {
                   elapsed_s:       d.elapsed_s       || null,
                   prompt_tokens:   d.prompt_tokens    || 0,
