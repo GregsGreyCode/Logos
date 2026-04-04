@@ -280,6 +280,7 @@ class AIAgent:
         provider_data_collection: str = None,
         session_id: str = None,
         tool_progress_callback: callable = None,
+        tool_complete_callback: callable = None,
         thinking_callback: callable = None,
         reasoning_callback: callable = None,
         clarify_callback: callable = None,
@@ -382,6 +383,7 @@ class AIAgent:
             self.api_mode = "chat_completions"
 
         self.tool_progress_callback = tool_progress_callback
+        self.tool_complete_callback = tool_complete_callback
         self.thinking_callback = thinking_callback
         self.reasoning_callback = reasoning_callback
         self.clarify_callback = clarify_callback
@@ -3792,11 +3794,12 @@ class AIAgent:
                 args_preview = args_str[:self.log_prefix_chars] + "..." if len(args_str) > self.log_prefix_chars else args_str
                 print(f"  📞 Tool {i}: {name}({list(args.keys())}) - {args_preview}")
 
-        for _, name, args in parsed_calls:
+        _concurrent_call_ids = {}  # index → call_id
+        for idx, (_, name, args) in enumerate(parsed_calls):
             if self.tool_progress_callback:
                 try:
                     preview = _build_tool_preview(name, args)
-                    self.tool_progress_callback(name, preview, args)
+                    _concurrent_call_ids[idx] = self.tool_progress_callback(name, preview, args)
                 except Exception as cb_err:
                     logging.debug(f"Tool progress callback error: {cb_err}")
 
@@ -3815,6 +3818,18 @@ class AIAgent:
             duration = time.time() - start
             is_error, _ = _detect_tool_failure(function_name, result)
             results[index] = (function_name, function_args, result, duration, is_error)
+            # Notify tool completion for live UI updates
+            if self.tool_complete_callback:
+                try:
+                    _cid = _concurrent_call_ids.get(index)
+                    result_preview = result[:200] if len(result) > 200 else result
+                    self.tool_complete_callback(
+                        function_name, _cid,
+                        not is_error, duration * 1000,
+                        error=result_preview if is_error else None,
+                    )
+                except Exception:
+                    pass
 
         # Start spinner for CLI mode
         spinner = None
@@ -3961,10 +3976,11 @@ class AIAgent:
                 args_preview = args_str[:self.log_prefix_chars] + "..." if len(args_str) > self.log_prefix_chars else args_str
                 print(f"  📞 Tool {i}: {function_name}({list(function_args.keys())}) - {args_preview}")
 
+            _call_id = None
             if self.tool_progress_callback:
                 try:
                     preview = _build_tool_preview(function_name, function_args)
-                    self.tool_progress_callback(function_name, preview, function_args)
+                    _call_id = self.tool_progress_callback(function_name, preview, function_args)
                 except Exception as cb_err:
                     logging.debug(f"Tool progress callback error: {cb_err}")
 
@@ -4151,6 +4167,17 @@ class AIAgent:
                         args_preview=_args_pv,
                         success=not _is_error_result,
                         duration_ms=tool_duration * 1000,
+                        error=result_preview if _is_error_result else None,
+                    )
+                except Exception:
+                    pass
+
+            # Notify tool completion for live UI updates
+            if self.tool_complete_callback:
+                try:
+                    self.tool_complete_callback(
+                        function_name, _call_id,
+                        not _is_error_result, tool_duration * 1000,
                         error=result_preview if _is_error_result else None,
                     )
                 except Exception:
