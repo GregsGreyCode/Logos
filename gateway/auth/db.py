@@ -167,6 +167,18 @@ CREATE TABLE IF NOT EXISTS cloud_providers (
 );
 CREATE INDEX IF NOT EXISTS idx_rlog_ts       ON routing_log(created_at);
 
+CREATE TABLE IF NOT EXISTS agents (
+    id           TEXT PRIMARY KEY,
+    name         TEXT UNIQUE NOT NULL,
+    soul_slug    TEXT NOT NULL DEFAULT 'general',
+    model        TEXT,
+    description  TEXT,
+    creator_id   TEXT REFERENCES users(id),
+    shared       INTEGER NOT NULL DEFAULT 1,
+    created_at   INTEGER NOT NULL,
+    updated_at   INTEGER NOT NULL
+);
+
 -- ── Action policies ────────────────────────────────────────────────────────
 -- What a user/session/agent is permitted to do (write, exec, provider, etc.)
 -- Separate from routing_policies which govern machine/provider *selection*.
@@ -833,6 +845,66 @@ def get_active_cloud_provider() -> Optional[dict]:
     with _conn() as conn:
         row = conn.execute("SELECT * FROM cloud_providers WHERE is_active = 1 LIMIT 1").fetchone()
         return dict(row) if row else None
+
+
+# ── Named agents ─────────────────────────────────────────────────────────────
+
+def create_agent(name: str, soul_slug: str = "general", model: str = "",
+                 description: str = "", creator_id: str = "", shared: bool = True) -> dict:
+    aid = _new_id("agent")
+    now = int(time.time() * 1000)
+    with _conn() as conn:
+        conn.execute(
+            """INSERT INTO agents (id, name, soul_slug, model, description, creator_id, shared, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (aid, name, soul_slug, model or "", description or "", creator_id or "", 1 if shared else 0, now, now),
+        )
+    return get_agent(aid)
+
+
+def get_agent(agent_id: str) -> Optional[dict]:
+    with _conn() as conn:
+        row = conn.execute("SELECT * FROM agents WHERE id = ?", (agent_id,)).fetchone()
+        return dict(row) if row else None
+
+
+def get_agent_by_name(name: str) -> Optional[dict]:
+    with _conn() as conn:
+        row = conn.execute("SELECT * FROM agents WHERE name = ? COLLATE NOCASE", (name,)).fetchone()
+        return dict(row) if row else None
+
+
+def list_agents(user_id: str = "") -> list[dict]:
+    """List agents visible to a user (shared + own). If no user_id, list all."""
+    with _conn() as conn:
+        if user_id:
+            rows = conn.execute(
+                "SELECT * FROM agents WHERE shared = 1 OR creator_id = ? ORDER BY created_at",
+                (user_id,),
+            ).fetchall()
+        else:
+            rows = conn.execute("SELECT * FROM agents ORDER BY created_at").fetchall()
+        return [dict(r) for r in rows]
+
+
+def update_agent(agent_id: str, **fields) -> Optional[dict]:
+    allowed = {"name", "soul_slug", "model", "description", "shared"}
+    updates = {k: v for k, v in fields.items() if k in allowed}
+    if not updates:
+        return get_agent(agent_id)
+    updates["updated_at"] = int(time.time() * 1000)
+    set_clause = ", ".join(f"{k} = ?" for k in updates)
+    with _conn() as conn:
+        conn.execute(
+            f"UPDATE agents SET {set_clause} WHERE id = ?",
+            (*updates.values(), agent_id),
+        )
+    return get_agent(agent_id)
+
+
+def delete_agent(agent_id: str) -> None:
+    with _conn() as conn:
+        conn.execute("DELETE FROM agents WHERE id = ?", (agent_id,))
 
 
 # ── Machine user claims ────────────────────────────────────────────────────────

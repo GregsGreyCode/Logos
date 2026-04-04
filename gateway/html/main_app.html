@@ -268,18 +268,15 @@
       </template>
     </div>
     <button class="pb-2 text-sm font-medium border-b-2 border-transparent"
-      :class="tab==='world'?'tab-active':'text-gray-400 hover:text-white'"
-      @click="tab='world'; loadInstances(); initWorld()">World</button>
+      :class="tab==='agents'?'tab-active':'text-gray-400 hover:text-white'"
+      @click="tab='agents'; loadInstances(); loadSouls(); loadAdminMachines(); loadNamedAgents(); initWorld()">Agents</button>
     <button class="pb-2 text-sm font-medium border-b-2 border-transparent"
       :class="tab==='sessions'?'tab-active':'text-gray-400 hover:text-white'"
       @click="tab='sessions'; if(!clusterInstances.length) loadInstances(); if(!soulsLoaded) loadSouls()">Chats</button>
-    <button class="pb-2 text-sm font-medium border-b-2 border-transparent"
-      :class="tab==='agents'?'tab-active':'text-gray-400 hover:text-white'"
-      @click="tab='agents'; loadInstances(); loadSouls(); loadAdminMachines()">Agents</button>
     <template x-if="can('manage_machines') || can('manage_profiles') || can('view_routing_debug') || can('view_evolution')">
       <button class="pb-2 text-sm font-medium border-b-2 border-transparent"
         :class="tab==='infra'?'tab-active':'text-gray-400 hover:text-white'"
-        @click="tab='infra'; loadAdminMachines(); loadCloudProviders(); loadRoutingData()">Infra</button>
+        @click="tab='infra'; loadAdminMachines(); loadCloudProviders(); loadRoutingData()">Settings</button>
     </template>
     <template x-if="can('manage_users') || can('view_audit_logs') || can('manage_workflows') || can('view_runs')">
       <button class="pb-2 text-sm font-medium border-b-2 border-transparent relative"
@@ -418,11 +415,13 @@
 
   <!-- ── World Tab ────────────────────────────────────────────────── -->
   <div x-show="tab==='world'" x-cloak style="height:calc(100vh - 84px);" class="flex gap-4">
-    <!-- World canvas — constrained, not fullscreen -->
-    <div class="flex-1 flex items-center justify-center" style="min-width:0;">
-      <div id="agent-world" style="width:100%; max-width:640px; height:100%; max-height:640px; border-radius:12px; overflow:hidden; border:1px solid rgba(255,255,255,0.05);"></div>
+    <!-- World tab merged into Agents — redirect -->
+    <div class="flex items-center justify-center w-full">
+      <button @click="tab='agents'; loadInstances(); loadSouls(); loadNamedAgents(); initWorld()"
+        class="text-sm text-indigo-400 hover:text-white transition-colors">World has moved to the Agents tab &rarr;</button>
     </div>
-    <!-- Agent list sidebar -->
+    <div class="hidden">
+    <!-- Agent list sidebar (hidden, moved to Agents tab) -->
     <div class="w-64 shrink-0 space-y-2 overflow-y-auto py-2" style="max-height:calc(100vh - 84px);">
       <div class="text-xs font-semibold text-gray-600 uppercase tracking-wider mb-2">Agents</div>
       <template x-for="agent in _worldAgentList()" :key="agent.name">
@@ -450,6 +449,7 @@
         </div>
       </template>
     </div>
+    </div><!-- /hidden world content -->
   </div>
 
   <!-- ── Chats Tab ────────────────────────────────────────────────── -->
@@ -498,7 +498,7 @@
       <div class="w-44 shrink-0 flex flex-col h-full">
         <button @click="newChat()"
           class="w-full mb-2 px-3 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-sm rounded-lg font-medium transition-colors flex items-center justify-center gap-2">
-          <span>＋</span><span>New Chat</span>
+          <span>＋</span><span x-text="(() => { const chat = webChats.find(c => c.id === activeChatId); return chat?.agent_name ? 'New Topic' : 'New Chat'; })()"></span>
         </button>
         <button @click="tab='agents'; loadInstances(); loadSouls()"
           class="w-full mb-3 px-3 py-1.5 bg-gray-900 hover:bg-gray-800 text-gray-500 hover:text-gray-300 text-xs rounded-lg transition-colors flex items-center justify-center gap-1.5 border border-gray-800 hover:border-gray-700"
@@ -581,7 +581,7 @@
             <!-- Row 1: Core badge + name + status dot (after name, like chips) + chat ID + canary -->
             <div class="flex items-center gap-2 pb-1.5">
               <span class="text-[10px] font-bold tracking-wider uppercase px-1 py-0.5 rounded bg-emerald-900 text-emerald-300 shrink-0">Agent</span>
-              <span class="font-semibold text-white" x-text="status.instance_name || 'Hermes'"></span>
+              <span class="font-semibold text-white" x-text="(() => { const chat = webChats.find(c => c.id === activeChatId); return chat?.agent_name || status.instance_name || 'Hermes'; })()"></span>
               <span class="w-2 h-2 rounded-full shrink-0"
                 :class="chatLoading ? 'bg-indigo-500 animate-pulse icon-hue' : agentAlive === false ? 'bg-red-500' : agentAlive === null ? 'bg-gray-600 animate-pulse' : 'bg-green-500'"
                 :title="chatLoading ? 'Thinking\u2026' : agentAlive === false ? 'Agent not responding' : agentAlive === null ? 'Checking\u2026' : 'Connected'"></span>
@@ -2218,7 +2218,126 @@
   <!-- ── Instances Tab (kubernetes mode only) ─────────────────────── -->
   <div x-show="tab==='agents'" x-cloak>
 
-    <!-- ── Running agents ── -->
+    <!-- ── Named Agents ── -->
+    <div class="mb-6">
+      <div class="flex items-center justify-between mb-3">
+        <h2 class="text-sm font-semibold text-white">Your Agents</h2>
+        <button @click="namedAgentFormOpen = !namedAgentFormOpen; namedAgentMsg = null"
+          class="text-[10px] px-2.5 py-1 rounded border border-gray-700 text-gray-400 hover:text-white hover:border-gray-500 transition-colors">
+          <span x-text="namedAgentFormOpen ? 'Cancel' : '+ Create Agent'"></span>
+        </button>
+      </div>
+
+      <!-- Status message -->
+      <div x-show="namedAgentMsg" x-cloak class="mb-3 text-xs px-3 py-2 rounded-lg"
+        :class="namedAgentMsg?.type === 'ok' ? 'bg-green-950 text-green-400 border border-green-800' : 'bg-red-950 text-red-400 border border-red-800'"
+        x-text="namedAgentMsg?.text"></div>
+
+      <!-- Create agent form -->
+      <div x-show="namedAgentFormOpen" x-cloak class="mb-4 p-4 rounded-xl border border-gray-700 bg-gray-900 space-y-3">
+        <input x-model="namedAgentForm.name" type="text" placeholder="Agent name (e.g. Atlas, DevOps-Bot)"
+          class="w-full px-3 py-2 rounded-lg bg-gray-800 border border-gray-700 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-indigo-500">
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="text-[10px] text-gray-500 mb-1 block">Soul</label>
+            <select x-model="namedAgentForm.soul_slug"
+              class="w-full px-2 py-1.5 rounded-lg bg-gray-800 border border-gray-700 text-xs text-white focus:outline-none focus:border-indigo-500">
+              <template x-for="s in (souls.length ? souls : [{slug:'general',name:'General'}])" :key="s.slug">
+                <option :value="s.slug" x-text="s.name || s.slug"></option>
+              </template>
+            </select>
+          </div>
+          <div>
+            <label class="text-[10px] text-gray-500 mb-1 block">Model (optional)</label>
+            <input x-model="namedAgentForm.model" type="text" placeholder="e.g. claude-opus-4-6"
+              class="w-full px-2 py-1.5 rounded-lg bg-gray-800 border border-gray-700 text-xs text-white placeholder-gray-600 focus:outline-none focus:border-indigo-500">
+          </div>
+        </div>
+        <input x-model="namedAgentForm.description" type="text" placeholder="What does this agent do? (optional)"
+          class="w-full px-3 py-2 rounded-lg bg-gray-800 border border-gray-700 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-indigo-500">
+        <button @click="createNamedAgent()" :disabled="!namedAgentForm.name.trim()"
+          class="w-full py-2 rounded-lg text-xs font-medium bg-indigo-600 text-white hover:bg-indigo-500 disabled:opacity-40 transition-colors">
+          Create Agent
+        </button>
+      </div>
+
+      <!-- Agent cards -->
+      <div class="space-y-2">
+        <template x-for="a in namedAgents" :key="a.id">
+          <div @click="if (!a._editing) chatWithAgent(a)"
+            class="p-3 rounded-xl border border-gray-800 bg-gray-900 hover:border-gray-600 transition-all cursor-pointer group">
+            <!-- Header -->
+            <div class="flex items-center justify-between mb-1">
+              <div class="flex items-center gap-2">
+                <span class="text-sm font-semibold text-white group-hover:text-indigo-300 transition-colors" x-text="a.name"></span>
+                <span class="text-[10px] px-1.5 py-0.5 rounded font-mono bg-indigo-950 text-indigo-300 border border-indigo-900"
+                  x-text="'S:' + a.soul_slug"></span>
+                <span x-show="a.model" class="text-[10px] px-1.5 py-0.5 rounded font-mono bg-gray-800 text-gray-400 border border-gray-700"
+                  x-text="'M:' + a.model"></span>
+              </div>
+              <div class="flex items-center gap-1.5" @click.stop>
+                <button x-show="!a._editing" @click.stop="a._editing = true; a._edit = { name: a.name, soul_slug: a.soul_slug, model: a.model || '', description: a.description || '' }"
+                  class="text-[10px] px-2 py-0.5 rounded border border-gray-700 text-gray-500 hover:text-white hover:border-gray-500 transition-colors">Edit</button>
+                <button @click.stop="deleteNamedAgent(a.id)"
+                  class="text-[10px] px-2 py-0.5 rounded border border-red-900 text-red-500 hover:text-red-400 hover:border-red-700 transition-colors">Delete</button>
+              </div>
+            </div>
+            <!-- Description -->
+            <p x-show="a.description && !a._editing" class="text-xs text-gray-500 mb-1" x-text="a.description"></p>
+            <!-- Inline edit -->
+            <div x-show="a._editing" x-cloak @click.stop class="mt-2 space-y-2 pt-2 border-t border-gray-800">
+              <input x-model="a._edit.name" type="text" placeholder="Agent name"
+                class="w-full px-2 py-1.5 rounded-lg bg-gray-800 border border-gray-700 text-xs text-white focus:outline-none focus:border-indigo-500">
+              <div class="grid grid-cols-2 gap-2">
+                <select x-model="a._edit.soul_slug"
+                  class="px-2 py-1.5 rounded-lg bg-gray-800 border border-gray-700 text-xs text-white focus:outline-none focus:border-indigo-500">
+                  <template x-for="s in (souls.length ? souls : [{slug:'general',name:'General'}])" :key="s.slug">
+                    <option :value="s.slug" x-text="s.name || s.slug"></option>
+                  </template>
+                </select>
+                <input x-model="a._edit.model" type="text" placeholder="Model"
+                  class="px-2 py-1.5 rounded-lg bg-gray-800 border border-gray-700 text-xs text-white placeholder-gray-600 focus:outline-none focus:border-indigo-500">
+              </div>
+              <input x-model="a._edit.description" type="text" placeholder="Description"
+                class="w-full px-2 py-1.5 rounded-lg bg-gray-800 border border-gray-700 text-xs text-white placeholder-gray-600 focus:outline-none focus:border-indigo-500">
+              <div class="flex gap-2">
+                <button @click="updateNamedAgent(a.id)"
+                  class="text-xs px-3 py-1.5 rounded-lg bg-indigo-600 text-white hover:bg-indigo-500 transition-colors">Save</button>
+                <button @click="a._editing = false; a._edit = null"
+                  class="text-xs px-3 py-1.5 rounded-lg border border-gray-700 text-gray-400 hover:text-white transition-colors">Cancel</button>
+              </div>
+            </div>
+          </div>
+        </template>
+        <p x-show="namedAgents.length === 0 && !namedAgentFormOpen" class="text-xs text-gray-600 text-center py-6">
+          No agents yet. Create one to get started — give it a name, pick a soul and model, and start chatting.
+        </p>
+      </div>
+    </div>
+
+    <!-- ── World visualization ── -->
+    <div class="mb-6" x-show="clusterInstances.length > 0 || _worldAgentList().length > 0">
+      <div class="text-xs font-semibold text-gray-600 uppercase tracking-wider mb-2">Running Instances</div>
+      <div class="flex gap-3" style="height:240px;">
+        <div class="flex-1 flex items-center justify-center" style="min-width:0;">
+          <div id="agent-world" style="width:100%; max-width:480px; height:100%; border-radius:10px; overflow:hidden; border:1px solid rgba(255,255,255,0.05);"></div>
+        </div>
+        <div class="w-48 shrink-0 space-y-1.5 overflow-y-auto">
+          <template x-for="agent in _worldAgentList()" :key="agent.name">
+            <div class="px-2 py-1.5 rounded-lg border border-gray-800 bg-gray-900 text-xs">
+              <div class="flex items-center gap-1.5">
+                <span class="w-1.5 h-1.5 rounded-full shrink-0"
+                  :class="agent.status === 'running' ? 'bg-green-500' : 'bg-yellow-500'"></span>
+                <span class="text-white font-medium truncate" x-text="agent.instance_name || agent.name"></span>
+              </div>
+              <span x-show="agent.soul?.name" class="text-[9px] text-gray-600 pl-3" x-text="agent.soul?.name"></span>
+            </div>
+          </template>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Spawn / Running instances (existing) ── -->
     <div>
 
     <!-- Resource bar — adapts to k8s (cluster totals) or local (psutil free) -->
@@ -4923,6 +5042,12 @@ function app() {
     forkCopyMemory: true,
     forkCopyKnowledge: true,
     forkMsg: null,
+    // Named agents
+    namedAgents: [],
+    namedAgentFormOpen: false,
+    namedAgentForm: { name: '', soul_slug: 'general', model: '', description: '' },
+    namedAgentEditId: null,
+    namedAgentMsg: null,
     // soul registry + spawn flow
     souls: [],
     soulsLoaded: false,
@@ -6848,6 +6973,72 @@ function app() {
     },
 
     // ── Cloud provider methods ──────────────────────────────────────────────
+    // ── Named agents methods ────────────────────────────────────────────────
+    async loadNamedAgents() {
+      try {
+        const r = await fetch('/admin/agents', { credentials: 'include' });
+        const d = await r.json();
+        this.namedAgents = d.agents || [];
+      } catch { this.namedAgents = []; }
+    },
+
+    async createNamedAgent() {
+      const f = this.namedAgentForm;
+      if (!f.name.trim()) return;
+      this.namedAgentMsg = null;
+      try {
+        const r = await fetch('/admin/agents', {
+          method: 'POST', credentials: 'include',
+          headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken() },
+          body: JSON.stringify(f),
+        });
+        if (r.ok) {
+          this.namedAgentFormOpen = false;
+          this.namedAgentForm = { name: '', soul_slug: 'general', model: '', description: '' };
+          await this.loadNamedAgents();
+        } else {
+          const d = await r.json().catch(() => ({}));
+          this.namedAgentMsg = { type: 'error', text: d.error || 'Failed to create agent' };
+        }
+      } catch (e) { this.namedAgentMsg = { type: 'error', text: e.message }; }
+    },
+
+    async updateNamedAgent(aid) {
+      const a = this.namedAgents.find(x => x.id === aid);
+      if (!a || !a._edit) return;
+      try {
+        const r = await fetch('/admin/agents/' + aid, {
+          method: 'PATCH', credentials: 'include',
+          headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken() },
+          body: JSON.stringify(a._edit),
+        });
+        if (r.ok) { a._editing = false; a._edit = null; await this.loadNamedAgents(); }
+      } catch {}
+    },
+
+    async deleteNamedAgent(aid) {
+      const a = this.namedAgents.find(x => x.id === aid);
+      if (!confirm('Delete agent "' + (a?.name || aid) + '"? This cannot be undone.')) return;
+      try {
+        await fetch('/admin/agents/' + aid, {
+          method: 'DELETE', credentials: 'include',
+          headers: { 'X-CSRF-Token': getCsrfToken() },
+        });
+        await this.loadNamedAgents();
+      } catch {}
+    },
+
+    chatWithAgent(agent) {
+      // Switch to chat tab and start/resume a conversation with this named agent
+      this.tab = 'sessions';
+      // For now, create a new chat named after the agent
+      const chatId = 'agent-' + agent.id + '-' + Math.random().toString(36).slice(2, 8);
+      const chat = { id: chatId, name: agent.name, messages: [], created_at: Date.now(), updated_at: Date.now(), agent_id: agent.id, agent_name: agent.name };
+      this.webChats = [chat, ...this.webChats];
+      this.activeChatId = chatId;
+      this._saveChats();
+    },
+
     async loadCloudProviders() {
       try {
         const r = await fetch('/admin/cloud-providers', { credentials: 'include' });
