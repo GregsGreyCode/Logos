@@ -272,14 +272,14 @@
       @click="tab='world'; loadInstances(); initWorld()">World</button>
     <button class="pb-2 text-sm font-medium border-b-2 border-transparent"
       :class="tab==='sessions'?'tab-active':'text-gray-400 hover:text-white'"
-      @click="tab='sessions'; if(!clusterInstances.length) loadInstances()">Chats</button>
+      @click="tab='sessions'; if(!clusterInstances.length) loadInstances(); if(!soulsLoaded) loadSouls()">Chats</button>
     <button class="pb-2 text-sm font-medium border-b-2 border-transparent"
       :class="tab==='agents'?'tab-active':'text-gray-400 hover:text-white'"
       @click="tab='agents'; loadInstances(); loadSouls(); loadAdminMachines()">Agents</button>
     <template x-if="can('manage_machines') || can('manage_profiles') || can('view_routing_debug') || can('view_evolution')">
       <button class="pb-2 text-sm font-medium border-b-2 border-transparent"
         :class="tab==='infra'?'tab-active':'text-gray-400 hover:text-white'"
-        @click="tab='infra'; loadAdminMachines(); loadRoutingData()">Infra</button>
+        @click="tab='infra'; loadAdminMachines(); loadCloudProviders(); loadRoutingData()">Infra</button>
     </template>
     <template x-if="can('manage_users') || can('view_audit_logs') || can('manage_workflows') || can('view_runs')">
       <button class="pb-2 text-sm font-medium border-b-2 border-transparent relative"
@@ -808,6 +808,75 @@
             <span class="ml-auto text-gray-700" x-text="lastRefresh ? 'updated ' + lastRefresh : ''"></span>
           </div>
 
+          <!-- STAMP selector -->
+          <div class="px-4 py-1.5 border-t border-gray-800/50 flex items-center gap-1.5 shrink-0 text-[10px]">
+            <!-- S: Soul -->
+            <div class="relative" x-data="{ open: false }" @click.away="open = false">
+              <button @click="open = !open"
+                class="flex items-center gap-1 px-2 py-1 rounded-md border transition-colors"
+                :class="open ? 'border-indigo-500 bg-indigo-950/30 text-white' : 'border-gray-800 text-gray-500 hover:text-gray-300 hover:border-gray-600'">
+                <span class="font-bold text-indigo-400">S</span>
+                <span class="font-mono truncate max-w-[6rem]" x-text="currentInstance?.soul || selectedSoul || 'general'"></span>
+              </button>
+              <div x-show="open" x-cloak class="absolute bottom-full left-0 mb-1 w-40 max-h-48 overflow-y-auto bg-gray-900 border border-gray-700 rounded-lg shadow-xl z-50 py-1">
+                <template x-for="s in (souls.length ? souls : [{slug:'general',name:'General'}])" :key="s.slug">
+                  <button @click="switchSoul(s.slug); open = false"
+                    class="block w-full text-left px-3 py-1.5 text-xs transition-colors"
+                    :class="(currentInstance?.soul || selectedSoul) === s.slug ? 'text-white bg-indigo-950' : 'text-gray-400 hover:text-white hover:bg-gray-800'"
+                    x-text="s.name || s.slug"></button>
+                </template>
+              </div>
+            </div>
+            <!-- T: Tools -->
+            <div class="flex items-center gap-1 px-2 py-1 rounded-md border border-gray-800 text-gray-600">
+              <span class="font-bold text-gray-500">T</span>
+              <span class="font-mono" x-text="(chatStats?.tool_count || 0) + '/' + (chatStats?.tools_loaded || status?.tools_loaded || '?')"></span>
+            </div>
+            <!-- A: Agent -->
+            <div class="flex items-center gap-1 px-2 py-1 rounded-md border border-gray-800 text-gray-600">
+              <span class="font-bold text-gray-500">A</span>
+              <span class="font-mono" x-text="currentInstance?.agent_id || 'hermes'"></span>
+            </div>
+            <!-- M: Model -->
+            <div class="relative" x-data="{ open: false }" @click.away="open = false">
+              <button @click="open = !open"
+                class="flex items-center gap-1 px-2 py-1 rounded-md border transition-colors"
+                :class="open ? 'border-indigo-500 bg-indigo-950/30 text-white' : 'border-gray-800 text-gray-500 hover:text-gray-300 hover:border-gray-600'">
+                <span class="font-bold text-indigo-400">M</span>
+                <span class="font-mono truncate max-w-[10rem]" x-text="currentInstance?.model || status?.model || 'unknown'"></span>
+              </button>
+              <div x-show="open" x-cloak class="absolute bottom-full right-0 mb-1 w-56 max-h-48 overflow-y-auto bg-gray-900 border border-gray-700 rounded-lg shadow-xl z-50 py-1">
+                <template x-if="cloudProviders.length > 0">
+                  <div>
+                    <div class="px-3 py-1 text-[9px] text-gray-600 uppercase tracking-wider">Cloud</div>
+                    <template x-for="cp in cloudProviders.filter(p => p.is_active && p.active_model)" :key="cp.id">
+                      <button @click="switchModel(cp.active_model); open = false"
+                        class="block w-full text-left px-3 py-1.5 text-xs font-mono transition-colors"
+                        :class="(currentInstance?.model || status?.model) === cp.active_model ? 'text-white bg-indigo-950' : 'text-gray-400 hover:text-white hover:bg-gray-800'"
+                        x-text="cp.active_model"></button>
+                    </template>
+                  </div>
+                </template>
+                <template x-if="adminMachines.length > 0">
+                  <div>
+                    <div class="px-3 py-1 text-[9px] text-gray-600 uppercase tracking-wider">Local</div>
+                    <template x-for="m in adminMachines.filter(x => x.default_model && x.enabled)" :key="m.id">
+                      <button @click="switchModel(m.default_model); open = false"
+                        class="block w-full text-left px-3 py-1.5 text-xs font-mono transition-colors"
+                        :class="(currentInstance?.model || status?.model) === m.default_model ? 'text-white bg-indigo-950' : 'text-gray-400 hover:text-white hover:bg-gray-800'"
+                        x-text="m.default_model"></button>
+                    </template>
+                  </div>
+                </template>
+              </div>
+            </div>
+            <!-- P: Policy -->
+            <div class="flex items-center gap-1 px-2 py-1 rounded-md border border-gray-800 text-gray-600">
+              <span class="font-bold text-gray-500">P</span>
+              <span class="font-mono" x-text="currentInstance?.policy || 'default'"></span>
+            </div>
+          </div>
+
           <!-- Input -->
           <div class="px-4 py-3 border-t border-gray-800 flex gap-2 shrink-0 items-end">
             <!-- Render mode drop-up -->
@@ -1045,7 +1114,7 @@
     <div class="flex gap-4 mb-4 border-b border-gray-800">
       <button class="pb-2 text-xs font-medium border-b-2 transition-colors"
         :class="infraTab==='servers' ? 'border-[var(--accent)] text-white' : 'border-transparent text-gray-500 hover:text-gray-300'"
-        @click="infraTab='servers'; localStorage.setItem('logos_infra_tab','servers'); loadAdminMachines()">Servers</button>
+        @click="infraTab='servers'; localStorage.setItem('logos_infra_tab','servers'); loadAdminMachines(); loadCloudProviders()">Inference</button>
       <button class="pb-2 text-xs font-medium border-b-2 transition-colors"
         :class="infraTab==='routing' ? 'border-[var(--accent)] text-white' : 'border-transparent text-gray-500 hover:text-gray-300'"
         @click="infraTab='routing'; localStorage.setItem('logos_infra_tab','routing'); loadRoutingData()">Routing</button>
@@ -1061,10 +1130,121 @@
       </template>
     </div>
 
-    <!-- ── Servers sub-tab (was: Machines) ── -->
+    <!-- ── Inference sub-tab ── -->
     <div x-show="infraTab==='servers'">
 
-    <!-- ── Machines section ── -->
+    <!-- ── Cloud Providers section ── -->
+    <div x-show="can('manage_machines')" class="mb-8">
+      <div class="flex items-center justify-between mb-3">
+        <h3 class="text-sm font-semibold text-gray-300">Cloud Providers</h3>
+        <button @click="cloudProviderFormOpen = !cloudProviderFormOpen; cloudProviderMsg = null"
+          class="text-[10px] px-2 py-1 rounded border border-gray-700 text-gray-400 hover:text-white hover:border-gray-500 transition-colors">
+          <span x-text="cloudProviderFormOpen ? 'Cancel' : '+ Add Provider'"></span>
+        </button>
+      </div>
+
+      <!-- Status message -->
+      <div x-show="cloudProviderMsg" x-cloak class="mb-3 text-xs px-3 py-2 rounded-lg"
+        :class="cloudProviderMsg?.type === 'ok' ? 'bg-green-950 text-green-400 border border-green-800' : 'bg-red-950 text-red-400 border border-red-800'"
+        x-text="cloudProviderMsg?.text"></div>
+
+      <!-- Add provider form -->
+      <div x-show="cloudProviderFormOpen" x-cloak class="mb-4 p-4 rounded-xl border border-gray-700 bg-gray-900 space-y-3">
+        <div class="grid grid-cols-3 gap-2">
+          <template x-for="ptype in ['anthropic', 'openrouter', 'custom']" :key="ptype">
+            <button @click="cloudProviderForm.provider = ptype; cloudProviderForm.name = cloudProviderForm.name || (ptype === 'anthropic' ? 'Anthropic' : ptype === 'openrouter' ? 'OpenRouter' : 'Custom'); cloudProviderModels = []"
+              class="text-left p-2 rounded-lg border transition-all text-xs"
+              :class="cloudProviderForm.provider === ptype ? 'border-indigo-500 bg-indigo-950/30 text-white' : 'border-gray-700 text-gray-400 hover:border-gray-500'">
+              <span class="font-medium" x-text="ptype === 'anthropic' ? 'Anthropic' : ptype === 'openrouter' ? 'OpenRouter' : 'Custom'"></span>
+            </button>
+          </template>
+        </div>
+        <input x-model="cloudProviderForm.name" type="text" placeholder="Display name"
+          class="w-full px-3 py-2 rounded-lg bg-gray-800 border border-gray-700 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-indigo-500">
+        <input x-model="cloudProviderForm.api_key" type="password" placeholder="API key"
+          class="w-full px-3 py-2 rounded-lg bg-gray-800 border border-gray-700 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-indigo-500">
+        <input x-show="cloudProviderForm.provider === 'custom'" x-model="cloudProviderForm.base_url" type="text"
+          placeholder="Base URL (https://api.example.com/v1)"
+          class="w-full px-3 py-2 rounded-lg bg-gray-800 border border-gray-700 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-indigo-500">
+        <div class="flex items-center gap-2">
+          <button @click="validateCloudProviderKey()"
+            :disabled="!cloudProviderForm.api_key || cloudProviderValidating"
+            class="text-xs px-3 py-1.5 rounded-lg border border-indigo-700 text-indigo-400 hover:text-white hover:border-indigo-500 disabled:opacity-40 transition-colors">
+            <span x-text="cloudProviderValidating ? 'Validating...' : cloudProviderModels.length ? '\u2713 ' + cloudProviderModels.length + ' models' : 'Validate key'"></span>
+          </button>
+          <select x-show="cloudProviderModels.length" x-model="cloudProviderForm.model"
+            class="flex-1 px-2 py-1.5 rounded-lg bg-gray-800 border border-gray-700 text-xs text-white focus:outline-none focus:border-indigo-500">
+            <template x-for="m in cloudProviderModels" :key="m">
+              <option :value="m" x-text="m"></option>
+            </template>
+          </select>
+        </div>
+        <button @click="createCloudProvider()"
+          :disabled="!cloudProviderForm.name || !cloudProviderForm.api_key"
+          class="w-full py-2 rounded-lg text-xs font-medium bg-indigo-600 text-white hover:bg-indigo-500 disabled:opacity-40 transition-colors">
+          Add Provider
+        </button>
+      </div>
+
+      <!-- Provider list -->
+      <div class="space-y-2">
+        <template x-for="p in cloudProviders" :key="p.id">
+          <div class="p-3 rounded-xl border transition-all"
+            :class="p.is_active ? 'border-indigo-500/50 bg-indigo-950/10' : 'border-gray-800 bg-gray-900'">
+            <!-- Header row -->
+            <div class="flex items-center justify-between mb-1">
+              <div class="flex items-center gap-2">
+                <span class="text-xs font-semibold" :class="p.is_active ? 'text-white' : 'text-gray-300'" x-text="p.name"></span>
+                <span class="text-[9px] px-1.5 py-0.5 rounded-full font-medium"
+                  :class="p.is_active ? 'bg-green-900 text-green-400 border border-green-700' : 'bg-gray-800 text-gray-500 border border-gray-700'"
+                  x-text="p.is_active ? 'Active' : 'Inactive'"></span>
+                <span class="text-[10px] text-gray-600 font-mono" x-text="p.provider"></span>
+              </div>
+              <div class="flex items-center gap-1.5">
+                <button @click="testCloudProvider(p.id)" :disabled="p._testing"
+                  class="text-[10px] px-2 py-0.5 rounded border border-gray-700 text-gray-500 hover:text-white hover:border-gray-500 disabled:opacity-40 transition-colors"
+                  x-text="p._testing ? 'Testing...' : 'Test'"></button>
+                <button x-show="!p.is_active" @click="activateCloudProvider(p.id)"
+                  class="text-[10px] px-2 py-0.5 rounded border border-indigo-700 text-indigo-400 hover:text-white hover:border-indigo-500 transition-colors">Activate</button>
+                <button x-show="!p._editing" @click="p._editing = true; p._edit = { name: p.name, api_key: '', base_url: p.base_url || '', active_model: p.active_model || '' }"
+                  class="text-[10px] px-2 py-0.5 rounded border border-gray-700 text-gray-500 hover:text-white hover:border-gray-500 transition-colors">Edit</button>
+                <button x-show="!p.is_active" @click="deleteCloudProvider(p.id)"
+                  class="text-[10px] px-2 py-0.5 rounded border border-red-900 text-red-500 hover:text-red-400 hover:border-red-700 transition-colors">Delete</button>
+              </div>
+            </div>
+            <!-- Info row -->
+            <div class="flex items-center gap-3 text-[10px] text-gray-500">
+              <span x-text="p.has_api_key ? '\uD83D\uDD11 Key set' : '\u26a0 No key'"></span>
+              <span x-show="p.active_model" class="font-mono" x-text="p.active_model"></span>
+              <span x-show="p._testResult?.ok" class="text-green-500">\u2713 Connected (<span x-text="p._testResult?.models"></span> models)</span>
+              <span x-show="p._testResult && !p._testResult?.ok" class="text-red-400" x-text="p._testResult?.error"></span>
+            </div>
+            <!-- Inline edit form -->
+            <div x-show="p._editing" x-cloak class="mt-3 space-y-2 pt-3 border-t border-gray-800">
+              <input x-model="p._edit.name" type="text" placeholder="Display name"
+                class="w-full px-2 py-1.5 rounded-lg bg-gray-800 border border-gray-700 text-xs text-white focus:outline-none focus:border-indigo-500">
+              <input x-model="p._edit.api_key" type="password" placeholder="New API key (leave blank to keep current)"
+                class="w-full px-2 py-1.5 rounded-lg bg-gray-800 border border-gray-700 text-xs text-white placeholder-gray-600 focus:outline-none focus:border-indigo-500">
+              <input x-show="p.provider === 'custom'" x-model="p._edit.base_url" type="text" placeholder="Base URL"
+                class="w-full px-2 py-1.5 rounded-lg bg-gray-800 border border-gray-700 text-xs text-white placeholder-gray-600 focus:outline-none focus:border-indigo-500">
+              <input x-model="p._edit.active_model" type="text" placeholder="Default model"
+                class="w-full px-2 py-1.5 rounded-lg bg-gray-800 border border-gray-700 text-xs text-white placeholder-gray-600 focus:outline-none focus:border-indigo-500">
+              <div class="flex gap-2">
+                <button @click="updateCloudProvider(p.id)"
+                  class="text-xs px-3 py-1.5 rounded-lg bg-indigo-600 text-white hover:bg-indigo-500 transition-colors">Save</button>
+                <button @click="p._editing = false; p._edit = null"
+                  class="text-xs px-3 py-1.5 rounded-lg border border-gray-700 text-gray-400 hover:text-white transition-colors">Cancel</button>
+              </div>
+            </div>
+          </div>
+        </template>
+        <p x-show="cloudProviders.length === 0 && !cloudProviderFormOpen" class="text-xs text-gray-600 text-center py-4">
+          No cloud providers configured. Click <span class="text-gray-400">+ Add Provider</span> to connect Anthropic, OpenRouter, or a custom endpoint.
+        </p>
+      </div>
+    </div>
+
+    <!-- ── Local Servers section ── -->
     <div x-show="can('manage_machines')" class="mb-8">
 
       <!-- Setup wizard banner — shown when all machines are seeded examples -->
@@ -1140,7 +1320,7 @@
 
       <!-- Header -->
       <div class="flex items-center justify-between mb-4">
-        <div class="text-sm font-semibold text-white">Machines</div>
+        <div class="text-sm font-semibold text-white">Local Servers</div>
         <div class="flex items-center gap-2">
           <button @click="adminScanMachines()"
             :disabled="adminScanRunning"
@@ -4826,6 +5006,14 @@ function app() {
     adminMachines: [],
     adminScanRunning: false,
     adminScanResults: [],
+    // Cloud providers
+    cloudProviders: [],
+    cloudProviderFormOpen: false,
+    cloudProviderForm: { provider: 'anthropic', name: '', api_key: '', base_url: '', model: '' },
+    cloudProviderEditId: null,
+    cloudProviderModels: [],
+    cloudProviderValidating: false,
+    cloudProviderMsg: null,
     adminPolicies: [],
     adminActionPolicies: [],
     actionPolicyForm: {},
@@ -6241,6 +6429,32 @@ function app() {
       event.target.value = '';  // reset so re-selecting same file works
     },
 
+    async switchSoul(slug) {
+      // Update user's default soul via settings API
+      try {
+        await fetch('/auth/me/settings', {
+          method: 'PATCH', credentials: 'include',
+          headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken() },
+          body: JSON.stringify({ default_soul: slug }),
+        });
+        this.selectedSoul = slug;
+        if (this.currentInstance) this.currentInstance.soul = slug;
+      } catch {}
+    },
+
+    async switchModel(modelId) {
+      // Send a /model command to change the model for the current session
+      if (!this.activeChatId) return;
+      try {
+        await fetch('/chat', {
+          method: 'POST', credentials: 'include',
+          headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken() },
+          body: JSON.stringify({ message: '/model ' + modelId, session_id: this.activeChatId }),
+        });
+        if (this.currentInstance) this.currentInstance.model = modelId;
+      } catch {}
+    },
+
     async sendChat() {
       const msg = this.chatInput.trim();
       if (!msg) return;
@@ -6660,6 +6874,120 @@ function app() {
         ).filter(s => !registeredEndpoints.has(s.endpoint));
       } catch(e) { console.error('admin scan failed', e); }
       this.adminScanRunning = false;
+    },
+
+    // ── Cloud provider methods ──────────────────────────────────────────────
+    async loadCloudProviders() {
+      try {
+        const r = await fetch('/admin/cloud-providers', { credentials: 'include' });
+        const d = await r.json();
+        this.cloudProviders = (d.providers || []).map(p => ({ ...p, _testing: false, _testResult: null }));
+      } catch { this.cloudProviders = []; }
+    },
+
+    async createCloudProvider() {
+      const f = this.cloudProviderForm;
+      if (!f.provider || !f.name || !f.api_key) return;
+      this.cloudProviderMsg = null;
+      try {
+        const r = await fetch('/admin/cloud-providers', {
+          method: 'POST', credentials: 'include',
+          headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken() },
+          body: JSON.stringify({
+            provider: f.provider, name: f.name, api_key: f.api_key,
+            base_url: f.base_url || '', model: f.model || '',
+          }),
+        });
+        if (r.ok) {
+          this.cloudProviderFormOpen = false;
+          this.cloudProviderForm = { provider: 'anthropic', name: '', api_key: '', base_url: '', model: '' };
+          this.cloudProviderModels = [];
+          await this.loadCloudProviders();
+          this.cloudProviderMsg = { type: 'ok', text: 'Provider added' };
+        } else {
+          const d = await r.json().catch(() => ({}));
+          this.cloudProviderMsg = { type: 'error', text: d.error || 'Failed to add provider' };
+        }
+      } catch (e) { this.cloudProviderMsg = { type: 'error', text: e.message }; }
+    },
+
+    async updateCloudProvider(pid) {
+      const p = this.cloudProviders.find(x => x.id === pid);
+      if (!p || !p._edit) return;
+      try {
+        const body = { name: p._edit.name, active_model: p._edit.active_model };
+        if (p._edit.api_key) body.api_key = p._edit.api_key;
+        if (p.provider === 'custom') body.base_url = p._edit.base_url || '';
+        const r = await fetch('/admin/cloud-providers/' + pid, {
+          method: 'PATCH', credentials: 'include',
+          headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken() },
+          body: JSON.stringify(body),
+        });
+        if (r.ok) {
+          p._editing = false;
+          p._edit = null;
+          await this.loadCloudProviders();
+        }
+      } catch {}
+    },
+
+    async deleteCloudProvider(pid) {
+      if (!confirm('Remove this cloud provider?')) return;
+      try {
+        await fetch('/admin/cloud-providers/' + pid, {
+          method: 'DELETE', credentials: 'include',
+          headers: { 'X-CSRF-Token': getCsrfToken() },
+        });
+        await this.loadCloudProviders();
+      } catch {}
+    },
+
+    async activateCloudProvider(pid) {
+      try {
+        const r = await fetch('/admin/cloud-providers/' + pid + '/activate', {
+          method: 'POST', credentials: 'include',
+          headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken() },
+        });
+        if (r.ok) await this.loadCloudProviders();
+      } catch {}
+    },
+
+    async testCloudProvider(pid) {
+      const p = this.cloudProviders.find(x => x.id === pid);
+      if (!p) return;
+      p._testing = true;
+      p._testResult = null;
+      try {
+        const r = await fetch('/admin/cloud-providers/' + pid + '/test', {
+          method: 'POST', credentials: 'include',
+          headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken() },
+        });
+        const d = await r.json();
+        p._testResult = d.ok ? { ok: true, models: d.models?.length || 0 } : { ok: false, error: d.error };
+      } catch (e) { p._testResult = { ok: false, error: e.message }; }
+      p._testing = false;
+    },
+
+    async validateCloudProviderKey() {
+      const f = this.cloudProviderForm;
+      if (!f.api_key) return;
+      this.cloudProviderValidating = true;
+      this.cloudProviderModels = [];
+      try {
+        const r = await fetch('/api/setup/validate-provider', {
+          method: 'POST', credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ provider: f.provider, api_key: f.api_key, base_url: f.base_url || '' }),
+        });
+        const d = await r.json();
+        if (d.ok && d.models?.length) {
+          this.cloudProviderModels = d.models;
+          if (!f.model) f.model = d.models[0];
+        } else {
+          this.cloudProviderMsg = { type: 'error', text: d.error || 'Validation failed' };
+        }
+      } catch (e) { this.cloudProviderMsg = { type: 'error', text: e.message }; }
+      this.cloudProviderValidating = false;
     },
 
     async loadAdminMachines() {
