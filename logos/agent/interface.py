@@ -41,6 +41,11 @@ class AgentContext:
     # Cleansed message stored in session transcripts (gateway uses this to
     # strip synthetic API prefixes before persisting).
     persist_user_message: Optional[str] = None
+    # Optional callbacks for live tool progress reporting (runtimes that
+    # don't support these just ignore them).
+    tool_progress_callback: Optional[Callable] = None
+    tool_complete_callback: Optional[Callable] = None
+    step_callback: Optional[Callable] = None
 
 
 @dataclass
