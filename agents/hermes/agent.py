@@ -5358,12 +5358,17 @@ class AIAgent:
                     # are programming bugs, not transient failures.
                     is_local_validation_error = isinstance(api_error, (ValueError, TypeError))
                     is_client_status_error = isinstance(status_code, int) and 400 <= status_code < 500 and status_code != 413
-                    # LM Studio model crashes return 400 but ARE transient — the backend
-                    # process dies and LM Studio reloads it, so a retry usually succeeds.
+                    # LM Studio model crashes and canceled loads return 400 but ARE
+                    # transient — the backend reloads, so a retry usually succeeds.
                     is_lm_studio_crash = "model has crashed" in error_msg.lower() or (
                         "exit code:" in error_msg.lower() and status_code == 400
                     )
-                    if is_lm_studio_crash:
+                    is_lm_studio_load_cancel = (
+                        "failed to load model" in error_msg.lower()
+                        and "operation canceled" in error_msg.lower()
+                        and status_code == 400
+                    )
+                    if is_lm_studio_crash or is_lm_studio_load_cancel:
                         is_client_status_error = False
                     is_client_error = (is_local_validation_error or is_client_status_error or any(phrase in error_msg for phrase in [
                         'error code: 401', 'error code: 403',
