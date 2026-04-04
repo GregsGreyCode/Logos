@@ -356,7 +356,10 @@ class GatewayRunner:
         self.delivery_router = DeliveryRouter(self.config)
         self._running = False
         self._shutdown_event = asyncio.Event()
-        
+
+        # Per-session agent runtime overrides (set via /runtime command)
+        self._session_runtime_overrides: Dict[str, str] = {}
+
         # Track running agents per session for interrupt support
         # Key: session_key, Value: AIAgent instance
         self._running_agents: Dict[str, Any] = {}
@@ -415,6 +418,25 @@ class GatewayRunner:
 
         # Per-chat voice reply mode: "off" | "voice_only" | "all"
         self._voice_mode: Dict[str, str] = self._load_voice_modes()
+
+    def _resolve_runtime(self, session_id: str) -> str:
+        """Determine which agent runtime to use for a session.
+
+        Priority: per-session override > config.yaml > default (hermes).
+        """
+        override = self._session_runtime_overrides.get(session_id)
+        if override:
+            return override
+        try:
+            import yaml as _y
+            _cfg_path = _hermes_home / "config.yaml"
+            if _cfg_path.exists():
+                with open(_cfg_path, encoding="utf-8") as _f:
+                    _cfg = _y.safe_load(_f) or {}
+                return _cfg.get("agent_runtime", "hermes")
+        except Exception:
+            pass
+        return "hermes"
 
     def _get_or_create_gateway_honcho(self, session_key: str):
         """Return a persistent Honcho manager/config pair for this gateway session."""
@@ -1209,7 +1231,7 @@ class GatewayRunner:
                           "personality", "retry", "undo", "sethome", "set-home",
                           "compress", "usage", "insights", "reload-mcp", "reload_mcp",
                           "update", "title", "resume", "provider", "rollback",
-                          "background", "reasoning", "voice"}
+                          "background", "reasoning", "voice", "runtime"}
         if command and command in _known_commands:
             await self.hooks.emit(f"command:{command}", {
                 "platform": source.platform.value if source.platform else "",
@@ -1238,7 +1260,10 @@ class GatewayRunner:
 
         if command == "provider":
             return await self._handle_provider_command(event)
-        
+
+        if command == "runtime":
+            return await self._handle_runtime_command(event)
+
         if command == "personality":
             return await self._handle_personality_command(event)
         
@@ -1942,6 +1967,7 @@ class GatewayRunner:
             "`/rollback [number]` — List or restore filesystem checkpoints",
             "`/background <prompt>` — Run a prompt in a separate background session",
             "`/voice [on|off|tts|status]` — Toggle voice reply mode",
+            "`/runtime [name]` — Show or switch agent runtime (hermes, claude-direct)",
             "`/reload-mcp` — Reload MCP servers from config",
             "`/update` — Update Hermes Agent to the latest version",
             "`/help` — Show this message",
@@ -1957,6 +1983,33 @@ class GatewayRunner:
             pass
         return "\n".join(lines)
     
+    async def _handle_runtime_command(self, event: MessageEvent) -> str:
+        """Handle /runtime command — show or switch agent runtime for this session."""
+        args = event.get_command_args().strip().lower()
+        session_id = self._get_session_id(event.source)
+        current = self._resolve_runtime(session_id)
+
+        _available = ["hermes", "claude-direct"]
+
+        if not args:
+            lines = [f"Current runtime: **{current}**", "", "Available runtimes:"]
+            for rt in _available:
+                marker = " ← active" if rt == current else ""
+                lines.append(f"  `{rt}`{marker}")
+            lines.append(f"\nSwitch with: `/runtime <name>`")
+            return "\n".join(lines)
+
+        if args not in _available:
+            return f"Unknown runtime `{args}`. Available: {', '.join(_available)}"
+
+        if args == "claude-direct":
+            api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+            if not api_key:
+                return "Claude Direct requires an Anthropic API key. Set `ANTHROPIC_API_KEY` in your environment."
+
+        self._session_runtime_overrides[session_id] = args
+        return f"Switched to **{args}** runtime for this session."
+
     async def _handle_model_command(self, event: MessageEvent) -> str:
         """Handle /model command - show or change the current model."""
         import yaml
@@ -4573,38 +4626,68 @@ class GatewayRunner:
             except Exception:
                 pass
 
-            agent = AIAgent(
-                model=model,
-                **runtime_kwargs,
-                max_iterations=max_iterations,
-                quiet_mode=True,
-                verbose_logging=False,
-                enabled_toolsets=_effective_toolsets,
-                ephemeral_system_prompt=combined_ephemeral or None,
-                prefill_messages=self._prefill_messages or None,
-                reasoning_config=reasoning_config,
-                providers_allowed=pr.get("only"),
-                providers_ignored=pr.get("ignore"),
-                providers_order=pr.get("order"),
-                provider_sort=pr.get("sort"),
-                provider_require_parameters=pr.get("require_parameters", False),
-                provider_data_collection=pr.get("data_collection"),
-                session_id=session_id,
-                tool_progress_callback=progress_callback,
-                tool_complete_callback=tool_complete_callback,
-                step_callback=_step_callback_sync if _hooks_ref.loaded_hooks else None,
-                platform=platform_key,
-                honcho_session_key=session_key,
-                honcho_manager=honcho_manager,
-                honcho_config=honcho_config,
-                session_db=self._session_db,
-                fallback_model=self._fallback_model,
-            )
+            _runtime_id = self._resolve_runtime(session_id)
+
+            if _runtime_id == "claude-direct":
+                # ── Claude Direct runtime — Anthropic SDK with native tool use ──
+                from logos.adapters.claude_direct.adapter import ClaudeDirectAdapter
+                from logos.agent.interface import AgentContext as _AgentContext
+                _cd_api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+                if not _cd_api_key:
+                    # Fall back to OpenAI key if Anthropic key not set
+                    _cd_api_key = runtime_kwargs.get("api_key", "")
+                _cd_model = model
+                # Map generic model names to Anthropic model IDs
+                if "/" not in _cd_model and not _cd_model.startswith("claude"):
+                    _cd_model = "claude-sonnet-4-20250514"
+                adapter = ClaudeDirectAdapter(
+                    model=_cd_model,
+                    api_key=_cd_api_key,
+                    system_prompt=combined_ephemeral or None,
+                    enabled_toolsets=_effective_toolsets,
+                    tool_progress_callback=progress_callback,
+                    tool_complete_callback=tool_complete_callback,
+                    session_id=session_id,
+                )
+                agent_holder[0] = adapter
+            else:
+                # ── Hermes runtime (default) ─────────────────────────────────
+                adapter = None
+
+            if adapter is None:
+                agent = AIAgent(
+                    model=model,
+                    **runtime_kwargs,
+                    max_iterations=max_iterations,
+                    quiet_mode=True,
+                    verbose_logging=False,
+                    enabled_toolsets=_effective_toolsets,
+                    ephemeral_system_prompt=combined_ephemeral or None,
+                    prefill_messages=self._prefill_messages or None,
+                    reasoning_config=reasoning_config,
+                    providers_allowed=pr.get("only"),
+                    providers_ignored=pr.get("ignore"),
+                    providers_order=pr.get("order"),
+                    provider_sort=pr.get("sort"),
+                    provider_require_parameters=pr.get("require_parameters", False),
+                    provider_data_collection=pr.get("data_collection"),
+                    session_id=session_id,
+                    tool_progress_callback=progress_callback,
+                    tool_complete_callback=tool_complete_callback,
+                    step_callback=_step_callback_sync if _hooks_ref.loaded_hooks else None,
+                    platform=platform_key,
+                    honcho_session_key=session_key,
+                    honcho_manager=honcho_manager,
+                    honcho_config=honcho_config,
+                    session_db=self._session_db,
+                    fallback_model=self._fallback_model,
+                )
             
-            # Store agent reference for interrupt support
-            agent_holder[0] = agent
-            # Capture the full tool definitions for transcript logging
-            tools_holder[0] = agent.tools if hasattr(agent, 'tools') else None
+            if adapter is None:
+                # Store agent reference for interrupt support (Hermes path)
+                agent_holder[0] = agent
+                # Capture the full tool definitions for transcript logging
+                tools_holder[0] = agent.tools if hasattr(agent, 'tools') else None
             
             # Convert history to agent format.
             # Two cases:
@@ -4661,10 +4744,21 @@ class GatewayRunner:
                             if _p:
                                 _history_media_paths.add(_p)
             
-            result = agent.run_conversation(message, conversation_history=agent_history, task_id=session_id)
+            if adapter is not None:
+                # Claude Direct (or other non-Hermes runtime)
+                _ctx = _AgentContext(
+                    user_message=message,
+                    conversation_history=agent_history,
+                    task_id=session_id,
+                    tool_progress_callback=progress_callback,
+                    tool_complete_callback=tool_complete_callback,
+                )
+                result = adapter.run(_ctx).to_dict()
+            else:
+                result = agent.run_conversation(message, conversation_history=agent_history, task_id=session_id)
             result_holder[0] = result
 
-            # ── Auto-upscale context on context errors ────────────────────
+            # ── Auto-upscale context on context errors (Hermes only) ────
             # If the agent failed due to context length, and we're below the
             # model's native max, reload at a higher context and retry once.
             _err = result.get("error", "")
@@ -4673,7 +4767,7 @@ class GatewayRunner:
                 "context size", "maximum context", "too many tokens",
                 "payload too large", "prompt is too long",
             ]
-            if _err and any(p in _err.lower() for p in _ctx_error_phrases):
+            if _runtime_id == "hermes" and _err and any(p in _err.lower() for p in _ctx_error_phrases):
                 _current_ctx = getattr(agent.context_compressor, "context_length", 0) if hasattr(agent, "context_compressor") else 0
                 # Fetch model's native max context via sync HTTP
                 _model_max = 0

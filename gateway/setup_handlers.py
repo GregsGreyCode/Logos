@@ -1266,6 +1266,8 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
                         has_reasoning = True
                 # Use message text if available, otherwise full output
                 output_text = message_text or output_text
+                # Strip <think> blocks for thinking models
+                output_text = _strip_think(output_text)
 
                 # Try to parse as JSON — thinking models may prefix with reasoning text
                 await send(_phase("scoring", eval_label="1/6"))
@@ -1353,7 +1355,7 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
                                 h_msg += item.get("content", "")
                             elif item.get("type") == "reasoning":
                                 h_reason += item.get("content", "")
-                        h_text = h_msg or h_reason
+                        h_text = _strip_think(h_msg or h_reason)
                         try:
                             h_cleaned = re.sub(r"```[a-z]*\n?", "", h_text).strip().rstrip("`")
                             try:
@@ -1413,14 +1415,33 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
                             elif item.get("type") == "reasoning":
                                 a_reason += item.get("content", "")
                         a_text = a_msg or a_reason
+                        # Strip <think> blocks for thinking models that embed
+                        # reasoning in the message content (Qwen3, etc.)
+                        a_text = _strip_think(a_text)
                         try:
                             a_cleaned = re.sub(r"```[a-z]*\n?", "", a_text).strip().rstrip("`")
                             try:
                                 a_obj = json.loads(a_cleaned)
                             except json.JSONDecodeError:
-                                _aj = re.search(r'\{[^{}]*(?:\{[^{}]*(?:\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}[^{}]*)*\}[^{}]*)*\}', a_cleaned)
-                                if _aj:
-                                    a_obj = json.loads(_aj.group())
+                                # Try extracting the last JSON object — thinking
+                                # models often emit reasoning text before the JSON
+                                _all_json = list(re.finditer(r'\{[^{}]*(?:\{[^{}]*(?:\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}[^{}]*)*\}[^{}]*)*\}', a_cleaned))
+                                if _all_json:
+                                    # Try from the last match backwards (most
+                                    # likely to be the actual answer, not a
+                                    # thinking-stage fragment)
+                                    a_obj = None
+                                    for _candidate in reversed(_all_json):
+                                        try:
+                                            _cand_obj = json.loads(_candidate.group())
+                                            # Must have at least one of our expected keys
+                                            if any(k in _cand_obj for k in ("tool_calls", "pirate", "items")):
+                                                a_obj = _cand_obj
+                                                break
+                                        except json.JSONDecodeError:
+                                            continue
+                                    if a_obj is None:
+                                        raise
                                 else:
                                     raise
 
