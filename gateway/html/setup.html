@@ -828,9 +828,10 @@
               </div>
               <div>
                 <span class="font-semibold text-gray-300">ctx</span> — context window: the maximum number of tokens the model can hold at once (your message + its reply + everything in between).
-                The agent system prompt alone uses <span class="font-mono text-white">~8K tokens</span>, so a model with an 8K context window has almost no room left for your conversation.
-                <span class="text-amber-400 font-medium">Models under 16K ctx are not eligible for recommendation</span> — they will show a <span class="text-red-400 font-mono">⚠</span> and cannot be selected as best.
-                If your model only supports 8K, use the <span class="text-white font-medium">General (Lite)</span> soul which has a smaller footprint.
+                The agent system prompt + tools uses <span class="font-mono text-white">~17K tokens</span>.
+                LM Studio splits context across <span class="font-mono text-white">4 parallel slots</span> by default, so a 32K model only provides 8K per request.
+                <span class="text-amber-400 font-medium">Models under 64K ctx are not eligible</span> (16K/slot minimum) — they show a <span class="text-red-400 font-mono">⚠</span> and cannot be selected.
+                <span class="text-gray-400">Models with ≥128K context support 4 concurrent users at 32K/slot. For smaller models, reduce <span class="text-white font-medium">"Max Concurrent Predictions"</span> in LM Studio advanced settings to increase per-slot context.</span>
               </div>
               <div>
                 <span class="font-semibold text-gray-300">&#10003; / &#9888;</span> — whether the model passed the quality eval (instruction following, reasoning, structured output, tool selection).
@@ -873,7 +874,7 @@
                          x-transition:enter-end="opacity-100 translate-y-0"
                          class="relative rounded-xl border transition-colors duration-500 overflow-hidden"
                          :class="[
-                           compareResults[mid]?.max_context && compareResults[mid].max_context < 16384
+                           compareResults[mid]?.max_context && compareResults[mid].max_context < 64000
                              ? 'border-red-900/50 bg-gray-900 opacity-60'
                              : serverModelForServer(server.endpoint) === mid && compareDone
                                ? 'border-indigo-500 bg-indigo-950/20'
@@ -884,16 +885,16 @@
                          ]">
                       <!-- Summary row — clickable once results are in; click selects and toggles detail -->
                       <div class="flex items-center justify-between px-3 py-2.5"
-                        :class="compareResults[mid] && !compareResults[mid].error && !(compareResults[mid].max_context && compareResults[mid].max_context < 16384) ? 'cursor-pointer hover:bg-white/5' : ''"
-                        @click="if (compareResults[mid] && !compareResults[mid].error && !(compareResults[mid].max_context && compareResults[mid].max_context < 16384)) { pickServerModel(server.endpoint, mid); compareExpanded = compareExpanded === mid ? null : mid; }">
+                        :class="compareResults[mid] && !compareResults[mid].error && !(compareResults[mid].max_context && compareResults[mid].max_context < 64000) ? 'cursor-pointer hover:bg-white/5' : ''"
+                        @click="if (compareResults[mid] && !compareResults[mid].error && !(compareResults[mid].max_context && compareResults[mid].max_context < 64000)) { pickServerModel(server.endpoint, mid); compareExpanded = compareExpanded === mid ? null : mid; }">
                         <div class="flex items-center gap-2 min-w-0 flex-wrap">
                           <!-- Default — shown when this model is the server's pick and has a valid result -->
                           <span x-show="serverModelForServer(server.endpoint) === mid && compareDone && compareResults[mid] && !compareResults[mid].error && !compareResults[mid].skipped"
                             class="text-[9px] px-1.5 py-0.5 rounded-full bg-indigo-900 text-indigo-300 border border-indigo-700 font-semibold uppercase tracking-wider flex-shrink-0"
                             title="Selected as the default model for this server">Default</span>
-                          <span x-show="compareResults[mid]?.max_context && compareResults[mid].max_context < 16384 && compareDone"
+                          <span x-show="compareResults[mid]?.max_context && compareResults[mid].max_context < 64000 && compareDone"
                             class="text-[9px] px-1.5 py-0.5 rounded-full bg-red-950 text-red-400 border border-red-900 font-semibold uppercase tracking-wider flex-shrink-0"
-                            title="Context window too small for agent use — system prompt alone is ~8K tokens">Not eligible</span>
+                            title="Context too small — at 4 parallel slots, each slot gets less than 16K. Use a model with ≥128K context or reduce 'Max Concurrent Predictions' in LM Studio.">Not eligible</span>
                           <span class="font-mono text-xs truncate transition-colors duration-300"
                             :class="compareTesting[mid] ? 'text-white' : 'text-gray-200'"
                             x-text="mid"></span>
@@ -976,9 +977,9 @@
                                   x-text="compareResults[mid].tok_s + ' tok/s'"></span>
                                 <template x-if="compareResults[mid].max_context">
                                   <span class="font-mono text-[10px]"
-                                    :class="compareResults[mid].max_context >= 16384 ? 'text-gray-500' : 'text-red-500 font-semibold'"
-                                    :title="compareResults[mid].max_context < 16384 ? 'Too small — agent system prompt uses ~8K tokens, leaving almost no room for conversation. Use General (Lite) soul if you must use this model.' : ''"
-                                    x-text="(compareResults[mid].max_context >= 1024 ? Math.round(compareResults[mid].max_context/1024)+'K' : compareResults[mid].max_context) + ' ctx' + (compareResults[mid].max_context < 16384 ? ' \u26a0' : '')"></span>
+                                    :class="compareResults[mid].max_context >= 64000 ? 'text-gray-500' : compareResults[mid].max_context >= 32768 ? 'text-yellow-500' : 'text-red-500 font-semibold'"
+                                    :title="compareResults[mid].max_context < 64000 ? 'Too small — at 4 parallel slots each slot gets less than 16K. Use ≥128K model or reduce Max Concurrent Predictions.' : ''"
+                                    x-text="(compareResults[mid].max_context >= 1024 ? Math.round(compareResults[mid].max_context/1024)+'K' : compareResults[mid].max_context) + ' ctx' + (compareResults[mid].max_context < 64000 ? ' \u26a0' : '')"></span>
                                 </template>
                                 <span :class="compareResults[mid].quality_pass ? 'text-green-500' : 'text-yellow-600'"
                                   :title="compareResults[mid].quality_pass ? 'Passed capability eval' : 'Low eval score — may struggle with agentic tasks'"
@@ -1040,10 +1041,10 @@
                           <div x-show="compareResults[mid]?.max_context">
                             <span class="text-gray-600">Max context</span>
                             <span class="ml-1.5 font-mono"
-                              :class="compareResults[mid]?.max_context >= 32768 ? 'text-green-400' : compareResults[mid]?.max_context >= 16384 ? 'text-yellow-400' : 'text-red-400'"
+                              :class="compareResults[mid]?.max_context >= 131072 ? 'text-green-400' : compareResults[mid]?.max_context >= 64000 ? 'text-yellow-400' : 'text-red-400'"
                               x-text="compareResults[mid]?.max_context >= 1024 ? Math.round(compareResults[mid]?.max_context/1024)+'K tokens' : compareResults[mid]?.max_context+' tokens'"></span>
                             <span class="ml-1 text-gray-600 text-[10px]"
-                              x-text="compareResults[mid]?.max_context >= 32768 ? '(full)' : compareResults[mid]?.max_context >= 16384 ? '(limited \u2014 short conversations only)' : '(too small \u2014 agent system prompt exceeds this)'"></span>
+                              x-text="compareResults[mid]?.max_context >= 131072 ? '(full — 32K+/slot, supports 4 concurrent users)' : compareResults[mid]?.max_context >= 64000 ? '(limited — 16K/slot, reduce parallel slots for longer conversations)' : '(too small — reduce Max Concurrent Predictions or use ≥128K model)'"></span>
                           </div>
                         </div>
                         <!-- Eval breakdown -->
@@ -1477,14 +1478,16 @@
         </div>
 
         <!-- Context warning banner — shown when selected model has limited context -->
-        <div x-show="selectedModelMaxCtx && selectedModelMaxCtx < 16384" x-cloak
+        <div x-show="selectedModelMaxCtx && selectedModelMaxCtx < 64000" x-cloak
           class="mb-4 px-3 py-2.5 rounded-xl border border-amber-800 bg-amber-950/40 flex items-start gap-2">
           <span class="text-amber-400 text-sm shrink-0">⚠</span>
           <p class="text-xs text-amber-300 leading-relaxed">
             Your model has a
             <span class="font-mono font-semibold" x-text="selectedModelMaxCtx >= 1024 ? Math.round(selectedModelMaxCtx/1024)+'K' : selectedModelMaxCtx"></span>
-            token context window. The agent system prompt uses ~8K tokens, leaving little room for conversation.
-            <span class="text-amber-200 font-medium">General (Lite) is recommended</span> — it has a smaller footprint and fewer tools.
+            token context window. LM Studio splits this across 4 parallel slots by default, giving only
+            <span class="font-mono font-semibold" x-text="selectedModelMaxCtx >= 1024 ? Math.round(selectedModelMaxCtx/4/1024)+'K' : Math.round(selectedModelMaxCtx/4)"></span>/slot.
+            The agent system prompt + tools needs ~17K tokens.
+            Use a model with <span class="text-amber-200 font-medium">≥128K context</span> for multi-user support, reduce <span class="text-amber-200 font-medium">"Max Concurrent Predictions"</span> in LM Studio, or use <span class="text-amber-200 font-medium">General (Lite)</span> which has a smaller footprint.
           </p>
         </div>
 
@@ -2390,7 +2393,7 @@ function setup() {
       if (this.step === 4) {
         await this._goStep(5, () => {
           // Auto-suggest General (Lite) if the selected model has limited context
-          if (this.selectedModelMaxCtx && this.selectedModelMaxCtx < 16384) {
+          if (this.selectedModelMaxCtx && this.selectedModelMaxCtx < 64000) {
             this.selectedSoul = 'general-lite';
           }
         });
