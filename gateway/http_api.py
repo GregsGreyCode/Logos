@@ -2466,6 +2466,11 @@ async def start_http_api(runner: Any, port: int = 8080) -> None:
     app.router.add_delete("/admin/cloud-providers/{id}",      _mm(require_csrf(admin_handlers.handle_cloud_providers_delete)))
     app.router.add_post("/admin/cloud-providers/{id}/activate", _mm(require_csrf(admin_handlers.handle_cloud_providers_activate)))
     app.router.add_post("/admin/cloud-providers/{id}/test",     _mm(require_csrf(admin_handlers.handle_cloud_providers_test)))
+    # Named agents
+    app.router.add_get("/admin/agents",              _mm(admin_handlers.handle_agents_list))
+    app.router.add_post("/admin/agents",             _mm(require_csrf(admin_handlers.handle_agents_post)))
+    app.router.add_patch("/admin/agents/{id}",       _mm(require_csrf(admin_handlers.handle_agents_patch)))
+    app.router.add_delete("/admin/agents/{id}",      _mm(require_csrf(admin_handlers.handle_agents_delete)))
     app.router.add_get("/admin/policies",      _mpr(admin_handlers.handle_policies_list))
     app.router.add_post("/admin/policies",     _mpr(require_csrf(admin_handlers.handle_policies_post)))
     app.router.add_patch("/admin/policies/{id}", _mpr(require_csrf(admin_handlers.handle_policies_patch)))

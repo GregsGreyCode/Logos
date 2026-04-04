@@ -446,6 +446,59 @@ async def handle_cloud_providers_test(request: web.Request) -> web.Response:
     return web.json_response(result)
 
 
+# ── Named agents ─────────────────────────────────────────────────────────────
+
+async def handle_agents_list(request: web.Request) -> web.Response:
+    user = request.get("current_user") or {}
+    agents = auth_db.list_agents(user.get("id", ""))
+    return web.json_response({"agents": agents})
+
+
+async def handle_agents_post(request: web.Request) -> web.Response:
+    body = await request.json()
+    name = (body.get("name") or "").strip()
+    if not name:
+        return web.json_response({"error": "name is required"}, status=400)
+    if auth_db.get_agent_by_name(name):
+        return web.json_response({"error": "An agent with that name already exists"}, status=409)
+    user = request.get("current_user") or {}
+    agent = auth_db.create_agent(
+        name=name,
+        soul_slug=(body.get("soul_slug") or "general").strip(),
+        model=(body.get("model") or "").strip(),
+        description=(body.get("description") or "").strip(),
+        creator_id=user.get("id", ""),
+        shared=body.get("shared", True),
+    )
+    return web.json_response(agent, status=201)
+
+
+async def handle_agents_patch(request: web.Request) -> web.Response:
+    aid = request.match_info["id"]
+    existing = auth_db.get_agent(aid)
+    if not existing:
+        return web.json_response({"error": "not_found"}, status=404)
+    body = await request.json()
+    updates = {}
+    for k in ("name", "soul_slug", "model", "description", "shared"):
+        if k in body:
+            updates[k] = body[k]
+    if "name" in updates and updates["name"] != existing["name"]:
+        dup = auth_db.get_agent_by_name(updates["name"])
+        if dup and dup["id"] != aid:
+            return web.json_response({"error": "An agent with that name already exists"}, status=409)
+    agent = auth_db.update_agent(aid, **updates)
+    return web.json_response(agent)
+
+
+async def handle_agents_delete(request: web.Request) -> web.Response:
+    aid = request.match_info["id"]
+    if not auth_db.get_agent(aid):
+        return web.json_response({"error": "not_found"}, status=404)
+    auth_db.delete_agent(aid)
+    return web.Response(status=204)
+
+
 # ── Routing policies ──────────────────────────────────────────────────────────
 
 async def handle_policies_list(request: web.Request) -> web.Response:
