@@ -796,26 +796,80 @@
       <!-- ── Step 2: Auto-compare models / Choose model ──────────────── -->
       <div x-show="step===2" x-cloak>
 
-        <!-- ── Frontier track: model selection ─────────────────────────── -->
+        <!-- ── Frontier track: model selection (smart picker) ─────────── -->
         <template x-if="track === 'frontier'">
-          <div>
+          <div x-data="{ showAll: false, catalogModels: [], catalogLoaded: false }" x-init="
+            // Fetch enriched catalog for the validated models
+            if (frontierModels.length) {
+              fetch('/api/setup/model-catalog?models=' + encodeURIComponent(frontierModels.join(',')))
+                .then(r => r.json())
+                .then(d => { catalogModels = d.models || []; catalogLoaded = true; })
+                .catch(() => { catalogLoaded = true; });
+            }
+          ">
             <div class="mb-5">
               <h2 class="text-xl font-bold mb-1">Choose your default model</h2>
               <p class="text-gray-400 text-sm">
-                <span x-text="frontierModels.length"></span> models available from
-                <span class="text-white font-medium" x-text="frontierProvider === 'anthropic' ? 'Anthropic' : frontierProvider === 'openrouter' ? 'OpenRouter' : 'your endpoint'"></span>.
-                Pick the one agents will use by default. You can change this anytime from the dashboard.
+                Pick the model your agents will use. You can change this anytime.
+                <span class="text-gray-500">Models marked with a star are recommended starting points.</span>
               </p>
             </div>
-            <div class="space-y-1.5 max-h-[24rem] overflow-y-auto pr-1">
-              <template x-for="m in frontierModels" :key="m">
-                <button @click="frontierSelectedModel = m"
-                  class="w-full text-left px-3 py-2.5 rounded-xl border transition-all duration-150"
-                  :class="frontierSelectedModel === m ? 'border-indigo-500 bg-indigo-950/30' : 'border-gray-800 bg-gray-900 hover:border-gray-600'">
-                  <span class="font-mono text-xs" :class="frontierSelectedModel === m ? 'text-white' : 'text-gray-300'" x-text="m"></span>
+
+            <!-- Recommended models (always visible, no scroll) -->
+            <div class="space-y-2 mb-4">
+              <template x-for="m in catalogModels.filter(m => m.recommended)" :key="m.id">
+                <button @click="frontierSelectedModel = m.id"
+                  class="w-full text-left px-4 py-3 rounded-xl border transition-all duration-150"
+                  :class="frontierSelectedModel === m.id ? 'border-indigo-500 bg-indigo-950/30' : 'border-gray-700 bg-gray-900 hover:border-gray-500'">
+                  <div class="flex items-center justify-between mb-1">
+                    <div class="flex items-center gap-2">
+                      <span class="text-yellow-500 text-xs">&#9733;</span>
+                      <span class="text-sm font-semibold" :class="frontierSelectedModel === m.id ? 'text-white' : 'text-gray-200'" x-text="m.display"></span>
+                      <span x-show="m.recommended_label" class="text-[9px] px-1.5 py-0.5 rounded-full bg-indigo-950 text-indigo-300 border border-indigo-800" x-text="m.recommended_label"></span>
+                    </div>
+                    <div class="flex items-center gap-2">
+                      <span class="text-[10px] text-gray-600" x-text="m.speed"></span>
+                      <span class="text-[10px] font-mono" :class="m.cost <= 1 ? 'text-green-500' : m.cost <= 2 ? 'text-gray-400' : m.cost <= 3 ? 'text-yellow-500' : 'text-orange-400'" x-text="'$'.repeat(m.cost || 1)"></span>
+                    </div>
+                  </div>
+                  <p class="text-xs text-gray-500 leading-relaxed" x-text="m.description"></p>
                 </button>
               </template>
             </div>
+
+            <!-- Show all toggle -->
+            <button @click="showAll = !showAll" class="text-xs text-gray-500 hover:text-gray-300 transition-colors mb-3 flex items-center gap-1">
+              <span x-text="showAll ? '\u25b4 Hide' : '\u25be Show all ' + catalogModels.length + ' models'"></span>
+            </button>
+
+            <!-- Full model list (collapsible) -->
+            <div x-show="showAll" x-cloak class="space-y-1.5 mb-4">
+              <template x-for="m in catalogModels.filter(m => !m.recommended)" :key="m.id">
+                <button @click="frontierSelectedModel = m.id"
+                  class="w-full text-left px-3 py-2 rounded-lg border transition-all duration-150"
+                  :class="frontierSelectedModel === m.id ? 'border-indigo-500 bg-indigo-950/20' : 'border-gray-800 bg-gray-900 hover:border-gray-600'">
+                  <div class="flex items-center justify-between">
+                    <div class="flex items-center gap-2">
+                      <span class="text-xs" :class="frontierSelectedModel === m.id ? 'text-white' : 'text-gray-300'" x-text="m.display || m.id"></span>
+                      <span class="text-[9px] text-gray-600" x-text="m.provider"></span>
+                    </div>
+                    <div class="flex items-center gap-2">
+                      <span class="text-[10px] text-gray-600" x-text="m.speed"></span>
+                      <span x-show="m.cost" class="text-[10px] font-mono" :class="m.cost <= 1 ? 'text-green-500' : m.cost <= 2 ? 'text-gray-400' : 'text-yellow-500'" x-text="'$'.repeat(m.cost)"></span>
+                    </div>
+                  </div>
+                </button>
+              </template>
+              <!-- Fallback for models not in catalog -->
+              <template x-for="mid in frontierModels.filter(m => !catalogModels.find(c => c.id === m))" :key="mid">
+                <button @click="frontierSelectedModel = mid"
+                  class="w-full text-left px-3 py-2 rounded-lg border transition-all duration-150"
+                  :class="frontierSelectedModel === mid ? 'border-indigo-500 bg-indigo-950/20' : 'border-gray-800 bg-gray-900 hover:border-gray-600'">
+                  <span class="text-xs font-mono" :class="frontierSelectedModel === mid ? 'text-white' : 'text-gray-400'" x-text="mid"></span>
+                </button>
+              </template>
+            </div>
+
             <div class="flex gap-2 mt-6">
               <button @click="goTo(1)"
                 class="px-4 py-2.5 rounded-xl text-sm text-gray-400 hover:text-white border border-gray-700 hover:border-gray-500 transition-colors">

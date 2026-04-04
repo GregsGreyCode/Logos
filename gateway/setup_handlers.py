@@ -2583,6 +2583,28 @@ async def validate_provider_key(provider: str, api_key: str, base_url: str = "")
     return {"ok": True, "models": models}
 
 
+async def handle_model_catalog(request: web.Request) -> web.Response:
+    """Return enriched model catalog for a provider, with recommendations."""
+    provider = request.query.get("provider", "").strip()
+    # Also accept a list of raw model IDs to enrich
+    raw_models = request.query.get("models", "").strip()
+
+    from logos_cli.models import get_model_info, get_provider_catalog, MODEL_CATALOG
+
+    if provider:
+        models = get_provider_catalog(provider)
+    elif raw_models:
+        ids = [m.strip() for m in raw_models.split(",") if m.strip()]
+        models = [get_model_info(mid) for mid in ids]
+        models.sort(key=lambda m: (not m.get("recommended", False), m.get("cost", 99)))
+    else:
+        # Return all catalog entries
+        models = [{"id": k, **v} for k, v in MODEL_CATALOG.items()]
+        models.sort(key=lambda m: (not m.get("recommended", False), m.get("cost", 99)))
+
+    return web.json_response({"models": models})
+
+
 async def handle_validate_provider(request: web.Request) -> web.Response:
     """Validate a cloud provider API key and return available models."""
     try:
