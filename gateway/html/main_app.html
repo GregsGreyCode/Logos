@@ -592,13 +592,24 @@
               </template>
             </div>
 
-            <!-- Row 2: STAMP governance chips -->
+            <!-- Row 2: STAMP governance chips (S and M are interactive) -->
             <div class="flex items-center gap-1.5 pb-1.5 flex-wrap">
-              <!-- S: Persona -->
-              <template x-if="activeInstance.soul">
-                <span class="text-[10px] px-1.5 py-0.5 rounded font-mono bg-indigo-950 text-indigo-300 border border-indigo-900"
-                  :title="'Persona'" x-text="'S:' + activeInstance.soul.name"></span>
-              </template>
+              <!-- S: Soul — clickable dropdown -->
+              <div class="relative" x-data="{ open: false }" @click.away="open = false">
+                <button @click="open = !open"
+                  class="text-[10px] px-1.5 py-0.5 rounded font-mono border transition-colors cursor-pointer"
+                  :class="open ? 'bg-indigo-900 text-white border-indigo-500' : 'bg-indigo-950 text-indigo-300 border-indigo-900 hover:border-indigo-600'"
+                  :title="'Click to change soul'"
+                  x-text="'S:' + (activeInstance.soul?.name || selectedSoul || 'general')"></button>
+                <div x-show="open" x-cloak class="absolute top-full left-0 mt-1 w-44 max-h-48 overflow-y-auto bg-gray-900 border border-gray-700 rounded-lg shadow-xl z-50 py-1">
+                  <template x-for="s in (souls.length ? souls : [{slug:'general',name:'General'}])" :key="s.slug">
+                    <button @click="switchSoul(s.slug); open = false"
+                      class="block w-full text-left px-3 py-1.5 text-[11px] transition-colors"
+                      :class="(activeInstance.soul?.slug || selectedSoul) === s.slug ? 'text-white bg-indigo-950' : 'text-gray-400 hover:text-white hover:bg-gray-800'"
+                      x-text="s.name || s.slug"></button>
+                  </template>
+                </div>
+              </div>
               <!-- T: Tools -->
               <template x-if="webSession && webSession.tool_count > 0">
                 <span class="text-[10px] px-1.5 py-0.5 rounded font-mono bg-gray-800 text-gray-400 border border-gray-700"
@@ -608,15 +619,44 @@
                 <span class="text-[10px] px-1.5 py-0.5 rounded font-mono bg-gray-800 text-gray-600 border border-gray-700"
                   :title="'Tools available'" x-text="'T:' + (chatStats?.tool_count || 0) + ' loaded'"></span>
               </template>
-              <!-- M: Model → Server -->
-              <template x-if="activeInstance.model_alias || status.current_model">
-                <span class="text-[10px] px-1.5 py-0.5 rounded font-mono border"
-                  :class="activeInstance.machine_name
-                    ? 'bg-[var(--accent-subtle)] text-[var(--accent)] border-[var(--accent)]/40'
-                    : 'bg-gray-800 text-gray-500 border-gray-700'"
-                  :title="'Model routing'"
-                  x-text="'M:' + (activeInstance.model_alias || status.current_model || '?') + (activeInstance.machine_name ? ' → ' + activeInstance.machine_name : '')"></span>
-              </template>
+              <!-- M: Model — clickable dropdown -->
+              <div class="relative" x-data="{ open: false }" @click.away="open = false">
+                <button @click="open = !open"
+                  class="text-[10px] px-1.5 py-0.5 rounded font-mono border transition-colors cursor-pointer"
+                  :class="open
+                    ? 'bg-[var(--accent-muted)] text-white border-[var(--accent)]'
+                    : activeInstance.machine_name
+                      ? 'bg-[var(--accent-subtle)] text-[var(--accent)] border-[var(--accent)]/40 hover:border-[var(--accent)]/70'
+                      : 'bg-gray-800 text-gray-500 border-gray-700 hover:border-gray-500'"
+                  :title="'Click to change model'"
+                  x-text="'M:' + (activeInstance.model_alias || status.current_model || '?') + (activeInstance.machine_name ? ' \u2192 ' + activeInstance.machine_name : '')"></button>
+                <div x-show="open" x-cloak class="absolute top-full left-0 mt-1 w-60 max-h-52 overflow-y-auto bg-gray-900 border border-gray-700 rounded-lg shadow-xl z-50 py-1">
+                  <template x-if="cloudProviders.filter(p => p.active_model).length > 0">
+                    <div>
+                      <div class="px-3 py-1 text-[9px] text-gray-600 uppercase tracking-wider">Cloud</div>
+                      <template x-for="cp in cloudProviders.filter(p => p.active_model)" :key="cp.id">
+                        <button @click="switchModel(cp.active_model); open = false"
+                          class="block w-full text-left px-3 py-1.5 text-[11px] font-mono transition-colors"
+                          :class="(activeInstance.model_alias || status.current_model) === cp.active_model ? 'text-white bg-indigo-950' : 'text-gray-400 hover:text-white hover:bg-gray-800'"
+                          x-text="cp.active_model"></button>
+                      </template>
+                    </div>
+                  </template>
+                  <template x-if="adminMachines.filter(x => x.default_model && x.enabled).length > 0">
+                    <div>
+                      <div class="px-3 py-1 text-[9px] text-gray-600 uppercase tracking-wider">Local</div>
+                      <template x-for="m in adminMachines.filter(x => x.default_model && x.enabled)" :key="m.id">
+                        <button @click="switchModel(m.default_model); open = false"
+                          class="block w-full text-left px-3 py-1.5 text-[11px] font-mono transition-colors"
+                          :class="(activeInstance.model_alias || status.current_model) === m.default_model ? 'text-white bg-indigo-950' : 'text-gray-400 hover:text-white hover:bg-gray-800'"
+                          x-text="m.default_model"></button>
+                      </template>
+                    </div>
+                  </template>
+                  <p x-show="cloudProviders.filter(p => p.active_model).length === 0 && adminMachines.filter(x => x.default_model && x.enabled).length === 0"
+                    class="px-3 py-2 text-[10px] text-gray-600">No models configured. Add a provider in Infra > Inference.</p>
+                </div>
+              </div>
               <!-- P: Policy -->
               <span class="text-[10px] px-1.5 py-0.5 rounded font-mono bg-emerald-950 text-emerald-400 border border-emerald-900"
                 :title="'Action policy'" x-text="'P:' + (activeInstance.action_policy || 'default')"></span>
@@ -806,75 +846,6 @@
               <span class="text-gray-700">idle</span>
             </template>
             <span class="ml-auto text-gray-700" x-text="lastRefresh ? 'updated ' + lastRefresh : ''"></span>
-          </div>
-
-          <!-- STAMP selector -->
-          <div class="px-4 py-1.5 border-t border-gray-800/50 flex items-center gap-1.5 shrink-0 text-[10px]">
-            <!-- S: Soul -->
-            <div class="relative" x-data="{ open: false }" @click.away="open = false">
-              <button @click="open = !open"
-                class="flex items-center gap-1 px-2 py-1 rounded-md border transition-colors"
-                :class="open ? 'border-indigo-500 bg-indigo-950/30 text-white' : 'border-gray-800 text-gray-500 hover:text-gray-300 hover:border-gray-600'">
-                <span class="font-bold text-indigo-400">S</span>
-                <span class="font-mono truncate max-w-[6rem]" x-text="currentInstance?.soul || selectedSoul || 'general'"></span>
-              </button>
-              <div x-show="open" x-cloak class="absolute bottom-full left-0 mb-1 w-40 max-h-48 overflow-y-auto bg-gray-900 border border-gray-700 rounded-lg shadow-xl z-50 py-1">
-                <template x-for="s in (souls.length ? souls : [{slug:'general',name:'General'}])" :key="s.slug">
-                  <button @click="switchSoul(s.slug); open = false"
-                    class="block w-full text-left px-3 py-1.5 text-xs transition-colors"
-                    :class="(currentInstance?.soul || selectedSoul) === s.slug ? 'text-white bg-indigo-950' : 'text-gray-400 hover:text-white hover:bg-gray-800'"
-                    x-text="s.name || s.slug"></button>
-                </template>
-              </div>
-            </div>
-            <!-- T: Tools -->
-            <div class="flex items-center gap-1 px-2 py-1 rounded-md border border-gray-800 text-gray-600">
-              <span class="font-bold text-gray-500">T</span>
-              <span class="font-mono" x-text="(chatStats?.tool_count || 0) + '/' + (chatStats?.tools_loaded || status?.tools_loaded || '?')"></span>
-            </div>
-            <!-- A: Agent -->
-            <div class="flex items-center gap-1 px-2 py-1 rounded-md border border-gray-800 text-gray-600">
-              <span class="font-bold text-gray-500">A</span>
-              <span class="font-mono" x-text="currentInstance?.agent_id || 'hermes'"></span>
-            </div>
-            <!-- M: Model -->
-            <div class="relative" x-data="{ open: false }" @click.away="open = false">
-              <button @click="open = !open"
-                class="flex items-center gap-1 px-2 py-1 rounded-md border transition-colors"
-                :class="open ? 'border-indigo-500 bg-indigo-950/30 text-white' : 'border-gray-800 text-gray-500 hover:text-gray-300 hover:border-gray-600'">
-                <span class="font-bold text-indigo-400">M</span>
-                <span class="font-mono truncate max-w-[10rem]" x-text="currentInstance?.model || status?.model || 'unknown'"></span>
-              </button>
-              <div x-show="open" x-cloak class="absolute bottom-full right-0 mb-1 w-56 max-h-48 overflow-y-auto bg-gray-900 border border-gray-700 rounded-lg shadow-xl z-50 py-1">
-                <template x-if="cloudProviders.length > 0">
-                  <div>
-                    <div class="px-3 py-1 text-[9px] text-gray-600 uppercase tracking-wider">Cloud</div>
-                    <template x-for="cp in cloudProviders.filter(p => p.is_active && p.active_model)" :key="cp.id">
-                      <button @click="switchModel(cp.active_model); open = false"
-                        class="block w-full text-left px-3 py-1.5 text-xs font-mono transition-colors"
-                        :class="(currentInstance?.model || status?.model) === cp.active_model ? 'text-white bg-indigo-950' : 'text-gray-400 hover:text-white hover:bg-gray-800'"
-                        x-text="cp.active_model"></button>
-                    </template>
-                  </div>
-                </template>
-                <template x-if="adminMachines.length > 0">
-                  <div>
-                    <div class="px-3 py-1 text-[9px] text-gray-600 uppercase tracking-wider">Local</div>
-                    <template x-for="m in adminMachines.filter(x => x.default_model && x.enabled)" :key="m.id">
-                      <button @click="switchModel(m.default_model); open = false"
-                        class="block w-full text-left px-3 py-1.5 text-xs font-mono transition-colors"
-                        :class="(currentInstance?.model || status?.model) === m.default_model ? 'text-white bg-indigo-950' : 'text-gray-400 hover:text-white hover:bg-gray-800'"
-                        x-text="m.default_model"></button>
-                    </template>
-                  </div>
-                </template>
-              </div>
-            </div>
-            <!-- P: Policy -->
-            <div class="flex items-center gap-1 px-2 py-1 rounded-md border border-gray-800 text-gray-600">
-              <span class="font-bold text-gray-500">P</span>
-              <span class="font-mono" x-text="currentInstance?.policy || 'default'"></span>
-            </div>
           </div>
 
           <!-- Input -->

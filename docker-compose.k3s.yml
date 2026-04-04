@@ -49,7 +49,7 @@ services:
 
   # ── k3s (lightweight Kubernetes) ──────────────────────────────────────────
   k3s:
-    image: rancher/k3s:v1.32-k3s1
+    image: rancher/k3s:v1.31.6-k3s1
     privileged: true          # required: k3s needs iptables, namespaces, cgroups
     restart: unless-stopped
     command:
@@ -76,7 +76,7 @@ services:
   # name so the logos container can reach the API across the Docker network.
   # Also creates the hermes namespace where agent pods will run.
   k3s-init:
-    image: rancher/k3s:v1.32-k3s1
+    image: rancher/k3s:v1.31.6-k3s1
     depends_on:
       k3s:
         condition: service_healthy
