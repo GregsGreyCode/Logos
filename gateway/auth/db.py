@@ -152,6 +152,19 @@ CREATE TABLE IF NOT EXISTS routing_log (
 CREATE INDEX IF NOT EXISTS idx_cap_machine   ON machine_capabilities(machine_id);
 CREATE INDEX IF NOT EXISTS idx_rules_policy  ON policy_rules(policy_id);
 CREATE INDEX IF NOT EXISTS idx_rlog_user     ON routing_log(user_id);
+
+CREATE TABLE IF NOT EXISTS cloud_providers (
+    id           TEXT PRIMARY KEY,
+    provider     TEXT NOT NULL,
+    name         TEXT NOT NULL,
+    base_url     TEXT,
+    api_key      TEXT,
+    active_model TEXT,
+    is_active    INTEGER NOT NULL DEFAULT 0,
+    enabled      INTEGER NOT NULL DEFAULT 1,
+    created_at   INTEGER NOT NULL,
+    updated_at   INTEGER NOT NULL
+);
 CREATE INDEX IF NOT EXISTS idx_rlog_ts       ON routing_log(created_at);
 
 -- ── Action policies ────────────────────────────────────────────────────────
@@ -754,6 +767,72 @@ def update_machine(machine_id: str, **fields) -> Optional[dict]:
 def delete_machine(machine_id: str) -> None:
     with _conn() as conn:
         conn.execute("DELETE FROM machines WHERE id = ?", (machine_id,))
+
+
+# ── Cloud providers ──────────────────────────────────────────────────────────
+
+def create_cloud_provider(provider: str, name: str, api_key: str = "",
+                          base_url: str = "", active_model: str = "") -> dict:
+    pid = _new_id("cprov")
+    now = int(time.time() * 1000)
+    with _conn() as conn:
+        conn.execute(
+            """INSERT INTO cloud_providers
+               (id, provider, name, base_url, api_key, active_model, is_active, enabled, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, 0, 1, ?, ?)""",
+            (pid, provider, name, base_url, api_key, active_model, now, now),
+        )
+    return get_cloud_provider(pid)
+
+
+def get_cloud_provider(provider_id: str) -> Optional[dict]:
+    with _conn() as conn:
+        row = conn.execute("SELECT * FROM cloud_providers WHERE id = ?", (provider_id,)).fetchone()
+        return dict(row) if row else None
+
+
+def list_cloud_providers() -> list[dict]:
+    with _conn() as conn:
+        rows = conn.execute(
+            "SELECT * FROM cloud_providers ORDER BY is_active DESC, created_at"
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def update_cloud_provider(provider_id: str, **fields) -> Optional[dict]:
+    allowed = {"name", "base_url", "api_key", "active_model", "is_active", "enabled"}
+    updates = {k: v for k, v in fields.items() if k in allowed}
+    if not updates:
+        return get_cloud_provider(provider_id)
+    updates["updated_at"] = int(time.time() * 1000)
+    set_clause = ", ".join(f"{k} = ?" for k in updates)
+    with _conn() as conn:
+        conn.execute(
+            f"UPDATE cloud_providers SET {set_clause} WHERE id = ?",
+            (*updates.values(), provider_id),
+        )
+    return get_cloud_provider(provider_id)
+
+
+def delete_cloud_provider(provider_id: str) -> None:
+    with _conn() as conn:
+        conn.execute("DELETE FROM cloud_providers WHERE id = ?", (provider_id,))
+
+
+def set_active_cloud_provider(provider_id: str) -> Optional[dict]:
+    """Set one provider as active, deactivate all others."""
+    with _conn() as conn:
+        conn.execute("UPDATE cloud_providers SET is_active = 0, updated_at = ?",
+                     (int(time.time() * 1000),))
+        conn.execute("UPDATE cloud_providers SET is_active = 1, updated_at = ? WHERE id = ?",
+                     (int(time.time() * 1000), provider_id))
+    return get_cloud_provider(provider_id)
+
+
+def get_active_cloud_provider() -> Optional[dict]:
+    with _conn() as conn:
+        row = conn.execute("SELECT * FROM cloud_providers WHERE is_active = 1 LIMIT 1").fetchone()
+        return dict(row) if row else None
 
 
 # ── Machine user claims ────────────────────────────────────────────────────────
