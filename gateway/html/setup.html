@@ -119,7 +119,7 @@
 
   <!-- Main content -->
   <main class="setup-content flex-1 flex items-start justify-center px-4 pt-6 pb-16">
-    <div class="w-full" :style="'max-width:' + ((step===0 && setupMode === 'new' && !introConfirmed) ? '58rem' : step===2 ? '44rem' : '34rem') + '; transition:max-width 0.4s cubic-bezier(0.4,0,0.2,1)'">
+    <div class="w-full" :style="'max-width:' + ((step===0 && setupMode === 'new' && !introConfirmed) ? '58rem' : (step===2 && track === 'local') ? '44rem' : '34rem') + '; transition:max-width 0.4s cubic-bezier(0.4,0,0.2,1)'">
     <!-- Step content — opacity controlled by stepFading for a clean fade-out/fade-in between steps -->
     <div :style="{opacity: stepFading ? 0 : 1, transition: 'opacity 0.18s ease'}" style="will-change:opacity">
 
@@ -315,25 +315,114 @@
             <div class="text-xs text-indigo-400 font-medium">Free &middot; Private</div>
             <div class="text-xs text-indigo-300/60 mt-0.5">Ollama &middot; LM Studio</div>
           </button>
-          <!-- Frontier-first (coming soon) -->
-          <div class="text-left p-5 rounded-2xl border border-gray-800 bg-gray-900/40 opacity-50 cursor-not-allowed select-none">
-            <div class="w-9 h-9 rounded-xl bg-gray-800 flex items-center justify-center mb-3 border border-gray-700">
-              <svg class="w-4 h-4 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <!-- Frontier-first -->
+          <button @click="selectTrack('frontier')"
+            class="icon-hue text-left p-5 rounded-2xl border border-gray-700 bg-gray-900 hover:border-indigo-500 hover:bg-gray-800/80 transition-all duration-200 group">
+            <div class="w-9 h-9 rounded-xl bg-indigo-950 flex items-center justify-center mb-3 group-hover:bg-indigo-900 transition-colors border border-indigo-800">
+              <svg class="w-4 h-4 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
                   d="M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2.5 0 0010.5 8h.5a2 2 0 012 2 2 2 0 104 0 2 2 0 012-2h1.064M15 20.488V18a2 2 0 012-2h3.064"/>
               </svg>
             </div>
-            <div class="font-semibold text-gray-500 mb-1">Frontier-first</div>
-            <div class="text-xs text-gray-600 leading-relaxed mb-3">
+            <div class="font-semibold text-white mb-1">Frontier-first</div>
+            <div class="text-xs text-gray-400 leading-relaxed mb-3">
               Best available cloud models via Anthropic, OpenAI, or OpenRouter.
             </div>
-            <div class="text-xs text-gray-600 font-medium">Coming soon</div>
-          </div>
+            <div class="text-xs text-indigo-400 font-medium">Pay-per-use &middot; No GPU needed</div>
+            <div class="text-xs text-indigo-300/60 mt-0.5">Anthropic &middot; OpenRouter &middot; Custom</div>
+          </button>
         </div>
       </div>
 
-      <!-- ── Step 1: Connect model server ───────────────────────────── -->
+      <!-- ── Step 1: Connect model server / Choose provider ──────────── -->
       <div x-show="step===1" x-cloak>
+
+        <!-- ── Frontier track: provider selection ──────────────────────── -->
+        <template x-if="track === 'frontier'">
+          <div>
+            <div class="mb-5">
+              <h2 class="text-xl font-bold mb-1">Choose your model provider</h2>
+              <p class="text-gray-400 text-sm">Select a cloud provider, enter your API key, and Logos will connect and list available models.</p>
+            </div>
+
+            <!-- Provider cards -->
+            <div class="grid grid-cols-3 gap-2 mb-5">
+              <button @click="frontierProvider = 'anthropic'; frontierError = ''; frontierModels = []; frontierBaseUrl = ''"
+                class="text-left p-3 rounded-xl border transition-all duration-200"
+                :class="frontierProvider === 'anthropic' ? 'border-indigo-500 bg-indigo-950/30' : 'border-gray-700 bg-gray-900 hover:border-gray-500'">
+                <div class="font-semibold text-sm mb-0.5" :class="frontierProvider === 'anthropic' ? 'text-white' : 'text-gray-300'">Anthropic</div>
+                <div class="text-[10px] text-gray-500">Claude models</div>
+              </button>
+              <button @click="frontierProvider = 'openrouter'; frontierError = ''; frontierModels = []; frontierBaseUrl = ''"
+                class="text-left p-3 rounded-xl border transition-all duration-200"
+                :class="frontierProvider === 'openrouter' ? 'border-indigo-500 bg-indigo-950/30' : 'border-gray-700 bg-gray-900 hover:border-gray-500'">
+                <div class="font-semibold text-sm mb-0.5" :class="frontierProvider === 'openrouter' ? 'text-white' : 'text-gray-300'">OpenRouter</div>
+                <div class="text-[10px] text-gray-500">200+ models, pay-per-use</div>
+              </button>
+              <button @click="frontierProvider = 'custom'; frontierError = ''; frontierModels = []"
+                class="text-left p-3 rounded-xl border transition-all duration-200"
+                :class="frontierProvider === 'custom' ? 'border-indigo-500 bg-indigo-950/30' : 'border-gray-700 bg-gray-900 hover:border-gray-500'">
+                <div class="font-semibold text-sm mb-0.5" :class="frontierProvider === 'custom' ? 'text-white' : 'text-gray-300'">Custom</div>
+                <div class="text-[10px] text-gray-500">Any OpenAI-compatible</div>
+              </button>
+            </div>
+
+            <!-- API key + base URL inputs -->
+            <div x-show="frontierProvider" class="space-y-3 mb-5">
+              <div>
+                <label class="text-xs text-gray-500 mb-1 block">API Key</label>
+                <input x-model="frontierApiKey" type="password"
+                  :placeholder="frontierProvider === 'anthropic' ? 'sk-ant-...' : frontierProvider === 'openrouter' ? 'sk-or-...' : 'API key'"
+                  class="w-full px-3 py-2 rounded-lg bg-gray-800 border border-gray-700 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-indigo-500">
+              </div>
+              <div x-show="frontierProvider === 'custom'">
+                <label class="text-xs text-gray-500 mb-1 block">Base URL</label>
+                <input x-model="frontierBaseUrl" type="text"
+                  placeholder="https://api.example.com/v1"
+                  class="w-full px-3 py-2 rounded-lg bg-gray-800 border border-gray-700 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-indigo-500">
+              </div>
+
+              <!-- Validate button -->
+              <button @click="validateFrontierProvider()"
+                :disabled="!frontierApiKey || frontierValidating || (frontierProvider === 'custom' && !frontierBaseUrl)"
+                class="btn-primary w-full py-2.5 rounded-xl text-sm disabled:opacity-40 disabled:cursor-not-allowed transition-opacity flex items-center justify-center gap-2">
+                <template x-if="frontierValidating">
+                  <div class="flex items-center gap-2">
+                    <div class="w-3.5 h-3.5 border-2 border-gray-600 border-t-white rounded-full animate-spin"></div>
+                    <span>Validating&hellip;</span>
+                  </div>
+                </template>
+                <template x-if="!frontierValidating">
+                  <span x-text="frontierModels.length > 0 ? '\u2713 Connected — ' + frontierModels.length + ' models' : 'Validate & connect'"></span>
+                </template>
+              </button>
+
+              <!-- Error -->
+              <p x-show="frontierError" class="text-xs text-red-400" x-text="frontierError"></p>
+
+              <!-- Success indicator -->
+              <div x-show="frontierModels.length > 0 && !frontierError" class="text-xs text-green-400 flex items-center gap-1.5">
+                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+                <span x-text="frontierModels.length + ' models available from ' + (frontierProvider === 'anthropic' ? 'Anthropic' : frontierProvider === 'openrouter' ? 'OpenRouter' : 'endpoint')"></span>
+              </div>
+            </div>
+
+            <!-- Next button -->
+            <div class="flex gap-2 mt-6">
+              <button @click="track = null; step = 0; introConfirmed = true"
+                class="px-4 py-2.5 rounded-xl text-sm text-gray-400 hover:text-white border border-gray-700 hover:border-gray-500 transition-colors">
+                &larr; Back
+              </button>
+              <button @click="goNext()" :disabled="frontierModels.length === 0"
+                class="btn-primary flex-1 py-2.5 rounded-xl text-sm disabled:opacity-40 disabled:cursor-not-allowed transition-opacity">
+                Continue &rarr; Choose model
+              </button>
+            </div>
+          </div>
+        </template>
+
+        <!-- ── Local track: connect servers (existing) ─────────────────── -->
+        <div x-show="track === 'local'">
         <div class="mb-5">
           <h2 class="text-xl font-bold mb-1">Connect your model servers</h2>
           <p class="text-gray-400 text-sm">Logos scanned for local inference servers and found the results below. Select every server you want agents to route across, then continue to benchmark.</p>
@@ -701,11 +790,47 @@
             </div>
           </div>
         </div>
+        </div><!-- /local track wrapper -->
       </div>
 
-      <!-- ── Step 2: Auto-compare models ─────────────────────────────── -->
+      <!-- ── Step 2: Auto-compare models / Choose model ──────────────── -->
       <div x-show="step===2" x-cloak>
 
+        <!-- ── Frontier track: model selection ─────────────────────────── -->
+        <template x-if="track === 'frontier'">
+          <div>
+            <div class="mb-5">
+              <h2 class="text-xl font-bold mb-1">Choose your default model</h2>
+              <p class="text-gray-400 text-sm">
+                <span x-text="frontierModels.length"></span> models available from
+                <span class="text-white font-medium" x-text="frontierProvider === 'anthropic' ? 'Anthropic' : frontierProvider === 'openrouter' ? 'OpenRouter' : 'your endpoint'"></span>.
+                Pick the one agents will use by default. You can change this anytime from the dashboard.
+              </p>
+            </div>
+            <div class="space-y-1.5 max-h-[24rem] overflow-y-auto pr-1">
+              <template x-for="m in frontierModels" :key="m">
+                <button @click="frontierSelectedModel = m"
+                  class="w-full text-left px-3 py-2.5 rounded-xl border transition-all duration-150"
+                  :class="frontierSelectedModel === m ? 'border-indigo-500 bg-indigo-950/30' : 'border-gray-800 bg-gray-900 hover:border-gray-600'">
+                  <span class="font-mono text-xs" :class="frontierSelectedModel === m ? 'text-white' : 'text-gray-300'" x-text="m"></span>
+                </button>
+              </template>
+            </div>
+            <div class="flex gap-2 mt-6">
+              <button @click="goTo(1)"
+                class="px-4 py-2.5 rounded-xl text-sm text-gray-400 hover:text-white border border-gray-700 hover:border-gray-500 transition-colors">
+                &larr; Back
+              </button>
+              <button @click="goNext()" :disabled="!frontierSelectedModel"
+                class="btn-primary flex-1 py-2.5 rounded-xl text-sm disabled:opacity-40 disabled:cursor-not-allowed transition-opacity">
+                Continue &rarr; Agent runtime
+              </button>
+            </div>
+          </div>
+        </template>
+
+        <!-- ── Local track: benchmark (existing) ───────────────────────── -->
+        <div x-show="track === 'local'">
         <!-- No models on Ollama: pull catalog -->
         <div x-show="getModels().length===0 && hasOllamaServer()" class="space-y-3">
           <div class="mb-5">
@@ -1217,6 +1342,7 @@
             </div>
           </div>
         </div>
+        </div><!-- /local track wrapper -->
       </div>
 
       <!-- ── Step 3: Choose your agent runtime ─────────────────────── -->
@@ -1769,6 +1895,15 @@ function setup() {
     osPlatform: 'mac',
     copied: '',
 
+    // Frontier track state
+    frontierProvider: null,
+    frontierApiKey: '',
+    frontierBaseUrl: '',
+    frontierValidating: false,
+    frontierError: '',
+    frontierModels: [],
+    frontierSelectedModel: null,
+
     // Step 2 — auto-compare
     compareAbortController: null,
     compareSkippedServers: {},   // ep → true when user stops that server
@@ -2093,6 +2228,11 @@ function setup() {
             if (s.selectedAgentType) this.selectedAgentType = s.selectedAgentType;
             if (s.setupEmail)        this.setupEmail        = s.setupEmail;
             if (s.setupUsername)     this.setupUsername     = s.setupUsername;
+            // Frontier track restoration (API key intentionally NOT persisted)
+            if (s.frontierProvider)       this.frontierProvider       = s.frontierProvider;
+            if (s.frontierBaseUrl)        this.frontierBaseUrl        = s.frontierBaseUrl;
+            if (s.frontierModels?.length) this.frontierModels         = s.frontierModels;
+            if (s.frontierSelectedModel)  this.frontierSelectedModel  = s.frontierSelectedModel;
             restoredFromProgress = true;
           }
         }
@@ -2169,6 +2309,11 @@ function setup() {
           selectedAgentType:      this.selectedAgentType,
           setupEmail:             this.setupEmail,
           setupUsername:          this.setupUsername,
+          // Frontier track — persist provider and model selection but NEVER the API key
+          frontierProvider:       this.frontierProvider,
+          frontierBaseUrl:        this.frontierBaseUrl,
+          frontierModels:         this.frontierModels,
+          frontierSelectedModel:  this.frontierSelectedModel,
         }));
       } catch {}
     },
@@ -2199,6 +2344,41 @@ function setup() {
       this.compareTesting = {}; this.compareSkippedServers = {};
       this.selectedModel = null; this.execEnv = null; this.k8sMode = null;
       this.selectedSoul = null; this.selectedAgentType = null; this.setupEmail = ''; this.setupUsername = '';
+    },
+
+    async validateFrontierProvider() {
+      if (!this.frontierProvider || !this.frontierApiKey) return;
+      if (this.frontierProvider === 'custom' && !this.frontierBaseUrl) return;
+      this.frontierValidating = true;
+      this.frontierError = '';
+      this.frontierModels = [];
+      this.frontierSelectedModel = null;
+      try {
+        const r = await fetch('/api/setup/validate-provider', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({
+            provider: this.frontierProvider,
+            api_key: this.frontierApiKey,
+            base_url: this.frontierBaseUrl || undefined,
+          }),
+        });
+        const d = await r.json();
+        if (d.ok && d.models && d.models.length > 0) {
+          this.frontierModels = d.models;
+          // Auto-select a sensible default
+          const preferred = d.models.find(m => m.includes('opus') || m.includes('claude-opus')) ||
+                            d.models.find(m => m.includes('sonnet')) ||
+                            d.models[0];
+          this.frontierSelectedModel = preferred || d.models[0];
+        } else {
+          this.frontierError = d.error || 'No models returned';
+        }
+      } catch (e) {
+        this.frontierError = 'Connection failed: ' + (e.message || e);
+      }
+      this.frontierValidating = false;
     },
 
     async startConnectScan() {
@@ -2243,8 +2423,10 @@ function setup() {
       this.track = track;
       this.step = 1;
       this._saveProgress();
-      // Only scan if we don't already have cached results — avoids redundant scan on resume
-      this.$nextTick(() => { if (!this.autoScanDone) this.autoDetect(); });
+      // Only scan for local track — frontier doesn't need network scanning
+      if (track === 'local') {
+        this.$nextTick(() => { if (!this.autoScanDone) this.autoDetect(); });
+      }
     },
 
     async autoDetect() {
@@ -2374,7 +2556,13 @@ function setup() {
 
     async goNext() {
       if (this.step === 1) {
-        // Auto-connect any servers that have a key typed but haven't been connected yet
+        if (this.track === 'frontier') {
+          // Frontier: just advance to model selection (validation already done)
+          if (this.frontierModels.length === 0) return;
+          await this._goStep(2);
+          return;
+        }
+        // Local: Auto-connect any servers that have a key typed but haven't been connected yet
         const pending = this.foundServers.filter(s =>
           s.status === 'auth_required' && (this.localKeys[s.endpoint]||'').trim()
         );
@@ -2388,7 +2576,19 @@ function setup() {
         await this._goStep(2, () => { this.$nextTick(() => { if (!this.compareDone) this.startCompare(); }); });
         return;
       }
-      if (this.step === 2) { await this._goStep(3); return; }
+      if (this.step === 2) {
+        if (this.track === 'frontier') {
+          // Frontier: set selected model and create synthetic server for steps 3-7
+          if (!this.frontierSelectedModel) return;
+          this.selectedModel = this.frontierSelectedModel;
+          const provUrls = { anthropic: 'https://api.anthropic.com/v1', openrouter: 'https://openrouter.ai/api/v1' };
+          const ep = this.frontierProvider === 'custom' ? this.frontierBaseUrl : (provUrls[this.frontierProvider] || '');
+          this.activeServer = { endpoint: ep, type: this.frontierProvider, status: 'up' };
+          this.selectedServers = [this.activeServer];
+        }
+        await this._goStep(3);
+        return;
+      }
       if (this.step === 3) { await this._goStep(4, () => { this.probeSandbox(); }); return; }
       if (this.step === 4) {
         await this._goStep(5, () => {
@@ -2404,7 +2604,9 @@ function setup() {
     },
     async goTo(i) {
       if (i < this.step && i >= 1 && this.step <= 7) {
-        await this._goStep(i, i === 2 ? () => { this.$nextTick(() => { if (!this.compareDone) this.startCompare(); }); } : null);
+        // Only auto-start benchmark for local track step 2
+        const afterStep2 = (i === 2 && this.track === 'local') ? () => { this.$nextTick(() => { if (!this.compareDone) this.startCompare(); }); } : null;
+        await this._goStep(i, afterStep2);
       }
     },
 
@@ -3238,6 +3440,13 @@ function setup() {
       // Re-probe the selected endpoint when step 7 is shown so the user sees
       // real readiness state before clicking Launch.
       if (!this.activeServer?.endpoint) return;
+      // Frontier providers were already validated in step 1 — skip local probe
+      // which doesn't understand cloud API auth headers.
+      if (this.track === 'frontier') {
+        this.step7ProbeStatus = this.frontierModels.length > 0 ? 'ok' : 'warn';
+        this.step7ProbeMsg = this.frontierModels.length > 0 ? '' : 'Provider was not validated — go back to step 1.';
+        return;
+      }
       this.step7ProbeStatus = 'checking';
       this.step7ProbeMsg = '';
       try {
@@ -3298,11 +3507,18 @@ function setup() {
             setup_email:    this.setupEmail    || '',
             setup_username: this.setupUsername || '',
             setup_password: this.setupPassword || '',
+            // Frontier track fields
+            ...(this.track === 'frontier' ? {
+              track: 'frontier',
+              provider: this.frontierProvider,
+              provider_api_key: this.frontierApiKey,
+              provider_base_url: this.frontierBaseUrl || '',
+            } : {}),
             // All selected servers so the backend can register each as a machine
             servers: (this.selectedServers || []).map(s => ({
               endpoint:          s.endpoint,
               type:              s.type || 'unknown',
-              api_key:           this.serverKeys[s.endpoint] || s._apiKey || '',
+              api_key:           this.track === 'frontier' ? this.frontierApiKey : (this.serverKeys[s.endpoint] || s._apiKey || ''),
               name:              s.customName || s.name || '',
               recommended_model: this.serverModelSelections[s.endpoint] || (this.compareServerRecs[s.endpoint] || {}).model || null,
             })),

@@ -6,6 +6,7 @@ Endpoints:
   POST /api/setup/pull     — SSE: stream Ollama model pull progress
   POST /api/setup/compare  — SSE: quick-benchmark candidates, recommend best model
   POST /api/setup/test     — SSE: full benchmark of selected model
+  POST /api/setup/validate-provider — validate a cloud provider API key and list models
   POST /api/setup/complete — save machine config and mark setup done
   POST /api/setup/test-k8s   — test Kubernetes connectivity
   POST /api/setup/k3s-install — SSE: install k3s on bare Linux host
@@ -2472,6 +2473,128 @@ async def handle_setup_test_k8s(request: web.Request) -> web.Response:
         return web.json_response({"ok": False, "error": str(exc)[:300]}, status=200)
 
 
+_FRONTIER_PROVIDERS = {
+    "anthropic": {
+        "base_url": "https://api.anthropic.com/v1",
+        "server_type": "anthropic",
+        "env_key": "ANTHROPIC_API_KEY",
+    },
+    "openrouter": {
+        "base_url": "https://openrouter.ai/api/v1",
+        "server_type": "openrouter",
+        "env_key": "OPENROUTER_API_KEY",
+    },
+    "custom": {
+        "base_url": "",  # user-provided
+        "server_type": "openai",
+        "env_key": "",   # stored as OPENAI_API_KEY only
+    },
+}
+
+
+async def handle_validate_provider(request: web.Request) -> web.Response:
+    """Validate a cloud provider API key and return available models."""
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"ok": False, "error": "invalid_json"}, status=400)
+
+    provider = (body.get("provider") or "").strip()
+    api_key = (body.get("api_key") or "").strip()
+    base_url = (body.get("base_url") or "").strip().rstrip("/")
+
+    if provider not in _FRONTIER_PROVIDERS:
+        return web.json_response({"ok": False, "error": f"Unknown provider: {provider}"}, status=400)
+    if not api_key:
+        return web.json_response({"ok": False, "error": "API key is required"}, status=400)
+    if provider == "custom" and not base_url:
+        return web.json_response({"ok": False, "error": "Base URL is required for custom endpoints"}, status=400)
+
+    prov = _FRONTIER_PROVIDERS[provider]
+    effective_url = base_url if provider == "custom" else prov["base_url"]
+
+    models: list[str] = []
+    error: str | None = None
+
+    try:
+        async with aiohttp.ClientSession() as session:
+            if provider == "anthropic":
+                # Anthropic uses x-api-key header, not Bearer
+                headers = {
+                    "x-api-key": api_key,
+                    "anthropic-version": "2023-06-01",
+                    "Accept": "application/json",
+                }
+                async with session.get(
+                    f"{effective_url}/models",
+                    headers=headers,
+                    timeout=aiohttp.ClientTimeout(total=15),
+                ) as r:
+                    if r.status == 200:
+                        data = await r.json(content_type=None)
+                        models = [m["id"] for m in (data.get("data") or []) if m.get("id")]
+                        models.sort()
+                    elif r.status in (401, 403):
+                        error = "Invalid API key"
+                    else:
+                        body_text = (await r.text())[:200]
+                        error = f"API returned HTTP {r.status}: {body_text}"
+            else:
+                # OpenRouter and custom use Bearer token
+                headers = {
+                    "Authorization": f"Bearer {api_key}",
+                    "Accept": "application/json",
+                }
+                async with session.get(
+                    f"{effective_url}/models",
+                    headers=headers,
+                    timeout=aiohttp.ClientTimeout(total=15),
+                ) as r:
+                    if r.status == 200:
+                        data = await r.json(content_type=None)
+                        raw_models = [m.get("id", "") for m in (data.get("data") or []) if m.get("id")]
+                        if provider == "openrouter":
+                            # Filter to curated list to avoid 200+ model overwhelm
+                            from logos_cli.models import OPENROUTER_MODELS
+                            curated = {mid for mid, _ in OPENROUTER_MODELS}
+                            models = [m for m in raw_models if m in curated]
+                            if not models:
+                                # Key is valid but no curated models matched — show curated list
+                                models = [mid for mid, _ in OPENROUTER_MODELS]
+                        else:
+                            models = sorted(raw_models)[:50]  # cap for custom
+                    elif r.status in (401, 403):
+                        error = "Invalid API key"
+                    else:
+                        body_text = (await r.text())[:200]
+                        error = f"API returned HTTP {r.status}: {body_text}"
+    except aiohttp.ClientError as e:
+        error = f"Connection failed: {str(e)[:100]}"
+    except Exception as e:
+        error = f"Unexpected error: {str(e)[:100]}"
+
+    # Fallback to static model lists if API call failed but key format looks valid
+    if not models and not error:
+        error = "No models returned from API"
+    if error and error != "Invalid API key":
+        # Try static fallback — the key might be valid but /models endpoint is flaky
+        try:
+            from logos_cli.models import _PROVIDER_MODELS, OPENROUTER_MODELS
+            if provider == "anthropic" and "anthropic" in _PROVIDER_MODELS:
+                models = _PROVIDER_MODELS["anthropic"]
+                error = None  # clear error, we have a fallback
+            elif provider == "openrouter":
+                models = [mid for mid, _ in OPENROUTER_MODELS]
+                error = None
+        except ImportError:
+            pass
+
+    if error:
+        return web.json_response({"ok": False, "error": error})
+
+    return web.json_response({"ok": True, "models": models})
+
+
 async def handle_setup_complete(request: web.Request) -> web.Response:
     """Save machine config and mark setup complete."""
     try:
@@ -2552,6 +2675,28 @@ async def handle_setup_complete(request: web.Request) -> web.Response:
         k8s_ns       = (body.get("k8s_namespace") or "hermes").strip()
         kubeconfig   = (body.get("kubeconfig") or "").strip()
 
+        # ── Frontier track: resolve endpoint, key, and server type from provider ──
+        _track = (body.get("track") or "local").strip()
+        _frontier_provider = (body.get("provider") or "").strip()
+        _frontier_key = (body.get("provider_api_key") or "").strip()
+        _frontier_base = (body.get("provider_base_url") or "").strip().rstrip("/")
+
+        if _track == "frontier" and _frontier_provider in _FRONTIER_PROVIDERS:
+            prov = _FRONTIER_PROVIDERS[_frontier_provider]
+            # Override endpoint and model from frontier selection
+            endpoint = _frontier_base if _frontier_provider == "custom" else prov["base_url"]
+            # Persist provider-specific API key securely to ~/.logos/.env
+            try:
+                from logos_cli.config import save_env_value
+                if prov["env_key"]:
+                    save_env_value(prov["env_key"], _frontier_key)
+                    logger.info("setup: saved %s to .env", prov["env_key"])
+                # Always also set OPENAI_API_KEY for OpenAI-compatible routing
+                save_env_value("OPENAI_API_KEY", _frontier_key)
+                save_env_value("OPENAI_BASE_URL", endpoint)
+            except Exception as _env_err:
+                logger.warning("setup: could not save provider keys to .env: %s", _env_err)
+
         # Write chosen model + endpoint to config.yaml so the agent actually uses them.
         # Keys are bridged to env vars by run.py on startup (only if not already in env,
         # so pre-configured k8s deployments with explicit env vars are not overridden).
@@ -2566,14 +2711,17 @@ async def handle_setup_complete(request: web.Request) -> web.Response:
             _cfg["HERMES_MODEL"] = model
             _cfg["OPENAI_BASE_URL"] = endpoint
             # Persist the API key for the primary server so the agent authenticates.
-            # Find it from the servers list; fall back to top-level api_key field.
-            _primary_key = ""
-            for _srv in (body.get("servers") or []):
-                if (_srv.get("endpoint") or "").rstrip("/") == endpoint.rstrip("/"):
-                    _primary_key = _srv.get("api_key") or ""
-                    break
-            if not _primary_key:
-                _primary_key = (body.get("api_key") or "")
+            if _track == "frontier" and _frontier_key:
+                _primary_key = _frontier_key
+            else:
+                # Find it from the servers list; fall back to top-level api_key field.
+                _primary_key = ""
+                for _srv in (body.get("servers") or []):
+                    if (_srv.get("endpoint") or "").rstrip("/") == endpoint.rstrip("/"):
+                        _primary_key = _srv.get("api_key") or ""
+                        break
+                if not _primary_key:
+                    _primary_key = (body.get("api_key") or "")
             # Always write the key from setup — overwrite any stale key left
             # from a previous session.  An empty key clears a stale wrong key
             # (important for LM Studio which returns 401 when auth is enabled
@@ -2585,14 +2733,23 @@ async def handle_setup_complete(request: web.Request) -> web.Response:
             os.environ["HERMES_MODEL"] = model
             # Persist the primary server type so the gateway can pre-load the model
             # with a sufficient context window before the first chat turn.
-            _primary_server_type = ""
-            for _srv in (body.get("servers") or []):
-                if (_srv.get("endpoint") or "").rstrip("/") == endpoint.rstrip("/"):
-                    _primary_server_type = _srv.get("type") or ""
-                    break
+            if _track == "frontier" and _frontier_provider in _FRONTIER_PROVIDERS:
+                _primary_server_type = _FRONTIER_PROVIDERS[_frontier_provider]["server_type"]
+            else:
+                _primary_server_type = ""
+                for _srv in (body.get("servers") or []):
+                    if (_srv.get("endpoint") or "").rstrip("/") == endpoint.rstrip("/"):
+                        _primary_server_type = _srv.get("type") or ""
+                        break
             if _primary_server_type:
                 _cfg["HERMES_SERVER_TYPE"] = _primary_server_type
                 os.environ["HERMES_SERVER_TYPE"] = _primary_server_type
+            # Persist provider ID for frontier track
+            if _track == "frontier" and _frontier_provider:
+                _cfg.setdefault("model", {})
+                if isinstance(_cfg["model"], str):
+                    _cfg["model"] = {"default": _cfg["model"]}
+                _cfg["model"]["provider"] = _frontier_provider
             # Persist the chosen execution mode so restarts use the correct executor.
             # Only written if not already forced via env var (k8s deployments set
             # HERMES_RUNTIME_MODE explicitly and must not be overridden by setup).
