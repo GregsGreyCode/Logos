@@ -2059,12 +2059,49 @@ async def _handle_chat(request: web.Request) -> web.StreamResponse:
         final = result.get("final_response", "")
         await send_event({"type": "message", "content": final})
     except Exception as exc:
-        # Distinguish real tool/agent errors from transport failures so the UI
-        # can show a more informative message than "network error".
         logger.exception("Error running agent for HTTP /chat")
         err_str = str(exc)
-        # Surface as a typed error so the frontend can decide how to display it
-        await send_event({"type": "error", "content": err_str, "error_class": type(exc).__name__})
+        err_lower = err_str.lower()
+        # Classify the error so the frontend can render appropriate UI
+        error_type = "unknown"
+        error_title = "Something went wrong"
+        error_action = ""
+        if "credit balance" in err_lower or "insufficient" in err_lower and "credit" in err_lower or "billing" in err_lower or "402" in err_str:
+            error_type = "billing"
+            error_title = "Out of credits"
+            error_action = "Top up your account with the model provider, then try again."
+        elif "401" in err_str or "invalid api key" in err_lower or "unauthorized" in err_lower or "authentication" in err_lower:
+            error_type = "auth"
+            error_title = "Authentication failed"
+            error_action = "Check your API key in Settings > Inference."
+        elif "429" in err_str or "rate limit" in err_lower or "too many requests" in err_lower:
+            error_type = "rate_limit"
+            error_title = "Rate limited"
+            error_action = "Wait a moment and try again. The provider is throttling requests."
+        elif "404" in err_str or "model not found" in err_lower or "not a valid model" in err_lower:
+            error_type = "model_error"
+            error_title = "Model not found"
+            error_action = "The model may have been renamed or removed. Check Settings > Inference."
+        elif "context" in err_lower and ("length" in err_lower or "too long" in err_lower or "exceeded" in err_lower):
+            error_type = "context_overflow"
+            error_title = "Conversation too long"
+            error_action = "Start a new topic or switch to a model with a larger context window."
+        elif "connection" in err_lower or "refused" in err_lower or "unreachable" in err_lower or "timeout" in err_lower:
+            error_type = "network"
+            error_title = "Cannot reach model server"
+            error_action = "Check that your inference server is running and reachable."
+        elif "model has crashed" in err_lower or "exit code" in err_lower:
+            error_type = "model_crash"
+            error_title = "Model crashed"
+            error_action = "The model process crashed. Check your inference server logs."
+        await send_event({
+            "type": "error",
+            "error_type": error_type,
+            "error_title": error_title,
+            "error_action": error_action,
+            "content": err_str,
+            "error_class": type(exc).__name__,
+        })
     finally:
         heartbeat.cancel()
         drain_task.cancel()
@@ -2355,6 +2392,7 @@ async def start_http_api(runner: Any, port: int = 8080) -> None:
     app.router.add_post("/api/setup/compare/cancel-server", _sh.handle_setup_compare_cancel_server)
     app.router.add_post("/api/setup/test-k8s", _sh.handle_setup_test_k8s)
     app.router.add_post("/api/setup/test",    _sh.handle_setup_test)
+    app.router.add_get("/api/setup/model-catalog",       _sh.handle_model_catalog)
     app.router.add_post("/api/setup/validate-provider", _sh.handle_validate_provider)
     app.router.add_post("/api/setup/complete",    _sh.handle_setup_complete)
     app.router.add_get("/api/setup/discover",       _sh.handle_setup_discover)
