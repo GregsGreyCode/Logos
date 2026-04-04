@@ -2459,6 +2459,13 @@ async def start_http_api(runner: Any, port: int = 8080) -> None:
     app.router.add_delete("/machines/{id}/claim",      _mp(require_csrf(admin_handlers.handle_machine_claim_delete)))
     app.router.add_put("/admin/machines/{id}/capabilities", _mm(require_csrf(admin_handlers.handle_machine_capabilities_put)))
     app.router.add_get("/admin/machines/{id}/health", _mm(admin_handlers.handle_machine_health))
+    # Cloud providers
+    app.router.add_get("/admin/cloud-providers",              _mm(admin_handlers.handle_cloud_providers_list))
+    app.router.add_post("/admin/cloud-providers",             _mm(require_csrf(admin_handlers.handle_cloud_providers_post)))
+    app.router.add_patch("/admin/cloud-providers/{id}",       _mm(require_csrf(admin_handlers.handle_cloud_providers_patch)))
+    app.router.add_delete("/admin/cloud-providers/{id}",      _mm(require_csrf(admin_handlers.handle_cloud_providers_delete)))
+    app.router.add_post("/admin/cloud-providers/{id}/activate", _mm(require_csrf(admin_handlers.handle_cloud_providers_activate)))
+    app.router.add_post("/admin/cloud-providers/{id}/test",     _mm(require_csrf(admin_handlers.handle_cloud_providers_test)))
     app.router.add_get("/admin/policies",      _mpr(admin_handlers.handle_policies_list))
     app.router.add_post("/admin/policies",     _mpr(require_csrf(admin_handlers.handle_policies_post)))
     app.router.add_patch("/admin/policies/{id}", _mpr(require_csrf(admin_handlers.handle_policies_patch)))

@@ -2492,23 +2492,18 @@ _FRONTIER_PROVIDERS = {
 }
 
 
-async def handle_validate_provider(request: web.Request) -> web.Response:
-    """Validate a cloud provider API key and return available models."""
-    try:
-        body = await request.json()
-    except Exception:
-        return web.json_response({"ok": False, "error": "invalid_json"}, status=400)
+async def validate_provider_key(provider: str, api_key: str, base_url: str = "") -> dict:
+    """Validate a cloud provider API key and return available models.
 
-    provider = (body.get("provider") or "").strip()
-    api_key = (body.get("api_key") or "").strip()
-    base_url = (body.get("base_url") or "").strip().rstrip("/")
-
+    Returns {'ok': True, 'models': [...]} or {'ok': False, 'error': '...'}.
+    Used by both the setup wizard and the admin cloud provider endpoints.
+    """
     if provider not in _FRONTIER_PROVIDERS:
-        return web.json_response({"ok": False, "error": f"Unknown provider: {provider}"}, status=400)
+        return {"ok": False, "error": f"Unknown provider: {provider}"}
     if not api_key:
-        return web.json_response({"ok": False, "error": "API key is required"}, status=400)
+        return {"ok": False, "error": "API key is required"}
     if provider == "custom" and not base_url:
-        return web.json_response({"ok": False, "error": "Base URL is required for custom endpoints"}, status=400)
+        return {"ok": False, "error": "Base URL is required for custom endpoints"}
 
     prov = _FRONTIER_PROVIDERS[provider]
     effective_url = base_url if provider == "custom" else prov["base_url"]
@@ -2519,7 +2514,6 @@ async def handle_validate_provider(request: web.Request) -> web.Response:
     try:
         async with aiohttp.ClientSession() as session:
             if provider == "anthropic":
-                # Anthropic uses x-api-key header, not Bearer
                 headers = {
                     "x-api-key": api_key,
                     "anthropic-version": "2023-06-01",
@@ -2540,7 +2534,6 @@ async def handle_validate_provider(request: web.Request) -> web.Response:
                         body_text = (await r.text())[:200]
                         error = f"API returned HTTP {r.status}: {body_text}"
             else:
-                # OpenRouter and custom use Bearer token
                 headers = {
                     "Authorization": f"Bearer {api_key}",
                     "Accept": "application/json",
@@ -2554,15 +2547,13 @@ async def handle_validate_provider(request: web.Request) -> web.Response:
                         data = await r.json(content_type=None)
                         raw_models = [m.get("id", "") for m in (data.get("data") or []) if m.get("id")]
                         if provider == "openrouter":
-                            # Filter to curated list to avoid 200+ model overwhelm
                             from logos_cli.models import OPENROUTER_MODELS
                             curated = {mid for mid, _ in OPENROUTER_MODELS}
                             models = [m for m in raw_models if m in curated]
                             if not models:
-                                # Key is valid but no curated models matched — show curated list
                                 models = [mid for mid, _ in OPENROUTER_MODELS]
                         else:
-                            models = sorted(raw_models)[:50]  # cap for custom
+                            models = sorted(raw_models)[:50]
                     elif r.status in (401, 403):
                         error = "Invalid API key"
                     else:
@@ -2573,16 +2564,14 @@ async def handle_validate_provider(request: web.Request) -> web.Response:
     except Exception as e:
         error = f"Unexpected error: {str(e)[:100]}"
 
-    # Fallback to static model lists if API call failed but key format looks valid
     if not models and not error:
         error = "No models returned from API"
     if error and error != "Invalid API key":
-        # Try static fallback — the key might be valid but /models endpoint is flaky
         try:
             from logos_cli.models import _PROVIDER_MODELS, OPENROUTER_MODELS
             if provider == "anthropic" and "anthropic" in _PROVIDER_MODELS:
                 models = _PROVIDER_MODELS["anthropic"]
-                error = None  # clear error, we have a fallback
+                error = None
             elif provider == "openrouter":
                 models = [mid for mid, _ in OPENROUTER_MODELS]
                 error = None
@@ -2590,9 +2579,23 @@ async def handle_validate_provider(request: web.Request) -> web.Response:
             pass
 
     if error:
-        return web.json_response({"ok": False, "error": error})
+        return {"ok": False, "error": error}
+    return {"ok": True, "models": models}
 
-    return web.json_response({"ok": True, "models": models})
+
+async def handle_validate_provider(request: web.Request) -> web.Response:
+    """Validate a cloud provider API key and return available models."""
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"ok": False, "error": "invalid_json"}, status=400)
+
+    provider = (body.get("provider") or "").strip()
+    api_key = (body.get("api_key") or "").strip()
+    base_url = (body.get("base_url") or "").strip().rstrip("/")
+
+    result = await validate_provider_key(provider, api_key, base_url)
+    return web.json_response(result, status=200 if result.get("ok") else 400 if "Unknown" in result.get("error", "") or "required" in result.get("error", "") else 200)
 
 
 async def handle_setup_complete(request: web.Request) -> web.Response:

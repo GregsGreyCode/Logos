@@ -315,6 +315,137 @@ async def handle_machine_health(request: web.Request) -> web.Response:
     })
 
 
+# ── Cloud providers ───────────────────────────────────────────────────────────
+
+async def handle_cloud_providers_list(request: web.Request) -> web.Response:
+    providers = auth_db.list_cloud_providers()
+    for p in providers:
+        p["has_api_key"] = bool(p.get("api_key"))
+        p.pop("api_key", None)
+    return web.json_response({"providers": providers})
+
+
+async def handle_cloud_providers_post(request: web.Request) -> web.Response:
+    body = await request.json()
+    provider = (body.get("provider") or "").strip()
+    name = (body.get("name") or "").strip()
+    api_key = (body.get("api_key") or "").strip()
+    base_url = (body.get("base_url") or "").strip()
+    active_model = (body.get("model") or "").strip()
+    if not provider or not name:
+        return web.json_response({"error": "provider and name required"}, status=400)
+    p = auth_db.create_cloud_provider(
+        provider=provider, name=name, api_key=api_key,
+        base_url=base_url, active_model=active_model,
+    )
+    p["has_api_key"] = bool(p.get("api_key"))
+    p.pop("api_key", None)
+    return web.json_response(p, status=201)
+
+
+async def handle_cloud_providers_patch(request: web.Request) -> web.Response:
+    pid = request.match_info["id"]
+    existing = auth_db.get_cloud_provider(pid)
+    if not existing:
+        return web.json_response({"error": "not_found"}, status=404)
+    body = await request.json()
+    updates = {}
+    for k in ("name", "base_url", "active_model", "enabled"):
+        if k in body:
+            updates[k] = body[k]
+    if "api_key" in body:
+        updates["api_key"] = body["api_key"]  # empty string clears
+    p = auth_db.update_cloud_provider(pid, **updates)
+    p["has_api_key"] = bool(p.get("api_key"))
+    p.pop("api_key", None)
+    return web.json_response(p)
+
+
+async def handle_cloud_providers_delete(request: web.Request) -> web.Response:
+    pid = request.match_info["id"]
+    existing = auth_db.get_cloud_provider(pid)
+    if not existing:
+        return web.json_response({"error": "not_found"}, status=404)
+    auth_db.delete_cloud_provider(pid)
+    return web.Response(status=204)
+
+
+async def handle_cloud_providers_activate(request: web.Request) -> web.Response:
+    """Set a cloud provider as active and sync env vars + config.yaml."""
+    pid = request.match_info["id"]
+    prov = auth_db.get_cloud_provider(pid)
+    if not prov:
+        return web.json_response({"error": "not_found"}, status=404)
+
+    auth_db.set_active_cloud_provider(pid)
+
+    # Sync to .env and os.environ so agent picks up immediately
+    from gateway.setup_handlers import _FRONTIER_PROVIDERS
+    provider_type = prov["provider"]
+    api_key = prov.get("api_key") or ""
+    frov = _FRONTIER_PROVIDERS.get(provider_type, {})
+    effective_url = prov.get("base_url") or frov.get("base_url", "")
+    active_model = prov.get("active_model") or ""
+
+    try:
+        from logos_cli.config import save_env_value
+        if frov.get("env_key"):
+            save_env_value(frov["env_key"], api_key)
+        save_env_value("OPENAI_API_KEY", api_key)
+        save_env_value("OPENAI_BASE_URL", effective_url)
+    except Exception as e:
+        logger.warning("cloud provider activate: env write failed: %s", e)
+
+    os.environ["OPENAI_API_KEY"] = api_key
+    os.environ["OPENAI_BASE_URL"] = effective_url
+    if active_model:
+        os.environ["HERMES_MODEL"] = active_model
+    if frov.get("server_type"):
+        os.environ["HERMES_SERVER_TYPE"] = frov["server_type"]
+
+    # Update config.yaml
+    try:
+        import pathlib
+        import yaml
+        _hermes_home = pathlib.Path(os.environ.get("LOGOS_HOME") or os.environ.get("HERMES_HOME") or str(pathlib.Path.home() / ".logos"))
+        _config_path = _hermes_home / "config.yaml"
+        cfg: dict = yaml.safe_load(_config_path.read_text(encoding="utf-8")) if _config_path.exists() else {}
+        cfg["OPENAI_BASE_URL"] = effective_url
+        cfg["OPENAI_API_KEY"] = api_key
+        if active_model:
+            cfg["HERMES_MODEL"] = active_model
+        if frov.get("server_type"):
+            cfg["HERMES_SERVER_TYPE"] = frov["server_type"]
+        cfg.setdefault("model", {})
+        if isinstance(cfg["model"], str):
+            cfg["model"] = {"default": cfg["model"]}
+        cfg["model"]["provider"] = provider_type
+        _config_path.write_text(yaml.dump(cfg, default_flow_style=False, allow_unicode=True))
+    except Exception as e:
+        logger.warning("cloud provider activate: config.yaml write failed: %s", e)
+
+    result = auth_db.get_cloud_provider(pid)
+    result["has_api_key"] = bool(result.get("api_key"))
+    result.pop("api_key", None)
+    return web.json_response({"ok": True, "provider": result})
+
+
+async def handle_cloud_providers_test(request: web.Request) -> web.Response:
+    """Validate a cloud provider's API key."""
+    pid = request.match_info["id"]
+    prov = auth_db.get_cloud_provider(pid)
+    if not prov:
+        return web.json_response({"error": "not_found"}, status=404)
+
+    from gateway.setup_handlers import validate_provider_key
+    result = await validate_provider_key(
+        prov["provider"],
+        prov.get("api_key") or "",
+        prov.get("base_url") or "",
+    )
+    return web.json_response(result)
+
+
 # ── Routing policies ──────────────────────────────────────────────────────────
 
 async def handle_policies_list(request: web.Request) -> web.Response:
