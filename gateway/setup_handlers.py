@@ -818,7 +818,12 @@ def _compare_score(r: dict) -> float:
     name_lower = r["model"].lower()
     _PENALISED_KEYWORDS = {"coder", "code", "math", "ocr", "embed", "search"}
     specialized_penalty = -0.15 if any(kw in name_lower for kw in _PENALISED_KEYWORDS) else 0.0
-    return 0.50 * eval_frac + 0.20 * speed + 0.15 * ttft_score + 0.05 * advanced + size_b + caps_bonus + specialized_penalty
+    # Context viability: LM Studio defaults to n_parallel=4 which splits context.
+    # Models with < 64K total get 16K/slot (marginal), < 128K get < 32K/slot.
+    # Penalise models that will struggle at default LM Studio settings.
+    ctx = r.get("max_context") or 0
+    ctx_penalty = -0.20 if 0 < ctx < 64000 else -0.05 if ctx < 131072 else 0.0
+    return 0.50 * eval_frac + 0.20 * speed + 0.15 * ttft_score + 0.05 * advanced + size_b + caps_bonus + specialized_penalty + ctx_penalty
 
 
 def _compare_reason(best: dict) -> str:
@@ -833,18 +838,22 @@ def _compare_reason(best: dict) -> str:
     eval_str  = ", ".join(parts) if parts else "limited capability confirmed"
     ttft_ms   = best.get("ttft_ms")
     ttft_note = f", {ttft_ms}ms TTFT" if ttft_ms is not None else ""
+    # Context workaround note for models under 128K
+    ctx = best.get("max_context") or 0
+    ctx_note = (" ⚠ At 4 parallel slots, per-slot context is limited. Reduce 'Max Concurrent Predictions' or use a ≥128K model."
+                if 0 < ctx < 131072 else "")
 
     if score == 6 and best["tok_s"] >= 15:
         return (f"{label} at {best['tok_s']} tok/s{ttft_note} — passes all 6 eval tests "
-                f"({eval_str}). Strong default agent model for your hardware.")
+                f"({eval_str}). Strong default agent model for your hardware.{ctx_note}")
     if score >= 4 and best["tok_s"] >= 10:
         return (f"{label} at {best['tok_s']} tok/s{ttft_note} — passes {score}/6 eval tests "
-                f"({eval_str}). Solid baseline agent model.")
+                f"({eval_str}). Solid baseline agent model.{ctx_note}")
     if score >= 4:
         return (f"Passes {score}/6 eval tests but slow at {best['tok_s']} tok/s. "
-                f"Consider a smaller quantised model for better responsiveness.")
+                f"Consider a smaller quantised model for better responsiveness.{ctx_note}")
     return (f"{label} at {best['tok_s']} tok/s but only {score}/6 eval tests passed. "
-            f"A general-purpose model (e.g. Qwen3-8B, Gemma3-9B) will work better.")
+            f"A general-purpose model (e.g. Qwen3-8B, Gemma3-9B) will work better.{ctx_note}")
 
 
 def _fast_reason(r: dict) -> str:
@@ -2188,15 +2197,37 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
 
     valid = [r for r in results if not r.get("error") and r.get("tok_s", 0) > 0]
 
-    # Context window gate: agent system prompt is ~7 800 tokens; anything ≤ 8 192 ctx
-    # leaves essentially no room for conversation and must not be recommended.
+    # Context window gate: agent system prompt + tools is ~17K tokens.
+    # LM Studio defaults to n_parallel=4 (Max Concurrent Predictions) which
+    # splits the loaded context across 4 slots.  This cannot be changed via API
+    # (only in the LM Studio UI), so we must assume the worst case.
+    #
+    # Minimum usable per-slot context: 16K (bare minimum for system prompt)
+    # Recommended per-slot context:    32K (room for conversation)
+    #
+    # At n_parallel=4:
+    #   64K total  → 16K/slot  (minimum viable — very short conversations)
+    #   128K total → 32K/slot  (recommended)
+    #   32K total  → 8K/slot   (broken — system prompt won't fit)
+    #
+    # For smaller models, users can reduce "Max Concurrent Predictions" in
+    # LM Studio advanced settings to increase per-slot context at the cost
+    # of fewer concurrent users.
+    #
     # Models without a measured max_context (e.g. remote APIs) are allowed through.
-    _MIN_CTX = 16384
+    _MIN_CTX = 64000          # minimum: 64K total → 16K per slot at n_parallel=4
+    _RECOMMENDED_CTX = 131072  # recommended: 128K total → 32K per slot
     ctx_viable = [r for r in valid if r.get("max_context") is None or r["max_context"] >= _MIN_CTX]
     ctx_limited = [r for r in valid if r.get("max_context") is not None and r["max_context"] < _MIN_CTX]
+    ctx_marginal = [r for r in valid if r.get("max_context") is not None and _MIN_CTX <= r["max_context"] < _RECOMMENDED_CTX]
     if ctx_limited:
         names = ", ".join(r["model"] for r in ctx_limited)
         await send({"log": f"⚠ Context too small for agent use (<{_MIN_CTX//1024}K): {names}"})
+        await send({"log": "  LM Studio splits context across 4 parallel slots by default (for concurrent users)."})
+        await send({"log": "  Use a model with ≥128K context, or reduce 'Max Concurrent Predictions' in LM Studio settings."})
+    if ctx_marginal:
+        names = ", ".join(r["model"] for r in ctx_marginal)
+        await send({"log": f"⚠ Limited context ({_MIN_CTX//1024}K–{_RECOMMENDED_CTX//1024}K): {names} — short conversations only at default LM Studio settings"})
     # Fall back to all valid if nothing clears the ctx bar (e.g. all are known-small)
     ctx_pool = ctx_viable if ctx_viable else valid
 
