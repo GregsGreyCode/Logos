@@ -424,7 +424,7 @@ class GatewayRunner:
 
         Priority: per-session override > config.yaml > default (hermes).
         """
-        override = self._session_runtime_overrides.get(session_id)
+        override = getattr(self, "_session_runtime_overrides", {}).get(session_id)
         if override:
             return override
         try:
