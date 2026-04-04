@@ -6,7 +6,7 @@
  * have idle/walk states with directional animation and smooth movement.
  */
 import {
-  TILE_SIZE, ZONES, AGENT_LABEL_STYLE,
+  TILE_SIZE, WORLD_COLS, WORLD_ROWS, ZONES, AGENT_LABEL_STYLE,
 } from './WorldConfig.js';
 import { CHARACTER_SHEETS, CHARACTER_TEXTURE } from './SpriteData.js';
 
@@ -226,13 +226,25 @@ export function updateAgentCharacter(container, inst, index, total) {
       if (sprite) sprite.gotoAndStop(0);
     }
 
-    // Idle wandering — small random movements
+    // Idle wandering — small random movements, avoid tree center
     container._idleTimer = (container._idleTimer || 0) + 1;
     if (container._idleTimer > 180 + Math.random() * 120) {
       container._idleTimer = 0;
-      const wobble = TILE_SIZE * 0.8;
-      container._targetX = pos.x + (Math.random() - 0.5) * wobble;
-      container._targetY = pos.y + (Math.random() - 0.5) * wobble;
+      const wobble = TILE_SIZE * 1.5;
+      let tx = pos.x + (Math.random() - 0.5) * wobble;
+      let ty = pos.y + (Math.random() - 0.5) * wobble;
+      // Avoid tree center (world center, ~2 tile radius)
+      const treeCx = Math.floor(WORLD_COLS / 2) * TILE_SIZE + TILE_SIZE / 2;
+      const treeCy = Math.floor(WORLD_ROWS / 2) * TILE_SIZE + TILE_SIZE / 2;
+      const treeDist = Math.sqrt((tx - treeCx) ** 2 + (ty - treeCy) ** 2);
+      if (treeDist < TILE_SIZE * 2.5) {
+        // Push away from tree
+        const angle = Math.atan2(ty - treeCy, tx - treeCx);
+        tx = treeCx + Math.cos(angle) * TILE_SIZE * 3;
+        ty = treeCy + Math.sin(angle) * TILE_SIZE * 3;
+      }
+      container._targetX = tx;
+      container._targetY = ty;
     }
   }
 
