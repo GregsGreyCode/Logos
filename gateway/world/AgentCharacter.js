@@ -42,7 +42,10 @@ function hashColor(str) {
 
 function positionForAgent(inst, index, total) {
   const status = inst.status || inst.k8s_status || 'unknown';
-  const zone = status === 'running' ? ZONES.plaza : ZONES.workshop;
+  // Running agents gather in the clearing, others in the meadow
+  const zone = status === 'running'
+    ? (ZONES.clearing || ZONES.plaza)
+    : (ZONES.meadow || ZONES.workshop);
 
   const cols = Math.max(Math.ceil(Math.sqrt(total || 1)), 2);
   const row = Math.floor(index / cols);
