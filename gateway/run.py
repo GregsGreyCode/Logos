@@ -3904,9 +3904,11 @@ class GatewayRunner:
             if _lms_base and _lms_model:
                 _lms_headers = {"Authorization": f"Bearer {_lms_key}"} if _lms_key and _lms_key != "ollama" else {}
                 # Known model context limits (substring-matched against model name,
-                # case-insensitive). Only lists models known to cap BELOW 16384.
+                # case-insensitive). Only lists models known to cap BELOW 64K.
+                # At LM Studio's default n_parallel=4, models under 64K total get
+                # <16K per slot which is insufficient for agent use (~17K system prompt).
                 # Persisted per-model config overrides this; both override the default
-                # cascade from 16384.
+                # cascade.
                 _LMS_KNOWN_CTX: list[tuple[str, int]] = [
                     # Moonlight / small MoE models
                     ("moonlight", 8192),
@@ -3944,7 +3946,7 @@ class GatewayRunner:
                 # More slots = more parallel users but less context per request.
                 # Default 2 (covers most homelab use). Configurable in config.yaml
                 # under lmstudio.n_parallel or via the dashboard.
-                _n_parallel = 1  # default: 1 slot = full context for single user
+                _n_parallel = 1  # default: 1 slot (LM Studio UI default is 4)
                 try:
                     _lms_parallel_cfg = (_lms_cfg_now.get("lmstudio") or {}).get("n_parallel")
                     if _lms_parallel_cfg and isinstance(_lms_parallel_cfg, int) and _lms_parallel_cfg >= 1:
@@ -4069,17 +4071,29 @@ class GatewayRunner:
                             _desired_per_slot = _ctx_sizes[0] // max(_n_parallel, 1) if _ctx_sizes else 0
                             if _loaded_ctx > 0 and _desired_per_slot > 0:
                                 # Detect slot splitting: if loaded context is exactly total/N,
-                                # the user's LM Studio is splitting across N parallel slots
+                                # the user's LM Studio is splitting across N parallel slots.
+                                # LM Studio defaults to n_parallel=4 ("Max Concurrent Predictions")
+                                # which cannot be changed via API — only in the LM Studio UI.
                                 for _guess_slots in (2, 3, 4, 6, 8):
                                     if _loaded_ctx == _ctx_sizes[0] // _guess_slots:
                                         _usable = _loaded_ctx
-                                        logger.warning(
-                                            "LM Studio: %s loaded with %d total context split across %d parallel slots "
-                                            "= %d tokens per request. The system prompt + tools need ~17K tokens. "
-                                            "Consider reducing parallel slots in LM Studio settings or restarting "
-                                            "Logos to reload with n_parallel=%d.",
-                                            _lms_model, _ctx_sizes[0], _guess_slots, _usable, _n_parallel,
-                                        )
+                                        if _usable < 16384:
+                                            logger.error(
+                                                "LM Studio: %s context is split across %d parallel slots "
+                                                "= %d tokens per request — INSUFFICIENT for agent use "
+                                                "(system prompt + tools need ~17K tokens). "
+                                                "Either use a model with ≥128K context (for %d concurrent users "
+                                                "at 32K/slot), or reduce 'Max Concurrent Predictions' in "
+                                                "LM Studio advanced settings to fit within %d total context.",
+                                                _lms_model, _guess_slots, _usable, _guess_slots, _ctx_sizes[0],
+                                            )
+                                        else:
+                                            logger.warning(
+                                                "LM Studio: %s loaded with %d total context split across %d parallel slots "
+                                                "= %d tokens per request. For full 32K/slot, use a model with ≥128K "
+                                                "context or reduce 'Max Concurrent Predictions' in LM Studio settings.",
+                                                _lms_model, _ctx_sizes[0], _guess_slots, _usable,
+                                            )
                                         # Update the saved context to the per-slot value so the
                                         # compressor uses the right limit
                                         try:
