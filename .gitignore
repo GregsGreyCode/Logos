@@ -73,3 +73,6 @@ environments/benchmarks/evals/
 # Private docs (homelab-specific, not for public repo)
 docs/private/
 knowledge-repos/
+
+# AI assistant working docs (local only)
+PROJECT_STATE.md
