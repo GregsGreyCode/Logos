@@ -1581,6 +1581,7 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
                         await send({"log": f"  Unloaded {model_id}"})
                     except Exception:
                         pass
+                    await asyncio.sleep(1.5)   # give LM Studio time to free VRAM before next load
                     continue
                 else:
                     await send({"log": "  Native API unavailable, falling back to OpenAI-compat…"})

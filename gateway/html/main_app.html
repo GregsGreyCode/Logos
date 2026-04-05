@@ -576,31 +576,60 @@
         <div class="bg-gray-900 border border-gray-700 rounded-xl overflow-hidden flex flex-col h-full">
 
           <!-- Card header -->
-          <div class="px-4 pt-3 pb-0 border-b border-gray-800 shrink-0">
+          <div class="px-4 pt-3 pb-2 border-b border-gray-800 shrink-0">
 
-            <!-- Row 1: Core badge + name + status dot (after name, like chips) + chat ID + canary -->
-            <div class="flex items-center gap-2 pb-1.5">
-              <span class="text-[10px] font-bold tracking-wider uppercase px-1 py-0.5 rounded bg-emerald-900 text-emerald-300 shrink-0">Agent</span>
-              <span class="font-semibold text-white" x-text="(() => { const chat = webChats.find(c => c.id === activeChatId); return chat?.agent_name || status.instance_name || 'Hermes'; })()"></span>
-              <span class="w-2 h-2 rounded-full shrink-0"
+            <!-- Row 1: Agent identity — who you are talking to -->
+            <div class="flex items-center gap-2.5 mb-2">
+              <!-- Status indicator -->
+              <span class="w-2.5 h-2.5 rounded-full shrink-0 ring-2 ring-gray-900"
                 :class="chatLoading ? 'bg-indigo-500 animate-pulse icon-hue' : agentAlive === false ? 'bg-red-500' : agentAlive === null ? 'bg-gray-600 animate-pulse' : 'bg-green-500'"
-                :title="chatLoading ? 'Thinking\u2026' : agentAlive === false ? 'Agent not responding' : agentAlive === null ? 'Checking\u2026' : 'Connected'"></span>
-              <span class="text-xs text-gray-600 font-mono"
-                x-text="activeChatId ? '#' + activeChatId.slice(-6) : ''"></span>
+                :title="chatLoading ? 'Thinking...' : agentAlive === false ? 'Agent not responding' : agentAlive === null ? 'Checking...' : 'Connected'"></span>
+              <!-- Agent name — prominent, clickable if named agents exist -->
+              <div class="relative" x-data="{ open: false }" @click.away="open = false">
+                <button @click="if (namedAgents.length) open = !open"
+                  class="text-base font-semibold text-white transition-colors flex items-center gap-1.5"
+                  :class="namedAgents.length ? 'hover:text-emerald-300 cursor-pointer' : 'cursor-default'">
+                  <span x-text="(() => { const chat = webChats.find(c => c.id === activeChatId); return chat?.agent_name || status.instance_name || 'Hermes'; })()"></span>
+                  <span x-show="namedAgents.length" class="text-gray-600 text-xs">&#9662;</span>
+                </button>
+                <!-- Agent switcher dropdown -->
+                <div x-show="open" x-cloak class="absolute top-full left-0 mt-1 w-52 max-h-48 overflow-y-auto bg-gray-900 border border-gray-700 rounded-lg shadow-xl z-50 py-1">
+                  <template x-for="a in namedAgents" :key="a.id">
+                    <button @click="chatWithAgent(a); open = false"
+                      class="block w-full text-left px-3 py-1.5 text-xs transition-colors"
+                      :class="(() => { const chat = webChats.find(c => c.id === activeChatId); return chat?.agent_id === a.id ? 'text-white bg-emerald-950' : 'text-gray-400 hover:text-white hover:bg-gray-800'; })()">
+                      <span class="font-medium" x-text="a.name"></span>
+                      <span class="text-gray-600 ml-1.5" x-text="a.soul_slug"></span>
+                    </button>
+                  </template>
+                  <p x-show="namedAgents.length === 0" class="px-3 py-2 text-[10px] text-gray-600">No agents yet. Create one in the Agents tab.</p>
+                </div>
+              </div>
+              <!-- Canary badge -->
               <template x-if="canary.active">
-                <span class="text-xs px-1.5 py-0.5 rounded bg-yellow-900 text-yellow-400 font-semibold animate-pulse ml-1">🐤 canary</span>
+                <span class="text-[10px] px-1.5 py-0.5 rounded bg-yellow-900 text-yellow-400 font-semibold animate-pulse">canary</span>
               </template>
+              <!-- k8s status badge -->
+              <template x-if="activeInstance.k8s_status && activeInstance.k8s_status !== 'running'">
+                <span class="text-[10px] px-1.5 py-0.5 rounded border border-yellow-900 bg-yellow-950 text-yellow-500 font-medium"
+                  x-text="activeInstance.k8s_status"></span>
+              </template>
+              <!-- Spacer + chat ID (subtle, right-aligned) -->
+              <span class="ml-auto text-[10px] text-gray-700 font-mono"
+                x-text="activeChatId ? '#' + activeChatId.slice(-6) : ''"></span>
             </div>
 
-            <!-- Row 2: STAMP governance chips (S and M are interactive) -->
-            <div class="flex items-center gap-1.5 pb-1.5 flex-wrap">
+            <!-- Row 2: STAMP governance — compact, interactive -->
+            <div class="flex items-center gap-1.5 flex-wrap">
               <!-- S: Soul — clickable dropdown -->
               <div class="relative" x-data="{ open: false }" @click.away="open = false">
                 <button @click="open = !open"
-                  class="text-[10px] px-1.5 py-0.5 rounded font-mono border transition-colors cursor-pointer"
+                  class="text-[10px] px-1.5 py-0.5 rounded font-mono border transition-colors cursor-pointer flex items-center gap-1"
                   :class="open ? 'bg-indigo-900 text-white border-indigo-500' : 'bg-indigo-950 text-indigo-300 border-indigo-900 hover:border-indigo-600'"
-                  :title="'Click to change soul'"
-                  x-text="'S:' + (activeInstance.soul?.name || selectedSoul || 'general')"></button>
+                  title="Soul — click to change">
+                  <span class="font-bold text-indigo-500">S</span>
+                  <span x-text="activeInstance.soul?.name || selectedSoul || 'General'"></span>
+                </button>
                 <div x-show="open" x-cloak class="absolute top-full left-0 mt-1 w-44 max-h-48 overflow-y-auto bg-gray-900 border border-gray-700 rounded-lg shadow-xl z-50 py-1">
                   <template x-for="s in (souls.length ? souls : [{slug:'general',name:'General'}])" :key="s.slug">
                     <button @click="switchSoul(s.slug); open = false"
@@ -610,48 +639,26 @@
                   </template>
                 </div>
               </div>
-              <!-- T: Tools -->
-              <template x-if="webSession && webSession.tool_count > 0">
-                <span class="text-[10px] px-1.5 py-0.5 rounded font-mono bg-gray-800 text-gray-400 border border-gray-700"
-                  :title="'Tools used this session'" x-text="'T:' + webSession.tool_count + ' used'"></span>
-              </template>
-              <template x-if="!webSession || !webSession.tool_count">
-                <span class="text-[10px] px-1.5 py-0.5 rounded font-mono bg-gray-800 text-gray-600 border border-gray-700"
-                  :title="'Tools available'" x-text="'T:' + (chatStats?.tool_count || 0) + ' loaded'"></span>
-              </template>
-              <!-- A: Agent — clickable dropdown to switch named agent -->
-              <div class="relative" x-data="{ open: false }" @click.away="open = false">
-                <button @click="if (namedAgents.length) open = !open"
-                  class="text-[10px] px-1.5 py-0.5 rounded font-mono border transition-colors"
-                  :class="open ? 'bg-emerald-900 text-white border-emerald-500'
-                    : namedAgents.length ? 'bg-emerald-950 text-emerald-300 border-emerald-900 hover:border-emerald-600 cursor-pointer'
-                    : 'bg-emerald-950 text-emerald-300 border-emerald-900'"
-                  :title="namedAgents.length ? 'Click to switch agent' : 'Agent'"
-                  x-text="'A:' + (() => { const chat = webChats.find(c => c.id === activeChatId); return chat?.agent_name || status.instance_name || 'Hermes'; })()"></button>
-                <div x-show="open" x-cloak class="absolute top-full left-0 mt-1 w-48 max-h-48 overflow-y-auto bg-gray-900 border border-gray-700 rounded-lg shadow-xl z-50 py-1">
-                  <template x-for="a in namedAgents" :key="a.id">
-                    <button @click="chatWithAgent(a); open = false"
-                      class="block w-full text-left px-3 py-1.5 text-[11px] transition-colors"
-                      :class="(() => { const chat = webChats.find(c => c.id === activeChatId); return chat?.agent_id === a.id ? 'text-white bg-emerald-950' : 'text-gray-400 hover:text-white hover:bg-gray-800'; })()"
-                      >
-                      <span class="font-medium" x-text="a.name"></span>
-                      <span class="text-gray-600 ml-1.5" x-text="a.soul_slug"></span>
-                    </button>
-                  </template>
-                  <p x-show="namedAgents.length === 0" class="px-3 py-2 text-[10px] text-gray-600">No agents. Create one in the Agents tab.</p>
-                </div>
-              </div>
+              <!-- T: Tools — only show count when tools exist -->
+              <span class="text-[10px] px-1.5 py-0.5 rounded font-mono border flex items-center gap-1"
+                :class="(webSession?.tool_count || chatStats?.tool_count) ? 'bg-gray-800 text-gray-400 border-gray-700' : 'bg-gray-800/50 text-gray-600 border-gray-800'"
+                :title="(webSession?.tool_count ? webSession.tool_count + ' tools used this session' : (chatStats?.tool_count || 0) + ' tools available')">
+                <span class="font-bold text-gray-500">T</span>
+                <span x-text="webSession?.tool_count ? webSession.tool_count + ' active' : (chatStats?.tool_count ? chatStats.tool_count + ' ready' : 'none')"></span>
+              </span>
               <!-- M: Model — clickable dropdown -->
               <div class="relative" x-data="{ open: false }" @click.away="open = false">
                 <button @click="open = !open"
-                  class="text-[10px] px-1.5 py-0.5 rounded font-mono border transition-colors cursor-pointer"
+                  class="text-[10px] px-1.5 py-0.5 rounded font-mono border transition-colors cursor-pointer flex items-center gap-1"
                   :class="open
                     ? 'bg-[var(--accent-muted)] text-white border-[var(--accent)]'
                     : activeInstance.machine_name
                       ? 'bg-[var(--accent-subtle)] text-[var(--accent)] border-[var(--accent)]/40 hover:border-[var(--accent)]/70'
-                      : 'bg-gray-800 text-gray-500 border-gray-700 hover:border-gray-500'"
-                  :title="'Click to change model'"
-                  x-text="'M:' + (activeInstance.model_alias || status.current_model || '?') + (activeInstance.machine_name ? ' \u2192 ' + activeInstance.machine_name : '')"></button>
+                      : 'bg-gray-800 text-gray-400 border-gray-700 hover:border-gray-500'"
+                  title="Model — click to change">
+                  <span class="font-bold" :class="activeInstance.machine_name ? 'text-[var(--accent)]' : 'text-gray-500'">M</span>
+                  <span x-text="(activeInstance.model_alias || status.current_model || 'not set')"></span>
+                </button>
                 <div x-show="open" x-cloak class="absolute top-full left-0 mt-1 w-60 max-h-52 overflow-y-auto bg-gray-900 border border-gray-700 rounded-lg shadow-xl z-50 py-1">
                   <template x-if="cloudProviders.filter(p => p.active_model).length > 0">
                     <div>
@@ -676,17 +683,15 @@
                     </div>
                   </template>
                   <p x-show="cloudProviders.filter(p => p.active_model).length === 0 && adminMachines.filter(x => x.default_model && x.enabled).length === 0"
-                    class="px-3 py-2 text-[10px] text-gray-600">No models configured. Add a provider in Infra > Inference.</p>
+                    class="px-3 py-2 text-[10px] text-gray-600">No models configured. Add a provider in Settings > Inference.</p>
                 </div>
               </div>
               <!-- P: Policy -->
-              <span class="text-[10px] px-1.5 py-0.5 rounded font-mono bg-emerald-950 text-emerald-400 border border-emerald-900"
-                :title="'Action policy'" x-text="'P:' + (activeInstance.action_policy || 'default')"></span>
-              <!-- k8s status -->
-              <template x-if="activeInstance.k8s_status && activeInstance.k8s_status !== 'running'">
-                <span class="text-[10px] px-1.5 py-0.5 rounded border border-yellow-900 bg-yellow-950 text-yellow-500 font-medium"
-                  x-text="activeInstance.k8s_status"></span>
-              </template>
+              <span class="text-[10px] px-1.5 py-0.5 rounded font-mono bg-emerald-950 text-emerald-400 border border-emerald-900 flex items-center gap-1"
+                title="Action policy">
+                <span class="font-bold text-emerald-600">P</span>
+                <span x-text="activeInstance.action_policy || 'default'"></span>
+              </span>
             </div>
 
 
@@ -2297,25 +2302,25 @@
             </template>
           </select>
         </div>
-        <div x-data="{ agentModelCatalog: [], agentModelLoaded: false }" x-init="
-          fetch('/api/setup/model-catalog').then(r => r.json()).then(d => { agentModelCatalog = d.models || []; agentModelLoaded = true; }).catch(() => { agentModelLoaded = true; })
-        ">
+        <div>
           <label class="text-[10px] text-gray-500 mb-1 block">Model</label>
           <select x-model="namedAgentForm.model"
             class="w-full px-2 py-1.5 rounded-lg bg-gray-800 border border-gray-700 text-xs text-white focus:outline-none focus:border-indigo-500">
-            <option value="">Auto (use active provider)</option>
-            <template x-if="agentModelCatalog.filter(m => m.recommended).length > 0">
-              <optgroup label="Recommended">
-                <template x-for="m in agentModelCatalog.filter(m => m.recommended)" :key="m.id">
-                  <option :value="m.id" x-text="'\u2605 ' + m.display + ' \u2014 ' + (m.recommended_label || '')"></option>
+            <option value="">Auto (use active model)</option>
+            <template x-if="allMachineModels.length > 0">
+              <optgroup label="Local models">
+                <template x-for="m in allMachineModels" :key="m">
+                  <option :value="m" x-text="m"></option>
                 </template>
               </optgroup>
             </template>
-            <optgroup label="All models">
-              <template x-for="m in agentModelCatalog.filter(m => !m.recommended)" :key="m.id">
-                <option :value="m.id" x-text="m.display + (m.cost ? ' (' + '$'.repeat(m.cost) + ')' : '')"></option>
-              </template>
-            </optgroup>
+            <template x-if="cloudProviders.filter(p => p.active_model).length > 0">
+              <optgroup label="Cloud models">
+                <template x-for="cp in cloudProviders.filter(p => p.active_model)" :key="cp.id">
+                  <option :value="cp.active_model" x-text="cp.name + ' — ' + cp.active_model"></option>
+                </template>
+              </optgroup>
+            </template>
           </select>
         </div>
       </div>
@@ -2327,55 +2332,83 @@
       </button>
     </div>
 
-    <!-- ── World Canvas (primary view — always visible) ── -->
-    <div class="mb-5 rounded-xl border border-gray-800 overflow-hidden bg-gray-950" style="height:320px;">
-      <div id="agent-world" style="width:100%; height:100%;"></div>
-    </div>
-    <p x-show="namedAgents.length === 0 && _worldAgentList().length === 0 && !namedAgentFormOpen" class="text-xs text-gray-500 text-center -mt-3 mb-4">
-      Your agents will appear in the garden above. Create one to get started.
-    </p>
+    <!-- ── Main layout: World canvas left + Agent list right ── -->
+    <div class="flex gap-4 mb-5" :class="namedAgents.length > 0 ? 'items-start' : 'items-center justify-center'">
 
-    <!-- ── Agent Cards (compact horizontal row) ── -->
-    <div x-show="namedAgents.length > 0" class="mb-5">
-      <div class="flex items-center gap-2 overflow-x-auto pb-2" style="-webkit-overflow-scrolling:touch;">
-        <template x-for="a in namedAgents" :key="a.id">
-          <div @click="if (!a._editing) chatWithAgent(a)"
-            class="flex-shrink-0 w-48 p-3 rounded-xl border border-gray-800 bg-gray-900 hover:border-indigo-500/50 hover:bg-indigo-950/10 transition-all cursor-pointer group">
-            <div class="flex items-center gap-2 mb-1">
-              <span class="w-2 h-2 rounded-full bg-green-500 shrink-0"></span>
-              <span class="text-sm font-semibold text-white group-hover:text-indigo-300 transition-colors truncate" x-text="a.name"></span>
-            </div>
-            <div class="flex items-center gap-1.5 mb-1">
-              <span class="text-[9px] px-1 py-0.5 rounded font-mono bg-indigo-950 text-indigo-300 border border-indigo-900" x-text="a.soul_slug"></span>
-              <span x-show="a.model" class="text-[9px] px-1 py-0.5 rounded font-mono bg-gray-800 text-gray-500 border border-gray-700 truncate" x-text="a.model"></span>
-            </div>
-            <p x-show="a.description" class="text-[10px] text-gray-600 truncate" x-text="a.description"></p>
-            <div class="flex items-center gap-1 mt-2 opacity-0 group-hover:opacity-100 transition-opacity" @click.stop>
-              <button @click.stop="a._editing = true; a._edit = { name: a.name, soul_slug: a.soul_slug, model: a.model || '', description: a.description || '' }"
-                class="text-[9px] px-1.5 py-0.5 rounded border border-gray-700 text-gray-500 hover:text-white hover:border-gray-500 transition-colors">Edit</button>
-              <button @click.stop="deleteNamedAgent(a.id)"
-                class="text-[9px] px-1.5 py-0.5 rounded border border-red-900 text-red-500 hover:text-red-400 transition-colors">Delete</button>
-            </div>
-            <!-- Inline edit overlay -->
-            <div x-show="a._editing" x-cloak @click.stop class="mt-2 space-y-1.5 pt-2 border-t border-gray-800">
-              <input x-model="a._edit.name" type="text" placeholder="Name"
-                class="w-full px-2 py-1 rounded bg-gray-800 border border-gray-700 text-[10px] text-white focus:outline-none focus:border-indigo-500">
-              <select x-model="a._edit.soul_slug"
-                class="w-full px-2 py-1 rounded bg-gray-800 border border-gray-700 text-[10px] text-white focus:outline-none focus:border-indigo-500">
-                <template x-for="s in (souls.length ? souls : [{slug:'general',name:'General'}])" :key="s.slug">
-                  <option :value="s.slug" x-text="s.name || s.slug"></option>
-                </template>
-              </select>
-              <input x-model="a._edit.model" type="text" placeholder="Model"
-                class="w-full px-2 py-1 rounded bg-gray-800 border border-gray-700 text-[10px] text-white placeholder-gray-600 focus:outline-none focus:border-indigo-500">
-              <div class="flex gap-1">
-                <button @click="updateNamedAgent(a.id)" class="text-[9px] px-2 py-1 rounded bg-indigo-600 text-white hover:bg-indigo-500 transition-colors">Save</button>
-                <button @click="a._editing = false; a._edit = null" class="text-[9px] px-2 py-1 rounded border border-gray-700 text-gray-400 hover:text-white transition-colors">Cancel</button>
+      <!-- World Canvas -->
+      <div class="rounded-xl border border-gray-800 overflow-hidden bg-gray-950 shrink-0" style="width:360px; height:360px;">
+        <div id="agent-world" style="width:100%; height:100%;"></div>
+      </div>
+
+      <!-- Agent list (right side) -->
+      <div class="flex-1 min-w-0">
+        <template x-if="namedAgents.length > 0">
+          <div class="space-y-2">
+            <template x-for="a in namedAgents" :key="a.id">
+              <div @click="if (!a._editing) chatWithAgent(a)"
+                class="p-3 rounded-xl border border-gray-800 bg-gray-900 hover:border-indigo-500/50 hover:bg-indigo-950/10 transition-all cursor-pointer group">
+                <div class="flex items-center gap-3">
+                  <!-- Agent identity -->
+                  <div class="min-w-0 flex-1">
+                    <div class="flex items-center gap-2 mb-0.5">
+                      <span class="w-2 h-2 rounded-full bg-green-500 shrink-0"></span>
+                      <span class="text-sm font-semibold text-white group-hover:text-indigo-300 transition-colors truncate" x-text="a.name"></span>
+                      <span class="text-[9px] px-1 py-0.5 rounded font-mono bg-indigo-950 text-indigo-300 border border-indigo-900 shrink-0" x-text="a.soul_slug"></span>
+                      <span x-show="a.model" class="text-[9px] px-1 py-0.5 rounded font-mono bg-gray-800 text-gray-500 border border-gray-700 truncate max-w-[140px]" x-text="a.model"></span>
+                    </div>
+                    <p x-show="a.description" class="text-[10px] text-gray-500 ml-4 truncate" x-text="a.description"></p>
+                  </div>
+                  <!-- Actions -->
+                  <div class="flex items-center gap-1.5 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity" @click.stop>
+                    <button @click.stop="a._editing = true; a._edit = { name: a.name, soul_slug: a.soul_slug, model: a.model || '', description: a.description || '' }"
+                      class="text-[10px] px-2 py-1 rounded border border-gray-700 text-gray-500 hover:text-white hover:border-gray-500 transition-colors">Edit</button>
+                    <button @click.stop="deleteNamedAgent(a.id)"
+                      class="text-[10px] px-2 py-1 rounded border border-red-900 text-red-700 hover:text-red-400 transition-colors">Delete</button>
+                    <button @click.stop="chatWithAgent(a)"
+                      class="text-[10px] px-2.5 py-1 rounded-lg bg-indigo-600 text-white hover:bg-indigo-500 transition-colors font-medium">Chat</button>
+                  </div>
+                </div>
+                <!-- Inline edit form -->
+                <div x-show="a._editing" x-cloak @click.stop class="mt-3 space-y-2 pt-3 border-t border-gray-800">
+                  <div class="grid grid-cols-3 gap-2">
+                    <input x-model="a._edit.name" type="text" placeholder="Name"
+                      class="px-2 py-1.5 rounded bg-gray-800 border border-gray-700 text-xs text-white focus:outline-none focus:border-indigo-500">
+                    <select x-model="a._edit.soul_slug"
+                      class="px-2 py-1.5 rounded bg-gray-800 border border-gray-700 text-xs text-white focus:outline-none focus:border-indigo-500">
+                      <template x-for="s in (souls.length ? souls : [{slug:'general',name:'General'}])" :key="s.slug">
+                        <option :value="s.slug" x-text="s.name || s.slug"></option>
+                      </template>
+                    </select>
+                    <select x-model="a._edit.model"
+                      class="px-2 py-1.5 rounded bg-gray-800 border border-gray-700 text-xs text-white focus:outline-none focus:border-indigo-500">
+                      <option value="">Auto</option>
+                      <template x-for="m in allMachineModels" :key="m">
+                        <option :value="m" x-text="m"></option>
+                      </template>
+                      <template x-for="cp in cloudProviders.filter(p => p.active_model)" :key="cp.id">
+                        <option :value="cp.active_model" x-text="cp.active_model"></option>
+                      </template>
+                    </select>
+                  </div>
+                  <input x-model="a._edit.description" type="text" placeholder="Description (optional)"
+                    class="w-full px-2 py-1.5 rounded bg-gray-800 border border-gray-700 text-xs text-white placeholder-gray-600 focus:outline-none focus:border-indigo-500">
+                  <div class="flex gap-1.5">
+                    <button @click="updateNamedAgent(a.id)" class="text-[10px] px-2.5 py-1 rounded bg-indigo-600 text-white hover:bg-indigo-500 transition-colors">Save</button>
+                    <button @click="a._editing = false; a._edit = null" class="text-[10px] px-2.5 py-1 rounded border border-gray-700 text-gray-400 hover:text-white transition-colors">Cancel</button>
+                  </div>
+                </div>
               </div>
-            </div>
+            </template>
+          </div>
+        </template>
+        <template x-if="namedAgents.length === 0 && !namedAgentFormOpen">
+          <div class="flex flex-col items-center justify-center py-8 text-center">
+            <p class="text-sm text-gray-500 mb-1">No agents yet</p>
+            <p class="text-xs text-gray-600">Create an agent to see them appear in the garden.</p>
           </div>
         </template>
       </div>
+    </div>
     </div>
 
     <!-- ── Instances & Resources (collapsible, secondary) ── -->
