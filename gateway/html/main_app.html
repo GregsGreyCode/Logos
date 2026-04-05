@@ -4774,7 +4774,7 @@ function app() {
       if (this.authUser) {
         if (this.authUser.role === 'admin') {
           try {
-            const r = await fetch('/admin/users?limit=100');
+            const r = await fetch('/users?limit=100', { credentials: 'include' });
             const d = await r.json();
             this.instanceUserList = (d.users || []).map(u => u.display_name || u.username).filter(Boolean);
           } catch(e) {}
