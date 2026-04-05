@@ -462,6 +462,9 @@ async def handle_agents_post(request: web.Request) -> web.Response:
     if auth_db.get_agent_by_name(name):
         return web.json_response({"error": "An agent with that name already exists"}, status=409)
     user = request.get("current_user") or {}
+    import json as _json
+    toolsets_raw = body.get("toolsets")
+    toolsets_str = _json.dumps(toolsets_raw) if isinstance(toolsets_raw, list) else ""
     agent = auth_db.create_agent(
         name=name,
         soul_slug=(body.get("soul_slug") or "general").strip(),
@@ -469,6 +472,7 @@ async def handle_agents_post(request: web.Request) -> web.Response:
         description=(body.get("description") or "").strip(),
         creator_id=user.get("id", ""),
         shared=body.get("shared", True),
+        toolsets=toolsets_str,
     )
     return web.json_response(agent, status=201)
 
@@ -479,10 +483,13 @@ async def handle_agents_patch(request: web.Request) -> web.Response:
     if not existing:
         return web.json_response({"error": "not_found"}, status=404)
     body = await request.json()
+    import json as _json
     updates = {}
     for k in ("name", "soul_slug", "model", "description", "shared"):
         if k in body:
             updates[k] = body[k]
+    if "toolsets" in body:
+        updates["toolsets"] = _json.dumps(body["toolsets"]) if isinstance(body["toolsets"], list) else ""
     if "name" in updates and updates["name"] != existing["name"]:
         dup = auth_db.get_agent_by_name(updates["name"])
         if dup and dup["id"] != aid:

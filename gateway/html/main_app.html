@@ -2326,6 +2326,31 @@
       </div>
       <input x-model="namedAgentForm.description" type="text" placeholder="What does this agent do? (optional)"
         class="w-full px-3 py-2 rounded-lg bg-gray-800 border border-gray-700 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-indigo-500">
+      <!-- Toolsets (expandable) -->
+      <details class="rounded-lg border border-gray-700 bg-gray-800/50 overflow-hidden">
+        <summary class="px-3 py-2 text-[10px] text-gray-500 cursor-pointer hover:text-gray-300 select-none flex items-center justify-between">
+          <span>Toolsets</span>
+          <span class="text-gray-600" x-text="namedAgentForm.toolsets.length ? namedAgentForm.toolsets.length + ' selected' : 'all defaults'"></span>
+        </summary>
+        <div class="px-3 pb-2.5 pt-1">
+          <template x-if="toolsets.toolsets">
+            <div class="grid grid-cols-2 sm:grid-cols-3 gap-1">
+              <template x-for="[name, ts] in Object.entries(toolsets.toolsets || {}).sort(([a],[b]) => a.localeCompare(b)).filter(([n, t]) => t.available)" :key="name">
+                <label class="flex items-center gap-1.5 px-2 py-1 rounded border text-[10px] cursor-pointer transition-colors"
+                  :class="namedAgentForm.toolsets.includes(name) ? 'border-emerald-800 bg-emerald-950/50 text-emerald-300' : 'border-gray-700 text-gray-500 hover:border-gray-600'">
+                  <input type="checkbox" :checked="namedAgentForm.toolsets.includes(name)"
+                    @change="$event.target.checked ? namedAgentForm.toolsets.push(name) : namedAgentForm.toolsets.splice(namedAgentForm.toolsets.indexOf(name), 1)"
+                    class="w-3 h-3 rounded border-gray-600 bg-gray-800 accent-emerald-500">
+                  <span class="font-mono truncate" x-text="name"></span>
+                  <span class="ml-auto text-gray-700 shrink-0" x-text="(ts.tools||[]).length + 't'"></span>
+                </label>
+              </template>
+            </div>
+          </template>
+          <p x-show="!toolsets.toolsets" class="text-[10px] text-gray-600">Loading toolsets...</p>
+          <p class="text-[10px] text-gray-600 mt-1.5">Leave empty for soul defaults. Selected toolsets override defaults.</p>
+        </div>
+      </details>
       <button @click="createNamedAgent()" :disabled="!namedAgentForm.name.trim()"
         class="w-full py-2.5 rounded-lg text-sm font-medium bg-indigo-600 text-white hover:bg-indigo-500 disabled:opacity-40 transition-colors">
         Create Agent
@@ -2351,10 +2376,12 @@
                 <span class="text-sm font-semibold text-white group-hover:text-indigo-300 transition-colors truncate" x-text="a.name"></span>
                 <span class="text-[9px] px-1 py-0.5 rounded font-mono bg-indigo-950 text-indigo-300 border border-indigo-900 shrink-0" x-text="a.soul_slug"></span>
                 <span x-show="a.model" class="text-[9px] px-1 py-0.5 rounded font-mono bg-gray-800 text-gray-500 border border-gray-700 truncate max-w-[120px]" x-text="a.model"></span>
+                <span x-show="a.toolsets && JSON.parse(a.toolsets || '[]').length" class="text-[9px] px-1 py-0.5 rounded font-mono bg-emerald-950 text-emerald-400 border border-emerald-900 shrink-0"
+                  x-text="JSON.parse(a.toolsets || '[]').length + ' tools'"></span>
               </div>
               <p x-show="a.description" class="text-[10px] text-gray-500 ml-4 mb-1.5 truncate" x-text="a.description"></p>
               <div class="flex items-center gap-1 ml-4 opacity-0 group-hover:opacity-100 transition-opacity" @click.stop>
-                <button @click.stop="a._editing = true; a._edit = { name: a.name, soul_slug: a.soul_slug, model: a.model || '', description: a.description || '' }"
+                <button @click.stop="a._editing = true; a._edit = { name: a.name, soul_slug: a.soul_slug, model: a.model || '', description: a.description || '', toolsets: JSON.parse(a.toolsets || '[]') }"
                   class="text-[9px] px-1.5 py-0.5 rounded border border-gray-700 text-gray-500 hover:text-white hover:border-gray-500 transition-colors">Edit</button>
                 <button @click.stop="deleteNamedAgent(a.id)"
                   class="text-[9px] px-1.5 py-0.5 rounded border border-red-900 text-red-700 hover:text-red-400 transition-colors">Delete</button>
@@ -2383,6 +2410,20 @@
                     </template>
                   </select>
                 </div>
+                <!-- Toolsets -->
+                <template x-if="toolsets.toolsets">
+                  <div class="flex flex-wrap gap-1">
+                    <template x-for="[tsName, ts] in Object.entries(toolsets.toolsets || {}).sort(([x],[y]) => x.localeCompare(y)).filter(([n, t]) => t.available)" :key="tsName">
+                      <label class="flex items-center gap-1 px-1.5 py-0.5 rounded border text-[9px] cursor-pointer transition-colors"
+                        :class="(a._edit.toolsets||[]).includes(tsName) ? 'border-emerald-800 bg-emerald-950/50 text-emerald-300' : 'border-gray-700 text-gray-600 hover:border-gray-600'">
+                        <input type="checkbox" :checked="(a._edit.toolsets||[]).includes(tsName)"
+                          @change="if (!a._edit.toolsets) a._edit.toolsets = []; $event.target.checked ? a._edit.toolsets.push(tsName) : a._edit.toolsets.splice(a._edit.toolsets.indexOf(tsName), 1)"
+                          class="w-2.5 h-2.5 rounded border-gray-600 bg-gray-800 accent-emerald-500">
+                        <span class="font-mono" x-text="tsName"></span>
+                      </label>
+                    </template>
+                  </div>
+                </template>
                 <div class="flex gap-1.5">
                   <button @click="updateNamedAgent(a.id)" class="text-[9px] px-2 py-1 rounded bg-indigo-600 text-white hover:bg-indigo-500 transition-colors">Save</button>
                   <button @click="a._editing = false; a._edit = null" class="text-[9px] px-2 py-1 rounded border border-gray-700 text-gray-400 hover:text-white transition-colors">Cancel</button>
@@ -2397,670 +2438,7 @@
       </p>
     </div>
 
-    <!-- ── Toolsets ── -->
-    <div class="mb-5 px-3 py-2.5 rounded-lg bg-gray-900 border border-gray-800" x-data="{ selectedTs: null, showUnavailable: false }">
-      <div class="flex items-center justify-between mb-2">
-        <div class="text-xs font-semibold text-gray-500 uppercase tracking-wider">
-          Toolsets
-          <span class="ml-1.5 normal-case font-normal text-gray-700" x-text="toolsets.available ? '(' + toolsets.available.length + ' available)' : ''"></span>
-        </div>
-        <div class="flex items-center gap-3">
-          <label class="flex items-center gap-1.5 text-[10px] text-gray-600 cursor-pointer">
-            <input type="checkbox" x-model="showUnavailable" class="rounded border-gray-600 bg-gray-800 accent-gray-500 w-3 h-3">
-            show unavailable
-          </label>
-          <button @click="loadToolsets()" class="text-gray-600 hover:text-gray-400 text-sm leading-none" title="Refresh">&#x21ba;</button>
-        </div>
-      </div>
-      <template x-if="!toolsets.toolsets">
-        <div class="text-xs text-gray-700 py-1">Loading...</div>
-      </template>
-      <template x-if="toolsets.toolsets">
-        <div>
-          <div class="grid grid-cols-2 sm:grid-cols-3 gap-1.5">
-            <template x-for="[name, ts] in Object.entries(toolsets.toolsets || {}).sort(([a],[b]) => a.localeCompare(b)).filter(([n, t]) => t.available || showUnavailable)" :key="name">
-              <div @click="selectedTs = selectedTs === name ? null : name"
-                class="flex items-center gap-2 px-2 py-1.5 rounded border text-xs cursor-pointer transition-colors"
-                :class="selectedTs === name
-                  ? 'border-[var(--accent)] bg-[var(--accent-subtle)]'
-                  : ts.available
-                    ? 'border-gray-800 hover:border-gray-600'
-                    : 'border-gray-800/50 opacity-40'">
-                <button v-if="ts.available" @click.stop="toggleToolset(name, !(toolsets.enabled_toolsets||[]).some(e => e === name))"
-                  class="w-7 h-4 rounded-full relative transition-colors shrink-0"
-                  :class="(toolsets.enabled_tools||[]).includes((ts.tools||[])[0]) ? 'bg-emerald-600' : 'bg-gray-700'">
-                  <span class="absolute top-0.5 w-3 h-3 rounded-full bg-white transition-transform"
-                    :class="(toolsets.enabled_tools||[]).includes((ts.tools||[])[0]) ? 'left-3.5' : 'left-0.5'"></span>
-                </button>
-                <span x-show="!ts.available" class="w-1.5 h-1.5 rounded-full bg-red-700 shrink-0"></span>
-                <span class="font-mono truncate" :class="ts.available ? 'text-gray-300' : 'text-gray-600'" x-text="name"></span>
-                <span class="ml-auto text-[10px] text-gray-700 shrink-0" x-text="(ts.tools||[]).length + 't'"></span>
-              </div>
-            </template>
-          </div>
-          <template x-if="selectedTs && toolsets.toolsets[selectedTs]">
-            <div class="mt-2 p-2.5 rounded-lg border border-gray-800 bg-gray-900/60">
-              <div class="flex items-center justify-between mb-1">
-                <span class="text-xs font-medium font-mono text-white" x-text="selectedTs"></span>
-                <span class="text-[10px] text-gray-600" x-text="(toolsets.toolsets[selectedTs].tools||[]).length + ' tools'"></span>
-              </div>
-              <div x-show="toolsets.toolsets[selectedTs].description" class="text-[10px] text-gray-500 mb-1.5" x-text="toolsets.toolsets[selectedTs].description"></div>
-              <div x-show="!toolsets.toolsets[selectedTs].available && (toolsets.toolsets[selectedTs].requirements||[]).length" class="text-[10px] text-red-700 font-mono mb-1.5" x-text="'needs: ' + (toolsets.toolsets[selectedTs].requirements||[]).join(', ')"></div>
-              <div class="flex flex-wrap gap-1">
-                <template x-for="tool in (toolsets.toolsets[selectedTs].tools || [])" :key="tool">
-                  <span class="text-[10px] font-mono px-1.5 py-0.5 rounded bg-gray-800 text-gray-500 border border-gray-700" x-text="tool"></span>
-                </template>
-              </div>
-            </div>
-          </template>
-        </div>
-      </template>
-    </div>
 
-    <!-- ── Resources & Admin (collapsible) ── -->
-    <details class="mb-4">
-      <summary class="text-xs text-gray-600 cursor-pointer hover:text-gray-400 transition-colors select-none flex items-center gap-2">
-        <span>Resources &amp; Administration</span>
-        <template x-if="clusterRes.free_cpu">
-          <span class="text-[10px] text-gray-700 font-mono" x-text="'CPU ' + clusterRes.free_cpu + ' free · RAM ' + (clusterRes.free_mem ? Math.round(clusterRes.free_mem / 1073741824) + 'GB free' : '?')"></span>
-        </template>
-      </summary>
-      <div class="mt-3 space-y-4">
-
-    <!-- Resource bar -->
-    <div class="flex items-center gap-3 px-3 py-2 rounded-lg border border-gray-800 bg-gray-900 text-xs flex-wrap">
-      <button @click="loadInstances()" class="text-gray-600 hover:text-gray-400 text-sm leading-none shrink-0" title="Refresh">↺</button>
-      <span class="text-gray-800 shrink-0 select-none">|</span>
-      <span x-show="clusterRes._error" class="text-red-500" x-text="(clusterRes.total_cpu ? 'k8s: ' : 'sys: ') + (clusterRes._error||'')"></span>
-      <!-- k8s: used/total bars — shown when cluster provides total_cpu -->
-      <template x-if="!clusterRes._error && clusterRes.total_cpu">
-        <div class="flex items-center gap-3 flex-wrap flex-1">
-          <div class="flex items-center gap-1.5">
-            <span class="text-gray-600">CPU</span>
-            <div class="w-20 h-1.5 bg-gray-800 rounded-full overflow-hidden">
-              <div class="h-full rounded-full transition-all"
-                :class="clusterRes.free_cpu < 4 ? 'bg-orange-500' : 'bg-green-500'"
-                :style="'width:' + Math.min(100, clusterRes.used_cpu / clusterRes.total_cpu * 100) + '%'"></div>
-            </div>
-            <span class="text-gray-400 font-mono" x-text="clusterRes.free_cpu + ' / ' + clusterRes.total_cpu + ' free'"></span>
-          </div>
-          <span class="text-gray-800 select-none">·</span>
-          <div class="flex items-center gap-1.5">
-            <span class="text-gray-600">RAM</span>
-            <div class="w-20 h-1.5 bg-gray-800 rounded-full overflow-hidden">
-              <div class="h-full rounded-full transition-all"
-                :class="clusterRes.free_mem < 6*1024*1024*1024 ? 'bg-orange-500' : 'bg-green-500'"
-                :style="'width:' + Math.min(100, clusterRes.used_mem / clusterRes.total_mem * 100) + '%'"></div>
-            </div>
-            <span class="text-gray-400 font-mono" x-text="fmtBytes(clusterRes.free_mem) + ' / ' + fmtBytes(clusterRes.total_mem) + ' free'"></span>
-          </div>
-          <span x-show="clusterRes.free_cpu < 4 || clusterRes.free_mem < 6*1024*1024*1024"
-            class="text-orange-400 ml-auto">⚠ Resources low — spawns will queue</span>
-        </div>
-      </template>
-      <!-- local: psutil free resources — shown when executor returns free_cpu without total_cpu -->
-      <template x-if="!clusterRes._error && !clusterRes.total_cpu && clusterRes.free_cpu != null">
-        <div class="flex items-center gap-3 flex-wrap flex-1">
-          <div class="flex items-center gap-1.5">
-            <span class="text-gray-600">CPU available</span>
-            <span class="text-gray-400 font-mono" x-text="(clusterRes.free_cpu || 0).toFixed(1) + ' cores'"></span>
-          </div>
-          <span class="text-gray-800 select-none">·</span>
-          <div class="flex items-center gap-1.5">
-            <span class="text-gray-600">RAM available</span>
-            <span class="text-gray-400 font-mono" x-text="fmtBytes(clusterRes.free_mem || 0)"></span>
-          </div>
-          <span x-show="clusterRes.can_spawn === false" class="text-orange-400 ml-auto" x-text="'⚠ ' + (clusterRes.reason || 'Resources low')"></span>
-        </div>
-      </template>
-      <span x-show="!clusterRes._error && !clusterRes.total_cpu && clusterRes.free_cpu == null" class="text-gray-600">System data unavailable</span>
-    </div>
-
-    <!-- Additional instances (k8s pods) -->
-    <div x-show="clusterInstances.length > 0" class="mb-5">
-      <div class="flex items-center justify-between mb-3">
-        <div class="text-xs font-semibold text-gray-500 uppercase tracking-wider">
-          Running Instances
-          <span class="ml-1.5 text-gray-600 normal-case font-normal" x-text="'(' + clusterInstances.length + ')'"></span>
-        </div>
-      </div>
-      <div class="space-y-1.5">
-        <template x-for="inst in clusterInstances" :key="inst.name">
-          <div class="flex items-center gap-3 px-3 py-2.5 rounded-lg bg-gray-900 border transition-colors"
-            :class="inst.status==='running' ? 'border-gray-800' : 'border-yellow-900/50'">
-
-            <!-- Status dot -->
-            <span class="w-1.5 h-1.5 rounded-full shrink-0"
-              :class="inst.status==='running' ? 'bg-green-500' : 'bg-yellow-500 animate-pulse'"></span>
-
-            <!-- Identity + chips -->
-            <div class="min-w-0 flex-1">
-              <div class="flex items-center gap-1.5 flex-wrap">
-                <span class="text-sm font-medium text-white" x-text="inst.instance_name"></span>
-                <!-- Instance label chip -->
-                <template x-if="inst.instance_label">
-                  <span class="text-xs px-1.5 py-0.5 rounded font-mono bg-emerald-950 text-emerald-300 border border-emerald-900"
-                    x-text="inst.instance_label"></span>
-                </template>
-                <!-- Soul chip -->
-                <template x-if="inst.soul">
-                  <span class="text-xs px-1.5 py-0.5 rounded font-mono bg-indigo-950 text-indigo-300 border border-indigo-900"
-                    x-text="inst.soul.name"></span>
-                </template>
-                <!-- Routing chip: [alias → machine] -->
-                <template x-if="inst.model_alias">
-                  <span class="text-xs px-1.5 py-0.5 rounded font-mono border"
-                    :class="inst.machine_name
-                      ? 'bg-[var(--accent-subtle)] text-[var(--accent)] border-[var(--accent)]/40'
-                      : 'bg-gray-800 text-gray-500 border-gray-700'"
-                    x-text="inst.model_alias + (inst.machine_name ? ' → ' + inst.machine_name : '')"></span>
-                </template>
-                <span x-show="inst.soul?.status === 'experimental'"
-                  class="text-xs text-yellow-600">experimental</span>
-              </div>
-              <!-- Secondary: name · ready/status · port · CPU/RAM (local) -->
-              <div class="flex items-center gap-2 mt-0.5 text-xs text-gray-700 font-mono flex-wrap">
-                <span x-text="inst.name"></span>
-                <span class="text-gray-800">·</span>
-                <span x-text="inst.ready + '/' + inst.desired + ' ready'"></span>
-                <template x-if="inst.node_port">
-                  <span>
-                    <span class="text-gray-800">·</span>
-                    <span class="text-indigo-500" x-text="':' + inst.node_port"></span>
-                  </span>
-                </template>
-                <template x-if="inst.cpu_percent != null">
-                  <span class="text-gray-700">
-                    <span class="text-gray-800">·</span>
-                    <span :class="inst.cpu_percent > 80 ? 'text-orange-500' : 'text-gray-600'" x-text="inst.cpu_percent + '% CPU'"></span>
-                  </span>
-                </template>
-                <template x-if="inst.mem_mb != null">
-                  <span class="text-gray-700">
-                    <span class="text-gray-800">·</span>
-                    <span :class="inst.mem_mb > 14000 ? 'text-orange-500' : 'text-gray-600'" x-text="inst.mem_mb >= 1024 ? (inst.mem_mb/1024).toFixed(1)+'GB' : inst.mem_mb+'MB'"></span>
-                  </span>
-                </template>
-              </div>
-            </div>
-
-            <!-- Actions -->
-            <div class="flex items-center gap-1.5 shrink-0">
-              <template x-if="inst.node_port && inst.status === 'running'">
-                <button @click="switchInstance((inst.source === 'local' ? 'local-' : 'k8s-') + inst.name); tab='sessions'"
-                  class="text-xs px-2.5 py-1 rounded-lg bg-[var(--accent)] hover:opacity-90 text-white font-medium transition-colors">
-                  Chat →
-                </button>
-              </template>
-              <template x-if="can('view_routing_debug') && inst.model_alias">
-                <button
-                  @click="tab='routing'; debugOpen=true; routeDebugUserId=''; routeDebugModel=inst.model_alias; resolveRouteDebug()"
-                  class="text-xs px-2 py-1 rounded border border-gray-800 text-gray-600 hover:border-gray-600 hover:text-gray-300 transition-colors font-mono"
-                  title="View routing trace">trace</button>
-              </template>
-              <button @click="openInspector(inst.name)"
-                class="text-xs px-2 py-1 rounded border border-gray-800 text-gray-600 hover:border-emerald-700 hover:text-emerald-400 transition-colors font-mono"
-                title="Inspect memory &amp; knowledge">inspect</button>
-              <button x-show="can('delete_instance')"
-                @click="confirmDeleteInstance(inst.name)"
-                :disabled="inst.name === 'hermes'"
-                class="text-xs px-2 py-1 rounded border border-gray-800 text-gray-700 hover:border-red-800 hover:text-red-400 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
-                title="Delete instance">✕</button>
-            </div>
-          </div>
-        </template>
-      </div>
-    </div>
-
-    <!-- Instance Inspector Panel -->
-    <template x-if="inspectorOpen && inspectorInstance">
-      <div class="mb-5 bg-gray-900 border border-gray-700 rounded-xl overflow-hidden">
-        <!-- Header -->
-        <div class="flex items-center justify-between px-4 py-3 border-b border-gray-800">
-          <div class="flex items-center gap-2">
-            <span class="text-sm font-semibold text-white" x-text="inspectorInstance"></span>
-            <span class="text-xs text-gray-500">Instance Inspector</span>
-          </div>
-          <button @click="inspectorOpen = false"
-            class="text-gray-600 hover:text-white transition-colors text-lg leading-none">&times;</button>
-        </div>
-
-        <!-- Tabs -->
-        <div class="flex border-b border-gray-800 px-4 gap-1">
-          <template x-for="t in [{id:'memory',label:'Memory'},{id:'user',label:'User Profile'},{id:'knowledge',label:'Knowledge'},{id:'bugs',label:'Bug Notes'}]" :key="t.id">
-            <button @click="inspectorTab = t.id"
-              :class="inspectorTab === t.id ? 'text-white border-b-2 border-emerald-500' : 'text-gray-600 hover:text-gray-400'"
-              class="px-3 py-2.5 text-xs font-medium transition-colors" x-text="t.label"></button>
-          </template>
-        </div>
-
-        <!-- Tab content -->
-        <div class="p-4" style="max-height: 480px; overflow-y: auto;">
-
-          <!-- Memory tab -->
-          <div x-show="inspectorTab === 'memory'">
-            <div class="flex items-center justify-between mb-2">
-              <label class="text-xs text-gray-500">MEMORY.md — agent-specific notes and learned context</label>
-              <button @click="saveInspectorMemory('memory')" :disabled="inspectorSaving"
-                class="text-xs px-2.5 py-1 rounded bg-emerald-700 hover:bg-emerald-600 disabled:opacity-40 text-white transition-colors">Save</button>
-            </div>
-            <textarea x-model="inspectorData.memory" @input="inspectorDirty.memory = true"
-              class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-300 font-mono focus:outline-none focus:border-emerald-600 transition-colors"
-              rows="12" placeholder="No memory entries yet."></textarea>
-
-            <!-- Fork agent -->
-            <div class="border-t border-gray-800 mt-4 pt-3">
-              <div class="text-xs text-gray-500 mb-2">Fork to another instance</div>
-              <div class="text-[10px] text-gray-600 mb-2">Copy this agent's memory and/or knowledge base to another instance. The target must already exist.</div>
-              <div class="flex gap-2 items-end">
-                <input x-model="forkTargetInstance" placeholder="Target instance name (e.g. hermes-greg-coder)"
-                  class="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm text-white font-mono placeholder-gray-600 focus:outline-none focus:border-emerald-600">
-                <label class="flex items-center gap-1 text-xs text-gray-400">
-                  <input type="checkbox" x-model="forkCopyMemory" checked class="rounded border-gray-600 bg-gray-800 accent-emerald-500">
-                  Memory
-                </label>
-                <label class="flex items-center gap-1 text-xs text-gray-400">
-                  <input type="checkbox" x-model="forkCopyKnowledge" checked class="rounded border-gray-600 bg-gray-800 accent-emerald-500">
-                  Knowledge
-                </label>
-                <button @click="forkInstance()" :disabled="!forkTargetInstance.trim()"
-                  class="px-3 py-1.5 bg-emerald-700 hover:bg-emerald-600 disabled:opacity-40 text-white text-xs rounded-lg transition-colors">Fork</button>
-              </div>
-              <div x-show="forkMsg" class="mt-2 text-xs" :class="forkMsg?.ok ? 'text-emerald-400' : 'text-red-400'" x-text="forkMsg?.text"></div>
-            </div>
-          </div>
-
-          <!-- User Profile tab -->
-          <div x-show="inspectorTab === 'user'">
-            <div class="flex items-center justify-between mb-2">
-              <label class="text-xs text-gray-500">USER.md — shared user profile (visible to all agents)</label>
-              <button @click="saveInspectorMemory('user_profile')" :disabled="inspectorSaving"
-                class="text-xs px-2.5 py-1 rounded bg-emerald-700 hover:bg-emerald-600 disabled:opacity-40 text-white transition-colors">Save</button>
-            </div>
-            <textarea x-model="inspectorData.user_profile" @input="inspectorDirty.user = true"
-              class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-300 font-mono focus:outline-none focus:border-emerald-600 transition-colors"
-              rows="12" placeholder="No user profile yet."></textarea>
-          </div>
-
-          <!-- Knowledge tab -->
-          <div x-show="inspectorTab === 'knowledge'">
-            <!-- Stats -->
-            <div class="flex items-center gap-4 mb-3 text-xs text-gray-500">
-              <span x-text="(inspectorKnowledge.stats?.total_sources || 0) + ' sources'"></span>
-              <span x-text="(inspectorKnowledge.stats?.total_chunks || 0) + ' chunks'"></span>
-              <span x-text="(inspectorKnowledge.stats?.usage_percent || 0) + '% capacity'"></span>
-              <span class="text-gray-700" x-text="'model: ' + (inspectorKnowledge.stats?.embedding_model || 'n/a')"></span>
-            </div>
-
-            <!-- Sources list -->
-            <div class="space-y-1.5 mb-4">
-              <template x-for="src in inspectorKnowledge.sources || []" :key="src.source_id">
-                <div class="flex items-center justify-between bg-gray-800 rounded-lg px-3 py-2">
-                  <div>
-                    <span class="text-sm text-white font-mono" x-text="src.source_name"></span>
-                    <span class="text-xs text-gray-600 ml-2" x-text="src.chunk_count + ' chunks · ' + (src.char_count/1000).toFixed(1) + 'k chars'"></span>
-                  </div>
-                  <button @click="deleteKnowledgeSource(src.source_name)"
-                    class="text-xs text-gray-700 hover:text-red-400 transition-colors">remove</button>
-                </div>
-              </template>
-              <div x-show="!inspectorKnowledge.sources?.length" class="text-xs text-gray-700 py-2">No documents ingested yet.</div>
-            </div>
-
-            <!-- Ingest form -->
-            <div class="border-t border-gray-800 pt-3 mb-4">
-              <div class="text-xs text-gray-500 mb-2">Ingest a new document</div>
-              <div class="flex gap-2 mb-2">
-                <input x-model="inspectorIngestName" placeholder="Source name (e.g. api-docs)"
-                  class="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm text-white font-mono placeholder-gray-600 focus:outline-none focus:border-emerald-600">
-                <button @click="ingestKnowledge()" :disabled="!inspectorIngestName.trim() || !inspectorIngestContent.trim()"
-                  class="px-3 py-1.5 bg-emerald-700 hover:bg-emerald-600 disabled:opacity-40 text-white text-xs rounded-lg transition-colors">Ingest</button>
-              </div>
-              <textarea x-model="inspectorIngestContent" placeholder="Paste document content here..."
-                class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-300 font-mono focus:outline-none focus:border-emerald-600 transition-colors"
-                rows="4"></textarea>
-            </div>
-
-            <!-- Search preview -->
-            <div class="border-t border-gray-800 pt-3">
-              <div class="text-xs text-gray-500 mb-2">Search preview</div>
-              <div class="flex gap-2 mb-2">
-                <input x-model="inspectorSearchQuery" placeholder="Search query..."
-                  @keydown.enter="searchKnowledge()"
-                  class="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-emerald-600">
-                <button @click="searchKnowledge()" :disabled="!inspectorSearchQuery.trim()"
-                  class="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 disabled:opacity-40 text-white text-xs rounded-lg transition-colors">Search</button>
-              </div>
-              <div class="space-y-2">
-                <template x-for="(r, i) in inspectorSearchResults" :key="i">
-                  <div class="bg-gray-800 rounded-lg px-3 py-2">
-                    <div class="flex items-center gap-2 mb-1">
-                      <span class="text-xs font-mono text-emerald-400" x-text="r.source"></span>
-                      <span class="text-xs text-gray-600" x-text="'score: ' + r.score"></span>
-                    </div>
-                    <div class="text-xs text-gray-400 whitespace-pre-wrap" x-text="r.text"></div>
-                  </div>
-                </template>
-              </div>
-            </div>
-          </div>
-
-          <!-- Bug Notes tab -->
-          <div x-show="inspectorTab === 'bugs'">
-            <div class="flex items-center justify-between mb-2">
-              <label class="text-xs text-gray-500">bug_notes.md — agent self-reported issues</label>
-              <button @click="saveInspectorMemory('bug_notes')" :disabled="inspectorSaving"
-                class="text-xs px-2.5 py-1 rounded bg-emerald-700 hover:bg-emerald-600 disabled:opacity-40 text-white transition-colors">Save</button>
-            </div>
-            <textarea x-model="inspectorData.bug_notes" @input="inspectorDirty.bugs = true"
-              class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-300 font-mono focus:outline-none focus:border-emerald-600 transition-colors"
-              rows="12" placeholder="No bug notes yet."></textarea>
-          </div>
-
-        </div>
-      </div>
-    </template>
-
-    <!-- Pending queue -->
-    <template x-if="instanceQueue.length > 0">
-      <div class="mb-5">
-        <div class="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">Queued</div>
-        <div class="space-y-2">
-          <template x-for="(req, i) in instanceQueue" :key="i">
-            <div class="bg-gray-900 border border-yellow-900 rounded-lg px-4 py-3 flex items-center gap-3 text-xs">
-              <span class="w-1.5 h-1.5 bg-yellow-500 rounded-full animate-pulse shrink-0"></span>
-              <span class="text-gray-300">Hermes for <span class="font-semibold" x-text="req.requester"></span></span>
-              <span class="text-gray-600 ml-auto" x-text="req.reason"></span>
-            </div>
-          </template>
-        </div>
-      </div>
-    </template>
-
-    <!-- Spawn panel (two-step: soul picker → name + overrides) -->
-    <div x-show="can('spawn_instance') || can('spawn_instance_restricted')"
-         class="bg-gray-900 border border-gray-800 rounded-xl p-4 mt-2">
-      <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">Spawn New Instance</div>
-
-      <!-- Step 1: Soul picker -->
-      <template x-if="spawnStep === 1">
-        <div>
-          <div class="text-xs text-gray-500 mb-3">Choose a soul (starting role and tool defaults).</div>
-          <template x-if="!soulsLoaded">
-            <div class="text-xs text-gray-600 py-2">Loading souls...</div>
-          </template>
-          <template x-if="soulsLoaded && souls.filter(s => can('spawn_instance') || s.user_accessible).length === 0">
-            <div class="text-xs text-gray-600 py-2">No souls available — check that the souls/ directory is present in the image.</div>
-          </template>
-          <div class="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-2 mb-3">
-            <template x-for="soul in souls.filter(s => can('spawn_instance') || s.user_accessible)" :key="soul.slug">
-              <div class="cursor-pointer rounded-lg border p-3 transition-colors select-none"
-                :class="inspectedSoul?.slug === soul.slug
-                  ? 'border-indigo-500 bg-indigo-950'
-                  : 'border-gray-700 bg-gray-800 hover:border-gray-600'"
-                @click="inspectSoul(soul)">
-                <div class="font-medium text-white text-xs mb-0.5 truncate" x-text="soul.name"></div>
-                <div class="text-xs text-gray-500 leading-tight line-clamp-2" x-text="soul.description"></div>
-                <div class="mt-1.5">
-                  <span class="text-xs px-1 py-0.5 rounded"
-                    :class="soul.status === 'stable' ? 'bg-green-950 text-green-500' : 'bg-yellow-950 text-yellow-500'"
-                    x-text="soul.status"></span>
-                </div>
-              </div>
-            </template>
-          </div>
-
-          <!-- Soul inspection panel (expands inline) -->
-          <template x-if="inspectedSoul">
-            <div class="border border-indigo-700 bg-indigo-950 rounded-xl p-4 mb-3">
-              <div class="flex items-start justify-between mb-2">
-                <div>
-                  <div class="font-semibold text-white text-sm" x-text="inspectedSoul.name"></div>
-                  <div class="text-xs text-indigo-300 mt-0.5" x-text="inspectedSoul.role_summary"></div>
-                </div>
-                <span class="text-xs font-mono text-gray-500 shrink-0 ml-3" x-text="'v' + inspectedSoul.version"></span>
-              </div>
-              <template x-if="inspectedSoul.status === 'experimental'">
-                <div class="mb-3 px-3 py-2 rounded-lg border border-yellow-800 bg-yellow-950 text-yellow-300 text-xs">
-                  ⚠ Experimental — behavior and tool defaults may change without notice.
-                </div>
-              </template>
-              <div class="space-y-2 mb-3">
-                <template x-if="inspectedSoul.toolsets?.enforced?.length">
-                  <div class="flex items-start gap-2 text-xs">
-                    <span class="text-gray-600 shrink-0 w-20 pt-0.5">enforced</span>
-                    <div class="flex flex-wrap gap-1">
-                      <template x-for="ts in inspectedSoul.toolsets.enforced" :key="ts">
-                        <span class="px-1.5 py-0.5 rounded font-mono bg-red-950 text-red-300 border border-red-900" x-text="ts"></span>
-                      </template>
-                    </div>
-                  </div>
-                </template>
-                <template x-if="inspectedSoul.toolsets?.default_enabled?.length">
-                  <div class="flex items-start gap-2 text-xs">
-                    <span class="text-gray-600 shrink-0 w-20 pt-0.5">enabled</span>
-                    <div class="flex flex-wrap gap-1">
-                      <template x-for="ts in inspectedSoul.toolsets.default_enabled" :key="ts">
-                        <span class="px-1.5 py-0.5 rounded font-mono bg-indigo-900 text-indigo-300 border border-indigo-800" x-text="ts"></span>
-                      </template>
-                    </div>
-                  </div>
-                </template>
-                <template x-if="inspectedSoul.toolsets?.optional?.length">
-                  <div class="flex items-start gap-2 text-xs">
-                    <span class="text-gray-600 shrink-0 w-20 pt-0.5">optional</span>
-                    <div class="flex flex-wrap gap-1">
-                      <template x-for="ts in inspectedSoul.toolsets.optional" :key="ts">
-                        <span class="px-1.5 py-0.5 rounded font-mono bg-gray-800 text-gray-400 border border-gray-700" x-text="ts"></span>
-                      </template>
-                    </div>
-                  </div>
-                </template>
-              </div>
-              <button @click="selectSoul(inspectedSoul)"
-                class="w-full py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-medium transition-colors">
-                Select this soul →
-              </button>
-            </div>
-          </template>
-
-          <p class="text-xs text-gray-700">Souls are starting presets — they shape behavior and tool defaults but do not guarantee expertise or consistent performance.</p>
-        </div>
-      </template>
-
-      <!-- Step 2: Name + optional overrides -->
-      <template x-if="spawnStep === 2">
-        <div>
-          <div class="flex items-center gap-2 mb-3">
-            <button @click="backToSoulPicker()" class="text-xs text-indigo-400 hover:text-indigo-300">&#8592; Back</button>
-            <span class="text-xs text-gray-600">Soul:</span>
-            <span class="text-xs px-1.5 py-0.5 rounded bg-indigo-950 text-indigo-300 border border-indigo-900 font-mono"
-              x-text="selectedSoul?.name"></span>
-          </div>
-          <!-- Model alias + routing preview -->
-          <div class="mb-3 space-y-2">
-            <div class="flex items-end gap-3">
-              <div class="flex-1">
-                <label class="text-xs text-gray-500 block mb-1">Default model (GPU node selected automatically)</label>
-                <select x-model="spawnModelAlias" @change="loadSpawnRoutePreview()"
-                  class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm text-white focus:border-[var(--accent)] focus:outline-none">
-                  <template x-for="group in spawnAliasGroups()" :key="group.cls">
-                    <optgroup :label="group.label">
-                      <template x-for="alias in group.aliases" :key="alias">
-                        <option :value="alias" x-text="alias"></option>
-                      </template>
-                    </optgroup>
-                  </template>
-                </select>
-              </div>
-            </div>
-            <!-- Routing preview card -->
-            <div class="rounded-lg border border-gray-800 bg-gray-900 px-3 py-2 text-xs min-h-[2rem] flex items-center">
-              <template x-if="spawnRoutePreviewLoading">
-                <span class="text-gray-600 animate-pulse">Resolving route&#8230;</span>
-              </template>
-              <template x-if="!spawnRoutePreviewLoading && spawnRoutePreview && spawnRoutePreview.machine">
-                <div class="flex items-center gap-2 flex-wrap w-full">
-                  <span class="font-mono text-[var(--accent)]" x-text="spawnRoutePreview.model_alias"></span>
-                  <span class="text-gray-700">→</span>
-                  <span class="px-1.5 py-0.5 rounded border border-gray-700 text-gray-400" x-text="spawnRoutePreview.model_class"></span>
-                  <span class="text-gray-700">→</span>
-                  <span class="font-medium text-white" x-text="spawnRoutePreview.machine.name"></span>
-                  <span class="text-gray-600 ml-auto italic" x-text="'via ' + spawnRoutePreview.layer_label"></span>
-                </div>
-              </template>
-              <template x-if="!spawnRoutePreviewLoading && spawnRoutePreview && !spawnRoutePreview.machine && !spawnRoutePreview.error">
-                <span class="text-yellow-700">No machines registered — will use default config</span>
-              </template>
-              <template x-if="!spawnRoutePreviewLoading && spawnRoutePreview?.error">
-                <span class="text-red-700" x-text="spawnRoutePreview.error"></span>
-              </template>
-              <template x-if="!spawnRoutePreviewLoading && !spawnRoutePreview">
-                <span class="text-gray-700">—</span>
-              </template>
-            </div>
-          </div>
-
-          <!-- Machine override — requires override_routing permission -->
-          <template x-if="can('override_routing')">
-            <div class="mb-3">
-              <label class="text-xs text-gray-500 block mb-1">
-                Machine override <span class="text-gray-700">(optional)</span>
-              </label>
-              <select x-model="spawnMachineOverride" @change="loadSpawnRoutePreview()"
-                class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm text-white focus:border-[var(--accent)] focus:outline-none">
-                <option value="">— auto (use routing profile) —</option>
-                <template x-for="m in adminMachines" :key="m.id">
-                  <option :value="m.id"
-                    x-text="m.name + (m.description ? ' — ' + m.description : '')"></option>
-                </template>
-              </select>
-            </div>
-          </template>
-
-          <div class="mb-3">
-            <label class="text-xs text-gray-500 block mb-1">Instance name</label>
-            <input x-model="spawnInstanceLabel"
-              @keydown.enter="requestInstance()"
-              placeholder="e.g. researcher, coder, sysadmin"
-              maxlength="32"
-              class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-indigo-500 transition-colors font-mono">
-            <div class="text-[10px] text-gray-600 mt-1">Lowercase letters, numbers, hyphens. Defaults to soul name. You can run multiple agents with different names.</div>
-          </div>
-          <div class="flex gap-3 items-end mb-3">
-            <div class="flex-1">
-              <label class="text-xs text-gray-500 block mb-1">Person's name</label>
-              <!-- Admins: searchable dropdown of all users -->
-              <template x-if="authUser && authUser.role === 'admin'">
-                <div class="relative">
-                  <input x-model="newInstanceRequester"
-                    @input="instanceUserDropdownOpen = true"
-                    @focus="instanceUserDropdownOpen = true"
-                    @blur="setTimeout(() => instanceUserDropdownOpen = false, 150)"
-                    @keydown.escape="instanceUserDropdownOpen = false"
-                    @keydown.enter="requestInstance()"
-                    placeholder="Search users…"
-                    class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-indigo-500 transition-colors">
-                  <div x-show="instanceUserDropdownOpen && instanceUserList.filter(u => !newInstanceRequester || u.toLowerCase().includes(newInstanceRequester.toLowerCase())).length > 0"
-                    x-cloak class="absolute z-50 top-full mt-1 w-full bg-gray-800 border border-gray-700 rounded-lg shadow-xl overflow-auto" style="max-height:180px">
-                    <template x-for="u in instanceUserList.filter(u => !newInstanceRequester || u.toLowerCase().includes(newInstanceRequester.toLowerCase()))" :key="u">
-                      <div @click="newInstanceRequester = u; instanceUserDropdownOpen = false"
-                        class="px-3 py-2 text-sm text-white hover:bg-gray-700 cursor-pointer" x-text="u"></div>
-                    </template>
-                  </div>
-                </div>
-              </template>
-              <!-- Non-admins: read-only, pre-filled with their own name -->
-              <template x-if="!authUser || authUser.role !== 'admin'">
-                <input :value="authUser ? (authUser.display_name || authUser.username) : ''"
-                  readonly class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-400 cursor-not-allowed">
-              </template>
-            </div>
-            <button @click="requestInstance()"
-              :disabled="!newInstanceRequester.trim() || instanceSpawning"
-              class="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 disabled:cursor-not-allowed text-white text-sm font-medium rounded-lg transition-colors flex items-center gap-2">
-              <span x-show="instanceSpawning" class="animate-spin text-xs">&#9881;</span>
-              <span>Spawn</span>
-            </button>
-          </div>
-          <template x-if="can('override_toolsets') && selectedSoul?.toolsets?.optional?.length > 0">
-            <div class="mb-3">
-              <div class="text-xs text-gray-500 mb-2">Optional toolsets</div>
-              <div class="flex flex-wrap gap-3">
-                <template x-for="ts in selectedSoul.toolsets.optional" :key="ts">
-                  <label class="flex items-center gap-1.5 cursor-pointer text-xs">
-                    <input type="checkbox" x-model="spawnOptionalEnabled[ts]"
-                      class="rounded border-gray-600 bg-gray-800 accent-indigo-500">
-                    <span class="text-gray-400 font-mono" x-text="ts"></span>
-                  </label>
-                </template>
-              </div>
-            </div>
-          </template>
-          <template x-if="instanceMsg">
-            <div class="mt-2 text-xs px-3 py-2 rounded-lg"
-              :class="instanceMsg.ok ? 'bg-green-950 text-green-300 border border-green-800' : 'bg-red-950 text-red-300 border border-red-800'"
-              x-text="instanceMsg.text"></div>
-          </template>
-          <div class="mt-2 text-xs text-gray-700">500m CPU / 2Gi RAM req · 4 cores / 6Gi limit · own PVC · auto NodePort</div>
-        </div>
-      </template>
-    </div>
-
-    <!-- Quick spawn templates -->
-    <template x-if="(can('spawn_instance') || can('spawn_instance_restricted')) && spawnTemplates.length > 0">
-      <div class="mt-4">
-        <div class="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Quick Spawn</div>
-        <div class="space-y-1.5">
-          <template x-for="t in spawnTemplates" :key="t.id">
-            <div class="flex items-center gap-2 px-3 py-2 rounded-lg bg-gray-900 border border-gray-800 hover:border-gray-700 transition-colors">
-              <!-- Chips -->
-              <span class="text-xs px-1.5 py-0.5 rounded font-mono bg-indigo-950 text-indigo-300 border border-indigo-900 shrink-0"
-                x-text="t.soul_name"></span>
-              <span class="text-xs px-1.5 py-0.5 rounded font-mono bg-[var(--accent-subtle)] text-[var(--accent)] border border-[var(--accent)]/40 shrink-0"
-                x-text="t.model_alias"></span>
-              <template x-for="ts in (t.optional_toolsets || [])" :key="ts">
-                <span class="text-xs px-1 py-0.5 rounded bg-gray-800 text-gray-500 border border-gray-700 font-mono shrink-0"
-                  x-text="ts"></span>
-              </template>
-              <!-- Requester -->
-              <span class="text-sm text-gray-300 truncate flex-1" x-text="t.requester"></span>
-              <!-- Actions -->
-              <button @click="spawnFromTemplate(t)" :disabled="instanceSpawning"
-                class="text-xs px-2.5 py-1 rounded-lg bg-[var(--accent)] hover:opacity-90 disabled:opacity-40 text-white font-medium shrink-0 transition-colors">
-                Spawn
-              </button>
-              <button @click="removeSpawnTemplate(t.id)"
-                class="text-xs px-1.5 py-1 rounded border border-gray-800 text-gray-700 hover:border-red-800 hover:text-red-400 transition-colors shrink-0"
-                title="Remove template">✕</button>
-            </div>
-          </template>
-        </div>
-      </div>
-    </template>
-
-    <!-- Grafana quick links -->
-    <div class="mt-5 flex flex-wrap gap-1.5 border-t border-gray-800 pt-4" x-data="{open:false}">
-      <button @click="open=!open"
-        class="text-xs text-gray-700 hover:text-gray-500 transition-colors">Observability ▾</button>
-      <div x-show="open" class="w-full flex flex-wrap gap-1.5 mt-1.5">
-        <a :href="routerState.grafana_url+'/d/hermes-logs'" target="_blank"
-           class="text-xs px-2.5 py-1 rounded border border-gray-800 text-gray-600 hover:text-gray-300 hover:border-gray-700 transition-colors">
-          Hermes Logs →
-        </a>
-        <a :href="routerState.grafana_url+'/d/docker-host-logs'" target="_blank"
-           class="text-xs px-2.5 py-1 rounded border border-gray-800 text-gray-600 hover:text-gray-300 hover:border-gray-700 transition-colors">
-          Docker Logs →
-        </a>
-        <a :href="routerState.grafana_url" target="_blank"
-           class="text-xs px-2.5 py-1 rounded border border-gray-800 text-gray-600 hover:text-gray-300 hover:border-gray-700 transition-colors">
-          Grafana →
-        </a>
-      </div>
-    </div>
-
-      </div><!-- /details content -->
-    </details><!-- /Resources & Administration -->
 
   </div>
 
@@ -5058,7 +4436,7 @@ function app() {
     // Named agents
     namedAgents: [],
     namedAgentFormOpen: false,
-    namedAgentForm: { name: '', soul_slug: 'general', model: '', description: '' },
+    namedAgentForm: { name: '', soul_slug: 'general', model: '', description: '', toolsets: [] },
     namedAgentEditId: null,
     namedAgentMsg: null,
     // soul registry + spawn flow
@@ -7041,7 +6419,7 @@ function app() {
         });
         if (r.ok) {
           this.namedAgentFormOpen = false;
-          this.namedAgentForm = { name: '', soul_slug: 'general', model: '', description: '' };
+          this.namedAgentForm = { name: '', soul_slug: 'general', model: '', description: '', toolsets: [] };
           await this.loadNamedAgents();
         } else {
           const d = await r.json().catch(() => ({}));
