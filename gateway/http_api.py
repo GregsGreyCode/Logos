@@ -402,7 +402,13 @@ async def _handle_status(request: web.Request) -> web.Response:
 
 
 async def _handle_model_patch(request: web.Request) -> web.Response:
-    """PATCH /api/model — change the active model at runtime and persist to config.yaml."""
+    """PATCH /api/model — change the active model at runtime and persist to config.yaml.
+
+    Also resolves the correct provider: if the model belongs to a cloud
+    provider, activate that provider.  If it belongs to a local machine,
+    switch provider to the local endpoint so requests don't get routed
+    to the wrong backend (e.g. sending a qwen model to Anthropic).
+    """
     try:
         body = await request.json()
     except Exception:
@@ -420,6 +426,56 @@ async def _handle_model_patch(request: web.Request) -> web.Response:
                 _cfg = _yaml.safe_load(_f) or {}
         _cfg["HERMES_MODEL"] = new_model
         os.environ["HERMES_MODEL"] = new_model
+
+        # Resolve the correct provider for this model
+        resolved_provider = None
+        # Check if model matches any cloud provider's active_model
+        try:
+            from gateway.auth import db as _adb
+            cloud_provs = _adb.list_cloud_providers()
+            for cp in cloud_provs:
+                if cp.get("active_model") == new_model:
+                    resolved_provider = cp.get("provider")  # e.g. "anthropic", "openrouter"
+                    # Also update endpoint env vars for this provider
+                    from gateway.setup_handlers import _FRONTIER_PROVIDERS
+                    frov = _FRONTIER_PROVIDERS.get(resolved_provider, {})
+                    _base_url = cp.get("base_url") or frov.get("base_url", "")
+                    _api_key = cp.get("api_key") or ""
+                    os.environ["OPENAI_API_KEY"] = _api_key
+                    os.environ["OPENAI_BASE_URL"] = _base_url
+                    if frov.get("server_type"):
+                        os.environ["HERMES_SERVER_TYPE"] = frov["server_type"]
+                        _cfg["HERMES_SERVER_TYPE"] = frov["server_type"]
+                    break
+        except Exception:
+            pass
+
+        if not resolved_provider:
+            # Model is local — use local machine endpoint
+            try:
+                from gateway.auth import db as _adb
+                machines = _adb.list_machines()
+                for m in machines:
+                    if m.get("enabled") and m.get("endpoint_url"):
+                        # Use the first enabled local machine
+                        _base_url = m["endpoint_url"].rstrip("/")
+                        os.environ["OPENAI_BASE_URL"] = _base_url
+                        os.environ["OPENAI_API_KEY"] = m.get("api_key") or "not-needed"
+                        os.environ["HERMES_SERVER_TYPE"] = "lmstudio"
+                        _cfg["OPENAI_BASE_URL"] = _base_url
+                        _cfg["HERMES_SERVER_TYPE"] = "lmstudio"
+                        resolved_provider = "openai"
+                        break
+            except Exception:
+                pass
+
+        # Update config.yaml provider
+        if resolved_provider:
+            _cfg.setdefault("model", {})
+            if isinstance(_cfg["model"], str):
+                _cfg["model"] = {"default": _cfg["model"]}
+            _cfg["model"]["provider"] = resolved_provider
+
         with open(_config_path, "w", encoding="utf-8") as _f:
             _yaml.dump(_cfg, _f, default_flow_style=False, sort_keys=False)
     except Exception as exc:
