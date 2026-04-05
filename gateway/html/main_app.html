@@ -2890,7 +2890,7 @@
 
                 <!-- Last login -->
                 <td class="px-4 py-3 text-xs text-gray-600"
-                  x-text="u.last_login ? new Date(u.last_login*1000).toLocaleString(undefined,{dateStyle:'short',timeStyle:'short'}) : 'never'">
+                  x-text="u.last_login ? new Date(u.last_login).toLocaleString(undefined,{dateStyle:'short',timeStyle:'short'}) : 'never'">
                 </td>
 
                 <!-- Actions: set password · reset data · delete -->
@@ -5361,7 +5361,7 @@ function app() {
       if (!this.adminMachines.length) await this.loadAdminMachines();
       const results = await Promise.all(this.adminMachines.map(async m => {
         try {
-          const r = await fetch('/api/setup/probe?url=' + encodeURIComponent(m.endpoint_url), {credentials:'include'});
+          const r = await fetch('/api/setup/probe?url=' + encodeURIComponent(m.endpoint_url) + '&machine_id=' + encodeURIComponent(m.id), {credentials:'include'});
           const d = await r.json();
           return (d.servers || []).flatMap(s => (s.models || []).map(mod => mod.id || mod.name)).filter(Boolean);
         } catch(e) { return []; }
