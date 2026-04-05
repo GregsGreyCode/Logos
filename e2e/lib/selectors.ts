@@ -15,25 +15,25 @@ export const login = {
 
 // ── Main navigation ─────────────────────────────────────────────────────────
 export const nav = {
-  agentsTab: 'button:has-text("Agents")',
-  chatsTab: 'button:has-text("Chats")',
-  settingsTab: 'button:has-text("Settings")',
-  adminTab: 'button:has-text("Admin")',
-  accountMenu: 'button:has-text("Admin"):last-of-type', // top-right dropdown
+  agentsTab: '[data-testid="nav-agents"]',
+  chatsTab: '[data-testid="nav-chats"]',
+  settingsTab: '[data-testid="nav-settings"]',
+  adminTab: '[data-testid="nav-admin"]',
 } as const;
 
 // ── Chat ────────────────────────────────────────────────────────────────────
 export const chat = {
-  textarea: 'textarea[autocomplete="off"]',
-  sendButton: 'button:has-text("Send")',
+  textarea: '[data-testid="chat-input"]',
+  sendButton: '[data-testid="chat-send"]',
   newChatButton: 'button:has-text("New Chat"), button:has-text("New Topic")',
   addAgentButton: 'button:has-text("Add Agent")',
-  agentNameHeader: ".text-base.font-semibold",
+  agentNameHeader: '[data-testid="chat-agent-name"]',
   messageContainer: ".space-y-4",
-  // STAMP chips — use the bold letter as anchor
-  stampS: 'button:has(span.font-bold.text-indigo-500)',
-  stampM: 'button:has(span.font-bold)',
-  stampP: "span:has(span.font-bold.text-emerald-600)",
+  // STAMP chips
+  stampS: '[data-testid="stamp-s"]',
+  stampT: '[data-testid="stamp-t"]',
+  stampM: '[data-testid="stamp-m"]',
+  stampP: '[data-testid="stamp-p"]',
   // Platform filters
   filterWeb: 'button:has-text("Web")',
   filterTG: 'button:has-text("TG")',
@@ -93,7 +93,7 @@ export const admin = {
   approvalsTab: '.border-b button:has-text("Approvals")',
   // Users
   newUserButton: 'button:has-text("New User")',
-  userTable: "table",
+  userTable: '[data-testid="users-table"]',
   // Security
   newPolicyButton: 'button:has-text("New Policy")',
   // Workflows
