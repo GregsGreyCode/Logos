@@ -98,6 +98,8 @@ export class WorldManager {
     // Remove agents that no longer exist
     for (const [name, entry] of this.agents) {
       if (!currentNames.has(name)) {
+        entry.container.eventMode = 'none';
+        entry.container.removeAllListeners();
         this.agentLayer.removeChild(entry.container);
         entry.container.destroy({ children: true });
         this.agents.delete(name);
