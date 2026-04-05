@@ -70,7 +70,7 @@ export const settings = {
   toolsTab: 'button:has-text("Tools")',
   proposalsTab: 'button:has-text("Proposals")',
   // Inference
-  addProviderButton: 'button:has-text("Add Provider")',
+  addProviderButton: 'button:has-text("Add Provider"):visible >> nth=0',
   scanButton: 'button:has-text("Scan")',
   registerButton: 'button:has-text("Register")',
   pingButton: 'button:has-text("Ping")',
@@ -85,12 +85,12 @@ export const settings = {
 
 // ── Admin ───────────────────────────────────────────────────────────────────
 export const admin = {
-  usersTab: 'button:has-text("Users")',
-  securityTab: 'button:has-text("Security")',
-  workflowsTab: 'button:has-text("Workflows")',
-  runsTab: 'button:has-text("Runs")',
-  auditTab: 'button:has-text("Audit Log")',
-  approvalsTab: 'button:has-text("Approvals")',
+  usersTab: '.border-b button:has-text("Users")',
+  securityTab: '.border-b button:has-text("Security")',
+  workflowsTab: '.border-b button:has-text("Workflows")',
+  runsTab: '.border-b button:has-text("Runs")',
+  auditTab: '.border-b button:has-text("Audit Log")',
+  approvalsTab: '.border-b button:has-text("Approvals")',
   // Users
   newUserButton: 'button:has-text("New User")',
   userTable: "table",

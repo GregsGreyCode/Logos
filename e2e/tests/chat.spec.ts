@@ -24,10 +24,11 @@ test.describe("Chat @regression", () => {
     const name = await header.textContent();
     expect(name).toBeTruthy();
 
-    // STAMP chips should be present (S, T, M, P)
-    // At minimum, the S and P chips should render
-    await expect(page.locator("text=general").first()).toBeVisible();  // S: general
-    await expect(page.locator("text=default").first()).toBeVisible();  // P: default
+    // STAMP chips should be present — look for the bold letter labels
+    // These are inside the chat header, not the nav
+    const headerArea = page.locator(".px-4.pt-3");
+    await expect(headerArea.locator("text=general").first()).toBeVisible();  // S: general
+    await expect(headerArea.locator("text=default").first()).toBeVisible();  // P: default
   });
 
   test("chat input accepts text", async ({ page }) => {
@@ -49,7 +50,7 @@ test.describe("Chat @regression", () => {
     await sendMessage(page, testMsg);
 
     // The user's message should appear in the chat
-    await expect(page.locator(`text=${testMsg}`)).toBeVisible({ timeout: 5_000 });
+    await expect(page.locator(`text=${testMsg}`).first()).toBeVisible({ timeout: 5_000 });
   });
 
   test("send message triggers loading state", async ({ page }) => {
@@ -62,7 +63,7 @@ test.describe("Chat @regression", () => {
     await page.waitForTimeout(500);
 
     // The chat area should now have the user message
-    await expect(page.locator("text=Say hello")).toBeVisible();
+    await expect(page.locator("text=Say hello").first()).toBeVisible();
   });
 
   // This test requires an active inference backend
