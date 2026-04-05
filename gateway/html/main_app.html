@@ -498,7 +498,7 @@
       <div class="w-44 shrink-0 flex flex-col h-full">
         <button @click="newChat()"
           class="w-full mb-2 px-3 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-sm rounded-lg font-medium transition-colors flex items-center justify-center gap-2">
-          <span>＋</span><span x-text="(() => { const chat = webChats.find(c => c.id === activeChatId); return chat?.agent_name ? 'New Topic' : 'New Chat'; })()"></span>
+          <span>＋</span><span x-text="(() => { const chat = chats.find(c => c.id === activeChatId); return chat?.agent_name ? 'New Topic' : 'New Chat'; })()"></span>
         </button>
         <button @click="tab='agents'; loadInstances(); loadSouls()"
           class="w-full mb-3 px-3 py-1.5 bg-gray-900 hover:bg-gray-800 text-gray-500 hover:text-gray-300 text-xs rounded-lg transition-colors flex items-center justify-center gap-1.5 border border-gray-800 hover:border-gray-700"
@@ -589,7 +589,7 @@
                 <button @click="if (namedAgents.length) open = !open"
                   class="text-base font-semibold text-white transition-colors flex items-center gap-1.5"
                   :class="namedAgents.length ? 'hover:text-emerald-300 cursor-pointer' : 'cursor-default'">
-                  <span x-text="(() => { const chat = webChats.find(c => c.id === activeChatId); return chat?.agent_name || status.instance_name || 'Hermes'; })()"></span>
+                  <span x-text="(() => { const chat = chats.find(c => c.id === activeChatId); return chat?.agent_name || status.instance_name || 'Hermes'; })()"></span>
                   <span x-show="namedAgents.length" class="text-gray-600 text-xs">&#9662;</span>
                 </button>
                 <!-- Agent switcher dropdown -->
@@ -597,7 +597,7 @@
                   <template x-for="a in namedAgents" :key="a.id">
                     <button @click="chatWithAgent(a); open = false"
                       class="block w-full text-left px-3 py-1.5 text-xs transition-colors"
-                      :class="(() => { const chat = webChats.find(c => c.id === activeChatId); return chat?.agent_id === a.id ? 'text-white bg-emerald-950' : 'text-gray-400 hover:text-white hover:bg-gray-800'; })()">
+                      :class="(() => { const chat = chats.find(c => c.id === activeChatId); return chat?.agent_id === a.id ? 'text-white bg-emerald-950' : 'text-gray-400 hover:text-white hover:bg-gray-800'; })()">
                       <span class="font-medium" x-text="a.name"></span>
                       <span class="text-gray-600 ml-1.5" x-text="a.soul_slug"></span>
                     </button>
@@ -5950,7 +5950,7 @@ function app() {
 
     retryLastMessage() {
       // Find the last user message and resend it
-      const chat = this.webChats.find(c => c.id === this.activeChatId);
+      const chat = this.chats.find(c => c.id === this.activeChatId);
       if (!chat) return;
       const lastUserMsg = [...chat.messages].reverse().find(m => m.role === 'user');
       if (lastUserMsg) {
@@ -5971,7 +5971,7 @@ function app() {
           body: JSON.stringify({ default_soul: slug }),
         });
         this.selectedSoul = slug;
-        if (this.currentInstance) this.currentInstance.soul = slug;
+        if (this.activeInstance) this.activeInstance.soul = slug;
       } catch {}
     },
 
@@ -5984,7 +5984,7 @@ function app() {
           headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken() },
           body: JSON.stringify({ message: '/model ' + modelId, session_id: this.activeChatId }),
         });
-        if (this.currentInstance) this.currentInstance.model = modelId;
+        if (this.activeInstance) this.activeInstance.model = modelId;
       } catch {}
     },
 
@@ -6459,7 +6459,7 @@ function app() {
       // For now, create a new chat named after the agent
       const chatId = 'agent-' + agent.id + '-' + Math.random().toString(36).slice(2, 8);
       const chat = { id: chatId, name: agent.name, messages: [], created_at: Date.now(), updated_at: Date.now(), agent_id: agent.id, agent_name: agent.name };
-      this.webChats = [chat, ...this.webChats];
+      this.chats = [chat, ...this.chats];
       this.activeChatId = chatId;
       this._saveChats();
     },
