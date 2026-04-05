@@ -272,7 +272,7 @@
       @click="tab='agents'; loadInstances(); loadSouls(); loadAdminMachines(); loadNamedAgents(); loadToolsets(); initWorld()">Agents</button>
     <button class="pb-2 text-sm font-medium border-b-2 border-transparent"
       :class="tab==='sessions'?'tab-active':'text-gray-400 hover:text-white'"
-      @click="tab='sessions'; if(!clusterInstances.length) loadInstances(); if(!soulsLoaded) loadSouls(); if(!namedAgents.length) loadNamedAgents()">Chats</button>
+      @click="tab='sessions'; if(!clusterInstances.length) loadInstances(); if(!soulsLoaded) loadSouls(); if(!namedAgents.length) loadNamedAgents(); if(!cloudProviders.length) loadCloudProviders(); if(!adminMachines.length) loadAdminMachines()">Chats</button>
     <template x-if="can('manage_machines') || can('manage_profiles') || can('view_routing_debug') || can('view_evolution')">
       <button class="pb-2 text-sm font-medium border-b-2 border-transparent"
         :class="tab==='infra'?'tab-active':'text-gray-400 hover:text-white'"

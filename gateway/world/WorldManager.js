@@ -24,7 +24,7 @@ export class WorldManager {
     this.app = new PIXI.Application({
       width: containerEl.clientWidth || 600,
       height: containerEl.clientHeight || 400,
-      backgroundColor: 0x2d3748,
+      backgroundColor: 0x0a0a0f,
       antialias: false,
       resolution: window.devicePixelRatio || 1,
       autoDensity: true,
