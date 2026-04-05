@@ -8,7 +8,7 @@ const BASE_URL = process.env.BASE_URL || "http://localhost:8080";
 
 export default defineConfig({
   testDir: "./tests",
-  fullyParallel: false, // Sequential — Logos is single-instance, shared state
+  fullyParallel: false,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 1 : 0,
   workers: 1,
@@ -24,22 +24,23 @@ export default defineConfig({
     video: "retain-on-failure",
     actionTimeout: 10_000,
     navigationTimeout: 15_000,
+    ...devices["Desktop Chrome"],
   },
 
+  // Single project — auth.setup.ts runs first via globalSetup-like pattern.
+  // Each test file that needs auth calls ensureLoggedIn() or uses storageState.
   projects: [
-    // Auth setup — runs first, saves session state
     {
-      name: "auth-setup",
+      name: "setup",
       testMatch: /auth\.setup\.ts/,
     },
-    // Main tests — reuse authenticated session
     {
-      name: "chromium",
+      name: "tests",
+      testIgnore: /auth\.setup\.ts/,
       use: {
-        ...devices["Desktop Chrome"],
         storageState: ".auth/admin.json",
       },
-      dependencies: ["auth-setup"],
+      dependencies: ["setup"],
     },
   ],
 });
