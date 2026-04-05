@@ -413,6 +413,8 @@ def _run_migrations() -> None:
             "ALTER TABLE machines ADD COLUMN default_model TEXT",
             # v6: machine api key (optional bearer token for auth-protected local servers)
             "ALTER TABLE machines ADD COLUMN api_key TEXT",
+            # v7: per-agent toolset config (JSON array of enabled toolset names)
+            "ALTER TABLE agents ADD COLUMN toolsets TEXT",
         ):
             try:
                 conn.execute(stmt)
@@ -850,14 +852,15 @@ def get_active_cloud_provider() -> Optional[dict]:
 # ── Named agents ─────────────────────────────────────────────────────────────
 
 def create_agent(name: str, soul_slug: str = "general", model: str = "",
-                 description: str = "", creator_id: str = "", shared: bool = True) -> dict:
+                 description: str = "", creator_id: str = "", shared: bool = True,
+                 toolsets: str = "") -> dict:
     aid = _new_id("agent")
     now = int(time.time() * 1000)
     with _conn() as conn:
         conn.execute(
-            """INSERT INTO agents (id, name, soul_slug, model, description, creator_id, shared, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (aid, name, soul_slug, model or "", description or "", creator_id or "", 1 if shared else 0, now, now),
+            """INSERT INTO agents (id, name, soul_slug, model, description, creator_id, shared, toolsets, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (aid, name, soul_slug, model or "", description or "", creator_id or "", 1 if shared else 0, toolsets or "", now, now),
         )
     return get_agent(aid)
 
@@ -888,7 +891,7 @@ def list_agents(user_id: str = "") -> list[dict]:
 
 
 def update_agent(agent_id: str, **fields) -> Optional[dict]:
-    allowed = {"name", "soul_slug", "model", "description", "shared"}
+    allowed = {"name", "soul_slug", "model", "description", "shared", "toolsets"}
     updates = {k: v for k, v in fields.items() if k in allowed}
     if not updates:
         return get_agent(agent_id)
