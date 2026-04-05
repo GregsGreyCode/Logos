@@ -5900,23 +5900,41 @@ function app() {
 
     _worldAgentList() {
       // Build a unified list from all sources:
+      // - Named agents (persistent entities — primary source)
       // - Connected workers (includes the primary in-process agent "hermes")
       // - Spawned instances (old-style full gateways, being phased out)
       const agents = [];
       const seen = new Set();
 
-      // Workers (local + remote) — these are the real agents
-      for (const w of (this._connectedWorkers || [])) {
-        seen.add(w.worker_id);
+      // Named agents first — these are the user-facing entities
+      for (const a of (this.namedAgents || [])) {
+        seen.add(a.name.toLowerCase());
         agents.push({
-          name: w.worker_id,
-          instance_name: w.instance_label || w.worker_id,
-          instance_label: w.instance_label,
-          status: w.healthy ? 'running' : 'starting',
-          k8s_status: w.healthy ? 'running' : 'starting',
-          soul: { name: w.soul, slug: w.soul },
-          source: 'worker',
+          name: a.name,
+          instance_name: a.name,
+          instance_label: '',
+          status: 'running',
+          k8s_status: 'running',
+          soul: { name: a.soul_slug, slug: a.soul_slug },
+          source: 'named',
+          _namedAgent: a,
         });
+      }
+
+      // Workers (local + remote) — these are runtime instances
+      for (const w of (this._connectedWorkers || [])) {
+        if (!seen.has((w.instance_label || w.worker_id).toLowerCase())) {
+          seen.add(w.worker_id);
+          agents.push({
+            name: w.worker_id,
+            instance_name: w.instance_label || w.worker_id,
+            instance_label: w.instance_label,
+            status: w.healthy ? 'running' : 'starting',
+            k8s_status: w.healthy ? 'running' : 'starting',
+            soul: { name: w.soul, slug: w.soul },
+            source: 'worker',
+          });
+        }
       }
 
       // Spawned instances not already covered by workers
@@ -5926,8 +5944,8 @@ function app() {
         }
       }
 
-      // Fallback: if no workers loaded yet, show primary as a placeholder
-      if (!seen.has('hermes') && agents.length === 0) {
+      // Fallback: if no named agents and no workers, show primary as placeholder
+      if (agents.length === 0) {
         agents.push({
           name: 'hermes',
           instance_name: this.status?.instance_name || 'Hermes',
@@ -5954,7 +5972,17 @@ function app() {
       // Dynamic import of world modules
       const { WorldManager } = await import('/world/WorldManager.js');
       this.worldManager = new WorldManager(el, {
-        onAgentClick: (name) => this.openInspector(name),
+        onAgentClick: (name) => {
+          // If it's a named agent, navigate to chat with it
+          const named = this.namedAgents.find(a => a.name === name);
+          if (named) {
+            this.chatWithAgent(named);
+          } else {
+            // Runtime instance — switch to it and open chat
+            this.switchInstance('self');
+            this.tab = 'sessions';
+          }
+        },
       });
 
       // Sync current agents
@@ -5966,6 +5994,10 @@ function app() {
       });
       // Also watch status changes (for the primary agent name)
       this.$watch('status', () => {
+        if (this.worldManager) this.worldManager.syncAgents(this._worldAgentList());
+      });
+      // Watch named agents so new/deleted agents appear in the world
+      this.$watch('namedAgents', () => {
         if (this.worldManager) this.worldManager.syncAgents(this._worldAgentList());
       });
     },
