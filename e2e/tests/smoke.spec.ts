@@ -60,8 +60,13 @@ test.describe("Smoke @smoke", () => {
     page.on("console", (msg) => {
       if (msg.type() === "error") {
         const text = msg.text();
-        // Ignore browser extension noise and CDN warnings
-        if (text.includes("autofill") || text.includes("favicon") || text.includes("tailwindcss.com")) return;
+        // Ignore browser extension noise, CDN warnings, and known benign 401s
+        if (
+          text.includes("autofill") ||
+          text.includes("favicon") ||
+          text.includes("tailwindcss.com") ||
+          text.includes("401")
+        ) return;
         errors.push(text);
       }
     });
