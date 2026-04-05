@@ -17,8 +17,8 @@ test.describe("Settings @regression", () => {
 
   test.describe("Inference", () => {
     test("shows cloud providers section with add button", async ({ page }) => {
-      await expect(page.locator("text=Cloud Providers")).toBeVisible();
-      await expect(page.locator(settings.addProviderButton)).toBeVisible();
+      await expect(page.locator("text=Cloud Providers").first()).toBeVisible();
+      await expect(page.locator(settings.addProviderButton).first()).toBeVisible();
     });
 
     test("shows local servers section", async ({ page }) => {
@@ -27,7 +27,7 @@ test.describe("Settings @regression", () => {
     });
 
     test("add provider form opens on click", async ({ page }) => {
-      await page.locator(settings.addProviderButton).click();
+      await page.locator(settings.addProviderButton).first().click();
       await page.waitForTimeout(500);
 
       // Form should appear with provider type options
