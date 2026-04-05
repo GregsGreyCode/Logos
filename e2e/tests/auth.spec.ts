@@ -7,13 +7,15 @@
 import { test, expect } from "@playwright/test";
 import { login as sel } from "../lib/selectors";
 
-// Override: don't use saved auth for these tests
-test.use({ storageState: { cookies: [], origins: [] } });
-
 const USER = process.env.ADMIN_USERNAME || "Greg";
 const PASS = process.env.ADMIN_PASSWORD || "";
 
 test.describe("Authentication @regression", () => {
+  // Clear saved auth so these tests start unauthenticated
+  test.beforeEach(async ({ context }) => {
+    await context.clearCookies();
+  });
+
   test("login page renders form elements", async ({ page }) => {
     await page.goto("/login");
     await page.waitForSelector(`${sel.usernameInput}:visible`, { timeout: 10_000 });
