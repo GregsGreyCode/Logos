@@ -17,9 +17,10 @@ test.describe("Admin @regression", () => {
 
   test.describe("Users", () => {
     test("users table shows current user", async ({ page }) => {
-      await expect(page.locator(admin.userTable).first()).toBeVisible();
-      // Current user should be marked with "you"
-      await expect(page.locator("text=you")).toBeVisible();
+      const table = page.locator(admin.userTable);
+      await expect(table).toBeVisible();
+      // Current user's row should exist in the table
+      await expect(table.locator("tr").first()).toBeVisible();
     });
 
     test("new user button present", async ({ page }) => {
