@@ -24,23 +24,10 @@ export default defineConfig({
     video: "retain-on-failure",
     actionTimeout: 10_000,
     navigationTimeout: 15_000,
+    storageState: ".auth/admin.json",
     ...devices["Desktop Chrome"],
   },
 
-  // Single project — auth.setup.ts runs first via globalSetup-like pattern.
-  // Each test file that needs auth calls ensureLoggedIn() or uses storageState.
-  projects: [
-    {
-      name: "setup",
-      testMatch: /auth\.setup\.ts/,
-    },
-    {
-      name: "tests",
-      testIgnore: /auth\.setup\.ts/,
-      use: {
-        storageState: ".auth/admin.json",
-      },
-      dependencies: ["setup"],
-    },
-  ],
+  // Global setup: authenticate once before all tests
+  globalSetup: "./global-setup.ts",
 });
