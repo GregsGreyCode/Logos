@@ -91,7 +91,7 @@ export async function loginViaUI(
   await page.locator(loginSel.passwordInput).fill(password);
   await page.locator(loginSel.passwordInput).press("Enter");
   // Wait for main nav to appear (proves login succeeded)
-  await page.waitForSelector(nav.agentsTab, { timeout: 15_000 });
+  await page.waitForSelector('[data-testid="nav-agents"]', { timeout: 15_000 });
 }
 
 /** Log in via API (faster, for storageState setup). */
@@ -102,7 +102,7 @@ export async function loginViaAPI(page: Page, identifier: string, password: stri
   expect(resp.ok()).toBeTruthy();
   // Navigate to app to pick up cookies
   await page.goto("/");
-  await page.waitForSelector(nav.agentsTab, { timeout: 15_000 });
+  await page.waitForSelector('[data-testid="nav-agents"]', { timeout: 15_000 });
 }
 
 // ── Navigation ──────────────────────────────────────────────────────────────

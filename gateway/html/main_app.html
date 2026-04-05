@@ -269,18 +269,22 @@
     </div>
     <button class="pb-2 text-sm font-medium border-b-2 border-transparent"
       :class="tab==='agents'?'tab-active':'text-gray-400 hover:text-white'"
+      data-testid="nav-agents"
       @click="tab='agents'; loadInstances(); loadSouls(); loadAdminMachines(); loadNamedAgents(); loadToolsets(); initWorld()">Agents</button>
     <button class="pb-2 text-sm font-medium border-b-2 border-transparent"
       :class="tab==='sessions'?'tab-active':'text-gray-400 hover:text-white'"
+      data-testid="nav-chats"
       @click="tab='sessions'; if(!clusterInstances.length) loadInstances(); if(!soulsLoaded) loadSouls(); if(!namedAgents.length) loadNamedAgents(); if(!cloudProviders.length) loadCloudProviders(); if(!adminMachines.length) loadAdminMachines()">Chats</button>
     <template x-if="can('manage_machines') || can('manage_profiles') || can('view_routing_debug') || can('view_evolution')">
       <button class="pb-2 text-sm font-medium border-b-2 border-transparent"
         :class="tab==='infra'?'tab-active':'text-gray-400 hover:text-white'"
+        data-testid="nav-settings"
         @click="tab='infra'; loadAdminMachines(); loadCloudProviders(); loadRoutingData()">Settings</button>
     </template>
     <template x-if="can('manage_users') || can('view_audit_logs') || can('manage_workflows') || can('view_runs')">
       <button class="pb-2 text-sm font-medium border-b-2 border-transparent relative"
         :class="tab==='admin'?'tab-active':'text-gray-400 hover:text-white'"
+        data-testid="nav-admin"
         @click="tab='admin'; loadAdminData()">
         Admin
         <template x-if="pendingApprovalCount > 0">
@@ -576,7 +580,7 @@
         <div class="bg-gray-900 border border-gray-700 rounded-xl overflow-hidden flex flex-col h-full">
 
           <!-- Card header -->
-          <div class="px-4 pt-3 pb-2 border-b border-gray-800 shrink-0">
+          <div data-testid="chat-header" class="px-4 pt-3 pb-2 border-b border-gray-800 shrink-0">
 
             <!-- Row 1: Agent identity — who you are talking to -->
             <div class="flex items-center gap-2.5 mb-2">
@@ -587,7 +591,7 @@
               <!-- Agent name — prominent, clickable if named agents exist -->
               <div class="relative" x-data="{ open: false }" @click.away="open = false">
                 <button @click="if (namedAgents.length) open = !open"
-                  class="text-base font-semibold text-white transition-colors flex items-center gap-1.5"
+                  data-testid="chat-agent-name" class="text-base font-semibold text-white transition-colors flex items-center gap-1.5"
                   :class="namedAgents.length ? 'hover:text-emerald-300 cursor-pointer' : 'cursor-default'">
                   <span x-text="(() => { const chat = chats.find(c => c.id === activeChatId); return chat?.agent_name || status.instance_name || 'Hermes'; })()"></span>
                   <span x-show="namedAgents.length" class="text-gray-600 text-xs">&#9662;</span>
@@ -623,7 +627,7 @@
             <div class="flex items-center gap-1.5 flex-wrap">
               <!-- S: Soul — clickable dropdown -->
               <div class="relative" x-data="{ open: false }" @click.away="open = false">
-                <button @click="open = !open"
+                <button @click="open = !open" data-testid="stamp-s"
                   class="text-[10px] px-1.5 py-0.5 rounded font-mono border transition-colors cursor-pointer flex items-center gap-1"
                   :class="open ? 'bg-indigo-900 text-white border-indigo-500' : 'bg-indigo-950 text-indigo-300 border-indigo-900 hover:border-indigo-600'"
                   title="Soul — click to change">
@@ -640,7 +644,7 @@
                 </div>
               </div>
               <!-- T: Tools — only show count when tools exist -->
-              <span class="text-[10px] px-1.5 py-0.5 rounded font-mono border flex items-center gap-1"
+              <span data-testid="stamp-t" class="text-[10px] px-1.5 py-0.5 rounded font-mono border flex items-center gap-1"
                 :class="(webSession?.tool_count || chatStats?.tool_count) ? 'bg-gray-800 text-gray-400 border-gray-700' : 'bg-gray-800/50 text-gray-600 border-gray-800'"
                 :title="(webSession?.tool_count ? webSession.tool_count + ' tools used this session' : (chatStats?.tool_count || 0) + ' tools available')">
                 <span class="font-bold text-gray-500">T</span>
@@ -648,7 +652,7 @@
               </span>
               <!-- M: Model — clickable dropdown -->
               <div class="relative" x-data="{ open: false }" @click.away="open = false">
-                <button @click="open = !open"
+                <button @click="open = !open" data-testid="stamp-m"
                   class="text-[10px] px-1.5 py-0.5 rounded font-mono border transition-colors cursor-pointer flex items-center gap-1"
                   :class="open
                     ? 'bg-[var(--accent-muted)] text-white border-[var(--accent)]'
@@ -687,7 +691,7 @@
                 </div>
               </div>
               <!-- P: Policy -->
-              <span class="text-[10px] px-1.5 py-0.5 rounded font-mono bg-emerald-950 text-emerald-400 border border-emerald-900 flex items-center gap-1"
+              <span data-testid="stamp-p" class="text-[10px] px-1.5 py-0.5 rounded font-mono bg-emerald-950 text-emerald-400 border border-emerald-900 flex items-center gap-1"
                 title="Action policy">
                 <span class="font-bold text-emerald-600">P</span>
                 <span x-text="activeInstance.action_policy || 'default'"></span>
@@ -953,7 +957,7 @@
                 @input="autoResizeChat($el)"
                 x-ref="chatTextarea"
                 autocomplete="off"
-                rows="1"
+                data-testid="chat-input" rows="1"
                 class="block w-full bg-gray-800 border border-gray-700 rounded-lg px-4 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-indigo-500 transition-colors resize-none"
                 :class="chatDragOver ? 'border-indigo-400 bg-indigo-950/30' : ''"
                 style="height:38px;min-height:38px;max-height:7rem;line-height:20px;overflow-y:hidden;padding-top:8px;padding-bottom:8px;vertical-align:bottom;"
@@ -1008,7 +1012,7 @@
                 </svg>
               </template>
             </button>
-            <button @click="sendChat()" :disabled="activeInstance.k8s_status === 'starting'"
+            <button @click="sendChat()" :disabled="activeInstance.k8s_status === 'starting'" data-testid="chat-send"
               class="self-end bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 px-4 rounded-lg text-sm font-medium transition-colors"
               style="height:38px;">
               Send
@@ -2805,7 +2809,7 @@
 
       <!-- User table -->
       <div class="bg-gray-900 border border-gray-800 rounded-xl overflow-x-auto">
-        <table class="w-full text-sm">
+        <table data-testid="users-table" class="w-full text-sm">
           <thead>
             <tr class="border-b border-gray-800 text-xs text-gray-500">
               <th class="text-left px-4 py-3 font-medium">User</th>

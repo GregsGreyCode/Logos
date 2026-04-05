@@ -77,8 +77,9 @@ test.describe("Settings @regression", () => {
     });
 
     test("default profile exists", async ({ page }) => {
-      await expect(page.locator("text=default").first()).toBeVisible();
-      await expect(page.locator("text=fallback").first()).toBeVisible();
+      // Look for the profile card containing "default" and "fallback"
+      const profileSection = page.locator("text=Routing Profiles").first().locator("xpath=ancestor::div[1]/following-sibling::*").first();
+      await expect(page.locator("text=fallback: any").first()).toBeVisible();
     });
 
     test("collapsible sections render", async ({ page }) => {

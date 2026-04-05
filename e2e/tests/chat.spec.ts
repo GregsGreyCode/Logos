@@ -24,11 +24,11 @@ test.describe("Chat @regression", () => {
     const name = await header.textContent();
     expect(name).toBeTruthy();
 
-    // STAMP chips should be present — look for the bold letter labels
-    // These are inside the chat header, not the nav
-    const headerArea = page.locator(".px-4.pt-3");
-    await expect(headerArea.locator("text=general").first()).toBeVisible();  // S: general
-    await expect(headerArea.locator("text=default").first()).toBeVisible();  // P: default
+    // STAMP chips via data-testid
+    await expect(page.locator(chat.stampS)).toBeVisible();
+    await expect(page.locator(chat.stampT)).toBeVisible();
+    await expect(page.locator(chat.stampM)).toBeVisible();
+    await expect(page.locator(chat.stampP)).toBeVisible();
   });
 
   test("chat input accepts text", async ({ page }) => {
@@ -91,12 +91,7 @@ test.describe("Chat @regression", () => {
   });
 
   test("STAMP S chip opens soul dropdown", async ({ page }) => {
-    // Find a button in the STAMP row containing "S" and "general"
-    const sChip = page.locator('button:has-text("general")').first();
-    if (await sChip.count() === 0) {
-      test.skip(true, "S chip not found — may need data-testid");
-      return;
-    }
+    const sChip = page.locator(chat.stampS);
     await sChip.click();
     await page.waitForTimeout(500);
 
