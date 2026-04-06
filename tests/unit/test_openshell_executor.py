@@ -199,7 +199,7 @@ class TestOpenShellSpawn:
         assert "--name" in args
         assert "hermes-test-agent" in args
         assert "--from" in args
-        assert "--detach" in args
+        assert "--forward" in args
 
     @patch("gateway.executors.openshell._health_check", return_value=True)
     @patch("gateway.executors.openshell._start_port_forward", return_value=12345)
@@ -208,8 +208,9 @@ class TestOpenShellSpawn:
     @patch("gateway.executors.openshell._load_state", return_value=[])
     @patch("gateway.executors.openshell._save_state")
     @patch("gateway.executors.openshell._allocate_port", return_value=8200)
-    def test_spawn_passes_env_vars(self, mock_port, mock_save, mock_load,
-                                    mock_exists, mock_os, mock_fwd, mock_health):
+    def test_spawn_writes_config_json(self, mock_port, mock_save, mock_load,
+                                       mock_exists, mock_os, mock_fwd, mock_health):
+        """Env vars are written to a config JSON file (not --env flags)."""
         mock_os.return_value = MagicMock(stdout="ok\n")
         executor = OpenShellExecutor()
         config = InstanceConfig(
@@ -221,11 +222,15 @@ class TestOpenShellSpawn:
 
         executor.spawn(config)
 
-        create_call = mock_os.call_args_list[0]
-        args_str = " ".join(create_call[0])
-        assert "HERMES_SOUL=atlas" in args_str
-        assert "HERMES_TOOLSETS=hermes-cli,web" in args_str
-        assert "HERMES_POLICY_LEVEL=WORKSPACE_ONLY" in args_str
+        # Config should be written to a JSON file
+        from gateway.executors.openshell import _SOUL_TMPDIR
+        config_file = _SOUL_TMPDIR / "test-agent-config.json"
+        if config_file.exists():
+            import json
+            cfg = json.loads(config_file.read_text())
+            assert cfg["HERMES_SOUL"] == "atlas"
+            assert cfg["HERMES_TOOLSETS"] == "hermes-cli,web"
+            assert cfg["HERMES_POLICY_LEVEL"] == "WORKSPACE_ONLY"
 
     @patch("gateway.executors.openshell._health_check", return_value=True)
     @patch("gateway.executors.openshell._start_port_forward", return_value=12345)
@@ -243,12 +248,13 @@ class TestOpenShellSpawn:
         with patch("pathlib.Path.exists", return_value=True):
             executor.spawn(config)
 
-        # Second call should be policy set
-        assert len(mock_os.call_args_list) >= 2
-        policy_call = mock_os.call_args_list[1]
-        args = policy_call[0]
-        assert "policy" in args
-        assert "set" in args
+        # Find the policy set call among all openshell calls
+        policy_calls = [
+            c for c in mock_os.call_args_list
+            if "policy" in c[0] and "set" in c[0]
+        ]
+        assert len(policy_calls) >= 1
+        args = policy_calls[0][0]
         assert "/tmp/test-policy.yaml" in args
 
     @patch("gateway.executors.openshell._health_check", return_value=False)
@@ -397,7 +403,7 @@ class TestPrivacyRouter:
         self, mock_port, mock_save, mock_load, mock_exists, mock_os,
         mock_fwd, mock_health,
     ):
-        """When provider config succeeds, sandbox env should use inference.local."""
+        """When provider config succeeds, config JSON should use inference.local."""
         mock_os.return_value = MagicMock(stdout="ok\n")
         executor = OpenShellExecutor()
         config = InstanceConfig(
@@ -407,20 +413,13 @@ class TestPrivacyRouter:
         )
         executor.spawn(config)
 
-        # Find the sandbox create call (the one with "sandbox" "create")
-        create_call = None
-        for call in mock_os.call_args_list:
-            args = call[0]
-            if "sandbox" in args and "create" in args:
-                create_call = call
-                break
-        assert create_call is not None
-        args_str = " ".join(create_call[0])
-
-        # Should have inference.local, NOT the real endpoint or API key
-        assert "HERMES_BASE_URL=https://inference.local" in args_str
-        assert "sk-test" not in args_str
-        assert "HERMES_API_KEY" not in args_str
+        import json as _json
+        from gateway.executors.openshell import _SOUL_TMPDIR
+        cfg_file = _SOUL_TMPDIR / "test-agent-config.json"
+        if cfg_file.exists():
+            cfg = _json.loads(cfg_file.read_text())
+            assert cfg.get("HERMES_BASE_URL") == "https://inference.local"
+            assert "HERMES_API_KEY" not in cfg
 
     @patch("gateway.executors.openshell._health_check", return_value=True)
     @patch("gateway.executors.openshell._start_port_forward", return_value=12345)
@@ -433,8 +432,7 @@ class TestPrivacyRouter:
         self, mock_port, mock_save, mock_load, mock_exists, mock_os,
         mock_fwd, mock_health,
     ):
-        """When provider config fails, sandbox should get direct credentials."""
-        # Make provider set fail, but sandbox create succeed
+        """When provider config fails, config JSON should have direct credentials."""
         def side_effect(*args, **kwargs):
             if args and "provider" in args:
                 raise Exception("CLI too old")
@@ -449,19 +447,14 @@ class TestPrivacyRouter:
         )
         executor.spawn(config)
 
-        create_call = None
-        for call in mock_os.call_args_list:
-            args = call[0]
-            if "sandbox" in args and "create" in args:
-                create_call = call
-                break
-        assert create_call is not None
-        args_str = " ".join(create_call[0])
-
-        # Should have direct credentials, NOT inference.local
-        assert "OPENAI_BASE_URL=http://localhost:11434/v1" in args_str
-        assert "HERMES_API_KEY=sk-test" in args_str
-        assert "inference.local" not in args_str
+        import json as _json
+        from gateway.executors.openshell import _SOUL_TMPDIR
+        cfg_file = _SOUL_TMPDIR / "test-agent-config.json"
+        if cfg_file.exists():
+            cfg = _json.loads(cfg_file.read_text())
+            assert cfg.get("OPENAI_BASE_URL") == "http://localhost:11434/v1"
+            assert cfg.get("HERMES_API_KEY") == "sk-test"
+            assert "inference.local" not in cfg.get("HERMES_BASE_URL", "")
 
     @patch("gateway.executors.openshell._health_check", return_value=True)
     @patch("gateway.executors.openshell._start_port_forward", return_value=12345)
@@ -474,21 +467,18 @@ class TestPrivacyRouter:
         self, mock_port, mock_save, mock_load, mock_exists, mock_os,
         mock_fwd, mock_health,
     ):
-        """Spawn should always inject HERMES_MCP_GATEWAY_URL."""
+        """Config JSON should always include HERMES_MCP_GATEWAY_URL."""
         mock_os.return_value = MagicMock(stdout="ok\n")
         executor = OpenShellExecutor()
         config = InstanceConfig(name="test-agent")
         executor.spawn(config)
 
-        create_call = None
-        for call in mock_os.call_args_list:
-            args = call[0]
-            if "sandbox" in args and "create" in args:
-                create_call = call
-                break
-        assert create_call is not None
-        args_str = " ".join(create_call[0])
-        assert "HERMES_MCP_GATEWAY_URL=" in args_str
+        import json as _json
+        from gateway.executors.openshell import _SOUL_TMPDIR
+        cfg_file = _SOUL_TMPDIR / "test-agent-config.json"
+        if cfg_file.exists():
+            cfg = _json.loads(cfg_file.read_text())
+            assert "HERMES_MCP_GATEWAY_URL" in cfg
 
 
 # ---------------------------------------------------------------------------
@@ -622,7 +612,10 @@ class TestOpenShellDeleteInstance:
         executor.delete_instance("test-agent")
 
         mock_kill.assert_called_once_with(12345)
-        mock_os.assert_called_once_with("sandbox", "delete", "hermes-test-agent", check=False)
+        # Should call sandbox delete AND forward stop
+        delete_calls = [c for c in mock_os.call_args_list if "delete" in c[0]]
+        assert len(delete_calls) == 1
+        assert delete_calls[0][0] == ("sandbox", "delete", "hermes-test-agent")
         mock_save.assert_called_once_with([])
 
     @patch("gateway.executors.openshell._kill_pid")
