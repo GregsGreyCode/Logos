@@ -256,6 +256,51 @@ class OpenShellExecutor:
         self.sandbox_image = sandbox_image
         self.policy_file = policy_file or (str(_DEFAULT_POLICY) if _DEFAULT_POLICY.exists() else None)
 
+    # ── Privacy Router ────────────────────────────────────────────────
+
+    def _configure_provider(self, config: InstanceConfig) -> bool:
+        """Configure OpenShell's Privacy Router for this sandbox session.
+
+        Calls ``openshell provider set`` so that ``inference.local`` inside
+        the sandbox forwards to the correct model endpoint with credentials
+        injected by the Privacy Router (outside the sandbox).
+
+        Returns True if the provider was successfully configured, False if
+        it failed (caller should fall back to passing credentials via env).
+        """
+        endpoint = config.machine_endpoint
+        api_key = config.api_key
+        if not endpoint:
+            return False
+
+        # Determine provider type from the endpoint URL
+        provider_type = "openai"  # default: OpenAI-compatible (Ollama, LM Studio, vLLM)
+        if "anthropic" in endpoint.lower():
+            provider_type = "anthropic"
+
+        try:
+            set_args = [
+                "provider", "set",
+                "--type", provider_type,
+                "--endpoint", endpoint,
+            ]
+            if api_key:
+                set_args += ["--api-key", api_key]
+
+            _openshell(*set_args, check=True)
+            logger.info(
+                "Configured OpenShell provider: type=%s endpoint=%s",
+                provider_type, endpoint,
+            )
+            # Provider propagation takes a few seconds
+            time.sleep(2)
+            return True
+        except Exception as exc:
+            logger.warning(
+                "Failed to configure OpenShell provider (will pass credentials via env): %s", exc
+            )
+            return False
+
     # ── Protocol methods ──────────────────────────────────────────────
 
     def spawn(self, config: InstanceConfig) -> SpawnedInstance:
@@ -284,6 +329,14 @@ class OpenShellExecutor:
         except Exception as exc:
             logger.warning("Could not resolve soul for '%s': %s", config.name, exc)
 
+        # ── Configure Privacy Router (inference.local) ────────────────────
+        # If an endpoint + optional API key are provided, configure
+        # OpenShell's Privacy Router so the sandbox uses inference.local
+        # instead of holding credentials directly.
+        _using_privacy_router = False
+        if config.machine_endpoint:
+            _using_privacy_router = self._configure_provider(config)
+
         # Build environment variables to inject into the sandbox
         env_args: list[str] = []
         env_vars = {
@@ -298,6 +351,22 @@ class OpenShellExecutor:
             env_vars["HERMES_TOOLSETS"] = ",".join(config.toolsets)
         if config.policy:
             env_vars["HERMES_POLICY_LEVEL"] = config.policy
+
+        # Inference routing: Privacy Router or direct credentials
+        if _using_privacy_router:
+            env_vars["HERMES_BASE_URL"] = "https://inference.local"
+            # No API key passed — Privacy Router injects it outside the sandbox
+        else:
+            # Fallback: pass endpoint + key directly (less secure, but functional)
+            if config.machine_endpoint:
+                env_vars["OPENAI_BASE_URL"] = config.machine_endpoint
+            if config.api_key:
+                env_vars["HERMES_API_KEY"] = config.api_key
+
+        # MCP gateway URL for tool access from inside the sandbox
+        _mcp_port = os.getenv("HERMES_MCP_PORT", "8081")
+        env_vars["HERMES_MCP_GATEWAY_URL"] = f"http://host.docker.internal:{_mcp_port}"
+
         for k, v in env_vars.items():
             env_args += ["--env", f"{k}={v}"]
 
