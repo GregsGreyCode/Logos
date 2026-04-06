@@ -4,3 +4,7 @@ dist/
 playwright-report/
 test-results/
 .env
+*.json
+!package.json
+!package-lock.json
+!tsconfig.json

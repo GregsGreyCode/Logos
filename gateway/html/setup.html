@@ -26,22 +26,29 @@
       content:'';position:fixed;top:50%;left:50%;
       transform:translate(-50%,-50%);
       width:2400px;height:2400px;border-radius:50%;
-      background:#6366f1;
-      filter:blur(280px) hue-rotate(var(--hue-deg,0deg));
+      /* Pre-blurred radial gradient — simulates blur(280px) at zero GPU cost */
+      background:radial-gradient(circle,
+        hsl(var(--hue-num,239),84%,64%) 0%,
+        hsla(var(--hue-num,239),84%,64%,0.7) 15%,
+        hsla(var(--hue-num,239),84%,50%,0.3) 35%,
+        hsla(var(--hue-num,239),84%,30%,0.05) 55%,
+        transparent 70%);
       opacity:0;
       pointer-events:none;z-index:0;
       animation:orb-fadein 0.8s ease 0.1s forwards;
-      will-change:filter;
     }
     .setup-logo{filter:hue-rotate(var(--hue-deg,0deg));will-change:filter;}
     .setup-halo{
       position:absolute;inset:-280px;border-radius:50%;
-      background:#6366f1;
-      filter:blur(160px) hue-rotate(var(--hue-deg,0deg));
+      /* Pre-blurred radial gradient — simulates blur(160px) without CPU cost */
+      background:radial-gradient(circle,
+        hsl(var(--hue-num,239),84%,64%) 0%,
+        hsla(var(--hue-num,239),84%,64%,0.6) 20%,
+        hsla(var(--hue-num,239),84%,50%,0.2) 45%,
+        transparent 65%);
       opacity:0;
       pointer-events:none;
       animation:halo-fadein 0.8s ease 0.1s forwards;
-      will-change:filter;
     }
     /* Skip fade-in when arriving via login transition — halo and orb are already "on" */
     .setup-halo-instant{animation:none!important;opacity:0.14!important}
@@ -57,17 +64,20 @@
     .setup-scale .text-3xl{font-size:2rem}
     .setup-scale .text-4xl{font-size:2.5rem}
     .btn-primary{
-      background:linear-gradient(135deg,#6366f1 0%,#a855f7 100%);
+      /* Use hsl() with CSS var instead of filter:hue-rotate — zero CPU cost */
+      background:linear-gradient(135deg,
+        hsl(calc(var(--hue-num,239) + 0),84%,64%) 0%,
+        hsl(calc(var(--hue-num,239) + 30),65%,60%) 100%);
       color:#fff;font-weight:500;cursor:pointer;
-      box-shadow:0 1px 2px rgba(0,0,0,0.4),0 0 0 1px rgba(99,102,241,0.3) inset;
+      box-shadow:0 1px 2px rgba(0,0,0,0.4),0 0 0 1px hsla(calc(var(--hue-num,239)),84%,64%,0.3) inset;
       transition:opacity 150ms ease,box-shadow 150ms ease;
-      filter:hue-rotate(var(--hue-deg,0deg));
     }
-    .btn-primary:hover:not(:disabled){opacity:0.9;box-shadow:0 1px 2px rgba(0,0,0,0.5),0 0 20px rgba(168,85,247,0.2),0 0 0 1px rgba(168,85,247,0.35) inset;}
+    .btn-primary:hover:not(:disabled){opacity:0.9;box-shadow:0 1px 2px rgba(0,0,0,0.5),0 0 20px hsla(calc(var(--hue-num,239)+30),65%,60%,0.2),0 0 0 1px hsla(calc(var(--hue-num,239)+30),65%,60%,0.35) inset;}
     .btn-primary:active:not(:disabled){opacity:0.95;transform:translateY(1px);}
-    .btn-primary:disabled{opacity:0.4;cursor:not-allowed;filter:none;background:#4f46e5;}
-    .spinner-hue{filter:hue-rotate(var(--hue-deg,0deg));}
-    .icon-hue{filter:hue-rotate(var(--hue-deg,0deg));}
+    .btn-primary:disabled{opacity:0.4;cursor:not-allowed;background:#4f46e5;}
+    /* spinner-hue and icon-hue: use color property cycling instead of filter */
+    .spinner-hue{color:hsl(calc(var(--hue-num,239)),84%,64%);}
+    .icon-hue{color:hsl(calc(var(--hue-num,239)),70%,60%);}
     /* animation-delay set inline by JS to sync with login page cycle */
     @keyframes bench-border-cycle {
       0%   { box-shadow: 0 0 0 1px rgba(99,102,241,.55),  0 0 18px rgba(99,102,241,.18); }
@@ -90,8 +100,11 @@
       function tick(now) {
         if (now - lastTs > 66) { // ~15fps
           lastTs = now;
-          const deg = ((Date.now() / 1000) * 6 % 360).toFixed(1);
-          document.documentElement.style.setProperty('--hue-deg', deg + 'deg');
+          const hue = (Date.now() / 1000) * 6 % 360;
+          const deg = hue.toFixed(1);
+          const ds = document.documentElement.style;
+          ds.setProperty('--hue-deg', deg + 'deg');
+          ds.setProperty('--hue-num', deg);  // unitless for gradient hsl()
         }
         requestAnimationFrame(tick);
       }
