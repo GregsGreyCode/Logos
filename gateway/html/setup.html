@@ -31,8 +31,9 @@
       opacity:0;
       pointer-events:none;z-index:0;
       animation:orb-fadein 0.8s ease 0.1s forwards;
+      will-change:filter;
     }
-    .setup-logo{filter:hue-rotate(var(--hue-deg,0deg))}
+    .setup-logo{filter:hue-rotate(var(--hue-deg,0deg));will-change:filter;}
     .setup-halo{
       position:absolute;inset:-280px;border-radius:50%;
       background:#6366f1;
@@ -40,6 +41,7 @@
       opacity:0;
       pointer-events:none;
       animation:halo-fadein 0.8s ease 0.1s forwards;
+      will-change:filter;
     }
     /* Skip fade-in when arriving via login transition — halo and orb are already "on" */
     .setup-halo-instant{animation:none!important;opacity:0.14!important}
@@ -82,9 +84,15 @@
     (function(){
       // Anchor to wall-clock time — same colour at the same real-world second
       // on every page and after every refresh. 6 deg/s → full 360° in 60s.
-      function tick() {
-        const deg = ((Date.now() / 1000) * 6 % 360).toFixed(1);
-        document.documentElement.style.setProperty('--hue-deg', deg + 'deg');
+      // Throttled to ~15fps — hue cycling doesn't need 60fps and the blur
+      // filter on body::before is expensive to re-composite every frame.
+      let lastTs = 0;
+      function tick(now) {
+        if (now - lastTs > 66) { // ~15fps
+          lastTs = now;
+          const deg = ((Date.now() / 1000) * 6 % 360).toFixed(1);
+          document.documentElement.style.setProperty('--hue-deg', deg + 'deg');
+        }
         requestAnimationFrame(tick);
       }
       requestAnimationFrame(tick);
@@ -105,7 +113,7 @@
       <div class="spinner-hue flex items-center gap-1">
         <template x-for="i in [1,2,3,4,5,6,7]" :key="i">
           <div class="flex items-center gap-1">
-            <div class="w-2 h-2 rounded-full transition-all duration-500"
+            <div class="w-2 h-2 rounded-full transition-colors duration-500"
                  :class="step > i ? 'bg-indigo-400 cursor-pointer hover:scale-125' : step === i ? 'bg-indigo-500 scale-125' : 'bg-gray-700'"
                  @click="goTo(i)" :title="step > i ? 'Go back to step ' + i : ''"></div>
             <div x-show="i < 7" class="w-4 h-px transition-colors duration-500"
@@ -132,7 +140,7 @@
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 max-w-xl mx-auto">
           <!-- New install -->
           <button @click="setupMode = 'new'"
-            class="text-left p-6 rounded-2xl border border-gray-700 bg-gray-900 hover:border-indigo-500 hover:bg-gray-800/80 transition-all duration-200 group">
+            class="text-left p-6 rounded-2xl border border-gray-700 bg-gray-900 hover:border-indigo-500 hover:bg-gray-800/80 transition-colors duration-200 group">
             <div class="w-10 h-10 rounded-xl bg-indigo-950 border border-indigo-800 flex items-center justify-center mb-4 group-hover:bg-indigo-900 transition-colors">
               <svg class="w-5 h-5 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 12h14M12 5l7 7-7 7"/>
@@ -145,7 +153,7 @@
           </button>
           <!-- Connect to existing -->
           <button @click="setupMode = 'connect'; startConnectScan()"
-            class="text-left p-6 rounded-2xl border border-gray-700 bg-gray-900 hover:border-indigo-500 hover:bg-gray-800/80 transition-all duration-200 group">
+            class="text-left p-6 rounded-2xl border border-gray-700 bg-gray-900 hover:border-indigo-500 hover:bg-gray-800/80 transition-colors duration-200 group">
             <div class="w-10 h-10 rounded-xl bg-indigo-950 border border-indigo-800 flex items-center justify-center mb-4 group-hover:bg-indigo-900 transition-colors">
               <svg class="w-5 h-5 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1"/>
@@ -177,7 +185,7 @@
             <div class="space-y-2">
               <template x-for="inst in connectInstances" :key="inst.url">
                 <button @click="connectUrl = inst.url"
-                  class="w-full text-left flex items-center justify-between px-4 py-3 rounded-xl border transition-all duration-150"
+                  class="w-full text-left flex items-center justify-between px-4 py-3 rounded-xl border transition-colors duration-150"
                   :class="connectUrl === inst.url ? 'border-indigo-500 bg-indigo-950/40 text-white' : 'border-gray-700 bg-gray-900 hover:border-gray-600 text-gray-300'">
                   <div>
                     <div class="text-sm font-medium" x-text="inst.url"></div>
@@ -204,7 +212,7 @@
         <div class="flex items-center gap-3">
           <button @click="setupMode = null; connectError = ''" class="text-sm text-gray-500 hover:text-gray-300 transition-colors">&larr; Back</button>
           <button @click="saveRemoteConnect()" :disabled="!connectUrl || connectSaving"
-            class="flex-1 py-3 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 disabled:cursor-not-allowed text-white font-semibold text-sm transition-all duration-200">
+            class="flex-1 py-3 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 disabled:cursor-not-allowed text-white font-semibold text-sm transition-colors duration-200">
             <span x-show="!connectSaving">Connect &rarr;</span>
             <span x-show="connectSaving">Connecting&hellip;</span>
           </button>
@@ -226,7 +234,7 @@
               <div class="text-base font-semibold text-white" x-text="tldr ? &quot;What you're about to do:&quot; : &quot;What setup configures&quot;"></div>
               <!-- TL;DR toggle — top-right of the card header -->
               <button @click="tldr=!tldr"
-                class="spinner-hue text-xs px-4 py-1.5 rounded-full border font-semibold tracking-wide transition-all flex-shrink-0"
+                class="spinner-hue text-xs px-4 py-1.5 rounded-full border font-semibold tracking-wide transition-colors flex-shrink-0"
                 :class="tldr ? 'bg-indigo-950 border-indigo-500 text-indigo-200' : 'bg-gray-900 border-gray-600 text-gray-400 hover:border-gray-400 hover:text-gray-200'"
                 title="Toggle TL;DR mode">
                 <span x-text="tldr ? 'TL;DR ON ⚡' : 'Click here for TL;DR'"></span>
@@ -286,7 +294,7 @@
         <!-- Continue -->
         <div class="flex justify-center">
           <button @click="introConfirmed = true"
-            class="spinner-hue px-8 py-3 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-semibold transition-all duration-200">
+            class="spinner-hue px-8 py-3 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-semibold transition-colors duration-200">
             Continue &rarr;
           </button>
         </div>
@@ -301,7 +309,7 @@
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <!-- Local-first -->
           <button @click="selectTrack('local')"
-            class="icon-hue text-left p-5 rounded-2xl border border-gray-700 bg-gray-900 hover:border-indigo-500 hover:bg-gray-800/80 transition-all duration-200 group">
+            class="icon-hue text-left p-5 rounded-2xl border border-gray-700 bg-gray-900 hover:border-indigo-500 hover:bg-gray-800/80 transition-colors duration-200 group">
             <div class="w-9 h-9 rounded-xl bg-indigo-950 flex items-center justify-center mb-3 group-hover:bg-indigo-900 transition-colors border border-indigo-800">
               <svg class="w-4 h-4 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
@@ -317,7 +325,7 @@
           </button>
           <!-- Frontier-first -->
           <button @click="selectTrack('frontier')"
-            class="icon-hue text-left p-5 rounded-2xl border border-gray-700 bg-gray-900 hover:border-indigo-500 hover:bg-gray-800/80 transition-all duration-200 group">
+            class="icon-hue text-left p-5 rounded-2xl border border-gray-700 bg-gray-900 hover:border-indigo-500 hover:bg-gray-800/80 transition-colors duration-200 group">
             <div class="w-9 h-9 rounded-xl bg-indigo-950 flex items-center justify-center mb-3 group-hover:bg-indigo-900 transition-colors border border-indigo-800">
               <svg class="w-4 h-4 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
@@ -348,19 +356,19 @@
             <!-- Provider cards -->
             <div class="grid grid-cols-3 gap-2 mb-5">
               <button @click="frontierProvider = 'anthropic'; frontierError = ''; frontierModels = []; frontierBaseUrl = ''"
-                class="text-left p-3 rounded-xl border transition-all duration-200"
+                class="text-left p-3 rounded-xl border transition-colors duration-200"
                 :class="frontierProvider === 'anthropic' ? 'border-indigo-500 bg-indigo-950/30' : 'border-gray-700 bg-gray-900 hover:border-gray-500'">
                 <div class="font-semibold text-sm mb-0.5" :class="frontierProvider === 'anthropic' ? 'text-white' : 'text-gray-300'">Anthropic</div>
                 <div class="text-[10px] text-gray-500">Claude models</div>
               </button>
               <button @click="frontierProvider = 'openrouter'; frontierError = ''; frontierModels = []; frontierBaseUrl = ''"
-                class="text-left p-3 rounded-xl border transition-all duration-200"
+                class="text-left p-3 rounded-xl border transition-colors duration-200"
                 :class="frontierProvider === 'openrouter' ? 'border-indigo-500 bg-indigo-950/30' : 'border-gray-700 bg-gray-900 hover:border-gray-500'">
                 <div class="font-semibold text-sm mb-0.5" :class="frontierProvider === 'openrouter' ? 'text-white' : 'text-gray-300'">OpenRouter</div>
                 <div class="text-[10px] text-gray-500">200+ models, pay-per-use</div>
               </button>
               <button @click="frontierProvider = 'custom'; frontierError = ''; frontierModels = []"
-                class="text-left p-3 rounded-xl border transition-all duration-200"
+                class="text-left p-3 rounded-xl border transition-colors duration-200"
                 :class="frontierProvider === 'custom' ? 'border-indigo-500 bg-indigo-950/30' : 'border-gray-700 bg-gray-900 hover:border-gray-500'">
                 <div class="font-semibold text-sm mb-0.5" :class="frontierProvider === 'custom' ? 'text-white' : 'text-gray-300'">Custom</div>
                 <div class="text-[10px] text-gray-500">Any OpenAI-compatible</div>
@@ -448,12 +456,12 @@
               <div class="space-y-2">
                 <template x-for="group in groupedLocalServers" :key="group.type">
                   <template x-for="s in group.servers" :key="s.endpoint">
-                    <div class="p-4 rounded-xl border transition-all"
+                    <div class="p-4 rounded-xl border transition-colors"
                       :class="isServerSelected(s) ? 'border-indigo-500/60 bg-indigo-950/20' : 'border-gray-700 bg-gray-900'">
                       <div class="flex items-start gap-3">
                         <button @click="s.status==='up' && toggleServer(s)"
                           :class="isServerSelected(s) ? 'bg-indigo-500 border-indigo-500' : s.status==='up' ? 'border-gray-600 hover:border-gray-400 cursor-pointer' : 'border-gray-700 cursor-default opacity-40'"
-                          class="w-5 h-5 rounded border-2 flex items-center justify-center flex-shrink-0 mt-0.5 transition-all">
+                          class="w-5 h-5 rounded border-2 flex items-center justify-center flex-shrink-0 mt-0.5 transition-colors">
                           <svg x-show="isServerSelected(s)" class="w-3 h-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/>
                           </svg>
@@ -550,12 +558,12 @@
               <div class="text-[10px] text-gray-500 uppercase tracking-wider font-semibold mb-2 px-1">Remote Servers</div>
               <div class="space-y-2">
                 <template x-for="s in remoteServers" :key="s.endpoint">
-                  <div class="p-4 rounded-xl border transition-all"
+                  <div class="p-4 rounded-xl border transition-colors"
                     :class="isServerSelected(s) ? 'border-indigo-500/60 bg-indigo-950/20' : 'border-gray-700 bg-gray-900'">
                     <div class="flex items-start gap-3">
                       <button @click="toggleServer(s)"
                         :class="isServerSelected(s) ? 'bg-indigo-500 border-indigo-500' : 'border-gray-600 hover:border-gray-400 cursor-pointer'"
-                        class="w-5 h-5 rounded border-2 flex items-center justify-center flex-shrink-0 mt-0.5 transition-all">
+                        class="w-5 h-5 rounded border-2 flex items-center justify-center flex-shrink-0 mt-0.5 transition-colors">
                         <svg x-show="isServerSelected(s)" class="w-3 h-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/>
                         </svg>
@@ -819,7 +827,7 @@
             <div class="space-y-2 mb-4">
               <template x-for="m in catalogModels.filter(m => m.recommended)" :key="m.id">
                 <button @click="frontierSelectedModel = m.id"
-                  class="w-full text-left px-4 py-3 rounded-xl border transition-all duration-150"
+                  class="w-full text-left px-4 py-3 rounded-xl border transition-colors duration-150"
                   :class="frontierSelectedModel === m.id ? 'border-indigo-500 bg-indigo-950/30' : 'border-gray-700 bg-gray-900 hover:border-gray-500'">
                   <div class="flex items-center justify-between mb-1">
                     <div class="flex items-center gap-2">
@@ -846,7 +854,7 @@
             <div x-show="showAll" x-cloak class="space-y-1.5 mb-4">
               <template x-for="m in catalogModels.filter(m => !m.recommended)" :key="m.id">
                 <button @click="frontierSelectedModel = m.id"
-                  class="w-full text-left px-3 py-2 rounded-lg border transition-all duration-150"
+                  class="w-full text-left px-3 py-2 rounded-lg border transition-colors duration-150"
                   :class="frontierSelectedModel === m.id ? 'border-indigo-500 bg-indigo-950/20' : 'border-gray-800 bg-gray-900 hover:border-gray-600'">
                   <div class="flex items-center justify-between">
                     <div class="flex items-center gap-2">
@@ -863,7 +871,7 @@
               <!-- Fallback for models not in catalog -->
               <template x-for="mid in frontierModels.filter(m => !catalogModels.find(c => c.id === m))" :key="mid">
                 <button @click="frontierSelectedModel = mid"
-                  class="w-full text-left px-3 py-2 rounded-lg border transition-all duration-150"
+                  class="w-full text-left px-3 py-2 rounded-lg border transition-colors duration-150"
                   :class="frontierSelectedModel === mid ? 'border-indigo-500 bg-indigo-950/20' : 'border-gray-800 bg-gray-900 hover:border-gray-600'">
                   <span class="text-xs font-mono" :class="frontierSelectedModel === mid ? 'text-white' : 'text-gray-400'" x-text="mid"></span>
                 </button>
@@ -894,7 +902,7 @@
           </div>
           <div class="space-y-2">
             <template x-for="m in ollamaModelCatalog" :key="m.id">
-              <div class="p-4 rounded-xl bg-gray-900 border border-gray-800 hover:border-gray-700 transition-all">
+              <div class="p-4 rounded-xl bg-gray-900 border border-gray-800 hover:border-gray-700 transition-colors">
                 <div class="flex items-start justify-between gap-3">
                   <div class="flex-1 min-w-0">
                     <div class="flex items-center gap-2 flex-wrap">
@@ -917,7 +925,7 @@
               <span x-text="pullStatus||'Downloading\u2026'"></span><span x-text="pullProgress+'%'"></span>
             </div>
             <div class="h-1.5 bg-gray-800 rounded-full overflow-hidden">
-              <div class="h-full bg-indigo-500 rounded-full transition-all" :style="'width:'+pullProgress+'%'"></div>
+              <div class="h-full bg-indigo-500 rounded-full transition-colors" :style="'width:'+pullProgress+'%'"></div>
             </div>
           </div>
           <div x-show="pullError" class="text-xs text-red-400" x-text="pullError"></div>
@@ -1129,7 +1137,7 @@
                           <!-- Thin progress bar at card bottom (loading phase with known progress) -->
                           <div x-show="compareTesting[mid] && comparePhase[mid]?.step === 'loading' && comparePhase[mid]?.progress != null"
                             class="absolute bottom-0 left-0 right-0 h-0.5 bg-gray-800">
-                            <div class="h-full bg-indigo-500 transition-all duration-300 ease-out rounded-full"
+                            <div class="h-full bg-indigo-500 transition-colors duration-300 ease-out rounded-full"
                               :style="'width:' + Math.round((comparePhase[mid]?.progress || 0) * 100) + '%'"></div>
                           </div>
                           <!-- Result — fades + slides in from the right when it arrives -->
@@ -1331,7 +1339,7 @@
                 <template x-for="m in getModels()" :key="m.id">
                   <button @click="pickServerModel(m._serverEndpoint || activeServer.endpoint, m.id); compareRecommended = m.id"
                     :class="selectedModel === m.id ? 'border-indigo-500 bg-indigo-950/30 text-white' : 'border-gray-800 hover:border-gray-700 text-gray-400'"
-                    class="w-full text-left px-3 py-2 rounded-lg bg-gray-900 border transition-all text-xs font-mono">
+                    class="w-full text-left px-3 py-2 rounded-lg bg-gray-900 border transition-colors text-xs font-mono">
                     <span x-text="m.id"></span>
                   </button>
                 </template>
@@ -1409,7 +1417,7 @@
         <div class="space-y-2 mb-4">
           <!-- Hermes — available -->
           <button @click="selectedAgentType = 'hermes'"
-            class="w-full text-left p-4 rounded-xl border transition-all duration-200"
+            class="w-full text-left p-4 rounded-xl border transition-colors duration-200"
             :class="selectedAgentType === 'hermes' ? 'border-indigo-500 bg-indigo-950/30 spinner-hue' : 'border-gray-800 bg-gray-900 hover:border-gray-700'">
             <div class="flex items-start gap-3">
               <div class="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0 mt-0.5 text-lg transition-colors"
@@ -1473,7 +1481,7 @@
 
             <!-- ── In-process ── -->
             <button @click="execEnv = 'local'"
-              class="w-full text-left p-4 rounded-xl border transition-all"
+              class="w-full text-left p-4 rounded-xl border transition-colors"
               :class="execEnv === 'local' ? 'border-yellow-600 bg-yellow-950/20' : 'border-gray-800 bg-gray-900 hover:border-gray-700'">
               <div class="flex items-start gap-3">
                 <span class="w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0 text-sm font-bold"
@@ -1506,7 +1514,7 @@
             <template x-if="sandboxProbe?.platform === 'linux'">
               <div>
                 <button @click="execEnv = 'k3s'; k8sTestResult = null; k8sTestError = '';"
-                  class="w-full text-left p-4 rounded-xl border transition-all"
+                  class="w-full text-left p-4 rounded-xl border transition-colors"
                   :class="execEnv === 'k3s' ? 'border-emerald-500 bg-emerald-950/30' : 'border-gray-800 bg-gray-900 hover:border-gray-700'">
                   <div class="flex items-start gap-3">
                     <span class="w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0 text-[10px] font-bold"
@@ -1574,7 +1582,7 @@
 
             <!-- ── Kubernetes ── -->
             <button @click="execEnv = 'k8s'; k8sTestResult = null; k8sTestError = '';"
-              class="w-full text-left p-4 rounded-xl border transition-all"
+              class="w-full text-left p-4 rounded-xl border transition-colors"
               :class="execEnv === 'k8s' ? 'border-indigo-500 bg-indigo-950/30' : 'border-gray-800 bg-gray-900 hover:border-gray-700'">
               <div class="flex items-start gap-3">
                 <span class="w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0 text-[10px] font-bold"
@@ -1679,7 +1687,7 @@
             <template x-for="(soul, idx) in soulOptions.slice(0, 5)" :key="soul.slug">
               <button
                 @click="soul.slug === 'general' && (selectedSoul = soul.slug)"
-                class="text-left p-3 rounded-xl border transition-all duration-200 relative overflow-hidden"
+                class="text-left p-3 rounded-xl border transition-colors duration-200 relative overflow-hidden"
                 :class="[
                   soul.slug === 'general'
                     ? (selectedSoul === soul.slug ? 'border-indigo-500 bg-indigo-950/30' : 'border-gray-800 bg-gray-900 hover:border-gray-600')
