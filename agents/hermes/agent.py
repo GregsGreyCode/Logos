@@ -5824,57 +5824,27 @@ class AIAgent:
 
                     # Check if response only has think block with no actual content after it
                     if not self._has_content_after_think_block(final_response):
-                        # If the previous turn already delivered real content alongside
-                        # tool calls (e.g. "You're welcome!" + memory save), the model
-                        # has nothing more to say. Use the earlier content immediately
-                        # instead of wasting API calls on retries that won't help.
-                        fallback = getattr(self, '_last_content_with_tools', None)
-                        if fallback:
-                            logger.debug("Empty follow-up after tool calls — using prior turn content as final response")
-                            self._last_content_with_tools = None
-                            self._empty_content_retries = 0
-                            for i in range(len(messages) - 1, -1, -1):
-                                msg = messages[i]
-                                if msg.get("role") == "assistant" and msg.get("tool_calls"):
-                                    tool_names = []
-                                    for tc in msg["tool_calls"]:
-                                        fn = tc.get("function", {})
-                                        tool_names.append(fn.get("name", "unknown"))
-                                    msg["content"] = f"Calling the {', '.join(tool_names)} tool{'s' if len(tool_names) > 1 else ''}..."
-                                    break
-                            final_response = self._strip_think_blocks(fallback).strip()
-                            self._response_was_previewed = True
-                            break
-
-                        # No fallback available — this is a genuine empty response.
-                        # Retry in case the model just had a bad generation.
-                        if not hasattr(self, '_empty_content_retries'):
-                            self._empty_content_retries = 0
-                        self._empty_content_retries += 1
-                        
-                        reasoning_text = self._extract_reasoning(assistant_message)
-                        self._vprint(f"{self.log_prefix}⚠️  Response only contains think block with no content after it")
-                        if reasoning_text:
-                            reasoning_preview = reasoning_text[:500] + "..." if len(reasoning_text) > 500 else reasoning_text
-                            self._vprint(f"{self.log_prefix}   Reasoning: {reasoning_preview}")
+                        # Some thinking models (e.g. qwen3.5 on LM Studio) put
+                        # their entire response in reasoning_content and leave
+                        # content empty.  Detect this and use reasoning_content
+                        # as the final response instead of retrying fruitlessly.
+                        _rc_text = self._extract_reasoning(assistant_message)
+                        if _rc_text and len(_rc_text.strip()) > 20:
+                            self._vprint(f"{self.log_prefix}💭 Content empty but reasoning_content has substantive text — using as response")
+                            final_response = _rc_text.strip()
+                            if hasattr(self, '_empty_content_retries'):
+                                self._empty_content_retries = 0
+                            # Fall through to normal response handling below
                         else:
-                            content_preview = final_response[:80] + "..." if len(final_response) > 80 else final_response
-                            self._vprint(f"{self.log_prefix}   Content: '{content_preview}'")
-                        
-                        if self._empty_content_retries < 3:
-                            self._vprint(f"{self.log_prefix}🔄 Retrying API call ({self._empty_content_retries}/3)...")
-                            continue
-                        else:
-                            self._vprint(f"{self.log_prefix}❌ Max retries (3) for empty content exceeded.", force=True)
-                            self._empty_content_retries = 0
-                            
-                            # If a prior tool_calls turn had real content, salvage it:
-                            # rewrite that turn's content to a brief tool description,
-                            # and use the original content as the final response here.
+                            # If the previous turn already delivered real content alongside
+                            # tool calls (e.g. "You're welcome!" + memory save), the model
+                            # has nothing more to say. Use the earlier content immediately
+                            # instead of wasting API calls on retries that won't help.
                             fallback = getattr(self, '_last_content_with_tools', None)
                             if fallback:
+                                logger.debug("Empty follow-up after tool calls — using prior turn content as final response")
                                 self._last_content_with_tools = None
-                                # Find the last assistant message with tool_calls and rewrite it
+                                self._empty_content_retries = 0
                                 for i in range(len(messages) - 1, -1, -1):
                                     msg = messages[i]
                                     if msg.get("role") == "assistant" and msg.get("tool_calls"):
@@ -5884,31 +5854,73 @@ class AIAgent:
                                             tool_names.append(fn.get("name", "unknown"))
                                         msg["content"] = f"Calling the {', '.join(tool_names)} tool{'s' if len(tool_names) > 1 else ''}..."
                                         break
-                                # Strip <think> blocks from fallback content for user display
                                 final_response = self._strip_think_blocks(fallback).strip()
                                 self._response_was_previewed = True
                                 break
-                            
-                            # No fallback -- append the empty message as-is
-                            empty_msg = {
-                                "role": "assistant",
-                                "content": final_response,
-                                "reasoning": reasoning_text,
-                                "finish_reason": finish_reason,
-                            }
-                            messages.append(empty_msg)
-                            
-                            self._cleanup_task_resources(effective_task_id)
-                            self._persist_session(messages, conversation_history)
-                            
-                            return {
-                                "final_response": final_response or None,
-                                "messages": messages,
-                                "api_calls": api_call_count,
-                                "completed": False,
-                                "partial": True,
-                                "error": "Model generated only think blocks with no actual response after 3 retries"
-                            }
+
+                            # No fallback available — this is a genuine empty response.
+                            # Retry in case the model just had a bad generation.
+                            if not hasattr(self, '_empty_content_retries'):
+                                self._empty_content_retries = 0
+                            self._empty_content_retries += 1
+
+                            reasoning_text = self._extract_reasoning(assistant_message)
+                            self._vprint(f"{self.log_prefix}⚠️  Response only contains think block with no content after it")
+                            if reasoning_text:
+                                reasoning_preview = reasoning_text[:500] + "..." if len(reasoning_text) > 500 else reasoning_text
+                                self._vprint(f"{self.log_prefix}   Reasoning: {reasoning_preview}")
+                            else:
+                                content_preview = final_response[:80] + "..." if len(final_response) > 80 else final_response
+                                self._vprint(f"{self.log_prefix}   Content: '{content_preview}'")
+
+                            if self._empty_content_retries < 3:
+                                self._vprint(f"{self.log_prefix}🔄 Retrying API call ({self._empty_content_retries}/3)...")
+                                continue
+                            else:
+                                self._vprint(f"{self.log_prefix}❌ Max retries (3) for empty content exceeded.", force=True)
+                                self._empty_content_retries = 0
+
+                                # If a prior tool_calls turn had real content, salvage it:
+                                # rewrite that turn's content to a brief tool description,
+                                # and use the original content as the final response here.
+                                fallback = getattr(self, '_last_content_with_tools', None)
+                                if fallback:
+                                    self._last_content_with_tools = None
+                                    # Find the last assistant message with tool_calls and rewrite it
+                                    for i in range(len(messages) - 1, -1, -1):
+                                        msg = messages[i]
+                                        if msg.get("role") == "assistant" and msg.get("tool_calls"):
+                                            tool_names = []
+                                            for tc in msg["tool_calls"]:
+                                                fn = tc.get("function", {})
+                                                tool_names.append(fn.get("name", "unknown"))
+                                            msg["content"] = f"Calling the {', '.join(tool_names)} tool{'s' if len(tool_names) > 1 else ''}..."
+                                            break
+                                    # Strip <think> blocks from fallback content for user display
+                                    final_response = self._strip_think_blocks(fallback).strip()
+                                    self._response_was_previewed = True
+                                    break
+
+                                # No fallback -- append the empty message as-is
+                                empty_msg = {
+                                    "role": "assistant",
+                                    "content": final_response,
+                                    "reasoning": reasoning_text,
+                                    "finish_reason": finish_reason,
+                                }
+                                messages.append(empty_msg)
+
+                                self._cleanup_task_resources(effective_task_id)
+                                self._persist_session(messages, conversation_history)
+
+                                return {
+                                    "final_response": final_response or None,
+                                    "messages": messages,
+                                    "api_calls": api_call_count,
+                                    "completed": False,
+                                    "partial": True,
+                                    "error": "Model generated only think blocks with no actual response after 3 retries"
+                                }
                     
                     # Reset retry counter on successful content
                     if hasattr(self, '_empty_content_retries'):
