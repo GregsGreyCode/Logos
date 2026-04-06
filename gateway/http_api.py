@@ -1614,6 +1614,43 @@ async def _handle_user_action_policy_patch(request: web.Request) -> web.Response
     return web.json_response({"user_id": user_id, "action_policy_id": policy_id})
 
 
+async def _handle_action_policy_preview_openshell(request: web.Request) -> web.Response:
+    """POST /action-policies/{id}/preview-openshell — compile and return OpenShell YAML."""
+    policy_id = request.match_info["id"]
+    row = auth_db.get_action_policy(policy_id)
+    if not row:
+        raise web.HTTPNotFound(reason="Action policy not found")
+
+    from gateway.auth.policy import ActionPolicy as _AP
+    action_policy = _AP.from_row(row)
+
+    # Resolve current MCP server names
+    mcp_names: list[str] = []
+    try:
+        _mcp_svc = request.app.get("mcp_service")
+        if _mcp_svc:
+            _cat = _mcp_svc.get_catalogue()
+            mcp_names = [s.get("name") or s.get("id", "") for s in _cat if isinstance(s, dict)]
+    except Exception:
+        pass
+
+    from gateway.policies.compiler import compile_openshell_policy, policy_hash, validate_openshell_policy
+    yaml_str = compile_openshell_policy(
+        action_policy,
+        mcp_servers=mcp_names,
+    )
+    valid, err = validate_openshell_policy(yaml_str)
+
+    return web.json_response({
+        "policy_id": policy_id,
+        "policy_name": row.get("name", ""),
+        "yaml": yaml_str,
+        "hash": policy_hash(yaml_str),
+        "valid": valid,
+        "error": err,
+    })
+
+
 # ── Approval request handlers ──────────────────────────────────────────────
 
 async def _handle_approvals_list(request: web.Request) -> web.Response:
@@ -2630,6 +2667,7 @@ async def start_http_api(runner: Any, port: int = 8080) -> None:
     app.router.add_get("/action-policies/{id}",    _map(_handle_action_policies_get))
     app.router.add_patch("/action-policies/{id}",  _map(require_csrf(_handle_action_policies_patch)))
     app.router.add_delete("/action-policies/{id}", _map(require_csrf(_handle_action_policies_delete)))
+    app.router.add_post("/action-policies/{id}/preview-openshell", _map(_handle_action_policy_preview_openshell))
     app.router.add_patch("/users/{id}/action-policy", _aap(require_csrf(_handle_user_action_policy_patch)))
 
     # ── Approval requests ──────────────────────────────────────────────────

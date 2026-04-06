@@ -3134,6 +3134,8 @@
                 <td class="px-4 py-3 text-xs text-gray-400" x-text="ap.network_policy"></td>
                 <td class="px-4 py-3 text-right">
                   <div class="flex gap-2 justify-end">
+                    <button @click="previewOpenShellPolicy(ap.id)"
+                      class="text-xs text-indigo-600 hover:text-indigo-400 transition-colors">Preview YAML</button>
                     <button @click="actionPolicyForm={...ap}; actionPolicyFormOpen=true"
                       class="text-xs text-gray-600 hover:text-white transition-colors">Edit</button>
                     <button @click="deleteActionPolicy(ap.id)"
@@ -3148,6 +3150,26 @@
           </tbody>
         </table>
       </div>
+
+      <!-- OpenShell YAML Preview Panel -->
+      <template x-if="openshellPreview">
+        <div class="mt-4 rounded-xl bg-gray-900/80 border border-gray-800 p-4">
+          <div class="flex items-center justify-between mb-2">
+            <div class="text-xs font-semibold text-gray-400">
+              OpenShell Policy YAML
+              <span class="text-gray-600 font-normal ml-2" x-text="'— ' + openshellPreview.policy_name"></span>
+            </div>
+            <div class="flex items-center gap-3">
+              <span class="text-xs font-mono text-gray-600" x-text="'hash: ' + openshellPreview.hash"></span>
+              <span class="text-xs px-2 py-0.5 rounded-full"
+                :class="openshellPreview.valid ? 'bg-green-950 text-green-400' : 'bg-red-950 text-red-400'"
+                x-text="openshellPreview.valid ? 'valid' : openshellPreview.error"></span>
+              <button @click="openshellPreview=null" class="text-xs text-gray-600 hover:text-white">Close</button>
+            </div>
+          </div>
+          <pre class="text-xs text-gray-300 font-mono bg-black/40 rounded-lg p-3 overflow-x-auto max-h-96 overflow-y-auto whitespace-pre" x-text="openshellPreview.yaml"></pre>
+        </div>
+      </template>
     </div>
 
     <!-- ── (Machines + Policies live under Routing tab) ── -->
@@ -4538,6 +4560,7 @@ function app() {
     actionPolicyForm: {},
     actionPolicyFormOpen: false,
     actionPolicyMsg: null,
+    openshellPreview: null,
     adminAuditLogs: [],
     auditLogsPage: 1,
     auditLogsLimit: 25,
@@ -6397,6 +6420,17 @@ function app() {
         this.actionPolicyForm = {};
         this.actionPolicyFormOpen = false;
       } catch(e) { this.actionPolicyMsg={ok:false,text:String(e)}; }
+    },
+
+    async previewOpenShellPolicy(pid) {
+      try {
+        this.openshellPreview = null;
+        const r = await fetch(`/action-policies/${pid}/preview-openshell`, {
+          method: "POST", credentials: "include",
+        });
+        if (!r.ok) { alert("Failed to preview policy"); return; }
+        this.openshellPreview = await r.json();
+      } catch(e) { alert(String(e)); }
     },
 
     async deleteActionPolicy(pid) {
