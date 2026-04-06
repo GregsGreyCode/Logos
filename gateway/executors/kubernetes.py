@@ -6,8 +6,10 @@ Extracted from gateway/http_api.py.
 
 from __future__ import annotations
 
+import base64
 import json
 import logging
+import os
 from typing import List
 
 from .base import InstanceConfig, ResourceHeadroom, SpawnedInstance
@@ -34,12 +36,167 @@ from gateway.souls import (
 logger = logging.getLogger(__name__)
 
 
+def _ensure_namespace_prerequisites(core) -> None:
+    """Create prerequisite resources in the hermes namespace if they don't exist.
+
+    Spawned agent pods need: ServiceAccount, Secret (API keys),
+    ConfigMap (runtime config), shared-memory PVC, and image pull secret.
+    These are created once and reused across all instances.
+    """
+    ns = HERMES_NAMESPACE
+
+    # ── Namespace ─────────────────────────────────────────────────────
+    try:
+        core.read_namespace(ns)
+    except Exception:
+        try:
+            core.create_namespace({
+                "apiVersion": "v1", "kind": "Namespace",
+                "metadata": {"name": ns},
+            })
+            logger.info("Created namespace %s", ns)
+        except Exception as e:
+            logger.debug("Namespace %s creation skipped: %s", ns, e)
+
+    # ── ServiceAccount ────────────────────────────────────────────────
+    try:
+        core.read_namespaced_service_account("hermes", ns)
+    except Exception:
+        try:
+            core.create_namespaced_service_account(ns, {
+                "apiVersion": "v1", "kind": "ServiceAccount",
+                "metadata": {"name": "hermes", "namespace": ns},
+            })
+            logger.info("Created ServiceAccount hermes in %s", ns)
+        except Exception as e:
+            logger.warning("Failed to create ServiceAccount: %s", e)
+
+    # ── Secret (hermes-secret) ────────────────────────────────────────
+    # Populated from the gateway's own env vars so spawned pods can
+    # reach the same inference providers.
+    try:
+        core.read_namespaced_secret("hermes-secret", ns)
+    except Exception:
+        secret_data = {}
+        for key in ("OPENAI_API_KEY", "HERMES_INTERNAL_TOKEN", "INSPECTOR_TOKEN",
+                     "ANTHROPIC_API_KEY", "OPENROUTER_API_KEY"):
+            val = os.environ.get(key, "")
+            if val:
+                secret_data[key] = base64.b64encode(val.encode()).decode()
+        # Ensure required keys exist even if empty
+        for key in ("OPENAI_API_KEY", "HERMES_INTERNAL_TOKEN", "INSPECTOR_TOKEN"):
+            if key not in secret_data:
+                secret_data[key] = base64.b64encode(b"not-set").decode()
+        try:
+            core.create_namespaced_secret(ns, {
+                "apiVersion": "v1", "kind": "Secret",
+                "metadata": {"name": "hermes-secret", "namespace": ns},
+                "type": "Opaque",
+                "data": secret_data,
+            })
+            logger.info("Created Secret hermes-secret in %s", ns)
+        except Exception as e:
+            logger.warning("Failed to create Secret: %s", e)
+
+    # ── ConfigMap (hermes-config) ─────────────────────────────────────
+    # Runtime config for spawned pods — model, endpoint, log level etc.
+    try:
+        core.read_namespaced_config_map("hermes-config", ns)
+    except Exception:
+        config_data = {
+            "HERMES_LOG_LEVEL": os.environ.get("HERMES_LOG_LEVEL", "INFO"),
+            "HERMES_PORT": os.environ.get("HERMES_PORT", "8080"),
+            "REQUEST_TIMEOUT_SECONDS": os.environ.get("REQUEST_TIMEOUT_SECONDS", "300"),
+            "OPENAI_BASE_URL": os.environ.get("OPENAI_BASE_URL", ""),
+            "HERMES_MODEL": os.environ.get("HERMES_MODEL", ""),
+            "LLM_MODEL": os.environ.get("LLM_MODEL", ""),
+        }
+        try:
+            core.create_namespaced_config_map(ns, {
+                "apiVersion": "v1", "kind": "ConfigMap",
+                "metadata": {"name": "hermes-config", "namespace": ns},
+                "data": config_data,
+            })
+            logger.info("Created ConfigMap hermes-config in %s", ns)
+        except Exception as e:
+            logger.warning("Failed to create ConfigMap: %s", e)
+
+    # ── ConfigMap (hermes-config-yaml) ────────────────────────────────
+    # Seed config.yaml for agent pods
+    try:
+        core.read_namespaced_config_map("hermes-config-yaml", ns)
+    except Exception:
+        from pathlib import Path
+        _hermes_home = Path(os.environ.get("LOGOS_HOME", os.environ.get("HERMES_HOME", str(Path.home() / ".logos"))))
+        _config_yaml = ""
+        try:
+            _cfg_path = _hermes_home / "config.yaml"
+            if _cfg_path.exists():
+                _config_yaml = _cfg_path.read_text(encoding="utf-8")
+        except Exception:
+            pass
+        if not _config_yaml:
+            _config_yaml = "model:\n  default: ''\n"
+        try:
+            core.create_namespaced_config_map(ns, {
+                "apiVersion": "v1", "kind": "ConfigMap",
+                "metadata": {"name": "hermes-config-yaml", "namespace": ns},
+                "data": {"config.yaml": _config_yaml},
+            })
+            logger.info("Created ConfigMap hermes-config-yaml in %s", ns)
+        except Exception as e:
+            logger.warning("Failed to create ConfigMap hermes-config-yaml: %s", e)
+
+    # ── Shared memory PVC ─────────────────────────────────────────────
+    try:
+        core.read_namespaced_persistent_volume_claim("hermes-shared-memory-pvc", ns)
+    except Exception:
+        try:
+            core.create_namespaced_persistent_volume_claim(ns, {
+                "apiVersion": "v1", "kind": "PersistentVolumeClaim",
+                "metadata": {"name": "hermes-shared-memory-pvc", "namespace": ns},
+                "spec": {
+                    "accessModes": ["ReadWriteOnce"],
+                    "storageClassName": "local-path",
+                    "resources": {"requests": {"storage": "1Gi"}},
+                },
+            })
+            logger.info("Created PVC hermes-shared-memory-pvc in %s", ns)
+        except Exception as e:
+            logger.warning("Failed to create shared memory PVC: %s", e)
+
+    # ── Image pull secret (ghcr-creds) ────────────────────────────────
+    # Copy from logos namespace if it exists there, otherwise skip
+    # (public images don't need pull secrets)
+    try:
+        core.read_namespaced_secret("ghcr-creds", ns)
+    except Exception:
+        try:
+            src = core.read_namespaced_secret("ghcr-creds", "logos")
+            core.create_namespaced_secret(ns, {
+                "apiVersion": "v1", "kind": "Secret",
+                "metadata": {"name": "ghcr-creds", "namespace": ns},
+                "type": src.type,
+                "data": {k: base64.b64encode(v).decode() if isinstance(v, bytes) else v
+                         for k, v in (src.data or {}).items()},
+            })
+            logger.info("Copied ghcr-creds from logos to %s", ns)
+        except Exception:
+            # No source secret — spawned pods will use public image or fail with
+            # ImagePullBackOff (which is visible in the UI as "starting" state)
+            logger.debug("ghcr-creds not available in logos namespace — skipping")
+
+
 class KubernetesExecutor:
     """Manages agent instances as Kubernetes Deployments."""
 
     def spawn(self, config: InstanceConfig) -> SpawnedInstance:
         """Create Deployment + Service + PVC + soul ConfigMap for a new agent instance."""
         core, apps = k8s_clients()
+
+        # Ensure all prerequisite resources exist (ServiceAccount, Secret, ConfigMaps, PVCs)
+        _ensure_namespace_prerequisites(core)
+
         dep_name = config.name  # already sanitised by the API layer via safe_k8s_name()
         tool_overrides = config.tool_overrides or {}
 
@@ -244,7 +401,7 @@ class KubernetesExecutor:
                         ],
                         "containers": [{
                             "name": "hermes",
-                            "image": "ghcr.io/gregsgreycode/hermes:latest",
+                            "image": os.environ.get("LOGOS_AGENT_IMAGE", "ghcr.io/gregsgreycode/logos:latest"),
                             "ports": [{"name": "http", "containerPort": 8080}],
                             "env": [
                                 {"name": "HOME", "value": "/home/hermes"},
