@@ -3386,6 +3386,15 @@ async def handle_setup_env_probe(request: web.Request) -> web.Response:
     # where Docker is running and the sandbox image exists.
     docker_sandbox_ready = docker_info["running"] and image_present
 
+    # Check inotify limits — k3s inside OpenShell needs >= 512 instances
+    inotify_ok = True
+    inotify_msg = ""
+    try:
+        from gateway.executors.openshell import check_inotify_limits
+        inotify_ok, inotify_msg = check_inotify_limits()
+    except Exception:
+        pass
+
     return web.json_response({
         "platform":              _OS_MAP.get(_platform.system(), _platform.system().lower()),
         "docker_running":        docker_info["running"],
@@ -3395,12 +3404,14 @@ async def handle_setup_env_probe(request: web.Request) -> web.Response:
         "openshell_path":        openshell_exe,
         "openshell_supported":   openshell_supported,
         "image_present":         image_present,
-        "sandbox_ready":         docker_info["running"] and bool(openshell_exe) and image_present,
+        "sandbox_ready":         docker_info["running"] and bool(openshell_exe) and image_present and inotify_ok,
         "docker_sandbox_ready":  docker_sandbox_ready,
         "k3s_installed":         k3s_info["installed"],
         "k3s_running":           k3s_info["running"],
         # In-cluster detection: if KUBERNETES_SERVICE_HOST is set, we're a pod
         "in_cluster":            bool(os.environ.get("KUBERNETES_SERVICE_HOST")),
+        "inotify_ok":            inotify_ok,
+        "inotify_fix":           inotify_msg,
     })
 
 
