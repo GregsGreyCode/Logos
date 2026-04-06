@@ -675,18 +675,18 @@
                       </template>
                     </div>
                   </template>
-                  <template x-if="adminMachines.filter(x => x.default_model && x.enabled).length > 0">
+                  <template x-if="allMachineModels.length > 0">
                     <div>
                       <div class="px-3 py-1 text-[9px] text-gray-600 uppercase tracking-wider">Local</div>
-                      <template x-for="m in adminMachines.filter(x => x.default_model && x.enabled)" :key="m.id">
-                        <button @click="switchModel(m.default_model); open = false"
+                      <template x-for="m in allMachineModels" :key="m">
+                        <button @click="switchModel(m); open = false"
                           class="block w-full text-left px-3 py-1.5 text-[11px] font-mono transition-colors"
-                          :class="(activeInstance.model_alias || status.current_model) === m.default_model ? 'text-white bg-indigo-950' : 'text-gray-400 hover:text-white hover:bg-gray-800'"
-                          x-text="m.default_model"></button>
+                          :class="(activeInstance.model_alias || status.current_model) === m ? 'text-white bg-indigo-950' : 'text-gray-400 hover:text-white hover:bg-gray-800'"
+                          x-text="m"></button>
                       </template>
                     </div>
                   </template>
-                  <p x-show="cloudProviders.filter(p => p.active_model).length === 0 && adminMachines.filter(x => x.default_model && x.enabled).length === 0"
+                  <p x-show="cloudProviders.filter(p => p.active_model).length === 0 && allMachineModels.length === 0"
                     class="px-3 py-2 text-[10px] text-gray-600">No models configured. Add a provider in Settings > Inference.</p>
                 </div>
               </div>
@@ -4773,7 +4773,7 @@ function app() {
       }
       // Scroll to bottom after Alpine renders the restored messages
       this.$nextTick(() => this._scrollChat());
-      await Promise.all([this.loadStatus(), this.loadRouterState(), this.loadCanary(), this.loadInstances(), this.loadSpawnTemplates(), this.loadWorkers()]);
+      await Promise.all([this.loadStatus(), this.loadRouterState(), this.loadCanary(), this.loadInstances(), this.loadSpawnTemplates(), this.loadWorkers(), this.loadAdminMachines()]);
       // Pre-fill requester for non-admins; load user list for admins
       if (this.authUser) {
         if (this.authUser.role === 'admin') {
