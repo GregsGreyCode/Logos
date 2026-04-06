@@ -8,7 +8,7 @@
   <meta name="theme-color" content="#0d0d0d">
   <link rel="icon" type="image/svg+xml" href="/static/logo.svg">
   <link rel="shortcut icon" href="/favicon.ico">
-  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="/static/tailwind.css">
   <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
   <style>
     [x-cloak]{display:none!important}
@@ -1168,8 +1168,8 @@
                                   :title="(() => { const h = compareResults[mid].hard_eval || compareResults[mid].eval?.hard || {}; const total = Object.values(h).filter(v => v === true || v === false).length || '?'; return 'Hard eval: ' + h.score + '/' + total; })()"
                                   x-text="'\u2605' + (compareResults[mid].hard_eval?.score ?? compareResults[mid].eval?.hard?.score)"></span>
                                 <span x-show="compareResults[mid].agent_eval?.score != null"
-                                  class="text-[10px] text-purple-400" :title="'Agent eval: ' + compareResults[mid].agent_eval.score + '/3'"
-                                  x-text="'\u2605\u2605' + compareResults[mid].agent_eval.score"></span>
+                                  class="text-[10px] text-purple-400" :title="'Agent eval: ' + (compareResults[mid].agent_eval?.score ?? 0) + '/3'"
+                                  x-text="'\u2605\u2605' + (compareResults[mid].agent_eval?.score ?? 0)"></span>
                                 <span x-show="compareResults[mid].tool_use || getModels().find(m => m.id === mid)?._toolUse"
                                   class="text-[9px] px-1 py-0.5 rounded bg-emerald-950 text-emerald-400 border border-emerald-900">tools</span>
                                 <span x-show="compareResults[mid].vision || getModels().find(m => m.id === mid)?._vision"
