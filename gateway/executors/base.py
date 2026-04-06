@@ -27,6 +27,9 @@ class InstanceConfig:
     machine_endpoint: Optional[str] = None
     machine_name: Optional[str] = None
     machine_id: Optional[str] = None
+    # OpenShell-specific: resolved ActionPolicy for dynamic policy compilation
+    action_policy: Optional[object] = None  # gateway.auth.policy.ActionPolicy
+    mcp_servers: List[str] = field(default_factory=list)
 
 
 @dataclass

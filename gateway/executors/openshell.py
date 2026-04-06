@@ -324,11 +324,36 @@ class OpenShellExecutor:
                 f"Failed to create OpenShell sandbox '{sandbox_name}': {exc.stderr}"
             ) from exc
 
-        # Apply the default egress policy (allow only the configured model endpoint)
-        if self.policy_file and Path(self.policy_file).exists():
+        # Apply sandbox policy — prefer dynamic compilation from ActionPolicy,
+        # fall back to static default YAML.
+        _applied_policy_file: Optional[str] = None
+        if config.action_policy is not None:
+            try:
+                from gateway.policies.compiler import compile_openshell_policy, policy_hash
+                yaml_str = compile_openshell_policy(
+                    config.action_policy,
+                    mcp_servers=config.mcp_servers or [],
+                )
+                compiled_file = _SOUL_TMPDIR / f"{config.name}-policy.yaml"
+                compiled_file.parent.mkdir(parents=True, exist_ok=True)
+                compiled_file.write_text(yaml_str, encoding="utf-8")
+                _applied_policy_file = str(compiled_file)
+                logger.info(
+                    "Compiled OpenShell policy for '%s' (hash=%s, fs=%s)",
+                    config.name,
+                    policy_hash(yaml_str),
+                    config.action_policy.filesystem_policy,
+                )
+            except Exception as exc:
+                logger.warning("Policy compilation failed for '%s': %s — using default", config.name, exc)
+                _applied_policy_file = self.policy_file
+        else:
+            _applied_policy_file = self.policy_file
+
+        if _applied_policy_file and Path(_applied_policy_file).exists():
             try:
                 _openshell("policy", "set", sandbox_name,
-                           "--policy", self.policy_file, "--wait", check=False)
+                           "--policy", _applied_policy_file, "--wait", check=False)
                 logger.info("Applied egress policy to sandbox '%s'", sandbox_name)
             except Exception as exc:
                 logger.warning("Could not apply policy to sandbox '%s': %s", sandbox_name, exc)
@@ -398,10 +423,11 @@ class OpenShellExecutor:
                 try:
                     _openshell("sandbox", "delete", sandbox_name, check=False)
                     logger.info("Deleted OpenShell sandbox '%s'", sandbox_name)
-                    # Clean up soul temp file
-                    soul_file = _SOUL_TMPDIR / f"{name}-SOUL.md"
-                    if soul_file.exists():
-                        soul_file.unlink(missing_ok=True)
+                    # Clean up temp files (soul + compiled policy)
+                    for suffix in (f"{name}-SOUL.md", f"{name}-policy.yaml"):
+                        tmp = _SOUL_TMPDIR / suffix
+                        if tmp.exists():
+                            tmp.unlink(missing_ok=True)
                 except Exception as exc:
                     logger.warning("Error deleting sandbox '%s': %s", sandbox_name, exc)
             else:
