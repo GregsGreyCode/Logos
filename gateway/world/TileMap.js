@@ -32,34 +32,47 @@ function generateMap() {
       else if (r < 0.22) tile = TILE.FLOWERS;
       else tile = TILE.GRASS;
 
-      // Clearing around center tree (radius ~3)
-      if (dist < 3.5) tile = TILE.MOSS;
+      // Clearing around center tree (radius ~5 for larger world)
+      if (dist < 5.5) tile = TILE.MOSS;
 
       // Tree trunk — 1 tile in the center (blocks movement)
       if (x === cx && y === cy) tile = TILE.PATH; // trunk marker
 
-      // Garden beds
-      if ((x >= 2 && x <= 4 && y >= 3 && y <= 5) ||
-          (x >= 15 && x <= 17 && y >= 2 && y <= 4) ||
-          (x >= 3 && x <= 5 && y >= 14 && y <= 16) ||
-          (x >= 14 && x <= 16 && y >= 13 && y <= 15)) {
+      // Garden beds — scattered around the map
+      if ((x >= 4 && x <= 7 && y >= 6 && y <= 9) ||
+          (x >= 30 && x <= 34 && y >= 4 && y <= 7) ||
+          (x >= 5 && x <= 9 && y >= 28 && y <= 32) ||
+          (x >= 28 && x <= 32 && y >= 26 && y <= 30) ||
+          (x >= 14 && x <= 17 && y >= 4 && y <= 6) ||
+          (x >= 24 && x <= 27 && y >= 33 && y <= 36)) {
         tile = TILE.GARDEN_BED;
         if (r < 0.3) tile = TILE.FLOWERS;
       }
 
-      // Pond — bottom right
-      if (x >= 15 && x <= 18 && y >= 15 && y <= 18) {
-        const pdx = x - 16.5;
-        const pdy = y - 16.5;
-        if (pdx * pdx + pdy * pdy < 4) tile = TILE.WATER;
-        else if (pdx * pdx + pdy * pdy < 6) tile = TILE.SAND;
+      // Pond — bottom right, larger
+      if (x >= 30 && x <= 37 && y >= 30 && y <= 37) {
+        const pdx = x - 33.5;
+        const pdy = y - 33.5;
+        if (pdx * pdx + pdy * pdy < 9) tile = TILE.WATER;
+        else if (pdx * pdx + pdy * pdy < 14) tile = TILE.SAND;
       }
 
-      // Winding paths
-      if (x >= cx - 1 && x <= cx && y < cy - 3 && y > 1) tile = TILE.PATH;
-      if (x >= cx && x <= cx + 1 && y > cy + 3 && y < WORLD_ROWS - 2) tile = TILE.PATH;
-      if (y >= cy && y <= cy + 1 && x < cx - 3 && x > 1) tile = TILE.PATH;
-      if (y >= cy - 1 && y <= cy && x > cx + 3 && x < WORLD_COLS - 2) tile = TILE.PATH;
+      // Second pond — top left area
+      if (x >= 3 && x <= 8 && y >= 3 && y <= 8) {
+        const pdx = x - 5.5;
+        const pdy = y - 5.5;
+        if (pdx * pdx + pdy * pdy < 5) tile = TILE.WATER;
+        else if (pdx * pdx + pdy * pdy < 8) tile = TILE.SAND;
+      }
+
+      // Winding paths — extend to fill larger world
+      if (x >= cx - 1 && x <= cx && y < cy - 5 && y > 1) tile = TILE.PATH;
+      if (x >= cx && x <= cx + 1 && y > cy + 5 && y < WORLD_ROWS - 2) tile = TILE.PATH;
+      if (y >= cy && y <= cy + 1 && x < cx - 5 && x > 1) tile = TILE.PATH;
+      if (y >= cy - 1 && y <= cy && x > cx + 5 && x < WORLD_COLS - 2) tile = TILE.PATH;
+      // Diagonal paths to corners
+      if (Math.abs(x - y) <= 1 && x < cx - 5 && y < cy - 5 && x > 1) tile = TILE.PATH;
+      if (Math.abs((WORLD_COLS - 1 - x) - y) <= 1 && x > cx + 5 && y < cy - 5 && x < WORLD_COLS - 2) tile = TILE.PATH;
 
       // Border
       if (x === 0 || x === WORLD_COLS - 1 || y === 0 || y === WORLD_ROWS - 1) {
@@ -95,25 +108,42 @@ function hslToHex(h, s, l) {
   return (Math.round(r * 255) << 16) + (Math.round(g * 255) << 8) + Math.round(b * 255);
 }
 
-// Top-down canopy pixels — circular shape, ~3 tile diameter
+// Top-down canopy pixels — circular shape, ~5 tile diameter for larger world
 // Relative to center tile. Each has a brightness multiplier for depth.
 const CANOPY_PIXELS = [
-  // Inner ring (brightest — top of canopy)
+  // Core (brightest — top of canopy)
   { dx: 0, dy: 0, l: 1.0 },
-  { dx: -1, dy: 0, l: 0.95 },
-  { dx: 1, dy: 0, l: 0.95 },
-  { dx: 0, dy: -1, l: 0.95 },
-  { dx: 0, dy: 1, l: 0.9 },
-  // Outer ring (darker — edges of canopy)
-  { dx: -1, dy: -1, l: 0.85 },
-  { dx: 1, dy: -1, l: 0.85 },
-  { dx: -1, dy: 1, l: 0.8 },
-  { dx: 1, dy: 1, l: 0.8 },
-  // Extended tips
-  { dx: -2, dy: 0, l: 0.7 },
-  { dx: 2, dy: 0, l: 0.7 },
-  { dx: 0, dy: -2, l: 0.75 },
-  { dx: 0, dy: 2, l: 0.65 },
+  { dx: -1, dy: 0, l: 0.97 },
+  { dx: 1, dy: 0, l: 0.97 },
+  { dx: 0, dy: -1, l: 0.97 },
+  { dx: 0, dy: 1, l: 0.95 },
+  // Inner ring
+  { dx: -1, dy: -1, l: 0.92 },
+  { dx: 1, dy: -1, l: 0.92 },
+  { dx: -1, dy: 1, l: 0.90 },
+  { dx: 1, dy: 1, l: 0.90 },
+  // Middle ring
+  { dx: -2, dy: 0, l: 0.85 },
+  { dx: 2, dy: 0, l: 0.85 },
+  { dx: 0, dy: -2, l: 0.87 },
+  { dx: 0, dy: 2, l: 0.82 },
+  { dx: -2, dy: -1, l: 0.80 },
+  { dx: 2, dy: -1, l: 0.80 },
+  { dx: -2, dy: 1, l: 0.78 },
+  { dx: 2, dy: 1, l: 0.78 },
+  { dx: -1, dy: -2, l: 0.80 },
+  { dx: 1, dy: -2, l: 0.80 },
+  { dx: -1, dy: 2, l: 0.75 },
+  { dx: 1, dy: 2, l: 0.75 },
+  // Outer ring
+  { dx: -3, dy: 0, l: 0.65 },
+  { dx: 3, dy: 0, l: 0.65 },
+  { dx: 0, dy: -3, l: 0.68 },
+  { dx: 0, dy: 3, l: 0.60 },
+  { dx: -2, dy: -2, l: 0.62 },
+  { dx: 2, dy: -2, l: 0.62 },
+  { dx: -2, dy: 2, l: 0.58 },
+  { dx: 2, dy: 2, l: 0.58 },
 ];
 
 /**
@@ -204,7 +234,7 @@ export function createTileMap(PIXI) {
 
   // Export collision info for agent movement
   container._treeCenter = { x: cx, y: cy };
-  container._treeRadius = 2; // agents should stay 2+ tiles from center
+  container._treeRadius = 4; // agents should stay 4+ tiles from center (larger world)
 
   return container;
 }

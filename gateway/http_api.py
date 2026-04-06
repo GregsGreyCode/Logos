@@ -424,8 +424,12 @@ async def _handle_model_patch(request: web.Request) -> web.Response:
         if _config_path.exists():
             with open(_config_path, encoding="utf-8") as _f:
                 _cfg = _yaml.safe_load(_f) or {}
-        _cfg["HERMES_MODEL"] = new_model
         os.environ["HERMES_MODEL"] = new_model
+        # Write model to both locations for compatibility
+        _cfg["HERMES_MODEL"] = new_model
+        if "model" not in _cfg or not isinstance(_cfg.get("model"), dict):
+            _cfg["model"] = {}
+        _cfg["model"]["default"] = new_model
 
         # Resolve the correct provider for this model
         resolved_provider = None

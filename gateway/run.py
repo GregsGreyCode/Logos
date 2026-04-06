@@ -2077,27 +2077,48 @@ class GatewayRunner:
         target_provider, new_model = parse_model_input(args, current_provider)
         provider_changed = target_provider != current_provider
 
-        # Resolve credentials for the target provider (for API probe)
-        api_key = os.getenv("OPENROUTER_API_KEY") or os.getenv("OPENAI_API_KEY") or ""
-        base_url = "https://openrouter.ai/api/v1"
-        if provider_changed:
+        # Resolve credentials from gateway DB (cloud_providers + machines tables)
+        # This mirrors the PATCH /api/model logic for consistent behavior.
+        api_key = ""
+        base_url = ""
+        resolved_from_db = False
+        try:
+            from gateway.auth import db as _adb
+            # Check cloud providers first
+            cloud_provs = _adb.list_cloud_providers()
+            for cp in cloud_provs:
+                if cp.get("active_model") == new_model:
+                    api_key = cp.get("api_key") or ""
+                    base_url = cp.get("base_url") or ""
+                    target_provider = cp.get("provider", target_provider)
+                    resolved_from_db = True
+                    break
+            if not resolved_from_db:
+                # Check local machines
+                machines = _adb.list_machines()
+                for m in machines:
+                    if m.get("enabled") and m.get("endpoint_url"):
+                        base_url = m["endpoint_url"].rstrip("/")
+                        api_key = m.get("api_key") or "not-needed"
+                        target_provider = "custom"
+                        resolved_from_db = True
+                        break
+        except Exception:
+            pass
+        # Fall back to CLI-level resolution if DB lookup failed
+        if not resolved_from_db:
+            api_key = os.getenv("OPENROUTER_API_KEY") or os.getenv("OPENAI_API_KEY") or ""
+            base_url = "https://openrouter.ai/api/v1"
             try:
                 from logos_cli.runtime_provider import resolve_runtime_provider
-                runtime = resolve_runtime_provider(requested=target_provider)
+                prov_to_resolve = target_provider if provider_changed else current_provider
+                runtime = resolve_runtime_provider(requested=prov_to_resolve)
                 api_key = runtime.get("api_key", "")
                 base_url = runtime.get("base_url", "")
             except Exception as e:
-                provider_label = _PROVIDER_LABELS.get(target_provider, target_provider)
-                return f"⚠️ Could not resolve credentials for provider '{provider_label}': {e}"
-        else:
-            # Use current provider's base_url from config or registry
-            try:
-                from logos_cli.runtime_provider import resolve_runtime_provider
-                runtime = resolve_runtime_provider(requested=current_provider)
-                api_key = runtime.get("api_key", "")
-                base_url = runtime.get("base_url", "")
-            except Exception:
-                pass
+                if provider_changed:
+                    provider_label = _PROVIDER_LABELS.get(target_provider, target_provider)
+                    return f"⚠️ Could not resolve credentials for provider '{provider_label}': {e}"
 
         # Validate the model against the live API
         try:
@@ -2134,8 +2155,14 @@ class GatewayRunner:
 
         # Set env vars so the next agent run picks up the change
         os.environ["HERMES_MODEL"] = new_model
-        if provider_changed:
+        if provider_changed or resolved_from_db:
             os.environ["HERMES_INFERENCE_PROVIDER"] = target_provider
+            # Also update the endpoint env vars so the OpenAI client connects
+            # to the right backend (prevents local models → cloud API mismatch)
+            if base_url:
+                os.environ["OPENAI_BASE_URL"] = base_url
+            if api_key:
+                os.environ["OPENAI_API_KEY"] = api_key
 
         provider_label = _PROVIDER_LABELS.get(target_provider, target_provider)
         provider_note = f"\n**Provider:** {provider_label}" if provider_changed else ""
