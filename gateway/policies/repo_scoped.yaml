@@ -1,0 +1,55 @@
+# OpenShell policy preset: REPO SCOPED
+#
+# Strict sandbox policy — writes limited to the repo working directory and
+# tmp.  Only the agent binary can reach inference.local and the MCP gateway.
+# No package managers, no GitHub, no arbitrary outbound.
+#
+# Maps to: FilesystemPolicy.REPO_SCOPED + NetworkPolicy.LOCAL_ONLY
+
+version: "1"
+
+filesystem:
+  read_write:
+    - /sandbox/repo
+    - /tmp
+  read_only:
+    - /usr
+    - /lib
+    - /lib64
+    - /etc
+    - /proc
+    - /sandbox
+    - /home
+    - /hermes/SOUL.md
+
+process:
+  run_as_user: hermes
+
+network:
+  # Model inference only (via Privacy Router)
+  - action: allow
+    destination: "inference.local"
+    ports: [443]
+    methods: [GET, POST]
+
+  # MCP gateway access (dynamically extended by compiler)
+  - action: allow
+    destination: "host.docker.internal"
+    ports: [8081]
+    methods: [POST]
+
+  # Local model servers (fallback when Privacy Router unavailable)
+  - action: allow
+    destination: "host.docker.internal"
+    ports: [11434, 1234, 8000]
+    methods: [GET, POST]
+
+  # DNS resolution
+  - action: allow
+    destination: "*"
+    ports: [53]
+    protocol: udp
+
+  # Default deny
+  - action: deny
+    destination: "*"

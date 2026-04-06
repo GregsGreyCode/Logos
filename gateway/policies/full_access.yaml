@@ -1,0 +1,76 @@
+# OpenShell policy preset: FULL ACCESS
+#
+# Broadest sandbox policy — allows read/write to sandbox, home, and tmp,
+# plus outbound access to common package registries, GitHub, and model
+# endpoints.  Suitable for development and exploration tasks where the
+# agent needs to install packages and access external services.
+#
+# Maps to: FilesystemPolicy.FULL + NetworkPolicy.INTERNET_ENABLED
+
+version: "1"
+
+filesystem:
+  read_write:
+    - /sandbox
+    - /tmp
+    - /home
+  read_only:
+    - /usr
+    - /lib
+    - /lib64
+    - /etc
+    - /proc
+    - /hermes/SOUL.md
+
+process:
+  run_as_user: hermes
+
+network:
+  # Model inference endpoints (local servers)
+  - action: allow
+    destination: "host.docker.internal"
+    ports: [11434, 1234, 8000, 8080, 8081]
+    methods: [GET, POST]
+
+  - action: allow
+    destination: "127.0.0.1"
+    ports: [11434, 1234, 8000]
+    methods: [GET, POST]
+
+  # OpenShell Privacy Router (inference.local)
+  - action: allow
+    destination: "inference.local"
+    ports: [443]
+    methods: [GET, POST]
+
+  # Package registries
+  - action: allow
+    destination: "pypi.org"
+    ports: [443]
+
+  - action: allow
+    destination: "files.pythonhosted.org"
+    ports: [443]
+
+  - action: allow
+    destination: "registry.npmjs.org"
+    ports: [443]
+
+  # GitHub (for git clone, API access)
+  - action: allow
+    destination: "github.com"
+    ports: [443, 22]
+
+  - action: allow
+    destination: "api.github.com"
+    ports: [443]
+
+  # DNS resolution
+  - action: allow
+    destination: "*"
+    ports: [53]
+    protocol: udp
+
+  # Default deny
+  - action: deny
+    destination: "*"

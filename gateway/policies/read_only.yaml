@@ -1,0 +1,49 @@
+# OpenShell policy preset: READ ONLY
+#
+# Most restrictive sandbox policy — only /tmp is writable.  Agent can
+# only reach inference.local for model calls.  No MCP access, no package
+# managers, no external services.  Suitable for audit, review, and
+# read-only analysis tasks.
+#
+# Maps to: FilesystemPolicy.READ_ONLY + NetworkPolicy.LOCAL_ONLY
+
+version: "1"
+
+filesystem:
+  read_write:
+    - /tmp
+  read_only:
+    - /usr
+    - /lib
+    - /lib64
+    - /etc
+    - /proc
+    - /sandbox
+    - /home
+    - /hermes/SOUL.md
+
+process:
+  run_as_user: hermes
+
+network:
+  # Model inference only (via Privacy Router)
+  - action: allow
+    destination: "inference.local"
+    ports: [443]
+    methods: [GET, POST]
+
+  # Local model servers (fallback when Privacy Router unavailable)
+  - action: allow
+    destination: "host.docker.internal"
+    ports: [11434, 1234, 8000]
+    methods: [GET, POST]
+
+  # DNS resolution
+  - action: allow
+    destination: "*"
+    ports: [53]
+    protocol: udp
+
+  # Default deny — no MCP, no external services
+  - action: deny
+    destination: "*"
