@@ -367,16 +367,17 @@ class OpenShellExecutor:
         if config.machine_endpoint:
             _using_privacy_router = self._configure_provider(config)
 
-        # Build environment variables to inject into the sandbox
-        env_args: list[str] = []
+        # ── Build instance config ──────────────────────────────────────────
+        # OpenShell 0.0.23 doesn't support --env flags on sandbox create.
+        # We write a JSON config file and upload it into the sandbox.
+        # The entrypoint.sh reads /tmp/hermes/instance-config.json and
+        # exports the values as env vars before starting the server.
         env_vars = {
             "HERMES_INSTANCE_NAME": config.name,
-            "HERMES_PORT": "8080",
+            "HERMES_PORT": str(local_port),
         }
         if config.soul_name and config.soul_name != "default":
             env_vars["HERMES_SOUL"] = config.soul_name
-        if soul_file and soul_file.exists():
-            env_vars["HERMES_SOUL_PATH"] = "/hermes/SOUL.md"
         if config.toolsets:
             env_vars["HERMES_TOOLSETS"] = ",".join(config.toolsets)
         if config.policy:
@@ -385,9 +386,7 @@ class OpenShellExecutor:
         # Inference routing: Privacy Router or direct credentials
         if _using_privacy_router:
             env_vars["HERMES_BASE_URL"] = "https://inference.local"
-            # No API key passed — Privacy Router injects it outside the sandbox
         else:
-            # Fallback: pass endpoint + key directly (less secure, but functional)
             if config.machine_endpoint:
                 env_vars["OPENAI_BASE_URL"] = config.machine_endpoint
             if config.api_key:
@@ -397,23 +396,17 @@ class OpenShellExecutor:
         _mcp_port = os.getenv("HERMES_MCP_PORT", "8081")
         env_vars["HERMES_MCP_GATEWAY_URL"] = f"http://host.docker.internal:{_mcp_port}"
 
-        for k, v in env_vars.items():
-            env_args += ["--env", f"{k}={v}"]
+        # Write config JSON to a temp file for upload
+        _SOUL_TMPDIR.mkdir(parents=True, exist_ok=True)
+        config_file = _SOUL_TMPDIR / f"{config.name}-config.json"
+        config_file.write_text(json.dumps(env_vars, indent=2), encoding="utf-8")
 
-        # Volume mount for SOUL.md (read-only inside sandbox)
-        volume_args: list[str] = []
-        if soul_file and soul_file.exists():
-            volume_args += ["--volume", f"{soul_file}:/hermes/SOUL.md:ro"]
-
-        # Create the sandbox.  ``--detach`` (or equivalent) keeps it running
-        # in the background.  ``--name`` gives it a stable identifier.
+        # Create the sandbox
         create_args = [
             "sandbox", "create",
             "--name", sandbox_name,
             "--from", self.sandbox_image,
-            "--detach",
-            *volume_args,
-            *env_args,
+            "--forward", str(local_port),
         ]
         try:
             result = _openshell(*create_args, check=True)
@@ -422,6 +415,35 @@ class OpenShellExecutor:
             raise RuntimeError(
                 f"Failed to create OpenShell sandbox '{sandbox_name}': {exc.stderr}"
             ) from exc
+
+        # Upload config + soul files into the sandbox.
+        # Upload syntax: openshell sandbox upload <name> <local_path> [dest]
+        try:
+            _openshell("sandbox", "upload", sandbox_name,
+                       str(config_file), "/tmp/hermes/instance-config.json",
+                       check=True)
+            logger.debug("Uploaded instance config to sandbox '%s'", sandbox_name)
+        except Exception as exc:
+            logger.warning("Could not upload config to sandbox '%s': %s", sandbox_name, exc)
+
+        if soul_file and soul_file.exists():
+            try:
+                _openshell("sandbox", "upload", sandbox_name,
+                           str(soul_file), "/tmp/hermes/SOUL.md",
+                           check=True)
+                logger.debug("Uploaded SOUL.md to sandbox '%s'", sandbox_name)
+            except Exception as exc:
+                logger.warning("Could not upload SOUL.md to sandbox '%s': %s", sandbox_name, exc)
+
+        # Start the server inside the sandbox (background via nohup)
+        try:
+            _openshell("sandbox", "exec", "-n", sandbox_name,
+                       "--", "/bin/bash", "-c",
+                       "nohup /app/entrypoint.sh > /tmp/hermes/server.log 2>&1 &",
+                       check=False)
+            logger.info("Started Hermes server in sandbox '%s'", sandbox_name)
+        except Exception as exc:
+            logger.warning("Could not start server in sandbox '%s': %s", sandbox_name, exc)
 
         # Apply sandbox policy — prefer dynamic compilation from ActionPolicy,
         # fall back to static default YAML.
@@ -457,8 +479,14 @@ class OpenShellExecutor:
             except Exception as exc:
                 logger.warning("Could not apply policy to sandbox '%s': %s", sandbox_name, exc)
 
-        # Establish SSH port-forward so the Logos gateway can reach Hermes
-        tunnel_pid = _start_port_forward(sandbox_name, local_port)
+        # Port forward: try OpenShell's native forward, fall back to SSH tunnel
+        tunnel_pid = None
+        try:
+            _openshell("forward", "start", "-d", str(local_port), sandbox_name, check=True)
+            logger.info("OpenShell forward established: 127.0.0.1:%d → %s", local_port, sandbox_name)
+        except Exception as exc:
+            logger.warning("OpenShell forward failed, falling back to SSH tunnel: %s", exc)
+            tunnel_pid = _start_port_forward(sandbox_name, local_port)
 
         record: dict = {
             "name": config.name,
@@ -522,8 +550,14 @@ class OpenShellExecutor:
                 try:
                     _openshell("sandbox", "delete", sandbox_name, check=False)
                     logger.info("Deleted OpenShell sandbox '%s'", sandbox_name)
-                    # Clean up temp files (soul + compiled policy)
-                    for suffix in (f"{name}-SOUL.md", f"{name}-policy.yaml"):
+                    # Stop OpenShell port forward if active
+                    try:
+                        _openshell("forward", "stop", str(inst.get("local_port", 0)),
+                                   sandbox_name, check=False)
+                    except Exception:
+                        pass
+                    # Clean up temp files (soul + compiled policy + config)
+                    for suffix in (f"{name}-SOUL.md", f"{name}-policy.yaml", f"{name}-config.json"):
                         tmp = _SOUL_TMPDIR / suffix
                         if tmp.exists():
                             tmp.unlink(missing_ok=True)

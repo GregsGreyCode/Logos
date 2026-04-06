@@ -71,4 +71,5 @@ EXPOSE 8080
 # OpenShell runs the CMD as the container's main process.
 # HERMES_INSTANCE_NAME, HERMES_SOUL, HERMES_TOOLSETS etc. are injected
 # by OpenShellExecutor via --env flags at sandbox creation time.
-CMD ["/app/venv/bin/python", "-m", "gateway.run"]
+COPY --chmod=755 docker/entrypoint-sandbox.sh /app/entrypoint.sh
+CMD ["/app/entrypoint.sh"]
