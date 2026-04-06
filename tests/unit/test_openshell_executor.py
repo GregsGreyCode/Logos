@@ -304,6 +304,194 @@ class TestOpenShellSpawn:
 
 
 # ---------------------------------------------------------------------------
+# TestPrivacyRouter
+# ---------------------------------------------------------------------------
+
+class TestPrivacyRouter:
+    @patch("gateway.executors.openshell._openshell")
+    def test_configure_provider_calls_cli(self, mock_os):
+        mock_os.return_value = MagicMock(stdout="ok\n")
+        executor = OpenShellExecutor()
+        config = InstanceConfig(
+            name="test",
+            machine_endpoint="http://localhost:11434/v1",
+            api_key="sk-test-123",
+        )
+        result = executor._configure_provider(config)
+
+        assert result is True
+        mock_os.assert_called_once()
+        args = mock_os.call_args[0]
+        assert "provider" in args
+        assert "set" in args
+        assert "--endpoint" in args
+        assert "http://localhost:11434/v1" in args
+        assert "--api-key" in args
+        assert "sk-test-123" in args
+
+    @patch("gateway.executors.openshell._openshell")
+    def test_configure_provider_detects_anthropic(self, mock_os):
+        mock_os.return_value = MagicMock(stdout="ok\n")
+        executor = OpenShellExecutor()
+        config = InstanceConfig(
+            name="test",
+            machine_endpoint="https://api.anthropic.com/v1",
+        )
+        executor._configure_provider(config)
+
+        args = mock_os.call_args[0]
+        # Should detect anthropic provider type
+        type_idx = list(args).index("--type")
+        assert args[type_idx + 1] == "anthropic"
+
+    @patch("gateway.executors.openshell._openshell")
+    def test_configure_provider_defaults_to_openai(self, mock_os):
+        mock_os.return_value = MagicMock(stdout="ok\n")
+        executor = OpenShellExecutor()
+        config = InstanceConfig(
+            name="test",
+            machine_endpoint="http://localhost:11434/v1",
+        )
+        executor._configure_provider(config)
+
+        args = mock_os.call_args[0]
+        type_idx = list(args).index("--type")
+        assert args[type_idx + 1] == "openai"
+
+    def test_configure_provider_returns_false_without_endpoint(self):
+        executor = OpenShellExecutor()
+        config = InstanceConfig(name="test")
+        assert executor._configure_provider(config) is False
+
+    @patch("gateway.executors.openshell._openshell")
+    def test_configure_provider_returns_false_on_failure(self, mock_os):
+        mock_os.side_effect = Exception("CLI error")
+        executor = OpenShellExecutor()
+        config = InstanceConfig(
+            name="test",
+            machine_endpoint="http://localhost:11434/v1",
+        )
+        assert executor._configure_provider(config) is False
+
+    @patch("gateway.executors.openshell._openshell")
+    def test_configure_provider_no_api_key_omits_flag(self, mock_os):
+        mock_os.return_value = MagicMock(stdout="ok\n")
+        executor = OpenShellExecutor()
+        config = InstanceConfig(
+            name="test",
+            machine_endpoint="http://localhost:11434/v1",
+        )
+        executor._configure_provider(config)
+
+        args_str = " ".join(mock_os.call_args[0])
+        assert "--api-key" not in args_str
+
+    @patch("gateway.executors.openshell._health_check", return_value=True)
+    @patch("gateway.executors.openshell._start_port_forward", return_value=12345)
+    @patch("gateway.executors.openshell._openshell")
+    @patch("gateway.executors.openshell._sandbox_exists", return_value=False)
+    @patch("gateway.executors.openshell._load_state", return_value=[])
+    @patch("gateway.executors.openshell._save_state")
+    @patch("gateway.executors.openshell._allocate_port", return_value=8200)
+    def test_spawn_with_privacy_router_uses_inference_local(
+        self, mock_port, mock_save, mock_load, mock_exists, mock_os,
+        mock_fwd, mock_health,
+    ):
+        """When provider config succeeds, sandbox env should use inference.local."""
+        mock_os.return_value = MagicMock(stdout="ok\n")
+        executor = OpenShellExecutor()
+        config = InstanceConfig(
+            name="test-agent",
+            machine_endpoint="http://localhost:11434/v1",
+            api_key="sk-test",
+        )
+        executor.spawn(config)
+
+        # Find the sandbox create call (the one with "sandbox" "create")
+        create_call = None
+        for call in mock_os.call_args_list:
+            args = call[0]
+            if "sandbox" in args and "create" in args:
+                create_call = call
+                break
+        assert create_call is not None
+        args_str = " ".join(create_call[0])
+
+        # Should have inference.local, NOT the real endpoint or API key
+        assert "HERMES_BASE_URL=https://inference.local" in args_str
+        assert "sk-test" not in args_str
+        assert "HERMES_API_KEY" not in args_str
+
+    @patch("gateway.executors.openshell._health_check", return_value=True)
+    @patch("gateway.executors.openshell._start_port_forward", return_value=12345)
+    @patch("gateway.executors.openshell._openshell")
+    @patch("gateway.executors.openshell._sandbox_exists", return_value=False)
+    @patch("gateway.executors.openshell._load_state", return_value=[])
+    @patch("gateway.executors.openshell._save_state")
+    @patch("gateway.executors.openshell._allocate_port", return_value=8200)
+    def test_spawn_without_privacy_router_passes_credentials(
+        self, mock_port, mock_save, mock_load, mock_exists, mock_os,
+        mock_fwd, mock_health,
+    ):
+        """When provider config fails, sandbox should get direct credentials."""
+        # Make provider set fail, but sandbox create succeed
+        def side_effect(*args, **kwargs):
+            if args and "provider" in args:
+                raise Exception("CLI too old")
+            return MagicMock(stdout="ok\n")
+        mock_os.side_effect = side_effect
+
+        executor = OpenShellExecutor()
+        config = InstanceConfig(
+            name="test-agent",
+            machine_endpoint="http://localhost:11434/v1",
+            api_key="sk-test",
+        )
+        executor.spawn(config)
+
+        create_call = None
+        for call in mock_os.call_args_list:
+            args = call[0]
+            if "sandbox" in args and "create" in args:
+                create_call = call
+                break
+        assert create_call is not None
+        args_str = " ".join(create_call[0])
+
+        # Should have direct credentials, NOT inference.local
+        assert "OPENAI_BASE_URL=http://localhost:11434/v1" in args_str
+        assert "HERMES_API_KEY=sk-test" in args_str
+        assert "inference.local" not in args_str
+
+    @patch("gateway.executors.openshell._health_check", return_value=True)
+    @patch("gateway.executors.openshell._start_port_forward", return_value=12345)
+    @patch("gateway.executors.openshell._openshell")
+    @patch("gateway.executors.openshell._sandbox_exists", return_value=False)
+    @patch("gateway.executors.openshell._load_state", return_value=[])
+    @patch("gateway.executors.openshell._save_state")
+    @patch("gateway.executors.openshell._allocate_port", return_value=8200)
+    def test_spawn_injects_mcp_gateway_url(
+        self, mock_port, mock_save, mock_load, mock_exists, mock_os,
+        mock_fwd, mock_health,
+    ):
+        """Spawn should always inject HERMES_MCP_GATEWAY_URL."""
+        mock_os.return_value = MagicMock(stdout="ok\n")
+        executor = OpenShellExecutor()
+        config = InstanceConfig(name="test-agent")
+        executor.spawn(config)
+
+        create_call = None
+        for call in mock_os.call_args_list:
+            args = call[0]
+            if "sandbox" in args and "create" in args:
+                create_call = call
+                break
+        assert create_call is not None
+        args_str = " ".join(create_call[0])
+        assert "HERMES_MCP_GATEWAY_URL=" in args_str
+
+
+# ---------------------------------------------------------------------------
 # TestDeleteInstance
 # ---------------------------------------------------------------------------
 
