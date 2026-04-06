@@ -3901,6 +3901,7 @@ class GatewayRunner:
         action_policy=None,
         auth_user_id: str = None,
         http_sse_queue: "asyncio.Queue | None" = None,
+        agent_config: dict = None,
     ) -> Dict[str, Any]:
         """
         Run the agent with the given message and context.
@@ -4287,6 +4288,18 @@ class GatewayRunner:
         else:
             default_toolset = default_toolset_map.get(source.platform, "hermes-telegram")
             enabled_toolsets = [default_toolset]
+
+        # Named agent override: use agent-specific toolsets if configured
+        if agent_config:
+            import json as _json
+            _agent_toolsets = agent_config.get("toolsets")
+            if _agent_toolsets:
+                try:
+                    _parsed = _json.loads(_agent_toolsets) if isinstance(_agent_toolsets, str) else _agent_toolsets
+                    if isinstance(_parsed, list) and _parsed:
+                        enabled_toolsets = _parsed
+                except Exception:
+                    pass
         
         # Tool progress mode from config.yaml: "all", "new", "verbose", "off"
         # Falls back to env vars for backward compatibility
@@ -4633,6 +4646,28 @@ class GatewayRunner:
                 pass
 
             model = _resolve_gateway_model()
+
+            # Named agent override: use agent-specific model if configured
+            if agent_config and agent_config.get("model"):
+                model = agent_config["model"]
+                # Resolve the correct provider for the agent's model
+                try:
+                    from gateway.auth import db as _adb
+                    _resolved = False
+                    for cp in _adb.list_cloud_providers():
+                        if cp.get("active_model") == model:
+                            os.environ["OPENAI_API_KEY"] = cp.get("api_key") or ""
+                            os.environ["OPENAI_BASE_URL"] = cp.get("base_url") or ""
+                            _resolved = True
+                            break
+                    if not _resolved:
+                        for _m in _adb.list_machines():
+                            if _m.get("enabled") and _m.get("endpoint_url"):
+                                os.environ["OPENAI_BASE_URL"] = _m["endpoint_url"].rstrip("/")
+                                os.environ["OPENAI_API_KEY"] = _m.get("api_key") or "not-needed"
+                                break
+                except Exception:
+                    pass
 
             try:
                 runtime_kwargs = _resolve_runtime_agent_kwargs()
