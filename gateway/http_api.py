@@ -927,6 +927,36 @@ async def _handle_instances_post(request: web.Request) -> web.Response:
         from gateway.executors.base import InstanceConfig as _IC
         # Default label to soul slug so each soul gets a distinct instance
         effective_label = instance_label or soul_slug
+
+        # ── Resolve OpenShell-specific config (action policy, MCP, API key) ──
+        _spawn_action_policy = None
+        _spawn_mcp_servers: list[str] = []
+        _spawn_api_key = None
+        if _RUNTIME_MODE == "openshell":
+            # Action policy for dynamic sandbox policy compilation
+            try:
+                from gateway.auth.policy import ActionPolicy as _AP
+                _policy_row = auth_db.get_user_action_policy_row(caller_id)
+                if _policy_row:
+                    _spawn_action_policy = _AP.from_row(_policy_row)
+            except Exception:
+                pass
+            # MCP server names for network policy rules
+            try:
+                _mcp_svc = request.app.get("mcp_service")
+                if _mcp_svc:
+                    _cat = _mcp_svc.get_catalogue()
+                    _spawn_mcp_servers = [s.get("name") or s.get("id", "") for s in _cat if isinstance(s, dict)]
+            except Exception:
+                pass
+            # API key from machine record (for Privacy Router)
+            try:
+                if resolved_machine_id:
+                    _m = auth_db.get_machine(resolved_machine_id)
+                    _spawn_api_key = (_m or {}).get("api_key")
+            except Exception:
+                pass
+
         _ic = _IC(
             name=_safe_k8s_name(requester, effective_label),
             soul_name=soul_slug,
@@ -937,6 +967,9 @@ async def _handle_instances_post(request: web.Request) -> web.Response:
             machine_endpoint=resolved_endpoint,
             machine_name=resolved_machine_name,
             machine_id=resolved_machine_id,
+            action_policy=_spawn_action_policy,
+            mcp_servers=_spawn_mcp_servers,
+            api_key=_spawn_api_key,
         )
         spawned = await loop.run_in_executor(None, executor.spawn, _ic)
         if _RUNTIME_MODE == "local":
