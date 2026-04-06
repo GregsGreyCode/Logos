@@ -18,6 +18,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     curl \
     git \
+    iproute2 \
  && rm -rf /var/lib/apt/lists/*
 
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh
@@ -35,13 +36,16 @@ RUN uv pip install ".[messaging]" || true
 COPY . /app/
 RUN uv pip install -e ".[messaging]"
 
-# Non-root user for reduced privilege
-RUN useradd -m -d /home/hermes -u 10001 hermes \
- && mkdir -p /home/hermes/.hermes/{sessions,logs,memories,skills} \
- && chown -R 10001:10001 /home/hermes /app
-USER hermes
-ENV HOME=/home/hermes
-ENV HERMES_HOME=/home/hermes/.hermes
+# Non-root user for reduced privilege.
+# Named "sandbox" for OpenShell compatibility (required user+group name).
+# Also works for plain Docker mode — the name doesn't matter there.
+RUN groupadd -g 10001 sandbox \
+ && useradd -m -d /home/sandbox -u 10001 -g sandbox sandbox \
+ && mkdir -p /home/sandbox/.hermes/{sessions,logs,memories,skills} \
+ && chown -R 10001:10001 /home/sandbox /app
+USER sandbox
+ENV HOME=/home/sandbox
+ENV HERMES_HOME=/home/sandbox/.hermes
 
 # Runtime defaults — overridden by DockerSandboxExecutor via -e flags
 ENV HERMES_PORT=8080

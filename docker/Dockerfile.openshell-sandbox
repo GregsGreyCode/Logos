@@ -17,6 +17,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     curl \
     git \
+    iproute2 \
     python3.11 \
     python3-pip \
     python3.11-venv \
@@ -42,20 +43,21 @@ COPY . /app/
 RUN uv pip install -e ".[messaging]"
 
 # ── Non-root user for reduced privilege ────────────────────────────────────
-RUN useradd -m -d /home/hermes -u 10001 hermes \
- && mkdir -p /home/hermes/.hermes/{sessions,logs,memories,skills} \
+# OpenShell requires a user+group named "sandbox" in the image.
+RUN groupadd -g 10001 sandbox \
+ && useradd -m -d /home/sandbox -u 10001 -g sandbox sandbox \
+ && mkdir -p /home/sandbox/.hermes/{sessions,logs,memories,skills} \
  && mkdir -p /hermes \
- && chown -R 10001:10001 /home/hermes /app /hermes
-USER hermes
-ENV HOME=/home/hermes
+ && chown -R 10001:10001 /home/sandbox /app /hermes
+USER sandbox
+ENV HOME=/home/sandbox
 
 # ── Runtime config ─────────────────────────────────────────────────────────
 ENV HERMES_PORT=8080
-ENV HERMES_HOME=/home/hermes/.hermes
+ENV HERMES_HOME=/home/sandbox/.hermes
 
 # Mount point for SOUL.md — OpenShellExecutor bind-mounts the resolved
 # soul content here as read-only at sandbox creation time.
-# /hermes/SOUL.md is owned by hermes user (created above).
 
 EXPOSE 8080
 
