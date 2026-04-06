@@ -1900,6 +1900,15 @@ async def _handle_chat(request: web.Request) -> web.StreamResponse:
 
     message = body.get("message", "")
     session_id = body.get("session_id", "http-default")
+    agent_id = body.get("agent_id")
+
+    # Look up named agent config (model, soul, toolsets) if specified
+    _agent_config = None
+    if agent_id:
+        try:
+            _agent_config = auth_db.get_agent(agent_id)
+        except Exception:
+            pass
 
     # --- Process file attachments ---
     raw_attachments = body.get("attachments") or []
@@ -2115,6 +2124,7 @@ async def _handle_chat(request: web.Request) -> web.StreamResponse:
                 action_policy=_action_policy,
                 auth_user_id=_auth_user_id,
                 http_sse_queue=http_sse_queue,
+                agent_config=_agent_config,
             )
         final = result.get("final_response", "")
         await send_event({"type": "message", "content": final})

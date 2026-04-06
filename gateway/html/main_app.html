@@ -1144,7 +1144,7 @@
     <div class="flex gap-4 mb-4 border-b border-gray-800">
       <button class="pb-2 text-xs font-medium border-b-2 transition-colors"
         :class="infraTab==='servers' ? 'border-[var(--accent)] text-white' : 'border-transparent text-gray-500 hover:text-gray-300'"
-        @click="infraTab='servers'; localStorage.setItem('logos_infra_tab','servers'); loadAdminMachines(); loadCloudProviders()">Inference</button>
+        @click="infraTab='servers'; localStorage.setItem('logos_infra_tab','servers'); loadAdminMachines(); loadCloudProviders(); probeAllMachines()">Inference</button>
       <button class="pb-2 text-xs font-medium border-b-2 transition-colors"
         :class="infraTab==='routing' ? 'border-[var(--accent)] text-white' : 'border-transparent text-gray-500 hover:text-gray-300'"
         @click="infraTab='routing'; localStorage.setItem('logos_infra_tab','routing'); loadRoutingData()">Routing</button>
@@ -6073,6 +6073,8 @@ function app() {
             message: msg,
             session_id: chat.id,
             attachments: pendingAttachments,
+            // Pass named agent config so the runner uses the right model/soul/toolsets
+            agent_id: chat.agent_id || undefined,
             // If talking to a specific worker (not the primary gateway), include worker_id
             // so the gateway dispatches to the right worker process
             worker_id: this.activeInstance?.worker_id || undefined,
