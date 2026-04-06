@@ -1,7 +1,7 @@
 # NVIDIA OpenShell Integration
 
 **Branch:** `feature/openshell-integration`
-**Status:** Phases 1-2 complete, Phases 3-5 pending
+**Status:** All 5 phases complete
 **Date:** 2026-04-06
 
 ---
@@ -123,23 +123,32 @@ Covers: preset selection for all 4 filesystem levels + unknown fallback, model e
 
 ## Remaining Phases
 
-### Phase 3: Inference Routing via Privacy Router (pending)
-
-Configure OpenShell's Privacy Router so sandboxed agents talk to `inference.local` instead of holding API keys. Add `_configure_provider()` to executor, stop passing credentials as env vars, add graceful fallback.
-
-### Phase 4: MCP Cross-Sandbox Routing (pending)
-
-Ensure sandboxed agents can reach the Logos MCP gateway through OpenShell's network policy. The pieces were built across Phases 2-3; Phase 4 connects them end-to-end.
+### Phase 3: Inference Routing via Privacy Router (complete)
 
 **What was done:**
-- `http_api.py` now resolves the user's `ActionPolicy`, configured MCP server names, and machine API key at spawn time, passing them to `InstanceConfig`
+- Added `_configure_provider()` method to OpenShellExecutor — calls `openshell provider set --type {openai|anthropic} --endpoint {url} --api-key {key}`
+- Auto-detects provider type from endpoint URL (anthropic vs openai-compatible)
+- When Privacy Router is configured, sandbox gets `HERMES_BASE_URL=https://inference.local` — no API keys inside the sandbox
+- Graceful fallback: if `openshell provider set` fails, passes credentials via env vars directly (less secure but functional)
+- `HERMES_MCP_GATEWAY_URL` injected into all sandbox env vars
+- `api_key` field added to `InstanceConfig`
+- 9 new tests covering provider config, type detection, inference.local routing, credential fallback
+
+### Phase 4: MCP Cross-Sandbox Routing (complete)
+
+**What was done:**
+- `http_api.py` now resolves the user's `ActionPolicy`, configured MCP server names, and machine API key at spawn time, passing them to `InstanceConfig` (openshell mode only)
 - The policy compiler (Phase 2) generates scoped `POST /mcp/*` network rules per MCP server
 - `HERMES_MCP_GATEWAY_URL` is injected into every sandbox env (Phase 3)
 - For `READ_ONLY` policies, MCP rules are omitted (agent can't use tools)
+- 3 new tests for compiled policy with MCP rules
 
-### Phase 5: Dashboard Preview + Documentation (pending)
+### Phase 5: Dashboard Preview + Documentation (complete)
 
-Policy preview API endpoint (`/api/admin/action-policies/{id}/preview-openshell`), dashboard YAML preview panel, and user-facing documentation.
+**What was done:**
+- New endpoint `POST /action-policies/{id}/preview-openshell` — compiles the ActionPolicy with current MCP config and returns YAML + hash + validation status
+- Dashboard "Preview YAML" button on each action policy card — opens a collapsible panel showing the rendered OpenShell YAML, policy hash, and validation badge
+- Documentation finalized
 
 ---
 
@@ -154,7 +163,7 @@ Policy preview API endpoint (`/api/admin/action-policies/{id}/preview-openshell`
 
 ---
 
-## Files Changed (Phases 1-4)
+## Files Changed (Phases 1-5)
 
 | Action | File |
 |--------|------|
