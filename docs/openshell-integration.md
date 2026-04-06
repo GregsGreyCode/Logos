@@ -129,7 +129,13 @@ Configure OpenShell's Privacy Router so sandboxed agents talk to `inference.loca
 
 ### Phase 4: MCP Cross-Sandbox Routing (pending)
 
-Ensure sandboxed agents can reach the Logos MCP gateway through OpenShell's network policy. Dynamic rule generation already exists in the compiler (Phase 2) — this phase wires up the gateway URL injection and end-to-end testing.
+Ensure sandboxed agents can reach the Logos MCP gateway through OpenShell's network policy. The pieces were built across Phases 2-3; Phase 4 connects them end-to-end.
+
+**What was done:**
+- `http_api.py` now resolves the user's `ActionPolicy`, configured MCP server names, and machine API key at spawn time, passing them to `InstanceConfig`
+- The policy compiler (Phase 2) generates scoped `POST /mcp/*` network rules per MCP server
+- `HERMES_MCP_GATEWAY_URL` is injected into every sandbox env (Phase 3)
+- For `READ_ONLY` policies, MCP rules are omitted (agent can't use tools)
 
 ### Phase 5: Dashboard Preview + Documentation (pending)
 
@@ -142,13 +148,13 @@ Policy preview API endpoint (`/api/admin/action-policies/{id}/preview-openshell`
 | Test file | Count | Status |
 |-----------|-------|--------|
 | `tests/unit/test_executors.py` | 102 | Passing (pre-existing) |
-| `tests/unit/test_openshell_executor.py` | 31 | Passing (new) |
+| `tests/unit/test_openshell_executor.py` | 43 | Passing (new) |
 | `tests/unit/test_policy_compiler.py` | 39 | Passing (new) |
-| **Total** | **172** | **All passing** |
+| **Total** | **184** | **All passing** |
 
 ---
 
-## Files Changed (Phases 1-2)
+## Files Changed (Phases 1-4)
 
 | Action | File |
 |--------|------|
@@ -160,7 +166,9 @@ Policy preview API endpoint (`/api/admin/action-policies/{id}/preview-openshell`
 | New | `gateway/policies/repo_scoped.yaml` |
 | New | `gateway/policies/read_only.yaml` |
 | New | `.github/workflows/build-sandbox-image.yml` |
+| New | `docs/openshell-integration.md` |
 | Modified | `gateway/executors/openshell.py` |
 | Modified | `gateway/executors/docker.py` |
 | Modified | `gateway/executors/base.py` |
+| Modified | `gateway/http_api.py` |
 | Modified | `docker/Dockerfile.openshell-sandbox` |
