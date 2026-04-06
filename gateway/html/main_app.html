@@ -652,7 +652,7 @@
               </span>
               <!-- M: Model — clickable dropdown -->
               <div class="relative" x-data="{ open: false }" @click.away="open = false">
-                <button @click="open = !open" data-testid="stamp-m"
+                <button @click="open = !open; if (open && !allMachineModels.length) loadAllMachineModels()" data-testid="stamp-m"
                   class="text-[10px] px-1.5 py-0.5 rounded font-mono border transition-colors cursor-pointer flex items-center gap-1"
                   :class="open
                     ? 'bg-[var(--accent-muted)] text-white border-[var(--accent)]'
@@ -5390,10 +5390,12 @@ function app() {
     },
 
     async loadAllMachineModels() {
+      // Ensure machines are loaded first (avoid race condition)
       if (!this.adminMachines.length) await this.loadAdminMachines();
-      const results = await Promise.all(this.adminMachines.map(async m => {
+      if (!this.adminMachines.length) return; // still empty — no machines configured
+      const results = await Promise.all(this.adminMachines.filter(m => m.enabled && m.endpoint_url).map(async m => {
         try {
-          const r = await fetch('/api/setup/probe?url=' + encodeURIComponent(m.endpoint_url) + '&machine_id=' + encodeURIComponent(m.id), {credentials:'include'});
+          const r = await fetch('/api/setup/probe?url=' + encodeURIComponent(m.endpoint_url) + '&prefer=lmstudio&machine_id=' + encodeURIComponent(m.id), {credentials:'include'});
           const d = await r.json();
           return (d.servers || []).flatMap(s => (s.models || []).map(mod => mod.id || mod.name)).filter(Boolean);
         } catch(e) { return []; }

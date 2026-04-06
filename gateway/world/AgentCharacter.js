@@ -83,7 +83,7 @@ async function getSheet(PIXI, charIndex) {
  */
 export async function createAgentCharacter(PIXI, inst, index, total) {
   const container = new PIXI.Container();
-  container.interactive = true;
+  container.eventMode = 'static';  // PixiJS v7+ (replaces deprecated .interactive)
   container.cursor = 'pointer';
   container._agentName = inst.name;
   container._direction = 'down';

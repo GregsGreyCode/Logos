@@ -120,6 +120,8 @@ export class WorldManager {
         try {
           const char = await createAgentCharacter(PIXI, inst, index, instances.length);
           if (this._destroyed) return;
+          char.eventMode = 'static';
+          char.cursor = 'pointer';
           char.on('pointertap', () => this.onAgentClick(inst.name));
           this.agentLayer.addChild(char);
           this.agents.set(inst.name, {
