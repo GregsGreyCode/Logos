@@ -2635,6 +2635,30 @@ async def handle_setup_complete(request: web.Request) -> web.Response:
         return web.json_response({"error": "endpoint and model required"}, status=400)
 
     try:
+        # Clear stale config from previous installations (PVC may persist across deploys)
+        import pathlib as _pathlib
+        import yaml as _yaml
+        _hermes_home = _pathlib.Path(os.environ.get("LOGOS_HOME") or os.environ.get("HERMES_HOME") or str(_pathlib.Path.home() / ".logos"))
+        _config_path = _hermes_home / "config.yaml"
+        _env_path = _hermes_home / ".env"
+        # Reset config.yaml to minimal state
+        if _config_path.exists():
+            try:
+                _old_cfg = _yaml.safe_load(_config_path.read_text(encoding="utf-8")) or {}
+                # Preserve only non-inference settings (theme, etc.)
+                _clean_cfg = {}
+                for _keep_key in ("ui_theme",):
+                    if _keep_key in _old_cfg:
+                        _clean_cfg[_keep_key] = _old_cfg[_keep_key]
+                _config_path.write_text(_yaml.dump(_clean_cfg, default_flow_style=False) if _clean_cfg else "")
+                logger.info("setup: cleared stale config.yaml")
+            except Exception as _cfg_err:
+                logger.warning("setup: could not clear config.yaml: %s", _cfg_err)
+        # Clear stale env vars that might route to wrong provider
+        for _stale_key in ("HERMES_MODEL", "HERMES_SERVER_TYPE", "HERMES_INFERENCE_PROVIDER",
+                           "OPENAI_API_KEY", "OPENAI_BASE_URL"):
+            os.environ.pop(_stale_key, None)
+
         # Clear any example-placeholder machines and their auto-generated profiles
         for m in auth_db.list_machines():
             if (m.get("description") or "").startswith("Example"):
