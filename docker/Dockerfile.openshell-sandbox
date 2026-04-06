@@ -1,7 +1,7 @@
 # Hermes agent sandbox image for OpenShell
 #
 # Build:
-#   docker build -f Dockerfile.openshell-sandbox -t logos-hermes-sandbox .
+#   docker build -f docker/Dockerfile.openshell-sandbox -t logos-hermes-sandbox .
 #
 # Usage (via OpenShellExecutor — handled automatically):
 #   openshell sandbox create --name hermes-X --from logos-hermes-sandbox --detach
@@ -14,28 +14,53 @@ FROM ghcr.io/nvidia/openshell/sandbox:latest
 
 # ── System dependencies ────────────────────────────────────────────────────
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    curl \
+    git \
     python3.11 \
     python3-pip \
     python3.11-venv \
-    curl \
     && rm -rf /var/lib/apt/lists/*
+
+# ── Install uv for fast dependency resolution ─────────────────────────────
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh
+ENV PATH="/root/.local/bin:$PATH"
 
 # ── Install Logos/Hermes ────────────────────────────────────────────────────
 WORKDIR /app
-COPY pyproject.toml ./
-COPY . .
 
-RUN python3.11 -m pip install --no-cache-dir -e ".[messaging]"
+# Install dependencies first (cached layer)
+COPY pyproject.toml ./
+RUN uv venv venv --python 3.11 --clear
+ENV VIRTUAL_ENV="/app/venv"
+ENV PATH="/app/venv/bin:$PATH"
+ENV PYTHONPATH="/app"
+RUN uv pip install ".[messaging]" || true
+
+# Copy source
+COPY . /app/
+RUN uv pip install -e ".[messaging]"
+
+# ── Non-root user for reduced privilege ────────────────────────────────────
+RUN useradd -m -d /home/hermes -u 10001 hermes \
+ && mkdir -p /home/hermes/.hermes/{sessions,logs,memories,skills} \
+ && mkdir -p /hermes \
+ && chown -R 10001:10001 /home/hermes /app /hermes
+USER hermes
+ENV HOME=/home/hermes
 
 # ── Runtime config ─────────────────────────────────────────────────────────
 ENV HERMES_PORT=8080
-ENV HERMES_HOME=/hermes
-RUN mkdir -p /hermes
+ENV HERMES_HOME=/home/hermes/.hermes
+
+# Mount point for SOUL.md — OpenShellExecutor bind-mounts the resolved
+# soul content here as read-only at sandbox creation time.
+# /hermes/SOUL.md is owned by hermes user (created above).
+
+EXPOSE 8080
 
 # ── Entrypoint ─────────────────────────────────────────────────────────────
 # OpenShell runs the CMD as the container's main process.
 # HERMES_INSTANCE_NAME, HERMES_SOUL, HERMES_TOOLSETS etc. are injected
 # by OpenShellExecutor via --env flags at sandbox creation time.
-CMD ["python3.11", "-m", "gateway.run"]
-
-EXPOSE 8080
+CMD ["python", "-m", "gateway.run"]
