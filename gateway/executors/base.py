@@ -30,6 +30,9 @@ class InstanceConfig:
     # OpenShell-specific: resolved ActionPolicy for dynamic policy compilation
     action_policy: Optional[object] = None  # gateway.auth.policy.ActionPolicy
     mcp_servers: List[str] = field(default_factory=list)
+    # API key for the model endpoint — used by OpenShellExecutor to configure
+    # the Privacy Router so the sandbox never holds credentials directly.
+    api_key: Optional[str] = None
 
 
 @dataclass
