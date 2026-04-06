@@ -3,8 +3,8 @@
  * Theme: a garden with a central Logos tree. Agents wander the garden.
  */
 export const TILE_SIZE = 24;
-export const WORLD_COLS = 20;
-export const WORLD_ROWS = 20;
+export const WORLD_COLS = 40;
+export const WORLD_ROWS = 40;
 export const WORLD_W = WORLD_COLS * TILE_SIZE;
 export const WORLD_H = WORLD_ROWS * TILE_SIZE;
 
@@ -34,10 +34,10 @@ export const TILE_COLORS = {
 
 // Garden zones — organic areas where agents gather
 export const ZONES = {
-  clearing:  { x: 8,  y: 8,  w: 4, h: 4 },  // central clearing around the tree
-  meadow:    { x: 2,  y: 2,  w: 4, h: 3 },   // open meadow
-  pond:      { x: 15, y: 15, w: 3, h: 3 },   // near the pond
-  grove:     { x: 14, y: 2,  w: 4, h: 3 },   // shaded grove
+  clearing:  { x: 16, y: 16, w: 8, h: 8 },  // central clearing around the tree
+  meadow:    { x: 4,  y: 4,  w: 8, h: 6 },   // open meadow (top-left)
+  pond:      { x: 30, y: 30, w: 6, h: 6 },   // near the pond (bottom-right)
+  grove:     { x: 28, y: 4,  w: 8, h: 6 },   // shaded grove (top-right)
 };
 
 // Agent marker size

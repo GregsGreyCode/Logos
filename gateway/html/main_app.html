@@ -2277,172 +2277,200 @@
   <!-- ── Instances Tab (kubernetes mode only) ─────────────────────── -->
   <div x-show="tab==='agents'" x-cloak>
 
-    <!-- ── Header ── -->
-    <div class="flex items-center justify-between mb-4">
-      <h2 class="text-lg font-bold text-white">Agents</h2>
-      <button @click="namedAgentFormOpen = !namedAgentFormOpen; namedAgentMsg = null"
-        class="px-3 py-1.5 rounded-lg text-xs font-medium transition-colors"
-        :class="namedAgentFormOpen ? 'bg-gray-800 text-gray-400 border border-gray-700' : 'bg-indigo-600 text-white hover:bg-indigo-500'">
-        <span x-text="namedAgentFormOpen ? 'Cancel' : '+ Create Agent'"></span>
-      </button>
-    </div>
+    <!-- ── Two-column layout: World (left) | Agent panel (right) ── -->
+    <div class="flex gap-4" style="height:calc(100vh - 7rem);">
 
-    <!-- Status message -->
-    <div x-show="namedAgentMsg" x-cloak class="mb-3 text-xs px-3 py-2 rounded-lg"
-      :class="namedAgentMsg?.type === 'ok' ? 'bg-green-950 text-green-400 border border-green-800' : 'bg-red-950 text-red-400 border border-red-800'"
-      x-text="namedAgentMsg?.text"></div>
-
-    <!-- Create agent form -->
-    <div x-show="namedAgentFormOpen" x-cloak class="mb-5 p-4 rounded-xl border border-indigo-800/50 bg-indigo-950/10 space-y-3">
-      <input x-model="namedAgentForm.name" type="text" placeholder="Agent name (e.g. Atlas, DevOps-Bot)"
-        class="w-full px-3 py-2.5 rounded-lg bg-gray-800 border border-gray-700 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-indigo-500">
-      <div class="grid grid-cols-2 gap-3">
-        <div>
-          <label class="text-[10px] text-gray-500 mb-1 block">Soul</label>
-          <select x-model="namedAgentForm.soul_slug"
-            class="w-full px-2 py-1.5 rounded-lg bg-gray-800 border border-gray-700 text-xs text-white focus:outline-none focus:border-indigo-500">
-            <template x-for="s in (souls.length ? souls : [{slug:'general',name:'General'}])" :key="s.slug">
-              <option :value="s.slug" x-text="s.name || s.slug"></option>
-            </template>
-          </select>
+      <!-- ── LEFT: World Canvas ── -->
+      <div class="flex-1 min-w-0 flex flex-col">
+        <div class="flex items-center justify-between mb-2">
+          <h2 class="text-lg font-bold text-white">Agents</h2>
         </div>
-        <div>
-          <label class="text-[10px] text-gray-500 mb-1 block">Model</label>
-          <select x-model="namedAgentForm.model"
-            class="w-full px-2 py-1.5 rounded-lg bg-gray-800 border border-gray-700 text-xs text-white focus:outline-none focus:border-indigo-500">
-            <option value="">Auto (use active model)</option>
-            <template x-if="allMachineModels.length > 0">
-              <optgroup label="Local models">
-                <template x-for="m in allMachineModels" :key="m">
-                  <option :value="m" x-text="m"></option>
-                </template>
-              </optgroup>
-            </template>
-            <template x-if="cloudProviders.filter(p => p.active_model).length > 0">
-              <optgroup label="Cloud models">
-                <template x-for="cp in cloudProviders.filter(p => p.active_model)" :key="cp.id">
-                  <option :value="cp.active_model" x-text="cp.name + ' — ' + cp.active_model"></option>
-                </template>
-              </optgroup>
-            </template>
-          </select>
+        <div class="flex-1 min-h-0 rounded-xl border border-gray-800 overflow-hidden bg-gray-950">
+          <div id="agent-world" style="width:100%; height:100%;"></div>
         </div>
       </div>
-      <input x-model="namedAgentForm.description" type="text" placeholder="What does this agent do? (optional)"
-        class="w-full px-3 py-2 rounded-lg bg-gray-800 border border-gray-700 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-indigo-500">
-      <!-- Toolsets (expandable) -->
-      <details class="rounded-lg border border-gray-700 bg-gray-800/50 overflow-hidden">
-        <summary class="px-3 py-2 text-[10px] text-gray-500 cursor-pointer hover:text-gray-300 select-none flex items-center justify-between">
-          <span>Toolsets</span>
-          <span class="text-gray-600" x-text="namedAgentForm.toolsets.length ? namedAgentForm.toolsets.length + ' selected' : 'all defaults'"></span>
-        </summary>
-        <div class="px-3 pb-2.5 pt-1">
-          <template x-if="toolsets.toolsets">
-            <div class="grid grid-cols-2 sm:grid-cols-3 gap-1">
-              <template x-for="[name, ts] in Object.entries(toolsets.toolsets || {}).sort(([a],[b]) => a.localeCompare(b)).filter(([n, t]) => t.available)" :key="name">
-                <label class="flex items-center gap-1.5 px-2 py-1 rounded border text-[10px] cursor-pointer transition-colors"
-                  :class="namedAgentForm.toolsets.includes(name) ? 'border-emerald-800 bg-emerald-950/50 text-emerald-300' : 'border-gray-700 text-gray-500 hover:border-gray-600'">
-                  <input type="checkbox" :checked="namedAgentForm.toolsets.includes(name)"
-                    @change="$event.target.checked ? namedAgentForm.toolsets.push(name) : namedAgentForm.toolsets.splice(namedAgentForm.toolsets.indexOf(name), 1)"
-                    class="w-3 h-3 rounded border-gray-600 bg-gray-800 accent-emerald-500">
-                  <span class="font-mono truncate" x-text="name"></span>
-                  <span class="ml-auto text-gray-700 shrink-0" x-text="(ts.tools||[]).length + 't'"></span>
-                </label>
-              </template>
+
+      <!-- ── RIGHT: Create + Agent Cards + Live Status ── -->
+      <div class="w-80 shrink-0 flex flex-col min-h-0 overflow-y-auto thin-scroll space-y-3">
+
+        <!-- Create Agent toggle -->
+        <button @click="namedAgentFormOpen = !namedAgentFormOpen; namedAgentMsg = null"
+          class="w-full px-3 py-2 rounded-lg text-xs font-medium transition-colors"
+          :class="namedAgentFormOpen ? 'bg-gray-800 text-gray-400 border border-gray-700' : 'bg-indigo-600 text-white hover:bg-indigo-500'">
+          <span x-text="namedAgentFormOpen ? 'Cancel' : '+ Create Agent'"></span>
+        </button>
+
+        <!-- Status message -->
+        <div x-show="namedAgentMsg" x-cloak class="text-xs px-3 py-2 rounded-lg"
+          :class="namedAgentMsg?.type === 'ok' ? 'bg-green-950 text-green-400 border border-green-800' : 'bg-red-950 text-red-400 border border-red-800'"
+          x-text="namedAgentMsg?.text"></div>
+
+        <!-- Create agent form -->
+        <div x-show="namedAgentFormOpen" x-cloak class="p-3 rounded-xl border border-indigo-800/50 bg-indigo-950/10 space-y-2">
+          <input x-model="namedAgentForm.name" type="text" placeholder="Agent name (e.g. Atlas, DevOps-Bot)"
+            class="w-full px-3 py-2 rounded-lg bg-gray-800 border border-gray-700 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-indigo-500">
+          <div class="grid grid-cols-2 gap-2">
+            <div>
+              <label class="text-[10px] text-gray-500 mb-1 block">Soul</label>
+              <select x-model="namedAgentForm.soul_slug"
+                class="w-full px-2 py-1.5 rounded-lg bg-gray-800 border border-gray-700 text-xs text-white focus:outline-none focus:border-indigo-500">
+                <template x-for="s in (souls.length ? souls : [{slug:'general',name:'General'}])" :key="s.slug">
+                  <option :value="s.slug" x-text="s.name || s.slug"></option>
+                </template>
+              </select>
             </div>
-          </template>
-          <p x-show="!toolsets.toolsets" class="text-[10px] text-gray-600">Loading toolsets...</p>
-          <p class="text-[10px] text-gray-600 mt-1.5">Leave empty for soul defaults. Selected toolsets override defaults.</p>
-        </div>
-      </details>
-      <button @click="createNamedAgent()" :disabled="!namedAgentForm.name.trim()"
-        class="w-full py-2.5 rounded-lg text-sm font-medium bg-indigo-600 text-white hover:bg-indigo-500 disabled:opacity-40 transition-colors">
-        Create Agent
-      </button>
-    </div>
-
-    <!-- ── World Canvas (centered) ── -->
-    <div class="mb-5 flex justify-center">
-      <div class="rounded-xl border border-gray-800 overflow-hidden bg-gray-950" style="width:420px; height:320px;">
-        <div id="agent-world" style="width:100%; height:100%;"></div>
-      </div>
-    </div>
-
-    <!-- ── Agent Cards ── -->
-    <div class="mb-5">
-      <template x-if="namedAgents.length > 0">
-        <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
-          <template x-for="a in namedAgents" :key="a.id">
-            <div @click="if (!a._editing) chatWithAgent(a)"
-              class="p-3 rounded-xl border border-gray-800 bg-gray-900 hover:border-indigo-500/50 hover:bg-indigo-950/10 transition-colors cursor-pointer group">
-              <div class="flex items-center gap-2 mb-1">
-                <span class="w-2 h-2 rounded-full bg-green-500 shrink-0"></span>
-                <span class="text-sm font-semibold text-white group-hover:text-indigo-300 transition-colors truncate" x-text="a.name"></span>
-                <span class="text-[9px] px-1 py-0.5 rounded font-mono bg-indigo-950 text-indigo-300 border border-indigo-900 shrink-0" x-text="a.soul_slug"></span>
-                <span x-show="a.model" class="text-[9px] px-1 py-0.5 rounded font-mono bg-gray-800 text-gray-500 border border-gray-700 truncate max-w-[120px]" x-text="a.model"></span>
-                <span x-show="a.toolsets && JSON.parse(a.toolsets || '[]').length" class="text-[9px] px-1 py-0.5 rounded font-mono bg-emerald-950 text-emerald-400 border border-emerald-900 shrink-0"
-                  x-text="JSON.parse(a.toolsets || '[]').length + ' tools'"></span>
-              </div>
-              <p x-show="a.description" class="text-[10px] text-gray-500 ml-4 mb-1.5 truncate" x-text="a.description"></p>
-              <div class="flex items-center gap-1 ml-4 opacity-0 group-hover:opacity-100 transition-opacity" @click.stop>
-                <button @click.stop="a._editing = true; a._edit = { name: a.name, soul_slug: a.soul_slug, model: a.model || '', description: a.description || '', toolsets: JSON.parse(a.toolsets || '[]') }"
-                  class="text-[9px] px-1.5 py-0.5 rounded border border-gray-700 text-gray-500 hover:text-white hover:border-gray-500 transition-colors">Edit</button>
-                <button @click.stop="deleteNamedAgent(a.id)"
-                  class="text-[9px] px-1.5 py-0.5 rounded border border-red-900 text-red-700 hover:text-red-400 transition-colors">Delete</button>
-                <button @click.stop="chatWithAgent(a)"
-                  class="text-[9px] px-2 py-0.5 rounded-lg bg-indigo-600 text-white hover:bg-indigo-500 transition-colors font-medium">Chat</button>
-              </div>
-              <!-- Inline edit form -->
-              <div x-show="a._editing" x-cloak @click.stop class="mt-2 space-y-1.5 pt-2 border-t border-gray-800">
-                <div class="grid grid-cols-3 gap-2">
-                  <input x-model="a._edit.name" type="text" placeholder="Name"
-                    class="px-2 py-1 rounded bg-gray-800 border border-gray-700 text-[10px] text-white focus:outline-none focus:border-indigo-500">
-                  <select x-model="a._edit.soul_slug"
-                    class="px-2 py-1 rounded bg-gray-800 border border-gray-700 text-[10px] text-white focus:outline-none focus:border-indigo-500">
-                    <template x-for="s in (souls.length ? souls : [{slug:'general',name:'General'}])" :key="s.slug">
-                      <option :value="s.slug" x-text="s.name || s.slug"></option>
-                    </template>
-                  </select>
-                  <select x-model="a._edit.model"
-                    class="px-2 py-1 rounded bg-gray-800 border border-gray-700 text-[10px] text-white focus:outline-none focus:border-indigo-500">
-                    <option value="">Auto</option>
+            <div>
+              <label class="text-[10px] text-gray-500 mb-1 block">Model</label>
+              <select x-model="namedAgentForm.model"
+                class="w-full px-2 py-1.5 rounded-lg bg-gray-800 border border-gray-700 text-xs text-white focus:outline-none focus:border-indigo-500">
+                <option value="">Auto (use active model)</option>
+                <template x-if="allMachineModels.length > 0">
+                  <optgroup label="Local models">
                     <template x-for="m in allMachineModels" :key="m">
                       <option :value="m" x-text="m"></option>
                     </template>
+                  </optgroup>
+                </template>
+                <template x-if="cloudProviders.filter(p => p.active_model).length > 0">
+                  <optgroup label="Cloud models">
                     <template x-for="cp in cloudProviders.filter(p => p.active_model)" :key="cp.id">
-                      <option :value="cp.active_model" x-text="cp.active_model"></option>
+                      <option :value="cp.active_model" x-text="cp.name + ' — ' + cp.active_model"></option>
                     </template>
-                  </select>
+                  </optgroup>
+                </template>
+              </select>
+            </div>
+          </div>
+          <input x-model="namedAgentForm.description" type="text" placeholder="What does this agent do? (optional)"
+            class="w-full px-2 py-1.5 rounded-lg bg-gray-800 border border-gray-700 text-xs text-white placeholder-gray-600 focus:outline-none focus:border-indigo-500">
+          <!-- Toolsets (expandable) -->
+          <details class="rounded-lg border border-gray-700 bg-gray-800/50 overflow-hidden">
+            <summary class="px-3 py-1.5 text-[10px] text-gray-500 cursor-pointer hover:text-gray-300 select-none flex items-center justify-between">
+              <span>Toolsets</span>
+              <span class="text-gray-600" x-text="namedAgentForm.toolsets.length ? namedAgentForm.toolsets.length + ' selected' : 'all defaults'"></span>
+            </summary>
+            <div class="px-3 pb-2 pt-1">
+              <template x-if="toolsets.toolsets">
+                <div class="grid grid-cols-2 gap-1">
+                  <template x-for="[name, ts] in Object.entries(toolsets.toolsets || {}).sort(([a],[b]) => a.localeCompare(b)).filter(([n, t]) => t.available)" :key="name">
+                    <label class="flex items-center gap-1.5 px-2 py-1 rounded border text-[10px] cursor-pointer transition-colors"
+                      :class="namedAgentForm.toolsets.includes(name) ? 'border-emerald-800 bg-emerald-950/50 text-emerald-300' : 'border-gray-700 text-gray-500 hover:border-gray-600'">
+                      <input type="checkbox" :checked="namedAgentForm.toolsets.includes(name)"
+                        @change="$event.target.checked ? namedAgentForm.toolsets.push(name) : namedAgentForm.toolsets.splice(namedAgentForm.toolsets.indexOf(name), 1)"
+                        class="w-3 h-3 rounded border-gray-600 bg-gray-800 accent-emerald-500">
+                      <span class="font-mono truncate" x-text="name"></span>
+                      <span class="ml-auto text-gray-700 shrink-0" x-text="(ts.tools||[]).length + 't'"></span>
+                    </label>
+                  </template>
                 </div>
-                <!-- Toolsets -->
-                <template x-if="toolsets.toolsets">
-                  <div class="flex flex-wrap gap-1">
-                    <template x-for="[tsName, ts] in Object.entries(toolsets.toolsets || {}).sort(([x],[y]) => x.localeCompare(y)).filter(([n, t]) => t.available)" :key="tsName">
-                      <label class="flex items-center gap-1 px-1.5 py-0.5 rounded border text-[9px] cursor-pointer transition-colors"
-                        :class="(a._edit.toolsets||[]).includes(tsName) ? 'border-emerald-800 bg-emerald-950/50 text-emerald-300' : 'border-gray-700 text-gray-600 hover:border-gray-600'">
-                        <input type="checkbox" :checked="(a._edit.toolsets||[]).includes(tsName)"
-                          @change="if (!a._edit.toolsets) a._edit.toolsets = []; $event.target.checked ? a._edit.toolsets.push(tsName) : a._edit.toolsets.splice(a._edit.toolsets.indexOf(tsName), 1)"
-                          class="w-2.5 h-2.5 rounded border-gray-600 bg-gray-800 accent-emerald-500">
-                        <span class="font-mono" x-text="tsName"></span>
-                      </label>
-                    </template>
+              </template>
+              <p x-show="!toolsets.toolsets" class="text-[10px] text-gray-600">Loading toolsets...</p>
+              <p class="text-[10px] text-gray-600 mt-1">Leave empty for soul defaults.</p>
+            </div>
+          </details>
+          <button @click="createNamedAgent()" :disabled="!namedAgentForm.name.trim()"
+            class="w-full py-2 rounded-lg text-sm font-medium bg-indigo-600 text-white hover:bg-indigo-500 disabled:opacity-40 transition-colors">
+            Create Agent
+          </button>
+        </div>
+
+        <!-- ── Agent Cards ── -->
+        <template x-if="namedAgents.length > 0">
+          <div class="space-y-2">
+            <template x-for="a in namedAgents" :key="a.id">
+              <div @click="if (!a._editing) chatWithAgent(a)"
+                class="p-3 rounded-xl border border-gray-800 bg-gray-900 hover:border-indigo-500/50 hover:bg-indigo-950/10 transition-colors cursor-pointer group">
+                <div class="flex items-center gap-2 mb-1">
+                  <!-- Live status dot: green if agent has active session, yellow otherwise -->
+                  <span class="w-2 h-2 rounded-full shrink-0"
+                    :class="(status.active_sessions||[]).some(s => s.agent_name === a.name) ? 'bg-green-500 animate-pulse' : 'bg-gray-600'"></span>
+                  <span class="text-sm font-semibold text-white group-hover:text-indigo-300 transition-colors truncate" x-text="a.name"></span>
+                  <span class="text-[9px] px-1 py-0.5 rounded font-mono bg-indigo-950 text-indigo-300 border border-indigo-900 shrink-0" x-text="a.soul_slug"></span>
+                </div>
+                <div class="flex items-center gap-1.5 ml-4 mb-1">
+                  <span x-show="a.model" class="text-[9px] px-1 py-0.5 rounded font-mono bg-gray-800 text-gray-500 border border-gray-700 truncate max-w-[140px]" x-text="a.model"></span>
+                  <span x-show="a.toolsets && JSON.parse(a.toolsets || '[]').length" class="text-[9px] px-1 py-0.5 rounded font-mono bg-emerald-950 text-emerald-400 border border-emerald-900 shrink-0"
+                    x-text="JSON.parse(a.toolsets || '[]').length + ' tools'"></span>
+                </div>
+                <p x-show="a.description" class="text-[10px] text-gray-500 ml-4 mb-1.5 truncate" x-text="a.description"></p>
+
+                <!-- Live execution info for this agent -->
+                <template x-for="s in (status.active_sessions||[]).filter(s => s.agent_name === a.name)" :key="s.session_key">
+                  <div class="ml-4 mb-1.5 px-2 py-1.5 rounded-lg bg-indigo-950/30 border border-indigo-900/50">
+                    <div class="flex items-center gap-1.5 text-[10px]">
+                      <span class="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-pulse shrink-0"></span>
+                      <span class="font-mono text-indigo-400 truncate" x-text="s.current_tool || 'thinking...'"></span>
+                      <span class="text-gray-600 ml-auto shrink-0" x-text="elapsed(s.tool_started_at) + 's'"></span>
+                    </div>
+                    <div x-show="s.tool_count > 1" class="text-[9px] text-gray-600 mt-0.5 ml-3">
+                      tool #<span x-text="s.tool_count"></span>
+                      <template x-if="s.error_count > 0">
+                        <span class="text-red-600 ml-1"><span x-text="s.error_count"></span> err</span>
+                      </template>
+                    </div>
                   </div>
                 </template>
-                <div class="flex gap-1.5">
-                  <button @click="updateNamedAgent(a.id)" class="text-[9px] px-2 py-1 rounded bg-indigo-600 text-white hover:bg-indigo-500 transition-colors">Save</button>
-                  <button @click="a._editing = false; a._edit = null" class="text-[9px] px-2 py-1 rounded border border-gray-700 text-gray-400 hover:text-white transition-colors">Cancel</button>
+
+                <div class="flex items-center gap-1 ml-4 opacity-0 group-hover:opacity-100 transition-opacity" @click.stop>
+                  <button @click.stop="a._editing = true; a._edit = { name: a.name, soul_slug: a.soul_slug, model: a.model || '', description: a.description || '', toolsets: JSON.parse(a.toolsets || '[]') }"
+                    class="text-[9px] px-1.5 py-0.5 rounded border border-gray-700 text-gray-500 hover:text-white hover:border-gray-500 transition-colors">Edit</button>
+                  <button @click.stop="deleteNamedAgent(a.id)"
+                    class="text-[9px] px-1.5 py-0.5 rounded border border-red-900 text-red-700 hover:text-red-400 transition-colors">Delete</button>
+                  <button @click.stop="chatWithAgent(a)"
+                    class="text-[9px] px-2 py-0.5 rounded-lg bg-indigo-600 text-white hover:bg-indigo-500 transition-colors font-medium">Chat</button>
+                </div>
+                <!-- Inline edit form -->
+                <div x-show="a._editing" x-cloak @click.stop class="mt-2 space-y-1.5 pt-2 border-t border-gray-800">
+                  <input x-model="a._edit.name" type="text" placeholder="Name"
+                    class="w-full px-2 py-1 rounded bg-gray-800 border border-gray-700 text-[10px] text-white focus:outline-none focus:border-indigo-500">
+                  <div class="grid grid-cols-2 gap-2">
+                    <select x-model="a._edit.soul_slug"
+                      class="px-2 py-1 rounded bg-gray-800 border border-gray-700 text-[10px] text-white focus:outline-none focus:border-indigo-500">
+                      <template x-for="s in (souls.length ? souls : [{slug:'general',name:'General'}])" :key="s.slug">
+                        <option :value="s.slug" x-text="s.name || s.slug"></option>
+                      </template>
+                    </select>
+                    <select x-model="a._edit.model"
+                      class="px-2 py-1 rounded bg-gray-800 border border-gray-700 text-[10px] text-white focus:outline-none focus:border-indigo-500">
+                      <option value="">Auto</option>
+                      <template x-for="m in allMachineModels" :key="m">
+                        <option :value="m" x-text="m"></option>
+                      </template>
+                      <template x-for="cp in cloudProviders.filter(p => p.active_model)" :key="cp.id">
+                        <option :value="cp.active_model" x-text="cp.active_model"></option>
+                      </template>
+                    </select>
+                  </div>
+                  <!-- Toolsets -->
+                  <template x-if="toolsets.toolsets">
+                    <div class="flex flex-wrap gap-1">
+                      <template x-for="[tsName, ts] in Object.entries(toolsets.toolsets || {}).sort(([x],[y]) => x.localeCompare(y)).filter(([n, t]) => t.available)" :key="tsName">
+                        <label class="flex items-center gap-1 px-1.5 py-0.5 rounded border text-[9px] cursor-pointer transition-colors"
+                          :class="(a._edit.toolsets||[]).includes(tsName) ? 'border-emerald-800 bg-emerald-950/50 text-emerald-300' : 'border-gray-700 text-gray-600 hover:border-gray-600'">
+                          <input type="checkbox" :checked="(a._edit.toolsets||[]).includes(tsName)"
+                            @change="if (!a._edit.toolsets) a._edit.toolsets = []; $event.target.checked ? a._edit.toolsets.push(tsName) : a._edit.toolsets.splice(a._edit.toolsets.indexOf(tsName), 1)"
+                            class="w-2.5 h-2.5 rounded border-gray-600 bg-gray-800 accent-emerald-500">
+                          <span class="font-mono" x-text="tsName"></span>
+                        </label>
+                      </template>
+                    </div>
+                  </template>
+                  <div class="flex gap-1.5">
+                    <button @click="updateNamedAgent(a.id)" class="text-[9px] px-2 py-1 rounded bg-indigo-600 text-white hover:bg-indigo-500 transition-colors">Save</button>
+                    <button @click="a._editing = false; a._edit = null" class="text-[9px] px-2 py-1 rounded border border-gray-700 text-gray-400 hover:text-white transition-colors">Cancel</button>
+                  </div>
                 </div>
               </div>
-            </div>
-          </template>
-        </div>
-      </template>
-      <p x-show="namedAgents.length === 0 && !namedAgentFormOpen" class="text-xs text-gray-500 text-center py-4">
-        No agents yet. Create one to get started.
-      </p>
-    </div>
+            </template>
+          </div>
+        </template>
+        <p x-show="namedAgents.length === 0 && !namedAgentFormOpen" class="text-xs text-gray-500 text-center py-4">
+          No agents yet. Create one to get started.
+        </p>
 
+      </div><!-- /right panel -->
 
+    </div><!-- /two-column layout -->
 
   </div>
 
@@ -5980,16 +6008,23 @@ function app() {
     },
 
     async switchModel(modelId) {
-      // Send a /model command to change the model for the current session
-      if (!this.activeChatId) return;
+      // Use PATCH /api/model which properly resolves provider from DB
+      // (cloud_providers + machines tables) instead of CLI-level env vars
       try {
-        await fetch('/chat', {
-          method: 'POST', credentials: 'include',
+        const r = await fetch('/api/model', {
+          method: 'PATCH', credentials: 'include',
           headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken() },
-          body: JSON.stringify({ message: '/model ' + modelId, session_id: this.activeChatId }),
+          body: JSON.stringify({ model: modelId }),
         });
-        if (this.activeInstance) this.activeInstance.model = modelId;
-      } catch {}
+        if (r.ok) {
+          if (this.activeInstance) this.activeInstance.model = modelId;
+          // Refresh status to pick up new model
+          this.loadStatus();
+        } else {
+          const err = await r.json().catch(() => ({}));
+          console.error('switchModel failed:', err);
+        }
+      } catch (e) { console.error('switchModel error:', e); }
     },
 
     async sendChat() {
