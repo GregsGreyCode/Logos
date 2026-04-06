@@ -492,6 +492,118 @@ class TestPrivacyRouter:
 
 
 # ---------------------------------------------------------------------------
+# TestCompiledPolicyWithMCP
+# ---------------------------------------------------------------------------
+
+class TestCompiledPolicyWithMCP:
+    """Test that spawn with action_policy + mcp_servers compiles dynamic policy."""
+
+    @patch("gateway.executors.openshell._health_check", return_value=True)
+    @patch("gateway.executors.openshell._start_port_forward", return_value=12345)
+    @patch("gateway.executors.openshell._openshell")
+    @patch("gateway.executors.openshell._sandbox_exists", return_value=False)
+    @patch("gateway.executors.openshell._load_state", return_value=[])
+    @patch("gateway.executors.openshell._save_state")
+    @patch("gateway.executors.openshell._allocate_port", return_value=8200)
+    def test_spawn_with_policy_compiles_yaml(
+        self, mock_port, mock_save, mock_load, mock_exists, mock_os,
+        mock_fwd, mock_health, tmp_path,
+    ):
+        """When action_policy is set, executor should compile + apply dynamic YAML."""
+        from gateway.auth.policy import ActionPolicy, FilesystemPolicy
+        mock_os.return_value = MagicMock(stdout="ok\n")
+
+        executor = OpenShellExecutor()
+        config = InstanceConfig(
+            name="test-agent",
+            action_policy=ActionPolicy(filesystem_policy=FilesystemPolicy.WORKSPACE_ONLY),
+            mcp_servers=["filesystem", "github"],
+        )
+        executor.spawn(config)
+
+        # Should have called "policy" "set" with a compiled YAML file
+        policy_calls = [
+            c for c in mock_os.call_args_list
+            if "policy" in c[0] and "set" in c[0]
+        ]
+        assert len(policy_calls) >= 1
+        policy_call = policy_calls[0]
+        args = policy_call[0]
+        # The --policy flag should point to a compiled yaml file
+        policy_idx = list(args).index("--policy")
+        policy_path = args[policy_idx + 1]
+        assert policy_path.endswith("-policy.yaml")
+
+    @patch("gateway.executors.openshell._health_check", return_value=True)
+    @patch("gateway.executors.openshell._start_port_forward", return_value=12345)
+    @patch("gateway.executors.openshell._openshell")
+    @patch("gateway.executors.openshell._sandbox_exists", return_value=False)
+    @patch("gateway.executors.openshell._load_state", return_value=[])
+    @patch("gateway.executors.openshell._save_state")
+    @patch("gateway.executors.openshell._allocate_port", return_value=8200)
+    def test_spawn_without_policy_uses_default(
+        self, mock_port, mock_save, mock_load, mock_exists, mock_os,
+        mock_fwd, mock_health,
+    ):
+        """Without action_policy, executor should use the static default YAML."""
+        mock_os.return_value = MagicMock(stdout="ok\n")
+        executor = OpenShellExecutor()
+        config = InstanceConfig(name="test-agent")
+
+        executor.spawn(config)
+
+        policy_calls = [
+            c for c in mock_os.call_args_list
+            if "policy" in c[0] and "set" in c[0]
+        ]
+        if policy_calls:
+            policy_call = policy_calls[0]
+            args = policy_call[0]
+            policy_idx = list(args).index("--policy")
+            policy_path = args[policy_idx + 1]
+            assert "openshell_default.yaml" in policy_path
+
+    @patch("gateway.executors.openshell._health_check", return_value=True)
+    @patch("gateway.executors.openshell._start_port_forward", return_value=12345)
+    @patch("gateway.executors.openshell._openshell")
+    @patch("gateway.executors.openshell._sandbox_exists", return_value=False)
+    @patch("gateway.executors.openshell._load_state", return_value=[])
+    @patch("gateway.executors.openshell._save_state")
+    @patch("gateway.executors.openshell._allocate_port", return_value=8200)
+    def test_compiled_policy_includes_mcp_rules(
+        self, mock_port, mock_save, mock_load, mock_exists, mock_os,
+        mock_fwd, mock_health,
+    ):
+        """Compiled policy YAML should include MCP server network rules."""
+        from gateway.auth.policy import ActionPolicy, FilesystemPolicy
+        import yaml
+
+        mock_os.return_value = MagicMock(stdout="ok\n")
+        executor = OpenShellExecutor()
+        config = InstanceConfig(
+            name="test-agent",
+            action_policy=ActionPolicy(filesystem_policy=FilesystemPolicy.WORKSPACE_ONLY),
+            mcp_servers=["filesystem", "github"],
+        )
+        executor.spawn(config)
+
+        # Read the compiled policy file
+        from gateway.executors.openshell import _SOUL_TMPDIR
+        policy_file = _SOUL_TMPDIR / "test-agent-policy.yaml"
+        if policy_file.exists():
+            doc = yaml.safe_load(policy_file.read_text())
+            mcp_rules = [
+                r for r in doc.get("network", [])
+                if r.get("paths") and any("/mcp/" in p for p in r["paths"])
+            ]
+            assert len(mcp_rules) >= 1
+            rule = mcp_rules[0]
+            assert "/mcp/filesystem" in rule["paths"]
+            assert "/mcp/github" in rule["paths"]
+            assert rule["methods"] == ["POST"]
+
+
+# ---------------------------------------------------------------------------
 # TestDeleteInstance
 # ---------------------------------------------------------------------------
 
