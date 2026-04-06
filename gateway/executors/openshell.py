@@ -45,11 +45,15 @@ import time
 from pathlib import Path
 from typing import List, Optional
 
+import tempfile
+
 from .base import InstanceConfig, ResourceHeadroom, SpawnedInstance
 
 logger = logging.getLogger(__name__)
 
 _HERMES_HOME = Path(os.getenv("HERMES_HOME", Path.home() / ".hermes"))
+# Directory for temporary soul files that get bind-mounted into sandboxes.
+_SOUL_TMPDIR = _HERMES_HOME / "openshell_souls"
 _STATE_FILE = _HERMES_HOME / "openshell_instances.json"
 _HEALTH_TIMEOUT = 30   # sandboxes start K3s — give them more time than local procs
 _PORT_MIN = 8200
@@ -266,6 +270,20 @@ class OpenShellExecutor:
 
         logger.info("Creating OpenShell sandbox '%s' from image '%s'", sandbox_name, self.sandbox_image)
 
+        # ── Resolve soul and write SOUL.md for bind-mounting ──────────────
+        soul_file: Optional[Path] = None
+        try:
+            from gateway.souls import get_soul_registry
+            registry = get_soul_registry()
+            soul = registry.get(config.soul_name) or registry.get("general")
+            if soul and soul.soul_md:
+                _SOUL_TMPDIR.mkdir(parents=True, exist_ok=True)
+                soul_file = _SOUL_TMPDIR / f"{config.name}-SOUL.md"
+                soul_file.write_text(soul.soul_md, encoding="utf-8")
+                logger.debug("Wrote SOUL.md for '%s' to %s", config.name, soul_file)
+        except Exception as exc:
+            logger.warning("Could not resolve soul for '%s': %s", config.name, exc)
+
         # Build environment variables to inject into the sandbox
         env_args: list[str] = []
         env_vars = {
@@ -274,12 +292,19 @@ class OpenShellExecutor:
         }
         if config.soul_name and config.soul_name != "default":
             env_vars["HERMES_SOUL"] = config.soul_name
+        if soul_file and soul_file.exists():
+            env_vars["HERMES_SOUL_PATH"] = "/hermes/SOUL.md"
         if config.toolsets:
             env_vars["HERMES_TOOLSETS"] = ",".join(config.toolsets)
         if config.policy:
             env_vars["HERMES_POLICY_LEVEL"] = config.policy
         for k, v in env_vars.items():
             env_args += ["--env", f"{k}={v}"]
+
+        # Volume mount for SOUL.md (read-only inside sandbox)
+        volume_args: list[str] = []
+        if soul_file and soul_file.exists():
+            volume_args += ["--volume", f"{soul_file}:/hermes/SOUL.md:ro"]
 
         # Create the sandbox.  ``--detach`` (or equivalent) keeps it running
         # in the background.  ``--name`` gives it a stable identifier.
@@ -288,6 +313,7 @@ class OpenShellExecutor:
             "--name", sandbox_name,
             "--from", self.sandbox_image,
             "--detach",
+            *volume_args,
             *env_args,
         ]
         try:
@@ -372,6 +398,10 @@ class OpenShellExecutor:
                 try:
                     _openshell("sandbox", "delete", sandbox_name, check=False)
                     logger.info("Deleted OpenShell sandbox '%s'", sandbox_name)
+                    # Clean up soul temp file
+                    soul_file = _SOUL_TMPDIR / f"{name}-SOUL.md"
+                    if soul_file.exists():
+                        soul_file.unlink(missing_ok=True)
                 except Exception as exc:
                     logger.warning("Error deleting sandbox '%s': %s", sandbox_name, exc)
             else:

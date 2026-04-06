@@ -48,6 +48,7 @@ _STATE_FILE = _HERMES_HOME / "docker_instances.json"
 _LOCK_FILE = _HERMES_HOME / "docker_instances.lock"
 _HEALTH_TIMEOUT = 30  # containers need time to start the Python process
 _DEFAULT_IMAGE = os.getenv("LOGOS_DOCKER_SANDBOX_IMAGE", "logos-hermes-sandbox")
+_SOUL_TMPDIR = _HERMES_HOME / "docker_souls"
 
 
 # ── File locking (cross-platform) ───────────────────────────────────────
@@ -198,6 +199,20 @@ class DockerSandboxExecutor:
             shared_home = _HERMES_HOME / "shared"
             shared_home.mkdir(parents=True, exist_ok=True)
 
+            # ── Resolve soul and write SOUL.md for bind-mounting ──────────
+            soul_file: Optional[Path] = None
+            try:
+                from gateway.souls import get_soul_registry
+                registry = get_soul_registry()
+                soul = registry.get(config.soul_name) or registry.get("general")
+                if soul and soul.soul_md:
+                    _SOUL_TMPDIR.mkdir(parents=True, exist_ok=True)
+                    soul_file = _SOUL_TMPDIR / f"{config.name}-SOUL.md"
+                    soul_file.write_text(soul.soul_md, encoding="utf-8")
+                    logger.debug("Wrote SOUL.md for '%s' to %s", config.name, soul_file)
+            except Exception as exc:
+                logger.warning("Could not resolve soul for '%s': %s", config.name, exc)
+
             # Build environment variables
             env_args: list[str] = []
             env_vars = {
@@ -207,6 +222,8 @@ class DockerSandboxExecutor:
             }
             if config.soul_name and config.soul_name != "default":
                 env_vars["HERMES_SOUL"] = config.soul_name
+            if soul_file and soul_file.exists():
+                env_vars["HERMES_SOUL_PATH"] = "/hermes/SOUL.md"
             if config.toolsets:
                 env_vars["HERMES_TOOLSETS"] = ",".join(config.toolsets)
             if config.policy:
@@ -216,6 +233,14 @@ class DockerSandboxExecutor:
             for k, v in env_vars.items():
                 env_args += ["-e", f"{k}={v}"]
 
+            # Volume mounts
+            volume_args = [
+                "-v", f"{instance_home}:/home/hermes/.hermes",  # per-instance storage
+                "-v", f"{shared_home}:/hermes-shared:ro",       # shared user profile (read-only)
+            ]
+            if soul_file and soul_file.exists():
+                volume_args += ["-v", f"{soul_file}:/hermes/SOUL.md:ro"]
+
             # docker run with reduced-privilege hardening
             run_args = [
                 "run", "-d",
@@ -224,8 +249,7 @@ class DockerSandboxExecutor:
                 "-p", f"127.0.0.1:{local_port}:8080",  # publish only to localhost
                 "--cap-drop=ALL",                       # drop all Linux capabilities
                 "--security-opt=no-new-privileges",     # prevent privilege escalation
-                "-v", f"{instance_home}:/home/hermes/.hermes",  # per-instance storage
-                "-v", f"{shared_home}:/hermes-shared:ro",       # shared user profile (read-only)
+                *volume_args,
                 *env_args,
                 self.sandbox_image,
             ]
@@ -304,6 +328,10 @@ class DockerSandboxExecutor:
                             logger.info("Stopped Docker sandbox '%s'", cn)
                         except Exception as exc:
                             logger.warning("Could not stop Docker sandbox '%s': %s", cn, exc)
+                    # Clean up soul temp file
+                    soul_file = _SOUL_TMPDIR / f"{name}-SOUL.md"
+                    if soul_file.exists():
+                        soul_file.unlink(missing_ok=True)
                 else:
                     remaining.append(inst)
             _save_state(remaining)
