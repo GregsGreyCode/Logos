@@ -58,10 +58,11 @@ ENV LOGOS_HOME=/tmp/logos
 ENV HERMES_PORT=8080
 EXPOSE 8080
 
-# Entrypoint wrapper that ensures venv and state dirs are set up,
-# then starts the gateway.  OpenShell strips Docker ENV vars, so
-# we hardcode the paths here.
-RUN printf '#!/bin/bash\nexport PATH="/app/venv/bin:$PATH"\nexport PYTHONPATH="/app"\nexport LOGOS_HOME="/tmp/logos"\nexport HERMES_HOME="/tmp/hermes"\nexport HERMES_PORT="${HERMES_PORT:-8080}"\nmkdir -p /tmp/logos/logs /tmp/hermes/sessions /tmp/hermes/memories\nexec /app/venv/bin/python -m gateway.run "$@"\n' > /app/entrypoint.sh \
- && chmod +x /app/entrypoint.sh
+# Entrypoint wrapper that:
+# 1. Sets up venv + writable state dirs (OpenShell strips Docker ENV)
+# 2. Reads /tmp/hermes/instance-config.json if it exists (uploaded by
+#    OpenShellExecutor with instance-specific config: name, soul, model, etc.)
+# 3. Starts the Hermes agent server
+COPY --chmod=755 docker/entrypoint-sandbox.sh /app/entrypoint.sh
 
 CMD ["/app/entrypoint.sh"]
