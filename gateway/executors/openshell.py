@@ -229,6 +229,31 @@ def _kill_pid(pid: Optional[int]) -> None:
         pass
 
 
+# ── System checks ─────────────────────────────────────────────────────────
+
+_INOTIFY_MIN_INSTANCES = 512
+
+def check_inotify_limits() -> tuple[bool, str]:
+    """Check if inotify limits are high enough for OpenShell's embedded k3s.
+
+    Returns (ok, message).  On non-Linux or if the file is unreadable,
+    returns (True, "") — we only warn when we can confirm it's too low.
+    """
+    try:
+        val = int(Path("/proc/sys/fs/inotify/max_user_instances").read_text().strip())
+        if val < _INOTIFY_MIN_INSTANCES:
+            return False, (
+                f"fs.inotify.max_user_instances={val} is too low for OpenShell "
+                f"(needs >= {_INOTIFY_MIN_INSTANCES}). Fix with:\n"
+                f"  sudo sysctl fs.inotify.max_user_instances={_INOTIFY_MIN_INSTANCES}\n"
+                f"To persist: echo 'fs.inotify.max_user_instances={_INOTIFY_MIN_INSTANCES}' "
+                f"| sudo tee /etc/sysctl.d/99-openshell.conf"
+            )
+        return True, ""
+    except Exception:
+        return True, ""  # non-Linux or unreadable — skip
+
+
 # ── Executor ──────────────────────────────────────────────────────────────
 
 class OpenShellExecutor:
@@ -304,6 +329,11 @@ class OpenShellExecutor:
     # ── Protocol methods ──────────────────────────────────────────────
 
     def spawn(self, config: InstanceConfig) -> SpawnedInstance:
+        # Pre-flight: warn if system limits are too low for k3s
+        _ok, _msg = check_inotify_limits()
+        if not _ok:
+            logger.warning("System check: %s", _msg.replace("\n", " | "))
+
         instances = _load_state()
 
         # Prune entries whose sandbox has already been deleted
