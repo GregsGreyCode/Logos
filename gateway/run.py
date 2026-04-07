@@ -4173,11 +4173,8 @@ class GatewayRunner:
                                         "flash_attention": True,
                                         "echo_load_config": True,
                                     }
-                                    # n_parallel is not supported by LM Studio's load API
-                                    # (configured in LM Studio settings, not via API)
-                                    # Keep the param for reference but it's silently ignored.
-                                    if _n_parallel >= 1:
-                                        _load_params["n_parallel"] = _n_parallel
+                                    # n_parallel is configured in LM Studio settings, not via the load API.
+                                    # Newer LM Studio versions reject it as an unrecognized key.
                                     _per_slot = _ctx // max(_n_parallel, 1)
                                     logger.info(
                                         "LM Studio: loading %s ctx=%d n_parallel=%d (per-slot=%d)",
@@ -4731,6 +4728,15 @@ class GatewayRunner:
                 adapter = None
 
             if adapter is None:
+                # ── Debug: log runtime config before agent creation ──
+                logger.info(
+                    "Creating AIAgent: model=%s base_url=%s api_key=%s... provider=%s toolsets=%s",
+                    model,
+                    runtime_kwargs.get("base_url", "?"),
+                    (runtime_kwargs.get("api_key", "") or "")[:15],
+                    runtime_kwargs.get("provider", "?"),
+                    _effective_toolsets,
+                )
                 agent = AIAgent(
                     model=model,
                     **runtime_kwargs,

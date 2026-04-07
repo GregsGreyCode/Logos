@@ -2063,11 +2063,10 @@ async def _handle_chat(request: web.Request) -> web.StreamResponse:
         worker_entry = worker_registry.get(target_worker) if worker_registry and target_worker else None
 
         if worker_entry and worker_entry.healthy and not worker_entry.is_local and worker_entry.ws and not worker_entry.ws.closed:
-            # Dispatch to connected worker
+            # Dispatch to connected remote worker (e.g. OpenShell sandbox).
+            # Workers manage their own inference config (via inference.local
+            # or instance-config.json) — we only send the conversation context.
             import uuid as _uuid
-            _model = os.environ.get("HERMES_MODEL", "")
-            _base_url = os.environ.get("OPENAI_BASE_URL", "")
-            _api_key = os.environ.get("OPENAI_API_KEY", os.environ.get("ANTHROPIC_API_KEY", "not-needed"))
             task_payload = {
                 "type": "run_conversation",
                 "task_id": str(_uuid.uuid4()),
@@ -2076,8 +2075,6 @@ async def _handle_chat(request: web.Request) -> web.StreamResponse:
                 "message": message,
                 "history": history,
                 "context_prompt": context_prompt,
-                "model": _model,
-                "model_kwargs": {"api_key": _api_key, "base_url": _base_url},
                 "toolsets": worker_entry.toolsets or ["hermes-cli"],
                 "max_iterations": int(os.environ.get("HERMES_MAX_ITERATIONS", "90")),
             }

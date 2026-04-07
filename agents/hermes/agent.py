@@ -5178,6 +5178,28 @@ class AIAgent:
                     if self.thinking_callback:
                         self.thinking_callback("")
 
+                    # ── Debug: log full exception chain for connection errors ──
+                    _err_name = type(api_error).__name__
+                    if "connection" in _err_name.lower() or "connection" in str(api_error).lower():
+                        import traceback as _tb
+                        _cause = api_error.__cause__ or api_error.__context__
+                        logging.error(
+                            "API connection debug:\n"
+                            "  base_url=%s\n"
+                            "  model=%s\n"
+                            "  error_type=%s\n"
+                            "  error=%s\n"
+                            "  cause=%s (%s)\n"
+                            "  traceback:\n%s",
+                            getattr(self.client, 'base_url', '?'),
+                            self.model,
+                            _err_name,
+                            str(api_error)[:300],
+                            type(_cause).__name__ if _cause else 'None',
+                            str(_cause)[:200] if _cause else '',
+                            _tb.format_exc()[-1000:],
+                        )
+
                     status_code = getattr(api_error, "status_code", None)
                     if (
                         self.api_mode == "codex_responses"
