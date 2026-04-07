@@ -150,6 +150,64 @@ class SessionContext:
         }
 
 
+def build_capability_manifest(context: SessionContext) -> str:
+    """Build a structured capability section for the agent system prompt.
+
+    Summarises messaging platforms, inference backend, MCP tools,
+    tool integrations, sandbox runtime, and any constraints — all
+    derived from live state rather than hardcoded checks.
+    """
+    sections = []
+
+    # Messaging
+    messaging = [p.value for p in context.connected_platforms if p != Platform.LOCAL]
+    if messaging:
+        sections.append(f"**Messaging:** {', '.join(messaging)} (connected)")
+    else:
+        sections.append("**Messaging:** web only (no external platforms connected)")
+
+    # Inference
+    model = os.environ.get("HERMES_MODEL") or os.environ.get("LLM_MODEL") or "unknown"
+    backend = os.environ.get("HERMES_SERVER_TYPE") or "local"
+    sections.append(f"**Inference:** {model} via {backend}")
+
+    # MCP tools
+    try:
+        from gateway.auth.db import list_mcp_servers
+        mcp_servers = list_mcp_servers()
+        running = [s["name"] for s in mcp_servers if s.get("enabled")]
+        if running:
+            sections.append(f"**MCP Tools:** {', '.join(running)}")
+    except Exception:
+        pass
+
+    # Tool integrations
+    try:
+        from gateway.services import get_tool_integrations
+        tools = [t["label"] for t in get_tool_integrations() if t.get("has_key")]
+        if tools:
+            sections.append(f"**Integrations:** {', '.join(tools)}")
+    except Exception:
+        pass
+
+    # Sandbox runtime
+    runtime = context.runtime_mode or "local"
+    sections.append(f"**Sandbox:** {runtime}")
+
+    # Constraints
+    constraints = []
+    if not messaging:
+        constraints.append(
+            "No external messaging — cannot deliver notifications or scheduled "
+            "messages outside the web UI. Do not suggest platform setup unprompted. "
+            "If the user asks, mention that messaging platforms can be added in Settings."
+        )
+    if constraints:
+        sections.append("**Constraints:** " + " ".join(constraints))
+
+    return "## Available Capabilities\n\n" + "\n".join(sections)
+
+
 def build_session_context_prompt(context: SessionContext) -> str:
     """
     Build the dynamic system prompt section that tells the agent about its context.
@@ -206,22 +264,10 @@ def build_session_context_prompt(context: SessionContext) -> str:
             "that you can only read messages sent directly to you and respond."
         )
 
-    # Connected platforms
-    messaging_platforms = [p for p in context.connected_platforms if p != Platform.LOCAL]
-    platforms_list = ["local (files on this machine)"] + [f"{p.value}: Connected ✓" for p in messaging_platforms]
-    lines.append(f"**Connected Platforms:** {', '.join(platforms_list)}")
+    # Capability manifest — structured summary of available capabilities.
+    lines.append("")
+    lines.append(build_capability_manifest(context))
 
-    # Capability context — tells the agent what's available without prescribing actions.
-    # The agent can reason about missing capabilities but never owns provisioning.
-    if not messaging_platforms:
-        lines.append(
-            "[CONTEXT: No external messaging platforms are connected. "
-            "The user is interacting via the web UI only. "
-            "Do not suggest platform setup unprompted. If the user asks about "
-            "notifications, reminders, or reaching you from other apps, mention "
-            "that messaging platforms can be added in Settings.]"
-        )
-    
     # Home channels
     if context.home_channels:
         lines.append("")

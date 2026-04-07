@@ -334,6 +334,15 @@ def load_gateway_config() -> GatewayConfig:
     except Exception:
         pass
 
+    # Inject DB-stored credentials (messaging tokens, tool keys) into os.environ
+    # so _apply_env_overrides picks them up. Only sets keys NOT already in env,
+    # preserving .env / k8s secret / Docker env priority.
+    try:
+        from gateway.services import inject_credentials
+        inject_credentials()
+    except Exception:
+        pass
+
     # Override with environment variables
     _apply_env_overrides(config)
     
