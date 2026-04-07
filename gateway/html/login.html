@@ -24,22 +24,8 @@
       background-size: 28px 28px;
     }
 
-    /* ── Ambient glow ─────────────────────────────────────────────────────
-       Huge blurred orb centred on the logo area. Colours synced to the
-       actual hue-rotate progression of the logo gradient (avg hue ~260°):
-         0°  → indigo, 60° → magenta, 120° → orange, 180° → yellow,
-         240° → green,  300° → cyan,   360° → back to indigo.          */
-    /* color-mix() in the gradient reads --orb-color; animate it via keyframes */
-    @property --orb-color { syntax: '<color>'; inherits: true; initial-value: #6366f1; }
-    @keyframes ambient-color {
-      0%   { --orb-color: #6366f1; }
-      17%  { --orb-color: #d946ef; }
-      33%  { --orb-color: #f97316; }
-      50%  { --orb-color: #eab308; }
-      67%  { --orb-color: #22c55e; }
-      83%  { --orb-color: #06b6d4; }
-      100% { --orb-color: #6366f1; }
-    }
+    /* ── Ambient glow — driven by --hue-num so it stays perfectly synced
+       with the logo hue-rotate. No separate keyframes needed. ────────── */
     body::before {
       content: '';
       position: fixed;
@@ -47,15 +33,13 @@
       transform: translate(-50%, -50%);
       width: 2400px; height: 2400px;
       border-radius: 50%;
-      /* Pre-blurred radial gradient — avoids CPU-intensive blur(280px) on headless/no-GPU machines */
       background: radial-gradient(circle,
-        var(--orb-color, #6366f1) 0%,
-        color-mix(in srgb, var(--orb-color, #6366f1) 70%, transparent) 15%,
-        color-mix(in srgb, var(--orb-color, #6366f1) 30%, transparent) 35%,
-        color-mix(in srgb, var(--orb-color, #6366f1) 5%, transparent) 55%,
+        hsl(var(--accent-hue, 239), 84%, 64%) 0%,
+        hsla(var(--accent-hue, 239), 84%, 64%, 0.7) 15%,
+        hsla(var(--accent-hue, 239), 84%, 50%, 0.3) 35%,
+        hsla(var(--accent-hue, 239), 84%, 50%, 0.05) 55%,
         transparent 70%);
       opacity: 0.038;
-      animation: ambient-color 60s linear infinite;
       pointer-events: none;
       z-index: 0;
     }
@@ -69,9 +53,9 @@
       border-radius: 50%;
       /* Pre-blurred radial gradient — no CPU filter cost */
       background: radial-gradient(circle,
-        hsl(var(--hue-num,239),84%,64%) 0%,
-        hsla(var(--hue-num,239),84%,64%,0.6) 20%,
-        hsla(var(--hue-num,239),84%,50%,0.2) 45%,
+        hsl(var(--accent-hue, 239),84%,64%) 0%,
+        hsla(var(--accent-hue, 239),84%,64%,0.6) 20%,
+        hsla(var(--accent-hue, 239),84%,50%,0.2) 45%,
         transparent 65%);
       opacity: 0.16;
       pointer-events: none;
@@ -173,22 +157,22 @@
       width: 100%; padding: 11px; border-radius: 12px;
       font-size: 0.875rem; font-weight: 500; color: #fff;
       background: linear-gradient(135deg,
-        hsl(calc(var(--hue-num,239)),84%,64%) 0%,
-        hsl(calc(var(--hue-num,239) + 30),65%,60%) 100%);
-      box-shadow: 0 1px 2px rgba(0,0,0,0.4), 0 0 0 1px hsla(calc(var(--hue-num,239)),84%,64%,0.3) inset;
+        hsl(var(--accent-hue, 239),84%,64%) 0%,
+        hsl(calc(var(--accent-hue, 239) + 30),65%,60%) 100%);
+      box-shadow: 0 1px 2px rgba(0,0,0,0.4), 0 0 0 1px hsla(var(--accent-hue, 239),84%,64%,0.3) inset;
       transition: opacity 150ms ease, box-shadow 150ms ease, transform 80ms ease;
       cursor: pointer;
     }
     .btn-signin:hover:not(:disabled) {
       opacity: 0.92;
-      box-shadow: 0 1px 2px rgba(0,0,0,0.5), 0 0 28px hsla(calc(var(--hue-num,239)+30),65%,60%,0.25), 0 0 0 1px hsla(calc(var(--hue-num,239)+30),65%,60%,0.35) inset;
+      box-shadow: 0 1px 2px rgba(0,0,0,0.5), 0 0 28px hsla(calc(var(--hue-num,0)+269),65%,60%,0.25), 0 0 0 1px hsla(calc(var(--hue-num,0)+269),65%,60%,0.35) inset;
     }
     .btn-signin:active:not(:disabled) { transform: translateY(1px); opacity: 0.95; }
     .btn-signin:disabled { opacity: 0.45; cursor: not-allowed; animation: none; }
 
     /* ── Navigation progress bar ── */
     @keyframes nav-progress{from{width:0%}to{width:100%}}
-    .nav-progress-hue{color:hsl(calc(var(--hue-num,239)),84%,64%);background:hsl(calc(var(--hue-num,239)),84%,64%);}
+    .nav-progress-hue{color:hsl(var(--accent-hue, 239),84%,64%);background:hsl(var(--accent-hue, 239),84%,64%);}
 
     /* ── Floating label inputs ── */
     /* Hide browser-native password reveal eye (Edge/Chrome) — we have our own */
@@ -368,9 +352,11 @@
           if (now - lastTs > 66) { // ~15fps — hue cycling doesn't need 60fps
             lastTs = now;
             const deg = ((Date.now() / 1000) * 6 % 360).toFixed(1);
+            const accentHue = ((parseFloat(deg) + 239) % 360).toFixed(1);
             const ds = document.documentElement.style;
-            ds.setProperty('--hue-deg', deg + 'deg');
-            ds.setProperty('--hue-num', deg); // unitless for gradient hsl()
+            ds.setProperty('--hue-deg', deg + 'deg');     // for filter: hue-rotate()
+            ds.setProperty('--hue-num', deg);              // legacy (being phased out)
+            ds.setProperty('--accent-hue', accentHue);     // actual apparent hue — use this for all hsl()
           }
           requestAnimationFrame(tick);
         };
