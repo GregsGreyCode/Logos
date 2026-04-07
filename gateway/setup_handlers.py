@@ -1312,7 +1312,7 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
 
                     # Eval 4: tool selection
                     e4 = obj.get("tool_a") == "search_web" and obj.get("tool_b") == "run_code"
-                    eval_details["tool_select"] = e4
+                    eval_details["tool_call"] = e4
                     await send({"log": f"    {'✓' if e4 else '✗'} tool selection"})
 
                     # Eval 5: multi-step reasoning
@@ -1322,7 +1322,7 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
 
                     # Eval 6: JSON format (we got valid JSON = pass)
                     e6 = True
-                    eval_details["json_format"] = e6
+                    eval_details["format"] = e6
                     await send({"log": f"    ✓ JSON format"})
 
                     eval_score = sum([e1, e2, e3, e4, e5, e6])
@@ -3141,7 +3141,7 @@ import sys as _sys
 import urllib.request as _urllib_request
 
 
-_OPENSHELL_IMAGE  = os.getenv("LOGOS_OPENSHELL_IMAGE", "logos-hermes-sandbox")
+_OPENSHELL_IMAGE  = os.getenv("LOGOS_OPENSHELL_IMAGE", "hermes-sandbox:local")
 _HERMES_BIN_DIR   = pathlib.Path(os.getenv("LOGOS_HOME") or os.getenv("HERMES_HOME") or str(pathlib.Path.home() / ".logos")) / "bin"
 
 # GitHub release asset naming (actual): openshell-{arch}-{os-triple}.tar.gz
@@ -3310,7 +3310,7 @@ def _docker_running() -> dict:
 
 
 def _sandbox_image_exists() -> bool:
-    """Return True if the logos-hermes-sandbox Docker image is present locally."""
+    """Return True if the hermes-sandbox Docker image is present locally."""
     docker_exe = _shutil.which("docker")
     if not docker_exe:
         logger.debug("sandbox_image_exists: docker not on PATH, skipping image check")
@@ -3551,7 +3551,7 @@ async def handle_setup_sandbox_setup(request: web.Request) -> web.Response:
 
     Attempts to automatically:
       1. Install the openshell CLI (tries uv, pip, then binary download)
-      2. Build the logos-hermes-sandbox Docker image
+      2. Build the hermes-sandbox Docker image
 
     Streams progress as SSE events:
       data: {"step": "openshell_install", "status": "running"|"ok"|"error", "msg": "..."}
@@ -3708,13 +3708,13 @@ def _install_openshell() -> tuple[str, str]:
         return "", str(exc)
 
 
-def _build_sandbox_image(dockerfile_name: str = "docker/Dockerfile.openshell-sandbox") -> tuple[bool, str]:
+def _build_sandbox_image(dockerfile_name: str = "docker/Dockerfile.hermes-sandbox") -> tuple[bool, str]:
     """
-    Build the logos-hermes-sandbox Docker image.
+    Build the hermes-sandbox Docker image.
 
     Args:
-        dockerfile_name: Which Dockerfile to use.  "docker/Dockerfile.openshell-sandbox"
-            for full OpenShell mode, "docker/Dockerfile.docker-sandbox" for Docker-only.
+        dockerfile_name: Which Dockerfile to use.  "docker/Dockerfile.hermes-sandbox"
+            for OpenShell mode, "docker/Dockerfile.docker-sandbox" for Docker-only (legacy).
 
     Looks for the Dockerfile relative to the package root (works both in
     development and inside a frozen .exe where files are extracted to a

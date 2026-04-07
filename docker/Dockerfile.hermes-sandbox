@@ -1,0 +1,47 @@
+# Minimal sandbox image for the Hermes agent worker.
+#
+# Runs inside an OpenShell sandbox. The worker connects OUT to the Logos
+# gateway via WebSocket (reverse-connection model) and calls the LLM via
+# https://inference.local/v1 (OpenShell's privacy router).
+#
+# Build:
+#   docker build -f docker/Dockerfile.hermes-sandbox -t hermes-sandbox:local docker/
+#
+# Note: Do NOT use COPY --chmod (no BuildKit inside OpenShell's builder).
+
+FROM ubuntu:24.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3 \
+    python3-pip \
+    python3-venv \
+    iproute2 \
+    ca-certificates \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create sandbox user (required by OpenShell — uid 10001)
+RUN groupadd -g 10001 sandbox && \
+    useradd -u 10001 -g sandbox -m -s /bin/bash sandbox
+
+# App directory
+WORKDIR /app
+
+# Create venv and install dependencies
+RUN python3 -m venv /app/venv
+ENV PATH="/app/venv/bin:$PATH"
+RUN pip install --no-cache-dir aiohttp
+
+# Copy worker script and entrypoint
+COPY sandbox_worker.py /app/sandbox_worker.py
+COPY entrypoint-hermes.sh /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh
+
+# Config directory (populated at runtime via --upload)
+RUN mkdir -p /tmp/hermes && chown sandbox:sandbox /tmp/hermes
+
+EXPOSE 8080
+
+CMD ["/app/entrypoint.sh"]

@@ -1,35 +1,77 @@
-# Default OpenShell egress policy for Hermes agent sandboxes.
+# Default OpenShell policy for Hermes agent sandboxes.
 #
-# This policy is applied automatically to every sandbox created by
-# OpenShellExecutor.  It allows outbound access to common model endpoints
-# (Ollama, LM Studio, OpenAI-compatible APIs) while blocking everything else.
+# Applied automatically by OpenShellExecutor at sandbox creation.
+# Hot-reloadable: openshell policy set <name> --policy openshell_default.yaml --wait
 #
-# Hot-reloadable at runtime:
-#   openshell policy set <sandbox-name> --policy openshell_default.yaml --wait
-#
-# See: https://docs.nvidia.com/openshell/latest/policies/
+# This policy allows the sandbox worker to:
+#   1. Connect back to the Logos gateway via WebSocket (host.openshell.internal)
+#   2. Call the LLM via inference.local (OpenShell's privacy router)
+#   3. Resolve DNS for *.internal hostnames
 
-version: "1"
+version: 1
 
-network:
-  # Allow outbound to local model servers (Ollama / LM Studio / vLLM)
-  - action: allow
-    destination: "host.docker.internal"
-    ports: [11434, 1234, 8000, 8080, 8081]
-    methods: [GET, POST]
+filesystem_policy:
+  include_workdir: true
+  read_only:
+    - /usr
+    - /lib
+    - /proc
+    - /dev/urandom
+    - /app
+    - /etc
+    - /var/log
+  read_write:
+    - /sandbox
+    - /tmp
+    - /home/sandbox
+    - /dev/null
 
-  # Allow localhost model servers (when running alongside gateway)
-  - action: allow
-    destination: "127.0.0.1"
-    ports: [11434, 1234, 8000]
-    methods: [GET, POST]
+landlock:
+  compatibility: best_effort
 
-  # Allow DNS resolution
-  - action: allow
-    destination: "*"
-    ports: [53]
-    protocol: udp
+process:
+  run_as_user: sandbox
+  run_as_group: sandbox
 
-  # Block everything else outbound
-  - action: deny
-    destination: "*"
+network_policies:
+  logos_gateway:
+    name: "Logos Gateway (WebSocket worker)"
+    endpoints:
+      - host: host.openshell.internal
+        port: 8091
+        protocol: rest
+        enforcement: enforce
+        access: full
+        allowed_ips:
+          - "172.16.0.0/12"
+          - "192.168.0.0/16"
+          - "10.0.0.0/8"
+    binaries:
+      - path: /app/venv/bin/python3
+      - path: /app/venv/bin/python
+      - path: /app/venv/bin/python3.12
+      - path: /usr/bin/python3
+      - path: /usr/bin/python3.12
+      - path: /usr/bin/curl
+
+  inference_local:
+    name: "Inference (Privacy Router)"
+    endpoints:
+      - host: inference.local
+        port: 443
+        protocol: rest
+        tls: terminate
+        access: full
+    binaries:
+      - path: /app/venv/bin/python3
+      - path: /app/venv/bin/python
+      - path: /app/venv/bin/python3.12
+      - path: /usr/bin/python3
+      - path: /usr/bin/curl
+
+  dns:
+    name: "DNS resolution"
+    endpoints:
+      - host: "*.internal"
+        port: 53
+        access: full
