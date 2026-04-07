@@ -267,6 +267,104 @@ async def _handle_services_validate_key(request: web.Request) -> web.Response:
     return web.json_response(result)
 
 
+async def _handle_messaging_catalogue(request: web.Request) -> web.Response:
+    """GET /api/services/messaging — list messaging platform integrations."""
+    from gateway.services import get_messaging_integrations
+    return web.json_response({"messaging": get_messaging_integrations()})
+
+
+async def _handle_messaging_set_key(request: web.Request) -> web.Response:
+    """POST /api/services/messaging/keys — set a messaging token (validate first)."""
+    user = request.get("current_user", {})
+    if user.get("role") not in ("admin",):
+        raise web.HTTPForbidden(text='{"error":"admin_required"}', content_type="application/json")
+    body = await request.json()
+    env_var = (body.get("env_var") or "").strip()
+    value = (body.get("value") or "").strip()
+    if not env_var or not value:
+        return web.json_response({"ok": False, "error": "env_var and value required"}, status=400)
+
+    from gateway.services import MESSAGING_INTEGRATIONS, validate_messaging_credential, set_credential, get_messaging_integrations
+    if env_var not in MESSAGING_INTEGRATIONS:
+        return web.json_response({"ok": False, "error": f"Unknown platform: {env_var}"}, status=400)
+
+    # Validate before saving
+    result = await validate_messaging_credential(env_var, value)
+    if not result["ok"]:
+        return web.json_response({"ok": False, "error": result["message"]}, status=400)
+
+    set_credential(env_var, value)
+
+    # Trigger platform adapter connect/reconnect
+    _ENV_TO_PLATFORM = {
+        "TELEGRAM_BOT_TOKEN": Platform.TELEGRAM,
+        "DISCORD_BOT_TOKEN": Platform.DISCORD,
+        "SLACK_BOT_TOKEN": Platform.SLACK,
+        "WHATSAPP_TOKEN": Platform.WHATSAPP,
+    }
+    platform = _ENV_TO_PLATFORM.get(env_var)
+    if platform:
+        runner = request.app.get("runner")
+        if runner:
+            try:
+                await runner.connect_platform(platform)
+            except Exception as exc:
+                logger.warning("Adapter restart for %s failed: %s", env_var, exc)
+
+    return web.json_response({"ok": True, "details": result.get("details", {}), "messaging": get_messaging_integrations()})
+
+
+async def _handle_messaging_delete_key(request: web.Request) -> web.Response:
+    """DELETE /api/services/messaging/keys — remove a messaging token."""
+    user = request.get("current_user", {})
+    if user.get("role") not in ("admin",):
+        raise web.HTTPForbidden(text='{"error":"admin_required"}', content_type="application/json")
+    body = await request.json()
+    env_var = (body.get("env_var") or "").strip()
+    if not env_var:
+        return web.json_response({"ok": False, "error": "env_var required"}, status=400)
+
+    from gateway.services import MESSAGING_INTEGRATIONS, delete_credential, get_messaging_integrations
+    if env_var not in MESSAGING_INTEGRATIONS:
+        return web.json_response({"ok": False, "error": f"Unknown platform: {env_var}"}, status=400)
+
+    delete_credential(env_var)
+
+    # Disconnect platform adapter
+    _ENV_TO_PLATFORM = {
+        "TELEGRAM_BOT_TOKEN": Platform.TELEGRAM,
+        "DISCORD_BOT_TOKEN": Platform.DISCORD,
+        "SLACK_BOT_TOKEN": Platform.SLACK,
+        "WHATSAPP_TOKEN": Platform.WHATSAPP,
+    }
+    platform = _ENV_TO_PLATFORM.get(env_var)
+    if platform:
+        runner = request.app.get("runner")
+        if runner:
+            try:
+                await runner.disconnect_platform(platform)
+            except Exception as exc:
+                logger.warning("Adapter disconnect for %s failed: %s", env_var, exc)
+
+    return web.json_response({"ok": True, "messaging": get_messaging_integrations()})
+
+
+async def _handle_messaging_validate(request: web.Request) -> web.Response:
+    """POST /api/services/messaging/validate — test a token without saving."""
+    user = request.get("current_user", {})
+    if user.get("role") not in ("admin",):
+        raise web.HTTPForbidden(text='{"error":"admin_required"}', content_type="application/json")
+    body = await request.json()
+    env_var = (body.get("env_var") or "").strip()
+    value = (body.get("value") or "").strip()
+    if not env_var or not value:
+        return web.json_response({"ok": False, "message": "env_var and value required"}, status=400)
+
+    from gateway.services import validate_messaging_credential
+    result = await validate_messaging_credential(env_var, value)
+    return web.json_response(result)
+
+
 async def _handle_setup_page(request: web.Request) -> web.Response:
     from gateway.auth.db import is_setup_completed
     if is_setup_completed():
@@ -1310,10 +1408,14 @@ async def _handle_favicon(request: web.Request) -> web.Response:
     for p in candidates:
         if p.exists():
             data = p.read_bytes()
+            import hashlib
+            etag = '"' + hashlib.md5(data).hexdigest()[:16] + '"'
+            if request.headers.get("If-None-Match") == etag:
+                return web.Response(status=304, headers={"ETag": etag, "Cache-Control": "public, max-age=86400"})
             return web.Response(
                 body=data,
                 content_type="image/x-icon",
-                headers={"Cache-Control": "public, max-age=86400"},
+                headers={"Cache-Control": "public, max-age=86400", "ETag": etag},
             )
     raise web.HTTPNotFound()
 
@@ -2449,6 +2551,12 @@ async def start_http_api(runner: Any, port: int = 8080) -> None:
     app.router.add_delete("/api/services/keys", _handle_services_delete_key)
     app.router.add_post("/api/services/validate", _handle_services_validate_key)
     app.router.add_post("/api/services/inference", _handle_services_inference)
+
+    # ── Messaging platform integrations (Channels tab) ────────────────
+    app.router.add_get("/api/services/messaging",          _handle_messaging_catalogue)
+    app.router.add_post("/api/services/messaging/keys",    _handle_messaging_set_key)
+    app.router.add_delete("/api/services/messaging/keys",  _handle_messaging_delete_key)
+    app.router.add_post("/api/services/messaging/validate", _handle_messaging_validate)
 
     app.router.add_get("/setup",              _handle_setup_page)
     app.router.add_get("/api/setup/probe",    _sh.handle_setup_probe)
