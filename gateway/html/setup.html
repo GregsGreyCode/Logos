@@ -1509,19 +1509,105 @@
               </div>
             </button>
 
-            <!-- ── Docker Desktop (greyed out) ── -->
-            <div class="w-full text-left p-4 rounded-xl border border-gray-800 bg-gray-900/40 opacity-40 cursor-not-allowed select-none">
-              <div class="flex items-start gap-3">
-                <span class="w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0 text-sm font-bold bg-gray-800 text-gray-600">D</span>
-                <div class="flex-1">
-                  <div class="flex items-center gap-2 flex-wrap">
-                    <span class="text-sm font-semibold text-gray-500">Docker Desktop</span>
-                    <span class="text-[9px] px-1.5 py-0.5 rounded-full bg-gray-800 text-gray-600 border border-gray-700 font-semibold uppercase tracking-wider">Coming soon</span>
+            <!-- ── OpenShell sandbox ── -->
+            <template x-if="sandboxProbe?.openshell_supported !== false">
+              <div>
+                <button @click="execEnv = 'openshell'"
+                  class="w-full text-left p-4 rounded-xl border transition-colors"
+                  :class="execEnv === 'openshell' ? 'border-cyan-500 bg-cyan-950/30' : 'border-gray-800 bg-gray-900 hover:border-gray-700'">
+                  <div class="flex items-start gap-3">
+                    <span class="w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0 text-[10px] font-bold"
+                      :class="execEnv === 'openshell' ? 'bg-cyan-900 text-cyan-300' : 'bg-gray-800 text-gray-500'">OS</span>
+                    <div class="flex-1">
+                      <div class="flex items-center gap-2 flex-wrap">
+                        <span class="text-sm font-semibold text-white">OpenShell</span>
+                        <span x-show="execEnv === 'openshell'" class="text-[9px] px-1.5 py-0.5 rounded-full bg-cyan-900 text-cyan-300 border border-cyan-700 font-semibold uppercase tracking-wider">Selected</span>
+                        <span x-show="sandboxProbe?.sandbox_ready" class="text-[9px] px-1.5 py-0.5 rounded-full bg-green-900 text-green-300 border border-green-800 font-semibold uppercase tracking-wider">Ready</span>
+                      </div>
+                      <p class="text-xs text-gray-500 mt-1 leading-relaxed">Each agent runs in an <span class="text-cyan-300 font-medium">NVIDIA OpenShell</span> sandbox with kernel-level filesystem isolation (Landlock), per-binary network egress control, and managed inference routing. Requires Docker.</p>
+                    </div>
                   </div>
-                  <p class="text-xs text-gray-600 mt-1 leading-relaxed">Each agent run gets its own Docker container with an isolated filesystem and network. Available when running Logos on a machine with Docker Desktop installed.</p>
+                </button>
+
+                <!-- OpenShell config panel -->
+                <div x-show="execEnv === 'openshell'" x-cloak class="p-3 rounded-xl bg-gray-900 border border-gray-800 space-y-3 mt-3">
+                  <!-- Status indicators -->
+                  <div class="space-y-1.5">
+                    <div class="flex items-center gap-2 text-xs">
+                      <span :class="sandboxProbe?.docker_running ? 'text-emerald-400' : 'text-red-400'" x-text="sandboxProbe?.docker_running ? '\u2713' : '\u2717'"></span>
+                      <span :class="sandboxProbe?.docker_running ? 'text-gray-400' : 'text-red-400'" x-text="sandboxProbe?.docker_running ? 'Docker running' : 'Docker not running'"></span>
+                    </div>
+                    <div class="flex items-center gap-2 text-xs">
+                      <span :class="sandboxProbe?.openshell_present ? 'text-emerald-400' : 'text-gray-500'" x-text="sandboxProbe?.openshell_present ? '\u2713' : '\u2717'"></span>
+                      <span :class="sandboxProbe?.openshell_present ? 'text-gray-400' : 'text-gray-500'" x-text="sandboxProbe?.openshell_present ? 'OpenShell CLI installed' : 'OpenShell CLI not found'"></span>
+                    </div>
+                    <div class="flex items-center gap-2 text-xs">
+                      <span :class="sandboxProbe?.image_present ? 'text-emerald-400' : 'text-gray-500'" x-text="sandboxProbe?.image_present ? '\u2713' : '\u2717'"></span>
+                      <span :class="sandboxProbe?.image_present ? 'text-gray-400' : 'text-gray-500'" x-text="sandboxProbe?.image_present ? 'Sandbox image built' : 'Sandbox image not found'"></span>
+                    </div>
+                  </div>
+
+                  <!-- inotify warning -->
+                  <template x-if="sandboxProbe?.inotify_ok === false">
+                    <div class="p-2.5 rounded-lg bg-amber-950/40 border border-amber-800 text-xs text-amber-300 space-y-1">
+                      <div class="font-semibold">System limit too low</div>
+                      <div class="text-amber-400/80">fs.inotify.max_user_instances needs to be >= 512 for OpenShell. Run:</div>
+                      <code class="block text-[10px] bg-black/30 px-2 py-1 rounded font-mono select-all">sudo sysctl fs.inotify.max_user_instances=512</code>
+                    </div>
+                  </template>
+
+                  <!-- Setup button (installs CLI + builds image) -->
+                  <template x-if="!sandboxProbe?.sandbox_ready && !sandboxSetupRunning && !sandboxSetupDone">
+                    <button @click="runSandboxSetup()" :disabled="sandboxSetupRunning"
+                      class="px-3 py-1.5 rounded-lg border border-cyan-700 hover:border-cyan-500 text-xs text-cyan-300 transition-colors disabled:opacity-40">
+                      Set up OpenShell
+                    </button>
+                  </template>
+
+                  <!-- Setup progress log -->
+                  <template x-if="sandboxSetupLog.length > 0">
+                    <div class="space-y-1">
+                      <template x-for="entry in sandboxSetupLog" :key="entry.step">
+                        <div class="flex items-center gap-2 text-xs">
+                          <span x-show="entry.status === 'running'" class="w-3 h-3 border border-gray-600 border-t-cyan-400 rounded-full animate-spin flex-shrink-0"></span>
+                          <span x-show="entry.status === 'ok'" class="text-emerald-400 flex-shrink-0">&#x2713;</span>
+                          <span x-show="entry.status === 'skip'" class="text-gray-500 flex-shrink-0">&ndash;</span>
+                          <span x-show="entry.status === 'error'" class="text-red-400 flex-shrink-0">&#x2717;</span>
+                          <span :class="entry.status === 'error' ? 'text-red-400' : (entry.status === 'ok' || entry.status === 'skip' ? 'text-gray-400' : 'text-gray-300')" x-text="entry.msg"></span>
+                        </div>
+                      </template>
+                    </div>
+                  </template>
+
+                  <!-- All green -->
+                  <template x-if="sandboxProbe?.sandbox_ready || sandboxSetupDone">
+                    <div class="flex items-center gap-2 text-xs text-emerald-400">
+                      <span>&#x2713;</span>
+                      <span>OpenShell sandbox ready</span>
+                    </div>
+                  </template>
                 </div>
               </div>
-            </div>
+            </template>
+
+            <!-- ── Docker sandbox ── -->
+            <template x-if="sandboxProbe?.docker_running">
+              <button @click="execEnv = 'docker'"
+                class="w-full text-left p-4 rounded-xl border transition-colors"
+                :class="execEnv === 'docker' ? 'border-blue-500 bg-blue-950/30' : 'border-gray-800 bg-gray-900 hover:border-gray-700'">
+                <div class="flex items-start gap-3">
+                  <span class="w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0 text-sm font-bold"
+                    :class="execEnv === 'docker' ? 'bg-blue-900 text-blue-300' : 'bg-gray-800 text-gray-500'">D</span>
+                  <div class="flex-1">
+                    <div class="flex items-center gap-2 flex-wrap">
+                      <span class="text-sm font-semibold text-white">Docker container</span>
+                      <span x-show="execEnv === 'docker'" class="text-[9px] px-1.5 py-0.5 rounded-full bg-blue-900 text-blue-300 border border-blue-700 font-semibold uppercase tracking-wider">Selected</span>
+                    </div>
+                    <p class="text-xs text-gray-500 mt-1 leading-relaxed">Each agent gets its own Docker container with an isolated filesystem and network. Uses <code class="text-blue-300">--cap-drop=ALL</code> but <span class="text-yellow-300 font-medium">no egress policy</span> &mdash; less secure than OpenShell.</p>
+                  </div>
+                </div>
+              </button>
+            </template>
 
             <!-- ── Linux server (k3s) ── -->
             <template x-if="sandboxProbe?.platform === 'linux'">
@@ -1661,6 +1747,8 @@
               :disabled="(execEnv === 'k8s' && k8sMode === 'kubeconfig' && k8sTestResult !== 'ok') || (execEnv === 'k3s' && k8sTestResult !== 'ok')"
               class="btn-primary w-full py-2.5 rounded-xl text-sm disabled:opacity-40 disabled:cursor-not-allowed">
               <span x-show="execEnv === 'local'">Continue &rarr;</span>
+              <span x-show="execEnv === 'openshell'">Continue &rarr;</span>
+              <span x-show="execEnv === 'docker'">Continue &rarr;</span>
               <span x-show="execEnv === 'k3s' && k8sTestResult === 'ok'">Continue &rarr;</span>
               <span x-show="execEnv === 'k3s' && k8sTestResult !== 'ok'" class="text-gray-500">Install k3s to continue &rarr;</span>
               <span x-show="execEnv === 'k8s' && (k8sMode === 'incluster' || k8sTestResult === 'ok')">Continue &rarr;</span>
