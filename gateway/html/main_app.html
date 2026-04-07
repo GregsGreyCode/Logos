@@ -1153,6 +1153,11 @@
           :class="infraTab==='tools' ? 'border-[var(--accent)] text-white' : 'border-transparent text-gray-500 hover:text-gray-300'"
           @click="infraTab='tools'; localStorage.setItem('logos_infra_tab','tools'); loadToolsTab(); loadServices()">Tools</button>
       </template>
+      <template x-if="can('manage_machines')">
+        <button class="pb-2 text-xs font-medium border-b-2 transition-colors"
+          :class="infraTab==='channels' ? 'border-[var(--accent)] text-white' : 'border-transparent text-gray-500 hover:text-gray-300'"
+          @click="infraTab='channels'; localStorage.setItem('logos_infra_tab','channels'); loadMessagingChannels()">Channels</button>
+      </template>
       <template x-if="can('view_evolution')">
         <button class="pb-2 text-xs font-medium border-b-2 transition-colors"
           :class="infraTab==='proposals' ? 'border-[var(--accent)] text-white' : 'border-transparent text-gray-500 hover:text-gray-300'"
@@ -2739,6 +2744,105 @@
     </div>
 
     <p class="text-[10px] text-gray-700">Keys from environment variables or .env take priority over keys saved here. Changes take effect on the next message.</p>
+  </div>
+
+  <!-- ── Channels sub-tab (Messaging Platforms) ──────────────────── -->
+  <div x-show="tab==='infra' && infraTab==='channels'" x-cloak class="space-y-6">
+    <div class="flex items-center justify-between mb-2">
+      <h2 class="text-sm font-semibold text-white">Messaging Channels</h2>
+      <button @click="loadMessagingChannels()" class="text-xs text-gray-500 hover:text-gray-300">Refresh</button>
+    </div>
+    <p class="text-xs text-gray-500">Connect messaging platforms so your agent can be reached outside the web UI. Tokens are validated before saving.</p>
+
+    <div class="space-y-3">
+      <template x-for="ch in messagingChannels" :key="ch.env_var">
+        <div class="px-4 py-4 rounded-lg bg-gray-800 border border-gray-700 text-xs" x-data="{editing: false, keyInput: '', validating: false, saving: false, result: null, showKey: false}">
+          <!-- Header row -->
+          <div class="flex items-center gap-3">
+            <!-- Platform icon -->
+            <span class="text-lg" x-text="ch.icon === 'telegram' ? '\u2708' : ch.icon === 'discord' ? '\uD83C\uDFAE' : ch.icon === 'slack' ? '\u2B23' : '\uD83D\uDCAC'"></span>
+            <div class="flex-1">
+              <span class="text-white font-medium text-sm" x-text="ch.label"></span>
+              <span class="text-gray-500 ml-2 text-xs" x-text="ch.description"></span>
+            </div>
+            <!-- Status -->
+            <template x-if="ch.has_key">
+              <div class="flex items-center gap-2">
+                <span class="flex items-center gap-1.5">
+                  <span class="w-2 h-2 rounded-full bg-green-400"></span>
+                  <span class="text-green-400 text-[10px] font-medium">Connected</span>
+                </span>
+                <span x-show="ch.source === 'env'" class="text-[9px] text-gray-600">(from env)</span>
+                <span x-show="ch.source === 'db'" class="text-[9px] text-gray-600">(saved)</span>
+                <button @click="editing = !editing; result = null" class="text-gray-600 hover:text-gray-400">change</button>
+                <button x-show="ch.source === 'db'"
+                  @click="if(confirm('Disconnect ' + ch.label + '?')) { fetch('/api/services/messaging/keys', {method:'DELETE', credentials:'include', headers:{'Content-Type':'application/json','X-CSRF-Token':getCsrfToken()}, body:JSON.stringify({env_var:ch.env_var})}).then(r=>r.json()).then(d=>{if(d.ok){messagingChannels=d.messaging; result=null}}) }"
+                  class="text-red-700 hover:text-red-400">disconnect</button>
+              </div>
+            </template>
+            <template x-if="!ch.has_key">
+              <div class="flex items-center gap-2">
+                <span class="flex items-center gap-1.5">
+                  <span class="w-2 h-2 rounded-full bg-gray-600"></span>
+                  <span class="text-gray-500 text-[10px]">Not connected</span>
+                </span>
+                <button @click="editing = true; result = null" class="text-[var(--accent)] hover:opacity-80 font-medium">Connect</button>
+              </div>
+            </template>
+          </div>
+
+          <!-- Token input row -->
+          <div x-show="editing" x-cloak class="mt-3 space-y-2">
+            <div class="flex items-center gap-2">
+              <div class="relative flex-1">
+                <input :type="showKey ? 'text' : 'password'" x-model="keyInput"
+                  :placeholder="'Paste ' + ch.label + ' token'"
+                  class="w-full bg-gray-900 border border-gray-600 rounded px-2 py-2 text-xs text-white placeholder-gray-600 focus:outline-none focus:border-[var(--accent)] font-mono pr-8">
+                <button @click="showKey = !showKey" class="absolute right-2 top-1/2 -translate-y-1/2 text-gray-600 hover:text-gray-400 text-[10px]"
+                  x-text="showKey ? 'hide' : 'show'"></button>
+              </div>
+              <button @click="if(keyInput.trim()) { validating=true; result=null; fetch('/api/services/messaging/validate',{method:'POST',credentials:'include',headers:{'Content-Type':'application/json','X-CSRF-Token':getCsrfToken()},body:JSON.stringify({env_var:ch.env_var,value:keyInput.trim()})}).then(r=>r.json()).then(d=>{result=d;validating=false}).catch(e=>{result={ok:false,message:String(e)};validating=false}) }"
+                :disabled="validating || !keyInput.trim()"
+                class="px-3 py-2 rounded border border-gray-600 text-xs font-medium transition-colors disabled:opacity-40 text-gray-300 hover:border-gray-400 shrink-0">
+                <span x-show="!validating">Test</span>
+                <span x-show="validating" class="flex items-center gap-1">
+                  <span class="w-3 h-3 border border-gray-600 border-t-[var(--accent)] rounded-full animate-spin inline-block"></span>
+                </span>
+              </button>
+              <button @click="if(keyInput.trim()) { saving=true; result=null; fetch('/api/services/messaging/keys',{method:'POST',credentials:'include',headers:{'Content-Type':'application/json','X-CSRF-Token':getCsrfToken()},body:JSON.stringify({env_var:ch.env_var,value:keyInput.trim()})}).then(r=>r.json()).then(d=>{saving=false; if(d.ok){messagingChannels=d.messaging; editing=false; keyInput=''; result={ok:true,message:'Connected',details:d.details}} else {result={ok:false,message:d.error||'Failed'}}}).catch(e=>{result={ok:false,message:String(e)};saving=false}) }"
+                :disabled="saving || !keyInput.trim()"
+                class="px-3 py-2 rounded border text-xs font-medium transition-colors disabled:opacity-40 shrink-0 border-[var(--accent)] text-[var(--accent)] hover:bg-[var(--accent)] hover:text-black">
+                <span x-show="!saving">Save</span>
+                <span x-show="saving" class="flex items-center gap-1">
+                  <span class="w-3 h-3 border border-gray-600 border-t-[var(--accent)] rounded-full animate-spin inline-block"></span>
+                </span>
+              </button>
+              <button @click="editing=false; keyInput=''; result=null; showKey=false" class="text-gray-600 hover:text-gray-400 text-xs">Cancel</button>
+            </div>
+            <!-- Validation result -->
+            <div x-show="result" x-cloak class="text-[11px] px-1"
+              :class="result?.ok ? 'text-green-400' : 'text-red-400'">
+              <span x-text="result?.ok ? '\u2713 ' + result.message : '\u2717 ' + result.message"></span>
+              <template x-if="result?.ok && result?.details">
+                <span class="text-gray-400 ml-1">
+                  <template x-if="result.details.username">
+                    <span>@<span x-text="result.details.username"></span></span>
+                  </template>
+                  <template x-if="result.details.team">
+                    <span x-text="result.details.team"></span>
+                  </template>
+                </span>
+              </template>
+            </div>
+          </div>
+
+          <!-- Help text (shown when not connected and not editing) -->
+          <div x-show="!ch.has_key && !editing" class="mt-2 text-[10px] text-gray-600" x-text="ch.help_text"></div>
+        </div>
+      </template>
+    </div>
+
+    <p class="text-[10px] text-gray-700">Tokens from environment variables take priority over saved tokens. Platform adapters restart automatically when tokens change.</p>
   </div>
 
   <!-- ── Admin Tab ────────────────────────────────────────────────── -->
@@ -4521,6 +4625,7 @@ function app() {
     // Services tab
     servicesMcp: [],
     servicesTools: [],
+    messagingChannels: [],
     adminUsers: [],
     adminMachines: [],
     adminScanRunning: false,
@@ -4801,7 +4906,21 @@ function app() {
       }
       // Scroll to bottom after Alpine renders the restored messages
       this.$nextTick(() => this._scrollChat());
-      await Promise.all([this.loadStatus(), this.loadRouterState(), this.loadCanary(), this.loadInstances(), this.loadSpawnTemplates(), this.loadWorkers(), this.loadAdminMachines()]);
+      await Promise.all([this.loadStatus(), this.loadRouterState(), this.loadCanary(), this.loadInstances(), this.loadSpawnTemplates(), this.loadWorkers(), this.loadAdminMachines(), this.loadNamedAgents()]);
+      // Auto-select the primary named agent's most recent chat on load.
+      // If no agent chat exists yet, create one for the first named agent.
+      if (this.namedAgents.length > 0) {
+        const primary = this.namedAgents[0];
+        const agentChat = this.chats
+          .filter(c => c.agent_id === primary.id)
+          .sort((a, b) => (b.updated_at || 0) - (a.updated_at || 0))[0];
+        if (agentChat) {
+          this.activeChatId = agentChat.id;
+        } else {
+          this.chatWithAgent(primary);
+        }
+        this.$nextTick(() => this._scrollChat());
+      }
       // Pre-fill requester for non-admins; load user list for admins
       if (this.authUser) {
         if (this.authUser.role === 'admin') {
@@ -6313,6 +6432,16 @@ function app() {
       } catch(e) { console.warn('loadServices failed:', e.message); }
     },
 
+    async loadMessagingChannels() {
+      try {
+        const r = await fetch('/api/services/messaging', {credentials: 'include'});
+        if (r.ok) {
+          const d = await r.json();
+          this.messagingChannels = d.messaging || [];
+        }
+      } catch(e) { console.warn('loadMessagingChannels failed:', e.message); }
+    },
+
     async loadRoutingData() {
       await Promise.all([this.loadAdminMachines(), this.loadAdminPolicies(), this.loadRouterState()]);
       this.probeAllMachines();  // fire-and-forget; updates health badges as results arrive
@@ -6497,9 +6626,17 @@ function app() {
     },
 
     chatWithAgent(agent) {
-      // Switch to chat tab and start/resume a conversation with this named agent
+      // Switch to chat tab and start/resume a conversation with this named agent.
+      // Reuse the most-recently-updated existing chat for this agent if one exists.
       this.tab = 'sessions';
-      // For now, create a new chat named after the agent
+      const existing = this.chats
+        .filter(c => c.agent_id === agent.id)
+        .sort((a, b) => (b.updated_at || 0) - (a.updated_at || 0))[0];
+      if (existing) {
+        this.activeChatId = existing.id;
+        this._scrollChat();
+        return;
+      }
       const chatId = 'agent-' + agent.id + '-' + Math.random().toString(36).slice(2, 8);
       const chat = { id: chatId, name: agent.name, messages: [], created_at: Date.now(), updated_at: Date.now(), agent_id: agent.id, agent_name: agent.name };
       this.chats = [chat, ...this.chats];

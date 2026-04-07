@@ -90,6 +90,47 @@ TOOL_INTEGRATIONS = {
     },
 }
 
+# ---------------------------------------------------------------------------
+# Messaging platform integrations — maps env var → metadata for Channels UI.
+# Uses the same credential storage as tool integrations above.
+# ---------------------------------------------------------------------------
+
+MESSAGING_INTEGRATIONS = {
+    "TELEGRAM_BOT_TOKEN": {
+        "label": "Telegram",
+        "description": "Bot token from @BotFather",
+        "icon": "telegram",
+        "env_var": "TELEGRAM_BOT_TOKEN",
+        "validate_url": "https://api.telegram.org/bot{value}/getMe",
+        "help_text": "Search @BotFather on Telegram → /newbot → copy the token.",
+    },
+    "DISCORD_BOT_TOKEN": {
+        "label": "Discord",
+        "description": "Bot token from Discord Developer Portal",
+        "icon": "discord",
+        "env_var": "DISCORD_BOT_TOKEN",
+        "validate_url": "https://discord.com/api/v10/users/@me",
+        "validate_headers": lambda key: {"Authorization": f"Bot {key}"},
+        "help_text": "discord.com/developers → New Application → Bot → Copy Token.",
+    },
+    "SLACK_BOT_TOKEN": {
+        "label": "Slack",
+        "description": "Bot User OAuth Token (xoxb-...)",
+        "icon": "slack",
+        "env_var": "SLACK_BOT_TOKEN",
+        "validate_url": "https://slack.com/api/auth.test",
+        "validate_headers": lambda key: {"Authorization": f"Bearer {key}"},
+        "help_text": "api.slack.com → Create App → OAuth → Bot Token (xoxb-...).",
+    },
+    "WHATSAPP_TOKEN": {
+        "label": "WhatsApp",
+        "description": "WhatsApp Business API token",
+        "icon": "whatsapp",
+        "env_var": "WHATSAPP_TOKEN",
+        "help_text": "developers.facebook.com → WhatsApp → API Setup → copy token.",
+    },
+}
+
 
 # ---------------------------------------------------------------------------
 # DB credential helpers
@@ -237,3 +278,68 @@ async def validate_credential(env_var: str, value: str) -> dict:
         return {"ok": False, "message": str(e)}
 
     return {"ok": True, "message": "Saved"}
+
+
+# ---------------------------------------------------------------------------
+# Messaging integrations catalogue + validation
+# ---------------------------------------------------------------------------
+
+def get_messaging_integrations() -> list[dict]:
+    """Build the messaging integrations catalogue for the Channels UI."""
+    creds = _get_credentials()
+    result = []
+    for env_var, meta in MESSAGING_INTEGRATIONS.items():
+        has_key = bool(os.environ.get(env_var) or creds.get(env_var))
+        result.append({
+            "env_var": env_var,
+            "label": meta["label"],
+            "description": meta["description"],
+            "icon": meta["icon"],
+            "has_key": has_key,
+            "connected": has_key,  # TODO: check adapter is actually running
+            "help_text": meta["help_text"],
+            "source": "env" if os.environ.get(env_var) and env_var not in creds else "db" if env_var in creds else None,
+        })
+    return result
+
+
+async def validate_messaging_credential(env_var: str, value: str) -> dict:
+    """Test a messaging token with the platform API. Returns {ok, message, details}."""
+    meta = MESSAGING_INTEGRATIONS.get(env_var)
+    if not meta:
+        return {"ok": False, "message": f"Unknown messaging platform: {env_var}"}
+
+    if "validate_url" not in meta:
+        return {"ok": True, "message": "No validation available — token saved on trust."}
+
+    import aiohttp
+    try:
+        url = meta["validate_url"].format(value=value)
+        headers_fn = meta.get("validate_headers")
+        headers = headers_fn(value) if headers_fn else {}
+
+        timeout = aiohttp.ClientTimeout(total=10)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.get(url, headers=headers) as resp:
+                body = await resp.json(content_type=None)
+                if resp.status == 200:
+                    # Extract useful details per platform
+                    details = {}
+                    if env_var == "TELEGRAM_BOT_TOKEN":
+                        bot = body.get("result", {})
+                        details = {"username": bot.get("username"), "name": bot.get("first_name")}
+                    elif env_var == "DISCORD_BOT_TOKEN":
+                        details = {"username": body.get("username"), "id": body.get("id")}
+                    elif env_var == "SLACK_BOT_TOKEN":
+                        if body.get("ok"):
+                            details = {"team": body.get("team"), "user": body.get("user")}
+                        else:
+                            return {"ok": False, "message": f"Slack error: {body.get('error', 'unknown')}"}
+                    return {"ok": True, "message": "Connected", "details": details}
+                else:
+                    text = json.dumps(body)[:200] if body else str(resp.status)
+                    return {"ok": False, "message": f"HTTP {resp.status}: {text}"}
+    except aiohttp.ClientError as e:
+        return {"ok": False, "message": f"Connection error: {e}"}
+    except Exception as e:
+        return {"ok": False, "message": str(e)}

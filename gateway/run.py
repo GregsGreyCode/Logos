@@ -1086,7 +1086,62 @@ class GatewayRunner:
             return EmailAdapter(config)
 
         return None
-    
+
+    async def connect_platform(self, platform: Platform) -> dict:
+        """Connect (or reconnect) a single platform adapter at runtime.
+
+        Called when a messaging token is saved via the Channels UI.
+        Returns {ok, message}.
+        """
+        from gateway.config import PlatformConfig, load_gateway_config
+        # Reload config so it picks up the newly-injected env var
+        fresh_config = load_gateway_config()
+        pconfig = fresh_config.platforms.get(platform)
+        if not pconfig or not pconfig.enabled:
+            return {"ok": False, "message": f"{platform.value} not enabled in config"}
+
+        # Disconnect existing adapter if running
+        existing = self.adapters.pop(platform, None)
+        if existing:
+            try:
+                await existing.disconnect()
+                logger.info("Disconnected old %s adapter for reconnect", platform.value)
+            except Exception as e:
+                logger.warning("Error disconnecting old %s adapter: %s", platform.value, e)
+
+        adapter = self._create_adapter(platform, pconfig)
+        if not adapter:
+            return {"ok": False, "message": f"No adapter available for {platform.value}"}
+
+        adapter.set_message_handler(self._handle_message)
+        try:
+            success = await adapter.connect()
+            if success:
+                self.adapters[platform] = adapter
+                self._sync_voice_mode_state_to_adapter(adapter)
+                self.delivery_router.adapters = self.adapters
+                logger.info("Runtime connect: %s connected", platform.value)
+                return {"ok": True, "message": f"{platform.value} connected"}
+            else:
+                return {"ok": False, "message": f"{platform.value} failed to connect"}
+        except Exception as e:
+            logger.error("Runtime connect: %s error: %s", platform.value, e)
+            return {"ok": False, "message": str(e)}
+
+    async def disconnect_platform(self, platform: Platform) -> dict:
+        """Disconnect a platform adapter at runtime."""
+        existing = self.adapters.pop(platform, None)
+        if not existing:
+            return {"ok": True, "message": f"{platform.value} was not connected"}
+        try:
+            await existing.disconnect()
+            self.delivery_router.adapters = self.adapters
+            logger.info("Runtime disconnect: %s disconnected", platform.value)
+            return {"ok": True, "message": f"{platform.value} disconnected"}
+        except Exception as e:
+            logger.warning("Runtime disconnect error: %s", e)
+            return {"ok": True, "message": f"{platform.value} disconnected (with warnings)"}
+
     def _is_user_authorized(self, source: SessionSource) -> bool:
         """
         Check if a user is authorized to use the bot.
