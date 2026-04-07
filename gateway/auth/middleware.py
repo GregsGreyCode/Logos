@@ -80,7 +80,7 @@ async def auth_middleware(request: web.Request, handler):
     """Global middleware: public paths pass through; everything else requires a valid session."""
     path = request.path
 
-    if path in _PUBLIC_PATHS or path.startswith("/static/"):
+    if path in _PUBLIC_PATHS or path.startswith("/static/") or path.startswith("/world/"):
         return await handler(request)
 
     # MCP proxy handles its own auth (bearer token + session grant check).

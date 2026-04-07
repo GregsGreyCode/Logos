@@ -465,16 +465,43 @@ async def handle_agents_post(request: web.Request) -> web.Response:
     import json as _json
     toolsets_raw = body.get("toolsets")
     toolsets_str = _json.dumps(toolsets_raw) if isinstance(toolsets_raw, list) else ""
+    soul_slug = (body.get("soul_slug") or "general").strip()
+    model = (body.get("model") or "").strip()
     agent = auth_db.create_agent(
         name=name,
-        soul_slug=(body.get("soul_slug") or "general").strip(),
-        model=(body.get("model") or "").strip(),
+        soul_slug=soul_slug,
+        model=model,
         description=(body.get("description") or "").strip(),
         creator_id=user.get("id", ""),
         shared=body.get("shared", True),
         toolsets=toolsets_str,
     )
-    return web.json_response(agent, status=201)
+
+    # If OpenShell runtime is active, spawn a sandbox for this agent
+    spawn_result = None
+    executor = request.app.get("executor")
+    if executor and type(executor).__name__ == "OpenShellExecutor":
+        try:
+            from gateway.executors.base import InstanceConfig
+            config = InstanceConfig(
+                name=name,
+                soul_name=soul_slug,
+                model=model,
+                requester=user.get("display_name") or user.get("username") or "",
+                instance_label=name,
+                toolsets=_json.loads(toolsets_str) if toolsets_str else [],
+            )
+            spawned = executor.spawn(config)
+            spawn_result = {"sandbox": spawned.name, "worker_id": getattr(spawned, "worker_id", None)}
+            logger.info("Spawned OpenShell sandbox for agent '%s': %s", name, spawned.name)
+        except Exception as exc:
+            logger.warning("Failed to spawn OpenShell sandbox for agent '%s': %s", name, exc)
+            spawn_result = {"error": str(exc)}
+
+    resp = dict(agent)
+    if spawn_result:
+        resp["spawn"] = spawn_result
+    return web.json_response(resp, status=201)
 
 
 async def handle_agents_patch(request: web.Request) -> web.Response:
@@ -500,8 +527,19 @@ async def handle_agents_patch(request: web.Request) -> web.Response:
 
 async def handle_agents_delete(request: web.Request) -> web.Response:
     aid = request.match_info["id"]
-    if not auth_db.get_agent(aid):
+    agent = auth_db.get_agent(aid)
+    if not agent:
         return web.json_response({"error": "not_found"}, status=404)
+
+    # If OpenShell runtime is active, destroy the agent's sandbox
+    executor = request.app.get("executor")
+    if executor and type(executor).__name__ == "OpenShellExecutor":
+        try:
+            executor.delete_instance(agent["name"])
+            logger.info("Destroyed OpenShell sandbox for agent '%s'", agent["name"])
+        except Exception as exc:
+            logger.warning("Failed to destroy sandbox for agent '%s': %s", agent["name"], exc)
+
     auth_db.delete_agent(aid)
     return web.Response(status=204)
 
