@@ -38,6 +38,16 @@
       animation:orb-fadein 0.8s ease 0.1s forwards;
     }
     .setup-logo{filter:hue-rotate(var(--hue-deg,0deg));will-change:filter;}
+    /* Hue-cycling utility classes — replaces hardcoded indigo-* for consistent branding */
+    .hue-text{color:hsl(var(--hue-num,239),70%,65%);}
+    .hue-text-dim{color:hsla(var(--hue-num,239),70%,65%,0.6);}
+    .hue-border{border-color:hsl(var(--hue-num,239),60%,40%);}
+    .hue-border-bright{border-color:hsl(var(--hue-num,239),70%,55%);}
+    .hue-bg{background:hsl(var(--hue-num,239),60%,15%);}
+    .hue-bg-bright{background:hsl(var(--hue-num,239),60%,25%);}
+    .hue-pill{background:hsl(var(--hue-num,239),60%,15%);border:1px solid hsl(var(--hue-num,239),60%,35%);color:hsl(var(--hue-num,239),70%,70%);}
+    .hue-pill-active{background:hsl(var(--hue-num,239),60%,18%);border:1px solid hsl(var(--hue-num,239),70%,55%);color:hsl(var(--hue-num,239),70%,80%);}
+    .hue-card-hover:hover{border-color:hsl(var(--hue-num,239),70%,55%) !important;}
     .setup-halo{
       position:absolute;inset:-280px;border-radius:50%;
       /* Pre-blurred radial gradient — simulates blur(160px) without CPU cost */
@@ -127,10 +137,10 @@
         <template x-for="i in [1,2,3,4,5,6,7]" :key="i">
           <div class="flex items-center gap-1">
             <div class="w-2 h-2 rounded-full transition-colors duration-500"
-                 :class="step > i ? 'bg-indigo-400 cursor-pointer hover:scale-125' : step === i ? 'bg-indigo-500 scale-125' : 'bg-gray-700'"
+                 :class="step > i ? 'hue-bg-bright cursor-pointer hover:scale-125' : step === i ? 'hue-bg-bright scale-125' : 'bg-gray-700'"
                  @click="goTo(i)" :title="step > i ? 'Go back to step ' + i : ''"></div>
             <div x-show="i < 7" class="w-4 h-px transition-colors duration-500"
-                 :class="step > i ? 'bg-indigo-600' : 'bg-gray-700'"></div>
+                 :class="step > i ? 'hue-bg-bright' : 'bg-gray-700'"></div>
           </div>
         </template>
       </div>
@@ -153,9 +163,9 @@
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 max-w-xl mx-auto">
           <!-- New install -->
           <button @click="setupMode = 'new'"
-            class="text-left p-6 rounded-2xl border border-gray-700 bg-gray-900 hover:border-indigo-500 hover:bg-gray-800/80 transition-colors duration-200 group">
-            <div class="w-10 h-10 rounded-xl bg-indigo-950 border border-indigo-800 flex items-center justify-center mb-4 group-hover:bg-indigo-900 transition-colors">
-              <svg class="w-5 h-5 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            class="text-left p-6 rounded-2xl border border-gray-700 bg-gray-900 hue-card-hover hover:bg-gray-800/80 transition-colors duration-200 group">
+            <div class="w-10 h-10 rounded-xl hue-bg border hue-border flex items-center justify-center mb-4 group-hover:hue-bg-bright transition-colors">
+              <svg class="w-5 h-5 hue-text" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 12h14M12 5l7 7-7 7"/>
               </svg>
             </div>
@@ -166,9 +176,9 @@
           </button>
           <!-- Connect to existing -->
           <button @click="setupMode = 'connect'; startConnectScan()"
-            class="text-left p-6 rounded-2xl border border-gray-700 bg-gray-900 hover:border-indigo-500 hover:bg-gray-800/80 transition-colors duration-200 group">
-            <div class="w-10 h-10 rounded-xl bg-indigo-950 border border-indigo-800 flex items-center justify-center mb-4 group-hover:bg-indigo-900 transition-colors">
-              <svg class="w-5 h-5 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            class="text-left p-6 rounded-2xl border border-gray-700 bg-gray-900 hue-card-hover hover:bg-gray-800/80 transition-colors duration-200 group">
+            <div class="w-10 h-10 rounded-xl hue-bg border hue-border flex items-center justify-center mb-4 group-hover:hue-bg-bright transition-colors">
+              <svg class="w-5 h-5 hue-text" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1"/>
               </svg>
             </div>
@@ -191,7 +201,7 @@
         <div class="mb-5">
           <div class="flex items-center gap-2 mb-3 text-xs text-gray-500 uppercase tracking-wider font-semibold">
             <span>Nearby servers</span>
-            <span x-show="connectScanning" class="inline-block w-3 h-3 border border-indigo-500 border-t-transparent rounded-full animate-spin"></span>
+            <span x-show="connectScanning" class="inline-block w-3 h-3 border hue-border-bright border-t-transparent rounded-full animate-spin"></span>
             <span x-show="!connectScanning && connectInstances.length === 0" class="text-gray-700">— none found</span>
           </div>
           <template x-if="connectInstances.length > 0">
@@ -199,12 +209,12 @@
               <template x-for="inst in connectInstances" :key="inst.url">
                 <button @click="connectUrl = inst.url"
                   class="w-full text-left flex items-center justify-between px-4 py-3 rounded-xl border transition-colors duration-150"
-                  :class="connectUrl === inst.url ? 'border-indigo-500 bg-indigo-950/40 text-white' : 'border-gray-700 bg-gray-900 hover:border-gray-600 text-gray-300'">
+                  :class="connectUrl === inst.url ? 'hue-border-bright hue-bg/40 text-white' : 'border-gray-700 bg-gray-900 hover:border-gray-600 text-gray-300'">
                   <div>
                     <div class="text-sm font-medium" x-text="inst.url"></div>
                     <div class="text-xs text-gray-500 mt-0.5" x-text="inst.setup_completed ? 'Ready' : 'Needs setup'"></div>
                   </div>
-                  <svg x-show="connectUrl === inst.url" class="w-4 h-4 text-indigo-400 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                  <svg x-show="connectUrl === inst.url" class="w-4 h-4 hue-text flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
                     <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/>
                   </svg>
                 </button>
@@ -217,7 +227,7 @@
         <div class="mb-5">
           <label class="block text-xs text-gray-500 uppercase tracking-wider font-semibold mb-2">Server URL</label>
           <input x-model="connectUrl" type="url" placeholder="http://192.168.1.x:8080"
-            class="w-full bg-gray-900 border border-gray-700 rounded-xl px-4 py-3 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-indigo-500 transition-colors">
+            class="w-full bg-gray-900 border border-gray-700 rounded-xl px-4 py-3 text-sm text-white placeholder-gray-600 focus:outline-none focus:hue-border-bright transition-colors">
         </div>
 
         <div x-show="connectError" class="mb-4 px-4 py-3 rounded-xl bg-red-950/40 border border-red-800 text-red-400 text-sm" x-text="connectError"></div>
@@ -225,7 +235,7 @@
         <div class="flex items-center gap-3">
           <button @click="setupMode = null; connectError = ''" class="text-sm text-gray-500 hover:text-gray-300 transition-colors">&larr; Back</button>
           <button @click="saveRemoteConnect()" :disabled="!connectUrl || connectSaving"
-            class="flex-1 py-3 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 disabled:cursor-not-allowed text-white font-semibold text-sm transition-colors duration-200">
+            class="flex-1 py-3 rounded-xl btn-primary disabled:opacity-40 disabled:cursor-not-allowed text-white font-semibold text-sm transition-colors duration-200">
             <span x-show="!connectSaving">Connect &rarr;</span>
             <span x-show="connectSaving">Connecting&hellip;</span>
           </button>
@@ -248,7 +258,7 @@
               <!-- TL;DR toggle — top-right of the card header -->
               <button @click="tldr=!tldr"
                 class="spinner-hue text-xs px-4 py-1.5 rounded-full border font-semibold tracking-wide transition-colors flex-shrink-0"
-                :class="tldr ? 'bg-indigo-950 border-indigo-500 text-indigo-200' : 'bg-gray-900 border-gray-600 text-gray-400 hover:border-gray-400 hover:text-gray-200'"
+                :class="tldr ? 'hue-pill-active' : 'bg-gray-900 border-gray-600 text-gray-400 hover:border-gray-400 hover:text-gray-200'"
                 title="Toggle TL;DR mode">
                 <span x-text="tldr ? 'TL;DR ON ⚡' : 'Click here for TL;DR'"></span>
               </button>
@@ -281,7 +291,7 @@
                 <div class="min-w-0 flex-1">
                   <div class="flex items-center justify-between gap-2 mb-1">
                     <div class="text-sm font-semibold text-gray-200 leading-tight" x-text="s.name"></div>
-                    <span class="text-[9px] px-1.5 py-0.5 rounded-full border border-indigo-800 text-indigo-400 font-medium uppercase tracking-wider flex-shrink-0"
+                    <span class="text-[9px] px-1.5 py-0.5 rounded-full hue-pill font-medium uppercase tracking-wider flex-shrink-0"
                       x-text="s.tag"></span>
                   </div>
                   <div class="text-xs text-gray-500 leading-relaxed" x-text="tldr ? s.tldrDesc : s.desc"></div>
@@ -307,7 +317,7 @@
         <!-- Continue -->
         <div class="flex justify-center">
           <button @click="introConfirmed = true"
-            class="spinner-hue px-8 py-3 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-semibold transition-colors duration-200">
+            class="spinner-hue px-8 py-3 rounded-xl btn-primary text-white font-semibold transition-colors duration-200">
             Continue &rarr;
           </button>
         </div>
@@ -322,9 +332,9 @@
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <!-- Local-first -->
           <button @click="selectTrack('local')"
-            class="icon-hue text-left p-5 rounded-2xl border border-gray-700 bg-gray-900 hover:border-indigo-500 hover:bg-gray-800/80 transition-colors duration-200 group">
-            <div class="w-9 h-9 rounded-xl bg-indigo-950 flex items-center justify-center mb-3 group-hover:bg-indigo-900 transition-colors border border-indigo-800">
-              <svg class="w-4 h-4 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            class="icon-hue text-left p-5 rounded-2xl border border-gray-700 bg-gray-900 hue-card-hover hover:bg-gray-800/80 transition-colors duration-200 group">
+            <div class="w-9 h-9 rounded-xl hue-bg flex items-center justify-center mb-3 group-hover:hue-bg-bright transition-colors border hue-border">
+              <svg class="w-4 h-4 hue-text" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
                   d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/>
               </svg>
@@ -333,14 +343,14 @@
             <div class="text-xs text-gray-400 leading-relaxed mb-3">
               Your data never leaves this machine. Models run on your hardware.
             </div>
-            <div class="text-xs text-indigo-400 font-medium">Free &middot; Private &middot; GPU required</div>
-            <div class="text-xs text-indigo-300/60 mt-0.5">Ollama &middot; LM Studio</div>
+            <div class="text-xs hue-text font-medium">Free &middot; Private &middot; GPU required</div>
+            <div class="text-xs hue-text-dim/60 mt-0.5">Ollama &middot; LM Studio</div>
           </button>
           <!-- Frontier-first -->
           <button @click="selectTrack('frontier')"
-            class="icon-hue text-left p-5 rounded-2xl border border-gray-700 bg-gray-900 hover:border-indigo-500 hover:bg-gray-800/80 transition-colors duration-200 group">
-            <div class="w-9 h-9 rounded-xl bg-indigo-950 flex items-center justify-center mb-3 group-hover:bg-indigo-900 transition-colors border border-indigo-800">
-              <svg class="w-4 h-4 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            class="icon-hue text-left p-5 rounded-2xl border border-gray-700 bg-gray-900 hue-card-hover hover:bg-gray-800/80 transition-colors duration-200 group">
+            <div class="w-9 h-9 rounded-xl hue-bg flex items-center justify-center mb-3 group-hover:hue-bg-bright transition-colors border hue-border">
+              <svg class="w-4 h-4 hue-text" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
                   d="M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2.5 0 0010.5 8h.5a2 2 0 012 2 2 2 0 104 0 2 2 0 012-2h1.064M15 20.488V18a2 2 0 012-2h3.064"/>
               </svg>
@@ -349,8 +359,8 @@
             <div class="text-xs text-gray-400 leading-relaxed mb-3">
               Best available cloud models via Anthropic, OpenAI, or OpenRouter.
             </div>
-            <div class="text-xs text-indigo-400 font-medium">Pay-per-use &middot; No GPU needed</div>
-            <div class="text-xs text-indigo-300/60 mt-0.5">Anthropic &middot; OpenRouter &middot; Custom</div>
+            <div class="text-xs hue-text font-medium">Pay-per-use &middot; No GPU needed</div>
+            <div class="text-xs hue-text-dim/60 mt-0.5">Anthropic &middot; OpenRouter &middot; Custom</div>
           </button>
         </div>
       </div>
@@ -370,19 +380,19 @@
             <div class="grid grid-cols-3 gap-2 mb-5">
               <button @click="frontierProvider = 'anthropic'; frontierError = ''; frontierModels = []; frontierBaseUrl = ''"
                 class="text-left p-3 rounded-xl border transition-colors duration-200"
-                :class="frontierProvider === 'anthropic' ? 'border-indigo-500 bg-indigo-950/30' : 'border-gray-700 bg-gray-900 hover:border-gray-500'">
+                :class="frontierProvider === 'anthropic' ? 'hue-border-bright hue-bg/30' : 'border-gray-700 bg-gray-900 hover:border-gray-500'">
                 <div class="font-semibold text-sm mb-0.5" :class="frontierProvider === 'anthropic' ? 'text-white' : 'text-gray-300'">Anthropic</div>
                 <div class="text-[10px] text-gray-500">Claude models</div>
               </button>
               <button @click="frontierProvider = 'openrouter'; frontierError = ''; frontierModels = []; frontierBaseUrl = ''"
                 class="text-left p-3 rounded-xl border transition-colors duration-200"
-                :class="frontierProvider === 'openrouter' ? 'border-indigo-500 bg-indigo-950/30' : 'border-gray-700 bg-gray-900 hover:border-gray-500'">
+                :class="frontierProvider === 'openrouter' ? 'hue-border-bright hue-bg/30' : 'border-gray-700 bg-gray-900 hover:border-gray-500'">
                 <div class="font-semibold text-sm mb-0.5" :class="frontierProvider === 'openrouter' ? 'text-white' : 'text-gray-300'">OpenRouter</div>
                 <div class="text-[10px] text-gray-500">200+ models, pay-per-use</div>
               </button>
               <button @click="frontierProvider = 'custom'; frontierError = ''; frontierModels = []"
                 class="text-left p-3 rounded-xl border transition-colors duration-200"
-                :class="frontierProvider === 'custom' ? 'border-indigo-500 bg-indigo-950/30' : 'border-gray-700 bg-gray-900 hover:border-gray-500'">
+                :class="frontierProvider === 'custom' ? 'hue-border-bright hue-bg/30' : 'border-gray-700 bg-gray-900 hover:border-gray-500'">
                 <div class="font-semibold text-sm mb-0.5" :class="frontierProvider === 'custom' ? 'text-white' : 'text-gray-300'">Custom</div>
                 <div class="text-[10px] text-gray-500">Any OpenAI-compatible</div>
               </button>
@@ -394,13 +404,13 @@
                 <label class="text-xs text-gray-500 mb-1 block">API Key</label>
                 <input x-model="frontierApiKey" type="password"
                   :placeholder="frontierProvider === 'anthropic' ? 'sk-ant-...' : frontierProvider === 'openrouter' ? 'sk-or-...' : 'API key'"
-                  class="w-full px-3 py-2 rounded-lg bg-gray-800 border border-gray-700 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-indigo-500">
+                  class="w-full px-3 py-2 rounded-lg bg-gray-800 border border-gray-700 text-sm text-white placeholder-gray-600 focus:outline-none focus:hue-border-bright">
               </div>
               <div x-show="frontierProvider === 'custom'">
                 <label class="text-xs text-gray-500 mb-1 block">Base URL</label>
                 <input x-model="frontierBaseUrl" type="text"
                   placeholder="https://api.example.com/v1"
-                  class="w-full px-3 py-2 rounded-lg bg-gray-800 border border-gray-700 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-indigo-500">
+                  class="w-full px-3 py-2 rounded-lg bg-gray-800 border border-gray-700 text-sm text-white placeholder-gray-600 focus:outline-none focus:hue-border-bright">
               </div>
 
               <!-- Validate button -->
@@ -452,7 +462,7 @@
         <!-- Scanning -->
         <div x-show="autoScanning" class="flex flex-col items-center py-12 gap-4">
           <div class="spinner-hue">
-            <div class="w-8 h-8 border-2 border-gray-800 border-t-indigo-500 rounded-full animate-spin"></div>
+            <div class="w-8 h-8 border-2 border-gray-800 border-t-current rounded-full animate-spin"></div>
           </div>
           <p class="text-sm text-gray-500">Scanning local network for model servers&hellip;</p>
         </div>
@@ -470,10 +480,10 @@
                 <template x-for="group in groupedLocalServers" :key="group.type">
                   <template x-for="s in group.servers" :key="s.endpoint">
                     <div class="p-4 rounded-xl border transition-colors"
-                      :class="isServerSelected(s) ? 'border-indigo-500/60 bg-indigo-950/20' : 'border-gray-700 bg-gray-900'">
+                      :class="isServerSelected(s) ? 'hue-border-bright/60 hue-bg/20' : 'border-gray-700 bg-gray-900'">
                       <div class="flex items-start gap-3">
                         <button @click="s.status==='up' && toggleServer(s)"
-                          :class="isServerSelected(s) ? 'bg-indigo-500 border-indigo-500' : s.status==='up' ? 'border-gray-600 hover:border-gray-400 cursor-pointer' : 'border-gray-700 cursor-default opacity-40'"
+                          :class="isServerSelected(s) ? 'hue-bg-bright hue-border-bright' : s.status==='up' ? 'border-gray-600 hover:border-gray-400 cursor-pointer' : 'border-gray-700 cursor-default opacity-40'"
                           class="w-5 h-5 rounded border-2 flex items-center justify-center flex-shrink-0 mt-0.5 transition-colors">
                           <svg x-show="isServerSelected(s)" class="w-3 h-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/>
@@ -482,14 +492,14 @@
                         <div class="flex-1 min-w-0">
                           <div class="flex items-center gap-2 flex-wrap mb-0.5" x-data="{ editing: false, draft: '' }">
                             <span x-show="!editing" @click="editing=true; draft=s.customName||group.label"
-                              class="text-sm font-semibold text-white cursor-text hover:text-indigo-300 transition-colors"
+                              class="text-sm font-semibold text-white cursor-text hover:hue-text-dim transition-colors"
                               x-text="s.customName||group.label" title="Click to rename"></span>
                             <input x-show="editing" x-model="draft" type="text"
                               @blur="s.customName=draft.trim()||''; editing=false"
                               @keydown.enter="s.customName=draft.trim()||''; editing=false"
                               @keydown.escape="editing=false"
                               x-init="$watch('editing', v => v && $nextTick(() => $el.focus()))"
-                              class="text-sm font-semibold bg-transparent border-b border-indigo-400 text-white focus:outline-none w-32">
+                              class="text-sm font-semibold bg-transparent border-b hue-border-bright text-white focus:outline-none w-32">
                             <span class="text-xs font-mono text-gray-500" x-text="new URL(s.endpoint).hostname + ':' + new URL(s.endpoint).port"></span>
                           </div>
                           <div class="flex items-center gap-2 flex-wrap">
@@ -512,7 +522,7 @@
                                 <input type="password" placeholder="API key"
                                   x-model="serverKeys[s.endpoint]"
                                   @keydown.enter="s._apiKey = serverKeys[s.endpoint]; keyTested = true; retryWithKey(s)"
-                                  class="flex-1 bg-gray-950 border border-gray-700 rounded-lg px-3 py-1.5 text-xs text-white placeholder-gray-600 focus:outline-none focus:border-indigo-500 font-mono">
+                                  class="flex-1 bg-gray-950 border border-gray-700 rounded-lg px-3 py-1.5 text-xs text-white placeholder-gray-600 focus:outline-none focus:hue-border-bright font-mono">
                                 <button @click="s._apiKey = serverKeys[s.endpoint]; keyTested = true; retryWithKey(s)"
                                   class="btn-primary px-3 py-1.5 rounded-lg text-xs flex-shrink-0">Save</button>
                               </div>
@@ -538,7 +548,7 @@
                               @input="$data.localKeys = {...$data.localKeys, [s.endpoint]: $event.target.value}"
                               @change="$data.localKeys = {...$data.localKeys, [s.endpoint]: $event.target.value}"
                               @keydown.enter="serverKeys[s.endpoint] = $data.localKeys[s.endpoint]||''; retryWithKey(s)"
-                              :class="authEnforcedServers[s.endpoint] ? 'border-amber-700 focus:border-amber-500' : 'border-gray-700 focus:border-indigo-500'"
+                              :class="authEnforcedServers[s.endpoint] ? 'border-amber-700 focus:border-amber-500' : 'border-gray-700 focus:hue-border-bright'"
                               class="w-full bg-gray-950 border rounded-lg px-3 py-1.5 text-xs text-white placeholder-gray-600 focus:outline-none font-mono transition-colors">
                             <p class="text-xs text-gray-600">
                               <template x-if="retryingServers[s.endpoint]">
@@ -572,10 +582,10 @@
               <div class="space-y-2">
                 <template x-for="s in remoteServers" :key="s.endpoint">
                   <div class="p-4 rounded-xl border transition-colors"
-                    :class="isServerSelected(s) ? 'border-indigo-500/60 bg-indigo-950/20' : 'border-gray-700 bg-gray-900'">
+                    :class="isServerSelected(s) ? 'hue-border-bright/60 hue-bg/20' : 'border-gray-700 bg-gray-900'">
                     <div class="flex items-start gap-3">
                       <button @click="toggleServer(s)"
-                        :class="isServerSelected(s) ? 'bg-indigo-500 border-indigo-500' : 'border-gray-600 hover:border-gray-400 cursor-pointer'"
+                        :class="isServerSelected(s) ? 'hue-bg-bright hue-border-bright' : 'border-gray-600 hover:border-gray-400 cursor-pointer'"
                         class="w-5 h-5 rounded border-2 flex items-center justify-center flex-shrink-0 mt-0.5 transition-colors">
                         <svg x-show="isServerSelected(s)" class="w-3 h-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/>
@@ -584,14 +594,14 @@
                       <div class="flex-1 min-w-0">
                         <div class="flex items-center gap-2 flex-wrap" x-data="{ editing: false, draft: '' }">
                           <span x-show="!editing" @click="editing=true; draft=s.customName||serverDefaultName(s)"
-                            class="text-sm font-semibold text-white cursor-text hover:text-indigo-300 transition-colors"
+                            class="text-sm font-semibold text-white cursor-text hover:hue-text-dim transition-colors"
                             x-text="serverName(s)" title="Click to rename"></span>
                           <input x-show="editing" x-model="draft" type="text"
                             @blur="s.customName=draft.trim()||''; editing=false"
                             @keydown.enter="s.customName=draft.trim()||''; editing=false"
                             @keydown.escape="editing=false"
                             x-init="$watch('editing', v => v && $nextTick(() => $el.focus()))"
-                            class="text-sm font-semibold bg-transparent border-b border-indigo-400 text-white focus:outline-none w-32">
+                            class="text-sm font-semibold bg-transparent border-b hue-border-bright text-white focus:outline-none w-32">
                           <span x-show="s.status==='up'" class="text-[10px] px-1.5 py-0.5 rounded-full bg-green-950 text-green-400 border border-green-900 font-medium">Running</span>
                           <span x-show="s.status==='auth_required'" class="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-950 text-amber-400 border border-amber-800 font-medium">Needs API key</span>
                         </div>
@@ -609,7 +619,7 @@
                             @input="$data.localKeys = {...$data.localKeys, [s.endpoint]: $event.target.value}"
                             @change="$data.localKeys = {...$data.localKeys, [s.endpoint]: $event.target.value}"
                             @keydown.enter="serverKeys[s.endpoint] = $data.localKeys[s.endpoint]||''; retryWithKey(s)"
-                            :class="authEnforcedServers[s.endpoint] ? 'border-amber-700 focus:border-amber-500' : 'border-gray-700 focus:border-indigo-500'"
+                            :class="authEnforcedServers[s.endpoint] ? 'border-amber-700 focus:border-amber-500' : 'border-gray-700 focus:hue-border-bright'"
                             class="w-full bg-gray-950 border rounded-lg px-3 py-1.5 text-xs text-white placeholder-gray-600 focus:outline-none font-mono transition-colors">
                           <p class="text-xs text-gray-600">
                             <template x-if="retryingServers[s.endpoint]">
@@ -645,7 +655,7 @@
           <!-- Manual add -->
           <div>
             <button @click="showManualEntry=!showManualEntry"
-              class="icon-hue flex items-center gap-1.5 text-xs text-indigo-400 hover:text-indigo-300 transition-colors py-1">
+              class="icon-hue flex items-center gap-1.5 text-xs hue-text hover:hue-text-dim transition-colors py-1">
               <svg class="w-3.5 h-3.5 transition-transform" :class="showManualEntry?'rotate-45':''" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
               </svg>
@@ -653,13 +663,13 @@
             </button>
             <div x-show="showManualEntry" class="mt-2 p-4 rounded-xl bg-gray-900 border border-gray-800 space-y-2">
               <!-- VPC / remote context note -->
-              <div class="flex gap-2 p-2.5 rounded-lg bg-indigo-950/40 border border-indigo-900/50 text-xs text-indigo-300">
-                <svg class="w-3.5 h-3.5 mt-0.5 shrink-0 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
-                <span>Point this at any machine running an inference server — your LAN, a VPC, a cloud VM, or a remote server. <strong class="text-indigo-200">No Logos installation is needed there</strong> — just the inference software (Ollama, vLLM, etc.) and a reachable IP/port.</span>
+              <div class="flex gap-2 p-2.5 rounded-lg hue-bg/40 border hue-border/50 text-xs hue-text-dim">
+                <svg class="w-3.5 h-3.5 mt-0.5 shrink-0 hue-text" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                <span>Point this at any machine running an inference server — your LAN, a VPC, a cloud VM, or a remote server. <strong class="hue-text-dim">No Logos installation is needed there</strong> — just the inference software (Ollama, vLLM, etc.) and a reachable IP/port.</span>
               </div>
               <div class="flex gap-2">
                 <select x-model="manualType"
-                  class="bg-gray-950 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500">
+                  class="bg-gray-950 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:hue-border-bright">
                   <option value="ollama">Ollama</option>
                   <option value="lmstudio">LM Studio</option>
                   <option value="vllm">vLLM</option>
@@ -671,7 +681,7 @@
                     : manualType==='vllm' ? 'http://gpu-vm.vpc:8000'
                     : 'https://api.openai.com/v1 or http://custom-host/v1'"
                   @keydown.enter="addManualServer()"
-                  class="flex-1 bg-gray-950 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-indigo-500 font-mono">
+                  class="flex-1 bg-gray-950 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-600 focus:outline-none focus:hue-border-bright font-mono">
                 <button @click="addManualServer()" :disabled="manualProbing||!manualUrl.trim()"
                   class="btn-primary px-4 py-2 rounded-lg text-sm flex-shrink-0">
                   <span x-show="!manualProbing">Add</span>
@@ -680,10 +690,10 @@
               </div>
               <input x-model="manualName" type="text"
                 placeholder="Custom name (optional, e.g. &ldquo;VPC GPU Node&rdquo; or &ldquo;Gaming PC&rdquo;)"
-                class="w-full bg-gray-950 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-indigo-500">
+                class="w-full bg-gray-950 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-600 focus:outline-none focus:hue-border-bright">
               <input x-show="manualType==='lmstudio' || manualType==='openai'" x-model="manualKey" type="password"
                 :placeholder="manualType==='openai' ? 'API key' : 'API key (if auth is enabled in LM Studio)'"
-                class="w-full bg-gray-950 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-indigo-500 font-mono">
+                class="w-full bg-gray-950 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-600 focus:outline-none focus:hue-border-bright font-mono">
               <p x-show="manualError" class="text-xs text-red-400" x-text="manualError"></p>
             </div>
           </div>
@@ -697,10 +707,10 @@
                 How to install LM Studio
               </summary>
               <div class="mt-2 p-4 rounded-xl bg-gray-900 border border-gray-800 space-y-3">
-                <div class="flex gap-2.5"><span class="w-4 h-4 rounded-full bg-gray-700 text-white text-[10px] flex items-center justify-center flex-shrink-0 font-medium">1</span><span class="text-xs text-gray-300">Download LM Studio from <a href="https://lmstudio.ai" target="_blank" class="text-indigo-400 hover:underline">lmstudio.ai &nearr;</a></span></div>
+                <div class="flex gap-2.5"><span class="w-4 h-4 rounded-full bg-gray-700 text-white text-[10px] flex items-center justify-center flex-shrink-0 font-medium">1</span><span class="text-xs text-gray-300">Download LM Studio from <a href="https://lmstudio.ai" target="_blank" class="hue-text hover:underline">lmstudio.ai &nearr;</a></span></div>
                 <div class="flex gap-2.5"><span class="w-4 h-4 rounded-full bg-gray-700 text-white text-[10px] flex items-center justify-center flex-shrink-0 font-medium">2</span><span class="text-xs text-gray-300">Open the <span class="text-white font-medium">Model Search</span> tab, download models you like that are advised as being able to run on your hardware</span></div>
                 <div class="flex gap-2.5"><span class="w-4 h-4 rounded-full bg-gray-700 text-white text-[10px] flex items-center justify-center flex-shrink-0 font-medium">3</span><span class="text-xs text-gray-300">Go to the <span class="text-white font-medium">Developer</span> tab and start your server by clicking the slider button</span></div>
-                <div class="flex gap-2.5"><span class="w-4 h-4 rounded-full bg-indigo-800 text-indigo-200 text-[10px] flex items-center justify-center flex-shrink-0 font-medium">4</span><span class="text-xs text-gray-300"><span class="text-white font-medium">Recommended:</span> in the Developer tab, enable <span class="text-white font-medium">API Authentication</span> and copy the generated API key — paste it into the <span class="text-white font-medium">API key</span> field above when adding this server. Without a key, any process on your machine can send requests to LM Studio.</span></div>
+                <div class="flex gap-2.5"><span class="w-4 h-4 rounded-full hue-bg hue-text-dim text-[10px] flex items-center justify-center flex-shrink-0 font-medium">4</span><span class="text-xs text-gray-300"><span class="text-white font-medium">Recommended:</span> in the Developer tab, enable <span class="text-white font-medium">API Authentication</span> and copy the generated API key — paste it into the <span class="text-white font-medium">API key</span> field above when adding this server. Without a key, any process on your machine can send requests to LM Studio.</span></div>
               </div>
             </details>
             <details class="group">
@@ -716,22 +726,22 @@
                 </div>
                 <div x-show="osPlatform==='mac'" class="space-y-2">
                   <div class="flex items-center justify-between bg-gray-950 rounded-lg px-3 py-2">
-                    <code class="text-xs text-indigo-300 font-mono">brew install ollama</code>
+                    <code class="text-xs hue-text-dim font-mono">brew install ollama</code>
                     <button @click="copy('brew install ollama')" class="text-gray-600 hover:text-gray-400 text-xs ml-3" x-text="copied==='brew install ollama'?'copied':'copy'"></button>
                   </div>
-                  <p class="text-xs text-gray-600">Or <a href="https://ollama.com/download" target="_blank" class="text-indigo-400 hover:underline">download the macOS app &nearr;</a></p>
+                  <p class="text-xs text-gray-600">Or <a href="https://ollama.com/download" target="_blank" class="hue-text hover:underline">download the macOS app &nearr;</a></p>
                 </div>
                 <div x-show="osPlatform==='linux'">
                   <div class="flex items-center justify-between bg-gray-950 rounded-lg px-3 py-2">
-                    <code class="text-xs text-indigo-300 font-mono">curl -fsSL https://ollama.com/install.sh | sh</code>
+                    <code class="text-xs hue-text-dim font-mono">curl -fsSL https://ollama.com/install.sh | sh</code>
                     <button @click="copy('curl -fsSL https://ollama.com/install.sh | sh')" class="text-gray-600 hover:text-gray-400 text-xs ml-3 flex-shrink-0" x-text="copied==='curl -fsSL https://ollama.com/install.sh | sh'?'copied':'copy'"></button>
                   </div>
                 </div>
                 <div x-show="osPlatform==='windows'">
-                  <a href="https://ollama.com/download" target="_blank" class="text-xs text-indigo-400 hover:underline">Download Ollama for Windows &nearr;</a>
+                  <a href="https://ollama.com/download" target="_blank" class="text-xs hue-text hover:underline">Download Ollama for Windows &nearr;</a>
                 </div>
                 <div class="flex items-center justify-between bg-gray-950 rounded-lg px-3 py-2 mt-2">
-                  <code class="text-xs text-indigo-300 font-mono">ollama serve</code>
+                  <code class="text-xs hue-text-dim font-mono">ollama serve</code>
                   <button @click="copy('ollama serve')" class="text-gray-600 hover:text-gray-400 text-xs ml-3" x-text="copied==='ollama serve'?'copied':'copy'"></button>
                 </div>
               </div>
@@ -748,12 +758,12 @@
                 <div class="space-y-2">
                   <p class="text-[10px] text-gray-600 uppercase tracking-wider font-semibold">Ollama on a Linux VM</p>
                   <div class="flex items-center justify-between bg-gray-950 rounded-lg px-3 py-2">
-                    <code class="text-indigo-300 font-mono">curl -fsSL https://ollama.com/install.sh | sh</code>
+                    <code class="hue-text-dim font-mono">curl -fsSL https://ollama.com/install.sh | sh</code>
                     <button @click="copy('curl -fsSL https://ollama.com/install.sh | sh')" class="text-gray-600 hover:text-gray-400 ml-3 flex-shrink-0" x-text="copied==='curl -fsSL https://ollama.com/install.sh | sh'?'copied':'copy'"></button>
                   </div>
                   <p class="text-gray-600">Then expose the API publicly (binds to all interfaces):</p>
                   <div class="flex items-center justify-between bg-gray-950 rounded-lg px-3 py-2">
-                    <code class="text-indigo-300 font-mono">OLLAMA_HOST=0.0.0.0 ollama serve</code>
+                    <code class="hue-text-dim font-mono">OLLAMA_HOST=0.0.0.0 ollama serve</code>
                     <button @click="copy('OLLAMA_HOST=0.0.0.0 ollama serve')" class="text-gray-600 hover:text-gray-400 ml-3 flex-shrink-0" x-text="copied==='OLLAMA_HOST=0.0.0.0 ollama serve'?'copied':'copy'"></button>
                   </div>
                   <p class="text-gray-600">Then pull your model: <code class="text-gray-500 font-mono">ollama pull qwen2.5:14b</code></p>
@@ -763,11 +773,11 @@
                 <div class="space-y-2">
                   <p class="text-[10px] text-gray-600 uppercase tracking-wider font-semibold">vLLM on a GPU VM</p>
                   <div class="flex items-center justify-between bg-gray-950 rounded-lg px-3 py-2">
-                    <code class="text-indigo-300 font-mono">pip install vllm</code>
+                    <code class="hue-text-dim font-mono">pip install vllm</code>
                     <button @click="copy('pip install vllm')" class="text-gray-600 hover:text-gray-400 ml-3 flex-shrink-0" x-text="copied==='pip install vllm'?'copied':'copy'"></button>
                   </div>
                   <div class="flex items-center justify-between bg-gray-950 rounded-lg px-3 py-2">
-                    <code class="text-indigo-300 font-mono">vllm serve Qwen/Qwen2.5-14B-Instruct --host 0.0.0.0 --port 8000</code>
+                    <code class="hue-text-dim font-mono">vllm serve Qwen/Qwen2.5-14B-Instruct --host 0.0.0.0 --port 8000</code>
                     <button @click="copy('vllm serve Qwen/Qwen2.5-14B-Instruct --host 0.0.0.0 --port 8000')" class="text-gray-600 hover:text-gray-400 ml-3 flex-shrink-0" x-text="copied==='vllm serve Qwen/Qwen2.5-14B-Instruct --host 0.0.0.0 --port 8000'?'copied':'copy'"></button>
                   </div>
                 </div>
@@ -786,7 +796,7 @@
                 <div class="space-y-2">
                   <p class="text-[10px] text-gray-600 uppercase tracking-wider font-semibold">Quick SSH tunnel (no firewall changes needed)</p>
                   <div class="flex items-center justify-between bg-gray-950 rounded-lg px-3 py-2">
-                    <code class="text-indigo-300 font-mono">ssh -L 11434:localhost:11434 user@your-vm-ip</code>
+                    <code class="hue-text-dim font-mono">ssh -L 11434:localhost:11434 user@your-vm-ip</code>
                     <button @click="copy('ssh -L 11434:localhost:11434 user@your-vm-ip')" class="text-gray-600 hover:text-gray-400 ml-3 flex-shrink-0" x-text="copied==='ssh -L 11434:localhost:11434 user@your-vm-ip'?'copied':'copy'"></button>
                   </div>
                   <p class="text-gray-600">Then add <code class="text-gray-500 font-mono">http://localhost:11434</code> as your server URL above — traffic tunnels securely.</p>
@@ -841,12 +851,12 @@
               <template x-for="m in catalogModels.filter(m => m.recommended)" :key="m.id">
                 <button @click="frontierSelectedModel = m.id"
                   class="w-full text-left px-4 py-3 rounded-xl border transition-colors duration-150"
-                  :class="frontierSelectedModel === m.id ? 'border-indigo-500 bg-indigo-950/30' : 'border-gray-700 bg-gray-900 hover:border-gray-500'">
+                  :class="frontierSelectedModel === m.id ? 'hue-border-bright hue-bg/30' : 'border-gray-700 bg-gray-900 hover:border-gray-500'">
                   <div class="flex items-center justify-between mb-1">
                     <div class="flex items-center gap-2">
                       <span class="text-yellow-500 text-xs">&#9733;</span>
                       <span class="text-sm font-semibold" :class="frontierSelectedModel === m.id ? 'text-white' : 'text-gray-200'" x-text="m.display"></span>
-                      <span x-show="m.recommended_label" class="text-[9px] px-1.5 py-0.5 rounded-full bg-indigo-950 text-indigo-300 border border-indigo-800" x-text="m.recommended_label"></span>
+                      <span x-show="m.recommended_label" class="text-[9px] px-1.5 py-0.5 rounded-full hue-bg hue-text-dim border hue-border" x-text="m.recommended_label"></span>
                     </div>
                     <div class="flex items-center gap-2">
                       <span class="text-[10px] text-gray-600" x-text="m.speed"></span>
@@ -868,7 +878,7 @@
               <template x-for="m in catalogModels.filter(m => !m.recommended)" :key="m.id">
                 <button @click="frontierSelectedModel = m.id"
                   class="w-full text-left px-3 py-2 rounded-lg border transition-colors duration-150"
-                  :class="frontierSelectedModel === m.id ? 'border-indigo-500 bg-indigo-950/20' : 'border-gray-800 bg-gray-900 hover:border-gray-600'">
+                  :class="frontierSelectedModel === m.id ? 'hue-border-bright hue-bg/20' : 'border-gray-800 bg-gray-900 hover:border-gray-600'">
                   <div class="flex items-center justify-between">
                     <div class="flex items-center gap-2">
                       <span class="text-xs" :class="frontierSelectedModel === m.id ? 'text-white' : 'text-gray-300'" x-text="m.display || m.id"></span>
@@ -885,7 +895,7 @@
               <template x-for="mid in frontierModels.filter(m => !catalogModels.find(c => c.id === m))" :key="mid">
                 <button @click="frontierSelectedModel = mid"
                   class="w-full text-left px-3 py-2 rounded-lg border transition-colors duration-150"
-                  :class="frontierSelectedModel === mid ? 'border-indigo-500 bg-indigo-950/20' : 'border-gray-800 bg-gray-900 hover:border-gray-600'">
+                  :class="frontierSelectedModel === mid ? 'hue-border-bright hue-bg/20' : 'border-gray-800 bg-gray-900 hover:border-gray-600'">
                   <span class="text-xs font-mono" :class="frontierSelectedModel === mid ? 'text-white' : 'text-gray-400'" x-text="mid"></span>
                 </button>
               </template>
@@ -920,7 +930,7 @@
                   <div class="flex-1 min-w-0">
                     <div class="flex items-center gap-2 flex-wrap">
                       <span class="text-sm font-medium text-white" x-text="m.name"></span>
-                      <span x-show="m.recommended" class="text-[10px] px-1.5 py-0.5 rounded-full bg-indigo-950 text-indigo-400 border border-indigo-800 font-medium">recommended</span>
+                      <span x-show="m.recommended" class="text-[10px] px-1.5 py-0.5 rounded-full hue-bg hue-text border hue-border font-medium">recommended</span>
                     </div>
                     <div class="text-xs text-gray-500 mt-1" x-text="m.desc"></div>
                     <div class="text-xs text-gray-600 mt-0.5"><span x-text="m.size"></span><span class="mx-1">&middot;</span><span x-text="m.ram"></span><span> on the inference machine</span></div>
@@ -938,7 +948,7 @@
               <span x-text="pullStatus||'Downloading\u2026'"></span><span x-text="pullProgress+'%'"></span>
             </div>
             <div class="h-1.5 bg-gray-800 rounded-full overflow-hidden">
-              <div class="h-full bg-indigo-500 rounded-full transition-colors" :style="'width:'+pullProgress+'%'"></div>
+              <div class="h-full hue-bg-bright rounded-full transition-colors" :style="'width:'+pullProgress+'%'"></div>
             </div>
           </div>
           <div x-show="pullError" class="text-xs text-red-400" x-text="pullError"></div>
@@ -950,7 +960,7 @@
           <p class="text-xs text-gray-500 mb-3">Your server is running but has no models loaded yet. Load or download a model and then refresh.</p>
           <div class="space-y-2 mb-4">
             <details class="group">
-              <summary class="text-xs text-indigo-400 cursor-pointer hover:text-indigo-300 list-none flex items-center gap-1.5">
+              <summary class="text-xs hue-text cursor-pointer hover:hue-text-dim list-none flex items-center gap-1.5">
                 <svg class="w-3 h-3 transition-transform group-open:rotate-90" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
                 LM Studio instructions
               </summary>
@@ -961,13 +971,13 @@
               </ol>
             </details>
             <details class="group">
-              <summary class="text-xs text-indigo-400 cursor-pointer hover:text-indigo-300 list-none flex items-center gap-1.5">
+              <summary class="text-xs hue-text cursor-pointer hover:hue-text-dim list-none flex items-center gap-1.5">
                 <svg class="w-3 h-3 transition-transform group-open:rotate-90" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
                 llama.cpp / llama-server instructions
               </summary>
               <ol class="mt-2 space-y-1.5 text-xs text-gray-400 list-none pl-4">
                 <li>1. Download a GGUF model from <span class="text-white font-medium">Hugging Face</span> (search for &ldquo;Q4_K_M GGUF&rdquo; variants of models like Qwen3 or Gemma3).</li>
-                <li>2. Restart llama-server with: <code class="text-indigo-300 font-mono">llama-server -m /path/to/model.gguf --port 8080 --ctx-size 32768</code></li>
+                <li>2. Restart llama-server with: <code class="hue-text-dim font-mono">llama-server -m /path/to/model.gguf --port 8080 --ctx-size 32768</code></li>
                 <li class="text-gray-600">&rarr; <code class="font-mono">--ctx-size 32768</code> is important — the default (512&ndash;4096) is too small for the agent system prompt (~8K tokens). Use at least 16384.</li>
                 <li>3. Come back here and click Refresh.</li>
               </ol>
@@ -990,14 +1000,14 @@
             <div class="flex-shrink-0 pt-0.5">
               <!-- Test All -->
               <button x-show="!compareRunning && !compareDone" @click="runCompare()"
-                class="px-4 py-2 rounded-xl text-sm font-medium bg-indigo-600 hover:bg-indigo-500 text-white transition-colors">
+                class="px-4 py-2 rounded-xl text-sm font-medium btn-primary text-white transition-colors">
                 Test all models
               </button>
               <!-- Stop -->
               <button x-show="compareRunning"
                 @click="selectedServers.forEach(s => { if (!compareSkippedServers[s.endpoint]) stopServerBenchmark(s.endpoint); })"
                 class="px-3 py-1.5 rounded-lg text-xs font-medium border border-red-900 text-red-400 hover:text-red-300 hover:border-red-700 transition-colors flex items-center gap-1.5">
-                <span class="w-3 h-3 border-2 border-gray-600 border-t-indigo-400 rounded-full animate-spin"></span>
+                <span class="w-3 h-3 border-2 border-gray-600 border-t-current rounded-full animate-spin"></span>
                 Stop
               </button>
               <!-- Re-run -->
@@ -1021,7 +1031,7 @@
                 Higher is better. Agent conversations feel sluggish below ~6 tok/s.
                 <span class="inline-flex gap-2 ml-1 font-mono">
                   <span class="text-green-400">&ge;30 fast</span>
-                  <span class="text-indigo-400">15&ndash;29 good</span>
+                  <span class="hue-text">15&ndash;29 good</span>
                   <span class="text-yellow-400">6&ndash;14 usable</span>
                   <span class="text-red-400">&lt;6 slow</span>
                 </span>
@@ -1077,7 +1087,7 @@
                            compareResults[mid]?.max_context && compareResults[mid].max_context < 64000
                              ? 'border-red-900/50 bg-gray-900 opacity-60'
                              : serverModelForServer(server.endpoint) === mid && compareDone
-                               ? 'border-indigo-500 bg-indigo-950/20'
+                               ? 'hue-border-bright hue-bg/20'
                                : compareResults[mid]
                                  ? 'border-gray-800 bg-gray-900'
                                  : 'border-transparent bg-gray-900',
@@ -1090,7 +1100,7 @@
                         <div class="flex items-center gap-2 min-w-0 flex-wrap">
                           <!-- Default — shown when this model is the server's pick and has a valid result -->
                           <span x-show="serverModelForServer(server.endpoint) === mid && compareDone && compareResults[mid] && !compareResults[mid].error && !compareResults[mid].skipped"
-                            class="text-[9px] px-1.5 py-0.5 rounded-full bg-indigo-900 text-indigo-300 border border-indigo-700 font-semibold uppercase tracking-wider flex-shrink-0"
+                            class="text-[9px] px-1.5 py-0.5 rounded-full hue-bg hue-text-dim border hue-border font-semibold uppercase tracking-wider flex-shrink-0"
                             title="Selected as the default model for this server">Default</span>
                           <span x-show="compareResults[mid]?.max_context && compareResults[mid].max_context < 64000 && compareDone"
                             class="text-[9px] px-1.5 py-0.5 rounded-full bg-red-950 text-red-400 border border-red-900 font-semibold uppercase tracking-wider flex-shrink-0"
@@ -1110,7 +1120,7 @@
                               <span x-show="getModels().find(m => m.id === mid)?._toolUse"
                                 class="text-[9px] px-1 py-0.5 rounded bg-emerald-950 text-emerald-400 border border-emerald-900">tools</span>
                               <span x-show="getModels().find(m => m.id === mid)?._vision"
-                                class="text-[9px] px-1 py-0.5 rounded bg-indigo-950 text-indigo-400 border border-indigo-900">vision</span>
+                                class="text-[9px] px-1 py-0.5 rounded hue-bg hue-text border hue-border">vision</span>
                               <span x-show="getModels().find(m => m.id === mid)?._maxCtx"
                                 class="text-[10px] font-mono text-gray-700"
                                 x-text="(() => { const ctx = getModels().find(m => m.id === mid)?._maxCtx || 0; return ctx >= 1024 ? Math.round(ctx/1024) + 'K ctx' : ctx + ' ctx'; })()"></span>
@@ -1124,8 +1134,8 @@
                               <!-- Loading phase (default when no phase data yet) -->
                               <template x-if="!comparePhase[mid] || comparePhase[mid].step === 'loading'">
                                 <div class="flex items-center gap-1.5">
-                                  <div class="spinner-hue"><div class="w-3 h-3 border border-gray-700 border-t-indigo-400 rounded-full animate-spin"></div></div>
-                                  <span class="text-indigo-400/80 tabular-nums"
+                                  <div class="spinner-hue"><div class="w-3 h-3 border border-gray-700 border-t-current rounded-full animate-spin"></div></div>
+                                  <span class="hue-text/80 tabular-nums"
                                     x-text="comparePhase[mid]?.progress != null ? 'Loading ' + Math.round(comparePhase[mid].progress * 100) + '%' : 'Loading\u2026'"></span>
                                 </div>
                               </template>
@@ -1150,7 +1160,7 @@
                           <!-- Thin progress bar at card bottom (loading phase with known progress) -->
                           <div x-show="compareTesting[mid] && comparePhase[mid]?.step === 'loading' && comparePhase[mid]?.progress != null"
                             class="absolute bottom-0 left-0 right-0 h-0.5 bg-gray-800">
-                            <div class="h-full bg-indigo-500 transition-colors duration-300 ease-out rounded-full"
+                            <div class="h-full hue-bg-bright transition-colors duration-300 ease-out rounded-full"
                               :style="'width:' + Math.round((comparePhase[mid]?.progress || 0) * 100) + '%'"></div>
                           </div>
                           <!-- Result — fades + slides in from the right when it arrives -->
@@ -1170,7 +1180,7 @@
                                 <span class="font-mono font-semibold"
                                   :class="{
                                     'text-green-400':  compareResults[mid].tok_s >= 30,
-                                    'text-indigo-400': compareResults[mid].tok_s >= 15 && compareResults[mid].tok_s < 30,
+                                    'hue-text': compareResults[mid].tok_s >= 15 && compareResults[mid].tok_s < 30,
                                     'text-yellow-400': compareResults[mid].tok_s >= 6  && compareResults[mid].tok_s < 15,
                                     'text-red-400':    compareResults[mid].tok_s < 6,
                                   }"
@@ -1194,7 +1204,7 @@
                                 <span x-show="compareResults[mid].tool_use || getModels().find(m => m.id === mid)?._toolUse"
                                   class="text-[9px] px-1 py-0.5 rounded bg-emerald-950 text-emerald-400 border border-emerald-900">tools</span>
                                 <span x-show="compareResults[mid].vision || getModels().find(m => m.id === mid)?._vision"
-                                  class="text-[9px] px-1 py-0.5 rounded bg-indigo-950 text-indigo-400 border border-indigo-900">vision</span>
+                                  class="text-[9px] px-1 py-0.5 rounded hue-bg hue-text border hue-border">vision</span>
                                 <span x-show="compareDone" class="text-gray-700 text-[10px]"
                                   x-text="compareExpanded === mid ? '\u25b4' : '\u25be'"></span>
                               </div>
@@ -1202,7 +1212,7 @@
                             <!-- Test button — shown when model hasn't been tested yet; hidden during bulk benchmark on this server -->
                             <button x-show="!compareResults[mid] && !compareTesting[mid] && !compareRunning"
                               @click.stop="testSingleModel(mid)"
-                              class="text-[10px] px-2 py-0.5 rounded border border-indigo-700 text-indigo-400 hover:text-indigo-300 hover:border-indigo-500 transition-colors">
+                              class="text-[10px] px-2 py-0.5 rounded border hue-border hue-text hover:hue-text-dim hue-card-hover transition-colors">
                               Test
                             </button>
                             <!-- Re-test button — shown once initial result is in; hidden during bulk benchmark -->
@@ -1226,7 +1236,7 @@
                             <span class="ml-1.5 font-mono font-semibold"
                               :class="{
                                 'text-green-400':  compareResults[mid]?.tok_s >= 30,
-                                'text-indigo-400': compareResults[mid]?.tok_s >= 15 && compareResults[mid]?.tok_s < 30,
+                                'hue-text': compareResults[mid]?.tok_s >= 15 && compareResults[mid]?.tok_s < 30,
                                 'text-yellow-400': compareResults[mid]?.tok_s >= 6  && compareResults[mid]?.tok_s < 15,
                                 'text-red-400':    compareResults[mid]?.tok_s < 6,
                               }"
@@ -1272,7 +1282,7 @@
                         </div>
                         <!-- Why selected (if this is the default for this server) -->
                         <div x-show="serverModelForServer(server.endpoint) === mid && compareDone && compareResults[mid] && !compareResults[mid].error && !compareResults[mid].skipped"
-                          class="text-[11px] text-indigo-300/70 pt-0.5"
+                          class="text-[11px] hue-text-dim/70 pt-0.5"
                           x-text="selectedServers.length > 1 ? ((compareServerRecs[server.endpoint]||{}).reason || '') : compareReason"></div>
                         <!-- Why not selected (if not the best for this server) -->
                         <div x-show="serverModelForServer(server.endpoint) !== mid && compareDone" class="text-[11px] text-gray-600 pt-0.5">
@@ -1301,7 +1311,7 @@
                   <!-- Progress indicator — follows below the last visible card while work is in progress -->
                   <div x-show="compareRunning && !compareSkippedServers[server.endpoint] && compareTargetsForServer(server.endpoint).filter(mid => !compareResults[mid] && !compareTesting[mid]).length > 0"
                        class="flex items-center gap-2 py-2.5 text-gray-600 text-sm">
-                    <div class="spinner-hue"><div class="w-3 h-3 border border-gray-700 border-t-indigo-400 rounded-full animate-spin"></div></div>
+                    <div class="spinner-hue"><div class="w-3 h-3 border border-gray-700 border-t-current rounded-full animate-spin"></div></div>
                     <span x-text="compareTargetsForServer(server.endpoint).filter(mid => !compareResults[mid] && !compareTesting[mid]).length + ' model' + (compareTargetsForServer(server.endpoint).filter(mid => !compareResults[mid] && !compareTesting[mid]).length === 1 ? '' : 's') + ' remaining\u2026'"></span>
                   </div>
                 </div>
@@ -1351,7 +1361,7 @@
               <div class="mt-2 space-y-1">
                 <template x-for="m in getModels()" :key="m.id">
                   <button @click="pickServerModel(m._serverEndpoint || activeServer.endpoint, m.id); compareRecommended = m.id"
-                    :class="selectedModel === m.id ? 'border-indigo-500 bg-indigo-950/30 text-white' : 'border-gray-800 hover:border-gray-700 text-gray-400'"
+                    :class="selectedModel === m.id ? 'hue-border-bright hue-bg/30 text-white' : 'border-gray-800 hover:border-gray-700 text-gray-400'"
                     class="w-full text-left px-3 py-2 rounded-lg bg-gray-900 border transition-colors text-xs font-mono">
                     <span x-text="m.id"></span>
                   </button>
@@ -1405,7 +1415,7 @@
                 x-ref="compareLogEl"
                 @scroll="compareLogPinned = $el.scrollTop < $el.scrollHeight - $el.clientHeight - 20">
                 <template x-for="(entry, idx) in compareLog" :key="idx">
-                  <div :class="entry.startsWith('      ') ? 'text-gray-600 pl-2' : entry.startsWith('Recommendation') ? 'text-indigo-400' : entry.startsWith('→') ? 'text-gray-300' : entry.includes('✓') ? 'text-green-500/80' : entry.includes('✗') ? 'text-red-500/70' : 'text-gray-500'"
+                  <div :class="entry.startsWith('      ') ? 'text-gray-600 pl-2' : entry.startsWith('Recommendation') ? 'hue-text' : entry.startsWith('→') ? 'text-gray-300' : entry.includes('✓') ? 'text-green-500/80' : entry.includes('✗') ? 'text-red-500/70' : 'text-gray-500'"
                     x-text="entry"></div>
                 </template>
               </div>
@@ -1431,15 +1441,15 @@
           <!-- Hermes — available -->
           <button @click="selectedAgentType = 'hermes'"
             class="w-full text-left p-4 rounded-xl border transition-colors duration-200"
-            :class="selectedAgentType === 'hermes' ? 'border-indigo-500 bg-indigo-950/30 spinner-hue' : 'border-gray-800 bg-gray-900 hover:border-gray-700'">
+            :class="selectedAgentType === 'hermes' ? 'hue-border-bright hue-bg/30 spinner-hue' : 'border-gray-800 bg-gray-900 hover:border-gray-700'">
             <div class="flex items-start gap-3">
               <div class="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0 mt-0.5 text-lg transition-colors"
-                :class="selectedAgentType === 'hermes' ? 'bg-indigo-900 border border-indigo-700' : 'bg-gray-800 border border-gray-700'">✦</div>
+                :class="selectedAgentType === 'hermes' ? 'hue-bg border hue-border' : 'bg-gray-800 border border-gray-700'">✦</div>
               <div class="flex-1 min-w-0">
                 <div class="flex items-center gap-2 mb-0.5">
                   <span class="text-sm font-semibold text-white">Hermes</span>
                   <span class="text-[9px] px-1.5 py-0.5 rounded-full bg-green-950 text-green-400 border border-green-800 font-semibold uppercase tracking-wider">Available</span>
-                  <span x-show="selectedAgentType === 'hermes'" class="text-[9px] px-1.5 py-0.5 rounded-full bg-indigo-900 text-indigo-300 border border-indigo-700 font-semibold uppercase tracking-wider">Selected</span>
+                  <span x-show="selectedAgentType === 'hermes'" class="text-[9px] px-1.5 py-0.5 rounded-full hue-bg hue-text-dim border hue-border font-semibold uppercase tracking-wider">Selected</span>
                 </div>
                 <p class="text-xs text-gray-400 leading-relaxed">General-purpose agent with a full tool loop — research, coding, file operations, web browsing, and more. The default runtime for all conversation types.</p>
                 <div class="flex flex-wrap gap-1 mt-2">
@@ -1484,7 +1494,7 @@
 
         <!-- ── Probing spinner ── -->
         <div x-show="sandboxProbing" class="flex items-center gap-2 text-sm text-gray-500 mb-4">
-          <div class="w-4 h-4 border border-gray-600 border-t-indigo-400 rounded-full animate-spin"></div>
+          <div class="w-4 h-4 border border-gray-600 border-t-current rounded-full animate-spin"></div>
           Scanning environment&hellip;
         </div>
 
@@ -1682,14 +1692,14 @@
             <!-- ── Kubernetes ── -->
             <button @click="execEnv = 'k8s'; k8sTestResult = null; k8sTestError = '';"
               class="w-full text-left p-4 rounded-xl border transition-colors"
-              :class="execEnv === 'k8s' ? 'border-indigo-500 bg-indigo-950/30' : 'border-gray-800 bg-gray-900 hover:border-gray-700'">
+              :class="execEnv === 'k8s' ? 'hue-border-bright hue-bg/30' : 'border-gray-800 bg-gray-900 hover:border-gray-700'">
               <div class="flex items-start gap-3">
                 <span class="w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0 text-[10px] font-bold"
-                  :class="execEnv === 'k8s' ? 'bg-indigo-900 text-indigo-300' : 'bg-gray-800 text-gray-500'">K8s</span>
+                  :class="execEnv === 'k8s' ? 'hue-bg hue-text-dim' : 'bg-gray-800 text-gray-500'">K8s</span>
                 <div class="flex-1">
                   <div class="flex items-center gap-2 flex-wrap">
                     <span class="text-sm font-semibold text-white">Kubernetes</span>
-                    <span x-show="execEnv === 'k8s'" class="text-[9px] px-1.5 py-0.5 rounded-full bg-indigo-900 text-indigo-300 border border-indigo-700 font-semibold uppercase tracking-wider">Selected</span>
+                    <span x-show="execEnv === 'k8s'" class="text-[9px] px-1.5 py-0.5 rounded-full hue-bg hue-text-dim border hue-border font-semibold uppercase tracking-wider">Selected</span>
                     <span x-show="sandboxProbe?.in_cluster" class="text-[9px] px-1.5 py-0.5 rounded-full bg-emerald-900 text-emerald-300 border border-emerald-700 font-semibold uppercase tracking-wider">Detected</span>
                   </div>
                   <p class="text-xs text-gray-500 mt-1 leading-relaxed" x-text="sandboxProbe?.in_cluster ? 'Logos is running as a pod in this cluster. In-cluster authentication is automatic — no credentials needed.' : 'Each agent run spawns a dedicated pod with its own filesystem, network namespace, and resource limits. Strongest isolation.'"></p>
@@ -1703,29 +1713,29 @@
               <div class="flex gap-2">
                 <button @click="k8sMode = 'incluster'; k8sTestResult = null; k8sTestError = '';"
                   class="flex-1 py-1.5 rounded-lg text-xs font-medium transition-colors"
-                  :class="k8sMode === 'incluster' ? 'bg-indigo-900 text-indigo-200 border border-indigo-700' : 'bg-gray-800 text-gray-400 border border-gray-700 hover:border-gray-600'">
+                  :class="k8sMode === 'incluster' ? 'hue-bg hue-text-dim border hue-border' : 'bg-gray-800 text-gray-400 border border-gray-700 hover:border-gray-600'">
                   Automatic (in-cluster)
                 </button>
                 <button @click="k8sMode = 'kubeconfig'; k8sTestResult = null; k8sTestError = '';"
                   class="flex-1 py-1.5 rounded-lg text-xs font-medium transition-colors"
-                  :class="k8sMode === 'kubeconfig' ? 'bg-indigo-900 text-indigo-200 border border-indigo-700' : 'bg-gray-800 text-gray-400 border border-gray-700 hover:border-gray-600'">
+                  :class="k8sMode === 'kubeconfig' ? 'hue-bg hue-text-dim border hue-border' : 'bg-gray-800 text-gray-400 border border-gray-700 hover:border-gray-600'">
                   Kubeconfig file
                 </button>
               </div>
               <div x-show="k8sMode === 'incluster'" class="text-xs text-gray-500">Logos is running as a pod in the cluster. Authentication uses the mounted service account token &mdash; no credentials needed.</div>
               <div x-show="k8sMode === 'kubeconfig'" class="text-xs text-gray-500">Logos is running outside the cluster (e.g. on your laptop or a separate VM). Provide a kubeconfig file so Logos can reach the Kubernetes API.</div>
               <div x-show="k8sMode === 'kubeconfig'"
-                   @dragover.prevent="$el.classList.add('border-indigo-600')"
-                   @dragleave="$el.classList.remove('border-indigo-600')"
-                   @drop.prevent="$el.classList.remove('border-indigo-600'); $event.dataTransfer.files[0] && $event.dataTransfer.files[0].text().then(t => kubeconfig = t)"
+                   @dragover.prevent="$el.classList.add('hue-border-bright')"
+                   @dragleave="$el.classList.remove('hue-border-bright')"
+                   @drop.prevent="$el.classList.remove('hue-border-bright'); $event.dataTransfer.files[0] && $event.dataTransfer.files[0].text().then(t => kubeconfig = t)"
                    class="border-2 border-dashed border-gray-700 rounded-lg p-2 transition-colors">
                 <label class="block text-xs text-gray-500 mb-1">
-                  Paste kubeconfig or <span class="text-indigo-400 cursor-pointer hover:text-indigo-300 underline" @click="$refs.kubeconfigFile.click()">browse</span>
+                  Paste kubeconfig or <span class="hue-text cursor-pointer hover:hue-text-dim underline" @click="$refs.kubeconfigFile.click()">browse</span>
                 </label>
                 <input type="file" x-ref="kubeconfigFile" accept=".yaml,.yml,.conf,text/plain" class="hidden"
                        @change="$event.target.files[0] && $event.target.files[0].text().then(t => { kubeconfig = t; $event.target.value = ''; })">
                 <textarea x-model="kubeconfig" rows="5" placeholder="apiVersion: v1&#10;kind: Config&#10;..."
-                  class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-xs text-white placeholder-gray-600 font-mono focus:outline-none focus:border-indigo-500 resize-none"
+                  class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-xs text-white placeholder-gray-600 font-mono focus:outline-none focus:hue-border-bright resize-none"
                   style="box-sizing:border-box;"></textarea>
               </div>
               <div class="flex items-center gap-3">
@@ -1733,7 +1743,7 @@
                   class="px-3 py-1.5 rounded-lg border border-gray-700 hover:border-gray-500 text-xs text-gray-300 transition-colors disabled:opacity-40">
                   <span x-show="!k8sTesting">Test connection</span>
                   <span x-show="k8sTesting" class="flex items-center gap-1.5">
-                    <div class="w-3 h-3 border border-gray-600 border-t-indigo-400 rounded-full animate-spin"></div>
+                    <div class="w-3 h-3 border border-gray-600 border-t-current rounded-full animate-spin"></div>
                     Testing&hellip;
                   </span>
                 </button>
@@ -1791,7 +1801,7 @@
                 class="text-left p-3 rounded-xl border transition-colors duration-200 relative overflow-hidden"
                 :class="[
                   soul.slug === 'general'
-                    ? (selectedSoul === soul.slug ? 'border-indigo-500 bg-indigo-950/30' : 'border-gray-800 bg-gray-900 hover:border-gray-600')
+                    ? (selectedSoul === soul.slug ? 'hue-border-bright hue-bg/30' : 'border-gray-800 bg-gray-900 hover:border-gray-600')
                     : 'border-gray-800 bg-gray-900 pointer-events-none cursor-default select-none'
                 ]"
                 :style="soul.slug === 'general' && selectedSoul === soul.slug
@@ -1801,13 +1811,13 @@
                     : ''">
                 <!-- icon -->
                 <div class="w-8 h-8 rounded-lg flex items-center justify-center mb-2 text-sm transition-colors"
-                  :class="selectedSoul === soul.slug ? 'bg-indigo-900 border border-indigo-700' : 'bg-gray-800 border border-gray-700'"
+                  :class="selectedSoul === soul.slug ? 'hue-bg border hue-border' : 'bg-gray-800 border border-gray-700'"
                   x-text="soul.icon"></div>
                 <!-- name + selected badge -->
                 <div class="flex items-center gap-1.5 mb-1 flex-wrap">
                   <span class="text-xs font-semibold text-white leading-tight" x-text="soul.name"></span>
                   <span x-show="selectedSoul === soul.slug"
-                    class="text-[8px] px-1 py-0.5 rounded-full bg-indigo-900 text-indigo-300 border border-indigo-700 font-semibold uppercase tracking-wider flex-shrink-0">✓</span>
+                    class="text-[8px] px-1 py-0.5 rounded-full hue-bg hue-text-dim border hue-border font-semibold uppercase tracking-wider flex-shrink-0">✓</span>
                 </div>
                 <!-- desc -->
                 <p class="text-xs text-gray-300 leading-relaxed line-clamp-3" x-text="soul.desc"></p>
@@ -1843,25 +1853,25 @@
           <div>
             <label class="block text-xs text-gray-500 mb-1.5">Email address</label>
             <input x-model="setupEmail" type="email" placeholder="" autocomplete="off"
-              class="w-full bg-gray-900 border border-gray-700 rounded-xl px-3 py-2.5 text-sm focus:border-indigo-500 focus:outline-none transition-colors"
+              class="w-full bg-gray-900 border border-gray-700 rounded-xl px-3 py-2.5 text-sm focus:hue-border-bright focus:outline-none transition-colors"
               style="-webkit-box-shadow:0 0 0 1000px #111827 inset;-webkit-text-fill-color:#f3f4f6;color:#f3f4f6" />
           </div>
           <div>
             <label class="block text-xs text-gray-500 mb-1.5">Username</label>
             <input x-model="setupUsername" type="text" placeholder="" autocomplete="off"
-              class="w-full bg-gray-900 border border-gray-700 rounded-xl px-3 py-2.5 text-sm focus:border-indigo-500 focus:outline-none transition-colors"
+              class="w-full bg-gray-900 border border-gray-700 rounded-xl px-3 py-2.5 text-sm focus:hue-border-bright focus:outline-none transition-colors"
               style="-webkit-box-shadow:0 0 0 1000px #111827 inset;-webkit-text-fill-color:#f3f4f6;color:#f3f4f6" />
           </div>
           <div>
             <label class="block text-xs text-gray-500 mb-1.5">Password</label>
             <input x-model="setupPassword" type="password" placeholder="&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;"
-              class="w-full bg-gray-900 border border-gray-700 rounded-xl px-3 py-2.5 text-sm focus:border-indigo-500 focus:outline-none transition-colors" />
+              class="w-full bg-gray-900 border border-gray-700 rounded-xl px-3 py-2.5 text-sm focus:hue-border-bright focus:outline-none transition-colors" />
           </div>
           <div>
             <label class="block text-xs text-gray-500 mb-1.5">Confirm password</label>
             <input x-model="setupPasswordConfirm" type="password" placeholder="&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;"
               @keydown.enter="setupEmail.trim() && setupUsername.trim() && setupPassword && setupPassword.length >= 8 && setupPassword === setupPasswordConfirm && goNext()"
-              class="w-full bg-gray-900 border border-gray-700 rounded-xl px-3 py-2.5 text-sm focus:border-indigo-500 focus:outline-none transition-colors" />
+              class="w-full bg-gray-900 border border-gray-700 rounded-xl px-3 py-2.5 text-sm focus:hue-border-bright focus:outline-none transition-colors" />
           </div>
           <div x-show="setupPassword && setupPassword.length < 8"
             class="text-xs text-red-400 px-1">Password must be at least 8 characters.</div>
@@ -1874,7 +1884,7 @@
           <div class="flex items-center justify-between mb-3">
             <div class="text-xs font-semibold text-gray-500 uppercase tracking-wider">Additional users <span class="text-gray-700 normal-case font-normal">(optional)</span></div>
             <button @click="setupAdditionalUsers.push({username:'', email:'', password:'', role:'user'})"
-              class="text-xs text-indigo-400 hover:text-indigo-300 transition-colors">+ Add user</button>
+              class="text-xs hue-text hover:hue-text-dim transition-colors">+ Add user</button>
           </div>
           <template x-if="setupAdditionalUsers.length === 0">
             <p class="text-xs text-gray-700">Add household members or colleagues. Each gets their own login and the default routing profile — you can adjust this later in Routing → Profiles.</p>
@@ -1883,16 +1893,16 @@
             <div class="rounded-xl border border-gray-800 bg-gray-900/50 p-3 mb-2 space-y-2">
               <div class="flex gap-2">
                 <input x-model="u.username" type="text" placeholder="Username"
-                  class="flex-1 bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-600 focus:border-indigo-500 focus:outline-none transition-colors" />
+                  class="flex-1 bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-600 focus:hue-border-bright focus:outline-none transition-colors" />
                 <input x-model="u.email" type="email" placeholder="Email"
-                  class="flex-1 bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-600 focus:border-indigo-500 focus:outline-none transition-colors" />
+                  class="flex-1 bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-600 focus:hue-border-bright focus:outline-none transition-colors" />
               </div>
               <div class="flex gap-2 items-center">
                 <input x-model="u.password" type="password" placeholder="Password (min 8 chars)"
                   :class="u.password && u.password.length < 8 ? 'border-red-600' : 'border-gray-700'"
-                  class="flex-1 bg-gray-900 border rounded-lg px-3 py-2 text-sm text-white placeholder-gray-600 focus:border-indigo-500 focus:outline-none transition-colors" />
+                  class="flex-1 bg-gray-900 border rounded-lg px-3 py-2 text-sm text-white placeholder-gray-600 focus:hue-border-bright focus:outline-none transition-colors" />
                 <select x-model="u.role"
-                  class="bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:border-indigo-500 focus:outline-none transition-colors">
+                  class="bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:hue-border-bright focus:outline-none transition-colors">
                   <option value="user">User</option>
                   <option value="admin">Admin</option>
                 </select>
