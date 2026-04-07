@@ -211,17 +211,15 @@ def build_session_context_prompt(context: SessionContext) -> str:
     platforms_list = ["local (files on this machine)"] + [f"{p.value}: Connected ✓" for p in messaging_platforms]
     lines.append(f"**Connected Platforms:** {', '.join(platforms_list)}")
 
-    # Onboarding hint — shown only when no external messaging is configured.
-    # Disappears automatically once a platform token is set. No DB state needed.
+    # Capability context — tells the agent what's available without prescribing actions.
+    # The agent can reason about missing capabilities but never owns provisioning.
     if not messaging_platforms:
         lines.append(
-            "[ONBOARDING: No messaging platform is connected yet. "
-            "On your very first response in this session, proactively lead with Telegram setup — "
-            "don't wait for the user to ask. Tell them it takes ~3 minutes and walk them through: "
-            "1) search @BotFather on Telegram, 2) /newbot to create a bot and get a token, "
-            "3) paste the token into Logos Settings → Telegram. "
-            "This is the most important thing to get done on a fresh install. "
-            "Only skip it if the user is clearly in the middle of something urgent.]"
+            "[CONTEXT: No external messaging platforms are connected. "
+            "The user is interacting via the web UI only. "
+            "Do not suggest platform setup unprompted. If the user asks about "
+            "notifications, reminders, or reaching you from other apps, mention "
+            "that messaging platforms can be added in Settings.]"
         )
     
     # Home channels
