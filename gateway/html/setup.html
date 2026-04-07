@@ -37,7 +37,7 @@
       pointer-events:none;z-index:0;
       animation:orb-fadein 0.8s ease 0.1s forwards;
     }
-    .setup-logo{filter:hue-rotate(var(--hue-deg,0deg));will-change:filter;}
+    .setup-logo{filter:hue-rotate(calc(var(--hue-deg,0deg) - 239deg));will-change:filter;}
     .setup-halo{
       position:absolute;inset:-280px;border-radius:50%;
       /* Pre-blurred radial gradient — simulates blur(160px) without CPU cost */
@@ -126,11 +126,12 @@
       <div class="spinner-hue flex items-center gap-1">
         <template x-for="i in [1,2,3,4,5,6,7]" :key="i">
           <div class="flex items-center gap-1">
-            <div class="w-2 h-2 rounded-full transition-colors duration-500"
-                 :class="step > i ? 'bg-indigo-400 cursor-pointer hover:scale-125' : step === i ? 'bg-indigo-500 scale-125' : 'bg-gray-700'"
+            <div class="w-2 h-2 rounded-full transition-all duration-500"
+                 :class="step > i ? 'cursor-pointer hover:scale-125' : step === i ? 'scale-125' : ''"
+                 :style="step > i ? 'background:currentColor;opacity:0.7' : step === i ? 'background:currentColor' : 'background:#374151'"
                  @click="goTo(i)" :title="step > i ? 'Go back to step ' + i : ''"></div>
             <div x-show="i < 7" class="w-4 h-px transition-colors duration-500"
-                 :class="step > i ? 'bg-indigo-600' : 'bg-gray-700'"></div>
+                 :style="step > i ? 'background:currentColor;opacity:0.4' : 'background:#374151'"></div>
           </div>
         </template>
       </div>
@@ -1175,6 +1176,15 @@
                                     'text-red-400':    compareResults[mid].tok_s < 6,
                                   }"
                                   x-text="compareResults[mid].tok_s + ' tok/s'"></span>
+                                <span x-show="compareResults[mid].ttft_ms" class="font-mono text-[10px]"
+                                  :class="{
+                                    'text-green-500':  compareResults[mid].ttft_ms <= 500,
+                                    'text-gray-500':   compareResults[mid].ttft_ms > 500 && compareResults[mid].ttft_ms <= 2000,
+                                    'text-yellow-500': compareResults[mid].ttft_ms > 2000 && compareResults[mid].ttft_ms <= 4000,
+                                    'text-red-500':    compareResults[mid].ttft_ms > 4000,
+                                  }"
+                                  :title="'Time to first token: ' + compareResults[mid].ttft_ms + 'ms'"
+                                  x-text="compareResults[mid].ttft_ms < 1000 ? compareResults[mid].ttft_ms + 'ms' : (compareResults[mid].ttft_ms / 1000).toFixed(1) + 's'"></span>
                                 <template x-if="compareResults[mid].max_context">
                                   <span class="font-mono text-[10px]"
                                     :class="compareResults[mid].max_context >= 64000 ? 'text-gray-500' : compareResults[mid].max_context >= 32768 ? 'text-yellow-500' : 'text-red-500 font-semibold'"
@@ -1260,14 +1270,24 @@
                             <span class="text-gray-400">Reasoning</span>
                           </div>
                           <div class="flex items-center gap-1.5">
-                            <span :class="compareResults[mid]?.eval?.format ? 'text-green-500' : 'text-red-400'"
-                              x-text="compareResults[mid]?.eval?.format ? '\u2713' : '\u2717'"></span>
-                            <span class="text-gray-400">JSON format</span>
+                            <span :class="compareResults[mid]?.eval?.arithmetic ? 'text-green-500' : 'text-red-400'"
+                              x-text="compareResults[mid]?.eval?.arithmetic ? '\u2713' : '\u2717'"></span>
+                            <span class="text-gray-400">Arithmetic</span>
                           </div>
                           <div class="flex items-center gap-1.5">
                             <span :class="compareResults[mid]?.eval?.tool_call ? 'text-green-500' : 'text-red-400'"
                               x-text="compareResults[mid]?.eval?.tool_call ? '\u2713' : '\u2717'"></span>
                             <span class="text-gray-400">Tool selection</span>
+                          </div>
+                          <div class="flex items-center gap-1.5">
+                            <span :class="compareResults[mid]?.eval?.multi_step ? 'text-green-500' : 'text-red-400'"
+                              x-text="compareResults[mid]?.eval?.multi_step ? '\u2713' : '\u2717'"></span>
+                            <span class="text-gray-400">Multi-step reasoning</span>
+                          </div>
+                          <div class="flex items-center gap-1.5">
+                            <span :class="compareResults[mid]?.eval?.format ? 'text-green-500' : 'text-red-400'"
+                              x-text="compareResults[mid]?.eval?.format ? '\u2713' : '\u2717'"></span>
+                            <span class="text-gray-400">JSON format</span>
                           </div>
                         </div>
                         <!-- Why selected (if this is the default for this server) -->
@@ -1281,8 +1301,10 @@
                               <span class="text-red-400/80" x-text="[
                                 !compareResults[mid]?.eval?.instruction && 'instruction following',
                                 !compareResults[mid]?.eval?.reasoning   && 'reasoning',
-                                !compareResults[mid]?.eval?.format      && 'JSON format',
+                                !compareResults[mid]?.eval?.arithmetic  && 'arithmetic',
                                 !compareResults[mid]?.eval?.tool_call   && 'tool selection',
+                                !compareResults[mid]?.eval?.multi_step  && 'multi-step reasoning',
+                                !compareResults[mid]?.eval?.format      && 'JSON format',
                               ].filter(Boolean).join(', ')"></span>
                               — agent loops may break.
                             </span>
@@ -1509,16 +1531,36 @@
               </div>
             </button>
 
-            <!-- ── Docker Desktop (greyed out) ── -->
+            <!-- ── OpenShell sandbox (recommended) ── -->
+            <button @click="execEnv = 'openshell'"
+              class="w-full text-left p-4 rounded-xl border transition-colors"
+              :class="execEnv === 'openshell' ? 'border-emerald-500 bg-emerald-950/30' : 'border-gray-800 bg-gray-900 hover:border-gray-700'">
+              <div class="flex items-start gap-3">
+                <span class="w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0 text-xs font-bold"
+                  :class="execEnv === 'openshell' ? 'bg-emerald-900 text-emerald-300' : 'bg-gray-800 text-gray-500'">
+                  <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M12 1L3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-9-4zm0 2.18l7 3.12v4.7c0 4.83-3.4 9.36-7 10.5-3.6-1.14-7-5.67-7-10.5V6.3l7-3.12z"/></svg>
+                </span>
+                <div class="flex-1">
+                  <div class="flex items-center gap-2 flex-wrap">
+                    <span class="text-sm font-semibold text-white">NVIDIA OpenShell</span>
+                    <span x-show="execEnv === 'openshell'" class="text-[9px] px-1.5 py-0.5 rounded-full bg-emerald-900 text-emerald-300 border border-emerald-700 font-semibold uppercase tracking-wider">Selected</span>
+                    <span x-show="execEnv !== 'openshell'" class="text-[9px] px-1.5 py-0.5 rounded-full bg-emerald-950 text-emerald-500 border border-emerald-800 font-semibold uppercase tracking-wider">Recommended</span>
+                  </div>
+                  <p class="text-xs text-gray-500 mt-1 leading-relaxed">Each agent runs in a <span class="text-emerald-300 font-medium">policy-governed sandbox</span> with network isolation, L7 egress control, and credential injection. Inference routes through OpenShell's privacy router &mdash; agents never see API keys. Requires Docker.</p>
+                </div>
+              </div>
+            </button>
+
+            <!-- ── Docker Desktop (legacy) ── -->
             <div class="w-full text-left p-4 rounded-xl border border-gray-800 bg-gray-900/40 opacity-40 cursor-not-allowed select-none">
               <div class="flex items-start gap-3">
                 <span class="w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0 text-sm font-bold bg-gray-800 text-gray-600">D</span>
                 <div class="flex-1">
                   <div class="flex items-center gap-2 flex-wrap">
                     <span class="text-sm font-semibold text-gray-500">Docker Desktop</span>
-                    <span class="text-[9px] px-1.5 py-0.5 rounded-full bg-gray-800 text-gray-600 border border-gray-700 font-semibold uppercase tracking-wider">Coming soon</span>
+                    <span class="text-[9px] px-1.5 py-0.5 rounded-full bg-yellow-900 text-yellow-400 border border-yellow-700 font-semibold uppercase tracking-wider">Legacy</span>
                   </div>
-                  <p class="text-xs text-gray-600 mt-1 leading-relaxed">Each agent run gets its own Docker container with an isolated filesystem and network. Available when running Logos on a machine with Docker Desktop installed.</p>
+                  <p class="text-xs text-gray-600 mt-1 leading-relaxed">Basic Docker container isolation without network policy enforcement. Use OpenShell instead for production workloads.</p>
                 </div>
               </div>
             </div>
@@ -1535,6 +1577,7 @@
                     <div class="flex-1">
                       <div class="flex items-center gap-2 flex-wrap">
                         <span class="text-sm font-semibold text-white">Linux server (k3s)</span>
+                        <span class="text-[9px] px-1.5 py-0.5 rounded-full bg-yellow-900 text-yellow-400 border border-yellow-700 font-semibold uppercase tracking-wider">Legacy</span>
                         <span x-show="execEnv === 'k3s'" class="text-[9px] px-1.5 py-0.5 rounded-full bg-emerald-900 text-emerald-300 border border-emerald-700 font-semibold uppercase tracking-wider">Selected</span>
                       </div>
                       <p class="text-xs text-gray-500 mt-1 leading-relaxed">Automatically installs a lightweight Kubernetes cluster (<span class="text-emerald-300 font-medium">k3s</span>) on this machine. Agents and MCP servers run as isolated pods. No existing cluster required.</p>
@@ -1603,6 +1646,7 @@
                 <div class="flex-1">
                   <div class="flex items-center gap-2 flex-wrap">
                     <span class="text-sm font-semibold text-white">Kubernetes</span>
+                    <span class="text-[9px] px-1.5 py-0.5 rounded-full bg-yellow-900 text-yellow-400 border border-yellow-700 font-semibold uppercase tracking-wider">Legacy</span>
                     <span x-show="execEnv === 'k8s'" class="text-[9px] px-1.5 py-0.5 rounded-full bg-indigo-900 text-indigo-300 border border-indigo-700 font-semibold uppercase tracking-wider">Selected</span>
                     <span x-show="sandboxProbe?.in_cluster" class="text-[9px] px-1.5 py-0.5 rounded-full bg-emerald-900 text-emerald-300 border border-emerald-700 font-semibold uppercase tracking-wider">Detected</span>
                   </div>
@@ -1660,6 +1704,7 @@
             <button @click="goNext()"
               :disabled="(execEnv === 'k8s' && k8sMode === 'kubeconfig' && k8sTestResult !== 'ok') || (execEnv === 'k3s' && k8sTestResult !== 'ok')"
               class="btn-primary w-full py-2.5 rounded-xl text-sm disabled:opacity-40 disabled:cursor-not-allowed">
+              <span x-show="execEnv === 'openshell'">Continue &rarr;</span>
               <span x-show="execEnv === 'local'">Continue &rarr;</span>
               <span x-show="execEnv === 'k3s' && k8sTestResult === 'ok'">Continue &rarr;</span>
               <span x-show="execEnv === 'k3s' && k8sTestResult !== 'ok'" class="text-gray-500">Install k3s to continue &rarr;</span>
