@@ -861,7 +861,7 @@ def create_agent(name: str, soul_slug: str = "general", model: str = "",
         conn.execute(
             """INSERT INTO agents (id, name, soul_slug, model, description, creator_id, shared, toolsets, created_at, updated_at)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (aid, name, soul_slug, model or "", description or "", creator_id or "", 1 if shared else 0, toolsets or "", now, now),
+            (aid, name, soul_slug, model or "", description or "", creator_id or None, 1 if shared else 0, toolsets or "", now, now),
         )
     return get_agent(aid)
 

@@ -4087,6 +4087,10 @@ class GatewayRunner:
                         _already_loaded = _lms_model in _LMS_CONFIRMED_LOADED
                         _loaded_ctx = 0
                         _other_loaded: list[str] = []  # models in VRAM that are NOT the target
+                        if _already_loaded:
+                            # Confirmed loaded within this gateway process — skip all
+                            # management API queries. The model doesn't unload on its own.
+                            logger.debug("LM Studio: %s in confirmed set, skipping pre-load", _lms_model)
                         if not _already_loaded:
                             # Always query the server on first check — _LMS_CONFIRMED_LOADED
                             # only persists within this process lifetime.
@@ -4678,6 +4682,15 @@ class GatewayRunner:
             combined_ephemeral = context_prompt or ""
             if self._ephemeral_system_prompt:
                 combined_ephemeral = (combined_ephemeral + "\n\n" + self._ephemeral_system_prompt).strip()
+
+            # Inject named agent identity so the agent knows its own name
+            if agent_config and agent_config.get("name"):
+                _agent_name = agent_config["name"]
+                combined_ephemeral = (
+                    f"**Your name is {_agent_name}.** "
+                    f"When asked your name, introduce yourself as {_agent_name}.\n\n"
+                    + combined_ephemeral
+                )
 
             # Re-read .env for fresh credentials (gateway is long-lived — keys
             # may change without restart via the setup wizard or manual edits).
