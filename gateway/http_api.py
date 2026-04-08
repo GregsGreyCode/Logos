@@ -2691,6 +2691,25 @@ async def start_http_api(runner: Any, port: int = 8080) -> None:
         _gw_module._mcp_service_ref = _mcp_svc
         import os as _os
         _os.environ["HERMES_GATEWAY_MCP"] = "1"
+
+        # Register the in-process 'logos' capabilities server. This has to
+        # happen BEFORE `_mcp_svc.start()` so the logos server is visible
+        # in the very first catalogue snapshot; the start() coroutine just
+        # boots external stdio subprocesses and doesn't touch our injected
+        # entries. Phase L.1 ships zero tools — L.2+ register tools on the
+        # returned server instance.
+        try:
+            from gateway.mcp_logos import register_logos_server
+            # _runner_ref is set by GatewayRunner.start() later in the boot
+            # sequence, so at this point it may be None. We still install
+            # the server here and let tools close over runner lazily via
+            # the module-level ref.
+            _logos_runner_ref = getattr(_gw_module, "_runner_ref", None)
+            _mcp_svc._logos_server = register_logos_server(_logos_runner_ref, _mcp_svc)
+            logger.info("MCP gateway: in-process 'logos' server registered")
+        except Exception as _logos_err:
+            logger.warning("MCP gateway: failed to register logos server: %s", _logos_err)
+
         asyncio.ensure_future(_mcp_svc.start())
         logger.info("MCP gateway service initialised (%d server(s) configured)",
                     len(_mcp_cfg.get("mcp_servers") or {}))
