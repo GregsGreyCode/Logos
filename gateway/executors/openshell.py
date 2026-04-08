@@ -48,8 +48,21 @@ logger = logging.getLogger(__name__)
 _HERMES_HOME = Path(os.getenv("HERMES_HOME", Path.home() / ".hermes"))
 _STATE_FILE = _HERMES_HOME / "openshell_instances.json"
 
-# Default sandbox image.  Override via LOGOS_OPENSHELL_IMAGE env var.
-_DEFAULT_IMAGE = os.getenv("LOGOS_OPENSHELL_IMAGE", "hermes-sandbox:local")
+# Default sandbox image source. Two modes:
+#   1. A pre-built image tag (e.g. "ghcr.io/myorg/hermes-sandbox:1.0") — used
+#      when the image is published to a registry the cluster can pull from.
+#   2. An absolute path to a Dockerfile — OpenShell builds and imports it
+#      into the gateway on demand. Used for dev/local and one-off setups.
+#
+# We default to mode #2 by computing the path to docker/Dockerfile.hermes-sandbox
+# in the repo (../../docker/ relative to this file). Override either with the
+# LOGOS_OPENSHELL_IMAGE env var.
+_REPO_ROOT = Path(__file__).parent.parent.parent
+_BUNDLED_DOCKERFILE = _REPO_ROOT / "docker" / "Dockerfile.hermes-sandbox"
+_DEFAULT_IMAGE = os.getenv(
+    "LOGOS_OPENSHELL_IMAGE",
+    str(_BUNDLED_DOCKERFILE) if _BUNDLED_DOCKERFILE.exists() else "hermes-sandbox:local",
+)
 
 # Path to the default egress policy applied to every sandbox.
 _DEFAULT_POLICY = Path(__file__).parent.parent / "policies" / "openshell_default.yaml"

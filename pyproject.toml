@@ -27,6 +27,8 @@ dependencies = [
   "prompt_toolkit",
   # Knowledge base (RAG)
   "numpy>=1.24.0",
+  # System resource introspection (used by OpenShellExecutor.get_headroom)
+  "psutil>=5.9.0",
   # Tools
   "firecrawl-py",
   "fal-client",
