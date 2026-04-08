@@ -14,6 +14,7 @@ __pycache__/web_tools.cpython-310.pyc
 logs/
 data/
 .pytest_cache/
+test-results/
 tmp/
 temp_vision_images/
 hermes-*/*
