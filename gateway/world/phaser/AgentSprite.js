@@ -196,8 +196,12 @@ export class AgentSprite {
 
   _followPath(delta) {
     const target = this.path[this.pathIndex];
-    const tx = target.col * TILE_SIZE + TILE_SIZE / 2;
-    const ty = target.row * TILE_SIZE + TILE_SIZE / 2;
+    // Clamp target tile to world bounds so a stale or out-of-range
+    // path entry can never walk the sprite off the visible map.
+    const tCol = Math.max(1, Math.min(WORLD_COLS - 2, target.col));
+    const tRow = Math.max(1, Math.min(WORLD_ROWS - 2, target.row));
+    const tx = tCol * TILE_SIZE + TILE_SIZE / 2;
+    const ty = tRow * TILE_SIZE + TILE_SIZE / 2;
 
     const dx = tx - this.sprite.x;
     const dy = ty - this.sprite.y;
@@ -214,6 +218,14 @@ export class AgentSprite {
     const ratio = Math.min(step / dist, 1);
     this.sprite.x += dx * ratio;
     this.sprite.y += dy * ratio;
+
+    // Hard-clamp the sprite position itself as a final safety net
+    const minX = TILE_SIZE;
+    const maxX = (WORLD_COLS - 1) * TILE_SIZE;
+    const minY = TILE_SIZE;
+    const maxY = (WORLD_ROWS - 1) * TILE_SIZE;
+    this.sprite.x = Math.max(minX, Math.min(maxX, this.sprite.x));
+    this.sprite.y = Math.max(minY, Math.min(maxY, this.sprite.y));
 
     // Direction + animation
     const newDir = this._directionFromDelta(dx, dy);

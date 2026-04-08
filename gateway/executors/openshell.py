@@ -95,14 +95,45 @@ def _openshell(*args: str, check: bool = True, capture: bool = True) -> subproce
     )
 
 
+def _sanitize_sandbox_name(name: str) -> str:
+    """
+    Coerce ``name`` into a valid RFC 1123 subdomain so the underlying
+    Kubernetes Sandbox CR accepts it. Lowercase, replace any character
+    that isn't [a-z0-9.-] with '-', collapse runs of '-', strip leading
+    and trailing non-alphanumerics, and truncate to 63 characters.
+    """
+    import re
+    s = name.lower()
+    s = re.sub(r"[^a-z0-9.-]+", "-", s)
+    s = re.sub(r"-+", "-", s)
+    s = s.strip("-.")
+    if not s:
+        s = "agent"
+    if not s[0].isalnum():
+        s = "a" + s
+    if len(s) > 63:
+        s = s[:63].rstrip("-.")
+    return s
+
+
 def _sandbox_exists(name: str) -> bool:
     """Return True if an OpenShell sandbox with this name is still running."""
     try:
-        result = _openshell("sandbox", "list", "--output", "json", check=False)
-        sandboxes = json.loads(result.stdout or "[]")
-        return any(s.get("name") == name for s in sandboxes)
+        # `openshell sandbox list --names` prints one sandbox name per line.
+        result = _openshell("sandbox", "list", "--names", check=False)
+        names = {line.strip() for line in (result.stdout or "").splitlines() if line.strip()}
+        return name in names
     except Exception:
         return False
+
+
+def _list_sandbox_names() -> List[str]:
+    """Return all live OpenShell sandbox names, or [] on failure."""
+    try:
+        result = _openshell("sandbox", "list", "--names", check=False)
+        return [line.strip() for line in (result.stdout or "").splitlines() if line.strip()]
+    except Exception:
+        return []
 
 
 # ── Executor ──────────────────────────────────────────────────────────────
@@ -129,7 +160,10 @@ class OpenShellExecutor:
         # Prune entries whose sandbox has already been deleted
         instances = [i for i in instances if _sandbox_exists(i.get("sandbox_name", ""))]
 
-        sandbox_name = f"hermes-{config.name}"
+        # OpenShell sandboxes are backed by Kubernetes Sandbox CRs, so the
+        # sandbox name must be a valid RFC 1123 subdomain: lowercase
+        # [a-z0-9.-], must start/end with alphanumeric, max 63 chars.
+        sandbox_name = _sanitize_sandbox_name(f"hermes-{config.name}")
         worker_id = sandbox_name  # worker registers with this ID
 
         logger.info("Creating OpenShell sandbox '%s' from image '%s'", sandbox_name, self.sandbox_image)
@@ -143,6 +177,26 @@ class OpenShellExecutor:
             "toolsets": config.toolsets or [],
             "model": config.model or "",
         }
+
+        # Persist the state record up front so the dashboard can show
+        # this sandbox as "provisioning" while openshell create is still
+        # running. We remove it again on failure below.
+        record = {
+            "name": config.name,
+            "sandbox_name": sandbox_name,
+            "worker_id": worker_id,
+            "source": "openshell",
+            "soul_name": config.soul_name,
+            "model": config.model,
+            "requester": config.requester,
+            "toolsets": config.toolsets or [],
+            "policy": config.policy or "",
+            "sandbox_image": self.sandbox_image,
+            "created_at": time.time(),
+            "phase": "provisioning",
+        }
+        instances.append(record)
+        _save_state(instances)
 
         config_tmpfile = None
         try:
@@ -178,7 +232,14 @@ class OpenShellExecutor:
             result = _openshell(*create_args, check=True)
             logger.debug("openshell sandbox create stdout: %s", result.stdout.strip())
 
+            # Update phase on success
+            record["phase"] = "ready"
+            _save_state(instances)
+
         except subprocess.CalledProcessError as exc:
+            # Roll back the state record on failure
+            instances = [i for i in instances if i.get("sandbox_name") != sandbox_name]
+            _save_state(instances)
             raise RuntimeError(
                 f"Failed to create OpenShell sandbox '{sandbox_name}': {exc.stderr}"
             ) from exc
@@ -188,22 +249,6 @@ class OpenShellExecutor:
                     os.unlink(config_tmpfile.name)
                 except OSError:
                     pass
-
-        record = {
-            "name": config.name,
-            "sandbox_name": sandbox_name,
-            "worker_id": worker_id,
-            "source": "openshell",
-            "soul_name": config.soul_name,
-            "model": config.model,
-            "requester": config.requester,
-            "toolsets": config.toolsets or [],
-            "policy": config.policy or "",
-            "sandbox_image": self.sandbox_image,
-            "created_at": time.time(),
-        }
-        instances.append(record)
-        _save_state(instances)
 
         return SpawnedInstance(
             name=config.name,
