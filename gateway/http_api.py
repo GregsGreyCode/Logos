@@ -365,6 +365,168 @@ async def _handle_messaging_validate(request: web.Request) -> web.Response:
     return web.json_response(result)
 
 
+async def _handle_sandboxes_list(request: web.Request) -> web.Response:
+    """GET /admin/sandboxes — aggregated sandbox status from CLI + workers + state."""
+    import shutil
+    executor = request.app.get("executor")
+    worker_registry = request.app.get("worker_registry")
+
+    cli_available = bool(shutil.which("openshell"))
+    sandboxes = []
+    policy_summary = {}
+    resources = {}
+
+    # 1. Instance records from executor state file
+    instance_map = {}
+    if executor and hasattr(executor, "list_instances"):
+        try:
+            for inst in executor.list_instances():
+                instance_map[inst.get("sandbox_name", "")] = inst
+        except Exception:
+            pass
+
+    # 2. Worker health from registry
+    worker_map = {}
+    if worker_registry:
+        for wid, entry in worker_registry.workers.items():
+            if not entry.is_local:
+                worker_map[wid] = entry.to_dict()
+
+    # 3. Merge: instance records + worker health
+    seen = set()
+    for sandbox_name, inst in instance_map.items():
+        worker_id = inst.get("worker_id", sandbox_name)
+        worker = worker_map.get(worker_id, {})
+        sandboxes.append({
+            "name": inst.get("name", ""),
+            "sandbox_name": sandbox_name,
+            "worker_id": worker_id,
+            "soul": inst.get("soul_name", ""),
+            "model": inst.get("model", ""),
+            "requester": inst.get("requester", ""),
+            "toolsets": inst.get("toolsets", []),
+            "policy": inst.get("policy", ""),
+            "sandbox_image": inst.get("sandbox_image", ""),
+            "created_at": inst.get("created_at", 0),
+            "worker_status": worker.get("status", "disconnected"),
+            "worker_healthy": worker.get("healthy", False),
+            "worker_uptime_s": worker.get("uptime_s", 0),
+            "current_task_id": worker.get("current_task_id"),
+        })
+        seen.add(worker_id)
+
+    # Workers not in instance state (connected but not tracked)
+    for wid, w in worker_map.items():
+        if wid not in seen:
+            sandboxes.append({
+                "name": wid, "sandbox_name": wid, "worker_id": wid,
+                "soul": w.get("soul", ""), "model": "", "requester": w.get("requester", ""),
+                "toolsets": w.get("toolsets", []), "policy": "", "sandbox_image": "",
+                "created_at": 0,
+                "worker_status": w.get("status", "idle"),
+                "worker_healthy": w.get("healthy", False),
+                "worker_uptime_s": w.get("uptime_s", 0),
+                "current_task_id": w.get("current_task_id"),
+            })
+
+    # 4. Resources
+    if executor and hasattr(executor, "get_resources"):
+        try:
+            resources = executor.get_resources()
+        except Exception:
+            pass
+
+    # 5. Parse policy YAML
+    try:
+        _policy_path = pathlib.Path(__file__).parent / "policies" / "openshell_default.yaml"
+        if _policy_path.exists():
+            import yaml as _yaml
+            raw = _yaml.safe_load(_policy_path.read_text(encoding="utf-8")) or {}
+            # Build human-readable summary
+            net_policies = []
+            for key, pol in (raw.get("network_policies") or {}).items():
+                endpoints = []
+                for ep in (pol.get("endpoints") or []):
+                    endpoints.append({
+                        "host": ep.get("host", ""), "port": ep.get("port", ""),
+                        "protocol": ep.get("protocol", ""), "tls": ep.get("tls", ""),
+                        "access": ep.get("access", ""),
+                        "allowed_ips": ep.get("allowed_ips", []),
+                    })
+                net_policies.append({"name": pol.get("name", key), "key": key, "endpoints": endpoints})
+            fs = raw.get("filesystem_policy") or {}
+            proc = raw.get("process") or {}
+            policy_summary = {
+                "network": net_policies,
+                "filesystem": {
+                    "read_only": fs.get("read_only", []),
+                    "read_write": fs.get("read_write", []),
+                },
+                "process": {"user": proc.get("run_as_user", ""), "group": proc.get("run_as_group", "")},
+                "binaries": list({b.get("path", "") for pol in (raw.get("network_policies") or {}).values() for b in (pol.get("binaries") or [])}),
+            }
+    except Exception:
+        pass
+
+    return web.json_response({
+        "sandboxes": sandboxes,
+        "policy": policy_summary,
+        "resources": resources,
+        "cli_available": cli_available,
+    })
+
+
+async def _handle_sandbox_logs(request: web.Request) -> web.Response:
+    """GET /admin/sandboxes/{name}/logs — tail sandbox stdout/stderr."""
+    name = request.match_info["name"]
+    try:
+        from gateway.executors.openshell import _openshell
+        result = _openshell("sandbox", "logs", name, "--tail", "100", check=False)
+        return web.json_response({"logs": result.stdout or "", "stderr": result.stderr or ""})
+    except FileNotFoundError:
+        return web.json_response({"logs": "", "stderr": "openshell CLI not available"})
+    except Exception as exc:
+        return web.json_response({"logs": "", "stderr": str(exc)})
+
+
+async def _handle_sandbox_restart(request: web.Request) -> web.Response:
+    """POST /admin/sandboxes/{name}/restart — destroy and re-spawn."""
+    name = request.match_info["name"]
+    executor = request.app.get("executor")
+    if not executor or not hasattr(executor, "delete_instance"):
+        return web.json_response({"ok": False, "error": "No OpenShell executor"}, status=400)
+
+    # Find the instance config before deleting
+    from gateway.executors.openshell import _load_state
+    instances = _load_state()
+    inst = next((i for i in instances if i.get("name") == name), None)
+    if not inst:
+        return web.json_response({"ok": False, "error": f"No instance record for '{name}'"}, status=404)
+
+    # Delete
+    try:
+        executor.delete_instance(name)
+    except Exception as exc:
+        logger.warning("Sandbox restart — delete failed for '%s': %s", name, exc)
+
+    # Re-spawn with original config
+    try:
+        from gateway.executors.base import InstanceConfig
+        config = InstanceConfig(
+            name=inst.get("name", name),
+            soul_name=inst.get("soul_name", "general"),
+            model=inst.get("model", ""),
+            requester=inst.get("requester", ""),
+            instance_label=inst.get("name", name),
+            toolsets=inst.get("toolsets", []),
+            policy=inst.get("policy", ""),
+        )
+        spawned = executor.spawn(config)
+        return web.json_response({"ok": True, "sandbox": spawned.name})
+    except Exception as exc:
+        return web.json_response({"ok": False, "error": str(exc)}, status=500)
+
+
 async def _handle_setup_page(request: web.Request) -> web.Response:
     from gateway.auth.db import is_setup_completed
     if is_setup_completed():
@@ -2680,6 +2842,12 @@ async def start_http_api(runner: Any, port: int = 8080) -> None:
     app.router.add_post("/admin/cloud-providers/{id}/activate", _mm(require_csrf(admin_handlers.handle_cloud_providers_activate)))
     app.router.add_post("/admin/cloud-providers/{id}/test",     _mm(require_csrf(admin_handlers.handle_cloud_providers_test)))
     # Named agents
+    # ── Sandbox dashboard ──────────────────────────────────────────
+    _vr = require_permission("view_runs")
+    app.router.add_get("/admin/sandboxes",                    _vr(_handle_sandboxes_list))
+    app.router.add_get("/admin/sandboxes/{name}/logs",        _vr(_handle_sandbox_logs))
+    app.router.add_post("/admin/sandboxes/{name}/restart",    _mm(require_csrf(_handle_sandbox_restart)))
+
     app.router.add_get("/admin/agents",              _mm(admin_handlers.handle_agents_list))
     app.router.add_post("/admin/agents",             _mm(require_csrf(admin_handlers.handle_agents_post)))
     app.router.add_patch("/admin/agents/{id}",       _mm(require_csrf(admin_handlers.handle_agents_patch)))
