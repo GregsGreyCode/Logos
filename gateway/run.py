@@ -888,37 +888,30 @@ class GatewayRunner:
             logger.warning("Process checkpoint recovery: %s", e)
         
         connected_count = 0
-        
-        # Initialize and connect each configured platform
-        for platform, platform_config in self.config.platforms.items():
-            if not platform_config.enabled:
-                continue
-            
-            adapter = self._create_adapter(platform, platform_config)
-            if not adapter:
-                logger.warning("No adapter available for %s", platform.value)
-                continue
-            
-            # Set up message handler
-            adapter.set_message_handler(self._handle_message)
-            
-            # Try to connect
-            logger.info("Connecting to %s...", platform.value)
-            try:
-                success = await adapter.connect()
-                if success:
-                    self.adapters[platform] = adapter
-                    self._sync_voice_mode_state_to_adapter(adapter)
-                    connected_count += 1
-                    logger.info("✓ %s connected", platform.value)
-                else:
-                    logger.warning("✗ %s failed to connect", platform.value)
-            except Exception as e:
-                logger.error("✗ %s error: %s", platform.value, e)
-        
+
+        # ── Platform adapters: DISABLED during OpenShell migration ──────
+        # Every inbound platform message used to run the AIAgent loop
+        # inside this gateway process via _handle_message → _run_agent.
+        # That path gave the agent the gateway's full privileges
+        # (env vars, API keys, auth DB access, no sandbox policy) and is
+        # the last remaining in-process execution site after the /chat
+        # pivot. Platforms stay offline until they are re-wired to
+        # dispatch through the sandbox WorkerRegistry (inbound) and
+        # expose outbound sends via the Logos Capabilities MCP Server.
+        #
+        # See docs/migration/platforms-as-gateway-mediated.md for the
+        # full plan and phase breakdown.
+        if self.config.platforms:
+            enabled = [p.value for p, c in self.config.platforms.items() if c.enabled]
+            if enabled:
+                logger.warning(
+                    "Platform adapters disabled during OpenShell migration: %s. "
+                    "See docs/migration/platforms-as-gateway-mediated.md.",
+                    ", ".join(enabled),
+                )
+
         if connected_count == 0:
-            logger.warning("No messaging platforms connected.")
-            logger.info("Gateway will continue running for cron job execution.")
+            logger.info("Gateway running without platforms (migration in progress).")
         
         # Update delivery router with adapters
         self.delivery_router.adapters = self.adapters
@@ -1772,29 +1765,44 @@ class GatewayRunner:
                 "message": message_text[:500],
             }
             await self.hooks.emit("agent:start", hook_ctx)
-            
-            # Run the agent with a hard top-level timeout so a hung MCP call or
-            # blocked network request can never stall the platform adapter thread
-            # indefinitely.  Individual tools have their own timeouts; this is the
-            # safety net for the entire turn.
-            _AGENT_TIMEOUT_S = int(os.getenv("HERMES_AGENT_TIMEOUT", "600"))  # 10 min default
-            try:
-                agent_result = await asyncio.wait_for(
-                    self._run_agent(
-                        message=message_text,
-                        context_prompt=context_prompt,
-                        history=history,
-                        source=source,
-                        session_id=session_entry.session_id,
-                        session_key=session_key,
-                    ),
-                    timeout=_AGENT_TIMEOUT_S,
-                )
-            except asyncio.TimeoutError:
-                raise RuntimeError(
-                    f"Agent timed out after {_AGENT_TIMEOUT_S}s. "
-                    "The run was cancelled. Try a shorter request or check for hung tools."
-                )
+
+            # ── In-process agent path: REMOVED during OpenShell migration ──
+            # This code path used to call self._run_agent(...) which ran the
+            # full AIAgent loop inside the gateway process, bypassing every
+            # sandbox policy. That is dangerous: in-process agents inherit
+            # the gateway's env vars, API keys, filesystem, and network
+            # access. The platform path is the last remaining in-process
+            # site and must route through the sandbox WorkerRegistry just
+            # like the /chat endpoint already does.
+            #
+            # Platform adapters are disabled at startup (see GatewayRunner
+            # .start()) so _handle_message should never actually be called
+            # right now. This guard exists as a defence-in-depth: if an
+            # adapter somehow gets wired up again before the migration is
+            # complete, it will fail loudly rather than silently running
+            # in-process code.
+            #
+            # Tracked in docs/migration/platforms-as-gateway-mediated.md —
+            # the replacement is runner.dispatch_platform_message which
+            # will land in Phase 5.2/5.3.
+            logger.error(
+                "Platform _handle_message was called during migration — "
+                "returning error reply. Platform: %s, user: %s",
+                source.platform.value if source.platform else "unknown",
+                source.user_id,
+            )
+            agent_result = {
+                "final_response": (
+                    "\u26a0\ufe0f This bot is offline during the OpenShell "
+                    "migration. The sandbox-dispatch path isn't wired up "
+                    "yet. Please use the web dashboard to chat with your "
+                    "agent in the meantime."
+                ),
+                "api_calls": 0,
+                "tools_used": [],
+                "messages": [],
+            }
+            _AGENT_TIMEOUT_S = 0  # unused, kept for symbol compatibility below
             
             response = agent_result.get("final_response", "")
             agent_messages = agent_result.get("messages", [])
