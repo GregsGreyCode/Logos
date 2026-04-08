@@ -2698,7 +2698,7 @@ async def _handle_run_clone(request: web.Request) -> web.Response:
     })
 
 
-async def start_http_api(runner: Any, port: int = 8080) -> None:
+async def start_http_api(runner: Any, port: int = 8091) -> None:
     """Start the aiohttp server. Call as an asyncio task."""
     global _start_time
     _start_time = time.time()
