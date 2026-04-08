@@ -451,6 +451,34 @@ async def handle_cloud_providers_test(request: web.Request) -> web.Response:
 async def handle_agents_list(request: web.Request) -> web.Response:
     user = request.get("current_user") or {}
     agents = auth_db.list_agents(user.get("id", ""))
+
+    # Augment each agent with the deterministic worker_id / sandbox_name that
+    # its OpenShell sandbox will register under, plus live worker state (if
+    # the sandbox is currently connected). The frontend uses this to grey
+    # out the chat UI until the sandbox is ready, and to pass worker_id on
+    # every /chat request.
+    try:
+        from gateway.executors.openshell import _sanitize_sandbox_name
+    except Exception:
+        _sanitize_sandbox_name = lambda s: s  # noqa: E731
+
+    worker_registry = request.app.get("worker_registry")
+    for a in agents:
+        name = a.get("name", "")
+        sandbox_name = _sanitize_sandbox_name(f"hermes-{name}") if name else ""
+        a["sandbox_name"] = sandbox_name
+        a["worker_id"] = sandbox_name
+        # Live worker status, if the sandbox is connected via /ws/worker
+        worker = worker_registry.get(sandbox_name) if worker_registry and sandbox_name else None
+        if worker:
+            a["worker_healthy"] = worker.healthy
+            a["worker_status"] = worker.status
+            a["worker_connected"] = True
+        else:
+            a["worker_healthy"] = False
+            a["worker_status"] = "disconnected"
+            a["worker_connected"] = False
+
     return web.json_response({"agents": agents})
 
 
@@ -467,6 +495,12 @@ async def handle_agents_post(request: web.Request) -> web.Response:
     toolsets_str = _json.dumps(toolsets_raw) if isinstance(toolsets_raw, list) else ""
     soul_slug = (body.get("soul_slug") or "general").strip()
     model = (body.get("model") or "").strip()
+    # Optional sprite selection (0..7); None falls back to name-hash render.
+    try:
+        char_index = body.get("char_index")
+        char_index = int(char_index) if char_index is not None else None
+    except (TypeError, ValueError):
+        char_index = None
     agent = auth_db.create_agent(
         name=name,
         soul_slug=soul_slug,
@@ -475,6 +509,7 @@ async def handle_agents_post(request: web.Request) -> web.Response:
         creator_id=user.get("id", ""),
         shared=body.get("shared", True),
         toolsets=toolsets_str,
+        char_index=char_index,
     )
 
     # If OpenShell runtime is active, spawn a sandbox for this agent.
@@ -527,7 +562,7 @@ async def handle_agents_patch(request: web.Request) -> web.Response:
     body = await request.json()
     import json as _json
     updates = {}
-    for k in ("name", "soul_slug", "model", "description", "shared"):
+    for k in ("name", "soul_slug", "model", "description", "shared", "char_index"):
         if k in body:
             updates[k] = body[k]
     if "toolsets" in body:

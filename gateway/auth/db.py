@@ -416,6 +416,9 @@ def _run_migrations() -> None:
             "ALTER TABLE machines ADD COLUMN api_key TEXT",
             # v7: per-agent toolset config (JSON array of enabled toolset names)
             "ALTER TABLE agents ADD COLUMN toolsets TEXT",
+            # v8: per-agent sprite selection (0..7). NULL falls back to name-hash
+            # in AgentSprite.js so pre-v8 agents still render.
+            "ALTER TABLE agents ADD COLUMN char_index INTEGER",
         ):
             try:
                 conn.execute(stmt)
@@ -854,14 +857,19 @@ def get_active_cloud_provider() -> Optional[dict]:
 
 def create_agent(name: str, soul_slug: str = "general", model: str = "",
                  description: str = "", creator_id: str = "", shared: bool = True,
-                 toolsets: str = "") -> dict:
+                 toolsets: str = "", char_index: Optional[int] = None) -> dict:
     aid = _new_id("agent")
     now = int(time.time() * 1000)
+    # Clamp char_index to the 0..7 sprite-sheet range, or store NULL so the
+    # frontend falls back to its name-hash default.
+    ci = int(char_index) if char_index is not None else None
+    if ci is not None and not (0 <= ci <= 7):
+        ci = None
     with _conn() as conn:
         conn.execute(
-            """INSERT INTO agents (id, name, soul_slug, model, description, creator_id, shared, toolsets, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (aid, name, soul_slug, model or "", description or "", creator_id or None, 1 if shared else 0, toolsets or "", now, now),
+            """INSERT INTO agents (id, name, soul_slug, model, description, creator_id, shared, toolsets, char_index, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (aid, name, soul_slug, model or "", description or "", creator_id or None, 1 if shared else 0, toolsets or "", ci, now, now),
         )
     return get_agent(aid)
 
@@ -892,8 +900,17 @@ def list_agents(user_id: str = "") -> list[dict]:
 
 
 def update_agent(agent_id: str, **fields) -> Optional[dict]:
-    allowed = {"name", "soul_slug", "model", "description", "shared", "toolsets"}
+    allowed = {"name", "soul_slug", "model", "description", "shared", "toolsets", "char_index"}
     updates = {k: v for k, v in fields.items() if k in allowed}
+    if "char_index" in updates:
+        ci = updates["char_index"]
+        try:
+            ci = int(ci) if ci is not None else None
+        except (TypeError, ValueError):
+            ci = None
+        if ci is not None and not (0 <= ci <= 7):
+            ci = None
+        updates["char_index"] = ci
     if not updates:
         return get_agent(agent_id)
     updates["updated_at"] = int(time.time() * 1000)
