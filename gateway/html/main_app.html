@@ -755,11 +755,17 @@
                 <span class="font-mono text-indigo-400 text-xs tabular-nums" x-text="thinkingText"></span>
               </div>
             </div>
-            <!-- Instance starting guard -->
-            <div x-show="!chatLoading && activeInstance && activeInstance.k8s_status === 'starting'" x-cloak
+            <!-- Sandbox provisioning guard (agent selected but worker not yet connected) -->
+            <div x-show="!chatLoading && activeInstance?.source === 'named' && !canSendChat" x-cloak
                  class="flex items-center gap-2 text-sm text-yellow-600 py-1">
               <span class="animate-spin inline-block">&#9881;</span>
-              <span>Instance is starting up — chat will be available once it\'s ready.</span>
+              <span x-text="'Sandbox for ' + (activeInstance?.name || 'agent') + ' is still provisioning — chat will unlock once the worker connects.'"></span>
+            </div>
+            <!-- No agents at all (e.g. post-setup before sandbox finishes) -->
+            <div x-show="!chatLoading && (!namedAgents || namedAgents.length === 0)" x-cloak
+                 class="flex items-center gap-2 text-sm text-indigo-400 py-1">
+              <span>&#10024;</span>
+              <span>No agents yet. Go to the <a @click.prevent="tab='agents'; loadSouls(); loadNamedAgents()" class="underline cursor-pointer">Agents</a> tab to create one.</span>
             </div>
           </div>
 
@@ -876,11 +882,11 @@
                 x-ref="chatTextarea"
                 autocomplete="off"
                 data-testid="chat-input" rows="1"
-                class="block w-full bg-gray-800 border border-gray-700 rounded-lg px-4 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-indigo-500 transition-colors resize-none"
+                class="block w-full bg-gray-800 border border-gray-700 rounded-lg px-4 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-indigo-500 transition-colors resize-none disabled:opacity-50 disabled:cursor-not-allowed"
                 :class="chatDragOver ? 'border-indigo-400 bg-indigo-950/30' : ''"
                 style="height:38px;min-height:38px;max-height:7rem;line-height:20px;overflow-y:hidden;padding-top:8px;padding-bottom:8px;vertical-align:bottom;"
-                :placeholder="micRecording ? ('Recording… ' + micCountdown + 's') : micTranscribing ? 'Transcribing…' : ('Message ' + (activeChat?.agent_name || 'agent') + '\u2026 (Enter · Shift+Enter for newline)')"
-                :disabled="micTranscribing || activeInstance.k8s_status === 'starting'"
+                :placeholder="!canSendChat ? (activeInstance.source === 'named' ? 'Sandbox is provisioning — chat will unlock when it is ready\u2026' : 'Create an agent to start chatting\u2026') : (micRecording ? ('Recording… ' + micCountdown + 's') : micTranscribing ? 'Transcribing…' : ('Message ' + (activeChat?.agent_name || activeInstance.name || 'agent') + '\u2026 (Enter · Shift+Enter for newline)'))"
+                :disabled="micTranscribing || !canSendChat"
                 :readonly="!chatInputReady"></textarea>
               <!-- Drag-drop overlay hint -->
               <template x-if="chatDragOver">
@@ -930,8 +936,9 @@
                 </svg>
               </template>
             </button>
-            <button @click="sendChat()" :disabled="activeInstance.k8s_status === 'starting'" data-testid="chat-send"
-              class="self-end bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 px-4 rounded-lg text-sm font-medium transition-colors"
+            <button @click="sendChat()" :disabled="!canSendChat" data-testid="chat-send"
+              class="self-end bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 disabled:cursor-not-allowed px-4 rounded-lg text-sm font-medium transition-colors"
+              :title="!canSendChat && activeInstance.source === 'named' ? 'Sandbox provisioning…' : ''"
               style="height:38px;">
               Send
             </button>
@@ -2232,6 +2239,21 @@
         <div x-show="namedAgentFormOpen" x-cloak class="p-3 rounded-xl border border-indigo-800/50 bg-indigo-950/10 space-y-2">
           <input x-model="namedAgentForm.name" type="text" placeholder="Agent name (e.g. Atlas, DevOps-Bot)"
             class="w-full px-3 py-2 rounded-lg bg-gray-800 border border-gray-700 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-indigo-500">
+          <!-- Sprite picker — 8 characters, click to select. Stored as char_index 0..7 -->
+          <div>
+            <label class="text-[10px] text-gray-500 mb-1 block">Character</label>
+            <div class="flex flex-wrap gap-1.5">
+              <template x-for="ci in [0,1,2,3,4,5,6,7]" :key="ci">
+                <button type="button" @click="namedAgentForm.char_index = ci"
+                  :title="'Character ' + (ci + 1)"
+                  :style="agentSpriteStyle(ci) + (namedAgentForm.char_index === ci ? 'border:2px solid rgb(99 102 241);border-radius:8px;' : 'border:2px solid transparent;')"
+                  class="shrink-0 hover:scale-110 transition-transform"></button>
+              </template>
+            </div>
+            <p x-show="namedAgentForm.char_index === null" class="text-[10px] text-gray-600 mt-1">
+              Pick a character, or leave unselected to auto-assign from the name.
+            </p>
+          </div>
           <div class="grid grid-cols-2 gap-2">
             <div>
               <label class="text-[10px] text-gray-500 mb-1 block">Soul</label>
@@ -2304,7 +2326,7 @@
               <div @click="if (!a._editing) chatWithAgent(a)"
                 class="p-3 rounded-xl border border-gray-800 bg-gray-900 hover:border-indigo-500/50 hover:bg-indigo-950/10 transition-colors cursor-pointer group flex gap-3">
                 <!-- Sprite preview — same character as the in-world sprite -->
-                <div class="shrink-0 self-center" :style="agentSpriteStyle(a.name)"></div>
+                <div class="shrink-0 self-center" :style="agentSpriteStyle(a.name, a.char_index)"></div>
                 <div class="flex-1 min-w-0">
                   <div class="flex items-center gap-2 mb-1">
                     <!-- Status dot: pulsing green if actively processing, solid green if available -->
@@ -4678,7 +4700,7 @@ function app() {
     // Named agents
     namedAgents: [],
     namedAgentFormOpen: false,
-    namedAgentForm: { name: '', soul_slug: 'general', model: '', description: '', toolsets: [] },
+    namedAgentForm: { name: '', soul_slug: 'general', model: '', description: '', toolsets: [], char_index: null },
     namedAgentEditId: null,
     namedAgentMsg: null,
     // soul registry + spawn flow
@@ -4874,14 +4896,42 @@ function app() {
     ],
 
     get activeInstance() {
-      // Prefer the named agent attached to the active chat — that is the
-      // user-facing entity. Fall back to chatAgents only for legacy paths.
+      // OpenShell-only: every active chat must be attached to a named
+      // agent with its own sandbox worker. The returned object carries the
+      // worker_id / worker_connected fields that sendChat uses to route
+      // and that the UI uses to grey out chat while the sandbox boots.
       const chatAgentId = this.activeChat?.agent_id;
       if (chatAgentId) {
         const named = (this.namedAgents || []).find(a => a.id === chatAgentId);
-        if (named) return { id: named.id, name: named.name, url: '', source: 'named' };
+        if (named) {
+          return {
+            id: named.id,
+            name: named.name,
+            url: '',
+            source: 'named',
+            soul: named.soul_slug ? { name: named.soul_slug, slug: named.soul_slug } : null,
+            model_alias: named.model || null,
+            // Sandbox worker wiring — supplied by /admin/agents augmentation.
+            worker_id: named.worker_id || '',
+            sandbox_name: named.sandbox_name || '',
+            worker_connected: !!named.worker_connected,
+            worker_healthy: !!named.worker_healthy,
+            worker_status: named.worker_status || 'disconnected',
+            k8s_status: named.worker_connected ? 'running' : 'starting',
+          };
+        }
       }
-      return this.chatAgents.find(i => i.id === this.activeInstanceId) || this.chatAgents[0] || { id: '', name: '', url: '' };
+      // Fallback for the pre-agent empty state / loading state. sendChat
+      // will refuse to submit without an agent_id + healthy worker.
+      return { id: '', name: '', url: '', source: 'none', worker_connected: false };
+    },
+
+    get canSendChat() {
+      // The chat can only dispatch if we have a named agent AND its sandbox
+      // worker is currently connected. During provisioning, or after a
+      // disconnect, the UI is greyed out.
+      const inst = this.activeInstance;
+      return inst && inst.source === 'named' && inst.worker_connected && inst.worker_healthy;
     },
     get instanceUrl() {
       return (this.activeInstance.url || '').replace(/\/$/, '');
@@ -5064,6 +5114,12 @@ function app() {
       setInterval(() => { this._now = Math.floor(Date.now() / 1000); }, 15000);
       setInterval(() => { if (this.tab === 'routing') this.probeAllMachines(); }, 90000);
       setInterval(() => { if (this.tab === 'admin' && this.adminTab === 'sandboxes') this.loadSandboxes(); }, 3000);
+      // Poll named agents every 3s so worker_connected flips from false→true
+      // the moment a sandbox finishes provisioning and its worker connects
+      // to /ws/worker. This drives the chat input's enabled/greyed state.
+      setInterval(() => {
+        if (this.tab === 'sessions' || this.tab === 'agents') this.loadNamedAgents();
+      }, 3000);
       // Poll for pending approvals to keep the badge up to date
       if (this.can('view_approvals')) {
         this._pollPendingApprovals();
@@ -5261,7 +5317,7 @@ function app() {
       this.manualAgents = this.manualAgents.filter(i => i.id !== id);
       this._saveManualAgents();
       this._buildChatAgents();
-      if (this.activeInstanceId === id) this.switchInstance('self');
+      if (this.activeInstanceId === id) this.activeInstanceId = null;
     },
 
     // ── Chat persistence ──────────────────────────────────────────
@@ -5477,10 +5533,20 @@ function app() {
      * occupies a 3-col x 4-row block. The "down idle" frame is at
      * (blockCol, blockRow) within that block.
      */
-    agentSpriteStyle(name) {
-      let h = 0;
-      for (let i = 0; i < name.length; i++) h = ((h << 5) - h + name.charCodeAt(i)) | 0;
-      const charIndex = Math.abs(h) % 8;
+    agentSpriteStyle(nameOrIndex, explicitIndex) {
+      // Accepts either (name) — hash-derived — or (name, charIndex) — explicit.
+      // Also accepts a plain number for the picker preview: agentSpriteStyle(3).
+      let charIndex;
+      if (typeof nameOrIndex === 'number' && explicitIndex === undefined) {
+        charIndex = nameOrIndex;
+      } else if (explicitIndex !== undefined && explicitIndex !== null && explicitIndex >= 0 && explicitIndex <= 7) {
+        charIndex = Number(explicitIndex);
+      } else {
+        const name = String(nameOrIndex || '');
+        let h = 0;
+        for (let i = 0; i < name.length; i++) h = ((h << 5) - h + name.charCodeAt(i)) | 0;
+        charIndex = Math.abs(h) % 8;
+      }
       const blockCol = (charIndex % 4) * 3;          // 0, 3, 6, 9
       const blockRow = Math.floor(charIndex / 4) * 4; // 0 or 4
       // 2x scale: each 32px frame becomes 64px; sheet becomes 768x512
@@ -5532,6 +5598,9 @@ function app() {
         k8s_status: 'running',
         soul: { name: a.soul_slug, slug: a.soul_slug },
         source: 'named',
+        // Pass through the explicit sprite selection so AgentSprite renders
+        // the chosen character instead of the name-hash fallback.
+        char_index: (a.char_index !== undefined && a.char_index !== null) ? Number(a.char_index) : null,
         _namedAgent: a,
       }));
     },
@@ -5549,15 +5618,11 @@ function app() {
       const { WorldManager } = await import('/world/phaser/PhaserWorldManager.js');
       this.worldManager = new WorldManager(el, {
         onAgentClick: (name) => {
-          // If it's a named agent, navigate to chat with it
+          // Every world entity is a named agent — look it up and open its
+          // chat. If the agent was deleted between the last world sync and
+          // the click, silently ignore.
           const named = this.namedAgents.find(a => a.name === name);
-          if (named) {
-            this.chatWithAgent(named);
-          } else {
-            // Runtime instance — switch to it and open chat
-            this.switchInstance('self');
-            this.tab = 'sessions';
-          }
+          if (named) this.chatWithAgent(named);
         },
       });
 
@@ -6282,6 +6347,24 @@ function app() {
       const chat = this.activeChat;
       if (!chat) return;
 
+      // OpenShell-only: refuse to dispatch unless the chat is attached to
+      // a named agent whose sandbox worker is live. The send button is
+      // already disabled via `canSendChat`, but this is the safety net in
+      // case it slipped through (e.g. via keyboard shortcut).
+      if (!this.canSendChat) {
+        const inst = this.activeInstance;
+        let reason = 'Create an agent to start chatting.';
+        if (inst && inst.source === 'named') {
+          reason = inst.worker_connected
+            ? 'Agent worker is unhealthy — wait a moment and try again.'
+            : 'Sandbox is still provisioning — chat will unlock when it is ready.';
+        }
+        chat.messages = [...chat.messages, { role: 'assistant', content: '\u26a0\ufe0f ' + reason }];
+        this.chats = [...this.chats];
+        this._saveChats();
+        return;
+      }
+
       this.chatInput = '';
       this._liveTools = {};
       this._liveToolOrder = [];
@@ -6315,10 +6398,10 @@ function app() {
             message: msg,
             session_id: chat.id,
             attachments: pendingAttachments,
-            // Pass named agent config so the runner uses the right model/soul/toolsets
-            agent_id: chat.agent_id || undefined,
-            // If talking to a specific worker (not the primary gateway), include worker_id
-            // so the gateway dispatches to the right worker process
+            // OpenShell-only routing: every chat is owned by a named agent
+            // and dispatches to that agent's sandbox worker. The backend
+            // rejects requests without agent_id.
+            agent_id: chat.agent_id || this.activeInstance?.id || undefined,
             worker_id: this.activeInstance?.worker_id || undefined,
           }),
         });
