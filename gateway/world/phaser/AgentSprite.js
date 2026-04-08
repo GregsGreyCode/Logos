@@ -93,11 +93,13 @@ export class AgentSprite {
       if (this.callbacks.onHover) this.callbacks.onHover(inst.name, inst, false);
     });
 
-    // Logo badge below sprite — agent's initial on a colored background
+    // Logo badge ABOVE sprite — agent's initial on a colored background.
+    // Sprite is scale 2, origin (0.5, 0.7), frame 32x32, so visual top edge
+    // sits around sprite.y - 45. Badge at y - 52 clears the head cleanly.
     const tint = nameToTint(inst.name);
     const tintHex = '#' + tint.toString(16).padStart(6, '0');
     const initial = (inst.name || '?')[0].toUpperCase();
-    this.logoText = scene.add.text(startPos.x, startPos.y + 22, initial, {
+    this.logoText = scene.add.text(startPos.x, startPos.y - 52, initial, {
       fontFamily: 'monospace',
       fontSize: '12px',
       fontStyle: 'bold',
@@ -110,7 +112,7 @@ export class AgentSprite {
     }).setOrigin(0.5, 0.5).setDepth(13);
     this.logoBg = null;
 
-    // No name or soul labels — the badge below the sprite is the only identifier.
+    // No name or soul labels — the badge above the sprite is the only identifier.
     this.nameLabel = null;
     this.soulLabel = null;
 
@@ -118,8 +120,9 @@ export class AgentSprite {
     this.statusDot = scene.add.graphics().setDepth(14);
     this._drawStatusDot(isRunning);
 
-    // State bubble (hourglass when not running)
-    this.bubble = scene.add.text(startPos.x, startPos.y - 50, '\u23f3', {
+    // State bubble (hourglass when not running) — sits above the letter badge
+    // so nothing covers the sprite itself.
+    this.bubble = scene.add.text(startPos.x, startPos.y - 72, '\u23f3', {
       fontSize: '16px',
       align: 'center',
     }).setOrigin(0.5, 0.5).setDepth(14);
@@ -196,10 +199,12 @@ export class AgentSprite {
       }
     }
 
-    // Sync logo badge + status positions
+    // Sync logo badge + bubble + status dot positions. Badge sits above the
+    // sprite head (y - 52) with the bubble/hourglass layered above that so
+    // nothing overlaps the character itself.
     this.statusDot.setPosition(this.sprite.x + 16, this.sprite.y - 14);
-    this.bubble.setPosition(this.sprite.x, this.sprite.y - 26);
-    this.logoText.setPosition(this.sprite.x, this.sprite.y + 22);
+    this.bubble.setPosition(this.sprite.x, this.sprite.y - 72);
+    this.logoText.setPosition(this.sprite.x, this.sprite.y - 52);
   }
 
   _followPath(delta) {

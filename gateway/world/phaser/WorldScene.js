@@ -217,19 +217,46 @@ export class WorldScene extends Phaser.Scene {
       }
     }
 
-    // Render tiles
+    // Render tiles — no grid lines (they read as "programmer art"), and
+    // each tile gets a tiny deterministic brightness jitter so adjacent
+    // tiles feel organic instead of lego-block flat.
     const gfx = this.add.graphics();
     for (let r = 0; r < WORLD_ROWS; r++) {
       for (let c = 0; c < WORLD_COLS; c++) {
-        const color = TILE_COLORS[grid[r][c]] || 0x4a7c3f;
-        gfx.fillStyle(color, 1);
+        const base = TILE_COLORS[grid[r][c]] || 0x2f4537;
+        // Deterministic pseudo-noise so the world is stable across redraws.
+        // Scale RGB channels ±7% for subtle per-tile variation.
+        const n = ((r * 73856093) ^ (c * 19349663)) & 0xff;
+        const k = 1 + ((n / 255) * 0.14 - 0.07);
+        const br = Math.max(0, Math.min(255, Math.round(((base >> 16) & 0xff) * k)));
+        const bgc = Math.max(0, Math.min(255, Math.round(((base >> 8) & 0xff) * k)));
+        const bb = Math.max(0, Math.min(255, Math.round((base & 0xff) * k)));
+        gfx.fillStyle((br << 16) | (bgc << 8) | bb, 1);
         gfx.fillRect(c * TILE_SIZE, r * TILE_SIZE, TILE_SIZE, TILE_SIZE);
-        // Subtle grid lines
-        gfx.lineStyle(0.5, 0x000000, 0.05);
-        gfx.strokeRect(c * TILE_SIZE, r * TILE_SIZE, TILE_SIZE, TILE_SIZE);
       }
     }
     gfx.setDepth(0);
+
+    // Radial vignette overlay — darker at the edges, focuses attention on
+    // the tree and the agents in the centre. Drawn as a stack of hollow
+    // ring strokes (not filled circles) so the alphas don't accumulate at
+    // the centre. Each ring covers a narrow radial band with an alpha
+    // that ramps up toward the outer edge of the world.
+    const vignette = this.add.graphics();
+    vignette.setDepth(1);
+    const vcx = WORLD_W / 2;
+    const vcy = WORLD_H / 2;
+    const vmaxR = Math.sqrt(vcx * vcx + vcy * vcy);
+    const STEPS = 48;
+    for (let i = 0; i < STEPS; i++) {
+      const rNorm = (i + 0.5) / STEPS;
+      if (rNorm < 0.55) continue;  // leave the centre 55% untouched
+      const t = (rNorm - 0.55) / 0.45;  // 0..1 across the outer band
+      const alpha = Math.min(0.55, t * t * 0.65);  // quadratic darkening
+      const bandWidth = vmaxR / STEPS + 2;  // slight overlap kills seams
+      vignette.lineStyle(bandWidth, 0x050510, alpha);
+      vignette.strokeCircle(vcx, vcy, rNorm * vmaxR);
+    }
 
     // No visible trunk — canopy covers the center completely
 
@@ -295,14 +322,28 @@ export class WorldScene extends Phaser.Scene {
     const gfx = this.canopyGraphics;
     gfx.clear();
 
+    // Base hues match the Logos logo gradient: indigo #6366f1 (H=239)
+    // and purple #a855f7 (H=271). The whole canopy rotates through the
+    // colour wheel as a unit — no per-pixel rainbow — so the tree reads
+    // as the same identity mark as the logo in the top-left of the app.
+    const BASE_INNER_H = 239;  // indigo
+    const BASE_OUTER_H = 271;  // purple
+    const rotate = this._hueOffset;  // deg, cycles 360 in 60s
+
     for (let i = 0; i < this.canopyPixels.length; i++) {
       const p = this.canopyPixels[i];
-      const hue = (this._hueOffset + i * 8) % 360;
-      const sat = 55 + p.brightness * 20;
-      const lit = 22 + p.brightness * 22;
-      const color = Phaser.Display.Color.HSLToColor(hue / 360, sat / 100, lit / 100);
-      gfx.fillStyle(color.color, 0.95);
-      gfx.fillCircle(p.x, p.y, TILE_SIZE * 0.6);
+      // Lerp hue by distance from centre: inner leaves are indigo, outer
+      // leaves are purple. Both rotate in lock-step.
+      const hue = ((p.distNorm < 1 ? BASE_INNER_H + (BASE_OUTER_H - BASE_INNER_H) * p.distNorm : BASE_OUTER_H) + rotate) % 360;
+      const sat = 0.72;
+      const lit = 0.38 + p.brightness * 0.22;
+      const color = Phaser.Display.Color.HSLToColor(hue / 360, sat, lit);
+      // Softer blob with an inner highlight for depth
+      gfx.fillStyle(color.color, 0.92);
+      gfx.fillCircle(p.x, p.y, TILE_SIZE * 0.65);
+      // Glow rim (lighter, larger, lower alpha) gives the tree a halo
+      gfx.fillStyle(color.color, 0.18);
+      gfx.fillCircle(p.x, p.y, TILE_SIZE * 1.1);
     }
   }
 

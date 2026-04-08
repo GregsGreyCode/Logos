@@ -20,16 +20,20 @@ export const TILE = {
   MOSS: 7,
 };
 
-// Colors for procedural tiles
+// Colors for procedural tiles — a calmer twilight-garden palette that
+// sits visually under the indigo/purple Logos tree without competing.
+// Greens shift slightly toward the blue end of the wheel so the whole
+// scene reads as one chilly, coherent landscape instead of a saturated
+// green lawn with a rainbow tree sat on top.
 export const TILE_COLORS = {
-  [TILE.GRASS]:      0x4a7c3f,
-  [TILE.DARK_GRASS]: 0x3d6b34,
-  [TILE.FLOWERS]:    0x5a8c4f,
-  [TILE.WATER]:      0x3a6ea5,
-  [TILE.SAND]:       0xc2b280,
-  [TILE.PATH]:       0x7a7060,
-  [TILE.GARDEN_BED]: 0x3a5e2f,
-  [TILE.MOSS]:       0x4d7a42,
+  [TILE.GRASS]:      0x2f4537,
+  [TILE.DARK_GRASS]: 0x26382c,
+  [TILE.FLOWERS]:    0x385641,
+  [TILE.WATER]:      0x2d4a72,
+  [TILE.SAND]:       0x8a7a5a,
+  [TILE.PATH]:       0x5a4c3a,
+  [TILE.GARDEN_BED]: 0x253a22,
+  [TILE.MOSS]:       0x334a37,
 };
 
 // Garden zones — organic areas where agents gather
