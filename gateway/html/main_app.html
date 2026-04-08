@@ -2214,7 +2214,7 @@
       </div>
 
       <!-- ── RIGHT: Create + Agent Cards + Live Status ── -->
-      <div class="w-80 shrink-0 flex flex-col min-h-0 overflow-y-auto thin-scroll space-y-3">
+      <div class="w-96 shrink-0 flex flex-col min-h-0 overflow-y-auto overflow-x-hidden thin-scroll space-y-3">
 
         <!-- Create Agent toggle -->
         <button @click="namedAgentFormOpen = !namedAgentFormOpen; namedAgentMsg = null"
@@ -2302,24 +2302,26 @@
           <div class="space-y-2">
             <template x-for="a in namedAgents" :key="a.id">
               <div @click="if (!a._editing) chatWithAgent(a)"
-                class="p-3 rounded-xl border border-gray-800 bg-gray-900 hover:border-indigo-500/50 hover:bg-indigo-950/10 transition-colors cursor-pointer group">
-                <div class="flex items-center gap-2 mb-1">
-                  <!-- Status dot: pulsing green if actively processing, solid green if available -->
-                  <span class="w-2 h-2 rounded-full shrink-0"
-                    :class="(status.active_sessions||[]).some(s => s.agent_name === a.name) ? 'bg-green-500 animate-pulse' : 'bg-green-600'"></span>
-                  <span class="text-sm font-semibold text-white group-hover:text-indigo-300 transition-colors truncate" x-text="a.name"></span>
-                  <span class="text-[9px] px-1 py-0.5 rounded font-mono bg-indigo-950 text-indigo-300 border border-indigo-900 shrink-0" x-text="a.soul_slug"></span>
-                </div>
-                <div class="flex items-center gap-1.5 ml-4 mb-1">
-                  <span x-show="a.model" class="text-[9px] px-1 py-0.5 rounded font-mono bg-gray-800 text-gray-500 border border-gray-700 truncate max-w-[140px]" x-text="a.model"></span>
-                  <span x-show="a.toolsets && JSON.parse(a.toolsets || '[]').length" class="text-[9px] px-1 py-0.5 rounded font-mono bg-emerald-950 text-emerald-400 border border-emerald-900 shrink-0"
-                    x-text="JSON.parse(a.toolsets || '[]').length + ' tools'"></span>
-                </div>
-                <p x-show="a.description" class="text-[10px] text-gray-500 ml-4 mb-1.5 truncate" x-text="a.description"></p>
+                class="p-3 rounded-xl border border-gray-800 bg-gray-900 hover:border-indigo-500/50 hover:bg-indigo-950/10 transition-colors cursor-pointer group flex gap-3">
+                <!-- Sprite preview — same character as the in-world sprite -->
+                <div class="shrink-0 self-center" :style="agentSpriteStyle(a.name)"></div>
+                <div class="flex-1 min-w-0">
+                  <div class="flex items-center gap-2 mb-1">
+                    <!-- Status dot: pulsing green if actively processing, solid green if available -->
+                    <span class="w-2 h-2 rounded-full shrink-0"
+                      :class="(status.active_sessions||[]).some(s => s.agent_name === a.name) ? 'bg-green-500 animate-pulse' : 'bg-green-600'"></span>
+                    <span class="text-sm font-semibold text-white group-hover:text-indigo-300 transition-colors truncate" x-text="a.name"></span>
+                  </div>
+                  <div class="flex items-center gap-1.5 mb-1">
+                    <span x-show="a.model" class="text-[9px] px-1 py-0.5 rounded font-mono bg-gray-800 text-gray-500 border border-gray-700 truncate max-w-[140px]" x-text="a.model"></span>
+                    <span x-show="a.toolsets && JSON.parse(a.toolsets || '[]').length" class="text-[9px] px-1 py-0.5 rounded font-mono bg-emerald-950 text-emerald-400 border border-emerald-900 shrink-0"
+                      x-text="JSON.parse(a.toolsets || '[]').length + ' tools'"></span>
+                  </div>
+                  <p x-show="a.description" class="text-[10px] text-gray-500 mb-1.5 truncate" x-text="a.description"></p>
 
                 <!-- Live execution info for this agent -->
                 <template x-for="s in (status.active_sessions||[]).filter(s => s.agent_name === a.name)" :key="s.session_key">
-                  <div class="ml-4 mb-1.5 px-2 py-1.5 rounded-lg bg-indigo-950/30 border border-indigo-900/50">
+                  <div class="mb-1.5 px-2 py-1.5 rounded-lg bg-indigo-950/30 border border-indigo-900/50">
                     <div class="flex items-center gap-1.5 text-[10px]">
                       <span class="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-pulse shrink-0"></span>
                       <span class="font-mono text-indigo-400 truncate" x-text="s.current_tool || 'thinking...'"></span>
@@ -2334,7 +2336,7 @@
                   </div>
                 </template>
 
-                <div class="flex items-center gap-1 ml-4 opacity-0 group-hover:opacity-100 transition-opacity" @click.stop>
+                <div class="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity" @click.stop>
                   <button @click.stop="a._editing = true; a._edit = { name: a.name, soul_slug: a.soul_slug, model: a.model || '', description: a.description || '', toolsets: JSON.parse(a.toolsets || '[]') }"
                     class="text-[9px] px-1.5 py-0.5 rounded border border-gray-700 text-gray-500 hover:text-white hover:border-gray-500 transition-colors">Edit</button>
                   <button @click.stop="deleteNamedAgent(a.id)"
@@ -2343,18 +2345,18 @@
                     class="text-[9px] px-2 py-0.5 rounded-lg bg-indigo-600 text-white hover:bg-indigo-500 transition-colors font-medium">Chat</button>
                 </div>
                 <!-- Inline edit form -->
-                <div x-show="a._editing" x-cloak @click.stop class="mt-2 space-y-1.5 pt-2 border-t border-gray-800">
+                <div x-show="a._editing" x-cloak @click.stop class="mt-2 space-y-1.5 pt-2 border-t border-gray-800 min-w-0">
                   <input x-model="a._edit.name" type="text" placeholder="Name"
                     class="w-full px-2 py-1 rounded bg-gray-800 border border-gray-700 text-[10px] text-white focus:outline-none focus:border-indigo-500">
-                  <div class="grid grid-cols-2 gap-2">
+                  <div class="grid grid-cols-2 gap-2 min-w-0">
                     <select x-model="a._edit.soul_slug"
-                      class="px-2 py-1 rounded bg-gray-800 border border-gray-700 text-[10px] text-white focus:outline-none focus:border-indigo-500">
+                      class="min-w-0 w-full px-2 py-1 rounded bg-gray-800 border border-gray-700 text-[10px] text-white focus:outline-none focus:border-indigo-500">
                       <template x-for="s in (souls.length ? souls : [{slug:'general',name:'General'}])" :key="s.slug">
                         <option :value="s.slug" x-text="s.name || s.slug"></option>
                       </template>
                     </select>
                     <select x-model="a._edit.model"
-                      class="px-2 py-1 rounded bg-gray-800 border border-gray-700 text-[10px] text-white focus:outline-none focus:border-indigo-500">
+                      class="min-w-0 w-full px-2 py-1 rounded bg-gray-800 border border-gray-700 text-[10px] text-white focus:outline-none focus:border-indigo-500">
                       <option value="">Auto</option>
                       <template x-for="m in allMachineModels" :key="m">
                         <option :value="m" x-text="m"></option>
@@ -2383,6 +2385,7 @@
                     <button @click="a._editing = false; a._edit = null" class="text-[9px] px-2 py-1 rounded border border-gray-700 text-gray-400 hover:text-white transition-colors">Cancel</button>
                   </div>
                 </div>
+                </div><!-- /right side of card -->
               </div>
             </template>
           </div>
@@ -4865,7 +4868,14 @@ function app() {
     ],
 
     get activeInstance() {
-      return this.chatAgents.find(i => i.id === this.activeInstanceId) || this.chatAgents[0] || {id:'self', name:'Hermes', url:''};
+      // Prefer the named agent attached to the active chat — that is the
+      // user-facing entity. Fall back to chatAgents only for legacy paths.
+      const chatAgentId = this.activeChat?.agent_id;
+      if (chatAgentId) {
+        const named = (this.namedAgents || []).find(a => a.id === chatAgentId);
+        if (named) return { id: named.id, name: named.name, url: '', source: 'named' };
+      }
+      return this.chatAgents.find(i => i.id === this.activeInstanceId) || this.chatAgents[0] || { id: '', name: '', url: '' };
     },
     get instanceUrl() {
       return (this.activeInstance.url || '').replace(/\/$/, '');
@@ -5167,7 +5177,8 @@ function app() {
     },
 
     _buildChatAgents() {
-      const self = {id: 'self', name: this.status.instance_name || 'Hermes', url: '', source: 'self', editable: false};
+      // No more "self" pseudo-agent — every agent must be a real named agent
+      // with its own sandbox. Empty chatAgents is a valid state.
       const k8s = (this.clusterInstances || [])
         .filter(i => i.node_port && i.source !== 'local')
         .map(i => ({
@@ -5205,9 +5216,7 @@ function app() {
         soul:         { name: w.soul, slug: w.soul },
         k8s_status:   w.healthy ? 'running' : 'starting',
       }));
-      // Only show "self" if the primary agent isn't already in the workers list
-      const hasPrimaryWorker = workers.some(w => w.worker_id === 'hermes');
-      this.chatAgents = [...(hasPrimaryWorker ? [] : [self]), ...workers, ...k8s, ...local, ...this.manualAgents];
+      this.chatAgents = [...workers, ...k8s, ...local, ...this.manualAgents];
     },
 
     switchInstance(id) {
@@ -5454,6 +5463,26 @@ function app() {
       }
     },
 
+    /**
+     * CSS style string for an agent sprite preview (matches in-world sprite).
+     * Uses the same hash → char index function as AgentSprite.js so the
+     * card preview is identical to the walking sprite in the world.
+     * Sheet is 384x256 (12 cols x 8 rows of 32x32 frames). Each character
+     * occupies a 3-col x 4-row block. The "down idle" frame is at
+     * (blockCol, blockRow) within that block.
+     */
+    agentSpriteStyle(name) {
+      let h = 0;
+      for (let i = 0; i < name.length; i++) h = ((h << 5) - h + name.charCodeAt(i)) | 0;
+      const charIndex = Math.abs(h) % 8;
+      const blockCol = (charIndex % 4) * 3;          // 0, 3, 6, 9
+      const blockRow = Math.floor(charIndex / 4) * 4; // 0 or 4
+      // 2x scale: each 32px frame becomes 64px; sheet becomes 768x512
+      const x = -(blockCol * 32 * 2);
+      const y = -(blockRow * 32 * 2);
+      return `width:64px;height:64px;background-image:url('/static/world/characters.png');background-position:${x}px ${y}px;background-size:768px 512px;image-rendering:pixelated;`;
+    },
+
     fmtChatTime(ts) {
       if (!ts) return '';
       const d = new Date(ts);
@@ -5485,55 +5514,20 @@ function app() {
     // ── Agent World ─────────────────────────────────────────────
 
     _worldAgentList() {
-      // Build a unified list from all sources:
-      // - Named agents (persistent entities — primary source)
-      // - Connected workers (includes the primary in-process agent "hermes")
-      // - Spawned instances (old-style full gateways, being phased out)
-      const agents = [];
-      const seen = new Set();
-
-      // Named agents first — these are the user-facing entities
-      for (const a of (this.namedAgents || [])) {
-        seen.add(a.name.toLowerCase());
-        agents.push({
-          name: a.name,
-          instance_name: a.name,
-          instance_label: '',
-          status: 'running',
-          k8s_status: 'running',
-          soul: { name: a.soul_slug, slug: a.soul_slug },
-          source: 'named',
-          _namedAgent: a,
-        });
-      }
-
-      // Workers (local + remote) — these are runtime instances
-      for (const w of (this._connectedWorkers || [])) {
-        if (!seen.has((w.instance_label || w.worker_id).toLowerCase())) {
-          seen.add(w.worker_id);
-          agents.push({
-            name: w.worker_id,
-            instance_name: w.instance_label || w.worker_id,
-            instance_label: w.instance_label,
-            status: w.healthy ? 'running' : 'starting',
-            k8s_status: w.healthy ? 'running' : 'starting',
-            soul: { name: w.soul, slug: w.soul },
-            source: 'worker',
-          });
-        }
-      }
-
-      // Spawned instances not already covered by workers
-      for (const inst of (this.clusterInstances || [])) {
-        if (!seen.has(inst.name)) {
-          agents.push(inst);
-        }
-      }
-
-      // No fallback — only real named agents and workers appear in the world.
-      // If empty, the world is simply unpopulated until agents are created.
-
-      return agents;
+      // Only real named agents appear in the world. Workers and cluster
+      // instances are runtime backing for named agents — they should not
+      // show up as their own entities. If no named agents exist the world
+      // is empty.
+      return (this.namedAgents || []).map(a => ({
+        name: a.name,
+        instance_name: a.name,
+        instance_label: '',
+        status: 'running',
+        k8s_status: 'running',
+        soul: { name: a.soul_slug, slug: a.soul_slug },
+        source: 'named',
+        _namedAgent: a,
+      }));
     },
 
     async initWorld() {
@@ -6698,6 +6692,17 @@ function app() {
         const d = await r.json();
         this.namedAgents = d.agents || [];
       } catch { this.namedAgents = []; }
+      // Drop orphan chats whose agent has been deleted server-side.
+      // A chat with no agent_id is "unassigned" and stays (legacy chats).
+      const validIds = new Set((this.namedAgents || []).map(a => a.id));
+      const before = this.chats.length;
+      this.chats = this.chats.filter(c => !c.agent_id || validIds.has(c.agent_id));
+      if (this.chats.length !== before) {
+        this._saveChats();
+        if (this.activeChatId && !this.chats.find(c => c.id === this.activeChatId)) {
+          this.activeChatId = this.chats[0]?.id || null;
+        }
+      }
     },
 
     async createNamedAgent() {
