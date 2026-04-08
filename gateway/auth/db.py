@@ -385,6 +385,27 @@ CREATE TABLE IF NOT EXISTS mcp_servers (
     updated_at      INTEGER NOT NULL,
     last_error      TEXT
 );
+
+-- ── Platform routing ───────────────────────────────────────────────────────
+-- Maps an inbound platform conversation (chat/user/global) to the agent
+-- whose sandbox should handle it. Inserted by the setup wizard (one
+-- 'global' row per enabled platform → first agent) and editable from the
+-- Admin → Platforms tab.
+--
+-- scope:
+--   'global'  → fallback for any conversation on this platform
+--   'chat'    → specific chat_id (e.g. a Telegram group, a Discord channel)
+--   'user'    → specific user_id (DMs, identified user across chats)
+
+CREATE TABLE IF NOT EXISTS platform_routing (
+    id          TEXT PRIMARY KEY,
+    platform    TEXT NOT NULL,
+    scope       TEXT NOT NULL CHECK (scope IN ('global', 'chat', 'user')),
+    scope_id    TEXT NOT NULL DEFAULT '',
+    agent_id    TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+    created_at  INTEGER NOT NULL,
+    UNIQUE(platform, scope, scope_id)
+);
 """
 
 
@@ -926,6 +947,90 @@ def update_agent(agent_id: str, **fields) -> Optional[dict]:
 def delete_agent(agent_id: str) -> None:
     with _conn() as conn:
         conn.execute("DELETE FROM agents WHERE id = ?", (agent_id,))
+
+
+# ── Platform routing ────────────────────────────────────────────────────────
+# Picks the agent that should handle inbound messages for a given
+# platform/scope. Resolution is most-specific-first: chat → user → global.
+
+def upsert_platform_routing(
+    platform: str,
+    scope: str,
+    scope_id: str,
+    agent_id: str,
+) -> dict:
+    """Insert or update a routing rule. Returns the row."""
+    if scope not in ("global", "chat", "user"):
+        raise ValueError(f"invalid scope: {scope!r}")
+    rid = _new_id("pr")
+    now = int(time.time() * 1000)
+    with _conn() as conn:
+        conn.execute(
+            """INSERT INTO platform_routing (id, platform, scope, scope_id, agent_id, created_at)
+               VALUES (?, ?, ?, ?, ?, ?)
+               ON CONFLICT(platform, scope, scope_id) DO UPDATE SET
+                   agent_id = excluded.agent_id,
+                   created_at = excluded.created_at""",
+            (rid, platform, scope, scope_id or "", agent_id, now),
+        )
+        row = conn.execute(
+            "SELECT * FROM platform_routing WHERE platform = ? AND scope = ? AND scope_id = ?",
+            (platform, scope, scope_id or ""),
+        ).fetchone()
+        return dict(row) if row else {}
+
+
+def delete_platform_routing(routing_id: str) -> None:
+    with _conn() as conn:
+        conn.execute("DELETE FROM platform_routing WHERE id = ?", (routing_id,))
+
+
+def list_platform_routing(platform: Optional[str] = None) -> list[dict]:
+    """All routing rules, optionally filtered by platform."""
+    with _conn() as conn:
+        if platform:
+            rows = conn.execute(
+                "SELECT * FROM platform_routing WHERE platform = ? ORDER BY scope, scope_id",
+                (platform,),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT * FROM platform_routing ORDER BY platform, scope, scope_id"
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def resolve_platform_routing(
+    platform: str,
+    chat_id: str = "",
+    user_id: str = "",
+) -> Optional[dict]:
+    """Pick the agent for an inbound message. Most-specific match wins:
+    chat > user > global. Returns the routing row (with agent_id) or None.
+    """
+    with _conn() as conn:
+        # 1. exact chat match
+        if chat_id:
+            row = conn.execute(
+                "SELECT * FROM platform_routing WHERE platform = ? AND scope = 'chat' AND scope_id = ?",
+                (platform, chat_id),
+            ).fetchone()
+            if row:
+                return dict(row)
+        # 2. exact user match
+        if user_id:
+            row = conn.execute(
+                "SELECT * FROM platform_routing WHERE platform = ? AND scope = 'user' AND scope_id = ?",
+                (platform, user_id),
+            ).fetchone()
+            if row:
+                return dict(row)
+        # 3. global fallback
+        row = conn.execute(
+            "SELECT * FROM platform_routing WHERE platform = ? AND scope = 'global'",
+            (platform,),
+        ).fetchone()
+        return dict(row) if row else None
 
 
 # ── Machine user claims ────────────────────────────────────────────────────────

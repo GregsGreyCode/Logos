@@ -2866,6 +2866,10 @@
         class="pb-2 text-sm font-medium"
         :class="adminTab==='sandboxes'?'tab-active':'text-gray-500 hover:text-white'"
         @click="adminTab='sandboxes'; loadSandboxes()">Sandboxes</button>
+      <button x-show="can('manage_users')"
+        class="pb-2 text-sm font-medium"
+        :class="adminTab==='platforms'?'tab-active':'text-gray-500 hover:text-white'"
+        @click="adminTab='platforms'; loadPlatforms()">Platforms</button>
       <button x-show="can('view_audit_logs')"
         class="pb-2 text-sm font-medium"
         :class="adminTab==='audit'?'tab-active':'text-gray-500 hover:text-white'"
@@ -3630,6 +3634,141 @@
         </div>
       </details>
 
+    </div>
+
+    <!-- ── Platforms sub-tab ── -->
+    <div x-show="adminTab==='platforms' && can('manage_users')" x-cloak>
+      <div class="flex items-center justify-between mb-4">
+        <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Platforms &amp; Routing</div>
+        <button @click="loadPlatforms()" class="text-xs text-[var(--accent)] hover:opacity-80 flex items-center gap-1">
+          <span>&#8635;</span> Refresh
+        </button>
+      </div>
+
+      <div class="text-xs text-gray-500 mb-4 max-w-2xl">
+        Inbound messages from each connected platform are routed to a specific agent's sandbox.
+        The most-specific match wins: <span class="text-gray-400 font-medium">chat</span> &rsaquo;
+        <span class="text-gray-400 font-medium">user</span> &rsaquo;
+        <span class="text-gray-400 font-medium">global</span>.
+        Setup wizard seeds one <span class="text-gray-400 font-medium">global</span> rule per
+        enabled platform; you can override per-chat or per-user here.
+      </div>
+
+      <template x-for="p in platforms" :key="p.name">
+        <div class="bg-gray-900 border border-gray-800 rounded-xl mb-4 overflow-hidden">
+          <!-- Header -->
+          <div class="flex items-center justify-between px-4 py-3 border-b border-gray-800">
+            <div class="flex items-center gap-3">
+              <span class="w-2 h-2 rounded-full"
+                    :class="p.connected ? 'bg-green-500' : (p.enabled ? 'bg-yellow-500' : 'bg-gray-600')"></span>
+              <span class="text-sm font-semibold text-white capitalize" x-text="p.name"></span>
+              <span class="text-[10px] uppercase tracking-wider"
+                    :class="p.connected ? 'text-green-400' : (p.enabled ? 'text-yellow-400' : 'text-gray-600')"
+                    x-text="p.connected ? 'connected' : (p.enabled ? 'configured' : 'disabled')"></span>
+            </div>
+            <button @click="platformRoutingForm = {platform: p.name, scope: 'chat', scope_id: '', agent_id: (platformAgents[0]?.id || '')}; platformRoutingFormOpen = true"
+                    class="text-[10px] px-2.5 py-1 rounded border border-gray-700 text-gray-400 hover:text-white hover:border-gray-500">
+              + Routing rule
+            </button>
+          </div>
+
+          <!-- Rules table -->
+          <table class="w-full text-xs">
+            <thead>
+              <tr class="text-gray-600 border-b border-gray-800">
+                <th class="text-left px-4 py-2 font-medium w-[90px]">Scope</th>
+                <th class="text-left px-4 py-2 font-medium">Match</th>
+                <th class="text-left px-4 py-2 font-medium">Target Agent</th>
+                <th class="text-right px-4 py-2 font-medium w-[60px]"></th>
+              </tr>
+            </thead>
+            <tbody>
+              <template x-for="r in p.routing" :key="r.id">
+                <tr class="border-b border-gray-800/50">
+                  <td class="px-4 py-2">
+                    <span class="px-1.5 py-0.5 rounded text-[10px] font-medium border"
+                          :class="r.scope === 'global' ? 'bg-blue-950 text-blue-400 border-blue-900'
+                                : r.scope === 'chat'   ? 'bg-purple-950 text-purple-400 border-purple-900'
+                                                       : 'bg-amber-950 text-amber-400 border-amber-900'"
+                          x-text="r.scope"></span>
+                  </td>
+                  <td class="px-4 py-2 text-gray-300 font-mono"
+                      x-text="r.scope === 'global' ? '(any)' : r.scope_id"></td>
+                  <td class="px-4 py-2 text-white" x-text="r.agent_name"></td>
+                  <td class="px-4 py-2 text-right">
+                    <button @click="deletePlatformRouting(r.id)"
+                            class="text-red-700 hover:text-red-400 text-xs"
+                            title="Delete routing rule">&times;</button>
+                  </td>
+                </tr>
+              </template>
+              <template x-if="(p.routing || []).length === 0">
+                <tr><td colspan="4" class="px-4 py-4 text-center text-gray-600 text-xs">
+                  No routing rules. Inbound messages will fall back to the first agent.
+                </td></tr>
+              </template>
+            </tbody>
+          </table>
+        </div>
+      </template>
+
+      <template x-if="!platformsLoading && platforms.length === 0">
+        <div class="text-center text-gray-600 text-xs py-8">
+          No platforms configured. Add credentials in Settings → Channels.
+        </div>
+      </template>
+      <template x-if="platformsLoading && platforms.length === 0">
+        <div class="text-center text-gray-600 text-xs py-8">Loading...</div>
+      </template>
+
+      <!-- Routing rule modal -->
+      <div x-show="platformRoutingFormOpen" x-cloak
+           class="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
+           @click.self="platformRoutingFormOpen = false">
+        <div class="bg-gray-900 border border-gray-700 rounded-xl p-5 w-[420px] space-y-4">
+          <div class="flex items-center justify-between">
+            <div class="text-sm font-semibold text-white">
+              New routing rule
+              <span class="text-gray-500 text-xs ml-1" x-text="'· ' + platformRoutingForm.platform"></span>
+            </div>
+            <button @click="platformRoutingFormOpen = false" class="text-gray-500 hover:text-white">&times;</button>
+          </div>
+          <div>
+            <label class="block text-[10px] text-gray-500 uppercase tracking-wider mb-1">Scope</label>
+            <select x-model="platformRoutingForm.scope"
+                    class="w-full bg-gray-950 border border-gray-700 rounded px-3 py-1.5 text-xs text-white">
+              <option value="chat">chat — specific channel/group</option>
+              <option value="user">user — specific user across chats</option>
+              <option value="global">global — fallback for this platform</option>
+            </select>
+          </div>
+          <div x-show="platformRoutingForm.scope !== 'global'">
+            <label class="block text-[10px] text-gray-500 uppercase tracking-wider mb-1">
+              <span x-text="platformRoutingForm.scope === 'chat' ? 'Chat ID' : 'User ID'"></span>
+            </label>
+            <input type="text" x-model="platformRoutingForm.scope_id"
+                   class="w-full bg-gray-950 border border-gray-700 rounded px-3 py-1.5 text-xs text-white font-mono"
+                   placeholder="e.g. 12345 or @greg"/>
+          </div>
+          <div>
+            <label class="block text-[10px] text-gray-500 uppercase tracking-wider mb-1">Agent</label>
+            <select x-model="platformRoutingForm.agent_id"
+                    class="w-full bg-gray-950 border border-gray-700 rounded px-3 py-1.5 text-xs text-white">
+              <template x-for="a in platformAgents" :key="a.id">
+                <option :value="a.id" x-text="a.name"></option>
+              </template>
+            </select>
+          </div>
+          <div class="flex items-center justify-end gap-2 pt-2">
+            <button @click="platformRoutingFormOpen = false"
+                    class="text-xs text-gray-400 hover:text-white px-3 py-1.5">Cancel</button>
+            <button @click="savePlatformRouting()"
+                    class="text-xs px-4 py-1.5 rounded-lg bg-[var(--accent)] text-white hover:opacity-90">
+              Save rule
+            </button>
+          </div>
+        </div>
+      </div>
     </div>
 
     <!-- ── Audit Log sub-tab ── -->
@@ -4871,6 +5010,12 @@ function app() {
     sandboxLogsLoading: false,
     sandboxLogsSelectedName: null,
     sandboxPolicyOpen: false,
+    // platforms (Admin → Platforms)
+    platforms: [],
+    platformsLoading: false,
+    platformAgents: [],
+    platformRoutingFormOpen: false,
+    platformRoutingForm: {platform: "", scope: "chat", scope_id: "", agent_id: ""},
     // evolution
     evoPanel: 'proposals',
     evolutionProposals: [],
@@ -5233,6 +5378,7 @@ function app() {
       workflows: 'workflows',
       runs:      'runs',
       sandboxes: 'sandboxes',
+      platforms: 'platforms',
       audit:     'audit',
       approvals: 'approvals',
     },
@@ -7656,6 +7802,69 @@ function app() {
       }
       if (this.selectedSandbox?.sandbox_name === name) this.selectedSandbox = null;
       await this.loadSandboxes();
+    },
+
+    async loadPlatforms() {
+      this.platformsLoading = true;
+      try {
+        const r = await fetch("/admin/platforms", {credentials: "include"});
+        if (!r.ok) throw new Error(await r.text());
+        const d = await r.json();
+        this.platforms = d.platforms || [];
+        this.platformAgents = d.agents || [];
+      } catch(e) {
+        this.platforms = [];
+        this.platformAgents = [];
+      }
+      this.platformsLoading = false;
+    },
+
+    async savePlatformRouting() {
+      const f = this.platformRoutingForm;
+      if (!f.platform || !f.scope || !f.agent_id) {
+        alert("Pick a scope and an agent.");
+        return;
+      }
+      if (f.scope !== "global" && !f.scope_id.trim()) {
+        alert("Enter the chat/user ID, or pick the global scope.");
+        return;
+      }
+      try {
+        const r = await fetch("/admin/platforms/routing", {
+          method: "POST",
+          credentials: "include",
+          headers: {
+            "Content-Type": "application/json",
+            "X-CSRF-Token": getCsrfToken(),
+          },
+          body: JSON.stringify({
+            platform: f.platform,
+            scope:    f.scope,
+            scope_id: f.scope_id.trim(),
+            agent_id: f.agent_id,
+          }),
+        });
+        if (!r.ok) throw new Error(await r.text());
+        this.platformRoutingFormOpen = false;
+        await this.loadPlatforms();
+      } catch(e) {
+        alert("Save failed: " + (e.message || e));
+      }
+    },
+
+    async deletePlatformRouting(id) {
+      if (!confirm("Delete this routing rule?")) return;
+      try {
+        const r = await fetch(`/admin/platforms/routing/${encodeURIComponent(id)}`, {
+          method: "DELETE",
+          credentials: "include",
+          headers: {"X-CSRF-Token": getCsrfToken()},
+        });
+        if (!r.ok) throw new Error(await r.text());
+        await this.loadPlatforms();
+      } catch(e) {
+        alert("Delete failed: " + (e.message || e));
+      }
     },
 
     async loadAgentRunDetail(runId) {

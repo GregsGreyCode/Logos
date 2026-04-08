@@ -338,6 +338,17 @@ class GatewayRunner:
         self.config = config or load_gateway_config()
         self.adapters: Dict[Platform, BasePlatformAdapter] = {}
 
+        # WorkerRegistry tracks connected OpenShell sandbox workers over
+        # WebSocket (/ws/worker). It lives on the runner, not on the HTTP
+        # layer, because the runner has a longer lifecycle and both the
+        # HTTP /chat endpoint and the platform dispatcher need to route
+        # tasks through it. http_api.start_http_api reads it from the
+        # runner at boot rather than creating its own copy. Platforms
+        # dispatch inbound messages through this registry via
+        # dispatch_platform_message below.
+        from gateway.worker_registry import WorkerRegistry
+        self.worker_registry = WorkerRegistry()
+
         # Load ephemeral config from config.yaml / env vars.
         # Both are injected at API-call time only and never persisted.
         self._prefill_messages = self._load_prefill_messages()
@@ -889,30 +900,47 @@ class GatewayRunner:
         
         connected_count = 0
 
-        # ── Platform adapters: DISABLED during OpenShell migration ──────
-        # Every inbound platform message used to run the AIAgent loop
-        # inside this gateway process via _handle_message → _run_agent.
-        # That path gave the agent the gateway's full privileges
-        # (env vars, API keys, auth DB access, no sandbox policy) and is
-        # the last remaining in-process execution site after the /chat
-        # pivot. Platforms stay offline until they are re-wired to
-        # dispatch through the sandbox WorkerRegistry (inbound) and
-        # expose outbound sends via the Logos Capabilities MCP Server.
-        #
-        # See docs/migration/platforms-as-gateway-mediated.md for the
-        # full plan and phase breakdown.
-        if self.config.platforms:
-            enabled = [p.value for p, c in self.config.platforms.items() if c.enabled]
-            if enabled:
-                logger.warning(
-                    "Platform adapters disabled during OpenShell migration: %s. "
-                    "See docs/migration/platforms-as-gateway-mediated.md.",
-                    ", ".join(enabled),
-                )
+        # ── Platform adapters: gateway-mediated (Phase 5.4) ─────────────
+        # Inbound messages no longer run the in-process AIAgent loop.
+        # set_message_handler is bound to dispatch_platform_message, which
+        # routes the event into a sandbox worker via WorkerRegistry. The
+        # gateway holds platform credentials but never executes agent
+        # code; the sandbox holds no credentials but executes the agent.
+        # See docs/migration/platforms-as-gateway-mediated.md.
+        for platform, platform_config in self.config.platforms.items():
+            if not platform_config.enabled:
+                continue
+            adapter = self._create_adapter(platform, platform_config)
+            if not adapter:
+                logger.warning("No adapter available for %s", platform.value)
+                continue
+            adapter.set_message_handler(self.dispatch_platform_message)
+            logger.info("Connecting to %s...", platform.value)
+            try:
+                success = await adapter.connect()
+                if success:
+                    self.adapters[platform] = adapter
+                    self._sync_voice_mode_state_to_adapter(adapter)
+                    connected_count += 1
+                    logger.info("✓ %s connected", platform.value)
+                else:
+                    logger.warning("✗ %s failed to connect", platform.value)
+            except Exception as e:
+                logger.error("✗ %s error: %s", platform.value, e)
 
         if connected_count == 0:
-            logger.info("Gateway running without platforms (migration in progress).")
-        
+            logger.info("Gateway running without platforms.")
+
+        # ── Bootstrap platform_routing for any newly-enabled platforms ──
+        # Each enabled platform needs at least one 'global' rule so
+        # dispatch_platform_message has a target. We seed it with the
+        # first named agent; the admin can later override via the
+        # Platforms dashboard.
+        try:
+            self._bootstrap_platform_routing()
+        except Exception as _bp_err:
+            logger.warning("platform routing bootstrap: %s", _bp_err)
+
         # Update delivery router with adapters
         self.delivery_router.adapters = self.adapters
         
@@ -1106,7 +1134,7 @@ class GatewayRunner:
         if not adapter:
             return {"ok": False, "message": f"No adapter available for {platform.value}"}
 
-        adapter.set_message_handler(self._handle_message)
+        adapter.set_message_handler(self.dispatch_platform_message)
         try:
             success = await adapter.connect()
             if success:
@@ -1204,10 +1232,220 @@ class GatewayRunner:
             check_ids.add(user_id.split("@")[0])
         return bool(check_ids & allowed_ids)
     
+    # ──────────────────────────────────────────────────────────────────
+    # Phase 5.4 — platform routing bootstrap
+    # ──────────────────────────────────────────────────────────────────
+
+    def _bootstrap_platform_routing(self) -> None:
+        """Ensure every enabled platform has a 'global' routing rule.
+
+        Idempotent: only writes a row if none exists for that platform.
+        Picks the first named agent as the default target. Admins can
+        override via Admin → Platforms after the fact.
+        """
+        if not self.config.platforms:
+            return
+        from gateway.auth import db as _auth_db
+        try:
+            agents = _auth_db.list_agents()
+        except Exception:
+            logger.exception("bootstrap routing: list_agents failed")
+            return
+        if not agents:
+            logger.info("bootstrap routing: no agents yet, skipping")
+            return
+        default_agent_id = agents[0]["id"]
+        for platform, pconfig in self.config.platforms.items():
+            if not pconfig.enabled:
+                continue
+            try:
+                existing = _auth_db.resolve_platform_routing(platform.value)
+                if existing:
+                    continue
+                _auth_db.upsert_platform_routing(
+                    platform=platform.value,
+                    scope="global",
+                    scope_id="",
+                    agent_id=default_agent_id,
+                )
+                logger.info(
+                    "bootstrap routing: %s → %s (global)",
+                    platform.value, agents[0].get("name", default_agent_id),
+                )
+            except Exception:
+                logger.exception("bootstrap routing: %s failed", platform.value)
+
+    # ──────────────────────────────────────────────────────────────────
+    # Phase 5.3 — dispatch_platform_message
+    # ──────────────────────────────────────────────────────────────────
+
+    async def dispatch_platform_message(self, event: MessageEvent) -> Optional[str]:
+        """Dispatch an inbound platform message to a sandbox worker.
+
+        Phase 5.3 implementation: resolves the target named agent,
+        builds a minimal task payload and calls
+        ``worker_registry.dispatch_task`` over the worker's WebSocket.
+
+        Agent resolution (Phase 5.4):
+          1. ``platform_routing`` table — most-specific match wins
+             (chat → user → global). Setup wizard seeds one ``global``
+             row per enabled platform pointing at the default agent.
+          2. Fallback: first named agent in the DB.
+
+        Failure modes returned as friendly strings (adapter will send
+        them to the user verbatim):
+          - no named agents in DB → "no agent configured"
+          - target worker not connected → "sandbox not ready"
+          - worker busy with another task → "agent is thinking"
+          - dispatch timeout → "agent took too long to respond"
+          - any other error → generic failure string
+
+        Authorisation, command handling (`/new` etc), attachments and
+        approval flows are still handled by ``_handle_message`` in the
+        legacy path. Phase 5.3 is a happy-path minimum — Phase 5.4+ will
+        port those pre-processing concerns into this method as the old
+        path is retired.
+        """
+        source = event.source
+        platform_name = source.platform.value if source and source.platform else "unknown"
+        user_id = source.user_id if source else ""
+        chat_id = source.chat_id if source else ""
+
+        # ── 1. Resolve target agent ───────────────────────────────────
+        try:
+            from gateway.auth import db as _auth_db
+            agents = _auth_db.list_agents()
+        except Exception as exc:
+            logger.exception("dispatch_platform_message: failed to load agents")
+            return "⚠️ Agent registry is unavailable right now. Please try again."
+
+        if not agents:
+            logger.warning(
+                "dispatch_platform_message: no named agents in DB (platform=%s user=%s)",
+                platform_name, user_id,
+            )
+            return (
+                "⚠️ No agent is configured on this Logos instance. "
+                "Open the web dashboard and create an agent to get started."
+            )
+
+        # 1a. Most-specific routing rule wins (chat → user → global).
+        agent = None
+        try:
+            rule = _auth_db.resolve_platform_routing(
+                platform=platform_name,
+                chat_id=chat_id or "",
+                user_id=user_id or "",
+            )
+        except Exception:
+            logger.exception("dispatch_platform_message: routing lookup failed")
+            rule = None
+        if rule and rule.get("agent_id"):
+            try:
+                agent = _auth_db.get_agent(rule["agent_id"])
+            except Exception:
+                logger.exception("dispatch_platform_message: get_agent failed")
+                agent = None
+
+        # 1b. Fallback: first named agent.
+        if agent is None:
+            agent = agents[0]
+        agent_name = agent.get("name", "")
+
+        # ── 2. Resolve the worker_id for this agent ───────────────────
+        try:
+            from gateway.executors.openshell import _sanitize_sandbox_name
+            worker_id = _sanitize_sandbox_name(f"hermes-{agent_name}")
+        except Exception:
+            logger.exception("dispatch_platform_message: sanitize_sandbox_name failed")
+            return "⚠️ Internal error resolving agent sandbox."
+
+        worker_entry = self.worker_registry.get(worker_id)
+        if not worker_entry or not worker_entry.healthy or not worker_entry.ws or worker_entry.ws.closed:
+            logger.info(
+                "dispatch_platform_message: worker %s not connected (platform=%s)",
+                worker_id, platform_name,
+            )
+            return (
+                f"⚠️ {agent_name}'s sandbox isn't connected right now. "
+                "Check Admin → Sandboxes on the dashboard, then try again."
+            )
+
+        # ── 3. Build session + history ────────────────────────────────
+        session_id = ""
+        session_key = ""
+        try:
+            session_entry = self.session_store.get_or_create_session(source)
+            session_id = session_entry.session_id
+            session_key = getattr(session_entry, "session_key", "")
+        except Exception:
+            logger.exception("dispatch_platform_message: session_store failure")
+            session_key = f"{platform_name}:{user_id or 'unknown'}"
+            session_id = session_key
+
+        # History is passed empty for 5.3 — the sandbox worker already
+        # maintains its own per-session context via session_id, and the
+        # web /chat path also passes an empty history on every turn. Rich
+        # history-injection for cross-session agent memory is a later
+        # phase concern.
+        history: list[dict] = []
+
+        # ── 4. Dispatch to sandbox worker ─────────────────────────────
+        import uuid as _uuid
+        context_prompt = (
+            f"You are being addressed on {platform_name} by user "
+            f"{getattr(source, 'user_name', None) or user_id or 'unknown'}. "
+            f"Respond naturally — the adapter will deliver your reply to the channel."
+        )
+        task_payload = {
+            "type":           "run_conversation",
+            "task_id":        str(_uuid.uuid4()),
+            "session_id":     session_id,
+            "session_key":    session_key,
+            "message":        event.text or "",
+            "history":        history,
+            "context_prompt": context_prompt,
+            "toolsets":       worker_entry.toolsets or ["hermes-cli"],
+            "max_iterations": int(os.environ.get(
+                "LOGOS_MAX_ITERATIONS",
+                os.environ.get("HERMES_MAX_ITERATIONS", "90"),
+            )),
+        }
+
+        try:
+            result = await self.worker_registry.dispatch_task(
+                worker_id, task_payload,
+                timeout=float(os.environ.get(
+                    "LOGOS_AGENT_TIMEOUT",
+                    os.environ.get("HERMES_AGENT_TIMEOUT", "300"),
+                )),
+                on_stream_event=None,  # no progress forwarding in v1
+            )
+        except asyncio.TimeoutError:
+            logger.warning("dispatch_platform_message: worker %s timed out", worker_id)
+            return "⚠️ The agent took too long to respond. Please try again."
+        except ConnectionError as exc:
+            logger.info("dispatch_platform_message: worker %s disconnected: %s", worker_id, exc)
+            return f"⚠️ {agent_name}'s sandbox disconnected mid-task. Please try again."
+        except RuntimeError as exc:
+            # Busy-worker path — WorkerRegistry raises RuntimeError
+            logger.info("dispatch_platform_message: worker %s busy: %s", worker_id, exc)
+            return f"⚠️ {agent_name} is still working on another message. Please wait."
+        except Exception:
+            logger.exception("dispatch_platform_message: dispatch_task failed")
+            return "⚠️ The agent hit an unexpected error. Check the gateway logs."
+
+        # ── 5. Return the adapter-friendly final response ────────────
+        final = (result or {}).get("final_response") or ""
+        if not final:
+            logger.warning("dispatch_platform_message: worker returned empty final_response")
+            return "⚠️ The agent returned an empty response."
+        return final
+
     async def _handle_message(self, event: MessageEvent) -> Optional[str]:
         """
         Handle an incoming message from any platform.
-        
+
         This is the core message processing pipeline:
         1. Check user authorization
         2. Check for commands (/new, /reset, etc.)
