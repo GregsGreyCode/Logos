@@ -2563,9 +2563,27 @@ async def _handle_chat(request: web.Request) -> web.StreamResponse:
         except Exception as _pe:
             logger.warning("Failed to resolve action policy for %s: %s", _real_user_id, _pe)
 
+    # ── Resolve the target sandbox worker first ──
+    # We need the worker's `registered_at` timestamp BEFORE building the
+    # session source so the transcript can be scoped to a single sandbox
+    # incarnation. When the sandbox dies and respawns (agent deleted +
+    # recreated, crash/restart, k3s reschedule, etc.) the new worker gets
+    # a fresh `registered_at`, which yields a brand-new session_id and
+    # therefore an empty transcript — the agent wakes up with no memory
+    # of the prior incarnation, exactly as the user expects.
+    from gateway.executors.openshell import _sanitize_sandbox_name
+    target_worker = body.get("worker_id") or _sanitize_sandbox_name(
+        f"hermes-{_agent_config.get('name', '')}"
+    )
+    worker_registry = request.app.get("worker_registry")
+    worker_entry = worker_registry.get(target_worker) if worker_registry else None
+    incarnation_tag = ""
+    if worker_entry and worker_entry.registered_at:
+        incarnation_tag = f"-w{int(worker_entry.registered_at)}"
+
     source = SessionSource(
         platform=Platform.LOCAL,
-        chat_id=session_id,
+        chat_id=f"{session_id}{incarnation_tag}",
         chat_type="dm",
         user_id=user_id,
         user_name=user_name,
@@ -2640,16 +2658,9 @@ async def _handle_chat(request: web.Request) -> web.StreamResponse:
     result = {}
     t_agent_start = time.time()
     try:
-        # OpenShell-only routing: resolve the target sandbox worker for this
-        # named agent. The worker_id is deterministically derived from the
-        # agent name (same sanitization OpenShellExecutor uses when spawning).
-        from gateway.executors.openshell import _sanitize_sandbox_name
-        target_worker = body.get("worker_id") or _sanitize_sandbox_name(
-            f"hermes-{_agent_config.get('name', '')}"
-        )
-        worker_registry = request.app.get("worker_registry")
-        worker_entry = worker_registry.get(target_worker) if worker_registry else None
-
+        # Worker + incarnation tag were resolved above, before the session
+        # was built. Re-check liveness here in case the worker dropped off
+        # between session creation and dispatch.
         if not (worker_entry and worker_entry.healthy and worker_entry.ws and not worker_entry.ws.closed):
             # Sandbox worker is not connected or not healthy. Do NOT silently
             # fall back to an in-process runner — that would run the user's
@@ -2718,6 +2729,29 @@ async def _handle_chat(request: web.Request) -> web.StreamResponse:
             }
             final = result.get("final_response", "")
             await send_event({"type": "message", "content": final})
+
+            # ── Persist this turn so the next message in the same sandbox
+            # incarnation sees the full transcript. Without this the agent
+            # would re-enter every turn with empty `history` and behave
+            # like an amnesic ("It looks like we're at the start of this
+            # thread"). The session_id is sandbox-incarnation-aware (see
+            # the worker resolution block above), so a sandbox respawn
+            # automatically resets memory by switching to a fresh row.
+            try:
+                runner.session_store.append_to_transcript(
+                    session_entry.session_id,
+                    {"role": "user", "content": message},
+                )
+                if final:
+                    runner.session_store.append_to_transcript(
+                        session_entry.session_id,
+                        {"role": "assistant", "content": final},
+                    )
+            except Exception as _persist_err:
+                logger.warning(
+                    "Failed to persist chat turn for session %s: %s",
+                    session_entry.session_id, _persist_err,
+                )
     except Exception as exc:
         logger.exception("Error running agent for HTTP /chat")
         err_str = str(exc)
