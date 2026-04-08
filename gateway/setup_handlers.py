@@ -2478,45 +2478,6 @@ async def handle_setup_test(request: web.Request) -> web.Response:
     return response
 
 
-async def handle_setup_test_k8s(request: web.Request) -> web.Response:
-    """Test Kubernetes connectivity for the chosen execution environment."""
-    try:
-        body = await request.json()
-    except Exception:
-        return web.json_response({"error": "invalid_json"}, status=400)
-
-    mode            = body.get("mode", "incluster")   # "incluster" | "kubeconfig"
-    namespace       = body.get("namespace", "hermes")
-    kubeconfig_text = body.get("kubeconfig", "")
-
-    try:
-        from kubernetes import client as _kc, config as _kcfg
-        # Always use an explicit Configuration so we don't pollute (or inherit
-        # from) the global in-cluster config that may already be loaded.
-        cfg = _kc.Configuration()
-        if mode == "incluster":
-            _kcfg.load_incluster_config(client_configuration=cfg)
-        else:
-            if not kubeconfig_text.strip():
-                return web.json_response({"ok": False, "error": "kubeconfig is empty"}, status=400)
-            import tempfile, os as _os
-            with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
-                f.write(kubeconfig_text)
-                tmp = f.name
-            try:
-                _kcfg.load_kube_config(config_file=tmp, client_configuration=cfg)
-            finally:
-                _os.unlink(tmp)
-
-        with _kc.ApiClient(cfg) as api_client:
-            v1 = _kc.CoreV1Api(api_client)
-            pod_list = v1.list_namespaced_pod(namespace, limit=1)
-            count = len(pod_list.items)
-        return web.json_response({"ok": True, "namespace": namespace, "pod_count": count})
-    except Exception as exc:
-        return web.json_response({"ok": False, "error": str(exc)[:300]}, status=200)
-
-
 _FRONTIER_PROVIDERS = {
     "anthropic": {
         "base_url": "https://api.anthropic.com/v1",

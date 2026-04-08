@@ -11,8 +11,8 @@ data:
   OPENAI_BASE_URL: "http://ai-router.hermes.svc.cluster.local:9001/v1"
   HERMES_MODEL: "qwen/qwen3.5-9b"
   LLM_MODEL: "balanced"
-  LOGOS_RUNTIME_MODE: "kubernetes"
-  HERMES_RUNTIME_MODE: "kubernetes"  # deprecated alias — kept for legacy in-flight code
+  LOGOS_RUNTIME_MODE: "openshell"
+  HERMES_RUNTIME_MODE: "openshell"  # deprecated alias — kept for legacy in-flight code
   # Wipe setup state on every pod start so the setup wizard always runs fresh.
   # Useful during active development. Set to "false" to preserve state across restarts.
   LOGOS_WIPE_ON_START: "true"

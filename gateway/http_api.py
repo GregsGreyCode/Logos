@@ -89,21 +89,8 @@ except Exception:
 _BUILD_SHA = os.environ.get("BUILD_SHA", "local")[:7]
 _VERSION_LABEL = f"v{_APP_VERSION} · {_BUILD_SHA}{' · canary' if _IS_CANARY else ''}"
 _SERVER_START_TS = str(int(__import__("time").time()))  # unique per pod start; used to invalidate setup localStorage
-# K8s constants and helpers — extracted to gateway/executors/k8s_helpers.py
-from gateway.executors.k8s_helpers import (
-    HERMES_NAMESPACE as _HERMES_NAMESPACE,
-    INSTANCE_CPU_REQUEST as _INSTANCE_CPU_REQUEST,
-    INSTANCE_MEM_REQUEST as _INSTANCE_MEM_REQUEST,
-    INSTANCE_CPU_LIMIT as _INSTANCE_CPU_LIMIT,
-    INSTANCE_MEM_LIMIT as _INSTANCE_MEM_LIMIT,
-    SPAWN_CPU_THRESHOLD as _SPAWN_CPU_THRESHOLD,
-    SPAWN_MEM_THRESHOLD as _SPAWN_MEM_THRESHOLD,
-    k8s_clients as _k8s_clients,
-    safe_k8s_name as _safe_k8s_name,
-    cluster_resources as _cluster_resources,
-    list_hermes_instances as _list_hermes_instances,
-    delete_hermes_instance as _delete_instance,
-)
+# Generic instance-name sanitiser (used by every executor for naming).
+from gateway.executors.k8s_helpers import safe_k8s_name as _safe_k8s_name
 
 # In-memory request queue for instances that couldn't spawn due to resource constraints
 _instance_queue: list[dict] = []
@@ -3080,7 +3067,6 @@ async def start_http_api(runner: Any, port: int = 8091) -> None:
     app.router.add_post("/api/setup/pull",    _sh.handle_setup_pull)
     app.router.add_post("/api/setup/compare", _sh.handle_setup_compare)
     app.router.add_post("/api/setup/compare/cancel-server", _sh.handle_setup_compare_cancel_server)
-    app.router.add_post("/api/setup/test-k8s", _sh.handle_setup_test_k8s)
     app.router.add_post("/api/setup/test",    _sh.handle_setup_test)
     app.router.add_get("/api/setup/model-catalog",       _sh.handle_model_catalog)
     app.router.add_post("/api/setup/validate-provider", _sh.handle_validate_provider)

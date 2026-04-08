@@ -1436,15 +1436,13 @@ def setup_terminal_backend(config: dict):
     # Build backend choices with descriptions
     terminal_choices = [
         "Local - run directly on this machine (default)",
-        "Docker - isolated container with configurable resources",
-        "Modal - serverless cloud sandbox",
         "SSH - run on a remote machine",
         "Daytona - persistent cloud development environment",
     ]
-    idx_to_backend = {0: "local", 1: "docker", 2: "modal", 3: "ssh", 4: "daytona"}
-    backend_to_idx = {"local": 0, "docker": 1, "modal": 2, "ssh": 3, "daytona": 4}
+    idx_to_backend = {0: "local", 1: "ssh", 2: "daytona"}
+    backend_to_idx = {"local": 0, "ssh": 1, "daytona": 2}
 
-    next_idx = 5
+    next_idx = 3
     if is_linux:
         terminal_choices.append("Singularity/Apptainer - HPC-friendly container")
         idx_to_backend[next_idx] = "singularity"
@@ -1500,27 +1498,6 @@ def setup_terminal_backend(config: dict):
                     save_env_value("SUDO_PASSWORD", sudo_pass)
                     print_success("Sudo password saved")
 
-    elif selected_backend == "docker":
-        print_success("Terminal backend: Docker")
-
-        # Check if Docker is available
-        docker_bin = shutil.which("docker")
-        if not docker_bin:
-            print_warning("Docker not found in PATH!")
-            print_info("Install Docker: https://docs.docker.com/get-docker/")
-        else:
-            print_info(f"Docker found: {docker_bin}")
-
-        # Docker image
-        current_image = config.get("terminal", {}).get(
-            "docker_image", "python:3.11-slim"
-        )
-        image = prompt("  Docker image", current_image)
-        config["terminal"]["docker_image"] = image
-        save_env_value("TERMINAL_DOCKER_IMAGE", image)
-
-        _prompt_container_resources(config)
-
     elif selected_backend == "singularity":
         print_success("Terminal backend: Singularity/Apptainer")
 
@@ -1540,69 +1517,6 @@ def setup_terminal_backend(config: dict):
         image = prompt("  Container image", current_image)
         config["terminal"]["singularity_image"] = image
         save_env_value("TERMINAL_SINGULARITY_IMAGE", image)
-
-        _prompt_container_resources(config)
-
-    elif selected_backend == "modal":
-        print_success("Terminal backend: Modal")
-        print_info("Serverless cloud sandboxes. Each session gets its own container.")
-        print_info("Requires a Modal account: https://modal.com")
-
-        # Check if swe-rex[modal] is installed
-        try:
-            __import__("swe_rex")
-        except ImportError:
-            print_info("Installing swe-rex[modal]...")
-            import subprocess
-
-            uv_bin = shutil.which("uv")
-            if uv_bin:
-                result = subprocess.run(
-                    [
-                        uv_bin,
-                        "pip",
-                        "install",
-                        "--python",
-                        sys.executable,
-                        "swe-rex[modal]",
-                    ],
-                    capture_output=True,
-                    text=True,
-                )
-            else:
-                result = subprocess.run(
-                    [sys.executable, "-m", "pip", "install", "swe-rex[modal]"],
-                    capture_output=True,
-                    text=True,
-                )
-            if result.returncode == 0:
-                print_success("swe-rex[modal] installed")
-            else:
-                print_warning(
-                    "Install failed — run manually: pip install 'swe-rex[modal]'"
-                )
-
-        # Modal token
-        print()
-        print_info("Modal authentication:")
-        print_info("  Get your token at: https://modal.com/settings")
-        existing_token = get_env_value("MODAL_TOKEN_ID")
-        if existing_token:
-            print_info("  Modal token: already configured")
-            if prompt_yes_no("  Update Modal credentials?", False):
-                token_id = prompt("    Modal Token ID", password=True)
-                token_secret = prompt("    Modal Token Secret", password=True)
-                if token_id:
-                    save_env_value("MODAL_TOKEN_ID", token_id)
-                if token_secret:
-                    save_env_value("MODAL_TOKEN_SECRET", token_secret)
-        else:
-            token_id = prompt("    Modal Token ID", password=True)
-            token_secret = prompt("    Modal Token Secret", password=True)
-            if token_id:
-                save_env_value("MODAL_TOKEN_ID", token_id)
-            if token_secret:
-                save_env_value("MODAL_TOKEN_SECRET", token_secret)
 
         _prompt_container_resources(config)
 

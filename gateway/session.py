@@ -223,7 +223,7 @@ def build_session_context_prompt(context: SessionContext) -> str:
     ]
 
     # Deployment environment
-    mode_label = {"kubernetes": "Kubernetes", "openshell": "OpenShell"}.get(context.runtime_mode, "Local")
+    mode_label = {"openshell": "OpenShell", "docker": "Docker"}.get(context.runtime_mode, "Local")
     platform_label = {"windows": "Windows", "darwin": "macOS"}.get(context.host_platform, "Linux")
     lines.append(f"**Deployment:** {mode_label} ({platform_label})")
 

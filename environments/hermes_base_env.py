@@ -41,12 +41,6 @@ _env_path = _repo_root / ".env"
 if _env_path.exists():
     load_dotenv(dotenv_path=_env_path)
 
-# Apply monkey patches for async-safe tool operation inside Atropos's event loop.
-# This patches SwerexModalEnvironment to use a background thread instead of
-# asyncio.run(), which would deadlock inside Atropos. Safe for normal CLI too.
-from environments.patches import apply_patches
-apply_patches()
-
 from atroposlib.envs.base import (
     BaseEnv,
     BaseEnvConfig,
@@ -114,8 +108,8 @@ class HermesAgentEnvConfig(BaseEnvConfig):
     # --- Terminal backend ---
     terminal_backend: str = Field(
         default="local",
-        description="Terminal backend: 'local', 'docker', 'modal', 'daytona', 'ssh', 'singularity'. "
-        "Modal or Daytona recommended for production RL (cloud isolation per rollout).",
+        description="Terminal backend: 'local', 'daytona', 'ssh', 'singularity'. "
+        "Daytona recommended for production RL (cloud isolation per rollout).",
     )
     terminal_timeout: int = Field(
         default=120,

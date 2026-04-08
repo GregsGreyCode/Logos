@@ -1,7 +1,7 @@
 """
 Unit tests for gateway/executors — LocalProcessExecutor, DockerSandboxExecutor,
-and build_executor factory.
-KubernetesExecutor tests are integration-level (require k8s) and are in tests/integration/.
+and build_executor factory. The legacy KubernetesExecutor was removed when
+OpenShell became the canonical sandbox runtime.
 """
 
 from __future__ import annotations
@@ -26,11 +26,6 @@ from gateway.executors.docker import DockerSandboxExecutor
 # ---------------------------------------------------------------------------
 
 class TestBuildExecutor:
-    def test_kubernetes_mode_returns_k8s_executor(self):
-        from gateway.executors.kubernetes import KubernetesExecutor
-        executor = build_executor("kubernetes")
-        assert isinstance(executor, KubernetesExecutor)
-
     def test_local_mode_returns_local_executor(self):
         executor = build_executor("local")
         assert isinstance(executor, LocalProcessExecutor)
@@ -561,27 +556,43 @@ class TestConfigRuntimeSection:
 
 class TestRuntimeModeInjectedToWindow:
     def test_runtime_mode_env_var_read_from_environ(self, monkeypatch):
-        """HERMES_RUNTIME_MODE env var drives runtime mode; defaults to 'kubernetes'."""
+        """LOGOS_RUNTIME_MODE env var drives runtime mode; defaults to 'openshell'."""
+        monkeypatch.delenv("LOGOS_RUNTIME_MODE", raising=False)
         monkeypatch.delenv("HERMES_RUNTIME_MODE", raising=False)
-        value = os.environ.get("HERMES_RUNTIME_MODE", "kubernetes")
-        assert value == "kubernetes"
+        value = (
+            os.environ.get("LOGOS_RUNTIME_MODE")
+            or os.environ.get("HERMES_RUNTIME_MODE")
+            or "openshell"
+        )
+        assert value == "openshell"
 
     def test_runtime_mode_env_var_override(self, monkeypatch):
-        monkeypatch.setenv("HERMES_RUNTIME_MODE", "local")
-        value = os.environ.get("HERMES_RUNTIME_MODE", "kubernetes")
+        monkeypatch.setenv("LOGOS_RUNTIME_MODE", "local")
+        value = (
+            os.environ.get("LOGOS_RUNTIME_MODE")
+            or os.environ.get("HERMES_RUNTIME_MODE")
+            or "openshell"
+        )
         assert value == "local"
 
-    def test_runtime_mode_kubernetes_override(self, monkeypatch):
-        monkeypatch.setenv("HERMES_RUNTIME_MODE", "kubernetes")
-        value = os.environ.get("HERMES_RUNTIME_MODE", "kubernetes")
-        assert value == "kubernetes"
+    def test_runtime_mode_legacy_hermes_var_still_honored(self, monkeypatch):
+        monkeypatch.delenv("LOGOS_RUNTIME_MODE", raising=False)
+        monkeypatch.setenv("HERMES_RUNTIME_MODE", "docker")
+        value = (
+            os.environ.get("LOGOS_RUNTIME_MODE")
+            or os.environ.get("HERMES_RUNTIME_MODE")
+            or "openshell"
+        )
+        assert value == "docker"
 
     def test_http_api_runtime_mode_constant_matches_env(self, monkeypatch):
         """The _RUNTIME_MODE constant in http_api is derived from the env var."""
-        # We verify the pattern used in http_api.py is consistent:
-        # os.environ.get("HERMES_RUNTIME_MODE", "kubernetes")
-        monkeypatch.setenv("HERMES_RUNTIME_MODE", "local")
-        derived = os.environ.get("HERMES_RUNTIME_MODE", "kubernetes")
+        monkeypatch.setenv("LOGOS_RUNTIME_MODE", "local")
+        derived = (
+            os.environ.get("LOGOS_RUNTIME_MODE")
+            or os.environ.get("HERMES_RUNTIME_MODE")
+            or "openshell"
+        )
         assert derived == "local"
 
 
