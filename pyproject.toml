@@ -35,15 +35,11 @@ dependencies = [
   # Text-to-speech (Edge TTS is free, no API key needed)
   "edge-tts",
   "faster-whisper>=1.0.0",
-  # mini-swe-agent deps (terminal tool)
-  "typer",
-  "platformdirs",
   # Skills Hub (GitHub App JWT auth — optional, only needed for bot identity)
   "PyJWT[crypto]",
 ]
 
 [project.optional-dependencies]
-modal = ["swe-rex[modal]>=1.4.0"]
 daytona = ["daytona>=0.148.0"]
 dev = ["pytest", "pytest-asyncio", "pytest-xdist", "mcp>=1.2.0"]
 messaging = ["python-telegram-bot>=20.0", "discord.py[voice]>=2.0", "aiohttp>=3.9.0", "slack-bolt>=1.18.0", "slack-sdk>=3.27.0", "argon2-cffi>=23.1.0"]
@@ -70,7 +66,6 @@ rl = [
 ]
 yc-bench = ["yc-bench @ git+https://github.com/collinear-ai/yc-bench.git"]
 all = [
-  "logos[modal]",
   "logos[daytona]",
   "logos[messaging]",
   "logos[cron]",

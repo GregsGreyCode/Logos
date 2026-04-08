@@ -110,8 +110,8 @@ services:
     environment:
       LOGOS_JWT_SECRET: "${LOGOS_JWT_SECRET:-${HERMES_JWT_SECRET:-}}"
       HERMES_JWT_SECRET: "${LOGOS_JWT_SECRET:-${HERMES_JWT_SECRET:-}}"  # deprecated alias
-      LOGOS_RUNTIME_MODE: "kubernetes"
-      HERMES_RUNTIME_MODE: "kubernetes"  # deprecated alias
+      LOGOS_RUNTIME_MODE: "openshell"
+      HERMES_RUNTIME_MODE: "openshell"  # deprecated alias
       LOGOS_PORT: "8080"
       HERMES_PORT: "8080"  # deprecated alias — kept for legacy in-flight code
       LOGOS_INSTANCE_NAME: "${LOGOS_INSTANCE_NAME:-${HERMES_INSTANCE_NAME:-Hermes}}"

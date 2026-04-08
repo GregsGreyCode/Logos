@@ -1,19 +1,22 @@
 #!/usr/bin/env python3
 """
-Terminal Tool Module (mini-swe-agent backend)
+Terminal Tool Module
 
-A terminal tool that executes commands using mini-swe-agent's execution environments.
-Supports local execution, Docker containers, and Modal cloud sandboxes.
+A terminal tool that executes commands in one of several backends, all
+implemented in tools/environments/. The mini-swe-agent vendored library
+and its docker/modal wrappers were removed when OpenShell became the
+canonical sandbox runtime — agents inside an OpenShell sandbox use the
+"local" backend, which executes inside the already-isolated container.
 
 Environment Selection (via TERMINAL_ENV environment variable):
-- "local": Execute directly on the host machine (default, fastest)
-- "docker": Execute in Docker containers (isolated, requires Docker)
-- "modal": Execute in Modal cloud sandboxes (scalable, requires Modal account)
+- "local"       : Execute directly on the host (default, fastest)
+- "singularity" : Execute inside an Apptainer/Singularity container (Linux only)
+- "ssh"         : Execute on a remote machine via SSH
+- "daytona"     : Execute in a Daytona persistent cloud sandbox
 
 Features:
-- Multiple execution backends (local, docker, modal)
 - Background task support
-- VM/container lifecycle management
+- Container lifecycle management
 - Automatic cleanup after inactivity
 
 Usage:
@@ -52,13 +55,6 @@ logger = logging.getLogger(__name__)
 # long-running subprocesses immediately instead of blocking until timeout.
 # ---------------------------------------------------------------------------
 from tools.interrupt import set_interrupt as set_interrupt_event, is_interrupted, _interrupt_event
-
-
-# Add mini-swe-agent to path if not installed. In git worktrees the populated
-# submodule may live in the main checkout rather than the worktree itself.
-from core.minisweagent_path import ensure_minisweagent_on_path
-
-ensure_minisweagent_on_path(Path(__file__).resolve().parent.parent)
 
 
 # =============================================================================
@@ -320,13 +316,13 @@ def _transform_sudo_command(command: str) -> tuple[str, str | None]:
           returned unchanged so it fails gracefully with
           "sudo: a password is required".
 
-    Callers that drive a subprocess directly (local, ssh, docker, singularity)
-    should prepend sudo_stdin to their stdin_data and pass the merged bytes to
-    Popen's stdin pipe.
+    Callers that drive a subprocess directly (local, ssh, singularity) should
+    prepend sudo_stdin to their stdin_data and pass the merged bytes to Popen's
+    stdin pipe.
 
-    Callers that cannot pipe subprocess stdin (modal, daytona) must embed the
-    password in the command string themselves; see their execute() methods for
-    how they handle the non-None sudo_stdin case.
+    Callers that cannot pipe subprocess stdin (daytona) must embed the password
+    in the command string themselves; see their execute() methods for how they
+    handle the non-None sudo_stdin case.
 
     If SUDO_PASSWORD is not set and in interactive mode (HERMES_INTERACTIVE=1):
       Prompts user for password with 45s timeout, caches for session.
@@ -368,12 +364,14 @@ def _transform_sudo_command(command: str) -> tuple[str, str | None]:
     return transformed, sudo_password + "\n"
 
 
-# Environment classes now live in tools/environments/
+# Environment classes live in tools/environments/. The docker/modal wrappers
+# (which depended on the now-removed mini-swe-agent vendored library) were
+# deleted when OpenShell became the canonical sandbox runtime — agents inside
+# an OpenShell sandbox use the "local" backend, which is already isolated by
+# the surrounding container.
 from tools.environments.local import LocalEnvironment as _LocalEnvironment
 from tools.environments.singularity import SingularityEnvironment as _SingularityEnvironment
 from tools.environments.ssh import SSHEnvironment as _SSHEnvironment
-from tools.environments.docker import DockerEnvironment as _DockerEnvironment
-from tools.environments.modal import ModalEnvironment as _ModalEnvironment
 
 
 # Tool description for LLM
@@ -405,10 +403,10 @@ _cleanup_thread = None
 _cleanup_running = False
 
 # Per-task environment overrides registry.
-# Allows environments (e.g., TerminalBench2Env) to specify a custom Docker/Modal
-# image for a specific task_id BEFORE the agent loop starts. When the terminal or
-# file tools create a new sandbox for that task_id, they check this registry first
-# and fall back to the TERMINAL_MODAL_IMAGE (etc.) env var if no override is set.
+# Allows environments (e.g., TerminalBench2Env) to specify a custom sandbox
+# image for a specific task_id BEFORE the agent loop starts. When the terminal
+# or file tools create a new sandbox for that task_id, they check this registry
+# first and fall back to the TERMINAL_*_IMAGE env var if no override is set.
 #
 # This is never exposed to the model -- only infrastructure code calls it.
 # Thread-safe because each task_id is unique per rollout.
@@ -420,12 +418,12 @@ def register_task_env_overrides(task_id: str, overrides: Dict[str, Any]):
     Register environment overrides for a specific task/rollout.
 
     Called by Atropos environments before the agent loop to configure
-    per-task sandbox settings (e.g., a custom Dockerfile for the Modal image).
+    per-task sandbox settings.
 
     Supported override keys:
-        - modal_image: str -- Path to Dockerfile or Docker Hub image name
-        - docker_image: str -- Docker image name
-        - cwd: str -- Working directory inside the sandbox
+        - singularity_image: str -- Singularity/Apptainer image name
+        - daytona_image:     str -- Daytona sandbox image name
+        - cwd:               str -- Working directory inside the sandbox
 
     Args:
         task_id: The rollout's unique task identifier
@@ -480,7 +478,7 @@ def _get_env_config() -> Dict[str, Any]:
     # catches the case where cli.py (or .env) leaked the host's CWD.
     # SSH is excluded since /home/ paths are valid on remote machines.
     cwd = os.getenv("TERMINAL_CWD", default_cwd)
-    if env_type in ("modal", "docker", "singularity", "daytona") and cwd:
+    if env_type in ("singularity", "daytona") and cwd:
         # Host paths that won't exist inside containers
         host_prefixes = ("/Users/", "/home/", "C:\\", "C:/")
         if any(cwd.startswith(p) for p in host_prefixes) and cwd != default_cwd:
@@ -491,9 +489,7 @@ def _get_env_config() -> Dict[str, Any]:
 
     return {
         "env_type": env_type,
-        "docker_image": os.getenv("TERMINAL_DOCKER_IMAGE", default_image),
         "singularity_image": os.getenv("TERMINAL_SINGULARITY_IMAGE", f"docker://{default_image}"),
-        "modal_image": os.getenv("TERMINAL_MODAL_IMAGE", default_image),
         "daytona_image": os.getenv("TERMINAL_DAYTONA_IMAGE", default_image),
         "cwd": cwd,
         "timeout": _parse_env_var("TERMINAL_TIMEOUT", "180"),
@@ -503,12 +499,11 @@ def _get_env_config() -> Dict[str, Any]:
         "ssh_user": os.getenv("TERMINAL_SSH_USER", ""),
         "ssh_port": _parse_env_var("TERMINAL_SSH_PORT", "22"),
         "ssh_key": os.getenv("TERMINAL_SSH_KEY", ""),
-        # Container resource config (applies to docker, singularity, modal, daytona -- ignored for local/ssh)
+        # Container resource config (applies to singularity, daytona -- ignored for local/ssh)
         "container_cpu": _parse_env_var("TERMINAL_CONTAINER_CPU", "1", float, "number"),
         "container_memory": _parse_env_var("TERMINAL_CONTAINER_MEMORY", "5120"),     # MB (default 5GB)
         "container_disk": _parse_env_var("TERMINAL_CONTAINER_DISK", "51200"),        # MB (default 50GB)
         "container_persistent": os.getenv("TERMINAL_CONTAINER_PERSISTENT", "true").lower() in ("true", "1", "yes"),
-        "docker_volumes": _parse_env_var("TERMINAL_DOCKER_VOLUMES", "[]", json.loads, "valid JSON"),
     }
 
 
@@ -516,17 +511,17 @@ def _create_environment(env_type: str, image: str, cwd: str, timeout: int,
                         ssh_config: dict = None, container_config: dict = None,
                         task_id: str = "default"):
     """
-    Create an execution environment from mini-swe-agent.
-    
+    Create an execution environment.
+
     Args:
-        env_type: One of "local", "docker", "singularity", "modal", "daytona", "ssh"
-        image: Docker/Singularity/Modal image name (ignored for local/ssh)
+        env_type: One of "local", "singularity", "daytona", "ssh"
+        image: Singularity/Daytona image name (ignored for local/ssh)
         cwd: Working directory
         timeout: Default command timeout
         ssh_config: SSH connection config (for env_type="ssh")
         container_config: Resource config for container backends (cpu, memory, disk, persistent)
         task_id: Task identifier for environment reuse and snapshot keying
-        
+
     Returns:
         Environment instance with execute() method
     """
@@ -535,46 +530,17 @@ def _create_environment(env_type: str, image: str, cwd: str, timeout: int,
     memory = cc.get("container_memory", 5120)
     disk = cc.get("container_disk", 51200)
     persistent = cc.get("container_persistent", True)
-    volumes = cc.get("docker_volumes", [])
 
     if env_type == "local":
         return _LocalEnvironment(cwd=cwd, timeout=timeout)
-    
-    elif env_type == "docker":
-        return _DockerEnvironment(
-            image=image, cwd=cwd, timeout=timeout,
-            cpu=cpu, memory=memory, disk=disk,
-            persistent_filesystem=persistent, task_id=task_id,
-            volumes=volumes,
-        )
-    
+
     elif env_type == "singularity":
         return _SingularityEnvironment(
             image=image, cwd=cwd, timeout=timeout,
             cpu=cpu, memory=memory, disk=disk,
             persistent_filesystem=persistent, task_id=task_id,
         )
-    
-    elif env_type == "modal":
-        sandbox_kwargs = {}
-        if cpu > 0:
-            sandbox_kwargs["cpu"] = cpu
-        if memory > 0:
-            sandbox_kwargs["memory"] = memory
-        if disk > 0:
-            try:
-                import inspect, modal
-                if "ephemeral_disk" in inspect.signature(modal.Sandbox.create).parameters:
-                    sandbox_kwargs["ephemeral_disk"] = disk
-            except Exception:
-                pass
-        
-        return _ModalEnvironment(
-            image=image, cwd=cwd, timeout=timeout,
-            modal_sandbox_kwargs=sandbox_kwargs,
-            persistent_filesystem=persistent, task_id=task_id,
-        )
-    
+
     elif env_type == "daytona":
         # Lazy import so daytona SDK is only required when backend is selected.
         from tools.environments.daytona import DaytonaEnvironment as _DaytonaEnvironment
@@ -597,7 +563,7 @@ def _create_environment(env_type: str, image: str, cwd: str, timeout: int,
         )
 
     else:
-        raise ValueError(f"Unknown environment type: {env_type}. Use 'local', 'docker', 'singularity', 'modal', 'daytona', or 'ssh'")
+        raise ValueError(f"Unknown environment type: {env_type}. Use 'local', 'singularity', 'daytona', or 'ssh'")
 
 
 def _cleanup_inactive_envs(lifetime_seconds: int = 300):
@@ -864,14 +830,10 @@ def terminal_tool(
         # Check per-task overrides (set by environments like TerminalBench2Env)
         # before falling back to global env var config
         overrides = _task_env_overrides.get(effective_task_id, {})
-        
+
         # Select image based on env type, with per-task override support
-        if env_type == "docker":
-            image = overrides.get("docker_image") or config["docker_image"]
-        elif env_type == "singularity":
+        if env_type == "singularity":
             image = overrides.get("singularity_image") or config["singularity_image"]
-        elif env_type == "modal":
-            image = overrides.get("modal_image") or config["modal_image"]
         elif env_type == "daytona":
             image = overrides.get("daytona_image") or config["daytona_image"]
         else:
@@ -993,13 +955,12 @@ def terminal_tool(
                             }
 
                         container_config = None
-                        if env_type in ("docker", "singularity", "modal", "daytona"):
+                        if env_type in ("singularity", "daytona"):
                             container_config = {
                                 "container_cpu": config.get("container_cpu", 1),
                                 "container_memory": config.get("container_memory", 5120),
                                 "container_disk": config.get("container_disk", 51200),
                                 "container_persistent": config.get("container_persistent", True),
-                                "docker_volumes": config.get("docker_volumes", []),
                             }
 
                         new_env = _create_environment(
@@ -1015,7 +976,7 @@ def terminal_tool(
                         return json.dumps({
                             "output": "",
                             "exit_code": -1,
-                            "error": f"Terminal tool disabled: mini-swe-agent not available ({e})",
+                            "error": f"Terminal tool backend not available ({e})",
                             "status": "disabled"
                         }, ensure_ascii=False)
 
@@ -1210,32 +1171,16 @@ def terminal_tool(
 def check_terminal_requirements() -> bool:
     """Check if all requirements for the terminal tool are met.
 
-    Important: local and singularity backends now use Hermes' own environment
-    wrappers directly and do not require the ``minisweagent`` Python package to
-    be installed. Docker and Modal still rely on mini-swe-agent internals.
+    Every backend uses Logos' own environment wrappers in
+    ``tools/environments/`` — there are no external library dependencies
+    beyond the optional Daytona SDK.
     """
     config = _get_env_config()
     env_type = config["env_type"]
 
     try:
         if env_type == "local":
-            # Local execution uses Hermes' own LocalEnvironment wrapper and does
-            # not depend on minisweagent being importable.
             return True
-
-        elif env_type == "docker":
-            ensure_minisweagent_on_path(Path(__file__).resolve().parent.parent)
-            if importlib.util.find_spec("minisweagent") is None:
-                logger.error("mini-swe-agent is required for docker terminal backend but is not importable")
-                return False
-            # Check if docker is available (use find_docker for macOS PATH issues)
-            from tools.environments.docker import find_docker
-            docker = find_docker()
-            if not docker:
-                logger.error("Docker executable not found in PATH or common install locations")
-                return False
-            result = subprocess.run([docker, "version"], capture_output=True, timeout=5)
-            return result.returncode == 0
 
         elif env_type == "singularity":
             executable = shutil.which("apptainer") or shutil.which("singularity")
@@ -1254,31 +1199,13 @@ def check_terminal_requirements() -> bool:
                 return False
             return True
 
-        elif env_type == "modal":
-            ensure_minisweagent_on_path(Path(__file__).resolve().parent.parent)
-            if importlib.util.find_spec("minisweagent") is None:
-                logger.error("mini-swe-agent is required for modal terminal backend but is not importable")
-                return False
-            # Check for modal token
-            has_token = os.getenv("MODAL_TOKEN_ID") is not None
-            has_config = Path.home().joinpath(".modal.toml").exists()
-            if not (has_token or has_config):
-                logger.error(
-                    "Modal backend selected but no MODAL_TOKEN_ID environment variable "
-                    "or ~/.modal.toml config file was found. Configure Modal or choose "
-                    "a different TERMINAL_ENV."
-                )
-                return False
-            return True
-
         elif env_type == "daytona":
-            from daytona import Daytona
+            from daytona import Daytona  # noqa: F401
             return os.getenv("DAYTONA_API_KEY") is not None
 
         else:
             logger.error(
-                "Unknown TERMINAL_ENV '%s'. Use one of: local, docker, singularity, "
-                "modal, daytona, ssh.",
+                "Unknown TERMINAL_ENV '%s'. Use one of: local, singularity, daytona, ssh.",
                 env_type,
             )
             return False
