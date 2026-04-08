@@ -321,22 +321,18 @@
       identifier: '', password: '', error: '', loading: false, needsSetup: false,
       navigating: false, navBarDur: 2600,
       _hintTimer: null,
-      _setupRedirectTimer: null,
 
       init() {
-        // Check setup status first — if setup isn't done, go to /setup
-        // regardless of auth state (prevents redirect loop: /login → / → /login)
+        // Check setup status first — if setup isn't done, mark needsSetup
+        // so the click handler navigates to /setup. We do NOT auto-redirect
+        // here: the hint says "click anywhere to continue" and that should
+        // be true. Auto-advancing made the hint a lie (it only had a ~500ms
+        // window before the timer fired) and skipped the splash transition.
         fetch('/api/setup/status', { credentials: 'same-origin' })
           .then(r => r.ok ? r.json() : null)
           .then(d => {
             if (d && !d.completed) {
               this.needsSetup = true;
-              this._setupAutoTimer = setTimeout(() => {
-                if (this.phase === 'splash') {
-                  document.body.classList.add('fade-out');
-                  setTimeout(() => { window.location.href = '/setup'; }, 600);
-                }
-              }, 1500);
             } else {
               // Setup is done — check if already authenticated
               fetch('/auth/me', { credentials: 'same-origin' })
@@ -366,7 +362,6 @@
       activate() {
         if (this.phase !== 'splash') return;
         clearTimeout(this._hintTimer);
-        clearTimeout(this._setupAutoTimer);
         this.showHint = false;
         if (this.needsSetup) {
           this.phase = 'setup';
