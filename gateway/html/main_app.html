@@ -2220,8 +2220,13 @@
         </div>
       </div>
 
-      <!-- ── RIGHT: Create + Agent Cards + Live Status ── -->
-      <div class="w-96 shrink-0 flex flex-col min-h-0 overflow-y-auto overflow-x-hidden thin-scroll space-y-3">
+      <!-- ── RIGHT: Create + Agent Cards + Live Status ──
+           min-w-0 is CRITICAL — without it, a flex item sizes to
+           max(w-96, intrinsic-content-width). When the edit form opens
+           with wide selects, the panel blows past 24rem and collapses
+           the world canvas on the left. min-w-0 lets it honour w-96. -->
+      <div class="w-96 shrink-0 min-w-0 flex flex-col min-h-0 overflow-y-auto overflow-x-hidden thin-scroll space-y-3"
+           style="width:24rem;max-width:24rem;">
 
         <!-- Create Agent toggle -->
         <button @click="namedAgentFormOpen = !namedAgentFormOpen; namedAgentMsg = null"
@@ -2323,35 +2328,41 @@
         <template x-if="namedAgents.length > 0">
           <div class="space-y-2">
             <template x-for="a in namedAgents" :key="a.id">
-              <div @click="if (!a._editing && !a._confirmDelete) chatWithAgent(a)"
-                class="relative p-3 rounded-xl border border-gray-800 bg-gray-900 hover:border-indigo-500/50 hover:bg-indigo-950/10 transition-colors cursor-pointer group flex gap-3">
+              <div @click="if (!a._editing && !a._confirmDelete && !$event.target.closest('button, input, select, textarea, label, [data-no-chat]')) chatWithAgent(a)"
+                class="relative p-3 rounded-xl border border-gray-800 bg-gray-900 hover:border-indigo-500/50 hover:bg-indigo-950/10 transition-colors cursor-pointer group w-full max-w-full overflow-hidden">
                 <!-- Destructive delete — small X in the top-right corner of the
                      card. Opens a type-to-confirm dialog so it can't be hit by
                      accident. Only visible on hover so it doesn't clutter the card. -->
                 <button @click.stop="a._confirmDelete = true; a._deleteText = ''"
                   title="Delete agent"
-                  class="absolute top-1.5 right-1.5 w-5 h-5 flex items-center justify-center rounded-full text-gray-600 hover:text-red-400 hover:bg-red-950/40 opacity-0 group-hover:opacity-100 transition-opacity text-sm leading-none">
+                  class="absolute top-1.5 right-1.5 w-5 h-5 flex items-center justify-center rounded-full text-gray-600 hover:text-red-400 hover:bg-red-950/40 opacity-0 group-hover:opacity-100 transition-opacity text-sm leading-none z-10">
                   &times;
                 </button>
-                <!-- Sprite preview — same character as the in-world sprite -->
-                <div class="shrink-0 self-center" :style="agentSpriteStyle(a.name, a.char_index)"></div>
-                <div class="flex-1 min-w-0">
-                  <div class="flex items-center gap-2 mb-1">
-                    <!-- Status dot: pulsing green if actively processing, solid green if available -->
-                    <span class="w-2 h-2 rounded-full shrink-0"
-                      :class="(status.active_sessions||[]).some(s => s.agent_name === a.name) ? 'bg-green-500 animate-pulse' : 'bg-green-600'"></span>
-                    <span class="text-sm font-semibold text-white group-hover:text-indigo-300 transition-colors truncate" x-text="a.name"></span>
+                <!-- Top row: sprite + summary (name, badges, description).
+                     Everything below this row (buttons, delete dialog, edit
+                     form) is a full-width BLOCK sibling so the edit form
+                     spans the card instead of being squeezed next to the
+                     sprite in a flex column. -->
+                <div class="flex gap-3 items-start">
+                  <div class="shrink-0" :style="agentSpriteStyle(a.name, a.char_index)"></div>
+                  <div class="flex-1 min-w-0">
+                    <div class="flex items-center gap-2 mb-1">
+                      <span class="w-2 h-2 rounded-full shrink-0"
+                        :class="(status.active_sessions||[]).some(s => s.agent_name === a.name) ? 'bg-green-500 animate-pulse' : 'bg-green-600'"></span>
+                      <span class="text-sm font-semibold text-white group-hover:text-indigo-300 transition-colors truncate" x-text="a.name"></span>
+                    </div>
+                    <div class="flex items-center gap-1.5 mb-1">
+                      <span x-show="a.model" class="text-[9px] px-1 py-0.5 rounded font-mono bg-gray-800 text-gray-500 border border-gray-700 truncate max-w-[140px]" x-text="a.model"></span>
+                      <span x-show="a.toolsets && JSON.parse(a.toolsets || '[]').length" class="text-[9px] px-1 py-0.5 rounded font-mono bg-emerald-950 text-emerald-400 border border-emerald-900 shrink-0"
+                        x-text="JSON.parse(a.toolsets || '[]').length + ' tools'"></span>
+                    </div>
+                    <p x-show="a.description" class="text-[10px] text-gray-500 mb-0 truncate" x-text="a.description"></p>
                   </div>
-                  <div class="flex items-center gap-1.5 mb-1">
-                    <span x-show="a.model" class="text-[9px] px-1 py-0.5 rounded font-mono bg-gray-800 text-gray-500 border border-gray-700 truncate max-w-[140px]" x-text="a.model"></span>
-                    <span x-show="a.toolsets && JSON.parse(a.toolsets || '[]').length" class="text-[9px] px-1 py-0.5 rounded font-mono bg-emerald-950 text-emerald-400 border border-emerald-900 shrink-0"
-                      x-text="JSON.parse(a.toolsets || '[]').length + ' tools'"></span>
-                  </div>
-                  <p x-show="a.description" class="text-[10px] text-gray-500 mb-1.5 truncate" x-text="a.description"></p>
+                </div>
 
                 <!-- Live execution info for this agent -->
                 <template x-for="s in (status.active_sessions||[]).filter(s => s.agent_name === a.name)" :key="s.session_key">
-                  <div class="mb-1.5 px-2 py-1.5 rounded-lg bg-indigo-950/30 border border-indigo-900/50">
+                  <div class="mt-1.5 px-2 py-1.5 rounded-lg bg-indigo-950/30 border border-indigo-900/50">
                     <div class="flex items-center gap-1.5 text-[10px]">
                       <span class="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-pulse shrink-0"></span>
                       <span class="font-mono text-indigo-400 truncate" x-text="s.current_tool || 'thinking...'"></span>
@@ -2366,88 +2377,91 @@
                   </div>
                 </template>
 
-                <div class="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity" @click.stop>
+                <div class="mt-2 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity" @click.stop>
                   <button @click.stop="a._editing = true; a._edit = { name: a.name, soul_slug: a.soul_slug, model: a.model || '', description: a.description || '', toolsets: JSON.parse(a.toolsets || '[]') }"
                     class="text-[9px] px-1.5 py-0.5 rounded border border-gray-700 text-gray-500 hover:text-white hover:border-gray-500 transition-colors">Edit</button>
                   <button @click.stop="chatWithAgent(a)"
                     class="text-[9px] px-2 py-0.5 rounded-lg bg-indigo-600 text-white hover:bg-indigo-500 transition-colors font-medium">Chat</button>
                 </div>
-                <!-- Type-to-confirm delete dialog — replaces the old Delete
-                     button. User must type the agent's exact name before the
-                     delete call fires. -->
-                <div x-show="a._confirmDelete" x-cloak @click.stop
-                     class="mt-2 space-y-1.5 pt-2 border-t border-red-900/50 min-w-0 max-w-full overflow-hidden">
-                  <p class="text-[10px] text-red-400 leading-snug">
-                    Delete <span class="font-semibold" x-text="a.name"></span>?
-                    This destroys the agent and its sandbox. Type
-                    <span class="font-mono text-red-300" x-text="a.name"></span>
-                    to confirm.
-                  </p>
-                  <input x-model="a._deleteText" type="text"
-                    :placeholder="a.name"
-                    @keydown.enter="(a._deleteText || '').trim() === a.name && deleteNamedAgent(a.id)"
-                    class="w-full px-2 py-1 rounded bg-gray-800 border border-red-900 text-[10px] text-white focus:outline-none focus:border-red-500">
-                  <div class="flex gap-1.5">
-                    <button @click.stop="deleteNamedAgent(a.id)"
-                      :disabled="(a._deleteText || '').trim() !== a.name"
-                      class="text-[9px] px-2 py-1 rounded bg-red-600 text-white hover:bg-red-500 disabled:opacity-30 disabled:cursor-not-allowed transition-colors">
-                      Delete forever
-                    </button>
-                    <button @click.stop="a._confirmDelete = false; a._deleteText = ''"
-                      class="text-[9px] px-2 py-1 rounded border border-gray-700 text-gray-400 hover:text-white transition-colors">
-                      Cancel
-                    </button>
-                  </div>
-                </div>
-                <!-- Inline edit form — constrained width so long model names
-                     in <select> options don't blow the card out to fullscreen.
-                     Native <select> ignores parent min-w-0 when its longest
-                     <option> is long, so we enforce max-width + overflow here. -->
-                <div x-show="a._editing" x-cloak @click.stop
-                     class="mt-2 space-y-1.5 pt-2 border-t border-gray-800 min-w-0 max-w-full overflow-hidden">
-                  <input x-model="a._edit.name" type="text" placeholder="Name"
-                    class="w-full px-2 py-1 rounded bg-gray-800 border border-gray-700 text-[10px] text-white focus:outline-none focus:border-indigo-500">
-                  <div class="grid grid-cols-2 gap-2 min-w-0 max-w-full">
-                    <select x-model="a._edit.soul_slug"
-                      style="width:100%;max-width:100%;overflow:hidden;text-overflow:ellipsis;"
-                      class="min-w-0 w-full px-2 py-1 rounded bg-gray-800 border border-gray-700 text-[10px] text-white focus:outline-none focus:border-indigo-500">
-                      <template x-for="s in (souls.length ? souls : [{slug:'general',name:'General'}])" :key="s.slug">
-                        <option :value="s.slug" x-text="s.name || s.slug"></option>
-                      </template>
-                    </select>
-                    <select x-model="a._edit.model"
-                      style="width:100%;max-width:100%;overflow:hidden;text-overflow:ellipsis;"
-                      class="min-w-0 w-full px-2 py-1 rounded bg-gray-800 border border-gray-700 text-[10px] text-white focus:outline-none focus:border-indigo-500">
-                      <option value="">Auto</option>
-                      <template x-for="m in allMachineModels" :key="m">
-                        <option :value="m" x-text="m"></option>
-                      </template>
-                      <template x-for="cp in cloudProviders.filter(p => p.active_model)" :key="cp.id">
-                        <option :value="cp.active_model" x-text="cp.active_model"></option>
-                      </template>
-                    </select>
-                  </div>
-                  <!-- Toolsets -->
-                  <template x-if="toolsets.toolsets">
-                    <div class="flex flex-wrap gap-1">
-                      <template x-for="[tsName, ts] in Object.entries(toolsets.toolsets || {}).sort(([x],[y]) => x.localeCompare(y)).filter(([n, t]) => t.available)" :key="tsName">
-                        <label class="flex items-center gap-1 px-1.5 py-0.5 rounded border text-[9px] cursor-pointer transition-colors"
-                          :class="(a._edit.toolsets||[]).includes(tsName) ? 'border-emerald-800 bg-emerald-950/50 text-emerald-300' : 'border-gray-700 text-gray-600 hover:border-gray-600'">
-                          <input type="checkbox" :checked="(a._edit.toolsets||[]).includes(tsName)"
-                            @change="if (!a._edit.toolsets) a._edit.toolsets = []; $event.target.checked ? a._edit.toolsets.push(tsName) : a._edit.toolsets.splice(a._edit.toolsets.indexOf(tsName), 1)"
-                            class="w-2.5 h-2.5 rounded border-gray-600 bg-gray-800 accent-emerald-500">
-                          <span class="font-mono" x-text="tsName"></span>
-                        </label>
-                      </template>
+                <!-- Type-to-confirm delete dialog. Wrapped in x-if so the
+                     inputs aren't evaluated when the dialog is closed. -->
+                <template x-if="a._confirmDelete">
+                  <div @click.stop
+                       class="mt-2 space-y-1.5 pt-2 border-t border-red-900/50 min-w-0 max-w-full overflow-hidden">
+                    <p class="text-[10px] text-red-400 leading-snug">
+                      Delete <span class="font-semibold" x-text="a.name"></span>?
+                      This destroys the agent and its sandbox. Type
+                      <span class="font-mono text-red-300" x-text="a.name"></span>
+                      to confirm.
+                    </p>
+                    <input x-model="a._deleteText" type="text"
+                      :placeholder="a.name"
+                      @keydown.enter="(a._deleteText || '').trim() === a.name && deleteNamedAgent(a.id)"
+                      class="w-full px-2 py-1 rounded bg-gray-800 border border-red-900 text-[10px] text-white focus:outline-none focus:border-red-500">
+                    <div class="flex gap-1.5">
+                      <button @click.stop="deleteNamedAgent(a.id)"
+                        :disabled="(a._deleteText || '').trim() !== a.name"
+                        class="text-[9px] px-2 py-1 rounded bg-red-600 text-white hover:bg-red-500 disabled:opacity-30 disabled:cursor-not-allowed transition-colors">
+                        Delete forever
+                      </button>
+                      <button @click.stop="a._confirmDelete = false; a._deleteText = ''"
+                        class="text-[9px] px-2 py-1 rounded border border-gray-700 text-gray-400 hover:text-white transition-colors">
+                        Cancel
+                      </button>
                     </div>
-                  </template>
-                  <div class="flex gap-1.5">
-                    <button @click="updateNamedAgent(a.id)" class="text-[9px] px-2 py-1 rounded bg-indigo-600 text-white hover:bg-indigo-500 transition-colors">Save</button>
-                    <button @click="a._editing = false; a._edit = null" class="text-[9px] px-2 py-1 rounded border border-gray-700 text-gray-400 hover:text-white transition-colors">Cancel</button>
                   </div>
-                </div>
-                </div><!-- /right side of card -->
-              </div>
+                </template>
+                <!-- Inline edit form. Wrapped in x-if (NOT x-show) so Alpine
+                     only evaluates the `a._edit.*` bindings when the form is
+                     actually open. With x-show the DOM stays rendered and
+                     `a._edit.name` etc. throw "undefined" on every card that
+                     isn't being edited. -->
+                <template x-if="a._editing && a._edit">
+                  <div @click.stop
+                       class="mt-2 space-y-1.5 pt-2 border-t border-gray-800 min-w-0 max-w-full overflow-hidden">
+                    <input x-model="a._edit.name" type="text" placeholder="Name"
+                      class="w-full px-2 py-1 rounded bg-gray-800 border border-gray-700 text-[10px] text-white focus:outline-none focus:border-indigo-500">
+                    <div class="grid grid-cols-2 gap-2 min-w-0 max-w-full">
+                      <select x-model="a._edit.soul_slug"
+                        style="width:100%;max-width:100%;overflow:hidden;text-overflow:ellipsis;"
+                        class="min-w-0 w-full px-2 py-1 rounded bg-gray-800 border border-gray-700 text-[10px] text-white focus:outline-none focus:border-indigo-500">
+                        <template x-for="s in (souls.length ? souls : [{slug:'general',name:'General'}])" :key="s.slug">
+                          <option :value="s.slug" x-text="s.name || s.slug"></option>
+                        </template>
+                      </select>
+                      <select x-model="a._edit.model"
+                        style="width:100%;max-width:100%;overflow:hidden;text-overflow:ellipsis;"
+                        class="min-w-0 w-full px-2 py-1 rounded bg-gray-800 border border-gray-700 text-[10px] text-white focus:outline-none focus:border-indigo-500">
+                        <option value="">Auto</option>
+                        <template x-for="m in allMachineModels" :key="m">
+                          <option :value="m" x-text="m"></option>
+                        </template>
+                        <template x-for="cp in cloudProviders.filter(p => p.active_model)" :key="cp.id">
+                          <option :value="cp.active_model" x-text="cp.active_model"></option>
+                        </template>
+                      </select>
+                    </div>
+                    <!-- Toolsets -->
+                    <template x-if="toolsets.toolsets">
+                      <div class="flex flex-wrap gap-1 max-w-full">
+                        <template x-for="[tsName, ts] in Object.entries(toolsets.toolsets || {}).sort(([x],[y]) => x.localeCompare(y)).filter(([n, t]) => t.available)" :key="tsName">
+                          <label class="flex items-center gap-1 px-1.5 py-0.5 rounded border text-[9px] cursor-pointer transition-colors"
+                            :class="(a._edit.toolsets||[]).includes(tsName) ? 'border-emerald-800 bg-emerald-950/50 text-emerald-300' : 'border-gray-700 text-gray-600 hover:border-gray-600'">
+                            <input type="checkbox" :checked="(a._edit.toolsets||[]).includes(tsName)"
+                              @change="if (!a._edit.toolsets) a._edit.toolsets = []; $event.target.checked ? a._edit.toolsets.push(tsName) : a._edit.toolsets.splice(a._edit.toolsets.indexOf(tsName), 1)"
+                              class="w-2.5 h-2.5 rounded border-gray-600 bg-gray-800 accent-emerald-500">
+                            <span class="font-mono" x-text="tsName"></span>
+                          </label>
+                        </template>
+                      </div>
+                    </template>
+                    <div class="flex gap-1.5">
+                      <button @click="updateNamedAgent(a.id)" class="text-[9px] px-2 py-1 rounded bg-indigo-600 text-white hover:bg-indigo-500 transition-colors">Save</button>
+                      <button @click="a._editing = false; a._edit = null" class="text-[9px] px-2 py-1 rounded border border-gray-700 text-gray-400 hover:text-white transition-colors">Cancel</button>
+                    </div>
+                  </div>
+                </template>
+              </div><!-- /card -->
             </template>
           </div>
         </template>
@@ -5088,6 +5102,16 @@ function app() {
       this.$watch('adminTab',       val => localStorage.setItem('hermes_admin_tab', val));
       // chatRenderMode intentionally not persisted — always defaults to markdown on load
 
+      // URL <-> state sync so refresh and browser back/forward preserve the
+      // active tab. Uses real paths (/agents, /admin/users, etc.) rather than
+      // hash so bookmarks + server logs are clean. Backend registers all these
+      // paths as aliases for the SPA index handler.
+      this._applyUrlToState(window.location.pathname);
+      this.$watch('tab',      () => this._syncStateToUrl());
+      this.$watch('adminTab', () => { if (this.tab === 'admin') this._syncStateToUrl(); });
+      this.$watch('infraTab', () => { if (this.tab === 'infra') this._syncStateToUrl(); });
+      window.addEventListener('popstate', () => this._applyUrlToState(window.location.pathname));
+
       await this.loadAuth();
 
       // Validate restored tabs against actual permissions — fall back if needed.
@@ -5122,7 +5146,10 @@ function app() {
       await Promise.all([this.loadStatus(), this.loadRouterState(), this.loadCanary(), this.loadInstances(), this.loadSpawnTemplates(), this.loadWorkers(), this.loadAdminMachines(), this.loadNamedAgents()]);
       // Auto-select the primary named agent's most recent chat on load.
       // If no agent chat exists yet, create one for the first named agent.
-      if (this.namedAgents.length > 0) {
+      // Only run on the chats tab — otherwise chatWithAgent's side effect of
+      // setting tab='sessions' would override the URL-driven tab that init()
+      // resolved from window.location.pathname.
+      if (this.tab === 'sessions' && this.namedAgents.length > 0) {
         const primary = this.namedAgents[0];
         const agentChat = this.chats
           .filter(c => c.agent_id === primary.id)
@@ -5169,6 +5196,93 @@ function app() {
       // then keep refreshing every 12 minutes (access token TTL is 15 minutes).
       this._refreshToken();
       setInterval(() => this._refreshToken(), 12 * 60 * 1000);
+    },
+
+    // ── URL routing ────────────────────────────────────────────────────
+    // Map Alpine's internal `tab` / `adminTab` / `infraTab` state to/from
+    // real URL paths so refresh + browser back/forward preserve the
+    // current view.
+    //
+    //   /                       → tab = sessions (default)
+    //   /agents                 → tab = agents
+    //   /chats                  → tab = sessions
+    //   /settings               → tab = infra, infraTab = (restored)
+    //   /settings/inference     → tab = infra, infraTab = servers
+    //   /settings/routing       → tab = infra, infraTab = routing
+    //   /settings/tools         → tab = infra, infraTab = tools
+    //   /settings/channels      → tab = infra, infraTab = channels
+    //   /settings/proposals     → tab = infra, infraTab = proposals
+    //   /admin                  → tab = admin, adminTab = (restored)
+    //   /admin/users            → tab = admin, adminTab = users
+    //   /admin/security         → tab = admin, adminTab = action-policies
+    //   /admin/workflows        → tab = admin, adminTab = workflows
+    //   /admin/runs             → tab = admin, adminTab = runs
+    //   /admin/sandboxes        → tab = admin, adminTab = sandboxes
+    //   /admin/audit            → tab = admin, adminTab = audit
+    //   /admin/approvals        → tab = admin, adminTab = approvals
+    _INFRA_URL_MAP: {
+      inference: 'servers',
+      routing:   'routing',
+      tools:     'tools',
+      channels:  'channels',
+      proposals: 'proposals',
+    },
+    _ADMIN_URL_MAP: {
+      users:     'users',
+      security:  'action-policies',
+      workflows: 'workflows',
+      runs:      'runs',
+      sandboxes: 'sandboxes',
+      audit:     'audit',
+      approvals: 'approvals',
+    },
+    _applyUrlToState(pathname) {
+      const parts = (pathname || '/').split('/').filter(Boolean);
+      const top = parts[0] || '';
+      const sub = parts[1] || '';
+      // Record that we're applying URL → state so the $watch handlers
+      // don't immediately push the same path back onto history.
+      this._suppressUrlSync = true;
+      try {
+        if (top === 'agents') {
+          this.tab = 'agents';
+        } else if (top === 'chats') {
+          this.tab = 'sessions';
+        } else if (top === 'settings') {
+          this.tab = 'infra';
+          const mapped = this._INFRA_URL_MAP[sub];
+          if (mapped) this.infraTab = mapped;
+        } else if (top === 'admin') {
+          this.tab = 'admin';
+          const mapped = this._ADMIN_URL_MAP[sub];
+          if (mapped) this.adminTab = mapped;
+        }
+        // else: unknown path — leave the restored default (sessions)
+      } finally {
+        // Flush the microtask queue before releasing the suppress flag so
+        // Alpine's $watch fires synchronously from the assignments above.
+        setTimeout(() => { this._suppressUrlSync = false; }, 0);
+      }
+    },
+    _stateToUrl() {
+      if (this.tab === 'agents')   return '/agents';
+      if (this.tab === 'sessions') return '/chats';
+      if (this.tab === 'infra') {
+        const rev = Object.entries(this._INFRA_URL_MAP).find(([, v]) => v === this.infraTab);
+        return rev ? `/settings/${rev[0]}` : '/settings';
+      }
+      if (this.tab === 'admin') {
+        const rev = Object.entries(this._ADMIN_URL_MAP).find(([, v]) => v === this.adminTab);
+        return rev ? `/admin/${rev[0]}` : '/admin';
+      }
+      return '/';
+    },
+    _syncStateToUrl() {
+      if (this._suppressUrlSync) return;
+      const next = this._stateToUrl();
+      if (window.location.pathname !== next) {
+        try { history.pushState({}, '', next); } catch {}
+      }
     },
 
     async loadAuth() {

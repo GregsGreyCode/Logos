@@ -218,8 +218,10 @@ export class AgentSprite {
 
     // Sync logo badge + bubble + status dot positions. Badge sits above the
     // sprite head (y - 52) with the bubble/hourglass layered above that so
-    // nothing overlaps the character itself.
-    this.statusDot.setPosition(this.sprite.x + 16, this.sprite.y - 14);
+    // nothing overlaps the character itself. Status dot hangs off the right
+    // edge of the letter badge so running/idle state is visible next to the
+    // identifier rather than floating over the sprite's face.
+    this.statusDot.setPosition(this.sprite.x + 13, this.sprite.y - 52);
     this.bubble.setPosition(this.sprite.x, this.sprite.y - 72);
     this.logoText.setPosition(this.sprite.x, this.sprite.y - 52);
   }
