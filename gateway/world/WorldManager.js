@@ -68,11 +68,20 @@ export class WorldManager {
     };
     setTimeout(checkReady, 200);
 
-    // Style the canvas
-    const canvas = containerEl.querySelector('canvas');
-    if (canvas) {
-      canvas.style.width = '100%';
-      canvas.style.height = '100%';
+    // Watch the host element for size changes (sidebar collapses/expands,
+    // window resize). Phaser's RESIZE mode reads from style on the parent,
+    // so we explicitly call scale.resize with the new dimensions to keep
+    // the renderer in lock-step with our square container.
+    if (typeof ResizeObserver !== 'undefined') {
+      this._resizeObserver = new ResizeObserver(() => {
+        if (this._destroyed || !this.game) return;
+        const w = containerEl.clientWidth;
+        const h = containerEl.clientHeight;
+        if (w > 0 && h > 0) {
+          this.game.scale.resize(w, h);
+        }
+      });
+      this._resizeObserver.observe(containerEl);
     }
   }
 
@@ -96,6 +105,10 @@ export class WorldManager {
   destroy() {
     if (this._destroyed) return;
     this._destroyed = true;
+    if (this._resizeObserver) {
+      try { this._resizeObserver.disconnect(); } catch (_) {}
+      this._resizeObserver = null;
+    }
     if (this.game) {
       this.game.destroy(true);
       this.game = null;
