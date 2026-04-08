@@ -477,11 +477,19 @@ async def handle_agents_post(request: web.Request) -> web.Response:
         toolsets=toolsets_str,
     )
 
-    # If OpenShell runtime is active, spawn a sandbox for this agent
+    # If OpenShell runtime is active, spawn a sandbox for this agent.
+    # `executor.spawn()` runs `openshell sandbox create` synchronously,
+    # which can take >60s while the underlying k8s Sandbox CR provisions.
+    # We must NOT block the asyncio event loop on it — instead we kick
+    # the spawn into a background thread and return immediately. The
+    # executor writes its state record with phase="provisioning" up
+    # front, so the Sandboxes dashboard sees the new entry within a
+    # second of this handler returning.
     spawn_result = None
     executor = request.app.get("executor")
     if executor and type(executor).__name__ == "OpenShellExecutor":
         try:
+            import asyncio as _asyncio
             from gateway.executors.base import InstanceConfig
             config = InstanceConfig(
                 name=name,
@@ -491,11 +499,18 @@ async def handle_agents_post(request: web.Request) -> web.Response:
                 instance_label=name,
                 toolsets=_json.loads(toolsets_str) if toolsets_str else [],
             )
-            spawned = executor.spawn(config)
-            spawn_result = {"sandbox": spawned.name, "worker_id": getattr(spawned, "worker_id", None)}
-            logger.info("Spawned OpenShell sandbox for agent '%s': %s", name, spawned.name)
+
+            async def _spawn_bg():
+                try:
+                    await _asyncio.to_thread(executor.spawn, config)
+                    logger.info("Spawned OpenShell sandbox for agent '%s'", name)
+                except Exception as exc:
+                    logger.warning("Failed to spawn OpenShell sandbox for agent '%s': %s", name, exc)
+
+            _asyncio.create_task(_spawn_bg())
+            spawn_result = {"status": "provisioning", "agent": name}
         except Exception as exc:
-            logger.warning("Failed to spawn OpenShell sandbox for agent '%s': %s", name, exc)
+            logger.warning("Failed to schedule sandbox spawn for agent '%s': %s", name, exc)
             spawn_result = {"error": str(exc)}
 
     resp = dict(agent)
@@ -531,14 +546,23 @@ async def handle_agents_delete(request: web.Request) -> web.Response:
     if not agent:
         return web.json_response({"error": "not_found"}, status=404)
 
-    # If OpenShell runtime is active, destroy the agent's sandbox
+    # If OpenShell runtime is active, destroy the agent's sandbox.
+    # Run in a background thread so we don't block the asyncio event
+    # loop on the openshell delete subprocess.
     executor = request.app.get("executor")
     if executor and type(executor).__name__ == "OpenShellExecutor":
         try:
-            executor.delete_instance(agent["name"])
-            logger.info("Destroyed OpenShell sandbox for agent '%s'", agent["name"])
+            import asyncio as _asyncio
+            agent_name = agent["name"]
+            async def _delete_bg():
+                try:
+                    await _asyncio.to_thread(executor.delete_instance, agent_name)
+                    logger.info("Destroyed OpenShell sandbox for agent '%s'", agent_name)
+                except Exception as exc:
+                    logger.warning("Failed to destroy sandbox for agent '%s': %s", agent_name, exc)
+            _asyncio.create_task(_delete_bg())
         except Exception as exc:
-            logger.warning("Failed to destroy sandbox for agent '%s': %s", agent["name"], exc)
+            logger.warning("Failed to schedule sandbox delete for agent '%s': %s", agent["name"], exc)
 
     auth_db.delete_agent(aid)
     return web.Response(status=204)
