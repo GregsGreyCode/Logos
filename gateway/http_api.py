@@ -580,6 +580,102 @@ async def _handle_sandbox_restart(request: web.Request) -> web.Response:
         return web.json_response({"ok": False, "error": str(exc)}, status=500)
 
 
+async def _handle_platforms_list(request: web.Request) -> web.Response:
+    """GET /admin/platforms — connection state + routing rules per platform.
+
+    Returns one entry per *configured* platform (enabled or not), with:
+      - name, enabled, connected, has_token
+      - routing: list of {id, scope, scope_id, agent_id, agent_name}
+    """
+    runner = request.app.get("runner")
+    if not runner:
+        return web.json_response({"platforms": []})
+    from gateway.auth import db as _auth_db
+
+    # Build agent_id → name lookup once
+    agents_by_id = {a["id"]: a.get("name", a["id"]) for a in _auth_db.list_agents()}
+
+    out = []
+    for platform, pconfig in runner.config.platforms.items():
+        connected = platform in runner.adapters
+        rules = []
+        try:
+            for r in _auth_db.list_platform_routing(platform=platform.value):
+                rules.append({
+                    "id":         r["id"],
+                    "platform":   r["platform"],
+                    "scope":      r["scope"],
+                    "scope_id":   r["scope_id"],
+                    "agent_id":   r["agent_id"],
+                    "agent_name": agents_by_id.get(r["agent_id"], r["agent_id"]),
+                    "created_at": r["created_at"],
+                })
+        except Exception:
+            logger.exception("list_platform_routing failed for %s", platform.value)
+        out.append({
+            "name":      platform.value,
+            "enabled":   bool(getattr(pconfig, "enabled", False)),
+            "connected": connected,
+            "routing":   rules,
+        })
+    return web.json_response({"platforms": out, "agents": [
+        {"id": a["id"], "name": a.get("name", a["id"])} for a in _auth_db.list_agents()
+    ]})
+
+
+async def _handle_platforms_routing_upsert(request: web.Request) -> web.Response:
+    """POST /admin/platforms/routing — create or update a routing rule.
+
+    Body: {platform, scope, scope_id, agent_id}
+    """
+    user = request.get("current_user", {})
+    if user.get("role") not in ("admin",):
+        raise web.HTTPForbidden(text='{"error":"admin_required"}', content_type="application/json")
+    body = await request.json()
+    platform = (body.get("platform") or "").strip()
+    scope    = (body.get("scope")    or "").strip()
+    scope_id = (body.get("scope_id") or "").strip()
+    agent_id = (body.get("agent_id") or "").strip()
+    if not platform or not scope or not agent_id:
+        return web.json_response(
+            {"ok": False, "error": "platform, scope, agent_id required"}, status=400,
+        )
+    if scope not in ("global", "chat", "user"):
+        return web.json_response(
+            {"ok": False, "error": "scope must be global|chat|user"}, status=400,
+        )
+    from gateway.auth import db as _auth_db
+    if not _auth_db.get_agent(agent_id):
+        return web.json_response({"ok": False, "error": "unknown agent_id"}, status=404)
+    try:
+        row = _auth_db.upsert_platform_routing(
+            platform=platform, scope=scope, scope_id=scope_id, agent_id=agent_id,
+        )
+    except ValueError as exc:
+        return web.json_response({"ok": False, "error": str(exc)}, status=400)
+    _auth_db.write_audit_log(
+        user.get("sub", ""), "platform_routing_upsert",
+        metadata={"platform": platform, "scope": scope, "agent_id": agent_id},
+        ip_address=request.remote,
+    )
+    return web.json_response({"ok": True, "routing": row})
+
+
+async def _handle_platforms_routing_delete(request: web.Request) -> web.Response:
+    """DELETE /admin/platforms/routing/{id} — remove a routing rule."""
+    user = request.get("current_user", {})
+    if user.get("role") not in ("admin",):
+        raise web.HTTPForbidden(text='{"error":"admin_required"}', content_type="application/json")
+    rid = request.match_info["id"]
+    from gateway.auth import db as _auth_db
+    _auth_db.delete_platform_routing(rid)
+    _auth_db.write_audit_log(
+        user.get("sub", ""), "platform_routing_delete",
+        metadata={"id": rid}, ip_address=request.remote,
+    )
+    return web.json_response({"ok": True})
+
+
 async def _handle_setup_page(request: web.Request) -> web.Response:
     from gateway.auth.db import is_setup_completed
     if is_setup_completed():
@@ -2670,12 +2766,13 @@ async def start_http_api(runner: Any, port: int = 8080) -> None:
     app["executor"] = build_executor(_RUNTIME_MODE)
     logger.info("Instance executor: %s (runtime_mode=%s)", type(app["executor"]).__name__, _RUNTIME_MODE)
 
-    # Worker registry — tracks connected OpenShell sandbox workers via WebSocket.
-    # No in-process worker is registered here: every agent runs in its own
-    # sandbox and connects back via /ws/worker. The gateway is infrastructure,
-    # not an agent.
-    from gateway.worker_registry import WorkerRegistry
-    worker_registry = WorkerRegistry()
+    # Worker registry lives on the runner (see GatewayRunner.__init__). We
+    # just expose it on the aiohttp app so existing request handlers that
+    # read request.app.get("worker_registry") keep working. Having the
+    # runner own the registry lets dispatch_platform_message route inbound
+    # platform messages through the same code path as the HTTP /chat
+    # handler without either side instantiating its own copy.
+    worker_registry = runner.worker_registry
     app["worker_registry"] = worker_registry
 
     # ── Centralized MCP gateway service ────────────────────────────────────
@@ -2816,6 +2913,7 @@ async def start_http_api(runner: Any, port: int = 8080) -> None:
         "/admin/workflows",
         "/admin/runs",
         "/admin/sandboxes",
+        "/admin/platforms",
         "/admin/audit",
         "/admin/approvals",
     ):
@@ -2925,6 +3023,11 @@ async def start_http_api(runner: Any, port: int = 8080) -> None:
     app.router.add_get("/admin/sandboxes",                    _vr(_handle_sandboxes_list))
     app.router.add_get("/admin/sandboxes/{name}/logs",        _vr(_handle_sandbox_logs))
     app.router.add_post("/admin/sandboxes/{name}/restart",    _mm(require_csrf(_handle_sandbox_restart)))
+
+    # ── Platforms (connection state + routing rules) ───────────────
+    app.router.add_get("/admin/platforms",                            _mm(_handle_platforms_list))
+    app.router.add_post("/admin/platforms/routing",                   _mm(require_csrf(_handle_platforms_routing_upsert)))
+    app.router.add_delete("/admin/platforms/routing/{id}",            _mm(require_csrf(_handle_platforms_routing_delete)))
 
     app.router.add_get("/admin/agents",              _mm(admin_handlers.handle_agents_list))
     app.router.add_post("/admin/agents",             _mm(require_csrf(admin_handlers.handle_agents_post)))
