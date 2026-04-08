@@ -43,7 +43,9 @@ from .base import InstanceConfig, ResourceHeadroom, SpawnedInstance
 
 logger = logging.getLogger(__name__)
 
-_HERMES_HOME = Path(os.getenv("HERMES_HOME", Path.home() / ".hermes"))
+_HERMES_HOME = Path(
+    os.getenv("LOGOS_HOME") or os.getenv("HERMES_HOME") or str(Path.home() / ".logos")
+)
 _STATE_FILE = _HERMES_HOME / "docker_instances.json"
 _LOCK_FILE = _HERMES_HOME / "docker_instances.lock"
 _HEALTH_TIMEOUT = 30  # containers need time to start the Python process
@@ -202,6 +204,8 @@ class DockerSandboxExecutor:
             env_args: list[str] = []
             env_vars = {
                 "HERMES_INSTANCE_NAME": config.name,
+                # Dual-write during the LOGOS_*/HERMES_* migration window.
+                "LOGOS_PORT": "8080",
                 "HERMES_PORT": "8080",
                 "HERMES_SHARED_HOME": "/hermes-shared",
             }

@@ -31,23 +31,31 @@ def _tirith_result(action="allow", findings=None, summary=""):
 _TIRITH_PATCH = "tools.tirith_security.check_command_security"
 
 
+_GUARD_ENV_VARS = (
+    "LOGOS_INTERACTIVE", "HERMES_INTERACTIVE",
+    "LOGOS_GATEWAY_SESSION", "HERMES_GATEWAY_SESSION",
+    "LOGOS_EXEC_ASK", "HERMES_EXEC_ASK",
+    "LOGOS_YOLO_MODE", "HERMES_YOLO_MODE",
+)
+
+
 @pytest.fixture(autouse=True)
 def _clean_state():
     """Clear approval state and relevant env vars between tests."""
-    key = os.getenv("HERMES_SESSION_KEY", "default")
+    key = os.getenv("LOGOS_SESSION_KEY") or os.getenv("HERMES_SESSION_KEY") or "default"
     clear_session(key)
     approval_module._permanent_approved.clear()
     saved = {}
-    for k in ("HERMES_INTERACTIVE", "HERMES_GATEWAY_SESSION", "HERMES_EXEC_ASK", "HERMES_YOLO_MODE"):
+    for k in _GUARD_ENV_VARS:
         if k in os.environ:
             saved[k] = os.environ.pop(k)
     yield
     clear_session(key)
     approval_module._permanent_approved.clear()
+    for k in _GUARD_ENV_VARS:
+        os.environ.pop(k, None)
     for k, v in saved.items():
         os.environ[k] = v
-    for k in ("HERMES_INTERACTIVE", "HERMES_GATEWAY_SESSION", "HERMES_EXEC_ASK", "HERMES_YOLO_MODE"):
-        os.environ.pop(k, None)
 
 
 # ---------------------------------------------------------------------------

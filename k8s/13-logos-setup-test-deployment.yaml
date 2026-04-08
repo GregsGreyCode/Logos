@@ -98,7 +98,11 @@ spec:
             # Wipe setup state at each startup so /setup always runs fresh
             - name: HERMES_WIPE_ON_START
               value: "true"
+            - name: LOGOS_WIPE_ON_START
+              value: "true"
             - name: HERMES_IS_CANARY
+              value: "true"
+            - name: LOGOS_IS_CANARY
               value: "true"
             - name: HERMES_LOG_LEVEL
               valueFrom:
@@ -110,6 +114,11 @@ spec:
                 configMapKeyRef:
                   name: logos-config
                   key: HERMES_PORT
+            - name: LOGOS_PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: logos-config
+                  key: LOGOS_PORT
             - name: REQUEST_TIMEOUT_SECONDS
               valueFrom:
                 configMapKeyRef:
@@ -141,6 +150,11 @@ spec:
                   name: logos-secret
                   key: HERMES_INTERNAL_TOKEN
             - name: HERMES_JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: logos-secret
+                  key: HERMES_JWT_SECRET
+            - name: LOGOS_JWT_SECRET
               valueFrom:
                 secretKeyRef:
                   name: logos-secret

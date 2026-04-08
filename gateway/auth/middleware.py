@@ -62,7 +62,11 @@ def check_rate_limit(ip: str, max_requests: int = 30, window: int = 60) -> bool:
 def get_user_from_request(request: web.Request) -> Optional[dict]:
     """Extract authenticated user payload from cookie JWT or service Bearer token."""
     # M2M / service bypass (K8s health probes, internal services)
-    internal_token = os.environ.get("HERMES_INTERNAL_TOKEN", "")
+    internal_token = (
+        os.environ.get("LOGOS_INTERNAL_TOKEN")
+        or os.environ.get("HERMES_INTERNAL_TOKEN")
+        or ""
+    )
     auth_header = request.headers.get("Authorization", "")
     if internal_token and auth_header == f"Bearer {internal_token}":
         return {"sub": "system", "email": "system@internal", "role": "admin"}
@@ -140,7 +144,11 @@ def require_csrf(handler):
     async def wrapper(request: web.Request) -> web.Response:
         if request.method in ("POST", "PATCH", "PUT", "DELETE"):
             # Service Bearer token bypasses CSRF (machine-to-machine)
-            internal_token = os.environ.get("HERMES_INTERNAL_TOKEN", "")
+            internal_token = (
+                os.environ.get("LOGOS_INTERNAL_TOKEN")
+                or os.environ.get("HERMES_INTERNAL_TOKEN")
+                or ""
+            )
             auth_header = request.headers.get("Authorization", "")
             if internal_token and auth_header == f"Bearer {internal_token}":
                 return await handler(request)

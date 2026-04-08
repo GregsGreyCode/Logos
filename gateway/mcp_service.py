@@ -252,9 +252,15 @@ class MCPGatewayService:
             name:     Server name as configured.
             platform: "local", "openshell", or "kubernetes".
         """
-        port = int(os.getenv("HERMES_MCP_PORT", "8081"))
+        port = int(
+            os.getenv("LOGOS_MCP_PORT") or os.getenv("HERMES_MCP_PORT") or "8081"
+        )
         if platform == "kubernetes":
-            ns = os.getenv("HERMES_K8S_NAMESPACE", "hermes")
+            ns = (
+                os.getenv("LOGOS_K8S_NAMESPACE")
+                or os.getenv("HERMES_K8S_NAMESPACE")
+                or "hermes"
+            )
             base = f"http://logos-gateway.{ns}.svc.cluster.local:{port}"
         elif platform == "openshell":
             base = f"http://host.docker.internal:{port}"

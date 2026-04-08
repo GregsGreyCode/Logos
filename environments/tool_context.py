@@ -461,14 +461,20 @@ class ToolContext:
 
         # Suppress browser_tool's noisy debug prints during cleanup.
         # The cleanup still runs (safe), it just doesn't spam the console.
-        _prev_quiet = os.environ.get("HERMES_QUIET")
+        _prev_logos_quiet = os.environ.get("LOGOS_QUIET")
+        _prev_hermes_quiet = os.environ.get("HERMES_QUIET")
+        os.environ["LOGOS_QUIET"] = "1"
         os.environ["HERMES_QUIET"] = "1"
         try:
             cleanup_browser(self.task_id)
         except Exception as e:
             logger.debug("Browser cleanup for task %s: %s", self.task_id, e)
         finally:
-            if _prev_quiet is None:
+            if _prev_logos_quiet is None:
+                os.environ.pop("LOGOS_QUIET", None)
+            else:
+                os.environ["LOGOS_QUIET"] = _prev_logos_quiet
+            if _prev_hermes_quiet is None:
                 os.environ.pop("HERMES_QUIET", None)
             else:
-                os.environ["HERMES_QUIET"] = _prev_quiet
+                os.environ["HERMES_QUIET"] = _prev_hermes_quiet

@@ -45,7 +45,9 @@ from .base import InstanceConfig, ResourceHeadroom, SpawnedInstance
 
 logger = logging.getLogger(__name__)
 
-_HERMES_HOME = Path(os.getenv("HERMES_HOME", Path.home() / ".hermes"))
+_HERMES_HOME = Path(
+    os.getenv("LOGOS_HOME") or os.getenv("HERMES_HOME") or str(Path.home() / ".logos")
+)
 _STATE_FILE = _HERMES_HOME / "openshell_instances.json"
 
 # Default sandbox image source. Two modes:
@@ -68,7 +70,9 @@ _DEFAULT_IMAGE = os.getenv(
 _DEFAULT_POLICY = Path(__file__).parent.parent / "policies" / "openshell_default.yaml"
 
 # Gateway port — must match what Logos is listening on
-_GATEWAY_PORT = int(os.getenv("HERMES_PORT", "8091"))
+_GATEWAY_PORT = int(
+    os.getenv("LOGOS_PORT") or os.getenv("HERMES_PORT") or "8091"
+)
 
 # How long to wait for the worker to register after sandbox creation
 _WORKER_REGISTER_TIMEOUT = 60

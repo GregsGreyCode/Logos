@@ -102,7 +102,11 @@ def redact_sensitive_text(text: str) -> str:
     """
     if not text:
         return text
-    if os.getenv("HERMES_REDACT_SECRETS", "").lower() in ("0", "false", "no", "off"):
+    if (
+        os.getenv("LOGOS_REDACT_SECRETS")
+        or os.getenv("HERMES_REDACT_SECRETS")
+        or ""
+    ).lower() in ("0", "false", "no", "off"):
         return text
 
     # Known prefixes (sk-, ghp_, etc.)

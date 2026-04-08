@@ -5,12 +5,15 @@ metadata:
   namespace: logos-dev
 data:
   HERMES_LOG_LEVEL: "info"
-  HERMES_PORT: "8080"
+  LOGOS_PORT: "8080"
+  HERMES_PORT: "8080"  # deprecated alias — kept for legacy in-flight code
   REQUEST_TIMEOUT_SECONDS: "120"
   OPENAI_BASE_URL: "http://ai-router.hermes.svc.cluster.local:9001/v1"
   HERMES_MODEL: "qwen/qwen3.5-9b"
   LLM_MODEL: "balanced"
-  HERMES_RUNTIME_MODE: "kubernetes"
+  LOGOS_RUNTIME_MODE: "kubernetes"
+  HERMES_RUNTIME_MODE: "kubernetes"  # deprecated alias — kept for legacy in-flight code
   # Wipe setup state on every pod start so the setup wizard always runs fresh.
   # Useful during active development. Set to "false" to preserve state across restarts.
-  HERMES_WIPE_ON_START: "true"
+  LOGOS_WIPE_ON_START: "true"
+  HERMES_WIPE_ON_START: "true"  # deprecated alias — kept for legacy in-flight code

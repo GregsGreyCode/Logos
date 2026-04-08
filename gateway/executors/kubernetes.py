@@ -103,9 +103,21 @@ def _ensure_namespace_prerequisites(core) -> None:
     try:
         core.read_namespaced_config_map("hermes-config", ns)
     except Exception:
+        _port_value = (
+            os.environ.get("LOGOS_PORT")
+            or os.environ.get("HERMES_PORT")
+            or "8080"
+        )
+        _log_level = (
+            os.environ.get("LOGOS_LOG_LEVEL")
+            or os.environ.get("HERMES_LOG_LEVEL")
+            or "INFO"
+        )
         config_data = {
-            "HERMES_LOG_LEVEL": os.environ.get("HERMES_LOG_LEVEL", "INFO"),
-            "HERMES_PORT": os.environ.get("HERMES_PORT", "8080"),
+            "HERMES_LOG_LEVEL": _log_level,
+            "LOGOS_LOG_LEVEL": _log_level,
+            "HERMES_PORT": _port_value,
+            "LOGOS_PORT": _port_value,
             "REQUEST_TIMEOUT_SECONDS": os.environ.get("REQUEST_TIMEOUT_SECONDS", "300"),
             "OPENAI_BASE_URL": os.environ.get("OPENAI_BASE_URL", ""),
             "HERMES_MODEL": os.environ.get("HERMES_MODEL", ""),
@@ -411,6 +423,9 @@ class KubernetesExecutor:
                                 }}},
                                 {"name": "HERMES_PORT", "valueFrom": {"configMapKeyRef": {
                                     "name": "hermes-config", "key": "HERMES_PORT",
+                                }}},
+                                {"name": "LOGOS_PORT", "valueFrom": {"configMapKeyRef": {
+                                    "name": "hermes-config", "key": "LOGOS_PORT",
                                 }}},
                                 {"name": "REQUEST_TIMEOUT_SECONDS", "valueFrom": {"configMapKeyRef": {
                                     "name": "hermes-config", "key": "REQUEST_TIMEOUT_SECONDS",

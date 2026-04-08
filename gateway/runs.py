@@ -16,7 +16,11 @@ import gateway.auth.db as auth_db
 
 logger = logging.getLogger(__name__)
 
-_INSTANCE_NAME = os.environ.get("HERMES_INSTANCE_NAME", "Hermes")
+_INSTANCE_NAME = (
+    os.environ.get("LOGOS_INSTANCE_NAME")
+    or os.environ.get("HERMES_INSTANCE_NAME")
+    or "Hermes"
+)
 
 
 def start_run(

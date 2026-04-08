@@ -710,8 +710,8 @@ def get_workspace_manager() -> WorkspaceManager:
 def _resolve_manager_config() -> Tuple[Path, float]:
     """Determine workspace base dir and default TTL from config / env."""
     # Environment override (useful for tests and Kubernetes ConfigMaps)
-    env_dir = os.getenv("HERMES_WORKSPACE_DIR")
-    env_ttl = os.getenv("HERMES_WORKSPACE_TTL_HOURS")
+    env_dir = os.getenv("LOGOS_WORKSPACE_DIR") or os.getenv("HERMES_WORKSPACE_DIR")
+    env_ttl = os.getenv("LOGOS_WORKSPACE_TTL_HOURS") or os.getenv("HERMES_WORKSPACE_TTL_HOURS")
 
     base_dir: Optional[Path] = Path(env_dir).expanduser() if env_dir else None
     ttl_hours: Optional[float] = float(env_ttl) if env_ttl else None

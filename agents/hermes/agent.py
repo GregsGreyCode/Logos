@@ -1502,7 +1502,11 @@ class AIAgent:
 
             self._vprint(f"{self.log_prefix}🧾 Request debug dump written to: {dump_file}")
 
-            if os.getenv("HERMES_DUMP_REQUEST_STDOUT", "").strip().lower() in {"1", "true", "yes", "on"}:
+            if (
+                os.getenv("LOGOS_DUMP_REQUEST_STDOUT")
+                or os.getenv("HERMES_DUMP_REQUEST_STDOUT")
+                or ""
+            ).strip().lower() in {"1", "true", "yes", "on"}:
                 print(json.dumps(dump_payload, ensure_ascii=False, indent=2, default=str))
 
             return dump_file
@@ -4854,7 +4858,11 @@ class AIAgent:
                     if self.api_mode == "codex_responses":
                         api_kwargs = self._preflight_codex_api_kwargs(api_kwargs, allow_stream=False)
 
-                    if os.getenv("HERMES_DUMP_REQUESTS", "").strip().lower() in {"1", "true", "yes", "on"}:
+                    if (
+                        os.getenv("LOGOS_DUMP_REQUESTS")
+                        or os.getenv("HERMES_DUMP_REQUESTS")
+                        or ""
+                    ).strip().lower() in {"1", "true", "yes", "on"}:
                         self._dump_api_request_debug(api_kwargs, reason="preflight")
 
                     cb = getattr(self, "_stream_callback", None)

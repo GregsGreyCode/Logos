@@ -141,6 +141,11 @@ spec:
                 configMapKeyRef:
                   name: logos-config
                   key: HERMES_PORT
+            - name: LOGOS_PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: logos-config
+                  key: LOGOS_PORT
             - name: REQUEST_TIMEOUT_SECONDS
               valueFrom:
                 configMapKeyRef:
@@ -166,6 +171,11 @@ spec:
                 configMapKeyRef:
                   name: logos-config
                   key: HERMES_RUNTIME_MODE
+            - name: LOGOS_RUNTIME_MODE
+              valueFrom:
+                configMapKeyRef:
+                  name: logos-config
+                  key: LOGOS_RUNTIME_MODE
             - name: OPENAI_API_KEY
               valueFrom:
                 secretKeyRef:
@@ -177,6 +187,11 @@ spec:
                   name: logos-secret
                   key: HERMES_INTERNAL_TOKEN
             - name: HERMES_JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: logos-secret
+                  key: HERMES_JWT_SECRET
+            - name: LOGOS_JWT_SECRET
               valueFrom:
                 secretKeyRef:
                   name: logos-secret
@@ -203,6 +218,8 @@ spec:
             - name: TELEGRAM_HOME_CHANNEL_NAME
               value: "Homelab Notifications"
             - name: HERMES_INSTANCE_NAME
+              value: "Hermes"
+            - name: LOGOS_INSTANCE_NAME
               value: "Hermes"
 
           volumeMounts:

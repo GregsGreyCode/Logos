@@ -60,9 +60,21 @@ _AI_ROUTER_BASE = os.environ.get(
     "http://ai-router.hermes.svc.cluster.local:9001",
 )
 _CANARY_HEALTH_URL = "http://hermes-canary.hermes.svc.cluster.local/health"
-_INSTANCE_NAME = os.environ.get("HERMES_INSTANCE_NAME", "Hermes")
-_IS_CANARY = os.environ.get("HERMES_IS_CANARY", "").lower() in ("1", "true", "yes")
-_RUNTIME_MODE = os.environ.get("HERMES_RUNTIME_MODE", "openshell")  # "openshell" (default) | "local" | "docker"
+_INSTANCE_NAME = (
+    os.environ.get("LOGOS_INSTANCE_NAME")
+    or os.environ.get("HERMES_INSTANCE_NAME")
+    or "Hermes"
+)
+_IS_CANARY = (
+    os.environ.get("LOGOS_IS_CANARY")
+    or os.environ.get("HERMES_IS_CANARY")
+    or ""
+).lower() in ("1", "true", "yes")
+_RUNTIME_MODE = (
+    os.environ.get("LOGOS_RUNTIME_MODE")
+    or os.environ.get("HERMES_RUNTIME_MODE")
+    or "openshell"
+)  # "openshell" (default) | "local" | "docker"
 
 try:
     # Read directly from pyproject.toml — immune to stale installed metadata
@@ -130,7 +142,11 @@ _SETUP_HTML  = (_html_dir / "setup.html").read_text(encoding="utf-8")
 
 def _check_auth(request: web.Request) -> bool:
     """Legacy internal-token check — still used by /sessions endpoint."""
-    token = os.environ.get("HERMES_INTERNAL_TOKEN", "")
+    token = (
+        os.environ.get("LOGOS_INTERNAL_TOKEN")
+        or os.environ.get("HERMES_INTERNAL_TOKEN")
+        or ""
+    )
     if not token:
         return True
     auth = request.headers.get("Authorization", "")
@@ -282,8 +298,16 @@ async def _resurrect_missing_sandboxes(executor) -> None:
 
 def _ensure_admin_exists() -> None:
     """Seed the first admin account from env vars if the users table is empty."""
-    admin_email = os.environ.get("HERMES_ADMIN_EMAIL", "").strip()
-    admin_pass  = os.environ.get("HERMES_ADMIN_PASSWORD", "").strip()
+    admin_email = (
+        os.environ.get("LOGOS_ADMIN_EMAIL")
+        or os.environ.get("HERMES_ADMIN_EMAIL")
+        or ""
+    ).strip()
+    admin_pass = (
+        os.environ.get("LOGOS_ADMIN_PASSWORD")
+        or os.environ.get("HERMES_ADMIN_PASSWORD")
+        or ""
+    ).strip()
     if not admin_email or not admin_pass:
         return
     try:
@@ -297,7 +321,11 @@ def _ensure_admin_exists() -> None:
             username="admin",
             password_hash=hash_password(admin_pass),
             role="admin",
-            display_name=os.environ.get("HERMES_ADMIN_NAME", "Admin"),
+            display_name=(
+                os.environ.get("LOGOS_ADMIN_NAME")
+                or os.environ.get("HERMES_ADMIN_NAME")
+                or "Admin"
+            ),
         )
         logger.info("Seeded admin account: %s", admin_email)
     except Exception as exc:
@@ -2860,36 +2888,50 @@ async def start_http_api(runner: Any, port: int = 8091) -> None:
     auth_db.init_db(hermes_home)
 
     # Ensure a stable JWT secret exists for local installs.
-    # K8s sets HERMES_JWT_SECRET via a k8s Secret; local desktop/CLI installs
-    # never set it.  Generate once, persist to ~/.logos/.jwt_secret so tokens
-    # survive gateway restarts without forcing re-login every time.
-    # Also treat the known template placeholder as unset — k8s/02-secret.yaml ships
-    # with REPLACE_WITH_JWT_SECRET so a fresh cluster with un-edited secrets gets a
-    # real random value rather than the publicly-known placeholder.
+    # K8s sets LOGOS_JWT_SECRET (or legacy HERMES_JWT_SECRET) via a k8s Secret;
+    # local desktop/CLI installs never set it.  Generate once, persist to
+    # ~/.logos/.jwt_secret so tokens survive gateway restarts without forcing
+    # re-login every time.  Also treat the known template placeholder as unset —
+    # k8s/02-secret.yaml ships with REPLACE_WITH_JWT_SECRET so a fresh cluster
+    # with un-edited secrets gets a real random value rather than the publicly
+    # known placeholder.
     _KNOWN_JWT_PLACEHOLDERS = {"", "REPLACE_WITH_JWT_SECRET", "replace_with_jwt_secret"}
-    if os.environ.get("HERMES_JWT_SECRET", "") in _KNOWN_JWT_PLACEHOLDERS:
+    _current_jwt = (
+        os.environ.get("LOGOS_JWT_SECRET")
+        or os.environ.get("HERMES_JWT_SECRET")
+        or ""
+    )
+    if _current_jwt in _KNOWN_JWT_PLACEHOLDERS:
         import secrets as _secrets
         _jwt_secret_path = hermes_home / ".jwt_secret"
         if _jwt_secret_path.exists():
-            os.environ["HERMES_JWT_SECRET"] = _jwt_secret_path.read_text().strip()
+            _persisted = _jwt_secret_path.read_text().strip()
+            os.environ["LOGOS_JWT_SECRET"] = _persisted
+            os.environ["HERMES_JWT_SECRET"] = _persisted
         else:
             _jwt_secret_path.parent.mkdir(parents=True, exist_ok=True)
             _new_secret = _secrets.token_hex(32)
             _jwt_secret_path.write_text(_new_secret)
             _jwt_secret_path.chmod(0o600)
+            os.environ["LOGOS_JWT_SECRET"] = _new_secret
             os.environ["HERMES_JWT_SECRET"] = _new_secret
             logger.info("Generated new JWT secret at %s", _jwt_secret_path)
-    # HERMES_WIPE_ON_START: wipe setup state so /setup always runs fresh (setup-test deployments)
-    if os.environ.get("HERMES_WIPE_ON_START", "").lower() in ("1", "true", "yes"):
+    # LOGOS_WIPE_ON_START: wipe setup state so /setup always runs fresh (setup-test deployments)
+    _wipe_flag = (
+        os.environ.get("LOGOS_WIPE_ON_START")
+        or os.environ.get("HERMES_WIPE_ON_START")
+        or ""
+    ).lower()
+    if _wipe_flag in ("1", "true", "yes"):
         try:
             auth_db.reset_setup_completed()
             for _m in auth_db.list_machines():
                 auth_db.delete_machine(_m["id"])
             for _p in auth_db.list_policies():
                 auth_db.delete_policy(_p["id"])
-            logger.info("HERMES_WIPE_ON_START: wiped setup state, machines, and policies")
+            logger.info("LOGOS_WIPE_ON_START: wiped setup state, machines, and policies")
         except Exception as _wipe_err:
-            logger.warning("HERMES_WIPE_ON_START: partial failure: %s", _wipe_err)
+            logger.warning("LOGOS_WIPE_ON_START: partial failure: %s", _wipe_err)
     # Env-var admin seeding (takes priority over generic seed)
     _ensure_admin_exists()
     # Generic seed: machines → profiles → admin user (all no-ops on existing data)
@@ -3351,7 +3393,9 @@ async def start_http_api(runner: Any, port: int = 8091) -> None:
     # Run once at startup to remove any workspaces left over from a previous
     # pod lifecycle, then schedule periodic sweeps.
     _ws_cleanup_interval_hours = float(
-        os.environ.get("HERMES_WORKSPACE_CLEANUP_INTERVAL_HOURS", "1")
+        os.environ.get("LOGOS_WORKSPACE_CLEANUP_INTERVAL_HOURS")
+        or os.environ.get("HERMES_WORKSPACE_CLEANUP_INTERVAL_HOURS")
+        or "1"
     )
 
     async def _workspace_cleanup_loop():

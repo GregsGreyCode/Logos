@@ -959,7 +959,7 @@ def main() -> None:
     # ── Agent-mode: spawned by LocalProcessExecutor for multi-instance support ──
     # When Logos is frozen (Logos.exe), subprocess.Popen([sys.executable, ...])
     # would re-run the full launcher.  The executor passes --agent-mode to skip
-    # all launcher UI and just start a gateway on the port supplied via HERMES_PORT.
+    # all launcher UI and just start a gateway on the port supplied via LOGOS_PORT.
     if "--agent-mode" in sys.argv:
         # Redirect None stdout/stderr (no console on Windows GUI apps) to devnull
         # so the gateway and agent code can print() without AttributeErrors.

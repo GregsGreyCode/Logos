@@ -5,11 +5,13 @@ metadata:
   namespace: logos
 data:
   HERMES_LOG_LEVEL: "info"
-  HERMES_PORT: "8080"
+  LOGOS_PORT: "8080"
+  HERMES_PORT: "8080"  # deprecated alias — kept for legacy in-flight code
   REQUEST_TIMEOUT_SECONDS: "120"
   # OPENAI_BASE_URL: set by the setup wizard or manually to your inference server
   # Example: "http://192.168.1.100:1234/v1" (LM Studio) or "https://openrouter.ai/api/v1"
   # The Routing tab in the dashboard manages multiple servers — this is the fallback.
   OPENAI_BASE_URL: ""
   HERMES_MODEL: ""
-  HERMES_RUNTIME_MODE: "kubernetes"
+  LOGOS_RUNTIME_MODE: "kubernetes"
+  HERMES_RUNTIME_MODE: "kubernetes"  # deprecated alias — kept for legacy in-flight code

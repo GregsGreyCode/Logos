@@ -286,17 +286,21 @@ def check_dangerous_command(command: str, env_type: str,
     if not is_dangerous:
         return {"approved": True, "message": None}
 
-    session_key = os.getenv("HERMES_SESSION_KEY", "default")
+    session_key = (
+        os.getenv("LOGOS_SESSION_KEY")
+        or os.getenv("HERMES_SESSION_KEY")
+        or "default"
+    )
     if is_approved(session_key, pattern_key):
         return {"approved": True, "message": None}
 
-    is_cli = os.getenv("HERMES_INTERACTIVE")
-    is_gateway = os.getenv("HERMES_GATEWAY_SESSION")
+    is_cli = os.getenv("LOGOS_INTERACTIVE") or os.getenv("HERMES_INTERACTIVE")
+    is_gateway = os.getenv("LOGOS_GATEWAY_SESSION") or os.getenv("HERMES_GATEWAY_SESSION")
 
     if not is_cli and not is_gateway:
         return {"approved": True, "message": None}
 
-    if is_gateway or os.getenv("HERMES_EXEC_ASK"):
+    if is_gateway or os.getenv("LOGOS_EXEC_ASK") or os.getenv("HERMES_EXEC_ASK"):
         submit_pending(session_key, {
             "command": command,
             "pattern_key": pattern_key,
@@ -350,12 +354,12 @@ def check_all_command_guards(command: str, env_type: str,
         return {"approved": True, "message": None}
 
     # --yolo: bypass all approval prompts and pre-exec guard checks
-    if os.getenv("HERMES_YOLO_MODE"):
+    if os.getenv("LOGOS_YOLO_MODE") or os.getenv("HERMES_YOLO_MODE"):
         return {"approved": True, "message": None}
 
-    is_cli = os.getenv("HERMES_INTERACTIVE")
-    is_gateway = os.getenv("HERMES_GATEWAY_SESSION")
-    is_ask = os.getenv("HERMES_EXEC_ASK")
+    is_cli = os.getenv("LOGOS_INTERACTIVE") or os.getenv("HERMES_INTERACTIVE")
+    is_gateway = os.getenv("LOGOS_GATEWAY_SESSION") or os.getenv("HERMES_GATEWAY_SESSION")
+    is_ask = os.getenv("LOGOS_EXEC_ASK") or os.getenv("HERMES_EXEC_ASK")
 
     # Preserve the existing non-interactive behavior: outside CLI/gateway/ask
     # flows, we do not block on approvals and we skip external guard work.

@@ -205,7 +205,7 @@ Host OS
 
 **To start:**
 ```bash
-cp .env.example .env   # add your API keys + HERMES_JWT_SECRET
+cp .env.example .env   # add your API keys + LOGOS_JWT_SECRET
 docker compose up -d
 ```
 
@@ -225,7 +225,7 @@ Host OS
 
 **To start:**
 ```bash
-cp .env.example .env   # add HERMES_JWT_SECRET (required)
+cp .env.example .env   # add LOGOS_JWT_SECRET (required)
 docker compose -f docker-compose.k3s.yml up -d
 # In setup wizard step 4: choose Kubernetes → "Logos is outside the cluster"
 # Leave kubeconfig empty — it is mounted automatically.
@@ -242,7 +242,7 @@ kubectl apply -f k8s/
 
 # 2. Set required secrets
 kubectl create secret generic logos-secrets -n logos \
-  --from-literal=HERMES_JWT_SECRET=$(openssl rand -hex 32) \
+  --from-literal=LOGOS_JWT_SECRET=$(openssl rand -hex 32) \
   --from-literal=OPENAI_API_KEY=<your-key>   # or whichever provider you use
 
 # 3. Check rollout
@@ -278,13 +278,13 @@ Agent security is defense-in-depth — multiple independent layers, not a single
 
 ### 🔑 Secrets and auth
 
-**`HERMES_JWT_SECRET`**
+**`LOGOS_JWT_SECRET`** _(legacy alias: `HERMES_JWT_SECRET`)_
 All session tokens are signed with this secret. Generate it once with `openssl rand -hex 32` and store it somewhere safe.
 - If you lose it, all active sessions are invalidated on next restart (users will need to log in again — no data is lost).
 - Rotating it intentionally: change the value, restart Logos.
 - Never commit it to version control.
 
-**`HERMES_COOKIE_SECURE`**
+**`LOGOS_COOKIE_SECURE`** _(legacy alias: `HERMES_COOKIE_SECURE`)_
 Set to `true` if Logos is behind an HTTPS reverse proxy (nginx, Caddy, Traefik). This adds the `Secure` flag to auth cookies so they are only sent over HTTPS.
 - Leave empty for plain HTTP (local or docker-compose without TLS termination).
 - **Do not expose Logos directly on the internet without TLS.**

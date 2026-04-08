@@ -156,7 +156,7 @@ def _handle_sudo_failure(output: str, env_type: str) -> str:
     
     Returns enhanced output if sudo failed in messaging context, else original.
     """
-    is_gateway = os.getenv("HERMES_GATEWAY_SESSION")
+    is_gateway = os.getenv("LOGOS_GATEWAY_SESSION") or os.getenv("HERMES_GATEWAY_SESSION")
     
     if not is_gateway:
         return output
@@ -346,7 +346,7 @@ def _transform_sudo_command(command: str) -> tuple[str, str | None]:
 
     if not sudo_password:
         # No password configured - check if we're in interactive mode
-        if os.getenv("HERMES_INTERACTIVE"):
+        if os.getenv("LOGOS_INTERACTIVE") or os.getenv("HERMES_INTERACTIVE"):
             # Prompt user for password
             sudo_password = _prompt_for_sudo_password(timeout_seconds=45)
             if sudo_password:

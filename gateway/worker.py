@@ -47,7 +47,7 @@ class AgentWorker:
         self.instance_label = instance_label
         self.requester = requester
         self.hermes_home = Path(hermes_home) if hermes_home else Path(
-            os.getenv("HERMES_HOME", Path.home() / ".hermes")
+            os.getenv("LOGOS_HOME") or os.getenv("HERMES_HOME") or str(Path.home() / ".logos")
         )
         self._ws = None
         self._running = True

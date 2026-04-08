@@ -935,7 +935,11 @@ def build_session_context(
         source=source,
         connected_platforms=connected,
         home_channels=home_channels,
-        runtime_mode=os.environ.get("HERMES_RUNTIME_MODE", "local"),
+        runtime_mode=(
+            os.environ.get("LOGOS_RUNTIME_MODE")
+            or os.environ.get("HERMES_RUNTIME_MODE")
+            or "local"
+        ),
         host_platform="windows" if _sys.platform == "win32" else ("darwin" if _sys.platform == "darwin" else "linux"),
     )
     

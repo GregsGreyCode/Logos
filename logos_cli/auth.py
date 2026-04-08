@@ -285,7 +285,11 @@ def _token_fingerprint(token: Any) -> Optional[str]:
 
 
 def _oauth_trace_enabled() -> bool:
-    raw = os.getenv("HERMES_OAUTH_TRACE", "").strip().lower()
+    raw = (
+        os.getenv("LOGOS_OAUTH_TRACE")
+        or os.getenv("HERMES_OAUTH_TRACE")
+        or ""
+    ).strip().lower()
     return raw in {"1", "true", "yes", "on"}
 
 
@@ -864,7 +868,7 @@ def resolve_codex_runtime_credentials(
                 access_token = str(tokens.get("access_token", "") or "").strip()
 
     base_url = (
-        os.getenv("HERMES_CODEX_BASE_URL", "").strip().rstrip("/")
+        (os.getenv("LOGOS_CODEX_BASE_URL") or os.getenv("HERMES_CODEX_BASE_URL") or "").strip().rstrip("/")
         or DEFAULT_CODEX_BASE_URL
     )
 
@@ -898,7 +902,7 @@ def _resolve_verify(
     effective_ca = (
         ca_bundle
         or tls_state.get("ca_bundle")
-        or os.getenv("HERMES_CA_BUNDLE")
+        or os.getenv("LOGOS_CA_BUNDLE") or os.getenv("HERMES_CA_BUNDLE")
         or os.getenv("SSL_CERT_FILE")
     )
 
@@ -1156,7 +1160,7 @@ def resolve_nous_runtime_credentials(
 
         portal_base_url = (
             _optional_base_url(state.get("portal_base_url"))
-            or os.getenv("HERMES_PORTAL_BASE_URL")
+            or os.getenv("LOGOS_PORTAL_BASE_URL") or os.getenv("HERMES_PORTAL_BASE_URL")
             or os.getenv("NOUS_PORTAL_BASE_URL")
             or DEFAULT_NOUS_PORTAL_URL
         ).rstrip("/")
@@ -1759,7 +1763,7 @@ def _login_openai_codex(args, pconfig: ProviderConfig) -> None:
             do_import = "n"
         if do_import in ("y", "yes"):
             _save_codex_tokens(cli_tokens)
-            base_url = os.getenv("HERMES_CODEX_BASE_URL", "").strip().rstrip("/") or DEFAULT_CODEX_BASE_URL
+            base_url = (os.getenv("LOGOS_CODEX_BASE_URL") or os.getenv("HERMES_CODEX_BASE_URL") or "").strip().rstrip("/") or DEFAULT_CODEX_BASE_URL
             config_path = _update_config_for_provider("openai-codex", base_url)
             print()
             print("Credentials imported. Note: if Codex CLI refreshes its token,")
@@ -1913,7 +1917,7 @@ def _codex_device_code_login() -> Dict[str, Any]:
 
     # Return tokens for the caller to persist (no longer writes to ~/.codex/)
     base_url = (
-        os.getenv("HERMES_CODEX_BASE_URL", "").strip().rstrip("/")
+        (os.getenv("LOGOS_CODEX_BASE_URL") or os.getenv("HERMES_CODEX_BASE_URL") or "").strip().rstrip("/")
         or DEFAULT_CODEX_BASE_URL
     )
 
@@ -1933,7 +1937,7 @@ def _login_nous(args, pconfig: ProviderConfig) -> None:
     """Nous Portal device authorization flow."""
     portal_base_url = (
         getattr(args, "portal_url", None)
-        or os.getenv("HERMES_PORTAL_BASE_URL")
+        or os.getenv("LOGOS_PORTAL_BASE_URL") or os.getenv("HERMES_PORTAL_BASE_URL")
         or os.getenv("NOUS_PORTAL_BASE_URL")
         or pconfig.portal_base_url
     ).rstrip("/")
@@ -1951,7 +1955,7 @@ def _login_nous(args, pconfig: ProviderConfig) -> None:
     insecure = bool(getattr(args, "insecure", False))
     ca_bundle = (
         getattr(args, "ca_bundle", None)
-        or os.getenv("HERMES_CA_BUNDLE")
+        or os.getenv("LOGOS_CA_BUNDLE") or os.getenv("HERMES_CA_BUNDLE")
         or os.getenv("SSL_CERT_FILE")
     )
     verify: bool | str = False if insecure else (ca_bundle if ca_bundle else True)

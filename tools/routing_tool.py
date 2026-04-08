@@ -19,8 +19,16 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-_GATEWAY_BASE = os.environ.get("HERMES_GATEWAY_URL", "http://localhost:8080")
-_INTERNAL_TOKEN = os.environ.get("HERMES_INTERNAL_TOKEN", "")
+_GATEWAY_BASE = (
+    os.environ.get("LOGOS_GATEWAY_URL")
+    or os.environ.get("HERMES_GATEWAY_URL")
+    or "http://localhost:8080"
+)
+_INTERNAL_TOKEN = (
+    os.environ.get("LOGOS_INTERNAL_TOKEN")
+    or os.environ.get("HERMES_INTERNAL_TOKEN")
+    or ""
+)
 
 
 def _headers() -> dict:

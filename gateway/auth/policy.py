@@ -347,13 +347,14 @@ def check_tool(tool_name: str, policy: ActionPolicy) -> tuple[bool, bool, str]:
 def _get_repo_roots() -> list:
     """Return the list of resolved absolute paths allowed under repo_scoped policy.
 
-    Reads HERMES_REPO_ROOTS (colon-separated) env var.  Falls back to sensible
-    defaults: /repo (homelab-infra mount in the Hermes pod), ~/work, ~/workspace.
+    Reads LOGOS_REPO_ROOTS (or legacy HERMES_REPO_ROOTS), colon-separated env
+    var.  Falls back to sensible defaults: /repo (homelab-infra mount in the
+    Logos pod), ~/work, ~/workspace.
 
     Symlinks in the configured roots are resolved so comparisons are consistent.
     """
     import os as _os
-    raw = _os.getenv("HERMES_REPO_ROOTS", "")
+    raw = _os.getenv("LOGOS_REPO_ROOTS") or _os.getenv("HERMES_REPO_ROOTS") or ""
     if raw:
         paths = [p.strip() for p in raw.split(":") if p.strip()]
     else:
