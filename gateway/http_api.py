@@ -443,26 +443,35 @@ async def _handle_sandboxes_list(request: web.Request) -> web.Response:
         seen_sandboxes.add(sandbox_name)
 
     # CLI sandboxes not in instance state (created out of band or
-    # in-flight before the state file was written)
+    # in-flight before the state file was written). Cross-reference
+    # the worker registry by matching worker_id == sandbox_name so
+    # CLI-only sandboxes still pick up live worker health.
     for sandbox_name, cli in cli_sandboxes.items():
         if sandbox_name not in seen_sandboxes:
+            worker = worker_map.get(sandbox_name, {})
+            # Strip the "hermes-" prefix to derive a friendlier display name
+            display_name = sandbox_name[len("hermes-"):] if sandbox_name.startswith("hermes-") else sandbox_name
             sandboxes.append({
-                "name": sandbox_name, "sandbox_name": sandbox_name, "worker_id": sandbox_name,
-                "soul": "", "model": "", "requester": "",
-                "toolsets": [], "policy": "", "sandbox_image": "",
+                "name": worker.get("instance_label") or display_name,
+                "sandbox_name": sandbox_name,
+                "worker_id": sandbox_name,
+                "soul": worker.get("soul", ""), "model": "", "requester": worker.get("requester", ""),
+                "toolsets": worker.get("toolsets", []), "policy": "", "sandbox_image": "",
                 "created_at": 0,
                 "phase": cli.get("phase") or "unknown",
-                "worker_status": "disconnected",
-                "worker_healthy": False,
-                "worker_uptime_s": 0,
-                "current_task_id": None,
+                "worker_status": worker.get("status", "disconnected"),
+                "worker_healthy": worker.get("healthy", False),
+                "worker_uptime_s": worker.get("uptime_s", 0),
+                "current_task_id": worker.get("current_task_id"),
             })
+            seen_sandboxes.add(sandbox_name)
 
-    # Workers not in instance state and not in CLI list (orphaned)
+    # Workers not in instance state and not in CLI list (orphaned —
+    # e.g. the in-process gateway worker named "hermes")
     for wid, w in worker_map.items():
         if wid not in seen_sandboxes:
             sandboxes.append({
-                "name": wid, "sandbox_name": wid, "worker_id": wid,
+                "name": w.get("instance_label") or wid, "sandbox_name": wid, "worker_id": wid,
                 "soul": w.get("soul", ""), "model": "", "requester": w.get("requester", ""),
                 "toolsets": w.get("toolsets", []), "policy": "", "sandbox_image": "",
                 "created_at": 0,
