@@ -2323,8 +2323,16 @@
         <template x-if="namedAgents.length > 0">
           <div class="space-y-2">
             <template x-for="a in namedAgents" :key="a.id">
-              <div @click="if (!a._editing) chatWithAgent(a)"
-                class="p-3 rounded-xl border border-gray-800 bg-gray-900 hover:border-indigo-500/50 hover:bg-indigo-950/10 transition-colors cursor-pointer group flex gap-3">
+              <div @click="if (!a._editing && !a._confirmDelete) chatWithAgent(a)"
+                class="relative p-3 rounded-xl border border-gray-800 bg-gray-900 hover:border-indigo-500/50 hover:bg-indigo-950/10 transition-colors cursor-pointer group flex gap-3">
+                <!-- Destructive delete — small X in the top-right corner of the
+                     card. Opens a type-to-confirm dialog so it can't be hit by
+                     accident. Only visible on hover so it doesn't clutter the card. -->
+                <button @click.stop="a._confirmDelete = true; a._deleteText = ''"
+                  title="Delete agent"
+                  class="absolute top-1.5 right-1.5 w-5 h-5 flex items-center justify-center rounded-full text-gray-600 hover:text-red-400 hover:bg-red-950/40 opacity-0 group-hover:opacity-100 transition-opacity text-sm leading-none">
+                  &times;
+                </button>
                 <!-- Sprite preview — same character as the in-world sprite -->
                 <div class="shrink-0 self-center" :style="agentSpriteStyle(a.name, a.char_index)"></div>
                 <div class="flex-1 min-w-0">
@@ -2361,23 +2369,54 @@
                 <div class="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity" @click.stop>
                   <button @click.stop="a._editing = true; a._edit = { name: a.name, soul_slug: a.soul_slug, model: a.model || '', description: a.description || '', toolsets: JSON.parse(a.toolsets || '[]') }"
                     class="text-[9px] px-1.5 py-0.5 rounded border border-gray-700 text-gray-500 hover:text-white hover:border-gray-500 transition-colors">Edit</button>
-                  <button @click.stop="deleteNamedAgent(a.id)"
-                    class="text-[9px] px-1.5 py-0.5 rounded border border-red-900 text-red-700 hover:text-red-400 transition-colors">Delete</button>
                   <button @click.stop="chatWithAgent(a)"
                     class="text-[9px] px-2 py-0.5 rounded-lg bg-indigo-600 text-white hover:bg-indigo-500 transition-colors font-medium">Chat</button>
                 </div>
-                <!-- Inline edit form -->
-                <div x-show="a._editing" x-cloak @click.stop class="mt-2 space-y-1.5 pt-2 border-t border-gray-800 min-w-0">
+                <!-- Type-to-confirm delete dialog — replaces the old Delete
+                     button. User must type the agent's exact name before the
+                     delete call fires. -->
+                <div x-show="a._confirmDelete" x-cloak @click.stop
+                     class="mt-2 space-y-1.5 pt-2 border-t border-red-900/50 min-w-0 max-w-full overflow-hidden">
+                  <p class="text-[10px] text-red-400 leading-snug">
+                    Delete <span class="font-semibold" x-text="a.name"></span>?
+                    This destroys the agent and its sandbox. Type
+                    <span class="font-mono text-red-300" x-text="a.name"></span>
+                    to confirm.
+                  </p>
+                  <input x-model="a._deleteText" type="text"
+                    :placeholder="a.name"
+                    @keydown.enter="(a._deleteText || '').trim() === a.name && deleteNamedAgent(a.id)"
+                    class="w-full px-2 py-1 rounded bg-gray-800 border border-red-900 text-[10px] text-white focus:outline-none focus:border-red-500">
+                  <div class="flex gap-1.5">
+                    <button @click.stop="deleteNamedAgent(a.id)"
+                      :disabled="(a._deleteText || '').trim() !== a.name"
+                      class="text-[9px] px-2 py-1 rounded bg-red-600 text-white hover:bg-red-500 disabled:opacity-30 disabled:cursor-not-allowed transition-colors">
+                      Delete forever
+                    </button>
+                    <button @click.stop="a._confirmDelete = false; a._deleteText = ''"
+                      class="text-[9px] px-2 py-1 rounded border border-gray-700 text-gray-400 hover:text-white transition-colors">
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+                <!-- Inline edit form — constrained width so long model names
+                     in <select> options don't blow the card out to fullscreen.
+                     Native <select> ignores parent min-w-0 when its longest
+                     <option> is long, so we enforce max-width + overflow here. -->
+                <div x-show="a._editing" x-cloak @click.stop
+                     class="mt-2 space-y-1.5 pt-2 border-t border-gray-800 min-w-0 max-w-full overflow-hidden">
                   <input x-model="a._edit.name" type="text" placeholder="Name"
                     class="w-full px-2 py-1 rounded bg-gray-800 border border-gray-700 text-[10px] text-white focus:outline-none focus:border-indigo-500">
-                  <div class="grid grid-cols-2 gap-2 min-w-0">
+                  <div class="grid grid-cols-2 gap-2 min-w-0 max-w-full">
                     <select x-model="a._edit.soul_slug"
+                      style="width:100%;max-width:100%;overflow:hidden;text-overflow:ellipsis;"
                       class="min-w-0 w-full px-2 py-1 rounded bg-gray-800 border border-gray-700 text-[10px] text-white focus:outline-none focus:border-indigo-500">
                       <template x-for="s in (souls.length ? souls : [{slug:'general',name:'General'}])" :key="s.slug">
                         <option :value="s.slug" x-text="s.name || s.slug"></option>
                       </template>
                     </select>
                     <select x-model="a._edit.model"
+                      style="width:100%;max-width:100%;overflow:hidden;text-overflow:ellipsis;"
                       class="min-w-0 w-full px-2 py-1 rounded bg-gray-800 border border-gray-700 text-[10px] text-white focus:outline-none focus:border-indigo-500">
                       <option value="">Auto</option>
                       <template x-for="m in allMachineModels" :key="m">
@@ -6779,7 +6818,20 @@ function app() {
       try {
         const r = await fetch('/admin/agents', { credentials: 'include' });
         const d = await r.json();
-        this.namedAgents = d.agents || [];
+        const fresh = d.agents || [];
+        // Preserve transient UI state (_editing / _edit / _confirmDelete)
+        // across the 3-second background refresh so an open edit form or
+        // confirmation dialog doesn't get obliterated by the next poll.
+        const prev = new Map((this.namedAgents || []).map(a => [a.id, a]));
+        for (const a of fresh) {
+          const old = prev.get(a.id);
+          if (old) {
+            if (old._editing) { a._editing = true; a._edit = old._edit; }
+            if (old._confirmDelete) a._confirmDelete = old._confirmDelete;
+            if (old._deleteText !== undefined) a._deleteText = old._deleteText;
+          }
+        }
+        this.namedAgents = fresh;
       } catch { this.namedAgents = []; }
       // Drop orphan chats whose agent has been deleted server-side.
       // A chat with no agent_id is "unassigned" and stays (legacy chats).
@@ -6830,7 +6882,13 @@ function app() {
 
     async deleteNamedAgent(aid) {
       const a = this.namedAgents.find(x => x.id === aid);
-      if (!confirm('Delete agent "' + (a?.name || aid) + '"? This cannot be undone.')) return;
+      if (!a) return;
+      // The type-to-confirm dialog in the agent card is the gate — if it
+      // let the user press "Delete forever" then the typed name matched.
+      // Guard here anyway as defence in depth.
+      if ((a._deleteText || '').trim() !== a.name) {
+        return;
+      }
       try {
         await fetch('/admin/agents/' + aid, {
           method: 'DELETE', credentials: 'include',

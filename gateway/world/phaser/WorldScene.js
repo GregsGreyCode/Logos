@@ -175,17 +175,9 @@ export class WorldScene extends Phaser.Scene {
       }
     }
 
-    // Ponds
-    const ponds = [[30, 30, 3], [8, 32, 2.5]];
-    for (const [px, py, pr] of ponds) {
-      for (let r = 0; r < WORLD_ROWS; r++) {
-        for (let c = 0; c < WORLD_COLS; c++) {
-          const dist = Math.sqrt((c - px) ** 2 + (r - py) ** 2);
-          if (dist < pr) grid[r][c] = TILE.WATER;
-          else if (dist < pr + 1 && grid[r][c] === TILE.GRASS) grid[r][c] = TILE.SAND;
-        }
-      }
-    }
+    // Ponds removed — they read as odd blue blobs at the 24px tile scale
+    // and broke the otherwise-unified twilight palette. The world is now
+    // all land; agents can wander the whole map.
 
     // Paths — from center to edges
     const pathPoints = [
@@ -194,7 +186,7 @@ export class WorldScene extends Phaser.Scene {
       [[cx, cy], [0, cy]],       // west
       [[cx, cy], [WORLD_COLS - 1, cy]], // east
       [[cx, cy], [4, 4]],        // to meadow
-      [[cx, cy], [30, 30]],      // to pond
+      [[cx, cy], [30, 30]],      // diagonal feeder
     ];
     for (const [from, to] of pathPoints) {
       this._drawPath(grid, from[0], from[1], to[0], to[1]);
@@ -383,7 +375,11 @@ export class WorldScene extends Phaser.Scene {
   }
 
   getCharIdleFrame(charIndex, direction) {
-    return this.getCharFrames(charIndex, direction)[0];
+    // Middle frame of the 3-frame walk cycle is the neutral standing pose
+    // (both feet together, both arms down) on the RPG-Maker-style sheet we
+    // use. Frame 0 and frame 2 are the opposing walk poses, which is why
+    // stopping on frame 0 looked frozen-mid-stride (one arm up, one down).
+    return this.getCharFrames(charIndex, direction)[1];
   }
 
   getCharTextureKey(charIndex) {
