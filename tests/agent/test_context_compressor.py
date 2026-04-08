@@ -6,6 +6,25 @@ from unittest.mock import patch, MagicMock
 from agent.context_compressor import ContextCompressor, SUMMARY_PREFIX
 
 
+@pytest.fixture(autouse=True)
+def _mock_call_llm():
+    """Globally mock call_llm so no test ever hits a real LLM endpoint.
+
+    Without this, tests that exercise compress() through the `compressor`
+    fixture (which only mocks get_model_context_length) run the real
+    auxiliary LLM client, which routes via task="compression" → live LM
+    Studio / OpenRouter. That caused parallel xdist workers to spawn
+    multiple concurrent qwen3.5-9b loads on LM Studio and stuck the model
+    in a placeholder-content reasoning loop. Tests that need a specific
+    mock response can still override this with their own context manager.
+    """
+    mock_response = MagicMock()
+    mock_response.choices = [MagicMock()]
+    mock_response.choices[0].message.content = "[CONTEXT SUMMARY]: mocked summary"
+    with patch("agent.context_compressor.call_llm", return_value=mock_response) as m:
+        yield m
+
+
 @pytest.fixture()
 def compressor():
     """Create a ContextCompressor with mocked dependencies."""
