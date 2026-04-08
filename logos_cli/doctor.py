@@ -614,19 +614,7 @@ def run_doctor(args):
     # =========================================================================
     print()
     print(color("◆ Submodules", Colors.CYAN, Colors.BOLD))
-    
-    # mini-swe-agent (terminal tool backend)
-    mini_swe_dir = PROJECT_ROOT / "mini-swe-agent"
-    if mini_swe_dir.exists() and (mini_swe_dir / "pyproject.toml").exists():
-        try:
-            __import__("minisweagent")
-            check_ok("mini-swe-agent", "(terminal backend)")
-        except ImportError:
-            check_warn("mini-swe-agent found but not installed", "(run: uv pip install -e ./mini-swe-agent)")
-            issues.append("Install mini-swe-agent: uv pip install -e ./mini-swe-agent")
-    else:
-        check_warn("mini-swe-agent not found", "(run: git submodule update --init --recursive)")
-    
+
     # tinker-atropos (RL training backend)
     tinker_dir = PROJECT_ROOT / "tinker-atropos"
     if tinker_dir.exists() and (tinker_dir / "pyproject.toml").exists():

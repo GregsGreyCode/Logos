@@ -444,12 +444,21 @@ async def _send_email(extra, chat_id, message):
 
 def _check_send_message():
     """Gate send_message on gateway running (always available on messaging platforms)."""
-    platform = os.getenv("HERMES_SESSION_PLATFORM", "")
+    platform = (
+        os.getenv("LOGOS_SESSION_PLATFORM")
+        or os.getenv("HERMES_SESSION_PLATFORM")
+        or ""
+    )
     if platform and platform != "local":
         return True
-    # In k8s or gateway foreground mode, the agent runs inside the gateway
-    # process itself — there's no PID file, but the gateway is alive.
-    if os.getenv("HERMES_RUNTIME_MODE") == "kubernetes":
+    # In OpenShell sandbox or gateway foreground mode, the agent runs inside
+    # the gateway process itself — there's no PID file, but the gateway is alive.
+    runtime_mode = (
+        os.getenv("LOGOS_RUNTIME_MODE")
+        or os.getenv("HERMES_RUNTIME_MODE")
+        or ""
+    )
+    if runtime_mode == "openshell":
         return True
     try:
         from gateway.status import is_gateway_running

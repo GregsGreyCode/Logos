@@ -13,5 +13,5 @@ data:
   # The Routing tab in the dashboard manages multiple servers — this is the fallback.
   OPENAI_BASE_URL: ""
   HERMES_MODEL: ""
-  LOGOS_RUNTIME_MODE: "kubernetes"
-  HERMES_RUNTIME_MODE: "kubernetes"  # deprecated alias — kept for legacy in-flight code
+  LOGOS_RUNTIME_MODE: "openshell"
+  HERMES_RUNTIME_MODE: "openshell"  # deprecated alias — kept for legacy in-flight code
