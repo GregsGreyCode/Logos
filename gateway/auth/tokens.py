@@ -14,13 +14,21 @@ ALGORITHM = "HS256"
 
 # Set to true when running behind an HTTPS reverse proxy.
 # Without HTTPS, Secure cookie flag is omitted so cookies work over HTTP.
-_COOKIE_SECURE = os.environ.get("HERMES_COOKIE_SECURE", "").lower() in ("1", "true", "yes")
+_COOKIE_SECURE = (
+    os.environ.get("LOGOS_COOKIE_SECURE")
+    or os.environ.get("HERMES_COOKIE_SECURE")
+    or ""
+).lower() in ("1", "true", "yes")
 
 
 def _secret() -> str:
-    s = os.environ.get("HERMES_JWT_SECRET", "")
+    s = (
+        os.environ.get("LOGOS_JWT_SECRET")
+        or os.environ.get("HERMES_JWT_SECRET")
+        or ""
+    )
     if not s:
-        raise RuntimeError("HERMES_JWT_SECRET env var is not set")
+        raise RuntimeError("LOGOS_JWT_SECRET env var is not set")
     return s
 
 

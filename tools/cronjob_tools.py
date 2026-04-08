@@ -390,8 +390,11 @@ def check_cronjob_requirements() -> bool:
     Cronjobs are server-side scheduled tasks so they work from any interface.
     """
     return bool(
-        os.getenv("HERMES_INTERACTIVE")
+        os.getenv("LOGOS_INTERACTIVE")
+        or os.getenv("HERMES_INTERACTIVE")
+        or os.getenv("LOGOS_GATEWAY_SESSION")
         or os.getenv("HERMES_GATEWAY_SESSION")
+        or os.getenv("LOGOS_EXEC_ASK")
         or os.getenv("HERMES_EXEC_ASK")
     )
 

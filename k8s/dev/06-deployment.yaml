@@ -123,6 +123,11 @@ spec:
                 configMapKeyRef:
                   name: logos-config
                   key: HERMES_PORT
+            - name: LOGOS_PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: logos-config
+                  key: LOGOS_PORT
             - name: REQUEST_TIMEOUT_SECONDS
               valueFrom:
                 configMapKeyRef:
@@ -148,11 +153,21 @@ spec:
                 configMapKeyRef:
                   name: logos-config
                   key: HERMES_RUNTIME_MODE
+            - name: LOGOS_RUNTIME_MODE
+              valueFrom:
+                configMapKeyRef:
+                  name: logos-config
+                  key: LOGOS_RUNTIME_MODE
             - name: HERMES_WIPE_ON_START
               valueFrom:
                 configMapKeyRef:
                   name: logos-config
                   key: HERMES_WIPE_ON_START
+            - name: LOGOS_WIPE_ON_START
+              valueFrom:
+                configMapKeyRef:
+                  name: logos-config
+                  key: LOGOS_WIPE_ON_START
             - name: OPENAI_API_KEY
               valueFrom:
                 secretKeyRef:
@@ -185,6 +200,8 @@ spec:
             - name: TELEGRAM_HOME_CHANNEL_NAME
               value: "Homelab Notifications"
             - name: HERMES_INSTANCE_NAME
+              value: "Hermes Dev"
+            - name: LOGOS_INSTANCE_NAME
               value: "Hermes Dev"
 
           volumeMounts:

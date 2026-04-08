@@ -31,7 +31,8 @@ logger = logging.getLogger(__name__)
 
 # Suppress startup messages for clean CLI experience
 os.environ["MSWEA_SILENT_STARTUP"] = "1"  # mini-swe-agent
-os.environ["HERMES_QUIET"] = "1"  # Our own modules
+os.environ["LOGOS_QUIET"] = "1"  # Our own modules
+os.environ["HERMES_QUIET"] = "1"  # deprecated alias — kept for legacy in-flight code
 
 import yaml
 

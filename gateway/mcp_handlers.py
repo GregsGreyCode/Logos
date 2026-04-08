@@ -36,7 +36,7 @@ logger = logging.getLogger(__name__)
 
 def _internal_token() -> str:
     import os
-    return os.getenv("HERMES_INTERNAL_TOKEN", "")
+    return os.getenv("LOGOS_INTERNAL_TOKEN") or os.getenv("HERMES_INTERNAL_TOKEN") or ""
 
 
 def _get_bearer_token(request: web.Request) -> str:

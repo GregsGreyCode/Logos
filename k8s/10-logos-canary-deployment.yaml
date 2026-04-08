@@ -109,6 +109,11 @@ spec:
                 configMapKeyRef:
                   name: logos-config
                   key: HERMES_PORT
+            - name: LOGOS_PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: logos-config
+                  key: LOGOS_PORT
             - name: REQUEST_TIMEOUT_SECONDS
               valueFrom:
                 configMapKeyRef:
@@ -140,6 +145,11 @@ spec:
                   name: logos-secret
                   key: HERMES_INTERNAL_TOKEN
             - name: HERMES_JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: logos-secret
+                  key: HERMES_JWT_SECRET
+            - name: LOGOS_JWT_SECRET
               valueFrom:
                 secretKeyRef:
                   name: logos-secret

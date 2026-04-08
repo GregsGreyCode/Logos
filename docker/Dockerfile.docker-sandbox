@@ -44,6 +44,7 @@ ENV HOME=/home/hermes
 ENV HERMES_HOME=/home/hermes/.hermes
 
 # Runtime defaults — overridden by DockerSandboxExecutor via -e flags
+ENV LOGOS_PORT=8080
 ENV HERMES_PORT=8080
 EXPOSE 8080
 
