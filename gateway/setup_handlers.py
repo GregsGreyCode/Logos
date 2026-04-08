@@ -2721,9 +2721,21 @@ async def handle_setup_complete(request: web.Request) -> web.Response:
             return web.json_response({"error": "no_admin_user"}, status=500)
         user_id = primary_admin["id"]
         agent_type   = (body.get("agent_type") or "general").strip()
-        exec_env     = (body.get("exec_env") or "local").strip()
+        # OpenShell is now the only supported runtime for agent workloads.
+        # Other `exec_env` values are accepted for backwards-compat but are
+        # coerced to "openshell" below when we spawn the default agent.
+        exec_env     = (body.get("exec_env") or "openshell").strip()
         k8s_ns       = (body.get("k8s_namespace") or "hermes").strip()
         kubeconfig   = (body.get("kubeconfig") or "").strip()
+        # Name the first sandboxed agent. Defaults to "Hermes" (the only
+        # agent type today); future releases will let users pick a type.
+        agent_name   = (body.get("agent_name") or "").strip() or "Hermes"
+        # Optional sprite picker selection from the setup wizard (0..7).
+        try:
+            _raw_ci = body.get("agent_char_index")
+            agent_char_index = int(_raw_ci) if _raw_ci is not None else None
+        except (TypeError, ValueError):
+            agent_char_index = None
 
         # ── Frontier track: resolve endpoint, key, and server type from provider ──
         _track = (body.get("track") or "local").strip()
@@ -2800,18 +2812,11 @@ async def handle_setup_complete(request: web.Request) -> web.Response:
                 if isinstance(_cfg["model"], str):
                     _cfg["model"] = {"default": _cfg["model"]}
                 _cfg["model"]["provider"] = _frontier_provider
-            # Persist the chosen execution mode so restarts use the correct executor.
-            # Only written if not already forced via env var (k8s deployments set
-            # HERMES_RUNTIME_MODE explicitly and must not be overridden by setup).
+            # OpenShell is the only supported runtime now. We still honour an
+            # explicit HERMES_RUNTIME_MODE env var so existing k8s deployments
+            # that force it can continue, but every new setup writes openshell.
             if not os.getenv("HERMES_RUNTIME_MODE"):
-                if exec_env == "k8s":
-                    _cfg["HERMES_RUNTIME_MODE"] = "kubernetes"
-                elif exec_env == "openshell":
-                    _cfg["HERMES_RUNTIME_MODE"] = "openshell"
-                elif exec_env == "docker":
-                    _cfg["HERMES_RUNTIME_MODE"] = "docker"
-                else:
-                    _cfg["HERMES_RUNTIME_MODE"] = "local"
+                _cfg["HERMES_RUNTIME_MODE"] = "openshell"
             # For k8s-kubeconfig mode, also write the kubeconfig to a file so
             # k8s_clients() can pick it up via load_kube_config() on the next start.
             _kube_raw = kubeconfig if exec_env == "k8s" and kubeconfig else ""
@@ -2930,12 +2935,57 @@ async def handle_setup_complete(request: web.Request) -> web.Response:
                 "If Logos runs in Kubernetes, use the node's LAN IP instead of localhost."
             )
 
-        # Auto-spawn first agent instance for local mode
-        if exec_env == "local":
+        # Create the default named agent and spawn its OpenShell sandbox.
+        # This gives the user a chat-ready agent the moment they land on
+        # the main app after setup. The sandbox provisions in the background;
+        # the frontend greys out the chat UI until the worker registers.
+        try:
+            existing_default = auth_db.get_agent_by_name(agent_name)
+            if not existing_default:
+                import json as _json
+                default_agent = auth_db.create_agent(
+                    name=agent_name,
+                    soul_slug=agent_type or "general",
+                    model=model,
+                    description="Default agent created by setup wizard.",
+                    creator_id=user_id,
+                    shared=True,
+                    toolsets=_json.dumps([]),
+                    char_index=agent_char_index,
+                )
+                logger.info("setup: created default named agent '%s'", agent_name)
+            else:
+                default_agent = existing_default
+                logger.info("setup: default agent '%s' already exists, reusing", agent_name)
+
+            # Kick off sandbox spawn in the background. We must not block
+            # the event loop on `openshell sandbox create` (which can take
+            # 60+s). The Sandboxes dashboard will show "provisioning" until
+            # the worker connects back.
+            from gateway.executors.openshell import OpenShellExecutor
+            from gateway.executors.base import InstanceConfig
             import asyncio as _asyncio
-            _asyncio.get_event_loop().run_in_executor(
-                None, _auto_spawn_first_instance, agent_type, model
+            _executor = OpenShellExecutor()
+            _cfg = InstanceConfig(
+                name=default_agent["name"],
+                soul_name=default_agent.get("soul_slug") or agent_type or "general",
+                model=default_agent.get("model") or model,
+                requester=primary_admin.get("email") or primary_admin.get("username") or "",
+                instance_label=default_agent["name"],
+                toolsets=[],
             )
+
+            async def _spawn_default_bg():
+                try:
+                    await _asyncio.to_thread(_executor.spawn, _cfg)
+                    logger.info("setup: spawned default sandbox for agent '%s'", agent_name)
+                except Exception as _spawn_err:
+                    logger.warning(
+                        "setup: default agent sandbox spawn failed: %s", _spawn_err,
+                    )
+            _asyncio.create_task(_spawn_default_bg())
+        except Exception as _default_err:
+            logger.warning("setup: could not create default agent: %s", _default_err)
 
         # Issue a session for the admin so the frontend navigates straight to the
         # main app.  This is best-effort: if token issuance fails for any reason
@@ -2977,24 +3027,6 @@ async def handle_setup_complete(request: web.Request) -> web.Response:
     except Exception as exc:
         logger.exception("setup/complete failed: %s", exc)
         return web.json_response({"error": "internal_error", "detail": str(exc)[:300]}, status=500)
-
-
-def _auto_spawn_first_instance(soul_name: str, model: str) -> None:
-    """Spawn a single default agent instance after local-mode setup completes."""
-    try:
-        from gateway.executors.local import LocalProcessExecutor
-        from gateway.executors.base import InstanceConfig
-        executor = LocalProcessExecutor()
-        resources = executor.get_resources()
-        if not resources.get("can_spawn", True):
-            logger.warning("setup: skipping auto-spawn — %s", resources.get("reason", "low resources"))
-            return
-        cfg = InstanceConfig(name="default", soul_name=soul_name or "general", model=model)
-        instance = executor.spawn(cfg)
-        logger.info("setup: auto-spawned first instance %s on port %d (healthy=%s)",
-                    instance.name, instance.port, instance.healthy)
-    except Exception as exc:
-        logger.warning("setup: auto-spawn failed: %s", exc)
 
 
 # ---------------------------------------------------------------------------

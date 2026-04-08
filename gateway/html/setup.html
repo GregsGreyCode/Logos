@@ -1490,6 +1490,35 @@
           </div>
         </div>
 
+        <!-- Agent name + sprite picker — what the user will call their first sandboxed agent -->
+        <div x-show="selectedAgentType" x-transition.opacity class="mb-4 space-y-3">
+          <div>
+            <label class="block text-xs font-medium text-gray-400 mb-1.5">Give your agent a name</label>
+            <input type="text" x-model="agentName"
+              placeholder="Hermes"
+              maxlength="32"
+              class="w-full bg-gray-900 border border-gray-800 rounded-lg px-3 py-2 text-sm text-white focus:border-indigo-500 focus:outline-none"/>
+            <p class="text-[11px] text-gray-600 mt-1 leading-relaxed">
+              This is the name you'll see in chat and in the world view. You can create more agents later.
+              Defaults to <span class="font-mono text-gray-500">Hermes</span> if left blank.
+            </p>
+          </div>
+          <div>
+            <label class="block text-xs font-medium text-gray-400 mb-1.5">Pick a character</label>
+            <div class="flex flex-wrap gap-2">
+              <template x-for="ci in [0,1,2,3,4,5,6,7]" :key="ci">
+                <button type="button" @click="agentCharIndex = ci"
+                  :title="'Character ' + (ci + 1)"
+                  :style="agentSpriteStyle(ci) + (agentCharIndex === ci ? 'border:2px solid rgb(99 102 241);border-radius:8px;' : 'border:2px solid transparent;')"
+                  class="shrink-0 hover:scale-110 transition-transform"></button>
+              </template>
+            </div>
+            <p x-show="agentCharIndex === null" class="text-[11px] text-gray-600 mt-1">
+              Leave unselected to auto-assign a character from the name.
+            </p>
+          </div>
+        </div>
+
         <div x-show="selectedAgentType" x-transition.opacity>
           <button @click="goNext()" class="btn-primary w-full py-2.5 rounded-xl text-sm">
             Continue &rarr;
@@ -2070,6 +2099,23 @@ function setup() {
 
     // Step 4 — agent runtime
     selectedAgentType: 'hermes',
+    agentName: 'Hermes',
+    agentCharIndex: null,  // 0..7 sprite index, or null to auto-assign from name
+
+    /**
+     * Compute a background-image style for a sprite preview button using
+     * the same 8-character sheet as AgentSprite.js. Pass a char index 0..7.
+     * Sheet is 384x256 (12 cols x 8 rows of 32x32 frames); 2x scaled to
+     * 768x512 for display.
+     */
+    agentSpriteStyle(charIndex) {
+      const ci = Number(charIndex) || 0;
+      const blockCol = (ci % 4) * 3;
+      const blockRow = Math.floor(ci / 4) * 4;
+      const x = -(blockCol * 32 * 2);
+      const y = -(blockRow * 32 * 2);
+      return `width:56px;height:56px;background-image:url('/static/world/characters.png');background-position:${x}px ${y}px;background-size:768px 512px;image-rendering:pixelated;`;
+    },
 
     // Account setup (step 6 / final creds)
     setupEmail: '',
@@ -2346,6 +2392,8 @@ function setup() {
             if (s.k8sMode)           this.k8sMode           = s.k8sMode;
             if (s.selectedSoul)      this.selectedSoul      = s.selectedSoul;
             if (s.selectedAgentType) this.selectedAgentType = s.selectedAgentType;
+            if (s.agentName)         this.agentName         = s.agentName;
+            if (s.agentCharIndex !== undefined && s.agentCharIndex !== null) this.agentCharIndex = Number(s.agentCharIndex);
             if (s.setupEmail)        this.setupEmail        = s.setupEmail;
             if (s.setupUsername)     this.setupUsername     = s.setupUsername;
             // Frontier track restoration (API key intentionally NOT persisted)
@@ -2388,6 +2436,8 @@ function setup() {
       this.$watch('execEnv',           () => this._saveProgress());
       this.$watch('k8sMode',           () => this._saveProgress());
       this.$watch('selectedAgentType', () => this._saveProgress());
+      this.$watch('agentName',         () => this._saveProgress());
+      this.$watch('agentCharIndex',    () => this._saveProgress());
 
       // Re-run endpoint probe whenever step 7 is entered — handles goNext(),
       // goTo() back-then-forward, and progress-restore that resumes at step 7.
@@ -2427,6 +2477,8 @@ function setup() {
           k8sMode:                this.k8sMode,
           selectedSoul:           this.selectedSoul,
           selectedAgentType:      this.selectedAgentType,
+          agentName:              this.agentName,
+          agentCharIndex:         this.agentCharIndex,
           setupEmail:             this.setupEmail,
           setupUsername:          this.setupUsername,
           // Frontier track — persist provider and model selection but NEVER the API key
@@ -3621,6 +3673,8 @@ function setup() {
             model:         this.selectedModel,
             server_type:   this.activeServer ? this.activeServer.type : '',
             agent_type:    this.selectedSoul || 'general',
+            agent_name:    (this.agentName || '').trim() || 'Hermes',
+            agent_char_index: this.agentCharIndex,
             exec_env:      this.execEnv === 'k3s' ? 'k8s' : (this.execEnv || 'local'),
             k8s_namespace: this.selectedAgentType || 'hermes',
             kubeconfig:    (this.execEnv === 'k3s' || (this.execEnv === 'k8s' && this.k8sMode === 'kubeconfig')) ? this.kubeconfig : '',

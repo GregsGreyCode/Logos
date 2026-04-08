@@ -2219,13 +2219,18 @@ async def _handle_chat(request: web.Request) -> web.StreamResponse:
     session_id = body.get("session_id", "http-default")
     agent_id = body.get("agent_id")
 
-    # Look up named agent config (model, soul, toolsets) if specified
-    _agent_config = None
-    if agent_id:
-        try:
-            _agent_config = auth_db.get_agent(agent_id)
-        except Exception:
-            pass
+    # OpenShell-only routing: every chat must target a named agent that has
+    # its own sandbox worker. No in-process fallback.
+    if not agent_id:
+        raise web.HTTPBadRequest(
+            reason="agent_id is required — chat must target a named sandboxed agent",
+        )
+    try:
+        _agent_config = auth_db.get_agent(agent_id)
+    except Exception:
+        _agent_config = None
+    if not _agent_config:
+        raise web.HTTPNotFound(reason=f"agent {agent_id} not found")
 
     # --- Process file attachments ---
     raw_attachments = body.get("attachments") or []
@@ -2374,15 +2379,38 @@ async def _handle_chat(request: web.Request) -> web.StreamResponse:
     result = {}
     t_agent_start = time.time()
     try:
-        # Check if a worker is connected for this agent
-        target_worker = body.get("worker_id", "")
+        # OpenShell-only routing: resolve the target sandbox worker for this
+        # named agent. The worker_id is deterministically derived from the
+        # agent name (same sanitization OpenShellExecutor uses when spawning).
+        from gateway.executors.openshell import _sanitize_sandbox_name
+        target_worker = body.get("worker_id") or _sanitize_sandbox_name(
+            f"hermes-{_agent_config.get('name', '')}"
+        )
         worker_registry = request.app.get("worker_registry")
-        worker_entry = worker_registry.get(target_worker) if worker_registry and target_worker else None
+        worker_entry = worker_registry.get(target_worker) if worker_registry else None
 
-        if worker_entry and worker_entry.healthy and not worker_entry.is_local and worker_entry.ws and not worker_entry.ws.closed:
-            # Dispatch to connected remote worker (e.g. OpenShell sandbox).
-            # Workers manage their own inference config (via inference.local
-            # or instance-config.json) — we only send the conversation context.
+        if not (worker_entry and worker_entry.healthy and worker_entry.ws and not worker_entry.ws.closed):
+            # Sandbox worker is not connected or not healthy. Do NOT silently
+            # fall back to an in-process runner — that would run the user's
+            # message through the gateway process itself, bypassing every
+            # network/filesystem policy the sandbox was meant to enforce.
+            await send_event({
+                "type": "error",
+                "error_type": "sandbox_unavailable",
+                "error_title": "Agent sandbox is not ready",
+                "error_action": (
+                    "Wait for the sandbox to finish provisioning, then try again. "
+                    "Check Admin → Sandboxes for worker status."
+                ),
+                "content": f"worker '{target_worker}' is not connected",
+                "error_class": "SandboxUnavailable",
+            })
+            result = {"final_response": ""}
+        else:
+            # Dispatch to the connected OpenShell sandbox worker.  The worker
+            # manages its own inference config (via inference.local or its
+            # uploaded instance-config.json) — we only send conversation
+            # context.
             import uuid as _uuid
             task_payload = {
                 "type": "run_conversation",
@@ -2393,7 +2421,8 @@ async def _handle_chat(request: web.Request) -> web.StreamResponse:
                 "history": history,
                 "context_prompt": context_prompt,
                 "toolsets": worker_entry.toolsets or ["hermes-cli"],
-                "max_iterations": int(os.environ.get("HERMES_MAX_ITERATIONS", "90")),
+                "max_iterations": int(os.environ.get("LOGOS_MAX_ITERATIONS",
+                                                     os.environ.get("HERMES_MAX_ITERATIONS", "90"))),
             }
             # Stream callback — forward worker events to client SSE
             async def _on_worker_stream(event):
@@ -2426,22 +2455,8 @@ async def _handle_chat(request: web.Request) -> web.StreamResponse:
                 "api_calls": worker_result.get("api_calls", 0),
                 "tools_used": worker_result.get("tools_used", []),
             }
-        else:
-            # Run locally (primary gateway agent or no worker connected)
-            result = await runner._run_agent(
-                message=message,
-                context_prompt=context_prompt,
-                history=history,
-                source=source,
-                session_id=session_entry.session_id,
-                session_key=session_key,
-                action_policy=_action_policy,
-                auth_user_id=_auth_user_id,
-                http_sse_queue=http_sse_queue,
-                agent_config=_agent_config,
-            )
-        final = result.get("final_response", "")
-        await send_event({"type": "message", "content": final})
+            final = result.get("final_response", "")
+            await send_event({"type": "message", "content": final})
     except Exception as exc:
         logger.exception("Error running agent for HTTP /chat")
         err_str = str(exc)
@@ -2655,39 +2670,13 @@ async def start_http_api(runner: Any, port: int = 8080) -> None:
     app["executor"] = build_executor(_RUNTIME_MODE)
     logger.info("Instance executor: %s (runtime_mode=%s)", type(app["executor"]).__name__, _RUNTIME_MODE)
 
-    # Worker registry — tracks connected agent workers via WebSocket
+    # Worker registry — tracks connected OpenShell sandbox workers via WebSocket.
+    # No in-process worker is registered here: every agent runs in its own
+    # sandbox and connects back via /ws/worker. The gateway is infrastructure,
+    # not an agent.
     from gateway.worker_registry import WorkerRegistry
     worker_registry = WorkerRegistry()
     app["worker_registry"] = worker_registry
-
-    # Register the primary agent as a local (in-process) worker.
-    # This makes it visible in the World tab and chat selector as a real agent,
-    # separate from the gateway infrastructure.
-    async def _primary_agent_run(task: dict) -> dict:
-        """Run the primary agent's AIAgent loop for a dispatched task."""
-        loop = asyncio.get_event_loop()
-        result = await runner._run_agent(
-            message=task.get("message", ""),
-            context_prompt=task.get("context_prompt", ""),
-            history=task.get("history", []),
-            source=None,
-            session_id=task.get("session_id", ""),
-            session_key=task.get("session_key", ""),
-        )
-        return {
-            "final_response": result.get("final_response", ""),
-            "api_calls": result.get("api_calls", 0),
-            "tools_used": result.get("tools_used", []),
-        }
-
-    _instance_name = os.environ.get("HERMES_INSTANCE_NAME", "Hermes")
-    worker_registry.register_local(
-        worker_id="hermes",
-        run_fn=_primary_agent_run,
-        soul="general",
-        toolsets=["hermes-cli"],
-        instance_label=_instance_name,
-    )
 
     # ── Centralized MCP gateway service ────────────────────────────────────
     # Boots all configured MCP servers once and exposes them over HTTP so

@@ -37,7 +37,15 @@ export class AgentSprite {
     this.total = total;
     this.callbacks = callbacks;
 
-    this.charIndex = nameToCharIndex(inst.name);
+    // Prefer an explicit char_index stored on the agent record (set via the
+    // sprite picker in Create Agent / setup wizard). Fall back to the
+    // name-hash so agents that predate the picker still render deterministically.
+    const explicitCI = (inst && inst.char_index !== undefined && inst.char_index !== null)
+      ? Number(inst.char_index)
+      : null;
+    this.charIndex = (explicitCI !== null && explicitCI >= 0 && explicitCI <= 7)
+      ? explicitCI
+      : nameToCharIndex(inst.name);
     this.direction = 'down';
     this.isMoving = false;
     this.path = [];          // current A* path [{col, row}, ...]
