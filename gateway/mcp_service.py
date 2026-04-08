@@ -107,12 +107,16 @@ class MCPGatewayService:
         loop = asyncio.get_event_loop()
         await loop.run_in_executor(None, lambda: _run_on_mcp_loop(_start_all(), timeout=120))
 
-        # Snapshot connected servers from the mcp_tool module's _servers dict
+        # Snapshot connected servers from the mcp_tool module's _servers dict.
+        # We UPDATE rather than replace so any in-process servers (e.g. the
+        # Logos capabilities server registered in http_api.py before start()
+        # runs) survive the snapshot.
         try:
             from tools.mcp_tool import _servers as _mcp_servers, _lock as _mcp_lock
             with _mcp_lock:
                 with self._lock:
-                    self._servers = dict(_mcp_servers)
+                    for _name, _srv in _mcp_servers.items():
+                        self._servers[_name] = _srv
         except Exception as exc:
             logger.warning("mcp_service: could not snapshot server map: %s", exc)
 
@@ -144,11 +148,18 @@ class MCPGatewayService:
             with self._lock:
                 server = self._servers.get(name)
             connected = server is not None and getattr(server, "session", None) is not None
+            in_process = bool(cfg.get("_in_process")) or getattr(server, "_logos_in_process", False)
+            if in_process:
+                transport = "in-process"
+            elif "url" in cfg:
+                transport = "http"
+            else:
+                transport = "stdio"
             catalogue.append({
                 "name":        name,
                 "description": cfg.get("description", ""),
                 "category":    cfg.get("category", "general"),
-                "transport":   "http" if "url" in cfg else "stdio",
+                "transport":   transport,
                 "connected":   connected,
                 "tool_count":  len(getattr(server, "_registered_tool_names", [])) if connected else 0,
                 "approval_tier": self.get_policy_tier(cfg.get("category", "general")),
@@ -170,6 +181,13 @@ class MCPGatewayService:
         cfg = self._servers_cfg.get(name)
         if not cfg or cfg.get("enabled", True) is False:
             return False
+        # In-process servers (e.g. the Logos capabilities server) are always
+        # live — they don't run in a subprocess so there's nothing to
+        # restart. No-op success so auto-restart logic in handle_jsonrpc
+        # doesn't fall through to the "disconnected" error.
+        if cfg.get("_in_process"):
+            with self._lock:
+                return name in self._servers
         try:
             from tools.mcp_tool import _ensure_mcp_loop, _discover_and_register_server, _run_on_mcp_loop
             _ensure_mcp_loop()
@@ -270,6 +288,23 @@ class MCPGatewayService:
                     server = self._servers.get(server_name)
             if server is None or getattr(server, "session", None) is None:
                 return _err(-32000, f"MCP server '{server_name}' is not connected (auto-restart failed)")
+
+        # ─── In-process dispatch branch ─────────────────────────────────
+        # The Logos capabilities server (gateway.mcp_logos) runs inside
+        # this process rather than as a stdio subprocess. It sets the
+        # `_logos_in_process` marker attribute and exposes `dispatch_method`
+        # directly on the gateway's asyncio loop — no thread bridge
+        # needed, no stdio transport. Calling-agent resolution (worker_id
+        # → named_agents[id]) will be wired in L.2 when platform messages
+        # start dispatching through this path; for now it's left as None.
+        if getattr(server, "_logos_in_process", False):
+            try:
+                calling_agent = None  # L.1: unresolved; L.2+ wires worker_id lookup
+                result = await server.dispatch_method(method, params, calling_agent=calling_agent)
+                return {"jsonrpc": "2.0", "id": request_id, "result": result}
+            except Exception as exc:
+                logger.warning("mcp_service: in-process jsonrpc error for %s/%s: %s", server_name, method, exc)
+                return _err(-32603, str(exc))
 
         try:
             from tools.mcp_tool import _run_on_mcp_loop
