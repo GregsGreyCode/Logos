@@ -7,8 +7,12 @@
 import { TILE_SIZE, WORLD_COLS, WORLD_ROWS, ZONES } from '../WorldConfig.js';
 
 const WALK_SPEED = 60;  // pixels per second
-const IDLE_WANDER_MIN = 3000; // ms
+const IDLE_WANDER_MIN = 3000; // ms — how long to stand still between walk phases
 const IDLE_WANDER_MAX = 6000; // ms
+const MIN_WALK_DURATION = 10000; // ms — once an agent starts walking, keep
+                                  // walking for at least this long (chain paths
+                                  // together if needed) so walks don't look
+                                  // like twitchy 1-tile hops.
 
 // Deterministic color from name
 function hashCode(str) {
@@ -54,6 +58,7 @@ export class AgentSprite {
     this.targetWorldY = 0;
     this.idleTimer = 0;
     this.nextIdleTime = this._randomIdleDelay();
+    this.walkPhaseStart = 0;  // ms (Date.now) when the current walk phase began
     this.lastStatus = null;
 
     // Create sprite
@@ -180,21 +185,33 @@ export class AgentSprite {
     if (this.path.length > 0 && this.pathIndex < this.path.length) {
       this._followPath(delta);
     } else {
-      // Arrived or idle
-      if (this.isMoving) {
+      // Path finished. If we're still inside the minimum-walk window,
+      // immediately generate another path so the agent keeps strolling
+      // instead of stopping after 1-2 tiles. Only when the minimum walk
+      // duration has elapsed do we actually stop and enter idle mode.
+      if (this.isMoving && this.walkPhaseStart > 0) {
+        const walkedFor = Date.now() - this.walkPhaseStart;
+        if (walkedFor < MIN_WALK_DURATION) {
+          this._idleWander();  // chain another path, keep walking
+          return;
+        }
+        // Minimum reached — settle into standing pose.
         this.isMoving = false;
-        // Stop any running animation and reset to neutral standing pose
+        this.walkPhaseStart = 0;
         if (this.sprite.anims.isPlaying) this.sprite.anims.stop();
         this.direction = 'down';
         const idleIdx = this.scene.getCharIdleFrame(this.charIndex, 'down');
         this.sprite.setTexture('characters', idleIdx);
       }
 
-      // Idle wandering
+      // Idle wandering — after the standing-still timer elapses, start a
+      // new walk phase and stamp walkPhaseStart so the chain logic above
+      // knows when this phase began.
       this.idleTimer += delta;
       if (this.idleTimer >= this.nextIdleTime) {
         this.idleTimer = 0;
         this.nextIdleTime = this._randomIdleDelay();
+        this.walkPhaseStart = Date.now();
         this._idleWander();
       }
     }
