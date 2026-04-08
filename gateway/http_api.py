@@ -62,7 +62,7 @@ _AI_ROUTER_BASE = os.environ.get(
 _CANARY_HEALTH_URL = "http://hermes-canary.hermes.svc.cluster.local/health"
 _INSTANCE_NAME = os.environ.get("HERMES_INSTANCE_NAME", "Hermes")
 _IS_CANARY = os.environ.get("HERMES_IS_CANARY", "").lower() in ("1", "true", "yes")
-_RUNTIME_MODE = os.environ.get("HERMES_RUNTIME_MODE", "kubernetes")  # "local" | "kubernetes"
+_RUNTIME_MODE = os.environ.get("HERMES_RUNTIME_MODE", "openshell")  # "openshell" (default) | "local" | "docker"
 
 try:
     # Read directly from pyproject.toml — immune to stale installed metadata

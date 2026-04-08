@@ -133,7 +133,7 @@ class SessionContext:
     updated_at: Optional[datetime] = None
 
     # Deployment environment
-    runtime_mode: str = "local"   # "local" | "kubernetes" | "openshell"
+    runtime_mode: str = "openshell"   # "openshell" (default) | "local" | "docker"
     host_platform: str = "linux"  # "linux" | "windows" | "darwin"
     
     def to_dict(self) -> Dict[str, Any]:
