@@ -560,11 +560,7 @@ class TestUpdateInHelp:
         result = await runner._handle_help_command(event)
         assert "/update" in result
 
-    def test_update_is_known_command(self):
-        """The /update command is in the help text (proxy for _known_commands)."""
-        # _known_commands is local to _handle_message, so we verify by
-        # checking the help output includes it.
-        from gateway.run import GatewayRunner
-        import inspect
-        source = inspect.getsource(GatewayRunner._handle_message)
-        assert '"update"' in source
+    # test_update_is_known_command: removed in Phase 5.6 — the
+    # _known_commands set lived inside _handle_message which has been
+    # deleted. Slash-command dispatch needs to be re-ported into
+    # dispatch_platform_message; that follow-up will replace this test.

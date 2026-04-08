@@ -263,12 +263,8 @@ class TestBackgroundInHelp:
         result = await runner._handle_help_command(event)
         assert "/background" in result
 
-    def test_background_is_known_command(self):
-        """The /background command is in the _known_commands set."""
-        from gateway.run import GatewayRunner
-        import inspect
-        source = inspect.getsource(GatewayRunner._handle_message)
-        assert '"background"' in source
+    # test_background_is_known_command: removed in Phase 5.6 — see
+    # tests/gateway/test_update_command.py for the rationale.
 
 
 # ---------------------------------------------------------------------------
