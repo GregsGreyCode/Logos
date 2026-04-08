@@ -385,6 +385,31 @@ async def _handle_sandboxes_list(request: web.Request) -> web.Response:
         except Exception:
             pass
 
+    # 1b. Live sandbox list from the OpenShell CLI — picks up sandboxes
+    # that are still provisioning (or were created out of band) and are
+    # not yet in the executor state file. Parses the human-readable
+    # `openshell sandbox list` table since there is no JSON output flag.
+    cli_sandboxes = {}
+    if cli_available:
+        try:
+            import re as _re
+            import subprocess as _sp
+            _r = _sp.run(["openshell", "sandbox", "list"],
+                         capture_output=True, text=True, check=False, timeout=5)
+            # Strip ANSI color codes the CLI emits
+            ansi = _re.compile(r"\x1b\[[0-9;]*m")
+            lines = [ansi.sub("", line) for line in (_r.stdout or "").splitlines() if line.strip()]
+            # First line is the header (NAME / NAMESPACE / CREATED / PHASE)
+            for line in lines[1:]:
+                parts = line.split()
+                if len(parts) >= 5:
+                    # NAME NAMESPACE YYYY-MM-DD HH:MM:SS PHASE
+                    name = parts[0]
+                    phase = parts[-1]
+                    cli_sandboxes[name] = {"name": name, "phase": phase}
+        except Exception:
+            pass
+
     # 2. Worker health from registry
     worker_map = {}
     if worker_registry:
@@ -392,11 +417,12 @@ async def _handle_sandboxes_list(request: web.Request) -> web.Response:
             if not entry.is_local:
                 worker_map[wid] = entry.to_dict()
 
-    # 3. Merge: instance records + worker health
-    seen = set()
+    # 3. Merge: instance records + worker health + CLI phase
+    seen_sandboxes = set()
     for sandbox_name, inst in instance_map.items():
         worker_id = inst.get("worker_id", sandbox_name)
         worker = worker_map.get(worker_id, {})
+        cli = cli_sandboxes.get(sandbox_name, {})
         sandboxes.append({
             "name": inst.get("name", ""),
             "sandbox_name": sandbox_name,
@@ -408,21 +434,39 @@ async def _handle_sandboxes_list(request: web.Request) -> web.Response:
             "policy": inst.get("policy", ""),
             "sandbox_image": inst.get("sandbox_image", ""),
             "created_at": inst.get("created_at", 0),
+            "phase": cli.get("phase") or inst.get("phase") or "unknown",
             "worker_status": worker.get("status", "disconnected"),
             "worker_healthy": worker.get("healthy", False),
             "worker_uptime_s": worker.get("uptime_s", 0),
             "current_task_id": worker.get("current_task_id"),
         })
-        seen.add(worker_id)
+        seen_sandboxes.add(sandbox_name)
 
-    # Workers not in instance state (connected but not tracked)
+    # CLI sandboxes not in instance state (created out of band or
+    # in-flight before the state file was written)
+    for sandbox_name, cli in cli_sandboxes.items():
+        if sandbox_name not in seen_sandboxes:
+            sandboxes.append({
+                "name": sandbox_name, "sandbox_name": sandbox_name, "worker_id": sandbox_name,
+                "soul": "", "model": "", "requester": "",
+                "toolsets": [], "policy": "", "sandbox_image": "",
+                "created_at": 0,
+                "phase": cli.get("phase") or "unknown",
+                "worker_status": "disconnected",
+                "worker_healthy": False,
+                "worker_uptime_s": 0,
+                "current_task_id": None,
+            })
+
+    # Workers not in instance state and not in CLI list (orphaned)
     for wid, w in worker_map.items():
-        if wid not in seen:
+        if wid not in seen_sandboxes:
             sandboxes.append({
                 "name": wid, "sandbox_name": wid, "worker_id": wid,
                 "soul": w.get("soul", ""), "model": "", "requester": w.get("requester", ""),
                 "toolsets": w.get("toolsets", []), "policy": "", "sandbox_image": "",
                 "created_at": 0,
+                "phase": "unknown",
                 "worker_status": w.get("status", "idle"),
                 "worker_healthy": w.get("healthy", False),
                 "worker_uptime_s": w.get("uptime_s", 0),

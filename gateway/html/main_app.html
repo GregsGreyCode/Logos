@@ -3420,7 +3420,7 @@
             <tr class="border-b border-gray-800 text-gray-500">
               <th class="text-left px-4 py-3 font-medium">Sandbox</th>
               <th class="text-left px-4 py-3 font-medium">Agent</th>
-              <th class="text-left px-4 py-3 font-medium">Soul</th>
+              <th class="text-left px-4 py-3 font-medium">Phase</th>
               <th class="text-left px-4 py-3 font-medium">Worker</th>
               <th class="text-left px-4 py-3 font-medium">Health</th>
               <th class="text-left px-4 py-3 font-medium">Uptime</th>
@@ -3433,7 +3433,13 @@
                   @click="selectedSandbox = selectedSandbox?.sandbox_name === sb.sandbox_name ? null : sb">
                 <td class="px-4 py-2 font-mono text-gray-300" x-text="sb.sandbox_name"></td>
                 <td class="px-4 py-2 text-white font-medium" x-text="sb.name"></td>
-                <td class="px-4 py-2 text-gray-500" x-text="sb.soul || '—'"></td>
+                <td class="px-4 py-2">
+                  <span class="px-1.5 py-0.5 rounded text-[10px] font-medium border"
+                    :class="sb.phase === 'ready' || sb.phase === 'Ready' ? 'bg-green-950 text-green-400 border-green-900'
+                      : (sb.phase === 'provisioning' || sb.phase === 'Provisioning') ? 'bg-yellow-950 text-yellow-400 border-yellow-900'
+                      : 'bg-gray-900 text-gray-500 border-gray-800'"
+                    x-text="sb.phase || 'unknown'"></span>
+                </td>
                 <td class="px-4 py-2">
                   <span class="px-1.5 py-0.5 rounded text-[10px] font-medium border"
                     :class="sb.worker_status === 'busy' ? 'bg-yellow-950 text-yellow-400 border-yellow-900'
