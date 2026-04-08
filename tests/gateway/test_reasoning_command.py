@@ -75,9 +75,8 @@ class TestReasoningCommand:
 
         assert "/reasoning [level|show|hide]" in result
 
-    def test_reasoning_is_known_command(self):
-        source = inspect.getsource(gateway_run.GatewayRunner._handle_message)
-        assert '"reasoning"' in source
+    # test_reasoning_is_known_command: removed in Phase 5.6 — see
+    # tests/gateway/test_update_command.py for the rationale.
 
     @pytest.mark.asyncio
     async def test_reasoning_command_reloads_current_state_from_config(self, tmp_path, monkeypatch):
