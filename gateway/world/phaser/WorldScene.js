@@ -99,7 +99,12 @@ export class WorldScene extends Phaser.Scene {
   }
 
   update(time, delta) {
-    this._hueOffset = (time / 1000) * 6; // 6 deg/sec = 360 in 60s
+    // Wall-clock anchored so the tree canopy's hue rotation stays in lock
+    // step with the Logos logo in the top-left of the main app, which uses
+    // the same `Date.now()/1000 * 6` formula to drive its CSS --hue-deg
+    // variable. Phaser's `time` parameter is relative to scene start, so
+    // using it would drift out of phase the moment the world tab is opened.
+    this._hueOffset = (((Date.now() / 1000) * 6) % 360 + 360) % 360;
     this._updateCanopy();
 
     for (const [, agent] of this.agents) {
