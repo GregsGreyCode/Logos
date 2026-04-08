@@ -1,10 +1,12 @@
 """
-Worker Registry — tracks connected agent workers.
+Worker Registry — tracks connected OpenShell sandbox workers.
 
-The gateway maintains a WebSocket connection to each worker. Workers register
-on connect, send heartbeats, and receive task dispatches.  The registry is
-the source of truth for "which agents are alive" — replacing the old pattern
-of listing k8s deployments or local PIDs.
+Every agent runs inside its own OpenShell sandbox and connects back to the
+gateway over WebSocket (/ws/worker). This module is the source of truth for
+"which sandbox workers are alive" — it replaces the old pattern of listing
+k8s deployments or local PIDs AND the even-older in-process "self" worker
+that used to run inside the gateway process itself. The gateway is
+infrastructure now; it does not advertise itself as a chat-capable agent.
 """
 
 from __future__ import annotations
@@ -14,7 +16,7 @@ import json
 import logging
 import time
 from dataclasses import dataclass, field
-from typing import Any, Dict, Optional
+from typing import Dict, Optional
 
 from aiohttp import web
 
@@ -25,9 +27,9 @@ HEARTBEAT_TIMEOUT = 90  # seconds — mark unhealthy after this
 
 @dataclass
 class WorkerEntry:
-    """A connected agent worker (remote via WebSocket or local in-process)."""
+    """A connected OpenShell sandbox worker (always remote via WebSocket)."""
     worker_id: str
-    ws: Optional[web.WebSocketResponse] = None  # None for local/in-process workers
+    ws: web.WebSocketResponse
     soul: str = "general"
     toolsets: list = field(default_factory=list)
     instance_label: str = ""
@@ -36,13 +38,9 @@ class WorkerEntry:
     registered_at: float = 0.0
     last_heartbeat: float = 0.0
     current_task_id: Optional[str] = None
-    is_local: bool = False        # True for the primary in-process agent
-    run_fn: Any = None            # For local workers: callable(task) -> result
 
     @property
     def healthy(self) -> bool:
-        if self.is_local:
-            return True  # local workers are always healthy
         return (time.time() - self.last_heartbeat) < HEARTBEAT_TIMEOUT
 
     def to_dict(self) -> dict:
@@ -159,49 +157,20 @@ class WorkerRegistry:
 
         return ws
 
-    def register_local(
-        self,
-        worker_id: str,
-        run_fn,
-        soul: str = "general",
-        toolsets: list | None = None,
-        instance_label: str = "",
-    ):
-        """Register an in-process worker (the primary agent).
-
-        *run_fn* is an async callable(task_dict) -> result_dict that runs
-        the AIAgent loop directly, without WebSocket transport.
-        """
-        now = time.time()
-        self._workers[worker_id] = WorkerEntry(
-            worker_id=worker_id,
-            ws=None,
-            soul=soul,
-            toolsets=toolsets or [],
-            instance_label=instance_label,
-            registered_at=now,
-            last_heartbeat=now,
-            is_local=True,
-            run_fn=run_fn,
-        )
-        logger.info("Local worker registered: %s (soul=%s)", worker_id, soul)
-
     async def dispatch_task(
         self, worker_id: str, task: dict, timeout: float = 300,
         on_stream_event=None,
     ) -> dict:
-        """Dispatch a task to a worker and wait for the result.
+        """Dispatch a task to an OpenShell sandbox worker and await the result.
 
-        For local workers, calls run_fn directly.
-        For remote workers, sends via WebSocket and awaits the result Future.
-
-        *on_stream_event*: optional async callback(event_dict) called for each
-        streaming event (token, tool_progress, thinking) from the worker.
+        Sends the task payload over the worker's WebSocket and streams
+        intermediate events (tokens, tool_start/end, thinking) through
+        *on_stream_event* while waiting for the final task_result message.
         """
         entry = self._workers.get(worker_id)
         if not entry:
             raise ConnectionError(f"Worker {worker_id} not connected")
-        if not entry.is_local and (not entry.ws or entry.ws.closed):
+        if not entry.ws or entry.ws.closed:
             raise ConnectionError(f"Worker {worker_id} WebSocket closed")
         if entry.status == "busy":
             raise RuntimeError(f"Worker {worker_id} is busy with task {entry.current_task_id}")
@@ -210,64 +179,54 @@ class WorkerRegistry:
         entry.status = "busy"
         entry.current_task_id = task_id
 
+        result_future: asyncio.Future = asyncio.get_event_loop().create_future()
+        self._pending_tasks[task_id] = result_future
+
+        # Set up stream queue for intermediate events
+        stream_queue: asyncio.Queue = asyncio.Queue(maxsize=500)
+        self._task_streams[task_id] = stream_queue
+
         try:
-            if entry.is_local and entry.run_fn:
-                # In-process: call directly (streaming handled by gateway's own SSE)
-                result = await entry.run_fn(task)
-                return result
-            else:
-                # Remote: WebSocket dispatch with streaming
-                result_future: asyncio.Future = asyncio.get_event_loop().create_future()
-                self._pending_tasks[task_id] = result_future
+            await entry.ws.send_json(task)
 
-                # Set up stream queue for intermediate events
-                stream_queue: asyncio.Queue = asyncio.Queue(maxsize=500)
-                self._task_streams[task_id] = stream_queue
+            # Consume stream events while waiting for final result
+            deadline = asyncio.get_event_loop().time() + timeout
+            while not result_future.done():
+                remaining = deadline - asyncio.get_event_loop().time()
+                if remaining <= 0:
+                    raise TimeoutError(f"Worker {worker_id} did not respond within {timeout}s")
 
-                try:
-                    await entry.ws.send_json(task)
-
-                    # Consume stream events while waiting for final result
-                    deadline = asyncio.get_event_loop().time() + timeout
-                    while not result_future.done():
-                        remaining = deadline - asyncio.get_event_loop().time()
-                        if remaining <= 0:
-                            raise TimeoutError(f"Worker {worker_id} did not respond within {timeout}s")
-
-                        # Drain any queued stream events
-                        while not stream_queue.empty():
-                            event = stream_queue.get_nowait()
-                            if on_stream_event:
-                                try:
-                                    await on_stream_event(event)
-                                except Exception:
-                                    pass
-
-                        # Short wait for more events or the final result
+                # Drain any queued stream events
+                while not stream_queue.empty():
+                    event = stream_queue.get_nowait()
+                    if on_stream_event:
                         try:
-                            await asyncio.wait_for(
-                                asyncio.shield(result_future),
-                                timeout=min(0.1, remaining),
-                            )
-                        except asyncio.TimeoutError:
-                            continue  # not done yet, keep polling
+                            await on_stream_event(event)
+                        except Exception:
+                            pass
 
-                    # Drain any remaining events
-                    while not stream_queue.empty():
-                        event = stream_queue.get_nowait()
-                        if on_stream_event:
-                            try:
-                                await on_stream_event(event)
-                            except Exception:
-                                pass
+                # Short wait for more events or the final result
+                try:
+                    await asyncio.wait_for(
+                        asyncio.shield(result_future),
+                        timeout=min(0.1, remaining),
+                    )
+                except asyncio.TimeoutError:
+                    continue  # not done yet, keep polling
 
-                    return result_future.result()
-                finally:
-                    self._pending_tasks.pop(task_id, None)
-                    self._task_streams.pop(task_id, None)
-        except asyncio.TimeoutError:
-            raise
+            # Drain any remaining events
+            while not stream_queue.empty():
+                event = stream_queue.get_nowait()
+                if on_stream_event:
+                    try:
+                        await on_stream_event(event)
+                    except Exception:
+                        pass
+
+            return result_future.result()
         finally:
+            self._pending_tasks.pop(task_id, None)
+            self._task_streams.pop(task_id, None)
             entry.status = "idle"
             entry.current_task_id = None
 

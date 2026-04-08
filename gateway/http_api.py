@@ -410,12 +410,12 @@ async def _handle_sandboxes_list(request: web.Request) -> web.Response:
         except Exception:
             pass
 
-    # 2. Worker health from registry
+    # 2. Worker health from registry (every registered worker is a remote
+    # OpenShell sandbox — the old in-process "self" worker no longer exists).
     worker_map = {}
     if worker_registry:
         for wid, entry in worker_registry.workers.items():
-            if not entry.is_local:
-                worker_map[wid] = entry.to_dict()
+            worker_map[wid] = entry.to_dict()
 
     # 3. Merge: instance records + worker health + CLI phase
     seen_sandboxes = set()
