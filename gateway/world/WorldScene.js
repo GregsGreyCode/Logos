@@ -4,8 +4,8 @@
  * Renders the tilemap, manages agent sprites, handles camera,
  * and drives pathfinding + zone behaviour.
  */
-import { TILE_SIZE, WORLD_COLS, WORLD_ROWS, WORLD_W, WORLD_H, TILE, TILE_COLORS, ZONES } from '../WorldConfig.js';
-import { CHARACTER_TEXTURE } from '../SpriteData.js';
+import { TILE_SIZE, WORLD_COLS, WORLD_ROWS, WORLD_W, WORLD_H, TILE, TILE_COLORS, ZONES } from './WorldConfig.js';
+import { CHARACTER_TEXTURE } from './SpriteData.js';
 import { AgentSprite } from './AgentSprite.js';
 import { Pathfinder } from './Pathfinder.js';
 
@@ -61,8 +61,16 @@ export class WorldScene extends Phaser.Scene {
     // The user was seeing agents "walk off screen" because scroll-wheel
     // zoom was enabled by default in an earlier version; locking the
     // view removes that footgun entirely.
+    //
+    // Fit math: use Math.MIN of the width/height ratios so the entire
+    // square world is always inside the visible area. The previous
+    // Math.max was filling the larger dimension, which on landscape
+    // containers (e.g. 1632x968) cropped 30%+ of the world's height
+    // off-screen — agents in the upper meadow / lower pond zones
+    // appeared to "walk off the edge" because they really were off
+    // the camera view.
     this.cameras.main.setBounds(0, 0, WORLD_W, WORLD_H);
-    const _fitZoom = () => Math.max(
+    const _fitZoom = () => Math.min(
       this.scale.width / WORLD_W,
       this.scale.height / WORLD_H
     );
@@ -73,7 +81,9 @@ export class WorldScene extends Phaser.Scene {
     this.pathfinder = new Pathfinder(this.walkableGrid, WORLD_COLS, WORLD_ROWS);
 
     // Resize handler — re-fit the camera so the world stays fully in view
-    // and centred when the window is resized.
+    // and centred when the window is resized. Fires whenever Phaser's
+    // Scale.RESIZE notices the parent container changed size (window
+    // resize, agent column toggling between 16↔24rem, etc.).
     this.scale.on('resize', (gameSize) => {
       this.cameras.main.setSize(gameSize.width, gameSize.height);
       this.cameras.main.setZoom(_fitZoom());

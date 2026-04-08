@@ -45,7 +45,7 @@ from gateway.auth.middleware import auth_middleware, check_rate_limit, require_c
 from gateway.auth.password import hash_password
 from gateway.auth.rbac import can_spawn
 from gateway.config import Platform
-from gateway.session import SessionSource, build_session_context, build_session_context_prompt
+from gateway.session import SessionSource, build_session_context, build_session_context_prompt, build_agent_system_prompt
 
 logger = logging.getLogger(__name__)
 
@@ -135,6 +135,149 @@ def _check_auth(request: web.Request) -> bool:
         return True
     auth = request.headers.get("Authorization", "")
     return auth == f"Bearer {token}"
+
+
+async def _prune_orphan_sandboxes(executor) -> None:
+    """Delete OpenShell sandboxes whose agent record no longer exists.
+
+    The reverse of ``_resurrect_missing_sandboxes``: when an agent is
+    deleted via the UI we destroy its sandbox in the request handler,
+    but if that handler raced with state-file pruning (or the gateway
+    crashed mid-delete, or the user wiped the auth DB while sandboxes
+    were running) the OpenShell side keeps the sandbox alive forever.
+    This pass walks every ``hermes-*`` sandbox and removes any that
+    don't map to a known agent. Runs once at startup.
+    """
+    if not executor or type(executor).__name__ != "OpenShellExecutor":
+        return
+    try:
+        agents = auth_db.list_agents()
+    except Exception as exc:
+        logger.warning("prune-orphans: could not list agents: %s", exc)
+        return
+
+    try:
+        from gateway.executors.openshell import (
+            _list_sandbox_names,
+            _sanitize_sandbox_name,
+            _openshell,
+        )
+        live_names = _list_sandbox_names()
+    except Exception as exc:
+        logger.warning("prune-orphans: could not list openshell sandboxes: %s", exc)
+        return
+
+    expected = {
+        _sanitize_sandbox_name(f"hermes-{a.get('name', '')}")
+        for a in agents
+        if a.get("name")
+    }
+    # Only consider hermes-prefixed sandboxes — leave anything else
+    # (e.g. user-managed sandboxes from the openshell CLI) alone.
+    orphans = [n for n in live_names if n.startswith("hermes-") and n not in expected]
+    if not orphans:
+        return
+
+    logger.info("prune-orphans: deleting %d orphan sandbox(es): %s",
+                len(orphans), ", ".join(orphans))
+
+    import asyncio as _asyncio
+
+    async def _delete_one(sandbox_name: str):
+        try:
+            await _asyncio.to_thread(_openshell, "sandbox", "delete", sandbox_name, check=False)
+            logger.info("prune-orphans: deleted '%s'", sandbox_name)
+        except Exception as exc:
+            logger.warning("prune-orphans: failed for '%s': %s", sandbox_name, exc)
+
+    for name in orphans:
+        _asyncio.create_task(_delete_one(name))
+
+
+async def _resurrect_missing_sandboxes(executor) -> None:
+    """One-shot startup pass: spawn a sandbox for any named agent whose
+    OpenShell sandbox no longer exists.
+
+    Why this exists: agent records live in auth.db, but the sandboxes that
+    serve them are managed by OpenShell out-of-process. The two can drift
+    apart in normal operation:
+      - admin force-deletes a sandbox via `openshell sandbox delete`
+      - the sandbox image is rebuilt and existing sandboxes need to pick
+        up new sandbox_worker.py code (the only way is delete + respawn)
+      - host crash leaves the auth DB intact but loses the sandbox CRs
+
+    Without this pass, the agent shows up in the UI but its chat hangs
+    forever because there's no worker on the other end. The user has no
+    obvious way to fix it short of deleting the agent and recreating it.
+
+    Each spawn takes 30-60s (openshell sandbox create blocks on the k8s
+    Sandbox CR provisioning), so we run them in background threads and
+    return immediately. The Sandboxes dashboard shows phase=provisioning
+    while the openshell create is in flight.
+    """
+    if not executor or type(executor).__name__ != "OpenShellExecutor":
+        return
+    try:
+        agents = auth_db.list_agents()
+    except Exception as exc:
+        logger.warning("resurrect: could not list agents: %s", exc)
+        return
+    if not agents:
+        return
+
+    # Snapshot the live sandbox names from OpenShell once, instead of
+    # calling _sandbox_exists per agent (which spawns one CLI subprocess
+    # each — slow if there are many agents).
+    try:
+        from gateway.executors.openshell import _list_sandbox_names, _sanitize_sandbox_name
+        live_names = set(_list_sandbox_names())
+    except Exception as exc:
+        logger.warning("resurrect: could not list openshell sandboxes: %s", exc)
+        return
+
+    from gateway.executors.base import InstanceConfig
+    import json as _json
+    import asyncio as _asyncio
+
+    missing = []
+    for a in agents:
+        name = a.get("name") or ""
+        if not name:
+            continue
+        sandbox_name = _sanitize_sandbox_name(f"hermes-{name}")
+        if sandbox_name in live_names:
+            continue
+        missing.append(a)
+
+    if not missing:
+        logger.info("resurrect: all %d agents already have sandboxes", len(agents))
+        return
+
+    logger.info("resurrect: %d agent(s) missing sandboxes — spawning in background",
+                len(missing))
+
+    async def _spawn_one(agent: dict):
+        try:
+            toolsets_raw = agent.get("toolsets") or ""
+            try:
+                toolsets = _json.loads(toolsets_raw) if toolsets_raw else []
+            except Exception:
+                toolsets = []
+            cfg = InstanceConfig(
+                name=agent["name"],
+                soul_name=agent.get("soul_slug") or "general",
+                model=agent.get("model") or "",
+                requester="(resurrected)",
+                instance_label=agent["name"],
+                toolsets=toolsets if isinstance(toolsets, list) else [],
+            )
+            await _asyncio.to_thread(executor.spawn, cfg)
+            logger.info("resurrect: spawned sandbox for agent '%s'", agent["name"])
+        except Exception as exc:
+            logger.warning("resurrect: failed for agent '%s': %s", agent.get("name"), exc)
+
+    for agent in missing:
+        _asyncio.create_task(_spawn_one(agent))
 
 
 def _ensure_admin_exists() -> None:
@@ -2417,7 +2560,14 @@ async def _handle_chat(request: web.Request) -> web.StreamResponse:
     session_key = session_entry.session_key
     history = runner.session_store.load_transcript(session_entry.session_id)
     context = build_session_context(source, runner.config, session_entry)
-    context_prompt = build_session_context_prompt(context)
+    # Compose the FULL system prompt: identity ("You are Jay.") + soul +
+    # description + session context. The sandbox worker forwards this to
+    # inference verbatim, so any missing piece (e.g. the name) means the
+    # model has no way to know it. build_agent_system_prompt handles all
+    # four pieces and falls back gracefully when fields are absent.
+    context_prompt = build_agent_system_prompt(
+        _agent_config, build_session_context_prompt(context),
+    )
 
     resp = web.StreamResponse(
         status=200,
@@ -2766,6 +2916,14 @@ async def start_http_api(runner: Any, port: int = 8091) -> None:
     app["executor"] = build_executor(_RUNTIME_MODE)
     logger.info("Instance executor: %s (runtime_mode=%s)", type(app["executor"]).__name__, _RUNTIME_MODE)
 
+    # Resurrect any agent records whose sandbox no longer exists in OpenShell,
+    # and prune any orphan hermes-* sandboxes whose agent record was deleted
+    # while the gateway was down. Both run in the background — spawns are
+    # slow (30-60s each) but the dashboard shows phase=provisioning while
+    # they're in flight, and deletes are fire-and-forget.
+    asyncio.create_task(_resurrect_missing_sandboxes(app["executor"]))
+    asyncio.create_task(_prune_orphan_sandboxes(app["executor"]))
+
     # Worker registry lives on the runner (see GatewayRunner.__init__). We
     # just expose it on the aiohttp app so existing request handlers that
     # read request.app.get("worker_registry") keep working. Having the
@@ -3019,15 +3177,20 @@ async def start_http_api(runner: Any, port: int = 8091) -> None:
     app.router.add_post("/admin/cloud-providers/{id}/test",     _mm(require_csrf(admin_handlers.handle_cloud_providers_test)))
     # Named agents
     # ── Sandbox dashboard ──────────────────────────────────────────
+    # NOTE: served under /api/admin/* to avoid colliding with the SPA
+    # tab paths registered at /admin/sandboxes (those serve main_app.html
+    # so deep links / refreshes land on the right tab). The router uses
+    # first-match-wins resolution, so any same-path API would be shadowed.
     _vr = require_permission("view_runs")
-    app.router.add_get("/admin/sandboxes",                    _vr(_handle_sandboxes_list))
-    app.router.add_get("/admin/sandboxes/{name}/logs",        _vr(_handle_sandbox_logs))
-    app.router.add_post("/admin/sandboxes/{name}/restart",    _mm(require_csrf(_handle_sandbox_restart)))
+    app.router.add_get("/api/admin/sandboxes",                    _vr(_handle_sandboxes_list))
+    app.router.add_get("/api/admin/sandboxes/{name}/logs",        _vr(_handle_sandbox_logs))
+    app.router.add_post("/api/admin/sandboxes/{name}/restart",    _mm(require_csrf(_handle_sandbox_restart)))
 
     # ── Platforms (connection state + routing rules) ───────────────
-    app.router.add_get("/admin/platforms",                            _mm(_handle_platforms_list))
-    app.router.add_post("/admin/platforms/routing",                   _mm(require_csrf(_handle_platforms_routing_upsert)))
-    app.router.add_delete("/admin/platforms/routing/{id}",            _mm(require_csrf(_handle_platforms_routing_delete)))
+    # Same /api/admin/* prefix, same SPA-tab-collision reason as above.
+    app.router.add_get("/api/admin/platforms",                            _mm(_handle_platforms_list))
+    app.router.add_post("/api/admin/platforms/routing",                   _mm(require_csrf(_handle_platforms_routing_upsert)))
+    app.router.add_delete("/api/admin/platforms/routing/{id}",            _mm(require_csrf(_handle_platforms_routing_delete)))
 
     app.router.add_get("/admin/agents",              _mm(admin_handlers.handle_agents_list))
     app.router.add_post("/admin/agents",             _mm(require_csrf(admin_handlers.handle_agents_post)))

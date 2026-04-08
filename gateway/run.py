@@ -1391,11 +1391,17 @@ class GatewayRunner:
 
         # ── 4. Dispatch to sandbox worker ─────────────────────────────
         import uuid as _uuid
-        context_prompt = (
+        # Compose a real system prompt: identity + soul + per-platform
+        # routing hint. Without the identity preamble the agent answers
+        # "I'm an AI assistant" when asked its name (the soul is generic
+        # and the sandbox worker forwards context_prompt verbatim).
+        from gateway.session import build_agent_system_prompt as _basp
+        platform_hint = (
             f"You are being addressed on {platform_name} by user "
             f"{getattr(source, 'user_name', None) or user_id or 'unknown'}. "
             f"Respond naturally — the adapter will deliver your reply to the channel."
         )
+        context_prompt = _basp(agent, platform_hint)
         task_payload = {
             "type":           "run_conversation",
             "task_id":        str(_uuid.uuid4()),

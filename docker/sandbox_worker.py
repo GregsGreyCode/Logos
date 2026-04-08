@@ -145,11 +145,23 @@ class TunnelWebSocket:
         self._writer.write(bytes(frame))
         await self._writer.drain()
 
-    async def receive_json(self, timeout: float = None) -> dict:
-        """Receive a WebSocket text frame and parse as JSON."""
+    async def receive_json(self, timeout: float = None) -> dict | None:
+        """Receive a WebSocket text frame and parse as JSON.
+
+        Returns None when the timeout window elapses without a frame
+        arriving — that's normal idle behaviour, NOT a disconnect (the
+        gateway only pushes frames when it has work to dispatch). The
+        caller treats None as "keep waiting".
+
+        Only raises ConnectionError when the underlying socket is
+        actually closed (peer EOF, which _recv_frame_inner detects by
+        a short read and sets self.closed = True).
+        """
         data = await self._recv_frame(timeout)
         if data is None:
-            raise ConnectionError("WebSocket closed")
+            if self.closed:
+                raise ConnectionError("WebSocket closed")
+            return None  # timeout, socket still open
         return json.loads(data)
 
     async def _recv_frame(self, timeout: float = None) -> bytes | None:

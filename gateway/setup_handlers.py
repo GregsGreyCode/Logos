@@ -1195,6 +1195,14 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
                     _gen_start = None
                     _last_progress_log = ""
                     async for line in sr.content:
+                        # ── Stop button — break out mid-stream so we don't
+                        # spend minutes draining a thinking model after the
+                        # user has clicked Stop. The aiohttp `async with`
+                        # closes the underlying connection on exit which
+                        # tells LM Studio to abort generation.
+                        if endpoint in _bench_cancels.get(bench_id, set()):
+                            await send({"log": "  ↳ stopped (mid-stream)"})
+                            return None
                         line = line.decode("utf-8", errors="replace").strip()
                         if not line.startswith("data:"):
                             continue
@@ -1252,6 +1260,9 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
 
                     return _result
 
+            # Cancel check before starting the (potentially slow) eval phase
+            if endpoint in _bench_cancels.get(bench_id, set()):
+                return None
             try:
                 await send({"log": "  Running combined eval..."})
                 cd = await _stream_chat(combined_prompt, "eval")
@@ -1342,7 +1353,7 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
 
             # ── Step 3: Hard evals (if passed ≥5/6) ───────────────────────
             hard_eval = {}
-            if eval_score >= 5:
+            if eval_score >= 5 and endpoint not in _bench_cancels.get(bench_id, set()):
                 await send({"log": "  ★ Hard evals...", **_phase("scoring", eval_label="hard")})
                 hard_prompt = (
                     'Complete ALL tasks. Reply with ONLY valid JSON.\n\n'
@@ -1397,7 +1408,7 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
 
             # ── Step 4: Agent evals (if hard ≥2/3) ─────────────────────
             agent_eval = {}
-            if hard_eval.get("score", 0) >= 2:
+            if hard_eval.get("score", 0) >= 2 and endpoint not in _bench_cancels.get(bench_id, set()):
                 await send({"log": "  ★★ Agent evals (model passed hard tier)...", **_phase("scoring", eval_label="agent")})
                 agent_prompt = (
                     'Complete ALL tasks. Reply with ONLY valid JSON, no other text.\n\n'
@@ -1584,6 +1595,34 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
                     await asyncio.sleep(1.5)   # give LM Studio time to free VRAM before next load
                     continue
                 else:
+                    # Native returned None — could be (a) genuine API
+                    # unavailability or (b) Stop button mid-run. If the
+                    # cancel set has this endpoint, skip cleanly instead
+                    # of grinding through the slow OpenAI-compat fallback.
+                    if endpoint in _bench_cancels.get(bench_id, set()):
+                        result = {
+                            "model": model_id, "endpoint": endpoint,
+                            "skipped": True, "error": "Stopped by user",
+                        }
+                        async with results_lock:
+                            results.append(result)
+                        await send({"result": result})
+                        # Best-effort unload so the in-progress model
+                        # frees VRAM right away.
+                        try:
+                            _unload_headers = {"Authorization": f"Bearer {api_key}"} if api_key and api_key != "ollama" else {}
+                            async with http.post(
+                                f"{base_url}/api/v1/models/unload",
+                                headers=_unload_headers,
+                                json={"instance_id": model_id},
+                                timeout=aiohttp.ClientTimeout(total=8),
+                            ):
+                                pass
+                        except Exception:
+                            pass
+                        if bench_id in _bench_active:
+                            _bench_active[bench_id].pop(endpoint, None)
+                        continue
                     await send({"log": "  Native API unavailable, falling back to OpenAI-compat…"})
 
             # Legacy OpenAI-compat path (Ollama, llama.cpp, or LM Studio fallback)

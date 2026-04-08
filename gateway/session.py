@@ -295,8 +295,62 @@ def build_session_context_prompt(context: SessionContext) -> str:
     # Note about explicit targeting
     lines.append("")
     lines.append("*For explicit targeting, use `\"platform:chat_id\"` format if the user provides a specific chat ID.*")
-    
+
     return "\n".join(lines)
+
+
+def build_agent_system_prompt(agent_record: dict, session_context_prompt: str) -> str:
+    """Compose the FULL system prompt sent to a sandbox worker.
+
+    The sandbox worker is a thin transport: it ships whatever
+    `context_prompt` it receives straight to inference. So the gateway
+    has to assemble:
+
+      1. Identity preamble — "You are {name}." Without this the model
+         has no idea what name it's wearing and answers "I'm an AI
+         assistant" when asked. The user noticed this regression after
+         the move to sandboxed agents because the legacy in-process
+         path baked the name into a different prompt builder that no
+         longer runs.
+      2. Soul markdown — the persona definition (souls/<slug>/soul.md).
+         Loaded from the in-process soul registry; falls back gracefully
+         if the slug is unknown or has no soul.md on disk.
+      3. Description — the per-agent free-text description from the
+         agents table (if any), so users can customise voice without
+         editing soul files.
+      4. Session context — deployment, source, capability manifest,
+         delivery options. Built by ``build_session_context_prompt``.
+    """
+    name = (agent_record or {}).get("name") or "Agent"
+    soul_slug = (agent_record or {}).get("soul_slug") or ""
+    description = ((agent_record or {}).get("description") or "").strip()
+
+    parts: list[str] = []
+    parts.append(f"You are {name}.")
+    parts.append("")
+
+    # Soul persona — pulled from the registry, not from disk per-call,
+    # so this is fast even on the dispatch hot path.
+    if soul_slug:
+        try:
+            from gateway.souls import get_soul_registry
+            soul = get_soul_registry().get(soul_slug)
+            if soul and soul.soul_md:
+                parts.append(soul.soul_md.strip())
+                parts.append("")
+        except Exception:
+            pass
+
+    if description:
+        parts.append(f"## About you")
+        parts.append("")
+        parts.append(description)
+        parts.append("")
+
+    if session_context_prompt:
+        parts.append(session_context_prompt)
+
+    return "\n".join(parts).strip()
 
 
 @dataclass

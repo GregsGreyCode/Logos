@@ -28,23 +28,25 @@
       width:2400px;height:2400px;border-radius:50%;
       /* Pre-blurred radial gradient — simulates blur(280px) at zero GPU cost */
       background:radial-gradient(circle,
-        hsl(var(--hue-num,239),84%,64%) 0%,
-        hsla(var(--hue-num,239),84%,64%,0.7) 15%,
-        hsla(var(--hue-num,239),84%,50%,0.3) 35%,
-        hsla(var(--hue-num,239),84%,30%,0.05) 55%,
+        hsl(var(--accent-hue,239),84%,64%) 0%,
+        hsla(var(--accent-hue,239),84%,64%,0.7) 15%,
+        hsla(var(--accent-hue,239),84%,50%,0.3) 35%,
+        hsla(var(--accent-hue,239),84%,30%,0.05) 55%,
         transparent 70%);
       opacity:0;
       pointer-events:none;z-index:0;
       animation:orb-fadein 0.8s ease 0.1s forwards;
     }
-    .setup-logo{filter:hue-rotate(calc(var(--hue-deg,0deg) - 239deg));will-change:filter;}
+    /* Match login.html's .logo-img filter exactly so the colour stays
+       continuous across the /login → /setup transition. */
+    .setup-logo{filter:hue-rotate(var(--hue-deg,0deg)) brightness(1.15);will-change:filter;}
     .setup-halo{
       position:absolute;inset:-280px;border-radius:50%;
       /* Pre-blurred radial gradient — simulates blur(160px) without CPU cost */
       background:radial-gradient(circle,
-        hsl(var(--hue-num,239),84%,64%) 0%,
-        hsla(var(--hue-num,239),84%,64%,0.6) 20%,
-        hsla(var(--hue-num,239),84%,50%,0.2) 45%,
+        hsl(var(--accent-hue,239),84%,64%) 0%,
+        hsla(var(--accent-hue,239),84%,64%,0.6) 20%,
+        hsla(var(--accent-hue,239),84%,50%,0.2) 45%,
         transparent 65%);
       opacity:0;
       pointer-events:none;
@@ -66,18 +68,25 @@
     .btn-primary{
       /* Use hsl() with CSS var instead of filter:hue-rotate — zero CPU cost */
       background:linear-gradient(135deg,
-        hsl(calc(var(--hue-num,239) + 0),84%,64%) 0%,
-        hsl(calc(var(--hue-num,239) + 30),65%,60%) 100%);
+        hsl(calc(var(--accent-hue,239) + 0),84%,64%) 0%,
+        hsl(calc(var(--accent-hue,239) + 30),65%,60%) 100%);
       color:#fff;font-weight:500;cursor:pointer;
-      box-shadow:0 1px 2px rgba(0,0,0,0.4),0 0 0 1px hsla(calc(var(--hue-num,239)),84%,64%,0.3) inset;
+      box-shadow:0 1px 2px rgba(0,0,0,0.4),0 0 0 1px hsla(calc(var(--accent-hue,239)),84%,64%,0.3) inset;
       transition:opacity 150ms ease,box-shadow 150ms ease;
     }
-    .btn-primary:hover:not(:disabled){opacity:0.9;box-shadow:0 1px 2px rgba(0,0,0,0.5),0 0 20px hsla(calc(var(--hue-num,239)+30),65%,60%,0.2),0 0 0 1px hsla(calc(var(--hue-num,239)+30),65%,60%,0.35) inset;}
+    .btn-primary:hover:not(:disabled){opacity:0.9;box-shadow:0 1px 2px rgba(0,0,0,0.5),0 0 20px hsla(calc(var(--accent-hue,239)+30),65%,60%,0.2),0 0 0 1px hsla(calc(var(--accent-hue,239)+30),65%,60%,0.35) inset;}
     .btn-primary:active:not(:disabled){opacity:0.95;transform:translateY(1px);}
     .btn-primary:disabled{opacity:0.4;cursor:not-allowed;background:#4f46e5;}
     /* spinner-hue and icon-hue: use color property cycling instead of filter */
-    .spinner-hue{color:hsl(calc(var(--hue-num,239)),84%,64%);}
-    .icon-hue{color:hsl(calc(var(--hue-num,239)),70%,60%);}
+    .spinner-hue{color:hsl(calc(var(--accent-hue,239)),84%,64%);}
+    .icon-hue{color:hsl(calc(var(--accent-hue,239)),70%,60%);}
+    /* tldr-on: hue-cycling pill for the active TL;DR toggle. Background +
+       border move with the logo; text stays white. */
+    .tldr-on{
+      background:hsla(calc(var(--accent-hue,239)),84%,30%,0.55);
+      border-color:hsl(calc(var(--accent-hue,239)),84%,55%);
+      color:#fff;
+    }
     /* animation-delay set inline by JS to sync with login page cycle */
     @keyframes bench-border-cycle {
       0%   { box-shadow: 0 0 0 1px rgba(99,102,241,.55),  0 0 18px rgba(99,102,241,.18); }
@@ -102,9 +111,16 @@
           lastTs = now;
           const hue = (Date.now() / 1000) * 6 % 360;
           const deg = hue.toFixed(1);
+          // The logo SVG has a natural indigo (~239°) base. CSS hue-rotate
+          // ROTATES the existing hue, so the rendered logo colour at any
+          // instant is (239 + --hue-deg) mod 360. Any hsl() background that
+          // wants to match the logo must use that sum, not --hue-deg alone.
+          // --accent-hue is that sum and matches login.html's identical var.
+          const accent = ((parseFloat(deg) + 239) % 360).toFixed(1);
           const ds = document.documentElement.style;
           ds.setProperty('--hue-deg', deg + 'deg');
-          ds.setProperty('--hue-num', deg);  // unitless for gradient hsl()
+          ds.setProperty('--hue-num', deg);   // raw cycle value (legacy)
+          ds.setProperty('--accent-hue', accent); // matches the logo's rendered hue
         }
         requestAnimationFrame(tick);
       }
@@ -248,8 +264,8 @@
               <div class="text-base font-semibold text-white" x-text="tldr ? &quot;What you're about to do:&quot; : &quot;What setup configures&quot;"></div>
               <!-- TL;DR toggle — top-right of the card header -->
               <button @click="tldr=!tldr"
-                class="spinner-hue text-xs px-4 py-1.5 rounded-full border font-semibold tracking-wide transition-colors flex-shrink-0"
-                :class="tldr ? 'bg-indigo-950 border-indigo-500 text-indigo-200' : 'bg-gray-900 border-gray-600 text-gray-400 hover:border-gray-400 hover:text-gray-200'"
+                class="text-xs px-4 py-1.5 rounded-full border font-semibold tracking-wide transition-colors flex-shrink-0"
+                :class="tldr ? 'tldr-on' : 'bg-gray-900 border-gray-600 text-gray-400 hover:border-gray-400 hover:text-gray-200'"
                 title="Toggle TL;DR mode">
                 <span x-text="tldr ? 'TL;DR ON ⚡' : 'Click here for TL;DR'"></span>
               </button>
@@ -308,7 +324,7 @@
         <!-- Continue -->
         <div class="flex justify-center">
           <button @click="introConfirmed = true"
-            class="spinner-hue px-8 py-3 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-semibold transition-colors duration-200">
+            class="btn-primary px-8 py-3 rounded-xl font-semibold">
             Continue &rarr;
           </button>
         </div>
