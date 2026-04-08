@@ -246,12 +246,22 @@ class InProcessMCPServer:
             )
         except Exception as exc:
             tool.error_count += 1
-            logger.warning("mcp_logos: tool '%s' raised: %s", name, exc)
+            # _AdapterUnavailable is a signal from platform tools that the
+            # requested platform has no adapter bound. Surface it as a
+            # structured, recoverable error — Phase 5.4 will unblock this
+            # automatically by re-enabling adapters, so the sandbox should
+            # treat it as "try again later" rather than a fatal bug.
+            err_type = type(exc).__name__
+            recoverable = err_type in ("_AdapterUnavailable", "AdapterUnavailable")
+            if recoverable:
+                err_type = "AdapterUnavailable"
+            else:
+                logger.warning("mcp_logos: tool '%s' raised: %s", name, exc)
             return self._error_envelope(
                 name,
-                type(exc).__name__,
-                str(exc),
-                recoverable=False,
+                err_type,
+                str(exc) or "adapter not available",
+                recoverable=recoverable,
                 duration_ms=int((time.monotonic() - t0) * 1000),
             )
 
@@ -343,8 +353,13 @@ def register_logos_server(runner: Any, service: Any) -> InProcessMCPServer:
     injects the logos server into both the service's config table and its
     live server map so catalogue + JSON-RPC routing find it.
 
-    Returns the server instance so the caller can keep a reference and
-    register tools on it later (L.2+ wiring).
+    Every tool module under ``gateway.mcp_logos.tools`` that has landed in
+    the current phase is auto-registered on the returned server. New tool
+    modules added in later phases just need to be imported here — nothing
+    in http_api.py has to change.
+
+    Returns the server instance so callers can reach it via
+    ``service._logos_server`` (set in http_api.py boot sequence).
     """
     server = InProcessMCPServer(
         name="logos",
@@ -369,4 +384,24 @@ def register_logos_server(runner: Any, service: Any) -> InProcessMCPServer:
         logger.warning("mcp_logos: could not install logos server on service: %s", exc)
         raise
 
+    # Register tool modules landed in the current phase. Each module
+    # exports a ``register(server)`` function that calls
+    # ``server.register_tool(...)`` for each tool it owns.
+    _register_current_phase_tools(server)
     return server
+
+
+def _register_current_phase_tools(server: "InProcessMCPServer") -> None:
+    """Import and register all tool modules that are currently in-phase.
+
+    Split out so tests can register a server without implicit tool side
+    effects by constructing ``InProcessMCPServer`` directly.
+    """
+    # Phase L.2
+    try:
+        from gateway.mcp_logos.tools import platform as _platform_tools
+        _platform_tools.register(server)
+    except Exception as exc:
+        logger.warning("mcp_logos: failed to register platform tools: %s", exc)
+
+    # L.3, L.4, L.5 tool modules get imported here as they land.
