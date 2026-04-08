@@ -1,171 +1,105 @@
 /**
- * WorldManager — main orchestrator for the Agent World visualization.
+ * WorldManager — boots a Phaser.Game with WorldScene and exposes
+ * a small imperative facade to the Alpine app.
  *
- * Creates a PixiJS Application, renders the tilemap, and manages agent
- * characters.  Bridges between Alpine.js state and the PixiJS scene graph.
- *
- * Usage (from Alpine.js):
- *   const wm = new WorldManager(containerEl, { onAgentClick: (name) => ... });
- *   wm.syncAgents(instancesArray);   // call on each data update
- *   wm.destroy();                    // cleanup
+ * Public API:
+ *   new WorldManager(containerEl, { onAgentClick, onAgentHover })
+ *   .syncAgents(instances)
+ *   .destroy()
  */
-import { WORLD_W, WORLD_H, TILE_SIZE } from './WorldConfig.js';
-import { createTileMap } from './TileMap.js';
-import { createAgentCharacter, updateAgentCharacter } from './AgentCharacter.js';
+import { WORLD_W, WORLD_H } from './WorldConfig.js';
+import { WorldScene } from './WorldScene.js';
 
 export class WorldManager {
   constructor(containerEl, options = {}) {
     this.container = containerEl;
     this.onAgentClick = options.onAgentClick || (() => {});
-    this.agents = new Map();  // name → { container, inst }
+    this.onAgentHover = options.onAgentHover || (() => {});
     this._destroyed = false;
+    this._scene = null;
+    this._pendingSync = null;
 
-    // Create PixiJS Application
-    this.app = new PIXI.Application({
-      width: containerEl.clientWidth || 600,
-      height: containerEl.clientHeight || 400,
-      backgroundColor: 0x0a0a0f,
-      antialias: false,
-      resolution: window.devicePixelRatio || 1,
-      autoDensity: true,
+    const width = containerEl.clientWidth || 800;
+    const height = containerEl.clientHeight || 600;
+
+    // Background colour matches the predominant GRASS tile (0x2f4537) so
+    // the empty area outside the square tilemap (when the container is
+    // wider than tall, or vice versa) blends into the world instead of
+    // showing as a contrasting dark bar at the top/bottom or sides.
+    this.game = new Phaser.Game({
+      type: Phaser.AUTO,
+      parent: containerEl,
+      width,
+      height,
+      backgroundColor: '#2f4537',
+      pixelArt: true,
+      scale: {
+        mode: Phaser.Scale.RESIZE,
+        autoCenter: Phaser.Scale.CENTER_BOTH,
+      },
+      scene: [],
+      audio: { noAudio: true },
+      banner: false,
     });
 
-    // Set pixel-art scaling
-    PIXI.BaseTexture.defaultOptions.scaleMode = PIXI.SCALE_MODES.NEAREST;
+    // Start the world scene with callbacks
+    this.game.scene.add('WorldScene', WorldScene, true, {
+      onAgentClick: (name, inst) => {
+        this.onAgentClick(name, inst);
+      },
+      onAgentHover: (name, inst, isOver) => {
+        this.onAgentHover(name, inst, isOver);
+      },
+    });
 
-    containerEl.appendChild(this.app.view);
-    this.app.view.style.width = '100%';
-    this.app.view.style.height = '100%';
-    this.app.view.style.display = 'block';
+    // Poll for scene readiness (scene.create() sets _ready = true)
+    const checkReady = () => {
+      if (this._destroyed) return;
+      const scene = this.game?.scene?.getScene('WorldScene');
+      if (scene?._ready) {
+        this._scene = scene;
+        if (this._pendingSync) {
+          this._scene.syncAgents(this._pendingSync);
+          this._pendingSync = null;
+        }
+      } else {
+        setTimeout(checkReady, 100);
+      }
+    };
+    setTimeout(checkReady, 200);
 
-    // Viewport (drag + zoom) via pixi-viewport
-    if (typeof Viewport !== 'undefined' && Viewport.Viewport) {
-      this.viewport = new Viewport.Viewport({
-        screenWidth: containerEl.clientWidth || 600,
-        screenHeight: containerEl.clientHeight || 400,
-        worldWidth: WORLD_W,
-        worldHeight: WORLD_H,
-        events: this.app.renderer.events,
-      });
-      this.viewport.drag().pinch().wheel({ smooth: 5 }).decelerate();
-      this.viewport.clampZoom({ minScale: 0.8, maxScale: 6 });
-      this.viewport.clamp({ direction: 'all' });
-      // Fit world to screen, then center
-      const fitScale = Math.min(
-        (containerEl.clientWidth || 600) / WORLD_W,
-        (containerEl.clientHeight || 400) / WORLD_H,
-      ) * 0.9;
-      this.viewport.setZoom(Math.max(fitScale, 0.8));
-      this.viewport.moveCenter(WORLD_W / 2, WORLD_H / 2);
-      this.app.stage.addChild(this.viewport);
-      this.worldContainer = this.viewport;
-    } else {
-      // Fallback: no viewport library, just use a scaled container
-      this.worldContainer = new PIXI.Container();
-      const scale = Math.min(
-        (containerEl.clientWidth || 600) / WORLD_W,
-        (containerEl.clientHeight || 400) / WORLD_H,
-      );
-      this.worldContainer.scale.set(scale);
-      this.app.stage.addChild(this.worldContainer);
+    // Style the canvas
+    const canvas = containerEl.querySelector('canvas');
+    if (canvas) {
+      canvas.style.width = '100%';
+      canvas.style.height = '100%';
     }
-
-    // Render tilemap
-    this.tileMap = createTileMap(PIXI);
-    this.worldContainer.addChild(this.tileMap);
-
-    // Agent layer (above tilemap)
-    this.agentLayer = new PIXI.Container();
-    this.worldContainer.addChild(this.agentLayer);
-
-    // Resize handler
-    this._onResize = () => this._handleResize();
-    window.addEventListener('resize', this._onResize);
-
-    // Animation ticker for smooth movement
-    this.app.ticker.add(() => this._tick());
   }
 
   /**
-   * Sync the world with the current agent instance list.
-   * Adds new agents, removes departed ones, updates existing.
+   * Sync agent state into the world. Pass the full agent list each
+   * time — the scene diffs to add/remove/update sprites.
    */
   syncAgents(instances) {
     if (this._destroyed) return;
-
-    const currentNames = new Set(instances.map(i => i.name));
-
-    // Remove agents that no longer exist
-    for (const [name, entry] of this.agents) {
-      if (!currentNames.has(name)) {
-        entry.container.eventMode = 'none';
-        entry.container.removeAllListeners();
-        this.agentLayer.removeChild(entry.container);
-        entry.container.destroy({ children: true });
-        this.agents.delete(name);
-      }
-    }
-
-    // Add or update agents
-    instances.forEach(async (inst, index) => {
-      const existing = this.agents.get(inst.name);
-      if (existing) {
-        // Update state for lerp
-        existing.inst = inst;
-        existing.index = index;
-        existing.total = instances.length;
-      } else if (!this.agents.has(inst.name)) {
-        // Mark as pending to prevent duplicate creation
-        this.agents.set(inst.name, { container: null, inst, index, total: instances.length });
-        try {
-          const char = await createAgentCharacter(PIXI, inst, index, instances.length);
-          if (this._destroyed) return;
-          char.eventMode = 'static';
-          char.cursor = 'pointer';
-          char.on('pointertap', () => this.onAgentClick(inst.name));
-          this.agentLayer.addChild(char);
-          this.agents.set(inst.name, {
-            container: char,
-            inst,
-            index,
-            total: instances.length,
-          });
-        } catch (e) {
-          console.warn('Failed to create agent character:', inst.name, e);
-          this.agents.delete(inst.name);
-        }
-      }
-    });
-  }
-
-  _tick() {
-    // Smooth position updates
-    for (const entry of this.agents.values()) {
-      if (entry.container) {
-        updateAgentCharacter(entry.container, entry.inst, entry.index, entry.total);
-      }
+    if (this._scene) {
+      this._scene.syncAgents(instances);
+    } else {
+      // Scene not ready yet — buffer for when it is
+      this._pendingSync = instances;
     }
   }
 
-  _handleResize() {
-    if (this._destroyed || !this.container) return;
-    const w = this.container.clientWidth || 600;
-    const h = this.container.clientHeight || 400;
-    this.app.renderer.resize(w, h);
-    if (this.viewport) {
-      this.viewport.resize(w, h);
-    } else if (this.worldContainer) {
-      const scale = Math.min(w / WORLD_W, h / WORLD_H);
-      this.worldContainer.scale.set(scale);
-    }
-  }
-
+  /**
+   * Full cleanup.
+   */
   destroy() {
+    if (this._destroyed) return;
     this._destroyed = true;
-    window.removeEventListener('resize', this._onResize);
-    if (this.app) {
-      this.app.destroy(true, { children: true, texture: true, baseTexture: true });
+    if (this.game) {
+      this.game.destroy(true);
+      this.game = null;
     }
-    this.agents.clear();
+    this._scene = null;
   }
 }

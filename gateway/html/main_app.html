@@ -2223,10 +2223,16 @@
       <!-- ── RIGHT: Create + Agent Cards + Live Status ──
            min-w-0 is CRITICAL — without it, a flex item sizes to
            max(w-96, intrinsic-content-width). When the edit form opens
-           with wide selects, the panel blows past 24rem and collapses
-           the world canvas on the left. min-w-0 lets it honour w-96. -->
-      <div class="w-96 shrink-0 min-w-0 flex flex-col min-h-0 overflow-y-auto overflow-x-hidden thin-scroll space-y-3"
-           style="width:24rem;max-width:24rem;">
+           with wide selects, the panel blows past its width and collapses
+           the world canvas on the left. min-w-0 lets it honour the width.
+
+           Width is dynamic: 24rem when create-form is open or any card
+           is being edited (the form needs the room for selects), 16rem
+           otherwise so the world canvas gets back its missing width and
+           renders as a square instead of a tall rectangle. WorldManager
+           uses a ResizeObserver, so the canvas auto-resizes to match. -->
+      <div class="shrink-0 min-w-0 flex flex-col min-h-0 overflow-y-auto overflow-x-hidden thin-scroll space-y-3"
+           :style="(namedAgentFormOpen || (namedAgents||[]).some(a => a._editing)) ? 'width:24rem;max-width:24rem;' : 'width:16rem;max-width:16rem;'">
 
         <!-- Create Agent toggle -->
         <button @click="namedAgentFormOpen = !namedAgentFormOpen; namedAgentMsg = null"
@@ -5268,12 +5274,21 @@ function app() {
         this.routingTab = this.can('manage_profiles') ? 'profiles' : 'debug';
       if (this.adminTab === 'users' && !this.can('manage_users'))
         this.adminTab = 'audit';
-      // Trigger initial data load for whichever tab is active on restore
+      // Trigger initial data load for whichever tab is active on restore.
+      // The Settings sub-tab loaders previously only ran from sub-tab click
+      // handlers, so refreshing on /settings/channels (or /settings/tools,
+      // /settings/proposals) left the page empty until the user clicked
+      // the Refresh button. Run the same loader the click would have run.
       if (this.tab === 'routing') this.loadRoutingData();
+      if (this.tab === 'infra')   this._loadInfraTabData(this.infraTab);
       if (this.tab === 'admin') {
         if (this.adminTab === 'routing-log') this.loadAdminRoutingLog();
         else if (this.adminTab === 'approvals') this.loadApprovals();
         else this.loadAdminData();
+        // Run the sub-tab specific loader on top of the base admin data
+        // (users + policies) so deep-linking to /admin/sandboxes etc.
+        // fills the dashboard immediately instead of after a poll cycle.
+        this._loadAdminTabData(this.adminTab);
       }
       if (this.tab === 'workflows') this.loadWorkflows();
       if (this.tab === 'runs') this.loadAgentRuns();
@@ -5371,6 +5386,28 @@ function app() {
       tools:     'tools',
       channels:  'channels',
       proposals: 'proposals',
+    },
+    // Run the appropriate loader for an infraTab value. Mirrors the
+    // per-tab click handlers (lines ~1072-1090) so that URL-driven
+    // navigation (refresh on /settings/channels, popstate, init) gets
+    // the same data fetched as a manual click would have.
+    _loadInfraTabData(name) {
+      if (name === 'servers')   { this.loadAdminMachines(); this.loadCloudProviders?.(); this.probeAllMachines?.(); return; }
+      if (name === 'routing')   { this.loadRoutingData(); return; }
+      if (name === 'tools')     { this.loadToolsTab?.(); this.loadServices?.(); return; }
+      if (name === 'channels')  { this.loadMessagingChannels(); return; }
+      if (name === 'proposals') { this.loadEvolutionProposals?.(); this.loadEvolutionSettings?.(); return; }
+    },
+    // Same idea for the Admin sub-tabs. loadAdminData() only fetches
+    // users + policies — sandboxes/platforms/runs/etc. each have their
+    // own loaders that previously only fired from sub-tab clicks, so
+    // refreshing the page on /admin/sandboxes left the dashboard empty
+    // for ~3s until the polling interval caught up.
+    _loadAdminTabData(name) {
+      if (name === 'sandboxes') { this.loadSandboxes?.(); return; }
+      if (name === 'platforms') { this.loadPlatforms?.(); return; }
+      if (name === 'runs')      { this.loadAgentRuns?.(); return; }
+      if (name === 'workflows') { this.loadWorkflows?.(); return; }
     },
     _ADMIN_URL_MAP: {
       users:     'users',
@@ -5914,7 +5951,7 @@ function app() {
       if (!el || typeof Phaser === 'undefined') return;
 
       // Dynamic import of Phaser world modules
-      const { WorldManager } = await import('/world/phaser/PhaserWorldManager.js');
+      const { WorldManager } = await import('/world/WorldManager.js');
       this.worldManager = new WorldManager(el, {
         onAgentClick: (name) => {
           // Every world entity is a named agent — look it up and open its
@@ -7742,7 +7779,7 @@ function app() {
     async loadSandboxes() {
       this.sandboxesLoading = true;
       try {
-        const r = await fetch('/admin/sandboxes', {credentials: 'include'});
+        const r = await fetch('/api/admin/sandboxes', {credentials: 'include'});
         if (!r.ok) throw new Error(await r.text());
         const d = await r.json();
         this.sandboxes = d.sandboxes || [];
@@ -7763,7 +7800,7 @@ function app() {
       this.sandboxLogsLoading = true;
       this.sandboxLogs = '';
       try {
-        const r = await fetch(`/admin/sandboxes/${encodeURIComponent(name)}/logs`, {credentials: 'include'});
+        const r = await fetch(`/api/admin/sandboxes/${encodeURIComponent(name)}/logs`, {credentials: 'include'});
         if (!r.ok) throw new Error(await r.text());
         const d = await r.json();
         this.sandboxLogs = d.logs || '(no output)';
@@ -7776,7 +7813,7 @@ function app() {
     async restartSandbox(name) {
       if (!confirm(`Restart sandbox "${name}"? The agent will briefly disconnect.`)) return;
       try {
-        const r = await fetch(`/admin/sandboxes/${encodeURIComponent(name)}/restart`, {
+        const r = await fetch(`/api/admin/sandboxes/${encodeURIComponent(name)}/restart`, {
           method: 'POST',
           credentials: 'include',
           headers: {'X-CSRF-Token': getCsrfToken()},
@@ -7807,7 +7844,7 @@ function app() {
     async loadPlatforms() {
       this.platformsLoading = true;
       try {
-        const r = await fetch("/admin/platforms", {credentials: "include"});
+        const r = await fetch("/api/admin/platforms", {credentials: "include"});
         if (!r.ok) throw new Error(await r.text());
         const d = await r.json();
         this.platforms = d.platforms || [];
@@ -7830,7 +7867,7 @@ function app() {
         return;
       }
       try {
-        const r = await fetch("/admin/platforms/routing", {
+        const r = await fetch("/api/admin/platforms/routing", {
           method: "POST",
           credentials: "include",
           headers: {
@@ -7855,7 +7892,7 @@ function app() {
     async deletePlatformRouting(id) {
       if (!confirm("Delete this routing rule?")) return;
       try {
-        const r = await fetch(`/admin/platforms/routing/${encodeURIComponent(id)}`, {
+        const r = await fetch(`/api/admin/platforms/routing/${encodeURIComponent(id)}`, {
           method: "DELETE",
           credentials: "include",
           headers: {"X-CSRF-Token": getCsrfToken()},

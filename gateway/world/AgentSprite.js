@@ -4,7 +4,7 @@
  * Owns: animated sprite, name label, soul label, status dot, state bubble.
  * Handles: pathfinding movement, idle wandering, zone assignment, interactions.
  */
-import { TILE_SIZE, WORLD_COLS, WORLD_ROWS, ZONES } from '../WorldConfig.js';
+import { TILE_SIZE, WORLD_COLS, WORLD_ROWS, ZONES } from './WorldConfig.js';
 
 const WALK_SPEED = 60;  // pixels per second
 const IDLE_WANDER_MIN = 3000; // ms — how long to stand still between walk phases

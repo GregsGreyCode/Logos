@@ -179,6 +179,26 @@ class OpenShellExecutor:
         sandbox_name = _sanitize_sandbox_name(f"hermes-{config.name}")
         worker_id = sandbox_name  # worker registers with this ID
 
+        # Resolve "auto" / empty model to the gateway's currently active
+        # inference model. The agents tab create-form lets users pick
+        # "Auto (use active model)" which stores model="" — without this
+        # fallback the sandbox worker has no model to send to inference.local
+        # and replies "No model configured" to every chat. We resolve at
+        # spawn time so agents created before the active model was set
+        # still get a valid model when their sandbox provisions.
+        resolved_model = (config.model or "").strip()
+        if not resolved_model:
+            resolved_model = (
+                os.environ.get("HERMES_MODEL")
+                or os.environ.get("LLM_MODEL")
+                or ""
+            ).strip()
+            if resolved_model:
+                logger.info(
+                    "spawn(%s): resolved empty model to active gateway model %r",
+                    sandbox_name, resolved_model,
+                )
+
         logger.info("Creating OpenShell sandbox '%s' from image '%s'", sandbox_name, self.sandbox_image)
 
         # Write instance config to a temp file for upload
@@ -188,7 +208,7 @@ class OpenShellExecutor:
             "gateway_url": f"http://host.openshell.internal:{_GATEWAY_PORT}",
             "soul": config.soul_name or "general",
             "toolsets": config.toolsets or [],
-            "model": config.model or "",
+            "model": resolved_model,
         }
 
         # Persist the state record up front so the dashboard can show
@@ -288,19 +308,31 @@ class OpenShellExecutor:
         return alive
 
     def delete_instance(self, name: str) -> None:
+        # Resolve the sandbox name authoritatively from the agent name
+        # — do NOT rely on the local state file. The state file goes
+        # out of sync whenever spawn() races with list_instances() (the
+        # latter prunes entries whose CR isn't visible yet), which left
+        # orphan OpenShell sandboxes for deleted agents because this
+        # method previously short-circuited when the state file was
+        # empty. Always issue the delete; clean up any matching state
+        # entries afterwards.
+        sandbox_name = _sanitize_sandbox_name(f"hermes-{name}")
+        try:
+            _openshell("sandbox", "delete", sandbox_name, check=False)
+            logger.info("Deleted OpenShell sandbox '%s'", sandbox_name)
+        except FileNotFoundError:
+            logger.warning("Cannot delete sandbox '%s' — openshell CLI not on PATH", sandbox_name)
+        except Exception as exc:
+            logger.warning("Error deleting sandbox '%s': %s", sandbox_name, exc)
+
+        # Drop any matching state record so the dashboard stops showing it.
         instances = _load_state()
-        remaining = []
-        for inst in instances:
-            if inst.get("name") == name:
-                sandbox_name = inst.get("sandbox_name", f"hermes-{name}")
-                try:
-                    _openshell("sandbox", "delete", sandbox_name, check=False)
-                    logger.info("Deleted OpenShell sandbox '%s'", sandbox_name)
-                except Exception as exc:
-                    logger.warning("Error deleting sandbox '%s': %s", sandbox_name, exc)
-            else:
-                remaining.append(inst)
-        _save_state(remaining)
+        remaining = [
+            i for i in instances
+            if i.get("name") != name and i.get("sandbox_name") != sandbox_name
+        ]
+        if len(remaining) != len(instances):
+            _save_state(remaining)
 
     def get_headroom(self) -> ResourceHeadroom:
         """Estimate available resources for spawning more sandboxes."""
