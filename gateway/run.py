@@ -65,6 +65,43 @@ if _env_path.exists():
 # Also try project .env as fallback
 load_dotenv()
 
+
+def _warn_deprecated_hermes_env_vars() -> None:
+    """One-time warning for HERMES_* env vars whose canonical name is LOGOS_*.
+
+    Phase 1 of the env-var rename keeps HERMES_* readable for backward compat,
+    but emits a single grouped warning at boot so deployments are nudged to
+    migrate. Removed entirely in Phase 3 of the migration.
+    """
+    import logging as _logging
+    _renamed = (
+        "HERMES_HOME", "HERMES_PORT", "HERMES_INSTANCE_NAME", "HERMES_RUNTIME_MODE",
+        "HERMES_JWT_SECRET", "HERMES_INTERNAL_TOKEN", "HERMES_COOKIE_SECURE",
+        "HERMES_ADMIN_EMAIL", "HERMES_ADMIN_PASSWORD", "HERMES_ADMIN_NAME",
+        "HERMES_OAUTH_TRACE", "HERMES_CODEX_BASE_URL", "HERMES_PORTAL_BASE_URL",
+        "HERMES_CA_BUNDLE", "HERMES_LOG_LEVEL", "HERMES_MCP_PORT",
+        "HERMES_K8S_NAMESPACE", "HERMES_IS_CANARY", "HERMES_WIPE_ON_START",
+        "HERMES_WORKSPACE_TTL_HOURS", "HERMES_WORKSPACE_DIR",
+        "HERMES_WORKSPACE_CLEANUP_INTERVAL_HOURS", "HERMES_REPO_ROOTS",
+        "HERMES_GATEWAY_MCP", "HERMES_GATEWAY_URL", "HERMES_QUIET",
+        "HERMES_INTERACTIVE", "HERMES_EXEC_ASK", "HERMES_GATEWAY_SESSION",
+        "HERMES_REDACT_SECRETS", "HERMES_DUMP_REQUESTS", "HERMES_DUMP_REQUEST_STDOUT",
+        "HERMES_HUMAN_DELAY_MODE", "HERMES_HUMAN_DELAY_MIN_MS", "HERMES_HUMAN_DELAY_MAX_MS",
+        "HERMES_SHARED_HOME", "HERMES_SOUL", "HERMES_TOOLSETS", "HERMES_POLICY_LEVEL",
+        "HERMES_SESSION_KEY", "HERMES_SESSION_PLATFORM", "HERMES_YOLO_MODE",
+        "HERMES_MODEL",
+    )
+    _present = [n for n in _renamed if n in os.environ and not os.environ.get(n.replace("HERMES_", "LOGOS_"))]
+    if _present:
+        _logging.getLogger("gateway").warning(
+            "DEPRECATED env vars in use — please rename to LOGOS_* (HERMES_* will be "
+            "removed in a future release): %s",
+            ", ".join(sorted(_present)),
+        )
+
+
+_warn_deprecated_hermes_env_vars()
+
 # Bridge config into the environment so os.getenv() picks them up.
 # Two-file strategy:
 #   config-base.yaml — infra-managed (k8s ConfigMap), overwritten each restart
@@ -190,22 +227,29 @@ if _cfg:
         _runtime_cfg = _cfg.get("runtime", {})
         if isinstance(_runtime_cfg, dict):
             _runtime_mode = str(_runtime_cfg.get("mode", "")).strip()
-            if _runtime_mode and "HERMES_RUNTIME_MODE" not in os.environ:
+            if _runtime_mode and not (
+                os.environ.get("LOGOS_RUNTIME_MODE")
+                or os.environ.get("HERMES_RUNTIME_MODE")
+            ):
+                os.environ["LOGOS_RUNTIME_MODE"] = _runtime_mode
                 os.environ["HERMES_RUNTIME_MODE"] = _runtime_mode
         # Security settings
         _security_cfg = _cfg.get("security", {})
         if isinstance(_security_cfg, dict):
             _redact = _security_cfg.get("redact_secrets")
             if _redact is not None:
+                os.environ["LOGOS_REDACT_SECRETS"] = str(_redact).lower()
                 os.environ["HERMES_REDACT_SECRETS"] = str(_redact).lower()
     except Exception:
         pass  # Non-fatal; gateway can still run with .env values
 
 # Gateway runs in quiet mode - suppress debug output and use cwd directly (no temp dirs)
-os.environ["HERMES_QUIET"] = "1"
+os.environ["LOGOS_QUIET"] = "1"
+os.environ["HERMES_QUIET"] = "1"  # deprecated alias — kept for legacy in-flight code
 
 # Enable interactive exec approval for dangerous commands on messaging platforms
-os.environ["HERMES_EXEC_ASK"] = "1"
+os.environ["LOGOS_EXEC_ASK"] = "1"
+os.environ["HERMES_EXEC_ASK"] = "1"  # deprecated alias — kept for legacy in-flight code
 
 # Set terminal working directory for messaging platforms.
 # If the user set an explicit path in config.yaml (not "." or "auto"),
@@ -4815,7 +4859,7 @@ async def start_gateway(config: Optional[GatewayConfig] = None, replace: bool = 
     # access but run on different ports and must not kill the parent process.
     import time as _time
     from gateway.status import get_running_pid, remove_pid_file
-    if os.environ.get("HERMES_INSTANCE_NAME"):
+    if os.environ.get("LOGOS_INSTANCE_NAME") or os.environ.get("HERMES_INSTANCE_NAME"):
         existing_pid = None  # agent instances coexist with the main gateway
     else:
         existing_pid = get_running_pid()
@@ -4855,11 +4899,15 @@ async def start_gateway(config: Optional[GatewayConfig] = None, replace: bool = 
                     pass
             remove_pid_file()
         else:
-            hermes_home = os.getenv("HERMES_HOME", str(Path.home() / ".logos"))
+            logos_home = (
+                os.getenv("LOGOS_HOME")
+                or os.getenv("HERMES_HOME")
+                or str(Path.home() / ".logos")
+            )
             logger.error(
-                "Another gateway instance is already running (PID %d, HERMES_HOME=%s). "
-                "Use 'hermes gateway restart' to replace it, or 'hermes gateway stop' first.",
-                existing_pid, hermes_home,
+                "Another gateway instance is already running (PID %d, LOGOS_HOME=%s). "
+                "Use 'logos gateway restart' to replace it, or 'logos gateway stop' first.",
+                existing_pid, logos_home,
             )
             print(
                 f"\n❌ Gateway already running (PID {existing_pid}).\n"

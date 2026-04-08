@@ -357,11 +357,15 @@ async def handle_setup_scan(request: web.Request) -> web.Response:
     Returns all discovered servers sorted by IP.  Localhost is always
     checked first and prepended to the results so it ranks highest.
     """
-    # The gateway itself listens on HERMES_PORT (default 8080).  Exclude it from
+    # The gateway itself listens on LOGOS_PORT (default 8080).  Exclude it from
     # the scan so Logos is never mistakenly identified as an "LM Studio (auth required)"
     # server — the /v1/models endpoint is present on the gateway too (OpenAI-compat),
     # and it returns 401 without a JWT, which looks identical to LM Studio with auth on.
-    own_port = int(os.environ.get("HERMES_PORT", request.url.port or 8080))
+    own_port = int(
+        os.environ.get("LOGOS_PORT")
+        or os.environ.get("HERMES_PORT")
+        or (request.url.port or 8080)
+    )
     localhost_ports = [p for p in _SCAN_PORTS if p != own_port]
 
     subnet = _local_subnet()
@@ -2852,9 +2856,11 @@ async def handle_setup_complete(request: web.Request) -> web.Response:
                     _cfg["model"] = {"default": _cfg["model"]}
                 _cfg["model"]["provider"] = _frontier_provider
             # OpenShell is the only supported runtime now. We still honour an
-            # explicit HERMES_RUNTIME_MODE env var so existing k8s deployments
-            # that force it can continue, but every new setup writes openshell.
-            if not os.getenv("HERMES_RUNTIME_MODE"):
+            # explicit LOGOS_RUNTIME_MODE / HERMES_RUNTIME_MODE env var so
+            # existing k8s deployments that force it can continue, but every
+            # new setup writes openshell.
+            if not (os.getenv("LOGOS_RUNTIME_MODE") or os.getenv("HERMES_RUNTIME_MODE")):
+                _cfg["LOGOS_RUNTIME_MODE"] = "openshell"
                 _cfg["HERMES_RUNTIME_MODE"] = "openshell"
             # For k8s-kubeconfig mode, also write the kubeconfig to a file so
             # k8s_clients() can pick it up via load_kube_config() on the next start.

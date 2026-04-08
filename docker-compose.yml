@@ -25,16 +25,21 @@ services:
     environment:
       # ── Required ────────────────────────────────────────────────────────────
       # Generate with: openssl rand -hex 32
-      HERMES_JWT_SECRET: "${HERMES_JWT_SECRET}"
+      LOGOS_JWT_SECRET: "${LOGOS_JWT_SECRET:-${HERMES_JWT_SECRET:-}}"
+      HERMES_JWT_SECRET: "${LOGOS_JWT_SECRET:-${HERMES_JWT_SECRET:-}}"  # deprecated alias
 
       # ── Agent execution ─────────────────────────────────────────────────────
-      # "local"  → agents spawn as child processes inside this container (default)
-      # "kubernetes" → agents spawn as k8s pods (see docker-compose.k3s.yml)
-      HERMES_RUNTIME_MODE: "${HERMES_RUNTIME_MODE:-local}"
+      # "openshell" (default) → sandboxed via OpenShell + k3s
+      # "local"               → agents spawn as child processes inside this container
+      # "kubernetes"          → agents spawn as k8s pods (see docker-compose.k3s.yml)
+      LOGOS_RUNTIME_MODE: "${LOGOS_RUNTIME_MODE:-${HERMES_RUNTIME_MODE:-local}}"
+      HERMES_RUNTIME_MODE: "${LOGOS_RUNTIME_MODE:-${HERMES_RUNTIME_MODE:-local}}"  # deprecated alias
 
       # ── Gateway ─────────────────────────────────────────────────────────────
-      HERMES_PORT: "8080"
-      HERMES_INSTANCE_NAME: "${HERMES_INSTANCE_NAME:-Hermes}"
+      LOGOS_PORT: "8080"
+      HERMES_PORT: "8080"  # deprecated alias — kept for legacy in-flight code
+      LOGOS_INSTANCE_NAME: "${LOGOS_INSTANCE_NAME:-${HERMES_INSTANCE_NAME:-Hermes}}"
+      HERMES_INSTANCE_NAME: "${LOGOS_INSTANCE_NAME:-${HERMES_INSTANCE_NAME:-Hermes}}"  # deprecated alias
       HERMES_LOG_LEVEL: "${HERMES_LOG_LEVEL:-info}"
 
       # ── Cookies ─────────────────────────────────────────────────────────────

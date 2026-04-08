@@ -42,7 +42,7 @@ def _handler(args: dict, **kwargs) -> str:
         return json.dumps({"error": "server_name is required"})
 
     # ── Gateway mode check ─────────────────────────────────────────────────
-    if os.getenv("HERMES_GATEWAY_MCP") != "1":
+    if (os.getenv("LOGOS_GATEWAY_MCP") or os.getenv("HERMES_GATEWAY_MCP")) != "1":
         return json.dumps({
             "status": "error",
             "message": (
@@ -273,7 +273,7 @@ def _register():
 
 def _catalogue_handler(args: dict, **kwargs) -> str:
     """Return the MCP catalogue as a formatted list for the agent."""
-    if os.getenv("HERMES_GATEWAY_MCP") != "1":
+    if (os.getenv("LOGOS_GATEWAY_MCP") or os.getenv("HERMES_GATEWAY_MCP")) != "1":
         return json.dumps({
             "status": "error",
             "message": "Gateway MCP service is not active.",

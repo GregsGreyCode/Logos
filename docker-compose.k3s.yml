@@ -108,10 +108,14 @@ services:
     ports:
       - "${LOGOS_PORT:-8080}:8080"
     environment:
-      HERMES_JWT_SECRET: "${HERMES_JWT_SECRET}"
-      HERMES_RUNTIME_MODE: "kubernetes"
-      HERMES_PORT: "8080"
-      HERMES_INSTANCE_NAME: "${HERMES_INSTANCE_NAME:-Hermes}"
+      LOGOS_JWT_SECRET: "${LOGOS_JWT_SECRET:-${HERMES_JWT_SECRET:-}}"
+      HERMES_JWT_SECRET: "${LOGOS_JWT_SECRET:-${HERMES_JWT_SECRET:-}}"  # deprecated alias
+      LOGOS_RUNTIME_MODE: "kubernetes"
+      HERMES_RUNTIME_MODE: "kubernetes"  # deprecated alias
+      LOGOS_PORT: "8080"
+      HERMES_PORT: "8080"  # deprecated alias — kept for legacy in-flight code
+      LOGOS_INSTANCE_NAME: "${LOGOS_INSTANCE_NAME:-${HERMES_INSTANCE_NAME:-Hermes}}"
+      HERMES_INSTANCE_NAME: "${LOGOS_INSTANCE_NAME:-${HERMES_INSTANCE_NAME:-Hermes}}"  # deprecated alias
       HERMES_LOG_LEVEL: "${HERMES_LOG_LEVEL:-info}"
       HERMES_COOKIE_SECURE: "${HERMES_COOKIE_SECURE:-}"
       OPENAI_BASE_URL: "${OPENAI_BASE_URL:-}"

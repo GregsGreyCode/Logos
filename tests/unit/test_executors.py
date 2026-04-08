@@ -98,11 +98,13 @@ class TestPortAllocation:
                  patch("builtins.open", MagicMock()):
                 result = exe.spawn(config)
 
-        # Popen was called — the explicit port is passed via HERMES_PORT env var
+        # Popen was called — the explicit port is passed via LOGOS_PORT env var
+        # (HERMES_PORT is also written for the migration window)
         call_args = mock_popen.call_args
         env = call_args[1].get("env") or call_args[0][1] if len(call_args[0]) > 1 else {}
         # env is passed as keyword arg
         env = mock_popen.call_args.kwargs.get("env") or mock_popen.call_args[1].get("env", {})
+        assert env.get("LOGOS_PORT") == "9000"
         assert env.get("HERMES_PORT") == "9000"
 
 
@@ -137,8 +139,10 @@ class TestLocalProcessExecutorSpawn:
         cmd = mock_popen.call_args[0][0]
         assert "-m" in cmd
         assert "gateway.run" in cmd
-        # Port is now passed via HERMES_PORT env var, not --port flag
+        # Port is now passed via LOGOS_PORT env var, not --port flag
+        # (HERMES_PORT is also written for the migration window)
         env = mock_popen.call_args.kwargs.get("env") or mock_popen.call_args[1].get("env", {})
+        assert "LOGOS_PORT" in env
         assert "HERMES_PORT" in env
 
     def test_spawn_saves_to_instances_file(self, tmp_path, monkeypatch):
@@ -772,6 +776,7 @@ class TestDockerSpawn:
                 env_pairs.append(run_args[i + 1])
         env_dict = dict(p.split("=", 1) for p in env_pairs)
         assert env_dict["HERMES_INSTANCE_NAME"] == "env-test"
+        assert env_dict["LOGOS_PORT"] == "8080"
         assert env_dict["HERMES_PORT"] == "8080"
         assert env_dict["HERMES_SOUL"] == "philosopher"
         assert env_dict["HERMES_TOOLSETS"] == "web,code"

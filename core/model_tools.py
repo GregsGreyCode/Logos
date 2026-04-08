@@ -117,10 +117,11 @@ def _discover_tools():
 _discover_tools()
 
 # MCP tool discovery (external MCP servers from config).
-# Skipped when HERMES_GATEWAY_MCP=1 because the gateway service manages server
-# lifecycles centrally — agents connect via HTTP rather than spawning subprocesses.
+# Skipped when LOGOS_GATEWAY_MCP=1 (or legacy HERMES_GATEWAY_MCP=1) because the
+# gateway service manages server lifecycles centrally — agents connect via HTTP
+# rather than spawning subprocesses.
 import os as _os
-if _os.getenv("HERMES_GATEWAY_MCP") != "1":
+if (_os.getenv("LOGOS_GATEWAY_MCP") or _os.getenv("HERMES_GATEWAY_MCP")) != "1":
     try:
         from tools.mcp_tool import discover_mcp_tools
         discover_mcp_tools()

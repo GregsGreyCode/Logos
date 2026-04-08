@@ -26,7 +26,9 @@ from .base import InstanceConfig, ResourceHeadroom, SpawnedInstance
 
 logger = logging.getLogger(__name__)
 
-_HERMES_HOME = Path(os.getenv("HERMES_HOME", Path.home() / ".hermes"))
+_HERMES_HOME = Path(
+    os.getenv("LOGOS_HOME") or os.getenv("HERMES_HOME") or str(Path.home() / ".logos")
+)
 _INSTANCES_FILE = _HERMES_HOME / "instances.json"
 _HEALTH_TIMEOUT = 15  # seconds to wait for instance health check
 
@@ -120,10 +122,21 @@ class LocalProcessExecutor:
         instance_home = _HERMES_HOME / "instances" / config.name
         (instance_home / "memories").mkdir(parents=True, exist_ok=True)
 
-        env = {**os.environ, "HERMES_INSTANCE_NAME": config.name, "HERMES_PORT": str(port)}
+        env = {
+            **os.environ,
+            "HERMES_INSTANCE_NAME": config.name,
+            # Write both for the dual-fallback migration window. New gateway
+            # code reads LOGOS_PORT first; legacy child code still finds
+            # HERMES_PORT until the deprecation phase removes it.
+            "LOGOS_PORT": str(port),
+            "HERMES_PORT": str(port),
+        }
+        # Dual-write during the LOGOS_*/HERMES_* migration window.
+        env["LOGOS_HOME"] = str(instance_home)
         env["HERMES_HOME"] = str(instance_home)
         shared_home = _HERMES_HOME / "shared"
         shared_home.mkdir(parents=True, exist_ok=True)
+        env["LOGOS_SHARED_HOME"] = str(shared_home)
         env["HERMES_SHARED_HOME"] = str(shared_home)
         env["TERMINAL_CWD"] = str(workspace)   # agent's working directory
         if config.soul_name and config.soul_name != "default":
@@ -135,7 +148,7 @@ class LocalProcessExecutor:
 
         # When running as a frozen executable (Logos.exe), sys.executable is the
         # launcher itself.  Pass --agent-mode so the launcher skips its UI and
-        # runs only the gateway on the port supplied via HERMES_PORT.
+        # runs only the gateway on the port supplied via LOGOS_PORT.
         # In development (plain Python), use the normal -m gateway.run invocation.
         if getattr(sys, "frozen", False):
             cmd = [sys.executable, "--agent-mode"]
