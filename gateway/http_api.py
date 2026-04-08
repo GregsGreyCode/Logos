@@ -2784,6 +2784,28 @@ async def start_http_api(runner: Any, port: int = 8080) -> None:
         require_csrf(require_permission("manage_platform")(_handle_setup_reset)))
 
     app.router.add_get("/",              _handle_index)
+    # Per-tab URL paths. Each one serves the same SPA (main_app.html);
+    # Alpine reads window.location.pathname on init and pushes state on
+    # tab changes so refresh keeps the user on the current page.
+    for _tab_path in (
+        "/agents",
+        "/chats",
+        "/settings",
+        "/settings/inference",
+        "/settings/routing",
+        "/settings/tools",
+        "/settings/channels",
+        "/settings/proposals",
+        "/admin",
+        "/admin/users",
+        "/admin/security",
+        "/admin/workflows",
+        "/admin/runs",
+        "/admin/sandboxes",
+        "/admin/audit",
+        "/admin/approvals",
+    ):
+        app.router.add_get(_tab_path, _handle_index)
     app.router.add_get("/auth/me",       handle_me)
     app.router.add_get("/users/me",      handle_me)
     app.router.add_patch("/users/me",    handle_users_me_patch)
