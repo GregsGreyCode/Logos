@@ -57,37 +57,27 @@ export class WorldScene extends Phaser.Scene {
     // Draw tree canopy above agents
     this._buildCanopy();
 
-    // Set up camera
+    // Set up camera. The world view is LOCKED — no zoom, no drag.
+    // The user was seeing agents "walk off screen" because scroll-wheel
+    // zoom was enabled by default in an earlier version; locking the
+    // view removes that footgun entirely.
     this.cameras.main.setBounds(0, 0, WORLD_W, WORLD_H);
-    // Zoom to fill the container — no dead space margin
-    this.cameras.main.setZoom(Math.max(
+    const _fitZoom = () => Math.max(
       this.scale.width / WORLD_W,
       this.scale.height / WORLD_H
-    ));
+    );
+    this.cameras.main.setZoom(_fitZoom());
     this.cameras.main.centerOn(WORLD_W / 2, WORLD_H / 2);
-
-    // Camera drag + zoom — ignore drags that started on an agent
-    this._isDraggingAgent = false;
-    this.input.on('gameobjectdown', () => { this._isDraggingAgent = true; });
-    this.input.on('pointerup', () => { this._isDraggingAgent = false; });
-    this.input.on('pointermove', (pointer) => {
-      if (pointer.isDown && !this._isDraggingAgent) {
-        this.cameras.main.scrollX -= (pointer.x - pointer.prevPosition.x) / this.cameras.main.zoom;
-        this.cameras.main.scrollY -= (pointer.y - pointer.prevPosition.y) / this.cameras.main.zoom;
-      }
-    });
-    this.input.on('wheel', (pointer, gameObjects, deltaX, deltaY) => {
-      const cam = this.cameras.main;
-      const newZoom = Phaser.Math.Clamp(cam.zoom - deltaY * 0.001, 0.5, 6);
-      cam.setZoom(newZoom);
-    });
 
     // Pathfinder
     this.pathfinder = new Pathfinder(this.walkableGrid, WORLD_COLS, WORLD_ROWS);
 
-    // Resize handler
+    // Resize handler — re-fit the camera so the world stays fully in view
+    // and centred when the window is resized.
     this.scale.on('resize', (gameSize) => {
       this.cameras.main.setSize(gameSize.width, gameSize.height);
+      this.cameras.main.setZoom(_fitZoom());
+      this.cameras.main.centerOn(WORLD_W / 2, WORLD_H / 2);
     });
 
     // Mark ready and flush pending sync
