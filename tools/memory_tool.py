@@ -424,7 +424,20 @@ def memory_tool(
 
 
 def check_memory_requirements() -> bool:
-    """Memory tool has no external requirements -- always available."""
+    """Memory tool is available unless explicitly disabled in config.
+
+    Defaults to True so memory works out of the box. If a user has set
+    `memory.memory_enabled: false` AND `memory.user_profile_enabled: false`
+    in their config, the tool is hidden so the model doesn't loop on a
+    permanently-failing tool call.
+    """
+    try:
+        from logos_cli.config import load_config
+        mem = load_config().get("memory", {}) or {}
+        if mem.get("memory_enabled", True) is False and mem.get("user_profile_enabled", True) is False:
+            return False
+    except Exception:
+        pass
     return True
 
 

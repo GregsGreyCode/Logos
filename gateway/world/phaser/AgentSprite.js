@@ -85,11 +85,11 @@ export class AgentSprite {
       if (this.callbacks.onHover) this.callbacks.onHover(inst.name, inst, false);
     });
 
-    // Logo badge above sprite — agent's initial on a colored background
+    // Logo badge below sprite — agent's initial on a colored background
     const tint = nameToTint(inst.name);
     const tintHex = '#' + tint.toString(16).padStart(6, '0');
     const initial = (inst.name || '?')[0].toUpperCase();
-    this.logoText = scene.add.text(startPos.x, startPos.y - 38, initial, {
+    this.logoText = scene.add.text(startPos.x, startPos.y + 22, initial, {
       fontFamily: 'monospace',
       fontSize: '12px',
       fontStyle: 'bold',
@@ -100,32 +100,11 @@ export class AgentSprite {
       fixedWidth: 16,
       fixedHeight: 16,
     }).setOrigin(0.5, 0.5).setDepth(13);
-    // No separate logoBg — the text backgroundColor handles it
     this.logoBg = null;
 
-    // Name label — larger, with background
-    const displayName = (inst.instance_label || inst.instance_name || inst.name);
-    const truncName = displayName.length > 14 ? displayName.slice(0, 13) + '\u2026' : displayName;
-    this.nameLabel = scene.add.text(startPos.x, startPos.y + 22, truncName, {
-      fontFamily: 'monospace',
-      fontSize: '9px',
-      fontStyle: 'bold',
-      color: '#ffffff',
-      align: 'center',
-    }).setOrigin(0.5, 0).setDepth(11);
-    this.nameLabel.setShadow(1, 1, '#000000', 2, true);
-
-    // Soul label
+    // No name or soul labels — the badge below the sprite is the only identifier.
+    this.nameLabel = null;
     this.soulLabel = null;
-    if (inst.soul?.name) {
-      this.soulLabel = scene.add.text(startPos.x, startPos.y + 33, inst.soul.name, {
-        fontFamily: 'monospace',
-        fontSize: '7px',
-        color: '#818cf8',
-        align: 'center',
-      }).setOrigin(0.5, 0).setDepth(11);
-      this.soulLabel.setShadow(1, 1, '#000000', 1, true);
-    }
 
     // Status dot
     this.statusDot = scene.add.graphics().setDepth(14);
@@ -183,18 +162,7 @@ export class AgentSprite {
       this._navigateTo(target.x, target.y);
     }
 
-    // Update labels
-    const displayName = (inst.instance_label || inst.instance_name || inst.name);
-    const truncName = displayName.length > 14 ? displayName.slice(0, 13) + '\u2026' : displayName;
-    this.nameLabel.setText(truncName);
-
-    if (inst.soul?.name && this.soulLabel) {
-      this.soulLabel.setText(inst.soul.name);
-    } else if (inst.soul?.name && !this.soulLabel) {
-      this.soulLabel = this.scene.add.text(this.sprite.x, this.sprite.y + 22, inst.soul.name, {
-        fontFamily: 'monospace', fontSize: '6px', color: '#818cf8', align: 'center',
-      }).setOrigin(0.5, 0).setDepth(11);
-    }
+    // No labels to update — only the logo badge identifies the agent.
   }
 
   update(time, delta) {
@@ -220,12 +188,10 @@ export class AgentSprite {
       }
     }
 
-    // Sync label + logo positions
-    this.nameLabel.setPosition(this.sprite.x, this.sprite.y + 22);
-    if (this.soulLabel) this.soulLabel.setPosition(this.sprite.x, this.sprite.y + 33);
-    this.statusDot.setPosition(this.sprite.x + 16, this.sprite.y - 30);
-    this.bubble.setPosition(this.sprite.x, this.sprite.y - 50);
-    this.logoText.setPosition(this.sprite.x, this.sprite.y - 38);
+    // Sync logo badge + status positions
+    this.statusDot.setPosition(this.sprite.x + 16, this.sprite.y - 14);
+    this.bubble.setPosition(this.sprite.x, this.sprite.y - 26);
+    this.logoText.setPosition(this.sprite.x, this.sprite.y + 22);
   }
 
   _followPath(delta) {
@@ -349,11 +315,19 @@ export class AgentSprite {
 
   destroy() {
     this.sprite.destroy();
-    this.nameLabel.destroy();
+    if (this.nameLabel) this.nameLabel.destroy();
     if (this.soulLabel) this.soulLabel.destroy();
     this.statusDot.destroy();
     this.bubble.destroy();
     if (this.logoBg) this.logoBg.destroy();
     this.logoText.destroy();
   }
+}
+
+// Re-export the deterministic char-index hash so the agent card sprite
+// preview matches the in-world sprite without divergence.
+export function nameToCharIndexExport(name) {
+  let h = 0;
+  for (let i = 0; i < name.length; i++) h = ((h << 5) - h + name.charCodeAt(i)) | 0;
+  return Math.abs(h) % 8;
 }

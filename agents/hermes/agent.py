@@ -746,8 +746,11 @@ class AIAgent:
             try:
                 from logos_cli.config import load_config as _load_mem_config
                 mem_config = _load_mem_config().get("memory", {})
-                self._memory_enabled = mem_config.get("memory_enabled", False)
-                self._user_profile_enabled = mem_config.get("user_profile_enabled", False)
+                # Memory is on by default — agents should remember user
+                # context and environment facts across sessions out of the box.
+                # Users can opt out with `memory.memory_enabled: false` in config.
+                self._memory_enabled = mem_config.get("memory_enabled", True)
+                self._user_profile_enabled = mem_config.get("user_profile_enabled", True)
                 self._memory_nudge_interval = int(mem_config.get("nudge_interval", 10))
                 self._memory_flush_min_turns = int(mem_config.get("flush_min_turns", 6))
                 if self._memory_enabled or self._user_profile_enabled:
