@@ -261,7 +261,7 @@
     <!-- data-fl-logo: on first-load after login, fade in instantly (no translateY so the swap illusion works) -->
     <div class="pb-2 shrink-0 flex items-center gap-2" data-fl-logo>
       <img id="nav-logo-img" src="/static/logo.svg" alt="Logos"
-           style="height:32px;width:32px;flex-shrink:0;object-fit:contain;filter:hue-rotate(var(--hue-deg,0deg)) drop-shadow(0 0 6px rgba(99,102,241,0.35));">
+           style="height:32px;width:32px;flex-shrink:0;object-fit:contain;filter:hue-rotate(var(--hue-deg,0deg)) brightness(1.35) saturate(1.35) drop-shadow(0 0 10px rgba(129,140,248,0.55)) drop-shadow(0 0 2px rgba(255,255,255,0.3));">
       <template x-if="isCanary">
         <span class="px-2 py-0.5 rounded-full text-[10px] font-bold tracking-widest uppercase border border-yellow-500 bg-yellow-950 text-yellow-400 self-center">canary</span>
       </template>
