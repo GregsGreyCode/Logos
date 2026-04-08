@@ -90,14 +90,23 @@ class MCPGatewayService:
         # run_in_executor → _run_on_mcp_loop to dispatch from here.
         _ensure_mcp_loop()
 
+        # In-process servers (e.g. the Logos capabilities server) are
+        # already wired up in self._servers — they don't need a subprocess
+        # spawn. Filter them out before handing the rest to the MCP loop.
+        external_items = [
+            (name, cfg) for name, cfg in self._servers_cfg.items()
+            if cfg.get("enabled", True) is not False
+            and not cfg.get("_in_process")
+        ]
+
         async def _start_all():
+            if not external_items:
+                return
             results = await asyncio.gather(
-                *(_discover_and_register_server(name, cfg)
-                  for name, cfg in self._servers_cfg.items()
-                  if cfg.get("enabled", True) is not False),
+                *(_discover_and_register_server(name, cfg) for name, cfg in external_items),
                 return_exceptions=True,
             )
-            for name, result in zip(self._servers_cfg.keys(), results):
+            for (name, _cfg), result in zip(external_items, results):
                 if isinstance(result, Exception):
                     logger.warning("mcp_service: failed to start '%s': %s", name, result)
                 else:

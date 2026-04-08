@@ -4923,8 +4923,11 @@ async def start_gateway(config: Optional[GatewayConfig] = None, replace: bool = 
     if not success:
         return False
 
-    # Start the HTTP API + dashboard server alongside the platform adapters
-    http_port = int(os.getenv("HERMES_PORT", "8080"))
+    # Start the HTTP API + dashboard server alongside the platform adapters.
+    # Default is 8091 — this is also the port the OpenShell network policy
+    # whitelists for sandbox-worker → gateway WebSocket traffic, so the two
+    # are kept in sync. Override with HERMES_PORT / LOGOS_PORT env vars.
+    http_port = int(os.getenv("LOGOS_PORT") or os.getenv("HERMES_PORT") or "8091")
     try:
         from gateway.http_api import start_http_api
         asyncio.create_task(start_http_api(runner, http_port))
