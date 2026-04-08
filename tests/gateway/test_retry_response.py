@@ -1,8 +1,10 @@
 """Regression test: /retry must return the agent response, not None.
 
-Before the fix in PR #441, _handle_retry_command() called
-_handle_message(retry_event) but discarded its return value with `return None`,
-so users never received the final response.
+Originally tracked PR #441 where _handle_retry_command() called
+_handle_message(retry_event) and discarded the return value. Phase 5.6
+deleted _handle_message and re-pointed _handle_retry_command at
+dispatch_platform_message; the same return-the-inner-result invariant
+applies to the new code path.
 """
 import pytest
 from unittest.mock import AsyncMock, MagicMock
@@ -33,7 +35,7 @@ async def test_retry_returns_response_not_none(gateway):
     ]
     gateway.session_store.rewrite_transcript = MagicMock()
     expected_response = "Hi there! (retried)"
-    gateway._handle_message = AsyncMock(return_value=expected_response)
+    gateway.dispatch_platform_message = AsyncMock(return_value=expected_response)
     event = MessageEvent(
         text="/retry",
         message_type=MessageType.TEXT,
