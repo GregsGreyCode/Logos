@@ -5063,7 +5063,7 @@ function app() {
       setInterval(() => { this.clientNow = Date.now(); }, 1000);
       setInterval(() => { this._now = Math.floor(Date.now() / 1000); }, 15000);
       setInterval(() => { if (this.tab === 'routing') this.probeAllMachines(); }, 90000);
-      setInterval(() => { if (this.tab === 'admin' && this.adminTab === 'sandboxes') this.loadSandboxes(); }, 10000);
+      setInterval(() => { if (this.tab === 'admin' && this.adminTab === 'sandboxes') this.loadSandboxes(); }, 3000);
       // Poll for pending approvals to keep the badge up to date
       if (this.can('view_approvals')) {
         this._pollPendingApprovals();
