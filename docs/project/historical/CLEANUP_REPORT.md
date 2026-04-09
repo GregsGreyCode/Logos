@@ -1,7 +1,19 @@
 # Logos Repo Cleanup & Restructuring Report
 
+> **STATUS: SUPERSEDED — migration executed.** This report's central
+> finding (the "stale `core/`" — `hermes_state.py` at root being canonical
+> at v8 while `core/state.py` was stuck at v4) has been resolved.
+> `hermes_state.py` no longer exists at root; `core/state.py` is now at
+> `SCHEMA_VERSION = 8` and is the canonical store. The Phase A–E plan
+> below was largely executed via `848a6db refactor: rename HERMES_* env
+> vars to LOGOS_* (Phase 1, dual-fallback)` and the surrounding rename
+> and consolidation work on develop. The proposed directory structure
+> was built. Preserved here as the original planning record only — do
+> **not** rely on any of the inventory tables, file lists, or "current
+> state" claims as accurate descriptions of the codebase today.
+>
 > Generated: 2026-03-23
-> Status: Phase 1–5 complete (analysis only — no files changed)
+> Status (original): Phase 1–5 complete (analysis only — no files changed)
 
 ---
 
