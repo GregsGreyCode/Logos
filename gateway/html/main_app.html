@@ -3879,10 +3879,38 @@
               placeholder="provider/model-id"
               class="w-full mt-2 px-3 py-2 bg-gray-800 border border-gray-700 rounded text-white text-sm font-mono"
               @keydown.enter="provisionRoute()">
-            <p x-show="!allMachineModels.length" class="text-[10px] text-gray-600 mt-1">
-              No machines registered yet — go to <a href="#" @click.prevent="provisionModalOpen=false; tab='infra'; infraTab='servers'" class="text-[var(--accent)] hover:opacity-80">Settings → Inference</a> to add one, or use Custom model id.
-            </p>
-            <div class="text-[10px] text-gray-600 mt-1">
+            <!--
+              Empty-state hint distinguishes three cases:
+              1. No machines registered → tell the user to go add one
+              2. Machines exist but probe returned auth_required → tell
+                 the user the inference backend wants an API key
+              3. Machines exist, probe succeeded, but model_count=0 →
+                 the backend has no models loaded
+              In all three the user can fall back to "Custom model id".
+            -->
+            <template x-if="!allMachineModels.length">
+              <div class="text-[10px] mt-1 space-y-1">
+                <template x-if="!adminMachines.length">
+                  <p class="text-gray-600">
+                    No machines registered yet — go to <a href="#" @click.prevent="provisionModalOpen=false; tab='infra'; infraTab='servers'" class="text-[var(--accent)] hover:opacity-80">Settings &rarr; Inference</a> to add one, or use Custom model id.
+                  </p>
+                </template>
+                <template x-if="adminMachines.length && machineProbeStatuses.length">
+                  <div class="space-y-0.5">
+                    <p class="text-yellow-500">No models returned from your inference machine(s):</p>
+                    <template x-for="ps in machineProbeStatuses" :key="ps.endpoint">
+                      <div class="text-gray-500 pl-2 font-mono">
+                        <span x-text="ps.machine_name"></span> (<span x-text="ps.endpoint"></span>): <span class="text-yellow-400" x-text="ps.status === 'auth_required' ? 'auth_required — LM Studio API token missing' : ps.status === 'up' && ps.model_count === 0 ? 'up but 0 models loaded' : ps.status"></span>
+                      </div>
+                    </template>
+                    <p class="text-gray-600 pt-1">
+                      Fix the issue in <a href="#" @click.prevent="provisionModalOpen=false; tab='infra'; infraTab='servers'" class="text-[var(--accent)] hover:opacity-80">Settings &rarr; Inference</a>, then click <em>refresh list</em> above. Or use Custom model id.
+                    </p>
+                  </div>
+                </template>
+              </div>
+            </template>
+            <div x-show="allMachineModels.length" class="text-[10px] text-gray-600 mt-1">
               The exact model id the inference backend expects. The list above is fetched live from your registered machines.
             </div>
           </div>
@@ -5250,6 +5278,11 @@ function app() {
     approvalsStatusFilter: 'pending',
     pendingApprovalCount: 0,
     allMachineModels: [],
+    // Per-machine probe results from the most recent loadAllMachineModels()
+    // call. Drives the provision-modal hint so the user can tell whether
+    // an empty dropdown is "no machines registered" vs "machine present
+    // but auth_required" vs "unreachable" vs "machine returned 0 models".
+    machineProbeStatuses: [],
     adminMsg: null,
     // workflows
     workflows: [],
@@ -6353,13 +6386,39 @@ function app() {
     async loadAllMachineModels() {
       // Ensure machines are loaded first (avoid race condition)
       if (!this.adminMachines.length) await this.loadAdminMachines();
-      if (!this.adminMachines.length) return; // still empty — no machines configured
-      const results = await Promise.all(this.adminMachines.filter(m => m.enabled && m.endpoint_url).map(async m => {
+      // Reset probe-status state so a re-run reflects only the latest result
+      this.machineProbeStatuses = [];
+      if (!this.adminMachines.length) {
+        this.allMachineModels = [];
+        return; // still empty — no machines configured
+      }
+      const enabled = this.adminMachines.filter(m => m.enabled && m.endpoint_url);
+      const results = await Promise.all(enabled.map(async m => {
         try {
           const r = await fetch('/api/setup/probe?url=' + encodeURIComponent(m.endpoint_url) + '&prefer=lmstudio&machine_id=' + encodeURIComponent(m.id), {credentials:'include'});
           const d = await r.json();
+          // Capture per-machine probe status so the provision modal can
+          // tell the user *why* the dropdown is empty (auth_required,
+          // unreachable, etc) instead of the misleading "no machines
+          // registered" hint that fired even when machines exist.
+          for (const s of (d.servers || [])) {
+            this.machineProbeStatuses.push({
+              machine_name: m.name,
+              endpoint: s.endpoint || m.endpoint_url,
+              status: s.status || 'unknown',
+              model_count: (s.models || []).length,
+            });
+          }
           return (d.servers || []).flatMap(s => (s.models || []).map(mod => mod.id || mod.name)).filter(Boolean);
-        } catch(e) { return []; }
+        } catch(e) {
+          this.machineProbeStatuses.push({
+            machine_name: m.name,
+            endpoint: m.endpoint_url,
+            status: 'error',
+            model_count: 0,
+          });
+          return [];
+        }
       }));
       this.allMachineModels = [...new Set(results.flat())];
     },
