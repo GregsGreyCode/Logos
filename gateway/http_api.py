@@ -929,15 +929,25 @@ async def _handle_model_routes_post(request: web.Request) -> web.Response:
 
     Body: ``{provider: str, model: str, set_as_default?: bool}``
 
-    Calls openshell_routes.provision_or_reuse_route under the hood, which
-    either adopts the existing primordial gateway, reuses an existing
-    matching route, or cold-provisions a fresh OpenShell gateway. The
-    cold-provision path can take 30-60 seconds — the call is offloaded
-    to a thread so other gateway requests aren't blocked.
+    Returns AS SOON as the model_routes row exists in the DB (status
+    ``provisioning`` for cold provision, status ``ready`` for the
+    fast paths). The slow openshell gateway start runs in a background
+    asyncio task and updates the row to ``ready`` (or ``error``) when
+    done. The admin UI's 5-second polling refresh on the model-routes
+    table picks up the status transition live, so the user sees the
+    new row appear immediately and watch it go from provisioning →
+    ready without staring at a wedged modal.
 
-    Returns ``{ok: true, route: {...}}`` on success or ``{ok: false,
-    error: str}`` on failure (with the underlying openshell CLI stderr
-    if available)."""
+    Three resolution paths (in order of speed):
+
+      1. Existing row for (provider, model) → reuse it. Re-pin the
+         inference route in a background task so OpenShell state
+         matches the DB. Returns immediately.
+      2. No routes exist AND the primordial gateway is alive → adopt
+         it. ``adopt_primordial`` is fast (~1s) so this stays inline.
+      3. Cold provision → insert the row sync, return now, finish
+         the gateway start in a background task.
+    """
     try:
         body = await request.json()
     except Exception:
@@ -952,21 +962,72 @@ async def _handle_model_routes_post(request: web.Request) -> web.Response:
     if not model:
         return web.json_response({"ok": False, "error": "model is required"}, status=400)
 
+    from gateway import openshell_routes as _osr
+    import asyncio as _asyncio
+
+    # Path 1: existing row → reuse + re-pin in background
+    existing = auth_db.get_model_route_by_provider_model(provider, model)
+    if existing:
+        async def _re_pin_bg():
+            try:
+                await _asyncio.to_thread(
+                    _osr.provision_or_reuse_route, provider, model, set_as_default,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "model-routes re-pin failed for %s/%s: %s",
+                    provider, model, exc,
+                )
+        _asyncio.create_task(_re_pin_bg())
+        return web.json_response({"ok": True, "route": existing})
+
+    # Path 2: no routes exist + primordial alive → adopt (fast, sync)
+    if not auth_db.list_model_routes() and _osr.gateway_is_alive(_osr.PRIMORDIAL_NAME):
+        try:
+            route = await _asyncio.to_thread(_osr.adopt_primordial, provider, model)
+            return web.json_response({"ok": True, "route": route})
+        except Exception as exc:
+            logger.warning(
+                "model-routes primordial adopt failed for %s/%s: %s",
+                provider, model, exc,
+            )
+            return web.json_response(
+                {"ok": False, "error": str(exc)}, status=500,
+            )
+
+    # Path 3: cold provision — insert row sync, finish in background
     try:
-        from gateway import openshell_routes as _osr
-        import asyncio as _asyncio
         route = await _asyncio.to_thread(
-            _osr.provision_or_reuse_route, provider, model, set_as_default,
+            _osr.create_route_provisioning_row, provider, model,
         )
-        return web.json_response({"ok": True, "route": route})
     except Exception as exc:
         logger.warning(
-            "model-routes POST failed for %s/%s: %s", provider, model, exc,
+            "model-routes row insert failed for %s/%s: %s",
+            provider, model, exc,
         )
         return web.json_response(
-            {"ok": False, "error": str(exc)},
-            status=500,
+            {"ok": False, "error": str(exc)}, status=500,
         )
+
+    async def _finish_bg():
+        try:
+            await _asyncio.to_thread(
+                _osr.finish_provisioning, route["id"], set_as_default,
+            )
+            logger.info(
+                "model-routes background provision finished for route %s (%s/%s)",
+                route["id"], provider, model,
+            )
+        except Exception as exc:
+            logger.warning(
+                "model-routes background provision failed for route %s: %s",
+                route["id"], exc,
+            )
+            # finish_provisioning already updates the row to status='error'
+            # with detail before raising, so the admin UI poll will show it.
+
+    _asyncio.create_task(_finish_bg())
+    return web.json_response({"ok": True, "route": route})
 
 
 async def _handle_model_routes_restart(request: web.Request) -> web.Response:
@@ -2919,6 +2980,7 @@ async def _handle_chat(request: web.Request) -> web.StreamResponse:
         bool(worker_entry and worker_entry.healthy),
     )
 
+
     source = SessionSource(
         platform=Platform.LOCAL,
         chat_id=f"{session_id}{incarnation_tag}",
@@ -2939,6 +3001,16 @@ async def _handle_chat(request: web.Request) -> web.StreamResponse:
     context_prompt = build_agent_system_prompt(
         _agent_config, build_session_context_prompt(context),
     )
+
+    # Diagnostic: log the first line of the constructed context_prompt
+    # so we can verify "You are <agent name>." actually matches the
+    # dispatch target. If the dispatch is to hermes-hermes but the
+    # prompt's first line says "You are Ani.", we have a prompt-builder
+    # bug. If the prompt says "You are Hermes." but the model still
+    # responds as Ani, the bug is the model's adherence (or qwen3.5-9b
+    # training-data bias toward common AI character names), not routing.
+    _first_line = (context_prompt or "").splitlines()[0] if context_prompt else "<empty>"
+    logger.info("chat dispatch prompt[0]: %r (length=%d)", _first_line, len(context_prompt or ""))
 
     resp = web.StreamResponse(
         status=200,
