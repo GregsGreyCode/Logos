@@ -778,11 +778,17 @@
                 <span class="font-mono text-indigo-400 text-xs tabular-nums" x-text="thinkingText"></span>
               </div>
             </div>
-            <!-- Sandbox provisioning guard (agent selected but worker not yet connected) -->
+            <!-- Sandbox provisioning guard (agent selected but worker not yet connected).
+                 Prominent banner so the user can immediately see why the chat
+                 input is disabled — earlier this was a small yellow text line
+                 that was easy to miss next to the spinner. -->
             <div x-show="!chatLoading && activeInstance?.source === 'named' && !canSendChat" x-cloak
-                 class="flex items-center gap-2 text-sm text-yellow-600 py-1">
-              <span class="animate-spin inline-block">&#9881;</span>
-              <span x-text="'Sandbox for ' + (activeInstance?.name || 'agent') + ' is still provisioning — chat will unlock once the worker connects.'"></span>
+                 class="mx-4 mt-2 mb-1 px-4 py-3 rounded-lg bg-yellow-950/40 border border-yellow-900/60 flex items-center gap-3 text-sm text-yellow-300 shrink-0">
+              <span class="animate-spin inline-block text-lg">&#9881;</span>
+              <div class="flex-1 min-w-0">
+                <div class="font-medium" x-text="'Sandbox for ' + (activeInstance?.name || 'agent') + ' is provisioning…'"></div>
+                <div class="text-xs text-yellow-500/70 mt-0.5">Chat unlocks automatically when the worker connects (~10–30 s).</div>
+              </div>
             </div>
             <!-- No agents at all (e.g. post-setup before sandbox finishes) -->
             <div x-show="!chatLoading && (!namedAgents || namedAgents.length === 0)" x-cloak
@@ -6338,19 +6344,32 @@ function app() {
       // instances are runtime backing for named agents — they should not
       // show up as their own entities. If no named agents exist the world
       // is empty.
-      return (this.namedAgents || []).map(a => ({
-        name: a.name,
-        instance_name: a.name,
-        instance_label: '',
-        status: 'running',
-        k8s_status: 'running',
-        soul: { name: a.soul_slug, slug: a.soul_slug },
-        source: 'named',
-        // Pass through the explicit sprite selection so AgentSprite renders
-        // the chosen character instead of the name-hash fallback.
-        char_index: (a.char_index !== undefined && a.char_index !== null) ? Number(a.char_index) : null,
-        _namedAgent: a,
-      }));
+      //
+      // Status is derived from the augmented worker_connected /
+      // worker_healthy fields that handle_agents_list adds based on the
+      // live worker_registry. Agents whose sandbox is still provisioning
+      // (or whose worker has dropped) get status='starting' so the
+      // AgentSprite renders them as grey + frozen instead of the normal
+      // walking animation. The earlier hardcoded 'running' meant a
+      // freshly-spawned agent looked identical to a healthy one even
+      // while its sandbox was still booting.
+      return (this.namedAgents || []).map(a => {
+        const isReady = !!(a.worker_connected && a.worker_healthy);
+        const status = isReady ? 'running' : 'starting';
+        return {
+          name: a.name,
+          instance_name: a.name,
+          instance_label: '',
+          status,
+          k8s_status: status,
+          soul: { name: a.soul_slug, slug: a.soul_slug },
+          source: 'named',
+          // Pass through the explicit sprite selection so AgentSprite renders
+          // the chosen character instead of the name-hash fallback.
+          char_index: (a.char_index !== undefined && a.char_index !== null) ? Number(a.char_index) : null,
+          _namedAgent: a,
+        };
+      });
     },
 
     async initWorld() {
