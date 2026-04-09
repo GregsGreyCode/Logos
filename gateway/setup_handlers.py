@@ -2941,6 +2941,56 @@ async def handle_setup_complete(request: web.Request) -> web.Response:
                 "If Logos runs in Kubernetes, use the node's LAN IP instead of localhost."
             )
 
+        # Provision (or reuse) the OpenShell route for the chosen
+        # (provider, model) BEFORE creating the default agent so we can
+        # bind the agent to the route at create time.
+        #
+        # Why this matters: OpenShell's privacy router enforces a single
+        # forced model per gateway via `openshell inference set --model`.
+        # Without this step, the user's chosen model in the wizard would
+        # be persisted to config.yaml + the agent record, but OpenShell's
+        # actual inference route would still be pinned to whatever model
+        # was last set (or the install default) — meaning the agent's
+        # first chat request silently lands on the wrong model. That's
+        # the regression the user originally hit ("I selected gpt-oss-20b
+        # but qwen3.5 loaded").
+        #
+        # provision_or_reuse_route handles both first-run (adopts the
+        # existing logos-openshell primordial gateway) and re-run with a
+        # new model (provisions a fresh gateway alongside). On any
+        # failure we log + fall through with provisioned_route=None — the
+        # agent gets created without a route binding, and the executor's
+        # bootstrap fallback handles spawning into the primordial gateway
+        # using the env-resolved model. The user can fix the route later
+        # from /admin/model-routes (commit 4) instead of having setup
+        # block on a recoverable failure.
+        provisioned_route = None  # populated below if provision succeeds
+        try:
+            from gateway import openshell_routes as _osr
+            # _primary_server_type was resolved above from the user's
+            # chosen server (defaults to "lmstudio" for the local-first
+            # track). Maps directly to the OpenShell provider name.
+            _route_provider = (_primary_server_type or "lmstudio").strip()
+            if model:
+                provisioned_route = _osr.provision_or_reuse_route(
+                    _route_provider, model, set_as_default=True,
+                )
+                logger.info(
+                    "setup: provisioned/reused model route %s for %s/%s "
+                    "(openshell_name=%s, status=%s)",
+                    provisioned_route["id"], _route_provider, model,
+                    provisioned_route["openshell_name"],
+                    provisioned_route["status"],
+                )
+        except Exception as _route_err:
+            logger.warning(
+                "setup: provision_or_reuse_route failed for %s/%s — agent will "
+                "fall back to the primordial gateway via the executor's bootstrap "
+                "path; the user can re-provision from /admin/model-routes. (%s: %s)",
+                _primary_server_type or "lmstudio", model,
+                type(_route_err).__name__, _route_err,
+            )
+
         # Create the default named agent and spawn its OpenShell sandbox.
         # This gives the user a chat-ready agent the moment they land on
         # the main app after setup. The sandbox provisions in the background;
@@ -2958,11 +3008,32 @@ async def handle_setup_complete(request: web.Request) -> web.Response:
                     shared=True,
                     toolsets=_json.dumps([]),
                     char_index=agent_char_index,
+                    model_route_id=(provisioned_route["id"] if provisioned_route else None),
                 )
-                logger.info("setup: created default named agent '%s'", agent_name)
+                logger.info(
+                    "setup: created default named agent '%s' bound to route %s",
+                    agent_name,
+                    provisioned_route["id"] if provisioned_route else "<none>",
+                )
             else:
-                default_agent = existing_default
-                logger.info("setup: default agent '%s' already exists, reusing", agent_name)
+                # Re-running setup with the same agent name — re-bind it
+                # to the (possibly newly-provisioned) route so the next
+                # spawn lands in the right gateway. Without this re-bind,
+                # the existing agent would keep its original (possibly
+                # NULL) model_route_id and the executor would resolve to
+                # the default route, which may now be a different model
+                # than the user just chose.
+                if provisioned_route:
+                    auth_db.update_agent(
+                        existing_default["id"],
+                        model_route_id=provisioned_route["id"],
+                    )
+                default_agent = auth_db.get_agent(existing_default["id"]) or existing_default
+                logger.info(
+                    "setup: default agent '%s' already exists — re-bound to route %s",
+                    agent_name,
+                    provisioned_route["id"] if provisioned_route else "<unchanged>",
+                )
 
             # Kick off sandbox spawn in the background. We must not block
             # the event loop on `openshell sandbox create` (which can take
@@ -2979,6 +3050,12 @@ async def handle_setup_complete(request: web.Request) -> web.Response:
                 requester=primary_admin.get("email") or primary_admin.get("username") or "",
                 instance_label=default_agent["name"],
                 toolsets=[],
+                # Pass the route binding through to the executor so the
+                # sandbox lands inside the gateway we just provisioned.
+                # When None, the executor falls back to the default route
+                # (or the primordial gateway) per _resolve_route() in
+                # gateway/executors/openshell.py.
+                model_route_id=default_agent.get("model_route_id"),
             )
 
             async def _spawn_default_bg():
