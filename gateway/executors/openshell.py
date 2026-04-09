@@ -31,6 +31,7 @@ Prerequisites
 
 from __future__ import annotations
 
+import fcntl
 import json
 import logging
 import os
@@ -40,8 +41,9 @@ import subprocess
 import tempfile
 import threading
 import time
+from contextlib import contextmanager
 from pathlib import Path
-from typing import List, Optional, Set
+from typing import Dict, Iterator, List, Optional, Set, Tuple
 
 from .base import InstanceConfig, ResourceHeadroom, SpawnedInstance
 
@@ -61,6 +63,17 @@ _HERMES_HOME = Path(
     os.getenv("LOGOS_HOME") or os.getenv("HERMES_HOME") or str(Path.home() / ".logos")
 )
 _STATE_FILE = _HERMES_HOME / "openshell_instances.json"
+# Sibling lock file used to serialize prune-and-save cycles between
+# concurrent spawn() and list_instances() callers. See _state_lock().
+_STATE_LOCK_FILE = _HERMES_HOME / "openshell_instances.lock"
+
+# Grace window during which a freshly-created or still-provisioning state
+# entry is exempt from pruning even if `openshell sandbox list` doesn't
+# yet show its CR. 90s matches the worker-registration deadline used by
+# the http_api restart handler — long enough for an openshell create to
+# finish on a cold cluster, short enough that genuinely-stuck records
+# get cleaned up on the next list_instances() pass.
+_PRUNE_GRACE_SECONDS = 90.0
 
 # Default sandbox image source. Two modes:
 #   1. A pre-built image tag (e.g. "ghcr.io/myorg/hermes-sandbox:1.0") — used
@@ -104,6 +117,34 @@ def _load_state() -> List[dict]:
 def _save_state(instances: List[dict]) -> None:
     _STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
     _STATE_FILE.write_text(json.dumps(instances, indent=2), encoding="utf-8")
+
+
+@contextmanager
+def _state_lock() -> Iterator[None]:
+    """Exclusive ``fcntl.flock`` on ``_STATE_LOCK_FILE``.
+
+    Serializes load → modify → save cycles in ``spawn()`` and
+    ``list_instances()`` so two callers racing on the state file can't
+    trash each other's writes (which is exactly how we ended up with
+    state-file drift before this — list_instances() pruning a
+    provisioning entry that spawn() had inserted seconds earlier).
+
+    Linux-only (fcntl.flock). The critical sections are tiny — just
+    the JSON load, the in-place mutation, and the JSON save — so a
+    blocking exclusive lock is fine. Spawns and lists are infrequent
+    relative to the lock duration.
+    """
+    _STATE_LOCK_FILE.parent.mkdir(parents=True, exist_ok=True)
+    f = open(_STATE_LOCK_FILE, "w")
+    try:
+        fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+        yield
+    finally:
+        try:
+            fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+        except OSError:
+            pass
+        f.close()
 
 
 # ── OpenShell CLI helpers ──────────────────────────────────────────────────
@@ -261,35 +302,133 @@ def _sanitize_sandbox_name(name: str) -> str:
     return s
 
 
-def _sandbox_exists(name: str, gateway: Optional[str] = None) -> bool:
-    """Return True if an OpenShell sandbox with this name is still running
-    inside the given gateway.
+def _query_sandbox_names(gateway: Optional[str] = None) -> Optional[Set[str]]:
+    """Return the set of live sandbox names in ``gateway``, or ``None`` if
+    the query itself failed.
 
-    With multi-route routing, each sandbox lives inside exactly one gateway
-    and the same sandbox name in two different gateways is not the same
-    sandbox. Callers MUST scope the lookup to the gateway they care about
-    — passing ``gateway=None`` falls back to the CLI's currently-selected
-    gateway, which is brittle.
+    The ``None`` return value is the load-bearing distinction that #11
+    fixes: previously every helper here returned ``False`` / ``[]`` on
+    any exception, conflating "the gateway is reachable and there are no
+    matching sandboxes" with "we couldn't even ask". The state-file
+    pruner then deleted entries from a gateway that was momentarily
+    unreachable, losing the ``openshell_name`` mapping forever.
+
+    Three outcomes:
+      * ``set[str]`` — the CLI ran cleanly; this is the authoritative
+        live set for that gateway. Empty set means the gateway is up
+        but contains no sandboxes.
+      * ``None`` — the CLI failed (timeout, missing binary, OS error,
+        non-zero exit). Callers must NOT treat this as "no sandboxes";
+        they should keep any state entries belonging to this gateway
+        rather than risk a destructive prune on transient errors.
     """
     try:
-        # `openshell sandbox list --names` prints one sandbox name per line.
-        result = _openshell("sandbox", "list", "--names",
-                            gateway=gateway, check=False)
-        names = {line.strip() for line in (result.stdout or "").splitlines() if line.strip()}
-        return name in names
-    except Exception:
-        return False
+        result = _openshell(
+            "sandbox", "list", "--names",
+            gateway=gateway, check=False, timeout=30,
+        )
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError) as exc:
+        logger.warning("query gateway %r failed: %s", gateway, exc)
+        return None
+    if result.returncode != 0:
+        logger.warning(
+            "query gateway %r exited %d: %s",
+            gateway, result.returncode, (result.stderr or "").strip()[:200],
+        )
+        return None
+    return {line.strip() for line in (result.stdout or "").splitlines() if line.strip()}
 
 
 def _list_sandbox_names(gateway: Optional[str] = None) -> List[str]:
-    """Return all live OpenShell sandbox names in the given gateway,
-    or [] on failure. ``gateway=None`` uses the CLI default gateway."""
-    try:
-        result = _openshell("sandbox", "list", "--names",
-                            gateway=gateway, check=False)
-        return [line.strip() for line in (result.stdout or "").splitlines() if line.strip()]
-    except Exception:
-        return []
+    """Back-compat shim: return live sandbox names in ``gateway`` or ``[]``.
+
+    Used by ``_list_all_sandbox_names_with_gateway()`` which only needs
+    "what's alive right now" for the resurrection pass — it doesn't make
+    destructive decisions, so the unknown-vs-empty distinction doesn't
+    matter. Internally delegates to ``_query_sandbox_names()`` and flattens
+    ``None`` to ``[]``.
+    """
+    names = _query_sandbox_names(gateway=gateway)
+    return sorted(names) if names is not None else []
+
+
+def _build_sandbox_index(gateways: Set[str]) -> Dict[str, Optional[Set[str]]]:
+    """Query every distinct gateway exactly once and return a snapshot.
+
+    Returns ``{gateway: set | None}`` — set means "queried successfully,
+    here are the live names", None means "query failed, treat as
+    unknown". Used by ``_prune_state_against_index()`` so the pruner
+    can make per-gateway decisions instead of calling the CLI once per
+    state entry (which is both slow AND prone to per-entry conflation
+    of missing-vs-unreachable).
+    """
+    return {gw: _query_sandbox_names(gateway=gw) for gw in gateways}
+
+
+def _is_within_grace_period(record: dict, grace: float = _PRUNE_GRACE_SECONDS) -> bool:
+    """Whether ``record`` is exempt from pruning due to its age/phase.
+
+    Returns True if either:
+      * ``record["phase"] == "provisioning"`` — spawn() is mid-flight,
+        the openshell CR may not be visible yet.
+      * ``record["created_at"]`` is within ``grace`` seconds — covers
+        the race where spawn() inserted the record but
+        ``openshell sandbox list`` hasn't picked it up yet, AND covers
+        legacy entries that never got their phase flipped to "ready".
+    """
+    if record.get("phase") == "provisioning":
+        return True
+    created = record.get("created_at")
+    if isinstance(created, (int, float)) and (time.time() - created) < grace:
+        return True
+    return False
+
+
+def _prune_state_against_index(
+    instances: List[dict],
+    index: Dict[str, Optional[Set[str]]],
+    primordial_name: str,
+) -> Tuple[List[dict], int]:
+    """Apply the prune rules. Returns ``(kept_entries, num_pruned)``.
+
+    Rules, in order:
+      1. Grace-period entries are kept regardless (phase=="provisioning"
+         or created within ``_PRUNE_GRACE_SECONDS``).
+      2. If the entry's gateway has a None index entry (query failed,
+         or the gateway wasn't queried at all), the entry is kept —
+         we don't have authoritative info to drop it.
+      3. Otherwise the entry is dropped iff its sandbox_name is not in
+         the index set for its gateway.
+
+    The point of returning the prune count is so the caller can decide
+    whether to bother saving the state file at all — saving on a
+    no-op prune is a waste of disk I/O and risks racing concurrent
+    writers (which is partly why we now hold ``_state_lock()`` around
+    the whole load-modify-save cycle).
+    """
+    kept: List[dict] = []
+    pruned = 0
+    for inst in instances:
+        if _is_within_grace_period(inst):
+            kept.append(inst)
+            continue
+        gw = inst.get("openshell_name") or primordial_name
+        live = index.get(gw)
+        if live is None:
+            # Either the query failed or this gateway wasn't in the
+            # batch we were asked to query. Either way: don't make a
+            # destructive decision on missing data.
+            kept.append(inst)
+            continue
+        if inst.get("sandbox_name", "") in live:
+            kept.append(inst)
+        else:
+            pruned += 1
+            logger.info(
+                "prune state entry name=%r sandbox=%r gateway=%r — sandbox confirmed missing",
+                inst.get("name"), inst.get("sandbox_name"), gw,
+            )
+    return kept, pruned
 
 
 def _list_all_sandbox_names_with_gateway() -> List[tuple[str, str]]:
@@ -410,19 +549,6 @@ class OpenShellExecutor:
     def spawn(self, config: InstanceConfig) -> SpawnedInstance:
         from gateway.openshell_routes import PRIMORDIAL_NAME
 
-        instances = _load_state()
-
-        # Prune entries whose sandbox has already been deleted. Each entry
-        # carries its own openshell_name now (older entries default to the
-        # primordial gateway since they predate multi-route routing).
-        instances = [
-            i for i in instances
-            if _sandbox_exists(
-                i.get("sandbox_name", ""),
-                gateway=i.get("openshell_name") or PRIMORDIAL_NAME,
-            )
-        ]
-
         # OpenShell sandboxes are backed by Kubernetes Sandbox CRs, so the
         # sandbox name must be a valid RFC 1123 subdomain: lowercase
         # [a-z0-9.-], must start/end with alphanumeric, max 63 chars.
@@ -449,12 +575,6 @@ class OpenShellExecutor:
             "model": resolved_model,
         }
 
-        # Persist the state record up front so the dashboard can show
-        # this sandbox as "provisioning" while openshell create is still
-        # running. We remove it again on failure below. The new
-        # openshell_name + model_route_id fields let list_instances() and
-        # delete_instance() know which gateway to query without re-reading
-        # the agent record.
         record = {
             "name": config.name,
             "sandbox_name": sandbox_name,
@@ -471,8 +591,26 @@ class OpenShellExecutor:
             "created_at": time.time(),
             "phase": "provisioning",
         }
-        instances.append(record)
-        _save_state(instances)
+
+        # Phase 1 (under lock): prune dead entries and insert the new
+        # provisioning record. Same prune rules as list_instances() —
+        # batch query per gateway, keep grace-period entries, never
+        # drop entries from gateways whose query failed. The new
+        # record gets a phase="provisioning" tag so concurrent
+        # list_instances() calls won't clobber it before openshell
+        # finishes creating the CR.
+        with _state_lock():
+            instances = _load_state()
+            gateways = {
+                (i.get("openshell_name") or PRIMORDIAL_NAME) for i in instances
+            }
+            gateways.add(openshell_gw)
+            index = _build_sandbox_index(gateways)
+            instances, _pruned = _prune_state_against_index(
+                instances, index, PRIMORDIAL_NAME
+            )
+            instances.append(record)
+            _save_state(instances)
 
         # ── Spawn flow: 3 separate openshell CLI calls ─────────────
         # The previous bundled-create flow was:
@@ -571,11 +709,25 @@ class OpenShellExecutor:
                 gateway=openshell_gw, check=True,
             )
 
-            # Update phase on success — the worker hasn't registered
-            # yet (that happens asynchronously via WebSocket), but
-            # the spawn flow is complete from the executor's POV.
-            record["phase"] = "ready"
-            _save_state(instances)
+            # Phase 3 (under lock): flip the record's phase to "ready"
+            # so subsequent list_instances() prunes apply normal rules.
+            # Re-load the state file because something else may have
+            # mutated it while we were running the openshell CLI calls.
+            with _state_lock():
+                cur = _load_state()
+                for i in cur:
+                    if i.get("sandbox_name") == sandbox_name:
+                        i["phase"] = "ready"
+                        break
+                else:
+                    # Our record vanished mid-spawn (e.g. user deleted
+                    # the agent, or another spawn ran a stale prune
+                    # on a gateway that had just temporarily failed).
+                    # Re-insert with phase=ready so the worker is
+                    # discoverable.
+                    record["phase"] = "ready"
+                    cur.append(record)
+                _save_state(cur)
 
         except subprocess.CalledProcessError as exc:
             # Roll back the state record on failure. Best-effort
@@ -583,8 +735,10 @@ class OpenShellExecutor:
             # successfully created the CR but failed at upload or
             # exec, leaving a half-baked sandbox like the ones we
             # were chasing all session before this refactor landed.
-            instances = [i for i in instances if i.get("sandbox_name") != sandbox_name]
-            _save_state(instances)
+            with _state_lock():
+                cur = _load_state()
+                cur = [i for i in cur if i.get("sandbox_name") != sandbox_name]
+                _save_state(cur)
             try:
                 _openshell(
                     "sandbox", "delete", sandbox_name,
@@ -617,18 +771,20 @@ class OpenShellExecutor:
     def list_instances(self) -> List[dict]:
         from gateway.openshell_routes import PRIMORDIAL_NAME
 
-        instances = _load_state()
-        alive = []
-        changed = False
-        for inst in instances:
-            gw = inst.get("openshell_name") or PRIMORDIAL_NAME
-            if _sandbox_exists(inst.get("sandbox_name", ""), gateway=gw):
-                alive.append(inst)
-            else:
-                changed = True
-        if changed:
-            _save_state(alive)
-        return alive
+        # Hardened pruning: batch one CLI query per gateway, keep
+        # grace-period entries, never drop entries from a gateway
+        # whose query failed. See _prune_state_against_index() for
+        # the full rule list.
+        with _state_lock():
+            instances = _load_state()
+            gateways = {
+                (i.get("openshell_name") or PRIMORDIAL_NAME) for i in instances
+            }
+            index = _build_sandbox_index(gateways)
+            kept, pruned = _prune_state_against_index(instances, index, PRIMORDIAL_NAME)
+            if pruned > 0:
+                _save_state(kept)
+        return kept
 
     def delete_instance(self, name: str) -> None:
         # Resolve the sandbox name authoritatively from the agent name
@@ -668,13 +824,16 @@ class OpenShellExecutor:
             logger.warning("Error deleting sandbox '%s': %s", sandbox_name, exc)
 
         # Drop any matching state record so the dashboard stops showing it.
-        instances = _load_state()
-        remaining = [
-            i for i in instances
-            if i.get("name") != name and i.get("sandbox_name") != sandbox_name
-        ]
-        if len(remaining) != len(instances):
-            _save_state(remaining)
+        # Held under the state lock so a concurrent spawn() can't re-insert
+        # while we're partway through the filter.
+        with _state_lock():
+            instances = _load_state()
+            remaining = [
+                i for i in instances
+                if i.get("name") != name and i.get("sandbox_name") != sandbox_name
+            ]
+            if len(remaining) != len(instances):
+                _save_state(remaining)
 
     def get_headroom(self) -> ResourceHeadroom:
         """Estimate available resources for spawning more sandboxes."""
