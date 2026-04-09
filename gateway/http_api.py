@@ -2863,6 +2863,31 @@ async def _handle_chat(request: web.Request) -> web.StreamResponse:
     if not _agent_config:
         raise web.HTTPNotFound(reason=f"agent {agent_id} not found")
 
+    # On-demand LM Studio model load. Logos has always known how to call
+    # /api/v1/models/load (run.py preloads the gateway-wide active model
+    # at startup, setup_handlers uses it for benchmarks). The chat
+    # dispatch path didn't call it, so an agent bound to a model that
+    # LM Studio hadn't loaded yet would dispatch to its worker, the
+    # worker would POST /v1/chat/completions, and LM Studio would
+    # respond with "Unexpected endpoint or method" because no model
+    # was loaded into the slot. ensure_loaded fills that gap and is
+    # cached after the first successful call per (host, model) pair.
+    _agent_model_for_load = (_agent_config.get("model") or "").strip()
+    if _agent_model_for_load:
+        try:
+            _machines = auth_db.list_machines()
+            for _m in _machines:
+                if _m.get("enabled") and _m.get("endpoint_url"):
+                    from gateway.lmstudio_loader import ensure_loaded as _ensure
+                    await _ensure(
+                        _m["endpoint_url"],
+                        _agent_model_for_load,
+                        _m.get("api_key"),
+                    )
+                    break
+        except Exception as _ld_exc:
+            logger.warning("lmstudio ensure_loaded skipped: %s", _ld_exc)
+
     # --- Process file attachments ---
     raw_attachments = body.get("attachments") or []
     # Legacy single-image support
