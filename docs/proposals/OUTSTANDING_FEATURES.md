@@ -1,5 +1,18 @@
 # Outstanding Features
 
+> **STATUS: HISTORICAL BACKLOG — NOT CURRENT.** This document is a
+> snapshot of an old backlog and several entries have since been
+> reversed by code changes. In particular, the "Recently Completed"
+> entry claiming `LocalProcessExecutor and KubernetesExecutor — fully
+> implemented` is **wrong**: the Kubernetes executor was implemented,
+> then **deleted** in commit `f6f0972`. Other entries reference CLI
+> commands (`hermes setup --vscode`, `hermes doctor`) and tools that
+> may or may not exist in the current `logos_cli/`. Treat this file as
+> historical context, not as a live backlog. Live work tracking lives
+> elsewhere (issues / PROJECT_STATE.md).
+
+---
+
 Unimplemented features and requirements identified from planning docs, design critiques, and code TODOs. Ordered roughly by impact. Use this as a backlog reference.
 
 ---
@@ -8,7 +21,7 @@ Unimplemented features and requirements identified from planning docs, design cr
 
 ### Frontier-first onboarding track
 **Source:** `docs/project/onboarding_plan.md`
-The wizard's Step 0 shows a "Frontier-first" track (Anthropic, OpenAI, OpenRouter) but it is disabled with a "Coming soon" label. The entire track — cloud model configuration, frontier voice providers, Honcho opt-in, cloud vision — needs to be built. Local-first is the only working track.
+The wizard's Step 0 shows a "Frontier-first" track (Anthropic, OpenAI, OpenRouter) but it is disabled with a "Coming soon" label. The entire track — cloud model configuration, frontier voice providers, cloud vision — needs to be built. Local-first is the only working track.
 
 ### `hermes doctor` system check step
 **Source:** `docs/project/onboarding_plan.md`
@@ -21,10 +34,6 @@ Telegram, Discord, Slack, and other platform tokens are configured entirely out-
 ### Tool/policy defaults by track
 **Source:** `docs/project/onboarding_plan.md`
 After track selection, the wizard should apply a config preset — which toolsets are enabled, which policy rules are active — based on whether the user chose local-first or frontier-first. Currently all users get identical defaults.
-
-### Honcho opt-in step
-**Source:** `docs/project/onboarding_plan.md`
-Honcho AI memory (`honcho_integration/`) is implemented but has no wizard UI. There should be a privacy-gated opt-in step that explains what data Honcho stores and lets the user enable or skip it during setup.
 
 ### Voice provider selection
 **Source:** `docs/project/onboarding_plan.md`
@@ -103,14 +112,6 @@ Installers ship unsigned. Identity validation for code signing certificates is n
 ### Page persistence and search
 **Source:** `tools/web_tools.py` (explicit TODOs)
 Web tools fetch and extract pages on demand but store nothing. Three TODOs at the top of the module: store scraped pages, search over stored pages, and expose a tool to list what has been saved. An accumulated knowledge base from web research would make repeated queries far more efficient.
-
----
-
-## Honcho Integration
-
-### Hermes-side Honcho enhancements
-**Source:** `docs/honcho-integration-spec.md`
-The integration spec documents several patterns from `openclaw-honcho` that Hermes should adopt: `lastSavedIndex` deduplication for message writes, platform metadata stripping before storage, multi-agent parent observer hierarchy, `peerPerspective` on `context()` calls, and tiered tool surfaces. None are implemented in `honcho_integration/`.
 
 ---
 

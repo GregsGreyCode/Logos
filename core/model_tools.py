@@ -94,7 +94,6 @@ def _discover_tools():
         "tools.handoff_tool",
         "tools.process_registry",
         "tools.send_message_tool",
-        "tools.honcho_tools",
         "tools.homeassistant_tool",
         "tools.log_inspector_tool",
         "tools.bug_notes_tool",

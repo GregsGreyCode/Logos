@@ -323,11 +323,6 @@ DEFAULT_CONFIG = {
     # injected at the start of every API call for few-shot priming.
     # Never saved to sessions, logs, or trajectories.
     "prefill_messages_file": "",
-    
-    # Honcho AI-native memory -- reads ~/.honcho/config.json as single source of truth.
-    # This section is only needed for hermes-specific overrides; everything else
-    # (apiKey, workspace, peerName, sessions, enabled) comes from the global config.
-    "honcho": {},
 
     # IANA timezone (e.g. "Asia/Kolkata", "America/New_York").
     # Empty string means use server-local time.
@@ -566,16 +561,6 @@ OPTIONAL_ENV_VARS = {
         "description": "GitHub token for Skills Hub (higher API rate limits, skill publish)",
         "prompt": "GitHub Token",
         "url": "https://github.com/settings/tokens",
-        "password": True,
-        "category": "tool",
-    },
-
-    # ── Honcho ──
-    "HONCHO_API_KEY": {
-        "description": "Honcho API key for AI-native persistent memory",
-        "prompt": "Honcho API key",
-        "url": "https://app.honcho.dev",
-        "tools": ["honcho_context"],
         "password": True,
         "category": "tool",
     },
@@ -1403,7 +1388,7 @@ def set_config_value(key: str, value: str):
         'FAL_KEY', 'TELEGRAM_BOT_TOKEN', 'DISCORD_BOT_TOKEN',
         'TERMINAL_SSH_HOST', 'TERMINAL_SSH_USER', 'TERMINAL_SSH_KEY',
         'SUDO_PASSWORD', 'SLACK_BOT_TOKEN', 'SLACK_APP_TOKEN',
-        'GITHUB_TOKEN', 'HONCHO_API_KEY', 'WANDB_API_KEY',
+        'GITHUB_TOKEN', 'WANDB_API_KEY',
         'TINKER_API_KEY',
     ]
     

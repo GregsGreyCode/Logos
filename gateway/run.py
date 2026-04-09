@@ -442,12 +442,6 @@ class GatewayRunner:
         import collections as _col
         self._recent_sessions: _col.deque = _col.deque(maxlen=20)
 
-        # Persistent Honcho managers keyed by gateway session key.
-        # This preserves write_frequency="session" semantics across short-lived
-        # per-message AIAgent instances.
-        self._honcho_managers: Dict[str, Any] = {}
-        self._honcho_configs: Dict[str, Any] = {}
-
         # Ensure tirith security scanner is available (downloads if needed)
         try:
             from tools.tirith_security import ensure_installed
@@ -493,61 +487,6 @@ class GatewayRunner:
             pass
         return "hermes"
 
-    def _get_or_create_gateway_honcho(self, session_key: str):
-        """Return a persistent Honcho manager/config pair for this gateway session."""
-        if not hasattr(self, "_honcho_managers"):
-            self._honcho_managers = {}
-        if not hasattr(self, "_honcho_configs"):
-            self._honcho_configs = {}
-
-        if session_key in self._honcho_managers:
-            return self._honcho_managers[session_key], self._honcho_configs.get(session_key)
-
-        try:
-            from honcho_integration.client import HonchoClientConfig, get_honcho_client
-            from honcho_integration.session import HonchoSessionManager
-
-            hcfg = HonchoClientConfig.from_global_config()
-            if not hcfg.enabled or not hcfg.api_key:
-                return None, hcfg
-
-            client = get_honcho_client(hcfg)
-            manager = HonchoSessionManager(
-                honcho=client,
-                config=hcfg,
-                context_tokens=hcfg.context_tokens,
-            )
-            self._honcho_managers[session_key] = manager
-            self._honcho_configs[session_key] = hcfg
-            return manager, hcfg
-        except Exception as e:
-            logger.debug("Gateway Honcho init failed for %s: %s", session_key, e)
-            return None, None
-
-    def _shutdown_gateway_honcho(self, session_key: str) -> None:
-        """Flush and close the persistent Honcho manager for a gateway session."""
-        managers = getattr(self, "_honcho_managers", None)
-        configs = getattr(self, "_honcho_configs", None)
-        if managers is None or configs is None:
-            return
-
-        manager = managers.pop(session_key, None)
-        configs.pop(session_key, None)
-        if not manager:
-            return
-        try:
-            manager.shutdown()
-        except Exception as e:
-            logger.debug("Gateway Honcho shutdown failed for %s: %s", session_key, e)
-
-    def _shutdown_all_gateway_honcho(self) -> None:
-        """Flush and close all persistent Honcho managers."""
-        managers = getattr(self, "_honcho_managers", None)
-        if not managers:
-            return
-        for session_key in list(managers.keys()):
-            self._shutdown_gateway_honcho(session_key)
-    
     # -- Voice mode persistence ------------------------------------------
 
     _VOICE_MODE_PATH = _hermes_home / "gateway_voice_mode.json"
@@ -656,12 +595,6 @@ class GatewayRunner:
                 conversation_history=msgs,
             )
             logger.info("Pre-reset memory flush completed for session %s", old_session_id)
-            # Flush any queued Honcho writes before the session is dropped
-            if getattr(tmp_agent, '_honcho', None):
-                try:
-                    tmp_agent._honcho.shutdown()
-                except Exception:
-                    pass
 
             # ── Auto-ingest session transcript into knowledge base ────
             self._auto_ingest_session(old_session_id, msgs)
@@ -1055,7 +988,6 @@ class GatewayRunner:
                     )
                     try:
                         await self._async_flush_memories(entry.session_id)
-                        self._shutdown_gateway_honcho(key)
                         self.session_store._pre_flushed_sessions.add(entry.session_id)
                     except Exception as e:
                         logger.debug("Proactive memory flush failed for %s: %s", entry.session_id, e)
@@ -1080,7 +1012,6 @@ class GatewayRunner:
                 logger.error("✗ %s disconnect error: %s", platform.value, e)
 
         self.adapters.clear()
-        self._shutdown_all_gateway_honcho()
         self._shutdown_event.set()
         _set_current_runner(None)
         global _current_loop
@@ -1507,8 +1438,6 @@ class GatewayRunner:
         except Exception as e:
             logger.debug("Gateway memory flush on reset failed: %s", e)
 
-        self._shutdown_gateway_honcho(session_key)
-        
         # Reset the session
         new_entry = self.session_store.reset_session(session_key)
         
@@ -2832,8 +2761,6 @@ class GatewayRunner:
             asyncio.create_task(self._async_flush_memories(current_entry.session_id))
         except Exception as e:
             logger.debug("Memory flush on resume failed: %s", e)
-
-        self._shutdown_gateway_honcho(session_key)
 
         # Clear any running agent for this session key
         if session_key in self._running_agents:
@@ -4315,7 +4242,6 @@ class GatewayRunner:
                 }
 
             pr = self._provider_routing
-            honcho_manager, honcho_config = self._get_or_create_gateway_honcho(session_key)
             reasoning_config = self._load_reasoning_config()
             self._reasoning_config = reasoning_config
 
@@ -4396,9 +4322,6 @@ class GatewayRunner:
                     tool_complete_callback=tool_complete_callback,
                     step_callback=_step_callback_sync if _hooks_ref.loaded_hooks else None,
                     platform=platform_key,
-                    honcho_session_key=session_key,
-                    honcho_manager=honcho_manager,
-                    honcho_config=honcho_config,
                     session_db=self._session_db,
                     fallback_model=self._fallback_model,
                 )

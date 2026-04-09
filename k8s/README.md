@@ -1,5 +1,16 @@
 # Logos Kubernetes Deployment
 
+> **STATUS: STATIC GATEWAY DEPLOYMENT ONLY.** The dynamic agent-pod-per-instance
+> path described in older parts of this README is **gone** — the
+> `KubernetesExecutor` was deleted in commit `f6f0972 chore: drop legacy
+> k8s pod-per-agent executor + mini-swe-agent terminal backends`. These
+> manifests still work for running the Logos **gateway itself** as a
+> Deployment in a cluster (with optional canary). Agent runtime is
+> handled by **OpenShell sandboxes** (default), Docker, or local
+> processes — *not* by spawning Kubernetes pods. References below to
+> "spawning agents in the `hermes` namespace" describe historical
+> behaviour, not what the current code does.
+
 > **Security model** — For a full explanation of isolation boundaries, what agents can/cannot reach in each deployment mode, and how secrets are handled, see the [Security & deployment model](../README.md#-security--deployment-model) section in the main README.
 
 ## Namespace architecture
@@ -9,13 +20,11 @@ Logos uses two namespaces:
 | Namespace | Purpose |
 |-----------|---------|
 | `logos` | The gateway process — HTTP API, dashboard, auth, routing, MCP service |
-| `hermes` | Agent instances — each spawned agent runs as a Deployment or Job here |
-
-This split isolates agent workloads from the gateway. The `logos` service account has RBAC permissions in both namespaces: it manages its own resources in `logos` and creates/deletes agent instances in `hermes`.
+| `hermes` | (Historical) Was used for dynamically-spawned agent Deployments via the now-deleted `KubernetesExecutor`. Currently unused by agent runtime — OpenShell sandboxes live outside the Logos pod entirely. The namespace is still created by `00-namespace.yaml` so existing PVCs and RBAC keep applying cleanly. |
 
 ### RBAC footprint
 
-`09-rbac.yaml` grants the `logos` ServiceAccount permission to manage Deployments, Services, PVCs, Jobs, and Pods in both the `logos` and `hermes` namespaces. It also grants cluster-wide read access to nodes and pods (for resource metrics). This is intentionally scoped — the service account cannot create resources in other namespaces or read cluster-wide secrets. Review this role before applying to a shared cluster.
+`09-rbac.yaml` grants the `logos` ServiceAccount permission to manage Deployments, Services, PVCs, Jobs, and Pods in both the `logos` and `hermes` namespaces. The `hermes` namespace permissions are now over-broad relative to current code — they were originally needed for the deleted `KubernetesExecutor` to spawn agent pods. Tighten this scope before applying to a shared cluster, or remove the `hermes` rules entirely if you don't need historical-state compatibility.
 
 ---
 

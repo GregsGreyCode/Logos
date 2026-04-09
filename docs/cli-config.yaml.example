@@ -646,20 +646,6 @@ delegation:
   #                                           # Supported: openrouter, nous, zai, kimi-coding, minimax
 
 # =============================================================================
-# Honcho Integration (Cross-Session User Modeling)
-# =============================================================================
-# AI-native persistent memory via Honcho (https://honcho.dev/).
-# Builds a deeper understanding of the user across sessions and tools.
-# Runs alongside USER.md — additive, not a replacement.
-#
-# Requires: pip install honcho-ai
-# Config: ~/.honcho/config.json (shared with Claude Code, Cursor, etc.)
-# API key: HONCHO_API_KEY in ~/.hermes/.env or ~/.honcho/config.json
-#
-# Hermes-specific overrides (optional — most config comes from ~/.honcho/config.json):
-# honcho: {}
-
-# =============================================================================
 # Display
 # =============================================================================
 display:

@@ -694,22 +694,6 @@ What gets imported: `SOUL.md`, memories, skills, command allowlist, messaging se
 
 ---
 
-## ☁️ Optional cloud integrations
-
-These are **disabled by default** and require explicit configuration. Enabling them sends data to third-party providers.
-
-### Honcho (user modelling)
-
-[Honcho](https://app.honcho.dev) builds a persistent model of each user across conversations and feeds it back into the agent context on future sessions.
-
-**What it does when enabled:** syncs conversation messages to Honcho's cloud API, uploads `MEMORY.md`/`USER.md`/`SOUL.md`, runs inference on Honcho's backend to inject user insights into context.
-
-**Privacy:** your conversations leave your network and are processed by a third party. Do not enable this if data privacy is a requirement.
-
-**To enable:** set `HONCHO_API_KEY` in your environment or `~/.honcho/config.json`.
-
----
-
 ## 🛠️ Developer reference
 
 Source in `gateway/`, `tools/`, and `agent/`. See [`AGENTS.md`](AGENTS.md) for internals, local dev setup, gateway architecture, and how to add tools.
