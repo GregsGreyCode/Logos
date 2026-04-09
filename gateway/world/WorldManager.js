@@ -79,9 +79,34 @@ export class WorldManager {
         const h = containerEl.clientHeight;
         if (w > 0 && h > 0) {
           this.game.scale.resize(w, h);
+          // refresh() forces Phaser to re-read the parent dimensions and
+          // re-emit the 'resize' event, which the WorldScene listens to
+          // for camera refit. Without this the canvas updates but the
+          // camera/zoom can drift after layout changes (e.g. agent
+          // column 16rem ↔ 24rem toggle when the create form opens),
+          // leaving the scene rendered at the old zoom and "centered"
+          // inside the new container.
+          this.game.scale.refresh();
         }
       });
       this._resizeObserver.observe(containerEl);
+    }
+  }
+
+  /**
+   * Force the renderer to re-fit the current parent dimensions. Used by
+   * the Alpine app when it knows a layout change just happened that the
+   * ResizeObserver might have missed (display:none → display:block on
+   * tab change, agent column width toggle on create-form open/close).
+   * Safe to call repeatedly.
+   */
+  forceResize() {
+    if (this._destroyed || !this.game) return;
+    const w = this.container.clientWidth;
+    const h = this.container.clientHeight;
+    if (w > 0 && h > 0) {
+      this.game.scale.resize(w, h);
+      this.game.scale.refresh();
     }
   }
 
