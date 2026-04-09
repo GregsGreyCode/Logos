@@ -291,6 +291,15 @@ async def _resurrect_missing_sandboxes(executor) -> None:
                 requester="(resurrected)",
                 instance_label=agent["name"],
                 toolsets=toolsets if isinstance(toolsets, list) else [],
+                # CRITICAL: pass the agent's model_route_id so the spawn
+                # ends up in the RIGHT openshell gateway. Without this,
+                # _resolve_route() falls back to the default route (e.g.
+                # logos-openshell / openai/gpt-oss-20b) and every
+                # resurrected agent lands on the default model regardless
+                # of which route it was bound to. That's how the user's
+                # Ani agent (route=qwen) kept respawning into Hermes'
+                # gateway and serving Hermes' model.
+                model_route_id=agent.get("model_route_id"),
             )
             await _asyncio.to_thread(executor.spawn, cfg)
             logger.info("resurrect: spawned sandbox for agent '%s'", agent["name"])
@@ -2878,8 +2887,15 @@ async def _handle_chat(request: web.Request) -> web.StreamResponse:
     # a fresh `registered_at`, which yields a brand-new session_id and
     # therefore an empty transcript — the agent wakes up with no memory
     # of the prior incarnation, exactly as the user expects.
+    #
+    # CRITICAL: target_worker is derived FROM THE AGENT RECORD, never from
+    # the request body. Earlier this was `body.get("worker_id") or
+    # <derived>` which let a stale frontend cache override agent-id-based
+    # routing — causing chats targeted at agent A to dispatch to agent B's
+    # worker (the "Hermes responds as Ani" bug). agent_id is the only
+    # identifier we trust; everything else is auth.db-derived.
     from gateway.executors.openshell import _sanitize_sandbox_name
-    target_worker = body.get("worker_id") or _sanitize_sandbox_name(
+    target_worker = _sanitize_sandbox_name(
         f"hermes-{_agent_config.get('name', '')}"
     )
     worker_registry = request.app.get("worker_registry")
@@ -2887,6 +2903,21 @@ async def _handle_chat(request: web.Request) -> web.StreamResponse:
     incarnation_tag = ""
     if worker_entry and worker_entry.registered_at:
         incarnation_tag = f"-w{int(worker_entry.registered_at)}"
+
+    # Diagnostic: log every dispatch decision so future "wrong agent
+    # responded" bugs can be traced from the gateway log alone instead
+    # of guessing from the symptom in the chat UI. Includes the body's
+    # worker_id (now ignored for routing) so we can detect when the
+    # frontend is sending a stale value.
+    logger.info(
+        "chat dispatch: agent_id=%r name=%r → target_worker=%r "
+        "(body.worker_id=%r ignored, worker_connected=%s)",
+        agent_id,
+        _agent_config.get("name"),
+        target_worker,
+        body.get("worker_id"),
+        bool(worker_entry and worker_entry.healthy),
+    )
 
     source = SessionSource(
         platform=Platform.LOCAL,
