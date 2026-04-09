@@ -812,19 +812,15 @@ async def _handle_sandbox_restart(request: web.Request) -> web.Response:
     # model_route_id is a stale cache. Pulling from auth.db here is
     # what makes the chat M dropdown's "switch model" actually take
     # effect: PATCH agent → POST restart reads the new value here →
-    # spawn lands in the new gateway. Without this lookup the
-    # restart silently respawned in the old gateway.
+    # spawn lands in the new gateway.
     #
-    # CRITICAL (same as the delete above): executor.spawn() shells
-    # out to `openshell sandbox create` which can take 30-60s. The
-    # original handler called it directly — wedging the event loop
-    # for the entire spawn duration. Wrapping in asyncio.to_thread
-    # keeps the rest of the gateway responsive while the spawn
-    # progresses, and the request still only returns when spawn is
-    # complete (so the frontend's "switching..." badge stays on
-    # until the new sandbox is actually ready). Without this, every
-    # M-dropdown switch hard-blocks /health, /admin/agents polls,
-    # and any in-flight chat — the symptom we just hit.
+    # As of the split-spawn refactor (commit "split spawn into
+    # create+upload+exec") executor.spawn() actually returns when
+    # the sandbox is provisioned and the worker entrypoint has been
+    # detached — typically 10-20s instead of "blocks forever holding
+    # the entrypoint SSH session". So awaiting it here gives a
+    # bounded latency on the restart endpoint instead of a phantom
+    # hang per the pre-refactor behaviour.
     try:
         from gateway.executors.base import InstanceConfig
         config = InstanceConfig(
@@ -841,10 +837,55 @@ async def _handle_sandbox_restart(request: web.Request) -> web.Response:
             model_route_id=agent.get("model_route_id"),
         )
         spawned = await asyncio.to_thread(executor.spawn, config)
-        return web.json_response({"ok": True, "sandbox": spawned.name})
     except Exception as exc:
         logger.exception("Sandbox restart spawn failed for '%s'", agent_name)
         return web.json_response({"ok": False, "error": str(exc)}, status=500)
+
+    # ── 5. Wait for the worker to register via WebSocket ───────────
+    # The split-spawn flow exits as soon as the entrypoint has been
+    # detached — the worker is starting in the background but hasn't
+    # connected to the gateway's /ws/worker endpoint yet. Poll the
+    # worker_registry until the new connection lands so the response
+    # only returns when the sandbox is actually usable. Without this
+    # the chat M dropdown's frontend would clear its "switching..."
+    # badge before the new worker is reachable, and the user's first
+    # message after the switch would race with the worker startup.
+    #
+    # Timeout: 90s. Worker registration normally happens within 5-15s
+    # after step 3 of spawn() (the detached exec). Anything beyond 30s
+    # is suspicious; 90s is the upper bound for slow hardware + slow
+    # model hot-load. On timeout we return 504 so the frontend can
+    # surface a useful error to the user.
+    worker_registry = request.app.get("worker_registry")
+    sandbox_name = spawned.name and _sanitize_sandbox_name(f"hermes-{spawned.name}")
+    if worker_registry and sandbox_name:
+        deadline = time.time() + 90.0
+        registered = False
+        while time.time() < deadline:
+            entry = worker_registry.get(sandbox_name)
+            if entry and entry.healthy and entry.ws and not entry.ws.closed:
+                registered = True
+                break
+            await asyncio.sleep(1.0)
+        if not registered:
+            logger.warning(
+                "Sandbox restart: worker '%s' did not register within 90s after spawn",
+                sandbox_name,
+            )
+            return web.json_response(
+                {
+                    "ok": False,
+                    "sandbox": spawned.name,
+                    "error": (
+                        f"Sandbox '{sandbox_name}' was provisioned but its worker did not "
+                        f"register with the gateway within 90 seconds. Check the sandbox "
+                        f"logs (Admin → Sandboxes → Logs) and the gateway log."
+                    ),
+                },
+                status=504,
+            )
+
+    return web.json_response({"ok": True, "sandbox": spawned.name, "worker_registered": True})
 
 
 # ── Model routes ──────────────────────────────────────────────────────────

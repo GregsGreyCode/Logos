@@ -358,51 +358,127 @@ class OpenShellExecutor:
         instances.append(record)
         _save_state(instances)
 
+        # ── Spawn flow: 3 separate openshell CLI calls ─────────────
+        # The previous bundled-create flow was:
+        #
+        #   openshell sandbox create --upload <local>:<dest> -- /app/entrypoint.sh
+        #
+        # which has a fatal architectural flaw: `openshell sandbox
+        # create` blocks for the LIFETIME of the trailing command. The
+        # trailing command here is /app/entrypoint.sh which exec's into
+        # the worker (a long-running WebSocket loop). So the create CLI
+        # never returns. subprocess.run(check=True) blocks forever.
+        # Even with the to_thread wrap from commit 3ea6d6e the gateway
+        # leaks one worker thread + one openshell child process per
+        # spawn — and the chat M dropdown's restart-handler response
+        # never lands, so the frontend's "switching..." badge hangs
+        # forever even though the worker DID actually register.
+        #
+        # The fix is to split into three independent CLI invocations,
+        # each of which actually returns:
+        #
+        #   1. openshell sandbox create
+        #        — no --upload, no trailing command
+        #        — returns when the CR is provisioned (~5-15s)
+        #
+        #   2. openshell sandbox upload
+        #        — uploads instance-config.json (and optional SOUL.md)
+        #        — returns when the upload completes (~1-2s)
+        #
+        #   3. openshell sandbox exec -- bash -c '<bg launch>'
+        #        — runs `nohup /app/entrypoint.sh & disown` so the
+        #          entrypoint is detached from the SSH session
+        #        — bash exits immediately, the SSH tunnel closes,
+        #          the entrypoint keeps running because it was
+        #          disowned. The worker registers with the gateway
+        #          shortly after via WebSocket.
+        #        — returns immediately (~1s)
+        #
+        # Total spawn time: ~10-20s. The function actually returns.
+        # The caller (e.g. _handle_sandbox_restart) is responsible
+        # for waiting for the worker to register via the gateway's
+        # worker_registry — see the wait_for_worker helper there.
         config_tmpfile = None
         try:
-            config_tmpfile = tempfile.NamedTemporaryFile(
-                mode="w", suffix=".json", prefix="hermes-config-", delete=False,
-            )
-            json.dump(instance_config, config_tmpfile)
-            config_tmpfile.close()
-
-            # Build sandbox create command
+            # ── Step 1: create the sandbox CR ──────────────────────
             create_args = [
                 "sandbox", "create",
                 "--name", sandbox_name,
                 "--from", self.sandbox_image,
                 "--no-auto-providers",
-                "--upload", f"{config_tmpfile.name}:/tmp/hermes/instance-config.json",
             ]
+            if self.policy_file and Path(self.policy_file).exists():
+                create_args += ["--policy", self.policy_file]
+            # NOTE: deliberately no `--upload` and no trailing `--`
+            # command. The image's CMD is overridden by openshell's
+            # `sleep infinity` placeholder, which is what we want —
+            # the sandbox stays alive without running anything until
+            # we exec the worker explicitly in step 3.
+            result = _openshell(*create_args, gateway=openshell_gw, check=True)
+            logger.debug("openshell sandbox create stdout: %s", result.stdout.strip())
 
-            # Upload soul file if it exists
+            # ── Step 2: upload the instance config (and soul) ──────
+            config_tmpfile = tempfile.NamedTemporaryFile(
+                mode="w", suffix=".json", prefix="hermes-config-", delete=False,
+            )
+            json.dump(instance_config, config_tmpfile)
+            config_tmpfile.close()
+            _openshell(
+                "sandbox", "upload", sandbox_name,
+                config_tmpfile.name, "/tmp/hermes/instance-config.json",
+                gateway=openshell_gw, check=True,
+            )
+
             if config.soul_name and config.soul_name != "default":
                 soul_dir = _HERMES_HOME / "souls"
                 soul_file = soul_dir / f"{config.soul_name}.md"
                 if soul_file.exists():
-                    create_args += ["--upload", f"{soul_file}:/tmp/hermes/SOUL.md"]
+                    _openshell(
+                        "sandbox", "upload", sandbox_name,
+                        str(soul_file), "/tmp/hermes/SOUL.md",
+                        gateway=openshell_gw, check=True,
+                    )
 
-            # Apply network policy
-            if self.policy_file and Path(self.policy_file).exists():
-                create_args += ["--policy", self.policy_file]
+            # ── Step 3: start the worker via a detached exec ───────
+            # The bash subshell backgrounds the entrypoint with
+            # nohup + disown so the SSH session can close cleanly.
+            # The entrypoint exec's into python3 sandbox_worker.py
+            # which then connects back to the gateway via WebSocket.
+            # `< /dev/null` is critical — without it bash inherits
+            # the SSH stdin and the disown is a no-op.
+            _openshell(
+                "sandbox", "exec",
+                "-n", sandbox_name,
+                "--",
+                "bash", "-c",
+                "nohup /app/entrypoint.sh > /tmp/worker.log 2>&1 < /dev/null & disown; echo started",
+                gateway=openshell_gw, check=True,
+            )
 
-            # Trailing command: start the worker
-            create_args += ["--", "/app/entrypoint.sh"]
-
-            result = _openshell(*create_args, gateway=openshell_gw, check=True)
-            logger.debug("openshell sandbox create stdout: %s", result.stdout.strip())
-
-            # Update phase on success
+            # Update phase on success — the worker hasn't registered
+            # yet (that happens asynchronously via WebSocket), but
+            # the spawn flow is complete from the executor's POV.
             record["phase"] = "ready"
             _save_state(instances)
 
         except subprocess.CalledProcessError as exc:
-            # Roll back the state record on failure
+            # Roll back the state record on failure. Best-effort
+            # cleanup of any partial sandbox CR — we may have
+            # successfully created the CR but failed at upload or
+            # exec, leaving a half-baked sandbox like the ones we
+            # were chasing all session before this refactor landed.
             instances = [i for i in instances if i.get("sandbox_name") != sandbox_name]
             _save_state(instances)
+            try:
+                _openshell(
+                    "sandbox", "delete", sandbox_name,
+                    gateway=openshell_gw, check=False,
+                )
+            except Exception:
+                pass
             raise RuntimeError(
                 f"Failed to create OpenShell sandbox '{sandbox_name}' in gateway "
-                f"'{openshell_gw}': {exc.stderr}"
+                f"'{openshell_gw}': {exc.stderr or exc.stdout or str(exc)}"
             ) from exc
         finally:
             if config_tmpfile:
@@ -419,7 +495,7 @@ class OpenShellExecutor:
             soul_name=config.soul_name,
             model=resolved_model,
             requester=config.requester,
-            healthy=False,  # will become healthy when worker registers
+            healthy=False,  # caller polls worker_registry to confirm registration
         )
 
     def list_instances(self) -> List[dict]:
