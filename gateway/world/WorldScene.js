@@ -61,11 +61,23 @@ export class WorldScene extends Phaser.Scene {
     // Create spritesheet frames from the characters image
     this._buildSpritesheets();
 
+    // Tree ground glow — sits ABOVE the tilemap (depth 5) and BELOW
+    // the agents (depth 10) so the glow paints onto the grass around
+    // the tree without occluding the agents that walk through it. The
+    // glow is always present but gets dramatically brighter at night.
+    this._buildGroundGlow();
+
     // Agent container group (between ground and canopy)
     this.agentGroup = this.add.group();
 
     // Draw tree canopy above agents
     this._buildCanopy();
+
+    // Day/night overlay — fullscreen graphics rectangle at high depth
+    // that darkens the whole scene during the night phase. Sits below
+    // the canopy so the tree itself stays visible (and the glow we
+    // boost at night reads against the darker ground).
+    this._buildDayNight();
 
     // Set up camera. The world view is LOCKED — no zoom, no drag.
     // The user was seeing agents "walk off screen" because scroll-wheel
@@ -115,7 +127,19 @@ export class WorldScene extends Phaser.Scene {
     // variable. Phaser's `time` parameter is relative to scene start, so
     // using it would drift out of phase the moment the world tab is opened.
     this._hueOffset = (((Date.now() / 1000) * 6) % 360 + 360) % 360;
-    this._updateCanopy();
+
+    // Day/night phase: 0 = full day, 1 = full night. 4-minute cycle
+    // (sinusoidal so transitions feel natural). Atmospheric for a
+    // homelab dashboard without being distracting.
+    const nightStrength = this._dayNightStrength();
+    // Stash on the instance so AgentSprite.update() can read it for
+    // the proximity-glow tint without us having to thread it through
+    // the agent.update() signature.
+    this._nightStrength = nightStrength;
+
+    this._updateGroundGlow(nightStrength);
+    this._updateCanopy(nightStrength);
+    this._updateDayNight(nightStrength);
 
     for (const [, agent] of this.agents) {
       agent.update(time, delta);
@@ -216,23 +240,19 @@ export class WorldScene extends Phaser.Scene {
       this._drawPath(grid, from[0], from[1], to[0], to[1]);
     }
 
-    // Flower border
-    for (let c = 0; c < WORLD_COLS; c++) {
-      if (grid[0][c] === TILE.GRASS) grid[0][c] = TILE.FLOWERS;
-      if (grid[WORLD_ROWS - 1][c] === TILE.GRASS) grid[WORLD_ROWS - 1][c] = TILE.FLOWERS;
-    }
-    for (let r = 0; r < WORLD_ROWS; r++) {
-      if (grid[r][0] === TILE.GRASS) grid[r][0] = TILE.FLOWERS;
-      if (grid[r][WORLD_COLS - 1] === TILE.GRASS) grid[r][WORLD_COLS - 1] = TILE.FLOWERS;
-    }
+    // No flower border. The earlier design wrapped the world in a single
+    // ring of TILE.FLOWERS as a frame, but the FLOWERS color happens to be
+    // LIGHTER than GRASS (0x385641 vs 0x2f4537) so the border read as a
+    // bright single-pixel band around the edge. The fix is just to skip
+    // the border entirely and let the scatter loop below paint right up
+    // to the edge — the radial vignette already darkens the corners,
+    // which provides all the framing we need.
 
-    // Scatter flowers + dark grass over the interior. Loop runs from row/col 1
-    // (i.e. one tile in from the flower border at row/col 0) so the variation
-    // reaches all the way to the edge — without this the inner ring of tiles
-    // sat as plain GRASS and read as a visibly lighter single-tile band
-    // inside the flower frame.
-    for (let r = 1; r < WORLD_ROWS - 1; r++) {
-      for (let c = 1; c < WORLD_COLS - 1; c++) {
+    // Scatter flowers + dark grass over the entire grid (including the
+    // outermost ring) so the variation reaches all the way to the edge.
+    // No more lighter perimeter band.
+    for (let r = 0; r < WORLD_ROWS; r++) {
+      for (let c = 0; c < WORLD_COLS; c++) {
         if (grid[r][c] === TILE.GRASS && Math.random() < 0.06) {
           grid[r][c] = TILE.FLOWERS;
         }
@@ -285,22 +305,15 @@ export class WorldScene extends Phaser.Scene {
 
     // No visible trunk — canopy covers the center completely
 
-    // Build walkable grid (for pathfinding)
+    // Build walkable grid (for pathfinding). Tree canopy is no longer
+    // blocked — agents are allowed to walk under the leaves and the
+    // canopy (depth 100) naturally renders ABOVE the agent sprites
+    // (depth 10), giving the visual sense of walking beneath foliage.
+    // The matching change is in AgentSprite._idleWander() which used
+    // to push wander targets away from the canopy ring.
     this.walkableGrid = grid.map(row =>
       row.map(tile => tile !== TILE.WATER && tile !== TILE.GARDEN_BED)
     );
-    // Block entire tree canopy area (radius 6 tiles) — agents must path around
-    const canopyBlock = 6;
-    for (let dr = -canopyBlock; dr <= canopyBlock; dr++) {
-      for (let dc = -canopyBlock; dc <= canopyBlock; dc++) {
-        const dist = Math.sqrt(dr * dr + dc * dc);
-        if (dist > canopyBlock) continue;
-        const rr = cy + dr, cc = cx + dc;
-        if (rr >= 0 && rr < WORLD_ROWS && cc >= 0 && cc < WORLD_COLS) {
-          this.walkableGrid[rr][cc] = false;
-        }
-      }
-    }
   }
 
   _drawPath(grid, x0, y0, x1, y1) {
@@ -343,7 +356,7 @@ export class WorldScene extends Phaser.Scene {
     }
   }
 
-  _updateCanopy() {
+  _updateCanopy(nightStrength = 0) {
     const gfx = this.canopyGraphics;
     gfx.clear();
 
@@ -355,21 +368,112 @@ export class WorldScene extends Phaser.Scene {
     const BASE_OUTER_H = 271;  // purple
     const rotate = this._hueOffset;  // deg, cycles 360 in 60s
 
+    // At night the canopy itself glows brighter — bump lightness so the
+    // tree becomes a beacon in the darker scene.
+    const litBoost = nightStrength * 0.15;
+
     for (let i = 0; i < this.canopyPixels.length; i++) {
       const p = this.canopyPixels[i];
       // Lerp hue by distance from centre: inner leaves are indigo, outer
       // leaves are purple. Both rotate in lock-step.
       const hue = ((p.distNorm < 1 ? BASE_INNER_H + (BASE_OUTER_H - BASE_INNER_H) * p.distNorm : BASE_OUTER_H) + rotate) % 360;
       const sat = 0.72;
-      const lit = 0.38 + p.brightness * 0.22;
-      const color = Phaser.Display.Color.HSLToColor(hue / 360, sat, lit);
+      const lit = 0.38 + p.brightness * 0.22 + litBoost;
+      const color = Phaser.Display.Color.HSLToColor(hue / 360, sat, Math.min(lit, 0.85));
       // Softer blob with an inner highlight for depth
       gfx.fillStyle(color.color, 0.92);
       gfx.fillCircle(p.x, p.y, TILE_SIZE * 0.65);
-      // Glow rim (lighter, larger, lower alpha) gives the tree a halo
-      gfx.fillStyle(color.color, 0.18);
+      // Glow rim (lighter, larger, lower alpha) gives the tree a halo.
+      // Rim alpha boosted at night so the tree throws light outward.
+      gfx.fillStyle(color.color, 0.18 + nightStrength * 0.25);
       gfx.fillCircle(p.x, p.y, TILE_SIZE * 1.1);
     }
+  }
+
+  // -- Tree ground glow + day/night cycle --
+
+  _buildGroundGlow() {
+    this.groundGlowGraphics = this.add.graphics();
+    this.groundGlowGraphics.setDepth(5); // above tilemap (0), below agents (10)
+
+    const cx = this.treeCenter.x * TILE_SIZE + TILE_SIZE / 2;
+    const cy = this.treeCenter.y * TILE_SIZE + TILE_SIZE / 2;
+    // Glow extends well past the canopy (which is radius 5 tiles).
+    // Inner radius 6 = just outside the canopy edge so the glow bleeds
+    // out from under the tree leaves. Outer radius 14 = a wide halo.
+    const innerR = 6;
+    const outerR = 14;
+
+    this.groundGlowPixels = [];
+    for (let dy = -outerR; dy <= outerR; dy++) {
+      for (let dx = -outerR; dx <= outerR; dx++) {
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        if (dist > outerR || dist < innerR) continue;
+        // Quadratic falloff from inner edge → 0 at outer edge.
+        const t = (dist - innerR) / (outerR - innerR);
+        const falloff = (1 - t) * (1 - t);
+        this.groundGlowPixels.push({
+          x: cx + dx * TILE_SIZE,
+          y: cy + dy * TILE_SIZE,
+          falloff,
+        });
+      }
+    }
+  }
+
+  _updateGroundGlow(nightStrength) {
+    const gfx = this.groundGlowGraphics;
+    gfx.clear();
+
+    // Match the canopy hue (indigo-purple, rotating with the same hue
+    // wheel) so the ground glow visually bleeds OUT of the tree — same
+    // colour signature as the canopy above.
+    const baseHue = (255 + this._hueOffset) % 360;
+    const color = Phaser.Display.Color.HSLToColor(baseHue / 360, 0.7, 0.55);
+
+    // Always-on base glow (subtle in daylight) + dramatic night boost.
+    // The user's call: "obviously in the night cycle the tree can and
+    // must glow onto the surrounding ground more". So daytime glow is
+    // a faint hint and nighttime glow is the main event.
+    const baseAlpha = 0.05;
+    const nightAlpha = 0.32 * nightStrength;
+    const totalScale = baseAlpha + nightAlpha;
+
+    for (const p of this.groundGlowPixels) {
+      const a = totalScale * p.falloff;
+      if (a < 0.005) continue;
+      gfx.fillStyle(color.color, a);
+      gfx.fillCircle(p.x, p.y, TILE_SIZE * 1.3);
+    }
+  }
+
+  _buildDayNight() {
+    this.dayNightOverlay = this.add.graphics();
+    // Above agents (10), above ground glow (5), below the canopy halo
+    // rim (100). Sitting at 50 means the canopy still pops through the
+    // night darkness as a glowing beacon.
+    this.dayNightOverlay.setDepth(50);
+  }
+
+  _updateDayNight(nightStrength) {
+    const gfx = this.dayNightOverlay;
+    gfx.clear();
+    // Deep night colour: rgb(20, 25, 50). Max alpha 0.55 so the
+    // tilemap stays legible but clearly reads as nighttime.
+    if (nightStrength <= 0.001) return;
+    const alpha = nightStrength * 0.55;
+    gfx.fillStyle(0x141932, alpha);
+    gfx.fillRect(0, 0, WORLD_W, WORLD_H);
+  }
+
+  _dayNightStrength() {
+    // 0 = full day, 1 = full night. 240s = 4-minute cycle. Wall-clock
+    // anchored so it doesn't drift across tab switches and so multiple
+    // browser sessions on the same machine see the same phase.
+    // Sinusoidal for natural transitions.
+    const t = Date.now() / 1000;
+    const phase = (Math.sin((t / 240) * Math.PI * 2) + 1) / 2;
+    return phase;
   }
 
   // -- Spritesheets --

@@ -80,8 +80,11 @@ export class AgentSprite {
     this.sprite.setOrigin(0.5, 0.7);
     this.sprite.setScale(2);  // 2x size for visibility
     this.sprite.setDepth(10);
-    // No tint — use the character's natural pixel art colors.
-    // Each of the 8 characters has distinct hair, outfit, and skin.
+    // No baseline tint — each of the 8 characters has distinct hair,
+    // outfit, and skin colors that we want visible in normal lighting.
+    // The update loop applies a dynamic indigo-purple tint when the
+    // sprite walks within range of the tree canopy glow (see
+    // _applyTreeGlowTint), which is the only sanctioned tint source.
 
     // Alpha based on status
     const isRunning = this._isRunning(inst);
@@ -244,6 +247,11 @@ export class AgentSprite {
     this.bubble.setPosition(this.sprite.x, this.sprite.y - 72);
     this.logoText.setPosition(this.sprite.x, this.sprite.y - 52);
 
+    // Apply the tree-proximity glow tint. Cheap (~50 lines of math)
+    // and self-throttled — only re-applies when the tint actually
+    // changed by a meaningful amount.
+    this._applyTreeGlowTint();
+
     // Record current position for persistence. Cheap in-memory write — the
     // scene throttles the actual localStorage flush to once a second.
     if (this.scene.recordPosition) {
@@ -324,21 +332,76 @@ export class AgentSprite {
     let targetCol = Math.round(currentCol + Math.cos(angle) * range);
     let targetRow = Math.round(currentRow + Math.sin(angle) * range);
 
-    // Clamp
+    // Clamp to world bounds. The tree canopy is no longer avoided —
+    // agents are allowed to wander under the leaves; the canopy
+    // (depth 100) naturally renders above the agent sprite (depth 10)
+    // so it visually reads as walking beneath foliage.
     targetCol = Math.max(1, Math.min(WORLD_COLS - 2, targetCol));
     targetRow = Math.max(1, Math.min(WORLD_ROWS - 2, targetRow));
 
-    // Avoid tree canopy area (radius 7 tiles from center)
-    const tcx = this.scene.treeCenter.x;
-    const tcy = this.scene.treeCenter.y;
-    const treeDist = Math.sqrt((targetCol - tcx) ** 2 + (targetRow - tcy) ** 2);
-    if (treeDist < 7) {
-      const a = Math.atan2(targetRow - tcy, targetCol - tcx);
-      targetCol = Math.round(tcx + Math.cos(a) * 8);
-      targetRow = Math.round(tcy + Math.sin(a) * 8);
-    }
-
     this._navigateTo(targetCol * TILE_SIZE + TILE_SIZE / 2, targetRow * TILE_SIZE + TILE_SIZE / 2);
+  }
+
+  /**
+   * Tint the sprite based on its distance from the tree centre. Inside
+   * the inner radius the sprite picks up the canopy's indigo-purple
+   * glow; outside the outer radius the sprite renders with no tint.
+   * The effect is much stronger at night so an agent walking under
+   * the tree at night reads as dramatically lit by the foliage glow.
+   */
+  _applyTreeGlowTint() {
+    const tcx = this.scene.treeCenter?.x;
+    const tcy = this.scene.treeCenter?.y;
+    if (tcx === undefined || tcy === undefined) return;
+    const myCol = this.sprite.x / TILE_SIZE;
+    const myRow = this.sprite.y / TILE_SIZE;
+    const dist = Math.sqrt((myCol - tcx) ** 2 + (myRow - tcy) ** 2);
+    // Inner radius (full tint) → tree centre. Outer radius (no tint)
+    // → 14 tiles (matches the ground-glow outer ring in WorldScene
+    // so the visual effect on the ground and the tint on the agent
+    // line up).
+    const INNER_R = 0;
+    const OUTER_R = 14;
+    let t;
+    if (dist <= INNER_R) {
+      t = 1;
+    } else if (dist >= OUTER_R) {
+      t = 0;
+    } else {
+      // Quadratic falloff matches the ground-glow rendering for visual
+      // consistency.
+      const lin = 1 - (dist - INNER_R) / (OUTER_R - INNER_R);
+      t = lin * lin;
+    }
+    if (t <= 0) {
+      // Outside the glow — clear any previous tint and skip the work.
+      if (this._lastGlowT && this._lastGlowT > 0) {
+        this.sprite.clearTint();
+        this._lastGlowT = 0;
+      }
+      return;
+    }
+    // Stronger tint at night (the ground/canopy glow are also much
+    // brighter at night, so the effect on the agent should match).
+    const nightStrength = this.scene._nightStrength || 0;
+    const intensity = Math.min(1, t * (0.35 + nightStrength * 0.65));
+    // Target tint colour: light indigo with a purple lean. Picked to
+    // match the canopy hue range (239°-271°) so the agent looks
+    // illuminated by the same light source.
+    const targetR = 130;
+    const targetG = 120;
+    const targetB = 255;
+    const r = Math.round(255 * (1 - intensity) + targetR * intensity);
+    const g = Math.round(255 * (1 - intensity) + targetG * intensity);
+    const b = Math.round(255 * (1 - intensity) + targetB * intensity);
+    const color = (r << 16) | (g << 8) | b;
+    // Cheap dirty-bit — only re-apply when the tint actually changed
+    // by a meaningful amount, to avoid hammering the renderer every
+    // frame on stationary agents.
+    if (Math.abs((this._lastGlowT || 0) - intensity) > 0.01) {
+      this.sprite.setTint(color);
+      this._lastGlowT = intensity;
+    }
   }
 
   _zonePosition(inst, index, total) {
