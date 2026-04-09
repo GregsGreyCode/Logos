@@ -730,44 +730,98 @@ async def _handle_sandbox_logs(request: web.Request) -> web.Response:
 
 
 async def _handle_sandbox_restart(request: web.Request) -> web.Response:
-    """POST /admin/sandboxes/{name}/restart — destroy and re-spawn."""
-    name = request.match_info["name"]
+    """POST /admin/sandboxes/{name}/restart — destroy and re-spawn.
+
+    Resolution rules (the messy bit):
+      * The {name} param is canonically the AGENT name (e.g. "Hermes"),
+        which is what the existing dashboard restart button passes via
+        sb.name. The chat M dropdown's switchAgentRoute() also passes
+        the agent name. We tolerate the sandbox name (e.g.
+        "hermes-hermes") as well, in case any caller passes that —
+        match it back to the agent record so the rest of the flow has
+        the canonical id.
+      * The agent record in auth.db is the source of truth for
+        model_route_id. The state file's copy of model_route_id is a
+        cache that drifts whenever an agent gets rebound (M dropdown
+        switch, /admin/agents PATCH, etc.). Reading from the state
+        file here would silently respawn into the OLD gateway.
+      * Some agents may be missing from the state file entirely
+        (stale prune from list_instances() hitting a transient
+        openshell CLI error). Don't 404 in that case — fall back to
+        building the InstanceConfig from the agent record alone, and
+        let the executor's spawn() repopulate state.
+    """
+    raw_name = request.match_info["name"]
     executor = request.app.get("executor")
     if not executor or not hasattr(executor, "delete_instance"):
         return web.json_response({"ok": False, "error": "No OpenShell executor"}, status=400)
 
-    # Find the instance config before deleting
-    from gateway.executors.openshell import _load_state
+    # ── 1. Resolve the agent record from auth.db ──────────────────
+    # Try by name first (the canonical case). If that misses, the
+    # caller probably passed the sandbox name (hermes-<sanitized>) —
+    # scan agents whose sanitized sandbox name matches.
+    from gateway.executors.openshell import _load_state, _sanitize_sandbox_name
+    agent = auth_db.get_agent_by_name(raw_name)
+    if not agent:
+        for a in auth_db.list_agents():
+            if _sanitize_sandbox_name(f"hermes-{a.get('name', '')}") == raw_name:
+                agent = a
+                break
+    if not agent:
+        return web.json_response(
+            {"ok": False, "error": f"No agent matching '{raw_name}' in auth.db"},
+            status=404,
+        )
+    agent_name = agent["name"]
+
+    # ── 2. Find the existing state-file entry (if any) so we know
+    # which gateway the sandbox CURRENTLY lives inside. The agent's
+    # model_route_id may have just been changed via PATCH /admin/agents,
+    # in which case the auth.db value is the NEW gateway and the state
+    # file value is the OLD gateway — we want the old one for the delete,
+    # and the new one for the spawn.
     instances = _load_state()
-    inst = next((i for i in instances if i.get("name") == name), None)
-    if not inst:
-        return web.json_response({"ok": False, "error": f"No instance record for '{name}'"}, status=404)
+    sandbox_name_canonical = _sanitize_sandbox_name(f"hermes-{agent_name}")
+    inst = next(
+        (i for i in instances
+         if i.get("name") == agent_name or i.get("sandbox_name") == sandbox_name_canonical),
+        None,
+    )
 
-    # Delete
+    # ── 3. Delete the existing sandbox (best-effort, never fatal) ──
+    # delete_instance() reads the gateway from the state file too;
+    # if state is missing it falls back to PRIMORDIAL_NAME which
+    # covers the common bootstrap case but not multi-gateway. For
+    # the multi-gateway case the state file MUST be intact for the
+    # delete to find the right gateway — we fix state-file drift in
+    # a follow-up; for now the delete tolerates a miss because the
+    # spawn step always proceeds anyway.
     try:
-        executor.delete_instance(name)
+        executor.delete_instance(agent_name)
     except Exception as exc:
-        logger.warning("Sandbox restart — delete failed for '%s': %s", name, exc)
+        logger.warning("Sandbox restart — delete failed for '%s': %s", agent_name, exc)
 
-    # Re-spawn with original config. The state-file inst dict carries
-    # the model_route_id this sandbox was last bound to (added in
-    # commit 2 of the multi-route routing chain) — we MUST pass it
-    # through to the new InstanceConfig or the executor's
-    # _resolve_route() will silently fall back to the default route
-    # and the restarted sandbox could land in a different gateway
-    # serving a different model, breaking the user's mental model of
-    # "restart === same agent same model".
+    # ── 4. Re-spawn with the agent's CURRENT model_route_id ────────
+    # auth.db is the source of truth — the state file's
+    # model_route_id is a stale cache. Pulling from auth.db here is
+    # what makes the chat M dropdown's "switch model" actually take
+    # effect: PATCH agent → POST restart reads the new value here →
+    # spawn lands in the new gateway. Without this lookup the
+    # restart silently respawned in the old gateway.
     try:
         from gateway.executors.base import InstanceConfig
         config = InstanceConfig(
-            name=inst.get("name", name),
-            soul_name=inst.get("soul_name", "general"),
-            model=inst.get("model", ""),
-            requester=inst.get("requester", ""),
-            instance_label=inst.get("name", name),
-            toolsets=inst.get("toolsets", []),
-            policy=inst.get("policy", ""),
-            model_route_id=inst.get("model_route_id"),
+            name=agent_name,
+            soul_name=agent.get("soul_slug") or (inst or {}).get("soul_name") or "general",
+            model=agent.get("model") or (inst or {}).get("model") or "",
+            requester=(inst or {}).get("requester", ""),
+            instance_label=agent_name,
+            toolsets=(inst or {}).get("toolsets") or [],
+            policy=(inst or {}).get("policy", ""),
+            # SOURCE OF TRUTH: auth.db.agents.model_route_id, not the
+            # state file's stale cache. This is the load-bearing line
+            # for the chat M dropdown's switch-model flow.
+            model_route_id=agent.get("model_route_id"),
         )
         spawned = executor.spawn(config)
         return web.json_response({"ok": True, "sandbox": spawned.name})
