@@ -34,7 +34,18 @@ export class WorldManager {
       backgroundColor: '#2f4537',
       pixelArt: true,
       scale: {
-        mode: Phaser.Scale.RESIZE,
+        // NONE rather than RESIZE: with RESIZE, Phaser auto-follows
+        // the parent element's dimensions on every internal tick.
+        // When the user navigates away from the agents tab via Alpine's
+        // x-show, the parent goes display:none and clientWidth/Height
+        // become 0 — Phaser then internally shrinks the canvas to 0×0.
+        // When the user comes back, the parent is non-zero again but
+        // Phaser doesn't always re-observe it before the next paint,
+        // leaving a black square that only recovers on a window
+        // resize event. With NONE we own all resize decisions through
+        // the ResizeObserver below (which guards against 0×0) plus the
+        // Alpine app's explicit forceResize() calls on tab transition.
+        mode: Phaser.Scale.NONE,
         autoCenter: Phaser.Scale.CENTER_BOTH,
       },
       scene: [],
