@@ -5275,8 +5275,33 @@ function app() {
       // active tab. Uses real paths (/agents, /admin/users, etc.) rather than
       // hash so bookmarks + server logs are clean. Backend registers all these
       // paths as aliases for the SPA index handler.
+      //
+      // IMPORTANT ordering: register the tab watcher BEFORE calling
+      // `_applyUrlToState` so that the very first URL→state transition
+      // (e.g. F5 on /agents) actually fires the watcher. Alpine `$watch`
+      // callbacks only run on changes that happen AFTER the watcher is
+      // registered — if we did this in the other order, F5-on-/agents
+      // would silently flip `tab` to 'agents' before the watcher
+      // existed, leaving the Agents-tab init hooks (`initWorld()` etc.)
+      // unfired and the Phaser world rendering as a black square.
+      this.$watch('tab', () => {
+        this._syncStateToUrl();
+        // The Agents tab's click handler initialises the Phaser world
+        // view inline, but URL-based navigation (F5 on /agents, browser
+        // back/forward, deep links) only flips `tab` and never fires
+        // `initWorld()` — leaving the world container as a black square.
+        // Hook the watcher so the world inits on every transition into
+        // the agents tab regardless of how we got there. `initWorld()` is
+        // idempotent (early-returns if worldManager already exists), so
+        // duplicate calls from the inline click handler are harmless.
+        // `$nextTick` waits for Alpine to render the agents tab DOM
+        // (`x-show="tab==='agents'"`) so `getElementById('agent-world')`
+        // actually finds the container.
+        if (this.tab === 'agents') {
+          this.$nextTick(() => this.initWorld());
+        }
+      });
       this._applyUrlToState(window.location.pathname);
-      this.$watch('tab',      () => this._syncStateToUrl());
       this.$watch('adminTab', () => { if (this.tab === 'admin') this._syncStateToUrl(); });
       this.$watch('infraTab', () => { if (this.tab === 'infra') this._syncStateToUrl(); });
       window.addEventListener('popstate', () => this._applyUrlToState(window.location.pathname));
