@@ -185,23 +185,31 @@ export class AgentSprite {
     if (this.path.length > 0 && this.pathIndex < this.path.length) {
       this._followPath(delta);
     } else {
-      // Path finished. If we're still inside the minimum-walk window,
-      // immediately generate another path so the agent keeps strolling
-      // instead of stopping after 1-2 tiles. Only when the minimum walk
-      // duration has elapsed do we actually stop and enter idle mode.
-      if (this.isMoving && this.walkPhaseStart > 0) {
+      // Path finished. Stop the walk animation IMMEDIATELY so we never
+      // show a walk-in-place pose. The Phaser animation auto-loops once
+      // play() is called, so without an explicit stop() the cycle keeps
+      // running even when _followPath returns early on a near-zero
+      // movement step. Resetting isMoving here also lets the next
+      // _followPath tick (after a chained path is generated below) hit
+      // the `!this.isMoving` branch in _followPath and re-trigger play().
+      if (this.isMoving) {
+        if (this.sprite.anims.isPlaying) this.sprite.anims.stop();
+        const idleIdx = this.scene.getCharIdleFrame(this.charIndex, this.direction);
+        this.sprite.setTexture('characters', idleIdx);
+        this.isMoving = false;
+      }
+
+      // If we're still inside the minimum-walk window, immediately
+      // generate another path so the agent keeps strolling instead of
+      // stopping after 1-2 tiles. The next update tick will pick the
+      // new path up via _followPath and resume the walk animation.
+      if (this.walkPhaseStart > 0) {
         const walkedFor = Date.now() - this.walkPhaseStart;
         if (walkedFor < MIN_WALK_DURATION) {
           this._idleWander();  // chain another path, keep walking
           return;
         }
-        // Minimum reached — settle into standing pose.
-        this.isMoving = false;
         this.walkPhaseStart = 0;
-        if (this.sprite.anims.isPlaying) this.sprite.anims.stop();
-        this.direction = 'down';
-        const idleIdx = this.scene.getCharIdleFrame(this.charIndex, 'down');
-        this.sprite.setTexture('characters', idleIdx);
       }
 
       // Idle wandering — after the standing-still timer elapses, start a
