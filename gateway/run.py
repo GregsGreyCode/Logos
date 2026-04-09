@@ -4961,6 +4961,19 @@ async def start_gateway(config: Optional[GatewayConfig] = None, replace: bool = 
     cron_stop.set()
     cron_thread.join(timeout=5)
 
+    # Reap any in-flight openshell CLI subprocess groups so their
+    # ssh-proxy children don't outlive the gateway. The executor
+    # tracks every Popen pgid in a module-level registry; this call
+    # SIGTERMs the whole tree (then SIGKILLs anything that resists).
+    # Without this, restart-the-gateway would routinely leave
+    # leaked openshell+ssh-proxy processes pinning ports until the
+    # next reboot.
+    try:
+        from gateway.executors.openshell import shutdown_openshell_children
+        shutdown_openshell_children()
+    except Exception as _osh_err:
+        logger.warning("shutdown_openshell_children failed: %s", _osh_err)
+
     # Close MCP server connections
     try:
         from tools.mcp_tool import shutdown_mcp_servers
