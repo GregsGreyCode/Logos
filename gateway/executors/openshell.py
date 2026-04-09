@@ -96,16 +96,28 @@ def _save_state(instances: List[dict]) -> None:
 
 # ── OpenShell CLI helpers ──────────────────────────────────────────────────
 
-def _openshell(*args: str, check: bool = True, capture: bool = True) -> subprocess.CompletedProcess:
-    """Run ``openshell <args>`` and return the CompletedProcess."""
+def _openshell(*args: str, gateway: Optional[str] = None,
+               check: bool = True, capture: bool = True) -> subprocess.CompletedProcess:
+    """Run ``openshell <args>`` and return the CompletedProcess.
+
+    When ``gateway`` is provided, the CLI is invoked with ``-g <gateway>``
+    so the command operates on a specific OpenShell gateway. Required for
+    multi-route routing — without scoping, ``openshell sandbox create``
+    targets whatever gateway is currently selected by ``openshell gateway
+    select``, which is global state we can't rely on.
+    """
     exe = shutil.which("openshell")
     if not exe:
         raise FileNotFoundError(
             "openshell CLI not found on PATH.  "
             "Install it: curl -LsSf https://raw.githubusercontent.com/NVIDIA/OpenShell/main/install.sh | sh"
         )
+    cmd = [exe]
+    if gateway:
+        cmd.extend(["-g", gateway])
+    cmd.extend(args)
     return subprocess.run(
-        [exe, *args],
+        cmd,
         capture_output=capture,
         text=True,
         check=check,
@@ -133,24 +145,132 @@ def _sanitize_sandbox_name(name: str) -> str:
     return s
 
 
-def _sandbox_exists(name: str) -> bool:
-    """Return True if an OpenShell sandbox with this name is still running."""
+def _sandbox_exists(name: str, gateway: Optional[str] = None) -> bool:
+    """Return True if an OpenShell sandbox with this name is still running
+    inside the given gateway.
+
+    With multi-route routing, each sandbox lives inside exactly one gateway
+    and the same sandbox name in two different gateways is not the same
+    sandbox. Callers MUST scope the lookup to the gateway they care about
+    — passing ``gateway=None`` falls back to the CLI's currently-selected
+    gateway, which is brittle.
+    """
     try:
         # `openshell sandbox list --names` prints one sandbox name per line.
-        result = _openshell("sandbox", "list", "--names", check=False)
+        result = _openshell("sandbox", "list", "--names",
+                            gateway=gateway, check=False)
         names = {line.strip() for line in (result.stdout or "").splitlines() if line.strip()}
         return name in names
     except Exception:
         return False
 
 
-def _list_sandbox_names() -> List[str]:
-    """Return all live OpenShell sandbox names, or [] on failure."""
+def _list_sandbox_names(gateway: Optional[str] = None) -> List[str]:
+    """Return all live OpenShell sandbox names in the given gateway,
+    or [] on failure. ``gateway=None`` uses the CLI default gateway."""
     try:
-        result = _openshell("sandbox", "list", "--names", check=False)
+        result = _openshell("sandbox", "list", "--names",
+                            gateway=gateway, check=False)
         return [line.strip() for line in (result.stdout or "").splitlines() if line.strip()]
     except Exception:
         return []
+
+
+def _list_all_sandbox_names_with_gateway() -> List[tuple[str, str]]:
+    """Enumerate every live sandbox across every known OpenShell gateway.
+
+    Returns ``[(sandbox_name, gateway_name), ...]``. Iterates over the
+    model_routes table so each provisioned gateway is queried exactly
+    once. Falls back to the primordial gateway when the routes table is
+    empty (the bootstrap path before /setup populates routes).
+
+    Used by orphan-prune and missing-sandbox-resurrect passes that need
+    a global view of "what sandboxes exist anywhere" before they can
+    decide which ones to clean up or recreate.
+    """
+    from gateway.openshell_routes import PRIMORDIAL_NAME
+    from gateway.auth import db as auth_db
+
+    gateways_to_query: set[str] = set()
+    try:
+        for r in auth_db.list_model_routes():
+            name = r.get("openshell_name")
+            if name:
+                gateways_to_query.add(name)
+    except Exception as exc:
+        logger.warning("could not enumerate model_routes: %s", exc)
+    if not gateways_to_query:
+        gateways_to_query.add(PRIMORDIAL_NAME)
+
+    out: List[tuple[str, str]] = []
+    for gw in gateways_to_query:
+        for name in _list_sandbox_names(gateway=gw):
+            out.append((name, gw))
+    return out
+
+
+# ── Route resolution ───────────────────────────────────────────────────────
+
+def _resolve_route(config: "InstanceConfig") -> tuple[str, str]:
+    """Resolve (openshell_gateway_name, effective_model) for a spawn.
+
+    Returns the OpenShell gateway the sandbox should land inside and the
+    model name baked into ``/tmp/hermes/instance-config.json`` for the
+    sandbox worker. Resolution order:
+
+      1. ``config.model_route_id`` is set → look up the model_routes row,
+         use its (openshell_name, model). The route's model takes priority
+         over ``config.model`` because the OpenShell gateway is forcing
+         that exact model anyway — sending a different value in the
+         worker's chat-completions call would be ignored by OpenShell's
+         privacy router.
+
+      2. ``model_routes.is_default = 1`` row exists → use it. This is the
+         path agents created via /admin/agents take when the user picks
+         "Auto (use default)" instead of an explicit route.
+
+      3. Fall through to the legacy path: primordial ``logos-openshell``
+         gateway with the env-resolved model. This handles the case where
+         model_routes is empty (the user hasn't run /setup yet under the
+         new architecture, or DB was just migrated and routes haven't
+         been populated).
+    """
+    from gateway.openshell_routes import PRIMORDIAL_NAME
+    from gateway.auth import db as auth_db
+
+    # 1. Explicit binding
+    if getattr(config, "model_route_id", None):
+        route = auth_db.get_model_route(config.model_route_id)
+        if route:
+            return route["openshell_name"], route["model"]
+        logger.warning(
+            "spawn: agent has model_route_id=%r but row not found — falling back",
+            config.model_route_id,
+        )
+
+    # 2. Default route
+    try:
+        default = auth_db.get_default_model_route()
+        if default:
+            return default["openshell_name"], default["model"]
+    except Exception as exc:
+        logger.warning("spawn: get_default_model_route failed: %s", exc)
+
+    # 3. Bootstrap fallback — primordial gateway with env/config-resolved model
+    resolved_model = (config.model or "").strip()
+    if not resolved_model:
+        resolved_model = (
+            os.environ.get("LOGOS_MODEL")
+            or os.environ.get("HERMES_MODEL")
+            or os.environ.get("LLM_MODEL")
+            or ""
+        ).strip()
+    if resolved_model and not getattr(config, "model_route_id", None):
+        logger.info(
+            "spawn(%s): no model_routes binding — using primordial gateway with model=%r",
+            config.name, resolved_model,
+        )
+    return PRIMORDIAL_NAME, resolved_model
 
 
 # ── Executor ──────────────────────────────────────────────────────────────
@@ -172,10 +292,20 @@ class OpenShellExecutor:
         self.policy_file = policy_file or (str(_DEFAULT_POLICY) if _DEFAULT_POLICY.exists() else None)
 
     def spawn(self, config: InstanceConfig) -> SpawnedInstance:
+        from gateway.openshell_routes import PRIMORDIAL_NAME
+
         instances = _load_state()
 
-        # Prune entries whose sandbox has already been deleted
-        instances = [i for i in instances if _sandbox_exists(i.get("sandbox_name", ""))]
+        # Prune entries whose sandbox has already been deleted. Each entry
+        # carries its own openshell_name now (older entries default to the
+        # primordial gateway since they predate multi-route routing).
+        instances = [
+            i for i in instances
+            if _sandbox_exists(
+                i.get("sandbox_name", ""),
+                gateway=i.get("openshell_name") or PRIMORDIAL_NAME,
+            )
+        ]
 
         # OpenShell sandboxes are backed by Kubernetes Sandbox CRs, so the
         # sandbox name must be a valid RFC 1123 subdomain: lowercase
@@ -183,27 +313,15 @@ class OpenShellExecutor:
         sandbox_name = _sanitize_sandbox_name(f"hermes-{config.name}")
         worker_id = sandbox_name  # worker registers with this ID
 
-        # Resolve "auto" / empty model to the gateway's currently active
-        # inference model. The agents tab create-form lets users pick
-        # "Auto (use active model)" which stores model="" — without this
-        # fallback the sandbox worker has no model to send to inference.local
-        # and replies "No model configured" to every chat. We resolve at
-        # spawn time so agents created before the active model was set
-        # still get a valid model when their sandbox provisions.
-        resolved_model = (config.model or "").strip()
-        if not resolved_model:
-            resolved_model = (
-                os.environ.get("HERMES_MODEL")
-                or os.environ.get("LLM_MODEL")
-                or ""
-            ).strip()
-            if resolved_model:
-                logger.info(
-                    "spawn(%s): resolved empty model to active gateway model %r",
-                    sandbox_name, resolved_model,
-                )
+        # Resolve which OpenShell gateway this sandbox should land inside,
+        # and what model the worker should request from inference.local.
+        # See _resolve_route() for the lookup order.
+        openshell_gw, resolved_model = _resolve_route(config)
 
-        logger.info("Creating OpenShell sandbox '%s' from image '%s'", sandbox_name, self.sandbox_image)
+        logger.info(
+            "Creating OpenShell sandbox '%s' in gateway '%s' (model=%s) from image '%s'",
+            sandbox_name, openshell_gw, resolved_model or "<none>", self.sandbox_image,
+        )
 
         # Write instance config to a temp file for upload
         instance_config = {
@@ -217,14 +335,19 @@ class OpenShellExecutor:
 
         # Persist the state record up front so the dashboard can show
         # this sandbox as "provisioning" while openshell create is still
-        # running. We remove it again on failure below.
+        # running. We remove it again on failure below. The new
+        # openshell_name + model_route_id fields let list_instances() and
+        # delete_instance() know which gateway to query without re-reading
+        # the agent record.
         record = {
             "name": config.name,
             "sandbox_name": sandbox_name,
             "worker_id": worker_id,
             "source": "openshell",
             "soul_name": config.soul_name,
-            "model": config.model,
+            "model": resolved_model,
+            "openshell_name": openshell_gw,
+            "model_route_id": getattr(config, "model_route_id", None),
             "requester": config.requester,
             "toolsets": config.toolsets or [],
             "policy": config.policy or "",
@@ -266,7 +389,7 @@ class OpenShellExecutor:
             # Trailing command: start the worker
             create_args += ["--", "/app/entrypoint.sh"]
 
-            result = _openshell(*create_args, check=True)
+            result = _openshell(*create_args, gateway=openshell_gw, check=True)
             logger.debug("openshell sandbox create stdout: %s", result.stdout.strip())
 
             # Update phase on success
@@ -278,7 +401,8 @@ class OpenShellExecutor:
             instances = [i for i in instances if i.get("sandbox_name") != sandbox_name]
             _save_state(instances)
             raise RuntimeError(
-                f"Failed to create OpenShell sandbox '{sandbox_name}': {exc.stderr}"
+                f"Failed to create OpenShell sandbox '{sandbox_name}' in gateway "
+                f"'{openshell_gw}': {exc.stderr}"
             ) from exc
         finally:
             if config_tmpfile:
@@ -293,17 +417,20 @@ class OpenShellExecutor:
             port=0,
             source="openshell",
             soul_name=config.soul_name,
-            model=config.model,
+            model=resolved_model,
             requester=config.requester,
             healthy=False,  # will become healthy when worker registers
         )
 
     def list_instances(self) -> List[dict]:
+        from gateway.openshell_routes import PRIMORDIAL_NAME
+
         instances = _load_state()
         alive = []
         changed = False
         for inst in instances:
-            if _sandbox_exists(inst.get("sandbox_name", "")):
+            gw = inst.get("openshell_name") or PRIMORDIAL_NAME
+            if _sandbox_exists(inst.get("sandbox_name", ""), gateway=gw):
                 alive.append(inst)
             else:
                 changed = True
@@ -313,17 +440,36 @@ class OpenShellExecutor:
 
     def delete_instance(self, name: str) -> None:
         # Resolve the sandbox name authoritatively from the agent name
-        # — do NOT rely on the local state file. The state file goes
-        # out of sync whenever spawn() races with list_instances() (the
-        # latter prunes entries whose CR isn't visible yet), which left
-        # orphan OpenShell sandboxes for deleted agents because this
-        # method previously short-circuited when the state file was
-        # empty. Always issue the delete; clean up any matching state
+        # — do NOT rely on the local state file for the SANDBOX NAME. The
+        # state file goes out of sync whenever spawn() races with
+        # list_instances() (the latter prunes entries whose CR isn't
+        # visible yet), which left orphan OpenShell sandboxes for deleted
+        # agents. Always issue the delete; clean up any matching state
         # entries afterwards.
+        #
+        # However, we DO need the state file (or, failing that, the
+        # primordial fallback) to find which gateway the sandbox lives
+        # inside — `openshell sandbox delete <name>` without `-g` only
+        # checks the CLI's currently-selected gateway and silently
+        # succeeds if the sandbox isn't there. Best-effort lookup: scan
+        # the state file for an entry matching by name OR sandbox_name,
+        # use its openshell_name; otherwise default to the primordial.
+        from gateway.openshell_routes import PRIMORDIAL_NAME
+
         sandbox_name = _sanitize_sandbox_name(f"hermes-{name}")
+        target_gw = PRIMORDIAL_NAME
+        for inst in _load_state():
+            if inst.get("name") == name or inst.get("sandbox_name") == sandbox_name:
+                target_gw = inst.get("openshell_name") or PRIMORDIAL_NAME
+                break
+
         try:
-            _openshell("sandbox", "delete", sandbox_name, check=False)
-            logger.info("Deleted OpenShell sandbox '%s'", sandbox_name)
+            _openshell("sandbox", "delete", sandbox_name,
+                        gateway=target_gw, check=False)
+            logger.info(
+                "Deleted OpenShell sandbox '%s' from gateway '%s'",
+                sandbox_name, target_gw,
+            )
         except FileNotFoundError:
             logger.warning("Cannot delete sandbox '%s' — openshell CLI not on PATH", sandbox_name)
         except Exception as exc:

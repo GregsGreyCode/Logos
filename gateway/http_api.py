@@ -161,11 +161,15 @@ async def _prune_orphan_sandboxes(executor) -> None:
 
     try:
         from gateway.executors.openshell import (
-            _list_sandbox_names,
+            _list_all_sandbox_names_with_gateway,
             _sanitize_sandbox_name,
             _openshell,
         )
-        live_names = _list_sandbox_names()
+        # Enumerate sandboxes across every provisioned gateway, not just
+        # the CLI's default — multi-route routing means orphans can live
+        # in any of N gateways and the old single-gateway scan would
+        # silently leak them.
+        live_with_gw = _list_all_sandbox_names_with_gateway()
     except Exception as exc:
         logger.warning("prune-orphans: could not list openshell sandboxes: %s", exc)
         return
@@ -177,24 +181,31 @@ async def _prune_orphan_sandboxes(executor) -> None:
     }
     # Only consider hermes-prefixed sandboxes — leave anything else
     # (e.g. user-managed sandboxes from the openshell CLI) alone.
-    orphans = [n for n in live_names if n.startswith("hermes-") and n not in expected]
+    orphans = [(n, gw) for (n, gw) in live_with_gw
+               if n.startswith("hermes-") and n not in expected]
     if not orphans:
         return
 
     logger.info("prune-orphans: deleting %d orphan sandbox(es): %s",
-                len(orphans), ", ".join(orphans))
+                len(orphans),
+                ", ".join(f"{n}@{gw}" for n, gw in orphans))
 
     import asyncio as _asyncio
 
-    async def _delete_one(sandbox_name: str):
+    async def _delete_one(sandbox_name: str, sandbox_gw: str):
         try:
-            await _asyncio.to_thread(_openshell, "sandbox", "delete", sandbox_name, check=False)
-            logger.info("prune-orphans: deleted '%s'", sandbox_name)
+            await _asyncio.to_thread(
+                _openshell, "sandbox", "delete", sandbox_name,
+                gateway=sandbox_gw, check=False,
+            )
+            logger.info("prune-orphans: deleted '%s' from gateway '%s'",
+                        sandbox_name, sandbox_gw)
         except Exception as exc:
-            logger.warning("prune-orphans: failed for '%s': %s", sandbox_name, exc)
+            logger.warning("prune-orphans: failed for '%s'@'%s': %s",
+                           sandbox_name, sandbox_gw, exc)
 
-    for name in orphans:
-        _asyncio.create_task(_delete_one(name))
+    for sandbox_name, sandbox_gw in orphans:
+        _asyncio.create_task(_delete_one(sandbox_name, sandbox_gw))
 
 
 async def _resurrect_missing_sandboxes(executor) -> None:
@@ -230,10 +241,17 @@ async def _resurrect_missing_sandboxes(executor) -> None:
 
     # Snapshot the live sandbox names from OpenShell once, instead of
     # calling _sandbox_exists per agent (which spawns one CLI subprocess
-    # each — slow if there are many agents).
+    # each — slow if there are many agents). Multi-route note: an agent
+    # is considered "alive" as long as a sandbox by its name exists in
+    # ANY gateway. Resurrection only fires when no gateway has it. The
+    # spawn path picks the right gateway via _resolve_route(), so we
+    # don't need to remember which gateway was the original home.
     try:
-        from gateway.executors.openshell import _list_sandbox_names, _sanitize_sandbox_name
-        live_names = set(_list_sandbox_names())
+        from gateway.executors.openshell import (
+            _list_all_sandbox_names_with_gateway,
+            _sanitize_sandbox_name,
+        )
+        live_names = {n for (n, _gw) in _list_all_sandbox_names_with_gateway()}
     except Exception as exc:
         logger.warning("resurrect: could not list openshell sandboxes: %s", exc)
         return
@@ -691,8 +709,19 @@ async def _handle_sandbox_logs(request: web.Request) -> web.Response:
     """GET /admin/sandboxes/{name}/logs — tail sandbox stdout/stderr."""
     name = request.match_info["name"]
     try:
-        from gateway.executors.openshell import _openshell
-        result = _openshell("sandbox", "logs", name, "--tail", "100", check=False)
+        from gateway.executors.openshell import _openshell, _load_state
+        from gateway.openshell_routes import PRIMORDIAL_NAME
+        # Look up which gateway this sandbox lives inside. Without
+        # gateway scoping, `openshell sandbox logs <name>` only checks
+        # the CLI default gateway and returns "sandbox not found" for
+        # any sandbox that lives in a non-default route.
+        target_gw = PRIMORDIAL_NAME
+        for inst in _load_state():
+            if inst.get("sandbox_name") == name or inst.get("name") == name:
+                target_gw = inst.get("openshell_name") or PRIMORDIAL_NAME
+                break
+        result = _openshell("sandbox", "logs", name, "--tail", "100",
+                            gateway=target_gw, check=False)
         return web.json_response({"logs": result.stdout or "", "stderr": result.stderr or ""})
     except FileNotFoundError:
         return web.json_response({"logs": "", "stderr": "openshell CLI not available"})
