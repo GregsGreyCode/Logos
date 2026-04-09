@@ -6045,7 +6045,15 @@ function app() {
           // Self instance: migrate from legacy key if it exists
           stored = JSON.parse(localStorage.getItem('hermes_chats') || '[]');
         }
-        return Array.isArray(stored) ? stored : [];
+        const arr = Array.isArray(stored) ? stored : [];
+        // Drop legacy chats that have no agent_id — under OpenShell-only
+        // routing every chat MUST be bound to a named agent (the chat
+        // dispatch path rejects requests with no agent_id), so an
+        // agent-less chat is unusable. Keeping it caused the "Agent"
+        // fallback header to appear on first land and the chat input
+        // to be permanently locked. Platform sessions (e.g. Telegram)
+        // are kept regardless because they have their own routing.
+        return arr.filter(c => c.agent_id || c._platform);
       } catch(_) { return []; }
     },
 
