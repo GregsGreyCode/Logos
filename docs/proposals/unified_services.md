@@ -1,6 +1,16 @@
 # Unified Services Architecture — MCP Servers + Tool Credentials
 
-> **Status:** Design — ready for implementation
+> **STATUS: ASPIRATIONAL.** This document describes a "Services" tab and
+> credentials registry that were proposed but never built. The current
+> dashboard navbar is exactly: **Agents · Chats · Settings · Admin** —
+> there is no Services tab. Tool credentials still live in environment
+> variables (`os.environ`, `~/.logos/.env`, k8s secrets, or `config.yaml`),
+> not in the auth DB. The MCP gateway portion is real and shipped — see
+> the README and `gateway/mcp_service.py`. The "Services" half (tool
+> credential UI, `/api/services` endpoints, `gateway/services.py`) is
+> a design sketch only. Kept as a historical proposal.
+
+---
 
 ## Problem
 

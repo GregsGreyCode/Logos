@@ -6,7 +6,7 @@
 
 | | |
 |---|---|
-| **Status** | DRAFT — Planning Phase |
+| **Status** | **HISTORICAL — Migration largely complete.** OpenShell is now the default and only first-class runtime. The Kubernetes pod-per-agent path described in §1 has been deleted entirely (commit `f6f0972`). The reverse-connection sandbox worker model that actually shipped is documented in `docs/openshell-integration.md` and `docker/sandbox_worker.py`; this file is preserved as the original planning record. |
 | **Target** | Logos v0.11.x (next minor cycle) |
 | **Scope** | Replace custom sandbox + egress policy with OpenShell; integrate Privacy Router as Model Router backend |
 

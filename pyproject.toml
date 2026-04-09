@@ -52,7 +52,6 @@ pty = [
   "ptyprocess>=0.7.0; sys_platform != 'win32'",
   "pywinpty>=2.0.0; sys_platform == 'win32'",
 ]
-honcho = ["honcho-ai>=2.0.1"]
 mcp = ["mcp>=1.2.0"]
 homeassistant = ["aiohttp>=3.9.0"]
 k8s = ["kubernetes>=29.0.0"]
@@ -74,7 +73,6 @@ all = [
   "logos[tts-premium]",
   "logos[slack]",
   "logos[pty]",
-  "logos[honcho]",
   "logos[mcp]",
   "logos[homeassistant]",
   "logos[acp]",
@@ -92,7 +90,7 @@ logos-acp = "acp_adapter.entry:main"
 py-modules = []
 
 [tool.setuptools.packages.find]
-include = ["agent", "agents", "agents.*", "tools", "tools.*", "logos_cli", "logos_cli.*", "gateway", "gateway.*", "core", "core.*", "cron", "honcho_integration", "acp_adapter"]
+include = ["agent", "agents", "agents.*", "tools", "tools.*", "logos_cli", "logos_cli.*", "gateway", "gateway.*", "core", "core.*", "cron", "acp_adapter"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
