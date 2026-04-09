@@ -27,7 +27,6 @@ RUN git submodule update --init --recursive || true
 # Re-install in editable mode now that source is present
 RUN uv pip install -e ".[all]"
 RUN if [ -f "./mini-swe-agent/pyproject.toml" ]; then uv pip install -e "./mini-swe-agent"; fi
-RUN if [ -f "./tinker-atropos/pyproject.toml" ]; then uv pip install -e "./tinker-atropos"; fi
 
 RUN useradd -m -d /home/logos -u 10001 logos \
  && mkdir -p /home/logos/.logos/{cron,sessions,logs,memories,skills,pairing,hooks,image_cache,audio_cache,whatsapp/session} \

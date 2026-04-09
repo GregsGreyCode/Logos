@@ -250,7 +250,6 @@ Logos's MCP servers boot once inside the Logos gateway process and are shared ac
 | **OpenShell Kubernetes integration** | OpenShell is currently Docker-only. The existing k3s/external k8s modes in Logos remain untouched. Revisit when OpenShell adds k8s support. |
 | **Multi-gateway OpenShell deployment** | For multi-model concurrency across sandboxes. Requires OpenShell to support multiple providers per gateway, or Logos managing multiple OpenShell gateway instances. Defer until usage patterns clarify. |
 | **OpenShell cloud gateway mode** | Logos is self-hosted first. Cloud gateway support is nice-to-have for VPS deployments but not essential for the core migration. |
-| **RL/Tinker-Atropos sandbox isolation** | RL training runs have different resource and isolation requirements. Keep them on the existing k8s executor for now. |
 
 ---
 

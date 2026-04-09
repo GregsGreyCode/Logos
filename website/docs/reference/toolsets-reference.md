@@ -30,7 +30,6 @@ Toolsets are named bundles of tools that you can enable with `hermes chat --tool
 | `image_gen` | core | `image_generate` |
 | `memory` | core | `memory` |
 | `moa` | core | `mixture_of_agents` |
-| `rl` | core | `rl_check_status`, `rl_edit_config`, `rl_get_current_config`, `rl_get_results`, `rl_list_environments`, `rl_list_runs`, `rl_select_environment`, `rl_start_training`, `rl_stop_training`, `rl_test_inference` |
 | `safe` | composite | `image_generate`, `mixture_of_agents`, `vision_analyze`, `web_extract`, `web_search` |
 | `search` | core | `web_search` |
 | `session_search` | core | `session_search` |
