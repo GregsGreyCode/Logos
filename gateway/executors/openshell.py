@@ -151,7 +151,7 @@ def _state_lock() -> Iterator[None]:
 
 def _openshell(*args: str, gateway: Optional[str] = None,
                check: bool = True, capture: bool = True,
-               timeout: float = 120.0) -> subprocess.CompletedProcess:
+               timeout: float = 600.0) -> subprocess.CompletedProcess:
     """Run ``openshell <args>`` and return the CompletedProcess.
 
     When ``gateway`` is provided, the CLI is invoked with ``-g <gateway>``
@@ -169,12 +169,16 @@ def _openshell(*args: str, gateway: Optional[str] = None,
       orphaned and reparented to init. With grouping we can ``killpg`` the
       whole tree.
 
-    * ``timeout`` (default 120s) — a hung openshell call would otherwise
-      pin the calling thread forever (we used to spend whole sessions
-      chasing wedged spawns). On timeout we ``killpg`` the group and
-      raise ``subprocess.TimeoutExpired`` so callers see the failure
-      explicitly. 120s is generous enough for ``sandbox create`` with
-      an image build; most calls finish in 1-2s.
+    * ``timeout`` (default 600s = 10 min) — a hung openshell call would
+      otherwise pin the calling thread forever (we used to spend whole
+      sessions chasing wedged spawns). On timeout we ``killpg`` the
+      group and raise ``subprocess.TimeoutExpired`` so callers see the
+      failure explicitly. 600s is the upper bound for ``sandbox
+      create`` against a freshly provisioned gateway that needs to
+      build a Dockerfile image and bring up a new k3s pod; the
+      original 120s default killed those legitimate cold-starts. Most
+      operations against a warm gateway finish in 1-2s, so the higher
+      ceiling only matters for the rare slow path.
 
     The pgid is added to the module-level ``_active_procs`` registry for
     the lifetime of the call so ``shutdown_openshell_children()`` can
@@ -663,11 +667,24 @@ class OpenShellExecutor:
             ]
             if self.policy_file and Path(self.policy_file).exists():
                 create_args += ["--policy", self.policy_file]
-            # NOTE: deliberately no `--upload` and no trailing `--`
-            # command. The image's CMD is overridden by openshell's
-            # `sleep infinity` placeholder, which is what we want —
-            # the sandbox stays alive without running anything until
-            # we exec the worker explicitly in step 3.
+            # CRITICAL: trailing `-- true` is required.
+            #
+            # `openshell sandbox create` with NO trailing command (after
+            # `--`) defaults to opening an interactive PTY shell once
+            # the CR is ready, and the create call blocks for the
+            # lifetime of that shell. Without a trailing command we get
+            # `ssh -tt -o RequestTTY=force` zombies that never exit and
+            # the create call hangs until the timeout reaper kills it
+            # — exactly the symptom that motivated task #9, just on a
+            # different code path.
+            #
+            # Passing `-- true` runs `/usr/bin/true` inside the sandbox
+            # which exits in milliseconds. Without `--no-keep` the
+            # sandbox stays alive after the initial command exits, so
+            # we can run the upload + worker exec steps below as
+            # independent calls. NB: do NOT add `--no-keep` here, that
+            # would tear the sandbox down when `true` returns.
+            create_args += ["--", "true"]
             result = _openshell(*create_args, gateway=openshell_gw, check=True)
             logger.debug("openshell sandbox create stdout: %s", result.stdout.strip())
 
