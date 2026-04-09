@@ -28,6 +28,11 @@ export class WorldScene extends Phaser.Scene {
     this._hueOffset = 0;
     this._ready = false;           // set true after create() completes
     this._pendingSync = null;      // buffered syncAgents call
+    // Persisted agent positions (loaded from localStorage in create())
+    // shape: { [agentName]: { x, y, dir } }
+    this._storedPositions = {};
+    this._positionDirty = false;
+    this._lastPositionFlush = 0;
   }
 
   init(data) {
@@ -45,6 +50,11 @@ export class WorldScene extends Phaser.Scene {
   }
 
   create() {
+    // Restore persisted agent positions before any sprites get built so
+    // AgentSprite constructors can pick up the stored coordinates instead
+    // of falling back to a fresh random spawn.
+    this._storedPositions = this._loadStoredPositions();
+
     // Build tilemap
     this._buildTilemap();
 
@@ -109,6 +119,20 @@ export class WorldScene extends Phaser.Scene {
 
     for (const [, agent] of this.agents) {
       agent.update(time, delta);
+    }
+
+    // Throttled flush of agent positions to localStorage so a page refresh
+    // restores agents wherever they were standing. Each agent calls
+    // recordPosition() every tick (cheap, in-memory); we only persist once
+    // a second to avoid hammering localStorage.
+    if (this._positionDirty && (time - this._lastPositionFlush) > 1000) {
+      this._lastPositionFlush = time;
+      this._positionDirty = false;
+      try {
+        localStorage.setItem('logos.world.positions', JSON.stringify(this._storedPositions));
+      } catch (e) {
+        // Quota exceeded, private mode, or no localStorage — just skip.
+      }
     }
   }
 
@@ -202,9 +226,13 @@ export class WorldScene extends Phaser.Scene {
       if (grid[r][WORLD_COLS - 1] === TILE.GRASS) grid[r][WORLD_COLS - 1] = TILE.FLOWERS;
     }
 
-    // Scatter flowers on some grass tiles
-    for (let r = 2; r < WORLD_ROWS - 2; r++) {
-      for (let c = 2; c < WORLD_COLS - 2; c++) {
+    // Scatter flowers + dark grass over the interior. Loop runs from row/col 1
+    // (i.e. one tile in from the flower border at row/col 0) so the variation
+    // reaches all the way to the edge — without this the inner ring of tiles
+    // sat as plain GRASS and read as a visibly lighter single-tile band
+    // inside the flower frame.
+    for (let r = 1; r < WORLD_ROWS - 1; r++) {
+      for (let c = 1; c < WORLD_COLS - 1; c++) {
         if (grid[r][c] === TILE.GRASS && Math.random() < 0.06) {
           grid[r][c] = TILE.FLOWERS;
         }
@@ -384,5 +412,76 @@ export class WorldScene extends Phaser.Scene {
 
   getCharTextureKey(charIndex) {
     return 'characters'; // all characters share the master spritesheet
+  }
+
+  // -- Persisted agent positions (localStorage) --
+
+  _loadStoredPositions() {
+    try {
+      const raw = localStorage.getItem('logos.world.positions');
+      if (!raw) return {};
+      const parsed = JSON.parse(raw);
+      return parsed && typeof parsed === 'object' ? parsed : {};
+    } catch (e) {
+      return {};
+    }
+  }
+
+  /**
+   * Look up a persisted spawn position for the given agent name. Returns
+   * { x, y, dir } if a valid in-bounds entry exists, otherwise null so the
+   * caller can fall back to getRandomWalkablePosition().
+   */
+  getStoredPosition(name) {
+    const entry = this._storedPositions && this._storedPositions[name];
+    if (!entry || typeof entry.x !== 'number' || typeof entry.y !== 'number') return null;
+    // Sanity-clamp: reject entries outside the world bounds (e.g. left over
+    // from an older world that had different dimensions).
+    if (entry.x < TILE_SIZE || entry.x > WORLD_W - TILE_SIZE) return null;
+    if (entry.y < TILE_SIZE || entry.y > WORLD_H - TILE_SIZE) return null;
+    return entry;
+  }
+
+  /**
+   * Mark an agent's current position as the latest known position. Cheap
+   * in-memory write — the actual localStorage flush happens at most once a
+   * second from update().
+   */
+  recordPosition(name, x, y, dir) {
+    if (!name) return;
+    if (!this._storedPositions) this._storedPositions = {};
+    this._storedPositions[name] = { x, y, dir };
+    this._positionDirty = true;
+  }
+
+  /**
+   * Pick a random walkable tile somewhere on the map, avoiding the tree
+   * canopy ring. Used as the initial spawn point for agents so a page
+   * reload doesn't always drop them in the same meadow corner.
+   */
+  getRandomWalkablePosition() {
+    if (!this.walkableGrid) {
+      return { x: WORLD_W / 2, y: WORLD_H / 2 };
+    }
+    const tcx = this.treeCenter.x;
+    const tcy = this.treeCenter.y;
+    for (let i = 0; i < 100; i++) {
+      const c = 1 + Math.floor(Math.random() * (WORLD_COLS - 2));
+      const r = 1 + Math.floor(Math.random() * (WORLD_ROWS - 2));
+      if (!this.walkableGrid[r] || !this.walkableGrid[r][c]) continue;
+      // Stay clear of the canopy ring (matches the 7-tile radius used by
+      // _idleWander so agents don't spawn inside the tree).
+      const dist = Math.sqrt((c - tcx) ** 2 + (r - tcy) ** 2);
+      if (dist < 7) continue;
+      return {
+        x: c * TILE_SIZE + TILE_SIZE / 2,
+        y: r * TILE_SIZE + TILE_SIZE / 2,
+      };
+    }
+    // Fallback: a known safe meadow tile if the random search struck out.
+    return {
+      x: 4 * TILE_SIZE + TILE_SIZE / 2,
+      y: 4 * TILE_SIZE + TILE_SIZE / 2,
+    };
   }
 }
