@@ -59,10 +59,21 @@ export class AgentSprite {
     this.idleTimer = 0;
     this.nextIdleTime = this._randomIdleDelay();
     this.walkPhaseStart = 0;  // ms (Date.now) when the current walk phase began
-    this.lastStatus = null;
+    // Seed lastStatus to the current status so the first syncState() call
+    // does NOT trip the "status changed" branch and snap the freshly-spawned
+    // agent into a zone tile — that defeats the persisted/random spawn.
+    this.lastStatus = this._getStatus(inst);
 
-    // Create sprite
-    const startPos = this._zonePosition(inst, index, total);
+    // Pick a spawn position. Priority order:
+    //   1. Persisted position from localStorage (so a page refresh leaves
+    //      the agent exactly where it was standing)
+    //   2. Random walkable tile (first-time visit / new agent / cleared
+    //      browser storage)
+    //   3. Zone-based fallback (only if the scene helpers are missing)
+    const stored = scene.getStoredPosition ? scene.getStoredPosition(inst.name) : null;
+    const startPos = stored
+      || (scene.getRandomWalkablePosition ? scene.getRandomWalkablePosition() : this._zonePosition(inst, index, total));
+    if (stored && stored.dir) this.direction = stored.dir;
     const texKey = 'characters';
     const idleFrame = scene.getCharIdleFrame(this.charIndex, 'down');
     this.sprite = scene.add.sprite(startPos.x, startPos.y, texKey, idleFrame);
@@ -232,6 +243,12 @@ export class AgentSprite {
     this.statusDot.setPosition(this.sprite.x + 13, this.sprite.y - 52);
     this.bubble.setPosition(this.sprite.x, this.sprite.y - 72);
     this.logoText.setPosition(this.sprite.x, this.sprite.y - 52);
+
+    // Record current position for persistence. Cheap in-memory write — the
+    // scene throttles the actual localStorage flush to once a second.
+    if (this.scene.recordPosition) {
+      this.scene.recordPosition(this.inst.name, this.sprite.x, this.sprite.y, this.direction);
+    }
   }
 
   _followPath(delta) {
