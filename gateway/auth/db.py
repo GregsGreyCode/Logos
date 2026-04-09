@@ -406,6 +406,32 @@ CREATE TABLE IF NOT EXISTS platform_routing (
     created_at  INTEGER NOT NULL,
     UNIQUE(platform, scope, scope_id)
 );
+
+-- ── Model routes ───────────────────────────────────────────────────────────
+-- One row per (provider, model) pair the user has provisioned. Each route is
+-- backed by a dedicated OpenShell gateway pinned to that single model via
+-- `openshell inference set`. Agents bind to a route via agents.model_route_id;
+-- the OpenShell executor reads the route's openshell_name to know which
+-- gateway to spawn the sandbox in. Lets multiple agents target different
+-- models simultaneously without OpenShell's "one forced model" design
+-- becoming a bottleneck.
+
+CREATE TABLE IF NOT EXISTS model_routes (
+    id              TEXT PRIMARY KEY,
+    provider        TEXT NOT NULL,                      -- 'lmstudio' / 'openai' / 'anthropic' / etc
+    model           TEXT NOT NULL,                      -- 'openai/gpt-oss-20b'
+    openshell_name  TEXT NOT NULL UNIQUE,               -- 'logos-openshell' (primordial) or 'logos-os-gpt-oss-20b'
+    openshell_port  INTEGER NOT NULL UNIQUE,            -- 9090 (primordial), 9091, 9092, ...
+    status          TEXT NOT NULL DEFAULT 'provisioning', -- 'provisioning' | 'ready' | 'error' | 'stopped'
+    status_detail   TEXT,                               -- last error / phase note (truncated to 500 chars)
+    is_default      INTEGER NOT NULL DEFAULT 0,         -- exactly one row should have is_default=1
+    is_primordial   INTEGER NOT NULL DEFAULT 0,         -- marks the original gateway; cannot be deleted
+    created_at      INTEGER NOT NULL,
+    updated_at      INTEGER NOT NULL,
+    UNIQUE(provider, model)
+);
+CREATE INDEX IF NOT EXISTS idx_mroutes_status ON model_routes(status);
+CREATE INDEX IF NOT EXISTS idx_mroutes_default ON model_routes(is_default);
 """
 
 
@@ -440,6 +466,13 @@ def _run_migrations() -> None:
             # v8: per-agent sprite selection (0..7). NULL falls back to name-hash
             # in AgentSprite.js so pre-v8 agents still render.
             "ALTER TABLE agents ADD COLUMN char_index INTEGER",
+            # v9: per-agent OpenShell route binding. Each agent's sandbox is
+            # spawned inside the OpenShell gateway named in the linked
+            # model_routes row. NULL means "use the default route" (the row
+            # with is_default=1) and is the path the gateway-side resolver
+            # takes when an agent was created before this column existed
+            # or when the user explicitly wants the platform default.
+            "ALTER TABLE agents ADD COLUMN model_route_id TEXT REFERENCES model_routes(id)",
         ):
             try:
                 conn.execute(stmt)
@@ -878,7 +911,8 @@ def get_active_cloud_provider() -> Optional[dict]:
 
 def create_agent(name: str, soul_slug: str = "general", model: str = "",
                  description: str = "", creator_id: str = "", shared: bool = True,
-                 toolsets: str = "", char_index: Optional[int] = None) -> dict:
+                 toolsets: str = "", char_index: Optional[int] = None,
+                 model_route_id: Optional[str] = None) -> dict:
     aid = _new_id("agent")
     now = int(time.time() * 1000)
     # Clamp char_index to the 0..7 sprite-sheet range, or store NULL so the
@@ -888,9 +922,13 @@ def create_agent(name: str, soul_slug: str = "general", model: str = "",
         ci = None
     with _conn() as conn:
         conn.execute(
-            """INSERT INTO agents (id, name, soul_slug, model, description, creator_id, shared, toolsets, char_index, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (aid, name, soul_slug, model or "", description or "", creator_id or None, 1 if shared else 0, toolsets or "", ci, now, now),
+            """INSERT INTO agents (id, name, soul_slug, model, description, creator_id,
+                                   shared, toolsets, char_index, model_route_id,
+                                   created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (aid, name, soul_slug, model or "", description or "", creator_id or None,
+             1 if shared else 0, toolsets or "", ci, model_route_id,
+             now, now),
         )
     return get_agent(aid)
 
@@ -921,7 +959,8 @@ def list_agents(user_id: str = "") -> list[dict]:
 
 
 def update_agent(agent_id: str, **fields) -> Optional[dict]:
-    allowed = {"name", "soul_slug", "model", "description", "shared", "toolsets", "char_index"}
+    allowed = {"name", "soul_slug", "model", "description", "shared", "toolsets",
+               "char_index", "model_route_id"}
     updates = {k: v for k, v in fields.items() if k in allowed}
     if "char_index" in updates:
         ci = updates["char_index"]
@@ -947,6 +986,147 @@ def update_agent(agent_id: str, **fields) -> Optional[dict]:
 def delete_agent(agent_id: str) -> None:
     with _conn() as conn:
         conn.execute("DELETE FROM agents WHERE id = ?", (agent_id,))
+
+
+# ── Model routes ────────────────────────────────────────────────────────────
+# Each row corresponds to one OpenShell gateway pinned to a single
+# (provider, model) combination. See gateway/openshell_routes.py for the
+# subprocess wrappers that actually provision / restart / destroy the
+# underlying gateways. The CRUD functions here only manage DB state — they
+# never call the openshell CLI themselves.
+
+def create_model_route(
+    provider: str,
+    model: str,
+    openshell_name: str,
+    openshell_port: int,
+    status: str = "provisioning",
+    status_detail: Optional[str] = None,
+    is_default: bool = False,
+    is_primordial: bool = False,
+) -> dict:
+    """Insert a new model_routes row. The (provider, model) UNIQUE constraint
+    means re-provisioning the same model raises sqlite3.IntegrityError — the
+    caller should handle that by looking up the existing row first."""
+    rid = _new_id("mr")
+    now = int(time.time() * 1000)
+    with _conn() as conn:
+        conn.execute(
+            """INSERT INTO model_routes
+               (id, provider, model, openshell_name, openshell_port,
+                status, status_detail, is_default, is_primordial,
+                created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (rid, provider, model, openshell_name, int(openshell_port),
+             status, status_detail,
+             1 if is_default else 0, 1 if is_primordial else 0,
+             now, now),
+        )
+    return get_model_route(rid)
+
+
+def get_model_route(route_id: str) -> Optional[dict]:
+    with _conn() as conn:
+        row = conn.execute("SELECT * FROM model_routes WHERE id = ?", (route_id,)).fetchone()
+        return dict(row) if row else None
+
+
+def get_model_route_by_name(openshell_name: str) -> Optional[dict]:
+    with _conn() as conn:
+        row = conn.execute(
+            "SELECT * FROM model_routes WHERE openshell_name = ?",
+            (openshell_name,),
+        ).fetchone()
+        return dict(row) if row else None
+
+
+def get_model_route_by_provider_model(provider: str, model: str) -> Optional[dict]:
+    with _conn() as conn:
+        row = conn.execute(
+            "SELECT * FROM model_routes WHERE provider = ? AND model = ?",
+            (provider, model),
+        ).fetchone()
+        return dict(row) if row else None
+
+
+def get_default_model_route() -> Optional[dict]:
+    """Return the row with is_default=1, or None if no default is set."""
+    with _conn() as conn:
+        row = conn.execute(
+            "SELECT * FROM model_routes WHERE is_default = 1 LIMIT 1"
+        ).fetchone()
+        return dict(row) if row else None
+
+
+def list_model_routes() -> list[dict]:
+    with _conn() as conn:
+        rows = conn.execute(
+            "SELECT * FROM model_routes ORDER BY is_primordial DESC, is_default DESC, created_at"
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def update_model_route(route_id: str, **fields) -> Optional[dict]:
+    """Partial update. Only the listed fields are mutable; created_at,
+    is_primordial, openshell_name, openshell_port, provider, model are
+    immutable after creation. Use set_default_model_route() to change
+    is_default since it has cross-row semantics."""
+    allowed = {"status", "status_detail"}
+    updates = {k: v for k, v in fields.items() if k in allowed}
+    if not updates:
+        return get_model_route(route_id)
+    updates["updated_at"] = int(time.time() * 1000)
+    set_clause = ", ".join(f"{k} = ?" for k in updates)
+    with _conn() as conn:
+        conn.execute(
+            f"UPDATE model_routes SET {set_clause} WHERE id = ?",
+            (*updates.values(), route_id),
+        )
+    return get_model_route(route_id)
+
+
+def set_default_model_route(route_id: str) -> Optional[dict]:
+    """Mark exactly one route as default. Clears all other is_default flags
+    in the same transaction."""
+    with _conn() as conn:
+        row = conn.execute(
+            "SELECT id FROM model_routes WHERE id = ?", (route_id,)
+        ).fetchone()
+        if not row:
+            return None
+        now = int(time.time() * 1000)
+        conn.execute("UPDATE model_routes SET is_default = 0, updated_at = ?", (now,))
+        conn.execute(
+            "UPDATE model_routes SET is_default = 1, updated_at = ? WHERE id = ?",
+            (now, route_id),
+        )
+    return get_model_route(route_id)
+
+
+def delete_model_route(route_id: str) -> bool:
+    """Delete a route. Caller must verify is_primordial=0 and that no
+    agents are bound (count_agents_using_route(route_id) == 0)."""
+    with _conn() as conn:
+        cur = conn.execute("DELETE FROM model_routes WHERE id = ?", (route_id,))
+        return cur.rowcount > 0
+
+
+def count_agents_using_route(route_id: str) -> int:
+    with _conn() as conn:
+        row = conn.execute(
+            "SELECT COUNT(*) AS n FROM agents WHERE model_route_id = ?",
+            (route_id,),
+        ).fetchone()
+        return int(row["n"] if row else 0)
+
+
+def list_agents_using_route(route_id: str) -> list[dict]:
+    with _conn() as conn:
+        rows = conn.execute(
+            "SELECT * FROM agents WHERE model_route_id = ? ORDER BY created_at",
+            (route_id,),
+        ).fetchall()
+        return [dict(r) for r in rows]
 
 
 # ── Platform routing ────────────────────────────────────────────────────────
