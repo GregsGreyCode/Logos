@@ -796,8 +796,14 @@ async def _handle_sandbox_restart(request: web.Request) -> web.Response:
     # delete to find the right gateway — we fix state-file drift in
     # a follow-up; for now the delete tolerates a miss because the
     # spawn step always proceeds anyway.
+    #
+    # CRITICAL: delete_instance() shells out to `openshell sandbox
+    # delete` which is a synchronous subprocess call. If we ran it
+    # directly inside this async handler the event loop would be
+    # blocked for the duration (~5-10s typical). asyncio.to_thread
+    # offloads it so other gateway requests keep flowing.
     try:
-        executor.delete_instance(agent_name)
+        await asyncio.to_thread(executor.delete_instance, agent_name)
     except Exception as exc:
         logger.warning("Sandbox restart — delete failed for '%s': %s", agent_name, exc)
 
@@ -808,6 +814,17 @@ async def _handle_sandbox_restart(request: web.Request) -> web.Response:
     # effect: PATCH agent → POST restart reads the new value here →
     # spawn lands in the new gateway. Without this lookup the
     # restart silently respawned in the old gateway.
+    #
+    # CRITICAL (same as the delete above): executor.spawn() shells
+    # out to `openshell sandbox create` which can take 30-60s. The
+    # original handler called it directly — wedging the event loop
+    # for the entire spawn duration. Wrapping in asyncio.to_thread
+    # keeps the rest of the gateway responsive while the spawn
+    # progresses, and the request still only returns when spawn is
+    # complete (so the frontend's "switching..." badge stays on
+    # until the new sandbox is actually ready). Without this, every
+    # M-dropdown switch hard-blocks /health, /admin/agents polls,
+    # and any in-flight chat — the symptom we just hit.
     try:
         from gateway.executors.base import InstanceConfig
         config = InstanceConfig(
@@ -823,9 +840,10 @@ async def _handle_sandbox_restart(request: web.Request) -> web.Response:
             # for the chat M dropdown's switch-model flow.
             model_route_id=agent.get("model_route_id"),
         )
-        spawned = executor.spawn(config)
+        spawned = await asyncio.to_thread(executor.spawn, config)
         return web.json_response({"ok": True, "sandbox": spawned.name})
     except Exception as exc:
+        logger.exception("Sandbox restart spawn failed for '%s'", agent_name)
         return web.json_response({"ok": False, "error": str(exc)}, status=500)
 
 
