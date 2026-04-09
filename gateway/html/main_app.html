@@ -8290,18 +8290,27 @@ function app() {
           const err = await patchResp.json().catch(() => ({}));
           throw new Error(err.error || `PATCH failed: HTTP ${patchResp.status}`);
         }
-        // 2. Restart the sandbox so the new model_route_id takes effect
-        const sandboxName = agent.sandbox_name || agent.worker_id;
-        if (sandboxName) {
-          const restartResp = await fetch(`/api/admin/sandboxes/${encodeURIComponent(sandboxName)}/restart`, {
-            method: 'POST',
-            credentials: 'include',
-            headers: {'X-CSRF-Token': getCsrfToken()},
-          });
-          if (!restartResp.ok) {
-            const err = await restartResp.text();
-            console.warn('Sandbox restart failed (agent rebind succeeded):', err);
-          }
+        // 2. Restart the sandbox so the new model_route_id takes effect.
+        // The restart endpoint canonically takes the AGENT name in the
+        // URL (matches the existing dashboard restart button which
+        // passes sb.name). Earlier versions of this function passed
+        // agent.sandbox_name which 404'd because _handle_sandbox_restart
+        // matched on inst.get('name') (= agent name), so the lookup
+        // missed the state file's canonical "name" field. The handler
+        // now also tolerates the sandbox name as a fallback, but the
+        // agent name is the right thing to send.
+        const restartResp = await fetch(`/api/admin/sandboxes/${encodeURIComponent(agent.name)}/restart`, {
+          method: 'POST',
+          credentials: 'include',
+          headers: {'X-CSRF-Token': getCsrfToken()},
+        });
+        if (!restartResp.ok) {
+          const err = await restartResp.text();
+          console.warn('Sandbox restart failed (agent rebind succeeded):', err);
+          // Surface the error so the user knows the chat may still hit
+          // the old model — the rebind alone won't take effect until a
+          // sandbox respawn lands.
+          alert('Agent rebind succeeded but sandbox restart failed:\n\n' + err.slice(0, 300));
         }
         // 3. Refresh local state so activeAgentRoute reflects the new binding
         await this.loadNamedAgents();
