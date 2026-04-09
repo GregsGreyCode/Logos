@@ -602,11 +602,11 @@
                     : (activeAgentRoute || activeInstance.machine_name)
                       ? 'bg-[var(--accent-subtle)] text-[var(--accent)] border-[var(--accent)]/40 hover:border-[var(--accent)]/70'
                       : 'bg-gray-800 text-gray-400 border-gray-700 hover:border-gray-500'"
-                  :title="switchingRoute ? 'Switching model — sandbox respawning' : 'Model — click to change'">
+                  :title="switchingAgentIds.includes(activeAgent?.id) ? 'Switching model — sandbox respawning' : 'Model — click to change'">
                   <span class="font-bold" :class="activeAgentRoute ? 'text-[var(--accent)]' : 'text-gray-500'">M</span>
-                  <span x-show="!switchingRoute"
+                  <span x-show="!switchingAgentIds.includes(activeAgent?.id)"
                     x-text="(activeAgentRoute?.model || activeInstance.model_alias || status.current_model || 'auto')"></span>
-                  <span x-show="switchingRoute" class="text-yellow-400">switching…</span>
+                  <span x-show="switchingAgentIds.includes(activeAgent?.id)" class="text-yellow-400">switching…</span>
                 </button>
                 <div x-show="open" x-cloak class="absolute top-full left-0 mt-1 w-72 max-h-72 overflow-y-auto bg-gray-900 border border-gray-700 rounded-lg shadow-xl z-50 py-1">
                   <div class="px-3 py-1.5 text-[9px] text-gray-600 uppercase tracking-wider border-b border-gray-800">Model Routes</div>
@@ -5352,11 +5352,13 @@ function app() {
     // every time the modal closes so the next open starts on the
     // dropdown.
     provisionFormCustom: false,
-    // True while the chat M dropdown is mid-flight switching the
-    // active agent's route. Drives the "switching…" badge in the
-    // M dropdown button so the user gets feedback during the
-    // PATCH-then-restart sequence.
-    switchingRoute: false,
+    // Set of agent ids whose M dropdown is currently mid-switch.
+    // Per-agent (not global) so switching one agent's route doesn't
+    // make every other agent's M dropdown badge say "switching…".
+    // Stored as a plain array (not Set) so Alpine's reactivity picks
+    // up the change when we reassign with a new array literal in
+    // switchAgentRoute.
+    switchingAgentIds: [],
     // platforms (Admin → Platforms)
     platforms: [],
     platformsLoading: false,
@@ -8408,7 +8410,11 @@ function app() {
         `The chat will briefly disconnect (~5-10 seconds) while the new sandbox provisions. ` +
         `All conversations with ${agent.name} will move to the new model.`
       )) return;
-      this.switchingRoute = true;
+      // Mark THIS agent as switching (per-agent, not a global flag —
+      // earlier code used a single switchingRoute boolean which made
+      // every other agent's M-dropdown badge say "switching…" too even
+      // though only one agent was being rebound).
+      this.switchingAgentIds = [...this.switchingAgentIds, agent.id];
       try {
         // 1. Rebind the agent to the new route
         const patchResp = await fetch(`/admin/agents/${encodeURIComponent(agent.id)}`, {
@@ -8449,7 +8455,8 @@ function app() {
       } catch(e) {
         alert(`Switch failed: ${e.message || e}`);
       }
-      this.switchingRoute = false;
+      // Clear the switching marker for THIS agent only.
+      this.switchingAgentIds = this.switchingAgentIds.filter(id => id !== agent.id);
     },
 
     async loadModelRoutes() {
