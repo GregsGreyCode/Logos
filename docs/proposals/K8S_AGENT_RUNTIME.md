@@ -1,6 +1,19 @@
 # Kubernetes Agent Runtime — Architecture Plan
 
-## Current State
+> **STATUS: ASPIRATIONAL / SHELVED.** This document describes a target
+> architecture that was never implemented. Phase 1 (extracting
+> `_spawn_instance()` into `gateway/executors/kubernetes.py`) was merged
+> on 2026-03-26, but the entire Kubernetes executor was subsequently
+> **deleted** in commit `f6f0972 chore: drop legacy k8s pod-per-agent
+> executor + mini-swe-agent terminal backends`. The current runtime is
+> **OpenShell-only**, with `docker` and `local` as fallbacks. There is no
+> `kubernetes` mode in `gateway/executors/build_executor()` and no plans
+> to revive one. This file is kept as a historical record of the
+> proposed direction; nothing below reflects the current code.
+
+---
+
+## Current State (historical — as of 2026-03)
 
 Logos today is a **monolithic gateway with optional k8s-backed agent spawning**. Agent instances are created imperatively via `http_api.py:_spawn_instance()` (~250 lines of coupled logic mixing soul resolution, toolset policy, ConfigMap building, and direct k8s API calls). There is no reconciliation loop — if the gateway pod restarts mid-spawn, state is lost. There are no CRDs, no controller, no inter-agent communication layer.
 

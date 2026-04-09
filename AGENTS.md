@@ -99,7 +99,6 @@ logos/                        ← repo root
 │
 ├── acp_adapter/              # ACP protocol server (VS Code / Zed / JetBrains)
 ├── cron/                     # Cron scheduler (jobs.py, scheduler.py)
-├── honcho_integration/       # Honcho AI memory integration
 ├── evals/                    # Eval framework and suites
 ├── workflows/                # DAG workflow engine
 ├── environments/             # RL training environments (Atropos)
@@ -262,7 +261,7 @@ The registry handles schema collection, dispatch, availability checking, and err
 
 ## MCP Gateway (Centralized MCP Server Management)
 
-When `HERMES_GATEWAY_MCP=1` (set automatically at gateway startup), MCP servers run once in the gateway process rather than as per-agent subprocesses. This is required for OpenShell sandbox and k8s pod deployments where agents cannot spawn their own MCP servers.
+When `LOGOS_GATEWAY_MCP=1` (alias `HERMES_GATEWAY_MCP=1`, set automatically at gateway startup), MCP servers run once in the gateway process rather than as per-agent subprocesses. This is required for OpenShell sandboxes — the sandbox container has no access to `~/.logos/config.yaml` or to npm/pipx, so it cannot spawn its own MCP server subprocesses.
 
 ### Architecture
 

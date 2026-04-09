@@ -192,14 +192,15 @@ Gateway → Executor.spawn(config) → new process/container
                                       └── connects back via /ws/worker
 ```
 
-**Executors available**:
+**Executors available** (`gateway/executors/build_executor()`):
 
-| Executor | How it spawns | Config |
-|----------|--------------|--------|
-| `LocalProcessExecutor` | `python -m gateway.run` subprocess | Port pool 8081-8199 |
-| `KubernetesExecutor` | k8s Deployment + Service + PVC | `ghcr.io/gregsgreycode/logos:latest` image |
-| `DockerSandboxExecutor` | Docker container | Dockerfile.docker-sandbox |
-| `OpenShellExecutor` | Policy-enforced sandbox | Dockerfile.openshell-sandbox |
+| Executor | Mode | How it spawns | Config |
+|----------|------|---------------|--------|
+| `OpenShellExecutor` | `openshell` (default) | Reverse-connection sandbox via OpenShell CLI; agent worker connects out to gateway over WebSocket through OpenShell's HTTP CONNECT proxy | `Dockerfile.hermes-sandbox`, policy in `gateway/policies/openshell_default.yaml` |
+| `DockerSandboxExecutor` | `docker` | Plain Docker container with `--cap-drop=ALL` and no host mounts | `Dockerfile.docker-sandbox` |
+| `LocalProcessExecutor` | `local` | Supervised local process — no isolation, last-resort desktop fallback | Inherits gateway env |
+
+> The legacy `KubernetesExecutor` (k8s Deployment + Service + PVC per agent) was deleted in `f6f0972 chore: drop legacy k8s pod-per-agent executor + mini-swe-agent terminal backends`. There is no `kubernetes` runtime mode.
 
 **Spawn config** (`gateway/executors/base.py`):
 
