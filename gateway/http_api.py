@@ -2656,6 +2656,19 @@ async def _handle_chat(request: web.Request) -> web.StreamResponse:
     drain_task = asyncio.ensure_future(drain_tool_events())
 
     result = {}
+    # Capture the agent's configured model so we can include it in the
+    # per-message stats `done` event below. The worker doesn't currently
+    # echo the model back in its task_result, so without this the Stats
+    # dropdown's "model" row stays blank. Resolution priority: explicit
+    # per-agent setting → gateway-wide active model env var → empty
+    # string. Defined here (before the try/except) so it's always bound,
+    # even on the sandbox-unavailable error path.
+    _agent_model = (
+        _agent_config.get("model")
+        or os.environ.get("LOGOS_MODEL")
+        or os.environ.get("HERMES_MODEL")
+        or ""
+    )
     t_agent_start = time.time()
     try:
         # Worker + incarnation tag were resolved above, before the session
@@ -2804,14 +2817,19 @@ async def _handle_chat(request: web.Request) -> web.StreamResponse:
         except asyncio.CancelledError:
             pass
 
+    # Worker-side fields take priority when present (worker has the
+    # authoritative usage data from the LLM response). Fall back to
+    # the agent-config model captured at dispatch time so the stats
+    # dropdown always shows *something* under "model" even before the
+    # worker is taught to echo usage stats back.
     await send_event({
         "type":            "done",
         "elapsed_s":       round(time.time() - t_agent_start, 1),
-        "prompt_tokens":   result.get("last_prompt_tokens", 0),
+        "prompt_tokens":   result.get("last_prompt_tokens") or result.get("prompt_tokens") or 0,
         "api_calls":       result.get("api_calls", 0),
         "tools_used":      result.get("tools_used", 0),
         "tools_available": len(result.get("tools", [])),
-        "model":           result.get("model", ""),
+        "model":           result.get("model") or _agent_model or "",
         "tool_detail":     result.get("tool_detail", []),
     })
     return resp
