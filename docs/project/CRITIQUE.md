@@ -7,8 +7,9 @@
 
 ## 1. Critical Issues (Fix Before Public / Interview)
 
-**1. SQLite single connection shared across all platform threads.**
-`core/state.py:176` — `check_same_thread=False` with a single connection object, no connection pool, no `threading.Lock()`. WAL mode supports concurrent readers but only one writer. Under concurrent load from multiple platform adapters, write contention causes `OperationalError: database is locked` at 10-second timeouts. The timeout is per-query, not per-transaction. This is a correctness risk at any meaningful concurrency level.
+**~~1. SQLite single connection shared across all platform threads.~~** ✅ *Resolved.*
+*~~`core/state.py:176` — `check_same_thread=False` with a single connection object, no connection pool, no `threading.Lock()`. WAL mode supports concurrent readers but only one writer. Under concurrent load from multiple platform adapters, write contention causes `OperationalError: database is locked` at 10-second timeouts. The timeout is per-query, not per-transaction. This is a correctness risk at any meaningful concurrency level.~~*
+*Fixed: `SessionDB` now serialises every write through a `_write_lock` so `execute()` + `commit()` pairs are never interleaved across platform-adapter threads. See class docstring at `core/state.py:165-172`. WAL mode is retained for concurrent readers. A proper connection pool is still on the roadmap (see §8 / §4) but the correctness bug is gone.*
 
 **2. Run state has no atomicity guarantees.**
 Runs are recorded incrementally (`runs.py:80-94`) with exceptions suppressed (`runs.py:104-105`). Tools execute with real side effects, but if the process dies before the DB write completes, the run record is incomplete with no recovery path. (The dual JSONL/SQLite session write is resolved — SQLite is now the sole session store.)
@@ -236,13 +237,6 @@ Environment variables are readable by any process with access to the pod's `/pro
 ---
 
 ## 11. Additional Issues (Post-Initial Audit)
-
-### Privacy
-
-**Honcho is a cloud integration that sends conversation data to a third party.**
-`honcho_integration/client.py:77` — disabled by default, activates when `HONCHO_API_KEY` is present. When active it syncs conversation messages, `MEMORY.md`, `USER.md`, and `SOUL.md` to Plastic Labs' managed cloud service. There is no sanitisation path — the service requires actual conversation content to function. This is now documented under "Optional cloud integrations" in the README with an explicit privacy warning. The critique item here is operational: ensure the integration is genuinely inert when the key is absent, and that no code path silently enables it.
-
----
 
 ### Security
 

@@ -19,7 +19,7 @@
 | 6 | core/ | 6,577 | Audited |
 | 7 | environments/ | 6,870 | Audited |
 | 8 | logos/ (framework) | 1,472 | Audited |
-| 9 | integrations (honcho/cron/acp) | 4,177 | Audited |
+| 9 | integrations (cron/acp) | 2,949 | Audited |
 | 10 | infra (k8s/docker/CI) | ~2,000 | Audited |
 
 ---
@@ -50,11 +50,8 @@
 - **Impact:** Crash during fallback if api_mode routing doesn't match
 - **Fix:** Add explicit null check before `self.client` usage
 
-### P0-5: OpenShell Executor — Beta Integration, Needs Testing
-- **File:** `gateway/executors/openshell.py` (428 lines)
-- **Note:** Built against NVIDIA OpenShell (beta). CLI commands may have changed since implementation. The referenced Dockerfile (`docker/Dockerfile.openshell-sandbox`) is not in the repo. `get_headroom()` hits Docker TCP API on port 2375 (not enabled by default).
-- **Impact:** Integration likely needs updating to match current OpenShell beta API
-- **Fix:** Test against current OpenShell release, create the sandbox Dockerfile, fix Docker API access
+### ~~P0-5: OpenShell Executor — Beta Integration, Needs Testing~~ ✅ Resolved
+- *Resolved by the OpenShell integration rewrite — agent-only sandboxes with reverse-connection worker. See `48c6135 feat: OpenShell integration rewrite`, `0cc3446 feat: OpenShell integration Phase 5`, and the new `Dockerfile.hermes-sandbox` + `gateway/policies/openshell_default.yaml`. OpenShell is now the default first-class runtime, not a beta integration.*
 
 ### P0-6: Context Length Not Updated on Model Switch
 - **File:** `agents/hermes/agent.py` lines 2991-3020
@@ -156,7 +153,6 @@
 
 ### P2-6: Add Missing Validation
 - [ ] `gateway/session.py` line 90-100: `from_dict()` doesn't validate Platform enum
-- [ ] `agents/hermes/agent.py`: No validation that Honcho session key is set before use (line 776-814)
 - [ ] `logos_cli/config.py` line 127: DEFAULT_CONFIG uses string "model" but code expects dict format
 
 ### P2-7: Fix Inconsistent Model Config Format
@@ -176,7 +172,6 @@
 - [ ] Centralized route registry for HTTP API (routes scattered across http_api.py, mcp_management.py, admin_handlers.py)
 - [ ] Abstract LLMAdapter base class with OpenAI/Anthropic subclasses sharing test suite
 - [ ] Integrate batch_runner.py with logos.agent.runner (currently bypasses framework)
-- [ ] OpenShell executor: test against current NVIDIA OpenShell beta, create missing sandbox Dockerfile
 
 ### P3-2: Code Quality
 - [ ] `gateway/http_api.py` line 1950: Missing space before `or` operator
@@ -215,11 +210,10 @@ These sections had minimal or no issues:
 | **environments/** | Fully functional RL training infrastructure |
 | **evals/** | Working evaluation framework with DB persistence |
 | **workflows/** | Well-engineered async engine with approval gates |
-| **honcho_integration/** | Production-ready, proper async lifecycle |
 | **cron/** | Functional scheduler with cross-platform locking |
 | **acp_adapter/** | Complete, matches agent.json spec |
 | **gateway/platforms/** | All 7 platforms functional (telegram/discord/slack/whatsapp/signal/email/homeassistant) |
-| **gateway/executors/** | 3 of 4 executors verified (local/docker/k8s). OpenShell is real (NVIDIA beta) but untested — see P0-5 |
+| **gateway/executors/** | All current executors verified (local/docker/openshell). The legacy KubernetesExecutor was deleted in `f6f0972`. |
 | **souls/** | All 10 soul manifests valid YAML, reference existing toolsets |
 | **CI/CD workflows** | All functional, proper gating |
 | **Docker configs** | Both modes (simple + k3s) properly configured |
