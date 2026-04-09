@@ -2212,24 +2212,23 @@
 
       <!-- ── LEFT: World Canvas ──
            The world is a fixed-size square (WORLD_W = WORLD_H = 960px in
-           WorldConfig.js). Render it as a centred square minimap so the
-           full world is always visible — never stretched, never clipped.
-           The square sizes itself off the smaller of the available column
-           width and the available column height (calc(100vh - 10rem) ≈
-           the parent's vertical breathing room minus header + padding). -->
+           WorldConfig.js). Render it as a square minimap pinned under the
+           navbar so the full world is always visible — never stretched,
+           never clipped. The square sizes itself off the smaller of the
+           available column width and the available column height
+           (calc(100vh - 7rem) matches the parent's height calc). -->
       <div class="flex-1 min-w-0 flex flex-col items-center">
-        <div class="w-full flex items-center justify-between mb-2">
-          <h2 class="text-lg font-bold text-white">Agents</h2>
-        </div>
-        <!-- Outer flex centres the square inside the column when the
-             column is taller than wide. -->
-        <div class="flex-1 min-h-0 w-full flex items-center justify-center">
+        <!-- Outer flex pins the square to the top of the column so it sits
+             flush under the navbar; horizontal centring keeps it middled
+             when the column is wider than the box. -->
+        <div class="flex-1 min-h-0 w-full flex items-start justify-center">
           <!-- Square viewport: aspect-ratio:1 + width:min(100%,available-height)
                guarantees the box stays a perfect square that always fits the
-               column. Background + ring make the world bounds visually
-               obvious without painting outside the world tilemap. -->
+               column. The height clamp matches the parent container's
+               `height: calc(100vh - 7rem)` so the box can use the full
+               vertical space without overflowing. -->
           <div class="relative rounded-xl border border-gray-800 ring-1 ring-indigo-500/20 overflow-hidden shadow-[0_0_40px_rgba(99,102,241,0.08)_inset]"
-               style="aspect-ratio:1/1; width:min(100%, calc(100vh - 10rem)); background:#0a0a0f;">
+               style="aspect-ratio:1/1; width:min(100%, calc(100vh - 7rem)); background:#0a0a0f;">
             <div id="agent-world" class="absolute inset-0"></div>
           </div>
         </div>
@@ -4873,7 +4872,11 @@ function app() {
     _liveTools: {},       // { [call_id]: {tool, preview, status, duration_ms} }
     _liveToolOrder: [],   // [call_id, ...] in order of appearance
     lastResponseAt: null,
-    isWakingUp: false,
+    // Default true so each chat starts with the breathe-pulse "waking up"
+    // dots while we wait for the model to load on LM Studio (or any cold
+    // backend). The first streaming event (token / tool_start / message)
+    // flips this to false and reveals the kawaii thinking phrase.
+    isWakingUp: true,
     lastRefresh: '',
     clientNow: Date.now(),
     chatAgents: [],
@@ -5763,8 +5766,13 @@ function app() {
       // Phrase (kawaii + verb) rotates every 4 ticks (~3.2s).
       const TICK_MS = 800;
       const PHRASE_TICKS = 4;
-      // If a response hasn't arrived after 15s, show waking-from-sleep indicator
-      this._wakingUpTimer = setTimeout(() => { this.isWakingUp = true; }, 15000);
+      // Each new chat starts in the "waking up" state — the breathe-pulse
+      // dots show until the model emits its first streaming event (token /
+      // tool_start / message), at which point the SSE handlers flip
+      // isWakingUp back to false and the kawaii phrase takes over. Without
+      // this reset the second turn would jump straight to kawaii because a
+      // prior turn already cleared the flag.
+      this.isWakingUp = true;
       // Show immediately so there's no blank frame
       this.thinkingText = SPINNERS[0] + ' ' + KAWAII[kIdx] + ' ' + VERBS[vIdx] + '\u2026';
       this._thinkingTimer = setInterval(() => {
@@ -5785,7 +5793,6 @@ function app() {
     _stopThinkingAnim() {
       if (this._thinkingTimer) { clearInterval(this._thinkingTimer); this._thinkingTimer = null; }
       if (this._statusOverrideTimer) { clearTimeout(this._statusOverrideTimer); this._statusOverrideTimer = null; }
-      if (this._wakingUpTimer) { clearTimeout(this._wakingUpTimer); this._wakingUpTimer = null; }
       this._statusOverride = null;
       this._statusOverridePending = null;
       this._statusOverrideGate = false;

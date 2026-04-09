@@ -495,6 +495,18 @@ async def handle_agents_post(request: web.Request) -> web.Response:
     toolsets_str = _json.dumps(toolsets_raw) if isinstance(toolsets_raw, list) else ""
     soul_slug = (body.get("soul_slug") or "general").strip()
     model = (body.get("model") or "").strip()
+    # "Auto" / empty model: pin to the gateway's currently active model so
+    # the agent card displays a concrete value and the executor + sandbox
+    # see the same model the rest of the gateway is using. Without this,
+    # the DB record stays empty and the world-view card shows no model
+    # badge even though the executor's spawn-time fallback gives the
+    # sandbox a working model. Resolution mirrors openshell.spawn().
+    if not model:
+        model = (
+            os.environ.get("HERMES_MODEL")
+            or os.environ.get("LLM_MODEL")
+            or ""
+        ).strip()
     # Optional sprite selection (0..7); None falls back to name-hash render.
     try:
         char_index = body.get("char_index")
