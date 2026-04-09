@@ -340,7 +340,7 @@ def finish_provisioning(route_id: str, set_as_default: bool = False) -> dict:
     #   3. Fall back to "http://host.docker.internal:1234/v1" — the
     #      default LM Studio URL on a vanilla Docker setup.
     base_url = ""
-    api_key = "unused"
+    api_key: Optional[str] = None
     try:
         machines = auth_db.list_machines() if hasattr(auth_db, "list_machines") else []
         for m in machines:
@@ -355,12 +355,45 @@ def finish_provisioning(route_id: str, set_as_default: bool = False) -> dict:
         import os as _os
         base_url = _os.environ.get("OPENAI_BASE_URL") or "http://host.docker.internal:1234/v1"
 
+    # Credential argument shape — must work for BOTH common LM Studio
+    # configurations:
+    #
+    #   1. LM Studio in NO-AUTH mode (the default and overwhelming
+    #      majority of homelab installs).
+    #   2. LM Studio with token auth enabled (rarer, but supported).
+    #
+    # Earlier code passed the literal `OPENAI_API_KEY=unused` as a
+    # sentinel. LM Studio (since 0.3.x) validates the token FORMAT
+    # whenever one is present and rejects "unused" with:
+    #     "Malformed LM Studio API token provided: unused"
+    # That's the bug the user hit on Hermat — the worker registered
+    # but every chat completion call returned 401.
+    #
+    # The accepted-by-both-modes default is the literal "lm-studio",
+    # which LM Studio uses as its placeholder token in their own
+    # SDK examples (https://lmstudio.ai/docs/developer/core/auth).
+    # No-auth instances accept any well-formed token; auth-enabled
+    # instances only accept the configured token. So:
+    #
+    #   - User has a real token in their machines record   → use it
+    #   - User has nothing OR the env var is set elsewhere → "lm-studio"
+    #
+    # If the user later enables LM Studio auth with a custom token,
+    # they enter it in the machine row's api_key column via the
+    # admin UI and the next provision picks it up.
+    if api_key:
+        cred_value = api_key
+    else:
+        import os as _os
+        cred_value = _os.environ.get("OPENAI_API_KEY") or "lm-studio"
+    cred_arg = f"OPENAI_API_KEY={cred_value}"
+
     try:
         _run_openshell(
             "provider", "create",
             "--name", provider,
             "--type", "openai",
-            "--credential", f"OPENAI_API_KEY={api_key}",
+            "--credential", cred_arg,
             "--config", f"OPENAI_BASE_URL={base_url}",
             gateway=name,
         )
