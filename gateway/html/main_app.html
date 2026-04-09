@@ -2886,6 +2886,10 @@
         class="pb-2 text-sm font-medium"
         :class="adminTab==='sandboxes'?'tab-active':'text-gray-500 hover:text-white'"
         @click="adminTab='sandboxes'; loadSandboxes()">Sandboxes</button>
+      <button x-show="can('manage_machines')"
+        class="pb-2 text-sm font-medium"
+        :class="adminTab==='model-routes'?'tab-active':'text-gray-500 hover:text-white'"
+        @click="adminTab='model-routes'; loadModelRoutes()">Model Routes</button>
       <button x-show="can('manage_users')"
         class="pb-2 text-sm font-medium"
         :class="adminTab==='platforms'?'tab-active':'text-gray-500 hover:text-white'"
@@ -3654,6 +3658,208 @@
         </div>
       </details>
 
+    </div>
+
+    <!-- ── Model Routes sub-tab ── -->
+    <!--
+      Multi-OpenShell-gateway routing dashboard. Each row is one
+      OpenShell sub-gateway pinned to a single (provider, model) pair
+      via `openshell inference set --model <m>`. Adding routes here
+      lets multiple agents target different models simultaneously
+      without OpenShell's "one forced model per gateway" design
+      becoming a bottleneck.
+    -->
+    <div x-show="adminTab==='model-routes' && can('manage_machines')" x-cloak>
+
+      <!-- Overview cards -->
+      <div class="grid grid-cols-4 gap-3 mb-5">
+        <div class="bg-gray-900 border border-gray-800 rounded-lg px-4 py-3">
+          <div class="text-2xl font-bold text-white" x-text="modelRoutes.length"></div>
+          <div class="text-[10px] text-gray-500 uppercase tracking-wider">Configured Routes</div>
+        </div>
+        <div class="bg-gray-900 border border-gray-800 rounded-lg px-4 py-3">
+          <div class="text-2xl font-bold"
+            :class="modelRoutes.filter(r => r.status === 'ready').length === modelRoutes.length && modelRoutes.length ? 'text-green-400' : 'text-yellow-400'"
+            x-text="modelRoutes.filter(r => r.status === 'ready').length + '/' + modelRoutes.length"></div>
+          <div class="text-[10px] text-gray-500 uppercase tracking-wider">Ready</div>
+        </div>
+        <div class="bg-gray-900 border border-gray-800 rounded-lg px-4 py-3">
+          <div class="text-2xl font-bold text-white"
+            x-text="modelRoutes.reduce((acc, r) => acc + (r.bound_agents || 0), 0)"></div>
+          <div class="text-[10px] text-gray-500 uppercase tracking-wider">Bound Agents</div>
+        </div>
+        <div class="bg-gray-900 border border-gray-800 rounded-lg px-4 py-3">
+          <div class="text-sm font-mono text-gray-300 truncate"
+            x-text="(modelRoutes.find(r => r.is_default) || {}).model || 'none'"
+            :title="(modelRoutes.find(r => r.is_default) || {}).model || 'no default route'"></div>
+          <div class="text-[10px] text-gray-500 uppercase tracking-wider">Default Route</div>
+        </div>
+      </div>
+
+      <!-- Route table -->
+      <div class="flex items-center justify-between mb-3">
+        <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Provisioned Routes</div>
+        <div class="flex items-center gap-2">
+          <button @click="loadModelRoutes()" class="text-xs text-[var(--accent)] hover:opacity-80 flex items-center gap-1">
+            <span>&#8635;</span> Refresh
+          </button>
+          <button @click="provisionModalOpen=true; provisionForm={provider:'lmstudio',model:'',set_as_default:false}"
+            class="text-xs px-3 py-1.5 rounded bg-[var(--accent)] text-black font-medium hover:opacity-90">
+            + Provision Model
+          </button>
+        </div>
+      </div>
+
+      <div class="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden mb-5">
+        <table class="w-full text-xs">
+          <thead>
+            <tr class="border-b border-gray-800 text-gray-500">
+              <th class="text-left px-4 py-3 font-medium">Model</th>
+              <th class="text-left px-4 py-3 font-medium">Provider</th>
+              <th class="text-left px-4 py-3 font-medium">OpenShell Gateway</th>
+              <th class="text-left px-4 py-3 font-medium">Port</th>
+              <th class="text-left px-4 py-3 font-medium">Status</th>
+              <th class="text-left px-4 py-3 font-medium">Agents</th>
+              <th class="text-left px-4 py-3 font-medium">Default</th>
+              <th class="text-right px-4 py-3 font-medium">Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            <template x-for="r in modelRoutes" :key="r.id">
+              <tr class="border-b border-gray-800/50 hover:bg-gray-800/30 cursor-pointer"
+                  @click="selectedRoute = selectedRoute?.id === r.id ? null : r">
+                <td class="px-4 py-2 text-white font-medium" x-text="r.model"></td>
+                <td class="px-4 py-2 text-gray-400 font-mono" x-text="r.provider"></td>
+                <td class="px-4 py-2 text-gray-300 font-mono" x-text="r.openshell_name"></td>
+                <td class="px-4 py-2 text-gray-500" x-text="r.openshell_port"></td>
+                <td class="px-4 py-2">
+                  <span class="px-1.5 py-0.5 rounded text-[10px] font-medium border"
+                    :class="r.status === 'ready' ? 'bg-green-950 text-green-400 border-green-900'
+                      : r.status === 'provisioning' ? 'bg-yellow-950 text-yellow-400 border-yellow-900'
+                      : r.status === 'stopped' ? 'bg-gray-900 text-gray-500 border-gray-800'
+                      : 'bg-red-950 text-red-400 border-red-900'"
+                    x-text="r.status"></span>
+                </td>
+                <td class="px-4 py-2 text-gray-400" x-text="r.bound_agents || 0"></td>
+                <td class="px-4 py-2">
+                  <template x-if="r.is_default">
+                    <span class="px-1.5 py-0.5 rounded text-[10px] font-medium bg-indigo-950 text-indigo-300 border border-indigo-900">default</span>
+                  </template>
+                  <template x-if="r.is_primordial">
+                    <span class="ml-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-gray-800 text-gray-400 border border-gray-700">primordial</span>
+                  </template>
+                </td>
+                <td class="px-4 py-2 text-right">
+                  <div class="flex items-center gap-1 justify-end" @click.stop>
+                    <button @click="refreshRoute(r.id)"
+                      class="px-2 py-1 rounded border border-gray-700 text-gray-500 hover:text-white hover:border-gray-500 text-[10px]">Refresh</button>
+                    <button x-show="!r.is_default" @click="setDefaultRoute(r.id)"
+                      class="px-2 py-1 rounded border border-indigo-900 text-indigo-700 hover:text-indigo-400 text-[10px]">Set Default</button>
+                    <button @click="restartRoute(r.id)"
+                      class="px-2 py-1 rounded border border-yellow-900 text-yellow-700 hover:text-yellow-400 text-[10px]">Restart</button>
+                    <button x-show="!r.is_primordial" @click="deleteRoute(r)"
+                      :disabled="(r.bound_agents || 0) > 0"
+                      :class="(r.bound_agents || 0) > 0 ? 'opacity-30 cursor-not-allowed' : ''"
+                      :title="(r.bound_agents || 0) > 0 ? 'Re-bind or delete the ' + r.bound_agents + ' agent(s) using this route first' : 'Destroy the OpenShell gateway and remove this route'"
+                      class="px-2 py-1 rounded border border-red-900 text-red-700 hover:text-red-400 text-[10px]">Delete</button>
+                  </div>
+                </td>
+              </tr>
+            </template>
+            <template x-if="!modelRoutesLoading && modelRoutes.length === 0">
+              <tr>
+                <td colspan="8" class="px-4 py-8 text-center text-gray-600">
+                  No model routes provisioned yet. Click <span class="text-[var(--accent)]">+ Provision Model</span> to create one,
+                  or finish <button @click="tab='infra'; infraTab='servers'" class="underline text-[var(--accent)] hover:opacity-80">Settings → Inference</button>
+                  if you haven't picked a model yet.
+                </td>
+              </tr>
+            </template>
+            <template x-if="modelRoutesLoading && modelRoutes.length === 0">
+              <tr><td colspan="8" class="px-4 py-8 text-center text-gray-600">Loading...</td></tr>
+            </template>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- Detail panel (expanded row) -->
+      <template x-if="selectedRoute">
+        <div class="bg-gray-900 border border-gray-700 rounded-xl p-5 space-y-4 mb-5">
+          <div class="flex items-start justify-between">
+            <div>
+              <div class="text-sm font-semibold text-white" x-text="selectedRoute.model"></div>
+              <div class="text-[10px] text-gray-500 font-mono" x-text="selectedRoute.id"></div>
+            </div>
+            <button @click="selectedRoute=null" class="text-gray-500 hover:text-white text-lg">&times;</button>
+          </div>
+          <div class="grid grid-cols-3 gap-4 text-xs">
+            <div><span class="text-gray-600">Provider:</span> <span class="text-gray-300 font-mono" x-text="selectedRoute.provider"></span></div>
+            <div><span class="text-gray-600">Gateway:</span> <span class="text-gray-300 font-mono" x-text="selectedRoute.openshell_name"></span></div>
+            <div><span class="text-gray-600">Port:</span> <span class="text-gray-300 font-mono" x-text="selectedRoute.openshell_port"></span></div>
+            <div><span class="text-gray-600">Status:</span> <span class="text-gray-300" x-text="selectedRoute.status"></span></div>
+            <div><span class="text-gray-600">Bound agents:</span> <span class="text-gray-300" x-text="selectedRoute.bound_agents || 0"></span></div>
+            <div><span class="text-gray-600">Created:</span> <span class="text-gray-300" x-text="selectedRoute.created_at ? new Date(selectedRoute.created_at).toLocaleString() : '—'"></span></div>
+          </div>
+          <template x-if="selectedRoute.status_detail">
+            <div>
+              <div class="text-[10px] text-gray-600 uppercase tracking-wider mb-1">Status Detail</div>
+              <pre class="text-[10px] text-red-400 bg-red-950/20 border border-red-900/40 rounded p-2 whitespace-pre-wrap" x-text="selectedRoute.status_detail"></pre>
+            </div>
+          </template>
+        </div>
+      </template>
+    </div>
+
+    <!-- ── Provision Model Route modal ── -->
+    <div x-show="provisionModalOpen" x-cloak
+      class="fixed inset-0 bg-black/60 flex items-center justify-center z-50"
+      @click="provisionModalOpen=false">
+      <div class="bg-gray-900 border border-gray-700 rounded-xl p-6 max-w-md w-full mx-4 space-y-4"
+        @click.stop>
+        <div class="flex items-start justify-between">
+          <div>
+            <div class="text-sm font-semibold text-white">Provision Model Route</div>
+            <div class="text-[10px] text-gray-500 mt-1">Spins up a new OpenShell sub-gateway pinned to one model. Cold-provisioning takes 30-60 seconds.</div>
+          </div>
+          <button @click="provisionModalOpen=false" class="text-gray-500 hover:text-white text-lg">&times;</button>
+        </div>
+        <div class="space-y-3">
+          <div>
+            <label class="text-[10px] text-gray-500 uppercase tracking-wider">Provider</label>
+            <select x-model="provisionForm.provider"
+              class="w-full mt-1 px-3 py-2 bg-gray-800 border border-gray-700 rounded text-white text-sm">
+              <option value="lmstudio">lmstudio</option>
+              <option value="ollama">ollama</option>
+              <option value="openai">openai</option>
+              <option value="anthropic">anthropic</option>
+            </select>
+          </div>
+          <div>
+            <label class="text-[10px] text-gray-500 uppercase tracking-wider">Model</label>
+            <input x-model="provisionForm.model" type="text" placeholder="openai/gpt-oss-20b"
+              class="w-full mt-1 px-3 py-2 bg-gray-800 border border-gray-700 rounded text-white text-sm font-mono"
+              @keydown.enter="provisionRoute()">
+            <div class="text-[10px] text-gray-600 mt-1">The exact model id the inference backend expects (e.g. <code class="text-gray-500">openai/gpt-oss-20b</code> for LM Studio).</div>
+          </div>
+          <label class="flex items-center gap-2 text-xs text-gray-400">
+            <input type="checkbox" x-model="provisionForm.set_as_default" class="rounded">
+            Set as default route for new agents
+          </label>
+        </div>
+        <template x-if="provisionError">
+          <div class="text-[10px] text-red-400 bg-red-950/20 border border-red-900/40 rounded p-2" x-text="provisionError"></div>
+        </template>
+        <div class="flex items-center gap-2 justify-end">
+          <button @click="provisionModalOpen=false"
+            class="px-3 py-1.5 rounded border border-gray-700 text-gray-400 hover:text-white text-xs">Cancel</button>
+          <button @click="provisionRoute()" :disabled="provisioningRoute || !provisionForm.model"
+            :class="provisioningRoute || !provisionForm.model ? 'opacity-50 cursor-not-allowed' : ''"
+            class="px-3 py-1.5 rounded bg-[var(--accent)] text-black font-medium text-xs">
+            <span x-show="!provisioningRoute">Provision</span>
+            <span x-show="provisioningRoute">Provisioning... (30-60s)</span>
+          </button>
+        </div>
+      </div>
     </div>
 
     <!-- ── Platforms sub-tab ── -->
@@ -5034,6 +5240,16 @@ function app() {
     sandboxLogsLoading: false,
     sandboxLogsSelectedName: null,
     sandboxPolicyOpen: false,
+    // model routes (Admin → Model Routes) — multi-OpenShell-gateway
+    // routing dashboard. Each row is one OpenShell sub-gateway pinned
+    // to one (provider, model) pair via `openshell inference set`.
+    modelRoutes: [],
+    modelRoutesLoading: false,
+    selectedRoute: null,
+    provisionModalOpen: false,
+    provisioningRoute: false,
+    provisionError: null,
+    provisionForm: { provider: 'lmstudio', model: '', set_as_default: false },
     // platforms (Admin → Platforms)
     platforms: [],
     platformsLoading: false,
@@ -5383,6 +5599,7 @@ function app() {
       setInterval(() => { this._now = Math.floor(Date.now() / 1000); }, 15000);
       setInterval(() => { if (this.tab === 'routing') this.probeAllMachines(); }, 90000);
       setInterval(() => { if (this.tab === 'admin' && this.adminTab === 'sandboxes') this.loadSandboxes(); }, 3000);
+      setInterval(() => { if (this.tab === 'admin' && this.adminTab === 'model-routes') this.loadModelRoutes(); }, 5000);
       // Poll named agents every 3s so worker_connected flips from false→true
       // the moment a sandbox finishes provisioning and its worker connects
       // to /ws/worker. This drives the chat input's enabled/greyed state.
@@ -5453,14 +5670,15 @@ function app() {
       if (name === 'workflows') { this.loadWorkflows?.(); return; }
     },
     _ADMIN_URL_MAP: {
-      users:     'users',
-      security:  'action-policies',
-      workflows: 'workflows',
-      runs:      'runs',
-      sandboxes: 'sandboxes',
-      platforms: 'platforms',
-      audit:     'audit',
-      approvals: 'approvals',
+      users:          'users',
+      security:       'action-policies',
+      workflows:      'workflows',
+      runs:           'runs',
+      sandboxes:      'sandboxes',
+      'model-routes': 'model-routes',
+      platforms:      'platforms',
+      audit:          'audit',
+      approvals:      'approvals',
     },
     _applyUrlToState(pathname) {
       const parts = (pathname || '/').split('/').filter(Boolean);
@@ -7907,6 +8125,126 @@ function app() {
       }
       if (this.selectedSandbox?.sandbox_name === name) this.selectedSandbox = null;
       await this.loadSandboxes();
+    },
+
+    // ── Model routes ──────────────────────────────────────────────
+    async loadModelRoutes() {
+      this.modelRoutesLoading = true;
+      try {
+        const r = await fetch('/api/admin/model-routes', {credentials: 'include'});
+        if (!r.ok) throw new Error(await r.text());
+        const d = await r.json();
+        this.modelRoutes = d.routes || [];
+        // Keep selectedRoute hydrated with the latest version of itself
+        // so its detail panel reflects status changes from refresh.
+        if (this.selectedRoute) {
+          const fresh = this.modelRoutes.find(r => r.id === this.selectedRoute.id);
+          this.selectedRoute = fresh || null;
+        }
+      } catch(e) {
+        this.modelRoutes = [];
+      }
+      this.modelRoutesLoading = false;
+    },
+
+    async provisionRoute() {
+      // POST a new (provider, model) tuple to /api/admin/model-routes.
+      // Cold-provision can take 30-60s — the button shows the spinner
+      // while the request is in flight. On success, refresh the list,
+      // close the modal, and clear the form.
+      if (!this.provisionForm.model) return;
+      this.provisioningRoute = true;
+      this.provisionError = null;
+      try {
+        const r = await fetch('/api/admin/model-routes', {
+          method: 'POST',
+          credentials: 'include',
+          headers: {'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken()},
+          body: JSON.stringify({
+            provider: this.provisionForm.provider,
+            model: this.provisionForm.model,
+            set_as_default: !!this.provisionForm.set_as_default,
+          }),
+        });
+        const d = await r.json();
+        if (!r.ok || !d.ok) {
+          this.provisionError = d.error || `HTTP ${r.status}`;
+        } else {
+          this.provisionModalOpen = false;
+          this.provisionForm = { provider: 'lmstudio', model: '', set_as_default: false };
+          await this.loadModelRoutes();
+        }
+      } catch(e) {
+        this.provisionError = e.message || String(e);
+      }
+      this.provisioningRoute = false;
+    },
+
+    async restartRoute(routeId) {
+      if (!confirm('Restart this OpenShell gateway? Sandboxes bound to this route will lose their connection and need to respawn.')) return;
+      try {
+        const r = await fetch(`/api/admin/model-routes/${encodeURIComponent(routeId)}/restart`, {
+          method: 'POST',
+          credentials: 'include',
+          headers: {'X-CSRF-Token': getCsrfToken()},
+        });
+        const d = await r.json();
+        if (!r.ok || !d.ok) throw new Error(d.error || `HTTP ${r.status}`);
+      } catch(e) {
+        alert(`Restart failed: ${e.message || e}`);
+      }
+      await this.loadModelRoutes();
+    },
+
+    async setDefaultRoute(routeId) {
+      try {
+        const r = await fetch(`/api/admin/model-routes/${encodeURIComponent(routeId)}/set-default`, {
+          method: 'POST',
+          credentials: 'include',
+          headers: {'X-CSRF-Token': getCsrfToken()},
+        });
+        const d = await r.json();
+        if (!r.ok || !d.ok) throw new Error(d.error || `HTTP ${r.status}`);
+      } catch(e) {
+        alert(`Set default failed: ${e.message || e}`);
+      }
+      await this.loadModelRoutes();
+    },
+
+    async refreshRoute(routeId) {
+      try {
+        const r = await fetch(`/api/admin/model-routes/${encodeURIComponent(routeId)}/refresh`, {
+          method: 'POST',
+          credentials: 'include',
+          headers: {'X-CSRF-Token': getCsrfToken()},
+        });
+        const d = await r.json();
+        if (!r.ok || !d.ok) throw new Error(d.error || `HTTP ${r.status}`);
+      } catch(e) {
+        alert(`Refresh failed: ${e.message || e}`);
+      }
+      await this.loadModelRoutes();
+    },
+
+    async deleteRoute(route) {
+      if ((route.bound_agents || 0) > 0) {
+        alert(`Cannot delete: ${route.bound_agents} agent(s) still bound to this route. Re-bind or delete those agents first.`);
+        return;
+      }
+      if (!confirm(`Destroy the OpenShell gateway "${route.openshell_name}" and remove route "${route.model}"?\n\nThis cannot be undone.`)) return;
+      try {
+        const r = await fetch(`/api/admin/model-routes/${encodeURIComponent(route.id)}`, {
+          method: 'DELETE',
+          credentials: 'include',
+          headers: {'X-CSRF-Token': getCsrfToken()},
+        });
+        const d = await r.json();
+        if (!r.ok || !d.ok) throw new Error(d.error || `HTTP ${r.status}`);
+        if (this.selectedRoute?.id === route.id) this.selectedRoute = null;
+      } catch(e) {
+        alert(`Delete failed: ${e.message || e}`);
+      }
+      await this.loadModelRoutes();
     },
 
     async loadPlatforms() {
