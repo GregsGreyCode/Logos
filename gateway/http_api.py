@@ -749,7 +749,14 @@ async def _handle_sandbox_restart(request: web.Request) -> web.Response:
     except Exception as exc:
         logger.warning("Sandbox restart — delete failed for '%s': %s", name, exc)
 
-    # Re-spawn with original config
+    # Re-spawn with original config. The state-file inst dict carries
+    # the model_route_id this sandbox was last bound to (added in
+    # commit 2 of the multi-route routing chain) — we MUST pass it
+    # through to the new InstanceConfig or the executor's
+    # _resolve_route() will silently fall back to the default route
+    # and the restarted sandbox could land in a different gateway
+    # serving a different model, breaking the user's mental model of
+    # "restart === same agent same model".
     try:
         from gateway.executors.base import InstanceConfig
         config = InstanceConfig(
@@ -760,10 +767,168 @@ async def _handle_sandbox_restart(request: web.Request) -> web.Response:
             instance_label=inst.get("name", name),
             toolsets=inst.get("toolsets", []),
             policy=inst.get("policy", ""),
+            model_route_id=inst.get("model_route_id"),
         )
         spawned = executor.spawn(config)
         return web.json_response({"ok": True, "sandbox": spawned.name})
     except Exception as exc:
+        return web.json_response({"ok": False, "error": str(exc)}, status=500)
+
+
+# ── Model routes ──────────────────────────────────────────────────────────
+# REST CRUD for the model_routes table + the underlying OpenShell
+# gateways. Each route is one OpenShell sub-gateway pinned to a single
+# (provider, model) pair. See gateway/openshell_routes.py for the
+# subprocess wrappers; this layer just exposes them over HTTP and
+# handles the JSON shapes the dashboard / curl will use.
+#
+# All write endpoints offload the openshell CLI calls to a thread via
+# asyncio.to_thread because cold-provisioning a new gateway can take
+# 30-60 seconds and the aiohttp event loop must not block. The
+# response only returns after the operation completes — there's no
+# 202-Accepted-then-poll pattern (yet); the UI in commit 5 will show
+# a spinner while the request is in flight.
+
+async def _handle_model_routes_list(request: web.Request) -> web.Response:
+    """GET /api/admin/model-routes — list every model_routes row.
+
+    Each row carries its current status (provisioning/ready/error/stopped)
+    plus a `bound_agents` count so the UI can show how many agents would
+    break if the route were destroyed. Read-only — does not call the
+    openshell CLI."""
+    routes = auth_db.list_model_routes()
+    for r in routes:
+        r["bound_agents"] = auth_db.count_agents_using_route(r["id"])
+    return web.json_response({"routes": routes})
+
+
+async def _handle_model_routes_post(request: web.Request) -> web.Response:
+    """POST /api/admin/model-routes — provision (or reuse) a route.
+
+    Body: ``{provider: str, model: str, set_as_default?: bool}``
+
+    Calls openshell_routes.provision_or_reuse_route under the hood, which
+    either adopts the existing primordial gateway, reuses an existing
+    matching route, or cold-provisions a fresh OpenShell gateway. The
+    cold-provision path can take 30-60 seconds — the call is offloaded
+    to a thread so other gateway requests aren't blocked.
+
+    Returns ``{ok: true, route: {...}}`` on success or ``{ok: false,
+    error: str}`` on failure (with the underlying openshell CLI stderr
+    if available)."""
+    try:
+        body = await request.json()
+    except Exception:
+        raise web.HTTPBadRequest(reason="Invalid JSON body")
+
+    provider = (body.get("provider") or "").strip()
+    model = (body.get("model") or "").strip()
+    set_as_default = bool(body.get("set_as_default", False))
+
+    if not provider:
+        return web.json_response({"ok": False, "error": "provider is required"}, status=400)
+    if not model:
+        return web.json_response({"ok": False, "error": "model is required"}, status=400)
+
+    try:
+        from gateway import openshell_routes as _osr
+        import asyncio as _asyncio
+        route = await _asyncio.to_thread(
+            _osr.provision_or_reuse_route, provider, model, set_as_default,
+        )
+        return web.json_response({"ok": True, "route": route})
+    except Exception as exc:
+        logger.warning(
+            "model-routes POST failed for %s/%s: %s", provider, model, exc,
+        )
+        return web.json_response(
+            {"ok": False, "error": str(exc)},
+            status=500,
+        )
+
+
+async def _handle_model_routes_restart(request: web.Request) -> web.Response:
+    """POST /api/admin/model-routes/{id}/restart — stop+start the
+    underlying OpenShell gateway.
+
+    Useful when the gateway has wedged or after the host reboots without
+    an autostart unit. Sandboxes bound to the route will lose their
+    WebSocket connection and need to respawn — the worker_registry
+    handles that automatically when the sandbox reconnects."""
+    route_id = request.match_info["id"]
+    if not auth_db.get_model_route(route_id):
+        return web.json_response({"ok": False, "error": "route not found"}, status=404)
+    try:
+        from gateway import openshell_routes as _osr
+        import asyncio as _asyncio
+        route = await _asyncio.to_thread(_osr.restart_route, route_id)
+        return web.json_response({"ok": True, "route": route})
+    except Exception as exc:
+        logger.warning("model-routes restart failed for %s: %s", route_id, exc)
+        return web.json_response({"ok": False, "error": str(exc)}, status=500)
+
+
+async def _handle_model_routes_set_default(request: web.Request) -> web.Response:
+    """POST /api/admin/model-routes/{id}/set-default — promote a route
+    to is_default=1, clearing the flag on every other row in one
+    transaction. Pure DB op — no openshell CLI involvement."""
+    route_id = request.match_info["id"]
+    route = auth_db.set_default_model_route(route_id)
+    if not route:
+        return web.json_response({"ok": False, "error": "route not found"}, status=404)
+    return web.json_response({"ok": True, "route": route})
+
+
+async def _handle_model_routes_refresh(request: web.Request) -> web.Response:
+    """POST /api/admin/model-routes/{id}/refresh — re-query OpenShell
+    for the route's current status and update the row's status field.
+
+    Used by the admin UI's "refresh" button after a manual openshell
+    intervention or when a route is stuck in 'provisioning'. Cheap —
+    just one `openshell gateway info` call per request, run in a
+    thread so it doesn't block."""
+    route_id = request.match_info["id"]
+    if not auth_db.get_model_route(route_id):
+        return web.json_response({"ok": False, "error": "route not found"}, status=404)
+    try:
+        from gateway import openshell_routes as _osr
+        import asyncio as _asyncio
+        route = await _asyncio.to_thread(_osr.refresh_status, route_id)
+        return web.json_response({"ok": True, "route": route})
+    except Exception as exc:
+        return web.json_response({"ok": False, "error": str(exc)}, status=500)
+
+
+async def _handle_model_routes_delete(request: web.Request) -> web.Response:
+    """DELETE /api/admin/model-routes/{id} — destroy the route + its
+    underlying OpenShell gateway.
+
+    Refuses with 409 if:
+      * the route is the primordial logos-openshell (cannot be deleted
+        because Logos itself depends on it being present)
+      * any agents are still bound to the route (caller must re-bind
+        or delete those agents first to avoid orphaning their sandboxes)
+
+    On success the openshell gateway is destroyed best-effort and the
+    DB row is removed. If the openshell CLI call fails (gateway already
+    gone, network blip, etc.) the DB row is still dropped so the UI
+    doesn't show a phantom route — the underlying state will be cleaned
+    up on the next host reboot."""
+    route_id = request.match_info["id"]
+    try:
+        from gateway import openshell_routes as _osr
+        import asyncio as _asyncio
+        ok = await _asyncio.to_thread(_osr.destroy_route, route_id)
+        if not ok:
+            return web.json_response({"ok": False, "error": "route not found"}, status=404)
+        return web.json_response({"ok": True})
+    except RuntimeError as exc:
+        # Soft-error path — primordial / agents-still-bound. Surface
+        # as 409 Conflict so the UI can render the message inline
+        # without treating it as a server crash.
+        return web.json_response({"ok": False, "error": str(exc)}, status=409)
+    except Exception as exc:
+        logger.warning("model-routes delete failed for %s: %s", route_id, exc)
         return web.json_response({"ok": False, "error": str(exc)}, status=500)
 
 
@@ -3294,6 +3459,37 @@ async def start_http_api(runner: Any, port: int = 8091) -> None:
     app.router.add_get("/api/admin/sandboxes",                    _vr(_handle_sandboxes_list))
     app.router.add_get("/api/admin/sandboxes/{name}/logs",        _vr(_handle_sandbox_logs))
     app.router.add_post("/api/admin/sandboxes/{name}/restart",    _mm(require_csrf(_handle_sandbox_restart)))
+
+    # ── Model routes (multi-OpenShell-gateway routing) ────────────
+    # REST CRUD for the model_routes table + the underlying OpenShell
+    # sub-gateways. Same /api/admin/* prefix as the sandbox endpoints
+    # so the SPA tab path /admin/model-routes (commit 5) doesn't get
+    # shadowed when the UI lands. read = manage_machines (consistent
+    # with the rest of admin infra); writes are CSRF-protected.
+    app.router.add_get(
+        "/api/admin/model-routes",
+        _mm(_handle_model_routes_list),
+    )
+    app.router.add_post(
+        "/api/admin/model-routes",
+        _mm(require_csrf(_handle_model_routes_post)),
+    )
+    app.router.add_post(
+        "/api/admin/model-routes/{id}/restart",
+        _mm(require_csrf(_handle_model_routes_restart)),
+    )
+    app.router.add_post(
+        "/api/admin/model-routes/{id}/set-default",
+        _mm(require_csrf(_handle_model_routes_set_default)),
+    )
+    app.router.add_post(
+        "/api/admin/model-routes/{id}/refresh",
+        _mm(require_csrf(_handle_model_routes_refresh)),
+    )
+    app.router.add_delete(
+        "/api/admin/model-routes/{id}",
+        _mm(require_csrf(_handle_model_routes_delete)),
+    )
 
     # ── Platforms (connection state + routing rules) ───────────────
     # Same /api/admin/* prefix, same SPA-tab-collision reason as above.
