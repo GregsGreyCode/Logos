@@ -315,7 +315,13 @@ async def _handle_task(ws: TunnelWebSocket, task: dict, config: dict):
             "type": "task_result",
             "task_id": task_id,
             "status": "ok",
-            "response": response,
+            # Use the canonical key the gateway looks for. Sending "response"
+            # here meant http_api._handle_chat received an empty final, so the
+            # assistant turn was never appended to the transcript — every new
+            # turn the model saw history as user, user, user, … with no
+            # interleaved assistant messages, and started replying to the
+            # oldest unanswered question instead of the current one.
+            "final_response": response,
         })
     except Exception as e:
         logger.error("Task %s failed: %s", task_id, e)
