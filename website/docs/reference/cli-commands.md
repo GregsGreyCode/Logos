@@ -43,7 +43,6 @@ hermes [global-options] <command> [subcommand/options]
 | `logos config` | Show, edit, migrate, and query configuration files. |
 | `logos pairing` | Approve or revoke messaging pairing codes. |
 | `logos skills` | Browse, install, publish, audit, and configure skills. |
-| `logos honcho` | Manage Honcho cross-session memory integration. |
 | `logos acp` | Run Hermes as an ACP server for editor integration. |
 | `logos tools` | Configure enabled tools per platform. |
 | `hermes sessions` | Browse, export, prune, rename, and delete sessions. |
@@ -263,26 +262,6 @@ logos skills inspect official/security/1password
 logos skills install official/migration/openclaw-migration
 logos skills config
 ```
-
-## `logos honcho`
-
-```bash
-logos honcho <subcommand>
-```
-
-Subcommands:
-
-| Subcommand | Description |
-|------------|-------------|
-| `setup` | Interactive Honcho setup wizard. |
-| `status` | Show current Honcho config and connection status. |
-| `sessions` | List known Honcho session mappings. |
-| `map` | Map the current directory to a Honcho session name. |
-| `peer` | Show or update peer names and dialectic reasoning level. |
-| `mode` | Show or set memory mode: `hybrid`, `honcho`, or `local`. |
-| `tokens` | Show or set token budgets for context and dialectic. |
-| `identity` | Seed or show the AI peer identity representation. |
-| `migrate` | Migration guide from openclaw-honcho to Hermes Honcho. |
 
 ## `logos acp`
 

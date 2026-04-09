@@ -75,7 +75,6 @@ OpenShell is an agent runtime sandbox. Logos is an agent control plane. The foll
 | **Workflow engine** | DAG-based task graphs with approval gates are a platform feature above the sandbox. |
 | **Memory system** | Agent-curated persistent memory, FTS5 search, and LLM summarisation. |
 | **Command approval (Tirith + regex)** | Application-layer command review. Runs above OpenShell's kernel-level controls for defense in depth. |
-| **Honcho integration** | Optional cloud user modelling — orthogonal to sandboxing. |
 
 ---
 

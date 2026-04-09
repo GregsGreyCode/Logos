@@ -128,7 +128,6 @@ uv pip install -e "."
 | `modal` | Modal cloud execution backend | `uv pip install -e ".[modal]"` |
 | `tts-premium` | ElevenLabs premium voices | `uv pip install -e ".[tts-premium]"` |
 | `pty` | PTY terminal support | `uv pip install -e ".[pty]"` |
-| `honcho` | AI-native memory (Honcho integration) | `uv pip install -e ".[honcho]"` |
 | `mcp` | Model Context Protocol server/client support | `uv pip install -e ".[mcp]"` |
 | `homeassistant` | Home Assistant integration | `uv pip install -e ".[homeassistant]"` |
 | `acp` | ACP editor integration (VS Code, Zed, JetBrains) | `uv pip install -e ".[acp]"` |

@@ -30,14 +30,13 @@ The cached system prompt is assembled in roughly this order:
 
 1. default agent identity
 2. tool-aware behavior guidance
-3. Honcho static block (when active)
-4. optional system message
-5. frozen MEMORY snapshot
-6. frozen USER profile snapshot
-7. skills index
-8. context files (`AGENTS.md`, `SOUL.md`, `.cursorrules`, `.cursor/rules/*.mdc`)
-9. timestamp / optional session ID
-10. platform hint
+3. optional system message
+4. frozen MEMORY snapshot
+5. frozen USER profile snapshot
+6. skills index
+7. context files (`AGENTS.md`, `SOUL.md`, `.cursorrules`, `.cursor/rules/*.mdc`)
+8. timestamp / optional session ID
+9. platform hint
 
 ## API-call-time-only layers
 
@@ -46,7 +45,6 @@ These are intentionally *not* persisted as part of the cached system prompt:
 - `ephemeral_system_prompt`
 - prefill messages
 - gateway-derived session context overlays
-- later-turn Honcho recall injected into the current-turn user message
 
 This separation keeps the stable prefix stable for caching.
 

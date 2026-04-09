@@ -206,13 +206,3 @@ memory:
   memory_char_limit: 2200   # ~800 tokens
   user_char_limit: 1375     # ~500 tokens
 ```
-
-## Honcho Integration (Cross-Session User Modeling)
-
-For deeper, AI-generated user understanding that works across sessions and platforms, you can enable [Honcho Memory](./honcho.md). Honcho runs alongside built-in memory in `hybrid` mode (the default) — `MEMORY.md` and `USER.md` stay as-is, and Honcho adds a persistent user modeling layer on top.
-
-```bash
-logos honcho setup
-```
-
-See the [Honcho Memory](./honcho.md) docs for full configuration, tools, and CLI reference.

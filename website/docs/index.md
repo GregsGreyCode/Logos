@@ -42,7 +42,7 @@ It's not a chatbot wrapper or a single-model assistant. It's a **platform** — 
 
 ## Key Features
 
-- **A closed learning loop** — Agent-curated memory with periodic nudges, autonomous skill creation, skill self-improvement during use, FTS5 cross-session recall with LLM summarization, and [Honcho](https://github.com/plastic-labs/honcho) dialectic user modeling
+- **A closed learning loop** — Agent-curated memory with periodic nudges, autonomous skill creation, skill self-improvement during use, and FTS5 cross-session recall with LLM summarization
 - **Runs anywhere, not just your laptop** — 6 terminal backends: local, Docker, SSH, Daytona, Singularity, Modal. Daytona and Modal offer serverless persistence — your environment hibernates when idle, costing nearly nothing
 - **Lives where you do** — CLI, Telegram, Discord, Slack, WhatsApp, all from one gateway
 - **Provider agnostic** — Works with [OpenRouter](https://openrouter.ai), [Nous Portal](https://portal.nousresearch.com), Anthropic, OpenAI, or any OpenAI-compatible endpoint

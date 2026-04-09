@@ -87,7 +87,6 @@ const sidebars: SidebarsConfig = {
           items: [
             'user-guide/features/acp',
             'user-guide/features/mcp',
-            'user-guide/features/honcho',
             'user-guide/features/provider-routing',
           ],
         },

@@ -84,10 +84,6 @@ The gateway also runs maintenance tasks such as:
 - session expiry checks
 - proactive memory flush before reset/expiry
 
-## Honcho interaction
-
-When Honcho is enabled, the gateway can keep persistent Honcho managers aligned with session lifetimes and platform-specific session keys.
-
 ## Related docs
 
 - [Session Storage](./session-storage.md)

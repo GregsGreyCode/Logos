@@ -370,7 +370,6 @@ You can switch between providers at any time with `logos model` — no restart r
 | Premium TTS voices | [ElevenLabs](https://elevenlabs.io/) | `ELEVENLABS_API_KEY` |
 | OpenAI TTS + voice transcription | [OpenAI](https://platform.openai.com/api-keys) | `VOICE_TOOLS_OPENAI_KEY` |
 | RL Training | [Tinker](https://tinker-console.thinkingmachines.ai/) + [WandB](https://wandb.ai/) | `TINKER_API_KEY`, `WANDB_API_KEY` |
-| Cross-session user modeling | [Honcho](https://honcho.dev/) | `HONCHO_API_KEY` |
 
 ### Self-Hosting Firecrawl
 
