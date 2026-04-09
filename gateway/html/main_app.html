@@ -569,6 +569,22 @@
                 <span x-text="webSession?.tool_count ? webSession.tool_count + ' active' : (chatStats?.tool_count ? chatStats.tool_count + ' ready' : 'none')"></span>
               </span>
               <!--
+                A: Agent — placeholder for future multi-agent UX. Today
+                a chat is bound to exactly one agent so this just shows
+                that agent's name. When multi-agent lands (collaborative
+                chats with two or more bound agents), this badge becomes
+                a clickable popover for picking which agent to address /
+                add / remove from the conversation. Sourced from
+                activeAgent (chat.agent_id → namedAgents lookup) for
+                consistency with the M dropdown's resolution path.
+              -->
+              <span data-testid="stamp-a" class="text-[10px] px-1.5 py-0.5 rounded font-mono border flex items-center gap-1"
+                :class="activeAgent ? 'bg-gray-800 text-gray-400 border-gray-700' : 'bg-gray-800/50 text-gray-600 border-gray-800'"
+                :title="activeAgent ? 'Active agent: ' + activeAgent.name : 'No agent bound to this chat'">
+                <span class="font-bold text-gray-500">A</span>
+                <span x-text="activeAgent ? activeAgent.name : 'none'"></span>
+              </span>
+              <!--
                 M: Model — clickable dropdown driven by model_routes.
                 Picking a route here PATCHes the active chat's agent
                 with model_route_id=<new> and restarts that agent's
@@ -8241,16 +8257,28 @@ function app() {
       await this.loadSandboxes();
     },
 
+    // ── Active agent + route lookups (chat header badges) ─────────
+    // Computed: the named-agent record bound to the currently-active
+    // chat. Drives the chat header's "A <name>" badge plus
+    // activeAgentRoute below. Resolution chain:
+    //   activeChatId → chats[].agent_id → namedAgents[].id
+    // Returns null when there's no active chat, no chat-to-agent
+    // binding (legacy chats), or the bound agent has been deleted.
+    get activeAgent() {
+      const chat = this.chats?.find(c => c.id === this.activeChatId);
+      if (!chat || !chat.agent_id) return null;
+      return this.namedAgents?.find(a => a.id === chat.agent_id) || null;
+    },
+
     // ── Model routes ──────────────────────────────────────────────
     // Computed: which model_route is the currently-active chat's
     // agent bound to? Returns the row object (so the M button can
     // show the model name) or null when there's no active agent
     // or no matching route. Used by the chat M dropdown's "current
-    // selection" highlight + badge text.
+    // selection" highlight + badge text. Reuses activeAgent above
+    // so the resolution path is shared with the A badge.
     get activeAgentRoute() {
-      const chat = this.chats?.find(c => c.id === this.activeChatId);
-      if (!chat || !chat.agent_id) return null;
-      const agent = this.namedAgents?.find(a => a.id === chat.agent_id);
+      const agent = this.activeAgent;
       if (!agent || !agent.model_route_id) return null;
       return (this.modelRoutes || []).find(r => r.id === agent.model_route_id) || null;
     },
