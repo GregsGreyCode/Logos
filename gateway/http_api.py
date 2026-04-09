@@ -3345,6 +3345,7 @@ async def start_http_api(runner: Any, port: int = 8091) -> None:
         "/admin/workflows",
         "/admin/runs",
         "/admin/sandboxes",
+        "/admin/model-routes",
         "/admin/platforms",
         "/admin/audit",
         "/admin/approvals",
