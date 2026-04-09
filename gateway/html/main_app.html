@@ -3717,7 +3717,7 @@
           <button @click="loadModelRoutes()" class="text-xs text-[var(--accent)] hover:opacity-80 flex items-center gap-1">
             <span>&#8635;</span> Refresh
           </button>
-          <button @click="provisionModalOpen=true; provisionForm={provider:'lmstudio',model:'',set_as_default:false}"
+          <button @click="provisionModalOpen=true; provisionForm={provider:'lmstudio',model:'',set_as_default:false}; provisionError=null; loadAllMachineModels()"
             class="text-xs px-3 py-1.5 rounded bg-[var(--accent)] text-black font-medium hover:opacity-90">
             + Provision Model
           </button>
@@ -3827,7 +3827,7 @@
     <!-- ── Provision Model Route modal ── -->
     <div x-show="provisionModalOpen" x-cloak
       class="fixed inset-0 bg-black/60 flex items-center justify-center z-50"
-      @click="provisionModalOpen=false">
+      @click="provisionModalOpen=false; provisionFormCustom=false; provisionError=null">
       <div class="bg-gray-900 border border-gray-700 rounded-xl p-6 max-w-md w-full mx-4 space-y-4"
         @click.stop>
         <div class="flex items-start justify-between">
@@ -3835,7 +3835,7 @@
             <div class="text-sm font-semibold text-white">Provision Model Route</div>
             <div class="text-[10px] text-gray-500 mt-1">Spins up a new OpenShell sub-gateway pinned to one model. Cold-provisioning takes 30-60 seconds.</div>
           </div>
-          <button @click="provisionModalOpen=false" class="text-gray-500 hover:text-white text-lg">&times;</button>
+          <button @click="provisionModalOpen=false; provisionFormCustom=false; provisionError=null" class="text-gray-500 hover:text-white text-lg">&times;</button>
         </div>
         <div class="space-y-3">
           <div>
@@ -3849,11 +3849,42 @@
             </select>
           </div>
           <div>
-            <label class="text-[10px] text-gray-500 uppercase tracking-wider">Model</label>
-            <input x-model="provisionForm.model" type="text" placeholder="openai/gpt-oss-20b"
+            <label class="text-[10px] text-gray-500 uppercase tracking-wider flex items-center justify-between">
+              <span>Model</span>
+              <button type="button" @click="loadAllMachineModels()"
+                class="text-[9px] text-[var(--accent)] hover:opacity-80 normal-case">refresh list &#8635;</button>
+            </label>
+            <!--
+              Populated from allMachineModels — the deduped union of every
+              model exposed by every machine the user registered in /setup
+              or /admin/machines (probed via /api/setup/probe under the
+              hood). For 99% of users on a homelab single-LM-Studio setup
+              this is exactly the LM Studio catalog. For multi-machine
+              setups it's the union across all of them. Custom-id escape
+              hatch (`Custom model id…`) reveals the free-text input for
+              the rare case where the user needs a model that isn't in
+              the list (e.g. testing a cloud model that hasn't been
+              registered as a machine).
+            -->
+            <select x-model="provisionForm.model"
               class="w-full mt-1 px-3 py-2 bg-gray-800 border border-gray-700 rounded text-white text-sm font-mono"
+              @change="if (provisionForm.model === '__custom__') { provisionForm.model = ''; provisionFormCustom = true; }">
+              <option value="" disabled>— pick a model —</option>
+              <template x-for="m in allMachineModels" :key="m">
+                <option :value="m" x-text="m"></option>
+              </template>
+              <option value="__custom__">Custom model id…</option>
+            </select>
+            <input x-show="provisionFormCustom" x-model="provisionForm.model" type="text"
+              placeholder="provider/model-id"
+              class="w-full mt-2 px-3 py-2 bg-gray-800 border border-gray-700 rounded text-white text-sm font-mono"
               @keydown.enter="provisionRoute()">
-            <div class="text-[10px] text-gray-600 mt-1">The exact model id the inference backend expects (e.g. <code class="text-gray-500">openai/gpt-oss-20b</code> for LM Studio).</div>
+            <p x-show="!allMachineModels.length" class="text-[10px] text-gray-600 mt-1">
+              No machines registered yet — go to <a href="#" @click.prevent="provisionModalOpen=false; tab='infra'; infraTab='servers'" class="text-[var(--accent)] hover:opacity-80">Settings → Inference</a> to add one, or use Custom model id.
+            </p>
+            <div class="text-[10px] text-gray-600 mt-1">
+              The exact model id the inference backend expects. The list above is fetched live from your registered machines.
+            </div>
           </div>
           <label class="flex items-center gap-2 text-xs text-gray-400">
             <input type="checkbox" x-model="provisionForm.set_as_default" class="rounded">
@@ -3864,7 +3895,7 @@
           <div class="text-[10px] text-red-400 bg-red-950/20 border border-red-900/40 rounded p-2" x-text="provisionError"></div>
         </template>
         <div class="flex items-center gap-2 justify-end">
-          <button @click="provisionModalOpen=false"
+          <button @click="provisionModalOpen=false; provisionFormCustom=false; provisionError=null"
             class="px-3 py-1.5 rounded border border-gray-700 text-gray-400 hover:text-white text-xs">Cancel</button>
           <button @click="provisionRoute()" :disabled="provisioningRoute || !provisionForm.model"
             :class="provisioningRoute || !provisionForm.model ? 'opacity-50 cursor-not-allowed' : ''"
@@ -5264,6 +5295,11 @@ function app() {
     provisioningRoute: false,
     provisionError: null,
     provisionForm: { provider: 'lmstudio', model: '', set_as_default: false },
+    // True when the user picked "Custom model id…" from the model
+    // dropdown — reveals a free-text input below the select. Reset
+    // every time the modal closes so the next open starts on the
+    // dropdown.
+    provisionFormCustom: false,
     // True while the chat M dropdown is mid-flight switching the
     // active agent's route. Drives the "switching…" badge in the
     // M dropdown button so the user gets feedback during the
@@ -8261,6 +8297,7 @@ function app() {
         } else {
           this.provisionModalOpen = false;
           this.provisionForm = { provider: 'lmstudio', model: '', set_as_default: false };
+          this.provisionFormCustom = false;
           await this.loadModelRoutes();
         }
       } catch(e) {
