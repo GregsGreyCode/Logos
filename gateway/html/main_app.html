@@ -5621,12 +5621,42 @@ function app() {
         // (`x-show="tab==='agents'"`) so `getElementById('agent-world')`
         // actually finds the container.
         if (this.tab === 'agents') {
-          this.$nextTick(() => this.initWorld());
+          this.$nextTick(() => {
+            this.initWorld();
+            // Force a Phaser resize on every entry into the agents tab.
+            // x-show toggles display:none/block, which can leave the
+            // canvas at 0×0 when the tab was hidden — ResizeObserver
+            // doesn't fire reliably on display state changes, so we
+            // poke Phaser explicitly to re-read the parent dimensions.
+            // This is the fix for the "black square when navigating
+            // between navbar tabs" bug.
+            if (this.worldManager?.forceResize) {
+              this.worldManager.forceResize();
+              // One more after layout settles, in case the first
+              // forceResize ran before the browser finished applying
+              // the display:block transition.
+              setTimeout(() => this.worldManager?.forceResize?.(), 50);
+            }
+          });
         }
       });
       this._applyUrlToState(window.location.pathname);
       this.$watch('adminTab', () => { if (this.tab === 'admin') this._syncStateToUrl(); });
       this.$watch('infraTab', () => { if (this.tab === 'infra') this._syncStateToUrl(); });
+
+      // Force a world resize whenever the agent column expands/collapses
+      // (create form open/close, edit form open/close). The ResizeObserver
+      // in WorldManager catches the SHRINK event but the GROW event
+      // sometimes fires before layout settles, leaving the canvas stuck
+      // at the smaller size and just centered in the wider container.
+      // Re-poking on the next tick + after a short delay covers both
+      // race windows.
+      this.$watch('namedAgentFormOpen', () => {
+        this.$nextTick(() => {
+          this.worldManager?.forceResize?.();
+          setTimeout(() => this.worldManager?.forceResize?.(), 100);
+        });
+      });
       window.addEventListener('popstate', () => this._applyUrlToState(window.location.pathname));
 
       await this.loadAuth();
