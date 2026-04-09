@@ -269,7 +269,7 @@
     <button class="pb-2 text-sm font-medium border-b-2 border-transparent"
       :class="tab==='agents'?'tab-active':'text-gray-400 hover:text-white'"
       data-testid="nav-agents"
-      @click="tab='agents'; loadInstances(); loadSouls(); loadAdminMachines(); loadNamedAgents(); loadToolsets(); initWorld()">Agents</button>
+      @click="tab='agents'; loadInstances(); loadSouls(); loadAdminMachines(); loadNamedAgents(); loadToolsets(); loadModelRoutes(); initWorld()">Agents</button>
     <button class="pb-2 text-sm font-medium border-b-2 border-transparent"
       :class="tab==='sessions'?'tab-active':'text-gray-400 hover:text-white'"
       data-testid="nav-chats"
@@ -568,44 +568,51 @@
                 <span class="font-bold text-gray-500">T</span>
                 <span x-text="webSession?.tool_count ? webSession.tool_count + ' active' : (chatStats?.tool_count ? chatStats.tool_count + ' ready' : 'none')"></span>
               </span>
-              <!-- M: Model — clickable dropdown -->
+              <!--
+                M: Model — clickable dropdown driven by model_routes.
+                Picking a route here PATCHes the active chat's agent
+                with model_route_id=<new> and restarts that agent's
+                sandbox so it respawns inside the new OpenShell
+                gateway. Switching is per-AGENT, not per-chat — every
+                conversation with this agent will move to the new
+                model. Confirms before triggering the respawn because
+                the sandbox briefly disconnects.
+              -->
               <div class="relative" x-data="{ open: false }" @click.away="open = false">
-                <button @click="open = !open; if (open && !allMachineModels.length) loadAllMachineModels()" data-testid="stamp-m"
+                <button @click="open = !open; if (open && !modelRoutes.length) loadModelRoutes()" data-testid="stamp-m"
                   class="text-[10px] px-1.5 py-0.5 rounded font-mono border transition-colors cursor-pointer flex items-center gap-1"
                   :class="open
                     ? 'bg-[var(--accent-muted)] text-white border-[var(--accent)]'
-                    : activeInstance.machine_name
+                    : (activeAgentRoute || activeInstance.machine_name)
                       ? 'bg-[var(--accent-subtle)] text-[var(--accent)] border-[var(--accent)]/40 hover:border-[var(--accent)]/70'
                       : 'bg-gray-800 text-gray-400 border-gray-700 hover:border-gray-500'"
-                  title="Model — click to change">
-                  <span class="font-bold" :class="activeInstance.machine_name ? 'text-[var(--accent)]' : 'text-gray-500'">M</span>
-                  <span x-text="(activeInstance.model_alias || status.current_model || 'not set')"></span>
+                  :title="switchingRoute ? 'Switching model — sandbox respawning' : 'Model — click to change'">
+                  <span class="font-bold" :class="activeAgentRoute ? 'text-[var(--accent)]' : 'text-gray-500'">M</span>
+                  <span x-show="!switchingRoute"
+                    x-text="(activeAgentRoute?.model || activeInstance.model_alias || status.current_model || 'auto')"></span>
+                  <span x-show="switchingRoute" class="text-yellow-400">switching…</span>
                 </button>
-                <div x-show="open" x-cloak class="absolute top-full left-0 mt-1 w-60 max-h-52 overflow-y-auto bg-gray-900 border border-gray-700 rounded-lg shadow-xl z-50 py-1">
-                  <template x-if="cloudProviders.filter(p => p.active_model).length > 0">
-                    <div>
-                      <div class="px-3 py-1 text-[9px] text-gray-600 uppercase tracking-wider">Cloud</div>
-                      <template x-for="cp in cloudProviders.filter(p => p.active_model)" :key="cp.id">
-                        <button @click="switchModel(cp.active_model); open = false"
-                          class="block w-full text-left px-3 py-1.5 text-[11px] font-mono transition-colors"
-                          :class="(activeInstance.model_alias || status.current_model) === cp.active_model ? 'text-white bg-indigo-950' : 'text-gray-400 hover:text-white hover:bg-gray-800'"
-                          x-text="cp.active_model"></button>
-                      </template>
-                    </div>
+                <div x-show="open" x-cloak class="absolute top-full left-0 mt-1 w-72 max-h-72 overflow-y-auto bg-gray-900 border border-gray-700 rounded-lg shadow-xl z-50 py-1">
+                  <div class="px-3 py-1.5 text-[9px] text-gray-600 uppercase tracking-wider border-b border-gray-800">Model Routes</div>
+                  <template x-for="r in modelRoutes.filter(r => r.status === 'ready')" :key="r.id">
+                    <button @click="switchAgentRoute(r); open = false"
+                      class="block w-full text-left px-3 py-2 text-[11px] transition-colors"
+                      :class="(activeAgentRoute?.id === r.id) ? 'text-white bg-indigo-950' : 'text-gray-400 hover:text-white hover:bg-gray-800'">
+                      <div class="font-mono" x-text="r.model"></div>
+                      <div class="text-[9px] text-gray-600 mt-0.5 flex items-center gap-2">
+                        <span x-text="r.provider"></span>
+                        <span class="text-gray-700">·</span>
+                        <span x-text="r.openshell_name"></span>
+                        <template x-if="r.is_default">
+                          <span class="ml-auto text-indigo-400">default</span>
+                        </template>
+                      </div>
+                    </button>
                   </template>
-                  <template x-if="allMachineModels.length > 0">
-                    <div>
-                      <div class="px-3 py-1 text-[9px] text-gray-600 uppercase tracking-wider">Local</div>
-                      <template x-for="m in allMachineModels" :key="m">
-                        <button @click="switchModel(m); open = false"
-                          class="block w-full text-left px-3 py-1.5 text-[11px] font-mono transition-colors"
-                          :class="(activeInstance.model_alias || status.current_model) === m ? 'text-white bg-indigo-950' : 'text-gray-400 hover:text-white hover:bg-gray-800'"
-                          x-text="m"></button>
-                      </template>
-                    </div>
-                  </template>
-                  <p x-show="cloudProviders.filter(p => p.active_model).length === 0 && allMachineModels.length === 0"
-                    class="px-3 py-2 text-[10px] text-gray-600">No models configured. Add a provider in Settings > Inference.</p>
+                  <p x-show="modelRoutes.filter(r => r.status === 'ready').length === 0"
+                    class="px-3 py-3 text-[10px] text-gray-600">
+                    No ready routes. <a href="#" @click.prevent="tab='admin'; adminTab='model-routes'; loadModelRoutes(); open=false" class="text-[var(--accent)] hover:opacity-80">Provision one &rarr;</a>
+                  </p>
                 </div>
               </div>
               <!-- P: Policy -->
@@ -2290,25 +2297,32 @@
               </select>
             </div>
             <div>
-              <label class="text-[10px] text-gray-500 mb-1 block">Model</label>
-              <select x-model="namedAgentForm.model"
+              <label class="text-[10px] text-gray-500 mb-1 block flex items-center justify-between">
+                <span>Model Route</span>
+                <a href="#" @click.prevent="tab='admin'; adminTab='model-routes'; loadModelRoutes()"
+                  class="text-[9px] text-[var(--accent)] hover:opacity-80 normal-case">manage routes &rarr;</a>
+              </label>
+              <!--
+                Each option binds the agent to a model_routes row. The
+                "Auto (use default route)" empty value lets the executor's
+                _resolve_route() pick whichever row is is_default=1 at
+                spawn time, so a single rebind in the admin page can
+                steer every "Auto" agent without touching their records.
+                Only ready routes are listed — provisioning/error/stopped
+                rows are hidden so the user can't pick a route their
+                sandbox can't actually reach yet.
+              -->
+              <select x-model="namedAgentForm.model_route_id"
                 class="w-full px-2 py-1.5 rounded-lg bg-gray-800 border border-gray-700 text-xs text-white focus:outline-none focus:border-indigo-500">
-                <option value="">Auto (use active model)</option>
-                <template x-if="allMachineModels.length > 0">
-                  <optgroup label="Local models">
-                    <template x-for="m in allMachineModels" :key="m">
-                      <option :value="m" x-text="m"></option>
-                    </template>
-                  </optgroup>
-                </template>
-                <template x-if="cloudProviders.filter(p => p.active_model).length > 0">
-                  <optgroup label="Cloud models">
-                    <template x-for="cp in cloudProviders.filter(p => p.active_model)" :key="cp.id">
-                      <option :value="cp.active_model" x-text="cp.name + ' — ' + cp.active_model"></option>
-                    </template>
-                  </optgroup>
+                <option :value="null">Auto (use default route)</option>
+                <template x-for="r in modelRoutes.filter(r => r.status === 'ready')" :key="r.id">
+                  <option :value="r.id"
+                    x-text="r.model + (r.is_default ? '  (default)' : '') + (r.is_primordial ? '  · primordial' : '')"></option>
                 </template>
               </select>
+              <p x-show="!modelRoutes.length" class="text-[9px] text-gray-600 mt-1">
+                No routes provisioned yet. The new agent will use the executor bootstrap fallback. <a href="#" @click.prevent="tab='admin'; adminTab='model-routes'; loadModelRoutes()" class="text-[var(--accent)] hover:opacity-80">Provision a route &rarr;</a>
+              </p>
             </div>
           </div>
           <input x-model="namedAgentForm.description" type="text" placeholder="What does this agent do? (optional)"
@@ -5122,7 +5136,7 @@ function app() {
     // Named agents
     namedAgents: [],
     namedAgentFormOpen: false,
-    namedAgentForm: { name: '', soul_slug: 'general', model: '', description: '', toolsets: [], char_index: null },
+    namedAgentForm: { name: '', soul_slug: 'general', model: '', model_route_id: null, description: '', toolsets: [], char_index: null },
     namedAgentEditId: null,
     namedAgentMsg: null,
     // soul registry + spawn flow
@@ -5250,6 +5264,11 @@ function app() {
     provisioningRoute: false,
     provisionError: null,
     provisionForm: { provider: 'lmstudio', model: '', set_as_default: false },
+    // True while the chat M dropdown is mid-flight switching the
+    // active agent's route. Drives the "switching…" badge in the
+    // M dropdown button so the user gets feedback during the
+    // PATCH-then-restart sequence.
+    switchingRoute: false,
     // platforms (Admin → Platforms)
     platforms: [],
     platformsLoading: false,
@@ -5562,7 +5581,7 @@ function app() {
       }
       // Scroll to bottom after Alpine renders the restored messages
       this.$nextTick(() => this._scrollChat());
-      await Promise.all([this.loadStatus(), this.loadRouterState(), this.loadCanary(), this.loadInstances(), this.loadSpawnTemplates(), this.loadWorkers(), this.loadAdminMachines(), this.loadNamedAgents()]);
+      await Promise.all([this.loadStatus(), this.loadRouterState(), this.loadCanary(), this.loadInstances(), this.loadSpawnTemplates(), this.loadWorkers(), this.loadAdminMachines(), this.loadNamedAgents(), this.loadModelRoutes()]);
       // Auto-select the primary named agent's most recent chat on load.
       // If no agent chat exists yet, create one for the first named agent.
       // Only run on the chats tab — otherwise chatWithAgent's side effect of
@@ -7441,7 +7460,7 @@ function app() {
         });
         if (r.ok) {
           this.namedAgentFormOpen = false;
-          this.namedAgentForm = { name: '', soul_slug: 'general', model: '', description: '', toolsets: [] };
+          this.namedAgentForm = { name: '', soul_slug: 'general', model: '', model_route_id: null, description: '', toolsets: [], char_index: null };
           await this.loadNamedAgents();
         } else {
           const d = await r.json().catch(() => ({}));
@@ -8128,6 +8147,76 @@ function app() {
     },
 
     // ── Model routes ──────────────────────────────────────────────
+    // Computed: which model_route is the currently-active chat's
+    // agent bound to? Returns the row object (so the M button can
+    // show the model name) or null when there's no active agent
+    // or no matching route. Used by the chat M dropdown's "current
+    // selection" highlight + badge text.
+    get activeAgentRoute() {
+      const chat = this.chats?.find(c => c.id === this.activeChatId);
+      if (!chat || !chat.agent_id) return null;
+      const agent = this.namedAgents?.find(a => a.id === chat.agent_id);
+      if (!agent || !agent.model_route_id) return null;
+      return (this.modelRoutes || []).find(r => r.id === agent.model_route_id) || null;
+    },
+
+    // Switch the active chat's agent to a different model route.
+    // Two-step: PATCH /admin/agents/{id} with the new model_route_id,
+    // then POST /api/admin/sandboxes/{name}/restart so the sandbox
+    // respawns inside the new OpenShell gateway. The frontend shows
+    // a "switching…" badge in the M button + a confirm dialog so the
+    // user knows their conversation will briefly lose its sandbox.
+    async switchAgentRoute(route) {
+      const chat = this.chats?.find(c => c.id === this.activeChatId);
+      if (!chat || !chat.agent_id) {
+        alert('No active agent to switch.');
+        return;
+      }
+      const agent = this.namedAgents?.find(a => a.id === chat.agent_id);
+      if (!agent) return;
+      // No-op if the agent is already bound to this route
+      if (agent.model_route_id === route.id) return;
+      if (!confirm(
+        `Switch ${agent.name} from ${agent.model || '(default)'} to ${route.model}?\n\n` +
+        `This rebinds the agent and respawns its sandbox in a different OpenShell gateway. ` +
+        `The chat will briefly disconnect (~5-10 seconds) while the new sandbox provisions. ` +
+        `All conversations with ${agent.name} will move to the new model.`
+      )) return;
+      this.switchingRoute = true;
+      try {
+        // 1. Rebind the agent to the new route
+        const patchResp = await fetch(`/admin/agents/${encodeURIComponent(agent.id)}`, {
+          method: 'PATCH',
+          credentials: 'include',
+          headers: {'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken()},
+          body: JSON.stringify({model_route_id: route.id}),
+        });
+        if (!patchResp.ok) {
+          const err = await patchResp.json().catch(() => ({}));
+          throw new Error(err.error || `PATCH failed: HTTP ${patchResp.status}`);
+        }
+        // 2. Restart the sandbox so the new model_route_id takes effect
+        const sandboxName = agent.sandbox_name || agent.worker_id;
+        if (sandboxName) {
+          const restartResp = await fetch(`/api/admin/sandboxes/${encodeURIComponent(sandboxName)}/restart`, {
+            method: 'POST',
+            credentials: 'include',
+            headers: {'X-CSRF-Token': getCsrfToken()},
+          });
+          if (!restartResp.ok) {
+            const err = await restartResp.text();
+            console.warn('Sandbox restart failed (agent rebind succeeded):', err);
+          }
+        }
+        // 3. Refresh local state so activeAgentRoute reflects the new binding
+        await this.loadNamedAgents();
+        await this.loadModelRoutes();
+      } catch(e) {
+        alert(`Switch failed: ${e.message || e}`);
+      }
+      this.switchingRoute = false;
+    },
+
     async loadModelRoutes() {
       this.modelRoutesLoading = true;
       try {

@@ -513,6 +513,27 @@ async def handle_agents_post(request: web.Request) -> web.Response:
         char_index = int(char_index) if char_index is not None else None
     except (TypeError, ValueError):
         char_index = None
+    # Optional binding to a model_routes row. The UI's route picker
+    # populates this; "Auto (use default)" sends NULL and the executor's
+    # _resolve_route() falls back to the row marked is_default=1. When
+    # set, the route's model overrides whatever the caller put in
+    # `model` (the OpenShell gateway is forcing exactly that model
+    # anyway, so the agent record's model field is purely cosmetic).
+    model_route_id = body.get("model_route_id") or None
+    if model_route_id:
+        _route = auth_db.get_model_route(model_route_id)
+        if _route:
+            # Sync model to the route's model so the agent card and
+            # the executor see the same value.
+            model = _route.get("model") or model
+        else:
+            # UI sent a stale id (route deleted between fetch and POST)
+            # — drop the binding and fall back to the default route.
+            logger.warning(
+                "create_agent: model_route_id=%r not found, dropping binding",
+                model_route_id,
+            )
+            model_route_id = None
     agent = auth_db.create_agent(
         name=name,
         soul_slug=soul_slug,
@@ -522,6 +543,7 @@ async def handle_agents_post(request: web.Request) -> web.Response:
         shared=body.get("shared", True),
         toolsets=toolsets_str,
         char_index=char_index,
+        model_route_id=model_route_id,
     )
 
     # If OpenShell runtime is active, spawn a sandbox for this agent.
@@ -545,6 +567,7 @@ async def handle_agents_post(request: web.Request) -> web.Response:
                 requester=user.get("display_name") or user.get("username") or "",
                 instance_label=name,
                 toolsets=_json.loads(toolsets_str) if toolsets_str else [],
+                model_route_id=model_route_id,
             )
 
             async def _spawn_bg():
@@ -579,6 +602,24 @@ async def handle_agents_patch(request: web.Request) -> web.Response:
             updates[k] = body[k]
     if "toolsets" in body:
         updates["toolsets"] = _json.dumps(body["toolsets"]) if isinstance(body["toolsets"], list) else ""
+    # model_route_id rebind: validate the row exists and sync the
+    # agent's `model` field to the route's model so the card and
+    # executor stay consistent. NULL is allowed — clears the binding
+    # and falls back to the default route at spawn time. The chat M
+    # dropdown uses this path to switch an agent between routes.
+    if "model_route_id" in body:
+        _new_route_id = body.get("model_route_id") or None
+        if _new_route_id:
+            _route = auth_db.get_model_route(_new_route_id)
+            if not _route:
+                return web.json_response({"error": "model_route_id not found"}, status=404)
+            updates["model_route_id"] = _new_route_id
+            # Pull the model field forward from the route — keeps
+            # agent.model in sync with the bound route's model so
+            # display + executor see the same value.
+            updates["model"] = _route.get("model") or updates.get("model", existing.get("model", ""))
+        else:
+            updates["model_route_id"] = None
     if "name" in updates and updates["name"] != existing["name"]:
         dup = auth_db.get_agent_by_name(updates["name"])
         if dup and dup["id"] != aid:
