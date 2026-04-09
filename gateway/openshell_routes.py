@@ -241,30 +241,21 @@ def adopt_primordial(provider: str, model: str) -> dict:
     )
 
 
-def provision_new_route(provider: str, model: str,
-                         set_as_default: bool = False) -> dict:
-    """Spin up a brand-new OpenShell gateway for (provider, model).
+def create_route_provisioning_row(provider: str, model: str) -> dict:
+    """Step 1 of cold provision — insert the model_routes row in
+    'provisioning' status and return it.
 
-    Steps:
-      1. Pre-create the model_routes row in 'provisioning' status so the
-         admin UI shows the in-flight provision immediately.
-      2. ``openshell gateway start --name <name> --port <port>`` — full k3s
-         spin-up. Slow on cold-start (~30-60s).
-      3. ``openshell provider create`` for the (provider, type) on the new
-         gateway, pulling credentials from OPENAI_API_KEY.
-      4. ``openshell inference set`` to pin the route.
-      5. Mark the row 'ready'. Optionally promote to default.
-
-    On any failure, the row is left in 'error' status with status_detail
-    populated, and the underlying gateway (if it got partially created) is
-    cleaned up best-effort with ``openshell gateway destroy``.
+    This is the FAST half of provisioning (just a DB insert + a name and
+    port pick). Splitting it out from the slow gateway-start lets the
+    HTTP handler respond immediately so the admin UI can show the new
+    row in the table while the actual openshell calls finish in a
+    background task. The user no longer has to stare at a wedged
+    "provisioning…" modal for 60s.
     """
     name = _sanitize_route_name(model)
     port = _next_free_port()
-
-    # 1. Pre-create the row so the UI can show 'provisioning' immediately
     try:
-        route = auth_db.create_model_route(
+        return auth_db.create_model_route(
             provider=provider,
             model=model,
             openshell_name=name,
@@ -272,11 +263,33 @@ def provision_new_route(provider: str, model: str,
             status="provisioning",
         )
     except Exception as exc:
-        # Likely an IntegrityError on UNIQUE(provider, model) — caller
-        # should have looked up the existing row first.
         raise RuntimeError(
             f"could not register route for {provider}/{model}: {exc}"
         )
+
+
+def finish_provisioning(route_id: str, set_as_default: bool = False) -> dict:
+    """Steps 2-5 of cold provision — actually start the openshell gateway,
+    register the provider, pin the inference route, and mark the row
+    'ready'.
+
+    Assumes ``create_route_provisioning_row`` has already inserted the
+    row in 'provisioning' status. On any failure the row is updated to
+    'error' with status_detail populated, the underlying gateway is
+    best-effort destroyed, and the exception is re-raised.
+
+    Designed to be called from a background task (via
+    ``asyncio.to_thread``) so the HTTP request that triggered the
+    provision can return long before this finishes.
+    """
+    route = auth_db.get_model_route(route_id)
+    if not route:
+        raise RuntimeError(f"finish_provisioning: route {route_id} not found")
+
+    name = route["openshell_name"]
+    port = route["openshell_port"]
+    provider = route["provider"]
+    model = route["model"]
 
     def _fail(detail: str, cleanup_gateway: bool = False) -> None:
         if cleanup_gateway:
@@ -288,45 +301,78 @@ def provision_new_route(provider: str, model: str,
                     "openshell gateway destroy cleanup failed for %s: %s",
                     name, cleanup_err,
                 )
-        auth_db.update_model_route(route["id"], status="error", status_detail=detail[:500])
+        auth_db.update_model_route(route_id, status="error", status_detail=detail[:500])
 
-    # 2. Start the gateway
+    # Step 2: Start the gateway (slow, ~30-60s on cold start)
     try:
         _run_openshell(
             "gateway", "start",
             "--name", name,
             "--port", str(port),
-            timeout=300,  # cold-start k3s pull can take a while
+            timeout=300,
         )
     except subprocess.TimeoutExpired:
         _fail(f"timeout waiting for `openshell gateway start --name {name}`",
               cleanup_gateway=True)
-        raise RuntimeError(f"gateway start timed out for route {route['id']}")
+        raise RuntimeError(f"gateway start timed out for route {route_id}")
     except subprocess.CalledProcessError as exc:
         _fail(_stderr_or_stdout(exc), cleanup_gateway=True)
         raise RuntimeError(
             f"failed to start OpenShell gateway '{name}': {_stderr_or_stdout(exc)}"
         )
 
-    # 3. Register the provider on the new gateway
+    # Step 3: Register the provider on the new gateway.
+    #
+    # CRITICAL: must pass BOTH the credential (OPENAI_API_KEY) AND the
+    # config (OPENAI_BASE_URL) so the new gateway knows where to send
+    # inference requests. Earlier code only passed --credential, leaving
+    # the new gateway with no LM Studio host URL — workers connected,
+    # made their first chat-completions call, got a connection error,
+    # and crashed within ~16 seconds of registering. The user hit this
+    # on the very first cold-provision of an alternate route.
+    #
+    # Resolution order for the LM Studio URL:
+    #   1. Look up the user's "Local Node" (or first enabled) machine
+    #      record in auth.db — that's where /setup writes the URL the
+    #      user picked during the wizard.
+    #   2. Fall back to OPENAI_BASE_URL env var if the gateway is being
+    #      provisioned outside the normal /setup flow (e.g. CLI tests).
+    #   3. Fall back to "http://host.docker.internal:1234/v1" — the
+    #      default LM Studio URL on a vanilla Docker setup.
+    base_url = ""
+    api_key = "unused"
+    try:
+        machines = auth_db.list_machines() if hasattr(auth_db, "list_machines") else []
+        for m in machines:
+            if m.get("enabled") and m.get("endpoint_url"):
+                base_url = m["endpoint_url"]
+                if m.get("api_key"):
+                    api_key = m["api_key"]
+                break
+    except Exception as exc:
+        logger.warning("could not read machines from auth.db: %s", exc)
+    if not base_url:
+        import os as _os
+        base_url = _os.environ.get("OPENAI_BASE_URL") or "http://host.docker.internal:1234/v1"
+
     try:
         _run_openshell(
             "provider", "create",
             "--name", provider,
             "--type", "openai",
-            "--credential", "OPENAI_API_KEY",
+            "--credential", f"OPENAI_API_KEY={api_key}",
+            "--config", f"OPENAI_BASE_URL={base_url}",
             gateway=name,
         )
     except subprocess.CalledProcessError as exc:
         msg = _stderr_or_stdout(exc).lower()
-        # Tolerate "already exists" — re-provisioning is idempotent
         if "exists" not in msg and "in use" not in msg and "duplicate" not in msg:
             _fail(_stderr_or_stdout(exc), cleanup_gateway=True)
             raise RuntimeError(
                 f"failed to create provider on '{name}': {_stderr_or_stdout(exc)}"
             )
 
-    # 4. Pin the inference route
+    # Step 4: Pin the inference route
     try:
         _run_openshell(
             "inference", "set",
@@ -341,11 +387,26 @@ def provision_new_route(provider: str, model: str,
             f"failed to set inference on '{name}': {_stderr_or_stdout(exc)}"
         )
 
-    # 5. Mark ready and optionally promote
-    auth_db.update_model_route(route["id"], status="ready", status_detail=None)
+    # Step 5: Mark ready and optionally promote
+    auth_db.update_model_route(route_id, status="ready", status_detail=None)
     if set_as_default:
-        auth_db.set_default_model_route(route["id"])
-    return auth_db.get_model_route(route["id"])
+        auth_db.set_default_model_route(route_id)
+    return auth_db.get_model_route(route_id)
+
+
+def provision_new_route(provider: str, model: str,
+                         set_as_default: bool = False) -> dict:
+    """Spin up a brand-new OpenShell gateway for (provider, model).
+
+    Synchronous full provision — does both halves (create row + finish).
+    Used by ``provision_or_reuse_route`` which is in turn called from
+    ``/setup`` (an interactive wizard that already shows progress).
+    The HTTP admin handler uses ``create_route_provisioning_row`` +
+    ``finish_provisioning`` directly so it can return as soon as the
+    row exists and finish the slow part in a background task.
+    """
+    route = create_route_provisioning_row(provider, model)
+    return finish_provisioning(route["id"], set_as_default=set_as_default)
 
 
 def provision_or_reuse_route(provider: str, model: str,
