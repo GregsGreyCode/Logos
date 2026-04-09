@@ -1275,10 +1275,12 @@ class GatewayRunner:
           - dispatch timeout → "agent took too long to respond"
           - any other error → generic failure string
 
-        Authorisation, slash-command handling (`/new` etc), attachment
-        enrichment and approval flows still need to be ported into this
-        method — they were dropped when the legacy ``_handle_message``
-        was deleted in Phase 5.6. Tracked as a follow-up.
+        Authorisation, slash-command handling (`/new` etc) and approval
+        flows still need to be ported into this method — they were dropped
+        when the legacy ``_handle_message`` was deleted in Phase 5.6.
+        Attachment enrichment (audio→transcription, image→vision,
+        document→context-note) is wired in below; the other three remain
+        as a follow-up.
         """
         source = event.source
         platform_name = source.platform.value if source and source.platform else "unknown"
@@ -1364,7 +1366,30 @@ class GatewayRunner:
         # phase concern.
         history: list[dict] = []
 
-        # ── 4. Dispatch to sandbox worker ─────────────────────────────
+        # ── 4. Enrich message with attachments ────────────────────────
+        # Voice messages, images, and documents arrive on the MessageEvent
+        # via media_urls/media_types. The platform adapter has already
+        # cached them locally; here we run them through the same
+        # enrichment pipeline the HTTP /chat path uses so the agent
+        # actually sees the transcript / vision description / doc note
+        # instead of just the user's caption (or empty text). Failure
+        # is non-fatal — we fall through with the raw message rather
+        # than dropping the dispatch.
+        message_text = event.text or ""
+        if event.media_urls:
+            try:
+                message_text = await self._enrich_message_with_attachments(
+                    message_text,
+                    event.media_urls,
+                    event.media_types or [],
+                )
+            except Exception:
+                logger.exception(
+                    "dispatch_platform_message: attachment enrichment failed (platform=%s, urls=%s)",
+                    platform_name, event.media_urls,
+                )
+
+        # ── 5. Dispatch to sandbox worker ─────────────────────────────
         import uuid as _uuid
         # Compose a real system prompt: identity + soul + per-platform
         # routing hint. Without the identity preamble the agent answers
@@ -1382,7 +1407,7 @@ class GatewayRunner:
             "task_id":        str(_uuid.uuid4()),
             "session_id":     session_id,
             "session_key":    session_key,
-            "message":        event.text or "",
+            "message":        message_text,
             "history":        history,
             "context_prompt": context_prompt,
             "toolsets":       worker_entry.toolsets or ["hermes-cli"],

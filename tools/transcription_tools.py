@@ -67,14 +67,24 @@ _local_model_name: Optional[str] = None
 
 
 def get_stt_model_from_config() -> Optional[str]:
-    """Read the STT model name from ~/.hermes/config.yaml.
+    """Read the STT model name from ~/.logos/config.yaml.
 
     Returns the value of ``stt.model`` if present, otherwise ``None``.
     Silently returns ``None`` on any error (missing file, bad YAML, etc.).
+
+    Honors ``LOGOS_HOME`` first, then ``HERMES_HOME`` as a legacy fallback,
+    then ``~/.logos`` as the default. The HERMES_HOME fallback is kept
+    for users mid-migration; remove once the dual-fallback rename is
+    fully retired.
     """
     try:
         import yaml
-        cfg_path = Path(os.getenv("HERMES_HOME", Path.home() / ".hermes")) / "config.yaml"
+        home = (
+            os.getenv("LOGOS_HOME")
+            or os.getenv("HERMES_HOME")
+            or str(Path.home() / ".logos")
+        )
+        cfg_path = Path(home) / "config.yaml"
         if cfg_path.exists():
             with open(cfg_path) as f:
                 data = yaml.safe_load(f) or {}
