@@ -35,15 +35,27 @@ import json
 import logging
 import os
 import shutil
+import signal
 import subprocess
 import tempfile
+import threading
 import time
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Set
 
 from .base import InstanceConfig, ResourceHeadroom, SpawnedInstance
 
 logger = logging.getLogger(__name__)
+
+# Process-group registry of in-flight `openshell` CLI invocations. Each
+# Popen runs with start_new_session=True so the CLI + its ssh-proxy
+# subprocess become a fresh process group whose leader pid == proc.pid.
+# We track those pgids so the gateway shutdown handler can kill any
+# leaked groups in one shot via `os.killpg`. Without this, an openshell
+# call that hung (or a SIGTERM that arrived mid-call) would leave the
+# ssh-proxy children orphaned and reparented to init.
+_active_procs: Set[int] = set()
+_active_procs_lock = threading.Lock()
 
 _HERMES_HOME = Path(
     os.getenv("LOGOS_HOME") or os.getenv("HERMES_HOME") or str(Path.home() / ".logos")
@@ -97,7 +109,8 @@ def _save_state(instances: List[dict]) -> None:
 # ── OpenShell CLI helpers ──────────────────────────────────────────────────
 
 def _openshell(*args: str, gateway: Optional[str] = None,
-               check: bool = True, capture: bool = True) -> subprocess.CompletedProcess:
+               check: bool = True, capture: bool = True,
+               timeout: float = 120.0) -> subprocess.CompletedProcess:
     """Run ``openshell <args>`` and return the CompletedProcess.
 
     When ``gateway`` is provided, the CLI is invoked with ``-g <gateway>``
@@ -105,6 +118,26 @@ def _openshell(*args: str, gateway: Optional[str] = None,
     multi-route routing — without scoping, ``openshell sandbox create``
     targets whatever gateway is currently selected by ``openshell gateway
     select``, which is global state we can't rely on.
+
+    Two safety nets layered on top of plain ``subprocess.run``:
+
+    * ``start_new_session=True`` — every invocation gets its own process
+      group (pgid == pid because of setsid). The openshell CLI internally
+      forks an ssh-proxy that talks to the OpenShell cluster; without
+      grouping them, killing the CLI parent leaves the ssh-proxy children
+      orphaned and reparented to init. With grouping we can ``killpg`` the
+      whole tree.
+
+    * ``timeout`` (default 120s) — a hung openshell call would otherwise
+      pin the calling thread forever (we used to spend whole sessions
+      chasing wedged spawns). On timeout we ``killpg`` the group and
+      raise ``subprocess.TimeoutExpired`` so callers see the failure
+      explicitly. 120s is generous enough for ``sandbox create`` with
+      an image build; most calls finish in 1-2s.
+
+    The pgid is added to the module-level ``_active_procs`` registry for
+    the lifetime of the call so ``shutdown_openshell_children()`` can
+    reap any survivors during gateway shutdown.
     """
     exe = shutil.which("openshell")
     if not exe:
@@ -116,12 +149,95 @@ def _openshell(*args: str, gateway: Optional[str] = None,
     if gateway:
         cmd.extend(["-g", gateway])
     cmd.extend(args)
-    return subprocess.run(
+
+    proc = subprocess.Popen(
         cmd,
-        capture_output=capture,
+        stdout=subprocess.PIPE if capture else None,
+        stderr=subprocess.PIPE if capture else None,
         text=True,
-        check=check,
+        start_new_session=True,
     )
+    pgid = proc.pid  # setsid → leader, pgid == pid
+    with _active_procs_lock:
+        _active_procs.add(pgid)
+    try:
+        try:
+            stdout, stderr = proc.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            logger.warning(
+                "openshell call timed out after %.0fs — killing pgid %d: %s",
+                timeout, pgid, " ".join(cmd[1:]),
+            )
+            try:
+                os.killpg(pgid, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+            try:
+                stdout, stderr = proc.communicate(timeout=5)
+            except subprocess.TimeoutExpired:
+                try:
+                    os.killpg(pgid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                stdout, stderr = proc.communicate()
+            raise
+        retcode = proc.returncode
+        if check and retcode != 0:
+            raise subprocess.CalledProcessError(retcode, cmd, output=stdout, stderr=stderr)
+        return subprocess.CompletedProcess(cmd, retcode, stdout, stderr)
+    finally:
+        with _active_procs_lock:
+            _active_procs.discard(pgid)
+
+
+def shutdown_openshell_children(grace_seconds: float = 0.5) -> None:
+    """Kill any leaked openshell CLI process groups still running.
+
+    Called from the gateway shutdown sequence (``run.py``) so no
+    ssh-proxy children outlive the gateway. Best-effort: SIGTERM the
+    whole group, wait briefly, then SIGKILL anything that didn't exit.
+    Safe to call when the registry is empty.
+
+    Notes / caveats:
+
+    * Only handles graceful shutdowns (SIGTERM/SIGINT to the gateway).
+      A hard SIGKILL of the gateway skips this entire path — for that
+      case the only real fix is a systemd cgroup that kills all
+      descendants when the leader dies, which is out of scope here.
+
+    * Uses ``os.killpg`` rather than ``proc.terminate()`` because the
+      openshell CLI forks an ssh-proxy in the same group; terminating
+      the CLI parent alone leaves the ssh-proxy stranded.
+    """
+    with _active_procs_lock:
+        pgids = list(_active_procs)
+    if not pgids:
+        return
+    logger.info(
+        "shutdown_openshell_children: SIGTERM %d in-flight openshell process group(s)",
+        len(pgids),
+    )
+    for pgid in pgids:
+        try:
+            os.killpg(pgid, signal.SIGTERM)
+        except ProcessLookupError:
+            continue
+        except PermissionError as exc:
+            logger.warning("killpg(%d, SIGTERM) denied: %s", pgid, exc)
+    if grace_seconds > 0:
+        time.sleep(grace_seconds)
+    for pgid in pgids:
+        try:
+            os.killpg(pgid, 0)  # probe — raises if already gone
+        except ProcessLookupError:
+            continue
+        try:
+            os.killpg(pgid, signal.SIGKILL)
+            logger.warning("openshell pgid %d did not exit on SIGTERM, sent SIGKILL", pgid)
+        except ProcessLookupError:
+            continue
+    with _active_procs_lock:
+        _active_procs.clear()
 
 
 def _sanitize_sandbox_name(name: str) -> str:
