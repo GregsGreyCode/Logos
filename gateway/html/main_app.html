@@ -2430,6 +2430,9 @@
                 <div class="mt-2 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity" @click.stop>
                   <button @click.stop="a._editing = true; a._edit = { name: a.name, soul_slug: a.soul_slug, model: a.model || '', description: a.description || '', toolsets: JSON.parse(a.toolsets || '[]') }"
                     class="text-[9px] px-1.5 py-0.5 rounded border border-gray-700 text-gray-500 hover:text-white hover:border-gray-500 transition-colors">Edit</button>
+                  <button @click.stop="duplicateNamedAgent(a)"
+                    title="Clone this agent — opens the create form pre-filled so you can tweak STAMP fields before saving"
+                    class="text-[9px] px-1.5 py-0.5 rounded border border-gray-700 text-gray-500 hover:text-indigo-300 hover:border-indigo-500 transition-colors">Dup</button>
                   <button @click.stop="chatWithAgent(a)"
                     class="text-[9px] px-2 py-0.5 rounded-lg bg-indigo-600 text-white hover:bg-indigo-500 transition-colors font-medium">Chat</button>
                 </div>
@@ -7578,6 +7581,68 @@ function app() {
           this.namedAgentMsg = { type: 'error', text: d.error || 'Failed to create agent' };
         }
       } catch (e) { this.namedAgentMsg = { type: 'error', text: e.message }; }
+    },
+
+    /**
+     * Pre-fill the create-agent form with a clone of the given agent and
+     * open the form so the user can tweak STAMP fields before saving.
+     *
+     * The duplicate flow uses the existing POST /admin/agents endpoint —
+     * no backend changes needed. Every cloneable field (Soul, Toolsets,
+     * Model route, sprite, description) is copied; only the name gets a
+     * default suffix that's unique against the current agent list so the
+     * user can submit immediately or rename inline.
+     *
+     * Designed as the prereq for the side-by-side AB-testing panel:
+     * users will typically duplicate an agent, switch its M (model
+     * route) or S (soul), then drag both pills into the side-by-side
+     * panel to compare responses on the same prompt.
+     */
+    duplicateNamedAgent(agent) {
+      if (!agent) return;
+      // Pick a unique default name: "<source> copy", then "<source> copy 2",
+      // etc. Case-insensitive collision check matches the auth.db UNIQUE
+      // index on agents.name COLLATE NOCASE.
+      const existing = new Set(
+        (this.namedAgents || []).map(a => (a.name || '').toLowerCase())
+      );
+      const base = `${agent.name} copy`;
+      let candidate = base;
+      let n = 2;
+      while (existing.has(candidate.toLowerCase())) {
+        candidate = `${base} ${n}`;
+        n++;
+      }
+      // Parse toolsets from the JSON-string column. Tolerate malformed
+      // values defensively — an unparseable toolsets field shouldn't
+      // block the duplicate flow.
+      let toolsets = [];
+      try {
+        toolsets = JSON.parse(agent.toolsets || '[]');
+        if (!Array.isArray(toolsets)) toolsets = [];
+      } catch { toolsets = []; }
+      this.namedAgentForm = {
+        name: candidate,
+        soul_slug: agent.soul_slug || 'general',
+        model: agent.model || '',
+        model_route_id: agent.model_route_id || null,
+        description: agent.description || '',
+        toolsets,
+        char_index: (agent.char_index !== undefined && agent.char_index !== null)
+          ? Number(agent.char_index)
+          : null,
+      };
+      this.namedAgentMsg = null;
+      this.namedAgentFormOpen = true;
+      // Scroll the form into view on the next tick so users see the
+      // pre-filled fields immediately instead of having to hunt for
+      // the form (the agents column can be long once a few agents exist).
+      this.$nextTick(() => {
+        const el = document.querySelector('[x-show="namedAgentFormOpen"]');
+        if (el && el.scrollIntoView) {
+          el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+      });
     },
 
     async updateNamedAgent(aid) {
