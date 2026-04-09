@@ -23,7 +23,6 @@ logos/
 │   └── auth/                 # JWT auth, RBAC, audit logging
 ├── agent/                    # prompt building, compression, caching, metadata, trajectories
 ├── cron/                     # scheduled job storage and scheduler
-├── honcho_integration/       # Honcho memory integration
 ├── acp_adapter/              # ACP editor integration server
 ├── workflows/                # DAG-based workflow engine
 ├── launcher/                 # Windows desktop launcher (system tray)
