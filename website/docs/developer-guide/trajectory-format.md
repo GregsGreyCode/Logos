@@ -52,5 +52,4 @@ Some prompt-time-only layers are intentionally excluded from persisted trajector
 
 ## Related docs
 
-- [Environments, Benchmarks & Data Generation](./environments.md)
 - [Agent Loop Internals](./agent-loop.md)

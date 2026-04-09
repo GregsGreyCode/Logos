@@ -46,7 +46,6 @@ If you are new to the codebase, read in this order:
 7. [Gateway Internals](./gateway-internals.md)
 8. [Context Compression & Prompt Caching](./context-compression-and-caching.md)
 9. [ACP Internals](./acp-internals.md)
-10. [Environments, Benchmarks & Data Generation](./environments.md)
 
 ## Major subsystems
 
@@ -118,14 +117,9 @@ Cron jobs are implemented as first-class agent tasks, not just shell tasks.
 
 See [Cron Internals](./cron-internals.md).
 
-### RL / environments / trajectories
+### Trajectories
 
-Hermes ships a full environment framework for evaluation, RL integration, and SFT data generation.
-
-See:
-
-- [Environments, Benchmarks & Data Generation](./environments.md)
-- [Trajectories & Training Format](./trajectory-format.md)
+Every run is recorded as a trajectory — see [Trajectories & Training Format](./trajectory-format.md) for the on-disk format.
 
 ## Design themes
 

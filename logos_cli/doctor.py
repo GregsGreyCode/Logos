@@ -133,7 +133,6 @@ def run_doctor(args):
         check_ok(f"Python {py_version.major}.{py_version.minor}.{py_version.micro}")
     elif py_version >= (3, 10):
         check_ok(f"Python {py_version.major}.{py_version.minor}.{py_version.micro}")
-        check_warn("Python 3.11+ recommended for RL Training tools (tinker requires >= 3.11)")
     elif py_version >= (3, 8):
         check_warn(f"Python {py_version.major}.{py_version.minor}.{py_version.micro}", "(3.10+ recommended)")
     else:
@@ -587,27 +586,6 @@ def run_doctor(args):
             except Exception as _e:
                 print(f"\r  {color('⚠', Colors.YELLOW)} {_label} {color(f'({_e})', Colors.DIM)}           ")
 
-    # =========================================================================
-    # Check: Submodules
-    # =========================================================================
-    print()
-    print(color("◆ Submodules", Colors.CYAN, Colors.BOLD))
-
-    # tinker-atropos (RL training backend)
-    tinker_dir = PROJECT_ROOT / "tinker-atropos"
-    if tinker_dir.exists() and (tinker_dir / "pyproject.toml").exists():
-        if py_version >= (3, 11):
-            try:
-                __import__("tinker_atropos")
-                check_ok("tinker-atropos", "(RL training backend)")
-            except ImportError:
-                check_warn("tinker-atropos found but not installed", "(run: uv pip install -e ./tinker-atropos)")
-                issues.append("Install tinker-atropos: uv pip install -e ./tinker-atropos")
-        else:
-            check_warn("tinker-atropos requires Python 3.11+", f"(current: {py_version.major}.{py_version.minor})")
-    else:
-        check_warn("tinker-atropos not found", "(run: git submodule update --init --recursive)")
-    
     # =========================================================================
     # Check: Tool Availability
     # =========================================================================

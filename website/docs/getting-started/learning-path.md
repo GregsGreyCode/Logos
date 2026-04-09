@@ -26,7 +26,7 @@ If you haven't installed Logos yet, begin with the [Installation guide](/docs/ge
 |---|---|---|
 | **Beginner** | Launch the gateway, use the web dashboard, have basic conversations | [Installation](/docs/getting-started/installation) → [Quickstart](/docs/getting-started/quickstart) → [Configuration](/docs/user-guide/configuration) |
 | **Intermediate** | Connect messaging platforms, configure policies, use memory, cron, and skills | [Messaging](/docs/user-guide/messaging) → [Tools](/docs/user-guide/features/tools) → [Skills](/docs/user-guide/features/skills) → [Memory](/docs/user-guide/features/memory) → [Cron](/docs/user-guide/features/cron) → [Sessions](/docs/user-guide/sessions) |
-| **Advanced** | Deploy on a server/cluster, build custom tools, train models, contribute | [Architecture](/docs/developer-guide/architecture) → [Deployment](/docs/user-guide/deployment) → [Adding Tools](/docs/developer-guide/adding-tools) → [Creating Skills](/docs/developer-guide/creating-skills) → [RL Training](/docs/user-guide/features/rl-training) → [Contributing](/docs/developer-guide/contributing) |
+| **Advanced** | Deploy on a server/cluster, build custom tools, contribute | [Architecture](/docs/developer-guide/architecture) → [Deployment](/docs/user-guide/deployment) → [Adding Tools](/docs/developer-guide/adding-tools) → [Creating Skills](/docs/developer-guide/creating-skills) → [Contributing](/docs/developer-guide/contributing) |
 
 ## By Use Case
 
@@ -122,16 +122,6 @@ Extend Logos with your own tools and reusable skill packages.
 Tools are individual functions the agent can call. Skills are bundles of tools, prompts, and configuration packaged together. MCP servers let you connect external tool providers. Start with tools, graduate to skills.
 :::
 
-### "I want to train models"
-
-Use reinforcement learning to fine-tune model behavior with the built-in RL training pipeline.
-
-1. [Quickstart](/docs/getting-started/quickstart)
-2. [Configuration](/docs/user-guide/configuration)
-3. [RL Training](/docs/user-guide/features/rl-training)
-4. [Provider Routing](/docs/user-guide/features/provider-routing)
-5. [Architecture](/docs/developer-guide/architecture)
-
 ### "I want to use it as a Python library"
 
 Integrate Logos into your own Python applications programmatically.
@@ -172,7 +162,6 @@ Run Hermes as an ACP server for VS Code, Zed, or JetBrains.
 | **Browser** | Web browsing and scraping | [Browser](/docs/user-guide/features/browser) |
 | **Hooks** | Event-driven callbacks and middleware | [Hooks](/docs/user-guide/features/hooks) |
 | **Batch Processing** | Process multiple inputs in bulk | [Batch Processing](/docs/user-guide/features/batch-processing) |
-| **RL Training** | Fine-tune models with reinforcement learning | [RL Training](/docs/user-guide/features/rl-training) |
 | **Provider Routing** | Route requests across multiple LLM providers | [Provider Routing](/docs/user-guide/features/provider-routing) |
 | **IDE Integration** | ACP adapter for VS Code, Zed, JetBrains | [ACP](/docs/user-guide/features/acp) |
 | **CLI (Local Mode)** | Direct terminal chat without the gateway — quick local use | [CLI](/docs/user-guide/cli) |

@@ -40,14 +40,11 @@ def _run_async(coro):
     """Run an async coroutine from a sync context.
 
     If the current thread already has a running event loop (e.g., inside
-    the gateway's async stack or Atropos's event loop), we spin up a
-    disposable thread so asyncio.run() can create its own loop without
-    conflicting.
+    the gateway's async stack), we spin up a disposable thread so
+    asyncio.run() can create its own loop without conflicting.
 
     This is the single source of truth for sync->async bridging in tool
-    handlers. The RL paths (agent_loop.py, tool_context.py) also provide
-    outer thread-pool wrapping as defense-in-depth, but each handler is
-    self-protecting via this function.
+    handlers.
     """
     try:
         loop = asyncio.get_running_loop()
@@ -83,7 +80,6 @@ def _discover_tools():
         "tools.skill_manager_tool",
         "tools.browser_tool",
         "tools.cronjob_tools",
-        "tools.rl_training_tool",
         "tools.tts_tool",
         "tools.todo_tool",
         "tools.memory_tool",
@@ -161,13 +157,6 @@ _LEGACY_TOOLSET_MAP = {
         "browser_vision"
     ],
     "cronjob_tools": ["schedule_cronjob", "list_cronjobs", "remove_cronjob"],
-    "rl_tools": [
-        "rl_list_environments", "rl_select_environment",
-        "rl_get_current_config", "rl_edit_config",
-        "rl_start_training", "rl_check_status",
-        "rl_stop_training", "rl_get_results",
-        "rl_list_runs", "rl_test_inference"
-    ],
     "file_tools": ["read_file", "write_file", "patch", "search_files"],
     "tts_tools": ["text_to_speech"],
 }

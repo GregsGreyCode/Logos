@@ -135,15 +135,6 @@ else
     echo -e "${YELLOW}⚠${NC} mini-swe-agent not found (run: git submodule update --init --recursive)"
 fi
 
-# tinker-atropos (RL training backend)
-if [ -d "tinker-atropos" ] && [ -f "tinker-atropos/pyproject.toml" ]; then
-    $UV_CMD pip install -e "./tinker-atropos" && \
-        echo -e "${GREEN}✓${NC} tinker-atropos installed" || \
-        echo -e "${YELLOW}⚠${NC} tinker-atropos install failed (RL tools may not work)"
-else
-    echo -e "${YELLOW}⚠${NC} tinker-atropos not found (run: git submodule update --init --recursive)"
-fi
-
 # ============================================================================
 # Optional: ripgrep (for faster file search)
 # ============================================================================

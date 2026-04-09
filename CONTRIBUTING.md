@@ -73,7 +73,6 @@ source .venv/bin/activate
 # Install with all extras (messaging, cron, CLI menus, dev tools)
 uv pip install -e ".[all,dev]"
 uv pip install -e "./mini-swe-agent"
-uv pip install -e "./tinker-atropos"
 
 # Optional: browser tools
 npm install
@@ -180,7 +179,6 @@ logos/                        ← repo root
 │
 ├── skills/                   # Bundled skills (copied to ~/.logos/skills/ on install)
 ├── optional-skills/          # Official optional skills (discoverable via hub, not activated by default)
-├── environments/             # RL training environments (Atropos integration)
 ├── k8s/                      # Kubernetes deployment manifests
 ├── tests/                    # Test suite
 ├── website/                  # Documentation site (Docusaurus)

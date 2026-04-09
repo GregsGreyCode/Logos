@@ -51,4 +51,4 @@ It's not a chatbot wrapper or a single-model assistant. It's a **platform** — 
 - **Open standard skills** — Compatible with [agentskills.io](https://agentskills.io). Skills are portable, shareable, and community-contributed via the Skills Hub
 - **Full web control** — Search, extract, browse, vision, image generation, TTS
 - **MCP support** — Connect to any MCP server for extended tool capabilities
-- **Research-ready** — Batch processing, trajectory export, RL training with Atropos
+- **Research-ready** — Batch processing and trajectory export
