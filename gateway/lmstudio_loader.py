@@ -89,6 +89,13 @@ async def ensure_loaded(
     Cached: subsequent calls for the same ``(base_url, model_id)`` pair
     are a no-op until ``invalidate_cache`` is called or the gateway
     process restarts.
+
+    ``api_key`` resolution: must work for both LM Studio in no-auth mode
+    AND token-auth mode. If the caller passes None, we fall back to the
+    OPENAI_API_KEY env var, then to the literal "lm-studio" placeholder
+    (which LM Studio accepts as a well-formed token in both modes —
+    same fallback we use for the openshell provider credential in
+    openshell_routes.finish_provisioning).
     """
     if not base_url or not model_id:
         return False
@@ -98,9 +105,10 @@ async def ensure_loaded(
     if cache_key in _LOADED:
         return True
 
-    headers = {}
-    if api_key:
-        headers["Authorization"] = f"Bearer {api_key}"
+    if not api_key:
+        import os as _os
+        api_key = _os.environ.get("OPENAI_API_KEY") or "lm-studio"
+    headers = {"Authorization": f"Bearer {api_key}"}
 
     try:
         async with aiohttp.ClientSession() as session:
