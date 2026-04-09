@@ -86,9 +86,19 @@ export class AgentSprite {
     // sprite walks within range of the tree canopy glow (see
     // _applyTreeGlowTint), which is the only sanctioned tint source.
 
-    // Alpha based on status
+    // Alpha + grey tint based on status. Starting/disconnected agents
+    // render at 0.6 alpha AND with a desaturated grey tint so the user
+    // can immediately tell which agents are still spinning up vs which
+    // are alive and ready. The update loop maintains this state and
+    // clears the tint when the agent transitions to running.
     const isRunning = this._isRunning(inst);
     this.sprite.setAlpha(isRunning ? 1 : 0.6);
+    if (!isRunning) {
+      this.sprite.setTint(0x6b6b6b);
+      this._greyTinted = true;
+    } else {
+      this._greyTinted = false;
+    }
 
     // Create walk animations for this character
     this._createAnimations();
@@ -185,17 +195,67 @@ export class AgentSprite {
     // Bubble
     this.bubble.setVisible(!isRunning && status !== 'unknown');
 
-    // If status changed, move to new zone
+    // Status transition handling. The freeze + walk animation reset
+    // happens in update() based on isRunning, so we don't need to
+    // re-trigger anything here. The zone snap from the old code has
+    // been removed — agents stay where they are when their status
+    // changes; the new design lets the user observe the worker
+    // connect in place rather than warping the sprite around.
     if (status !== this.lastStatus) {
       this.lastStatus = status;
-      const target = this._zonePosition(inst, index, total);
-      this._navigateTo(target.x, target.y);
     }
 
     // No labels to update — only the logo badge identifies the agent.
   }
 
   update(time, delta) {
+    const isRunning = this._isRunning(this.inst);
+
+    // Provisioning / disconnected agents are visibly grey AND frozen
+    // in place — no wandering, no walk animation, no tree glow tint.
+    // The freeze stops the moment the worker_registry flips
+    // worker_connected → true (status flows in via syncState).
+    if (!isRunning) {
+      // Stop any in-progress walk so we don't get stuck mid-stride.
+      if (this.isMoving) {
+        if (this.sprite.anims.isPlaying) this.sprite.anims.stop();
+        const idleIdx = this.scene.getCharIdleFrame(this.charIndex, this.direction);
+        this.sprite.setTexture('characters', idleIdx);
+        this.isMoving = false;
+      }
+      // Clear any in-progress path/wander state so the agent doesn't
+      // resume walking the moment status flips back to running.
+      this.path = [];
+      this.pathIndex = 0;
+      this.idleTimer = 0;
+      this.walkPhaseStart = 0;
+      // Apply the desaturated grey tint. Cheaply guarded by a dirty
+      // bit so we don't hammer setTint every frame on stationary
+      // provisioning agents.
+      if (!this._greyTinted) {
+        this.sprite.setTint(0x6b6b6b);
+        this._greyTinted = true;
+        this._lastGlowT = -1; // force tree-glow to re-apply when running again
+      }
+      // Sync UI elements (badge, bubble, status dot) to current pos
+      // so they don't drift if the sprite was moved by other code.
+      this.statusDot.setPosition(this.sprite.x + 13, this.sprite.y - 52);
+      this.bubble.setPosition(this.sprite.x, this.sprite.y - 72);
+      this.logoText.setPosition(this.sprite.x, this.sprite.y - 52);
+      // Still record position for persistence (cheap, in-memory).
+      if (this.scene.recordPosition) {
+        this.scene.recordPosition(this.inst.name, this.sprite.x, this.sprite.y, this.direction);
+      }
+      return;
+    }
+
+    // Running path — clear the grey tint so the tree-glow tint can
+    // take over. Only happens once at the running transition.
+    if (this._greyTinted) {
+      this.sprite.clearTint();
+      this._greyTinted = false;
+    }
+
     if (this.path.length > 0 && this.pathIndex < this.path.length) {
       this._followPath(delta);
     } else {
