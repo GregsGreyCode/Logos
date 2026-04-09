@@ -122,8 +122,6 @@ def show_status(args):
         "Firecrawl": "FIRECRAWL_API_KEY",
         "Browserbase": "BROWSERBASE_API_KEY",  # Optional — local browser works without this
         "FAL": "FAL_KEY",
-        "Tinker": "TINKER_API_KEY",
-        "WandB": "WANDB_API_KEY",
         "ElevenLabs": "ELEVENLABS_API_KEY",
         "GitHub": "GITHUB_TOKEN",
     }

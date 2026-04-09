@@ -417,9 +417,6 @@ def register_task_env_overrides(task_id: str, overrides: Dict[str, Any]):
     """
     Register environment overrides for a specific task/rollout.
 
-    Called by Atropos environments before the agent loop to configure
-    per-task sandbox settings.
-
     Supported override keys:
         - singularity_image: str -- Singularity/Apptainer image name
         - daytona_image:     str -- Daytona sandbox image name

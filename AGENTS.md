@@ -22,7 +22,6 @@ logos/                        ← repo root
 ├── metrics.py                # Prometheus-compatible metrics engine
 ├── batch_runner.py           # Parallel batch processing
 ├── mini_swe_runner.py        # mini-swe-agent runner
-├── rl_cli.py                 # RL training CLI runner
 │
 ├── agent/                    # Agent internals
 │   ├── prompt_builder.py     # System prompt assembly
@@ -101,7 +100,6 @@ logos/                        ← repo root
 ├── cron/                     # Cron scheduler (jobs.py, scheduler.py)
 ├── evals/                    # Eval framework and suites
 ├── workflows/                # DAG workflow engine
-├── environments/             # RL training environments (Atropos)
 ├── k8s/                      # Kubernetes manifests (numbered apply order)
 ├── tests/                    # Pytest suite
 ├── skills/                   # Bundled agent skills
@@ -113,8 +111,7 @@ logos/                        ← repo root
 ├── assets/                   # Logo, banner images
 ├── scripts/                  # Operational scripts (install, release, dev-setup)
 ├── archive/hermes-origin/    # Legacy files from hermes-agent era (pending review)
-├── mini-swe-agent/           # Git submodule
-└── tinker-atropos/           # Git submodule (RL training)
+└── mini-swe-agent/           # Git submodule
 ```
 
 **User config:** `~/.logos/config.yaml` (settings), `~/.logos/.env` (API keys)
@@ -128,7 +125,7 @@ tools/*.py  (each calls registry.register() at import time)
        ↑
 core/model_tools.py  (imports tools/registry + triggers tool discovery)
        ↑
-agents/hermes/agent.py, batch_runner.py, environments/
+agents/hermes/agent.py, batch_runner.py
 ```
 
 ---

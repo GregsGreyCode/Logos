@@ -95,7 +95,6 @@ const sidebars: SidebarsConfig = {
           label: 'Advanced',
           items: [
             'user-guide/features/batch-processing',
-            'user-guide/features/rl-training',
           ],
         },
       ],
@@ -115,7 +114,6 @@ const sidebars: SidebarsConfig = {
         'developer-guide/acp-internals',
         'developer-guide/trajectory-format',
         'developer-guide/cron-internals',
-        'developer-guide/environments',
         'developer-guide/adding-tools',
         'developer-guide/creating-skills',
         'developer-guide/contributing',
