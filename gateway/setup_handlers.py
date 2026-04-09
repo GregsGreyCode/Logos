@@ -328,6 +328,21 @@ async def handle_setup_probe(request: web.Request) -> web.Response:
         if m:
             api_key = m.get("api_key") or None
 
+    # Final fallback: the gateway-wide OPENAI_API_KEY env var. The setup
+    # wizard writes the user's chosen LM Studio / Ollama / cloud key here
+    # at the end of /setup, but the seeded `machines` row's api_key
+    # column is left NULL (the env path is what the worker actually uses
+    # at inference time, so the row column is just for "users with
+    # multiple separately-keyed machines"). Without this fallback the
+    # /api/admin/model-routes provision modal's `loadAllMachineModels`
+    # call probes LM Studio anonymously, gets `auth_required`, and the
+    # dropdown shows zero models — which is the bug the user reported
+    # ("dropdown empty even though I have a machine + a model picked").
+    # Mirrors the worker's auth chain in docker/sandbox_worker.py:344
+    # so the probe sees the same backend the worker eventually will.
+    if not api_key:
+        api_key = os.environ.get("OPENAI_API_KEY") or None
+
     async with aiohttp.ClientSession() as session:
         if raw_url:
             result = await _probe_server(session, raw_url, api_key, prefer=prefer)
