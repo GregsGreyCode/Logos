@@ -8508,6 +8508,22 @@ function app() {
         // 3. Refresh local state so activeAgentRoute reflects the new binding
         await this.loadNamedAgents();
         await this.loadModelRoutes();
+        // 4. Wait for the worker to actually reconnect before clearing
+        //    the switching marker. Earlier this cleared as soon as
+        //    PATCH+restart returned, but the worker reconnect happens
+        //    asynchronously after that — so the M-pill would say
+        //    "qwen" while the chat banner still said "Sandbox is
+        //    provisioning…", which was confusing because two parts
+        //    of the UI disagreed about whether the swap was done.
+        //    Now the M-pill stays "switching…" until worker_connected
+        //    flips true (or we hit a 60s safety deadline).
+        const deadline = Date.now() + 60_000;
+        while (Date.now() < deadline) {
+          await new Promise(r => setTimeout(r, 1000));
+          try { await this.loadNamedAgents(); } catch (_) {}
+          const fresh = this.namedAgents?.find(a => a.id === agent.id);
+          if (fresh && fresh.worker_connected && fresh.worker_healthy) break;
+        }
       } catch(e) {
         alert(`Switch failed: ${e.message || e}`);
       }
