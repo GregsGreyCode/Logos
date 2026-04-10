@@ -3577,22 +3577,27 @@
                 <td class="px-4 py-2 text-white font-medium" x-text="sb.name"></td>
                 <td class="px-4 py-2">
                   <span class="px-1.5 py-0.5 rounded text-[10px] font-medium border"
-                    :class="sb.phase === 'ready' || sb.phase === 'Ready' ? 'bg-green-950 text-green-400 border-green-900'
+                    :class="isSandboxSwitching(sb) ? 'bg-yellow-950 text-yellow-400 border-yellow-900 animate-pulse'
+                      : (sb.phase === 'ready' || sb.phase === 'Ready') ? 'bg-green-950 text-green-400 border-green-900'
                       : (sb.phase === 'provisioning' || sb.phase === 'Provisioning') ? 'bg-yellow-950 text-yellow-400 border-yellow-900'
                       : 'bg-gray-900 text-gray-500 border-gray-800'"
-                    x-text="sb.phase || 'unknown'"></span>
+                    x-text="isSandboxSwitching(sb) ? 'switching' : (sb.phase || 'unknown')"></span>
                 </td>
                 <td class="px-4 py-2">
                   <span class="px-1.5 py-0.5 rounded text-[10px] font-medium border"
-                    :class="sb.worker_status === 'busy' ? 'bg-yellow-950 text-yellow-400 border-yellow-900'
+                    :class="isSandboxSwitching(sb) ? 'bg-yellow-950 text-yellow-400 border-yellow-900 animate-pulse'
+                      : sb.worker_status === 'busy' ? 'bg-yellow-950 text-yellow-400 border-yellow-900'
                       : sb.worker_status === 'idle' ? 'bg-green-950 text-green-400 border-green-900'
                       : 'bg-red-950 text-red-400 border-red-900'"
-                    x-text="sb.worker_status"></span>
+                    x-text="isSandboxSwitching(sb) ? 'switching…' : sb.worker_status"></span>
                 </td>
                 <td class="px-4 py-2">
                   <span class="flex items-center gap-1.5">
-                    <span class="w-2 h-2 rounded-full" :class="sb.worker_healthy ? 'bg-green-500' : 'bg-red-500'"></span>
-                    <span class="text-gray-500" x-text="sb.worker_healthy ? 'healthy' : 'unhealthy'"></span>
+                    <span class="w-2 h-2 rounded-full"
+                      :class="isSandboxSwitching(sb) ? 'bg-yellow-400 animate-pulse'
+                        : sb.worker_healthy ? 'bg-green-500' : 'bg-red-500'"></span>
+                    <span class="text-gray-500"
+                      x-text="isSandboxSwitching(sb) ? 'switching…' : (sb.worker_healthy ? 'healthy' : 'unhealthy')"></span>
                   </span>
                 </td>
                 <td class="px-4 py-2 text-gray-500" x-text="sb.worker_uptime_s > 3600 ? Math.floor(sb.worker_uptime_s/3600) + 'h ' + Math.floor((sb.worker_uptime_s%3600)/60) + 'm' : sb.worker_uptime_s > 60 ? Math.floor(sb.worker_uptime_s/60) + 'm' : sb.worker_uptime_s + 's'"></td>
@@ -8385,6 +8390,23 @@ function app() {
         this.sandboxLogs = `Failed to load logs: ${e.message || e}`;
       }
       this.sandboxLogsLoading = false;
+    },
+
+    /**
+     * Whether the sandbox row's owning agent is currently mid-switch.
+     * Used by the sandboxes table to render "switching…" badges in
+     * the phase / worker_status / health columns instead of the
+     * accurate-but-alarming "disconnected/unhealthy" that shows up
+     * during the brief window between PATCH+restart and the worker
+     * reconnecting in the new gateway.
+     *
+     * sb.name is the AGENT name (e.g. "Michael"). switchingAgentIds
+     * is keyed by agent.id. We bridge the two via namedAgents.
+     */
+    isSandboxSwitching(sb) {
+      if (!sb || !this.switchingAgentIds || this.switchingAgentIds.length === 0) return false;
+      const agent = (this.namedAgents || []).find(a => a.name === sb.name);
+      return !!(agent && this.switchingAgentIds.includes(agent.id));
     },
 
     async restartSandbox(name) {
