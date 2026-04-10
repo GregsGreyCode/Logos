@@ -715,22 +715,36 @@ async def _handle_sandboxes_list(request: web.Request) -> web.Response:
 
 
 async def _handle_sandbox_logs(request: web.Request) -> web.Response:
-    """GET /admin/sandboxes/{name}/logs — tail sandbox stdout/stderr."""
+    """GET /admin/sandboxes/{name}/logs — tail the worker log inside the sandbox.
+
+    The openshell CLI does not have a `sandbox logs` subcommand (only
+    create/list/delete/exec/connect/upload/download/ssh-config). The
+    earlier implementation called `openshell sandbox logs <name>`
+    which always errored out with "unrecognized subcommand", so the
+    Logs button in the admin UI silently returned nothing.
+
+    Fix: read /tmp/worker.log directly via `sandbox exec`. That's
+    where the worker writes its stdout/stderr (the spawn flow runs
+    `nohup /app/entrypoint.sh > /tmp/worker.log 2>&1`). Tail the last
+    200 lines so we don't blow up the response on a chatty worker."""
     name = request.match_info["name"]
     try:
         from gateway.executors.openshell import _openshell, _load_state
         from gateway.openshell_routes import PRIMORDIAL_NAME
         # Look up which gateway this sandbox lives inside. Without
-        # gateway scoping, `openshell sandbox logs <name>` only checks
-        # the CLI default gateway and returns "sandbox not found" for
-        # any sandbox that lives in a non-default route.
+        # gateway scoping, the exec call only checks the CLI default
+        # gateway and returns "sandbox not found" for any sandbox
+        # that lives in a non-default route.
         target_gw = PRIMORDIAL_NAME
         for inst in _load_state():
             if inst.get("sandbox_name") == name or inst.get("name") == name:
                 target_gw = inst.get("openshell_name") or PRIMORDIAL_NAME
                 break
-        result = _openshell("sandbox", "logs", name, "--tail", "100",
-                            gateway=target_gw, check=False)
+        result = _openshell(
+            "sandbox", "exec", "-n", name, "--no-tty", "--",
+            "sh", "-c", "tail -n 200 /tmp/worker.log 2>/dev/null || echo '(no worker log yet)'",
+            gateway=target_gw, check=False, timeout=15,
+        )
         return web.json_response({"logs": result.stdout or "", "stderr": result.stderr or ""})
     except FileNotFoundError:
         return web.json_response({"logs": "", "stderr": "openshell CLI not available"})
