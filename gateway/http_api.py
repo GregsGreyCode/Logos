@@ -3222,7 +3222,18 @@ async def _handle_chat(request: web.Request) -> web.StreamResponse:
         error_type = "unknown"
         error_title = "Something went wrong"
         error_action = ""
-        if "credit balance" in err_lower or "insufficient" in err_lower and "credit" in err_lower or "billing" in err_lower or "402" in err_str:
+        # Worker dropped mid-dispatch (rejected by worker_registry's
+        # finally cleanup when the WebSocket dies). Surface as a
+        # specific "agent connection lost" message rather than the
+        # generic "Something went wrong" the frontend used to show.
+        if isinstance(exc, ConnectionError) or "disconnected before" in err_lower:
+            error_type = "sandbox_disconnected"
+            error_title = "Agent connection lost mid-reply"
+            error_action = (
+                "The sandbox worker disconnected while processing your message. "
+                "Wait a few seconds for it to reconnect, then try sending again."
+            )
+        elif "credit balance" in err_lower or "insufficient" in err_lower and "credit" in err_lower or "billing" in err_lower or "402" in err_str:
             error_type = "billing"
             error_title = "Out of credits"
             error_action = "Top up your account with the model provider, then try again."
