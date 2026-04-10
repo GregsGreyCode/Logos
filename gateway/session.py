@@ -469,7 +469,18 @@ def build_session_key(source: SessionSource) -> str:
     if source.chat_type == "dm":
         if source.thread_id:
             return f"agent:main:{platform}:dm:{source.thread_id}"
-        if platform == "whatsapp" and source.chat_id:
+        # Whenever the source has a chat_id, key the session by it.
+        # Earlier this was guarded by `platform == "whatsapp"` and
+        # everything else (including local DMs from /chat) fell through
+        # to the bare `agent:main:{platform}:dm` key — meaning EVERY
+        # local-platform chat shared the same session_key, the same
+        # transcript, and therefore the same conversation history.
+        # The user hit this with two agents (Hilo + Michael): Hilo's
+        # worker loaded Michael's transcript and qwen3.5-9b parroted
+        # "I am Michael" because the history contained Michael's
+        # earlier turns. Fix is to include chat_id whenever it exists,
+        # not just for WhatsApp.
+        if source.chat_id:
             return f"agent:main:{platform}:dm:{source.chat_id}"
         return f"agent:main:{platform}:dm"
     if source.thread_id:
