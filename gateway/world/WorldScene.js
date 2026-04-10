@@ -467,13 +467,41 @@ export class WorldScene extends Phaser.Scene {
   }
 
   _dayNightStrength() {
-    // 0 = full day, 1 = full night. 240s = 4-minute cycle. Wall-clock
-    // anchored so it doesn't drift across tab switches and so multiple
-    // browser sessions on the same machine see the same phase.
-    // Sinusoidal for natural transitions.
-    const t = Date.now() / 1000;
-    const phase = (Math.sin((t / 240) * Math.PI * 2) + 1) / 2;
-    return phase;
+    // 0 = full day, 1 = full night. Keyed to the user's actual local
+    // time-of-day so the world genuinely matches whether it's day or
+    // night outside their window. Earlier this was a 4-minute
+    // artificial sine cycle for visual interest, but the user asked
+    // for it to align with real time so the agent world feels
+    // anchored to the same clock as the rest of their day.
+    //
+    // The browser handles the timezone for us — `new Date()` returns
+    // local wall-clock time without us having to know the user's
+    // tz, server tz, DST rules, etc. So no /setup dropdown is
+    // strictly needed: every browser self-configures correctly.
+    //
+    // Curve (continuous, no jagged transitions):
+    //
+    //     00:00 ─┐                          ┌─ 24:00
+    //     full   │                          │   full
+    //     night  │                          │   night
+    //            │ ↘ dawn ┐    day    ┌ dusk│
+    //            │   05–08├──08–18────┤18–22│
+    //   night ───┘────────┘           └─────└─── night
+    //
+    //   * 22:00 – 05:00 → 1.0 (full night)
+    //   * 05:00 – 08:00 → linear ramp 1.0 → 0.0 (dawn)
+    //   * 08:00 – 18:00 → 0.0 (full day)
+    //   * 18:00 – 22:00 → linear ramp 0.0 → 1.0 (dusk)
+    const now = new Date();
+    const hour = now.getHours() + now.getMinutes() / 60 + now.getSeconds() / 3600;
+    if (hour < 5 || hour >= 22) return 1.0;          // full night
+    if (hour >= 8 && hour < 18) return 0.0;          // full day
+    if (hour >= 5 && hour < 8) {
+      // dawn: 05:00 → 1.0, 08:00 → 0.0
+      return 1.0 - (hour - 5) / 3;
+    }
+    // dusk: 18:00 → 0.0, 22:00 → 1.0
+    return (hour - 18) / 4;
   }
 
   // -- Spritesheets --
