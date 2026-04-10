@@ -222,6 +222,20 @@ def build_session_context_prompt(context: SessionContext) -> str:
         "",
     ]
 
+    # Current time. Cheap, single line — gives the agent unambiguous
+    # awareness of "now" without needing a tool call. Format includes
+    # ISO date+time AND a human-readable weekday so the agent can
+    # reason about both. Uses the gateway server's local timezone via
+    # datetime.now().astimezone(); if the server is UTC the agent
+    # gets UTC and can convert if needed. A future enhancement could
+    # accept the user's timezone in the request body for client-local
+    # awareness — for now, server time is good enough for the "what
+    # time / day is it?" use case the user raised.
+    from datetime import datetime as _dt
+    _now = _dt.now().astimezone()
+    _tzname = _now.tzname() or "UTC"
+    lines.append(f"**Current time:** {_now.strftime('%A %Y-%m-%d %H:%M:%S')} {_tzname}")
+
     # Deployment environment
     mode_label = {"openshell": "OpenShell", "docker": "Docker"}.get(context.runtime_mode, "Local")
     platform_label = {"windows": "Windows", "darwin": "macOS"}.get(context.host_platform, "Linux")
