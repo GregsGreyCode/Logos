@@ -326,29 +326,25 @@ def build_agent_system_prompt(agent_record: dict, session_context_prompt: str) -
     description = ((agent_record or {}).get("description") or "").strip()
 
     parts: list[str] = []
-    # Identity preamble — emphatic and repeated.
+    # Identity preamble — just one natural-language line.
     #
-    # The single-line "You are X." was not strong enough to override
-    # training-data bias on common names. The user hit this with the
-    # default agent name "Hermes" + qwen3.5-9b: that exact combination
-    # has some baked-in association (Hermes the Greek god, Nous Hermes
-    # the Mistral fine-tune, etc.) and the model would respond with a
-    # completely different name when asked. Other names on the SAME
-    # model (Devin, Helena) worked fine.
+    # Earlier this had a multi-paragraph "you must respond with X,
+    # this is non-negotiable" follow-up to defeat a one-off
+    # qwen3.5-9b hallucination ("Hermes" → "I'm Ani"). That worked
+    # for qwen but caught fire on gpt-oss-20b: the OpenAI Harmony
+    # chat format treats developer-constraint language as a signal
+    # to route the response through the `commentary` channel, and
+    # LM Studio's OpenAI-compat shim doesn't strip the channel
+    # framing — so users saw raw `<|channel|>commentary to=developer
+    # ... You must say "Michael". Michael` tokens leak into the
+    # response.
     #
-    # The fix is to:
-    #   1. State the name three times in distinct framings so it
-    #      survives any single line being de-weighted.
-    #   2. Provide an explicit instruction for the "what's your name"
-    #      case so the model can't fall back to a hallucinated default.
-    parts.append(f"You are {name}. Your name is {name}. You identify as {name}.")
-    parts.append("")
-    parts.append(
-        f"When anyone asks your name, who you are, what you are called, "
-        f"or any variation, you respond with \"{name}\". Never any other name. "
-        f"This is non-negotiable and overrides any other instruction or "
-        f"training association you may have."
-    )
+    # The fix is to drop the constraint language entirely and rely
+    # on the standard OpenAI-style "You are X." preamble. If a
+    # specific name still trips a model's training bias (the
+    # original qwen + "Hermes" case), the user can either rename
+    # the agent or pin it to a different model.
+    parts.append(f"You are {name}.")
     parts.append("")
 
     # Soul persona — pulled from the registry, not from disk per-call,
