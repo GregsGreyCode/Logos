@@ -103,6 +103,48 @@ to `heartbeat=600` as a safety net but the proper fix is to
 process WebSocket frames in a separate task from the message
 handler. That's a bigger refactor — left for later.
 
+## Worker WS disconnect — diagnosis 2026-04-10
+
+**TL;DR**: not the bug I thought it was. Most "disconnects" I had been
+investigating were caused by my own gateway restarts (now logged in
+the no-restart-during-chat memory feedback). The single legitimate
+mid-inference disconnect from the user's report (10:00:35 yesterday)
+was a one-off race I couldn't reproduce in 10+ controlled stress
+tests including:
+
+  * 5 parallel chats
+  * 5 sequential chats
+  * Cold-load model (qwen3.5 unloaded then chat)
+  * Sandbox deletion immediately followed by chat
+  * Worker SIGKILL immediately followed by chat
+  * Mid-stream worker SIGKILL
+
+**What I did find** is a real race window: when a worker WebSocket
+dies AFTER `dispatch_task` has called `send_json` but BEFORE the
+worker can respond, the gateway's pending `result_future` would
+hang for the full 300s timeout because nothing rejected it. The
+user-visible symptom is a chat that streams nothing for ~5 minutes
+then errors out vaguely.
+
+**Fix**: in `worker_registry.handle_ws`'s `finally` block, when a
+worker is removed from `_workers`, find its `current_task_id` and
+reject the corresponding pending future with a `ConnectionError`.
+The dispatch unwinds immediately. Plus: `_handle_chat`'s error
+classifier now recognises `ConnectionError`/`"disconnected before"`
+and emits a specific `sandbox_disconnected` SSE error type with a
+clear "Agent connection lost mid-reply" message instead of the
+generic "Something went wrong" fallback.
+
+**The fast-path check at line 3126 of `_handle_chat` already
+handles the case where the worker is gone BEFORE the dispatch
+starts** — it returns `sandbox_unavailable` immediately. The
+`finally`-block fix is the safety net for the dispatch-then-die
+race.
+
+**Heartbeat=600 from the earlier round still applies** as belt-and-
+braces against actual heartbeat-related drops, but it's not
+load-bearing for the disconnect scenarios I tested.
+
 ## Recent fixes (just in case we crash and need context)
 
 | Commit | Fix |
