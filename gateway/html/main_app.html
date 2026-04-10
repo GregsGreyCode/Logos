@@ -5647,6 +5647,33 @@ function app() {
             }
           });
         }
+        // Auto-select an agent on first land of the chats tab. Without
+        // this, the user lands on /chats with no active chat, the
+        // header reads the placeholder fallback, and the chat input
+        // shows "Create an agent to start chatting…" — even when they
+        // already have several agents. The "no agents" state should
+        // ONLY appear when there are genuinely zero agents.
+        if (this.tab === 'sessions') {
+          this.$nextTick(async () => {
+            // Make sure we have a fresh agent list before deciding.
+            if (!this.namedAgents || this.namedAgents.length === 0) {
+              try { await this.loadNamedAgents(); } catch (_) {}
+            }
+            // If there's already a usable active chat, leave it alone.
+            const cur = this.chats.find(c => c.id === this.activeChatId);
+            if (cur && cur.agent_id && (this.namedAgents || []).some(a => a.id === cur.agent_id)) {
+              return;
+            }
+            // No active chat (or active chat points at a deleted agent)
+            // — auto-select the first available agent. Future
+            // enhancement: prefer a user-marked default if/when we
+            // add that field to the agent record.
+            const first = (this.namedAgents || [])[0];
+            if (first) {
+              this.chatWithAgent(first);
+            }
+          });
+        }
       });
       this._applyUrlToState(window.location.pathname);
       this.$watch('adminTab', () => { if (this.tab === 'admin') this._syncStateToUrl(); });
@@ -7618,6 +7645,16 @@ function app() {
         if (this.activeChatId && !this.chats.find(c => c.id === this.activeChatId)) {
           this.activeChatId = this.chats[0]?.id || null;
         }
+      }
+      // Push the fresh agent list directly to the world so deletions
+      // (and additions) appear immediately. The Alpine $watch on
+      // namedAgents inside initWorld() should fire on the assignment
+      // above, but the user reported deletions weren't reflected in
+      // the world view until a hard refresh — the watcher path is
+      // racy/unreliable. This direct call is the load-bearing one;
+      // the watcher is now belt-and-braces.
+      if (this.worldManager && this._worldAgentList) {
+        try { this.worldManager.syncAgents(this._worldAgentList()); } catch (_) {}
       }
     },
 
