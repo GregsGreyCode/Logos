@@ -167,6 +167,27 @@ class WorkerRegistry:
             logger.warning("Worker WebSocket error for %s: %s", worker_id, exc)
         finally:
             if worker_id and worker_id in self._workers:
+                entry = self._workers[worker_id]
+                # Reject any pending dispatch_task futures for this
+                # worker's in-flight task. Without this, dispatch_task
+                # would block on its result_future for the full 300s
+                # timeout even though we already know the worker is
+                # gone — the user sees a hung chat box for 5 minutes
+                # before the SSE eventually errors out. Rejecting here
+                # surfaces the disconnect to _handle_chat within the
+                # ~30s window aiohttp takes to notice the WS is dead,
+                # so the user gets a "sandbox unavailable" error
+                # bubble immediately.
+                pending_task_id = entry.current_task_id
+                if pending_task_id:
+                    fut = self._pending_tasks.get(pending_task_id)
+                    if fut and not fut.done():
+                        fut.set_exception(
+                            ConnectionError(
+                                f"Worker {worker_id} disconnected before "
+                                f"task {pending_task_id} completed"
+                            )
+                        )
                 del self._workers[worker_id]
                 logger.info("Worker disconnected: %s", worker_id)
 
