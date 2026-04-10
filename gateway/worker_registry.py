@@ -80,7 +80,22 @@ class WorkerRegistry:
 
     async def handle_ws(self, request: web.Request) -> web.WebSocketResponse:
         """WebSocket handler for /ws/worker — called per incoming worker connection."""
-        ws = web.WebSocketResponse(heartbeat=30)
+        # heartbeat=600 (10 min). The worker uses a custom TunnelWebSocket
+        # whose frame parser only runs while the main loop is calling
+        # receive_json(). When _handle_task is awaiting an inference call
+        # to LM Studio, NO frames are being processed — including aiohttp's
+        # WS-level pings. With heartbeat=30, any inference longer than
+        # ~30s caused the gateway to close the connection because no pong
+        # came back, even though the worker was alive and busy. The user
+        # got the response to their first chat (the worker still sent
+        # task_result once inference finished) but every subsequent chat
+        # silently failed because the WebSocket was already gone.
+        #
+        # Workers also send their own application-level heartbeat
+        # ("type": "heartbeat") every 30s while idle, so the gateway
+        # doesn't actually need WebSocket-level keepalive. The 600s
+        # ceiling is a safety net for genuinely-stuck connections.
+        ws = web.WebSocketResponse(heartbeat=600)
         await ws.prepare(request)
 
         worker_id = None
