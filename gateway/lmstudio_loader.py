@@ -36,11 +36,19 @@ import aiohttp
 
 logger = logging.getLogger(__name__)
 
-# Cache of (base_url, model_id) tuples that we've confirmed are loaded
-# in LM Studio. Cleared when the gateway restarts (intentional — we
-# re-verify on first dispatch after a restart in case LM Studio also
-# restarted in between).
-_LOADED: Set[Tuple[str, str]] = set()
+# Cache of (base_url, model_id) → last_verified_unix_seconds. Used as a
+# short-TTL fast-path so we don't hammer LM Studio's /api/v1/models on
+# every chat dispatch. After the TTL expires we re-query LM Studio
+# directly because the user might have manually unloaded the model in
+# LM Studio's UI in between — earlier code with a permanent cache made
+# unloading the model invisible to the gateway, so the next chat would
+# silently dispatch into a "no model loaded" LM Studio and the worker
+# would hang.
+_LOADED: dict = {}
+# 30 seconds is short enough that manual unloads are caught quickly
+# but long enough that a flurry of chats from the same agent doesn't
+# round-trip to LM Studio for every single one.
+_CACHE_TTL_SECONDS = 30.0
 
 
 def _strip_v1_suffix(base_url: str) -> str:
@@ -69,7 +77,7 @@ def invalidate_cache(base_url: Optional[str] = None) -> None:
         _LOADED.clear()
         return
     host = _strip_v1_suffix(base_url)
-    _LOADED = {(b, m) for (b, m) in _LOADED if b != host}
+    _LOADED = {k: v for k, v in _LOADED.items() if k[0] != host}
 
 
 async def ensure_loaded(
@@ -102,7 +110,15 @@ async def ensure_loaded(
 
     host = _strip_v1_suffix(base_url)
     cache_key = (host, model_id)
-    if cache_key in _LOADED:
+    # Short-TTL fast path. If we verified this (host, model) within the
+    # last _CACHE_TTL_SECONDS, skip the network round-trip. Beyond the
+    # TTL we MUST re-verify because the user might have manually
+    # unloaded the model in LM Studio's UI — a permanent cache would
+    # silently miss that and dispatch into a no-model-loaded server.
+    import time as _time
+    now = _time.time()
+    last_verified = _LOADED.get(cache_key, 0.0)
+    if (now - last_verified) < _CACHE_TTL_SECONDS:
         return True
 
     if not api_key:
@@ -114,6 +130,27 @@ async def ensure_loaded(
         async with aiohttp.ClientSession() as session:
             # 1. Query loaded models. If the model is already there,
             # add to cache and return without touching /load.
+            #
+            # LM Studio's /api/v1/models response shape (verified by
+            # actual probe, not assumed):
+            #
+            #   {
+            #     "models": [
+            #       {
+            #         "key": "openai/gpt-oss-20b",
+            #         "loaded_instances": [...],  // non-empty = loaded
+            #         "type": "llm",
+            #         ...
+            #       }
+            #     ]
+            #   }
+            #
+            # Earlier code looked for `data["data"]`, `m["id"]`,
+            # `m["state"]` — none of which exist in LM Studio's
+            # response — so the query NEVER matched anything and we
+            # called /api/v1/models/load on every single chat. The
+            # user's "every new request is loading a new model"
+            # symptom was caused by these wrong field names.
             try:
                 async with session.get(
                     f"{host}/api/v1/models",
@@ -122,16 +159,31 @@ async def ensure_loaded(
                 ) as resp:
                     if resp.status == 200:
                         data = await resp.json(content_type=None)
-                        for m in (data.get("data") or []):
-                            mid = m.get("id") or m.get("model")
-                            state = (m.get("state") or m.get("status") or "").lower()
-                            # LM Studio reports state="loaded" for active
-                            # models. Empty state from older LM Studio
-                            # builds is also treated as "loaded" (it
-                            # only lists loaded models on those builds).
-                            if mid == model_id and state in ("loaded", "ready", ""):
-                                _LOADED.add(cache_key)
+                        # LM Studio's REST API uses "models"; the
+                        # OpenAI-compat endpoint at /v1/models uses
+                        # "data". Tolerate both so we work against
+                        # either tree.
+                        items = data.get("models") or data.get("data") or []
+                        for m in items:
+                            mid = m.get("key") or m.get("id") or m.get("model")
+                            if mid != model_id:
+                                continue
+                            # Loaded state: LM Studio reports an array
+                            # of `loaded_instances` (non-empty = at
+                            # least one running instance of this model).
+                            # Older builds may use a flat "state" field
+                            # instead — accept both.
+                            instances = m.get("loaded_instances")
+                            if isinstance(instances, list) and len(instances) > 0:
+                                _LOADED[cache_key] = now
                                 return True
+                            state = (m.get("state") or m.get("status") or "").lower()
+                            if state in ("loaded", "ready"):
+                                _LOADED[cache_key] = now
+                                return True
+                            # Found the model in the catalog but not
+                            # loaded — fall through to /load below.
+                            break
                     else:
                         logger.warning(
                             "ensure_loaded: GET %s/api/v1/models returned %d",
@@ -158,7 +210,7 @@ async def ensure_loaded(
                 timeout=aiohttp.ClientTimeout(total=timeout),
             ) as resp:
                 if resp.status == 200:
-                    _LOADED.add(cache_key)
+                    _LOADED[cache_key] = now
                     logger.info(
                         "ensure_loaded: %r loaded successfully on %s",
                         model_id, host,
