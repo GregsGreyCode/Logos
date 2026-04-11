@@ -300,9 +300,64 @@ Approach A is the minimum; **M7 is the follow-up that makes the sandbox health s
 
 ---
 
-## M9 — Autonomous agent activity (self-reflection scheduler)
+## M9 — Autonomous agent activity (discoverable, on-ledger, richer cadence)
 
-**State today**: **No agent in Logos ever initiates activity on its own.** Every `dispatch_task` call is driven by: (1) a user-authored chat message, (2) a user-scheduled cron job, (3) a user-triggered workflow, or (4) a sub-agent spawned inside a user conversation. The `memory` tool that agents call during conversations to write `MEMORY.md` / `USER.md` is the ONLY "self-modifying" behavior, and it only fires mid-response to a user-authored turn. There is no reflection scheduler, no background consolidation loop, no periodic "review your recent conversations" prompt. The tamagotchi / living-agent identity Greg is building toward requires this layer; it doesn't exist yet.
+**State today — correction to an earlier misreading**: Logos **does already** have an autonomous agent-activity mechanism. It lives in `gateway/run.py:720 _flush_memories_for_session`, fires on three triggers (session expiry watcher, `/reset` command, `/resume` command), and spins up a **temporary in-process `AIAgent`** with `enabled_toolsets=["memory", "skills"]` to review the conversation transcript and save memories/skills before the session is cleared. The injected system turn is word-for-word:
+
+```
+[System: This session is about to be automatically reset due to
+inactivity or a scheduled daily reset. The conversation context
+will be cleared after this turn.
+
+Review the conversation above and:
+1. Save any important facts, preferences, or decisions to memory
+   (user profile or your notes) that would be useful in future sessions.
+2. If you discovered a reusable workflow or solved a non-trivial
+   problem, consider saving it as a skill.
+3. If nothing is worth saving, that's fine — just skip.
+
+Do NOT respond to the user. Just use the memory and skill_manage
+tools if needed, then stop.]
+```
+
+An earlier audit of this file wrongly claimed "no agent in Logos ever initiates activity on its own." The audit was looking at `worker_registry.dispatch_task` call sites — the flush mechanism doesn't go through that path (it creates a fresh in-process `AIAgent` instead), which is why it escaped the grep. That misreading is corrected here.
+
+**What's actually missing** (and why M9 is still a real M-ticket despite the correction):
+
+1. **Discoverability — the whole point of the tamagotchi identity is that you can SEE your agents live.** Today, memory flushes are completely invisible to the user. No SSE event in the chat UI, no log entry in the unified log tagged as "self-reflection", no increment on the `active_tasks` counter from M8 Phase A (because the flush bypasses `dispatch_task` and therefore bypasses the counter), no thought-bubble animation in the world view, no toast notification when a new memory is actually written. An agent can review 30 conversations a day and save 8 memories and you'd never know unless you tailed the raw gateway log.
+
+2. **Architectural divergence**: the flush path uses `runtime_kwargs` + in-process `AIAgent` (hits the provider API directly on the host network) while the primary chat path uses `openshell sandbox exec` per-task (Plan A-prime, TASKS.md #24). That means the flush is **NOT subject to** the sandbox's network policy, filesystem isolation, or the worker-registry's activity counter. A reflection that writes memories runs with full host access, while the conversation that triggered the reflection ran in an isolated sandbox. That's a split worth making explicit and deciding about intentionally.
+
+3. **The only trigger is session expiry** (or explicit `/reset`/`/resume`). There's no periodic "nightly reflection" cadence, no activity-triggered "review what happened in the last hour", no per-agent opt-in schedule. If a session never expires and the user never runs `/reset`, the agent never reflects — so the most-loved agents are the ones that *least* consolidate their memories. The opposite of what you want.
+
+**What this M-ticket should actually do**:
+
+1. **Route the flush through `worker_registry.dispatch_task`** with a new `origin="session_flush"` tag so:
+   - The `active_tasks` counter increments → thought-bubble shows in the world view while the agent is reflecting (same visual language as a user chat turn, different glyph maybe 🌙)
+   - The M8 Phase B ledger (when it lands) gets a row per reflection tagged with the origin, so you can query "Tali reflected 12 times this week, saved 4 memories"
+   - The flush inherits the sandbox's network policy — or doesn't, by explicit decision
+
+2. **Add richer triggers** beyond session expiry:
+   - Nightly (one pass per agent per day at 3am, opt-out per agent soul)
+   - Activity-triggered (N minutes after the last user turn, once, if the session has >= 4 turns)
+   - Keep the existing expiry + `/reset` + `/resume` triggers as-is
+
+3. **Surface memory writes to the user when they happen**: a toast notification or a "💭 Tali saved a new memory: '…'" card in a feed somewhere. Otherwise the whole mechanism is invisible and might as well not exist from a UX perspective.
+
+4. **World-view affordance**: when an agent is mid-reflection, render a distinct glyph (🌙 for nightly? 💭 with a different tint? custom sprite?) on the world-view bubble so the user can tell "Tali is thinking *about her memories*, not about a user message".
+
+5. **Safety / cost guards**: Admin → Settings pause-all switch; per-agent "max reflections per day" budget; dry-run mode that captures proposed writes as evolution proposals instead of auto-applying them.
+
+**Why it's architecturally large**:
+
+1. Routing flush through `dispatch_task` means deciding whether reflection runs in-sandbox or on the host — there's an argument both ways and it's a product decision, not a plumbing one.
+2. The new cadences need a lightweight periodic scheduler; the current cron system is for user-authored one-off jobs, not periodic system loops.
+3. User-facing discoverability (M9 #3) is where most of the UX work lives — toasts, feed cards, sprite glyphs, the Admin → Activity integration (which in turn needs M8 Phase B).
+4. The reflection prompt design is a product-shaping decision that changes how the agent thinks of itself and what memories it forms. The current prompt is functional but not particularly rich.
+
+**Dependency**: Phase A of M8 shipped (active_tasks counter + thought bubble). **Must land after M8 Phase B (dispatch ledger)** so reflections are distinguishable from user traffic in the analytics layer and so the user can tell "this agent spent 3 hours today thinking about its own memories" at a glance. The visual affordances (M9 #4) benefit from M8's world-view integration being stable first.
+
+**Direction established**: 2026-04-11 session — user observed qwen reasoning mid-flush in LM Studio and asked about it, exposing the mechanism's existence and its complete invisibility in the UI. The mechanism is the beginning of the tamagotchi identity; the work in this ticket is making it *feel* like that identity instead of being silent background noise.
 
 **What's missing**:
 
