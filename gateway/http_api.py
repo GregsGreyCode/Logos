@@ -730,17 +730,21 @@ async def _handle_sandbox_logs(request: web.Request) -> web.Response:
     name = request.match_info["name"]
     try:
         from gateway.executors.openshell import _openshell, _load_state
-        from gateway.openshell_routes import get_primordial_name
+        from gateway.openshell_routes import get_default_gateway_name
         # Look up which gateway this sandbox lives inside. Without
         # gateway scoping, the exec call only checks the CLI default
         # gateway and returns "sandbox not found" for any sandbox
         # that lives in a non-default route.
-        primordial = get_primordial_name()
-        target_gw = primordial
+        fallback_gw = get_default_gateway_name()
+        target_gw = fallback_gw
         for inst in _load_state():
             if inst.get("sandbox_name") == name or inst.get("name") == name:
-                target_gw = inst.get("openshell_name") or primordial
+                target_gw = inst.get("openshell_name") or fallback_gw
                 break
+        if not target_gw:
+            return web.json_response(
+                {"logs": "", "stderr": "no model routes configured — run /setup first"}
+            )
         result = _openshell(
             "sandbox", "exec", "-n", name, "--no-tty", "--",
             "sh", "-c", "tail -n 200 /tmp/worker.log 2>/dev/null || echo '(no worker log yet)'",
@@ -814,18 +818,21 @@ async def _handle_sandbox_restart(request: web.Request) -> web.Response:
 
     # ── 3. Delete the existing sandbox (best-effort, never fatal) ──
     # delete_instance() reads the gateway from the state file too;
-    # if state is missing it falls back to PRIMORDIAL_NAME which
-    # covers the common bootstrap case but not multi-gateway. For
-    # the multi-gateway case the state file MUST be intact for the
-    # delete to find the right gateway — we fix state-file drift in
-    # a follow-up; for now the delete tolerates a miss because the
-    # spawn step always proceeds anyway.
+    # if state is missing it falls back to the user's default model
+    # route (get_default_gateway_name), which covers the common single-
+    # gateway case. For the multi-gateway case the state file MUST be
+    # intact for the delete to find the right gateway — we fix state-
+    # file drift in a follow-up; for now the delete tolerates a miss
+    # because the spawn step always proceeds anyway.
     #
     # CRITICAL: delete_instance() shells out to `openshell sandbox
     # delete` which is a synchronous subprocess call. If we ran it
     # directly inside this async handler the event loop would be
     # blocked for the duration (~5-10s typical). asyncio.to_thread
-    # offloads it so other gateway requests keep flowing.
+    # offloads it so other gateway requests keep flowing. If the
+    # state file is missing, delete_instance falls back to the user's
+    # default model route for gateway resolution (or skips cleanly if
+    # no routes exist yet).
     try:
         await asyncio.to_thread(executor.delete_instance, agent_name)
     except Exception as exc:
@@ -940,14 +947,12 @@ async def _handle_model_routes_post(request: web.Request) -> web.Response:
     new row appear immediately and watch it go from provisioning →
     ready without staring at a wedged modal.
 
-    Three resolution paths (in order of speed):
+    Two resolution paths (in order of speed):
 
       1. Existing row for (provider, model) → reuse it. Re-pin the
          inference route in a background task so OpenShell state
          matches the DB. Returns immediately.
-      2. No routes exist AND the primordial gateway is alive → adopt
-         it. ``adopt_primordial`` is fast (~1s) so this stays inline.
-      3. Cold provision → insert the row sync, return now, finish
+      2. Cold provision → insert the row sync, return now, finish
          the gateway start in a background task.
     """
     try:
@@ -983,21 +988,7 @@ async def _handle_model_routes_post(request: web.Request) -> web.Response:
         _asyncio.create_task(_re_pin_bg())
         return web.json_response({"ok": True, "route": existing})
 
-    # Path 2: no routes exist + bootstrap gateway alive → adopt (fast, sync)
-    if not auth_db.list_model_routes() and _osr.gateway_is_alive(_osr.BOOTSTRAP_PRIMORDIAL_NAME):
-        try:
-            route = await _asyncio.to_thread(_osr.adopt_primordial, provider, model)
-            return web.json_response({"ok": True, "route": route})
-        except Exception as exc:
-            logger.warning(
-                "model-routes primordial adopt failed for %s/%s: %s",
-                provider, model, exc,
-            )
-            return web.json_response(
-                {"ok": False, "error": str(exc)}, status=500,
-            )
-
-    # Path 3: cold provision — insert row sync, finish in background
+    # Path 2: cold provision — insert row sync, finish in background
     try:
         route = await _asyncio.to_thread(
             _osr.create_route_provisioning_row, provider, model,
@@ -1089,10 +1080,10 @@ async def _handle_model_routes_delete(request: web.Request) -> web.Response:
     underlying OpenShell gateway.
 
     Refuses with 409 if:
-      * the route is the primordial logos-openshell (cannot be deleted
-        because Logos itself depends on it being present)
       * any agents are still bound to the route (caller must re-bind
         or delete those agents first to avoid orphaning their sandboxes)
+      * this is the last remaining route (deleting it would leave Logos
+        with no way to route inference)
 
     On success the openshell gateway is destroyed best-effort and the
     DB row is removed. If the openshell CLI call fails (gateway already
@@ -1108,9 +1099,9 @@ async def _handle_model_routes_delete(request: web.Request) -> web.Response:
             return web.json_response({"ok": False, "error": "route not found"}, status=404)
         return web.json_response({"ok": True})
     except RuntimeError as exc:
-        # Soft-error path — primordial / agents-still-bound. Surface
-        # as 409 Conflict so the UI can render the message inline
-        # without treating it as a server crash.
+        # Soft-error path — last-route guard or agents-still-bound.
+        # Surface as 409 Conflict so the UI can render the message
+        # inline without treating it as a server crash.
         return web.json_response({"ok": False, "error": str(exc)}, status=409)
     except Exception as exc:
         logger.warning("model-routes delete failed for %s: %s", route_id, exc)

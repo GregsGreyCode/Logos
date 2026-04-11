@@ -13,10 +13,6 @@ The fix is to run multiple OpenShell gateways on the same host, one per
 
   * is named after its model (e.g. ``openai-gpt-oss-20b``,
     ``qwen-qwen3-5-9b``) — the sanitized form of the model id, no prefix.
-    Including the bootstrap "primordial" gateway (originally provisioned
-    out-of-band as ``logos-openshell``), which is aliased to its model
-    name via ``openshell gateway add --local`` so Logos refers to it
-    consistently with the rest.
   * has its own unique host port (``9090``, ``9091``, ``9092``, ...)
   * has its own k3s cluster (full Docker container)
   * is pinned to one provider+model via ``openshell inference set``
@@ -25,6 +21,28 @@ The fix is to run multiple OpenShell gateways on the same host, one per
 Logos's ``OpenShellExecutor.spawn`` reads the agent's ``model_route_id``,
 looks up the row in ``model_routes``, and passes ``-g <openshell_name>``
 to the spawn subprocess so the sandbox lands inside the right gateway.
+
+History note — the "primordial" concept has been removed
+────────────────────────────────────────────────────────
+Earlier versions had a ``BOOTSTRAP_PRIMORDIAL_NAME = "logos-openshell"``
+constant and an ``adopt_primordial`` function that detected a pre-
+existing gateway (usually provisioned out-of-band by the user via
+``openshell gateway start``) and "adopted" it into ``model_routes`` by
+registering a client-side alias with a clean model-based name. That
+approach was structurally broken: the alias worked for gRPC/exec calls
+(endpoint-URL routed) but ``openshell sandbox create --from <Dockerfile>``
+derives its target Docker container name from the gateway name, so
+``-g <alias>`` looked for ``openshell-cluster-<alias>`` which didn't
+exist and failed with ``404: No such container``. Every first-run /setup
+on a machine with an existing ``logos-openshell`` container hit this.
+
+Rather than patch the alias trick, we dropped the concept entirely:
+Logos now always provisions gateways fresh via ``openshell gateway start
+--name <sanitized-model>``, and the ``is_primordial`` deletion guard is
+replaced with a "refuse to delete the last remaining route" check in
+``destroy_route``. Users who had a standalone ``logos-openshell``
+container from a pre-Logos OpenShell install need to destroy it first
+(or let /setup collide and surface the port conflict clearly).
 
 This module wraps the ``openshell`` CLI and the ``model_routes`` table.
 HTTP endpoints (gateway/http_api.py) and the executor
@@ -54,18 +72,11 @@ logger = logging.getLogger(__name__)
 
 # ── Constants ───────────────────────────────────────────────────────────────
 
-# Default name produced by `openshell gateway start` with no `--name` flag.
-# Used as a discovery candidate during the bootstrap path (first /setup run
-# before any model_routes row exists). Once the primordial is adopted it
-# gets aliased to its model-based name and the row in auth.db tracks the
-# new name; this constant is only consulted when no DB row exists yet.
-BOOTSTRAP_PRIMORDIAL_NAME = "logos-openshell"
-PRIMORDIAL_PORT = 9090
-
-# Auto-allocation pool for new gateways. Routes 2..N pick the next free
-# port in this range. Cap is intentional — running >9 OpenShell containers
-# on a homelab host will exhaust RAM. Raise if needed.
-_PORT_ALLOC_START = 9091
+# Auto-allocation pool for OpenShell gateway host ports. The first route
+# provisioned on a fresh install starts at 9090 and subsequent routes
+# walk upward. Cap is intentional — running >10 OpenShell containers on
+# a homelab host will exhaust RAM. Raise if needed.
+_PORT_ALLOC_START = 9090
 _PORT_ALLOC_END = 9099
 
 
@@ -96,44 +107,67 @@ def _sanitize_route_name(model: str) -> str:
     return s[:63].rstrip("-")
 
 
-def get_primordial_name() -> str:
-    """Return the OpenShell gateway name of the primordial route.
+def get_default_gateway_name() -> Optional[str]:
+    """Return the ``openshell_name`` of the default model route, if any.
 
-    Reads the primordial row from auth.db (the row marked
-    ``is_primordial=1``) and returns its current ``openshell_name``,
-    which is the model-based alias added during ``adopt_primordial``.
-    Falls back to ``BOOTSTRAP_PRIMORDIAL_NAME`` only when no DB row
-    exists yet — i.e. during the very first /setup run, before adoption.
+    Replaces the removed ``get_primordial_name()``. Used by executor
+    paths (prune, delete-by-name, state fallback) that need a gateway
+    to consult when a state-file entry is missing an ``openshell_name``.
 
-    Most call sites that previously hardcoded ``PRIMORDIAL_NAME``
-    actually wanted "the gateway my orphaned-state-file entries fall
-    back to" (e.g. for prune passes or delete-by-name lookups). For
-    those, this helper is the correct answer because it tracks the
-    current renamed primordial.
+    Resolution order:
+      1. The row with ``is_default=1`` — that's the user's chosen primary.
+      2. The oldest row by ``created_at`` — covers the case where the
+         default flag hasn't been set yet (e.g. fresh post-/setup state).
+      3. ``None`` — caller is responsible for handling the "no routes
+         configured" case. Historically this returned
+         ``BOOTSTRAP_PRIMORDIAL_NAME = "logos-openshell"`` as a literal
+         fallback, which masked the "/setup hasn't run yet" state; we
+         prefer the explicit None so callers can tell the difference.
     """
     try:
-        for r in auth_db.list_model_routes():
-            if r.get("is_primordial"):
-                name = r.get("openshell_name")
-                if name:
-                    return name
+        routes = auth_db.list_model_routes()
     except Exception as exc:
-        logger.warning("get_primordial_name: list_model_routes failed: %s", exc)
-    return BOOTSTRAP_PRIMORDIAL_NAME
-
-
-# Back-compat alias. Old call sites import ``PRIMORDIAL_NAME`` as a
-# module-level constant. We can't make a constant follow DB state, so
-# the property-style helper is the canonical access path now. Anything
-# that still references ``PRIMORDIAL_NAME`` directly should be migrated
-# to ``get_primordial_name()``.
-PRIMORDIAL_NAME = BOOTSTRAP_PRIMORDIAL_NAME
+        logger.warning("get_default_gateway_name: list_model_routes failed: %s", exc)
+        return None
+    if not routes:
+        return None
+    # list_model_routes() orders by is_default DESC then created_at, so
+    # the first row is already the correct default/fallback.
+    return routes[0].get("openshell_name")
 
 
 def _next_free_port() -> int:
-    """Pick the next unused port in the OpenShell allocation range."""
-    used = {r["openshell_port"] for r in auth_db.list_model_routes()}
-    used.add(PRIMORDIAL_PORT)  # always reserved even if not yet registered
+    """Pick the next unused port in the OpenShell allocation range.
+
+    Considers both model_routes rows AND any already-running OpenShell
+    gateway containers — the latter so a fresh-install allocator doesn't
+    collide with a pre-existing ``openshell-cluster-*`` container that
+    was provisioned out-of-band. (Historically we reserved port 9090 as
+    the primordial port; now we just check whether anything already
+    owns it and skip if so.)
+    """
+    used: set[int] = {r["openshell_port"] for r in auth_db.list_model_routes()}
+
+    # Also treat any port already bound by a running openshell-cluster-*
+    # container as used, so the allocator never hands out a port that
+    # `openshell gateway start` would immediately fail on.
+    try:
+        out = subprocess.run(
+            ["docker", "ps", "--filter", "name=openshell-cluster-",
+             "--format", "{{.Ports}}"],
+            capture_output=True, text=True, timeout=5,
+        )
+        if out.returncode == 0:
+            # Ports lines look like "0.0.0.0:9090->30051/tcp" — grab the
+            # first `:NNNN->` occurrence on each line.
+            import re as _re
+            for line in out.stdout.splitlines():
+                m = _re.search(r":(\d+)->", line)
+                if m:
+                    used.add(int(m.group(1)))
+    except Exception as exc:
+        logger.debug("_next_free_port: docker ps probe failed (non-fatal): %s", exc)
+
     for p in range(_PORT_ALLOC_START, _PORT_ALLOC_END + 1):
         if p not in used:
             return p
@@ -347,216 +381,12 @@ def refresh_status(route_id: str) -> Optional[dict]:
     return auth_db.get_model_route(route_id)
 
 
-# ── Migration ──────────────────────────────────────────────────────────────
-
-def migrate_routes_to_model_names() -> int:
-    """Bring legacy route names over to the prefix-free model-name scheme.
-
-    Old scheme:
-      * primordial: ``logos-openshell``
-      * other:      ``logos-os-<sanitized-model>``
-
-    New scheme:
-      * all:        ``<sanitized-model>`` (e.g. ``openai-gpt-oss-20b``,
-        ``qwen-qwen3-5-9b``)
-
-    For each row whose ``openshell_name`` doesn't already match the new
-    scheme, this helper:
-
-      1. Computes the target name from the model id.
-      2. Registers a client-side alias via ``openshell gateway add``
-         pointing at the same ``https://127.0.0.1:<port>`` endpoint.
-         (Idempotent — silently no-ops if the alias already exists.)
-      3. Updates the DB row's ``openshell_name`` to the new value.
-
-    The old name remains valid in the openshell CLI's metadata
-    (``~/.config/openshell/gateways/<old>/``) so any existing state-file
-    entries that reference it continue to work; we don't delete the old
-    alias here because that would race with state-file pruning.
-
-    Idempotent — running this on every gateway startup is cheap (one DB
-    read per row + one CLI call per row that's still on the old name).
-    Returns the number of rows actually renamed.
-    """
-    renamed = 0
-    try:
-        rows = auth_db.list_model_routes()
-    except Exception as exc:
-        logger.warning("migrate_routes_to_model_names: list failed: %s", exc)
-        return 0
-    for row in rows:
-        current = row.get("openshell_name") or ""
-        model = row.get("model") or ""
-        if not model:
-            continue
-        target = _sanitize_route_name(model)
-        if current == target:
-            continue
-        port = row.get("openshell_port") or 0
-        endpoint = f"https://127.0.0.1:{port}"
-        try:
-            _ensure_gateway_alias(target, endpoint)
-        except subprocess.CalledProcessError as exc:
-            logger.warning(
-                "migrate: failed to alias %s → %s: %s",
-                current, target, _stderr_or_stdout(exc),
-            )
-            continue
-        except RuntimeError as exc:
-            # _openshell_exe missing — skip the migration entirely.
-            logger.warning("migrate: %s", exc)
-            return renamed
-        try:
-            auth_db.rename_model_route_openshell_name(row["id"], target)
-        except Exception as exc:
-            logger.warning(
-                "migrate: DB rename failed for route %s (%s → %s): %s",
-                row["id"], current, target, exc,
-            )
-            continue
-        logger.info(
-            "migrated route %s: openshell_name %s → %s",
-            row["id"], current, target,
-        )
-        renamed += 1
-    return renamed
-
-
 # ── Route lifecycle ────────────────────────────────────────────────────────
-
-def _ensure_gateway_alias(alias_name: str, endpoint_url: str) -> None:
-    """Idempotently register a client-side alias for an existing gateway.
-
-    ``openshell gateway add --local --name <alias>`` creates a new entry
-    in the openshell CLI's local metadata (``~/.config/openshell/gateways/``)
-    that points at the same physical container as another existing
-    gateway entry. This is purely a client-side rename — the actual
-    gateway server doesn't know its own "name" so we can refer to it
-    under any alias we like.
-
-    Used by ``adopt_primordial`` (and the migration helper) to give the
-    bootstrap ``logos-openshell`` gateway a model-based name without
-    destroying and re-provisioning anything. Returns silently on
-    "already exists" errors so this is safe to call repeatedly.
-    """
-    try:
-        _run_openshell(
-            "gateway", "add",
-            "--local",
-            "--name", alias_name,
-            endpoint_url,
-            gateway=None,  # this command takes its target via positional + flags
-            timeout=60,
-        )
-        logger.info("registered openshell gateway alias '%s' → %s", alias_name, endpoint_url)
-    except subprocess.CalledProcessError as exc:
-        msg = (_stderr_or_stdout(exc) or "").lower()
-        if "already exists" in msg:
-            logger.debug("openshell alias '%s' already exists — skipping", alias_name)
-            return
-        raise
-
-
-def adopt_primordial(provider: str, model: str) -> dict:
-    """Register the existing primordial gateway as a model route.
-
-    Used by /setup on first run when the user already has the bootstrap
-    OpenShell gateway running (provisioned out-of-band by
-    ``openshell gateway start``, default name ``logos-openshell``). The
-    function:
-
-      1. Confirms the bootstrap gateway is alive.
-      2. Pushes the provider config + inference pin via the primordial
-         gateway's real name (``BOOTSTRAP_PRIMORDIAL_NAME``).
-      3. Writes the model_routes row using the primordial's real name
-         and marks it ``is_primordial=True`` so it can't be deleted from
-         the admin UI even when no agents are bound to it.
-
-    The ``is_primordial`` flag is a deletion guard only — it prevents
-    destroy_route() from nuking the bootstrap gateway the user set up
-    out-of-band.
-
-    History note: earlier versions of this function tried to rename the
-    primordial to a model-based clean name (e.g. ``qwen-qwen3-5-9b``)
-    via ``openshell gateway add --local --name <alias>`` pointing at
-    the same endpoint URL. That alias works for gRPC/exec calls (which
-    resolve via the URL) but BREAKS ``openshell sandbox create --from
-    <Dockerfile>``, because the image-push path derives the target
-    Docker container name from the gateway name — so it looks for
-    ``openshell-cluster-<alias>`` which doesn't exist, and fails with
-    ``404: No such container``. Every /setup first-run hit this. The
-    proper rename requires destroying the container and re-starting it
-    under a new name, which is a user-driven action, not something to
-    do silently on their first adopt. We use the primordial's real
-    name here and leave a follow-up in MISSING.md to offer a clean
-    "rename gateway" flow in the admin UI.
-    """
-    if not gateway_is_alive(BOOTSTRAP_PRIMORDIAL_NAME):
-        raise RuntimeError(
-            f"bootstrap gateway '{BOOTSTRAP_PRIMORDIAL_NAME}' is not running. "
-            f"Start it with `openshell gateway start --name {BOOTSTRAP_PRIMORDIAL_NAME}` first."
-        )
-
-    # Use the primordial's real name directly — NO alias rename.
-    gateway_name = BOOTSTRAP_PRIMORDIAL_NAME
-
-    # Ensure the provider record exists on the gateway with BOTH a real
-    # credential value and OPENAI_BASE_URL config — see the long
-    # explanation on `finish_provisioning` step 3 for why both are
-    # required. Earlier this passed `--credential OPENAI_API_KEY` (a
-    # literal env var name with no value) and no `--config` at all,
-    # which created a provider record that the OpenShell privacy router
-    # couldn't actually route through. Workers landing in the primordial
-    # would then crash on first inference. ``ensure_provider_configured``
-    # heals primordials provisioned before this fix; new ones get the
-    # right config inline below.
-    cred_arg, config_arg = _resolve_lmstudio_provider_args()
-    try:
-        _run_openshell(
-            "provider", "create",
-            "--name", provider,
-            "--type", "openai",
-            "--credential", cred_arg,
-            "--config", config_arg,
-            gateway=gateway_name,
-        )
-    except subprocess.CalledProcessError as exc:
-        msg = _stderr_or_stdout(exc).lower()
-        if "exists" not in msg and "in use" not in msg and "duplicate" not in msg:
-            raise RuntimeError(
-                f"failed to create provider '{provider}' on primordial gateway: "
-                f"{_stderr_or_stdout(exc)}"
-            )
-
-    # Pin the inference route to the chosen model. This is the actual
-    # behaviour change OpenShell needs — without this, requests through
-    # inference.local keep going to whatever model was last set.
-    try:
-        _run_openshell(
-            "inference", "set",
-            "--provider", provider,
-            "--model", model,
-            "--no-verify",
-            gateway=gateway_name,
-        )
-    except subprocess.CalledProcessError as exc:
-        raise RuntimeError(
-            f"failed to pin inference route on primordial gateway: "
-            f"{_stderr_or_stdout(exc)}"
-        )
-
-    # Write the DB row. The UNIQUE(provider, model) constraint catches
-    # double-adopts; we let the caller handle the resulting IntegrityError.
-    return auth_db.create_model_route(
-        provider=provider,
-        model=model,
-        openshell_name=gateway_name,
-        openshell_port=PRIMORDIAL_PORT,
-        status="ready",
-        is_default=True,
-        is_primordial=True,
-    )
-
+#
+# Note: the earlier ``adopt_primordial`` / ``_ensure_gateway_alias`` /
+# ``migrate_routes_to_model_names`` helpers are gone — see the module
+# docstring at the top of this file for the full explanation. Logos now
+# always provisions gateways fresh via ``provision_new_route``.
 
 def create_route_provisioning_row(provider: str, model: str) -> dict:
     """Step 1 of cold provision — insert the model_routes row in
@@ -708,21 +538,23 @@ def provision_or_reuse_route(provider: str, model: str,
                               set_as_default: bool = False) -> dict:
     """Get an existing route for (provider, model) or provision a new one.
 
-    Resolution order:
+    Resolution order (simpler post-primordial-removal):
       1. If a model_routes row already exists for (provider, model), reuse
          it. Re-pin the underlying gateway's inference route as a side
          effect (cheap, idempotent) so the actual OpenShell state matches
          the DB.
-      2. If NO routes exist at all, try to adopt the bootstrap OpenShell
-         gateway (default name ``logos-openshell``, see
-         ``BOOTSTRAP_PRIMORDIAL_NAME``) as the first route, aliased under
-         a model-based name via ``adopt_primordial``.
-      3. Otherwise, provision a fresh OpenShell gateway alongside the
-         existing ones (slow path — see provision_new_route).
+      2. Otherwise, provision a fresh OpenShell gateway via
+         ``provision_new_route`` (slow path — ~30-60s cold start).
 
-    Used by /setup (commit 3) and the /admin/model-routes POST handler
-    (commit 4). Caller is expected to be in a non-blocking context — this
-    function is sync and can take >60s on the cold-provision path.
+    Used by /setup and the /admin/model-routes POST handler. Caller is
+    expected to be in a non-blocking context — this function is sync and
+    can take >60s on the cold-provision path.
+
+    Note: the earlier "adopt the existing logos-openshell primordial"
+    branch was removed. If a pre-existing out-of-band gateway is on the
+    host, ``_next_free_port`` will see its port as occupied and pick the
+    next free slot, so the new route gets its own container. Users who
+    want to consolidate should destroy the old container manually.
     """
     # 1. Existing match
     existing = auth_db.get_model_route_by_provider_model(provider, model)
@@ -751,11 +583,7 @@ def provision_or_reuse_route(provider: str, model: str,
             auth_db.set_default_model_route(existing["id"])
         return auth_db.get_model_route(existing["id"])
 
-    # 2. No routes exist — adopt the bootstrap gateway if it's alive
-    if not auth_db.list_model_routes() and gateway_is_alive(BOOTSTRAP_PRIMORDIAL_NAME):
-        return adopt_primordial(provider, model)
-
-    # 3. Fresh provision
+    # 2. Fresh provision
     return provision_new_route(provider, model, set_as_default=set_as_default)
 
 
@@ -806,23 +634,34 @@ def restart_route(route_id: str) -> dict:
 def destroy_route(route_id: str) -> bool:
     """Tear down an OpenShell gateway and remove its route record.
 
-    Refuses if the route is primordial or if any agents are still bound
-    to it (the caller is expected to either delete the agents first or
-    re-bind them to a different route via update_agent).
+    Refuses if:
+      * any agents are still bound to this route (caller must re-bind
+        or delete those agents first via update_agent), or
+      * this is the last remaining route (deleting it would leave Logos
+        with no way to route inference at all, effectively bricking the
+        install until /setup is re-run from scratch).
+
+    The "last route" guard replaces the old ``is_primordial`` deletion
+    guard — no more special-casing the bootstrap gateway; the rule is
+    just "don't let the user paint themselves into a corner."
     """
     route = auth_db.get_model_route(route_id)
     if not route:
         return False
-    if route["is_primordial"]:
-        raise RuntimeError(
-            f"cannot destroy primordial route {route_id} "
-            f"({route['openshell_name']}) — it's the original gateway"
-        )
     bound = auth_db.count_agents_using_route(route_id)
     if bound > 0:
         raise RuntimeError(
             f"cannot destroy route {route_id}: {bound} agent(s) still bound. "
             f"Re-bind or delete those agents first."
+        )
+    remaining_after = [
+        r for r in auth_db.list_model_routes() if r["id"] != route_id
+    ]
+    if not remaining_after:
+        raise RuntimeError(
+            f"cannot destroy route {route_id} ({route['openshell_name']}): "
+            f"it's the only model route left. Provision another route via "
+            f"Admin → Model Routes before destroying this one, or re-run /setup."
         )
 
     # Best-effort destroy of the underlying gateway. Even if openshell

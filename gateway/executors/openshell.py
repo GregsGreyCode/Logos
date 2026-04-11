@@ -521,7 +521,7 @@ def _is_within_grace_period(record: dict, grace: float = _PRUNE_GRACE_SECONDS) -
 def _prune_state_against_index(
     instances: List[dict],
     index: Dict[str, Optional[Set[str]]],
-    primordial_name: str,
+    fallback_gateway: Optional[str],
 ) -> Tuple[List[dict], int]:
     """Apply the prune rules. Returns ``(kept_entries, num_pruned)``.
 
@@ -533,6 +533,11 @@ def _prune_state_against_index(
          we don't have authoritative info to drop it.
       3. Otherwise the entry is dropped iff its sandbox_name is not in
          the index set for its gateway.
+
+    ``fallback_gateway`` is used only when a state-file entry is missing
+    an ``openshell_name`` (stale pre-multi-gateway entries). If no
+    fallback is available (``None``), we treat such entries as "gateway
+    unknown" and keep them rather than dropping them on uncertain info.
 
     The point of returning the prune count is so the caller can decide
     whether to bother saving the state file at all — saving on a
@@ -546,7 +551,11 @@ def _prune_state_against_index(
         if _is_within_grace_period(inst):
             kept.append(inst)
             continue
-        gw = inst.get("openshell_name") or primordial_name
+        gw = inst.get("openshell_name") or fallback_gateway
+        if gw is None:
+            # No gateway known and no fallback — don't prune on missing info.
+            kept.append(inst)
+            continue
         live = index.get(gw)
         if live is None:
             # Either the query failed or this gateway wasn't in the
@@ -570,14 +579,13 @@ def _list_all_sandbox_names_with_gateway() -> List[tuple[str, str]]:
 
     Returns ``[(sandbox_name, gateway_name), ...]``. Iterates over the
     model_routes table so each provisioned gateway is queried exactly
-    once. Falls back to the bootstrap gateway when the routes table is
-    empty (the path before /setup populates routes).
+    once. Returns an empty list when no routes are configured — if
+    /setup hasn't run yet there are no Logos-managed gateways to query.
 
     Used by orphan-prune and missing-sandbox-resurrect passes that need
     a global view of "what sandboxes exist anywhere" before they can
     decide which ones to clean up or recreate.
     """
-    from gateway.openshell_routes import BOOTSTRAP_PRIMORDIAL_NAME
     from gateway.auth import db as auth_db
 
     gateways_to_query: set[str] = set()
@@ -588,8 +596,6 @@ def _list_all_sandbox_names_with_gateway() -> List[tuple[str, str]]:
                 gateways_to_query.add(name)
     except Exception as exc:
         logger.warning("could not enumerate model_routes: %s", exc)
-    if not gateways_to_query:
-        gateways_to_query.add(BOOTSTRAP_PRIMORDIAL_NAME)
 
     out: List[tuple[str, str]] = []
     for gw in gateways_to_query:
@@ -614,17 +620,18 @@ def _resolve_route(config: "InstanceConfig") -> tuple[str, str]:
          worker's chat-completions call would be ignored by OpenShell's
          privacy router.
 
-      2. ``model_routes.is_default = 1`` row exists → use it. This is the
-         path agents created via /admin/agents take when the user picks
-         "Auto (use default)" instead of an explicit route.
+      2. Fall back to the default model route (``is_default=1``) so
+         /admin/agents "Auto" binds work.
 
-      3. Fall through to the legacy path: bootstrap OpenShell gateway
-         (default name ``logos-openshell``) with the env-resolved model.
-         This handles the case where model_routes is empty (the user
-         hasn't run /setup yet under the new architecture, or DB was
-         just migrated and routes haven't been populated).
+      3. Fall back to the first row in ``model_routes`` so partially
+         provisioned installs still have a chance of spawning — any
+         route is better than a hard error.
+
+      4. If there are no model_routes at all, raise — the user hasn't
+         run /setup yet, and spawning a sandbox with no gateway would
+         just hang the caller on an invalid ``-g`` flag.
     """
-    from gateway.openshell_routes import get_primordial_name
+    from gateway.openshell_routes import get_default_gateway_name
     from gateway.auth import db as auth_db
 
     # 1. Explicit binding
@@ -645,21 +652,24 @@ def _resolve_route(config: "InstanceConfig") -> tuple[str, str]:
     except Exception as exc:
         logger.warning("spawn: get_default_model_route failed: %s", exc)
 
-    # 3. Bootstrap fallback — primordial gateway with env/config-resolved model
-    resolved_model = (config.model or "").strip()
-    if not resolved_model:
-        resolved_model = (
-            os.environ.get("LOGOS_MODEL")
-            or os.environ.get("HERMES_MODEL")
-            or os.environ.get("LLM_MODEL")
-            or ""
-        ).strip()
-    if resolved_model and not getattr(config, "model_route_id", None):
-        logger.info(
-            "spawn(%s): no model_routes binding — using primordial gateway with model=%r",
-            config.name, resolved_model,
-        )
-    return get_primordial_name(), resolved_model
+    # 3. First available route
+    fallback_gw = get_default_gateway_name()
+    if fallback_gw:
+        # Pull the model from the route row for consistency so the worker
+        # sees the exact model the gateway is pinned to.
+        try:
+            for r in auth_db.list_model_routes():
+                if r.get("openshell_name") == fallback_gw:
+                    return fallback_gw, (r.get("model") or "")
+        except Exception:
+            pass
+        return fallback_gw, (config.model or "").strip()
+
+    # 4. No routes configured at all
+    raise RuntimeError(
+        f"spawn({config.name}): cannot resolve an OpenShell gateway — "
+        f"no rows in model_routes. Run /setup to provision a route first."
+    )
 
 
 # ── Executor ──────────────────────────────────────────────────────────────
@@ -681,7 +691,7 @@ class OpenShellExecutor:
         self.policy_file = policy_file or (str(_DEFAULT_POLICY) if _DEFAULT_POLICY.exists() else None)
 
     def spawn(self, config: InstanceConfig) -> SpawnedInstance:
-        from gateway.openshell_routes import get_primordial_name
+        from gateway.openshell_routes import get_default_gateway_name
 
         # OpenShell sandboxes are backed by Kubernetes Sandbox CRs, so the
         # sandbox name must be a valid RFC 1123 subdomain: lowercase
@@ -758,14 +768,16 @@ class OpenShellExecutor:
         # finishes creating the CR.
         with _state_lock():
             instances = _load_state()
-            primordial = get_primordial_name()
+            fallback_gw = get_default_gateway_name()
             gateways = {
-                (i.get("openshell_name") or primordial) for i in instances
+                gw for gw in (
+                    (i.get("openshell_name") or fallback_gw) for i in instances
+                ) if gw
             }
             gateways.add(openshell_gw)
             index = _build_sandbox_index(gateways)
             instances, _pruned = _prune_state_against_index(
-                instances, index, primordial
+                instances, index, fallback_gw
             )
             instances.append(record)
             _save_state(instances)
@@ -1020,7 +1032,7 @@ class OpenShellExecutor:
         )
 
     def list_instances(self) -> List[dict]:
-        from gateway.openshell_routes import get_primordial_name
+        from gateway.openshell_routes import get_default_gateway_name
 
         # Hardened pruning: batch one CLI query per gateway, keep
         # grace-period entries, never drop entries from a gateway
@@ -1028,12 +1040,14 @@ class OpenShellExecutor:
         # the full rule list.
         with _state_lock():
             instances = _load_state()
-            primordial = get_primordial_name()
+            fallback_gw = get_default_gateway_name()
             gateways = {
-                (i.get("openshell_name") or primordial) for i in instances
+                gw for gw in (
+                    (i.get("openshell_name") or fallback_gw) for i in instances
+                ) if gw
             }
             index = _build_sandbox_index(gateways)
-            kept, pruned = _prune_state_against_index(instances, index, primordial)
+            kept, pruned = _prune_state_against_index(instances, index, fallback_gw)
             if pruned > 0:
                 _save_state(kept)
         return kept
@@ -1048,33 +1062,42 @@ class OpenShellExecutor:
         # entries afterwards.
         #
         # However, we DO need the state file (or, failing that, the
-        # primordial fallback) to find which gateway the sandbox lives
+        # default-route fallback) to find which gateway the sandbox lives
         # inside — `openshell sandbox delete <name>` without `-g` only
         # checks the CLI's currently-selected gateway and silently
         # succeeds if the sandbox isn't there. Best-effort lookup: scan
         # the state file for an entry matching by name OR sandbox_name,
-        # use its openshell_name; otherwise default to the primordial.
-        from gateway.openshell_routes import get_primordial_name
+        # use its openshell_name; otherwise default to the user's
+        # default model route. If neither is available, there's nothing
+        # to delete — the gateway is unknown and so is the sandbox.
+        from gateway.openshell_routes import get_default_gateway_name
 
         sandbox_name = _sanitize_sandbox_name(f"hermes-{name}")
-        primordial = get_primordial_name()
-        target_gw = primordial
+        fallback_gw = get_default_gateway_name()
+        target_gw: Optional[str] = fallback_gw
         for inst in _load_state():
             if inst.get("name") == name or inst.get("sandbox_name") == sandbox_name:
-                target_gw = inst.get("openshell_name") or primordial
+                target_gw = inst.get("openshell_name") or fallback_gw
                 break
 
-        try:
-            _openshell("sandbox", "delete", sandbox_name,
-                        gateway=target_gw, check=False)
+        if not target_gw:
             logger.info(
-                "Deleted OpenShell sandbox '%s' from gateway '%s'",
-                sandbox_name, target_gw,
+                "delete_instance(%s): no gateway resolvable (no state entry, "
+                "no default route) — skipping CLI delete, cleaning state only",
+                name,
             )
-        except FileNotFoundError:
-            logger.warning("Cannot delete sandbox '%s' — openshell CLI not on PATH", sandbox_name)
-        except Exception as exc:
-            logger.warning("Error deleting sandbox '%s': %s", sandbox_name, exc)
+        else:
+            try:
+                _openshell("sandbox", "delete", sandbox_name,
+                            gateway=target_gw, check=False)
+                logger.info(
+                    "Deleted OpenShell sandbox '%s' from gateway '%s'",
+                    sandbox_name, target_gw,
+                )
+            except FileNotFoundError:
+                logger.warning("Cannot delete sandbox '%s' — openshell CLI not on PATH", sandbox_name)
+            except Exception as exc:
+                logger.warning("Error deleting sandbox '%s': %s", sandbox_name, exc)
 
         # Drop any matching state record so the dashboard stops showing it.
         # Held under the state lock so a concurrent spawn() can't re-insert
