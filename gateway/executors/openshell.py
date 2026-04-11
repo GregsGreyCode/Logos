@@ -1,41 +1,46 @@
 """
 OpenShellExecutor — runs Hermes agent instances as OpenShell sandboxes.
 
-Integration model (Plan A, host-drives-sandbox — TASKS.md #24)
+Integration model (Plan A-prime, per-task exec — TASKS.md #24)
 ──────────────────────────────────────────────────────────────
 1.  A sandbox image (``hermes-sandbox``) contains the Python worker
     (``/app/sandbox_worker.py``) and its dependencies (aiohttp for the
     inference.local HTTPS call, Python 3.12). The entrypoint is
-    ``sleep infinity`` — the worker is NOT started at container boot.
+    ``sleep infinity`` — the sandbox pod stays alive indefinitely as a
+    passive execution environment.
 
 2.  ``spawn()`` creates a named OpenShell sandbox with:
     - An uploaded instance config at ``/tmp/hermes/instance-config.json``
-    - A network policy allowing access to inference.local (host gateway
-      entry removed — no outbound traffic to the host anymore)
-    - The sandbox just idles until the host calls ensure_worker
+    - A network policy allowing access to inference.local
+    - An uploaded SOUL.md at ``/tmp/hermes/SOUL.md`` (optional)
+    Then it marks the state-file record ``phase=ready`` and returns.
+    **No persistent worker is launched** — each chat dispatch spawns
+    its own subprocess via ``WorkerRegistry.dispatch_task``.
 
-3.  ``spawn()`` then calls ``WorkerRegistry.ensure_worker`` which runs
-    ``openshell sandbox exec --no-tty --name <sandbox> -- python3
-    /app/sandbox_worker.py`` as a long-running ``asyncio`` subprocess
-    on the gateway side. The subprocess's stdin/stdout form the
-    bidirectional control channel over OpenShell's blessed gRPC/mTLS
-    exec transport — no reverse WebSocket, no HTTP CONNECT tunnel, no
-    custom proxy bypass. The old approach (sandbox opens a WebSocket
-    back to ``/ws/worker`` through an HTTP CONNECT tunnel) was retired
-    after OpenShell's L7 proxy tightening broke it post-upgrade.
+3.  ``WorkerRegistry.dispatch_task`` spawns a fresh ``openshell sandbox
+    exec --no-tty --name <sandbox> -- python3 /app/sandbox_worker.py``
+    subprocess for every task. It pipes the task JSON to the
+    subprocess's stdin, closes stdin (the EOF is what unblocks
+    openshell's exec gate — without it the in-sandbox process never
+    starts, proven directly), streams token/thinking/task_result
+    frames from stdout, and waits for the subprocess to exit.
 
-4.  The worker's first line on stdout is
-    ``{"type":"ready","worker_id":...}``. ``ensure_worker`` blocks on
-    that line and then registers a ``WorkerEntry`` in the
-    ``WorkerRegistry``. Chat dispatches are written as JSON lines to
-    the subprocess's stdin; tokens/tool_progress/task_result stream
-    back as JSON lines on stdout.
+4.  Cold-start tax per dispatch: ~0.2s for python + aiohttp import +
+    config load. Negligible compared to 2–30s inference calls. No
+    persistent worker registry, no stdin protocol loop, no ready
+    handshake, no ``ensure_worker`` bridging between event loop and
+    thread pool.
 
 5.  ``delete_instance()`` destroys the sandbox — ``openshell sandbox
-    delete`` tears down the in-pod process, which closes the gRPC
-    exec stream, which causes our subprocess's stdin/stdout to EOF,
-    which causes ``_read_stdout_loop`` to call ``_cleanup_worker``
-    which drops the entry from the registry.
+    delete`` tears down the pod. Any in-flight dispatch_task
+    subprocess gets its exec stream killed and raises.
+
+History: earlier versions of Plan A kept a persistent stdin/stdout
+loop per sandbox, expecting the subprocess to live for the whole
+session. That was impossible on ``openshell sandbox exec``: the exec
+primitive refuses to invoke the in-sandbox command until stdin
+reaches EOF, so a persistent worker sat blocked on gRPC forever.
+Per-task exec matches the transport's actual contract.
 
 Prerequisites
 ─────────────
@@ -876,101 +881,23 @@ class OpenShellExecutor:
                         gateway=openshell_gw, check=True,
                     )
 
-            # ── Step 3: launch the worker via WorkerRegistry.ensure_worker ──
+            # ── Step 3: mark the sandbox ready ──────────────────────
             #
-            # Plan A (TASKS.md #24): the sandbox container no longer
-            # auto-launches the worker. Instead, the host gateway
-            # manages the worker's lifetime by spawning `openshell
-            # sandbox exec --no-tty --name <sandbox> -- python3
-            # /app/sandbox_worker.py` as a long-running asyncio
-            # subprocess. Stdin/stdout of that subprocess become the
-            # control channel.
+            # Plan A-prime (TASKS.md #24): there's no persistent worker
+            # subprocess to launch. Each chat dispatch spawns a fresh
+            # ``openshell sandbox exec --no-tty -- python3 /app/
+            # sandbox_worker.py`` subprocess on-demand (see
+            # ``gateway.worker_registry.dispatch_task``). So spawn()
+            # just has to get the sandbox CR to Ready phase + upload
+            # the instance config, and it's done.
             #
-            # We're inside asyncio.to_thread here (executor.spawn is a
-            # sync method called via thread pool), so the main event
-            # loop is running in a different thread. Use
-            # asyncio.run_coroutine_threadsafe to schedule ensure_worker
-            # on the main loop and block this thread on the result.
-            #
-            # Read the runner/loop via ``gateway.runtime_state`` — NOT
-            # via ``gateway.run``. ``gateway/run.py`` is started with
-            # ``python -m gateway.run`` which loads it as ``__main__``,
-            # and a subsequent ``import gateway.run`` from this module
-            # loads the same file *again* as a second module object with
-            # its own independent globals. Assignments inside ``main()``
-            # mutate the ``__main__`` module's globals, so the copy
-            # imported here keeps seeing ``None``. ``runtime_state`` is
-            # a standalone module (never run as ``__main__``) so every
-            # importer sees the same object — single source of truth.
-            try:
-                from gateway import runtime_state as _runtime_state
-                from gateway.worker_registry import WORKER_READY_TIMEOUT
-                _current_runner = _runtime_state.current_runner
-                _current_loop = _runtime_state.current_loop
-            except Exception:
-                _current_runner = None
-                _current_loop = None
-                WORKER_READY_TIMEOUT = 60.0
-
-            if _current_runner and _current_loop and not _current_loop.is_closed():
-                try:
-                    ensure_future = asyncio.run_coroutine_threadsafe(
-                        _current_runner.worker_registry.ensure_worker(
-                            sandbox_name,
-                            soul=config.soul_name or "general",
-                            toolsets=config.toolsets or [],
-                            instance_label=config.name,
-                            requester=config.requester or "",
-                            env={
-                                "OPENAI_BASE_URL": os.environ.get(
-                                    "OPENAI_BASE_URL",
-                                    "https://inference.local/v1",
-                                ),
-                                "OPENAI_API_KEY": os.environ.get(
-                                    "OPENAI_API_KEY", "unused"
-                                ),
-                                "HERMES_MODEL": resolved_model or "",
-                                "HERMES_WORKER_ID": sandbox_name,
-                            },
-                        ),
-                        _current_loop,
-                    )
-                    # Budget: WORKER_READY_TIMEOUT + 5s slack for the
-                    # subprocess spawn itself (openshell CLI startup,
-                    # gRPC auth, exec dispatch).
-                    ensure_future.result(timeout=WORKER_READY_TIMEOUT + 5)
-                except ConnectionError as exc:
-                    # RAISE — don't swallow. /setup/complete blocks on
-                    # spawn so it can surface this to the user. The
-                    # sandbox CR is already created at this point, so
-                    # the caller should delete it before retrying.
-                    logger.error(
-                        "ensure_worker failed for %s: %s", sandbox_name, exc,
-                    )
-                    raise RuntimeError(
-                        f"Sandbox '{sandbox_name}' was created but the "
-                        f"Plan A worker subprocess failed to come up: {exc}"
-                    ) from exc
-                except Exception as exc:
-                    logger.exception(
-                        "ensure_worker raised unexpectedly for %s: %s",
-                        sandbox_name, exc,
-                    )
-                    raise
-            else:
-                # No runner bound to the module globals. In production
-                # this should never happen (run.py sets them before the
-                # HTTP API can accept requests), so treat it as a hard
-                # error rather than silently skipping. The old behaviour
-                # was to log a warning and return — which let /setup
-                # show "done" while the sandbox sat there with no worker.
-                raise RuntimeError(
-                    f"ensure_worker cannot launch for '{sandbox_name}': "
-                    f"no current GatewayRunner bound on the main loop. "
-                    f"This usually means spawn() was called before "
-                    f"gateway.run.main() set _current_runner, or after "
-                    f"the event loop was closed during shutdown."
-                )
+            # Rationale for why the persistent-worker variant was
+            # abandoned: ``openshell sandbox exec --no-tty`` refuses
+            # to invoke the in-sandbox process until stdin reaches
+            # EOF. Any design that keeps stdin open for ongoing task
+            # delivery sits blocked forever. The per-task subprocess
+            # model works WITH the transport's contract instead of
+            # against it.
 
             # Phase 3 (under lock): flip the record's phase to "ready"
             # so subsequent list_instances() prunes apply normal rules.

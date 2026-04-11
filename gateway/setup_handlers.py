@@ -3161,10 +3161,13 @@ async def handle_setup_complete(request: web.Request) -> web.Response:
             # forever with no way to see what went wrong.
             #
             # Blocking here means /setup/complete takes ~10-30s on the
-            # happy path (sandbox create + Plan A ensure_worker wait),
-            # but if anything in the stack is broken — image push, policy
-            # conflict, worker ready timeout — the user sees the actual
-            # error message in the /setup flow and can act on it.
+            # happy path (image build/push + sandbox create + Ready
+            # phase + config upload). Plan A-prime: there's no
+            # persistent worker to wait on — each chat dispatch spawns
+            # its own openshell sandbox exec subprocess on-demand. If
+            # anything in the stack is broken — image push, policy
+            # conflict, sandbox never reaches Ready — the user sees the
+            # actual error message in the /setup flow and can act on it.
             #
             # TODO (MISSING.md): add an explicit "Verifying your agent…"
             # step to the /setup UI that dispatches a ping-sized chat

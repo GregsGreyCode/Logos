@@ -5139,11 +5139,10 @@ async def start_gateway(config: Optional[GatewayConfig] = None, replace: bool = 
     runner = GatewayRunner(config)
     _set_current_runner(runner)
 
-    # Store loop for cross-thread shutdown via request_gateway_shutdown()
-    # and for OpenShellExecutor.spawn's ensure_worker bridge from the
-    # thread pool. Uses gateway.runtime_state so the value is visible to
-    # modules that imported via `from gateway import run` — see the
-    # docstring on gateway/runtime_state.py for the dual-module gotcha.
+    # Store loop for cross-thread shutdown via request_gateway_shutdown().
+    # Uses gateway.runtime_state so the value is visible to modules that
+    # imported via `from gateway import run` — see the docstring on
+    # gateway/runtime_state.py for the dual-module gotcha.
     loop = asyncio.get_running_loop()
     _runtime_state.set_current_loop(loop)
 

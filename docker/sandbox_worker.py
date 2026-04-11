@@ -1,46 +1,60 @@
 """
-Sandbox Worker — stdin/stdout task dispatcher for OpenShell sandboxes.
+Sandbox Worker — one-shot task dispatcher for OpenShell sandboxes.
 
-Runs inside the sandbox pod, launched by the Logos gateway via
-`openshell sandbox exec --no-tty --name <sandbox> -- python3 /app/sandbox_worker.py`.
+Runs inside the sandbox pod, invoked fresh for every task by the Logos
+gateway via ``openshell sandbox exec --no-tty --name <sandbox> --
+python3 /app/sandbox_worker.py``. The gateway pipes one task JSON on
+stdin + closes stdin, the worker reads it, runs the LLM call via
+``https://inference.local/v1`` (OpenShell's privacy router), streams
+back token/thinking/result events as JSON lines on stdout, and exits.
+Cold-start cost per task: ~0.2s (python import + aiohttp import). The
+sandbox pod stays alive between tasks; only the worker process is
+ephemeral.
 
-The gateway writes task JSON lines to this process's stdin; the worker
-reads each line, runs an LLM call via `https://inference.local/v1`
-(OpenShell's privacy router), streams back token/thinking/result events
-as JSON lines on stdout, and waits for the next task.
+Why one-shot and not a persistent stdin/stdout loop
+────────────────────────────────────────────────────
+Earlier versions of this file ran a persistent loop reading multiple
+tasks from stdin. That was impossible on ``openshell sandbox exec``:
+the exec primitive refuses to invoke the in-sandbox process until
+stdin reaches EOF. Writing bytes isn't enough — the gRPC exec stream
+sits blocked waiting for the stdin write end to close. Proven with
+direct side-by-side tests:
 
-This is the **Plan A** architecture from TASKS.md #24 — the reverse-
-connection WebSocket approach (old `TunnelWebSocket` class) was
-unsupported by OpenShell's L7 proxy after an upstream change. `openshell
-sandbox exec` is the blessed gRPC/mTLS control path and was empirically
-verified rock-solid throughout the 2026-04-11 debugging session.
+    openshell sandbox exec --no-tty ... -- python3 -u -c 'print("x")'
+        < /dev/null              → runs in ~1s, "x" on stdout
+        < empty_fifo_stay_open   → timeout, nothing on stdout ever
+
+So any design that keeps stdin open for ongoing dispatch is a dead
+end on this transport. Instead we spawn one subprocess per task, pipe
+the task + close stdin immediately, and stream stdout until exit. The
+gateway's ``WorkerRegistry.dispatch_task`` handles that lifecycle.
 
 Why stdin/stdout and not HTTP:
-    * OpenShell's `sandbox exec` gives us a ready-made bidirectional
-      gRPC stream — no new transport to maintain.
-    * No port-forwarding, no sandbox-initiated network egress, no
-      CONNECT tunnels.
+    * ``openshell sandbox exec`` is the blessed gRPC/mTLS control path
+      and gives us a ready-made bidirectional stream — no new transport
+      to build, no port-forward to manage, no CORS, no TLS certs.
     * Matches OpenShell's isolation model: sandbox is a passive
-      execution environment, gateway drives.
-    * Simple to debug: `openshell sandbox exec -n <name> -- ...` is
-      the same primitive a human operator uses.
+      execution environment, the gateway drives.
+    * Simple to debug: ``echo '{"type":"task",...}' | openshell sandbox
+      exec -n <name> -- python3 /app/sandbox_worker.py`` is the exact
+      same primitive a human operator uses at the shell.
 
 Protocol (line-delimited JSON on stdin/stdout):
 
-    Gateway → worker (stdin):
+    Gateway → worker (stdin, one line then EOF):
         {"type":"task","task_id":"<id>","message":"...","history":[...],
          "context_prompt":"...","model":"..."}
 
     Worker → gateway (stdout):
-        {"type":"ready","worker_id":"..."}           (once, at startup)
+        {"type":"ready","worker_id":"..."}           (sanity, first line)
         {"type":"thinking","task_id":"...","content":"..."}  (streamed)
         {"type":"token","task_id":"...","content":"..."}     (streamed)
         {"type":"task_result","task_id":"...","status":"ok",
-         "final_response":"..."}                              (once per task)
+         "final_response":"..."}                              (last line, ok)
         {"type":"task_result","task_id":"...","status":"error",
-         "error":"..."}                                       (on failure)
+         "error":"..."}                                       (last line, err)
 
-stdin EOF means "gateway is done with me" → clean exit.
+Worker exits cleanly (returncode=0) after emitting task_result.
 Logging goes to **stderr** (separate from the stdout protocol channel)
 plus a structured JSON sink at /tmp/worker.jsonl for future log
 forwarding to the gateway's unified.jsonl (MISSING.md M6 stretch).
@@ -351,19 +365,38 @@ async def _run_inference(
     return accumulated
 
 
-# ── Main loop ─────────────────────────────────────────────────────────────
+# ── One-shot entry point ──────────────────────────────────────────────────
 
-async def run_worker(config: Dict[str, Any]) -> int:
-    """Read tasks from stdin until EOF, execute each, and write results to stdout.
+async def run_one_task(config: Dict[str, Any]) -> int:
+    """Process exactly one task from stdin, emit results, return.
 
-    Returns the exit code the process should use (0 = clean EOF, 1 = fatal).
+    Flow:
+      1. Emit ``{"type":"ready"}`` as a sanity first line so the gateway
+         can tell the process actually booted and reached the dispatch
+         code path (useful for distinguishing import errors from
+         inference errors in logs).
+      2. Wrap stdin as an async StreamReader and read one JSON line.
+         ``read_stdin_line`` already skips blank/malformed lines and
+         returns None on EOF.
+      3. Dispatch based on ``type``:
+           - ``task`` / ``run_conversation``: run inference, emit
+             streaming events + task_result.
+           - any other type: emit a task_result with an error payload
+             so the gateway always gets a terminal line.
+      4. Return 0.
+
+    If stdin reaches EOF before delivering a task, emit a task_result
+    error and return 0 anyway — the gateway will treat the missing
+    terminal frame as a hard error, but at least we don't leave it
+    blocked on readline().
     """
     worker_id = config.get("worker_id") or os.environ.get("HERMES_WORKER_ID") or f"sandbox-{os.getpid()}"
     soul = config.get("soul", "general")
-    logger.info("Worker %s starting in stdin-mode (soul=%s)", worker_id, soul)
+    logger.info("Worker %s starting (one-shot, soul=%s)", worker_id, soul)
 
-    # Announce readiness on stdout. The gateway's subprocess reader
-    # waits for this message before marking spawn complete.
+    # Sanity ready line — useful in logs. Not load-bearing any more
+    # (the gateway doesn't gate the dispatch on it since we're one-shot
+    # and the subprocess's existence is its own handshake).
     try:
         emit({
             "type": "ready",
@@ -373,60 +406,68 @@ async def run_worker(config: Dict[str, Any]) -> int:
             "started_at": time.time(),
         })
     except BrokenPipeError:
-        logger.error("Gateway closed stdout before we could announce ready — aborting")
+        logger.error("Gateway closed stdout before ready emit — aborting")
         return 1
 
-    # Wrap stdin as an async StreamReader. Python doesn't give us one
-    # directly for sys.stdin, so we connect to the file descriptor.
+    # Wrap stdin as an async StreamReader so read_stdin_line's
+    # asyncio.StreamReader interface works unchanged.
     loop = asyncio.get_running_loop()
     reader = asyncio.StreamReader()
     protocol = asyncio.StreamReaderProtocol(reader)
     await loop.connect_read_pipe(lambda: protocol, sys.stdin)
 
-    while True:
+    try:
+        task = await read_stdin_line(reader)
+    except asyncio.CancelledError:
+        logger.info("Worker cancelled — exiting")
+        return 0
+    except Exception as exc:
+        logger.error("read_stdin_line failed: %s", exc)
         try:
-            task = await read_stdin_line(reader)
-        except asyncio.CancelledError:
-            logger.info("Worker cancelled — exiting")
-            return 0
-        except Exception as exc:
-            logger.error("read_stdin_line failed: %s", exc)
-            return 1
+            emit({
+                "type": "task_result",
+                "task_id": "",
+                "status": "error",
+                "error": f"stdin read failed: {exc}",
+            })
+        except BrokenPipeError:
+            pass
+        return 1
 
-        if task is None:
-            logger.info("Stdin EOF — gateway closed the exec subprocess, exiting cleanly")
-            return 0
+    if task is None:
+        logger.warning("Stdin EOF before any task received — exiting cleanly")
+        try:
+            emit({
+                "type": "task_result",
+                "task_id": "",
+                "status": "error",
+                "error": "stdin EOF before task received",
+            })
+        except BrokenPipeError:
+            pass
+        return 0
 
-        msg_type = task.get("type")
-        if msg_type == "task" or msg_type == "run_conversation":
-            # Accept both the new "task" type and the legacy "run_conversation"
-            # the old WebSocket protocol used, so the gateway can roll
-            # out its own rewrite gradually without breaking compat.
-            try:
-                await _handle_task(task, config)
-            except BrokenPipeError:
-                logger.info("Gateway closed stdout during task — exiting")
-                return 0
-        elif msg_type == "ping":
-            # Cheap liveness check. Gateway sends `{"type":"ping","id":n}`,
-            # we echo back `{"type":"pong","id":n}`.
-            try:
-                emit({"type": "pong", "id": task.get("id")})
-            except BrokenPipeError:
-                return 0
-        elif msg_type == "shutdown":
-            logger.info("Shutdown requested via stdin — exiting cleanly")
+    msg_type = task.get("type")
+    task_id = task.get("task_id", "")
+    if msg_type == "task" or msg_type == "run_conversation":
+        try:
+            await _handle_task(task, config)
+        except BrokenPipeError:
+            logger.info("Gateway closed stdout during task — exiting")
             return 0
-        else:
-            logger.warning("Unknown message type on stdin: %r", msg_type)
-            try:
-                emit({
-                    "type": "error",
-                    "task_id": task.get("task_id"),
-                    "error": f"unknown message type {msg_type!r}",
-                })
-            except BrokenPipeError:
-                return 0
+    else:
+        logger.warning("Unknown message type on stdin: %r", msg_type)
+        try:
+            emit({
+                "type": "task_result",
+                "task_id": task_id,
+                "status": "error",
+                "error": f"unknown message type {msg_type!r}",
+            })
+        except BrokenPipeError:
+            pass
+
+    return 0
 
 
 def main() -> None:
@@ -449,12 +490,11 @@ def main() -> None:
         try:
             loop.add_signal_handler(sig, _shutdown, sig)
         except NotImplementedError:
-            # Windows / non-standard environments — fall back to default handlers
             pass
 
     exit_code = 0
     try:
-        exit_code = loop.run_until_complete(run_worker(config))
+        exit_code = loop.run_until_complete(run_one_task(config))
     except asyncio.CancelledError:
         pass
     finally:
