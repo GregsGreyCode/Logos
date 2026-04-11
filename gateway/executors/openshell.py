@@ -880,14 +880,25 @@ class OpenShellExecutor:
             # asyncio.run_coroutine_threadsafe to schedule ensure_worker
             # on the main loop and block this thread on the result.
             #
-            # If _current_runner is unavailable (e.g., running in a
-            # test harness that imported OpenShellExecutor directly
-            # without starting a real GatewayRunner), skip ensure_worker
-            # and return with healthy=False. Callers that need a live
-            # worker should run against a real gateway.
+            # IMPORTANT: we must read `_current_runner` and `_current_loop`
+            # from the `gateway.run` module LIVE, not via `from gateway.run
+            # import _current_runner`. A `from X import Y` statement binds
+            # Y to its value at import time — so if we import at spawn
+            # time but the module-level globals haven't been populated yet
+            # (or get re-assigned later via `_set_current_runner`), the
+            # local binding stays stuck on the import-time snapshot. We
+            # hit this: spawn saw `_current_runner = None` even though
+            # run.py had already called `_set_current_runner(runner)` on
+            # startup, because openshell.py was imported BEFORE that
+            # assignment and the import-time `None` default was frozen.
+            #
+            # Using `from gateway import run as _gwrun` + attribute access
+            # reads the current value of the module global each call.
             try:
-                from gateway.run import _current_runner, _current_loop
+                from gateway import run as _gwrun
                 from gateway.worker_registry import WORKER_READY_TIMEOUT
+                _current_runner = _gwrun._current_runner
+                _current_loop = _gwrun._current_loop
             except Exception:
                 _current_runner = None
                 _current_loop = None
@@ -918,27 +929,39 @@ class OpenShellExecutor:
                     )
                     # Budget: WORKER_READY_TIMEOUT + 5s slack for the
                     # subprocess spawn itself (openshell CLI startup,
-                    # gRPC auth, exec dispatch). If ensure_worker
-                    # raises ConnectionError we let it propagate so
-                    # the caller can roll back the sandbox state.
+                    # gRPC auth, exec dispatch).
                     ensure_future.result(timeout=WORKER_READY_TIMEOUT + 5)
                 except ConnectionError as exc:
-                    logger.warning(
-                        "ensure_worker failed for %s: %s — sandbox created but worker not running",
-                        sandbox_name, exc,
+                    # RAISE — don't swallow. /setup/complete blocks on
+                    # spawn so it can surface this to the user. The
+                    # sandbox CR is already created at this point, so
+                    # the caller should delete it before retrying.
+                    logger.error(
+                        "ensure_worker failed for %s: %s", sandbox_name, exc,
                     )
-                    # Don't raise; let the caller decide whether to
-                    # retry (they can call ensure_worker again directly
-                    # or delete the sandbox and respawn).
+                    raise RuntimeError(
+                        f"Sandbox '{sandbox_name}' was created but the "
+                        f"Plan A worker subprocess failed to come up: {exc}"
+                    ) from exc
                 except Exception as exc:
                     logger.exception(
                         "ensure_worker raised unexpectedly for %s: %s",
                         sandbox_name, exc,
                     )
+                    raise
             else:
-                logger.info(
-                    "ensure_worker skipped for %s (no current GatewayRunner) — sandbox is Ready but worker not launched",
-                    sandbox_name,
+                # No runner bound to the module globals. In production
+                # this should never happen (run.py sets them before the
+                # HTTP API can accept requests), so treat it as a hard
+                # error rather than silently skipping. The old behaviour
+                # was to log a warning and return — which let /setup
+                # show "done" while the sandbox sat there with no worker.
+                raise RuntimeError(
+                    f"ensure_worker cannot launch for '{sandbox_name}': "
+                    f"no current GatewayRunner bound on the main loop. "
+                    f"This usually means spawn() was called before "
+                    f"gateway.run.main() set _current_runner, or after "
+                    f"the event loop was closed during shutdown."
                 )
 
             # Phase 3 (under lock): flip the record's phase to "ready"
