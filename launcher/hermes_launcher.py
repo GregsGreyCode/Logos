@@ -212,60 +212,6 @@ def _stop_gateway() -> None:
         _gateway_thread.join(timeout=3)
 
 
-def _kill_instances() -> None:
-    """Kill any agent instances spawned by LocalProcessExecutor and clear the registry."""
-    import json
-    import signal
-    instances_file = _HERMES_HOME / "instances.json"
-    killed_pids: set = set()
-    try:
-        if instances_file.exists():
-            instances = json.loads(instances_file.read_text(encoding="utf-8"))
-            for inst in instances:
-                pid = inst.get("pid")
-                if not pid:
-                    continue
-                try:
-                    if sys.platform == "win32":
-                        import subprocess
-                        subprocess.run(["taskkill", "/F", "/PID", str(pid)], capture_output=True)
-                    else:
-                        os.kill(pid, signal.SIGTERM)
-                    killed_pids.add(pid)
-                except Exception:
-                    pass
-            instances_file.write_text("[]", encoding="utf-8")
-    except Exception:
-        pass
-
-    # Catch --agent-mode processes that were spawned but not yet written to
-    # instances.json (race between Popen and _save_instances on quit).
-    # wmic is deprecated/removed on Windows 11; use PowerShell Get-CimInstance instead.
-    if sys.platform == "win32":
-        try:
-            import subprocess as _sp
-            _r = _sp.run(
-                ["powershell", "-NoProfile", "-Command",
-                 "Get-CimInstance Win32_Process -Filter \"name='Logos.exe'\" "
-                 "| Where-Object { $_.CommandLine -like '*--agent-mode*' } "
-                 "| Select-Object -ExpandProperty ProcessId"],
-                capture_output=True, text=True, timeout=5,
-            )
-            _own_pid = os.getpid()
-            for _line in _r.stdout.splitlines():
-                _line = _line.strip()
-                if not _line:
-                    continue
-                try:
-                    _pid = int(_line)
-                    if _pid != _own_pid and _pid not in killed_pids:
-                        _sp.run(["taskkill", "/F", "/PID", str(_pid)], capture_output=True)
-                except ValueError:
-                    pass
-        except Exception:
-            pass
-
-
 def _restart_gateway() -> None:
     _gateway_ready.clear()  # go back to colour-cycling during restart
     _stop_gateway()
@@ -956,29 +902,6 @@ def _run_tray_client_mode(remote_url: str) -> None:
 
 
 def main() -> None:
-    # ── Agent-mode: spawned by LocalProcessExecutor for multi-instance support ──
-    # When Logos is frozen (Logos.exe), subprocess.Popen([sys.executable, ...])
-    # would re-run the full launcher.  The executor passes --agent-mode to skip
-    # all launcher UI and just start a gateway on the port supplied via LOGOS_PORT.
-    if "--agent-mode" in sys.argv:
-        # Redirect None stdout/stderr (no console on Windows GUI apps) to devnull
-        # so the gateway and agent code can print() without AttributeErrors.
-        import io
-        if sys.stdout is None:
-            sys.stdout = io.TextIOWrapper(open(os.devnull, "wb"), encoding="utf-8", errors="replace")
-        if sys.stderr is None:
-            sys.stderr = io.TextIOWrapper(open(os.devnull, "wb"), encoding="utf-8", errors="replace")
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        try:
-            from gateway.run import start_gateway  # type: ignore
-            loop.run_until_complete(start_gateway(None, replace=False))
-        except Exception as exc:
-            _log(f"Agent-mode gateway error: {exc}")
-        finally:
-            loop.close()
-        return
-
     # Redirect None stdout/stderr before anything else so print() in the
     # gateway / agent code never raises AttributeError on Windows GUI builds.
     import io
@@ -1037,7 +960,6 @@ def main() -> None:
         """Handle SIGTERM / SIGINT so the process exits cleanly from the outside."""
         _close_browser()
         _stop_gateway()
-        _kill_instances()
         sys.exit(0)
 
     try:
@@ -1060,11 +982,10 @@ def main() -> None:
         except KeyboardInterrupt:
             pass
     finally:
-        # Ensure the gateway, browser window, and any spawned instances are
-        # cleaned up regardless of how icon.run() returned.
+        # Ensure the gateway and browser window are cleaned up regardless
+        # of how icon.run() returned.
         _close_browser()
         _stop_gateway()
-        _kill_instances()
 
 
 if __name__ == "__main__":

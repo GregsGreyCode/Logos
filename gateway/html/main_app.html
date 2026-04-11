@@ -274,6 +274,10 @@
       :class="tab==='sessions'?'tab-active':'text-gray-400 hover:text-white'"
       data-testid="nav-chats"
       @click="tab='sessions'; if(!namedAgents.length) loadNamedAgents()">Chats</button>
+    <button class="pb-2 text-sm font-medium border-b-2 border-transparent"
+      :class="tab==='compare'?'tab-active':'text-gray-400 hover:text-white'"
+      data-testid="nav-compare"
+      @click="tab='compare'; if(!namedAgents.length) loadNamedAgents()">Compare</button>
     <template x-if="can('manage_machines') || can('manage_profiles') || can('view_routing_debug') || can('view_evolution')">
       <button class="pb-2 text-sm font-medium border-b-2 border-transparent"
         :class="tab==='infra'?'tab-active':'text-gray-400 hover:text-white'"
@@ -1088,6 +1092,196 @@
         </div><!-- /liveExecCollapsed wrapper -->
       </div>
 
+    </div>
+  </div>
+
+  <!-- ── Compare Tab (#13: side-by-side AB chat) ──────────────────────
+       Drag two agents from the left column into the two pane slots, then
+       send one prompt to both for AB-style comparison. Each pane is its
+       own independent chat session — separate session_ids, separate
+       transcripts, no bleed.
+       v1 is hard-capped at 2 panes (intentional). Layout collapses
+       gracefully when fewer than 2 are filled.
+  -->
+  <div x-show="tab==='compare'" x-cloak style="height:calc(100vh - 84px)">
+    <div class="flex flex-col gap-3 h-full">
+
+      <!-- ── Top palette: horizontal pill row (drag source) ───────── -->
+      <div class="shrink-0 border border-gray-800 rounded-2xl bg-gray-900/40 px-3 py-2.5">
+        <div class="flex items-center gap-2 flex-wrap">
+          <span class="text-[10px] font-semibold uppercase tracking-wider text-gray-500 mr-1">Agents</span>
+          <template x-if="!namedAgents.length">
+            <span class="text-[11px] text-gray-600 italic">No agents yet.</span>
+          </template>
+          <template x-for="agent in namedAgents" :key="agent.id">
+            <div class="px-2.5 py-1 rounded-lg border text-xs flex items-center gap-1.5 select-none transition-colors"
+                 :class="(agent.worker_connected && agent.worker_healthy)
+                         ? 'border-gray-800 bg-gray-900 hover:border-indigo-700 cursor-grab active:cursor-grabbing text-gray-200'
+                         : 'border-gray-900 bg-gray-950/60 text-gray-600 cursor-not-allowed'"
+                 :draggable="(agent.worker_connected && agent.worker_healthy) ? 'true' : 'false'"
+                 @dragstart="if (agent.worker_connected && agent.worker_healthy) { $event.dataTransfer.effectAllowed = 'move'; $event.dataTransfer.setData('text/x-logos-agent-id', agent.id); }"
+                 @click="if (agent.worker_connected && agent.worker_healthy) compareDropAgent(agent, comparePanes.findIndex(p => !p) === -1 ? 0 : comparePanes.findIndex(p => !p))"
+                 :title="(agent.worker_connected && agent.worker_healthy) ? 'Drag into a pane (or click to add to next empty)' : 'Sandbox not ready'">
+              <span class="w-1.5 h-1.5 rounded-full"
+                    :class="(agent.worker_connected && agent.worker_healthy) ? 'bg-emerald-500' : 'bg-gray-700'"></span>
+              <span class="font-medium" x-text="agent.name"></span>
+            </div>
+          </template>
+          <span class="ml-auto text-[10px] text-gray-600">Drag two into a pane below, or click to add</span>
+        </div>
+      </div>
+
+      <!-- Pane row: two slots side-by-side, full remaining height -->
+      <div class="flex-1 flex gap-3 min-h-0">
+        <template x-for="(pane, slotIdx) in comparePanes" :key="slotIdx">
+          <div class="flex-1 border rounded-2xl flex flex-col min-w-0 transition-colors"
+               :class="pane ? 'border-gray-800 bg-gray-900/30' : 'border-2 border-dashed border-gray-800 bg-transparent hover:border-indigo-700'"
+               @dragover.prevent="$event.dataTransfer.dropEffect = 'move'"
+               @drop.prevent="(() => {
+                 const aid = $event.dataTransfer.getData('text/x-logos-agent-id');
+                 const a = namedAgents.find(x => x.id === aid);
+                 if (a) compareDropAgent(a, slotIdx);
+               })()">
+
+            <!-- Empty drop target -->
+            <template x-if="!pane">
+              <div class="flex-1 flex items-center justify-center text-center px-6 pointer-events-none">
+                <div class="text-gray-600 text-sm">
+                  <div class="text-3xl mb-2 opacity-50">+</div>
+                  <div>Drop an agent here</div>
+                  <div class="text-[10px] text-gray-700 mt-1" x-text="slotIdx === 0 ? 'pane A' : 'pane B'"></div>
+                </div>
+              </div>
+            </template>
+
+            <!-- Filled pane: header + transcript area -->
+            <template x-if="pane">
+              <div class="flex-1 flex flex-col min-h-0">
+                <!-- Pane header -->
+                <div class="px-3 py-2 border-b border-gray-800 flex items-center gap-2">
+                  <div class="flex-1 min-w-0">
+                    <div class="text-sm font-semibold text-white truncate flex items-center gap-2">
+                      <span x-text="pane.name"></span>
+                      <template x-if="compareStreaming[pane.id]">
+                        <span class="text-[9px] px-1.5 py-0.5 rounded-full bg-indigo-950 text-indigo-300 border border-indigo-800 font-medium tracking-wide animate-pulse">streaming</span>
+                      </template>
+                      <template x-if="compareQueued[pane.id] && !compareStreaming[pane.id]">
+                        <span class="text-[9px] px-1.5 py-0.5 rounded-full bg-gray-800 text-gray-400 border border-gray-700 font-medium tracking-wide">queued…</span>
+                      </template>
+                    </div>
+                    <div class="text-[10px] text-gray-500 font-mono truncate"
+                         x-text="(pane.model || 'no model') + ' · ' + (pane.soul_slug || 'general')"></div>
+                  </div>
+                  <button class="text-gray-600 hover:text-red-400 text-lg leading-none px-1"
+                          @click="compareRemovePane(slotIdx)"
+                          title="Remove this agent">&times;</button>
+                </div>
+
+                <!-- Transcript area -->
+                <div class="flex-1 overflow-y-auto p-3 space-y-3 text-sm" :data-pane-transcript="slotIdx">
+                  <!-- Empty state when no messages yet -->
+                  <template x-if="!(compareTranscripts[pane.id] && compareTranscripts[pane.id].length)">
+                    <div class="text-xs text-gray-600 italic">No messages yet. Type a prompt below.</div>
+                  </template>
+
+                  <!-- Messages -->
+                  <template x-for="(msg, mi) in (compareTranscripts[pane.id] || [])" :key="mi">
+                    <div>
+                      <!-- User turn -->
+                      <template x-if="msg.role === 'user'">
+                        <div class="flex justify-end">
+                          <div class="max-w-[85%] px-3 py-1.5 rounded-2xl rounded-tr-sm bg-indigo-900/40 border border-indigo-900 text-gray-100 whitespace-pre-wrap" x-text="msg.content"></div>
+                        </div>
+                      </template>
+                      <!-- Assistant turn (or error) -->
+                      <template x-if="msg.role === 'assistant'">
+                        <div class="flex justify-start">
+                          <div class="max-w-[85%] px-3 py-1.5 rounded-2xl rounded-tl-sm border whitespace-pre-wrap"
+                               :class="msg.isError ? 'bg-red-950/30 border-red-900 text-red-300' : 'bg-gray-900/60 border-gray-800 text-gray-200'">
+                            <!-- Captured thinking (collapsed by default) — only on
+                                 finished assistant turns. Live thinking still streams
+                                 below the message until the turn finalizes. -->
+                            <template x-if="msg.thinking">
+                              <details class="mb-1.5">
+                                <summary class="cursor-pointer text-[10px] text-gray-500 hover:text-gray-300 select-none">
+                                  Show reasoning
+                                </summary>
+                                <div class="mt-1 text-[11px] text-gray-500 italic border-l-2 border-indigo-900 pl-2 py-1 whitespace-pre-wrap" x-text="msg.thinking"></div>
+                              </details>
+                            </template>
+                            <span x-text="msg.content || (msg._streaming ? '…' : '')"></span>
+                            <template x-if="msg.isError && msg.errorAction">
+                              <div class="text-[10px] text-gray-500 mt-1" x-text="msg.errorAction"></div>
+                            </template>
+                            <template x-if="msg.stats && msg.stats.elapsed_s != null">
+                              <div class="text-[9px] text-gray-600 mt-1.5 font-mono"
+                                   x-text="msg.stats.elapsed_s + 's · ' + (msg.stats.model || pane.model || '')"></div>
+                            </template>
+                          </div>
+                        </div>
+                      </template>
+                    </div>
+                  </template>
+
+                  <!-- Live thinking buffer (current turn only). Phase 5
+                       will move this into a collapsible <details>. -->
+                  <template x-if="compareThinking[pane.id]">
+                    <div class="text-[11px] text-gray-500 italic border-l-2 border-indigo-900 pl-2 py-1 whitespace-pre-wrap"
+                         x-text="'thinking: ' + compareThinking[pane.id]"></div>
+                  </template>
+                </div>
+              </div>
+            </template>
+          </div>
+        </template>
+      </div>
+
+      <!-- Shared input row (disabled until at least one pane filled) -->
+      <div class="shrink-0 border border-gray-800 rounded-2xl bg-gray-900/30 p-3">
+        <div class="flex items-center gap-2">
+          <input type="text"
+                 x-model="compareInput"
+                 :disabled="!comparePanes.some(p => p)"
+                 @keydown.enter="if (compareInput.trim() && comparePanes.some(p => p)) compareSend()"
+                 :placeholder="comparePanes.some(p => p) ? 'Send the same prompt to all panes…' : 'Drop an agent into a pane to start'"
+                 class="flex-1 bg-gray-950 border border-gray-800 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-indigo-600 disabled:opacity-40">
+          <button class="px-4 py-2 rounded-lg text-sm font-medium transition-colors"
+                  :class="(comparePanes.some(p => p) && compareInput.trim()) ? 'btn-primary' : 'bg-gray-800 text-gray-600 cursor-not-allowed'"
+                  :disabled="!(comparePanes.some(p => p) && compareInput.trim())"
+                  @click="compareSend()">
+            Send →
+          </button>
+        </div>
+        <div class="flex items-center justify-between mt-1.5">
+          <div class="text-[10px] text-gray-600">
+            <template x-if="comparePanes.filter(p => p).length === 0">
+              <span>Empty — drop two agents into the panes above.</span>
+            </template>
+            <template x-if="comparePanes.filter(p => p).length === 1">
+              <span>One pane filled — drop a second agent to start comparing.</span>
+            </template>
+            <template x-if="comparePanes.filter(p => p).length === 2">
+              <span>Both panes ready. Each agent gets its own session — transcripts don't bleed.</span>
+            </template>
+          </div>
+          <!-- Sequential / parallel toggle. Default sequential because the
+               OpenShell privacy router has a 60s hard cap on total request
+               duration (TASKS.md #22), and parallel inference doubles each
+               model's elapsed time, pushing both past the cap. Sequential
+               gives each model the full GPU and finishes inside 60s. -->
+          <div class="flex items-center gap-1.5 text-[10px] text-gray-500">
+            <span>dispatch:</span>
+            <button @click="compareSendMode = 'sequential'"
+              :class="compareSendMode === 'sequential' ? 'bg-indigo-900 text-indigo-200 border-indigo-700' : 'bg-gray-900 text-gray-500 border-gray-800 hover:border-gray-700'"
+              class="px-2 py-0.5 rounded border font-medium transition-colors"
+              title="One pane at a time. Each gets the full GPU and finishes inside the 60s OpenShell timeout. Slower total but reliable.">sequential</button>
+            <button @click="compareSendMode = 'parallel'"
+              :class="compareSendMode === 'parallel' ? 'bg-indigo-900 text-indigo-200 border-indigo-700' : 'bg-gray-900 text-gray-500 border-gray-800 hover:border-gray-700'"
+              class="px-2 py-0.5 rounded border font-medium transition-colors"
+              title="Both panes at once. Faster on big GPUs but currently broken on most hardware — OpenShell's 60s request cap truncates whichever pane runs longest.">parallel</button>
+          </div>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -5228,6 +5422,34 @@ function app() {
     namedAgentForm: { name: '', soul_slug: 'general', model: '', model_route_id: null, description: '', toolsets: [], char_index: null },
     namedAgentEditId: null,
     namedAgentMsg: null,
+    // ── Compare tab (#13: side-by-side AB chat with two named agents) ─────
+    // Two slots, each is null or an agent object pulled from namedAgents.
+    // Order matters (left/right). v1 is hard-capped at 2 panes; the layout
+    // and state model don't generalize to N>2 (intentional — see TASKS.md).
+    comparePanes: [null, null],
+    // Per-pane state, all keyed by agent.id. Why agent.id rather than slot
+    // index? Because dragging the same pill out and back in shouldn't lose
+    // its transcript mid-session.
+    compareSessions: {},      // {agent_id: session_id}
+    compareTranscripts: {},   // {agent_id: [{role, content, _streaming?}]}
+    compareStreaming: {},     // {agent_id: bool}
+    compareThinking: {},      // {agent_id: in-progress reasoning text}
+    compareInput: '',
+    // Send mode: 'sequential' fires panes one at a time (each gets the
+    // full GPU; works on systems where parallel inference saturates).
+    // 'parallel' fires both at once (faster total time on beefy GPUs;
+    // currently broken on the user's hardware where parallel dispatch
+    // truncates one or both streams at ~30/60s — root cause unknown,
+    // tracked as TASKS.md follow-up).
+    // Default: 'sequential' since it actually works.
+    compareSendMode: 'sequential',
+    // Set per-agent while a parallel/sequential dispatch is queued
+    // but not yet started, so the UI can show "queued…" instead of
+    // appearing dead.
+    compareQueued: {},        // {agent_id: bool}
+    // Future-scope hook (#13 future scope: shared scratchpad for multi-agent
+    // collab). Empty placeholder so adding the wiring later is zero-refactor.
+    compareScratchpad: [],
     // soul registry + spawn flow
     souls: [],
     soulsLoaded: false,
@@ -7661,6 +7883,286 @@ function app() {
       if (this.worldManager && this._worldAgentList) {
         try { this.worldManager.syncAgents(this._worldAgentList()); } catch (_) {}
       }
+    },
+
+    // ── Compare tab actions (#13) ────────────────────────────────────
+    // Drop an agent into a slot. If the slot is occupied, replace.
+    // If the existing pane has a non-empty transcript, confirm first
+    // (per the design: "replace, with confirmation if non-empty").
+    // Rejects duplicates — same agent in both slots is meaningless.
+    compareDropAgent(agent, slotIdx) {
+      if (!agent || slotIdx == null || slotIdx < 0 || slotIdx >= this.comparePanes.length) return;
+      // Reject if already in another slot
+      const otherIdx = 1 - slotIdx;
+      if (this.comparePanes[otherIdx] && this.comparePanes[otherIdx].id === agent.id) {
+        // Already comparing this same agent — no-op (or could swap later)
+        return;
+      }
+      // Replace path
+      const existing = this.comparePanes[slotIdx];
+      if (existing && existing.id !== agent.id) {
+        const existingTranscript = this.compareTranscripts[existing.id] || [];
+        if (existingTranscript.length > 0) {
+          const ok = confirm(`Replace ${existing.name} with ${agent.name}? The current transcript will be lost.`);
+          if (!ok) return;
+        }
+        this._compareTeardownAgent(existing.id);
+      }
+      // If the SAME agent is being re-dropped into its own slot, it's a no-op
+      if (existing && existing.id === agent.id) return;
+      // Init per-agent state
+      this.compareSessions = { ...this.compareSessions, [agent.id]: `compare-${agent.id}-${Date.now()}` };
+      this.compareTranscripts = { ...this.compareTranscripts, [agent.id]: [] };
+      this.compareStreaming = { ...this.compareStreaming, [agent.id]: false };
+      this.compareThinking = { ...this.compareThinking, [agent.id]: '' };
+      // Plant the agent in the slot. Spread to trigger Alpine reactivity
+      // since direct array index assignment isn't always tracked.
+      const next = [...this.comparePanes];
+      next[slotIdx] = agent;
+      this.comparePanes = next;
+    },
+
+    // Tear down per-agent state without touching the slot.
+    // Used by both compareRemovePane and the replace path in compareDropAgent.
+    _compareTeardownAgent(agentId) {
+      const sessions = { ...this.compareSessions }; delete sessions[agentId]; this.compareSessions = sessions;
+      const transcripts = { ...this.compareTranscripts }; delete transcripts[agentId]; this.compareTranscripts = transcripts;
+      const streaming = { ...this.compareStreaming }; delete streaming[agentId]; this.compareStreaming = streaming;
+      const thinking = { ...this.compareThinking }; delete thinking[agentId]; this.compareThinking = thinking;
+      const queued = { ...this.compareQueued }; delete queued[agentId]; this.compareQueued = queued;
+    },
+
+    // Close a pane: tear down the agent's state and clear the slot.
+    compareRemovePane(slotIdx) {
+      const pane = this.comparePanes[slotIdx];
+      if (pane) this._compareTeardownAgent(pane.id);
+      const next = [...this.comparePanes];
+      next[slotIdx] = null;
+      this.comparePanes = next;
+    },
+
+    // Send the current input to every filled pane.
+    //
+    // Two dispatch modes:
+    //   * 'sequential' (default): fire one pane, wait for it to finish,
+    //      then fire the next. Each model gets the full GPU and finishes
+    //      inside the 60s OpenShell request cap (TASKS.md #22). Slower
+    //      total time but actually returns clean responses on hardware
+    //      that can't run two models in parallel.
+    //   * 'parallel': fire all panes at once. Faster on beefy GPUs but
+    //      currently broken — the OpenShell 60s cap truncates whichever
+    //      pane runs longest because parallel inference doubles each
+    //      model's elapsed time.
+    //
+    // Each pane has its own session_id and runs an independent /chat
+    // dispatch — transcripts never bleed across panes.
+    async compareSend() {
+      const text = this.compareInput.trim();
+      if (!text) return;
+      if (!this.comparePanes.some(p => p)) return;
+      // Snapshot + clear input immediately so the user can keep typing.
+      this.compareInput = '';
+      // Append the user turn to ALL filled panes right away so the prompt
+      // shows up simultaneously even when dispatch is sequential. The
+      // user shouldn't have to wait for pane B to start before seeing
+      // their own message in pane B.
+      const filledIds = [];
+      for (let i = 0; i < this.comparePanes.length; i++) {
+        const pane = this.comparePanes[i];
+        if (!pane) continue;
+        const t = { ...this.compareTranscripts };
+        t[pane.id] = [...(t[pane.id] || []), { role: 'user', content: text }];
+        this.compareTranscripts = t;
+        // Mark queued so the UI shows "queued…" instead of empty until
+        // the actual dispatch begins.
+        const q = { ...this.compareQueued };
+        q[pane.id] = true;
+        this.compareQueued = q;
+        filledIds.push(pane.id);
+      }
+
+      if (this.compareSendMode === 'parallel') {
+        // True parallel — both dispatches fire at once. Currently
+        // truncated by OpenShell's 60s cap on most hardware.
+        const promises = filledIds.map(id => {
+          const q = { ...this.compareQueued };
+          q[id] = false;
+          this.compareQueued = q;
+          return this._compareDispatchOne(id, text);
+        });
+        await Promise.allSettled(promises);
+      } else {
+        // Sequential — each pane runs in turn, gets the full GPU,
+        // returns a clean reply.
+        for (const id of filledIds) {
+          const q = { ...this.compareQueued };
+          q[id] = false;
+          this.compareQueued = q;
+          await this._compareDispatchOne(id, text);
+        }
+      }
+    },
+
+    // Dispatch one /chat request for a single pane and stream the SSE
+    // response into that pane's transcript. Mirrors the chat-tab
+    // sendChat() pattern (line ~7218) but writes to compare* state
+    // instead of chats[].
+    async _compareDispatchOne(agentId, userMessage) {
+      // Mark streaming + reset per-turn thinking buffer.
+      this.compareStreaming = { ...this.compareStreaming, [agentId]: true };
+      this.compareThinking = { ...this.compareThinking, [agentId]: '' };
+      // Plant an empty streaming-assistant message that the token
+      // events will fill in-place. Same pattern as the chat tab's
+      // _streaming sentinel.
+      const initT = { ...this.compareTranscripts };
+      initT[agentId] = [...(initT[agentId] || []), { role: 'assistant', content: '', _streaming: true }];
+      this.compareTranscripts = initT;
+
+      const sessionId = this.compareSessions[agentId];
+      try {
+        const r = await fetch('/chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken() },
+          credentials: 'same-origin',
+          body: JSON.stringify({
+            message: userMessage,
+            session_id: sessionId,
+            agent_id: agentId,
+          }),
+        });
+        if (r.status === 401) {
+          this._compareAppendError(agentId, 'Session expired — reload to log in again.');
+          return;
+        }
+        if (!r.ok) {
+          this._compareAppendError(agentId, `HTTP ${r.status}`);
+          return;
+        }
+        const reader = r.body.getReader();
+        const dec = new TextDecoder();
+        let buf = '', reply = '';
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buf += dec.decode(value, { stream: true });
+          const lines = buf.split('\n');
+          buf = lines.pop();
+          for (const line of lines) {
+            if (!line.startsWith('data:')) continue;
+            try {
+              const d = JSON.parse(line.slice(5).trim());
+              if (d.type === 'token') {
+                reply += (d.content || '');
+                this._compareUpdateStreamingMessage(agentId, reply);
+              } else if (d.type === 'thinking') {
+                // Reasoning models stream their internal CoT here.
+                // Append to a per-pane buffer rendered above the visible
+                // reply. Polished collapse comes in Phase 5.
+                const th = { ...this.compareThinking };
+                th[agentId] = (th[agentId] || '') + (d.content || '');
+                this.compareThinking = th;
+              } else if (d.type === 'message') {
+                // Final message — replaces the streamed reply if it differs
+                // (e.g. non-streaming worker, or post-stream cleanup).
+                if (d.content) reply = d.content;
+                this._compareUpdateStreamingMessage(agentId, reply);
+              } else if (d.type === 'done') {
+                this._compareFinalizeMessage(agentId, reply, {
+                  elapsed_s:     d.elapsed_s,
+                  prompt_tokens: d.prompt_tokens,
+                  model:         d.model,
+                });
+              } else if (d.type === 'error') {
+                // Remove the empty streaming placeholder (don't leave a
+                // blank assistant bubble next to the error card) and
+                // append a typed error.
+                this._compareDropStreamingPlaceholder(agentId);
+                this._compareAppendError(
+                  agentId,
+                  d.error_title || d.content || 'An error occurred',
+                  d.error_action || ''
+                );
+              }
+            } catch (_) {}
+          }
+        }
+        // SSE ended without an explicit done event — finalize anyway.
+        this._compareFinalizeMessage(agentId, reply, null);
+      } catch (e) {
+        this._compareFinalizeMessage(agentId, '', null);
+        this._compareAppendError(agentId, `Dispatch failed: ${e.message || e}`);
+      } finally {
+        this.compareStreaming = { ...this.compareStreaming, [agentId]: false };
+      }
+    },
+
+    _compareUpdateStreamingMessage(agentId, content) {
+      const t = { ...this.compareTranscripts };
+      const messages = [...(t[agentId] || [])];
+      const last = messages[messages.length - 1];
+      if (last && last.role === 'assistant' && last._streaming) {
+        messages[messages.length - 1] = { ...last, content };
+        t[agentId] = messages;
+        this.compareTranscripts = t;
+      }
+    },
+
+    _compareFinalizeMessage(agentId, reply, stats) {
+      const t = { ...this.compareTranscripts };
+      const messages = [...(t[agentId] || [])];
+      const last = messages[messages.length - 1];
+      if (last && last.role === 'assistant' && last._streaming) {
+        const finalized = { ...last };
+        delete finalized._streaming;
+        if (reply) finalized.content = reply;
+        if (stats) finalized.stats = stats;
+        // Capture the in-progress thinking buffer onto the message so the
+        // user can still see (or expand, in Phase 5) the model's reasoning
+        // after the turn finishes. Then CLEAR the live buffer so the
+        // floating italic block doesn't double-render alongside the
+        // finalized message — that was the qwen3.5 "shows the same
+        // reasoning twice" bug observed in the AB test.
+        const thinkingForTurn = (this.compareThinking[agentId] || '').trim();
+        if (thinkingForTurn) {
+          finalized.thinking = thinkingForTurn;
+          const th = { ...this.compareThinking };
+          th[agentId] = '';
+          this.compareThinking = th;
+        }
+        messages[messages.length - 1] = finalized;
+        t[agentId] = messages;
+        this.compareTranscripts = t;
+      }
+    },
+
+    // Remove the in-flight streaming-assistant placeholder if it's still
+    // present and empty. Used by the error path so the UI doesn't render
+    // an empty bubble next to the error card.
+    _compareDropStreamingPlaceholder(agentId) {
+      const t = { ...this.compareTranscripts };
+      const messages = [...(t[agentId] || [])];
+      const last = messages[messages.length - 1];
+      if (last && last.role === 'assistant' && last._streaming) {
+        messages.pop();
+        t[agentId] = messages;
+        this.compareTranscripts = t;
+      }
+      // Also clear the live thinking buffer for this agent so it doesn't
+      // hang around after an error.
+      const th = { ...this.compareThinking };
+      th[agentId] = '';
+      this.compareThinking = th;
+    },
+
+    _compareAppendError(agentId, title, action) {
+      const t = { ...this.compareTranscripts };
+      t[agentId] = [...(t[agentId] || []), {
+        role: 'assistant',
+        isError: true,
+        content: title,
+        errorAction: action || '',
+      }];
+      this.compareTranscripts = t;
     },
 
     async createNamedAgent() {

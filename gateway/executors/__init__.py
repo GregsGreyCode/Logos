@@ -4,7 +4,11 @@ Executor abstraction for agent instance management.
 Selects the appropriate backend at startup based on runtime.mode config:
   - "openshell"  — spawn as OpenShell sandboxes (full policy enforcement, default)
   - "docker"     — spawn as plain Docker containers (container isolation, no policy engine)
-  - "local"      — spawn as supervised local processes (no isolation, desktop fallback)
+
+Any other value (including the legacy "local") is coerced to OpenShell.
+LocalProcessExecutor was removed when OpenShell became the only sandbox
+runtime exposed in /setup — agents are no longer spawned as supervised
+local subprocesses.
 """
 
 from .base import InstanceExecutor, InstanceConfig, SpawnedInstance, ResourceHeadroom
@@ -19,13 +23,12 @@ __all__ = [
 
 
 def build_executor(mode: str) -> "InstanceExecutor":
-    """Return the appropriate executor for the given runtime mode."""
-    if mode == "openshell":
-        from .openshell import OpenShellExecutor
-        return OpenShellExecutor()
-    elif mode == "docker":
+    """Return the appropriate executor for the given runtime mode.
+
+    Unknown modes (including legacy "local") fall through to OpenShell.
+    """
+    if mode == "docker":
         from .docker import DockerSandboxExecutor
         return DockerSandboxExecutor()
-    else:
-        from .local import LocalProcessExecutor
-        return LocalProcessExecutor()
+    from .openshell import OpenShellExecutor
+    return OpenShellExecutor()

@@ -18,24 +18,19 @@ shared workspace where the dropped agents can see each other's
 messages and work together. Probably needs a shared "scratchpad"
 message stream both panes subscribe to.
 
-### Day/night cycle with real local time + location dropdown in /setup
-- `/setup` step: dropdown of common IANA timezones
-  (`Europe/London`, `America/New_York`, etc.) with a "detect from
-  browser" default button using
-  `Intl.DateTimeFormat().resolvedOptions().timeZone`. Stored in
-  user settings or platform_settings.
-- World view: replace the 4-minute artificial sine cycle with a
-  real 24-hour cycle keyed to the user's local hour.
-  Dark 22:00–05:00, dawn 05:00–08:00, day 08:00–18:00,
-  dusk 18:00–22:00.
-- Inject `Current local time: 2026-04-10 09:32 (Europe/London)`
-  into `build_session_context_prompt` so agents know the time
-  on every dispatch. Cheap, single line, no extra code path.
-
 ### `get_current_time` MCP tool (later)
 For agents that need to actively query time (scheduling, "in 3
-hours", relative dates). The prompt-injection above covers the
-"what time is it?" case. The MCP tool is for explicit lookups.
+hours", relative dates). The prompt-injection in `24e3ad8` covers
+the passive "what time is it?" case. The MCP tool is for explicit
+lookups (e.g. "remind me in 3 hours" → agent computes target).
+
+### /setup IANA timezone dropdown (future, low priority)
+Browser-side `new Date().getHours()` already self-configures the
+world view to the user's local tz, and the gateway's
+`datetime.now().astimezone()` handles the prompt injection. A
+manual tz override in `/setup` is only needed if a user wants to
+display the world in a different tz than their browser — punted
+unless someone asks for it.
 
 ## Pending — infra / cleanup
 
@@ -56,16 +51,156 @@ it in. Cache the last-known values per-sandbox in Alpine state so
 the panel never goes blank — refresh in place when fresh data
 arrives instead of clearing first then re-populating.
 
-### #18 Standardize openshell gateway naming to model-only
-Currently the first gateway is `logos-openshell` (the original
-primordial that Logos adopts on first /setup) and subsequent
-gateways are `logos-os-<sanitized-model>`. The user wants all
-gateways named consistently after the model they serve. Options:
-(a) destroy + re-provision the primordial under a new name
-(destructive but clean), (b) leave the primordial alone and
-rename the sub-gateway prefix (compromise), or (c) drop the
-"primordial" concept and always provision named gateways from
-/setup. Needs a migration story for existing installs.
+### #19 Model-route switch breaks worker on switched agent — FIXED
+Reproduced 2026-04-10 with Tildi, then again with Hermette-copy.
+Two compounding stale-state bugs in the OpenShell sub-gateway
+provider records:
+
+  1. **Stale URL** — sub-gateways provisioned before commit
+     `5390da5` had no `OPENAI_BASE_URL` on the provider config
+     (`CONFIG_KEYS=0`). Worker registers, then dies on first
+     request through inference.local because the privacy router
+     has no upstream URL.
+  2. **Stale credential** — even after the URL was healed,
+     sub-gateways were holding API keys from prior LM Studio
+     key rotations. `ensure_loaded` (which reads
+     `auth.db.machines.api_key` directly) kept working, but the
+     worker's chat completion call through the privacy router
+     used the stored stale credential and got rejected by
+     LM Studio (with the misleading "Unexpected endpoint or
+     method" 200 response, not a clean 401).
+
+**Fix** (`gateway/openshell_routes.py` + `gateway/admin_handlers.py`
++ `gateway/executors/openshell.py`):
+
+  * `ensure_provider_configured(gateway, provider)` always
+    re-pushes both `--credential` and `--config` from the auth.db
+    machines table to the target sub-gateway. No detection step;
+    cheap (one CLI call per spawn); idempotent.
+  * Called pre-spawn from `OpenShellExecutor.spawn` so every
+    sandbox lands in a sub-gateway with current credential+URL.
+  * Called from `handle_machines_patch` as a background task
+    when the user updates `api_key` or `endpoint_url` in the
+    Machines admin page — propagates the new value to every
+    existing sub-gateway immediately, so the user doesn't have
+    to wait until the next spawn.
+  * `adopt_primordial` and `finish_provisioning` both refactored
+    to use shared `_resolve_lmstudio_provider_args()` helper
+    (no more silent `host.docker.internal` fallback — raises if
+    no machine row + no env var, since /setup populates the
+    machine row in step 1, well before any gateway provision).
+  * The resolver previously had a hardcoded
+    `http://host.docker.internal:1234/v1` fallback that turned
+    "we don't know your URL" into "we configured the wrong URL".
+    Removed.
+
+### #21 Reasoning models silently return empty replies — FIXED
+Observed 2026-04-10. With Hermette-copy bound to qwen3.5-9b,
+the worker would dispatch, qwen3.5 would think for ~60-76s,
+and the user would see an empty `{"type":"message","content":""}`
+event with `prompt_tokens: 0`. No visible reply, no tokens
+generated by the worker side, no error.
+
+**Root cause**: LM Studio's OpenAI-compat endpoint at
+`/v1/chat/completions` splits reasoning-model output into TWO
+delta fields:
+
+  * `delta.content` — the visible reply (after thinking)
+  * `delta.reasoning_content` — the model's thinking phase
+    (LM Studio's extension to the OpenAI spec)
+
+The worker at `docker/sandbox_worker.py:382-397` only read
+`delta.get("content", "")`. For qwen3.5 it would receive 600+
+`reasoning_content` chunks containing the model's full thinking
+trace and discard every single one. If qwen3.5 ran out of tokens
+before finishing reasoning (common on short prompts because the
+chat template keeps it deeply in reasoning mode), `accumulated`
+stayed empty and the worker returned `""`.
+
+**Fix** (`docker/sandbox_worker.py`):
+
+  * Worker now reads `delta.reasoning_content` alongside
+    `delta.content`. Reasoning chunks are forwarded to the
+    gateway as `thinking` events (the gateway already had a
+    handler for those at `http_api.py:3138-3142`).
+  * If the stream ends with empty `accumulated` content but
+    non-empty accumulated reasoning, the worker emits the
+    accumulated reasoning as the visible reply. Better a verbose
+    answer than silence — and lets the user see qwen3.5's chain
+    of thought instead of staring at an empty chat box.
+
+**Verified end-to-end** by direct `/chat` POST to a freshly
+restarted Hermette-copy sandbox (qwen3.5 model). 620 thinking
+events streamed live, qwen3.5 never emitted any `content`,
+fallback fired and surfaced the reasoning as the visible
+message. Testing reasoning models is now possible.
+
+Future improvement: a UI affordance (`<details>` collapse?) to
+hide the thinking stream by default and let users expand it
+for debugging — currently the entire reasoning trace is
+displayed inline.
+
+
+### #20 World map shows stale "loading" hourglass after first /setup
+Observed 2026-04-10. After first /setup completes, the new agent
+(Hermette) keeps a loading hourglass above her head on the world
+map even though `/admin/sandboxes` shows the sandbox healthy and
+chats are dispatching/replying fine. A hard refresh + creating a
+second agent fixed it. Suggests `_worldAgentList()` is reading
+stale `worker_connected/worker_healthy` from `namedAgents` —
+probably a name-mismatch between dispatch lookup and
+`handle_agents_list`'s `_sanitize_sandbox_name(f"hermes-{name}")`
+lookup, since dispatch finds the worker but admin doesn't.
+
+### #18 Standardize openshell gateway naming to model-only — FIXED
+Old scheme: bootstrap gateway was `logos-openshell` (the original
+out-of-band install), new gateways were `logos-os-<sanitized-model>`.
+Inconsistent and the bootstrap name leaked into the M-pill dropdown
+("logos-openshell" next to a model id was confusing).
+
+New scheme: every gateway is named after its model with no prefix.
+
+  | Old                              | New                  |
+  |---                               |---                   |
+  | `logos-openshell`                | `openai-gpt-oss-20b` |
+  | `logos-os-qwen-qwen3-5-9b`       | `qwen-qwen3-5-9b`    |
+
+**How** (`gateway/openshell_routes.py`):
+  * `_sanitize_route_name(model)` returns the sanitized model id with
+    no prefix.
+  * `BOOTSTRAP_PRIMORDIAL_NAME` constant (`"logos-openshell"`) is the
+    discovery candidate during the very first /setup run; once the
+    bootstrap gateway is adopted it gets aliased to its model name and
+    `get_primordial_name()` returns the new alias from then on.
+  * `_ensure_gateway_alias(name, endpoint)` wraps
+    `openshell gateway add --local --name <name> https://127.0.0.1:<port>`
+    — this is a client-side rename that registers a new entry in
+    `~/.config/openshell/gateways/<name>/` pointing at the same
+    physical container. The old name remains valid in openshell's
+    metadata so existing state-file entries keep working during the
+    transition.
+  * `adopt_primordial(provider, model)` registers the alias before the
+    `provider create` and `inference set` calls, so the bootstrap
+    gateway is referred to by its model name from the very first
+    moment Logos talks to it.
+  * `migrate_routes_to_model_names()` is the idempotent backfill for
+    existing installs — runs at gateway startup
+    (`gateway/run.py:start_gateway`), checks every model_routes row,
+    aliases + renames anything still on the old scheme. Safe to run
+    repeatedly.
+  * `auth_db.rename_model_route_openshell_name(route_id, new_name)` is
+    the only sanctioned way to mutate `openshell_name` after creation;
+    `update_model_route` still treats it as immutable.
+
+All call sites that previously imported `PRIMORDIAL_NAME` as a
+hardcoded constant (`http_api.py`, `executors/openshell.py`) now read
+the current name through `get_primordial_name()` so the rest of the
+codebase tracks the rename without further changes. The old constant
+is kept as a back-compat alias pointing at `BOOTSTRAP_PRIMORDIAL_NAME`
+for any callers we may have missed.
+
+Migration runs automatically on the next `start_gateway()` — no
+manual DB surgery required.
 
 ## Documentation / known limitations
 
@@ -92,6 +227,108 @@ expose a reasoning param in their compat endpoint.
 
 The /setup benchmark could add a "trivial answer TTFT" metric to
 surface this kind of model-specific UX gap upfront.
+
+### #23 Save openshell-router timeout patch as personal fork
+A local patch lives at `~/homelab-infra/projects/knowledge-repos/openshell`
+on branch `local/router-streaming-timeout`. It bumps the hardcoded
+60s reqwest timeout in `crates/openshell-router/src/lib.rs` to 600s
+(`Duration::from_secs(60)` → `Duration::from_secs(600)`) so streaming
+inference responses don't get truncated mid-flight.
+
+Currently the patch only exists on disk in the knowledge-repos clone
+and as a derived `gateway:0.0.23` Docker image loaded into both
+running cluster containerd image stores. If the clone is wiped or the
+branch deleted, the patch is gone.
+
+**TODO**:
+  1. Create a personal GitHub fork of `NVIDIA/OpenShell`
+  2. Add it as a remote in the local clone (e.g. `git remote add fork
+     git@github.com:<user>/OpenShell.git`)
+  3. Commit the patch on `local/router-streaming-timeout`
+  4. Push the branch to the fork so it has a stable URL
+  5. Optionally tag it (e.g. `streaming-timeout-fix-v1`) so the binary
+     build is reproducible
+  6. (Later) consider opening a PR upstream — the change is small
+     enough to be a candidate, though making it configurable via env
+     var would be a more PR-friendly version
+
+The k8s deployment side also needs documentation: `imagePullPolicy`
+on the `openshell` StatefulSet has been patched from `Always` to
+`Never` in both clusters so future pod restarts use the local
+patched image instead of pulling the upstream from ghcr.io. If the
+gateway containers are recreated from scratch (e.g. via
+`openshell gateway destroy && start`), this patch is lost too —
+the StatefulSet manifest gets re-applied with the original
+`imagePullPolicy: Always` and the next pull resets the image.
+
+### #22 OpenShell 60s hard cap on inference.local requests — FIXED
+Empirically confirmed 2026-04-10 with two parallel aiohttp streaming
+requests from inside a sandbox to ``https://inference.local/v1/chat/completions``
+using a long prompt + ``max_tokens=16384`` + ``ClientTimeout(total=300)``.
+Both requests finished at **EXACTLY 60.01s**, same instant, with
+``max_gap`` between chunks of only ~10s. Streams were alive the whole
+time — this is a TOTAL request timeout, not an idle timeout.
+
+**Root cause**: hardcoded ``Duration::from_secs(60)`` in
+``crates/openshell-router/src/lib.rs::Router::new()``. The reqwest
+client's total timeout governs the entire upstream request including
+streaming body reads, so any single inference call that needed >60s
+wall-clock got truncated mid-stream regardless of whether bytes were
+still flowing.
+
+**Two false starts**:
+  1. First we patched the binary that runs in the **gateway pod**
+     (``/usr/local/bin/openshell-server``). No effect — that binary
+     doesn't actually execute the proxy code path. Validation test
+     still capped at 60.01s with the patched md5 in place.
+  2. The actual inference proxy lives in the **sandbox supervisor**
+     (``/opt/openshell/bin/openshell-sandbox``), which is the PID 1
+     process inside every agent container. The supervisor crate
+     (``openshell-sandbox``) is what calls
+     ``router.proxy_with_candidates_streaming(...)`` from
+     ``crates/openshell-sandbox/src/proxy.rs:998``. The gateway
+     pod's openshell-server doesn't even sit on the inference path
+     for this request type.
+
+**Fix**:
+  * Patched ``crates/openshell-router/src/lib.rs:48`` from
+    ``Duration::from_secs(60)`` → ``Duration::from_secs(600)`` on
+    branch ``local/router-streaming-timeout`` of the openshell
+    knowledge-repos clone.
+  * Built ``deploy/docker/Dockerfile.images`` ``--target supervisor-builder``
+    to produce a patched ``openshell-sandbox`` binary
+    (md5 ``b7e682634c95bf62d210fd4269c639f3``, vs unpatched
+    ``9c972341e3d8b3ba726619f0fca80995``).
+  * The supervisor binary lives on the cluster node filesystem at
+    ``/opt/openshell/bin/openshell-sandbox`` and is mounted into every
+    sandbox pod via a read-only hostPath. So deployment is just
+    ``docker cp`` into the cluster container at that path; existing
+    pods are unaffected until they bounce, new pods pick it up
+    automatically.
+
+**Verified end-to-end** 2026-04-11 by running the same parallel test
+that originally exposed the cap:
+  * Hermette (gpt-oss-20b in primordial gateway) and Atlas
+    (qwen3.5-9b in qwen sub-gateway) firing simultaneously, each from
+    its own sandbox so the requests hit two different sub-gateways
+    and two different LM Studio models.
+  * Both ran for the full **300.01s / 300.32s** of the test's
+    ``ClientTimeout(total=300)`` without truncation. The OpenShell
+    cap is gone — the only stop now is the test's own client-side
+    timeout.
+
+**Compare-tab parallel toggle**: still relevant, since long parallel
+inference is GPU-bound and slow, but it's no longer load-bearing for
+correctness — sequential mode is now a performance choice, not a
+truncation workaround.
+
+**Persistence concern**: see #23 — the patched supervisor binary is
+only on the cluster node filesystem, not baked into any image or
+fork. If either cluster container is destroyed and recreated, the
+hostPath gets re-populated from ``ghcr.io/nvidia/openshell/cluster:0.0.23``'s
+unpatched copy and the cap comes back. The fix is to either save
+this as a personal fork + bake a derived cluster image, or to redo
+the docker cp on every gateway recreate.
 
 ### Worker WebSocket frame parser blocks during inference
 The sandbox worker uses a custom `TunnelWebSocket` whose frame
@@ -155,6 +392,8 @@ load-bearing for the disconnect scenarios I tested.
 | `11f2ae9` | Local DM session_key includes chat_id (was `agent:main:local:dm` for everyone, causing cross-agent transcript bleed) |
 | `5eaac73` | On-demand LM Studio `ensure_loaded` from `_handle_chat` |
 | `4c4a09f` | Use `lm-studio` placeholder token instead of `unused` (initial fix, since superseded by reading user's machine.api_key) |
+| `47b5472` | Reject pending futures when worker WS dies mid-dispatch (the 5-min stall race documented above) |
+| `24e3ad8` | Real local-time day/night cycle in WorldScene + `Current time` line injected into session context prompt |
 
 ## What's currently a "dead end" we're aware of
 

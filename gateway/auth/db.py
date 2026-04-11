@@ -1070,7 +1070,9 @@ def update_model_route(route_id: str, **fields) -> Optional[dict]:
     """Partial update. Only the listed fields are mutable; created_at,
     is_primordial, openshell_name, openshell_port, provider, model are
     immutable after creation. Use set_default_model_route() to change
-    is_default since it has cross-row semantics."""
+    is_default since it has cross-row semantics. Use
+    rename_model_route_openshell_name() for the one legitimate exception
+    (the model-name standardisation migration)."""
     allowed = {"status", "status_detail"}
     updates = {k: v for k, v in fields.items() if k in allowed}
     if not updates:
@@ -1082,6 +1084,30 @@ def update_model_route(route_id: str, **fields) -> Optional[dict]:
             f"UPDATE model_routes SET {set_clause} WHERE id = ?",
             (*updates.values(), route_id),
         )
+    return get_model_route(route_id)
+
+
+def rename_model_route_openshell_name(
+    route_id: str, new_openshell_name: str,
+) -> Optional[dict]:
+    """Rename the openshell_name on an existing route row.
+
+    Used by the model-name standardisation migration to bring routes
+    provisioned under the old ``logos-os-<sanitized-model>`` (or
+    bootstrap ``logos-openshell``) naming scheme over to the prefix-free
+    pure-model-name scheme. Caller is expected to have already
+    registered the new name as a client-side alias for the same physical
+    gateway via ``openshell gateway add --local`` so the old and new
+    names point at the same underlying container.
+    """
+    now = int(time.time() * 1000)
+    with _conn() as conn:
+        cur = conn.execute(
+            "UPDATE model_routes SET openshell_name = ?, updated_at = ? WHERE id = ?",
+            (new_openshell_name, now, route_id),
+        )
+        if cur.rowcount == 0:
+            return None
     return get_model_route(route_id)
 
 
