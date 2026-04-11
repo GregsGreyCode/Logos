@@ -214,6 +214,39 @@ logos debug tail --since 5m
 
 ---
 
+## M7 — Sandbox health observability in the UI
+
+**State today**: The `/admin/agents` endpoint returns two booleans per agent — `worker_connected` and `worker_healthy` — which the UI reads in ~8 places to decide whether to render an agent as "chat-ready" (green pill, drag-enabled, etc.). Those booleans currently reflect **WebSocket reverse-connection state** (from the `WorkerRegistry` keyed on `sandbox_name`). When the TASKS.md #24 refactor lands, they'll be redefined to reflect **port-forward reachability + HTTP /health probe** under the same names (Approach A — zero UI churn) so the refactor doesn't block on UI work.
+
+Approach A is the minimum; **M7 is the follow-up that makes the sandbox health surface actually informative for users**.
+
+**What's scaffolded**:
+- `/admin/agents` endpoint already returns per-agent status; the shape is well-known and consumed by 8 UI sites.
+- M6 unified logging (shipped) already captures probe-response events as structured records, so a historical latency chart is one query away.
+- NemoClaw's `agents/hermes/manifest.yaml` already specifies the health probe contract (`GET http://localhost:8642/health → {"status":"ok","platform":"hermes-agent"}`) and timeout (90s).
+
+**What's missing**:
+1. **Rename the fields** from `worker_connected` / `worker_healthy` to `sandbox_reachable` / `sandbox_api_healthy`. The "worker" vocabulary is a lie after #24 — there is no worker, there's a port-forward + HTTP probe. Clearer naming reduces future confusion.
+2. **Add `sandbox_phase`** (from `openshell sandbox get`) — "Ready", "Provisioning", "Error", "Stopped". Lets the UI distinguish "sandbox is still spawning" from "sandbox spawned but /health is failing" from "sandbox was deleted".
+3. **Add `api_latency_ms`** — p50 of the last N health probes. Lets users see at a glance which agent's sandbox is slow before they try to chat with it.
+4. **Add `last_probe_ts`** so the UI can show "checked 2s ago" / "stale" / "never probed" states instead of a boolean that silently ages.
+5. **Add `api_version`** — whatever Hermes reports on `/health` or `/v1/models`. Surfaces version drift across sandboxes (useful during upgrade rolls).
+6. **Update all UI call sites** to read the new field names. ~8 places in `main_app.html` — each is a one-line find-and-replace plus optionally a new pill rendering the latency/phase.
+7. **Add a dedicated health tile to Admin → Sandboxes** that shows a per-sandbox mini-dashboard: phase + latency sparkline (fed by M6's `~/.logos/logs/unified.jsonl` filtered on `event=sandbox_probe`) + last-N failed probes with reason.
+
+**Why it's architecturally large**:
+
+1. Field rename touches every UI consumer (~8 files/blocks) plus the admin handler plus any tests. Backwards-compat matters if external tooling reads `/admin/agents`.
+2. Requires a **probe-result event stream** emitted to `unified.jsonl`, not just the current boolean flip-flop. That's a small but real backend addition.
+3. The sparkline + "checked 2s ago" UX is a meaningful visual design exercise, not just a field rename.
+4. Integration with M6 is load-bearing — the richer UI pulls live data from the unified log, which has to be a first-class consumer API, not just a file humans grep.
+
+**Dependency**: Must land **after** TASKS.md #24 is stable (Approach A is deployed and user-validated). Don't try to combine them — the refactor is already large and the UI rename would thrash 8 unrelated files during the hard transport swap.
+
+**Direction established**: 2026-04-11 session — user raised the question during the TASKS.md #24 planning: *"if we don't have workers anymore do we change the UI for sandboxes to give a different indication that its working?"* — a good instinct. Approach A defers the rename; M7 plans the proper upgrade.
+
+---
+
 ## Relationships
 
 ```
@@ -228,8 +261,12 @@ M5 (world as surface) ──→ extends pass 3 S2 (CRUD slide-out)
 
 M6 (unified logs) ──→ unblocks every future debugging session
                  ──→ prerequisite for operating M3+M4 at multi-user scale
+
+M7 (sandbox health UX) ──→ depends on TASKS.md #24 refactor (port-forward + /health probe)
+                      ──→ depends on M6 (log-stream as data source for latency sparklines)
+                      ──→ makes the new architecture self-documenting in the UI
 ```
 
-**Recommended tackling order**: **M6 → M3 → M4 → M2 → M1 → M5.**
+**Recommended tackling order**: **M6 → #24 refactor → M7 → M3 → M4 → M2 → M1 → M5.**
 
-Rationale: **M6 goes first** because it pays for itself the next time anything breaks, and because every subsequent M depends on being able to reason about what happened across components. Then M3 unlocks M4; M2 is user-visibility-critical once M4 is real; M1 is the last polish on the STAMP pill once everything else is in place; M5 is the long arc that benefits from everything else first.
+Rationale: **M6 goes first** because it pays for itself the next time anything breaks, and because every subsequent M depends on being able to reason about what happened across components. **TASKS.md #24** (the NemoClaw-pattern refactor) unblocks chat end-to-end and forces the sandbox transport question. **M7** then accurately surfaces the new transport's health in the UI. Then M3 unlocks M4; M2 is user-visibility-critical once M4 is real; M1 is the last polish on the STAMP pill once everything else is in place; M5 is the long arc that benefits from everything else first.
