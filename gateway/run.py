@@ -277,18 +277,185 @@ from gateway.delivery import DeliveryRouter
 from gateway.runs import start_run, finish_run
 from gateway.platforms.base import BasePlatformAdapter, MessageEvent, MessageType
 
-# Per-async-task session ID, propagated through the request path so every
-# log record in a message-handling turn includes a common trace identifier.
+# ── Correlation ID contextvars ──────────────────────────────────────────────
+# These propagate through the async request path so every log record in a
+# message-handling turn carries a common set of trace identifiers. The
+# unified log can then be grepped by task_id / session_id / user_id /
+# worker_id to reconstruct the full cross-component story for a single
+# chat turn. See docs/MISSING.md M6 for the design rationale.
 _session_ctx: contextvars.ContextVar[str] = contextvars.ContextVar(
     "session_id", default="-"
 )
+_task_ctx: contextvars.ContextVar[str] = contextvars.ContextVar(
+    "task_id", default="-"
+)
+_user_ctx: contextvars.ContextVar[str] = contextvars.ContextVar(
+    "user_id", default="-"
+)
+_worker_ctx: contextvars.ContextVar[str] = contextvars.ContextVar(
+    "worker_id", default="-"
+)
+_chat_ctx: contextvars.ContextVar[str] = contextvars.ContextVar(
+    "chat_id", default="-"
+)
+
+
+_CORRELATION_VARS = {
+    "session_id": _session_ctx,
+    "task_id": _task_ctx,
+    "user_id": _user_ctx,
+    "worker_id": _worker_ctx,
+    "chat_id": _chat_ctx,
+}
+
+
+def set_log_context(**kwargs: Any) -> None:
+    """Set one or more correlation-ID contextvars for the current async task.
+
+    Callers at entry points (HTTP handlers, workflow runs, cron jobs) should
+    invoke this once at the top of their handling code. All subsequent log
+    records in the same async context will carry the values and they become
+    grep-able in ``~/.logos/logs/unified.jsonl`` via::
+
+        logos debug tail --filter task_id=<id>
+        logos debug tail --filter session_id=<id>
+
+    Unknown keys are silently ignored. Values are coerced to ``str`` so
+    callers don't have to stringify UUIDs / ints themselves. Passing an
+    empty string or None for a key leaves that contextvar unchanged —
+    use the default ``-`` explicitly if you want to clear it.
+
+    Example::
+
+        set_log_context(
+            session_id=session_id,
+            task_id=task_id,
+            user_id=user.get("sub"),
+            worker_id=f"hermes-{agent_name}",
+        )
+    """
+    for key, value in kwargs.items():
+        var = _CORRELATION_VARS.get(key)
+        if var is None:
+            continue  # unknown key — ignore rather than fail loudly
+        if value is None or value == "":
+            continue
+        try:
+            var.set(str(value))
+        except Exception:
+            # Contextvars shouldn't raise, but defensively swallow anything
+            # so a bad correlation ID never breaks the request itself.
+            pass
 
 
 class _SessionFilter(logging.Filter):
-    """Inject the current session_id into every log record for this module."""
+    """Inject all correlation IDs into every log record.
+
+    The contextvar getters default to "-" so records always have the field
+    set, even when no request context is active. Filters are applied per
+    handler (not on the root logger) because child loggers propagate records
+    directly to the root's handlers, bypassing root-level filters.
+    """
     def filter(self, record: logging.LogRecord) -> bool:
         record.session_id = _session_ctx.get()
+        record.task_id = _task_ctx.get()
+        record.user_id = _user_ctx.get()
+        record.worker_id = _worker_ctx.get()
+        record.chat_id = _chat_ctx.get()
         return True
+
+
+class JsonRedactingFormatter(logging.Formatter):
+    """Structured JSON-lines formatter for the unified log sink.
+
+    Emits one JSON object per log record on a single line. Includes
+    correlation IDs (session_id, task_id, user_id, worker_id, chat_id)
+    injected by _SessionFilter, plus the standard logging fields.
+
+    The message body is run through ``redact_sensitive_text`` to strip
+    API keys, tokens, and other secrets before serialisation — matching
+    the behaviour of ``RedactingFormatter`` for the text log.
+
+    Companion to the existing RotatingFileHandler at ~/.logos/logs/gateway.log
+    (unstructured text, optimised for tail -f) — this one writes to
+    ~/.logos/logs/unified.jsonl, optimised for ``logos debug tail`` /
+    ``grep task_id=xyz`` / future log aggregation backends.
+    """
+
+    # Standard LogRecord attributes we do NOT want to serialise verbatim
+    # (we explicitly pick the ones we want instead, for stable output shape)
+    _SKIP = frozenset({
+        "args", "asctime", "created", "exc_info", "exc_text", "filename",
+        "funcName", "levelname", "levelno", "lineno", "module", "msecs",
+        "msg", "message", "name", "pathname", "process", "processName",
+        "relativeCreated", "stack_info", "thread", "threadName", "getMessage",
+        "taskName",
+    })
+
+    def format(self, record: logging.LogRecord) -> str:
+        # Defensive defaults in case _SessionFilter wasn't applied to this
+        # handler for some reason. Every field should always be present.
+        for attr, default in (
+            ("session_id", "-"),
+            ("task_id", "-"),
+            ("user_id", "-"),
+            ("worker_id", "-"),
+            ("chat_id", "-"),
+        ):
+            if not hasattr(record, attr):
+                setattr(record, attr, default)
+
+        try:
+            from agent.redact import redact_sensitive_text
+            message = redact_sensitive_text(record.getMessage())
+        except Exception:
+            message = record.getMessage()
+
+        payload: Dict[str, Any] = {
+            "ts": record.created,                      # float seconds epoch
+            "level": record.levelname,                 # "INFO", "WARNING", ...
+            "logger": record.name,                     # "gateway.worker_registry"
+            "msg": message,
+            "session_id": record.session_id,
+            "task_id": record.task_id,
+            "user_id": record.user_id,
+            "worker_id": record.worker_id,
+            "chat_id": record.chat_id,
+            "source": "gateway",                       # distinguishes from worker/cluster
+            "pid": record.process,
+        }
+
+        # Attach exception info if present (pre-formatted, redacted)
+        if record.exc_info:
+            try:
+                from agent.redact import redact_sensitive_text as _r
+                payload["exc"] = _r(self.formatException(record.exc_info))
+            except Exception:
+                payload["exc"] = self.formatException(record.exc_info)
+
+        # Pull in any extra fields a caller attached via logger.info(..., extra={...})
+        # without clobbering the structured fields above.
+        for k, v in record.__dict__.items():
+            if k in self._SKIP or k in payload or k.startswith("_"):
+                continue
+            # Only serialise JSON-safe types; everything else gets str()'d
+            try:
+                json.dumps(v)
+                payload[k] = v
+            except (TypeError, ValueError):
+                payload[k] = str(v)
+
+        try:
+            return json.dumps(payload, default=str, ensure_ascii=False)
+        except Exception:
+            # Last-resort fallback: return a minimal dict that cannot fail
+            return json.dumps({
+                "ts": record.created,
+                "level": record.levelname,
+                "logger": record.name,
+                "msg": "<formatter error — see text log>",
+                "source": "gateway",
+            })
 
 
 logger = logging.getLogger(__name__)
@@ -4902,6 +5069,27 @@ async def start_gateway(config: Optional[GatewayConfig] = None, replace: bool = 
     error_handler.addFilter(_SessionFilter())
     error_handler.setFormatter(_sess_fmt)
     logging.getLogger().addHandler(error_handler)
+
+    # Structured unified log sink (M6 in docs/MISSING.md). Parallel to the
+    # text gateway.log above — same events, but JSON-lines format with
+    # correlation IDs attached, optimised for `logos debug tail`, grep by
+    # task_id/user_id/worker_id, and future log aggregators (Loki, etc.).
+    #
+    # History: a long 2026-04-11 debugging session burned hours because
+    # the CLI spinner output in `logos gateway run` masked the stdlib
+    # logger output entirely. Even finding `~/.logos/logs/gateway.log`
+    # was a scramble, and the text format made cross-component correlation
+    # painful. This handler is the fix — it writes to a well-known path
+    # in a format that's trivial to query, and `logos debug tail` pretty-
+    # prints it so humans don't have to read raw JSON.
+    unified_handler = RotatingFileHandler(
+        log_dir / 'unified.jsonl',
+        maxBytes=10 * 1024 * 1024,
+        backupCount=5,
+    )
+    unified_handler.addFilter(_SessionFilter())
+    unified_handler.setFormatter(JsonRedactingFormatter())
+    logging.getLogger().addHandler(unified_handler)
 
     # Reap any openshell CLI / ssh-proxy processes left over from a prior
     # gateway run that died ungracefully (SIGKILL, crash, power loss).
