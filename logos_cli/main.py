@@ -1817,6 +1817,14 @@ def cmd_doctor(args):
     run_doctor(args)
 
 
+def cmd_debug(args):
+    """Debug / observability commands (unified log tail, etc.)."""
+    from logos_cli.debug import debug_command
+    rc = debug_command(args)
+    if rc:
+        sys.exit(rc)
+
+
 def cmd_config(args):
     """Configuration management."""
     from logos_cli.config import config_command
@@ -2647,6 +2655,81 @@ For more help on a command:
         help="Attempt to fix issues automatically"
     )
     doctor_parser.set_defaults(func=cmd_doctor)
+
+    # =========================================================================
+    # debug command — observability / unified log access (MISSING.md M6)
+    # =========================================================================
+    debug_parser = subparsers.add_parser(
+        "debug",
+        help="Debug and observability tools (unified log tail, etc.)",
+        description="Structured log access over ~/.logos/logs/unified.jsonl"
+    )
+    debug_subparsers = debug_parser.add_subparsers(dest="debug_command")
+
+    debug_tail = debug_subparsers.add_parser(
+        "tail",
+        help="Pretty-print or follow the unified structured log",
+        description=(
+            "Read ~/.logos/logs/unified.jsonl (the gateway's structured log) "
+            "and pretty-print records with colored source tags and correlation "
+            "IDs. Supports filtering by key=value, minimum level, time window, "
+            "and tail-follow mode."
+        ),
+    )
+    debug_tail.add_argument(
+        "-f", "--file",
+        help="Path to the unified JSONL log file (defaults to ~/.logos/logs/unified.jsonl)",
+    )
+    debug_tail.add_argument(
+        "-n", "--lines",
+        type=int, default=50,
+        help="Number of recent lines to emit before exiting (default: 50). Ignored with --all.",
+    )
+    debug_tail.add_argument(
+        "-a", "--all",
+        action="store_true",
+        help="Emit the entire log file (ignores --lines).",
+    )
+    debug_tail.add_argument(
+        "-F", "--follow",
+        action="store_true",
+        help="Keep tailing new records as they arrive (like tail -f).",
+    )
+    debug_tail.add_argument(
+        "--filter",
+        action="append",
+        metavar="KEY=VALUE",
+        help=(
+            "Filter records by a field. Repeatable. Supports key=value, key!=value, "
+            "and wildcards in value (e.g. --filter source=gateway --filter task_id=abc*)."
+        ),
+    )
+    debug_tail.add_argument(
+        "--level",
+        default="INFO",
+        help="Minimum log level (DEBUG, INFO, WARNING, ERROR). Default: INFO.",
+    )
+    debug_tail.add_argument(
+        "--since",
+        help=(
+            "Only show records newer than this. "
+            "Relative offsets: 30s, 5m, 2h, 1d. "
+            "Absolute: 2026-04-11T14:00, 2026-04-11, or epoch seconds."
+        ),
+    )
+    debug_tail.add_argument(
+        "--raw",
+        action="store_true",
+        help="Emit raw JSON lines without pretty-printing.",
+    )
+    debug_tail.add_argument(
+        "--color",
+        choices=("auto", "always", "never"),
+        default="auto",
+        help="Colorize output. Default: auto (only when stdout is a TTY).",
+    )
+    debug_parser.set_defaults(func=cmd_debug)
+    debug_tail.set_defaults(func=cmd_debug)
     
     # =========================================================================
     # config command

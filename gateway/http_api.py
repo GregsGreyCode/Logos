@@ -2826,6 +2826,28 @@ async def _handle_chat(request: web.Request) -> web.StreamResponse:
     session_id = body.get("session_id", "http-default")
     agent_id = body.get("agent_id")
 
+    # M6 correlation IDs: stamp every log record emitted during this request
+    # with identifiers that can be grepped from the unified log afterwards.
+    # Generate a fresh task_id per dispatch so a single chat turn (worker
+    # dispatch → inference → streaming reply → tool calls) is queryable as
+    # one unit via `logos debug tail --filter task_id=<id>`. See MISSING.md M6.
+    import uuid as _uuid
+    _task_id = _uuid.uuid4().hex[:12]
+    try:
+        from gateway.run import set_log_context
+        _current_user = request.get("current_user") or {}
+        set_log_context(
+            session_id=session_id,
+            task_id=_task_id,
+            user_id=_current_user.get("sub") or _current_user.get("id"),
+            chat_id=body.get("chat_id"),
+            # worker_id gets set later once the sandbox_name is resolved —
+            # at this point `agent_id` is still the raw DB id, not the
+            # sanitised sandbox name the worker registry keys on.
+        )
+    except Exception as _ctx_exc:
+        logger.debug("set_log_context skipped: %s", _ctx_exc)
+
     # OpenShell-only routing: every chat must target a named agent that has
     # its own sandbox worker. No in-process fallback.
     if not agent_id:
