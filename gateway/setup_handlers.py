@@ -3069,15 +3069,16 @@ async def handle_setup_complete(request: web.Request) -> web.Response:
         # the regression the user originally hit ("I selected gpt-oss-20b
         # but qwen3.5 loaded").
         #
-        # provision_or_reuse_route handles both first-run (adopts the
-        # existing logos-openshell primordial gateway) and re-run with a
-        # new model (provisions a fresh gateway alongside). On any
+        # provision_or_reuse_route handles both first-run (cold provisions
+        # a fresh OpenShell gateway via `openshell gateway start --name
+        # <sanitized-model> --port <next-free>`) and re-run with a new
+        # model (same, just allocated to a different port). On any
         # failure we log + fall through with provisioned_route=None — the
         # agent gets created without a route binding, and the executor's
-        # bootstrap fallback handles spawning into the primordial gateway
-        # using the env-resolved model. The user can fix the route later
-        # from /admin/model-routes (commit 4) instead of having setup
-        # block on a recoverable failure.
+        # fallback handles spawning using the first available model
+        # route. The user can fix the route later from
+        # /admin/model-routes instead of having setup block on a
+        # recoverable failure.
         provisioned_route = None  # populated below if provision succeeds
         try:
             from gateway import openshell_routes as _osr
@@ -3099,8 +3100,9 @@ async def handle_setup_complete(request: web.Request) -> web.Response:
         except Exception as _route_err:
             logger.warning(
                 "setup: provision_or_reuse_route failed for %s/%s — agent will "
-                "fall back to the primordial gateway via the executor's bootstrap "
-                "path; the user can re-provision from /admin/model-routes. (%s: %s)",
+                "fall back to the first available route via the executor's "
+                "default-route path; the user can re-provision from "
+                "/admin/model-routes. (%s: %s)",
                 _primary_server_type or "lmstudio", model,
                 type(_route_err).__name__, _route_err,
             )
@@ -3183,7 +3185,7 @@ async def handle_setup_complete(request: web.Request) -> web.Response:
                 # Pass the route binding through to the executor so the
                 # sandbox lands inside the gateway we just provisioned.
                 # When None, the executor falls back to the default route
-                # (or the primordial gateway) per _resolve_route() in
+                # (or the first available route) per _resolve_route() in
                 # gateway/executors/openshell.py.
                 model_route_id=default_agent.get("model_route_id"),
             )
