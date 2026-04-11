@@ -5016,6 +5016,9 @@ function app() {
     // to one (provider, model) pair via `openshell inference set`.
     modelRoutes: [],
     modelRoutesLoading: false,
+    // setTimeout handle for auto-polling rows still in `provisioning`
+    // status — set/cleared by loadModelRoutes().
+    _modelRoutesPollTimer: null,
     selectedRoute: null,
     provisionModalOpen: false,
     provisioningRoute: false,
@@ -8488,6 +8491,28 @@ function app() {
         this.modelRoutes = [];
       }
       this.modelRoutesLoading = false;
+
+      // Auto-poll any rows still in `provisioning` status — the
+      // /api/admin/model-routes POST handler returns immediately with
+      // status=provisioning and finishes the gateway start in a
+      // background task, so the row only flips to ready (or error)
+      // ~30-60s later. Without polling the user would have to click
+      // the Refresh button manually, which previously also had the
+      // side effect of clobbering the provisioning status (backend
+      // refresh_status used to overwrite provisioning→error when
+      // gateway_is_alive() was still returning False). The backend
+      // fix landed alongside this; this poll loop is the UX half.
+      if ((this.modelRoutes || []).some(r => r.status === 'provisioning')) {
+        if (this._modelRoutesPollTimer) clearTimeout(this._modelRoutesPollTimer);
+        this._modelRoutesPollTimer = setTimeout(() => {
+          this._modelRoutesPollTimer = null;
+          // Only re-poll if the user is still on the Model Routes
+          // tab — don't burn requests in the background forever.
+          if (this.tab === 'admin' && this.adminTab === 'model-routes') {
+            this.loadModelRoutes();
+          }
+        }, 3000);
+      }
     },
 
     async provisionRoute() {
