@@ -1,8 +1,11 @@
 # Minimal sandbox image for the Hermes agent worker.
 #
-# Runs inside an OpenShell sandbox. The worker connects OUT to the Logos
-# gateway via WebSocket (reverse-connection model) and calls the LLM via
-# https://inference.local/v1 (OpenShell's privacy router).
+# Plan A architecture (TASKS.md #24): the container idles with `sleep
+# infinity` until the host Logos gateway calls
+# `openshell sandbox exec --no-tty --name <sandbox> -- python3
+# /app/sandbox_worker.py`, at which point the worker runs inside the
+# sandbox and talks to the gateway via stdin/stdout. The worker calls
+# the LLM via https://inference.local/v1 (OpenShell's privacy router).
 #
 # Build:
 #   docker build -f docker/Dockerfile.hermes-sandbox -t hermes-sandbox:local docker/
