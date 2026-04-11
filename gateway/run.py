@@ -516,19 +516,30 @@ def _resolve_gateway_model() -> str:
 
 # Module-level reference to the running gateway runner so the launcher
 # can request a graceful shutdown without abruptly stopping the event loop.
-_current_runner: Optional["GatewayRunner"] = None
-_current_loop: Optional[asyncio.AbstractEventLoop] = None
+#
+# IMPORTANT: the canonical storage for these is ``gateway.runtime_state``.
+# We keep the ``_current_runner`` / ``_current_loop`` names here purely as
+# legacy thin wrappers for any code in this file that still reads them,
+# but **any code outside this module must go through runtime_state**.
+# Why: ``python -m gateway.run`` loads this file as ``__main__``, and a
+# second ``from gateway import run`` or ``import gateway.run`` from
+# anywhere else re-loads it as a separate module object — two copies of
+# every global. Anything assigning to ``_current_runner`` here mutates
+# the ``__main__`` copy; anything reading ``gateway.run._current_runner``
+# from an executor reads the *other* copy which stays ``None`` forever.
+# ``gateway.runtime_state`` sits outside that trap because it's never
+# imported as ``__main__``.
+from gateway import runtime_state as _runtime_state
 
 
 def _set_current_runner(runner: Optional["GatewayRunner"]) -> None:
-    global _current_runner
-    _current_runner = runner
+    _runtime_state.set_current_runner(runner)
 
 
 def request_gateway_shutdown() -> None:
     """Thread-safe: schedule runner.stop() from outside the event loop (e.g. launcher)."""
-    r = _current_runner
-    loop = _current_loop
+    r = _runtime_state.current_runner
+    loop = _runtime_state.current_loop
     if r is None or loop is None:
         return
     try:
@@ -1182,8 +1193,7 @@ class GatewayRunner:
         self.adapters.clear()
         self._shutdown_event.set()
         _set_current_runner(None)
-        global _current_loop
-        _current_loop = None
+        _runtime_state.set_current_loop(None)
 
         from gateway.status import remove_pid_file
         remove_pid_file()
@@ -5130,14 +5140,17 @@ async def start_gateway(config: Optional[GatewayConfig] = None, replace: bool = 
     _set_current_runner(runner)
 
     # Store loop for cross-thread shutdown via request_gateway_shutdown()
-    global _current_loop
-    _current_loop = asyncio.get_running_loop()
+    # and for OpenShellExecutor.spawn's ensure_worker bridge from the
+    # thread pool. Uses gateway.runtime_state so the value is visible to
+    # modules that imported via `from gateway import run` — see the
+    # docstring on gateway/runtime_state.py for the dual-module gotcha.
+    loop = asyncio.get_running_loop()
+    _runtime_state.set_current_loop(loop)
 
     # Set up signal handlers
     def signal_handler():
         asyncio.create_task(runner.stop())
 
-    loop = _current_loop
     for sig in (signal.SIGINT, signal.SIGTERM):
         try:
             loop.add_signal_handler(sig, signal_handler)

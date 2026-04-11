@@ -880,25 +880,21 @@ class OpenShellExecutor:
             # asyncio.run_coroutine_threadsafe to schedule ensure_worker
             # on the main loop and block this thread on the result.
             #
-            # IMPORTANT: we must read `_current_runner` and `_current_loop`
-            # from the `gateway.run` module LIVE, not via `from gateway.run
-            # import _current_runner`. A `from X import Y` statement binds
-            # Y to its value at import time — so if we import at spawn
-            # time but the module-level globals haven't been populated yet
-            # (or get re-assigned later via `_set_current_runner`), the
-            # local binding stays stuck on the import-time snapshot. We
-            # hit this: spawn saw `_current_runner = None` even though
-            # run.py had already called `_set_current_runner(runner)` on
-            # startup, because openshell.py was imported BEFORE that
-            # assignment and the import-time `None` default was frozen.
-            #
-            # Using `from gateway import run as _gwrun` + attribute access
-            # reads the current value of the module global each call.
+            # Read the runner/loop via ``gateway.runtime_state`` — NOT
+            # via ``gateway.run``. ``gateway/run.py`` is started with
+            # ``python -m gateway.run`` which loads it as ``__main__``,
+            # and a subsequent ``import gateway.run`` from this module
+            # loads the same file *again* as a second module object with
+            # its own independent globals. Assignments inside ``main()``
+            # mutate the ``__main__`` module's globals, so the copy
+            # imported here keeps seeing ``None``. ``runtime_state`` is
+            # a standalone module (never run as ``__main__``) so every
+            # importer sees the same object — single source of truth.
             try:
-                from gateway import run as _gwrun
+                from gateway import runtime_state as _runtime_state
                 from gateway.worker_registry import WORKER_READY_TIMEOUT
-                _current_runner = _gwrun._current_runner
-                _current_loop = _gwrun._current_loop
+                _current_runner = _runtime_state.current_runner
+                _current_loop = _runtime_state.current_loop
             except Exception:
                 _current_runner = None
                 _current_loop = None
