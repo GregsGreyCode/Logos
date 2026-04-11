@@ -240,11 +240,39 @@ class WorkerRegistry:
         if not task_id:
             raise ValueError("dispatch_task requires task_id in the task payload")
 
+        # CRITICAL: look up which OpenShell gateway this sandbox lives
+        # inside, and pass it via -g to the CLI. Without -g, the CLI
+        # uses whatever gateway is "currently selected" in
+        # ~/.config/openshell/gateways/ — which is whichever one was
+        # provisioned / selected most recently. That means a dispatch
+        # to hermes-tali (living in qwen-qwen3-5-9b) would actually
+        # run against openai-gpt-oss-20b if that was the last gateway
+        # the user added, and openshell returns
+        # ``status: NotFound, message: "sandbox not found"`` because
+        # the target sandbox isn't in the selected cluster.
+        #
+        # This bit us in the wild on 2026-04-11: agent Tali chats
+        # worked fine until agent Grace was re-bound to a new route,
+        # at which point openai-gpt-oss-20b became the active gateway
+        # and every Tali dispatch failed with NotFound. Grace worked
+        # by coincidence because her sandbox happened to be in the
+        # now-active gateway.
+        target_gateway = self._resolve_sandbox_gateway(sandbox_name)
+        if target_gateway is None:
+            raise ConnectionError(
+                f"dispatch_task({sandbox_name}): no gateway resolvable "
+                f"for this sandbox. Not in the state file, no default "
+                f"route configured, /setup may not have run yet."
+            )
+
         # Build the exec command. --no-tty is critical — with a TTY,
         # openshell allocates a PTY and stdout becomes a terminal which
-        # breaks JSON-line framing.
+        # breaks JSON-line framing. -g forces exec into the correct
+        # cluster regardless of whichever gateway is CLI-selected.
         cmd = [
             "openshell",
+            "-g",
+            target_gateway,
             "sandbox",
             "exec",
             "--no-tty",
@@ -419,6 +447,85 @@ class WorkerRegistry:
         # than an opaque 500. Only the "no frame at all" case above is
         # a hard failure worth raising.
         return final_result
+
+    # ─── Gateway routing helper ─────────────────────────────────────────
+
+    def _resolve_sandbox_gateway(self, sandbox_name: str) -> Optional[str]:
+        """Look up which OpenShell gateway a sandbox lives in.
+
+        Resolution order:
+          1. Exact match in the executor state file
+             (``~/.logos/openshell_instances.json``). This is the
+             source of truth for multi-gateway installs — each
+             state-file entry carries its ``openshell_name``.
+          2. Match by agent name in ``auth.db.agents`` → the bound
+             ``model_route_id`` → ``model_routes.openshell_name``.
+             Covers the case where the state file got pruned but
+             the agent row still exists.
+          3. Default route from ``get_default_gateway_name()``. Only
+             a sane answer if there's exactly one route configured;
+             otherwise the caller should have gotten a state-file
+             hit via the agent name.
+          4. ``None`` — caller raises a clear error.
+
+        The key reason this helper exists: ``openshell sandbox exec``
+        without ``-g`` uses whatever gateway is CLI-selected
+        (``~/.config/openshell/gateways/current``), which is whichever
+        one was added most recently. That means a dispatch to a
+        sandbox in gateway A silently targets gateway B if B was
+        provisioned more recently — and openshell returns
+        ``status: NotFound, message: "sandbox not found"``.
+        Looking up the target gateway explicitly and passing ``-g``
+        makes dispatch routing deterministic regardless of CLI state.
+        """
+        # 1. State file lookup
+        try:
+            from gateway.executors.openshell import _load_state
+            for inst in _load_state():
+                if (inst.get("sandbox_name") == sandbox_name
+                        or inst.get("worker_id") == sandbox_name):
+                    gw = inst.get("openshell_name")
+                    if gw:
+                        return gw
+        except Exception as exc:
+            logger.warning(
+                "_resolve_sandbox_gateway: load_state failed: %s", exc,
+            )
+
+        # 2. Agent row lookup by inferred agent name.
+        # Sandbox names are ``hermes-<sanitized-agent-name>`` (see
+        # OpenShellExecutor._sanitize_sandbox_name), so strip the
+        # prefix and try the sanitized match against agent rows.
+        try:
+            from gateway.auth import db as auth_db
+            from gateway.executors.openshell import _sanitize_sandbox_name
+            prefix = "hermes-"
+            if sandbox_name.startswith(prefix):
+                base = sandbox_name[len(prefix):]
+                for agent in auth_db.list_agents():
+                    if _sanitize_sandbox_name(f"hermes-{agent.get('name', '')}") == sandbox_name:
+                        route_id = agent.get("model_route_id")
+                        if route_id:
+                            route = auth_db.get_model_route(route_id)
+                            if route and route.get("openshell_name"):
+                                return route["openshell_name"]
+        except Exception as exc:
+            logger.warning(
+                "_resolve_sandbox_gateway: agent/route lookup failed: %s", exc,
+            )
+
+        # 3. Default route fallback (single-gateway install)
+        try:
+            from gateway.openshell_routes import get_default_gateway_name
+            default_gw = get_default_gateway_name()
+            if default_gw:
+                return default_gw
+        except Exception as exc:
+            logger.warning(
+                "_resolve_sandbox_gateway: default gateway lookup failed: %s", exc,
+            )
+
+        return None
 
     # ─── Subprocess lifecycle helpers ───────────────────────────────────
 
