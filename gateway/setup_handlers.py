@@ -3149,10 +3149,26 @@ async def handle_setup_complete(request: web.Request) -> web.Response:
                     provisioned_route["id"] if provisioned_route else "<unchanged>",
                 )
 
-            # Kick off sandbox spawn in the background. We must not block
-            # the event loop on `openshell sandbox create` (which can take
-            # 60+s). The Sandboxes dashboard will show "provisioning" until
-            # the worker connects back.
+            # Spawn the sandbox and BLOCK the /setup/complete response on
+            # it. The previous version fired spawn in a background task
+            # and returned success immediately — which produced a nasty
+            # false-positive UX: /setup said "all done", the user was
+            # dropped into /chats, and then the sandbox silently failed
+            # to provision 1-2s later. The error only existed in the
+            # gateway log, and the user saw "Sandbox is provisioning…"
+            # forever with no way to see what went wrong.
+            #
+            # Blocking here means /setup/complete takes ~10-30s on the
+            # happy path (sandbox create + Plan A ensure_worker wait),
+            # but if anything in the stack is broken — image push, policy
+            # conflict, worker ready timeout — the user sees the actual
+            # error message in the /setup flow and can act on it.
+            #
+            # TODO (MISSING.md): add an explicit "Verifying your agent…"
+            # step to the /setup UI that dispatches a ping-sized chat
+            # message and waits for a reply, so the user gets positive
+            # confirmation the full stack works end-to-end (not just
+            # "the sandbox exists").
             from gateway.executors.openshell import OpenShellExecutor
             from gateway.executors.base import InstanceConfig
             import asyncio as _asyncio
@@ -3172,15 +3188,29 @@ async def handle_setup_complete(request: web.Request) -> web.Response:
                 model_route_id=default_agent.get("model_route_id"),
             )
 
-            async def _spawn_default_bg():
-                try:
-                    await _asyncio.to_thread(_executor.spawn, _cfg)
-                    logger.info("setup: spawned default sandbox for agent '%s'", agent_name)
-                except Exception as _spawn_err:
-                    logger.warning(
-                        "setup: default agent sandbox spawn failed: %s", _spawn_err,
-                    )
-            _asyncio.create_task(_spawn_default_bg())
+            try:
+                await _asyncio.to_thread(_executor.spawn, _cfg)
+                logger.info("setup: spawned default sandbox for agent '%s'", agent_name)
+            except Exception as _spawn_err:
+                logger.exception(
+                    "setup: default agent sandbox spawn failed: %s", _spawn_err,
+                )
+                # Surface the failure as a 500 so the /setup UI can show
+                # a clear error. The agent DB row stays (next retry can
+                # reuse it) but the sandbox didn't come up.
+                return web.json_response(
+                    {
+                        "error": "sandbox_spawn_failed",
+                        "detail": str(_spawn_err)[:800],
+                        "hint": (
+                            "The agent was created in the database but its "
+                            "OpenShell sandbox could not be provisioned. "
+                            "Check ~/.logos/logs/gateway.log or run "
+                            "`logos debug tail -n 200` for the full error."
+                        ),
+                    },
+                    status=500,
+                )
         except Exception as _default_err:
             logger.warning("setup: could not create default agent: %s", _default_err)
 
