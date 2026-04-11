@@ -466,17 +466,30 @@ def adopt_primordial(provider: str, model: str) -> dict:
     function:
 
       1. Confirms the bootstrap gateway is alive.
-      2. Computes the new model-based gateway name (e.g.
-         ``openai-gpt-oss-20b``) and registers it as a client-side alias
-         pointing at the same physical container, so we can refer to the
-         gateway consistently with the rest from now on.
-      3. Pushes the provider config + inference pin via the new alias.
-      4. Writes the model_routes row with the model-based name and
-         marks it ``is_primordial=True`` so it can't be deleted from the
-         admin UI even when no agents are bound to it.
+      2. Pushes the provider config + inference pin via the primordial
+         gateway's real name (``BOOTSTRAP_PRIMORDIAL_NAME``).
+      3. Writes the model_routes row using the primordial's real name
+         and marks it ``is_primordial=True`` so it can't be deleted from
+         the admin UI even when no agents are bound to it.
 
-    The marker is purely a deletion guard now — the gateway's name no
-    longer encodes its bootstrap origin.
+    The ``is_primordial`` flag is a deletion guard only — it prevents
+    destroy_route() from nuking the bootstrap gateway the user set up
+    out-of-band.
+
+    History note: earlier versions of this function tried to rename the
+    primordial to a model-based clean name (e.g. ``qwen-qwen3-5-9b``)
+    via ``openshell gateway add --local --name <alias>`` pointing at
+    the same endpoint URL. That alias works for gRPC/exec calls (which
+    resolve via the URL) but BREAKS ``openshell sandbox create --from
+    <Dockerfile>``, because the image-push path derives the target
+    Docker container name from the gateway name — so it looks for
+    ``openshell-cluster-<alias>`` which doesn't exist, and fails with
+    ``404: No such container``. Every /setup first-run hit this. The
+    proper rename requires destroying the container and re-starting it
+    under a new name, which is a user-driven action, not something to
+    do silently on their first adopt. We use the primordial's real
+    name here and leave a follow-up in MISSING.md to offer a clean
+    "rename gateway" flow in the admin UI.
     """
     if not gateway_is_alive(BOOTSTRAP_PRIMORDIAL_NAME):
         raise RuntimeError(
@@ -484,17 +497,8 @@ def adopt_primordial(provider: str, model: str) -> dict:
             f"Start it with `openshell gateway start --name {BOOTSTRAP_PRIMORDIAL_NAME}` first."
         )
 
-    # Compute the new name and register the alias before doing anything
-    # else, so subsequent CLI calls can use the friendly name.
-    new_name = _sanitize_route_name(model)
-    endpoint_url = f"https://127.0.0.1:{PRIMORDIAL_PORT}"
-    try:
-        _ensure_gateway_alias(new_name, endpoint_url)
-    except subprocess.CalledProcessError as exc:
-        raise RuntimeError(
-            f"failed to register alias '{new_name}' for bootstrap gateway: "
-            f"{_stderr_or_stdout(exc)}"
-        )
+    # Use the primordial's real name directly — NO alias rename.
+    gateway_name = BOOTSTRAP_PRIMORDIAL_NAME
 
     # Ensure the provider record exists on the gateway with BOTH a real
     # credential value and OPENAI_BASE_URL config — see the long
@@ -514,7 +518,7 @@ def adopt_primordial(provider: str, model: str) -> dict:
             "--type", "openai",
             "--credential", cred_arg,
             "--config", config_arg,
-            gateway=new_name,
+            gateway=gateway_name,
         )
     except subprocess.CalledProcessError as exc:
         msg = _stderr_or_stdout(exc).lower()
@@ -533,7 +537,7 @@ def adopt_primordial(provider: str, model: str) -> dict:
             "--provider", provider,
             "--model", model,
             "--no-verify",
-            gateway=new_name,
+            gateway=gateway_name,
         )
     except subprocess.CalledProcessError as exc:
         raise RuntimeError(
@@ -546,7 +550,7 @@ def adopt_primordial(provider: str, model: str) -> dict:
     return auth_db.create_model_route(
         provider=provider,
         model=model,
-        openshell_name=new_name,
+        openshell_name=gateway_name,
         openshell_port=PRIMORDIAL_PORT,
         status="ready",
         is_default=True,
