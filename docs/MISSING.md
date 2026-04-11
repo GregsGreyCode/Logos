@@ -496,7 +496,82 @@ This **was not the case** pre-Plan-A. The old reverse-WebSocket worker design ra
 
 **How we got here** (for the record so this doesn't get mis-blamed on a later hand): the original Plan A and Plan A-prime refactors intentionally kept `sandbox_worker.py` minimal — a single `_run_inference` call — because the priority was "make the dispatch transport work at all". The idea was to restore full agent functionality after the transport was proven. The transport IS proven now. This is that restoration work.
 
-**Three paths forward**, each with different tradeoffs:
+**Four paths forward**, with Option D as the recommended choice after the user articulated the trust-boundary model it codifies:
+
+### Option D — Agent inside, action tools outside, STAMP-gated bridges (RECOMMENDED)
+
+**The principle**: what crosses the sandbox boundary is an explicit, user-governed decision — not an implicit consequence of where code happens to live. The sandbox IS the permission boundary. STAMP's T and P axes become functional governance instead of decorative labels.
+
+**What lives inside the sandbox**:
+- `AIAgent.run_conversation` and its tool-loop
+- Self-directed tools (the ones the agent uses to grow and remember): `memory_tool`, `skill_manager_tool`, `skill_view`, `skills_list`
+- Memory/skill files persist on the sandbox pod filesystem
+- Soul, reasoning, context, conversation state, run recorder
+
+**What lives outside the sandbox**:
+- Action tools that touch the real world: `terminal_tool`, `browser_tool`, `delegate_tool`, `knowledge_search`, `knowledge_add`, `schedule_cronjob`, `platform_send`, `home_message`, any future "do something external" tool
+- These execute on the host, gated by STAMP-T (grant list per agent) and STAMP-P (approval policy per tool)
+
+**How the bridge works**: the stdin/stdout JSON protocol grows three new message types:
+
+| Direction | Type | Purpose |
+|---|---|---|
+| sandbox → gateway | `tool_request` | "Execute `terminal_tool('ls -la')` on the host and return the result" |
+| gateway → sandbox | `tool_grant` | "Approved — here's the result" (delivered via stdin) |
+| gateway → sandbox | `tool_denied` | "User denied / policy rejected" (via stdin) |
+
+Gateway-side handling:
+1. Reads `tool_request` from subprocess stdout (interleaved with token/thinking/task_result events)
+2. Checks the STAMP-T grant list for this agent — is the requested tool even in the granted set?
+3. Checks `action_policies` (STAMP-P): auto / require-approval / deny
+4. If require-approval: writes a row to `approval_requests`, emits an SSE event to the chat UI, blocks on user response
+5. On approval: executes the tool on the host, captures output
+6. Writes `tool_grant` (or `tool_denied`) back to the subprocess stdin
+7. The agent's in-sandbox tool proxy receives the result and continues its loop
+
+The agent inside the sandbox has **proxy implementations** of each host-side tool — same function signature, but instead of executing locally they serialize the call and `await` a result on stdin. Transparent to the agent loop.
+
+**STAMP mapping** (why this is the right architecture):
+
+- **S (Soul)** — stays inside the sandbox as it does today
+- **T (Tools)** — now has teeth. The STAMP-T pill becomes an editable grant list, user decides which tools cross the boundary. **First time T is a real governance axis and not a decorative label.** M1 in this file ("editable T in the STAMP pill") becomes concretely buildable.
+- **A (Agent)** — lives inside, run history writes to a sandbox-local DB or syncs back periodically
+- **M (Model)** — same as today, sandbox calls `inference.local` for inference
+- **P (Policy)** — now has teeth for action tools: per-tool approval policy wired into the existing `approval_requests` table. M2 ("editable P in the STAMP pill") also becomes concretely buildable.
+
+This is the version where STAMP is the user's real governance interface for the sandbox trust boundary, not just vocabulary.
+
+**Persistence model for memory/skill files** (inside-the-sandbox writes that need to survive pod destruction):
+- Memories/skills write to `/tmp/hermes/memories/` + `/tmp/hermes/skills/` inside the pod
+- Survive across dispatches naturally (pod runs `sleep infinity`, filesystem persists)
+- Do NOT survive pod destruction or gateway restart without sync-back
+- **Gateway sync-back daemon**: periodically calls `openshell sandbox download` to pull the files out to `~/.logos/memories/<agent_name>/`, canonical copy on the host. On pod re-create, `openshell sandbox upload` restores them. The pod is the live copy during a session; the host is the durable backup. This sync-back is itself a controlled boundary crossing — exactly the kind of thing the Option D trust model is designed to make explicit.
+
+**Pros**:
+- Correct trust boundary: compromise containment for the agent, user governance for real-world actions
+- Makes STAMP's T and P axes functional, unblocks M1 and M2
+- Memory/skill writes happen during chats (M10's core fix)
+- Action tools stay on the host where they have the filesystem and network access they need
+- User has explicit control over what tools each agent can touch — aligns with the multi-user / multi-agent product identity
+
+**Cons**:
+- Largest lift of the four options — 3-5 days spanning sandbox image, protocol extension, agent rewrite, sync-back daemon, and STAMP UI work
+- The protocol extension is the biggest risk: interleaving `tool_request` frames with the existing token/thinking/task_result stream needs careful testing against concurrent dispatches
+- Sync-back has edge cases (crashed pod mid-write, two dispatches touching the same memory file, gateway restart during sync)
+
+**Scope breakdown** (~3-5 days):
+1. Extend `docker/Dockerfile.hermes-sandbox` to include `agents/hermes/agent.py` + `tools/memory_tool.py` + `tools/skill_manager_tool.py` + their imports (pure Python, manageable)
+2. Rewrite `docker/sandbox_worker.py` as a thin bootstrap: load config, instantiate `AIAgent` with proxy tools for the action surface, call `run_conversation`, emit events to stdout
+3. Extend the stdin/stdout JSON protocol with `tool_request` / `tool_grant` / `tool_denied` types. Update the protocol doc.
+4. Extend `gateway/worker_registry.py dispatch_task` to handle `tool_request` messages from stdout: check STAMP-T grants, route through `action_policies`, block on user approval when required, execute the tool on the host, reply via the subprocess stdin
+5. Build the tool proxy framework inside the sandbox: a base class that serializes `tool_request` and awaits a `tool_grant`/`tool_denied` on stdin
+6. Build the STAMP-T grant editor UI (closes M1)
+7. Build the STAMP-P approval-policy editor UI (closes M2)
+8. Sync-back daemon for memory/skill files (periodic `openshell sandbox download` → `~/.logos/memories/<agent>/`)
+
+**Dependency**: Nothing else blocks this. M1, M2, M9 all become concretely buildable AFTER M10-via-Option-D lands because they depend on the STAMP grant/policy system having teeth.
+
+---
 
 ### Option A: Full AIAgent in the sandbox (architecturally correct, biggest lift)
 
@@ -522,11 +597,11 @@ Keep `sandbox_worker.py` lightweight but extend `_run_inference` to parse `tool_
 - **Cons**: reimplements a fraction of `AIAgent.run_conversation` in `sandbox_worker.py` — duplication risk. Any new tool the user wants in chats needs to be ported over. The "full Hermes experience" is partially delivered — the most-important tools work but the long tail doesn't. Memory_tool and skill_manage need to be importable inside the sandbox image (they're both pure Python so that's easy).
 - **Estimated scope**: ~1 day. Well-bounded. Doesn't preclude doing Option A or B later.
 
-**Recommended tackling order** (my opinion): **Option B first**, because it's the fastest path to restoring the full agent experience and uses infrastructure that's already been proven to work. Then, if the sandbox isolation gap becomes a real security concern (e.g. a user installs a terminal-heavy agent that shouldn't have host shell access), migrate the heavy tools to Option A while leaving memory/skills on Option B. Option C is the compromise path if neither A nor B feel right.
+**Recommended tackling order** (updated after user framing): **Option D**. A, B, and C are all weaker answers to the same question — they compromise the trust boundary in different ways. Option D maps the split onto the user's actual mental model (sandbox = agent self, host = real-world actuators, STAMP = governance of the bridge) and is the architecture that makes the multi-user, multi-agent product identity work correctly. It's the biggest lift but it's also the one that doesn't leave something important broken.
 
-**Dependency**: Must land before M9 (visible memory writes). M9 depends on memory writes actually *happening* during chats, which requires this restoration.
+**Dependency**: Must land before M9 (visible memory writes). M9 depends on memory writes actually *happening* during chats, which requires this restoration. M1 (editable STAMP-T) and M2 (editable STAMP-P) become concretely buildable *after* Option D because they depend on the grant/policy system having runtime teeth.
 
-**Direction established**: 2026-04-11 session — user asked to ship "visible memory writes" and during scoping I discovered that memory writes don't happen during chats at all because the sandbox worker doesn't run the agent loop. User instinct that "Hermes already has periodic triggers" was correct in principle but inert in practice for their current Plan A-prime setup. This M-ticket is the work to make the correct-in-principle layer actually fire.
+**Direction established**: 2026-04-11 session — user asked to ship "visible memory writes" and during scoping I discovered that memory writes don't happen during chats at all because the sandbox worker doesn't run the agent loop. I presented three options (A: full agent in sandbox, B: agent on host, C: minimal tool loop in sandbox). User responded with the correct fourth framing: "from a protective save policy drive perspective it's probably better to have the entire agent on the inside. But with regards to tooling, apart from ones the agent needs to improve and remember, tools to act should probably be available on the outside and confirmed by users to be given to the agent. Part of the STAMP model." That framing became Option D above, and supersedes the earlier recommendation of Option B.
 
 ---
 
