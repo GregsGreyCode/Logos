@@ -271,6 +271,44 @@ class WorkerRegistry:
                 name=f"worker-stderr-{sandbox_name}",
             )
 
+            # Stdin warmup byte — unblocks ``openshell sandbox exec --no-tty``.
+            #
+            # Empirically, openshell's exec primitive waits for stdin to
+            # deliver at least one byte (or reach EOF) before it actually
+            # invokes the in-sandbox process. Our stdin is an open
+            # ``asyncio.subprocess.PIPE`` that the gateway keeps around
+            # indefinitely to deliver tasks later — it never closes until
+            # shutdown, and we haven't written anything yet at spawn time
+            # because there are no tasks queued. Result: openshell blocks
+            # inside its gRPC exec stream, the in-sandbox python process
+            # is never launched, the "ready" message never gets emitted,
+            # and this function times out after WORKER_READY_TIMEOUT.
+            #
+            # Proof: a direct CLI invocation with ``< /dev/null`` (immediate
+            # stdin EOF) runs the worker in ~1s and emits ``{"type":"ready"}``.
+            # The same invocation with stdin held open as an empty FIFO
+            # hangs indefinitely and never produces any stdout at all.
+            #
+            # Fix: write a single ``\n`` to stdin immediately. The worker's
+            # ``read_stdin_line`` already skips blank lines (recursive call
+            # on ``if not text: return await read_stdin_line(reader)``), so
+            # the warmup is a no-op from the worker's perspective — it
+            # unblocks openshell's exec gate, the worker boots, emits
+            # ``ready`` on stdout, and then waits for the next line (the
+            # first real task).
+            try:
+                assert entry._stdin_lock is not None
+                async with entry._stdin_lock:
+                    if process.stdin and not process.stdin.is_closing():
+                        process.stdin.write(b"\n")
+                        await process.stdin.drain()
+            except Exception as exc:
+                logger.debug(
+                    "ensure_worker(%s): stdin warmup write failed (non-fatal, "
+                    "continuing): %s",
+                    sandbox_name, exc,
+                )
+
             # Wait for the "ready" event. The worker emits this as its
             # first line on stdout, so by the time _read_stdout_loop sees
             # it, the worker is alive and listening on stdin.
