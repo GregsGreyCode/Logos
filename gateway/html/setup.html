@@ -1028,7 +1028,21 @@
             </div>
           </div>
 
-          <!-- Score legend — collapsed by default, expands on click -->
+          <!-- Always-visible compact legend — names each column left→right -->
+          <div class="mb-2 text-[11px] text-gray-500 leading-relaxed">
+            Each model row (left→right):
+            <span class="font-mono text-gray-300">tok/s</span> streaming speed
+            <span class="text-gray-700">·</span>
+            <span class="font-mono text-gray-300">Xms</span> time to first token
+            <span class="text-gray-700">·</span>
+            <span class="font-mono text-gray-300">Hi! Xms</span> full round-trip on a "Hi!" prompt
+            <span class="text-gray-700">·</span>
+            <span class="font-mono text-gray-300">XK ctx</span> context window
+            <span class="text-gray-700">·</span>
+            <span class="font-mono text-gray-300">X/6</span> capability eval
+          </div>
+
+          <!-- Detailed score legend — collapsed by default, expands on click -->
           <details class="mb-4 group">
             <summary class="text-[11px] text-gray-600 hover:text-gray-400 cursor-pointer list-none flex items-center gap-1.5 select-none">
               <svg class="w-3 h-3 transition-transform group-open:rotate-90 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
@@ -1044,6 +1058,21 @@
                   <span class="text-yellow-400">6&ndash;14 usable</span>
                   <span class="text-red-400">&lt;6 slow</span>
                 </span>
+              </div>
+              <div>
+                <span class="font-semibold text-gray-300">ttft</span> — time to first token: how long from request sent until the model emits its first byte.
+                This is network + model loading + prompt processing. Separate from <span class="font-mono text-gray-300">tok/s</span> which measures streaming after the first byte.
+                <span class="inline-flex gap-2 ml-1 font-mono">
+                  <span class="text-green-500">&le;500ms snappy</span>
+                  <span class="text-gray-500">500ms&ndash;2s ok</span>
+                  <span class="text-yellow-500">2&ndash;4s sluggish</span>
+                  <span class="text-red-500">&gt;4s bad</span>
+                </span>
+              </div>
+              <div>
+                <span class="font-semibold text-gray-300">Hi! Xms</span> — full round-trip latency on a "Hi!" prompt (from POST to first visible reply token).
+                This is the closest number to "what a user feels" when they type and wait. Includes ttft plus any reasoning-mode thinking before the first visible reply.
+                Reasoning models (qwen3, etc.) will show a higher number here than their ttft because they think before speaking.
               </div>
               <div>
                 <span class="font-semibold text-gray-300">ctx</span> — context window: the maximum number of tokens the model can hold at once (your message + its reply + everything in between).

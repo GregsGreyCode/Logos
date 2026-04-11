@@ -278,11 +278,11 @@
       :class="tab==='compare'?'tab-active':'text-gray-400 hover:text-white'"
       data-testid="nav-compare"
       @click="tab='compare'; if(!namedAgents.length) loadNamedAgents()">Compare</button>
-    <template x-if="can('manage_machines') || can('manage_profiles') || can('view_routing_debug') || can('view_evolution')">
+    <template x-if="can('manage_machines') || can('view_evolution')">
       <button class="pb-2 text-sm font-medium border-b-2 border-transparent"
         :class="tab==='infra'?'tab-active':'text-gray-400 hover:text-white'"
         data-testid="nav-settings"
-        @click="tab='infra'; loadAdminMachines(); loadCloudProviders(); loadRoutingData()">Settings</button>
+        @click="tab='infra'; loadAdminMachines(); loadCloudProviders()">Settings</button>
     </template>
     <template x-if="can('manage_users') || can('view_audit_logs') || can('manage_workflows') || can('view_runs')">
       <button class="pb-2 text-sm font-medium border-b-2 border-transparent relative"
@@ -1293,9 +1293,6 @@
       <button class="pb-2 text-xs font-medium border-b-2 transition-colors"
         :class="infraTab==='servers' ? 'border-[var(--accent)] text-white' : 'border-transparent text-gray-500 hover:text-gray-300'"
         @click="infraTab='servers'; localStorage.setItem('logos_infra_tab','servers'); loadAdminMachines(); loadCloudProviders(); probeAllMachines()">Inference</button>
-      <button class="pb-2 text-xs font-medium border-b-2 transition-colors"
-        :class="infraTab==='routing' ? 'border-[var(--accent)] text-white' : 'border-transparent text-gray-500 hover:text-gray-300'"
-        @click="infraTab='routing'; localStorage.setItem('logos_infra_tab','routing'); loadRoutingData()">Routing</button>
       <template x-if="can('manage_machines')">
         <button class="pb-2 text-xs font-medium border-b-2 transition-colors"
           :class="infraTab==='tools' ? 'border-[var(--accent)] text-white' : 'border-transparent text-gray-500 hover:text-gray-300'"
@@ -1767,263 +1764,7 @@
       </div>
     </div>
 
-    </div><!-- /Servers sub-tab -->
-
-    <!-- ── Routing sub-tab ── -->
-    <div x-show="infraTab==='routing'">
-
-    <!-- ── Profiles section ── -->
-    <div x-show="can('manage_profiles')" class="mb-8">
-      <div class="border-t border-gray-800 mb-6 pt-6">
-        <div class="flex items-center justify-between mb-4">
-          <div class="text-sm font-semibold text-white">Routing Profiles</div>
-        <button @click="adminPolicyForm={name:'',description:'',fallback:'any_available'}; adminPolicyFormOpen=true"
-          class="text-xs px-3 py-1.5 rounded-lg bg-[var(--accent)] text-white hover:opacity-90 transition-opacity">+ New Profile</button>
-      </div>
-      <template x-if="adminPolicyFormOpen">
-        <div class="bg-gray-900 border border-gray-700 rounded-xl p-4 mb-4">
-          <div class="text-xs font-semibold text-gray-400 mb-3">Create Profile</div>
-          <div class="grid grid-cols-2 gap-3 mb-3">
-            <div>
-              <label class="text-xs text-gray-500 block mb-1">Name</label>
-              <input x-model="adminPolicyForm.name" type="text" placeholder="e.g. home-routing"
-                class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm text-white focus:border-[var(--accent)] focus:outline-none">
-            </div>
-            <div>
-              <label class="text-xs text-gray-500 block mb-1">Fallback</label>
-              <select x-model="adminPolicyForm.fallback"
-                class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm text-white focus:border-[var(--accent)] focus:outline-none">
-                <option value="any_available">any_available — use best available machine</option>
-                <option value="fail">fail — error if no matching machine is up</option>
-              </select>
-            </div>
-            <div class="col-span-2">
-              <label class="text-xs text-gray-500 block mb-1">Description (optional)</label>
-              <input x-model="adminPolicyForm.description" type="text" placeholder="Route lightweight tasks to home PC, fallback to server"
-                class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm text-white focus:border-[var(--accent)] focus:outline-none">
-            </div>
-          </div>
-          <div class="flex gap-2">
-            <button @click="createPolicy()"
-              class="text-xs px-3 py-1.5 rounded-lg bg-[var(--accent)] text-white hover:opacity-90">Create</button>
-            <button @click="adminPolicyFormOpen=false"
-              class="text-xs px-3 py-1.5 rounded-lg border border-gray-700 text-gray-400 hover:text-white">Cancel</button>
-          </div>
-        </div>
-      </template>
-      <div class="grid grid-cols-1 gap-4">
-        <template x-for="p in adminPolicies" :key="p.id">
-          <div class="bg-gray-900 border border-gray-800 rounded-xl p-4">
-
-            <!-- View mode header -->
-            <div x-show="adminPolicyEditId !== p.id">
-              <div class="flex items-start justify-between">
-                <div class="flex-1 min-w-0">
-                  <div class="flex items-center gap-2 flex-wrap">
-                    <span class="font-medium text-white text-sm" x-text="p.name"></span>
-                    <span class="text-xs px-1.5 py-0.5 rounded border"
-                      :class="p.fallback==='fail' ? 'border-red-900 bg-red-950 text-red-400' : 'border-gray-700 bg-gray-800 text-gray-500'"
-                      x-text="p.fallback==='fail' ? 'fail on no match' : 'fallback: any'"></span>
-                    <span class="text-xs px-1.5 py-0.5 rounded border font-medium"
-                      :class="p.user_count===0 ? 'border-amber-800 bg-amber-950 text-amber-400' : 'border-gray-700 bg-gray-800 text-gray-400'"
-                      x-text="p.user_count===0 ? '0 users assigned' : p.user_count+' user'+(p.user_count!==1?'s':'')"></span>
-                  </div>
-                  <div class="text-xs text-gray-500 mt-1" x-show="p.description" x-text="p.description"></div>
-                </div>
-                <div class="flex gap-1.5 ml-3 shrink-0">
-                  <button @click="startEditPolicy(p)"
-                    class="text-xs px-2 py-1 rounded border border-gray-700 text-gray-400 hover:text-white transition-colors">Edit</button>
-                  <button @click="deletePolicy(p.id)"
-                    :class="p.user_count>0 ? 'border-orange-900 text-orange-500 hover:text-orange-300' : 'border-red-900 text-red-500 hover:text-red-300'"
-                    class="text-xs px-2 py-1 rounded border transition-colors"
-                    :title="p.user_count>0 ? 'Warning: '+p.user_count+' user(s) will lose routing override' : 'Delete profile'">Delete</button>
-                </div>
-              </div>
-            </div>
-
-            <!-- Inline metadata edit mode -->
-            <div x-show="adminPolicyEditId === p.id" class="space-y-2">
-              <div class="grid grid-cols-2 gap-2">
-                <div>
-                  <label class="text-xs text-gray-500 block mb-1">Name</label>
-                  <input x-model="adminPolicyEditForm.name" type="text"
-                    class="w-full bg-gray-800 border border-gray-700 rounded-lg px-2 py-1.5 text-sm text-white focus:border-[var(--accent)] focus:outline-none">
-                </div>
-                <div>
-                  <label class="text-xs text-gray-500 block mb-1">Fallback</label>
-                  <select x-model="adminPolicyEditForm.fallback"
-                    class="w-full bg-gray-800 border border-gray-700 rounded-lg px-2 py-1.5 text-sm text-white focus:border-[var(--accent)] focus:outline-none">
-                    <option value="any_available">any_available</option>
-                    <option value="fail">fail</option>
-                  </select>
-                </div>
-                <div class="col-span-2">
-                  <label class="text-xs text-gray-500 block mb-1">Description</label>
-                  <input x-model="adminPolicyEditForm.description" type="text"
-                    class="w-full bg-gray-800 border border-gray-700 rounded-lg px-2 py-1.5 text-sm text-white focus:border-[var(--accent)] focus:outline-none">
-                </div>
-              </div>
-              <div class="flex gap-2">
-                <button @click="saveEditPolicy()"
-                  class="text-xs px-3 py-1.5 rounded-lg bg-[var(--accent)] text-white hover:opacity-90">Save</button>
-                <button @click="cancelEditPolicy()"
-                  class="text-xs px-3 py-1.5 rounded-lg border border-gray-700 text-gray-400 hover:text-white">Cancel</button>
-              </div>
-            </div>
-
-            <!-- Rules editor -->
-            <div class="border-t border-gray-800 mt-3 pt-3">
-              <div class="text-xs text-gray-600 mb-2">Rules — rank order; exact class matched first, then * wildcard</div>
-              <div class="space-y-1.5">
-                <template x-for="(rule, idx) in p.rules" :key="idx">
-                  <div class="flex items-center gap-1.5">
-                    <span class="text-xs text-gray-700 w-5 text-right shrink-0" x-text="(idx+1)+'.'"></span>
-                    <select :value="rule.model_class" @change="rule.model_class=$event.target.value"
-                      class="bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs text-white focus:border-[var(--accent)] focus:outline-none w-32 shrink-0">
-                      <option value="*">* (any)</option>
-                      <option value="lightweight">lightweight</option>
-                      <option value="coding">coding</option>
-                      <option value="general">general</option>
-                      <option value="reasoning">reasoning</option>
-                      <option value="vision">vision</option>
-                      <option value="embedding">embedding</option>
-                    </select>
-                    <span class="text-gray-700 text-xs shrink-0">→</span>
-                    <select :value="rule.machine_id" @change="rule.machine_id=$event.target.value"
-                      class="bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs text-white focus:border-[var(--accent)] focus:outline-none flex-1 min-w-0">
-                      <template x-for="m in adminMachines" :key="m.id">
-                        <option :value="m.id" x-text="m.name + (m.enabled ? '' : ' (disabled)')"></option>
-                      </template>
-                    </select>
-                    <div class="flex gap-0.5 shrink-0">
-                      <button @click="movePolicyRule(p, idx, -1)" :disabled="idx===0"
-                        class="text-xs w-5 h-5 rounded flex items-center justify-center text-gray-500 hover:text-white bg-gray-800 hover:bg-gray-700 disabled:opacity-25 disabled:cursor-not-allowed">↑</button>
-                      <button @click="movePolicyRule(p, idx, 1)" :disabled="idx===p.rules.length-1"
-                        class="text-xs w-5 h-5 rounded flex items-center justify-center text-gray-500 hover:text-white bg-gray-800 hover:bg-gray-700 disabled:opacity-25 disabled:cursor-not-allowed">↓</button>
-                    </div>
-                    <button @click="p.rules.splice(idx,1)"
-                      class="text-xs text-red-700 hover:text-red-400 px-1 shrink-0">✕</button>
-                  </div>
-                </template>
-                <template x-if="p.rules.length===0">
-                  <div class="text-xs text-gray-700 py-1 italic">No rules — all requests fall through to fallback.</div>
-                </template>
-              </div>
-              <div class="flex items-center justify-between mt-3">
-                <button @click="p.rules.push({model_class:'*',machine_id:adminMachines[0]?.id||''})"
-                  class="text-xs px-2 py-1 rounded border border-gray-700 text-gray-400 hover:text-white transition-colors">+ Add Rule</button>
-                <button @click="savePolicyRules(p)"
-                  class="text-xs px-3 py-1.5 rounded-lg bg-[var(--accent)] text-white hover:opacity-90">Save Rules</button>
-              </div>
-            </div>
-
-          </div>
-        </template>
-        <template x-if="adminPolicies.length===0">
-          <div class="bg-gray-900 border border-gray-800 rounded-xl p-8 text-center text-xs text-gray-600">No profiles yet. Create one to control per-user routing.</div>
-        </template>
-      </div>
-      </div><!-- /border-t wrapper -->
-    </div><!-- /profiles section -->
-
-    <!-- ── Model Map section (collapsible) ── -->
-    <div class="mb-6 border-t border-gray-800 pt-6">
-      <button @click="modelMapOpen=!modelMapOpen"
-        class="flex items-center justify-between w-full text-left mb-4 group">
-        <span class="text-sm font-semibold text-white group-hover:text-gray-200">Model Map</span>
-        <span class="text-xs text-gray-600 transition-transform" :class="modelMapOpen ? 'rotate-90' : ''" style="display:inline-block">▶</span>
-      </button>
-    <div x-show="modelMapOpen" x-cloak>
-      <!-- Explanatory header -->
-      <div class="bg-gray-900 border border-gray-800 rounded-xl px-5 py-4 mb-5">
-        <div class="text-sm font-semibold text-white mb-1">Alias → Model Class Mapping</div>
-        <p class="text-xs text-gray-500 leading-relaxed">
-          When a request arrives, Hermes resolves the <span class="text-gray-300 font-medium">alias</span> (e.g. <span class="font-mono text-[var(--accent)]">coding</span>) to a <span class="text-gray-300 font-medium">model class</span> (e.g. <span class="font-mono text-gray-300">coding</span>), then picks a machine based on the user's routing profile.
-          The candidates shown below are the <span class="text-gray-300 font-medium">global defaults</span> — they apply when no profile overrides the class.
-          This page is not a model inventory; it shows how aliases map to routing inputs.
-        </p>
-      </div>
-
-      <!-- Grouped by class -->
-      <template x-for="cls in ['lightweight','general','coding','reasoning']" :key="cls">
-        <div x-show="Object.entries(routerState.routes||{}).some(([a]) => (routerState.route_model_classes||{})[a]===cls)" class="mb-5">
-          <div class="flex items-center gap-2 mb-2">
-            <span class="text-xs font-semibold uppercase tracking-widest"
-              :class="{
-                'text-sky-400':    cls==='lightweight',
-                'text-emerald-400': cls==='general',
-                'text-violet-400': cls==='coding',
-                'text-orange-400': cls==='reasoning'
-              }" x-text="cls"></span>
-            <div class="flex-1 h-px bg-gray-800"></div>
-          </div>
-          <div class="space-y-1.5">
-            <template x-for="[alias, candidates] in Object.entries(routerState.routes||{}).filter(([a]) => (routerState.route_model_classes||{})[a]===cls)" :key="alias">
-              <div class="bg-gray-900 rounded-lg px-4 py-2.5 border border-gray-800 flex items-center gap-3 flex-wrap">
-                <!-- Alias -->
-                <span class="font-mono text-[var(--accent)] text-sm w-20 shrink-0" x-text="alias"></span>
-                <!-- Class badge -->
-                <span class="text-xs px-1.5 py-0.5 rounded border shrink-0"
-                  :class="{
-                    'border-sky-900 bg-sky-950 text-sky-400':       cls==='lightweight',
-                    'border-emerald-900 bg-emerald-950 text-emerald-400': cls==='general',
-                    'border-violet-900 bg-violet-950 text-violet-400': cls==='coding',
-                    'border-orange-900 bg-orange-950 text-orange-400': cls==='reasoning'
-                  }" x-text="cls"></span>
-                <!-- Separator -->
-                <span class="text-gray-700 text-xs shrink-0">→</span>
-                <!-- Global default candidates -->
-                <div class="flex flex-wrap gap-1.5">
-                  <template x-for="(c,i) in candidates" :key="i">
-                    <span class="text-xs px-2 py-0.5 rounded font-mono flex items-center gap-1"
-                      :class="routerState.providers?.[c.provider] && !routerState.providers[c.provider].enabled
-                        ? 'bg-gray-800 text-gray-600 line-through opacity-50'
-                        : i===0 ? 'bg-gray-800 text-gray-300' : 'bg-gray-900 text-gray-600 border border-gray-800'">
-                      <span x-show="i===0" class="text-gray-600 text-[10px]">default</span>
-                      <span x-show="i>0" class="text-gray-700 text-[10px]">fallback</span>
-                      <span x-text="c.model"></span>
-                    </span>
-                  </template>
-                </div>
-              </div>
-            </template>
-          </div>
-        </div>
-      </template>
-      <p class="text-xs text-gray-700 mt-2">To override routing per user, create a Profile in the <button class="underline hover:text-gray-500" @click="modelMapOpen=false">Profiles section above</button> and assign it in <button class="underline hover:text-gray-500" @click="tab='admin'; adminTab='users'">Admin → Users</button>.</p>
-
-      <!-- AI Router endpoint health -->
-      <div class="mt-6">
-        <div class="flex items-center justify-between mb-3">
-          <div class="text-xs font-semibold text-gray-600 uppercase tracking-wider">AI Router Endpoint Health</div>
-          <button @click="loadRouterState()"
-            class="text-xs text-[var(--accent)] hover:opacity-80 flex items-center gap-1">
-            <span>&#8635;</span><span>Refresh</span>
-          </button>
-        </div>
-        <div class="space-y-1.5">
-          <template x-for="(p, key) in routerState.providers" :key="key">
-            <div class="bg-gray-900 rounded-lg px-4 py-3 border border-gray-800 flex items-center gap-3">
-              <div class="w-2 h-2 rounded-full shrink-0"
-                :class="p.health==='ok' ? 'bg-green-500' : p.health==='disabled' ? 'bg-gray-600' : 'bg-red-500'"></div>
-              <span class="text-sm text-white" x-text="p.name"></span>
-              <span class="text-xs text-gray-600 font-mono" x-text="p.endpoint"></span>
-              <span class="text-xs text-gray-700 ml-auto" x-text="(p.context_limit/1000).toFixed(0) + 'k ctx'"></span>
-              <button
-                class="text-xs px-2.5 py-1 rounded-md font-medium transition-colors border"
-                :class="p.enabled ? 'bg-[var(--accent)] border-[var(--accent)] text-white hover:opacity-80' : 'bg-gray-800 border-gray-700 text-gray-400 hover:bg-gray-700'"
-                @click="toggleProvider(key)"
-                x-text="p.enabled ? 'Enabled' : 'Disabled'">
-              </button>
-            </div>
-          </template>
-        </div>
-        <p class="text-xs text-gray-700 mt-2">Toggles reset on router restart — edit the providers ConfigMap to persist.</p>
-      </div>
-    </div><!-- /modelMapOpen -->
-    </div><!-- /model map wrapper -->
-
-    <!-- ── Benchmark section (collapsible) ── -->
+    <!-- ── Benchmark section (moved from Settings/Routing 2026-04-11, pass-3 S1) ── -->
     <div x-show="can('manage_machines')" class="mb-6 border-t border-gray-800 pt-6">
       <button @click="benchmarkOpen=!benchmarkOpen"
         class="flex items-center justify-between w-full text-left mb-4 group">
@@ -2218,210 +1959,7 @@
       </div><!-- /benchmarkOpen -->
     </div><!-- /benchmark section -->
 
-    <!-- ── Debug section (collapsible) ── -->
-    <div x-show="can('view_routing_debug')" class="mb-6 border-t border-gray-800 pt-6">
-      <button @click="debugOpen=!debugOpen; if(debugOpen) loadAdminUsers()"
-        class="flex items-center justify-between w-full text-left mb-4 group">
-        <span class="text-sm font-semibold text-white group-hover:text-gray-200">Debug</span>
-        <span class="text-xs text-gray-600 transition-transform" :class="debugOpen ? 'rotate-90' : ''" style="display:inline-block">▶</span>
-      </button>
-    <div x-show="debugOpen" x-cloak>
-
-      <!-- Query form -->
-      <div class="bg-gray-900 border border-gray-800 rounded-xl p-4 mb-4">
-        <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">Simulate Route</div>
-        <div class="grid grid-cols-2 gap-3 mb-3">
-          <div>
-            <label class="text-xs text-gray-500 block mb-1">User</label>
-            <select x-model="routeDebugUserId"
-              class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm text-white focus:border-[var(--accent)] focus:outline-none">
-              <option value="">— you —</option>
-              <template x-for="u in adminUsers" :key="u.id">
-                <option :value="u.id" x-text="(u.display_name||u.username) + ' · ' + u.email"></option>
-              </template>
-            </select>
-          </div>
-          <div>
-            <label class="text-xs text-gray-500 block mb-1">Model alias</label>
-            <select x-model="routeDebugModel"
-              class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm text-white focus:border-[var(--accent)] focus:outline-none">
-              <template x-for="group in spawnAliasGroups()" :key="group.cls">
-                <optgroup :label="group.label">
-                  <template x-for="alias in group.aliases" :key="alias">
-                    <option :value="alias" x-text="alias"></option>
-                  </template>
-                </optgroup>
-              </template>
-            </select>
-          </div>
-        </div>
-        <button @click="resolveRouteDebug()"
-          :disabled="routeDebugLoading"
-          class="px-4 py-1.5 rounded-lg bg-[var(--accent)] text-white text-xs font-medium hover:opacity-90 disabled:opacity-40 flex items-center gap-2">
-          <span x-show="routeDebugLoading" class="animate-spin inline-block">&#9881;</span>
-          <span>Resolve</span>
-        </button>
-      </div>
-
-      <!-- Result: routing failed (503 / profile fail mode) -->
-      <template x-if="routeDebugResult && routeDebugResult.error && !routeDebugResult.result">
-        <div class="space-y-3">
-          <div class="bg-red-950 border border-red-900 rounded-xl px-5 py-4">
-            <div class="text-xs font-semibold text-red-400 mb-1">No route found</div>
-            <div class="text-red-300 text-sm"
-              x-text="routeDebugResult.error === 'no_available_machine'
-                ? 'All profile machines are unavailable and the profile is set to fail (no fallback).'
-                : routeDebugResult.error === 'no_machines_registered'
-                ? 'No machines are registered in the system.'
-                : routeDebugResult.error"></div>
-            <template x-if="routeDebugResult.profile">
-              <div class="text-xs text-red-700 mt-1" x-text="'Profile: ' + routeDebugResult.profile"></div>
-            </template>
-          </div>
-          <!-- Still show trace if present -->
-          <template x-if="routeDebugResult.trace && routeDebugResult.trace.length">
-            <div class="bg-gray-900 border border-gray-800 rounded-xl p-4">
-              <div class="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">Trace</div>
-              <div class="space-y-1.5">
-                <template x-for="(t, i) in routeDebugResult.trace" :key="i">
-                  <div class="flex items-start gap-3 text-xs">
-                    <span class="text-gray-700 shrink-0 w-32 font-mono" x-text="t.layer"></span>
-                    <span class="shrink-0 px-1.5 py-0.5 rounded font-medium"
-                      :class="t.result==='match'?'bg-green-950 text-green-400':t.result==='skip'?'bg-gray-800 text-gray-600':'bg-yellow-950 text-yellow-500'"
-                      x-text="t.result"></span>
-                    <span class="text-gray-600" x-text="t.machine||t.profile_name||t.reason||''"></span>
-                  </div>
-                </template>
-              </div>
-            </div>
-          </template>
-        </div>
-      </template>
-
-      <!-- Result: success -->
-      <template x-if="routeDebugResult && routeDebugResult.result">
-        <div class="space-y-3">
-
-          <!-- Resolution banner -->
-          <div class="rounded-xl border border-gray-700 bg-gray-900 px-5 py-4">
-            <div class="flex items-start justify-between">
-              <div>
-                <div class="flex items-center gap-2 mb-1">
-                  <span class="font-mono text-[var(--accent)] text-sm" x-text="routeDebugResult.input.model_alias"></span>
-                  <span class="text-gray-700 text-xs">→</span>
-                  <span class="text-xs px-1.5 py-0.5 rounded border border-gray-700 text-gray-400"
-                    x-text="routeDebugResult.input.model_class"></span>
-                  <span class="text-gray-700 text-xs">→</span>
-                  <span class="font-semibold text-white text-sm" x-text="routeDebugResult.result.machine_name"></span>
-                </div>
-                <div class="text-xs text-gray-600 font-mono" x-text="routeDebugResult.result.endpoint_url"></div>
-              </div>
-              <span class="text-xs px-2 py-1 rounded-full bg-green-950 text-green-400 border border-green-900 shrink-0 ml-4">resolved</span>
-            </div>
-            <div class="mt-2 text-xs text-gray-600"
-              x-text="'For: ' + routeDebugResult.input.user_name + (routeDebugResult.input.user_id !== routeDebugResult.input.user_id ? '' : '')"></div>
-          </div>
-
-          <!-- Layer timeline -->
-          <div class="bg-gray-900 border border-gray-800 rounded-xl p-4">
-            <div class="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">Decision Layers</div>
-            <div class="space-y-0">
-              <template x-for="(t, i) in routeDebugResult.trace" :key="i">
-                <div class="flex items-start gap-3 py-2"
-                  :class="i < routeDebugResult.trace.length - 1 ? 'border-b border-gray-800/50' : ''">
-                  <!-- Layer dot -->
-                  <div class="w-2 h-2 rounded-full mt-1 shrink-0"
-                    :class="t.result==='match' ? 'bg-green-500' : t.result==='skip' ? 'bg-gray-700' : 'bg-yellow-600'"></div>
-                  <div class="flex-1 min-w-0">
-                    <div class="flex items-center gap-2 mb-0.5">
-                      <!-- Human layer label -->
-                      <span class="text-xs font-medium text-gray-300"
-                        x-text="t.layer==='instance_override' ? 'Instance Override'
-                               : t.layer==='user_profile'       ? 'Profile Rules'
-                               : t.layer==='best_effort'        ? 'Best-Effort Fallback'
-                               : t.layer"></span>
-                      <span class="text-xs px-1.5 py-0.5 rounded font-medium"
-                        :class="t.result==='match'     ? 'bg-green-950 text-green-400'
-                               : t.result==='skip'      ? 'bg-gray-800 text-gray-600'
-                               : t.result==='exhausted' ? 'bg-yellow-950 text-yellow-500'
-                               :                          'bg-gray-800 text-gray-600'"
-                        x-text="t.result==='match'     ? '✓ matched'
-                               : t.result==='skip'      ? 'skipped'
-                               : t.result==='exhausted' ? 'all failed'
-                               : t.result"></span>
-                    </div>
-                    <!-- Layer detail -->
-                    <div class="text-xs text-gray-600"
-                      x-text="t.layer==='user_profile' && t.profile_name ? 'Profile: ' + t.profile_name + (t.rule_class ? '  ·  rule: ' + t.rule_class : '') + (t.machine ? '  →  ' + t.machine : '')
-                             : t.layer==='user_profile' && t.reason       ? t.reason
-                             : t.layer==='best_effort' && t.machine       ? t.machine
-                             : t.reason || ''"></div>
-                  </div>
-                </div>
-              </template>
-            </div>
-          </div>
-
-          <!-- Candidate machine checks (profile evaluation) -->
-          <template x-if="routeDebugResult.fallback_chain && routeDebugResult.fallback_chain.length > 0">
-            <div class="bg-gray-900 border border-gray-800 rounded-xl p-4">
-              <div class="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">Candidate Machines</div>
-              <div class="space-y-2">
-                <template x-for="(c, i) in routeDebugResult.fallback_chain" :key="i">
-                  <div class="flex items-center gap-3 text-xs rounded-lg px-3 py-2"
-                    :class="c.selected ? 'bg-green-950/40 border border-green-900/50' : 'bg-gray-800/40'">
-                    <!-- Rank -->
-                    <span class="text-gray-700 w-4 shrink-0 text-center font-mono" x-text="c.rank"></span>
-                    <!-- Name + rule class -->
-                    <div class="flex-1 min-w-0">
-                      <div class="flex items-center gap-1.5">
-                        <span class="font-medium"
-                          :class="c.selected ? 'text-green-300' : 'text-gray-400'"
-                          x-text="c.machine_name"></span>
-                        <span class="text-gray-700 font-mono" x-text="c.rule_class !== '*' ? c.rule_class : ''"></span>
-                        <template x-if="c.selected">
-                          <span class="text-green-500 text-xs">✓ selected</span>
-                        </template>
-                      </div>
-                    </div>
-                    <!-- Check badges -->
-                    <div class="flex gap-1 shrink-0">
-                      <span class="px-1.5 py-0.5 rounded text-xs border"
-                        :class="c.checks.enabled
-                          ? 'border-gray-700 text-gray-500'
-                          : 'border-red-900 bg-red-950 text-red-400'"
-                        x-text="c.checks.enabled ? 'on' : 'disabled'"></span>
-                      <span class="px-1.5 py-0.5 rounded text-xs border"
-                        :class="c.checks.reachable
-                          ? 'border-gray-700 text-gray-500'
-                          : 'border-red-900 bg-red-950 text-red-400'"
-                        x-text="c.checks.reachable ? 'up' : 'down'"></span>
-                      <span class="px-1.5 py-0.5 rounded text-xs border"
-                        :class="c.checks.capable
-                          ? 'border-gray-700 text-gray-500'
-                          : 'border-yellow-900 bg-yellow-950 text-yellow-500'"
-                        x-text="c.checks.capable ? 'capable' : 'wrong class'"></span>
-                    </div>
-                  </div>
-                </template>
-              </div>
-            </div>
-          </template>
-
-        </div>
-      </template>
-
-      <!-- Generic fetch error -->
-      <template x-if="routeDebugResult && !routeDebugResult.result && !routeDebugResult.error && !routeDebugResult.trace">
-        <div class="bg-red-950 border border-red-900 rounded-xl px-4 py-3 text-red-300 text-xs">
-          Unexpected response from server.
-        </div>
-      </template>
-
-    </div><!-- /debugOpen -->
-    </div><!-- /debug section -->
-
-    </div><!-- /Routing sub-tab -->
+    </div><!-- /Servers sub-tab -->
 
     <!-- Tools + Services + Proposals content rendered below via x-show conditions -->
 
@@ -3515,203 +3053,6 @@
       </div>
     </div>
 
-    <!-- ── (Machines + Policies live under Routing tab) ── -->
-    <div x-show="false" style="display:none">
-      <div class="flex items-center justify-between mb-4">
-        <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Machines</div>
-        <button @click="adminMachineForm={name:'',endpoint_url:'',description:''}; adminMachineFormOpen=true"
-          class="text-xs px-3 py-1.5 rounded-lg bg-[var(--accent)] text-white hover:opacity-90 transition-opacity">+ Register Machine</button>
-      </div>
-
-      <!-- New machine form -->
-      <template x-if="adminMachineFormOpen">
-        <div class="bg-gray-900 border border-gray-700 rounded-xl p-4 mb-4">
-          <div class="text-xs font-semibold text-gray-400 mb-3">Register Machine</div>
-          <div class="grid grid-cols-2 gap-3 mb-3">
-            <div>
-              <label class="text-xs text-gray-500 block mb-1">Name</label>
-              <input x-model="adminMachineForm.name" type="text" placeholder="e.g. windows-gpu"
-                class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm text-white focus:border-[var(--accent)] focus:outline-none">
-            </div>
-            <div>
-              <label class="text-xs text-gray-500 block mb-1">Endpoint URL</label>
-              <input x-model="adminMachineForm.endpoint_url" type="text" placeholder="http://192.168.1.x:1234/v1"
-                class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm text-white focus:border-[var(--accent)] focus:outline-none">
-            </div>
-            <div class="col-span-2">
-              <label class="text-xs text-gray-500 block mb-1">Description (optional)</label>
-              <input x-model="adminMachineForm.description" type="text" placeholder="RTX 4080 SUPER, 16GB VRAM"
-                class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm text-white focus:border-[var(--accent)] focus:outline-none">
-            </div>
-          </div>
-          <div class="flex gap-2">
-            <button @click="createMachine()"
-              class="text-xs px-3 py-1.5 rounded-lg bg-[var(--accent)] text-white hover:opacity-90">Register</button>
-            <button @click="adminMachineFormOpen=false"
-              class="text-xs px-3 py-1.5 rounded-lg border border-gray-700 text-gray-400 hover:text-white">Cancel</button>
-          </div>
-          <template x-if="adminMsg">
-            <div class="mt-2 text-xs px-3 py-2 rounded-lg"
-              :class="adminMsg.ok ? 'bg-green-950 text-green-300 border border-green-800' : 'bg-red-950 text-red-300 border border-red-800'"
-              x-text="adminMsg.text"></div>
-          </template>
-        </div>
-      </template>
-
-      <!-- Machine cards -->
-      <div class="grid grid-cols-1 gap-3">
-        <template x-for="m in adminMachines" :key="m.id">
-          <div class="bg-gray-900 border border-gray-800 rounded-xl p-4">
-            <div class="flex items-start justify-between mb-3">
-              <div>
-                <div class="flex items-center gap-2">
-                  <span class="font-medium text-white text-sm" x-text="m.name"></span>
-                  <span class="text-xs px-1.5 py-0.5 rounded"
-                    :class="m.enabled ? 'bg-green-950 text-green-400' : 'bg-gray-800 text-gray-500'"
-                    x-text="m.enabled ? 'enabled' : 'disabled'"></span>
-                </div>
-                <div class="text-xs text-gray-500 mt-0.5" x-text="m.endpoint_url"></div>
-                <div class="text-xs text-gray-600 mt-0.5" x-text="m.description || ''"></div>
-              </div>
-              <div class="flex gap-2 items-center">
-                <button @click="probeHealth(m)"
-                  class="text-xs px-2 py-1 rounded border border-gray-700 text-gray-400 hover:text-white transition-colors">Health</button>
-                <button @click="toggleMachine(m)"
-                  class="text-xs px-2 py-1 rounded border border-gray-700 text-gray-400 hover:text-white transition-colors"
-                  x-text="m.enabled ? 'Disable' : 'Enable'"></button>
-                <button @click="deleteMachine(m.id)"
-                  class="text-xs px-2 py-1 rounded border border-red-900 text-red-500 hover:text-red-300 transition-colors">Delete</button>
-              </div>
-            </div>
-            <!-- Health result -->
-            <template x-if="m._health">
-              <div class="mb-3 text-xs px-3 py-1.5 rounded-lg border"
-                :class="m._health.status==='ok' ? 'border-green-800 bg-green-950 text-green-400' : 'border-red-800 bg-red-950 text-red-400'"
-                x-text="m._health.status + (m._health.http ? ' · HTTP ' + m._health.http : '') + (m._health.error ? ' · ' + m._health.error : '')"></div>
-            </template>
-            <!-- Capabilities -->
-            <div>
-              <div class="text-xs text-gray-600 mb-1.5">Capabilities (model classes this machine serves)</div>
-              <div class="flex flex-wrap gap-1.5">
-                <template x-for="cls in ['lightweight','coding','general','reasoning','vision','embedding']" :key="cls">
-                  <label class="flex items-center gap-1 text-xs cursor-pointer">
-                    <input type="checkbox"
-                      :checked="m.capabilities.includes(cls)"
-                      @change="toggleCapability(m, cls, $event.target.checked)"
-                      class="rounded border-gray-600 bg-gray-800 accent-[var(--accent)]">
-                    <span class="text-gray-400" x-text="cls"></span>
-                  </label>
-                </template>
-              </div>
-            </div>
-          </div>
-        </template>
-        <template x-if="adminMachines.length===0">
-          <div class="bg-gray-900 border border-gray-800 rounded-xl p-8 text-center text-xs text-gray-600">No machines registered. Click "Register Machine" to add one.</div>
-        </template>
-      </div>
-    </div>
-
-    <!-- ── (Policies live under Routing tab) ── -->
-    <div x-show="false" style="display:none">
-      <div class="flex items-center justify-between mb-4">
-        <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Routing Profiles</div>
-        <button @click="adminPolicyForm={name:'',description:'',fallback:'any_available'}; adminPolicyFormOpen=true"
-          class="text-xs px-3 py-1.5 rounded-lg bg-[var(--accent)] text-white hover:opacity-90 transition-opacity">+ New Profile</button>
-      </div>
-
-      <!-- New policy form -->
-      <template x-if="adminPolicyFormOpen">
-        <div class="bg-gray-900 border border-gray-700 rounded-xl p-4 mb-4">
-          <div class="text-xs font-semibold text-gray-400 mb-3">Create Profile</div>
-          <div class="grid grid-cols-2 gap-3 mb-3">
-            <div>
-              <label class="text-xs text-gray-500 block mb-1">Name</label>
-              <input x-model="adminPolicyForm.name" type="text" placeholder="e.g. local-routing"
-                class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm text-white focus:border-[var(--accent)] focus:outline-none">
-            </div>
-            <div>
-              <label class="text-xs text-gray-500 block mb-1">Fallback</label>
-              <select x-model="adminPolicyForm.fallback"
-                class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm text-white focus:border-[var(--accent)] focus:outline-none">
-                <option value="any_available">any_available</option>
-                <option value="fail">fail</option>
-              </select>
-            </div>
-            <div class="col-span-2">
-              <label class="text-xs text-gray-500 block mb-1">Description (optional)</label>
-              <input x-model="adminPolicyForm.description" type="text" placeholder="Route lightweight tasks to local machine"
-                class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm text-white focus:border-[var(--accent)] focus:outline-none">
-            </div>
-          </div>
-          <div class="flex gap-2">
-            <button @click="createPolicy()"
-              class="text-xs px-3 py-1.5 rounded-lg bg-[var(--accent)] text-white hover:opacity-90">Create</button>
-            <button @click="adminPolicyFormOpen=false"
-              class="text-xs px-3 py-1.5 rounded-lg border border-gray-700 text-gray-400 hover:text-white">Cancel</button>
-          </div>
-        </div>
-      </template>
-
-      <!-- Policy cards -->
-      <div class="grid grid-cols-1 gap-4">
-        <template x-for="p in adminPolicies" :key="p.id">
-          <div class="bg-gray-900 border border-gray-800 rounded-xl p-4">
-            <div class="flex items-start justify-between mb-3">
-              <div>
-                <div class="font-medium text-white text-sm" x-text="p.name"></div>
-                <div class="text-xs text-gray-500 mt-0.5" x-text="p.description || ''"></div>
-                <div class="text-xs text-gray-600 mt-1">
-                  <span x-text="p.user_count + ' user' + (p.user_count!==1?'s':'')"></span> ·
-                  <span x-text="'fallback: ' + p.fallback"></span>
-                </div>
-              </div>
-              <button @click="deletePolicy(p.id)"
-                class="text-xs px-2 py-1 rounded border border-red-900 text-red-500 hover:text-red-300 transition-colors">Delete</button>
-            </div>
-            <!-- Rules editor -->
-            <div class="border-t border-gray-800 pt-3">
-              <div class="text-xs text-gray-600 mb-2">Rules (drag to reorder, model class → machine)</div>
-              <div class="space-y-2">
-                <template x-for="(rule, idx) in p.rules" :key="idx">
-                  <div class="flex items-center gap-2">
-                    <select :value="rule.model_class" @change="rule.model_class=$event.target.value"
-                      class="bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs text-white focus:border-[var(--accent)] focus:outline-none w-36">
-                      <option value="*">* (any)</option>
-                      <option value="lightweight">lightweight</option>
-                      <option value="coding">coding</option>
-                      <option value="general">general</option>
-                      <option value="reasoning">reasoning</option>
-                      <option value="vision">vision</option>
-                      <option value="embedding">embedding</option>
-                    </select>
-                    <span class="text-gray-600 text-xs">→</span>
-                    <select :value="rule.machine_id" @change="rule.machine_id=$event.target.value"
-                      class="bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs text-white focus:border-[var(--accent)] focus:outline-none flex-1">
-                      <template x-for="m in adminMachines" :key="m.id">
-                        <option :value="m.id" x-text="m.name"></option>
-                      </template>
-                    </select>
-                    <button @click="p.rules.splice(idx,1)"
-                      class="text-xs text-red-600 hover:text-red-400 px-1">✕</button>
-                  </div>
-                </template>
-              </div>
-              <div class="flex gap-2 mt-2">
-                <button @click="p.rules.push({model_class:'*',machine_id:adminMachines[0]?.id||''})"
-                  class="text-xs px-2 py-1 rounded border border-gray-700 text-gray-400 hover:text-white">+ Rule</button>
-                <button @click="savePolicyRules(p)"
-                  class="text-xs px-2 py-1 rounded bg-[var(--accent)] text-white hover:opacity-90">Save Rules</button>
-              </div>
-            </div>
-          </div>
-        </template>
-        <template x-if="adminPolicies.length===0">
-          <div class="bg-gray-900 border border-gray-800 rounded-xl p-8 text-center text-xs text-gray-600">No profiles yet. Create one to control per-user routing.</div>
-        </template>
-      </div>
-    </div>
-
     <!-- ── Sandboxes sub-tab ── -->
     <div x-show="adminTab==='sandboxes'" x-cloak>
 
@@ -4159,6 +3500,210 @@
       </div>
     </div>
 
+    <!-- ── Debug section (moved from Settings/Routing 2026-04-11, pass-3 S1) ── -->
+    <!-- Gated as sibling of model-routes block; only renders when that sub-tab is active. -->
+    <div x-show="adminTab==='model-routes' && can('view_routing_debug')" x-cloak class="mb-6 border-t border-gray-800 pt-6">
+      <button @click="debugOpen=!debugOpen; if(debugOpen) loadAdminUsers()"
+        class="flex items-center justify-between w-full text-left mb-4 group">
+        <span class="text-sm font-semibold text-white group-hover:text-gray-200">Routing Debug — Simulate Route</span>
+        <span class="text-xs text-gray-600 transition-transform" :class="debugOpen ? 'rotate-90' : ''" style="display:inline-block">▶</span>
+      </button>
+    <div x-show="debugOpen" x-cloak>
+
+      <!-- Query form -->
+      <div class="bg-gray-900 border border-gray-800 rounded-xl p-4 mb-4">
+        <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">Simulate Route</div>
+        <div class="grid grid-cols-2 gap-3 mb-3">
+          <div>
+            <label class="text-xs text-gray-500 block mb-1">User</label>
+            <select x-model="routeDebugUserId"
+              class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm text-white focus:border-[var(--accent)] focus:outline-none">
+              <option value="">— you —</option>
+              <template x-for="u in adminUsers" :key="u.id">
+                <option :value="u.id" x-text="(u.display_name||u.username) + ' · ' + u.email"></option>
+              </template>
+            </select>
+          </div>
+          <div>
+            <label class="text-xs text-gray-500 block mb-1">Model alias</label>
+            <select x-model="routeDebugModel"
+              class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm text-white focus:border-[var(--accent)] focus:outline-none">
+              <template x-for="group in spawnAliasGroups()" :key="group.cls">
+                <optgroup :label="group.label">
+                  <template x-for="alias in group.aliases" :key="alias">
+                    <option :value="alias" x-text="alias"></option>
+                  </template>
+                </optgroup>
+              </template>
+            </select>
+          </div>
+        </div>
+        <button @click="resolveRouteDebug()"
+          :disabled="routeDebugLoading"
+          class="px-4 py-1.5 rounded-lg bg-[var(--accent)] text-white text-xs font-medium hover:opacity-90 disabled:opacity-40 flex items-center gap-2">
+          <span x-show="routeDebugLoading" class="animate-spin inline-block">&#9881;</span>
+          <span>Resolve</span>
+        </button>
+      </div>
+
+      <!-- Result: routing failed (503 / profile fail mode) -->
+      <template x-if="routeDebugResult && routeDebugResult.error && !routeDebugResult.result">
+        <div class="space-y-3">
+          <div class="bg-red-950 border border-red-900 rounded-xl px-5 py-4">
+            <div class="text-xs font-semibold text-red-400 mb-1">No route found</div>
+            <div class="text-red-300 text-sm"
+              x-text="routeDebugResult.error === 'no_available_machine'
+                ? 'All profile machines are unavailable and the profile is set to fail (no fallback).'
+                : routeDebugResult.error === 'no_machines_registered'
+                ? 'No machines are registered in the system.'
+                : routeDebugResult.error"></div>
+            <template x-if="routeDebugResult.profile">
+              <div class="text-xs text-red-700 mt-1" x-text="'Profile: ' + routeDebugResult.profile"></div>
+            </template>
+          </div>
+          <!-- Still show trace if present -->
+          <template x-if="routeDebugResult.trace && routeDebugResult.trace.length">
+            <div class="bg-gray-900 border border-gray-800 rounded-xl p-4">
+              <div class="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">Trace</div>
+              <div class="space-y-1.5">
+                <template x-for="(t, i) in routeDebugResult.trace" :key="i">
+                  <div class="flex items-start gap-3 text-xs">
+                    <span class="text-gray-700 shrink-0 w-32 font-mono" x-text="t.layer"></span>
+                    <span class="shrink-0 px-1.5 py-0.5 rounded font-medium"
+                      :class="t.result==='match'?'bg-green-950 text-green-400':t.result==='skip'?'bg-gray-800 text-gray-600':'bg-yellow-950 text-yellow-500'"
+                      x-text="t.result"></span>
+                    <span class="text-gray-600" x-text="t.machine||t.profile_name||t.reason||''"></span>
+                  </div>
+                </template>
+              </div>
+            </div>
+          </template>
+        </div>
+      </template>
+
+      <!-- Result: success -->
+      <template x-if="routeDebugResult && routeDebugResult.result">
+        <div class="space-y-3">
+
+          <!-- Resolution banner -->
+          <div class="rounded-xl border border-gray-700 bg-gray-900 px-5 py-4">
+            <div class="flex items-start justify-between">
+              <div>
+                <div class="flex items-center gap-2 mb-1">
+                  <span class="font-mono text-[var(--accent)] text-sm" x-text="routeDebugResult.input.model_alias"></span>
+                  <span class="text-gray-700 text-xs">→</span>
+                  <span class="text-xs px-1.5 py-0.5 rounded border border-gray-700 text-gray-400"
+                    x-text="routeDebugResult.input.model_class"></span>
+                  <span class="text-gray-700 text-xs">→</span>
+                  <span class="font-semibold text-white text-sm" x-text="routeDebugResult.result.machine_name"></span>
+                </div>
+                <div class="text-xs text-gray-600 font-mono" x-text="routeDebugResult.result.endpoint_url"></div>
+              </div>
+              <span class="text-xs px-2 py-1 rounded-full bg-green-950 text-green-400 border border-green-900 shrink-0 ml-4">resolved</span>
+            </div>
+            <div class="mt-2 text-xs text-gray-600"
+              x-text="'For: ' + routeDebugResult.input.user_name + (routeDebugResult.input.user_id !== routeDebugResult.input.user_id ? '' : '')"></div>
+          </div>
+
+          <!-- Layer timeline -->
+          <div class="bg-gray-900 border border-gray-800 rounded-xl p-4">
+            <div class="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">Decision Layers</div>
+            <div class="space-y-0">
+              <template x-for="(t, i) in routeDebugResult.trace" :key="i">
+                <div class="flex items-start gap-3 py-2"
+                  :class="i < routeDebugResult.trace.length - 1 ? 'border-b border-gray-800/50' : ''">
+                  <!-- Layer dot -->
+                  <div class="w-2 h-2 rounded-full mt-1 shrink-0"
+                    :class="t.result==='match' ? 'bg-green-500' : t.result==='skip' ? 'bg-gray-700' : 'bg-yellow-600'"></div>
+                  <div class="flex-1 min-w-0">
+                    <div class="flex items-center gap-2 mb-0.5">
+                      <!-- Human layer label -->
+                      <span class="text-xs font-medium text-gray-300"
+                        x-text="t.layer==='instance_override' ? 'Instance Override'
+                               : t.layer==='user_profile'       ? 'Profile Rules'
+                               : t.layer==='best_effort'        ? 'Best-Effort Fallback'
+                               : t.layer"></span>
+                      <span class="text-xs px-1.5 py-0.5 rounded font-medium"
+                        :class="t.result==='match'     ? 'bg-green-950 text-green-400'
+                               : t.result==='skip'      ? 'bg-gray-800 text-gray-600'
+                               : t.result==='exhausted' ? 'bg-yellow-950 text-yellow-500'
+                               :                          'bg-gray-800 text-gray-600'"
+                        x-text="t.result==='match'     ? '✓ matched'
+                               : t.result==='skip'      ? 'skipped'
+                               : t.result==='exhausted' ? 'all failed'
+                               : t.result"></span>
+                    </div>
+                    <!-- Layer detail -->
+                    <div class="text-xs text-gray-600"
+                      x-text="t.layer==='user_profile' && t.profile_name ? 'Profile: ' + t.profile_name + (t.rule_class ? '  ·  rule: ' + t.rule_class : '') + (t.machine ? '  →  ' + t.machine : '')
+                             : t.layer==='user_profile' && t.reason       ? t.reason
+                             : t.layer==='best_effort' && t.machine       ? t.machine
+                             : t.reason || ''"></div>
+                  </div>
+                </div>
+              </template>
+            </div>
+          </div>
+
+          <!-- Candidate machine checks (profile evaluation) -->
+          <template x-if="routeDebugResult.fallback_chain && routeDebugResult.fallback_chain.length > 0">
+            <div class="bg-gray-900 border border-gray-800 rounded-xl p-4">
+              <div class="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">Candidate Machines</div>
+              <div class="space-y-2">
+                <template x-for="(c, i) in routeDebugResult.fallback_chain" :key="i">
+                  <div class="flex items-center gap-3 text-xs rounded-lg px-3 py-2"
+                    :class="c.selected ? 'bg-green-950/40 border border-green-900/50' : 'bg-gray-800/40'">
+                    <!-- Rank -->
+                    <span class="text-gray-700 w-4 shrink-0 text-center font-mono" x-text="c.rank"></span>
+                    <!-- Name + rule class -->
+                    <div class="flex-1 min-w-0">
+                      <div class="flex items-center gap-1.5">
+                        <span class="font-medium"
+                          :class="c.selected ? 'text-green-300' : 'text-gray-400'"
+                          x-text="c.machine_name"></span>
+                        <span class="text-gray-700 font-mono" x-text="c.rule_class !== '*' ? c.rule_class : ''"></span>
+                        <template x-if="c.selected">
+                          <span class="text-green-500 text-xs">✓ selected</span>
+                        </template>
+                      </div>
+                    </div>
+                    <!-- Check badges -->
+                    <div class="flex gap-1 shrink-0">
+                      <span class="px-1.5 py-0.5 rounded text-xs border"
+                        :class="c.checks.enabled
+                          ? 'border-gray-700 text-gray-500'
+                          : 'border-red-900 bg-red-950 text-red-400'"
+                        x-text="c.checks.enabled ? 'on' : 'disabled'"></span>
+                      <span class="px-1.5 py-0.5 rounded text-xs border"
+                        :class="c.checks.reachable
+                          ? 'border-gray-700 text-gray-500'
+                          : 'border-red-900 bg-red-950 text-red-400'"
+                        x-text="c.checks.reachable ? 'up' : 'down'"></span>
+                      <span class="px-1.5 py-0.5 rounded text-xs border"
+                        :class="c.checks.capable
+                          ? 'border-gray-700 text-gray-500'
+                          : 'border-yellow-900 bg-yellow-950 text-yellow-500'"
+                        x-text="c.checks.capable ? 'capable' : 'wrong class'"></span>
+                    </div>
+                  </div>
+                </template>
+              </div>
+            </div>
+          </template>
+
+        </div>
+      </template>
+
+      <!-- Generic fetch error -->
+      <template x-if="routeDebugResult && !routeDebugResult.result && !routeDebugResult.error && !routeDebugResult.trace">
+        <div class="bg-red-950 border border-red-900 rounded-xl px-4 py-3 text-red-300 text-xs">
+          Unexpected response from server.
+        </div>
+      </template>
+
+    </div><!-- /debugOpen -->
+    </div><!-- /debug section -->
+
     <!-- ── Platforms sub-tab ── -->
     <div x-show="adminTab==='platforms' && can('manage_users')" x-cloak>
       <div class="flex items-center justify-between mb-4">
@@ -4333,103 +3878,6 @@
         <span x-text="'Page ' + auditLogsPage + ' of ' + Math.ceil(auditLogsTotal/auditLogsLimit)"></span>
         <button @click="auditLogsPage++; loadAdminAudit()" :disabled="auditLogsPage*auditLogsLimit>=auditLogsTotal"
           class="px-2 py-1 rounded border border-gray-700 disabled:opacity-40">Next →</button>
-      </div>
-    </div>
-
-    <!-- ── Routing Log sub-tab ── -->
-    <div x-show="tab==='infra' && infraTab==='routing' && can('view_audit_logs')">
-      <div class="flex items-center justify-between mb-4 gap-3 flex-wrap">
-        <div class="flex items-center gap-3">
-          <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Routing Log</div>
-          <!-- Row window label -->
-          <span class="text-xs text-gray-600"
-            x-show="adminRoutingLogTotal > 0"
-            x-text="'rows ' + (adminRoutingLogPage * 100 - 99) + '–' + Math.min(adminRoutingLogPage * 100, adminRoutingLogTotal) + ' of ' + adminRoutingLogTotal">
-          </span>
-          <div x-show="adminRoutingLogLoading" class="w-3 h-3 rounded-full border border-gray-600 border-t-[var(--accent)] animate-spin"></div>
-        </div>
-        <div class="flex items-center gap-2 flex-wrap">
-          <!-- User filter — only shown when user list is available -->
-          <template x-if="can('manage_users') && adminUsers.length > 0">
-            <select x-model="adminRoutingLogUserFilter" @change="adminRoutingLogPage=1; loadAdminRoutingLog()"
-              class="bg-gray-800 border border-gray-700 rounded-lg px-2 py-1 text-xs text-white focus:border-[var(--accent)] focus:outline-none">
-              <option value="">All users</option>
-              <template x-for="u in adminUsers" :key="u.id">
-                <option :value="u.id" x-text="u.display_name || u.username"></option>
-              </template>
-            </select>
-          </template>
-          <button @click="loadAdminRoutingLog()"
-            class="text-xs text-[var(--accent)] hover:opacity-80 flex items-center gap-1"><span>&#8635;</span> Refresh</button>
-        </div>
-      </div>
-
-      <!-- Chunk slider — only shown when there is more than one window -->
-      <div x-show="adminRoutingLogTotal > 100" class="mb-4 flex items-center gap-3">
-        <span class="text-xs text-gray-600 shrink-0">Window</span>
-        <input type="range" min="1" :max="Math.ceil(adminRoutingLogTotal/100)"
-          x-model.number="adminRoutingLogPage"
-          @change="loadAdminRoutingLog()"
-          class="flex-1 accent-[var(--accent)] h-1.5 rounded-full appearance-none bg-gray-700 cursor-pointer"/>
-        <span class="text-xs text-gray-500 shrink-0 font-mono w-24 text-right"
-          x-text="(adminRoutingLogPage * 100 - 99) + '–' + Math.min(adminRoutingLogPage * 100, adminRoutingLogTotal)"></span>
-        <div class="flex gap-1 shrink-0">
-          <button @click="adminRoutingLogPage=Math.max(1,adminRoutingLogPage-1); loadAdminRoutingLog()"
-            :disabled="adminRoutingLogPage<=1"
-            class="px-1.5 py-0.5 rounded border border-gray-700 text-gray-500 hover:text-white hover:border-gray-500 disabled:opacity-30 text-xs">‹</button>
-          <button @click="adminRoutingLogPage=Math.min(Math.ceil(adminRoutingLogTotal/100),adminRoutingLogPage+1); loadAdminRoutingLog()"
-            :disabled="adminRoutingLogPage*100>=adminRoutingLogTotal"
-            class="px-1.5 py-0.5 rounded border border-gray-700 text-gray-500 hover:text-white hover:border-gray-500 disabled:opacity-30 text-xs">›</button>
-        </div>
-      </div>
-
-      <div class="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden mb-3">
-        <table class="w-full text-xs">
-          <thead>
-            <tr class="border-b border-gray-800 text-gray-500">
-              <th class="text-left px-4 py-3 font-medium w-36">Time</th>
-              <th class="text-left px-4 py-3 font-medium">Instance</th>
-              <th class="text-left px-4 py-3 font-medium">Alias</th>
-              <th class="text-left px-4 py-3 font-medium">Class</th>
-              <th class="text-left px-4 py-3 font-medium">Machine</th>
-              <th class="text-left px-4 py-3 font-medium">Layer</th>
-            </tr>
-          </thead>
-          <tbody>
-            <template x-if="adminRoutingLogLoading && adminRoutingLog.length===0">
-              <tr><td colspan="6" class="px-4 py-8 text-center text-gray-600">
-                <div class="flex items-center justify-center gap-2">
-                  <div class="w-3 h-3 rounded-full border border-gray-600 border-t-[var(--accent)] animate-spin"></div>
-                  Loading…
-                </div>
-              </td></tr>
-            </template>
-            <template x-for="row in adminRoutingLog" :key="row.id">
-              <tr class="border-b border-gray-800/50 hover:bg-gray-800/30">
-                <td class="px-4 py-2 text-gray-600 font-mono whitespace-nowrap"
-                  x-text="new Date(row.created_at*1000).toLocaleString(undefined,{dateStyle:'short',timeStyle:'short'})"></td>
-                <td class="px-4 py-2 text-gray-500 truncate max-w-24" x-text="row.instance_name || '—'"></td>
-                <td class="px-4 py-2">
-                  <span class="font-mono text-[var(--accent)]" x-text="row.model_alias"></span>
-                </td>
-                <td class="px-4 py-2 text-gray-500 font-mono" x-text="row.model_class"></td>
-                <td class="px-4 py-2 text-gray-300" x-text="row.machine_name || '—'"></td>
-                <td class="px-4 py-2">
-                  <span class="px-1.5 py-0.5 rounded text-[10px] font-medium"
-                    :class="{
-                      'bg-indigo-950 text-indigo-400 border border-indigo-900': row.layer==='user_profile',
-                      'bg-gray-800 text-gray-500 border border-gray-700':       row.layer==='best_effort',
-                      'bg-orange-950 text-orange-400 border border-orange-900': row.layer==='instance_override',
-                    }"
-                    x-text="row.layer==='user_profile' ? 'profile' : row.layer==='best_effort' ? 'default' : row.layer || '—'"></span>
-                </td>
-              </tr>
-            </template>
-            <template x-if="!adminRoutingLogLoading && adminRoutingLog.length===0">
-              <tr><td colspan="6" class="px-4 py-8 text-center text-gray-600">No routing decisions recorded yet</td></tr>
-            </template>
-          </tbody>
-        </table>
       </div>
     </div>
 
@@ -5473,8 +4921,6 @@ function app() {
     agentsTab: 'running',  // kept for compat; sub-tabs removed
     // infra sub-tabs
     infraTab: localStorage.getItem('logos_infra_tab') || 'servers',
-    // routing (used within infra > routing)
-    routingTab: localStorage.getItem('hermes_routing_tab') || 'machines',
     // admin
     adminTab: localStorage.getItem('hermes_admin_tab') || 'users',
     adminSetPwUserId: null,
@@ -5484,7 +4930,6 @@ function app() {
     setupResetModalOpen: false,
     prevActiveSessions: [],
     completedSessions: {},
-    adminRoutingLogLoading: false,
     // Tools tab
     toolsServers: [],
     toolsCatalogue: [],
@@ -5522,10 +4967,6 @@ function app() {
     auditLogsPage: 1,
     auditLogsLimit: 25,
     auditLogsTotal: 0,
-    adminRoutingLog: [],
-    adminRoutingLogTotal: 0,
-    adminRoutingLogPage: 1,
-    adminRoutingLogUserFilter: '',
     approvalRequests: [],
     approvalsStatusFilter: 'pending',
     pendingApprovalCount: 0,
@@ -5635,7 +5076,6 @@ function app() {
     setupWizardEndpoint: '',
     setupWizardLoading: false,
     // routing sections (collapsible)
-    modelMapOpen: false,
     debugOpen: false,
     benchmarkOpen: false,
     benchmarkRunning: false,
@@ -5825,7 +5265,6 @@ function app() {
         }
       } catch {}
 
-      this.$watch('routingTab',     val => localStorage.setItem('hermes_routing_tab', val));
       this.$watch('adminTab',       val => localStorage.setItem('hermes_admin_tab', val));
       // chatRenderMode intentionally not persisted — always defaults to markdown on load
 
@@ -5924,12 +5363,8 @@ function app() {
       await this.loadAuth();
 
       // Validate restored tabs against actual permissions — fall back if needed.
-      const routingAllowed = this.can('manage_machines') || this.can('manage_profiles') || this.can('view_routing_debug');
       const adminAllowed   = this.can('manage_users') || this.can('view_audit_logs');
-      if (this.tab === 'routing' && !routingAllowed) this.tab = 'sessions';
       if (this.tab === 'admin'   && !adminAllowed)   this.tab = 'sessions';
-      if (this.routingTab === 'machines' && !this.can('manage_machines'))
-        this.routingTab = this.can('manage_profiles') ? 'profiles' : 'debug';
       if (this.adminTab === 'users' && !this.can('manage_users'))
         this.adminTab = 'audit';
       // Trigger initial data load for whichever tab is active on restore.
@@ -5937,11 +5372,9 @@ function app() {
       // handlers, so refreshing on /settings/channels (or /settings/tools,
       // /settings/proposals) left the page empty until the user clicked
       // the Refresh button. Run the same loader the click would have run.
-      if (this.tab === 'routing') this.loadRoutingData();
       if (this.tab === 'infra')   this._loadInfraTabData(this.infraTab);
       if (this.tab === 'admin') {
-        if (this.adminTab === 'routing-log') this.loadAdminRoutingLog();
-        else if (this.adminTab === 'approvals') this.loadApprovals();
+        if (this.adminTab === 'approvals') this.loadApprovals();
         else this.loadAdminData();
         // Run the sub-tab specific loader on top of the base admin data
         // (users + policies) so deep-linking to /admin/sandboxes etc.
@@ -5996,7 +5429,6 @@ function app() {
       setInterval(() => this.loadCanary(), 10000);
       setInterval(() => { this.clientNow = Date.now(); }, 1000);
       setInterval(() => { this._now = Math.floor(Date.now() / 1000); }, 15000);
-      setInterval(() => { if (this.tab === 'routing') this.probeAllMachines(); }, 90000);
       setInterval(() => { if (this.tab === 'admin' && this.adminTab === 'sandboxes') this.loadSandboxes(); }, 3000);
       setInterval(() => { if (this.tab === 'admin' && this.adminTab === 'model-routes') this.loadModelRoutes(); }, 5000);
       // Poll named agents every 3s so worker_connected flips from false→true
@@ -6027,7 +5459,6 @@ function app() {
     //   /chats                  → tab = sessions
     //   /settings               → tab = infra, infraTab = (restored)
     //   /settings/inference     → tab = infra, infraTab = servers
-    //   /settings/routing       → tab = infra, infraTab = routing
     //   /settings/tools         → tab = infra, infraTab = tools
     //   /settings/channels      → tab = infra, infraTab = channels
     //   /settings/proposals     → tab = infra, infraTab = proposals
@@ -6041,7 +5472,6 @@ function app() {
     //   /admin/approvals        → tab = admin, adminTab = approvals
     _INFRA_URL_MAP: {
       inference: 'servers',
-      routing:   'routing',
       tools:     'tools',
       channels:  'channels',
       proposals: 'proposals',
@@ -6052,7 +5482,6 @@ function app() {
     // the same data fetched as a manual click would have.
     _loadInfraTabData(name) {
       if (name === 'servers')   { this.loadAdminMachines(); this.loadCloudProviders?.(); this.probeAllMachines?.(); return; }
-      if (name === 'routing')   { this.loadRoutingData(); return; }
       if (name === 'tools')     { this.loadToolsTab?.(); this.loadServices?.(); return; }
       if (name === 'channels')  { this.loadMessagingChannels(); return; }
       if (name === 'proposals') { this.loadEvolutionProposals?.(); this.loadEvolutionSettings?.(); return; }
@@ -8624,19 +8053,6 @@ function app() {
         this.adminAuditLogs = d.logs || [];
         this.auditLogsTotal = d.total || 0;
       } catch(e) { this.adminAuditLogs = []; }
-    },
-
-    async loadAdminRoutingLog() {
-      this.adminRoutingLogLoading = true;
-      try {
-        const params = new URLSearchParams({ page: this.adminRoutingLogPage, limit: 100 });
-        if (this.adminRoutingLogUserFilter) params.set('user_id', this.adminRoutingLogUserFilter);
-        const r = await fetch('/admin/routing/log?' + params, {credentials:'include'});
-        const d = await r.json();
-        this.adminRoutingLog      = d.entries || [];
-        this.adminRoutingLogTotal = d.total   || 0;
-      } catch(e) { this.adminRoutingLog = []; }
-      finally { this.adminRoutingLogLoading = false; }
     },
 
     async _pollPendingApprovals() {
