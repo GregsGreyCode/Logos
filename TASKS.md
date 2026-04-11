@@ -106,6 +106,24 @@ Cloned `NVIDIA/NemoClaw` into `knowledge-repos/NemoClaw` and read the full sandb
 8. **Update** `gateway/policies/openshell_default.yaml` — remove the `logos_gateway` network_policy entry entirely (no more outbound traffic from sandbox → host). Keep `inference_local` and `dns`. Model the policy on `knowledge-repos/openshell-community/sandboxes/openclaw-nvidia/policy.yaml`.
 9. **Test via** `/setup` wizard walkthrough from scratch. M6 unified log (`logos debug tail --follow`) makes this trivial to observe.
 
+### UI semantics — Approach A (redefine, don't rename)
+
+**Constraint**: 8 UI call sites in `gateway/html/main_app.html` currently read `agent.worker_connected && agent.worker_healthy` to decide "is this sandbox chat-ready" (Chats pill bar, Admin → Sandboxes status, world map sprite color, Compare tab drop targets, M-pill switching loop, etc.). Renaming these fields would thrash the UI during an already-large transport refactor.
+
+**Decision**: Keep the field NAMES in `gateway/admin_handlers.py::handle_agents_list`, but **redefine their semantics** to match the new transport:
+
+| Field | Old semantics (pre-#24) | New semantics (post-#24) |
+|---|---|---|
+| `worker_connected` | `worker_registry.get(sandbox_name)` returns a live `WorkerEntry` (open WebSocket) | SandboxPortForwardRegistry has an active port-forward entry for this sandbox_name |
+| `worker_healthy` | `WorkerEntry.healthy` (based on last WS heartbeat) | Last `GET http://127.0.0.1:{local_port}/health` probe returned 200 OK within `probe_ttl` seconds |
+
+**Consequences**:
+- Zero UI changes. All 8 call sites keep working — the green dot still means "chat-ready" because the conjunction `worker_connected && worker_healthy` still means "I can dispatch a chat to this sandbox right now".
+- `gateway/admin_handlers.py::handle_agents_list` swaps the data source: instead of `worker_registry.get(sandbox_name)`, it reads `sandbox_forward_registry.get(sandbox_name)` (from R8) and `sandbox_forward_registry.get_health(sandbox_name)` (the cached last-probe result).
+- Add a big code comment above the field assignments explaining the rename deferral and pointing at `docs/MISSING.md` **M7** for the proper-naming follow-up.
+
+**Follow-up**: [MISSING.md M7 — Sandbox health observability in the UI](../docs/MISSING.md) is the tracked work item for the proper rename (`worker_connected` → `sandbox_reachable`, `worker_healthy` → `sandbox_api_healthy`) plus the richer fields (`sandbox_phase`, `api_latency_ms`, `last_probe_ts`, `api_version`) and the Admin → Sandboxes health tile. Explicitly scheduled AFTER this refactor stabilises so the transport swap and the UI rename don't land in the same commit.
+
 **Effort estimate**: 1-3 days of focused work. **Risk**: medium — significant refactor but every hard sub-problem (decode-proxy, socat forwarder, integrity check, capability drop) is already solved upstream and Apache-2.0 licensed. Primary work is: (a) deleting Logos-specific code, (b) re-wiring `_handle_chat` for the new transport, (c) integration testing through `/setup`.
 
 **Rejected alternatives** (kept for history):

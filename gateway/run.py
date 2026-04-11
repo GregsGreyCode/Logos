@@ -1505,7 +1505,7 @@ class GatewayRunner:
             return "⚠️ Internal error resolving agent sandbox."
 
         worker_entry = self.worker_registry.get(worker_id)
-        if not worker_entry or not worker_entry.healthy or not worker_entry.ws or worker_entry.ws.closed:
+        if not worker_entry or not worker_entry.healthy:
             logger.info(
                 "dispatch_platform_message: worker %s not connected (platform=%s)",
                 worker_id, platform_name,

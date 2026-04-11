@@ -1,36 +1,52 @@
 """
 OpenShellExecutor — runs Hermes agent instances as OpenShell sandboxes.
 
-Integration model (reverse-connection)
-──────────────────────────────────────
-1.  A sandbox image (``hermes-sandbox``) contains a lightweight WebSocket
-    worker (``sandbox_worker.py``) and its dependencies (aiohttp, Python 3.12).
+Integration model (Plan A, host-drives-sandbox — TASKS.md #24)
+──────────────────────────────────────────────────────────────
+1.  A sandbox image (``hermes-sandbox``) contains the Python worker
+    (``/app/sandbox_worker.py``) and its dependencies (aiohttp for the
+    inference.local HTTPS call, Python 3.12). The entrypoint is
+    ``sleep infinity`` — the worker is NOT started at container boot.
 
 2.  ``spawn()`` creates a named OpenShell sandbox with:
-    - An uploaded instance config (``/tmp/hermes/instance-config.json``)
-    - A network policy allowing access to the Logos gateway and inference.local
-    - The entrypoint ``/app/entrypoint.sh`` which starts the worker
+    - An uploaded instance config at ``/tmp/hermes/instance-config.json``
+    - A network policy allowing access to inference.local (host gateway
+      entry removed — no outbound traffic to the host anymore)
+    - The sandbox just idles until the host calls ensure_worker
 
-3.  The worker connects OUT to the Logos gateway at ``ws://host.openshell.internal:{port}/ws/worker``
-    through OpenShell's HTTP CONNECT proxy.  The proxy enforces the network policy.
+3.  ``spawn()`` then calls ``WorkerRegistry.ensure_worker`` which runs
+    ``openshell sandbox exec --no-tty --name <sandbox> -- python3
+    /app/sandbox_worker.py`` as a long-running ``asyncio`` subprocess
+    on the gateway side. The subprocess's stdin/stdout form the
+    bidirectional control channel over OpenShell's blessed gRPC/mTLS
+    exec transport — no reverse WebSocket, no HTTP CONNECT tunnel, no
+    custom proxy bypass. The old approach (sandbox opens a WebSocket
+    back to ``/ws/worker`` through an HTTP CONNECT tunnel) was retired
+    after OpenShell's L7 proxy tightening broke it post-upgrade.
 
-4.  Once connected, the worker registers with the ``WorkerRegistry`` and receives
-    chat tasks dispatched by the gateway.  Responses stream back over the same
-    WebSocket.
+4.  The worker's first line on stdout is
+    ``{"type":"ready","worker_id":...}``. ``ensure_worker`` blocks on
+    that line and then registers a ``WorkerEntry`` in the
+    ``WorkerRegistry``. Chat dispatches are written as JSON lines to
+    the subprocess's stdin; tokens/tool_progress/task_result stream
+    back as JSON lines on stdout.
 
-5.  ``delete_instance()`` destroys the sandbox — the WebSocket drops and the
-    worker is automatically unregistered.
+5.  ``delete_instance()`` destroys the sandbox — ``openshell sandbox
+    delete`` tears down the in-pod process, which closes the gRPC
+    exec stream, which causes our subprocess's stdin/stdout to EOF,
+    which causes ``_read_stdout_loop`` to call ``_cleanup_worker``
+    which drops the entry from the registry.
 
 Prerequisites
 ─────────────
 - Docker running.
 - ``openshell`` CLI installed.
 - The sandbox image built and imported (see docker/Dockerfile.hermes-sandbox).
-- UFW allows port 8091 from Docker networks (172.16.0.0/12, 10.0.0.0/8).
 """
 
 from __future__ import annotations
 
+import asyncio
 import fcntl
 import json
 import logging
@@ -848,21 +864,82 @@ class OpenShellExecutor:
                         gateway=openshell_gw, check=True,
                     )
 
-            # ── Step 3: start the worker via a detached exec ───────
-            # The bash subshell backgrounds the entrypoint with
-            # nohup + disown so the SSH session can close cleanly.
-            # The entrypoint exec's into python3 sandbox_worker.py
-            # which then connects back to the gateway via WebSocket.
-            # `< /dev/null` is critical — without it bash inherits
-            # the SSH stdin and the disown is a no-op.
-            _openshell(
-                "sandbox", "exec",
-                "-n", sandbox_name,
-                "--",
-                "bash", "-c",
-                "nohup /app/entrypoint.sh > /tmp/worker.log 2>&1 < /dev/null & disown; echo started",
-                gateway=openshell_gw, check=True,
-            )
+            # ── Step 3: launch the worker via WorkerRegistry.ensure_worker ──
+            #
+            # Plan A (TASKS.md #24): the sandbox container no longer
+            # auto-launches the worker. Instead, the host gateway
+            # manages the worker's lifetime by spawning `openshell
+            # sandbox exec --no-tty --name <sandbox> -- python3
+            # /app/sandbox_worker.py` as a long-running asyncio
+            # subprocess. Stdin/stdout of that subprocess become the
+            # control channel.
+            #
+            # We're inside asyncio.to_thread here (executor.spawn is a
+            # sync method called via thread pool), so the main event
+            # loop is running in a different thread. Use
+            # asyncio.run_coroutine_threadsafe to schedule ensure_worker
+            # on the main loop and block this thread on the result.
+            #
+            # If _current_runner is unavailable (e.g., running in a
+            # test harness that imported OpenShellExecutor directly
+            # without starting a real GatewayRunner), skip ensure_worker
+            # and return with healthy=False. Callers that need a live
+            # worker should run against a real gateway.
+            try:
+                from gateway.run import _current_runner, _current_loop
+                from gateway.worker_registry import WORKER_READY_TIMEOUT
+            except Exception:
+                _current_runner = None
+                _current_loop = None
+                WORKER_READY_TIMEOUT = 60.0
+
+            if _current_runner and _current_loop and not _current_loop.is_closed():
+                try:
+                    ensure_future = asyncio.run_coroutine_threadsafe(
+                        _current_runner.worker_registry.ensure_worker(
+                            sandbox_name,
+                            soul=config.soul_name or "general",
+                            toolsets=config.toolsets or [],
+                            instance_label=config.name,
+                            requester=config.requester or "",
+                            env={
+                                "OPENAI_BASE_URL": os.environ.get(
+                                    "OPENAI_BASE_URL",
+                                    "https://inference.local/v1",
+                                ),
+                                "OPENAI_API_KEY": os.environ.get(
+                                    "OPENAI_API_KEY", "unused"
+                                ),
+                                "HERMES_MODEL": resolved_model or "",
+                                "HERMES_WORKER_ID": sandbox_name,
+                            },
+                        ),
+                        _current_loop,
+                    )
+                    # Budget: WORKER_READY_TIMEOUT + 5s slack for the
+                    # subprocess spawn itself (openshell CLI startup,
+                    # gRPC auth, exec dispatch). If ensure_worker
+                    # raises ConnectionError we let it propagate so
+                    # the caller can roll back the sandbox state.
+                    ensure_future.result(timeout=WORKER_READY_TIMEOUT + 5)
+                except ConnectionError as exc:
+                    logger.warning(
+                        "ensure_worker failed for %s: %s — sandbox created but worker not running",
+                        sandbox_name, exc,
+                    )
+                    # Don't raise; let the caller decide whether to
+                    # retry (they can call ensure_worker again directly
+                    # or delete the sandbox and respawn).
+                except Exception as exc:
+                    logger.exception(
+                        "ensure_worker raised unexpectedly for %s: %s",
+                        sandbox_name, exc,
+                    )
+            else:
+                logger.info(
+                    "ensure_worker skipped for %s (no current GatewayRunner) — sandbox is Ready but worker not launched",
+                    sandbox_name,
+                )
 
             # Phase 3 (under lock): flip the record's phase to "ready"
             # so subsequent list_instances() prunes apply normal rules.

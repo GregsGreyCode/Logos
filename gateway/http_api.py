@@ -865,35 +865,22 @@ async def _handle_sandbox_restart(request: web.Request) -> web.Response:
         logger.exception("Sandbox restart spawn failed for '%s'", agent_name)
         return web.json_response({"ok": False, "error": str(exc)}, status=500)
 
-    # ── 5. Wait for the worker to register via WebSocket ───────────
-    # The split-spawn flow exits as soon as the entrypoint has been
-    # detached — the worker is starting in the background but hasn't
-    # connected to the gateway's /ws/worker endpoint yet. Poll the
-    # worker_registry until the new connection lands so the response
-    # only returns when the sandbox is actually usable. Without this
-    # the chat M dropdown's frontend would clear its "switching..."
-    # badge before the new worker is reachable, and the user's first
-    # message after the switch would race with the worker startup.
+    # ── 5. Worker is already registered ────────────────────────────
+    # Plan A (TASKS.md #24): executor.spawn() internally calls
+    # WorkerRegistry.ensure_worker via run_coroutine_threadsafe, which
+    # blocks until the sandbox's stdin/stdout subprocess has emitted its
+    # "ready" event. By the time spawn() returns, the worker is live
+    # and dispatching is possible. No more polling loop.
     #
-    # Timeout: 90s. Worker registration normally happens within 5-15s
-    # after step 3 of spawn() (the detached exec). Anything beyond 30s
-    # is suspicious; 90s is the upper bound for slow hardware + slow
-    # model hot-load. On timeout we return 504 so the frontend can
-    # surface a useful error to the user.
+    # If ensure_worker failed inside spawn() it logged a warning but
+    # didn't raise — we detect that here by querying the registry.
     worker_registry = request.app.get("worker_registry")
     sandbox_name = spawned.name and _sanitize_sandbox_name(f"hermes-{spawned.name}")
     if worker_registry and sandbox_name:
-        deadline = time.time() + 90.0
-        registered = False
-        while time.time() < deadline:
-            entry = worker_registry.get(sandbox_name)
-            if entry and entry.healthy and entry.ws and not entry.ws.closed:
-                registered = True
-                break
-            await asyncio.sleep(1.0)
-        if not registered:
+        entry = worker_registry.get(sandbox_name)
+        if not entry or not entry.healthy:
             logger.warning(
-                "Sandbox restart: worker '%s' did not register within 90s after spawn",
+                "Sandbox restart: worker '%s' not healthy after spawn",
                 sandbox_name,
             )
             return web.json_response(
@@ -901,9 +888,9 @@ async def _handle_sandbox_restart(request: web.Request) -> web.Response:
                     "ok": False,
                     "sandbox": spawned.name,
                     "error": (
-                        f"Sandbox '{sandbox_name}' was provisioned but its worker did not "
-                        f"register with the gateway within 90 seconds. Check the sandbox "
-                        f"logs (Admin → Sandboxes → Logs) and the gateway log."
+                        f"Sandbox '{sandbox_name}' was provisioned but its worker subprocess "
+                        f"is not healthy. Check `logos debug tail --filter worker_id={sandbox_name}` "
+                        f"and `openshell sandbox exec --no-tty --name {sandbox_name} -- cat /tmp/worker.log`."
                     ),
                 },
                 status=504,
@@ -3107,7 +3094,7 @@ async def _handle_chat(request: web.Request) -> web.StreamResponse:
         # Worker + incarnation tag were resolved above, before the session
         # was built. Re-check liveness here in case the worker dropped off
         # between session creation and dispatch.
-        if not (worker_entry and worker_entry.healthy and worker_entry.ws and not worker_entry.ws.closed):
+        if not (worker_entry and worker_entry.healthy):
             # Sandbox worker is not connected or not healthy. Do NOT silently
             # fall back to an in-process runner — that would run the user's
             # message through the gateway process itself, bypassing every
@@ -3687,8 +3674,12 @@ async def start_http_api(runner: Any, port: int = 8091) -> None:
     app.router.add_delete("/instances/{name}/knowledge/{source}", _handle_instance_knowledge_delete)
     app.router.add_get("/instances/{name}/knowledge/search",    _handle_instance_knowledge_search)
     app.router.add_post("/instances/{name}/fork",               _handle_instance_fork)
-    # Worker WebSocket + REST
-    app.router.add_get("/ws/worker", worker_registry.handle_ws)
+    # Worker REST (no WebSocket — Plan A TASKS.md #24: workers are
+    # subprocess-per-sandbox, launched via `openshell sandbox exec --no-tty`
+    # by OpenShellExecutor.spawn → WorkerRegistry.ensure_worker). The
+    # /ws/worker route used to live here but was removed in the Plan A
+    # refactor because the reverse-connection WebSocket pattern was
+    # unsupported by OpenShell's L7 proxy after an upstream change.
     app.router.add_get("/api/workers", lambda r: web.json_response(
         {"workers": r.app["worker_registry"].list_workers()}
     ))

@@ -503,7 +503,12 @@ async def handle_agents_list(request: web.Request) -> web.Response:
         sandbox_name = _sanitize_sandbox_name(f"hermes-{name}") if name else ""
         a["sandbox_name"] = sandbox_name
         a["worker_id"] = sandbox_name
-        # Live worker status, if the sandbox is connected via /ws/worker
+        # Live worker status, if the sandbox has a subprocess worker
+        # registered (Plan A / TASKS.md #24: `openshell sandbox exec` —
+        # worker_connected means "the gateway has a WorkerEntry for this
+        # sandbox", worker_healthy means "the exec subprocess is still
+        # alive"). M7 in docs/MISSING.md is where the richer
+        # sandbox_phase / api_latency_ms / last_probe_ts fields will land.
         worker = worker_registry.get(sandbox_name) if worker_registry and sandbox_name else None
         if worker:
             a["worker_healthy"] = worker.healthy
