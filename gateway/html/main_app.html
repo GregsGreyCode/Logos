@@ -1214,55 +1214,110 @@
                     <div class="text-xs text-gray-600 italic">No messages yet. Type a prompt below.</div>
                   </template>
 
-                  <!-- Messages -->
+                  <!-- Messages: mirrors the Chats-tab aesthetic so the
+                       A/B comparison view uses the same markdown
+                       rendering, copy/stats bar, and reasoning collapse
+                       that the single-agent view already has. The only
+                       compare-specific bit is the pane-scoped compareThinking
+                       buffer name; everything else (user bubble palette,
+                       assistant bubble with chat-md/chat-mono class, copy
+                       button, stats footer) is identical to the Chats
+                       tab at line ~661. Duplicating the HTML rather than
+                       factoring it into a Alpine sub-component because
+                       Alpine x-template scoping with x-for parent doesn't
+                       inherit inner x-data cleanly. -->
                   <template x-for="(msg, mi) in (compareTranscripts[pane.id] || [])" :key="mi">
-                    <div>
-                      <!-- User turn -->
+                    <div class="chat-msg-anim" :class="msg.role==='user' ? 'text-right' : 'text-left'">
+                      <!-- User turn: same bubble as Chats tab -->
                       <template x-if="msg.role === 'user'">
-                        <div class="flex justify-end">
-                          <div class="max-w-[85%] px-3 py-1.5 rounded-2xl rounded-tr-sm bg-indigo-900/40 border border-indigo-900 text-gray-100 whitespace-pre-wrap" x-text="msg.content"></div>
+                        <span class="inline-block max-w-full text-left px-3 py-2 rounded-xl text-sm leading-relaxed bg-indigo-700 text-white whitespace-pre-wrap" x-text="msg.content"></span>
+                      </template>
+                      <!-- Error card -->
+                      <template x-if="msg.isError">
+                        <div class="inline-block max-w-full text-left">
+                          <div class="rounded-xl border-l-4 border-l-red-500 overflow-hidden">
+                            <div class="px-3 py-2 bg-gray-800/80">
+                              <div class="text-sm font-semibold text-red-400" x-text="msg.errorTitle || 'Error'"></div>
+                              <p x-show="msg.errorAction" class="text-xs text-gray-400 mt-1" x-text="msg.errorAction"></p>
+                            </div>
+                          </div>
                         </div>
                       </template>
-                      <!-- Assistant turn (or error) -->
-                      <template x-if="msg.role === 'assistant'">
-                        <div class="flex justify-start">
-                          <div class="max-w-[85%] px-3 py-1.5 rounded-2xl rounded-tl-sm border whitespace-pre-wrap"
-                               :class="msg.isError ? 'bg-red-950/30 border-red-900 text-red-300' : 'bg-gray-900/60 border-gray-800 text-gray-200'">
-                            <!-- Reasoning block. Three states:
-                                 (a) streaming in progress + live thinking buffer has content
-                                     → <details open>, shows compareThinking[pane.id] live
-                                 (b) turn finalized + msg.thinking populated
-                                     → <details> collapsed, shows msg.thinking when expanded
-                                 (c) neither → block is hidden entirely
-                                 Rendering inside the bubble (not floating below it)
-                                 means the thinking never looks like part of the answer
-                                 content and never takes up "weird left-hand space". -->
+                      <!-- Assistant turn (or streaming placeholder) -->
+                      <template x-if="msg.role === 'assistant' && !msg.isError">
+                        <div class="msg-wrap inline-block max-w-full" x-data="{statsOpen:false,copied:false}">
+                          <div class="text-left px-3 pt-2 pb-2 rounded-t-xl text-sm bg-gray-800 text-gray-100"
+                               :class="[chatRenderMode==='mono' ? 'chat-mono' : 'chat-md', !msg.stats ? 'rounded-b-xl' : '']">
+                            <!-- Reasoning block — same three-state logic
+                                 as the Chats tab (streaming/finalized/hidden).
+                                 During streaming we read from the pane-scoped
+                                 compareThinking buffer; after finalize the
+                                 buffer has been moved onto msg.thinking. -->
                             <template x-if="msg._streaming && compareThinking[pane.id]">
-                              <details open class="mb-1.5">
+                              <details open class="mb-2">
                                 <summary class="cursor-pointer text-[10px] text-indigo-400/70 hover:text-indigo-300 select-none flex items-center gap-1">
                                   <span class="inline-block w-1.5 h-1.5 rounded-full bg-indigo-400 animate-pulse"></span>
                                   <span>Reasoning&hellip;</span>
                                 </summary>
-                                <div class="mt-1 text-[11px] text-gray-500 italic whitespace-pre-wrap" x-text="compareThinking[pane.id]"></div>
+                                <div class="mt-1 text-[11px] text-gray-400 italic whitespace-pre-wrap" x-text="compareThinking[pane.id]"></div>
                               </details>
                             </template>
                             <template x-if="!msg._streaming && msg.thinking">
-                              <details class="mb-1.5">
+                              <details class="mb-2">
                                 <summary class="cursor-pointer text-[10px] text-gray-500 hover:text-gray-300 select-none">
                                   Show reasoning
                                 </summary>
-                                <div class="mt-1 text-[11px] text-gray-500 italic whitespace-pre-wrap" x-text="msg.thinking"></div>
+                                <div class="mt-1 text-[11px] text-gray-400 italic whitespace-pre-wrap" x-text="msg.thinking"></div>
                               </details>
                             </template>
-                            <span x-text="msg.content || (msg._streaming ? '…' : '')"></span>
-                            <template x-if="msg.isError && msg.errorAction">
-                              <div class="text-[10px] text-gray-500 mt-1" x-text="msg.errorAction"></div>
+                            <!-- Markdown-rendered content (or ellipsis
+                                 placeholder while streaming) -->
+                            <template x-if="msg.content">
+                              <div x-html="renderMsg(msg.content)"></div>
                             </template>
-                            <template x-if="msg.stats && msg.stats.elapsed_s != null">
-                              <div class="text-[9px] text-gray-600 mt-1.5 font-mono"
-                                   x-text="msg.stats.elapsed_s + 's · ' + (msg.stats.model || pane.model || '')"></div>
+                            <template x-if="!msg.content && msg._streaming">
+                              <div class="text-gray-500">&hellip;</div>
                             </template>
                           </div>
+                          <!-- Stats + copy bar (only when stats available) -->
+                          <template x-if="msg.stats">
+                            <div class="msg-bar bg-gray-800 rounded-b-xl border-t border-gray-700/40">
+                              <span class="msg-hint" @click.stop="statsOpen=!statsOpen">
+                                <span x-text="statsOpen ? '\u25B4 hide stats' : '\u22EF stats'"></span>
+                              </span>
+                              <button class="msg-copy" :class="copied ? 'copied' : ''"
+                                @click.stop="navigator.clipboard.writeText(msg.content).then(()=>{copied=true;setTimeout(()=>copied=false,1500)})"
+                                title="Copy response">
+                                <svg width="11" height="11" viewBox="0 0 16 16" fill="none"><rect x="5" y="5" width="9" height="9" rx="2" stroke="currentColor" stroke-width="1.5"/><path d="M3 10V3a2 2 0 012-2h7" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+                                <span x-text="copied ? '\u2713 copied' : 'copy'"></span>
+                              </button>
+                            </div>
+                          </template>
+                          <!-- Stats panel — expandable (compare stats are
+                               leaner than chat-tab stats; only show what
+                               the compare handler actually captures) -->
+                          <template x-if="msg.stats && statsOpen">
+                            <div class="msg-stats">
+                              <template x-if="msg.stats.model || pane.model">
+                                <div class="msg-stats-row">
+                                  <span class="msg-stats-label">model</span>
+                                  <span class="msg-stats-val" x-text="(msg.stats.model || pane.model || '').split('/').pop()"></span>
+                                </div>
+                              </template>
+                              <template x-if="msg.stats.elapsed_s != null">
+                                <div class="msg-stats-row">
+                                  <span class="msg-stats-label">time</span>
+                                  <span class="msg-stats-val" x-text="(msg.stats.elapsed_s || 0) + 's'"></span>
+                                </div>
+                              </template>
+                              <template x-if="msg.stats.prompt_tokens">
+                                <div class="msg-stats-row">
+                                  <span class="msg-stats-label">context</span>
+                                  <span class="msg-stats-val" x-text="fmtTokens(msg.stats.prompt_tokens) + ' tok'"></span>
+                                </div>
+                              </template>
+                            </div>
+                          </template>
                         </div>
                       </template>
                     </div>
@@ -6972,6 +7027,17 @@ function app() {
                 // Streaming token from worker
                 this.isWakingUp = false;
                 reply += (d.content || '');
+                // Strip leading whitespace from the accumulated reply.
+                // Some chat templates (observed on gpt-oss-20b via LM
+                // Studio) emit ~28 leading spaces after their role
+                // start marker. Without stripping, our markdown
+                // renderer treats >=4 leading spaces as an indented
+                // code block, so the first paragraph renders as a
+                // visually offset wall of preformatted text. The
+                // regex is idempotent — once real content lands, the
+                // anchor match is empty and internal whitespace is
+                // preserved untouched.
+                reply = reply.replace(/^\s+/, '');
                 // Update message in-place for live typing effect
                 const lastMsg = chat.messages[chat.messages.length - 1];
                 if (lastMsg && lastMsg.role === 'assistant' && lastMsg._streaming) {
@@ -7552,6 +7618,11 @@ function app() {
               const d = JSON.parse(line.slice(5).trim());
               if (d.type === 'token') {
                 reply += (d.content || '');
+                // Strip leading whitespace from the accumulated reply
+                // (same rationale as the Chats tab handler — some
+                // chat templates emit a wall of leading spaces that
+                // renderMsg then treats as a code block). Idempotent.
+                reply = reply.replace(/^\s+/, '');
                 this._compareUpdateStreamingMessage(agentId, reply);
               } else if (d.type === 'thinking') {
                 // Reasoning models stream their internal CoT here.
