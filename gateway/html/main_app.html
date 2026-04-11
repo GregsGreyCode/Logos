@@ -697,8 +697,38 @@
                 <template x-if="msg.role!=='user' && !msg.isError">
                   <div class="msg-wrap inline-block max-w-3xl" x-data="{statsOpen:false,copied:false}">
                     <div class="text-left px-3 pt-2 pb-2 rounded-t-xl text-sm bg-gray-800 text-gray-100"
-                      :class="[chatRenderMode==='mono' ? 'chat-mono' : 'chat-md', !msg.stats ? 'rounded-b-xl' : '']"
-                      x-html="renderMsg(msg.content)"></div>
+                      :class="[chatRenderMode==='mono' ? 'chat-mono' : 'chat-md', !msg.stats ? 'rounded-b-xl' : '']">
+                      <!-- Reasoning block (for models that stream CoT via
+                           reasoning_content, e.g. qwen3.5). Three states:
+                           (a) live stream in progress + thinking buffer
+                               populated → <details open>, showing the
+                               live buffer with a pulsing indicator
+                           (b) finalized + msg.thinking populated →
+                               <details> collapsed, clickable "Show reasoning"
+                           (c) neither → hidden entirely
+                           Rendering inside the bubble (not floating) so the
+                           thinking never looks like it's part of the answer
+                           and never steals "left-hand space" alongside the
+                           visible response. -->
+                      <template x-if="msg._streaming && msg._liveThinking">
+                        <details open class="mb-2">
+                          <summary class="cursor-pointer text-[10px] text-indigo-400/70 hover:text-indigo-300 select-none flex items-center gap-1">
+                            <span class="inline-block w-1.5 h-1.5 rounded-full bg-indigo-400 animate-pulse"></span>
+                            <span>Reasoning&hellip;</span>
+                          </summary>
+                          <div class="mt-1 text-[11px] text-gray-400 italic whitespace-pre-wrap" x-text="msg._liveThinking"></div>
+                        </details>
+                      </template>
+                      <template x-if="!msg._streaming && msg.thinking">
+                        <details class="mb-2">
+                          <summary class="cursor-pointer text-[10px] text-gray-500 hover:text-gray-300 select-none">
+                            Show reasoning
+                          </summary>
+                          <div class="mt-1 text-[11px] text-gray-400 italic whitespace-pre-wrap" x-text="msg.thinking"></div>
+                        </details>
+                      </template>
+                      <div x-html="renderMsg(msg.content)"></div>
+                    </div>
                     <!-- Bottom bar: stats toggle (left) + copy (right) — only when stats available -->
                     <template x-if="msg.stats">
                       <div class="msg-bar bg-gray-800 rounded-b-xl border-t border-gray-700/40">
@@ -1198,15 +1228,30 @@
                         <div class="flex justify-start">
                           <div class="max-w-[85%] px-3 py-1.5 rounded-2xl rounded-tl-sm border whitespace-pre-wrap"
                                :class="msg.isError ? 'bg-red-950/30 border-red-900 text-red-300' : 'bg-gray-900/60 border-gray-800 text-gray-200'">
-                            <!-- Captured thinking (collapsed by default) — only on
-                                 finished assistant turns. Live thinking still streams
-                                 below the message until the turn finalizes. -->
-                            <template x-if="msg.thinking">
+                            <!-- Reasoning block. Three states:
+                                 (a) streaming in progress + live thinking buffer has content
+                                     → <details open>, shows compareThinking[pane.id] live
+                                 (b) turn finalized + msg.thinking populated
+                                     → <details> collapsed, shows msg.thinking when expanded
+                                 (c) neither → block is hidden entirely
+                                 Rendering inside the bubble (not floating below it)
+                                 means the thinking never looks like part of the answer
+                                 content and never takes up "weird left-hand space". -->
+                            <template x-if="msg._streaming && compareThinking[pane.id]">
+                              <details open class="mb-1.5">
+                                <summary class="cursor-pointer text-[10px] text-indigo-400/70 hover:text-indigo-300 select-none flex items-center gap-1">
+                                  <span class="inline-block w-1.5 h-1.5 rounded-full bg-indigo-400 animate-pulse"></span>
+                                  <span>Reasoning&hellip;</span>
+                                </summary>
+                                <div class="mt-1 text-[11px] text-gray-500 italic whitespace-pre-wrap" x-text="compareThinking[pane.id]"></div>
+                              </details>
+                            </template>
+                            <template x-if="!msg._streaming && msg.thinking">
                               <details class="mb-1.5">
                                 <summary class="cursor-pointer text-[10px] text-gray-500 hover:text-gray-300 select-none">
                                   Show reasoning
                                 </summary>
-                                <div class="mt-1 text-[11px] text-gray-500 italic border-l-2 border-indigo-900 pl-2 py-1 whitespace-pre-wrap" x-text="msg.thinking"></div>
+                                <div class="mt-1 text-[11px] text-gray-500 italic whitespace-pre-wrap" x-text="msg.thinking"></div>
                               </details>
                             </template>
                             <span x-text="msg.content || (msg._streaming ? '…' : '')"></span>
@@ -1221,13 +1266,6 @@
                         </div>
                       </template>
                     </div>
-                  </template>
-
-                  <!-- Live thinking buffer (current turn only). Phase 5
-                       will move this into a collapsible <details>. -->
-                  <template x-if="compareThinking[pane.id]">
-                    <div class="text-[11px] text-gray-500 italic border-l-2 border-indigo-900 pl-2 py-1 whitespace-pre-wrap"
-                         x-text="'thinking: ' + compareThinking[pane.id]"></div>
                   </template>
                 </div>
               </div>
@@ -6944,6 +6982,26 @@ function app() {
                 }
                 this._scrollChat();
               }
+              if (d.type === 'thinking') {
+                // Reasoning CoT from reasoning-capable models
+                // (qwen3.5 via LM Studio, etc). Accumulates onto the
+                // in-flight streaming message's `_liveThinking` buffer
+                // and re-renders inside the bubble as a live <details
+                // open>. On 'done' we move it into msg.thinking so the
+                // user can still expand it after the turn finalizes.
+                //
+                // Without this branch the thinking stream was dropped
+                // on the floor in the regular chat view — only the
+                // compare view was catching it.
+                this.isWakingUp = false;
+                const lastMsg = chat.messages[chat.messages.length - 1];
+                if (lastMsg && lastMsg.role === 'assistant' && lastMsg._streaming) {
+                  lastMsg._liveThinking = (lastMsg._liveThinking || '') + (d.content || '');
+                  this.chats = [...this.chats];
+                } else {
+                  chat.messages = [...chat.messages, { role: 'assistant', content: '', _liveThinking: (d.content || ''), _streaming: true }];
+                }
+              }
               if (d.type === 'message') { reply = d.content; this.isWakingUp = false; }
               if (d.type === 'done') {
                 // Keep _liveTools visible so the user can inspect what happened
@@ -6978,6 +7036,15 @@ function app() {
                   // post-stream cleanup, or non-streaming worker that
                   // only emitted a message event).
                   if (reply && reply !== lastMsg.content) lastMsg.content = reply;
+                  // Move the live reasoning buffer onto the durable
+                  // msg.thinking field so the collapsible <details>
+                  // block stays available after the turn finalizes.
+                  // Delete _liveThinking so the x-if="msg._streaming
+                  // && msg._liveThinking" branch stops rendering.
+                  if (lastMsg._liveThinking) {
+                    lastMsg.thinking = lastMsg._liveThinking.trim();
+                    delete lastMsg._liveThinking;
+                  }
                   chat.updated_at = Date.now();
                   this.chats = [chat, ...this.chats.filter(c => c.id !== chat.id)];
                   this._saveChats();
