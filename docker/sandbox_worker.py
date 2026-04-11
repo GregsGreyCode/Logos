@@ -24,11 +24,72 @@ import sys
 import time
 from urllib.parse import urlparse
 
+class _SandboxJsonFormatter(logging.Formatter):
+    """Structured JSON-lines formatter for sandbox worker logs.
+
+    Mirrors the JsonRedactingFormatter in gateway/run.py so that when
+    sandbox logs are eventually forwarded upstream to the gateway's
+    unified.jsonl (MISSING.md M6 stretch goal), records arrive in a
+    shape that's compatible with the rest of the unified stream.
+
+    Emits one JSON object per log record. Source is tagged "sandbox-worker"
+    so `logos debug tail --filter source=sandbox-worker` singles them out.
+    worker_id is pulled from the environment (HERMES_WORKER_ID, falls back
+    to WORKER_ID, falls back to "-") so every record is self-identifying
+    even before a registration exchange has happened.
+    """
+
+    def format(self, record: logging.LogRecord) -> str:
+        payload = {
+            "ts": record.created,
+            "level": record.levelname,
+            "logger": record.name,
+            "msg": record.getMessage(),
+            "source": "sandbox-worker",
+            "worker_id": os.environ.get("HERMES_WORKER_ID")
+                         or os.environ.get("WORKER_ID")
+                         or "-",
+            "pid": record.process,
+        }
+        if record.exc_info:
+            payload["exc"] = self.formatException(record.exc_info)
+        try:
+            return json.dumps(payload, default=str, ensure_ascii=False)
+        except Exception:
+            return json.dumps({
+                "ts": record.created,
+                "level": record.levelname,
+                "logger": record.name,
+                "msg": "<formatter error>",
+                "source": "sandbox-worker",
+            })
+
+
+# The sandbox worker emits logs in TWO formats intentionally:
+#   1. Text (via basicConfig, stdout) — for humans reading /tmp/worker.log
+#      directly inside the sandbox, and for the openshell-sandbox supervisor
+#      to capture in its own logs.
+#   2. JSON (via the dedicated file handler below) — for future forwarding
+#      to the gateway's unified.jsonl, and for `logos debug tail` to parse
+#      once a forwarder is in place.
+# Both handlers are attached to the same logger so every log call writes
+# to both sinks.
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(levelname)s %(name)s: %(message)s",
 )
 logger = logging.getLogger("sandbox_worker")
+# Also attach a JSON file handler to /tmp/worker.jsonl for structured output.
+# This file can be tailed by the gateway (once sandbox log forwarding lands)
+# or scraped via `openshell sandbox exec -- cat /tmp/worker.jsonl` in the
+# interim. Failures to open the file are swallowed — the sandbox might be
+# running in an environment where /tmp is read-only or full.
+try:
+    _json_handler = logging.FileHandler("/tmp/worker.jsonl", mode="a")
+    _json_handler.setFormatter(_SandboxJsonFormatter())
+    logging.getLogger().addHandler(_json_handler)
+except Exception:
+    pass
 
 CONFIG_PATH = "/tmp/hermes/instance-config.json"
 HEARTBEAT_INTERVAL = 30
