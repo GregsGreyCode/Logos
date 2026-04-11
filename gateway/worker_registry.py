@@ -121,6 +121,18 @@ class _SandboxHealthEntry:
     def requester(self) -> str:
         return self._state_entry.get("requester", "")
 
+    @property
+    def registered_at(self) -> float:
+        """Unix timestamp when the sandbox record was written to the
+        state file. Back-compat with the old persistent-worker API —
+        http_api uses it as a cache-buster / incarnation tag so the
+        frontend can detect sandbox restarts."""
+        val = self._state_entry.get("created_at")
+        try:
+            return float(val) if val else 0.0
+        except (TypeError, ValueError):
+            return 0.0
+
     def to_dict(self) -> dict:
         """UI-facing shape consumed by admin_handlers.handle_agents_list."""
         created = self._state_entry.get("created_at") or 0
