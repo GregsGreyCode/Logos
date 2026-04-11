@@ -164,9 +164,22 @@ class WorkerRegistry:
     """
 
     def __init__(self) -> None:
-        # No persistent state. Kept for compat — old call sites that
-        # introspected .workers got a dict.
-        pass
+        # No persistent worker state. Old call sites that introspected
+        # ``.workers`` got a dict — we reconstruct that on demand from
+        # the executor state file.
+        #
+        # ``_active_tasks`` is an in-flight-dispatch counter keyed by
+        # sandbox_name. Incremented at the top of ``dispatch_task``,
+        # decremented in its ``finally`` block. Exposed via
+        # ``active_task_count()`` so admin_handlers can surface
+        # "agent is currently processing N tasks" to the UI — which
+        # the world view uses to render a thought-bubble indicator
+        # (MISSING.md — Phase A of the dispatch-activity tracking
+        # work). A ``defaultdict(int)`` would work but the plain dict
+        # + explicit ``get(..., 0)`` keeps the semantics obvious: the
+        # dict only holds non-zero entries; a missing key means zero
+        # in-flight tasks for that sandbox.
+        self._active_tasks: Dict[str, int] = {}
 
     # ─── Read accessors (back-compat with old persistent-worker API) ────
 
@@ -209,6 +222,17 @@ class WorkerRegistry:
     def list_healthy(self) -> List[_SandboxHealthEntry]:
         return [e for e in self.workers.values() if e.healthy]
 
+    def active_task_count(self, sandbox_name: str) -> int:
+        """Return the number of dispatches currently in flight against
+        the given sandbox.
+
+        Used by ``admin_handlers.handle_agents_list`` to expose
+        ``active_tasks`` per-agent in ``/admin/agents`` responses so
+        the world view can render a thought-bubble animation on
+        agents that are currently processing a task.
+        """
+        return self._active_tasks.get(sandbox_name, 0)
+
     # ─── Task dispatch ──────────────────────────────────────────────────
 
     async def dispatch_task(
@@ -240,6 +264,39 @@ class WorkerRegistry:
         if not task_id:
             raise ValueError("dispatch_task requires task_id in the task payload")
 
+        # Mark this sandbox as "actively processing a task" for the
+        # duration of the dispatch. See active_task_count() for the
+        # rationale — admin_handlers surfaces this counter to the
+        # frontend which uses it to render a thought-bubble animation
+        # on agents that are currently working. Decrement in the outer
+        # finally so every exit path (success, error, cancel) clears
+        # the count correctly.
+        self._active_tasks[sandbox_name] = self._active_tasks.get(sandbox_name, 0) + 1
+
+        try:
+            return await self._dispatch_task_impl(
+                sandbox_name, task_id, task, timeout, on_stream_event,
+            )
+        finally:
+            remaining = self._active_tasks.get(sandbox_name, 1) - 1
+            if remaining <= 0:
+                self._active_tasks.pop(sandbox_name, None)
+            else:
+                self._active_tasks[sandbox_name] = remaining
+
+    async def _dispatch_task_impl(
+        self,
+        sandbox_name: str,
+        task_id: str,
+        task: dict,
+        timeout: float,
+        on_stream_event: Optional[Callable[[Dict[str, Any]], Any]],
+    ) -> dict:
+        """Internal implementation of dispatch_task — the actual
+        subprocess-per-task machinery. Split out from the public
+        ``dispatch_task`` so the entry/exit counter update in the
+        outer wrapper stays readable and can't be accidentally
+        bypassed by an early return in the middle of the body."""
         # CRITICAL: look up which OpenShell gateway this sandbox lives
         # inside, and pass it via -g to the CLI. Without -g, the CLI
         # uses whatever gateway is "currently selected" in

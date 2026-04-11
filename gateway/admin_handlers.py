@@ -503,12 +503,20 @@ async def handle_agents_list(request: web.Request) -> web.Response:
         sandbox_name = _sanitize_sandbox_name(f"hermes-{name}") if name else ""
         a["sandbox_name"] = sandbox_name
         a["worker_id"] = sandbox_name
-        # Live worker status, if the sandbox has a subprocess worker
-        # registered (Plan A / TASKS.md #24: `openshell sandbox exec` —
-        # worker_connected means "the gateway has a WorkerEntry for this
-        # sandbox", worker_healthy means "the exec subprocess is still
-        # alive"). M7 in docs/MISSING.md is where the richer
-        # sandbox_phase / api_latency_ms / last_probe_ts fields will land.
+        # Live worker status, if the sandbox has a registered state-file
+        # entry (Plan A-prime / TASKS.md #24: per-task ``openshell
+        # sandbox exec`` dispatch — ``worker_connected`` now means "the
+        # gateway has a state-file entry for this sandbox", and
+        # ``worker_healthy`` means "the sandbox CR is in phase=ready").
+        # M7 in docs/MISSING.md is where the richer sandbox_phase /
+        # api_latency_ms / last_probe_ts fields will land.
+        #
+        # ``active_tasks`` is the in-flight dispatch counter from
+        # ``WorkerRegistry.active_task_count`` (MISSING.md — dispatch
+        # activity tracking, Phase A). Goes > 0 while a chat dispatch
+        # is running a task in this sandbox; the world view renders a
+        # thought-bubble indicator while > 0 so the user can see the
+        # agent "thinking" live.
         worker = worker_registry.get(sandbox_name) if worker_registry and sandbox_name else None
         if worker:
             a["worker_healthy"] = worker.healthy
@@ -518,6 +526,10 @@ async def handle_agents_list(request: web.Request) -> web.Response:
             a["worker_healthy"] = False
             a["worker_status"] = "disconnected"
             a["worker_connected"] = False
+        a["active_tasks"] = (
+            worker_registry.active_task_count(sandbox_name)
+            if worker_registry and sandbox_name else 0
+        )
 
     return web.json_response({"agents": agents})
 
