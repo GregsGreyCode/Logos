@@ -13,7 +13,28 @@
 
 ---
 
+## Status summary (verified 2026-04-11 end of session)
+
+| Ticket | Status | Notes |
+|---|---|---|
+| M1 — Editable Tools (T) in STAMP pill | **NOT STARTED** | T pill is a display-only `<span>` at `main_app.html:569`. Blocked until M10 Option D gives STAMP-T runtime teeth. |
+| M2 — Editable Policy (P) + approvals | **NOT STARTED** | P pill is a display-only `<span>` at `main_app.html:639`. Blocked until M10 Option D gives STAMP-P runtime teeth. |
+| M3 — Per-user inference routing | **NOT STARTED** | `machine_users` table exists, zero UI. No claimMachine JS, no My Inference tab. |
+| M4 — Multi-user UX polish | **NOT STARTED** | No owner badges, no shared toggle, no per-user chat filter. |
+| M5 — World view first-class surface | **PARTIALLY SHIPPED** | Phase A thought bubble from M8 landed (`AgentSprite._updateBubble` — 💭 scale-pulse when `active_tasks > 0`). Full-tab / click-to-enter-chat / multi-user world still pending. |
+| M6 — Unified observability | **DONE (MVP)** | `JsonRedactingFormatter` + `_SessionFilter` + `set_log_context` in `gateway/run.py`. `unified.jsonl` actively writing. `logos debug tail` CLI works. 4 of 5 minimum-viable items landed. |
+| M7 — Sandbox health UX | **PREMISE OUTDATED** | Original premise assumed a NemoClaw port-forward + HTTP /health probe. Plan A-prime uses per-task `openshell sandbox exec` instead, so the rename/probe design needs to be re-grounded on what Plan A-prime actually offers as a health signal. Field rename and richer observability goals still valid. |
+| M8 — Dispatch activity ledger | **PHASE A SHIPPED, PHASE B NOT STARTED** | `WorkerRegistry._active_tasks` counter, `admin_handlers` surfaces it, world view renders thought bubble. `dispatches` table, origin tagging, Admin → Activity tab still pending. |
+| M9 — Autonomous activity (visibility) | **NOT STARTED** | The three consolidation mechanisms exist (memory nudge + skill nudge + pre-reset flush) but are invisible in the UI. Memory writes during chats don't actually happen today because M10 blocks them. |
+| M10 — Plan A-prime bypasses agent loop | **NOT STARTED** | `sandbox_worker.py` is a naive chat forwarder with no `tools` payload. Option D (agent inside, action tools outside, STAMP-gated bridges) documented and recommended. Blocks M1, M2, M9. |
+
+**Recommended next execution target**: **M10 via Option D**. It unblocks M1, M2, and M9, and it's the architecture that makes STAMP's T/P axes real governance instead of decorative labels. Estimated 3-5 days of focused work — scope as its own session.
+
+---
+
 ## M1 — Editable Tools (T) in the Chats STAMP pill
+
+**Status**: NOT STARTED. Verified: T pill is `<span data-testid="stamp-t">` at `gateway/html/main_app.html:569`, no `@click` handler, no dropdown, no toggle logic. Purely informational.
 
 **State today**: The Chats tab has a STAMP governance pill row — **S**oul / **T**ools / **A**gent / **M**odel / **P**olicy. S and M are dropdowns users can change mid-chat. T displays a count but has no interaction.
 
@@ -30,6 +51,8 @@
 ---
 
 ## M2 — Editable Policy (P) in the Chats STAMP pill + approval surfacing
+
+**Status**: NOT STARTED. Verified: P pill is `<span data-testid="stamp-p">` at `gateway/html/main_app.html:639`, display-only, no click handler, no slide-out. Blocked on M10 Option D to give per-tool approval enforcement a runtime path.
 
 **State today**: P pill shows the policy name badge, no interaction. Pending approvals are badged only on the top-level Admin tab and live in Admin → Approvals. A non-admin user in the middle of a chat has no way to see or respond to an approval for their own tool call — the chat just stalls.
 
@@ -50,6 +73,8 @@
 ---
 
 ## M3 — Per-user inference routing
+
+**Status**: NOT STARTED. Verified: no `my-inference` / `claim_machine` / `claimMachine` / `machine_users` references anywhere in `main_app.html`. Data-layer functions exist in `gateway/auth/db.py` but have zero UI consumers.
 
 **State today**: `machines` (local LM Studio / Ollama endpoints) and `cloud_providers` (API-key backends) are global. Every user shares the same inference pool. The `machine_users` claims table exists with full CRUD methods (`claim_machine`, `unclaim_machine`, `list_machine_claims`, `list_user_machines`) — **no UI at all**. Claims are populated by backend setup flows only.
 
@@ -78,6 +103,8 @@
 ---
 
 ## M4 — Multi-user UX polish
+
+**Status**: NOT STARTED. Verified: no owner-badge / shared-toggle / created-by / shared_with_me references in `main_app.html`. The data shape is ready (`agents.creator_id`, `agents.shared`, `user_settings`) but zero UI consumers.
 
 **State today**: The auth / permissions layer is real, but UX defaults still assume a single operator:
 - `/chats` auto-selects the first agent on page load (era-3 residue)
@@ -111,7 +138,9 @@
 
 ## M5 — World view as a first-class, persistent surface
 
-**State today**: 960px Phaser canvas lives in the Agents tab, sharing space with the Create-Agent form. Canvas shrinks (16rem) when the form is open, grows (24rem) when closed. Agent sprites walk around the world with a real local-time day/night cycle (commit `24e3ad8`).
+**Status**: PARTIALLY SHIPPED. The M8 Phase A thought-bubble animation (`AgentSprite._updateBubble` at `gateway/world/AgentSprite.js:~170` + `_startBusyTween` at ~560) made the world view actually reflect live agent state for the first time — previously it was just walking sprites. That's a big piece of "world as a real surface not a decoration", but M5's full scope (full-tab mode, click-to-enter-chat, multi-user awareness) is still not built.
+
+**State today**: 960px Phaser canvas lives in the Agents tab, sharing space with the Create-Agent form. Canvas shrinks (16rem) when the form is open, grows (24rem) when closed. Agent sprites walk around the world with a real local-time day/night cycle (commit `24e3ad8`). Agents in flight render a pulsing 💭 thought bubble driven by `inst.active_tasks > 0` (commit `bbee66a`).
 
 **What's scaffolded**:
 - Phaser scene setup at `gateway/templates/main_app.html:2431`
@@ -132,6 +161,8 @@
 ---
 
 ## M6 — Unified observability / single source of logs
+
+**Status**: DONE (MVP). Verified 2026-04-11: `~/.logos/logs/unified.jsonl` is 4.3MB and actively growing. `JsonRedactingFormatter`, `_SessionFilter`, and `set_log_context` all present in `gateway/run.py` at lines 312/351/368. `./venv/bin/logos debug tail` CLI works. The "CLI spinner bleeds over stdout log" leftover is cosmetic and the JSON sink bypasses it entirely. Used extensively during this session to diagnose the `registered_at` crash, the `-g` routing bug, the qwen reasoning stream separation verification, and the `_flush_memories_for_session` discovery — it paid for itself multiple times today.
 
 **State today**: Logos events are scattered across **at least 6 disjoint log sources**, none of which agree with each other or are easily correlated:
 
@@ -216,14 +247,14 @@ logos debug tail --since 5m
 
 ## M7 — Sandbox health observability in the UI
 
-**State today**: The `/admin/agents` endpoint returns two booleans per agent — `worker_connected` and `worker_healthy` — which the UI reads in ~8 places to decide whether to render an agent as "chat-ready" (green pill, drag-enabled, etc.). Those booleans currently reflect **WebSocket reverse-connection state** (from the `WorkerRegistry` keyed on `sandbox_name`). When the TASKS.md #24 refactor lands, they'll be redefined to reflect **port-forward reachability + HTTP /health probe** under the same names (Approach A — zero UI churn) so the refactor doesn't block on UI work.
+**Status**: PREMISE OUTDATED, needs re-grounding. The original M7 draft assumed the TASKS.md #24 refactor would land as a NemoClaw-style port-forward + HTTP /health probe architecture — under that design, "sandbox health" meant "can the gateway HTTP-GET `/health` on a forwarded port and does the agent reply with `{"status":"ok"}`". **Plan A-prime instead landed as per-task `openshell sandbox exec` subprocesses**, which doesn't have a port-forward or an HTTP endpoint to probe. What constitutes "sandbox healthy" under Plan A-prime is different: the sandbox CR is in `phase=ready` (per `openshell sandbox list`) and the last `dispatch_task` invocation returned a clean `task_result`. The field rename and richer observability goals from M7's "What's missing" list are still valid, but they need to be re-grounded on the per-task-exec model rather than port-forward probes. Low priority until M10 Option D lands — after that, sandbox health will include "can the agent loop inside the sandbox reach its self-directed tools" which IS probeable.
 
-Approach A is the minimum; **M7 is the follow-up that makes the sandbox health surface actually informative for users**.
+**State today**: The `/admin/agents` endpoint returns two booleans per agent — `worker_connected` and `worker_healthy` — which the UI reads in ~8 places to decide whether to render an agent as "chat-ready" (green pill, drag-enabled, etc.). Under Plan A-prime those booleans now reflect **state-file entry presence + phase=="ready"** (from `_SandboxHealthEntry` in `gateway/worker_registry.py`). The old reverse-WebSocket semantics are gone, the new semantics are "does the state file show this sandbox as Ready". M8 Phase A added `active_tasks` as a third field that actually reflects real-time activity.
 
 **What's scaffolded**:
 - `/admin/agents` endpoint already returns per-agent status; the shape is well-known and consumed by 8 UI sites.
-- M6 unified logging (shipped) already captures probe-response events as structured records, so a historical latency chart is one query away.
-- NemoClaw's `agents/hermes/manifest.yaml` already specifies the health probe contract (`GET http://localhost:8642/health → {"status":"ok","platform":"hermes-agent"}`) and timeout (90s).
+- M6 unified logging (shipped) already captures structured records, so a historical latency chart is one query away if probe events start getting emitted.
+- `WorkerRegistry._active_tasks` (from M8 Phase A) gives us the first real "is this agent currently doing something" signal.
 
 **What's missing**:
 1. **Rename the fields** from `worker_connected` / `worker_healthy` to `sandbox_reachable` / `sandbox_api_healthy`. The "worker" vocabulary is a lie after #24 — there is no worker, there's a port-forward + HTTP probe. Clearer naming reduces future confusion.
@@ -248,6 +279,8 @@ Approach A is the minimum; **M7 is the follow-up that makes the sandbox health s
 ---
 
 ## M8 — Dispatch activity ledger
+
+**Status**: PHASE A SHIPPED (commit `bbee66a`), PHASE B NOT STARTED. Verified: `gateway/worker_registry.py:139` has `self._active_tasks: Dict[str, int]`, `dispatch_task` increments/decrements, `admin_handlers.handle_agents_list` emits `active_tasks` on each agent record, `gateway/world/AgentSprite.js:_updateBubble` renders the 💭 bubble. The `dispatches` table, per-caller origin tagging, and Admin → Activity tab are all still pending.
 
 **State today**: Phase A of the dispatch-activity work shipped — `WorkerRegistry` tracks an in-memory `_active_tasks` counter that goes up when `dispatch_task` enters and down when it exits, `admin_handlers.handle_agents_list` surfaces it as `active_tasks` on each agent record, and the world-view Phaser `AgentSprite` renders a 💭 thought-bubble with a subtle scale pulse whenever `active_tasks > 0`. The user can now see at a world-view glance "Tali is thinking about something right now" without guessing.
 
@@ -301,6 +334,10 @@ Approach A is the minimum; **M7 is the follow-up that makes the sandbox health s
 ---
 
 ## M9 — Autonomous agent activity (discoverability, not cadence)
+
+**Status**: NOT STARTED, AND partially blocked on M10. Two separate points here:
+1. The three underlying consolidation mechanisms (memory nudge `agent.py:4118`, skill nudge `agent.py:4131`, pre-reset flush `run.py:720`) all exist in code and were verified 2026-04-11. This M-ticket is about making them *visible and consistent*, not about adding new triggers.
+2. **The nudges don't actually fire during Plan A-prime chats** because `sandbox_worker.py` doesn't invoke `AIAgent.run_conversation`. Until M10 is fixed, nudges are dead code for web-UI chats. The pre-reset flush still works because it's an in-process path that goes around the sandbox entirely. M9's "visible memory writes" feature depends on memory writes actually *happening* during chats, so M9 is blocked on M10 for the chat path (but not for the flush path).
 
 **State today — two corrections to earlier misreadings of this file**: Logos **already has** a layered autonomous-consolidation system. Three mechanisms, together they cover active-session incremental consolidation AND end-of-session final consolidation — the "cadence" problem I wrote this M-ticket around in the first draft doesn't actually exist. What IS missing is visibility and dispatch-path consistency, not triggers.
 
@@ -373,95 +410,11 @@ The nudges handle "incremental consolidation during active use", the flush handl
 
 **Direction established**: 2026-04-11 session — user observed qwen reasoning mid-flush in LM Studio and asked about it, exposing the flush mechanism. Same user then correctly pointed out that Hermes already has in-turn memory/skill nudges built in and rejected the "add nightly cadence" premise of the first draft of this ticket. This corrected version scopes M9 to discoverability, dispatch-path consistency, and user-visible memory writes — NOT to adding new triggers.
 
-**What's missing**:
-
-1. **A reflection scheduler**. Periodically wakes each agent and dispatches a synthetic "system" turn that asks the agent to review its recent conversations, extract durable learnings, write memories, and optionally flag evolution proposals. Shape is basically:
-   ```python
-   async def run_reflection_cycle(agent):
-       last_n_turns = load_recent_chat_turns(agent.id, hours=24)
-       if not last_n_turns: return   # nothing to reflect on
-       task = {
-           "type": "task",
-           "task_id": new_uuid(),
-           "message": REFLECTION_PROMPT_TEMPLATE.format(turns=last_n_turns),
-           "history": [],
-           "context_prompt": agent.soul_prompt + REFLECTION_SOUL_SUFFIX,
-           "_internal_origin": "self_reflection",
-       }
-       await worker_registry.dispatch_task(agent.sandbox_name, task, ...)
-   ```
-
-2. **A cadence model**. Options:
-   - Fixed interval (every N hours) — simplest, boring
-   - Activity-triggered (run N minutes after the last user turn in a session) — reflects fresh context
-   - Nightly (one reflection per agent per day at 3am) — matches human rhythm, cheapest
-   - User-configurable per agent (soul manifest has `reflection_cadence: hourly|nightly|never`)
-   
-   Probably start with "nightly, opt-out per agent" and expand from there.
-
-3. **Reflection prompt template** — separate concern from the dispatch machinery. Needs to be authored with care: should reinforce the agent's persona/soul, summarize what happened, ask for takeaways, authorize memory writes. Likely lives in `souls/<name>.md` or a shared `REFLECTION.md` skill.
-
-4. **Dispatch origin integration**. Reflection dispatches must be tagged `origin='self_reflection'` in the Phase B ledger so the user can see "Tali self-reflected 7 times this week" as distinct from "Tali answered 42 user messages". Without the ledger, reflections vanish into the same SSE firehose as chats and the user can't tell they're happening.
-
-5. **World-view visual affordance**. When an agent is in a reflection cycle, the thought bubble from M8 Phase A should render with a distinct glyph (🌙 for nightly reflection?) or color so the user can tell "Tali is thinking *about her memories*, not about a user message". Pure UX polish on top of the counter.
-
-6. **A memory-write channel that's visible to the user**. If the agent writes a new memory during reflection, the user should SEE that happen — a toast notification, a notification dot on the agent's avatar, a "Tali wrote 2 new memories" card in a feed somewhere. Otherwise reflection is invisible and might as well not be happening, UX-wise. This is the whole *point* of the tamagotchi identity — you watch your agents grow.
-
-7. **Safety / cost guards**. Reflection is an LLM call that costs compute (even on local LM Studio) and writes durable state. Guards:
-   - Global "pause all reflection" switch in Admin → Settings
-   - Per-agent budget ("no more than N reflections per day")
-   - Dry-run mode that captures the proposed memory writes as evolution proposals instead of auto-applying them
-
-**Why it's architecturally large**:
-
-1. Needs an entirely new cron-like scheduler that isn't the current `cron/scheduler.py` (that one is user-authored one-off jobs, not a periodic system loop).
-2. Requires a new "internal" dispatch origin the frontend and ledger both understand.
-3. The reflection prompt design is a product-shaping decision, not a plumbing decision — it changes how the agent thinks of itself and what memories it forms.
-4. Touches soul manifests, memory write path, evolution_proposals table, notification UI — it's a cross-cutting feature that spans most of the app.
-5. User-facing discoverability (M9 #6) is where most of the UX work lives — make reflection feel like the agent *living*, not like a hidden backend cron.
-
-**Dependency**: Must land **after** M8 Phase B (the dispatch ledger). Without a way to tag and count self-reflections, the feature is invisible to the user and no analytics can tell it from user traffic. Strong preference for Phase C to be scoped as its own focused session, not piggy-backed onto a plumbing commit.
-
-**Direction established**: 2026-04-11 session — user observation that the tamagotchi / living-agent identity requires autonomous agent behavior, currently impossible. This is the M-feature that most directly shapes the product identity of Logos vs other agent frameworks.
-
----
-
-## Relationships
-
-```
-M1 (T editable) ─┐
-                 ├─→ both feed the Chats STAMP pill becoming fully interactive
-M2 (P editable) ─┘
-
-M3 (per-user routing) ──→ M4 (multi-user polish) [M3 is the infrastructure M4 needs]
-                      └─→ fixes the dupe-surface accident root cause
-
-M5 (world as surface) ──→ extends pass 3 S2 (CRUD slide-out)
-
-M6 (unified logs) ──→ unblocks every future debugging session
-                 ──→ prerequisite for operating M3+M4 at multi-user scale
-
-M7 (sandbox health UX) ──→ depends on TASKS.md #24 refactor (port-forward + /health probe)
-                      ──→ depends on M6 (log-stream as data source for latency sparklines)
-                      ──→ makes the new architecture self-documenting in the UI
-
-M8 (dispatch ledger) ──→ Phase A shipped (in-memory counter + world thought bubble)
-                     ──→ Phase B depends on M6 (ledger cross-references log by task_id)
-                     ──→ Phase B unlocks M9 (self-reflection needs the ledger to be
-                         distinguishable from user chats)
-
-M9 (self-reflection) ──→ depends on M8 Phase B
-                     ──→ the tamagotchi / living-agent identity feature
-                     ──→ product-shaping, not plumbing — scope as its own session
-```
-
-**Recommended tackling order**: **M6 → #24 refactor → M7 → M3 → M4 → M2 → M1 → M5 → M8 Phase B → M9.**
-
-Rationale: **M6 goes first** because it pays for itself the next time anything breaks, and because every subsequent M depends on being able to reason about what happened across components. **TASKS.md #24** (the NemoClaw-pattern refactor) unblocks chat end-to-end and forces the sandbox transport question. **M7** then accurately surfaces the new transport's health in the UI. Then M3 unlocks M4; M2 is user-visibility-critical once M4 is real; M1 is the last polish on the STAMP pill once everything else is in place; M5 is the long arc that benefits from everything else first. **M8 Phase B** lands after the UI polish cluster because the ledger is lower-stakes than the interactive surfaces and can be retrofitted without disrupting anything already shipped. **M9** is last because it's the most product-shaping feature and deserves the richest context — it's also the one most likely to reveal further infrastructure needs once prototyped.
-
 ---
 
 ## M10 — Plan A-prime bypasses the Hermes agent loop entirely
+
+**Status**: NOT STARTED. Discovered 2026-04-11 during M9 scoping. The most architecturally significant finding in the doc — blocks M1, M2, M9's chat-path discoverability, and the tamagotchi product identity generally. Recommended fix: Option D below (agent inside, action tools outside, STAMP-gated bridges). Estimated 3-5 days of focused work.
 
 **State today — a fundamental finding surfaced while scoping M9**: Plan A-prime's `docker/sandbox_worker.py` is a **naive chat-completion forwarder**. It builds `messages = [system(context_prompt), ...history, user(message)]`, sends `{model, messages, stream, max_tokens}` to `inference.local/v1/chat/completions`, and streams back `delta.content` + `delta.reasoning_content` as token/thinking events. **There is no `tools` field in the payload, no `tool_choice`, no `tool_calls` handling in the response loop, and no invocation of `AIAgent.run_conversation` anywhere in the sandbox path.**
 
@@ -602,6 +555,62 @@ Keep `sandbox_worker.py` lightweight but extend `_run_inference` to parse `tool_
 **Dependency**: Must land before M9 (visible memory writes). M9 depends on memory writes actually *happening* during chats, which requires this restoration. M1 (editable STAMP-T) and M2 (editable STAMP-P) become concretely buildable *after* Option D because they depend on the grant/policy system having runtime teeth.
 
 **Direction established**: 2026-04-11 session — user asked to ship "visible memory writes" and during scoping I discovered that memory writes don't happen during chats at all because the sandbox worker doesn't run the agent loop. I presented three options (A: full agent in sandbox, B: agent on host, C: minimal tool loop in sandbox). User responded with the correct fourth framing: "from a protective save policy drive perspective it's probably better to have the entire agent on the inside. But with regards to tooling, apart from ones the agent needs to improve and remember, tools to act should probably be available on the outside and confirmed by users to be given to the agent. Part of the STAMP model." That framing became Option D above, and supersedes the earlier recommendation of Option B.
+
+---
+
+## Relationships
+
+```
+M6 (unified logs) ══════════→ DONE — MVP shipped, used daily now
+                        └──→ unblocks every debugging session (already paid off)
+
+TASKS.md #24 (chat transport) → DONE — Plan A-prime shipped end-to-end
+
+M8 Phase A (active_tasks + bubble) → DONE — world view reflects live activity
+
+─── blockers remain below this line ───
+
+M10 (sandbox_worker ⟷ AIAgent) ══╦══→ Option D: agent inside, tools outside,
+                                  ║     STAMP-gated bridges
+                                  ║
+                                  ╠══→ BLOCKS M1 (STAMP-T has no runtime teeth
+                                  ║                until Option D lands)
+                                  ╠══→ BLOCKS M2 (STAMP-P has no runtime teeth
+                                  ║                until Option D lands)
+                                  ╚══→ BLOCKS M9 chat-path visibility
+                                        (memory writes don't happen during
+                                         chats without the agent loop)
+
+M1 (T editable) ─┐
+                 ├──→ depend on M10 Option D
+M2 (P editable) ─┘
+
+M3 (per-user routing) ──→ M4 (multi-user polish) [M3 is the infrastructure M4 needs]
+                      └──→ fixes the dupe-surface accident root cause
+
+M5 (world as surface) ──→ extends pass 3 S2 (CRUD slide-out)
+                      ──→ Phase A (M8's thought bubble) already ships the
+                          "live agent state" half
+
+M7 (sandbox health UX) ──→ premise needs re-grounding on Plan A-prime's
+                            per-task exec model, not the old port-forward design
+                      ──→ depends on M6 (shipped — log-stream as data source)
+                      ──→ depends on M8 Phase A (active_tasks is the first
+                          real "is agent busy" signal — shipped)
+
+M8 Phase B (ledger) ──→ depends on M6 (shipped)
+                    ──→ unlocks M9 analytics surface
+
+M9 (activity visibility) ──→ depends on M10 Option D (for chat-path visibility)
+                         ──→ depends on M8 Phase B (for ledger tagging)
+                         ──→ the tamagotchi / living-agent identity feature
+```
+
+**Recommended tackling order (updated end of 2026-04-11)**:
+
+**M10 (Option D) → M1 + M2 (both become buildable after Option D) → M8 Phase B → M9 → M3 → M4 → M7 → M5 (full-tab world)**
+
+Rationale: **M6 is already done** and paid for itself multiple times today. **TASKS.md #24 is already done** — Plan A-prime ships end-to-end. **M8 Phase A is already done** — the thought bubble makes live agent state visible for the first time. The next focused chunk is **M10 via Option D**, because it unblocks THREE other tickets (M1, M2, M9's chat-path discoverability) and is the architecture that makes STAMP's T/P axes real governance. After Option D lands, M1 and M2 become concrete UI work; after that, the dispatch ledger (M8 Phase B) and visible memory writes (M9) are the next natural cluster. Multi-user (M3 → M4) and world-view polish (M5 full-tab) can run in parallel with the Option D work or follow after. M7 needs re-grounding before it can move forward — its original premise (NemoClaw port-forward + HTTP probe) was superseded by Plan A-prime's per-task exec model.
 
 ---
 
