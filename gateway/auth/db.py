@@ -420,12 +420,12 @@ CREATE TABLE IF NOT EXISTS model_routes (
     id              TEXT PRIMARY KEY,
     provider        TEXT NOT NULL,                      -- 'lmstudio' / 'openai' / 'anthropic' / etc
     model           TEXT NOT NULL,                      -- 'openai/gpt-oss-20b'
-    openshell_name  TEXT NOT NULL UNIQUE,               -- 'logos-openshell' (primordial) or 'logos-os-gpt-oss-20b'
-    openshell_port  INTEGER NOT NULL UNIQUE,            -- 9090 (primordial), 9091, 9092, ...
+    openshell_name  TEXT NOT NULL UNIQUE,               -- sanitized model name, e.g. 'qwen-qwen3-5-9b'
+    openshell_port  INTEGER NOT NULL UNIQUE,            -- 9090, 9091, 9092, ...
     status          TEXT NOT NULL DEFAULT 'provisioning', -- 'provisioning' | 'ready' | 'error' | 'stopped'
     status_detail   TEXT,                               -- last error / phase note (truncated to 500 chars)
     is_default      INTEGER NOT NULL DEFAULT 0,         -- exactly one row should have is_default=1
-    is_primordial   INTEGER NOT NULL DEFAULT 0,         -- marks the original gateway; cannot be deleted
+    is_primordial   INTEGER NOT NULL DEFAULT 0,         -- DEPRECATED: always 0 in new rows (primordial concept removed)
     created_at      INTEGER NOT NULL,
     updated_at      INTEGER NOT NULL,
     UNIQUE(provider, model)
@@ -1061,18 +1061,16 @@ def get_default_model_route() -> Optional[dict]:
 def list_model_routes() -> list[dict]:
     with _conn() as conn:
         rows = conn.execute(
-            "SELECT * FROM model_routes ORDER BY is_primordial DESC, is_default DESC, created_at"
+            "SELECT * FROM model_routes ORDER BY is_default DESC, created_at"
         ).fetchall()
         return [dict(r) for r in rows]
 
 
 def update_model_route(route_id: str, **fields) -> Optional[dict]:
     """Partial update. Only the listed fields are mutable; created_at,
-    is_primordial, openshell_name, openshell_port, provider, model are
-    immutable after creation. Use set_default_model_route() to change
-    is_default since it has cross-row semantics. Use
-    rename_model_route_openshell_name() for the one legitimate exception
-    (the model-name standardisation migration)."""
+    openshell_name, openshell_port, provider, model are immutable after
+    creation. Use set_default_model_route() to change is_default since
+    it has cross-row semantics."""
     allowed = {"status", "status_detail"}
     updates = {k: v for k, v in fields.items() if k in allowed}
     if not updates:
@@ -1092,13 +1090,10 @@ def rename_model_route_openshell_name(
 ) -> Optional[dict]:
     """Rename the openshell_name on an existing route row.
 
-    Used by the model-name standardisation migration to bring routes
-    provisioned under the old ``logos-os-<sanitized-model>`` (or
-    bootstrap ``logos-openshell``) naming scheme over to the prefix-free
-    pure-model-name scheme. Caller is expected to have already
-    registered the new name as a client-side alias for the same physical
-    gateway via ``openshell gateway add --local`` so the old and new
-    names point at the same underlying container.
+    Kept for future use by a proper "destroy container + re-provision
+    under new name" admin flow. The previous client-side-alias migration
+    that used this helper was structurally broken (see the module
+    docstring on gateway/openshell_routes.py) and has been removed.
     """
     now = int(time.time() * 1000)
     with _conn() as conn:
@@ -1130,8 +1125,10 @@ def set_default_model_route(route_id: str) -> Optional[dict]:
 
 
 def delete_model_route(route_id: str) -> bool:
-    """Delete a route. Caller must verify is_primordial=0 and that no
-    agents are bound (count_agents_using_route(route_id) == 0)."""
+    """Delete a route. Caller must verify no agents are bound
+    (count_agents_using_route(route_id) == 0) and that this isn't the
+    last remaining route (see gateway.openshell_routes.destroy_route
+    for the full guards)."""
     with _conn() as conn:
         cur = conn.execute("DELETE FROM model_routes WHERE id = ?", (route_id,))
         return cur.rowcount > 0

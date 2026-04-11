@@ -25,10 +25,10 @@ class InstanceConfig:
     # OpenShell route binding — id of a row in auth.db model_routes that
     # determines which OpenShell gateway the sandbox is spawned inside.
     # When None, the executor falls back to (a) the row marked is_default=1
-    # in model_routes, or (b) the primordial logos-openshell gateway with
-    # the env-resolved model. Lets multiple agents target different models
-    # at the same time without OpenShell's "one forced model per gateway"
-    # design becoming a bottleneck.
+    # in model_routes, or (b) the first available route — see
+    # _resolve_route in gateway/executors/openshell.py. Lets multiple
+    # agents target different models at the same time without OpenShell's
+    # "one forced model per gateway" design becoming a bottleneck.
     model_route_id: Optional[str] = None
     # k8s-specific: resolved before passing to KubernetesExecutor
     tool_overrides: dict = field(default_factory=dict)
