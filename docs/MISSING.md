@@ -461,6 +461,75 @@ Rationale: **M6 goes first** because it pays for itself the next time anything b
 
 ---
 
+## M10 — Plan A-prime bypasses the Hermes agent loop entirely
+
+**State today — a fundamental finding surfaced while scoping M9**: Plan A-prime's `docker/sandbox_worker.py` is a **naive chat-completion forwarder**. It builds `messages = [system(context_prompt), ...history, user(message)]`, sends `{model, messages, stream, max_tokens}` to `inference.local/v1/chat/completions`, and streams back `delta.content` + `delta.reasoning_content` as token/thinking events. **There is no `tools` field in the payload, no `tool_choice`, no `tool_calls` handling in the response loop, and no invocation of `AIAgent.run_conversation` anywhere in the sandbox path.**
+
+**Concrete implications for every primary chat** (user sends message to Tali/Grace via the browser):
+
+| Feature | Active? |
+|---|---|
+| Soul text as system prompt | Yes (via `context_prompt`) |
+| Conversation history | Yes |
+| Reasoning content streaming (`reasoning_content`) | Yes |
+| `memory_tool` — any call | **No** (not in payload, no handler) |
+| `skill_manage` / `skills_list` / `skill_view` | **No** |
+| `memory_nudge` (every 10 user turns, `agent.py:4118`) | **No** — fires inside `AIAgent.run_conversation`, which the worker never invokes |
+| `skill_nudge` (every 15 tool iterations) | **No** — same |
+| `delegate_tool` (sub-agent spawn) | **No** |
+| `terminal_tool` (shell exec) | **No** |
+| `browser_tool` | **No** |
+| `schedule_cronjob` / `list_cronjobs` / `remove_cronjob` | **No** |
+| `knowledge_search` / `knowledge_add` | **No** |
+| Every other tool declared in `tools/` | **No** |
+| RunRecorder / `agent_runs` table writes | **No** (recorder init lives inside `AIAgent.run_conversation`) |
+| Workspace TTL cleanup trigger | **No** |
+
+The full `AIAgent` class (`agents/hermes/agent.py`, ~4500 lines) only runs in three places:
+1. `_flush_memories_for_session` — session expiry / `/reset` / `/resume`, in-process on the host (bypasses sandbox — see M9)
+2. Direct CLI invocations (`hermes` at the terminal — out-of-scope for the web UI)
+3. Legacy paths that predate Plan A-prime and may be partially dead
+
+**What this means concretely**: the "Hermes" your agents present as is currently *just the soul prompt in a system message followed by a bare LM Studio chat*. No tool use. No memories written during chats. No self-improvement. No delegation. No workspace management. No knowledge search. The entire multi-thousand-line agent loop is sitting unused for every single web-UI chat you have.
+
+This **was not the case** pre-Plan-A. The old reverse-WebSocket worker design ran the full `AIAgent` inside the sandbox — the sandbox was the home of the agent loop, not just a chat-completion proxy. Plan A and Plan A-prime both stripped that out to get the transport working, with the intention of adding it back. It wasn't added back.
+
+**How we got here** (for the record so this doesn't get mis-blamed on a later hand): the original Plan A and Plan A-prime refactors intentionally kept `sandbox_worker.py` minimal — a single `_run_inference` call — because the priority was "make the dispatch transport work at all". The idea was to restore full agent functionality after the transport was proven. The transport IS proven now. This is that restoration work.
+
+**Three paths forward**, each with different tradeoffs:
+
+### Option A: Full AIAgent in the sandbox (architecturally correct, biggest lift)
+
+Replace `sandbox_worker._run_inference` with `AIAgent.run_conversation`. Import `AIAgent` and its dependencies into `Dockerfile.hermes-sandbox`. Every tool the agent might call needs to be available inside the sandbox (filesystem-wise and import-wise). The agent runs fully inside the pod; tool calls execute inside the pod; memory writes go to paths inside the pod and need to sync back to the host for persistence.
+
+- **Pros**: architecturally pure. Tool calls are truly isolated. Matches the pre-Plan-A design.
+- **Cons**: large scope. Every tool needs to be shipped into the sandbox image (current image is minimal: Python + aiohttp). Memory/skills need persistent mount or sync-back. Workspace paths inside the sandbox vs host filesystem diverge. The sandbox image balloons from ~250MB to probably >1GB. Cold-start time on first spawn jumps significantly.
+- **Estimated scope**: 2-3 days of careful work. High risk of "now we have tool-call bugs in the sandbox environment" follow-ups.
+
+### Option B: AIAgent in the gateway, inference via sandbox (hybrid, pragmatic)
+
+Run `AIAgent` in the gateway process (like `_flush_memories_for_session` already does). Tool calls execute on the host. When the agent needs to call the LLM, route that call through the sandbox — either via the existing `openshell sandbox exec` per-task path (the agent becomes a gateway-side loop that farms each chat-completion call out to the sandbox for isolation), OR by having the agent hit `https://inference.local/v1` directly from the host (bypassing the sandbox entirely, like flush already does).
+
+- **Pros**: restores full agent functionality fast. Tool calls inherit the gateway's filesystem access so `memory_tool`, `skill_manager_tool`, `workspace`, etc. all just work. No sandbox image bloat. Low cold-start cost. Reuses the proven `_flush_memories_for_session` pattern.
+- **Cons**: tool execution is on the host, not sandboxed. If the user wanted the sandbox to be a security boundary for tools (terminal, browser, filesystem), this path doesn't provide that. The sandbox becomes essentially a proxy for inference calls only — its isolation becomes cosmetic for the chat path.
+- **Estimated scope**: 1 day. The machinery is already built (`_flush_memories_for_session` proves the shape works).
+
+### Option C: Add a tool-loop to `sandbox_worker.py` without pulling in full AIAgent (middle ground)
+
+Keep `sandbox_worker.py` lightweight but extend `_run_inference` to parse `tool_calls` from the LM Studio response and execute a whitelist of sandbox-safe tools inline (memory_tool, skill_manage). Keep terminal/browser/delegate out of scope for the sandbox. Send `tools=[...]` in the payload so the model can actually request tool use.
+
+- **Pros**: sandbox stays slim. Memory and skill consolidation work during chats (the user's original expectation). No host-side agent loop. Scope-bounded.
+- **Cons**: reimplements a fraction of `AIAgent.run_conversation` in `sandbox_worker.py` — duplication risk. Any new tool the user wants in chats needs to be ported over. The "full Hermes experience" is partially delivered — the most-important tools work but the long tail doesn't. Memory_tool and skill_manage need to be importable inside the sandbox image (they're both pure Python so that's easy).
+- **Estimated scope**: ~1 day. Well-bounded. Doesn't preclude doing Option A or B later.
+
+**Recommended tackling order** (my opinion): **Option B first**, because it's the fastest path to restoring the full agent experience and uses infrastructure that's already been proven to work. Then, if the sandbox isolation gap becomes a real security concern (e.g. a user installs a terminal-heavy agent that shouldn't have host shell access), migrate the heavy tools to Option A while leaving memory/skills on Option B. Option C is the compromise path if neither A nor B feel right.
+
+**Dependency**: Must land before M9 (visible memory writes). M9 depends on memory writes actually *happening* during chats, which requires this restoration.
+
+**Direction established**: 2026-04-11 session — user asked to ship "visible memory writes" and during scoping I discovered that memory writes don't happen during chats at all because the sandbox worker doesn't run the agent loop. User instinct that "Hermes already has periodic triggers" was correct in principle but inert in practice for their current Plan A-prime setup. This M-ticket is the work to make the correct-in-principle layer actually fire.
+
+---
+
 ## Navigation consolidation — not yet scoped as an M-ticket
 
 **State today**: The 5-tab navbar (Agents, Chats, Compare, Settings, Admin) was audited in `docs/audit/pass3_ui_audit.md` and judged to "mostly work" against the 8-domain model sketched in pass2. The audit focused on:
