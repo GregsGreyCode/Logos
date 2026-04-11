@@ -361,20 +361,36 @@ def refresh_status(route_id: str) -> Optional[dict]:
       * background reconciliation if a route is stuck in 'provisioning'
 
     Status transitions written here:
-      * ``provisioning`` → ``ready``  (gateway info succeeded)
-      * ``ready``        → ``error``  (gateway info failed)
+      * ``ready``        → ``error``  (gateway info failed — route went bad)
       * ``error``        → ``ready``  (gateway came back up)
+
+    Intentionally does NOT touch rows in ``provisioning``. Those
+    belong to an in-flight background ``finish_provisioning`` task;
+    that task is the authoritative writer and will flip the row to
+    ``ready`` (or ``error``) when it completes. Stomping on it here
+    was the cause of a nasty bug where clicking the Refresh button
+    on a freshly-provisioned row mid-cold-start would overwrite
+    ``provisioning`` → ``error`` with "gateway info reported the
+    underlying gateway is unreachable" (literally true at that
+    instant — the gateway was still being started — but wrong to
+    record as a terminal error state). The background task would
+    then overwrite with ``ready`` a few seconds later and the row
+    would flash red→green in the UI.
     """
     route = auth_db.get_model_route(route_id)
     if not route:
         return None
+    current_status = route.get("status")
+    if current_status == "provisioning":
+        # Background task owns this row — don't touch.
+        return route
     if gateway_is_alive(route["openshell_name"]):
         new_status = "ready"
         new_detail = None
     else:
         new_status = "error"
         new_detail = "gateway info reported the underlying gateway is unreachable"
-    if new_status != route["status"] or new_detail != route.get("status_detail"):
+    if new_status != current_status or new_detail != route.get("status_detail"):
         auth_db.update_model_route(
             route_id, status=new_status, status_detail=new_detail,
         )
