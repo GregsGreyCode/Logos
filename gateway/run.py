@@ -5105,36 +5105,26 @@ async def start_gateway(config: Optional[GatewayConfig] = None, replace: bool = 
     except Exception as _reap_err:
         logger.warning("reap_orphan_openshell_processes failed: %s", _reap_err)
 
-    # Migrate any model_routes rows still using the old prefixed naming
-    # scheme (``logos-openshell``, ``logos-os-<model>``) to the new
-    # prefix-free model-name scheme. Idempotent — safe to run on every
-    # startup. The helper registers a client-side openshell alias for
-    # each new name and updates the DB row in place; existing state-file
-    # entries that still reference the old name continue to work because
-    # the alias and the original both point at the same physical gateway.
+    # NOTE: the `migrate_routes_to_model_names` helper (in
+    # gateway/openshell_routes.py) used to run here and rename legacy
+    # `logos-openshell` / `logos-os-<model>` routes to the bare
+    # `<model>` scheme via a client-side `openshell gateway add` alias.
     #
-    # The migration reads model_routes via auth_db, so we must initialise
-    # the auth DB first. init_db() is idempotent (CREATE TABLE IF NOT
-    # EXISTS + additive ALTERs) so it's safe to call here AND again later
-    # from http_api's startup. Without this, the migration would fail
-    # with "Auth DB not initialised — call init_db() first" on every
-    # gateway start and the old ``logos-os-*`` names would never get
-    # cleaned up.
-    try:
-        from pathlib import Path as _Path
-        from gateway.auth import db as _auth_db
-        from gateway.openshell_routes import migrate_routes_to_model_names
-        _hermes_home = _Path(
-            os.environ.get("LOGOS_HOME")
-            or os.environ.get("HERMES_HOME")
-            or str(_Path.home() / ".logos")
-        )
-        _auth_db.init_db(_hermes_home)
-        renamed = migrate_routes_to_model_names()
-        if renamed:
-            logger.info("model-route name migration: renamed %d row(s)", renamed)
-    except Exception as _mig_err:
-        logger.warning("migrate_routes_to_model_names failed: %s", _mig_err)
+    # That approach is structurally broken: `openshell sandbox create
+    # --from <Dockerfile>` derives its target container name from the
+    # gateway name (`openshell-cluster-<gateway>`), so the alias works
+    # for gRPC/exec calls (endpoint-URL routed) but the image-push
+    # path fails with `404: No such container: openshell-cluster-
+    # <alias>`. Image push has to target the actual Docker container
+    # name, not the client-side alias.
+    #
+    # Proper rename requires destroying the existing gateway and
+    # re-provisioning it under the clean name via `openshell gateway
+    # start --name <model>`, which is a user-driven action (loses any
+    # per-gateway provider/inference-router state). See TASKS.md entry
+    # for "model-based gateway names" and MISSING.md M-TBD for the
+    # proper flow — until that lands, the migration must stay OFF or
+    # /setup will break for any user whose routes were auto-renamed.
 
     runner = GatewayRunner(config)
     _set_current_runner(runner)
