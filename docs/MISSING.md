@@ -300,9 +300,17 @@ Approach A is the minimum; **M7 is the follow-up that makes the sandbox health s
 
 ---
 
-## M9 — Autonomous agent activity (discoverable, on-ledger, richer cadence)
+## M9 — Autonomous agent activity (discoverability, not cadence)
 
-**State today — correction to an earlier misreading**: Logos **does already** have an autonomous agent-activity mechanism. It lives in `gateway/run.py:720 _flush_memories_for_session`, fires on three triggers (session expiry watcher, `/reset` command, `/resume` command), and spins up a **temporary in-process `AIAgent`** with `enabled_toolsets=["memory", "skills"]` to review the conversation transcript and save memories/skills before the session is cleared. The injected system turn is word-for-word:
+**State today — two corrections to earlier misreadings of this file**: Logos **already has** a layered autonomous-consolidation system. Three mechanisms, together they cover active-session incremental consolidation AND end-of-session final consolidation — the "cadence" problem I wrote this M-ticket around in the first draft doesn't actually exist. What IS missing is visibility and dispatch-path consistency, not triggers.
+
+The three mechanisms:
+
+1. **In-turn memory nudge** (`agents/hermes/agent.py:4118`). Every N user turns (default 10, configurable via soul's `memory.nudge_interval`), the next user message gets a `[System: Consider whether there's anything worth saving to your memories.]` footer injected before the agent sees it. Counter resets when the memory tool is actually called. Runs through whatever dispatch path the chat turn uses (Plan A-prime sandbox for primary chats). **Completely automatic, completely invisible to the user.**
+
+2. **In-turn skill nudge** (`agents/hermes/agent.py:4131`). Same pattern, default 15 tool-loop iterations. Fires when the previous task involved many tool calls — the signal "there might be a reusable pattern here worth capturing".
+
+3. **Pre-reset memory flush** (`gateway/run.py:720 _flush_memories_for_session`), fires on three triggers (session expiry watcher, `/reset` command, `/resume` command). Spins up a **temporary in-process `AIAgent`** with `enabled_toolsets=["memory", "skills"]` to review the full transcript and save memories/skills before the session is cleared. The injected system turn is word-for-word:
 
 ```
 [System: This session is about to be automatically reset due to
@@ -320,44 +328,50 @@ Do NOT respond to the user. Just use the memory and skill_manage
 tools if needed, then stop.]
 ```
 
-An earlier audit of this file wrongly claimed "no agent in Logos ever initiates activity on its own." The audit was looking at `worker_registry.dispatch_task` call sites — the flush mechanism doesn't go through that path (it creates a fresh in-process `AIAgent` instead), which is why it escaped the grep. That misreading is corrected here.
+An earlier audit of this file wrongly claimed "no agent in Logos ever initiates activity on its own." The audit was looking at `worker_registry.dispatch_task` call sites — the flush mechanism doesn't go through that path (it creates a fresh in-process `AIAgent` instead), and the in-turn nudges live inside `run_conversation` which only grep hit as "it's a Python function, not a scheduled job". Both misreadings are corrected here.
 
-**What's actually missing** (and why M9 is still a real M-ticket despite the correction):
+Together, the three mechanisms form a nicely layered system:
 
-1. **Discoverability — the whole point of the tamagotchi identity is that you can SEE your agents live.** Today, memory flushes are completely invisible to the user. No SSE event in the chat UI, no log entry in the unified log tagged as "self-reflection", no increment on the `active_tasks` counter from M8 Phase A (because the flush bypasses `dispatch_task` and therefore bypasses the counter), no thought-bubble animation in the world view, no toast notification when a new memory is actually written. An agent can review 30 conversations a day and save 8 memories and you'd never know unless you tailed the raw gateway log.
+| Mechanism | Trigger | Cadence | Dispatch path |
+|---|---|---|---|
+| Memory nudge | user turn | every 10 user turns | piggy-backs on user chat → sandbox (Plan A-prime) |
+| Skill nudge | user turn after long tool loop | every 15 tool iterations | same |
+| Pre-reset flush | session expires / `/reset` / `/resume` | one-shot on session end | **in-process on host, bypasses sandbox** |
 
-2. **Architectural divergence**: the flush path uses `runtime_kwargs` + in-process `AIAgent` (hits the provider API directly on the host network) while the primary chat path uses `openshell sandbox exec` per-task (Plan A-prime, TASKS.md #24). That means the flush is **NOT subject to** the sandbox's network policy, filesystem isolation, or the worker-registry's activity counter. A reflection that writes memories runs with full host access, while the conversation that triggered the reflection ran in an isolated sandbox. That's a split worth making explicit and deciding about intentionally.
+The nudges handle "incremental consolidation during active use", the flush handles "final consolidation when the session ends". **There is no gap that needs a new nightly-reflection scheduler** — adding one would be duplicative of the nudge mechanism. That's what the original draft of this M-ticket wrongly proposed. What's actually missing is discoverability and dispatch-path consistency.
 
-3. **The only trigger is session expiry** (or explicit `/reset`/`/resume`). There's no periodic "nightly reflection" cadence, no activity-triggered "review what happened in the last hour", no per-agent opt-in schedule. If a session never expires and the user never runs `/reset`, the agent never reflects — so the most-loved agents are the ones that *least* consolidate their memories. The opposite of what you want.
+**What's actually missing** (the real M9 scope):
+
+1. **Discoverability — the whole point of the tamagotchi identity is that you can SEE your agents live.** Today, all three consolidation mechanisms are completely invisible to the user. The nudges inject a system footer into a user turn and the agent's response may or may not include a memory tool call — the user just sees the response, never knows a nudge fired. The flush runs entirely out-of-band, no chat UI surface. No SSE event tagged "self-reflection" in the unified log, no increment on the `active_tasks` counter from M8 Phase A (because the flush bypasses `dispatch_task` and nudges happen inside an already-counted user turn), no thought-bubble animation specific to reflection, no toast notification when a memory is actually written. An agent can be nudged 30 times and save 8 memories across a day and the user has zero indication it's happening.
+
+2. **Architectural divergence on the flush path**: the flush uses `runtime_kwargs` + in-process `AIAgent` (hits the provider API directly on the host network at `$OPENAI_BASE_URL`) while the primary chat path uses `openshell sandbox exec` per-task via `https://inference.local/v1` (Plan A-prime, TASKS.md #24). That means the flush is **NOT subject to** the sandbox's network policy, filesystem isolation, or the worker-registry's activity counter. A reflection that writes memories to `~/.logos/memories/` runs with full host access, while the conversation that triggered the reflection ran in an isolated sandbox. That's a split worth making explicit and deciding about intentionally — either route the flush through the sandbox too for consistency, or document why it runs on the host (speed? no need for isolation since it doesn't execute user code?). Confirmed empirically: the env has `OPENAI_BASE_URL=http://192.168.1.117:1234/v1` (direct LAN LM Studio), and `AIAgent.__init__` does `OpenAI(base_url=...)` + `self.client.responses.stream(...)` from the gateway process.
+
+3. **Memory writes are invisible to the user when they happen**. When `memory_tool` actually persists a new entry to `MEMORY.md` / `USER.md`, nothing surfaces in the chat UI or the world view. Toast notifications, a "💭 Tali saved a new memory: '…'" feed card, or a subtle animation on the agent's sprite — any of those would turn the invisible background work into a visible product moment. This is where most of the "living agent" UX feel actually comes from; without it the mechanism might as well not exist.
+
+4. **World-view affordance during reflection**. M8 Phase A renders a 💭 thought bubble when `active_tasks > 0`, but the flush path never increments that counter (it bypasses `dispatch_task`), so reflections are invisible in the world view too. The nudges DO show the bubble because they happen inside an active user turn that IS counted — but a casual observer can't tell the difference between "agent is thinking about your message" and "agent is handling a nudge within your message". A distinct glyph or color for mid-nudge vs mid-flush vs mid-chat would let you glance at the world and see what KIND of cognition is happening.
 
 **What this M-ticket should actually do**:
 
-1. **Route the flush through `worker_registry.dispatch_task`** with a new `origin="session_flush"` tag so:
-   - The `active_tasks` counter increments → thought-bubble shows in the world view while the agent is reflecting (same visual language as a user chat turn, different glyph maybe 🌙)
-   - The M8 Phase B ledger (when it lands) gets a row per reflection tagged with the origin, so you can query "Tali reflected 12 times this week, saved 4 memories"
-   - The flush inherits the sandbox's network policy — or doesn't, by explicit decision
+1. **Route the flush through `worker_registry.dispatch_task`** so it inherits the sandbox isolation AND increments the `active_tasks` counter. A new `origin="session_flush"` tag (feeding into M8 Phase B's dispatch ledger) lets the ledger distinguish reflection traffic from user chat traffic. If running inside the sandbox is too slow or loses host-local memory file access, document the decision instead and add the counter increment via a different mechanism (a manual counter bump around the in-process AIAgent).
 
-2. **Add richer triggers** beyond session expiry:
-   - Nightly (one pass per agent per day at 3am, opt-out per agent soul)
-   - Activity-triggered (N minutes after the last user turn, once, if the session has >= 4 turns)
-   - Keep the existing expiry + `/reset` + `/resume` triggers as-is
+2. **Tag nudges in the ledger**. When M8 Phase B lands, the per-turn dispatch row should carry a `had_memory_nudge: bool` / `had_skill_nudge: bool` flag so the user can query "how often is Tali being nudged, and how often does she act on it?"
 
-3. **Surface memory writes to the user when they happen**: a toast notification or a "💭 Tali saved a new memory: '…'" card in a feed somewhere. Otherwise the whole mechanism is invisible and might as well not exist from a UX perspective.
+3. **Surface memory writes live**. The memory tool handler emits an event whenever it writes a new entry; the chat UI subscribes and shows an inline "💭 Tali saved a memory" card next to the assistant turn that triggered the write. Or a top-level toast. Or a badge on the agent's avatar that clears when you click through. Multiple options, small UX exercise.
 
-4. **World-view affordance**: when an agent is mid-reflection, render a distinct glyph (🌙 for nightly? 💭 with a different tint? custom sprite?) on the world-view bubble so the user can tell "Tali is thinking *about her memories*, not about a user message".
+4. **Distinct world-view glyph/color for reflection vs chat** (polish on top of M8 Phase A).
 
-5. **Safety / cost guards**: Admin → Settings pause-all switch; per-agent "max reflections per day" budget; dry-run mode that captures proposed writes as evolution proposals instead of auto-applying them.
+5. **Safety / cost guards**: Admin → Settings pause-all switch for the flush path; per-agent opt-out on nudges (soul config already supports `nudge_interval: 0` to disable, but no UI for it); dry-run mode that captures proposed memory writes as evolution proposals instead of auto-applying them.
 
-**Why it's architecturally large**:
+**Why it's architecturally medium**:
 
-1. Routing flush through `dispatch_task` means deciding whether reflection runs in-sandbox or on the host — there's an argument both ways and it's a product decision, not a plumbing one.
-2. The new cadences need a lightweight periodic scheduler; the current cron system is for user-authored one-off jobs, not periodic system loops.
-3. User-facing discoverability (M9 #3) is where most of the UX work lives — toasts, feed cards, sprite glyphs, the Admin → Activity integration (which in turn needs M8 Phase B).
-4. The reflection prompt design is a product-shaping decision that changes how the agent thinks of itself and what memories it forms. The current prompt is functional but not particularly rich.
+1. Routing the flush through `dispatch_task` is a real decision point (sandbox vs host) but the code change itself is small.
+2. The visible-when-written feature is the bulk of the UX work — event plumbing from `memory_tool` → SSE → chat UI.
+3. The ledger integration is trivial once M8 Phase B exists.
+4. No new cadences to design. No new scheduler. The triggers are all already there.
 
-**Dependency**: Phase A of M8 shipped (active_tasks counter + thought bubble). **Must land after M8 Phase B (dispatch ledger)** so reflections are distinguishable from user traffic in the analytics layer and so the user can tell "this agent spent 3 hours today thinking about its own memories" at a glance. The visual affordances (M9 #4) benefit from M8's world-view integration being stable first.
+**Dependency**: Phase A of M8 shipped (active_tasks counter + thought bubble). **Must land after M8 Phase B (dispatch ledger)** so reflections are distinguishable from user traffic in the analytics layer.
 
-**Direction established**: 2026-04-11 session — user observed qwen reasoning mid-flush in LM Studio and asked about it, exposing the mechanism's existence and its complete invisibility in the UI. The mechanism is the beginning of the tamagotchi identity; the work in this ticket is making it *feel* like that identity instead of being silent background noise.
+**Direction established**: 2026-04-11 session — user observed qwen reasoning mid-flush in LM Studio and asked about it, exposing the flush mechanism. Same user then correctly pointed out that Hermes already has in-turn memory/skill nudges built in and rejected the "add nightly cadence" premise of the first draft of this ticket. This corrected version scopes M9 to discoverability, dispatch-path consistency, and user-visible memory writes — NOT to adding new triggers.
 
 **What's missing**:
 
