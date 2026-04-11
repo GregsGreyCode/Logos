@@ -872,22 +872,22 @@ async def _handle_sandbox_restart(request: web.Request) -> web.Response:
         logger.exception("Sandbox restart spawn failed for '%s'", agent_name)
         return web.json_response({"ok": False, "error": str(exc)}, status=500)
 
-    # ── 5. Worker is already registered ────────────────────────────
-    # Plan A (TASKS.md #24): executor.spawn() internally calls
-    # WorkerRegistry.ensure_worker via run_coroutine_threadsafe, which
-    # blocks until the sandbox's stdin/stdout subprocess has emitted its
-    # "ready" event. By the time spawn() returns, the worker is live
-    # and dispatching is possible. No more polling loop.
-    #
-    # If ensure_worker failed inside spawn() it logged a warning but
-    # didn't raise — we detect that here by querying the registry.
+    # ── 5. Sandbox is Ready ────────────────────────────────────────
+    # Plan A-prime (TASKS.md #24): there's no persistent worker to
+    # register — each chat dispatch spawns a fresh ``openshell sandbox
+    # exec`` subprocess on-demand. By the time executor.spawn()
+    # returns, the sandbox CR is in the Ready phase (we flipped the
+    # state file record inside spawn). That's the only health signal
+    # we need at restart time; the first chat message will exercise
+    # the actual dispatch path.
     worker_registry = request.app.get("worker_registry")
     sandbox_name = spawned.name and _sanitize_sandbox_name(f"hermes-{spawned.name}")
     if worker_registry and sandbox_name:
         entry = worker_registry.get(sandbox_name)
         if not entry or not entry.healthy:
             logger.warning(
-                "Sandbox restart: worker '%s' not healthy after spawn",
+                "Sandbox restart: state file entry for '%s' is not "
+                "in phase=ready after spawn",
                 sandbox_name,
             )
             return web.json_response(
@@ -895,9 +895,10 @@ async def _handle_sandbox_restart(request: web.Request) -> web.Response:
                     "ok": False,
                     "sandbox": spawned.name,
                     "error": (
-                        f"Sandbox '{sandbox_name}' was provisioned but its worker subprocess "
-                        f"is not healthy. Check `logos debug tail --filter worker_id={sandbox_name}` "
-                        f"and `openshell sandbox exec --no-tty --name {sandbox_name} -- cat /tmp/worker.log`."
+                        f"Sandbox '{sandbox_name}' was provisioned but its "
+                        f"state file entry is not marked ready. Check "
+                        f"`logos debug tail` and `openshell sandbox list` "
+                        f"for the current phase."
                     ),
                 },
                 status=504,
@@ -3665,12 +3666,14 @@ async def start_http_api(runner: Any, port: int = 8091) -> None:
     app.router.add_delete("/instances/{name}/knowledge/{source}", _handle_instance_knowledge_delete)
     app.router.add_get("/instances/{name}/knowledge/search",    _handle_instance_knowledge_search)
     app.router.add_post("/instances/{name}/fork",               _handle_instance_fork)
-    # Worker REST (no WebSocket — Plan A TASKS.md #24: workers are
-    # subprocess-per-sandbox, launched via `openshell sandbox exec --no-tty`
-    # by OpenShellExecutor.spawn → WorkerRegistry.ensure_worker). The
-    # /ws/worker route used to live here but was removed in the Plan A
-    # refactor because the reverse-connection WebSocket pattern was
-    # unsupported by OpenShell's L7 proxy after an upstream change.
+    # Worker REST (no WebSocket — Plan A-prime TASKS.md #24: each chat
+    # dispatch spawns a fresh ``openshell sandbox exec`` subprocess
+    # per task via WorkerRegistry.dispatch_task. No persistent worker
+    # processes exist, so ``/api/workers`` now lists state-file sandbox
+    # entries with a health shim. The old /ws/worker route was removed
+    # in the Plan A refactor because the reverse-connection WebSocket
+    # pattern was unsupported by OpenShell's L7 proxy after an upstream
+    # change.
     app.router.add_get("/api/workers", lambda r: web.json_response(
         {"workers": r.app["worker_registry"].list_workers()}
     ))
