@@ -74,7 +74,7 @@ _RUNTIME_MODE = (
     os.environ.get("LOGOS_RUNTIME_MODE")
     or os.environ.get("HERMES_RUNTIME_MODE")
     or "openshell"
-)  # "openshell" (default) | "local" | "docker"
+)  # "openshell" (default) | "docker"
 
 try:
     # Read directly from pyproject.toml — immune to stale installed metadata
@@ -730,15 +730,16 @@ async def _handle_sandbox_logs(request: web.Request) -> web.Response:
     name = request.match_info["name"]
     try:
         from gateway.executors.openshell import _openshell, _load_state
-        from gateway.openshell_routes import PRIMORDIAL_NAME
+        from gateway.openshell_routes import get_primordial_name
         # Look up which gateway this sandbox lives inside. Without
         # gateway scoping, the exec call only checks the CLI default
         # gateway and returns "sandbox not found" for any sandbox
         # that lives in a non-default route.
-        target_gw = PRIMORDIAL_NAME
+        primordial = get_primordial_name()
+        target_gw = primordial
         for inst in _load_state():
             if inst.get("sandbox_name") == name or inst.get("name") == name:
-                target_gw = inst.get("openshell_name") or PRIMORDIAL_NAME
+                target_gw = inst.get("openshell_name") or primordial
                 break
         result = _openshell(
             "sandbox", "exec", "-n", name, "--no-tty", "--",
@@ -995,8 +996,8 @@ async def _handle_model_routes_post(request: web.Request) -> web.Response:
         _asyncio.create_task(_re_pin_bg())
         return web.json_response({"ok": True, "route": existing})
 
-    # Path 2: no routes exist + primordial alive → adopt (fast, sync)
-    if not auth_db.list_model_routes() and _osr.gateway_is_alive(_osr.PRIMORDIAL_NAME):
+    # Path 2: no routes exist + bootstrap gateway alive → adopt (fast, sync)
+    if not auth_db.list_model_routes() and _osr.gateway_is_alive(_osr.BOOTSTRAP_PRIMORDIAL_NAME):
         try:
             route = await _asyncio.to_thread(_osr.adopt_primordial, provider, model)
             return web.json_response({"ok": True, "route": route})
@@ -1713,37 +1714,6 @@ async def _handle_instances_get(request: web.Request) -> web.Response:
     # Non-admins only see instances spawned for themselves
     if caller_role not in ("admin", "operator"):
         inst = [i for i in inst if i.get("requester", "").lower() == caller_name]
-    # Normalise local-executor instances to the same shape the k8s executor returns
-    # so the frontend can use a single template for both modes.
-    if _RUNTIME_MODE == "local":
-        registry = _get_soul_registry()
-        normalized = []
-        for i in inst:
-            slug = i.get("soul_name", "")
-            soul_obj = registry.get(slug)
-            _label = i.get("instance_label", "")
-        _req = i.get("requester") or i.get("name", "")
-        normalized.append({
-                "name":          i.get("name", ""),
-                "instance_name": f"{_req} · {_label}" if _label else f"Hermes for {_req}",
-                "requester":     _req,
-                "instance_label": _label,
-                "soul":          {"name": soul_obj.name, "slug": slug, "status": soul_obj.status}
-                                 if soul_obj else {"name": slug or "default", "slug": slug, "status": "stable"},
-                "model_alias":   i.get("model", ""),
-                "machine_name":  None,
-                "k8s_status":    "running" if i.get("healthy") else "starting",
-                "status":        "running" if i.get("healthy") else "starting",
-                "ready":         1 if i.get("healthy") else 0,
-                "desired":       1,
-                "node_port":     i.get("port"),
-                "url":           i.get("url"),
-                "pid":           i.get("pid"),
-                "source":        "local",
-                "cpu_percent":   i.get("cpu_percent"),
-                "mem_mb":        i.get("mem_mb"),
-            })
-        inst = normalized
     return web.json_response({
         "instances": inst,
         "resources": res,
@@ -1897,24 +1867,16 @@ async def _handle_instances_post(request: web.Request) -> web.Response:
             machine_id=resolved_machine_id,
         )
         spawned = await loop.run_in_executor(None, executor.spawn, _ic)
-        if _RUNTIME_MODE == "local":
-            result = {
-                "status": "created" if spawned.healthy else "starting",
-                "name": spawned.name,
-                "url": spawned.url,
-                "instance_name": f"Hermes for {requester}",
-            }
-        else:
-            is_exists = spawned.url == "" and not spawned.healthy
-            result = {
-                "status": "exists" if is_exists else "created",
-                "name": spawned.name,
-                "instance_name": spawned.soul_name,
-                "instance_label": effective_label,
-                "soul": {"slug": spawned.soul_name, "name": spawned.soul_name},
-            }
-            if is_exists:
-                result["message"] = f"An instance named '{effective_label}' already exists for {requester}. Choose a different name or delete the existing one."
+        is_exists = spawned.url == "" and not spawned.healthy
+        result = {
+            "status": "exists" if is_exists else "created",
+            "name": spawned.name,
+            "instance_name": spawned.soul_name,
+            "instance_label": effective_label,
+            "soul": {"slug": spawned.soul_name, "name": spawned.soul_name},
+        }
+        if is_exists:
+            result["message"] = f"An instance named '{effective_label}' already exists for {requester}. Choose a different name or delete the existing one."
     except Exception as e:
         logger.exception("Failed to spawn instance for %s", requester)
         return web.json_response({"error": "spawn_failed", "message": str(e)}, status=500)
@@ -3181,7 +3143,7 @@ async def _handle_chat(request: web.Request) -> web.StreamResponse:
                     })
 
             worker_result = await worker_registry.dispatch_task(
-                target_worker, task_payload, timeout=300,
+                target_worker, task_payload, timeout=600,
                 on_stream_event=_on_worker_stream,
             )
             result = {
@@ -3189,8 +3151,47 @@ async def _handle_chat(request: web.Request) -> web.StreamResponse:
                 "api_calls": worker_result.get("api_calls", 0),
                 "tools_used": worker_result.get("tools_used", []),
             }
-            final = result.get("final_response", "")
-            await send_event({"type": "message", "content": final})
+            # Worker sets status="error" when its inference call raised
+            # (e.g. LM Studio returned HTTP 500 mid-eviction during JIT
+            # auto-evict, OpenShell privacy router blew up, model crashed).
+            # Without this branch the gateway used to silently emit an
+            # empty `message` event and the user saw a blank assistant
+            # bubble with no indication anything went wrong. Surface it
+            # as an error event the frontend can render distinctly.
+            if worker_result.get("status") == "error":
+                _werr = worker_result.get("error") or "Worker reported an error"
+                _werr_lower = str(_werr).lower()
+                _err_type = "worker_error"
+                _err_title = "Inference failed"
+                _err_action = ""
+                if "500" in _werr_lower or "internal server error" in _werr_lower:
+                    _err_title = "Inference server error"
+                    _err_action = (
+                        "LM Studio returned 500. If you have multiple agents loaded, "
+                        "the JIT auto-evict setting may have unloaded this model "
+                        "mid-request. Disable 'JIT models auto-evict' in LM Studio "
+                        "developer settings."
+                    )
+                elif "401" in _werr_lower or "unauthorized" in _werr_lower:
+                    _err_title = "Inference auth failed"
+                    _err_action = "Check your LM Studio API key in Settings → Inference."
+                elif "404" in _werr_lower or "model not found" in _werr_lower:
+                    _err_title = "Model not loaded"
+                    _err_action = "Load the model in LM Studio first, or wait for ensure_loaded."
+                await send_event({
+                    "type": "error",
+                    "error_type": _err_type,
+                    "error_title": _err_title,
+                    "error_action": _err_action,
+                    "content": str(_werr)[:500],
+                    "error_class": "WorkerError",
+                })
+                # Still emit a message event with empty content so the
+                # streaming placeholder gets finalized cleanly downstream.
+                await send_event({"type": "message", "content": ""})
+            else:
+                final = result.get("final_response", "")
+                await send_event({"type": "message", "content": final})
 
             # ── Persist this turn so the next message in the same sandbox
             # incarnation sees the full transcript. Without this the agent

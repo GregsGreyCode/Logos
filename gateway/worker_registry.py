@@ -194,7 +194,7 @@ class WorkerRegistry:
         return ws
 
     async def dispatch_task(
-        self, worker_id: str, task: dict, timeout: float = 300,
+        self, worker_id: str, task: dict, timeout: float = 600,
         on_stream_event=None,
     ) -> dict:
         """Dispatch a task to an OpenShell sandbox worker and await the result.

@@ -285,6 +285,120 @@ def shutdown_openshell_children(grace_seconds: float = 0.5) -> None:
         _active_procs.clear()
 
 
+def reap_orphan_openshell_processes() -> int:
+    """SIGTERM any openshell-related processes left over from a prior gateway run.
+
+    Called at gateway startup BEFORE the WorkerRegistry comes up so stale
+    workers from a SIGKILL'd or crashed prior gateway can't re-register
+    with their old (stale) sandbox names. That was the day-long
+    "Hermes thinks it's Ani" investigation: a previous gateway died
+    ungracefully, its openshell CLI children + ssh-proxy subprocesses
+    were reparented to init, and when the new gateway came up the
+    orphaned workers reconnected with their old worker_ids and the
+    new gateway routed chats to the wrong agent.
+
+    ``shutdown_openshell_children()`` (task #10) handles the GRACEFUL
+    shutdown path. This function is its safety net for the SIGKILL /
+    crash / power-loss path that ``shutdown_openshell_children`` can
+    never run for.
+
+    Detection rule: PPID == 1 (reparented to init — the classic signature
+    of an orphan whose original parent died) AND ``"openshell"`` appears
+    anywhere in the command line. The PPID==1 filter is what makes this
+    safe to call at every startup: a user running ``openshell sandbox
+    list`` in another terminal is still parented to a shell (PPID > 1)
+    and won't be touched.
+
+    Returns the number of process groups SIGTERM'd. Best-effort: errors
+    are logged and swallowed; this function never raises so a startup
+    failure here can't block the gateway from coming up.
+    """
+    import subprocess as _sp
+
+    try:
+        result = _sp.run(
+            ["ps", "-eo", "pid,pgid,ppid,cmd"],
+            capture_output=True, text=True, timeout=10,
+        )
+    except Exception as exc:
+        logger.warning("reap_orphan_openshell: ps failed: %s", exc)
+        return 0
+    if result.returncode != 0:
+        logger.warning(
+            "reap_orphan_openshell: ps exited %d: %s",
+            result.returncode, (result.stderr or "")[:200],
+        )
+        return 0
+
+    own_pid = os.getpid()
+    killed_pgids: set = set()
+
+    for line in result.stdout.splitlines()[1:]:  # skip header
+        parts = line.strip().split(None, 3)
+        if len(parts) < 4:
+            continue
+        try:
+            pid = int(parts[0])
+            pgid = int(parts[1])
+            ppid = int(parts[2])
+        except ValueError:
+            continue
+        cmd = parts[3]
+
+        # Only kill orphans (parent died, reparented to init).
+        if ppid != 1:
+            continue
+        if pid == own_pid:
+            continue
+        if "openshell" not in cmd.lower():
+            continue
+        # Don't double-kill processes whose group we already SIGTERM'd.
+        if pgid in killed_pgids:
+            continue
+        try:
+            os.killpg(pgid, signal.SIGTERM)
+            logger.info(
+                "reap_orphan_openshell: SIGTERM pgid=%d (pid=%d): %s",
+                pgid, pid, cmd[:120],
+            )
+            killed_pgids.add(pgid)
+        except (ProcessLookupError, PermissionError) as exc:
+            logger.debug(
+                "reap_orphan_openshell: killpg(%d, SIGTERM) failed: %s",
+                pgid, exc,
+            )
+
+    if killed_pgids:
+        # Brief grace period before SIGKILL fallback. Same pattern as
+        # shutdown_openshell_children — give the children a chance to
+        # exit cleanly on SIGTERM before forcing them.
+        time.sleep(0.5)
+        for pgid in list(killed_pgids):
+            try:
+                os.killpg(pgid, 0)  # probe — raises if already gone
+            except ProcessLookupError:
+                continue
+            try:
+                os.killpg(pgid, signal.SIGKILL)
+                logger.warning(
+                    "reap_orphan_openshell: SIGKILL pgid=%d (didn't exit on SIGTERM)",
+                    pgid,
+                )
+            except ProcessLookupError:
+                pass
+            except PermissionError as exc:
+                logger.warning(
+                    "reap_orphan_openshell: killpg(%d, SIGKILL) denied: %s",
+                    pgid, exc,
+                )
+        logger.info(
+            "reap_orphan_openshell: reaped %d orphan process group(s) from a "
+            "prior gateway run", len(killed_pgids),
+        )
+
+    return len(killed_pgids)
+
+
 def _sanitize_sandbox_name(name: str) -> str:
     """
     Coerce ``name`` into a valid RFC 1123 subdomain so the underlying
@@ -440,14 +554,14 @@ def _list_all_sandbox_names_with_gateway() -> List[tuple[str, str]]:
 
     Returns ``[(sandbox_name, gateway_name), ...]``. Iterates over the
     model_routes table so each provisioned gateway is queried exactly
-    once. Falls back to the primordial gateway when the routes table is
-    empty (the bootstrap path before /setup populates routes).
+    once. Falls back to the bootstrap gateway when the routes table is
+    empty (the path before /setup populates routes).
 
     Used by orphan-prune and missing-sandbox-resurrect passes that need
     a global view of "what sandboxes exist anywhere" before they can
     decide which ones to clean up or recreate.
     """
-    from gateway.openshell_routes import PRIMORDIAL_NAME
+    from gateway.openshell_routes import BOOTSTRAP_PRIMORDIAL_NAME
     from gateway.auth import db as auth_db
 
     gateways_to_query: set[str] = set()
@@ -459,7 +573,7 @@ def _list_all_sandbox_names_with_gateway() -> List[tuple[str, str]]:
     except Exception as exc:
         logger.warning("could not enumerate model_routes: %s", exc)
     if not gateways_to_query:
-        gateways_to_query.add(PRIMORDIAL_NAME)
+        gateways_to_query.add(BOOTSTRAP_PRIMORDIAL_NAME)
 
     out: List[tuple[str, str]] = []
     for gw in gateways_to_query:
@@ -488,13 +602,13 @@ def _resolve_route(config: "InstanceConfig") -> tuple[str, str]:
          path agents created via /admin/agents take when the user picks
          "Auto (use default)" instead of an explicit route.
 
-      3. Fall through to the legacy path: primordial ``logos-openshell``
-         gateway with the env-resolved model. This handles the case where
-         model_routes is empty (the user hasn't run /setup yet under the
-         new architecture, or DB was just migrated and routes haven't
-         been populated).
+      3. Fall through to the legacy path: bootstrap OpenShell gateway
+         (default name ``logos-openshell``) with the env-resolved model.
+         This handles the case where model_routes is empty (the user
+         hasn't run /setup yet under the new architecture, or DB was
+         just migrated and routes haven't been populated).
     """
-    from gateway.openshell_routes import PRIMORDIAL_NAME
+    from gateway.openshell_routes import get_primordial_name
     from gateway.auth import db as auth_db
 
     # 1. Explicit binding
@@ -529,7 +643,7 @@ def _resolve_route(config: "InstanceConfig") -> tuple[str, str]:
             "spawn(%s): no model_routes binding — using primordial gateway with model=%r",
             config.name, resolved_model,
         )
-    return PRIMORDIAL_NAME, resolved_model
+    return get_primordial_name(), resolved_model
 
 
 # ── Executor ──────────────────────────────────────────────────────────────
@@ -551,7 +665,7 @@ class OpenShellExecutor:
         self.policy_file = policy_file or (str(_DEFAULT_POLICY) if _DEFAULT_POLICY.exists() else None)
 
     def spawn(self, config: InstanceConfig) -> SpawnedInstance:
-        from gateway.openshell_routes import PRIMORDIAL_NAME
+        from gateway.openshell_routes import get_primordial_name
 
         # OpenShell sandboxes are backed by Kubernetes Sandbox CRs, so the
         # sandbox name must be a valid RFC 1123 subdomain: lowercase
@@ -568,6 +682,29 @@ class OpenShellExecutor:
             "Creating OpenShell sandbox '%s' in gateway '%s' (model=%s) from image '%s'",
             sandbox_name, openshell_gw, resolved_model or "<none>", self.sandbox_image,
         )
+
+        # Pre-flight provider sync — re-push the credential + URL from
+        # auth.db.machines to the target sub-gateway's provider record so
+        # the worker's chat completion call (which goes through OpenShell's
+        # privacy router with the stored credential) sees the same value
+        # as ``ensure_loaded`` does (which reads auth.db.machines directly).
+        # Without this, the two paths can drift after a key rotation:
+        # ensure_loaded keeps working but the worker's chat call gets
+        # rejected with stale auth. See
+        # ``openshell_routes.ensure_provider_configured`` for details.
+        try:
+            from gateway.openshell_routes import ensure_provider_configured
+            from gateway.auth import db as _auth_db
+            provider_name = "lmstudio"
+            if getattr(config, "model_route_id", None):
+                _route = _auth_db.get_model_route(config.model_route_id)
+                if _route:
+                    provider_name = _route.get("provider") or provider_name
+            ensure_provider_configured(openshell_gw, provider_name)
+        except Exception as exc:
+            logger.warning(
+                "Pre-spawn provider sync raised (continuing anyway): %s", exc
+            )
 
         # Write instance config to a temp file for upload
         instance_config = {
@@ -605,13 +742,14 @@ class OpenShellExecutor:
         # finishes creating the CR.
         with _state_lock():
             instances = _load_state()
+            primordial = get_primordial_name()
             gateways = {
-                (i.get("openshell_name") or PRIMORDIAL_NAME) for i in instances
+                (i.get("openshell_name") or primordial) for i in instances
             }
             gateways.add(openshell_gw)
             index = _build_sandbox_index(gateways)
             instances, _pruned = _prune_state_against_index(
-                instances, index, PRIMORDIAL_NAME
+                instances, index, primordial
             )
             instances.append(record)
             _save_state(instances)
@@ -786,7 +924,7 @@ class OpenShellExecutor:
         )
 
     def list_instances(self) -> List[dict]:
-        from gateway.openshell_routes import PRIMORDIAL_NAME
+        from gateway.openshell_routes import get_primordial_name
 
         # Hardened pruning: batch one CLI query per gateway, keep
         # grace-period entries, never drop entries from a gateway
@@ -794,11 +932,12 @@ class OpenShellExecutor:
         # the full rule list.
         with _state_lock():
             instances = _load_state()
+            primordial = get_primordial_name()
             gateways = {
-                (i.get("openshell_name") or PRIMORDIAL_NAME) for i in instances
+                (i.get("openshell_name") or primordial) for i in instances
             }
             index = _build_sandbox_index(gateways)
-            kept, pruned = _prune_state_against_index(instances, index, PRIMORDIAL_NAME)
+            kept, pruned = _prune_state_against_index(instances, index, primordial)
             if pruned > 0:
                 _save_state(kept)
         return kept
@@ -819,13 +958,14 @@ class OpenShellExecutor:
         # succeeds if the sandbox isn't there. Best-effort lookup: scan
         # the state file for an entry matching by name OR sandbox_name,
         # use its openshell_name; otherwise default to the primordial.
-        from gateway.openshell_routes import PRIMORDIAL_NAME
+        from gateway.openshell_routes import get_primordial_name
 
         sandbox_name = _sanitize_sandbox_name(f"hermes-{name}")
-        target_gw = PRIMORDIAL_NAME
+        primordial = get_primordial_name()
+        target_gw = primordial
         for inst in _load_state():
             if inst.get("name") == name or inst.get("sandbox_name") == sandbox_name:
-                target_gw = inst.get("openshell_name") or PRIMORDIAL_NAME
+                target_gw = inst.get("openshell_name") or primordial
                 break
 
         try:

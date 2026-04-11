@@ -223,7 +223,8 @@ if _cfg:
         if _tz_cfg and isinstance(_tz_cfg, str) and "HERMES_TIMEZONE" not in os.environ:
             os.environ["HERMES_TIMEZONE"] = _tz_cfg.strip()
         # Runtime mode: bridge config.yaml → HERMES_RUNTIME_MODE env var.
-        # Controls whether k8s or local-process executor is used for Instances.
+        # Selects which executor backend (openshell, docker) handles agent
+        # instance spawning.
         _runtime_cfg = _cfg.get("runtime", {})
         if isinstance(_runtime_cfg, dict):
             _runtime_mode = str(_runtime_cfg.get("mode", "")).strip()
@@ -4802,9 +4803,9 @@ async def start_gateway(config: Optional[GatewayConfig] = None, replace: bool = 
     # setups (each profile using a distinct HERMES_HOME) will naturally
     # allow concurrent instances without tripping this guard.
     #
-    # Skip the guard for named agent instances (spawned by LocalProcessExecutor)
-    # — they intentionally share HERMES_HOME with the main gateway for auth/config
-    # access but run on different ports and must not kill the parent process.
+    # Skip the guard when LOGOS_INSTANCE_NAME is set — that env var is used
+    # by container/pod-based executors to identify a child gateway distinct
+    # from the host's main process.
     import time as _time
     from gateway.status import get_running_pid, remove_pid_file
     if os.environ.get("LOGOS_INSTANCE_NAME") or os.environ.get("HERMES_INSTANCE_NAME"):
@@ -4901,6 +4902,35 @@ async def start_gateway(config: Optional[GatewayConfig] = None, replace: bool = 
     error_handler.addFilter(_SessionFilter())
     error_handler.setFormatter(_sess_fmt)
     logging.getLogger().addHandler(error_handler)
+
+    # Reap any openshell CLI / ssh-proxy processes left over from a prior
+    # gateway run that died ungracefully (SIGKILL, crash, power loss).
+    # Must run BEFORE GatewayRunner.__init__ creates the WorkerRegistry —
+    # otherwise an orphaned worker can re-register with its stale
+    # sandbox name as soon as /ws/worker comes up and the gateway routes
+    # chats to the wrong agent (the day-long "Hermes thinks it's Ani"
+    # bug). shutdown_openshell_children() handles graceful shutdowns;
+    # this is its safety net for the SIGKILL/crash path.
+    try:
+        from gateway.executors.openshell import reap_orphan_openshell_processes
+        reap_orphan_openshell_processes()
+    except Exception as _reap_err:
+        logger.warning("reap_orphan_openshell_processes failed: %s", _reap_err)
+
+    # Migrate any model_routes rows still using the old prefixed naming
+    # scheme (``logos-openshell``, ``logos-os-<model>``) to the new
+    # prefix-free model-name scheme. Idempotent — safe to run on every
+    # startup. The helper registers a client-side openshell alias for
+    # each new name and updates the DB row in place; existing state-file
+    # entries that still reference the old name continue to work because
+    # the alias and the original both point at the same physical gateway.
+    try:
+        from gateway.openshell_routes import migrate_routes_to_model_names
+        renamed = migrate_routes_to_model_names()
+        if renamed:
+            logger.info("model-route name migration: renamed %d row(s)", renamed)
+    except Exception as _mig_err:
+        logger.warning("migrate_routes_to_model_names failed: %s", _mig_err)
 
     runner = GatewayRunner(config)
     _set_current_runner(runner)

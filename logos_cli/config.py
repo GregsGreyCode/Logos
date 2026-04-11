@@ -353,12 +353,11 @@ DEFAULT_CONFIG = {
     },
 
     # Runtime execution mode.
-    # "local"      — agents run as supervised local processes on the host machine
-    #                (required for Windows desktop; also works on Linux/macOS without a cluster)
-    # "kubernetes" — use the Kubernetes cluster (default for server/homelab deployments)
+    # "openshell"  — agents run as OpenShell sandboxes (default; full policy
+    #                enforcement, network isolation, credential injection)
+    # "docker"     — agents run as plain Docker containers (no policy engine)
     "runtime": {
-        "mode": "local",                    # "local" | "kubernetes"
-        "local_port_range": [8081, 8199],   # Port pool for local agent instances
+        "mode": "openshell",                # "openshell" | "docker"
     },
 
     # Config schema version - bump this when adding new required fields

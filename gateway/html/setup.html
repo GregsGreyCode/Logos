@@ -146,8 +146,10 @@
                  :class="step > i ? 'cursor-pointer hover:scale-125' : step === i ? 'scale-125' : ''"
                  :style="step > i ? 'background:currentColor;opacity:0.7' : step === i ? 'background:currentColor' : 'background:#374151'"
                  @click="goTo(i)" :title="step > i ? 'Go back to step ' + i : ''"></div>
-            <div x-show="i < 7" class="w-4 h-px transition-colors duration-500"
-                 :style="step > i ? 'background:currentColor;opacity:0.4' : 'background:#374151'"></div>
+            <template x-if="i < 7">
+              <div class="w-4 h-px transition-colors duration-500"
+                   :style="step > i ? 'background:currentColor;opacity:0.4' : 'background:#374151'"></div>
+            </template>
           </div>
         </template>
       </div>
@@ -312,8 +314,8 @@
             <div class="text-base font-semibold text-white mb-1" x-text="tldr ? 'When done' : 'When complete'"></div>
             <p class="text-sm text-gray-500 leading-relaxed" x-show="!tldr">
               You&rsquo;ll have a fully configured platform: inference routed to a benchmarked local model,
-              agent runs sandboxed with policy-enforced isolation (or in-process if Docker isn&rsquo;t available),
-              a soul selected, and a secured admin account. The platform is ready for agent runs.
+              agent runs sandboxed with policy-enforced isolation, a soul selected, and a secured admin account.
+              The platform is ready for agent runs.
             </p>
             <p class="text-sm text-gray-500 leading-relaxed" x-show="tldr" x-cloak>
               Logos is running, your model is connected, agents are sandboxed, and you have a login. You&rsquo;re ready to go.
@@ -1201,6 +1203,15 @@
                                   }"
                                   :title="'Time to first token: ' + compareResults[mid].ttft_ms + 'ms'"
                                   x-text="compareResults[mid].ttft_ms < 1000 ? compareResults[mid].ttft_ms + 'ms' : (compareResults[mid].ttft_ms / 1000).toFixed(1) + 's'"></span>
+                                <span x-show="compareResults[mid].greeting_ms != null" class="font-mono text-[10px]"
+                                  :class="{
+                                    'text-green-500':  compareResults[mid].greeting_ms <= 1500,
+                                    'text-gray-500':   compareResults[mid].greeting_ms > 1500 && compareResults[mid].greeting_ms <= 5000,
+                                    'text-yellow-500': compareResults[mid].greeting_ms > 5000 && compareResults[mid].greeting_ms <= 10000,
+                                    'text-red-500':    compareResults[mid].greeting_ms > 10000,
+                                  }"
+                                  :title="'Hi! → first reply: ' + compareResults[mid].greeting_ms + 'ms' + (compareResults[mid].greeting_reasoning_toks ? ' (' + compareResults[mid].greeting_reasoning_toks + ' thinking tokens)' : '')"
+                                  x-text="'Hi! ' + (compareResults[mid].greeting_ms < 1000 ? compareResults[mid].greeting_ms + 'ms' : (compareResults[mid].greeting_ms / 1000).toFixed(1) + 's')"></span>
                                 <template x-if="compareResults[mid].max_context">
                                   <span class="font-mono text-[10px]"
                                     :class="compareResults[mid].max_context >= 64000 ? 'text-gray-500' : compareResults[mid].max_context >= 32768 ? 'text-yellow-500' : 'text-red-500 font-semibold'"
@@ -1263,6 +1274,21 @@
                           <div x-show="compareResults[mid]?.ttft_ms">
                             <span class="text-gray-600">TTFT</span>
                             <span class="ml-1.5 font-mono text-gray-300" x-text="compareResults[mid]?.ttft_ms + 'ms'"></span>
+                          </div>
+                          <div x-show="compareResults[mid]?.greeting_ms != null"
+                               :title="'Wall-clock from POST → first visible token on the prompt &quot;Hi!&quot;'">
+                            <span class="text-gray-600">Hi! reply</span>
+                            <span class="ml-1.5 font-mono"
+                              :class="{
+                                'text-green-400':  compareResults[mid]?.greeting_ms <= 1500,
+                                'text-gray-300':   compareResults[mid]?.greeting_ms > 1500 && compareResults[mid]?.greeting_ms <= 5000,
+                                'text-yellow-400': compareResults[mid]?.greeting_ms > 5000 && compareResults[mid]?.greeting_ms <= 10000,
+                                'text-red-400':    compareResults[mid]?.greeting_ms > 10000,
+                              }"
+                              x-text="compareResults[mid]?.greeting_ms < 1000 ? compareResults[mid]?.greeting_ms + 'ms' : (compareResults[mid]?.greeting_ms / 1000).toFixed(1) + 's'"></span>
+                            <span x-show="compareResults[mid]?.greeting_reasoning_toks > 0"
+                                  class="ml-1 text-gray-600 text-[10px]"
+                                  x-text="'(' + compareResults[mid]?.greeting_reasoning_toks + ' thinking toks)'"></span>
                           </div>
                           <div x-show="compareResults[mid]?.max_context">
                             <span class="text-gray-600">Max context</span>
@@ -1559,23 +1585,6 @@
         <template x-if="!sandboxProbing">
           <div class="space-y-3">
 
-            <!-- ── In-process ── -->
-            <button @click="execEnv = 'local'"
-              class="w-full text-left p-4 rounded-xl border transition-colors"
-              :class="execEnv === 'local' ? 'border-yellow-600 bg-yellow-950/20' : 'border-gray-800 bg-gray-900 hover:border-gray-700'">
-              <div class="flex items-start gap-3">
-                <span class="w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0 text-sm font-bold"
-                  :class="execEnv === 'local' ? 'bg-yellow-900 text-yellow-300' : 'bg-gray-800 text-gray-500'">!</span>
-                <div class="flex-1">
-                  <div class="flex items-center gap-2 flex-wrap">
-                    <span class="text-sm font-semibold text-white">In-process</span>
-                    <span x-show="execEnv === 'local'" class="text-[9px] px-1.5 py-0.5 rounded-full bg-yellow-900 text-yellow-300 border border-yellow-700 font-semibold uppercase tracking-wider">Selected</span>
-                  </div>
-                  <p class="text-xs text-gray-500 mt-1 leading-relaxed">Agents run inside the Logos process with <span class="text-yellow-300 font-medium">no OS-level isolation</span>. They share the filesystem, network, and environment variables. Fine for personal use on a trusted machine &mdash; not recommended for shared environments or untrusted inputs.</p>
-                </div>
-              </div>
-            </button>
-
             <!-- ── OpenShell sandbox (recommended) ── -->
             <button @click="execEnv = 'openshell'"
               class="w-full text-left p-4 rounded-xl border transition-colors"
@@ -1750,7 +1759,6 @@
               :disabled="(execEnv === 'k8s' && k8sMode === 'kubeconfig' && k8sTestResult !== 'ok') || (execEnv === 'k3s' && k8sTestResult !== 'ok')"
               class="btn-primary w-full py-2.5 rounded-xl text-sm disabled:opacity-40 disabled:cursor-not-allowed">
               <span x-show="execEnv === 'openshell'">Continue &rarr;</span>
-              <span x-show="execEnv === 'local'">Continue &rarr;</span>
               <span x-show="execEnv === 'k3s' && k8sTestResult === 'ok'">Continue &rarr;</span>
               <span x-show="execEnv === 'k3s' && k8sTestResult !== 'ok'" class="text-gray-500">Install k3s to continue &rarr;</span>
               <span x-show="execEnv === 'k8s' && (k8sMode === 'incluster' || k8sTestResult === 'ok')">Continue &rarr;</span>
@@ -1944,7 +1952,7 @@
           </div>
           <div class="flex justify-between text-sm py-2.5">
             <span class="text-gray-500">Execution</span>
-            <span class="text-white font-medium" x-text="execEnv === 'k8s' ? 'Kubernetes (' + (k8sMode === 'incluster' ? 'automatic' : 'kubeconfig') + ')' : execEnv === 'openshell' ? 'Full sandbox (OpenShell)' : execEnv === 'docker' ? 'Container sandbox (Docker)' : 'Local process (no isolation)'"></span>
+            <span class="text-white font-medium" x-text="execEnv === 'k8s' ? 'Kubernetes (' + (k8sMode === 'incluster' ? 'automatic' : 'kubeconfig') + ')' : execEnv === 'k3s' ? 'Linux server (k3s)' : execEnv === 'docker' ? 'Container sandbox (Docker)' : 'Full sandbox (OpenShell)'"></span>
           </div>
           <div x-show="execEnv === 'k8s'" class="flex justify-between text-sm py-2.5">
             <span class="text-gray-500">Namespace</span>
@@ -2033,7 +2041,7 @@ function setup() {
       { n: 1, name: 'Connect inference servers',  tag: 'detects',    desc: 'Logos scans your local network for Ollama and LM Studio. You can also add remote servers — on a LAN, VPC, or cloud VM — using a custom address. No Logos installation is needed on the inference machine.', tldrDesc: 'Logos finds your models (Ollama, LM Studio) or you add one manually.' },
       { n: 2, name: 'Benchmark models',       tag: 'measures',   desc: 'Candidate models run 6 eval tests: instruction following, reasoning, JSON format, tool selection, nested JSON, and multi-step arithmetic. The best fit is pre-selected; you can override freely.', tldrDesc: 'Each model runs a few tests. Logos picks the best one by default.' },
       { n: 3, name: 'Agent runtime',          tag: 'configures', desc: 'Choose which agent engine handles your sessions. Hermes is available now; additional runtimes plug in as they are released.', tldrDesc: 'Choose what runs your agents (Hermes for now).' },
-      { n: 4, name: 'Agent sandbox',           tag: 'secures',    desc: 'Choose how agent code runs: Docker containers for local sandboxing, Kubernetes pods for production-grade isolation, or in-process as a fallback. Logos auto-detects what\u2019s available and recommends the safest option.', tldrDesc: 'Choose where agents run — Docker, Kubernetes, or in-process.' },
+      { n: 4, name: 'Agent sandbox',           tag: 'secures',    desc: 'Choose how agent code runs: NVIDIA OpenShell on Docker for local sandboxing, or k3s/Kubernetes for production-grade isolation. Logos auto-detects what\u2019s available and recommends the safest option.', tldrDesc: 'Choose where agents run — OpenShell, k3s, or Kubernetes.' },
       { n: 5, name: 'Soul',                   tag: 'configures', desc: "A soul defines the agent's communication style and default behaviour. It is a starting point — editable at any time from the dashboard.", tldrDesc: 'Sets how the agent behaves. You can change it anytime.' },
       { n: 6, name: 'Your account',           tag: 'secures',    desc: 'Set the email, username, and password for the admin account that protects the dashboard and API.', tldrDesc: 'Create a login to secure your setup.' },
       { n: 7, name: 'Review & launch',        tag: 'confirms',   desc: 'Review every setting, confirm the model endpoint is reachable, and launch the platform.', tldrDesc: 'Check everything, then start Logos.' },
@@ -2215,7 +2223,7 @@ function setup() {
     ],
 
     // Step 4 — execution environment
-    execEnv: 'local',
+    execEnv: 'openshell',
     k8sMode: 'incluster',
     kubeconfig: '',
     k8sTesting: false,
@@ -2263,15 +2271,15 @@ function setup() {
           // Linux without Docker — suggest k3s
           this.execEnv = 'k3s';
         } else {
-          // No Docker at all — fall back to in-process
-          this.execEnv = 'local';
+          // No Docker, no k3s — default to OpenShell so the user is guided
+          // through Docker install. There is no in-process fallback any more.
+          this.execEnv = 'openshell';
         }
       } catch(e) {
         this.sandboxProbe = { docker_running: false, docker_installed: false,
                                openshell_present: false, image_present: false, sandbox_ready: false,
                                docker_sandbox_ready: false, openshell_supported: true };
-        // Only reset to local if no explicit choice has been made (e.g. k8s)
-        if (!this.execEnv || this.execEnv === 'openshell') this.execEnv = 'local';
+        if (!this.execEnv) this.execEnv = 'openshell';
       } finally {
         this.sandboxProbing = false;
       }

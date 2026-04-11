@@ -11,7 +11,7 @@ Compared to OpenShellExecutor:
     unless you layer Docker network restrictions externally).
   - No SSH tunnel; the container port is published directly to localhost.
 
-Compared to LocalProcessExecutor:
+Versus running agents directly on the host:
   - Agents run inside a container with their own filesystem and PID namespace.
   - Host filesystem is not accessible unless explicitly mounted.
   - The container is removed on exit (--rm).

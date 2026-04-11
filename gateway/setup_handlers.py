@@ -807,8 +807,18 @@ def _sanitize_for_json(obj: object) -> object:
 def _compare_score(r: dict) -> float:
     """Composite score for ranking models within a gated candidate pool.
 
-    Weights: eval capability 50%, throughput 20%, TTFT 15%, model size 5%,
-    advanced evals 5%, capability metadata 5%.
+    Weights: eval capability 50%, throughput 20%, model size 5%,
+    advanced evals 5%, capability metadata 5%, snappiness penalty up to -15%.
+
+    `ttft_ms` (LM Studio's first-token-of-any-kind on the long eval prompt)
+    is recorded for display but no longer scored — for reasoning models it
+    counts the first *reasoning* token, which understates how slow they feel.
+    Real felt-snappiness comes from `greeting_ms` — wall-clock from POST →
+    first message token on a trivial "Hi!" prompt. The penalty kicks in
+    only above 5s (where waiting starts to hurt) and caps at -0.15 so it
+    can break ties between similar models without overruling a clearly
+    better one (eval at 50% weight is still king).
+
     JSON format and tool-call are handled as mandatory gates before ranking
     (see handle_setup_compare), not as score components here.
     """
@@ -819,9 +829,6 @@ def _compare_score(r: dict) -> float:
     speed      = min(r["tok_s"], 40) / 40            # cap at 40 tok/s
     sz         = _parse_model_size_b(r["model"], r.get("size_b", 0.0))
     size_b     = min(sz, 13) / 13 * 0.05 if sz > 0 else 0
-    ttft_ms    = r.get("ttft_ms")
-    # TTFT score: ≤500ms→1.0, ≥4000ms→0.0
-    ttft_score = max(0.0, min(1.0, (4000 - ttft_ms) / 3500)) if ttft_ms is not None else 0.5
     # Advanced eval bonus: hard + agent tiers reward models that passed higher bars
     hard_score  = (r.get("hard_eval") or r.get("eval", {}).get("hard") or {}).get("score", 0)
     agent_score = (r.get("agent_eval") or {}).get("score", 0)
@@ -843,7 +850,30 @@ def _compare_score(r: dict) -> float:
     # Penalise models that will struggle at default LM Studio settings.
     ctx = r.get("max_context") or 0
     ctx_penalty = -0.20 if 0 < ctx < 64000 else -0.05 if ctx < 131072 else 0.0
-    return 0.50 * eval_frac + 0.20 * speed + 0.15 * ttft_score + 0.05 * advanced + size_b + caps_bonus + specialized_penalty + ctx_penalty
+    # Snappiness penalty — only kicks in above 5s on the "Hi!" benchmark.
+    # < 5s: 0   |   10s: -0.05   |   15s: -0.10   |   ≥20s: -0.15 (cap)
+    greeting_ms = r.get("greeting_ms")
+    if greeting_ms is not None and greeting_ms > 5000:
+        snappiness_penalty = -min(0.15, (greeting_ms - 5000) / 100000)
+    else:
+        snappiness_penalty = 0.0
+    return 0.50 * eval_frac + 0.20 * speed + 0.05 * advanced + size_b + caps_bonus + specialized_penalty + ctx_penalty + snappiness_penalty
+
+
+def _greeting_note(r: dict) -> str:
+    """Format the Hi! benchmark for the recommendation reason text."""
+    g_ms = r.get("greeting_ms")
+    if g_ms is None:
+        return ""
+    g_s = g_ms / 1000
+    g_r = r.get("greeting_reasoning_toks") or 0
+    if g_ms <= 1500:
+        return f", snappy ({g_s:.1f}s on Hi!)"
+    if g_ms <= 5000:
+        return f", {g_s:.1f}s on Hi!"
+    if g_r > 0:
+        return f", ⚠ {g_s:.0f}s on Hi! ({g_r} thinking toks)"
+    return f", ⚠ {g_s:.0f}s on Hi!"
 
 
 def _compare_reason(best: dict) -> str:
@@ -856,18 +886,17 @@ def _compare_reason(best: dict) -> str:
     if ev.get("format"):      parts.append("structured output")
     if ev.get("tool_call"):   parts.append("tool selection")
     eval_str  = ", ".join(parts) if parts else "limited capability confirmed"
-    ttft_ms   = best.get("ttft_ms")
-    ttft_note = f", {ttft_ms}ms TTFT" if ttft_ms is not None else ""
+    g_note    = _greeting_note(best)
     # Context workaround note for models under 128K
     ctx = best.get("max_context") or 0
     ctx_note = (" ⚠ At 4 parallel slots, per-slot context is limited. Reduce 'Max Concurrent Predictions' or use a ≥128K model."
                 if 0 < ctx < 131072 else "")
 
     if score == 6 and best["tok_s"] >= 15:
-        return (f"{label} at {best['tok_s']} tok/s{ttft_note} — passes all 6 eval tests "
+        return (f"{label} at {best['tok_s']} tok/s{g_note} — passes all 6 eval tests "
                 f"({eval_str}). Strong default agent model for your hardware.{ctx_note}")
     if score >= 4 and best["tok_s"] >= 10:
-        return (f"{label} at {best['tok_s']} tok/s{ttft_note} — passes {score}/6 eval tests "
+        return (f"{label} at {best['tok_s']} tok/s{g_note} — passes {score}/6 eval tests "
                 f"({eval_str}). Solid baseline agent model.{ctx_note}")
     if score >= 4:
         return (f"Passes {score}/6 eval tests but slow at {best['tok_s']} tok/s. "
@@ -879,10 +908,9 @@ def _compare_reason(best: dict) -> str:
 def _fast_reason(r: dict) -> str:
     """Short reason string for the fastest-acceptable recommendation."""
     label, _ = _bench_score(r["tok_s"])
-    ttft_ms   = r.get("ttft_ms")
-    ttft_note = f", {ttft_ms}ms TTFT" if ttft_ms is not None else ""
+    g_note    = _greeting_note(r)
     score     = r.get("eval", {}).get("score", 0)
-    return (f"{label} at {r['tok_s']} tok/s{ttft_note} — {score}/6 evals. "
+    return (f"{label} at {r['tok_s']} tok/s{g_note} — {score}/6 evals. "
             f"Best speed choice that passes the format and tool-call gates.")
 
 
@@ -1186,9 +1214,61 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
 
             tok_s = 0
             ttft_ms = 0
+            greeting_ms = None
+            greeting_reasoning_toks = None
             eval_score = 0
             eval_details = {}
             has_reasoning = False
+
+            async def _bench_greeting() -> dict | None:
+                """Measure first-reply latency on a trivial 'Hi!' prompt.
+
+                Returns {greeting_ms, greeting_reasoning_toks} or None on failure.
+
+                `greeting_ms` is wall-clock from POST → first `message.delta`
+                event. For reasoning models that includes the entire thinking
+                phase — exactly what the user feels staring at an empty chat
+                box. The reasoning-token count surfaces *why* a model is slow
+                on a one-word input (LM Studio's stats `time_to_first_token`
+                counts the first reasoning token, which understates this).
+                """
+                _t0 = time.monotonic()
+                _greeting_ms = None
+                _r_toks = 0
+                try:
+                    async with http_session.post(
+                        f"{base_url}/api/v1/chat",
+                        headers=_headers,
+                        json={"model": model_id, "input": "Hi!", "temperature": 0,
+                              "max_output_tokens": 32, "store": False, "stream": True},
+                        timeout=aiohttp.ClientTimeout(total=120),
+                    ) as sr:
+                        if sr.status != 200:
+                            return None
+                        async for line in sr.content:
+                            line = line.decode("utf-8", errors="replace").strip()
+                            if not line.startswith("data:"):
+                                continue
+                            try:
+                                ev = json.loads(line[5:].strip())
+                            except Exception:
+                                continue
+                            etype = ev.get("type", "")
+                            if etype == "reasoning.delta":
+                                _r_toks += 1
+                            elif etype == "message.delta":
+                                _greeting_ms = round((time.monotonic() - _t0) * 1000)
+                                return {"greeting_ms": _greeting_ms,
+                                        "greeting_reasoning_toks": _r_toks}
+                            elif etype == "chat.end":
+                                # Edge case: model finished without emitting message.delta
+                                if _greeting_ms is None:
+                                    _greeting_ms = round((time.monotonic() - _t0) * 1000)
+                                return {"greeting_ms": _greeting_ms,
+                                        "greeting_reasoning_toks": _r_toks}
+                except Exception:
+                    return None
+                return None
 
             async def _stream_chat(prompt: str, label: str = "eval") -> dict | None:
                 """Call /api/v1/chat with streaming, forward progress to the UI.
@@ -1278,6 +1358,23 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
                             await send({"log": f"  Error: {err_info.get('message', 'unknown')}"})
 
                     return _result
+
+            # ── Step 1.5: Hi! first-reply latency ─────────────────────
+            # Trivial-input snappiness — surfaces reasoning overhead that
+            # the long-prompt TTFT misses. See _compare_score for the
+            # penalty curve (kicks in above 5s).
+            if endpoint not in _bench_cancels.get(bench_id, set()):
+                try:
+                    await send({"log": "  Greeting test (Hi!)..."})
+                    gd = await _bench_greeting()
+                    if gd:
+                        greeting_ms = gd["greeting_ms"]
+                        greeting_reasoning_toks = gd["greeting_reasoning_toks"]
+                        _r_note = (f" ({greeting_reasoning_toks} thinking toks)"
+                                   if greeting_reasoning_toks else "")
+                        await send({"log": f"  Hi! reply: {greeting_ms}ms{_r_note}"})
+                except Exception as e:
+                    await send({"log": f"  Greeting test failed: {str(e)[:60]}"})
 
             # Cancel check before starting the (potentially slow) eval phase
             if endpoint in _bench_cancels.get(bench_id, set()):
@@ -1534,6 +1631,8 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
                 "endpoint": endpoint,
                 "tok_s": tok_s,
                 "ttft_ms": ttft_ms,
+                "greeting_ms": greeting_ms,
+                "greeting_reasoning_toks": greeting_reasoning_toks,
                 "max_context": max_context,
                 "quality_pass": quality_pass,
                 "eval": {"score": eval_score, **eval_details},

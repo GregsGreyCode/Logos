@@ -184,6 +184,41 @@ async def handle_machines_patch(request: web.Request) -> web.Response:
             metadata=updates, ip_address=request.remote,
         )
 
+        # Propagate credential / URL changes to every OpenShell sub-gateway's
+        # provider record. Without this hook, rotating the LM Studio API key
+        # (or moving the LM Studio host) silently leaves every previously-
+        # provisioned sub-gateway holding a stale credential — workers in
+        # those gateways still register and ensure_loaded still works
+        # (because both read auth.db directly), but the worker's chat
+        # completion call goes through OpenShell's privacy router which
+        # injects the stored stale credential and gets rejected by LM Studio.
+        # Run in a background task so the PATCH response returns immediately;
+        # the resync is best-effort and idempotent. See
+        # ``ensure_provider_configured`` for the per-gateway sync logic.
+        if "api_key" in updates or "endpoint_url" in updates:
+            try:
+                import asyncio as _asyncio
+                from gateway.openshell_routes import ensure_provider_configured
+                async def _propagate_bg():
+                    try:
+                        routes = auth_db.list_model_routes()
+                        for r in routes:
+                            try:
+                                await _asyncio.to_thread(
+                                    ensure_provider_configured,
+                                    r["openshell_name"], r["provider"],
+                                )
+                            except Exception as exc:
+                                logger.warning(
+                                    "Failed to propagate machine update to route %s (%s): %s",
+                                    r["id"], r["openshell_name"], exc,
+                                )
+                    except Exception as exc:
+                        logger.warning("Machine-update propagation raised: %s", exc)
+                _asyncio.create_task(_propagate_bg())
+            except Exception as exc:
+                logger.warning("Could not schedule machine-update propagation: %s", exc)
+
     machine = auth_db.get_machine(mid)
     machine["capabilities"] = auth_db.get_machine_capabilities(mid)
     machine["has_api_key"] = bool(machine.pop("api_key", None))
