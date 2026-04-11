@@ -5112,8 +5112,24 @@ async def start_gateway(config: Optional[GatewayConfig] = None, replace: bool = 
     # each new name and updates the DB row in place; existing state-file
     # entries that still reference the old name continue to work because
     # the alias and the original both point at the same physical gateway.
+    #
+    # The migration reads model_routes via auth_db, so we must initialise
+    # the auth DB first. init_db() is idempotent (CREATE TABLE IF NOT
+    # EXISTS + additive ALTERs) so it's safe to call here AND again later
+    # from http_api's startup. Without this, the migration would fail
+    # with "Auth DB not initialised — call init_db() first" on every
+    # gateway start and the old ``logos-os-*`` names would never get
+    # cleaned up.
     try:
+        from pathlib import Path as _Path
+        from gateway.auth import db as _auth_db
         from gateway.openshell_routes import migrate_routes_to_model_names
+        _hermes_home = _Path(
+            os.environ.get("LOGOS_HOME")
+            or os.environ.get("HERMES_HOME")
+            or str(_Path.home() / ".logos")
+        )
+        _auth_db.init_db(_hermes_home)
         renamed = migrate_routes_to_model_names()
         if renamed:
             logger.info("model-route name migration: renamed %d row(s)", renamed)
