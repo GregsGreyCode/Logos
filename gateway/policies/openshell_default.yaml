@@ -3,10 +3,16 @@
 # Applied automatically by OpenShellExecutor at sandbox creation.
 # Hot-reloadable: openshell policy set <name> --policy openshell_default.yaml --wait
 #
-# This policy allows the sandbox worker to:
-#   1. Connect back to the Logos gateway via WebSocket (host.openshell.internal)
-#   2. Call the LLM via inference.local (OpenShell's privacy router)
-#   3. Resolve DNS for *.internal hostnames
+# Plan A architecture (TASKS.md #24): the host gateway drives the sandbox
+# via `openshell sandbox exec --no-tty -- python3 /app/sandbox_worker.py`
+# over OpenShell's blessed gRPC/mTLS exec transport. The sandbox no longer
+# initiates outbound traffic to host.openshell.internal:8091 — that
+# reverse-connection model (broken by OpenShell's L7 proxy tightening)
+# has been retired along with the `logos_gateway` network_policy entry.
+#
+# This policy now only allows the sandbox worker to:
+#   1. Call the LLM via inference.local (OpenShell's privacy router)
+#   2. Resolve DNS for *.internal hostnames
 
 version: 1
 
@@ -34,26 +40,6 @@ process:
   run_as_group: sandbox
 
 network_policies:
-  logos_gateway:
-    name: "Logos Gateway (WebSocket worker)"
-    endpoints:
-      - host: host.openshell.internal
-        port: 8091
-        protocol: rest
-        enforcement: enforce
-        access: full
-        allowed_ips:
-          - "172.16.0.0/12"
-          - "192.168.0.0/16"
-          - "10.0.0.0/8"
-    binaries:
-      - path: /app/venv/bin/python3
-      - path: /app/venv/bin/python
-      - path: /app/venv/bin/python3.12
-      - path: /usr/bin/python3
-      - path: /usr/bin/python3.12
-      - path: /usr/bin/curl
-
   inference_local:
     name: "Inference (Privacy Router)"
     endpoints:
