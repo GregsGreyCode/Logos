@@ -360,8 +360,20 @@ async def _run_inference(
     messages.append({"role": "user", "content": message})
 
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
-    payload = {"model": model, "messages": messages, "stream": True}
+    # max_tokens=16384 — generous ceiling so reasoning models like
+    # qwen3.5-9b have room to finish thinking AND emit a visible answer.
+    # Without this LM Studio's default cuts the response off mid-reasoning
+    # (~600-1000 tokens) and the user sees a truncated thinking trace
+    # with no actual reply. The model still stops naturally on its own
+    # </think> + answer; this is an upper bound, not a target.
+    payload = {
+        "model": model,
+        "messages": messages,
+        "stream": True,
+        "max_tokens": 16384,
+    }
     accumulated = ""
+    accumulated_reasoning = ""
 
     ssl_ctx = None
     ca_bundle = "/etc/openshell-tls/ca.crt"
@@ -370,10 +382,18 @@ async def _run_inference(
         ssl_ctx = ssl.create_default_context(cafile=ca_bundle)
 
     # Use trust_env for inference (HTTPS goes through CONNECT automatically)
+    #
+    # ClientTimeout=600 (10 min) matches the patched OpenShell router ceiling
+    # in `crates/openshell-router/src/lib.rs` (was 60s, bumped to 600s — see
+    # TASKS.md #22 for the full debug story). The previous 120s worker
+    # timeout was the bottleneck after the OpenShell patch landed: real
+    # inference calls beyond 120s would still get clipped client-side even
+    # though the proxy now allows up to 10 minutes. Worker and proxy budgets
+    # are now aligned.
     async with aiohttp.ClientSession(trust_env=True) as session:
         async with session.post(
             f"{base_url}/chat/completions", json=payload, headers=headers,
-            ssl=ssl_ctx, timeout=aiohttp.ClientTimeout(total=120),
+            ssl=ssl_ctx, timeout=aiohttp.ClientTimeout(total=600),
         ) as resp:
             if resp.status != 200:
                 body = await resp.text()
@@ -389,6 +409,29 @@ async def _run_inference(
                 try:
                     chunk = json.loads(data_str)
                     delta = chunk.get("choices", [{}])[0].get("delta", {})
+                    # Reasoning models (qwen3.5, gpt-oss, etc) emit their
+                    # internal thinking via LM Studio's reasoning extension
+                    # to the OpenAI-compat format. The field name varies
+                    # by model + LM Studio version:
+                    #
+                    #   * `reasoning_content` — qwen3.5-9b in streaming mode
+                    #     (the original LM Studio extension name)
+                    #   * `reasoning`         — gpt-oss-20b non-streaming
+                    #     responses (verified 2026-04-10), and likely the
+                    #     newer convention LM Studio is migrating toward
+                    #
+                    # Read both so we don't silently drop the entire output
+                    # of any model that picks the other field. Without this
+                    # the worker would return "" while LM Studio happily
+                    # streams the model's reasoning into a field we ignore.
+                    reasoning = (
+                        delta.get("reasoning_content")
+                        or delta.get("reasoning")
+                        or ""
+                    )
+                    if reasoning:
+                        accumulated_reasoning += reasoning
+                        await ws.send_json({"type": "thinking", "task_id": task_id, "content": reasoning})
                     content = delta.get("content", "")
                     if content:
                         accumulated += content
@@ -396,6 +439,22 @@ async def _run_inference(
                 except json.JSONDecodeError:
                     continue
 
+    # Fallback: if the model emitted ONLY reasoning and no actual content
+    # (qwen3.5 has been observed doing this on short prompts under certain
+    # chat templates), surface the reasoning as the visible reply so the
+    # caller sees something instead of an empty string. Better a verbose
+    # answer than silence.
+    if not accumulated and accumulated_reasoning:
+        logger.info(
+            "Inference returned only reasoning_content (%d chars) — "
+            "falling back to reasoning as visible reply",
+            len(accumulated_reasoning),
+        )
+        await ws.send_json({
+            "type": "token", "task_id": task_id,
+            "content": accumulated_reasoning,
+        })
+        return accumulated_reasoning
     return accumulated
 
 

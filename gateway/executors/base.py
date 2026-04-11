@@ -63,7 +63,7 @@ class ResourceHeadroom:
 @runtime_checkable
 class InstanceExecutor(Protocol):
     """
-    Protocol satisfied by KubernetesExecutor and LocalProcessExecutor.
+    Protocol satisfied by OpenShellExecutor and DockerSandboxExecutor.
 
     All methods are synchronous; async callers should run them in a thread pool.
     """
