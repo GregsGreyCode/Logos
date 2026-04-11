@@ -247,6 +247,116 @@ Approach A is the minimum; **M7 is the follow-up that makes the sandbox health s
 
 ---
 
+## M8 — Dispatch activity ledger
+
+**State today**: Phase A of the dispatch-activity work shipped — `WorkerRegistry` tracks an in-memory `_active_tasks` counter that goes up when `dispatch_task` enters and down when it exits, `admin_handlers.handle_agents_list` surfaces it as `active_tasks` on each agent record, and the world-view Phaser `AgentSprite` renders a 💭 thought-bubble with a subtle scale pulse whenever `active_tasks > 0`. The user can now see at a world-view glance "Tali is thinking about something right now" without guessing.
+
+**What's missing (Phase B — the durable ledger)**:
+
+1. **A `dispatches` table** in `auth.db`:
+   ```
+   id TEXT PRIMARY KEY
+   agent_id TEXT           -- who was dispatched (hermes-<name>)
+   route_id TEXT           -- model_routes.id at dispatch time
+   model TEXT              -- the model string (denorm for easy group-by after route edits)
+   origin TEXT             -- 'user_chat' | 'platform:discord' | 'cron' | 'workflow:<id>:<step>' | 'delegate:<parent_agent>'
+   origin_detail TEXT      -- free-form JSON: user_id, chat_id, workflow_run_id, cron_job_id, etc.
+   prompt_tokens INT       -- from the final task_result (if the worker reports it)
+   completion_tokens INT
+   elapsed_s REAL
+   status TEXT             -- 'running' | 'ok' | 'error' | 'timeout'
+   error TEXT              -- short error string if status != ok
+   started_at INT          -- epoch ms
+   ended_at INT
+   ```
+
+2. **Wrap `dispatch_task` at the gateway level** (not inside the registry) so the ledger row is written by whoever knows the origin. The registry is origin-agnostic — it shouldn't learn about "did this come from a chat, a cron job, or a platform message"; that's the caller's context. Each of the 4 real dispatch sites (`gateway/http_api.py:_handle_chat`, `gateway/run.py:dispatch_platform_message`, `cron/scheduler.py:run_job`, `workflows/engine.py:_run_agent`) gets a helper that inserts the `dispatches` row at entry, updates it at exit, and calls through to `worker_registry.dispatch_task`. The `delegate_tool.py` path doesn't go through `dispatch_task` at all (in-process thread-pool) — either record it separately with `origin='delegate'` or mark it explicitly out-of-scope for the ledger.
+
+3. **Audit existing code paths** to plumb the right `origin_detail`:
+   - `_handle_chat` has access to `request["current_user"]`, agent_id, session_id — trivial.
+   - `dispatch_platform_message` has platform name + user_id + chat_id on the `MessageEvent.source` dataclass. Today that's **discarded** before `dispatch_task` is called (see the audit report above) — Phase B is the reason to stop discarding it.
+   - `cron/scheduler.py` has the `origin` dict on the job record already — just needs to be passed through.
+   - `workflows/engine.py` knows the `run_id` and `step_id` at step dispatch time.
+
+4. **Admin → Activity tab**: new UI page that queries the ledger and shows:
+   - Per-agent histogram of dispatches over the last 24h, split by origin
+   - "Most-used model" per agent
+   - Average elapsed_s per agent per origin (user vs cron is usually a dramatic split)
+   - Top errors per agent
+   - Filter by origin / agent / date range
+
+5. **Retention policy**: a cron job that prunes rows older than N days (default 30) to keep the ledger cheap. Rollups for longer-term "you made 2,847 dispatches last month" come in Phase C or later.
+
+**Why it's architecturally medium**:
+
+1. New table + migration + CRUD helpers in `auth/db.py` (~50 lines, low risk).
+2. Every dispatch site needs a wrapper; care needed to ensure the wrapper is robust to worker errors (don't leave `status='running'` ledger rows after a crash).
+3. The wrapper has to be placed at the *caller* not the registry, which means 4 touch sites — small per site but they have to be kept in sync.
+4. Rendering per-agent stats in the UI is a new page with a new API endpoint.
+
+**Dependency**: Must land **after** M6 unified log is stable (it is) so the ledger and the log can cross-reference by `task_id` and `agent_id`. No hard ordering against #24 — the refactor already shipped.
+
+**Direction established**: 2026-04-11 session — user observed agents autonomously writing memories mid-chat and asked *"should we have a way of counting how many requests are made by us and land on a model and the agent landing on a model?"* Phase A is the visual indicator; Phase B is the durable data for the analytics/observability story.
+
+---
+
+## M9 — Autonomous agent activity (self-reflection scheduler)
+
+**State today**: **No agent in Logos ever initiates activity on its own.** Every `dispatch_task` call is driven by: (1) a user-authored chat message, (2) a user-scheduled cron job, (3) a user-triggered workflow, or (4) a sub-agent spawned inside a user conversation. The `memory` tool that agents call during conversations to write `MEMORY.md` / `USER.md` is the ONLY "self-modifying" behavior, and it only fires mid-response to a user-authored turn. There is no reflection scheduler, no background consolidation loop, no periodic "review your recent conversations" prompt. The tamagotchi / living-agent identity Greg is building toward requires this layer; it doesn't exist yet.
+
+**What's missing**:
+
+1. **A reflection scheduler**. Periodically wakes each agent and dispatches a synthetic "system" turn that asks the agent to review its recent conversations, extract durable learnings, write memories, and optionally flag evolution proposals. Shape is basically:
+   ```python
+   async def run_reflection_cycle(agent):
+       last_n_turns = load_recent_chat_turns(agent.id, hours=24)
+       if not last_n_turns: return   # nothing to reflect on
+       task = {
+           "type": "task",
+           "task_id": new_uuid(),
+           "message": REFLECTION_PROMPT_TEMPLATE.format(turns=last_n_turns),
+           "history": [],
+           "context_prompt": agent.soul_prompt + REFLECTION_SOUL_SUFFIX,
+           "_internal_origin": "self_reflection",
+       }
+       await worker_registry.dispatch_task(agent.sandbox_name, task, ...)
+   ```
+
+2. **A cadence model**. Options:
+   - Fixed interval (every N hours) — simplest, boring
+   - Activity-triggered (run N minutes after the last user turn in a session) — reflects fresh context
+   - Nightly (one reflection per agent per day at 3am) — matches human rhythm, cheapest
+   - User-configurable per agent (soul manifest has `reflection_cadence: hourly|nightly|never`)
+   
+   Probably start with "nightly, opt-out per agent" and expand from there.
+
+3. **Reflection prompt template** — separate concern from the dispatch machinery. Needs to be authored with care: should reinforce the agent's persona/soul, summarize what happened, ask for takeaways, authorize memory writes. Likely lives in `souls/<name>.md` or a shared `REFLECTION.md` skill.
+
+4. **Dispatch origin integration**. Reflection dispatches must be tagged `origin='self_reflection'` in the Phase B ledger so the user can see "Tali self-reflected 7 times this week" as distinct from "Tali answered 42 user messages". Without the ledger, reflections vanish into the same SSE firehose as chats and the user can't tell they're happening.
+
+5. **World-view visual affordance**. When an agent is in a reflection cycle, the thought bubble from M8 Phase A should render with a distinct glyph (🌙 for nightly reflection?) or color so the user can tell "Tali is thinking *about her memories*, not about a user message". Pure UX polish on top of the counter.
+
+6. **A memory-write channel that's visible to the user**. If the agent writes a new memory during reflection, the user should SEE that happen — a toast notification, a notification dot on the agent's avatar, a "Tali wrote 2 new memories" card in a feed somewhere. Otherwise reflection is invisible and might as well not be happening, UX-wise. This is the whole *point* of the tamagotchi identity — you watch your agents grow.
+
+7. **Safety / cost guards**. Reflection is an LLM call that costs compute (even on local LM Studio) and writes durable state. Guards:
+   - Global "pause all reflection" switch in Admin → Settings
+   - Per-agent budget ("no more than N reflections per day")
+   - Dry-run mode that captures the proposed memory writes as evolution proposals instead of auto-applying them
+
+**Why it's architecturally large**:
+
+1. Needs an entirely new cron-like scheduler that isn't the current `cron/scheduler.py` (that one is user-authored one-off jobs, not a periodic system loop).
+2. Requires a new "internal" dispatch origin the frontend and ledger both understand.
+3. The reflection prompt design is a product-shaping decision, not a plumbing decision — it changes how the agent thinks of itself and what memories it forms.
+4. Touches soul manifests, memory write path, evolution_proposals table, notification UI — it's a cross-cutting feature that spans most of the app.
+5. User-facing discoverability (M9 #6) is where most of the UX work lives — make reflection feel like the agent *living*, not like a hidden backend cron.
+
+**Dependency**: Must land **after** M8 Phase B (the dispatch ledger). Without a way to tag and count self-reflections, the feature is invisible to the user and no analytics can tell it from user traffic. Strong preference for Phase C to be scoped as its own focused session, not piggy-backed onto a plumbing commit.
+
+**Direction established**: 2026-04-11 session — user observation that the tamagotchi / living-agent identity requires autonomous agent behavior, currently impossible. This is the M-feature that most directly shapes the product identity of Logos vs other agent frameworks.
+
+---
+
 ## Relationships
 
 ```
@@ -265,8 +375,39 @@ M6 (unified logs) ──→ unblocks every future debugging session
 M7 (sandbox health UX) ──→ depends on TASKS.md #24 refactor (port-forward + /health probe)
                       ──→ depends on M6 (log-stream as data source for latency sparklines)
                       ──→ makes the new architecture self-documenting in the UI
+
+M8 (dispatch ledger) ──→ Phase A shipped (in-memory counter + world thought bubble)
+                     ──→ Phase B depends on M6 (ledger cross-references log by task_id)
+                     ──→ Phase B unlocks M9 (self-reflection needs the ledger to be
+                         distinguishable from user chats)
+
+M9 (self-reflection) ──→ depends on M8 Phase B
+                     ──→ the tamagotchi / living-agent identity feature
+                     ──→ product-shaping, not plumbing — scope as its own session
 ```
 
-**Recommended tackling order**: **M6 → #24 refactor → M7 → M3 → M4 → M2 → M1 → M5.**
+**Recommended tackling order**: **M6 → #24 refactor → M7 → M3 → M4 → M2 → M1 → M5 → M8 Phase B → M9.**
 
-Rationale: **M6 goes first** because it pays for itself the next time anything breaks, and because every subsequent M depends on being able to reason about what happened across components. **TASKS.md #24** (the NemoClaw-pattern refactor) unblocks chat end-to-end and forces the sandbox transport question. **M7** then accurately surfaces the new transport's health in the UI. Then M3 unlocks M4; M2 is user-visibility-critical once M4 is real; M1 is the last polish on the STAMP pill once everything else is in place; M5 is the long arc that benefits from everything else first.
+Rationale: **M6 goes first** because it pays for itself the next time anything breaks, and because every subsequent M depends on being able to reason about what happened across components. **TASKS.md #24** (the NemoClaw-pattern refactor) unblocks chat end-to-end and forces the sandbox transport question. **M7** then accurately surfaces the new transport's health in the UI. Then M3 unlocks M4; M2 is user-visibility-critical once M4 is real; M1 is the last polish on the STAMP pill once everything else is in place; M5 is the long arc that benefits from everything else first. **M8 Phase B** lands after the UI polish cluster because the ledger is lower-stakes than the interactive surfaces and can be retrofitted without disrupting anything already shipped. **M9** is last because it's the most product-shaping feature and deserves the richest context — it's also the one most likely to reveal further infrastructure needs once prototyped.
+
+---
+
+## Navigation consolidation — not yet scoped as an M-ticket
+
+**State today**: The 5-tab navbar (Agents, Chats, Compare, Settings, Admin) was audited in `docs/audit/pass3_ui_audit.md` and judged to "mostly work" against the 8-domain model sketched in pass2. The audit focused on:
+
+- **S1** (shipped): removed dupe surfaces from Settings — deleted Routing sub-tab, moved Benchmark into Inference, moved Debug into Admin → Model Routes
+- **S2** (pending): Agents tab CRUD slide-out so the world breathes full-width
+- **S3/S4** (pending, = MISSING.md M3/M4): multi-user polish
+
+**What the audit did NOT cover** — and what's been raised since:
+
+1. Whether **Admin → Sandboxes** and **Admin → Model Routes** should merge into a single "Dashboard" page. Today they're sibling sub-tabs inside Admin that are obviously related (sandboxes are the things that run inside routes) but render as two separate tables. A Dashboard that shows "routes → sandboxes → workers → dispatches" as a single nested view would compress two sub-tabs into one and make the containment relationship visually obvious.
+
+2. Whether **Admin → Security** (which internally is `adminTab='action-policies'`) is a subsystem that belongs at the Admin top level or should be demoted / merged into Settings. The audit noted action-policies are "subsystems not settings" but didn't recommend a move.
+
+3. Whether the **Compare tab** should be a top-level navbar item at all, or a mode you toggle inside Chats. Right now Compare is the 3rd of 5 tabs, which gives it equal weight to the core Chats flow — but it's used far less often and only makes sense once you have ≥2 agents. Moving it to a "Compare mode" button inside Chats frees a top-level slot.
+
+4. Whether there should be a new top-level **Dashboard** tab that replaces Admin's current tabular sub-tabs with a single live overview page (active agents, active tasks, recent dispatches, route health) — the home-base for a running Logos install.
+
+This isn't in the M-series because it's UX direction, not a missing capability. When it's ready to execute it should become M10 (or get folded into M5 "world as first-class surface", which already has a claim on the navbar-consolidation space). Concrete proposals welcome — the audit deliberately stopped short of this layer because pass3 judged the current navbar "good enough to unblock pass 3's punch list".

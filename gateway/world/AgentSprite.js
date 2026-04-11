@@ -149,13 +149,29 @@ export class AgentSprite {
     this.statusDot = scene.add.graphics().setDepth(14);
     this._drawStatusDot(isRunning);
 
-    // State bubble (hourglass when not running) — sits above the letter badge
-    // so nothing covers the sprite itself.
+    // State bubble — three glyphs, mutually exclusive:
+    //   ⏳  (hourglass)        — not running (provisioning / disconnected)
+    //   💭  (thought bubble)   — running AND at least one task in flight
+    //   (hidden)               — running and idle
+    //
+    // The active-task indicator is driven by ``inst.active_tasks``
+    // (populated by admin_handlers.handle_agents_list from
+    // WorkerRegistry.active_task_count). Phase A of the dispatch-
+    // activity observability work in docs/MISSING.md — the whole point
+    // is a live visual cue that the user can glance at and see "Tali
+    // is currently thinking about something" at a world-view glance,
+    // matching the tamagotchi/living-agent product identity.
     this.bubble = scene.add.text(startPos.x, startPos.y - 72, '\u23f3', {
       fontSize: '16px',
       align: 'center',
     }).setOrigin(0.5, 0.5).setDepth(14);
-    this.bubble.setVisible(!isRunning && this._getStatus(inst) !== 'unknown');
+    this._updateBubble(inst);
+
+    // Tween handle for the busy-state bob animation — created on demand
+    // the first time the agent enters the busy state, paused/resumed as
+    // the state toggles. Phaser disallows multiple simultaneous tweens
+    // on the same target so we track the single tween here.
+    this._busyTween = null;
 
     // Initial target
     this.targetWorldX = startPos.x;
@@ -192,8 +208,8 @@ export class AgentSprite {
     // Status dot
     this._drawStatusDot(isRunning);
 
-    // Bubble
-    this.bubble.setVisible(!isRunning && status !== 'unknown');
+    // Bubble (hourglass / thought bubble / hidden — see _updateBubble)
+    this._updateBubble(inst);
 
     // Status transition handling. The freeze + walk animation reset
     // happens in update() based on isRunning, so we don't need to
@@ -495,6 +511,88 @@ export class AgentSprite {
     return this._getStatus(inst) === 'running';
   }
 
+  _isBusy(inst) {
+    // "Busy" = at least one dispatch_task currently in flight for this
+    // sandbox. Reads the ``active_tasks`` counter that admin_handlers
+    // adds to each agent record, sourced from
+    // WorkerRegistry.active_task_count() (Phase A of the dispatch-
+    // activity observability work — docs/MISSING.md). Defensive
+    // against the field being missing on older agent records.
+    return Number(inst && inst.active_tasks) > 0;
+  }
+
+  _updateBubble(inst) {
+    // Three mutually-exclusive visual states for the bubble glyph:
+    //   hourglass (⏳) — sandbox is not running (provisioning, disconnected,
+    //                    or unknown); this is the existing "cold agent" indicator
+    //   thought    (💭) — sandbox is running AND has at least one task in flight;
+    //                    driven by inst.active_tasks > 0
+    //   hidden           — sandbox is running and idle (no bubble at all)
+    //
+    // The busy state also gets a gentle vertical bob (±2px at 600ms)
+    // as a secondary "this is alive" cue. Tween is created on demand
+    // and stopped cleanly when the state transitions out.
+    const isRunning = this._isRunning(inst);
+    const isBusy = isRunning && this._isBusy(inst);
+    const status = this._getStatus(inst);
+
+    if (!isRunning) {
+      // Cold / provisioning — hourglass, no bob
+      this.bubble.setText('\u23f3');
+      this.bubble.setVisible(status !== 'unknown');
+      this._stopBusyTween();
+      return;
+    }
+
+    if (isBusy) {
+      // Running + currently processing a task — thought bubble + bob
+      this.bubble.setText('\ud83d\udcad');
+      this.bubble.setVisible(true);
+      this._startBusyTween();
+      return;
+    }
+
+    // Running + idle — hide the bubble entirely
+    this.bubble.setVisible(false);
+    this._stopBusyTween();
+  }
+
+  _startBusyTween() {
+    // Only create the tween once; re-starting on every syncState()
+    // poll would jitter the animation. If the tween exists and is
+    // playing, leave it alone.
+    if (this._busyTween && this._busyTween.isPlaying()) return;
+    if (this._busyTween) {
+      // Tween exists but was paused after a previous busy window
+      this._busyTween.resume();
+      return;
+    }
+    // Pulse the bubble's scale between 1.0 and 1.2 instead of its
+    // position — update() unconditionally resets bubble.setPosition()
+    // on every frame to keep it above the sprite head, which would
+    // clobber a position tween. Scale isn't touched by update(), so
+    // it's safe to animate here. The effect reads as a subtle
+    // "thinking harder" breath.
+    this._busyTween = this.scene.tweens.add({
+      targets: this.bubble,
+      scale: 1.2,
+      duration: 600,
+      ease: 'Sine.easeInOut',
+      yoyo: true,
+      repeat: -1,
+    });
+  }
+
+  _stopBusyTween() {
+    if (!this._busyTween) return;
+    this._busyTween.stop();
+    this._busyTween = null;
+    // Restore default scale so the next time this bubble is shown
+    // (e.g. an hourglass after the agent's sandbox goes cold) it
+    // renders at its intended size.
+    this.bubble.setScale(1);
+  }
+
   _drawStatusDot(isRunning) {
     this.statusDot.clear();
     this.statusDot.fillStyle(isRunning ? 0x22c55e : 0xeab308, 1);
@@ -506,6 +604,7 @@ export class AgentSprite {
   }
 
   destroy() {
+    this._stopBusyTween();
     this.sprite.destroy();
     if (this.nameLabel) this.nameLabel.destroy();
     if (this.soulLabel) this.soulLabel.destroy();
