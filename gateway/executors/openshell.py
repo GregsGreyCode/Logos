@@ -915,64 +915,89 @@ class OpenShellExecutor:
             _ensure_image_in_cluster(self.sandbox_image, openshell_gw)
 
             # ── Step 1: create the sandbox CR ──────────────────────
-            create_args = [
-                "sandbox", "create",
-                "--name", sandbox_name,
-                "--from", self.sandbox_image,
-                "--no-auto-providers",
-            ]
-            # Compute the effective policy (baseline + applied presets)
-            # for this agent. If the agent has any presets applied in
-            # the DB, we write a merged YAML to a tempfile and pass THAT
-            # instead of the raw baseline. gateway.policies is imported
-            # inside the try so we don't reintroduce a circular import
-            # at module load time — gateway.policies imports back from
-            # this module for _openshell + _sanitize_sandbox_name.
-            _policy_arg: Optional[str] = None
+            #
+            # Pre-create check: if a sandbox with this name already
+            # exists and is Ready (e.g. from a previous gateway
+            # instance that spawned it before crashing), skip the
+            # create and go straight to uploads. This avoids the
+            # openshell CLI hanging for 300s+ on a duplicate create.
+            _sandbox_already_exists = False
             try:
-                from gateway.auth import db as _policies_auth_db
-                _agent_row = _policies_auth_db.get_agent_by_name(config.name)
-                if _agent_row:
-                    from gateway import policies as _gp
-                    _effective_policy_tmp = _gp.write_effective_policy_to_tempfile(
-                        _agent_row["id"]
-                    )
-                    _policy_arg = str(_effective_policy_tmp)
-                    logger.info(
-                        "spawn(%s): using effective policy with %d applied "
-                        "preset(s)", sandbox_name,
-                        len(_gp.get_applied_presets(_agent_row["id"])),
-                    )
-            except Exception as _policy_exc:
-                logger.warning(
-                    "spawn(%s): effective policy computation failed, "
-                    "falling back to baseline %s: %s",
-                    sandbox_name, self.policy_file, _policy_exc,
+                _list_result = _openshell(
+                    "sandbox", "list",
+                    gateway=openshell_gw, check=False, timeout=15,
                 )
-            if not _policy_arg and self.policy_file and Path(self.policy_file).exists():
-                _policy_arg = self.policy_file
-            if _policy_arg:
-                create_args += ["--policy", _policy_arg]
-            # CRITICAL: trailing `-- true` is required.
-            #
-            # `openshell sandbox create` with NO trailing command (after
-            # `--`) defaults to opening an interactive PTY shell once
-            # the CR is ready, and the create call blocks for the
-            # lifetime of that shell. Without a trailing command we get
-            # `ssh -tt -o RequestTTY=force` zombies that never exit and
-            # the create call hangs until the timeout reaper kills it
-            # — exactly the symptom that motivated task #9, just on a
-            # different code path.
-            #
-            # Passing `-- true` runs `/usr/bin/true` inside the sandbox
-            # which exits in milliseconds. Without `--no-keep` the
-            # sandbox stays alive after the initial command exits, so
-            # we can run the upload + worker exec steps below as
-            # independent calls. NB: do NOT add `--no-keep` here, that
-            # would tear the sandbox down when `true` returns.
-            create_args += ["--", "true"]
-            result = _openshell(*create_args, gateway=openshell_gw, check=True)
-            logger.debug("openshell sandbox create stdout: %s", result.stdout.strip())
+                if _list_result.returncode == 0 and sandbox_name in (_list_result.stdout or ""):
+                    # Check if it's Ready (not Provisioning/Failed)
+                    for _line in (_list_result.stdout or "").splitlines():
+                        if sandbox_name in _line and "Ready" in _line:
+                            logger.info(
+                                "spawn(%s): sandbox already exists and is Ready — "
+                                "skipping create, proceeding to uploads",
+                                sandbox_name,
+                            )
+                            _sandbox_already_exists = True
+                            break
+            except Exception:
+                pass  # list failed, proceed with create
+
+            if not _sandbox_already_exists:
+                create_args = [
+                    "sandbox", "create",
+                    "--name", sandbox_name,
+                    "--from", self.sandbox_image,
+                    "--no-auto-providers",
+                ]
+                # Compute the effective policy (baseline + applied presets)
+                # for this agent. If the agent has any presets applied in
+                # the DB, we write a merged YAML to a tempfile and pass THAT
+                # instead of the raw baseline. gateway.policies is imported
+                # inside the try so we don't reintroduce a circular import
+                # at module load time — gateway.policies imports back from
+                # this module for _openshell + _sanitize_sandbox_name.
+                _policy_arg: Optional[str] = None
+                try:
+                    from gateway.auth import db as _policies_auth_db
+                    _agent_row = _policies_auth_db.get_agent_by_name(config.name)
+                    if _agent_row:
+                        from gateway import policies as _gp
+                        _effective_policy_tmp = _gp.write_effective_policy_to_tempfile(
+                            _agent_row["id"]
+                        )
+                        _policy_arg = str(_effective_policy_tmp)
+                        logger.info(
+                            "spawn(%s): using effective policy with %d applied "
+                            "preset(s)", sandbox_name,
+                            len(_gp.get_applied_presets(_agent_row["id"])),
+                        )
+                except Exception as _policy_exc:
+                    logger.warning(
+                        "spawn(%s): effective policy computation failed, "
+                        "falling back to baseline %s: %s",
+                        sandbox_name, self.policy_file, _policy_exc,
+                    )
+                if not _policy_arg and self.policy_file and Path(self.policy_file).exists():
+                    _policy_arg = self.policy_file
+                if _policy_arg:
+                    create_args += ["--policy", _policy_arg]
+                # CRITICAL: trailing `-- true` is required.
+                #
+                # `openshell sandbox create` with NO trailing command
+                # (after `--`) defaults to opening an interactive PTY
+                # shell once the CR is ready, and the create call blocks
+                # for the lifetime of that shell. Without a trailing
+                # command we get `ssh -tt -o RequestTTY=force` zombies
+                # that never exit and the create call hangs until the
+                # timeout reaper kills it.
+                #
+                # Passing `-- true` runs `/usr/bin/true` inside the
+                # sandbox which exits in milliseconds. Without
+                # `--no-keep` the sandbox stays alive after the initial
+                # command exits, so we can run the upload + worker exec
+                # steps below as independent calls.
+                create_args += ["--", "true"]
+                result = _openshell(*create_args, gateway=openshell_gw, check=True)
+                logger.debug("openshell sandbox create stdout: %s", result.stdout.strip())
 
             # ── Step 2: upload the instance config (and soul) ──────
             config_tmpfile = tempfile.NamedTemporaryFile(

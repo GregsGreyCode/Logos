@@ -261,6 +261,13 @@ async def _resurrect_missing_sandboxes(executor) -> None:
     import asyncio as _asyncio
 
     missing = []
+    # Track live sandboxes with their gateway for state reconciliation
+    live_names_with_gw = {}
+    try:
+        live_names_with_gw = {n: gw for (n, gw) in _list_all_sandbox_names_with_gateway()}
+    except Exception:
+        pass  # already captured in live_names above
+
     for a in agents:
         name = a.get("name") or ""
         if not name:
@@ -269,6 +276,50 @@ async def _resurrect_missing_sandboxes(executor) -> None:
         if sandbox_name in live_names:
             continue
         missing.append(a)
+
+    # Reconcile state file: ensure every live sandbox has a state entry.
+    # After a gateway restart, the state file may be empty even though
+    # sandboxes are still running from the previous instance. Without
+    # state entries, worker_registry.get() returns None and chat dispatch
+    # reports "worker not connected" even though the sandbox is Ready.
+    from gateway.executors.openshell import _load_state, _save_state, _state_lock
+    with _state_lock():
+        current_state = _load_state()
+        _known_names = {s.get("sandbox_name") for s in current_state}
+        _reconciled = 0
+        for a in agents:
+            name = a.get("name") or ""
+            if not name:
+                continue
+            sandbox_name = _sanitize_sandbox_name(f"hermes-{name}")
+            if sandbox_name not in live_names or sandbox_name in _known_names:
+                continue
+            # Sandbox exists in OpenShell but not in the state file — create entry
+            toolsets_raw = a.get("toolsets") or ""
+            try:
+                toolsets = _json.loads(toolsets_raw) if toolsets_raw else []
+            except Exception:
+                toolsets = []
+            current_state.append({
+                "name": name,
+                "sandbox_name": sandbox_name,
+                "worker_id": sandbox_name,
+                "source": "openshell",
+                "soul_name": a.get("soul_slug") or "general",
+                "model": a.get("model") or "",
+                "openshell_name": live_names_with_gw.get(sandbox_name, ""),
+                "model_route_id": a.get("model_route_id") or "",
+                "requester": "(reconciled)",
+                "toolsets": toolsets if isinstance(toolsets, list) else [],
+                "policy": "",
+                "sandbox_image": executor.sandbox_image,
+                "created_at": __import__("time").time(),
+                "phase": "ready",
+            })
+            _reconciled += 1
+        if _reconciled:
+            _save_state(current_state)
+            logger.info("resurrect: reconciled %d existing sandbox(es) into state file", _reconciled)
 
     if not missing:
         logger.info("resurrect: all %d agents already have sandboxes", len(agents))
