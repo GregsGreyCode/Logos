@@ -809,6 +809,17 @@ async def handle_agent_tools_get(request: web.Request) -> web.Response:
             aid, exc,
         )
 
+    # ── Tool readiness — per-tool status check ──
+    tool_readiness: list[dict] = []
+    try:
+        from gateway import policies as gp
+        tool_readiness = gp.get_tool_readiness(aid)
+    except Exception as exc:
+        logger.warning(
+            "handle_agent_tools_get(%s): failed to compute tool readiness: %s",
+            aid, exc,
+        )
+
     return web.json_response({
         "toolsets": {
             "enabled": enabled_toolsets,
@@ -818,6 +829,7 @@ async def handle_agent_tools_get(request: web.Request) -> web.Response:
             "applied": applied_presets,
             "available": available_presets,
         },
+        "readiness": tool_readiness,
     })
 
 

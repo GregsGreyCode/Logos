@@ -605,6 +605,39 @@
                     No agent bound to this chat. Select or create one to edit its tools.
                   </div>
 
+                  <!-- Tool readiness — per-tool status at a glance -->
+                  <div x-show="activeAgent && agentToolsState && agentToolsState._agentId === activeAgent.id && (agentToolsState.readiness || []).length > 0">
+                    <div class="px-3 pt-2 pb-1 text-[9px] text-gray-500 uppercase tracking-wider flex items-center justify-between">
+                      <span>Tool readiness</span>
+                      <span class="text-gray-700 normal-case"
+                        x-text="(() => { const r = agentToolsState?.readiness || []; const ok = r.filter(t => t.status === 'ready').length; return ok + '/' + r.length + ' ready'; })()"></span>
+                    </div>
+                    <template x-for="t in (agentToolsState?.readiness || [])" :key="'rdy-' + t.name">
+                      <div class="flex items-center gap-2 px-3 py-1 text-[11px]">
+                        <span x-show="t.status === 'ready'" class="text-green-400 flex-shrink-0" title="Ready">&#x2705;</span>
+                        <span x-show="t.status !== 'ready'" class="text-yellow-400 flex-shrink-0" title="Needs configuration">&#x26a0;&#xfe0f;</span>
+                        <div class="flex-1 min-w-0">
+                          <span class="text-gray-300 font-mono" x-text="t.name"></span>
+                          <span x-show="t.optional" class="text-gray-600 text-[9px] ml-1">(optional)</span>
+                        </div>
+                        <template x-if="t.status === 'ready'">
+                          <span class="text-green-600 text-[9px]">ready</span>
+                        </template>
+                        <template x-if="t.status === 'needs_config'">
+                          <a :href="t.setup_url" target="_blank" rel="noopener"
+                            class="text-yellow-500 text-[9px] hover:text-yellow-300 underline underline-offset-2"
+                            x-text="t.reason || 'needs API key'"></a>
+                        </template>
+                        <template x-if="t.status === 'needs_preset'">
+                          <span class="text-orange-500 text-[9px]" x-text="t.reason || 'needs preset'"></span>
+                        </template>
+                      </div>
+                    </template>
+                    <div class="px-3 py-1.5 text-[10px] text-gray-600 border-b border-gray-800 mb-1">
+                      Type <span class="font-mono text-gray-500">/setup tools</span> in chat to configure missing tools.
+                    </div>
+                  </div>
+
                   <!-- Toolsets (application layer) -->
                   <div x-show="activeAgent && agentToolsState && agentToolsState._agentId === activeAgent.id">
                     <div class="px-3 pt-2 pb-1 text-[9px] text-gray-500 uppercase tracking-wider flex items-center justify-between">
