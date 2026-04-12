@@ -5003,6 +5003,47 @@ function getCsrfToken() {
     ?.split('=')[1] ?? '';
 }
 
+/** Save tool API key from the /setup tools card. Called by the inline
+ *  "Save & Enable" button rendered in the setup_tools SSE handler. */
+window._saveToolConfig = async function(btn) {
+  const card = btn.closest('[data-tool-config]');
+  if (!card) return;
+  const inputs = card.querySelectorAll('input[data-env-key]');
+  const credentials = {};
+  for (const inp of inputs) {
+    const key = inp.dataset.envKey;
+    const val = inp.value.trim();
+    if (key && val) credentials[key] = val;
+  }
+  if (Object.keys(credentials).length === 0) return;
+
+  btn.disabled = true;
+  btn.textContent = 'Saving...';
+  try {
+    const resp = await fetch('/tools/configure', {
+      method: 'POST', credentials: 'include',
+      headers: {'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken()},
+      body: JSON.stringify({ credentials }),
+    });
+    const data = await resp.json();
+    if (data.saved && data.saved.length > 0) {
+      card.innerHTML = '<div class="flex items-center gap-2 py-1"><span class="text-green-400">&#x2705;</span>'
+        + '<span class="text-green-300 text-xs font-medium">Configured! Tool is now available.</span></div>';
+    } else {
+      btn.textContent = 'Error';
+      btn.classList.replace('bg-indigo-600', 'bg-red-600');
+      const errMsg = (data.errors || []).map(e => e.error).join(', ') || 'Unknown error';
+      const errDiv = document.createElement('div');
+      errDiv.className = 'text-[10px] text-red-400 mt-1';
+      errDiv.textContent = errMsg;
+      card.appendChild(errDiv);
+    }
+  } catch (err) {
+    btn.textContent = 'Failed';
+    btn.classList.replace('bg-indigo-600', 'bg-red-600');
+  }
+};
+
 function app() {
   return {
     tab: 'sessions',
@@ -7162,6 +7203,67 @@ function app() {
                         duration_ms: d.duration_ms,
                     }};
                 }
+              }
+              if (d.type === 'setup_tools') {
+                // Gateway command: /setup tools — render interactive config card
+                this.isWakingUp = false;
+                const readiness = d.readiness || [];
+                const presetMap = d.preset_map || {};
+                let cardHtml = '<div class="bg-gray-900 border border-gray-700 rounded-lg p-4 my-2 max-w-lg">';
+                cardHtml += '<div class="text-sm font-semibold text-gray-200 mb-3">Tool Configuration</div>';
+                const needsConfig = readiness.filter(t => t.status !== 'ready');
+                const ready = readiness.filter(t => t.status === 'ready');
+                if (needsConfig.length > 0) {
+                  for (const t of needsConfig) {
+                    cardHtml += `<div class="mb-3 p-2 bg-gray-800 rounded border border-gray-700" data-tool-config="${t.name}">`;
+                    cardHtml += `<div class="flex items-center gap-2 mb-1">`;
+                    cardHtml += `<span class="text-yellow-400">&#x26a0;&#xfe0f;</span>`;
+                    cardHtml += `<span class="text-gray-200 font-mono text-xs">${t.name}</span>`;
+                    cardHtml += `<span class="text-gray-500 text-[10px]">${t.description || ''}</span>`;
+                    cardHtml += `</div>`;
+                    cardHtml += `<div class="text-[10px] text-gray-500 mb-1.5">${t.reason || 'Needs API key'}</div>`;
+                    // Input for each env var
+                    const envKeys = Object.keys(presetMap).filter(k => {
+                      const m = presetMap[k]; return m && m.tool === t.name;
+                    });
+                    for (const ek of envKeys) {
+                      cardHtml += `<div class="flex items-center gap-2 mb-1">`;
+                      cardHtml += `<input type="password" placeholder="${ek}" data-env-key="${ek}"`;
+                      cardHtml += ` class="flex-1 bg-gray-900 border border-gray-600 rounded px-2 py-1 text-xs text-gray-200 font-mono placeholder:text-gray-600 focus:border-indigo-500 focus:outline-none">`;
+                      cardHtml += `</div>`;
+                    }
+                    if (envKeys.length === 0 && t.reason) {
+                      // Fallback: show the reason as a generic input hint
+                      const guessKey = t.reason.replace(' not set', '').replace(', ', '_').toUpperCase();
+                      cardHtml += `<input type="password" placeholder="${guessKey}" data-env-key="${guessKey}"`;
+                      cardHtml += ` class="w-full bg-gray-900 border border-gray-600 rounded px-2 py-1 text-xs text-gray-200 font-mono placeholder:text-gray-600 focus:border-indigo-500 focus:outline-none mb-1">`;
+                    }
+                    cardHtml += `<div class="flex items-center justify-between mt-1.5">`;
+                    if (t.setup_url) {
+                      cardHtml += `<a href="${t.setup_url}" target="_blank" class="text-[10px] text-indigo-400 hover:text-indigo-300">Get API key &rarr;</a>`;
+                    } else {
+                      cardHtml += `<span></span>`;
+                    }
+                    cardHtml += `<button onclick="window._saveToolConfig(this)" data-tool-name="${t.name}"`;
+                    cardHtml += ` class="px-2 py-0.5 bg-indigo-600 hover:bg-indigo-500 text-white text-[10px] rounded font-medium">Save &amp; Enable</button>`;
+                    cardHtml += `</div></div>`;
+                  }
+                }
+                if (ready.length > 0) {
+                  cardHtml += '<div class="text-[10px] text-gray-500 uppercase tracking-wider mb-1 mt-2">Ready</div>';
+                  for (const t of ready) {
+                    cardHtml += `<div class="flex items-center gap-2 px-1 py-0.5 text-xs">`;
+                    cardHtml += `<span class="text-green-400">&#x2705;</span>`;
+                    cardHtml += `<span class="text-gray-400 font-mono">${t.name}</span>`;
+                    cardHtml += `</div>`;
+                  }
+                }
+                if (readiness.length === 0) {
+                  cardHtml += '<div class="text-xs text-gray-500">No agent selected or no tools configured.</div>';
+                }
+                cardHtml += '</div>';
+                chat.messages = [...chat.messages, { role: 'system', content: cardHtml, _html: true }];
+                this._scrollChat();
               }
               if (d.type === 'token') {
                 // Streaming token from worker
