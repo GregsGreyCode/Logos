@@ -27,7 +27,7 @@
 | M8 — Dispatch activity ledger | **PHASE A SHIPPED, PHASE B NOT STARTED** | `WorkerRegistry._active_tasks` counter, `admin_handlers` surfaces it, world view renders thought bubble. `dispatches` table, origin tagging, Admin → Activity tab still pending. |
 | M9 — Autonomous activity (visibility) | **NOT STARTED** | The three consolidation mechanisms exist (memory nudge + skill nudge + pre-reset flush) but are invisible in the UI. Memory writes during chats don't actually happen today because M10 blocks them. |
 | M10 — Restore AIAgent inside the sandbox | **PARTIALLY SHIPPED, ITEMS 1-3 REVERTED** | Phase 1 items 4-5 shipped on 2026-04-12 (network policy presets + `gateway/policies.py` management module + per-agent `applied_presets` DB column + admin Tools endpoints + T pill dropdown UI — all agent-runtime-agnostic, stay in place). Items 1-3 (Dockerfile + sandbox_worker.py rewrites + SOUL.md/memories upload changes) **reverted during the build-test cycle** — first build produced a 4.26 GB image because `COPY . /app/` + `pip install -e ".[messaging]"` bundled the entire Logos Python package (gateway/, logos_cli/, cron/, acp_adapter/) into the sandbox, which is both bloated and an architectural error (host-side code inside the security boundary). **Superseded by M11** — image-per-agent-release pattern. |
-| M11 — Agents as versioned drop-in sandbox images | **NOT STARTED** | Replaces M10 items 1-3. Sandbox image is a versioned upstream agent runtime (Hermes, Claude Code, OpenClaw, etc.), referenced by tag, **not bundled by Logos**. Proves one agent works end-to-end; multi-agent then comes free from spawning a second sandbox. Narrow 2-3 day scope for the proof-of-concept. |
+| M11 — Agents as versioned drop-in sandbox images | **IN PROGRESS — CODE LANDED, TESTING** | All 4 code items landed (2026-04-12): (1) `_DEFAULT_IMAGE` → `hermes-upstream:latest`, (2) worker script upload in spawn step 2b, (3) `sandbox_worker.py` rewritten to use AIAgent with real streaming via `stream_delta_callback`/`reasoning_callback` + toolset pass-through from instance config, (4) exec command sets `PYTHONPATH=/opt/hermes`. End-to-end testing in progress. |
 
 **Recommended next execution target**: **M11 — prove one full agent runs inside a sandbox from a versioned drop-in image.** The M10 Phase 1 build-test cycle on 2026-04-12 surfaced that bundling Logos's Hermes fork into the sandbox via `pip install -e .` was the wrong architectural direction — the right shape is the NemoClaw-style "sandbox image = the agent runtime release, Logos references it by tag." M10 Phase 1 items 4-8 (network policies, DB, editor UI) stay intact because they're infrastructure-layer, not runtime-layer. **Unblocks the runtime half of M1 / M2 / M9.**
 
@@ -584,7 +584,7 @@ NVIDIA's **NemoClaw** (`knowledge-repos/NemoClaw`) is a separate opinionated ref
 
 ## M11 — Agents as versioned drop-in sandbox images
 
-**Status**: NOT STARTED. Supersedes M10 Phase 1 items 1-3 (reverted 2026-04-12 evening). The narrow proof-of-concept scope is ~2-3 days of focused work: prove one full agent runs inside a sandbox from a versioned image, then multi-agent follows for free from spawning a second sandbox.
+**Status**: IN PROGRESS — CODE LANDED, TESTING (2026-04-12). Supersedes M10 Phase 1 items 1-3 (reverted 2026-04-12 evening). All 4 implementation items from M11.md landed: `_DEFAULT_IMAGE` → `hermes-upstream:latest`, worker script upload in spawn step 2b, `sandbox_worker.py` rewritten to use AIAgent (real streaming, toolset pass-through), exec command sets `PYTHONPATH=/opt/hermes`. End-to-end testing in progress.
 
 ### Why M10 items 1-3 went wrong
 
@@ -629,12 +629,21 @@ Two viable patterns, both proven in prior art:
 
 ### Scope — narrow proof-of-concept (~2-3 days)
 
-1. **Pick the image source.** Easiest options in priority order:
-   - **(a)** Use Logos's existing `docker/Dockerfile.docker-sandbox` as-is. It already builds a container running `python -m gateway.run` — effectively "a Logos gateway in a container", which is "a Hermes runtime with a gateway" because the gateway imports `AIAgent` and runs the tool loop in-process for `_run_agent` calls. Tag it `logos-hermes-runtime:<version>` or similar. Lowest risk — reuses proven working code.
-   - **(b)** Build our own `logos-hermes-runtime:<version>` image from a clean subset of the Logos repo (just `agents/`, `agent/`, `tools/`, `core/`, and the `logos_cli.config` bits we can't easily separate yet). Slightly smaller image; requires the `logos_cli.config` cross-layer cleanup below.
-   - **(c)** Use Nous Research's upstream `hermes-agent` image directly if they publish one, and accept that Logos's fork-specific additions don't apply. Longest-term correct; most work today.
+1. **Pick the image source.** The only architecturally-correct answer is "upstream Nous Research `hermes-agent`" — the agent is the agent, Logos is the platform around it. The "Logos fork" is mostly an illusion: `agents/hermes/agent.py` has only 8 occurrences of "logos" across its 5947 lines, and the rest of the fork (`agent/*`, `tools/*`, `core/*`) is mostly agent-runtime support with one real problem — a few cross-layer imports of `logos_cli.config` (for `get_hermes_home`, `load_env`, `_ENV_VAR_NAME_RE`) that leaked in during development and should be refactored out. The `agents/hermes/logos-agent.yaml` file is a Logos-platform registration manifest that's sitting inside the agent fork directory — it belongs in Logos's own `agents/<name>/manifest.yaml` slot (NemoClaw's shape) as orchestrator metadata, not colocated with the agent code.
 
-    **Recommendation: start with (a).** It works today via `DockerSandboxExecutor` and proves the Pattern A dispatch model end-to-end. Swap to (b) or (c) in M11 Phase 2 once the primitive is working.
+   What we don't know yet (and should discover before deciding the path):
+   - **How much does Logos's `agents/hermes/agent.py` + `agent/` + `tools/` + `core/` actually differ from Nous Research's upstream `hermes-agent`?** We haven't cloned upstream and diffed. The git log shows many commits to `agents/hermes/` (lazy tool loading, qwen3 parsing fixes, LM Studio retry, etc.) but almost all of those are general agent improvements that probably belong upstream as PRs, not Logos-specific features.
+   - **Does Nous Research publish a runnable Hermes image or a Dockerfile?** If yes, we reference it. If no, we build from their repo the same way NemoClaw does.
+
+   Paths forward, priority order now reflects the right architecture:
+
+   - **(a)** **Use Nous Research's upstream `hermes-agent` directly.** Clone it (or pull an official image if they publish one), build or reference it as `hermes-agent:<version>`, reference it by tag in Logos's executor. Anything that "doesn't work" on first run is either (i) a feature that should move to Logos's platform layer (the `logos-agent.yaml` case), (ii) a Logos-platform leak into the agent (the `logos_cli.config` cross-imports), or (iii) a genuine agent improvement Logos has that isn't upstream yet — in which case PR it to Nous Research. **This is the end state.**
+
+   - **(b)** **Reuse Logos's `Dockerfile.docker-sandbox` as a stepping stone** if (a) can't happen in the 2-3 day POC budget. It already builds a working Logos-gateway-in-a-container that includes the fork's agent runtime, so it's a fast way to prove the Pattern A port-forward HTTP dispatch shape works. **Explicitly a debt to be paid in M11 Phase 2** — migrate to (a) once the pattern is proven.
+
+   - **(c)** **Build a leaner image from the Logos repo subset** — just `agents/`, `agent/`, `tools/`, `core/` plus the `logos_cli.config` shim. This is worse than (a) (still using the fork) and worse than (b) (more custom build work), so it's only valuable if we want to keep something Logos-specific in the fork that we can't easily upstream. Probably skip.
+
+   **Recommendation: start with (a) if we can get a working upstream image + dispatch path in <1 day; otherwise fall back to (b) for the POC and file "migrate to (a)" as M11 Phase 2.** The call depends on how usable upstream Nous hermes-agent is out of the box — I haven't checked yet and should before committing.
 
 2. **Rewrite `gateway/executors/openshell.py:spawn()`** to:
    - Accept an image tag and a forwarded port (both from a per-agent config/manifest)

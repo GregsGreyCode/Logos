@@ -336,8 +336,8 @@ class WorkerRegistry:
             "--name",
             sandbox_name,
             "--",
-            "python3",
-            "/app/sandbox_worker.py",
+            "bash", "-c",
+            "HERMES_HOME=/tmp/hermes exec python3 /tmp/sandbox_worker.py",
         ]
 
         logger.debug(
