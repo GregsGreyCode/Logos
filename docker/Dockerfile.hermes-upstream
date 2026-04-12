@@ -26,9 +26,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends iproute2 \
 # site-packages where the sandbox user can read it.
 RUN pip install --no-cache-dir --break-system-packages /opt/hermes
 
-# OpenShell requires a 'sandbox' user with uid/gid 10001
-RUN groupadd -g 10001 sandbox && \
-    useradd -u 10001 -g sandbox -m -s /bin/bash sandbox
+# Config / state directory (populated at runtime via `openshell sandbox upload`).
+# Created before the sandbox user so we can set it as HOME — avoids the
+# "/bin/bash: /home/sandbox/.profile: Permission denied" warning that
+# OpenShell's read-only home overlay causes.
+RUN mkdir -p /tmp/hermes
 
-# Config directory (populated at runtime via `openshell sandbox upload`)
-RUN mkdir -p /tmp/hermes && chown sandbox:sandbox /tmp/hermes
+# OpenShell requires a 'sandbox' user with uid/gid 10001.
+# HOME is set to /tmp/hermes (writable) instead of /home/sandbox
+# (read-only after OpenShell's workspace init overlays it).
+RUN groupadd -g 10001 sandbox && \
+    useradd -u 10001 -g sandbox -d /tmp/hermes -s /bin/bash sandbox && \
+    chown sandbox:sandbox /tmp/hermes
