@@ -3776,6 +3776,17 @@ async def start_http_api(runner: Any, port: int = 8091) -> None:
     app.router.add_post("/admin/agents",             _mm(require_csrf(admin_handlers.handle_agents_post)))
     app.router.add_patch("/admin/agents/{id}",       _mm(require_csrf(admin_handlers.handle_agents_patch)))
     app.router.add_delete("/admin/agents/{id}",      _mm(require_csrf(admin_handlers.handle_agents_delete)))
+    # Per-agent Tools editor (MISSING.md M10 scope item 5 — the T pill dropdown).
+    # GET bundles both application-layer (agents.toolsets) and infrastructure-
+    # layer (agents.applied_presets) state; POST variants toggle one item at a
+    # time. Toolset toggles are DB-only; preset toggles also push the merged
+    # effective policy to the running sandbox via `openshell policy set`.
+    app.router.add_get("/admin/agents/{id}/tools",
+                       _mm(admin_handlers.handle_agent_tools_get))
+    app.router.add_post("/admin/agents/{id}/tools/toolsets/toggle",
+                        _mm(require_csrf(admin_handlers.handle_agent_toolsets_toggle)))
+    app.router.add_post("/admin/agents/{id}/tools/presets/toggle",
+                        _mm(require_csrf(admin_handlers.handle_agent_presets_toggle)))
     app.router.add_get("/admin/policies",      _mpr(admin_handlers.handle_policies_list))
     app.router.add_post("/admin/policies",     _mpr(require_csrf(admin_handlers.handle_policies_post)))
     app.router.add_patch("/admin/policies/{id}", _mpr(require_csrf(admin_handlers.handle_policies_patch)))

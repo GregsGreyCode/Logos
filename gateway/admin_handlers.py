@@ -708,6 +708,253 @@ async def handle_agents_delete(request: web.Request) -> web.Response:
     return web.Response(status=204)
 
 
+# ── Agent tools (per-agent toolset + policy preset editor) ───────────────────
+#
+# These endpoints back the Tools (T) pill dropdown in the Chats tab
+# (MISSING.md M1 / M10 scope item 5). Each agent has two independent
+# dimensions of "tools":
+#
+#   1. Application-layer toolsets (agents.toolsets column, JSON array)
+#      — which tool NAMES are loaded into AIAgent at dispatch time.
+#      Toggled via ``update_agent(toolsets=[...])``, enforced at
+#      run_conversation time by the agent's own tool registry.
+#
+#   2. Infrastructure-layer network policy presets (agents.applied_presets
+#      column, JSON array) — which endpoint groups the sandbox can
+#      reach on the network. Managed by ``gateway.policies.apply_preset``
+#      / ``remove_preset`` which also push the merged effective policy
+#      to the running sandbox via ``openshell policy set``.
+#
+# Both dimensions surface in the same T pill UI because they're
+# conceptually "the tools this agent can use", but the underlying
+# enforcement layers are very different — see MISSING.md M10's
+# two-layer STAMP model for the division.
+
+
+async def handle_agent_tools_get(request: web.Request) -> web.Response:
+    """GET /admin/agents/{id}/tools — bundle the state the T pill needs.
+
+    Returns both dimensions in one round trip so the UI can open the
+    dropdown with a single fetch::
+
+        {
+            "toolsets": {
+                "enabled":   ["hermes-cli"],         // agents.toolsets
+                "available": [
+                    {"name": "web", "description": "Web research..."},
+                    ...
+                ]
+            },
+            "presets": {
+                "applied":   ["github"],              // agents.applied_presets
+                "available": [
+                    {"name": "github", "description": "GitHub.com ..."},
+                    ...
+                ]
+            }
+        }
+
+    Unknown or malformed state is degraded gracefully (empty lists +
+    a warning log) so a broken preset directory or a corrupt JSON
+    column doesn't block the editor UI from rendering.
+    """
+    aid = request.match_info["id"]
+    agent = auth_db.get_agent(aid)
+    if not agent:
+        return web.json_response({"error": "not_found"}, status=404)
+
+    # ── Application layer: available + enabled toolsets ──
+    available_toolsets: list[dict] = []
+    try:
+        from core.toolsets import TOOLSETS
+        for name, meta in sorted(TOOLSETS.items()):
+            description = ""
+            if isinstance(meta, dict):
+                description = str(meta.get("description", ""))
+            available_toolsets.append({"name": name, "description": description})
+    except Exception as exc:
+        logger.warning(
+            "handle_agent_tools_get(%s): failed to load core.toolsets.TOOLSETS: %s",
+            aid, exc,
+        )
+
+    import json as _json
+    enabled_toolsets: list[str] = []
+    raw_ts = agent.get("toolsets")
+    if raw_ts:
+        try:
+            loaded = _json.loads(raw_ts)
+            if isinstance(loaded, list):
+                enabled_toolsets = [str(t) for t in loaded if isinstance(t, str)]
+        except _json.JSONDecodeError:
+            logger.warning(
+                "handle_agent_tools_get(%s): agents.toolsets is not valid JSON: %r",
+                aid, raw_ts,
+            )
+
+    # ── Infrastructure layer: available + applied presets ──
+    available_presets: list[dict] = []
+    applied_presets: list[str] = []
+    try:
+        from gateway import policies as gp
+        for p in gp.list_presets():
+            available_presets.append({
+                "name": p.name,
+                "description": p.description,
+            })
+        applied_presets = gp.get_applied_presets(aid)
+    except Exception as exc:
+        logger.warning(
+            "handle_agent_tools_get(%s): failed to load policy presets: %s",
+            aid, exc,
+        )
+
+    return web.json_response({
+        "toolsets": {
+            "enabled": enabled_toolsets,
+            "available": available_toolsets,
+        },
+        "presets": {
+            "applied": applied_presets,
+            "available": available_presets,
+        },
+    })
+
+
+async def handle_agent_toolsets_toggle(request: web.Request) -> web.Response:
+    """POST /admin/agents/{id}/tools/toolsets/toggle
+
+    Body: ``{"toolset": "<name>", "enabled": <bool>}``
+
+    Adds or removes the named toolset from ``agents.toolsets``.
+    Unknown toolset names are rejected with 400 so typos don't
+    silently persist as dead entries. Returns the updated enabled
+    list as the canonical "after" state the UI can render directly::
+
+        {"enabled": ["hermes-cli", "web"]}
+
+    Application-layer only — does not touch the network policy.
+    """
+    aid = request.match_info["id"]
+    agent = auth_db.get_agent(aid)
+    if not agent:
+        return web.json_response({"error": "not_found"}, status=404)
+
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "invalid_json"}, status=400)
+
+    toolset = (body.get("toolset") or "").strip()
+    enabled = bool(body.get("enabled"))
+    if not toolset:
+        return web.json_response({"error": "toolset is required"}, status=400)
+
+    # Validate against the canonical toolset registry before writing.
+    try:
+        from core.toolsets import TOOLSETS
+        if toolset not in TOOLSETS:
+            return web.json_response(
+                {"error": f"unknown toolset: {toolset}"},
+                status=400,
+            )
+    except Exception as exc:
+        return web.json_response(
+            {"error": f"toolsets module unavailable: {exc}"},
+            status=500,
+        )
+
+    # Read, mutate, write-back the current JSON list.
+    import json as _json
+    current: list[str] = []
+    raw_ts = agent.get("toolsets")
+    if raw_ts:
+        try:
+            loaded = _json.loads(raw_ts)
+            if isinstance(loaded, list):
+                current = [str(t) for t in loaded if isinstance(t, str)]
+        except _json.JSONDecodeError:
+            pass  # treat corrupt state as empty — the toggle will fix it
+
+    if enabled and toolset not in current:
+        current.append(toolset)
+    elif not enabled and toolset in current:
+        current.remove(toolset)
+
+    auth_db.update_agent(aid, toolsets=_json.dumps(current))
+    logger.info(
+        "agent_toolsets_toggle(%s, %s=%s): enabled=%s",
+        aid, toolset, enabled, current,
+    )
+    return web.json_response({"enabled": current})
+
+
+async def handle_agent_presets_toggle(request: web.Request) -> web.Response:
+    """POST /admin/agents/{id}/tools/presets/toggle
+
+    Body: ``{"preset": "<name>", "enabled": <bool>}``
+
+    When ``enabled=true`` calls ``gateway.policies.apply_preset``,
+    otherwise ``remove_preset``. Both update ``agents.applied_presets``
+    in the DB AND push the merged effective policy to the running
+    sandbox via ``openshell policy set --wait``.
+
+    The push is best-effort — if the sandbox isn't spawned yet, or
+    openshell is unreachable, the DB update still happens and the
+    next spawn picks up the new effective policy. Returns the full
+    applied list so the UI can re-render without an extra GET::
+
+        {"applied": ["github", "slack"]}
+
+    Unknown preset names return 400 (validated up front in
+    ``apply_preset`` via ``load_preset``). Any other exception from
+    the policies module surfaces as a 500 with the error text.
+    """
+    aid = request.match_info["id"]
+    agent = auth_db.get_agent(aid)
+    if not agent:
+        return web.json_response({"error": "not_found"}, status=404)
+
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "invalid_json"}, status=400)
+
+    preset = (body.get("preset") or "").strip()
+    enabled = bool(body.get("enabled"))
+    if not preset:
+        return web.json_response({"error": "preset is required"}, status=400)
+
+    try:
+        from gateway import policies as gp
+    except Exception as exc:
+        return web.json_response(
+            {"error": f"policies module unavailable: {exc}"},
+            status=500,
+        )
+
+    try:
+        if enabled:
+            gp.apply_preset(aid, preset)
+        else:
+            gp.remove_preset(aid, preset)
+        applied = gp.get_applied_presets(aid)
+    except gp.PresetNotFound as exc:
+        return web.json_response({"error": str(exc)}, status=400)
+    except Exception as exc:
+        logger.exception(
+            "agent_presets_toggle(%s, %s=%s): failed",
+            aid, preset, enabled,
+        )
+        return web.json_response({"error": str(exc)}, status=500)
+
+    logger.info(
+        "agent_presets_toggle(%s, %s=%s): applied=%s",
+        aid, preset, enabled, applied,
+    )
+    return web.json_response({"applied": applied})
+
+
 # ── Routing policies ──────────────────────────────────────────────────────────
 
 async def handle_policies_list(request: web.Request) -> web.Response:

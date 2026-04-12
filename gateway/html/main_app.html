@@ -565,13 +565,103 @@
                   </template>
                 </div>
               </div>
-              <!-- T: Tools — only show count when tools exist -->
-              <span data-testid="stamp-t" class="text-[10px] px-1.5 py-0.5 rounded font-mono border flex items-center gap-1"
-                :class="(webSession?.tool_count || chatStats?.tool_count) ? 'bg-gray-800 text-gray-400 border-gray-700' : 'bg-gray-800/50 text-gray-600 border-gray-800'"
-                :title="(webSession?.tool_count ? webSession.tool_count + ' tools used this session' : (chatStats?.tool_count || 0) + ' tools available')">
-                <span class="font-bold text-gray-500">T</span>
-                <span x-text="webSession?.tool_count ? webSession.tool_count + ' active' : (chatStats?.tool_count ? chatStats.tool_count + ' ready' : 'none')"></span>
-              </span>
+              <!-- T: Tools — clickable dropdown with two sections.
+                   Application-layer toolsets (agents.toolsets) +
+                   infrastructure-layer network policy presets
+                   (agents.applied_presets). MISSING.md M1 / M10 item 5.
+                   Lazy-loads on first open; re-fetches when the bound
+                   agent changes. -->
+              <div class="relative" x-data="{ open: false }" @click.away="open = false">
+                <button
+                  @click="open = !open;
+                          if (open && activeAgent && (!agentToolsState || agentToolsState._agentId !== activeAgent.id)) {
+                            loadAgentTools(activeAgent.id);
+                          }"
+                  data-testid="stamp-t"
+                  class="text-[10px] px-1.5 py-0.5 rounded font-mono border transition-colors cursor-pointer flex items-center gap-1"
+                  :class="open
+                    ? 'bg-gray-700 text-white border-gray-500'
+                    : (activeAgent
+                        ? 'bg-gray-800 text-gray-400 border-gray-700 hover:border-gray-500'
+                        : 'bg-gray-800/50 text-gray-600 border-gray-800')"
+                  :title="activeAgent ? 'Tools — click to change' : 'No agent bound'">
+                  <span class="font-bold text-gray-500">T</span>
+                  <span x-text="(agentToolsState && activeAgent && agentToolsState._agentId === activeAgent.id)
+                    ? ((agentToolsState.toolsets?.enabled?.length || 0) + ' ts · ' + (agentToolsState.presets?.applied?.length || 0) + ' pre')
+                    : (webSession?.tool_count ? webSession.tool_count + ' active' : (chatStats?.tool_count ? chatStats.tool_count + ' ready' : 'tools'))">
+                  </span>
+                </button>
+                <div x-show="open" x-cloak
+                  class="absolute top-full left-0 mt-1 w-80 max-h-[26rem] overflow-y-auto bg-gray-900 border border-gray-700 rounded-lg shadow-xl z-50">
+
+                  <!-- Header — shows loading state + agent context -->
+                  <div class="px-3 py-2 text-[9px] text-gray-600 uppercase tracking-wider border-b border-gray-800 flex items-center justify-between sticky top-0 bg-gray-900 z-10">
+                    <span x-text="'Tools · ' + (activeAgent?.name || '(no agent)')"></span>
+                    <span x-show="agentToolsLoading" class="text-yellow-400 normal-case">loading…</span>
+                  </div>
+
+                  <!-- No agent -->
+                  <div x-show="!activeAgent" class="px-3 py-3 text-[11px] text-gray-600">
+                    No agent bound to this chat. Select or create one to edit its tools.
+                  </div>
+
+                  <!-- Toolsets (application layer) -->
+                  <div x-show="activeAgent && agentToolsState && agentToolsState._agentId === activeAgent.id">
+                    <div class="px-3 pt-2 pb-1 text-[9px] text-gray-500 uppercase tracking-wider flex items-center justify-between">
+                      <span>Toolsets (in-agent)</span>
+                      <span class="text-gray-700 normal-case"
+                        x-text="'(' + (agentToolsState?.toolsets?.enabled?.length || 0) + '/' + (agentToolsState?.toolsets?.available?.length || 0) + ')'"></span>
+                    </div>
+                    <template x-for="t in (agentToolsState?.toolsets?.available || [])" :key="'ts-' + t.name">
+                      <label class="flex items-start gap-2 px-3 py-1.5 text-[11px] hover:bg-gray-800 cursor-pointer">
+                        <input type="checkbox"
+                          :checked="(agentToolsState?.toolsets?.enabled || []).includes(t.name)"
+                          :disabled="!!(agentToolsToggling && agentToolsToggling['ts:' + t.name])"
+                          @change="toggleToolset(activeAgent.id, t.name, $event.target.checked)"
+                          class="mt-0.5 h-3 w-3 rounded border-gray-700 bg-gray-900 text-indigo-500 focus:ring-0 focus:ring-offset-0 flex-shrink-0">
+                        <div class="flex-1 min-w-0">
+                          <div class="text-gray-200 font-mono" x-text="t.name"></div>
+                          <div class="text-gray-600 text-[10px] leading-tight" x-text="t.description" x-show="t.description"></div>
+                        </div>
+                        <span x-show="agentToolsToggling && agentToolsToggling['ts:' + t.name]" class="text-yellow-500 text-[9px]">…</span>
+                      </label>
+                    </template>
+                  </div>
+
+                  <!-- Presets (infrastructure layer) -->
+                  <div x-show="activeAgent && agentToolsState && agentToolsState._agentId === activeAgent.id"
+                    class="border-t border-gray-800 mt-1 pt-1">
+                    <div class="px-3 pt-2 pb-1 text-[9px] text-gray-500 uppercase tracking-wider flex items-center justify-between">
+                      <span>Network presets (sandbox)</span>
+                      <span class="text-gray-700 normal-case"
+                        x-text="'(' + (agentToolsState?.presets?.applied?.length || 0) + '/' + (agentToolsState?.presets?.available?.length || 0) + ')'"></span>
+                    </div>
+                    <template x-for="p in (agentToolsState?.presets?.available || [])" :key="'pre-' + p.name">
+                      <label class="flex items-start gap-2 px-3 py-1.5 text-[11px] hover:bg-gray-800 cursor-pointer">
+                        <input type="checkbox"
+                          :checked="(agentToolsState?.presets?.applied || []).includes(p.name)"
+                          :disabled="!!(agentToolsToggling && agentToolsToggling['pre:' + p.name])"
+                          @change="togglePreset(activeAgent.id, p.name, $event.target.checked)"
+                          class="mt-0.5 h-3 w-3 rounded border-gray-700 bg-gray-900 text-emerald-500 focus:ring-0 focus:ring-offset-0 flex-shrink-0">
+                        <div class="flex-1 min-w-0">
+                          <div class="text-gray-200 font-mono" x-text="p.name"></div>
+                          <div class="text-gray-600 text-[10px] leading-tight" x-text="p.description" x-show="p.description"></div>
+                        </div>
+                        <span x-show="agentToolsToggling && agentToolsToggling['pre:' + p.name]" class="text-yellow-500 text-[9px]">…</span>
+                      </label>
+                    </template>
+                    <div x-show="(agentToolsState?.presets?.available?.length || 0) === 0"
+                      class="px-3 py-2 text-[10px] text-gray-600">
+                      No presets available in gateway/policies/presets/.
+                    </div>
+                  </div>
+
+                  <!-- Error banner — surfaces any fetch / toggle failure -->
+                  <div x-show="agentToolsError"
+                    class="px-3 py-2 text-[10px] text-red-400 border-t border-red-900/50 bg-red-950/30"
+                    x-text="agentToolsError"></div>
+                </div>
+              </div>
               <!--
                 A: Agent — placeholder for future multi-agent UX. Today
                 a chat is bound to exactly one agent so this just shows
@@ -5112,6 +5202,23 @@ function app() {
     // setTimeout handle for auto-polling rows still in `provisioning`
     // status — set/cleared by loadModelRoutes().
     _modelRoutesPollTimer: null,
+
+    // ── T pill state (per-agent Tools editor, MISSING.md M10 item 5) ──
+    //
+    // Populated on first T pill dropdown open via loadAgentTools().
+    // Shape: { toolsets: {enabled, available}, presets: {applied,
+    // available}, _agentId } — see admin_handlers.handle_agent_tools_get
+    // for the canonical response schema. _agentId is stamped locally so
+    // the render path can detect stale state when the user switches
+    // chats while a fetch is in flight.
+    agentToolsState: null,
+    agentToolsLoading: false,
+    // {key: bool} — tracks in-flight toggle requests so individual
+    // checkboxes can show a spinner / stay disabled without locking
+    // the rest of the dropdown. Keys are "ts:<name>" for toolsets
+    // and "pre:<name>" for presets.
+    agentToolsToggling: {},
+    agentToolsError: null,
     selectedRoute: null,
     provisionModalOpen: false,
     provisioningRoute: false,
@@ -8651,6 +8758,120 @@ function app() {
           }
         }, 3000);
       }
+    },
+
+    // ── T pill methods (per-agent Tools editor, M10 item 5) ────────────
+    //
+    // Three methods: load the bundle, toggle one toolset, toggle one
+    // preset. All three are lazy — nothing runs until the user opens
+    // the T pill dropdown. Errors from the backend surface as
+    // agentToolsError which the dropdown renders as a banner.
+    //
+    // State shape (populated by loadAgentTools):
+    //   agentToolsState = {
+    //     toolsets: {
+    //       enabled: string[],           // agents.toolsets JSON
+    //       available: [{name, description}],
+    //     },
+    //     presets: {
+    //       applied: string[],           // agents.applied_presets JSON
+    //       available: [{name, description}],
+    //     },
+    //     _agentId: string,              // local stamp; used to detect
+    //                                    // stale state when the user
+    //                                    // switches chats mid-fetch.
+    //   }
+
+    async loadAgentTools(agentId) {
+      if (!agentId) return;
+      this.agentToolsLoading = true;
+      this.agentToolsError = null;
+      try {
+        const r = await fetch(
+          '/admin/agents/' + encodeURIComponent(agentId) + '/tools',
+          {credentials: 'include'},
+        );
+        if (!r.ok) throw new Error(await r.text() || r.statusText);
+        const d = await r.json();
+        // Stamp with the requested agentId so the render path can
+        // detect stale state (user switched chats while the fetch
+        // was in flight). Template bindings check _agentId against
+        // activeAgent.id before rendering.
+        d._agentId = agentId;
+        // Defensive defaults so template bindings never hit undefined
+        d.toolsets = d.toolsets || {};
+        d.toolsets.enabled = d.toolsets.enabled || [];
+        d.toolsets.available = d.toolsets.available || [];
+        d.presets = d.presets || {};
+        d.presets.applied = d.presets.applied || [];
+        d.presets.available = d.presets.available || [];
+        this.agentToolsState = d;
+      } catch(e) {
+        this.agentToolsError = 'Failed to load tools: ' + (e.message || e);
+      }
+      this.agentToolsLoading = false;
+    },
+
+    async toggleToolset(agentId, toolset, enabled) {
+      if (!agentId || !toolset) return;
+      const key = 'ts:' + toolset;
+      if (!this.agentToolsToggling) this.agentToolsToggling = {};
+      this.agentToolsToggling[key] = true;
+      this.agentToolsError = null;
+      try {
+        const r = await fetch(
+          '/admin/agents/' + encodeURIComponent(agentId) + '/tools/toolsets/toggle',
+          {
+            method: 'POST',
+            credentials: 'include',
+            headers: {'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken()},
+            body: JSON.stringify({toolset, enabled}),
+          },
+        );
+        if (!r.ok) throw new Error(await r.text() || r.statusText);
+        const d = await r.json();
+        // Update the in-memory state with the server's canonical list
+        // so the checkbox state matches the DB exactly even if
+        // concurrent toggles arrived out-of-order.
+        if (this.agentToolsState && this.agentToolsState._agentId === agentId) {
+          this.agentToolsState.toolsets.enabled = d.enabled || [];
+        }
+      } catch(e) {
+        this.agentToolsError = 'Toggle "' + toolset + '" failed: ' + (e.message || e);
+        // Re-fetch to recover canonical state — the checkbox might
+        // be out of sync with the DB if the server-side update
+        // partially succeeded.
+        this.loadAgentTools(agentId);
+      }
+      delete this.agentToolsToggling[key];
+    },
+
+    async togglePreset(agentId, preset, enabled) {
+      if (!agentId || !preset) return;
+      const key = 'pre:' + preset;
+      if (!this.agentToolsToggling) this.agentToolsToggling = {};
+      this.agentToolsToggling[key] = true;
+      this.agentToolsError = null;
+      try {
+        const r = await fetch(
+          '/admin/agents/' + encodeURIComponent(agentId) + '/tools/presets/toggle',
+          {
+            method: 'POST',
+            credentials: 'include',
+            headers: {'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken()},
+            body: JSON.stringify({preset, enabled}),
+          },
+        );
+        if (!r.ok) throw new Error(await r.text() || r.statusText);
+        const d = await r.json();
+        if (this.agentToolsState && this.agentToolsState._agentId === agentId) {
+          this.agentToolsState.presets.applied = d.applied || [];
+        }
+      } catch(e) {
+        this.agentToolsError = 'Preset "' + preset + '" ' + (enabled ? 'apply' : 'remove') + ' failed: ' + (e.message || e);
+        this.loadAgentTools(agentId);
+      }
+      delete this.agentToolsToggling[key];
     },
 
     async provisionRoute() {
