@@ -3422,6 +3422,7 @@ class AIAgent:
                         function_name, _cid,
                         not is_error, duration * 1000,
                         error=result_preview if is_error else None,
+                        result=result_preview if not is_error else None,
                     )
                 except Exception:
                     pass
@@ -3771,6 +3772,7 @@ class AIAgent:
                         function_name, _call_id,
                         not _is_error_result, tool_duration * 1000,
                         error=result_preview if _is_error_result else None,
+                        result=result_preview if not _is_error_result else None,
                     )
                 except Exception:
                     pass

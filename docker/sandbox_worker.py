@@ -204,6 +204,32 @@ def read_task_from_stdin() -> Optional[Dict[str, Any]]:
 # (readable by the sandbox user). The upstream editable install at
 # /opt/hermes is blocked by OpenShell's sandbox policy.
 
+def build_memory_write_event(
+    tool_name: Optional[str],
+    success: bool,
+    result: Optional[str],
+    task_id: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
+    """Build a memory_write SSE event dict, or None when not applicable.
+
+    Chat UI (main_app.html:7382) renders this as a "saved a memory" card
+    inline with the assistant turn. The preview field carries the first
+    200 chars of the written memory content so the card shows what was
+    saved — an empty preview forces the UI into a bland fallback string.
+    Kept pure + module-level so it's unit-testable without spinning up
+    the full _handle_task closure.
+    """
+    if tool_name != "memory" or not success:
+        return None
+    evt: Dict[str, Any] = {
+        "type": "memory_write",
+        "preview": str(result or "")[:200],
+    }
+    if task_id:
+        evt["task_id"] = task_id
+    return evt
+
+
 def _import_aiagent():
     """Import AIAgent from the upstream hermes installation.
 
@@ -267,19 +293,40 @@ def _handle_task(task: Dict[str, Any], config: Dict[str, Any]) -> None:
             except BrokenPipeError:
                 raise
 
-    def on_tool_complete(call_id, tool_name, success, duration_ms, preview=None):
-        """Called when a tool invocation finishes. Emits tool_end + memory_write."""
+    # Counter for generating unique call IDs per tool invocation
+    _tool_call_counter = [0]
+
+    def on_tool_progress(tool_name, preview=None, args=None):
+        """Called when a tool invocation STARTS. Emits tool_start for live UI.
+
+        Returns a call_id that AIAgent passes to on_tool_complete later.
+        Signature: callback(tool_name, preview, args) -> call_id
+        """
+        _tool_call_counter[0] += 1
+        call_id = f"{task_id}_{_tool_call_counter[0]}"
+        try:
+            emit({"type": "tool_start", "task_id": task_id, "call_id": call_id,
+                  "tool": tool_name or "", "preview": str(preview or "")[:200]})
+        except BrokenPipeError:
+            raise
+        return call_id
+
+    def on_tool_complete(tool_name, call_id, success, duration_ms, error=None, result=None):
+        """Called when a tool invocation FINISHES. Emits tool_end + memory_write.
+
+        Signature from AIAgent: callback(tool_name, call_id, success, duration_ms,
+        error=<preview on failure>, result=<preview on success>).
+        """
         try:
             emit({"type": "tool_end", "task_id": task_id, "call_id": call_id or "",
                   "tool": tool_name or "", "success": bool(success),
                   "duration_ms": duration_ms})
         except BrokenPipeError:
             raise
-        # Surface memory writes as a distinct event for the frontend
-        if tool_name == "memory" and success:
+        mw = build_memory_write_event(tool_name, success, result, task_id=task_id)
+        if mw is not None:
             try:
-                emit({"type": "memory_write", "task_id": task_id,
-                      "preview": str(preview or "")[:200]})
+                emit(mw)
             except BrokenPipeError:
                 raise
 
@@ -298,6 +345,7 @@ def _handle_task(task: Dict[str, Any], config: Dict[str, Any]) -> None:
         enabled_toolsets=toolsets,
         stream_delta_callback=on_token,
         reasoning_callback=on_reasoning,
+        tool_progress_callback=on_tool_progress,
         tool_complete_callback=on_tool_complete,
     )
 
