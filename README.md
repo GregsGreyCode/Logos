@@ -14,13 +14,13 @@
 
 **A self-hosted platform for agentic AI.**
 
-Logos is a control plane for AI agents — not a single agent, but a platform you run on your own hardware under your own rules. Agent runtimes plug in; you assemble what you need from five dimensions:
+Logos is a control plane for AI agents — not a single agent, but a platform you run on your own hardware under your own rules. You assemble what you need from five dimensions:
 
 > **Soul · Tools · Agent · Model · Policy**
 
 That combination is a **STAMP** — it defines every run Logos records, making every agent interaction observable, reproducible, and auditable. No black-box behaviour you can't inspect.
 
-Run on a $5 VPS, a homelab Kubernetes cluster, or serverless infrastructure. During onboarding you choose your privacy model: local inference, self-hosted endpoints, or cloud providers (Anthropic, OpenAI, OpenRouter).
+Run it on your laptop, a homelab box, or a $5 VPS. During the first-run setup wizard you choose your privacy model: local inference (Ollama, LM Studio), self-hosted endpoints, or cloud providers (Anthropic, OpenAI, OpenRouter).
 
 ---
 
@@ -28,47 +28,47 @@ Run on a $5 VPS, a homelab Kubernetes cluster, or serverless infrastructure. Dur
 
 ```
                         ┌──────────────────────────────────────────┐
-                        │              Logos Platform               │
-                        │                                          │
-  Telegram ─────────►  │  Gateway / Router                        │
-  Web Dashboard ──────► │    ├── MCP Gateway ──► MCP Servers       │
-  ACP (IDE) ──────────► │    │    (runs inside     (filesystem,    │
-                        │    │     gateway)          GitHub, etc.)  │
-                        │    ▼                                     │
-                        │  Auth & Policy Layer                     │
-                        │    │                                     │
-                        │    ▼                                     │
-                        │  Agent Runtime (e.g. Hermes)             │
-                        │    │          │                          │
-                        │    ▼          ▼                          │
-                        │  Tools    Sub-agents                     │
-                        │    │          │    ▲                     │
-                        │    └────┬─────┘    │ request_mcp_access  │
-                        │         │          │ (HTTP to gateway)   │
-                        │         ▼          │                     │
-                        │  Model Router      │                     │
-                        │    │         │     │                     │
-                        └────┼─────────┼─────┼────────────────────┘
-                             ▼         ▼
-                          Local     Anthropic  OpenRouter
-                          (Ollama)  (Claude)   (200+ models)
+                        │              Logos Gateway                │
+                        │                                           │
+  Telegram ───────────► │   HTTP / SSE / WebSocket entry point      │
+  Web Dashboard ──────► │     ├── Auth + per-user policy            │
+  ACP (IDE) ──────────► │     ├── MCP Gateway ──► MCP servers       │
+                        │     │     (one process,    (filesystem,   │
+                        │     │      shared by all    GitHub, etc.) │
+                        │     │      sandboxes)                     │
+                        │     ▼                                     │
+                        │   Worker Registry                         │
+                        │     │                                     │
+                        │     │  openshell sandbox exec (per task)  │
+                        │     │  stdin: task JSON                   │
+                        │     │  stdout: token/thinking/result JSON │
+                        │     ▼                                     │
+                        │   ┌─────────────────────────────────────┐ │
+                        │   │  OpenShell Sandbox (per agent)       │ │
+                        │   │    sandbox_worker.py ─► inference.local──► Local Ollama
+                        │   │      tools, MCP, sandbox FS          │ │     LM Studio
+                        │   └─────────────────────────────────────┘ │     Anthropic
+                        │                                           │     OpenAI
+                        └───────────────────────────────────────────┘     OpenRouter
 ```
 
 **Request lifecycle:**
 
 1. A message arrives via Telegram, the web dashboard, or an ACP-connected editor.
-2. The **Gateway** authenticates the request and applies the per-user policy snapshot.
-3. The **Agent Runtime** (currently Hermes) processes the conversation through its tool loop.
-4. Tool calls execute inside an **isolated workspace** — scoped to the policy level you've set.
-5. The **Model Router** dispatches inference to whichever backend you've configured (local GPU, cloud, or both).
-6. The completed run is written to SQLite as a **STAMP record** — full tool trace, approval events, token counts, and outcome — queryable and replayable at any time.
+2. The **gateway** authenticates the request and applies the per-user policy snapshot.
+3. The gateway finds the target agent's existing sandbox via the **worker registry** (reads `~/.logos/openshell_instances.json`; healthy means the sandbox CR is `phase == "ready"`).
+4. The gateway spawns a one-shot **`openshell sandbox exec`** into that sandbox, running `docker/sandbox_worker.py`. The task JSON is written to the subprocess's stdin and stdin is closed — OpenShell's exec transport only starts the in-sandbox process once stdin reaches EOF.
+5. The worker runs the conversation through its tool loop, calling models via OpenShell's `inference.local` Privacy Router (which strips sandbox credentials and injects the real provider keys outside the isolation boundary).
+6. The worker streams `token` / `thinking` / `tool_progress` JSON lines on stdout as they arrive; the gateway forwards them to the dashboard over SSE and collects the terminal `task_result` frame. The subprocess exits; the sandbox stays up for the next task.
+7. The completed run is written to SQLite as a **STAMP record** — full tool trace, approval events, token counts, outcome — queryable and replayable later.
 
 **Key boundaries:**
 
-- `gateway/` — the always-on process: HTTP server, Telegram adapter, auth, routing, web dashboard
-- `agent/` — runtime adapters; Hermes is the first, additional runtimes plug in via `logos/agent/interface.py`
+- `gateway/` — the always-on process: HTTP server, Telegram adapter, auth, routing, web dashboard, MCP gateway, worker registry
+- `agents/hermes/` — the Hermes runtime that runs *inside* sandbox workers
 - `tools/` — capabilities the agent can call; scoped per session and per policy level
-- The platform layer (gateway, router, auth, dashboard) is runtime-agnostic; `hermes_*` modules belong to the Hermes runtime specifically
+- `gateway/executors/` — the two runtime backends: `openshell.py` (default) and `docker.py`
+- `docker/sandbox_worker.py` — the lightweight worker that runs inside an OpenShell sandbox, invoked per task by `openshell sandbox exec`
 
 ---
 
@@ -100,11 +100,11 @@ Test agentic combinations, then modify, extend, and break the platform and its a
 
 ## 🚀 What Logos does
 
-- **Runs agents** — Hermes is the current runtime, with a clean adapter interface for additional runtimes
+- **Runs agents** — Hermes is the current runtime. The runtime layer is pluggable; additional runtimes can register as alternative sandbox worker images.
 - **Records everything** — every run captures its full STAMP: agent, model, soul, tools, policy, tool sequence, approval events, token counts, and outcome
-- **Enforces policy** — workspace isolation, command approval, filesystem scoping, built-in policy evals
+- **Enforces policy** — workspace isolation, command approval, filesystem scoping, OpenShell egress policy, built-in policy evals
 - **Reaches you anywhere** — Telegram and a built-in web dashboard, all from a single gateway process
-- **Web dashboard** — full chat UI at `http://localhost:8080`; real-time streaming, per-message stats, voice input, metrics, multiple agent instances, and a live execution panel
+- **Web dashboard** — full chat UI at `http://localhost:8080`; real-time streaming, per-message stats, voice input, metrics, multiple named agents, world view with live agent sprites, live execution panel
 - **Persistent history** — searchable conversation history in SQLite with full-text search across all past conversations
 - **Voice input** — speak via Telegram or the dashboard; faster-whisper transcribes locally by default
 - **Image support** — send images directly; the vision pipeline enriches context before passing it to the model
@@ -118,7 +118,6 @@ Test agentic combinations, then modify, extend, and break the platform and its a
 - **Self-improvement** — the Evolution system lets agents propose code improvements on a schedule; you review, question, or accept each proposal
 - **IDE integration** — ACP protocol for VS Code, Zed, and JetBrains
 - **Model support** — Anthropic, OpenAI, OpenRouter (200+ models), Nous Portal, or any OpenAI-compatible endpoint
-- **Runs anywhere** — local, Docker, SSH
 - **Cancel mid-response** — abort any in-flight request without waiting for it to finish
 
 ---
@@ -137,125 +136,26 @@ Every run in Logos is defined by five dimensions:
 
 Compose these five and you have an AI agent. Change any one dimension and you have a different seeded agent. Every STAMP is recorded in full — compare runs across configurations, replay them exactly, or clone them into new sessions.
 
-The soul lives in `SOUL.md`, editable without a restart. Tools are scoped per platform and per session. The agent adapter is switchable. The model switches without code changes. Policy is enforced at the workspace and approval layers, not just in the prompt.
+The soul lives in `SOUL.md`, editable without a restart. Tools are scoped per agent and per session. The agent adapter is switchable. The model switches without code changes. Policy is enforced at the workspace, OpenShell sandbox, and approval layers — not just in the prompt.
 
 ---
 
 ## 🔒 Security & deployment model
 
-**Understanding the isolation boundary matters before you choose how to run Logos.** Agents can read files, execute code, and make network requests — what they _cannot_ reach depends entirely on your deployment mode.
+**Understanding the isolation boundary matters before you choose how to run Logos.** Agents can read files, execute code, and make network requests — what they _cannot_ reach depends entirely on which runtime mode you pick.
 
-### Isolation modes at a glance
+### Runtime modes at a glance
 
-| Mode | How it's run | Isolation boundary | Network policy | Agents can reach… |
-|------|-------------|-------------------|----------------|-------------------|
-| **Local process** | `pip install logos` / Windows `.exe` | OS process boundary | None | Your user's home directory and whatever that user can reach on the host |
-| **Container sandbox** | Docker Desktop (Windows/macOS) | Docker container boundary | None (outbound unrestricted) | Files inside the container only; host filesystem not mounted |
-| **Full sandbox (OpenShell)** | Docker + OpenShell CLI (Linux/macOS) | Docker container + egress policy | OpenShell YAML policy enforcement | Container-only filesystem; outbound restricted to policy allowlist |
-| **Docker Compose** | `docker-compose.yml` | Container boundary | None | Files/processes _inside_ the container only; the host filesystem is not mounted |
-| **Docker Compose + k3s** | `docker-compose.k3s.yml` | Kubernetes pod boundary | K8s NetworkPolicy capable | A fresh pod with its own filesystem and network namespace per agent |
-| **External Kubernetes** | `k8s/` manifests | Kubernetes pod + RBAC boundary | K8s NetworkPolicy capable | Pod resources only; network policies and RBAC apply |
+Logos has two runtime modes selected by `runtime.mode` in `~/.logos/config.yaml` (or via the setup wizard). They are the two branches of `gateway/executors/build_executor()`:
 
-### Local process (Windows / Linux / macOS) — fallback
+| Mode | Default? | How it spawns | Isolation boundary | Egress policy | Platform |
+|------|---|---------------|-------------------|---------------|----------|
+| **`openshell`** | ✅ default | OpenShell CLI provisions a persistent sandbox per agent; the gateway dispatches each task via a one-shot `openshell sandbox exec` subprocess, piping task JSON on stdin and reading event JSON on stdout. Inference egress goes through OpenShell's HTTP CONNECT proxy to the `inference.local` Privacy Router. | Kernel Landlock LSM (filesystem) + OpenShell egress allowlist (network) + container | Per-binary YAML egress policy (`gateway/policies/openshell_default.yaml`) | Linux, macOS |
+| **`docker`** | fallback | Plain Docker container — `--cap-drop=ALL`, `--security-opt=no-new-privileges`, no host filesystem mounts | Docker container | None (outbound unrestricted) | Linux, macOS, Windows (via Docker Desktop) |
 
-Agents run as child processes of the gateway, inheriting the same user account. There is **no additional sandbox** beyond normal OS process isolation. An agent that calls the terminal tool can read and write anything your user account can.
+> **What happened to the Kubernetes and local-process executors?** The Kubernetes pod-per-agent executor was deleted in commit `f6f0972 chore: drop legacy k8s pod-per-agent executor + mini-swe-agent terminal backends`. The `LocalProcessExecutor` (running agents as subprocesses of the gateway) was removed at the same time once OpenShell became the only sandbox runtime exposed in `/setup`. The `k8s/` manifests still work for **deploying the gateway itself** as a Kubernetes Deployment — see [`k8s/README.md`](k8s/README.md) — but agents inside that gateway use OpenShell or Docker just like everywhere else. Any legacy `runtime.mode` value other than `docker` now coerces to OpenShell.
 
-This is the **last-resort fallback** when neither Docker nor Kubernetes is available. The setup wizard clearly labels this mode.
-
-**Mitigations:**
-- Keep policy level at `WORKSPACE_ONLY` or lower to restrict filesystem access to the working directory.
-- Run Logos under a dedicated low-privilege user account, not your daily-driver account.
-
-### Container sandbox (Windows with Docker Desktop)
-
-When Docker Desktop is available but the OpenShell CLI is not (currently the case on **Windows**, where OpenShell does not ship binaries), Logos can still run agents inside Docker containers. Each agent gets its own isolated container with:
-
-- Separate filesystem (host filesystem not mounted)
-- `--cap-drop=ALL` (no Linux capabilities)
-- `--security-opt=no-new-privileges`
-- Localhost-only port binding
-- Auto-cleanup on exit (`--rm`)
-
-**What this mode does NOT provide:** egress policy enforcement. Agents can make outbound network requests to any destination. If your use case requires network restriction, use Kubernetes with NetworkPolicy or wait for OpenShell Windows support.
-
-### Full sandbox — OpenShell (Linux / macOS)
-
-The strongest desktop isolation. OpenShell manages Docker containers with a declarative YAML policy layer that controls:
-
-- Which network destinations agents can reach (egress allowlist)
-- GPU passthrough for local inference
-- Container lifecycle and resource limits
-
-**Platform support:** Linux and macOS only. OpenShell does not currently ship Windows binaries. The setup wizard detects this automatically and offers Container sandbox mode as the Windows alternative.
-
-### Docker Compose — `docker-compose.yml` (recommended for most users)
-
-Logos and all its agents run inside a single Docker container. The host filesystem is **not mounted** — agents can only see what's inside the container. They cannot read your `.env` file, home directory, or other host files.
-
-```
-Host OS
-└── Docker container  ← isolation boundary
-    ├── Logos gateway
-    └── Agent processes (child processes inside the same container)
-```
-
-**What agents cannot do:** escape the container, read host files, reach host network services (unless you expose ports in `docker-compose.yml`).
-
-**What agents can do:** read/write files inside the container, make outbound HTTP requests, call the tools you've enabled.
-
-**To start:**
-```bash
-cp .env.example .env   # add your API keys + LOGOS_JWT_SECRET
-docker compose up -d
-```
-
-### Docker Compose + k3s — `docker-compose.k3s.yml` (strongest self-hosted isolation)
-
-Each agent session spawns a dedicated Kubernetes pod inside an embedded [k3s](https://k3s.io) cluster. Pods have their own filesystem, network namespace, and resource limits — agents are isolated from each other _and_ from the Logos gateway container.
-
-```
-Host OS
-└── Docker network
-    ├── k3s container (privileged)  ← runs the Kubernetes control plane
-    └── logos container
-        └── Agent pods (k8s pods in the hermes namespace)  ← per-agent isolation boundary
-```
-
-**Requirements:** Linux host only. k3s requires a privileged container and Linux namespaces/cgroups — this does **not** work on Docker Desktop for Mac or Windows without extra configuration.
-
-**To start:**
-```bash
-cp .env.example .env   # add LOGOS_JWT_SECRET (required)
-docker compose -f docker-compose.k3s.yml up -d
-# In setup wizard step 4: choose Kubernetes → "Logos is outside the cluster"
-# Leave kubeconfig empty — it is mounted automatically.
-```
-
-### External Kubernetes (`k8s/` manifests)
-
-Deploy Logos to an existing cluster. Agent pods run in the `hermes` namespace with full Kubernetes isolation. You can layer network policies and RBAC on top for production deployments.
-
-**Quick start:**
-```bash
-# 1. Create the namespace and apply manifests
-kubectl apply -f k8s/
-
-# 2. Set required secrets
-kubectl create secret generic logos-secrets -n logos \
-  --from-literal=LOGOS_JWT_SECRET=$(openssl rand -hex 32) \
-  --from-literal=OPENAI_API_KEY=<your-key>   # or whichever provider you use
-
-# 3. Check rollout
-kubectl rollout status deployment/logos -n logos
-```
-
-In the setup wizard, step 4: choose **Kubernetes → "Logos is inside the cluster"** and leave kubeconfig empty — the in-cluster service account is used automatically.
-
-See [`k8s/README.md`](k8s/README.md) for full manifest reference, ingress setup, and persistent volume configuration.
-
----
-
-### 🛡️ Defense layers
+### Defense layers
 
 Agent security is defense-in-depth — multiple independent layers, not a single boundary:
 
@@ -263,22 +163,20 @@ Agent security is defense-in-depth — multiple independent layers, not a single
 |-------|-------------|---------------|
 | **Workspace scoping** | Restricts file read/write to the agent's workspace directory. Symlink-safe (`realpath` before access check). | All modes |
 | **Toolset enforcement** | Agents can only call tools in their enabled toolset. Validated at agent init and registry dispatch. | All modes |
-| **API key filtering** | Terminal subprocesses don't receive provider API keys (`OPENAI_API_KEY`, etc.). Built from provider registry. | All modes |
+| **API key filtering** | Sandbox workers never receive provider API keys. They call `inference.local`, and the OpenShell Privacy Router (running outside the sandbox) injects the real credentials. | OpenShell only |
 | **Command review** | Regex patterns catch common destructive shell commands (`rm -rf /`, `DROP TABLE`, `chmod 777`, etc.). Prompts for approval before execution. | All modes |
 | **Tirith scanning** | Pre-execution semantic analysis of shell commands for content-level threats (homograph URLs, pipe-to-interpreter, terminal injection). Auto-installed from [GitHub releases](https://github.com/sheeki03/tirith). | Linux, macOS |
-| **Container isolation** | Agent runs in a Docker container with `--cap-drop=ALL`, `--security-opt=no-new-privileges`, no host filesystem mounts. | Container sandbox, OpenShell, k8s |
-| **Egress policy** | Declarative YAML policy controls which network destinations the agent can reach. | OpenShell only |
-| **NetworkPolicy** | Kubernetes-native network restriction. Agent pods can only reach DNS, HTTPS, the gateway, and inference server ports. | k8s only |
+| **Filesystem isolation** | Landlock LSM declarative read-only / read-write policy enforced by the kernel. | OpenShell only |
+| **Egress policy** | Per-binary YAML allowlist (`network_policies` in OpenShell policy). | OpenShell only |
+| **Container isolation** | Docker container with `--cap-drop=ALL`, `--security-opt=no-new-privileges`, no host filesystem mounts. | OpenShell, Docker |
 
-**Command review** catches obvious destructive patterns but is bypassable with interpreter one-liners (e.g. `python -c "import shutil; ..."`). It is a convenience layer, not a security boundary. The real protection comes from workspace scoping (all modes), container isolation (Docker/k8s modes), and egress policies (OpenShell/k8s).
+**Command review** catches obvious destructive patterns but is bypassable with interpreter one-liners (e.g. `python -c "import shutil; ..."`). It is a convenience layer, not a security boundary. The real protection comes from workspace scoping (all modes), kernel-level filesystem and egress policy (OpenShell), and container isolation (OpenShell, Docker).
 
 **Tirith** is not available on Windows. When absent, the command review regex patterns are the only pre-execution check. On Linux/macOS, Tirith is auto-downloaded at startup and provides deeper analysis.
 
----
+### Secrets and auth
 
-### 🔑 Secrets and auth
-
-**`LOGOS_JWT_SECRET`** _(legacy alias: `HERMES_JWT_SECRET`)_
+**`LOGOS_JWT_SECRET`** _(legacy alias: `HERMES_JWT_SECRET` — still accepted)_
 All session tokens are signed with this secret. Generate it once with `openssl rand -hex 32` and store it somewhere safe.
 - If you lose it, all active sessions are invalidated on next restart (users will need to log in again — no data is lost).
 - Rotating it intentionally: change the value, restart Logos.
@@ -286,15 +184,15 @@ All session tokens are signed with this secret. Generate it once with `openssl r
 
 **`LOGOS_COOKIE_SECURE`** _(legacy alias: `HERMES_COOKIE_SECURE`)_
 Set to `true` if Logos is behind an HTTPS reverse proxy (nginx, Caddy, Traefik). This adds the `Secure` flag to auth cookies so they are only sent over HTTPS.
-- Leave empty for plain HTTP (local or docker-compose without TLS termination).
+- Leave empty for plain HTTP (local or development).
 - **Do not expose Logos directly on the internet without TLS.**
 
-**API keys in `.env`**
-In Docker deployments, API keys live in the `.env` file on the host — they are passed as environment variables to the container and are **not visible to agents** (agents cannot read the host `.env` file or process environment of the gateway). On bare metal, agents run in the same process environment, so a sufficiently capable agent could read them via `os.environ`.
+> **Env var note:** as of `848a6db refactor: rename HERMES_* env vars to LOGOS_*`, the canonical prefix is `LOGOS_*`. The old `HERMES_*` names still work as fallbacks during the migration window, but new config and docs should use `LOGOS_*`.
 
----
+**Provider API keys**
+In OpenShell mode, provider API keys are never exposed to the sandbox at all — they live in the gateway's environment and are injected at the Privacy Router boundary. In Docker mode, the sandbox container inherits the API keys needed to reach the model endpoint; a sufficiently capable agent could read them via `os.environ`. This is the strongest argument for running OpenShell mode whenever you can.
 
-### 🌐 Network exposure
+### Network exposure
 
 By default Logos binds to `0.0.0.0:8080`, making the dashboard reachable from any interface. In a homelab or VPS deployment:
 
@@ -306,46 +204,25 @@ By default Logos binds to `0.0.0.0:8080`, making the dashboard reachable from an
 
 ## ⚡ Quick install
 
-**Which path is for me?**
-
-| I want to… | Use |
-|---|---|
-| Try Logos on Linux / macOS / WSL2 | [Bash installer](#bash-installer) |
-| Run on Windows without WSL2 | [Windows installer](#-windows-installer) |
-| Strongest self-hosted isolation (Linux host) | [Docker Compose + k3s](#docker-compose--k3s----docker-composek3syml-strongest-self-hosted-isolation) |
-| Standard Docker deployment | [Docker Compose](#docker-compose----docker-composeyml-recommended-for-most-users) |
-| Deploy to an existing Kubernetes cluster | [External Kubernetes](#external-kubernetes-k8s-manifests) |
-
----
-
-### Bash installer
-
-> **Before running:** you can inspect the installer first:
-> ```bash
-> curl -fsSL https://raw.githubusercontent.com/GregsGreyCode/logos/main/scripts/install.sh | less
-> ```
+### Linux / macOS — from source (current path)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/GregsGreyCode/logos/main/scripts/install.sh | bash
+git clone https://github.com/GregsGreyCode/Logos.git
+cd Logos
+curl -LsSf https://astral.sh/uv/install.sh | sh
+uv venv venv --python 3.11
+source venv/bin/activate
+uv pip install -e ".[all]"
+python -m gateway.run
 ```
 
-Works on Linux, macOS, and WSL2. Handles Python, Node.js, and dependencies automatically. No prerequisites except git.
+Then open <http://localhost:8080> — the **setup wizard launches automatically on first run** (whenever `auth.db` doesn't have the `setup_completed` feature flag).
 
-After the installer finishes:
+> **OpenShell:** to use the default `openshell` runtime mode, install the [OpenShell CLI](https://github.com/openshell-ai/openshell) first. The setup wizard will detect it. If OpenShell is missing, you'll be steered to the `docker` fallback.
 
-```bash
-# Add your API keys / JWT secret (open in any editor)
-nano ~/.logos/config.yaml   # or edit via the setup wizard at http://localhost:8080
+### Windows installer
 
-# Start Logos
-logos                       # or: python -m gateway.http_api
-```
-
-Open `http://localhost:8080` — the setup wizard launches automatically on first run.
-
-### 🪟 Windows installer
-
-A native Windows installer (`.exe`) is available on the [GitHub Releases](https://github.com/GregsGreyCode/logos/releases) page. No WSL2 required.
+A native Windows installer (`.exe`) is published on the [GitHub Releases](https://github.com/GregsGreyCode/Logos/releases) page. No WSL2 required.
 
 **What the installer does:**
 1. Installs a self-contained Python + Node.js environment under `%LOCALAPPDATA%\Logos`
@@ -358,66 +235,28 @@ A native Windows installer (`.exe`) is available on the [GitHub Releases](https:
 3. The setup wizard launches automatically — it will prompt you for any API keys it needs
 4. Your configuration is saved to `%USERPROFILE%\.logos\config.yaml`
 
-**Sandbox on Windows:** If Docker Desktop is installed, the setup wizard offers **Container sandbox** mode — each agent runs in its own isolated Docker container. Without Docker, agents run in-process (local process mode). OpenShell is not yet available on Windows.
-
----
+**Sandbox on Windows:** OpenShell does not yet ship Windows binaries. The setup wizard offers **`docker` mode** when Docker Desktop is installed. Without Docker Desktop there is no supported runtime on Windows — install Docker Desktop (or run Logos inside WSL2 where OpenShell works) before proceeding.
 
 #### ⚠️ Why Windows shows a warning
 
-Logos is currently unsigned. Windows SmartScreen may show **"Windows protected your PC"** on first run. Click **"More info" → "Run anyway"** to proceed.
-
-You can verify that what you downloaded is exactly what was built using the methods below.
-
-#### 🔐 Build transparency
-
-Logos binaries are built exclusively via GitHub Actions — no local machines, no manual steps, no hidden stages.
-
-- Source → build → artifact pipeline is fully public
-- Every release links to the exact CI run that produced it
-- [View all builds](https://github.com/GregsGreyCode/logos/actions/workflows/build-windows.yml)
-
-#### 🔑 SHA256 integrity verification
-
-Every release publishes SHA256 hashes for both the installer and the inner `Logos.exe`. These appear in the **GitHub Release notes**, in `SHA256SUMS.txt`, and in a `.sha256` sidecar file — all produced by the same CI run.
-
-```powershell
-# Windows — replace X.Y.Z with the version you downloaded
-certutil -hashfile LogosSetup-X.Y.Z.exe SHA256
-# Compare the output to the hash in the GitHub Release notes
-```
-
-```bash
-# macOS / Linux
-sha256sum LogosSetup-X.Y.Z.exe
-```
-
-#### 🧪 VirusTotal scan
-
-Each release is scanned on [VirusTotal](https://www.virustotal.com) — the scan link is included in the GitHub Release notes. You can also drag-and-drop your downloaded file at [virustotal.com](https://www.virustotal.com) to run your own scan.
+Logos is currently unsigned. Windows SmartScreen may show **"Windows protected your PC"** on first run. Click **"More info" → "Run anyway"** to proceed. See the build-transparency / SHA256 verification section under [Releases](https://github.com/GregsGreyCode/Logos/releases) for how to verify what you downloaded.
 
 ---
 
 ## 🏁 Getting started
 
-On first run, the setup wizard walks you through:
+On first run, the setup wizard at `/setup` walks you through:
 
-1. Choosing your LLM provider and model (local, Anthropic, OpenAI, or OpenRouter)
-2. Connecting inference servers — Logos scans your local network automatically
-3. Benchmarking candidates to find the best model for your hardware
-4. Choosing your agent runtime and soul
-5. Setting your policy level and workspace isolation mode
-6. Optionally connecting Telegram
+1. **Model provider** — local inference (Ollama or LM Studio), or a cloud provider (Anthropic, OpenAI, OpenRouter)
+2. **Inference servers** — Logos scans your local network automatically for Ollama / LM Studio endpoints
+3. **Benchmarking** — quick TTFT + tok/s + capability evals on candidate models, scoring them so you can pick the best fit for your hardware
+4. **Runtime mode** — OpenShell (preferred), Docker, or local
+5. **Soul + first agent** — pick a starting persona; you can edit it later
+6. **Telegram (optional)** — connect a bot token if you want to chat from your phone
 
-**Platform-specific choices in the wizard:**
+Your configuration lives in `~/.logos/config.yaml` (Linux/macOS/WSL2) or `%USERPROFILE%\.logos\config.yaml` (Windows). Per-user state and auth live in `~/.logos/auth.db`. Sessions and per-agent memory are under `~/.logos/sessions/` and `~/.logos/memories/`.
 
-| Platform | Step 4 — Execution backend |
-|---|---|
-| Bare metal (Linux / macOS / Windows) | **Local** (default) |
-| Docker Compose | **Local** (agents run inside the container) |
-| Docker Compose + k3s | **Kubernetes → "Logos is outside the cluster"** |
-| External Kubernetes | **Kubernetes → "Logos is inside the cluster"** |
-
-Your configuration lives in `~/.logos/config.yaml` (Linux/macOS/WSL2) or `%USERPROFILE%\.logos\config.yaml` (Windows).
+To re-run the setup wizard, an admin user can hit `POST /api/setup/reset` (or just delete `auth.db` to start completely fresh).
 
 ---
 
@@ -427,15 +266,15 @@ Your configuration lives in `~/.logos/config.yaml` (Linux/macOS/WSL2) or `%USERP
 
 **0:00 — Install and start**
 
-Run the installer and open `http://localhost:8080`. You should see the Logos dashboard.
+Run the installer (or `python -m gateway.run` from source) and open `http://localhost:8080`. You should see the setup wizard.
 
 **2:00 — Complete the setup wizard**
 
-The wizard launches automatically on first run. Choose a model (cloud API key or local Ollama endpoint), run the benchmark, and leave policy at `WORKSPACE_ONLY` for now. You can change everything later.
+Pick a model (cloud API key or local Ollama/LM Studio endpoint), let the benchmark run, choose a runtime mode (OpenShell if it's available — otherwise Docker), and leave policy at the default. You can change everything later.
 
 **4:00 — Send your first message**
 
-Ask the agent something simple. Watch the **live execution panel** — you'll see exactly which tools it calls, in order, and how long each step takes. This is the STAMP model in action.
+Open the dashboard's **Agents** tab, create an agent, then jump to **Chats** and send something simple. Watch the **live execution panel** — you'll see exactly which tools the agent calls, in order, and how long each step takes. This is the STAMP model in action.
 
 > *Try: "What can you see about the machine you're running on?"*
 
@@ -447,12 +286,12 @@ Open `~/.logos/SOUL.md` in any editor. Change the agent's name, tone, or give it
 
 **8:00 — Inspect a run**
 
-From the dashboard, open **Runs**. Click the run you just created. You'll see the full tool trace, token counts, and outcome. Hit **Clone** to open a new session seeded from that exact configuration.
+From the dashboard's **Settings** tab (admins only) you can browse recent runs. Each entry has the full tool trace, token counts, and outcome.
 
 **10:00 — Where to go next**
 
 - Connect Telegram so you can reach your agent from anywhere
-- Swap the model to something local if you haven't already
+- Swap the model — try a smaller local model for routine work and a frontier model for hard tasks
 - Try a more complex prompt — ask it to read a log file, query a URL, or write and run a script
 - Explore `workflows/examples/` for pre-built task graphs
 
@@ -474,14 +313,7 @@ Within each bucket, models are ranked by quality heuristics:
 
 ### Speed benchmark
 
-Two passes per model on different prompt types:
-
-| Pass | Prompt type | Purpose |
-|------|-------------|---------|
-| 1 | Natural language prose | Baseline throughput |
-| 2 | Structured JSON output | Throughput under formatting constraints |
-
-The two results are averaged. Time-to-first-token (TTFT) is measured on pass 1. Throughput is measured from first token to last, so cold-start latency doesn't inflate the tok/s figure.
+Two passes per model on different prompt types. Results are averaged. Time-to-first-token (TTFT) is measured on pass 1. Throughput is measured from first token to last so cold-start latency doesn't inflate the tok/s figure.
 
 | Label | Tokens/sec | Notes |
 |-------|-----------|-------|
@@ -490,7 +322,7 @@ The two results are averaged. Time-to-first-token (TTFT) is measured on pass 1. 
 | Usable | ≥ 6 | Acceptable; notable latency on long outputs |
 | Slow | < 6 | Likely too large for real-time agent use on this hardware |
 
-### Capability evals — 4 tests
+### Capability evals
 
 | # | Test | Pass condition |
 |---|------|---------------|
@@ -510,14 +342,7 @@ score = 0.45 × (eval_tests_passed / 4)
       + 0.10 × min(param_count_B, 13) / 13
 ```
 
-- **Eval quality (45%)** — weighted most heavily; a fast but unreliable model produces poor agent outcomes
-- **Speed (30%)** — capped at 40 tok/s; returns above that have diminishing value for interactive use
-- **TTFT (15%)** — time-to-first-token affects perceived responsiveness
-- **Model size (10%)** — all else equal, a larger model is preferred; capped at 13B
-
-### VRAM management
-
-Between tests, each model is explicitly unloaded from GPU memory to prevent contention. If you connect more than one inference server, each server's models are tested **in parallel with other servers** — but models on the *same* server run sequentially to prevent VRAM contention.
+Eval quality dominates. Speed is capped at 40 tok/s — diminishing returns for interactive use above that.
 
 ---
 
@@ -525,75 +350,51 @@ Between tests, each model is explicitly unloaded from GPU memory to prevent cont
 
 **Soul** — edit `~/.logos/SOUL.md` at any time. Changes take effect on the next message; no restart needed.
 
-**Tools** — enable or disable per platform via the web dashboard or by editing the `toolsets` key in `~/.logos/config.yaml`.
+**Tools** — enable or disable per agent via the Agents tab in the dashboard, or by editing `toolsets` on the agent record.
 
-**Agent** — choose which runtime processes your conversation. Currently available: **Hermes** (general-purpose, full tool loop). Additional agents register via `logos/agent/interface.py`. ACP clients (VS Code, Zed, JetBrains) connect through the ACP adapter.
+**Agent** — choose which runtime processes your conversation. Currently available: **Hermes** (general-purpose, full tool loop). ACP clients (VS Code, Zed, JetBrains) connect through the ACP adapter.
 
-**Model** — switch via the web dashboard or by setting `openai.base_url` in config for any OpenAI-compatible endpoint.
+**Model** — switch via the dashboard's model picker (shown in the chat header), or set `HERMES_MODEL` / `LOGOS_MODEL` directly in `~/.logos/config.yaml`.
 
-**Policy** — set workspace isolation mode (`FULL_ACCESS`, `WORKSPACE_ONLY`, `REPO_SCOPED`, `READ_ONLY`), configure command approval callbacks, and run policy enforcement evals from the dashboard.
+**Policy** — set the action policy for an agent via the dashboard's Admin tab, or assign a policy ID per session at chat-start time.
 
 ---
 
 ## 🔭 Observability
 
-```
-/runs list          # recent runs with status and token counts
-/runs detail <id>   # full tool trace, approval events, outcome
-/runs replay <id>   # re-run a message in the same session
-/runs clone <id>    # seed a new session from a prior run
-/evals run <suite>  # execute an eval suite
-/evals results      # view past eval results
-/metrics            # usage dashboard
-/metrics prometheus # Prometheus export for scraping
-```
-
-Every log line includes a `[session_id]` field set via a `contextvars.ContextVar` at the start of each request — grep a single session ID across gateway, agent, and tool logs without any thread-local state.
+Every log line includes a `[session_id]` field set via a `contextvars.ContextVar` at the start of each request — grep a single session ID across gateway, sandbox worker, and tool logs without any thread-local state.
 
 `GET /healthz` returns per-platform success and error counters (`platform_stats`), useful for spotting silent adapter failures across Telegram, Discord, Slack, and other connected platforms.
+
+`GET /api/runs` and the **Settings → Runs** view in the dashboard expose the per-run STAMP records — model, soul, tool sequence, token counts, outcome.
 
 ---
 
 ## 🧠 Evolution — agent self-improvement
 
-The **Evolution** tab gives agents a structured channel to propose improvements to the platform itself, on a schedule you control.
+The **Evolution** view (under the Settings tab) gives agents a structured channel to propose improvements to the platform itself, on a schedule you control.
 
 1. **Agents analyse your codebase** on the configured interval. Each agent reads the repository, looks for bugs and complexity hotspots, and drafts a concrete improvement.
-2. **A proposal is submitted** — title, summary, a unified diff, and the list of affected files — and appears in the Evolution tab for your review.
+2. **A proposal is submitted** — title, summary, a unified diff, and the list of affected files — and appears in the Evolution view for your review.
 3. **You decide:** Accept, Decline, or Ask a question back to the agent.
 4. **Optionally consult a frontier model** — ask Claude or GPT-4o to review the proposal before you decide.
 
 Each Logos deployment works against **your own fork** of the repository. Fork the canonical repo, configure the fork URL in Evolution Settings, and the agent reads from it and opens PRs against it.
 
-**Setup:** Fork → Evolution Settings → configure fork URL, PAT, base branch, schedule, frontier model → Enable.
-
-**API:**
-```
-GET    /evolution/proposals              # list (filterable by status)
-POST   /evolution/proposals             # create (agents use this)
-POST   /evolution/proposals/{id}/decide  # accept / decline / question
-POST   /evolution/proposals/{id}/consult # consult a frontier model
-PATCH  /evolution/settings               # update settings
-```
-
 ---
 
 ## 🔌 MCP Gateway
 
-Logos runs a **centralized MCP (Model Context Protocol) gateway** inside the gateway process. MCP servers boot once at startup and are shared across all agent sessions — no per-agent subprocess spawning, no config duplication into sandboxes.
+Logos runs a **centralized MCP (Model Context Protocol) gateway** inside the gateway process. MCP servers boot once at startup and are shared across all agent sandboxes — no per-agent subprocess spawning, no config duplication into sandboxes.
 
 ### Why centralized?
 
-The per-agent subprocess model breaks in two critical scenarios:
-- **OpenShell sandbox**: the sandbox container has no access to `~/.logos/config.yaml`, so MCP servers can never start inside it.
-- **k8s pods**: each pod would need its own MCP server subprocesses, multiplying resource use by session count.
-
-The centralized gateway solves both: agents connect over HTTP regardless of where they're running.
+The per-agent subprocess model breaks for OpenShell sandboxes: the sandbox container has no access to `~/.logos/config.yaml` and no way to spawn `npx` / `pipx` MCP server processes. The centralized gateway solves this — agents connect over HTTP to `http://host.openshell.internal:{mcp_port}/mcp/{server-name}` regardless of where they're running.
 
 ### How it works
 
 ```
-Agent (any executor)
+Sandbox worker (any executor)
     │
     │  tools: request_mcp_access("filesystem")
     │
@@ -640,75 +441,26 @@ mcp_policy:
   # deny:        [dangerous]   # always blocked
 ```
 
-**`category`** is a free-form label you assign to each server — the `mcp_policy` block maps categories to approval tiers. Any server whose category isn't listed defaults to `user_approve`.
+`category` is a free-form label you assign to each server — the `mcp_policy` block maps categories to approval tiers. Any server whose category isn't listed defaults to `user_approve`.
 
-### How agents request access
-
-Agents have two MCP tools always available (in the `mcp-gateway` toolset):
-
-| Tool | What it does |
-|------|-------------|
-| `get_mcp_catalogue` | Lists all configured MCP servers, their descriptions, and the approval tier |
-| `request_mcp_access` | Requests access to a specific server by name |
-
-When `request_mcp_access("filesystem")` is called:
-1. The gateway checks the server's category against `mcp_policy`.
-2. **`auto_approve`**: access granted immediately; MCP tools injected into the session.
-3. **`user_approve`**: an approval card appears in the web dashboard or Telegram; the agent pauses and resumes when you respond.
-4. **`admin_approve`**: same flow, but only an admin-role account can approve.
-
-### Cross-platform URL routing
-
-The gateway automatically resolves the right endpoint URL based on where the agent is running:
-
-| Execution mode | Agent connects to |
-|---|---|
-| Local process (bare metal / Docker) | `http://127.0.0.1:{mcp_port}/mcp/{name}` |
-| OpenShell sandbox | `http://host.docker.internal:{mcp_port}/mcp/{name}` |
-| Kubernetes pod | `http://logos-gateway.{ns}.svc.cluster.local:{mcp_port}/mcp/{name}` |
-
-The port defaults to `8081` and can be overridden with `HERMES_MCP_PORT`.
-
-### Management API
-
-```
-GET    /api/mcp/catalogue                  # list configured servers + policy tiers
-GET    /api/mcp/status                     # which servers are running, which failed
-POST   /api/mcp/grants/{session_id}/{srv}  # admin: manually grant access
-DELETE /api/mcp/grants/{session_id}/{srv}  # admin: revoke access
-```
-
-Grants are in-memory and reset on gateway restart.
-
----
-
-## 🔄 Migrating from OpenClaw
-
-```bash
-hermes claw migrate              # interactive migration (full preset)
-hermes claw migrate --dry-run    # preview what would be migrated
-hermes claw migrate --preset user-data   # migrate without secrets
-```
-
-What gets imported: `SOUL.md`, memories, skills, command allowlist, messaging settings, API keys, TTS assets, workspace instructions.
+The MCP port defaults to `8081` and can be overridden with `LOGOS_MCP_PORT` (alias `HERMES_MCP_PORT`).
 
 ---
 
 ## 🛠️ Developer reference
 
-Source in `gateway/`, `tools/`, and `agent/`. See [`AGENTS.md`](AGENTS.md) for internals, local dev setup, gateway architecture, and how to add tools.
+Source in `gateway/`, `tools/`, and `agents/hermes/`. See [`AGENTS.md`](AGENTS.md) for internals, local dev setup, gateway architecture, and how to add tools.
 
 **Runtime support:**
 
-| Backend | Status |
-|---------|--------|
-| Local (Ollama / LM Studio) | ✅ Tested |
-| Docker | ✅ Tested |
-| Kubernetes (k3s / external) | ✅ Tested |
-| SSH | ✅ Tested |
-| Modal | ⚠️ Not yet tested |
-| Daytona | ⚠️ Not yet tested |
-| Singularity | ⚠️ Not yet tested |
+| Backend | Status | Notes |
+|---------|--------|-------|
+| OpenShell sandbox (Linux / macOS) | ✅ Default | Strongest isolation; required for inference credential separation |
+| Docker sandbox | ✅ Tested | Container isolation; no per-binary egress policy |
+| Local process | ⚠️ Unsafe fallback | No isolation; only when nothing else is available |
+| Local model serving (Ollama / LM Studio) | ✅ Tested | Auto-discovered by setup wizard scan |
+| Cloud providers (Anthropic, OpenAI, OpenRouter) | ✅ Tested | Configured in setup wizard |
+| Kubernetes pod-per-agent | ❌ Removed | Deleted in `f6f0972`. The `k8s/` manifests still deploy the gateway itself; agent runtime uses OpenShell. |
 
 ---
 
@@ -724,39 +476,29 @@ docker buildx build \
 
 > **`--build-arg BUILD_SHA=...` is required** — omit it and the version footer displays `unknown` instead of the actual commit SHA.
 
-After pushing, roll out:
-
-```bash
-kubectl rollout restart deployment/logos -n logos
-kubectl rollout status  deployment/logos -n logos
-```
-
 ---
 
 ## 🤝 Contributing
 
 ```bash
-git clone https://github.com/GregsGreyCode/logos.git
-cd logos
+git clone https://github.com/GregsGreyCode/Logos.git
+cd Logos
 curl -LsSf https://astral.sh/uv/install.sh | sh
-uv venv .venv --python 3.11
-source .venv/bin/activate
+uv venv venv --python 3.11
+source venv/bin/activate
 uv pip install -e ".[all,dev]"
-uv pip install -e "./mini-swe-agent"
 ./scripts/test.sh
 ```
 
 **Why these choices:**
 - `uv` — significantly faster than pip for dependency resolution; the project uses it throughout
 - Python 3.11 — minimum supported version; 3.12+ untested
-- `mini-swe-agent` — vendored directly into the repo; powers the agent's code-editing toolset
 
 **Test script options:**
 
 ```bash
 ./scripts/test.sh                  # unit tests only — mirrors CI (default)
 ./scripts/test.sh --integration    # unit + integration tests (requires API keys)
-./scripts/test.sh --mini           # mini-swe-agent tests only
 ./scripts/test.sh --everything     # all suites
 ./scripts/test.sh --coverage       # generate HTML coverage report in htmlcov/
 ./scripts/test.sh --no-parallel    # serial output — easier to read tracebacks
@@ -764,6 +506,12 @@ uv pip install -e "./mini-swe-agent"
 ```
 
 Integration tests require live API keys (`OPENROUTER_API_KEY`, `OPENAI_API_KEY`, etc.) and hit real external services. Unit tests blank all keys automatically and never make network calls.
+
+> **RL Training (optional):** To work on the RL/Tinker-Atropos integration:
+> ```bash
+> git submodule update --init tinker-atropos
+> uv pip install -e "./tinker-atropos"
+> ```
 
 ---
 
@@ -778,15 +526,15 @@ MIT — see [LICENSE](LICENSE).
 This project would not exist without the open-source work it stands on:
 
 - **[Anthropic / Claude](https://www.anthropic.com)** — Claude wrote a significant portion of the gateway, UI, tooling, and this documentation.
-- **[Nous Research / hermes-agent](https://github.com/NousResearch/hermes-agent)** — the Hermes agent runtime (`agents/hermes/`) is a heavily extended fork of their open-source hermes-agent. The platform layer (gateway, auth, dashboard, STAMP system, policy enforcement) is original work built on top of it.
-- **[SWE-agent / mini-swe-agent](https://github.com/SWE-agent/mini-swe-agent)** — vendored directly into the repo (MIT licence), powers the terminal tool's PTY-based shell execution.
+- **[Nous Research / hermes-agent](https://github.com/NousResearch/hermes-agent)** — the Hermes agent runtime (`agents/hermes/`) is a heavily extended fork of their open-source hermes-agent. The platform layer (gateway, auth, dashboard, STAMP system, policy enforcement) is original work built on top of it. The `tinker-atropos` RL submodule combines [Atropos](https://github.com/NousResearch/atropos) (Nous Research) and [Tinker](https://github.com/thinking-machines-lab/tinker) (Thinking Machines Lab).
+- **[NVIDIA OpenShell](https://github.com/openshell-ai/openshell)** — the sandbox runtime that gives Logos its strongest isolation mode: kernel-level Landlock filesystem policy, per-binary egress allowlists, and the Privacy Router that keeps inference credentials out of the sandbox entirely.
 - **[Ollama](https://github.com/ollama/ollama)** — makes running local LLMs approachable. Powers the homelab GPU machines that handle inference.
 - **[LM Studio](https://lmstudio.ai)** — excellent local model serving, especially for experimentation and first-time model setup.
 - **[faster-whisper](https://github.com/SYSTRAN/faster-whisper)** — powers in-pod voice transcription without any cloud dependency.
 - **[aiohttp](https://github.com/aio-libs/aiohttp)** — the async web framework underpinning the entire gateway and HTTP API.
 - **[Alpine.js](https://alpinejs.dev)** — the reactive UI layer for the dashboard. Lightweight and pleasant to work with for a single-file SPA.
 - **[Tailwind CSS](https://tailwindcss.com)** — makes the dashboard look polished without writing custom CSS.
+- **[Phaser](https://phaser.io)** — powers the world view and agent sprites in the Agents tab.
 - **[marked.js](https://github.com/markedjs/marked)** — client-side Markdown rendering for chat messages.
-- **[Talos Linux](https://www.talos.dev)** — the immutable, secure Kubernetes OS running the homelab cluster.
-- **[python-telegram-bot](https://github.com/python-telegram-bot/python-telegram-bot)** — the Telegram adapter that makes Hermes available anywhere.
+- **[python-telegram-bot](https://github.com/python-telegram-bot/python-telegram-bot)** — the Telegram adapter that makes Logos available anywhere.
 - **[SQLite](https://www.sqlite.org)** — server-side chat persistence and full-text search. Quietly does everything.
