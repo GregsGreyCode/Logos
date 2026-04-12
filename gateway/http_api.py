@@ -3291,6 +3291,30 @@ async def _handle_chat(request: web.Request) -> web.StreamResponse:
                         "type": "thinking",
                         "content": event.get("content", ""),
                     })
+                elif etype == "memory_write":
+                    await send_event({
+                        "type": "memory_write",
+                        "preview": event.get("preview", ""),
+                    })
+
+            # ── Dispatch ledger: record start ──
+            _dispatch_id = None
+            try:
+                _dispatch_id = auth_db.create_dispatch(
+                    task_id=task_payload["task_id"],
+                    agent_id=agent_id or "",
+                    sandbox_name=target_worker,
+                    model=_agent_model,
+                    origin="user_chat",
+                    origin_detail=json.dumps({
+                        "user_id": (_real_user_id or ""),
+                        "chat_id": body.get("chat_id", ""),
+                    }),
+                    session_id=session_entry.session_id if session_entry else "",
+                    user_id=_real_user_id or "",
+                )
+            except Exception as _dsp_exc:
+                logger.debug("dispatch ledger create skipped: %s", _dsp_exc)
 
             worker_result = await worker_registry.dispatch_task(
                 target_worker, task_payload, timeout=600,
@@ -3301,6 +3325,22 @@ async def _handle_chat(request: web.Request) -> web.StreamResponse:
                 "api_calls": worker_result.get("api_calls", 0),
                 "tools_used": worker_result.get("tools_used", []),
             }
+
+            # ── Dispatch ledger: record completion ──
+            if _dispatch_id:
+                try:
+                    _dsp_status = worker_result.get("status", "ok")
+                    _dsp_elapsed = round(time.time() - t_agent_start, 2)
+                    auth_db.complete_dispatch(
+                        _dispatch_id,
+                        status=_dsp_status,
+                        elapsed_s=_dsp_elapsed,
+                        prompt_tokens=worker_result.get("prompt_tokens"),
+                        completion_tokens=worker_result.get("completion_tokens"),
+                        error=worker_result.get("error"),
+                    )
+                except Exception as _dsp_exc:
+                    logger.debug("dispatch ledger complete skipped: %s", _dsp_exc)
             # Worker sets status="error" when its inference call raised
             # (e.g. LM Studio returned HTTP 500 mid-eviction during JIT
             # auto-evict, OpenShell privacy router blew up, model crashed).
@@ -3927,6 +3967,7 @@ async def start_http_api(runner: Any, port: int = 8091) -> None:
     app.router.add_post("/api/admin/platforms/routing",                   _mm(require_csrf(_handle_platforms_routing_upsert)))
     app.router.add_delete("/api/admin/platforms/routing/{id}",            _mm(require_csrf(_handle_platforms_routing_delete)))
 
+    app.router.add_get("/admin/dispatches",           _mm(admin_handlers.handle_dispatches_list))
     app.router.add_get("/admin/agents",              _mm(admin_handlers.handle_agents_list))
     app.router.add_post("/admin/agents",             _mm(require_csrf(admin_handlers.handle_agents_post)))
     app.router.add_patch("/admin/agents/{id}",       _mm(require_csrf(admin_handlers.handle_agents_patch)))

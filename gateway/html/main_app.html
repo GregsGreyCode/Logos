@@ -2894,6 +2894,9 @@
           <span class="absolute -top-1 -right-3 min-w-[16px] h-4 px-1 rounded-full bg-red-500 text-[9px] text-white font-bold flex items-center justify-center" x-text="pendingApprovalCount > 99 ? '99+' : pendingApprovalCount"></span>
         </template>
       </button>
+      <button class="pb-2 text-sm font-medium"
+        :class="adminTab==='activity'?'tab-active':'text-gray-500 hover:text-white'"
+        @click="adminTab='activity'; loadDispatches()">Activity</button>
     </div>
 
     <!-- ── Users sub-tab ── -->
@@ -4165,6 +4168,76 @@
       </div>
     </div>
 
+    <!-- ── Activity sub-tab (M8 Phase B dispatch ledger) ── -->
+    <div x-show="adminTab==='activity'">
+      <div class="flex items-center justify-between mb-4">
+        <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Dispatch Activity</div>
+        <div class="flex items-center gap-3">
+          <select x-model="dispatchOriginFilter" @change="loadDispatches()"
+            class="bg-gray-800 border border-gray-700 rounded-lg text-xs px-2 py-1 text-gray-300">
+            <option value="">All origins</option>
+            <option value="user_chat">User chat</option>
+            <option value="platform">Platform</option>
+            <option value="cron">Cron</option>
+            <option value="session_flush">Session flush</option>
+          </select>
+          <button @click="loadDispatches()"
+            class="text-xs text-gray-500 hover:text-white">Refresh</button>
+        </div>
+      </div>
+      <div x-show="dispatchesLoading" class="text-xs text-gray-500 py-4 text-center">Loading...</div>
+      <div class="overflow-x-auto" x-show="!dispatchesLoading">
+        <table class="w-full text-xs">
+          <thead>
+            <tr class="text-gray-500 text-left border-b border-gray-800">
+              <th class="px-3 py-2">Agent</th>
+              <th class="px-3 py-2">Origin</th>
+              <th class="px-3 py-2">Model</th>
+              <th class="px-3 py-2">Status</th>
+              <th class="px-3 py-2">Elapsed</th>
+              <th class="px-3 py-2">Tokens</th>
+              <th class="px-3 py-2">Time</th>
+            </tr>
+          </thead>
+          <tbody>
+            <template x-for="d in dispatches" :key="d.id">
+              <tr class="border-b border-gray-800/50 hover:bg-gray-800/30">
+                <td class="px-3 py-2 font-mono text-gray-300" x-text="d.sandbox_name || d.agent_id || '—'"></td>
+                <td class="px-3 py-2">
+                  <span class="px-1.5 py-0.5 rounded text-[9px] font-medium"
+                    :class="{
+                      'bg-blue-950 text-blue-400': d.origin==='user_chat',
+                      'bg-purple-950 text-purple-400': d.origin?.startsWith('platform'),
+                      'bg-yellow-950 text-yellow-400': d.origin==='cron',
+                      'bg-gray-800 text-gray-400': !['user_chat','cron'].includes(d.origin) && !d.origin?.startsWith('platform'),
+                    }" x-text="d.origin"></span>
+                </td>
+                <td class="px-3 py-2 text-gray-500 font-mono" x-text="(d.model || '—').split('/').pop()"></td>
+                <td class="px-3 py-2">
+                  <span class="text-[10px] font-medium"
+                    :class="{
+                      'text-green-400': d.status==='ok',
+                      'text-red-400': d.status==='error',
+                      'text-yellow-400': d.status==='running',
+                      'text-gray-500': d.status==='timeout' || d.status==='cancelled',
+                    }" x-text="d.status"></span>
+                </td>
+                <td class="px-3 py-2 text-gray-500" x-text="d.elapsed_s ? d.elapsed_s.toFixed(1) + 's' : '—'"></td>
+                <td class="px-3 py-2 text-gray-500" x-text="(d.prompt_tokens || 0) + (d.completion_tokens || 0) || '—'"></td>
+                <td class="px-3 py-2 text-gray-600" x-text="d.started_at ? new Date(d.started_at).toLocaleTimeString() : '—'"></td>
+              </tr>
+            </template>
+            <template x-if="dispatches.length === 0">
+              <tr><td colspan="7" class="px-4 py-8 text-center text-gray-600">No dispatches recorded yet</td></tr>
+            </template>
+          </tbody>
+        </table>
+        <div class="flex items-center justify-between mt-3 text-xs text-gray-500">
+          <span x-text="'Showing ' + dispatches.length + ' of ' + dispatchesTotal + ' dispatches'"></span>
+        </div>
+      </div>
+    </div>
+
     <!-- Shared admin message bar -->
     <template x-if="adminMsg && !adminUserFormOpen && !adminMachineFormOpen && !adminPolicyFormOpen">
       <div class="mt-4 text-xs px-3 py-2 rounded-lg"
@@ -5227,6 +5300,10 @@ function app() {
     approvalRequests: [],
     approvalsStatusFilter: 'pending',
     pendingApprovalCount: 0,
+    dispatches: [],
+    dispatchesTotal: 0,
+    dispatchesLoading: false,
+    dispatchOriginFilter: '',
     allMachineModels: [],
     // Per-machine probe results from the most recent loadAllMachineModels()
     // call. Drives the provision-modal hint so the user can tell whether
@@ -7265,6 +7342,13 @@ function app() {
                 chat.messages = [...chat.messages, { role: 'system', content: cardHtml, _html: true }];
                 this._scrollChat();
               }
+              if (d.type === 'memory_write') {
+                // Agent saved a memory — show inline notification card
+                const preview = d.preview || 'saved a memory';
+                const memCard = `<div class="flex items-center gap-2 py-1 px-2 my-1 bg-gray-800/50 border border-gray-700/50 rounded text-[11px] text-gray-400"><span class="text-purple-400 flex-shrink-0">&#x1f4ad;</span><span>` + preview + `</span></div>`;
+                chat.messages = [...chat.messages, { role: 'system', content: memCard, _html: true }];
+                this._scrollChat();
+              }
               if (d.type === 'token') {
                 // Streaming token from worker
                 this.isWakingUp = false;
@@ -8445,6 +8529,20 @@ function app() {
         const d = await r.json();
         this.pendingApprovalCount = d.total ?? (d.approvals || []).length;
       } catch(e) {}
+    },
+
+    async loadDispatches() {
+      this.dispatchesLoading = true;
+      try {
+        const params = new URLSearchParams({ limit: '50' });
+        if (this.dispatchOriginFilter) params.set('origin', this.dispatchOriginFilter);
+        const r = await fetch('/admin/dispatches?' + params, {credentials:'include'});
+        if (!r.ok) { this.dispatches = []; this.dispatchesTotal = 0; return; }
+        const d = await r.json();
+        this.dispatches = d.dispatches || [];
+        this.dispatchesTotal = d.total || 0;
+      } catch(e) { this.dispatches = []; this.dispatchesTotal = 0; }
+      this.dispatchesLoading = false;
     },
 
     async loadApprovals() {

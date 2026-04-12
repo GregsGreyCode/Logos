@@ -481,6 +481,25 @@ async def handle_cloud_providers_test(request: web.Request) -> web.Response:
     return web.json_response(result)
 
 
+# ── Dispatch ledger (M8 Phase B) ─────────────────────────────────────────────
+
+async def handle_dispatches_list(request: web.Request) -> web.Response:
+    """GET /admin/dispatches — query the dispatch activity ledger.
+
+    Query params: agent_id, origin, status, limit (max 200), offset.
+    """
+    agent_id = request.rel_url.query.get("agent_id")
+    origin = request.rel_url.query.get("origin")
+    status = request.rel_url.query.get("status")
+    limit = min(int(request.rel_url.query.get("limit", 50)), 200)
+    offset = int(request.rel_url.query.get("offset", 0))
+    rows, total = auth_db.list_dispatches(
+        agent_id=agent_id, origin=origin, status=status,
+        limit=limit, offset=offset,
+    )
+    return web.json_response({"dispatches": rows, "total": total})
+
+
 # ── Named agents ─────────────────────────────────────────────────────────────
 
 async def handle_agents_list(request: web.Request) -> web.Response:
