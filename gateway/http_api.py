@@ -2837,6 +2837,68 @@ async def _handle_workflow_approval_decide(request: web.Request) -> web.Response
     return web.json_response({"decided": True, "decision": decision, "approval_id": approval_id})
 
 
+async def _handle_tools_configure(request: web.Request) -> web.Response:
+    """POST /tools/configure — save a tool API key and auto-apply presets.
+
+    Body: {"credentials": {"FIRECRAWL_API_KEY": "fc-..."}}
+
+    For each credential key:
+    1. Saves to ~/.hermes/.env via save_env_value()
+    2. Sets in os.environ for the running gateway process
+    3. Auto-applies the corresponding network preset to agents that
+       have the matching toolset enabled
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        raise web.HTTPBadRequest(reason="Invalid JSON body")
+
+    credentials = body.get("credentials")
+    if not credentials or not isinstance(credentials, dict):
+        return web.json_response({"error": "credentials dict required"}, status=400)
+
+    saved = []
+    errors = []
+
+    for env_key, env_value in credentials.items():
+        if not env_key or not isinstance(env_key, str) or not isinstance(env_value, str):
+            errors.append({"key": env_key, "error": "invalid key or value"})
+            continue
+        env_value = env_value.strip()
+        if not env_value:
+            errors.append({"key": env_key, "error": "value cannot be empty"})
+            continue
+
+        # 1. Save to ~/.hermes/.env
+        try:
+            from logos_cli.config import save_env_value
+            save_env_value(env_key, env_value)
+        except Exception as exc:
+            errors.append({"key": env_key, "error": f"failed to save: {exc}"})
+            continue
+
+        # 2. Set in os.environ for the running process
+        os.environ[env_key] = env_value
+
+        # 3. Auto-apply matching presets
+        applied_presets = []
+        try:
+            from gateway import policies as gp
+            applied_presets = gp.auto_apply_presets_for_env(env_key)
+        except Exception as exc:
+            logger.warning("tools/configure: auto_apply failed for %s: %s", env_key, exc)
+
+        saved.append({
+            "key": env_key,
+            "presets_applied": applied_presets,
+        })
+
+    return web.json_response({
+        "saved": saved,
+        "errors": errors,
+    })
+
+
 async def _handle_chat(request: web.Request) -> web.StreamResponse:
     # /chat is intentionally unauthenticated (same-origin dashboard, LAN-only NodePort).
     # Rate limiting prevents runaway agent spawning from a single IP.
@@ -2855,6 +2917,42 @@ async def _handle_chat(request: web.Request) -> web.StreamResponse:
     message = body.get("message", "")
     session_id = body.get("session_id", "http-default")
     agent_id = body.get("agent_id")
+
+    # ── Gateway command: /setup tools ──────────────────────────────────
+    # Intercept before any session/dispatch logic. Returns tool readiness
+    # as a special SSE message the frontend renders as an interactive card.
+    _msg_stripped = (message or "").strip().lower()
+    if _msg_stripped in ("/setup tools", "/setup", "/tools setup"):
+        resp = web.StreamResponse(
+            status=200,
+            headers={"Content-Type": "text/event-stream", "Cache-Control": "no-cache"},
+        )
+        await resp.prepare(request)
+        readiness = []
+        if agent_id:
+            try:
+                from gateway import policies as gp
+                readiness = gp.get_tool_readiness(agent_id)
+            except Exception:
+                pass
+        # Also include available presets for context
+        from gateway import policies as gp
+        preset_map = {}
+        for tool_name, info in gp.TOOL_PRESET_MAP.items():
+            for env_key in info.get("env", []):
+                preset_map[env_key] = {
+                    "tool": tool_name,
+                    "preset": info.get("presets", [None])[0],
+                    "setup_url": info.get("setup_url", ""),
+                    "description": info.get("description", ""),
+                }
+        await resp.write(("data: " + json.dumps({
+            "type": "setup_tools",
+            "readiness": readiness,
+            "preset_map": preset_map,
+        }) + "\n\n").encode())
+        await resp.write(("data: " + json.dumps({"type": "done", "elapsed_s": 0}) + "\n\n").encode())
+        return resp
 
     # M6 correlation IDs: stamp every log record emitted during this request
     # with identifiers that can be grepped from the unified log afterwards.
@@ -3744,6 +3842,7 @@ async def start_http_api(runner: Any, port: int = 8091) -> None:
     app.router.add_get("/api/platform-sessions/{session_id}/messages", _handle_api_session_messages)
     app.router.add_post("/chat",               _handle_chat)
     app.router.add_post("/chat/transcribe",    require_csrf(_handle_transcribe))
+    app.router.add_post("/tools/configure",    require_csrf(_handle_tools_configure))
     app.router.add_route("OPTIONS", "/chat",   _handle_index)
     app.router.add_get("/canary/status", _handle_canary_status)
     app.router.add_get("/proxy/state",        _handle_proxy_state)
