@@ -97,20 +97,17 @@ _STATE_LOCK_FILE = _HERMES_HOME / "openshell_instances.lock"
 _PRUNE_GRACE_SECONDS = 90.0
 
 # Default sandbox image source. Two modes:
-#   1. A pre-built image tag (e.g. "ghcr.io/myorg/hermes-sandbox:1.0") — used
-#      when the image is published to a registry the cluster can pull from.
+#   1. A pre-built image tag (e.g. "hermes-upstream:latest") — used when
+#      the image is already on the local Docker daemon or a pullable registry.
 #   2. An absolute path to a Dockerfile — OpenShell builds and imports it
 #      into the gateway on demand. Used for dev/local and one-off setups.
 #
-# We default to mode #2 by computing the path to docker/Dockerfile.hermes-sandbox
-# in the repo (../../docker/ relative to this file). Override either with the
-# LOGOS_OPENSHELL_IMAGE env var.
+# M11: default to mode #1 — the upstream hermes-agent image, pre-built at
+# projects/knowledge-repos/hermes-agent/Dockerfile (7.46 GB). The sandbox
+# worker script is uploaded separately at spawn time (step 2b below).
+# Override with the LOGOS_OPENSHELL_IMAGE env var.
 _REPO_ROOT = Path(__file__).parent.parent.parent
-_BUNDLED_DOCKERFILE = _REPO_ROOT / "docker" / "Dockerfile.hermes-sandbox"
-_DEFAULT_IMAGE = os.getenv(
-    "LOGOS_OPENSHELL_IMAGE",
-    str(_BUNDLED_DOCKERFILE) if _BUNDLED_DOCKERFILE.exists() else "hermes-sandbox:local",
-)
+_DEFAULT_IMAGE = os.getenv("LOGOS_OPENSHELL_IMAGE", "hermes-sandbox:m11")
 
 # Path to the default egress policy applied to every sandbox.
 _DEFAULT_POLICY = Path(__file__).parent.parent / "policies" / "openshell_default.yaml"
@@ -909,6 +906,21 @@ class OpenShellExecutor:
                 config_tmpfile.name, "/tmp/hermes/instance-config.json",
                 gateway=openshell_gw, check=True,
             )
+
+            # ── Step 2b: upload the sandbox worker script ─────────
+            #
+            # The upstream image doesn't have /app/sandbox_worker.py —
+            # it has hermes at /opt/hermes. Logos owns the protocol
+            # bridge (sandbox_worker.py), the image owns the agent
+            # runtime. Upload the worker so dispatch_task's exec call
+            # can invoke it.
+            _worker_script = _REPO_ROOT / "docker" / "sandbox_worker.py"
+            if _worker_script.exists():
+                _openshell(
+                    "sandbox", "upload", sandbox_name,
+                    str(_worker_script), "/tmp/",
+                    gateway=openshell_gw, check=True,
+                )
 
             # Upload SOUL.md — destination path is deliberately left
             # at the pre-M11 location (/tmp/hermes/SOUL.md) because

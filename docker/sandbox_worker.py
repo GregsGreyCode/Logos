@@ -3,13 +3,17 @@ Sandbox Worker — one-shot task dispatcher for OpenShell sandboxes.
 
 Runs inside the sandbox pod, invoked fresh for every task by the Logos
 gateway via ``openshell sandbox exec --no-tty --name <sandbox> --
-python3 /app/sandbox_worker.py``. The gateway pipes one task JSON on
-stdin + closes stdin, the worker reads it, runs the LLM call via
-``https://inference.local/v1`` (OpenShell's privacy router), streams
-back token/thinking/result events as JSON lines on stdout, and exits.
-Cold-start cost per task: ~0.2s (python import + aiohttp import). The
-sandbox pod stays alive between tasks; only the worker process is
-ephemeral.
+bash -c "PYTHONPATH=/opt/hermes exec python3 /app/sandbox_worker.py"``.
+The gateway pipes one task JSON on stdin + closes stdin, the worker
+reads it, instantiates an AIAgent from the upstream hermes image,
+runs ``run_conversation()`` with streaming callbacks wired to the
+JSON-lines stdout protocol, and exits.
+
+M11: replaced the dumb aiohttp LLM proxy with hermes AIAgent.  The
+agent now runs the full agentic loop (tool calls, multi-turn iteration,
+context compression) inside the sandbox.  Streaming is real — each
+text delta fires a ``token`` event via ``stream_callback``, each
+reasoning delta fires a ``thinking`` event via ``reasoning_callback``.
 
 Why one-shot and not a persistent stdin/stdout loop
 ────────────────────────────────────────────────────
@@ -60,7 +64,6 @@ plus a structured JSON sink at /tmp/worker.jsonl for future log
 forwarding to the gateway's unified.jsonl (MISSING.md M6 stretch).
 """
 
-import asyncio
 import json
 import logging
 import os
@@ -182,31 +185,46 @@ def emit(msg: Dict[str, Any]) -> None:
         logger.error("emit() failed for msg type=%s: %s", msg.get("type"), exc)
 
 
-async def read_stdin_line(
-    reader: asyncio.StreamReader,
-) -> Optional[Dict[str, Any]]:
-    """Read one JSON object from stdin. Returns None on EOF.
-
-    Malformed lines are logged and skipped (we read the next line instead
-    of aborting) — this keeps the worker resilient to a broken gateway.
-    """
-    raw = await reader.readline()
-    if not raw:
-        return None  # EOF — gateway closed stdin
-    text = raw.decode("utf-8", errors="replace").strip()
-    if not text:
-        return await read_stdin_line(reader)  # skip blank lines
+def read_task_from_stdin() -> Optional[Dict[str, Any]]:
+    """Read one JSON task object from stdin (blocking). Returns None on EOF."""
+    raw = sys.stdin.read()
+    if not raw or not raw.strip():
+        return None
     try:
-        return json.loads(text)
+        return json.loads(raw.strip())
     except json.JSONDecodeError as exc:
-        logger.warning("malformed JSON on stdin (%s): %r", exc, text[:200])
-        return await read_stdin_line(reader)  # skip and try next line
+        logger.warning("malformed JSON on stdin (%s): %r", exc, raw[:200])
+        return None
+
+
+# ── AIAgent import ────────────────────────────────────────────────────────
+#
+# The M11 wrapper Dockerfile (Dockerfile.hermes-upstream) re-installs
+# hermes-agent as a non-editable package so it lands in site-packages
+# (readable by the sandbox user). The upstream editable install at
+# /opt/hermes is blocked by OpenShell's sandbox policy.
+
+def _import_aiagent():
+    """Import AIAgent from the upstream hermes installation.
+
+    Returns the AIAgent class, or raises ImportError with a helpful
+    message if the import fails (e.g. image doesn't have hermes).
+    """
+    try:
+        from run_agent import AIAgent
+        return AIAgent
+    except ImportError as exc:
+        logger.error(
+            "Failed to import AIAgent from /opt/hermes: %s. "
+            "Is this running inside the hermes-upstream image?", exc,
+        )
+        raise
 
 
 # ── Task handler ──────────────────────────────────────────────────────────
 
-async def _handle_task(task: Dict[str, Any], config: Dict[str, Any]) -> None:
-    """Execute one task end-to-end, streaming events to stdout."""
+def _handle_task(task: Dict[str, Any], config: Dict[str, Any]) -> None:
+    """Execute one task end-to-end using AIAgent, streaming events to stdout."""
     task_id = task.get("task_id", "")
     message = task.get("message", "")
     history = task.get("history", [])
@@ -214,25 +232,94 @@ async def _handle_task(task: Dict[str, Any], config: Dict[str, Any]) -> None:
 
     logger.info("Task %s: message=%r", task_id, message[:80])
 
-    try:
-        response = await _run_inference(message, history, context_prompt, config, task_id)
+    model = config.get("model", os.environ.get("HERMES_MODEL", ""))
+    if not model:
+        fallback = (
+            f"[sandbox worker {config.get('worker_id', '?')}] "
+            f"Connected! No model configured — set model in agent config to enable inference."
+        )
+        emit({"type": "token", "task_id": task_id, "content": fallback})
         emit({
             "type": "task_result",
             "task_id": task_id,
             "status": "ok",
-            # Canonical key the gateway's _handle_chat looks for. Sending
-            # "response" here instead of "final_response" meant the
-            # assistant turn was never appended to the transcript —
-            # every subsequent turn the model saw history as
-            # user, user, user, … (see commit comment on the original
-            # _handle_task for the full story).
-            "final_response": response,
+            "final_response": fallback,
         })
+        return
+
+    AIAgent = _import_aiagent()
+
+    # Build streaming callbacks that emit JSON-lines protocol events.
+    # These fire from inside AIAgent's synchronous agentic loop.
+    def on_token(delta: str) -> None:
+        """Called for each text token delta during streaming."""
+        if delta:
+            try:
+                emit({"type": "token", "task_id": task_id, "content": delta})
+            except BrokenPipeError:
+                raise
+
+    def on_reasoning(delta: str) -> None:
+        """Called for each reasoning/thinking delta."""
+        if delta:
+            try:
+                emit({"type": "thinking", "task_id": task_id, "content": delta})
+            except BrokenPipeError:
+                raise
+
+    # Resolve toolsets from the instance config. The soul manifest defines
+    # enforced/default_enabled/optional/forbidden toolsets; by the time
+    # they reach instance_config["toolsets"] the gateway has resolved them
+    # to a flat list of enabled toolset names (e.g. ["web", "memory"]).
+    toolsets = config.get("toolsets") or None
+
+    agent = AIAgent(
+        model=model,
+        base_url=os.environ.get("OPENAI_BASE_URL", "https://inference.local/v1"),
+        api_key=os.environ.get("OPENAI_API_KEY", "unused"),
+        max_iterations=90,
+        quiet_mode=True,
+        enabled_toolsets=toolsets,
+        stream_delta_callback=on_token,
+        reasoning_callback=on_reasoning,
+    )
+
+    # Convert history to the format AIAgent expects
+    conversation_history = []
+    for h in history:
+        role = h.get("role", "user")
+        content = h.get("content", "")
+        if content:
+            conversation_history.append({"role": role, "content": content})
+
+    try:
+        result = agent.run_conversation(
+            user_message=message,
+            system_message=context_prompt or None,
+            conversation_history=conversation_history if conversation_history else None,
+            task_id=task_id,
+        )
+
+        final_response = result.get("final_response", "") or ""
+        completed = result.get("completed", True)
+        api_calls = result.get("api_calls", 0)
+
+        logger.info(
+            "Task %s finished: completed=%s api_calls=%d response_len=%d",
+            task_id, completed, api_calls, len(final_response),
+        )
+
+        emit({
+            "type": "task_result",
+            "task_id": task_id,
+            "status": "ok",
+            "final_response": final_response,
+        })
+
     except BrokenPipeError:
-        # Gateway closed stdout mid-task. Let the main loop handle exit.
         raise
     except Exception as exc:
-        logger.error("Task %s failed: %s", task_id, exc)
+        logger.error("Task %s failed: %s", task_id, exc, exc_info=True)
         try:
             emit({
                 "type": "task_result",
@@ -244,130 +331,9 @@ async def _handle_task(task: Dict[str, Any], config: Dict[str, Any]) -> None:
             raise
 
 
-# ── Inference ─────────────────────────────────────────────────────────────
-
-async def _run_inference(
-    message: str,
-    history: list,
-    context_prompt: str,
-    config: Dict[str, Any],
-    task_id: str,
-) -> str:
-    """Call the LLM via OpenAI-compatible API, streaming tokens back via emit()."""
-    import aiohttp
-
-    base_url = os.environ.get("OPENAI_BASE_URL", "https://inference.local/v1")
-    api_key = os.environ.get("OPENAI_API_KEY", "unused")
-    model = config.get("model", os.environ.get("HERMES_MODEL", ""))
-
-    if not model:
-        fallback = (
-            f"[sandbox worker {config.get('worker_id', '?')}] "
-            f"Connected! No model configured — set model in agent config to enable inference."
-        )
-        emit({"type": "token", "task_id": task_id, "content": fallback})
-        return fallback
-
-    messages = []
-    if context_prompt:
-        messages.append({"role": "system", "content": context_prompt})
-    for h in history:
-        role = h.get("role", "user")
-        content = h.get("content", "")
-        if content:
-            messages.append({"role": role, "content": content})
-    messages.append({"role": "user", "content": message})
-
-    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
-    # max_tokens=16384 — generous ceiling so reasoning models like
-    # qwen3.5-9b have room to finish thinking AND emit a visible answer.
-    # Without this LM Studio's default cuts the response off mid-reasoning
-    # (~600-1000 tokens) and the user sees a truncated thinking trace
-    # with no actual reply. The model still stops naturally on its own
-    # </think> + answer; this is an upper bound, not a target.
-    payload = {
-        "model": model,
-        "messages": messages,
-        "stream": True,
-        "max_tokens": 16384,
-    }
-    accumulated = ""
-    accumulated_reasoning = ""
-
-    ssl_ctx = None
-    ca_bundle = "/etc/openshell-tls/ca.crt"
-    if os.path.exists(ca_bundle):
-        import ssl
-        ssl_ctx = ssl.create_default_context(cafile=ca_bundle)
-
-    # ClientTimeout=600 (10 min) matches the patched OpenShell router ceiling
-    # in crates/openshell-router/src/lib.rs (was 60s, bumped to 600s — see
-    # TASKS.md #22 for the full debug story). Real inference calls beyond 120s
-    # would otherwise get clipped client-side even though the proxy now
-    # allows up to 10 minutes. Worker and proxy budgets are aligned.
-    async with aiohttp.ClientSession(trust_env=True) as session:
-        async with session.post(
-            f"{base_url}/chat/completions", json=payload, headers=headers,
-            ssl=ssl_ctx, timeout=aiohttp.ClientTimeout(total=600),
-        ) as resp:
-            if resp.status != 200:
-                body = await resp.text()
-                raise RuntimeError(f"LLM API returned {resp.status}: {body[:200]}")
-
-            async for line in resp.content:
-                line = line.decode("utf-8", errors="replace").strip()
-                if not line.startswith("data: "):
-                    continue
-                data_str = line[6:]
-                if data_str == "[DONE]":
-                    break
-                try:
-                    chunk = json.loads(data_str)
-                    delta = chunk.get("choices", [{}])[0].get("delta", {})
-                    # Reasoning models (qwen3.5, gpt-oss, etc) emit their
-                    # internal thinking via LM Studio's reasoning extension
-                    # to the OpenAI-compat format. The field name varies
-                    # by model + LM Studio version:
-                    #   * `reasoning_content` — qwen3.5-9b streaming
-                    #   * `reasoning`         — gpt-oss-20b non-streaming
-                    # Read both so we don't silently drop the entire output
-                    # of any model that picks the other field.
-                    reasoning = (
-                        delta.get("reasoning_content")
-                        or delta.get("reasoning")
-                        or ""
-                    )
-                    if reasoning:
-                        accumulated_reasoning += reasoning
-                        emit({"type": "thinking", "task_id": task_id, "content": reasoning})
-                    content = delta.get("content", "")
-                    if content:
-                        accumulated += content
-                        emit({"type": "token", "task_id": task_id, "content": content})
-                except json.JSONDecodeError:
-                    continue
-
-    # Fallback: if the model emitted ONLY reasoning and no actual content
-    # (qwen3.5 has been observed doing this on short prompts under certain
-    # chat templates), surface the reasoning as the visible reply so the
-    # caller sees something instead of an empty string.
-    if not accumulated and accumulated_reasoning:
-        logger.info(
-            "Inference returned only reasoning_content (%d chars) — "
-            "falling back to reasoning as visible reply",
-            len(accumulated_reasoning),
-        )
-        emit({
-            "type": "token", "task_id": task_id,
-            "content": accumulated_reasoning,
-        })
-        return accumulated_reasoning
-    return accumulated
-
-
 # ── One-shot entry point ──────────────────────────────────────────────────
 
-async def run_one_task(config: Dict[str, Any]) -> int:
+def run_one_task(config: Dict[str, Any]) -> int:
     """Process exactly one task from stdin, emit results, return.
 
     Flow:
@@ -375,12 +341,11 @@ async def run_one_task(config: Dict[str, Any]) -> int:
          can tell the process actually booted and reached the dispatch
          code path (useful for distinguishing import errors from
          inference errors in logs).
-      2. Wrap stdin as an async StreamReader and read one JSON line.
-         ``read_stdin_line`` already skips blank/malformed lines and
-         returns None on EOF.
+      2. Read one JSON object from stdin (blocking, full read until EOF).
       3. Dispatch based on ``type``:
-           - ``task`` / ``run_conversation``: run inference, emit
-             streaming events + task_result.
+           - ``task`` / ``run_conversation``: instantiate AIAgent, run
+             the full agentic loop with streaming callbacks, emit
+             task_result.
            - any other type: emit a task_result with an error payload
              so the gateway always gets a terminal line.
       4. Return 0.
@@ -409,30 +374,7 @@ async def run_one_task(config: Dict[str, Any]) -> int:
         logger.error("Gateway closed stdout before ready emit — aborting")
         return 1
 
-    # Wrap stdin as an async StreamReader so read_stdin_line's
-    # asyncio.StreamReader interface works unchanged.
-    loop = asyncio.get_running_loop()
-    reader = asyncio.StreamReader()
-    protocol = asyncio.StreamReaderProtocol(reader)
-    await loop.connect_read_pipe(lambda: protocol, sys.stdin)
-
-    try:
-        task = await read_stdin_line(reader)
-    except asyncio.CancelledError:
-        logger.info("Worker cancelled — exiting")
-        return 0
-    except Exception as exc:
-        logger.error("read_stdin_line failed: %s", exc)
-        try:
-            emit({
-                "type": "task_result",
-                "task_id": "",
-                "status": "error",
-                "error": f"stdin read failed: {exc}",
-            })
-        except BrokenPipeError:
-            pass
-        return 1
+    task = read_task_from_stdin()
 
     if task is None:
         logger.warning("Stdin EOF before any task received — exiting cleanly")
@@ -451,7 +393,7 @@ async def run_one_task(config: Dict[str, Any]) -> int:
     task_id = task.get("task_id", "")
     if msg_type == "task" or msg_type == "run_conversation":
         try:
-            await _handle_task(task, config)
+            _handle_task(task, config)
         except BrokenPipeError:
             logger.info("Gateway closed stdout during task — exiting")
             return 0
@@ -473,32 +415,24 @@ async def run_one_task(config: Dict[str, Any]) -> int:
 def main() -> None:
     config = load_config()
     logger.info(
-        "Config: worker_id=%s, soul=%s, model=%s",
+        "Config: worker_id=%s, soul=%s, model=%s, toolsets=%s",
         config.get("worker_id", "?"),
         config.get("soul", "general"),
         config.get("model", "(env fallback)"),
+        config.get("toolsets", []),
     )
 
-    loop = asyncio.new_event_loop()
-
-    def _shutdown(sig: signal.Signals) -> None:
-        logger.info("Received %s, shutting down", sig.name)
-        for task in asyncio.all_tasks(loop):
-            task.cancel()
+    def _shutdown(sig_num, frame):
+        logger.info("Received signal %s, shutting down", sig_num)
+        sys.exit(1)
 
     for sig in (signal.SIGTERM, signal.SIGINT):
         try:
-            loop.add_signal_handler(sig, _shutdown, sig)
-        except NotImplementedError:
+            signal.signal(sig, _shutdown)
+        except (OSError, ValueError):
             pass
 
-    exit_code = 0
-    try:
-        exit_code = loop.run_until_complete(run_one_task(config))
-    except asyncio.CancelledError:
-        pass
-    finally:
-        loop.close()
+    exit_code = run_one_task(config)
     sys.exit(exit_code)
 
 
