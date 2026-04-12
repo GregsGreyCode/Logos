@@ -1,0 +1,61 @@
+# PyPI (Python Package Index) access preset — read-only.
+#
+# Enables `pip install` / `uv pip install` / direct wheel downloads
+# from inside the sandbox for agents that need to install additional
+# Python packages at runtime (e.g. skills that require a library
+# not bundled in the base image).
+#
+# Download-only: GET + HEAD. No POST (which would allow package
+# uploads if the agent's environment ever contained a PyPI token).
+#
+# Apply via:
+#   gateway.policies.apply_preset(agent_id, "pypi")
+#
+# NB: pip installs can execute arbitrary setup.py code during
+# install. Applying this preset is an implicit trust decision —
+# any malicious package the agent is persuaded to install runs
+# with the sandbox's local privileges. Defense comes from the
+# filesystem + process layers (Landlock, capability drops,
+# ulimits), not from this network policy.
+
+preset:
+  name: pypi
+  description: "Python Package Index (pip install, read-only)"
+
+network_policies:
+  pypi:
+    name: pypi
+    endpoints:
+      # Index (metadata + JSON API for package lookups)
+      - host: pypi.org
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        tls: terminate
+        rules:
+          - allow: { method: GET, path: "/**" }
+          - allow: { method: HEAD, path: "/**" }
+      # Wheel + sdist blob storage (the actual package contents)
+      - host: files.pythonhosted.org
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        tls: terminate
+        rules:
+          - allow: { method: GET, path: "/**" }
+          - allow: { method: HEAD, path: "/**" }
+    binaries:
+      # Venv Python + pip (the sandbox's primary install target)
+      - { path: /app/venv/bin/python }
+      - { path: /app/venv/bin/python3 }
+      - { path: /app/venv/bin/python3.11 }
+      - { path: /app/venv/bin/python3.12 }
+      - { path: /app/venv/bin/pip }
+      - { path: /app/venv/bin/pip3 }
+      - { path: /app/venv/bin/pip3.11 }
+      # uv's Python downloads live here when the agent uses `uv pip install`
+      - { path: /root/.local/bin/uv }
+      - { path: /home/sandbox/.local/bin/uv }
+      # System Python (fallback if something runs /usr/bin/pip3 directly)
+      - { path: /usr/bin/python3 }
+      - { path: /usr/bin/pip3 }

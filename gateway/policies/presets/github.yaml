@@ -1,0 +1,55 @@
+# GitHub access preset — github.com + api.github.com
+#
+# Enables `git clone` / `git push` / `git fetch` and the GitHub REST
+# + GraphQL API for agents that need to read or modify repositories,
+# issues, pull requests, releases, etc.
+#
+# Apply via:
+#   gateway.policies.apply_preset(agent_id, "github")
+#
+# Binary scoping: /usr/bin/git (required for git clone/push/fetch),
+# /usr/bin/gh (the GitHub CLI — only if installed; sandbox images
+# don't ship it by default), and the venv Python for agents that
+# use `requests` or `PyGithub` to hit api.github.com directly.
+#
+# Moved out of the baseline for the same reason NemoClaw did — a
+# sandbox that doesn't need GitHub shouldn't have it, even if "most
+# agents probably want it". Least-privilege by default.
+
+preset:
+  name: github
+  description: "GitHub.com and GitHub REST/GraphQL API (git, gh, Python requests)"
+
+network_policies:
+  github:
+    name: github
+    endpoints:
+      - host: github.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        tls: terminate
+        access: full
+      - host: api.github.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        tls: terminate
+        access: full
+      # LFS large file storage — required for `git lfs pull` on repos
+      # that use Git LFS. GET-only; LFS writes happen through the
+      # main github.com endpoint.
+      - host: github-cloud.s3.amazonaws.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        tls: terminate
+        rules:
+          - allow: { method: GET, path: "/**" }
+    binaries:
+      - { path: /usr/bin/git }
+      - { path: /usr/bin/gh }
+      - { path: /app/venv/bin/python }
+      - { path: /app/venv/bin/python3 }
+      - { path: /app/venv/bin/python3.11 }
+      - { path: /app/venv/bin/python3.12 }
