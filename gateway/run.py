@@ -4314,7 +4314,7 @@ class GatewayRunner:
         )
         _tool_calls_log: list = []
 
-        def tool_complete_callback(tool_name: str, call_id, success: bool, duration_ms: float, error: str = None):
+        def tool_complete_callback(tool_name: str, call_id, success: bool, duration_ms: float, error: str = None, result: str = None):
             """Callback invoked by agent after a tool finishes executing."""
             # Enrich the most recent matching entry in _tool_calls_log
             for entry in reversed(_tool_calls_log):
@@ -4335,6 +4335,13 @@ class GatewayRunner:
                         "duration_ms": round(duration_ms, 1),
                         "error": (error or "")[:100] if error else None,
                     })
+                    # Surface memory writes for the chat UI (parity with the
+                    # in-sandbox dispatcher in docker/sandbox_worker.py).
+                    if tool_name == "memory" and success:
+                        http_sse_queue.put_nowait({
+                            "type": "memory_write",
+                            "preview": str(result or "")[:200],
+                        })
                 except Exception:
                     pass
 
