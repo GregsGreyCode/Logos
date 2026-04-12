@@ -705,23 +705,35 @@ async def handle_agents_delete(request: web.Request) -> web.Response:
     if not agent:
         return web.json_response({"error": "not_found"}, status=404)
 
-    # If OpenShell runtime is active, destroy the agent's sandbox.
-    # Run in a background thread so we don't block the asyncio event
-    # loop on the openshell delete subprocess.
+    # If OpenShell runtime is active, destroy the agent's sandbox AND
+    # purge per-agent host data (memories, logs, sessions synced from
+    # sandbox by worker_registry). Run in a background thread so we
+    # don't block the asyncio event loop. Sandbox teardown must happen
+    # before rmtree — worker_registry may still be writing syncs until
+    # the sandbox is gone.
     executor = request.app.get("executor")
+    agent_name = agent["name"]
     if executor and type(executor).__name__ == "OpenShellExecutor":
         try:
             import asyncio as _asyncio
-            agent_name = agent["name"]
+            import shutil as _shutil
+            from gateway.executors.openshell import _HERMES_HOME as _HH
             async def _delete_bg():
                 try:
                     await _asyncio.to_thread(executor.delete_instance, agent_name)
                     logger.info("Destroyed OpenShell sandbox for agent '%s'", agent_name)
                 except Exception as exc:
                     logger.warning("Failed to destroy sandbox for agent '%s': %s", agent_name, exc)
+                try:
+                    agent_dir = _HH / "agents" / agent_name
+                    if agent_dir.exists():
+                        await _asyncio.to_thread(_shutil.rmtree, str(agent_dir), True)
+                        logger.info("Purged host data dir %s", agent_dir)
+                except Exception as exc:
+                    logger.warning("Failed to purge host data for agent '%s': %s", agent_name, exc)
             _asyncio.create_task(_delete_bg())
         except Exception as exc:
-            logger.warning("Failed to schedule sandbox delete for agent '%s': %s", agent["name"], exc)
+            logger.warning("Failed to schedule sandbox delete for agent '%s': %s", agent_name, exc)
 
     auth_db.delete_agent(aid)
     return web.Response(status=204)
