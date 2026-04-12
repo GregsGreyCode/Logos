@@ -3527,6 +3527,11 @@ async def start_http_api(runner: Any, port: int = 8091) -> None:
     worker_registry = runner.worker_registry
     app["worker_registry"] = worker_registry
 
+    # Start periodic sandbox state sync (logs every 30min, sessions every 1hr).
+    # Memory sync is per-dispatch (change-detected), not periodic.
+    if worker_registry:
+        worker_registry.start_background_sync_tasks()
+
     # ── Centralized MCP gateway service ────────────────────────────────────
     # Boots all configured MCP servers once and exposes them over HTTP so
     # agents in any executor mode (local, OpenShell, k8s) can connect via URL.

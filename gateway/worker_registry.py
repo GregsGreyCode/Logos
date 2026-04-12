@@ -524,67 +524,181 @@ class WorkerRegistry:
 
         return final_result
 
-    # ─── Memory persistence ──────────────────────────────────────────────
+    # ─── Sandbox state sync ──────────────────────────────────────────────
+    #
+    # Three tiers of data sync from sandbox → gateway host:
+    #   1. Memories  — synced after dispatch, only when files changed (mtime)
+    #   2. Logs      — synced every 30 minutes by background task
+    #   3. Sessions  — synced every 60 minutes by background task
+    #
+    # All syncs are best-effort: failures never block chat responses.
+
+    # Track last-known mtime per sandbox for change detection
+    _memory_mtimes: Dict[str, float] = {}
+
+    def _download_sandbox_dir(
+        self,
+        sandbox_name: str,
+        gateway: str,
+        sandbox_path: str,
+        host_dir: Path,
+    ) -> bool:
+        """Download a directory from a sandbox to the host. Returns True on success."""
+        host_dir.mkdir(parents=True, exist_ok=True)
+        result = subprocess.run(
+            [
+                "openshell", "-g", gateway,
+                "sandbox", "download",
+                sandbox_name, sandbox_path,
+                str(host_dir),
+            ],
+            capture_output=True, text=True, timeout=30,
+        )
+        return result.returncode == 0
+
+    def _resolve_agent_info(self, sandbox_name: str):
+        """Return (agent_name, gateway) for a sandbox, or (None, None)."""
+        from gateway.executors.openshell import _load_state
+        for inst in _load_state():
+            if inst.get("sandbox_name") == sandbox_name:
+                return inst.get("name"), inst.get("openshell_name", "")
+        return None, None
+
+    def _agent_host_dir(self, agent_name: str) -> Path:
+        """Return the per-agent host directory: ~/.logos/agents/<name>/"""
+        from gateway.executors.openshell import _HERMES_HOME
+        return _HERMES_HOME / "agents" / agent_name
 
     async def _sync_memories_from_sandbox(
         self,
         sandbox_name: str,
         gateway: str,
     ) -> None:
-        """Download the agent's memories from the sandbox to the host.
+        """Sync memories only if the sandbox has newer files than last sync.
 
-        Called after every task dispatch so memories accumulated during the
-        agentic loop (via AIAgent's memory tool) are persisted on the
-        gateway host at ~/.logos/agents/<name>/memories/. This ensures
-        memories survive sandbox restarts and can be re-uploaded at spawn.
-
-        Best-effort: failures are logged but never propagated.
+        Uses ``openshell sandbox exec -- stat`` to check the mtime of the
+        memories directory. Only downloads if mtime is newer than the last
+        recorded sync. This avoids downloading an empty/unchanged directory
+        on every dispatch — memories only sync when the agent actually
+        wrote to them via the memory tool.
         """
-        from gateway.executors.openshell import _load_state, _HERMES_HOME
-
-        # Resolve the agent name from the state entry
-        agent_name = None
-        for inst in _load_state():
-            if inst.get("sandbox_name") == sandbox_name:
-                agent_name = inst.get("name")
-                break
+        agent_name, _ = self._resolve_agent_info(sandbox_name)
         if not agent_name:
             return
 
-        host_memories_dir = _HERMES_HOME / "agents" / agent_name / "memories"
-        host_memories_dir.mkdir(parents=True, exist_ok=True)
-
+        # Check mtime of the memories directory inside the sandbox
         try:
-            result = await asyncio.to_thread(
+            stat_result = await asyncio.to_thread(
                 subprocess.run,
                 [
                     "openshell", "-g", gateway,
-                    "sandbox", "download",
-                    sandbox_name, "/tmp/hermes/memories/",
-                    str(host_memories_dir),
+                    "sandbox", "exec", "--no-tty",
+                    "--name", sandbox_name, "--",
+                    "stat", "-c", "%Y", "/tmp/hermes/memories/",
                 ],
-                capture_output=True, text=True, timeout=30,
+                capture_output=True, text=True, timeout=10,
+                input="",
             )
-            if result.returncode == 0:
-                # Count files to log meaningfully
-                n_files = len([
-                    f for f in host_memories_dir.iterdir() if f.is_file()
-                ])
+            if stat_result.returncode != 0:
+                return
+            current_mtime = float(stat_result.stdout.strip())
+        except Exception:
+            return
+
+        last_mtime = self._memory_mtimes.get(sandbox_name, 0.0)
+        if current_mtime <= last_mtime:
+            return  # no changes since last sync
+
+        host_dir = self._agent_host_dir(agent_name) / "memories"
+        try:
+            ok = await asyncio.to_thread(
+                self._download_sandbox_dir,
+                sandbox_name, gateway,
+                "/tmp/hermes/memories/", host_dir,
+            )
+            if ok:
+                self._memory_mtimes[sandbox_name] = current_mtime
+                n_files = len([f for f in host_dir.iterdir() if f.is_file()])
                 if n_files > 0:
                     logger.info(
                         "memory sync: %s → %s (%d file(s))",
-                        sandbox_name, host_memories_dir, n_files,
+                        sandbox_name, host_dir, n_files,
                     )
-            else:
-                logger.debug(
-                    "memory sync: download returned %d for %s: %s",
-                    result.returncode, sandbox_name,
-                    (result.stderr or "").strip()[:200],
-                )
-        except subprocess.TimeoutExpired:
-            logger.debug("memory sync: timed out for %s", sandbox_name)
         except Exception as exc:
             logger.debug("memory sync: failed for %s: %s", sandbox_name, exc)
+
+    async def _periodic_sync_loop(
+        self,
+        sync_type: str,
+        sandbox_path: str,
+        host_subdir: str,
+        interval_seconds: int,
+    ) -> None:
+        """Background loop that syncs a sandbox directory for all agents on a schedule.
+
+        Args:
+            sync_type: Label for logging (e.g. "logs", "sessions")
+            sandbox_path: Path inside sandbox (e.g. "/tmp/hermes/logs/")
+            host_subdir: Subdirectory under ~/.logos/agents/<name>/ (e.g. "logs")
+            interval_seconds: Seconds between sync cycles
+        """
+        await asyncio.sleep(60)  # initial delay — let gateway fully start
+        while True:
+            try:
+                from gateway.executors.openshell import _load_state
+                for inst in _load_state():
+                    if inst.get("phase") != "ready":
+                        continue
+                    sandbox_name = inst.get("sandbox_name", "")
+                    agent_name = inst.get("name", "")
+                    gw = inst.get("openshell_name", "")
+                    if not sandbox_name or not agent_name or not gw:
+                        continue
+                    host_dir = self._agent_host_dir(agent_name) / host_subdir
+                    try:
+                        ok = await asyncio.to_thread(
+                            self._download_sandbox_dir,
+                            sandbox_name, gw, sandbox_path, host_dir,
+                        )
+                        if ok:
+                            n = len([f for f in host_dir.iterdir() if f.is_file()])
+                            if n > 0:
+                                logger.debug(
+                                    "%s sync: %s → %s (%d file(s))",
+                                    sync_type, sandbox_name, host_dir, n,
+                                )
+                    except Exception as exc:
+                        logger.debug(
+                            "%s sync: failed for %s: %s",
+                            sync_type, sandbox_name, exc,
+                        )
+            except Exception as exc:
+                logger.debug("periodic %s sync cycle failed: %s", sync_type, exc)
+            await asyncio.sleep(interval_seconds)
+
+    def start_background_sync_tasks(self) -> None:
+        """Launch the periodic log and session sync background tasks.
+
+        Called once at gateway startup from start_http_api().
+        """
+        asyncio.create_task(
+            self._periodic_sync_loop(
+                sync_type="logs",
+                sandbox_path="/tmp/hermes/logs/",
+                host_subdir="logs",
+                interval_seconds=1800,  # 30 minutes
+            ),
+            name="sandbox-sync-logs",
+        )
+        asyncio.create_task(
+            self._periodic_sync_loop(
+                sync_type="sessions",
+                sandbox_path="/tmp/hermes/sessions/",
+                host_subdir="sessions",
+                interval_seconds=3600,  # 1 hour
+            ),
+            name="sandbox-sync-sessions",
+        )
 
     # ─── Gateway routing helper ─────────────────────────────────────────
 
