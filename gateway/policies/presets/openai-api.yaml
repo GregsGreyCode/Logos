@@ -1,0 +1,35 @@
+# OpenAI API access preset — direct OpenAI endpoint.
+#
+# Enables tools that call the OpenAI API directly (not through the
+# inference.local privacy router): OpenAI TTS, DALL-E image gen,
+# and any tool using the OpenAI SDK pointed at api.openai.com.
+#
+# NOT needed for LLM inference — that goes through inference.local
+# which handles provider routing and credential injection separately.
+#
+# Apply via:
+#   gateway.policies.apply_preset(agent_id, "openai-api")
+#
+# Requires OPENAI_API_KEY (the real one, not the inference.local placeholder).
+
+preset:
+  name: openai-api
+  description: "OpenAI API (TTS, DALL-E, direct SDK calls)"
+
+network_policies:
+  openai_api:
+    name: openai-api
+    endpoints:
+      - host: api.openai.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        tls: terminate
+        access: full
+    binaries:
+      - { path: /app/venv/bin/python }
+      - { path: /app/venv/bin/python3 }
+      - { path: /app/venv/bin/python3.11 }
+      - { path: /app/venv/bin/python3.12 }
+      - { path: /usr/bin/python3 }
+      - { path: /usr/bin/python3.13 }

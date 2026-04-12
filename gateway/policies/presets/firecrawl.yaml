@@ -1,0 +1,35 @@
+# Firecrawl access preset — web search + content extraction.
+#
+# Enables web_search and web_extract tools, which use the Firecrawl
+# API to search the web and scrape page content. Required for any
+# agent with the "web" toolset that needs to search or extract.
+#
+# Apply via:
+#   gateway.policies.apply_preset(agent_id, "firecrawl")
+#
+# Requires FIRECRAWL_API_KEY (cloud) or FIRECRAWL_API_URL (self-hosted).
+# The tool's check_fn hides itself if neither is set, so applying
+# this preset without the key is harmless (just widens the network
+# policy without the tool being visible to the agent).
+
+preset:
+  name: firecrawl
+  description: "Firecrawl web search and content extraction API"
+
+network_policies:
+  firecrawl:
+    name: firecrawl
+    endpoints:
+      - host: api.firecrawl.dev
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        tls: terminate
+        access: full
+    binaries:
+      - { path: /app/venv/bin/python }
+      - { path: /app/venv/bin/python3 }
+      - { path: /app/venv/bin/python3.11 }
+      - { path: /app/venv/bin/python3.12 }
+      - { path: /usr/bin/python3 }
+      - { path: /usr/bin/python3.13 }

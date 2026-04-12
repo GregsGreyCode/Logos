@@ -120,6 +120,245 @@ class PolicyMergeError(Exception):
     conform to the expected YAML shape."""
 
 
+# ── Tool → preset mapping ─────────────────────────────────────────────────
+#
+# Maps tool names to the network presets and environment variables they
+# need. Used by:
+#   - tool-readiness endpoint (Phase 2) to show which tools need config
+#   - auto-apply logic (Phase 1c) to apply presets when API keys are saved
+#   - /setup tools command (Phase 3) to present configuration options
+#
+# Tools not listed here run entirely inside the sandbox and need no
+# network preset (terminal, memory, file ops, todo, delegate, etc.).
+
+TOOL_PRESET_MAP: Dict[str, Dict[str, Any]] = {
+    # Web search & extraction — Firecrawl API
+    "web_search": {
+        "presets": ["firecrawl"],
+        "env": ["FIRECRAWL_API_KEY"],
+        "env_alt": ["FIRECRAWL_API_URL"],  # self-hosted alternative
+        "toolset": "web",
+        "description": "Web search and content extraction",
+        "setup_url": "https://firecrawl.dev",
+    },
+    "web_extract": {
+        "presets": ["firecrawl"],
+        "env": ["FIRECRAWL_API_KEY"],
+        "env_alt": ["FIRECRAWL_API_URL"],
+        "toolset": "web",
+        "description": "Web page content extraction",
+        "setup_url": "https://firecrawl.dev",
+    },
+    # Browser automation — Browserbase (cloud) or local (no preset needed)
+    "browser_navigate": {
+        "presets": ["browserbase"],
+        "env": ["BROWSERBASE_API_KEY", "BROWSERBASE_PROJECT_ID"],
+        "toolset": "browser",
+        "description": "Cloud browser automation (Browserbase)",
+        "setup_url": "https://browserbase.com",
+        "optional": True,  # local browser works without this
+    },
+    # Vision — OpenRouter multi-model API
+    "vision_analyze": {
+        "presets": ["openrouter"],
+        "env": ["OPENROUTER_API_KEY"],
+        "toolset": "vision",
+        "description": "Image analysis via OpenRouter",
+        "setup_url": "https://openrouter.ai",
+    },
+    # Image generation — fal.ai
+    "image_generate": {
+        "presets": ["fal"],
+        "env": ["FAL_KEY"],
+        "toolset": "image_gen",
+        "description": "Image generation via fal.ai",
+        "setup_url": "https://fal.ai",
+    },
+    # Text-to-speech — ElevenLabs (premium) or Edge TTS (free, no preset)
+    "text_to_speech": {
+        "presets": ["elevenlabs"],
+        "env": ["ELEVENLABS_API_KEY"],
+        "toolset": "tts",
+        "description": "Text-to-speech via ElevenLabs",
+        "setup_url": "https://elevenlabs.io",
+        "optional": True,  # Edge TTS works without this
+    },
+    # Mixture of agents — OpenRouter
+    "mixture_of_agents": {
+        "presets": ["openrouter"],
+        "env": ["OPENROUTER_API_KEY"],
+        "toolset": "moa",
+        "description": "Multi-model reasoning via OpenRouter",
+        "setup_url": "https://openrouter.ai",
+    },
+}
+
+
+def get_tool_readiness(agent_id: str) -> List[Dict[str, Any]]:
+    """Return per-tool readiness status for an agent.
+
+    Checks three things per tool:
+    1. Is the toolset enabled for this agent?
+    2. Is the required env var set?
+    3. Is the required network preset applied?
+
+    Returns a list of dicts with: name, toolset, status, reason, preset,
+    setup_url. Status is one of: "ready", "needs_config", "not_enabled".
+    """
+    from gateway.auth import db as auth_db
+
+    agent = auth_db.get_agent(agent_id)
+    if not agent:
+        return []
+
+    # Resolve enabled toolsets from the agent record
+    raw_toolsets = agent.get("toolsets")
+    if isinstance(raw_toolsets, str):
+        try:
+            enabled_toolsets = set(json.loads(raw_toolsets))
+        except (ValueError, TypeError):
+            enabled_toolsets = set()
+    elif isinstance(raw_toolsets, list):
+        enabled_toolsets = set(raw_toolsets)
+    else:
+        enabled_toolsets = set()
+
+    # Resolve applied presets
+    applied = set(get_applied_presets(agent_id))
+
+    results = []
+
+    # First: tools that need external config
+    for tool_name, info in TOOL_PRESET_MAP.items():
+        toolset = info["toolset"]
+        if toolset not in enabled_toolsets:
+            continue  # toolset not enabled, skip
+
+        # Check env vars
+        env_keys = info.get("env", [])
+        env_alt = info.get("env_alt", [])
+        has_env = all(os.environ.get(k) for k in env_keys) or any(
+            os.environ.get(k) for k in env_alt
+        )
+
+        # Check presets
+        needed_presets = info.get("presets", [])
+        has_presets = all(p in applied for p in needed_presets)
+
+        if has_env and has_presets:
+            status = "ready"
+            reason = ""
+        elif not has_env:
+            missing = [k for k in env_keys if not os.environ.get(k)]
+            status = "needs_config"
+            reason = f"{', '.join(missing)} not set"
+        else:
+            status = "needs_preset"
+            reason = f"preset '{needed_presets[0]}' not applied"
+
+        results.append({
+            "name": tool_name,
+            "toolset": toolset,
+            "status": status,
+            "reason": reason,
+            "preset": needed_presets[0] if needed_presets else None,
+            "setup_url": info.get("setup_url", ""),
+            "description": info.get("description", ""),
+            "optional": info.get("optional", False),
+        })
+
+    # Second: tools that work locally (no config needed)
+    local_toolsets = {
+        "terminal": "Command execution",
+        "memory": "Persistent memory",
+        "file": "File operations",
+        "todo": "Task planning",
+        "delegation": "Subagent delegation",
+        "clarify": "Clarifying questions",
+        "session_search": "Session history search",
+        "code_execution": "Python sandbox",
+        "skills": "Skill management",
+        "cronjob": "Scheduled tasks",
+        "homeassistant": "Home Assistant control",
+    }
+    for toolset, desc in local_toolsets.items():
+        if toolset in enabled_toolsets:
+            results.append({
+                "name": toolset,
+                "toolset": toolset,
+                "status": "ready",
+                "reason": "",
+                "preset": None,
+                "setup_url": "",
+                "description": desc,
+                "optional": False,
+            })
+
+    return results
+
+
+def auto_apply_presets_for_env(env_key: str) -> List[str]:
+    """When an API key env var is saved, auto-apply matching presets.
+
+    Finds all tools that need ``env_key``, looks up their required
+    presets, and applies those presets to every agent that has the
+    corresponding toolset enabled. Returns the list of preset names
+    that were applied.
+
+    Called by the ``POST /tools/configure`` endpoint after saving
+    a credential to ``~/.hermes/.env``.
+    """
+    from gateway.auth import db as auth_db
+
+    # Find which presets this env key unlocks
+    presets_to_apply: Dict[str, str] = {}  # preset_name -> toolset
+    for tool_name, info in TOOL_PRESET_MAP.items():
+        all_env = info.get("env", []) + info.get("env_alt", [])
+        if env_key in all_env:
+            for preset in info.get("presets", []):
+                presets_to_apply[preset] = info["toolset"]
+
+    if not presets_to_apply:
+        return []
+
+    applied_names = []
+    agents = auth_db.list_agents()
+
+    for preset_name, toolset in presets_to_apply.items():
+        for agent in agents:
+            # Check if the agent has the relevant toolset enabled
+            raw_ts = agent.get("toolsets")
+            if isinstance(raw_ts, str):
+                try:
+                    agent_toolsets = json.loads(raw_ts)
+                except (ValueError, TypeError):
+                    agent_toolsets = []
+            elif isinstance(raw_ts, list):
+                agent_toolsets = raw_ts
+            else:
+                agent_toolsets = []
+
+            if toolset in agent_toolsets:
+                current = get_applied_presets(agent["id"])
+                if preset_name not in current:
+                    try:
+                        apply_preset(agent["id"], preset_name)
+                        logger.info(
+                            "auto_apply: applied '%s' to agent '%s' (toolset '%s' enabled, %s configured)",
+                            preset_name, agent.get("name", agent["id"]), toolset, env_key,
+                        )
+                    except Exception as exc:
+                        logger.warning(
+                            "auto_apply: failed to apply '%s' to '%s': %s",
+                            preset_name, agent.get("name", agent["id"]), exc,
+                        )
+
+        if preset_name not in applied_names:
+            applied_names.append(preset_name)
+
+    return applied_names
+
+
 # ── Preset discovery ──────────────────────────────────────────────────────
 
 
