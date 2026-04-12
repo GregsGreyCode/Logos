@@ -13,21 +13,21 @@
 
 ---
 
-## Status summary (verified 2026-04-11 end of session)
+## Status summary (verified 2026-04-12)
 
 | Ticket | Status | Notes |
 |---|---|---|
-| M1 — Editable Tools (T) in STAMP pill | **UI SHIPPED, RUNTIME BLOCKED ON M11** | T pill dropdown UI shipped as part of M10 Phase 1 item 5 (2026-04-12) — lists toolsets + network policy presets, writes to DB, pushes policy changes via `openshell policy set`. Infrastructure-layer presets take runtime effect today. Application-layer toolset toggles land on `agents.toolsets` but won't actually gate tool invocations until M11 ships an in-sandbox agent that honors `enabled_toolsets`. |
-| M2 — Editable Policy (P) + approvals | **NOT STARTED** | P pill is a display-only `<span>` at `main_app.html:639`. Blocked on M11 (need the in-sandbox agent first) + M10 Phase 1 items 6-7 (Policy editor UI + in-sandbox approval callback, not yet built). |
+| M1 — Editable Tools (T) in STAMP pill | **UI SHIPPED, RUNTIME UNBLOCKED** | T pill dropdown UI shipped (M10 item 5). M11 landed — in-sandbox agent now honors `enabled_toolsets`. Infrastructure-layer presets have runtime effect via `openshell policy set`. Application-layer toolset toggles persist to DB and are passed through to AIAgent in sandbox. |
+| M2 — Editable Policy (P) + approvals | **NOT STARTED** | P pill is display-only. Needs M10 items 6-7 (Policy editor UI + in-sandbox approval callback). M11 unblocked the runtime prerequisite. |
 | M3 — Per-user inference routing | **NOT STARTED** | `machine_users` table exists, zero UI. No claimMachine JS, no My Inference tab. |
 | M4 — Multi-user UX polish | **NOT STARTED** | No owner badges, no shared toggle, no per-user chat filter. |
-| M5 — World view first-class surface | **PARTIALLY SHIPPED** | Phase A thought bubble from M8 landed (`AgentSprite._updateBubble` — 💭 scale-pulse when `active_tasks > 0`). Full-tab / click-to-enter-chat / multi-user world still pending. |
-| M6 — Unified observability | **DONE (MVP)** | `JsonRedactingFormatter` + `_SessionFilter` + `set_log_context` in `gateway/run.py`. `unified.jsonl` actively writing. `logos debug tail` CLI works. 4 of 5 minimum-viable items landed. |
-| M7 — Sandbox health UX | **PREMISE OUTDATED** | Original premise assumed a NemoClaw port-forward + HTTP /health probe. Plan A-prime uses per-task `openshell sandbox exec` instead, so the rename/probe design needs to be re-grounded on what Plan A-prime actually offers as a health signal. Field rename and richer observability goals still valid. |
-| M8 — Dispatch activity ledger | **PHASE A SHIPPED, PHASE B NOT STARTED** | `WorkerRegistry._active_tasks` counter, `admin_handlers` surfaces it, world view renders thought bubble. `dispatches` table, origin tagging, Admin → Activity tab still pending. |
-| M9 — Autonomous activity (visibility) | **NOT STARTED** | The three consolidation mechanisms exist (memory nudge + skill nudge + pre-reset flush) but are invisible in the UI. Memory writes during chats don't actually happen today because M10 blocks them. |
-| M10 — Restore AIAgent inside the sandbox | **PARTIALLY SHIPPED, ITEMS 1-3 REVERTED** | Phase 1 items 4-5 shipped on 2026-04-12 (network policy presets + `gateway/policies.py` management module + per-agent `applied_presets` DB column + admin Tools endpoints + T pill dropdown UI — all agent-runtime-agnostic, stay in place). Items 1-3 (Dockerfile + sandbox_worker.py rewrites + SOUL.md/memories upload changes) **reverted during the build-test cycle** — first build produced a 4.26 GB image because `COPY . /app/` + `pip install -e ".[messaging]"` bundled the entire Logos Python package (gateway/, logos_cli/, cron/, acp_adapter/) into the sandbox, which is both bloated and an architectural error (host-side code inside the security boundary). **Superseded by M11** — image-per-agent-release pattern. |
-| M11 — Agents as versioned drop-in sandbox images | **IN PROGRESS — CODE LANDED, TESTING** | All 4 code items landed (2026-04-12): (1) `_DEFAULT_IMAGE` → `hermes-upstream:latest`, (2) worker script upload in spawn step 2b, (3) `sandbox_worker.py` rewritten to use AIAgent with real streaming via `stream_delta_callback`/`reasoning_callback` + toolset pass-through from instance config, (4) exec command sets `PYTHONPATH=/opt/hermes`. End-to-end testing in progress. |
+| M5 — World view first-class surface | **PARTIALLY SHIPPED** | Phase A thought bubble from M8 landed. Full-tab / click-to-enter-chat / multi-user world still pending. |
+| M6 — Unified observability | **DONE (MVP)** | `JsonRedactingFormatter` + `_SessionFilter` + `set_log_context`. `unified.jsonl` actively writing. `logos debug tail` CLI works. |
+| M7 — Sandbox health UX | **PREMISE OUTDATED** | Needs re-grounding on Plan A-prime's per-task exec model. Field rename and richer observability goals still valid. |
+| M8 — Dispatch activity ledger | **PHASE A SHIPPED, PHASE B NOT STARTED** | `active_tasks` counter + world view thought bubble done. `dispatches` table, origin tagging, Admin Activity tab still pending. |
+| M9 — Autonomous activity (visibility) | **UNBLOCKED BY M11** | Memory nudges + skill nudges + pre-reset flush all exist. Memory writes now happen during web-UI chats (M11 restored AIAgent in sandbox). Remaining work: make them visible in the UI. |
+| M10 — Restore AIAgent inside the sandbox | **DONE (via M11)** | Items 4-5 shipped (network policy presets, T pill UI). Items 1-3 superseded by M11's image-per-agent-release pattern which solved the same problem correctly. |
+| M11 — Agents as versioned drop-in sandbox images | **DONE** | Full AIAgent running inside OpenShell sandbox from `hermes-upstream` image. 7 issues discovered and fixed during testing. Per-agent memory persistence + tiered state sync (memories on-write, logs/sessions periodic) + auto-import from local registry + state reconciliation on gateway restart all shipped. |
 
 **Recommended next execution target**: **M11 — prove one full agent runs inside a sandbox from a versioned drop-in image.** The M10 Phase 1 build-test cycle on 2026-04-12 surfaced that bundling Logos's Hermes fork into the sandbox via `pip install -e .` was the wrong architectural direction — the right shape is the NemoClaw-style "sandbox image = the agent runtime release, Logos references it by tag." M10 Phase 1 items 4-8 (network policies, DB, editor UI) stay intact because they're infrastructure-layer, not runtime-layer. **Unblocks the runtime half of M1 / M2 / M9.**
 
@@ -584,7 +584,7 @@ NVIDIA's **NemoClaw** (`knowledge-repos/NemoClaw`) is a separate opinionated ref
 
 ## M11 — Agents as versioned drop-in sandbox images
 
-**Status**: IN PROGRESS — CODE LANDED, TESTING (2026-04-12). Supersedes M10 Phase 1 items 1-3 (reverted 2026-04-12 evening). All 4 implementation items from M11.md landed: `_DEFAULT_IMAGE` → `hermes-upstream:latest`, worker script upload in spawn step 2b, `sandbox_worker.py` rewritten to use AIAgent (real streaming, toolset pass-through), exec command sets `PYTHONPATH=/opt/hermes`. End-to-end testing in progress.
+**Status**: DONE (2026-04-12). Superseded M10 Phase 1 items 1-3. All 4 core implementation items landed, plus 7 issues discovered and fixed during testing (see M11.md), plus stretch items: per-agent memory persistence across sandbox lifecycle (`76502d4`), tiered state sync — memories on-write, logs/sessions periodic (`99b1fa4`), local agent image registry + auto-import (`2edcb03`), pre-create check + state reconciliation on gateway restart (`453007d`).
 
 ### Why M10 items 1-3 went wrong
 
@@ -721,33 +721,15 @@ M10 Phase 1 items 4-5 (policies + UI) ══→ SHIPPED — network policies +
                                            works for preset toggling
                                            at runtime today.
 
-M10 Phase 1 items 1-3 (sandbox bundling) ═→ REVERTED 2026-04-12 evening.
-                                             Superseded by M11 —
-                                             bundling Logos's Python
-                                             package into the sandbox
-                                             was the wrong shape; the
-                                             right shape is image-per-
-                                             agent-release.
+M10 Phase 1 items 1-3 (sandbox bundling) ═→ SUPERSEDED by M11.
 
-M11 (agents as drop-in sandbox images) ══╦══→ Sandbox image = versioned
-                                           ║    upstream agent runtime,
-                                           ║    Logos references by tag,
-                                           ║    doesn't rebuild on agent
-                                           ║    version bumps. Pattern A
-                                           ║    port-forward HTTP dispatch.
-                                           ║    Multi-agent comes free.
-                                           ║
-                                           ╠══→ UNBLOCKS runtime half of
-                                           ║    M1 (toolsets honored in
-                                           ║    the agent), runtime half
-                                           ║    of M2 (action_policy
-                                           ║    enforced), and M9 chat-
-                                           ║    path visibility (memory
-                                           ║    writes during chats).
-                                           ╚══→ Proof-of-concept: one
-                                               agent, one sandbox, one
-                                               chat turn with tool use
-                                               + memory write.
+M11 (agents as drop-in sandbox images) ══→ DONE (2026-04-12).
+                                           Full AIAgent in OpenShell
+                                           sandbox + memory persistence
+                                           + tiered state sync + auto-
+                                           import + state reconciliation.
+                                           UNBLOCKED: runtime half of
+                                           M1, M2, M9.
 
 M1 (T editable) ──→ UI shipped (M10 item 5). Infrastructure-layer
                     toggles (presets) have runtime effect today via
@@ -780,11 +762,11 @@ M9 (activity visibility) ──→ depends on M11 (for chat-path visibility)
                          ──→ the tamagotchi / living-agent identity feature
 ```
 
-**Recommended tackling order (updated 2026-04-12 evening)**:
+**Recommended tackling order (updated 2026-04-12)**:
 
-**M11 proof-of-concept (2-3 days, one agent in one sandbox end-to-end) → multi-agent validation (hours — spawn a second sandbox, confirm both work) → M10 Phase 1 items 6-7 (Policy editor UI + in-sandbox approval callback, closes M2 + the remaining half of M9 chat visibility) → M8 Phase B → M3 → M4 → M7 → M5 (full-tab world) → M10 item 8 (sync-back daemon)**
+**M10 items 6-7 (Policy editor UI + in-sandbox approval callback, closes M2) → M9 (make memory writes visible in UI) → M8 Phase B (dispatch ledger) → M3 → M4 → M7 → M5 (full-tab world)**
 
-Rationale: **M10 Phase 1 items 4-5 shipped** on 2026-04-12 (network policy presets, `gateway/policies.py`, DB migration, Tools editor backend and UI). Those are infrastructure-layer and agent-runtime-agnostic — they ride through M11 unchanged and already work for preset toggling today. **M10 items 1-3 were reverted** because bundling Logos's Python package into the sandbox image turned out to be the wrong shape after the first build produced a 4.26 GB image stuffed with host-side code. The replacement direction is **M11** — versioned upstream agent images referenced by tag, proven with one agent end-to-end first, multi-agent as the free consequence. Once M11 lands with a working in-sandbox Hermes, M1 and M2 become genuinely closable (Tools editor toolset toggles start having runtime effect; Policy editor runtime approvals land via items 6-7). M8 Phase B, M3/M4, M7, and M5 are independent tracks that can run in any order.
+Rationale: **M11 is DONE** — full AIAgent runs inside OpenShell sandbox with memory persistence, state sync, and auto-import. **M10 items 4-5 shipped** (network policy presets, T pill UI). M1's runtime half is now unblocked (toolset toggles flow through to AIAgent). The next highest-value work is M2 (Policy editor + approvals) which needs M10 items 6-7, then M9 (making the existing autonomous mechanisms visible — now that memory writes actually happen during web-UI chats). M8 Phase B, M3/M4, M7, and M5 are independent tracks.
 
 ---
 
