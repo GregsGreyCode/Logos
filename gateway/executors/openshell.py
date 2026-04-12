@@ -1044,6 +1044,28 @@ class OpenShellExecutor:
                         gateway=openshell_gw, check=True,
                     )
 
+            # ── Step 2c: upload persisted agent memories ────────────
+            #
+            # Each agent has its own memory directory on the gateway host
+            # at ~/.logos/agents/<name>/memories/. If the directory exists
+            # and has files, upload them into the sandbox so the agent
+            # resumes with its accumulated knowledge.
+            _agent_memories_dir = _HERMES_HOME / "agents" / config.name / "memories"
+            if _agent_memories_dir.is_dir() and any(_agent_memories_dir.iterdir()):
+                for mem_file in _agent_memories_dir.iterdir():
+                    if mem_file.is_file():
+                        _openshell(
+                            "sandbox", "upload", sandbox_name,
+                            str(mem_file), "/tmp/hermes/memories/",
+                            gateway=openshell_gw, check=True,
+                        )
+                logger.info(
+                    "spawn(%s): uploaded %d memory file(s) from %s",
+                    sandbox_name,
+                    len(list(_agent_memories_dir.iterdir())),
+                    _agent_memories_dir,
+                )
+
             # ── Step 3: mark the sandbox ready ──────────────────────
             #
             # Plan A-prime (TASKS.md #24): there's no persistent worker

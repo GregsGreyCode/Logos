@@ -55,8 +55,10 @@ import asyncio
 import json
 import logging
 import shlex
+import subprocess
 import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
@@ -503,7 +505,86 @@ class WorkerRegistry:
         # it can render the failure as an in-chat error bubble rather
         # than an opaque 500. Only the "no frame at all" case above is
         # a hard failure worth raising.
+
+        # ── Sync memories back from sandbox to host ──────────────
+        #
+        # After each task, download the agent's /tmp/hermes/memories/
+        # directory to the per-agent host directory so memories persist
+        # across sandbox restarts. Best-effort — download failure must
+        # not block the chat response.
+        try:
+            await self._sync_memories_from_sandbox(
+                sandbox_name, target_gateway,
+            )
+        except Exception as exc:
+            logger.debug(
+                "dispatch_task(%s): memory sync-back failed (non-fatal): %s",
+                sandbox_name, exc,
+            )
+
         return final_result
+
+    # ─── Memory persistence ──────────────────────────────────────────────
+
+    async def _sync_memories_from_sandbox(
+        self,
+        sandbox_name: str,
+        gateway: str,
+    ) -> None:
+        """Download the agent's memories from the sandbox to the host.
+
+        Called after every task dispatch so memories accumulated during the
+        agentic loop (via AIAgent's memory tool) are persisted on the
+        gateway host at ~/.logos/agents/<name>/memories/. This ensures
+        memories survive sandbox restarts and can be re-uploaded at spawn.
+
+        Best-effort: failures are logged but never propagated.
+        """
+        from gateway.executors.openshell import _load_state, _HERMES_HOME
+
+        # Resolve the agent name from the state entry
+        agent_name = None
+        for inst in _load_state():
+            if inst.get("sandbox_name") == sandbox_name:
+                agent_name = inst.get("name")
+                break
+        if not agent_name:
+            return
+
+        host_memories_dir = _HERMES_HOME / "agents" / agent_name / "memories"
+        host_memories_dir.mkdir(parents=True, exist_ok=True)
+
+        try:
+            result = await asyncio.to_thread(
+                subprocess.run,
+                [
+                    "openshell", "-g", gateway,
+                    "sandbox", "download",
+                    sandbox_name, "/tmp/hermes/memories/",
+                    str(host_memories_dir),
+                ],
+                capture_output=True, text=True, timeout=30,
+            )
+            if result.returncode == 0:
+                # Count files to log meaningfully
+                n_files = len([
+                    f for f in host_memories_dir.iterdir() if f.is_file()
+                ])
+                if n_files > 0:
+                    logger.info(
+                        "memory sync: %s → %s (%d file(s))",
+                        sandbox_name, host_memories_dir, n_files,
+                    )
+            else:
+                logger.debug(
+                    "memory sync: download returned %d for %s: %s",
+                    result.returncode, sandbox_name,
+                    (result.stderr or "").strip()[:200],
+                )
+        except subprocess.TimeoutExpired:
+            logger.debug("memory sync: timed out for %s", sandbox_name)
+        except Exception as exc:
+            logger.debug("memory sync: failed for %s: %s", sandbox_name, exc)
 
     # ─── Gateway routing helper ─────────────────────────────────────────
 
