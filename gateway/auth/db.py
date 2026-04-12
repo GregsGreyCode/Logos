@@ -490,6 +490,34 @@ def _run_migrations() -> None:
             except sqlite3.OperationalError:
                 pass  # column already exists
 
+        # v11: dispatch activity ledger (M8 Phase B). Durable record of
+        # every task dispatch — who, what agent, which model, origin,
+        # timing, token counts, and outcome. Feeds the Admin Activity tab.
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS dispatches (
+                id                TEXT PRIMARY KEY,
+                task_id           TEXT NOT NULL,
+                agent_id          TEXT,
+                sandbox_name      TEXT,
+                model             TEXT,
+                origin            TEXT NOT NULL DEFAULT 'user_chat',
+                origin_detail     TEXT,
+                session_id        TEXT,
+                user_id           TEXT,
+                prompt_tokens     INTEGER,
+                completion_tokens INTEGER,
+                elapsed_s         REAL,
+                status            TEXT NOT NULL DEFAULT 'running',
+                error             TEXT,
+                started_at        INTEGER NOT NULL,
+                ended_at          INTEGER
+            );
+            CREATE INDEX IF NOT EXISTS idx_disp_agent   ON dispatches(agent_id);
+            CREATE INDEX IF NOT EXISTS idx_disp_origin  ON dispatches(origin);
+            CREATE INDEX IF NOT EXISTS idx_disp_ts      ON dispatches(started_at);
+            CREATE INDEX IF NOT EXISTS idx_disp_status  ON dispatches(status);
+        """)
+
 
 @contextmanager
 def _conn():
@@ -2397,3 +2425,84 @@ def delete_mcp_server(server_id: str) -> bool:
     with _conn() as conn:
         cursor = conn.execute("DELETE FROM mcp_servers WHERE id=?", (server_id,))
     return cursor.rowcount > 0
+
+
+# ── Dispatch ledger (M8 Phase B) ───────────────────────────────────────────
+
+
+def create_dispatch(
+    task_id: str,
+    agent_id: str = "",
+    sandbox_name: str = "",
+    model: str = "",
+    origin: str = "user_chat",
+    origin_detail: str = "",
+    session_id: str = "",
+    user_id: str = "",
+) -> str:
+    """Insert a new dispatch record at the start of a task. Returns the id."""
+    import uuid
+    dispatch_id = f"dsp_{uuid.uuid4().hex[:12]}"
+    now_ms = int(time.time() * 1000)
+    with _conn() as conn:
+        conn.execute(
+            """INSERT INTO dispatches
+               (id, task_id, agent_id, sandbox_name, model, origin,
+                origin_detail, session_id, user_id, status, started_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+            (dispatch_id, task_id, agent_id, sandbox_name, model, origin,
+             origin_detail, session_id, user_id, "running", now_ms),
+        )
+    return dispatch_id
+
+
+def complete_dispatch(
+    dispatch_id: str,
+    status: str = "ok",
+    elapsed_s: float = 0.0,
+    prompt_tokens: int = None,
+    completion_tokens: int = None,
+    error: str = None,
+) -> None:
+    """Update a dispatch record when the task finishes."""
+    now_ms = int(time.time() * 1000)
+    with _conn() as conn:
+        conn.execute(
+            """UPDATE dispatches
+               SET status=?, elapsed_s=?, prompt_tokens=?,
+                   completion_tokens=?, error=?, ended_at=?
+               WHERE id=?""",
+            (status, elapsed_s, prompt_tokens, completion_tokens, error,
+             now_ms, dispatch_id),
+        )
+
+
+def list_dispatches(
+    agent_id: str = None,
+    origin: str = None,
+    status: str = None,
+    limit: int = 50,
+    offset: int = 0,
+) -> tuple:
+    """Query the dispatch ledger. Returns (rows, total_count)."""
+    where_parts = []
+    params = []
+    if agent_id:
+        where_parts.append("agent_id = ?")
+        params.append(agent_id)
+    if origin:
+        where_parts.append("origin = ?")
+        params.append(origin)
+    if status:
+        where_parts.append("status = ?")
+        params.append(status)
+    where_clause = (" WHERE " + " AND ".join(where_parts)) if where_parts else ""
+    with _conn() as conn:
+        total = conn.execute(
+            f"SELECT COUNT(*) FROM dispatches{where_clause}", params,
+        ).fetchone()[0]
+        rows = conn.execute(
+            f"SELECT * FROM dispatches{where_clause} ORDER BY started_at DESC LIMIT ? OFFSET ?",
+            [*params, limit, offset],
+        ).fetchall()
+    return [dict(r) for r in rows], total

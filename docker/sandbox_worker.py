@@ -267,6 +267,22 @@ def _handle_task(task: Dict[str, Any], config: Dict[str, Any]) -> None:
             except BrokenPipeError:
                 raise
 
+    def on_tool_complete(call_id, tool_name, success, duration_ms, preview=None):
+        """Called when a tool invocation finishes. Emits tool_end + memory_write."""
+        try:
+            emit({"type": "tool_end", "task_id": task_id, "call_id": call_id or "",
+                  "tool": tool_name or "", "success": bool(success),
+                  "duration_ms": duration_ms})
+        except BrokenPipeError:
+            raise
+        # Surface memory writes as a distinct event for the frontend
+        if tool_name == "memory" and success:
+            try:
+                emit({"type": "memory_write", "task_id": task_id,
+                      "preview": str(preview or "")[:200]})
+            except BrokenPipeError:
+                raise
+
     # Resolve toolsets from the instance config. The soul manifest defines
     # enforced/default_enabled/optional/forbidden toolsets; by the time
     # they reach instance_config["toolsets"] the gateway has resolved them
@@ -282,6 +298,7 @@ def _handle_task(task: Dict[str, Any], config: Dict[str, Any]) -> None:
         enabled_toolsets=toolsets,
         stream_delta_callback=on_token,
         reasoning_callback=on_reasoning,
+        tool_complete_callback=on_tool_complete,
     )
 
     # Convert history to the format AIAgent expects
