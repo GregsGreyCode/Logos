@@ -96,18 +96,19 @@ _STATE_LOCK_FILE = _HERMES_HOME / "openshell_instances.lock"
 # get cleaned up on the next list_instances() pass.
 _PRUNE_GRACE_SECONDS = 90.0
 
-# Default sandbox image source. Two modes:
-#   1. A pre-built image tag (e.g. "hermes-upstream:latest") — used when
-#      the image is already on the local Docker daemon or a pullable registry.
-#   2. An absolute path to a Dockerfile — OpenShell builds and imports it
-#      into the gateway on demand. Used for dev/local and one-off setups.
-#
-# M11: default to mode #1 — the upstream hermes-agent image, pre-built at
-# projects/knowledge-repos/hermes-agent/Dockerfile (7.46 GB). The sandbox
-# worker script is uploaded separately at spawn time (step 2b below).
+# Default sandbox image. M11: references a pre-built image tag that exists
+# in the local Docker daemon (built from docker/Dockerfile.hermes-upstream).
+# The spawn flow ensures the image is imported into the target OpenShell
+# cluster's containerd before creating the sandbox (see _ensure_image_in_cluster).
 # Override with the LOGOS_OPENSHELL_IMAGE env var.
 _REPO_ROOT = Path(__file__).parent.parent.parent
 _DEFAULT_IMAGE = os.getenv("LOGOS_OPENSHELL_IMAGE", "hermes-sandbox:m11")
+
+# Logos agent image registry. When set, the spawn flow will `docker pull`
+# from this registry before importing into the cluster. This ensures images
+# persist across containerd garbage collection cycles. Users will eventually
+# browse and install agent images from a UI backed by this registry.
+_REGISTRY_URL = os.getenv("LOGOS_REGISTRY_URL", "localhost:5000")
 
 # Path to the default egress policy applied to every sandbox.
 _DEFAULT_POLICY = Path(__file__).parent.parent / "policies" / "openshell_default.yaml"
@@ -154,6 +155,75 @@ def _state_lock() -> Iterator[None]:
         except OSError:
             pass
         f.close()
+
+
+# ── Image management helpers ──────────────────────────────────────────────
+
+def _ensure_image_in_cluster(image: str, gateway: str) -> None:
+    """Ensure a Docker image is available in the target OpenShell cluster's containerd.
+
+    OpenShell runs k3s inside a Docker container. Each cluster has its own
+    containerd image store that is separate from the host Docker daemon.
+    Images get garbage-collected when no pods reference them, so we must
+    re-import before every sandbox create.
+
+    Flow:
+      1. Resolve the cluster container name from the gateway name.
+      2. Check if the image already exists in the cluster's containerd.
+      3. If not, ``docker save <image> | docker exec -i <cluster> ctr import -``.
+
+    The image must already exist in the host Docker daemon (pulled from the
+    Logos registry or built locally).
+    """
+    cluster_container = f"openshell-cluster-{gateway}"
+
+    # Check if image already exists in containerd
+    # docker.io/library/ prefix is added by containerd for unqualified names
+    check_ref = image
+    if "/" not in image:
+        check_ref = f"docker.io/library/{image}"
+    try:
+        result = subprocess.run(
+            ["docker", "exec", cluster_container, "ctr", "-n", "k8s.io",
+             "images", "check", f"name=={check_ref}"],
+            capture_output=True, text=True, timeout=10,
+        )
+        if check_ref in (result.stdout or ""):
+            logger.debug("_ensure_image_in_cluster: %s already in %s", image, cluster_container)
+            return
+    except Exception:
+        pass  # check failed, proceed with import
+
+    logger.info(
+        "_ensure_image_in_cluster: importing %s into %s (this takes ~60-120s for large images)",
+        image, cluster_container,
+    )
+    try:
+        save = subprocess.Popen(
+            ["docker", "save", image],
+            stdout=subprocess.PIPE,
+        )
+        load = subprocess.run(
+            ["docker", "exec", "-i", cluster_container,
+             "ctr", "-n", "k8s.io", "images", "import", "-"],
+            stdin=save.stdout,
+            capture_output=True, text=True, timeout=600,
+        )
+        save.stdout.close()
+        save.wait()
+        if load.returncode != 0:
+            logger.warning(
+                "_ensure_image_in_cluster: ctr import returned %d: %s",
+                load.returncode, (load.stderr or "").strip(),
+            )
+        else:
+            logger.info("_ensure_image_in_cluster: imported %s into %s", image, cluster_container)
+    except subprocess.TimeoutExpired:
+        logger.error("_ensure_image_in_cluster: timed out importing %s", image)
+        raise
+    except Exception as exc:
+        logger.error("_ensure_image_in_cluster: failed for %s: %s", image, exc)
+        raise
 
 
 # ── OpenShell CLI helpers ──────────────────────────────────────────────────
@@ -835,6 +905,15 @@ class OpenShellExecutor:
         # aborting the spawn.
         _effective_policy_tmp: Optional[Path] = None
         try:
+            # ── Step 0: ensure the sandbox image is in the cluster ─
+            #
+            # OpenShell's k3s containerd is separate from the host
+            # Docker daemon. Images get GC'd when no pods reference
+            # them. This step imports the image if it's missing,
+            # taking ~60-120s for a fresh import (layers are cached
+            # after the first import, making subsequent spawns fast).
+            _ensure_image_in_cluster(self.sandbox_image, openshell_gw)
+
             # ── Step 1: create the sandbox CR ──────────────────────
             create_args = [
                 "sandbox", "create",
