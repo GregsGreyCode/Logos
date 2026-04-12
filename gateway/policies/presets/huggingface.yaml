@@ -1,0 +1,60 @@
+# Hugging Face Hub + LFS + Inference API access preset.
+#
+# Download-only by default (GET on huggingface.co). Posting new
+# models, datasets, or repositories is intentionally blocked — if
+# an agent has an HF_TOKEN in its environment, allowing POST /**
+# on huggingface.co would let it create repositories and upload
+# files on behalf of the token owner. NemoClaw learned this the
+# hard way as their issue #1432; we copy their tightening.
+#
+# Inference traffic goes through router.huggingface.co (which
+# allows POST) — that endpoint is Hugging Face's serverless
+# inference proxy and doesn't grant repo-write access.
+#
+# Apply via:
+#   gateway.policies.apply_preset(agent_id, "huggingface")
+
+preset:
+  name: huggingface
+  description: "Hugging Face Hub (download-only) and Inference API"
+
+network_policies:
+  huggingface:
+    name: huggingface
+    endpoints:
+      # Hub — read-only. `from_pretrained` downloads go through here.
+      # POST is deliberately NOT allowed; see the header comment.
+      - host: huggingface.co
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        tls: terminate
+        rules:
+          - allow: { method: GET, path: "/**" }
+          - allow: { method: HEAD, path: "/**" }
+      # LFS-backed large file storage (model weights, tokenizers).
+      - host: cdn-lfs.huggingface.co
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        tls: terminate
+        rules:
+          - allow: { method: GET, path: "/**" }
+          - allow: { method: HEAD, path: "/**" }
+      # Inference API proxy — POST is allowed here only. Distinct
+      # host from huggingface.co so a single POST /** rule on the
+      # router can't be used to write to the Hub.
+      - host: router.huggingface.co
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        tls: terminate
+        rules:
+          - allow: { method: GET, path: "/**" }
+          - allow: { method: POST, path: "/**" }
+    binaries:
+      - { path: /app/venv/bin/python }
+      - { path: /app/venv/bin/python3 }
+      - { path: /app/venv/bin/python3.11 }
+      - { path: /app/venv/bin/python3.12 }
+      - { path: /usr/bin/python3 }

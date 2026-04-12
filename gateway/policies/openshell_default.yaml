@@ -1,20 +1,49 @@
-# Default OpenShell policy for Hermes agent sandboxes.
+# Default OpenShell network + filesystem policy for Hermes agent sandboxes.
 #
-# Applied automatically by OpenShellExecutor at sandbox creation.
-# Hot-reloadable: openshell policy set <name> --policy openshell_default.yaml --wait
+# Applied automatically by OpenShellExecutor.spawn() at sandbox creation.
+# Hot-reloadable via:
+#   openshell policy set --policy openshell_default.yaml --wait <sandbox>
 #
-# Plan A architecture (TASKS.md #24): the host gateway drives the sandbox
-# via `openshell sandbox exec --no-tty -- python3 /app/sandbox_worker.py`
-# over OpenShell's blessed gRPC/mTLS exec transport. The sandbox no longer
-# initiates outbound traffic to host.openshell.internal:8091 — that
-# reverse-connection model (broken by OpenShell's L7 proxy tightening)
-# has been retired along with the `logos_gateway` network_policy entry.
+# ── Architecture (post-M10, 2026-04-12) ────────────────────────────────
 #
-# This policy now only allows the sandbox worker to:
-#   1. Call the LLM via inference.local (OpenShell's privacy router)
-#   2. Resolve DNS for *.internal hostnames
+# The sandbox runs the full Hermes AIAgent loop per-dispatch via
+# `openshell sandbox exec --no-tty -- python3 /app/sandbox_worker.py`.
+# The worker instantiates AIAgent, calls run_conversation, streams
+# token/thinking/tool_progress frames back over stdout, and exits.
+# Memory writes, skill management, tool invocations, delegation,
+# nudges, and run recording all happen INSIDE run_conversation on
+# the sandbox filesystem ($HERMES_HOME = /sandbox/.hermes-data).
+#
+# This baseline policy restricts what the in-sandbox agent can reach
+# on the network. Only the absolute minimum is allowed by default —
+# the LLM proxy (inference.local) and DNS resolution for *.internal
+# hostnames. Everything else is opt-in via presets in ./presets/.
+#
+# Least-privilege rationale: the same reason NemoClaw moved GitHub
+# out of its base policy (see issue #1583 in their repo). A sandbox
+# that doesn't need GitHub should not have it, even if "everyone
+# probably wants it" — agents with narrow scopes stay narrow.
+#
+# ── Filesystem layout (HERMES_HOME) ────────────────────────────────────
+#
+# $HERMES_HOME = /sandbox/.hermes-data (set in Dockerfile.hermes-sandbox)
+#   ├── SOUL.md           (uploaded per-agent at spawn)
+#   ├── memories/         (seeded from ~/.logos/memories/ at spawn)
+#   ├── skills/           (fresh per sandbox lifetime, Phase 1)
+#   ├── sessions/         (fresh per sandbox lifetime)
+#   └── logs/errors.log   (created lazily by AIAgent)
+#
+# Phase 2 (MISSING.md M10 scope item 8) adds a sync-back daemon that
+# pulls /sandbox/.hermes-data/{memories,skills}/ to the host for
+# durability across sandbox re-creation.
 
 version: 1
+
+# ── Filesystem ─────────────────────────────────────────────────────────
+#
+# Landlock LSM + container mounts enforce these rules at the kernel
+# level. best_effort lets pre-5.13 kernels continue to work (mounts
+# alone) while newer kernels get the full Landlock semantics.
 
 filesystem_policy:
   include_workdir: true
@@ -35,13 +64,39 @@ filesystem_policy:
 landlock:
   compatibility: best_effort
 
+# ── Process ────────────────────────────────────────────────────────────
+#
+# The sandbox image creates uid/gid 10001 as user `sandbox` — see
+# docker/Dockerfile.hermes-sandbox. OpenShell enforces this at
+# container start: if the image tries to run as root, the sandbox
+# fails to come up.
+
 process:
   run_as_user: sandbox
   run_as_group: sandbox
 
+# ── Network ────────────────────────────────────────────────────────────
+#
+# Two baseline entries:
+#
+#   1. inference_local — the OpenShell privacy router. Sandbox sends
+#      ALL LLM traffic here. The router injects the provider
+#      credential at egress, so the sandbox never holds API keys.
+#      Binary scoping covers the venv Python (all version flavors
+#      via glob) plus curl for smoke testing from within the sandbox.
+#
+#   2. dns — resolve *.internal hostnames, which OpenShell uses for
+#      its internal service mesh (including inference.local itself).
+#      Without this, the sandbox can't even look up the proxy.
+#
+# Everything else — GitHub, Slack, Telegram, Discord, Hugging Face,
+# PyPI, etc. — lives in ./presets/*.yaml and must be explicitly
+# applied per-agent via gateway.policies.apply_preset() and the
+# Tools editor UI (MISSING.md M10 scope items 4-5).
+
 network_policies:
   inference_local:
-    name: "Inference (Privacy Router)"
+    name: "Inference (OpenShell privacy router)"
     endpoints:
       - host: inference.local
         port: 443
@@ -49,14 +104,24 @@ network_policies:
         tls: terminate
         access: full
     binaries:
-      - path: /app/venv/bin/python3
+      # Venv Python (3.11 in the new M10 image; 3.12 is also allowed
+      # for back-compat with any pre-M10 sandbox that happens to
+      # still be running). Globs catch point releases like python3.11.5.
       - path: /app/venv/bin/python
+      - path: /app/venv/bin/python3
+      - path: /app/venv/bin/python3.11
       - path: /app/venv/bin/python3.12
+      # System Python (used when the worker is invoked directly via
+      # /usr/bin/python3 rather than going through the venv shim).
       - path: /usr/bin/python3
+      - path: /usr/bin/python3.11
+      - path: /usr/bin/python3.12
+      # Curl for smoke testing inference.local from inside the sandbox
+      # (debugging only — the agent itself goes via the OpenAI SDK).
       - path: /usr/bin/curl
 
   dns:
-    name: "DNS resolution"
+    name: "DNS resolution (*.internal)"
     endpoints:
       - host: "*.internal"
         port: 53

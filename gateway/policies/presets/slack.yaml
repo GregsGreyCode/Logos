@@ -1,0 +1,61 @@
+# Slack access preset — Web API, Incoming Webhooks, and Socket Mode.
+#
+# Enables Logos's Slack platform adapter (backed by slack-sdk + slack-bolt)
+# to post messages, upload files, and receive events via the Real Time
+# Messaging WebSocket.
+#
+# Apply via:
+#   gateway.policies.apply_preset(agent_id, "slack")
+#
+# Binary scoping: the venv Python only — Logos's Slack adapter is
+# pure Python (not Node, unlike NemoClaw's OpenClaw build).
+
+preset:
+  name: slack
+  description: "Slack Web API, Incoming Webhooks, and Socket Mode WebSocket"
+
+network_policies:
+  slack:
+    name: slack
+    endpoints:
+      - host: slack.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        tls: terminate
+        rules:
+          - allow: { method: GET, path: "/**" }
+          - allow: { method: POST, path: "/**" }
+      - host: api.slack.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        tls: terminate
+        rules:
+          - allow: { method: GET, path: "/**" }
+          - allow: { method: POST, path: "/**" }
+      # Incoming Webhooks — one-way POST to hooks.slack.com/services/...
+      - host: hooks.slack.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        tls: terminate
+        rules:
+          - allow: { method: POST, path: "/services/**" }
+      # Socket Mode WebSocket endpoints. MUST use `access: full` (L4
+      # CONNECT tunnel) instead of `protocol: rest` — the L7 proxy's
+      # HTTP idle timeout (~2 min) kills long-lived WebSocket
+      # connections, and Slack's Socket Mode gateway expects
+      # persistent bidirectional streams. NemoClaw hit this as #409
+      # and landed on the same L4 fallback pattern.
+      - host: wss-primary.slack.com
+        port: 443
+        access: full
+      - host: wss-backup.slack.com
+        port: 443
+        access: full
+    binaries:
+      - { path: /app/venv/bin/python }
+      - { path: /app/venv/bin/python3 }
+      - { path: /app/venv/bin/python3.11 }
+      - { path: /app/venv/bin/python3.12 }

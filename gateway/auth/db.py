@@ -473,6 +473,17 @@ def _run_migrations() -> None:
             # takes when an agent was created before this column existed
             # or when the user explicitly wants the platform default.
             "ALTER TABLE agents ADD COLUMN model_route_id TEXT REFERENCES model_routes(id)",
+            # v10: per-agent network policy presets layered on top of the
+            # baseline in gateway/policies/openshell_default.yaml. JSON
+            # array of preset names from gateway/policies/presets/*.yaml
+            # (e.g. ["github", "slack"]). NULL means "no presets applied,
+            # baseline only". Read by gateway.policies.get_applied_presets()
+            # and merged into the effective policy at spawn time + when the
+            # Tools editor UI toggles presets (MISSING.md M10 scope items
+            # 4-5). Use get_agent_applied_presets() / set_agent_applied_presets()
+            # below for JSON-aware access instead of reading the column
+            # directly.
+            "ALTER TABLE agents ADD COLUMN applied_presets TEXT",
         ):
             try:
                 conn.execute(stmt)
@@ -960,7 +971,7 @@ def list_agents(user_id: str = "") -> list[dict]:
 
 def update_agent(agent_id: str, **fields) -> Optional[dict]:
     allowed = {"name", "soul_slug", "model", "description", "shared", "toolsets",
-               "char_index", "model_route_id"}
+               "char_index", "model_route_id", "applied_presets"}
     updates = {k: v for k, v in fields.items() if k in allowed}
     if "char_index" in updates:
         ci = updates["char_index"]
@@ -986,6 +997,58 @@ def update_agent(agent_id: str, **fields) -> Optional[dict]:
 def delete_agent(agent_id: str) -> None:
     with _conn() as conn:
         conn.execute("DELETE FROM agents WHERE id = ?", (agent_id,))
+
+
+def get_agent_applied_presets(agent_id: str) -> list[str]:
+    """Return the list of network policy preset names applied to an agent.
+
+    Returns an empty list for agents with no presets (either NULL in the
+    DB or an explicit empty JSON array). Invalid JSON in the column is
+    logged and treated as empty — callers should not crash on malformed
+    state. See gateway/policies.py for the merge/apply/remove logic that
+    consumes this.
+    """
+    agent = get_agent(agent_id)
+    if not agent:
+        return []
+    raw = agent.get("applied_presets")
+    if not raw:
+        return []
+    try:
+        loaded = json.loads(raw)
+    except json.JSONDecodeError:
+        logger.warning(
+            "get_agent_applied_presets(%s): applied_presets is not valid JSON: %r",
+            agent_id, raw,
+        )
+        return []
+    if not isinstance(loaded, list):
+        return []
+    return [str(p) for p in loaded if isinstance(p, str)]
+
+
+def set_agent_applied_presets(agent_id: str, presets: list[str]) -> None:
+    """Replace the applied preset list for an agent with the given list.
+
+    Deduplicates (preserving order) and coerces each entry to str.
+    Callers are responsible for validating that each preset name
+    matches a real file in gateway/policies/presets/ — this function
+    stores whatever it's given. gateway.policies.set_applied_presets
+    is the validating wrapper.
+    """
+    seen: set[str] = set()
+    clean: list[str] = []
+    for name in presets or []:
+        s = str(name)
+        if s in seen:
+            continue
+        seen.add(s)
+        clean.append(s)
+    with _conn() as conn:
+        conn.execute(
+            "UPDATE agents SET applied_presets = ?, updated_at = ? WHERE id = ?",
+            (json.dumps(clean), int(time.time() * 1000), agent_id),
+        )
 
 
 # ── Model routes ────────────────────────────────────────────────────────────

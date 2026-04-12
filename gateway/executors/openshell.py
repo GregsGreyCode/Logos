@@ -115,15 +115,6 @@ _DEFAULT_IMAGE = os.getenv(
 # Path to the default egress policy applied to every sandbox.
 _DEFAULT_POLICY = Path(__file__).parent.parent / "policies" / "openshell_default.yaml"
 
-# Gateway port — must match what Logos is listening on
-_GATEWAY_PORT = int(
-    os.getenv("LOGOS_PORT") or os.getenv("HERMES_PORT") or "8091"
-)
-
-# How long to wait for the worker to register after sandbox creation
-_WORKER_REGISTER_TIMEOUT = 60
-
-
 # ── State persistence ──────────────────────────────────────────────────────
 
 def _load_state() -> List[dict]:
@@ -737,11 +728,21 @@ class OpenShellExecutor:
                 "Pre-spawn provider sync raised (continuing anyway): %s", exc
             )
 
-        # Write instance config to a temp file for upload
+        # Write instance config to a temp file for upload. The sandbox
+        # worker reads this from /tmp/hermes/instance-config.json at
+        # dispatch time via load_config() and uses it to resolve the
+        # model + toolsets when the task payload doesn't supply them.
+        #
+        # M10 cleanup (2026-04-12): dropped the ``gateway_url`` field
+        # that was carried over from the original Plan A reverse-
+        # connection architecture. Plan A-prime's per-task exec transport
+        # doesn't have the sandbox dial back into the gateway, and the
+        # M10 Phase 1 sandbox_worker.py rewrite instantiates AIAgent
+        # in-process (talking only to inference.local via the OpenShell
+        # privacy router) — nothing reads gateway_url any more.
         instance_config = {
             "worker_id": worker_id,
             "instance_name": config.name,
-            "gateway_url": f"http://host.openshell.internal:{_GATEWAY_PORT}",
             "soul": config.soul_name or "general",
             "toolsets": config.toolsets or [],
             "model": resolved_model,
@@ -828,6 +829,14 @@ class OpenShellExecutor:
         # for waiting for the worker to register via the gateway's
         # worker_registry — see the wait_for_worker helper there.
         config_tmpfile = None
+        # M10 scope item 5: effective policy = baseline + applied presets.
+        # Looked up by agent name (config.name → auth_db.get_agent_by_name)
+        # so the InstanceConfig dataclass doesn't need a new field. Falls
+        # back to self.policy_file (the raw baseline) if the lookup or
+        # merge fails, so a broken preset can't block spawning — degrading
+        # to the narrowest available policy is always preferred over
+        # aborting the spawn.
+        _effective_policy_tmp: Optional[Path] = None
         try:
             # ── Step 1: create the sandbox CR ──────────────────────
             create_args = [
@@ -836,8 +845,38 @@ class OpenShellExecutor:
                 "--from", self.sandbox_image,
                 "--no-auto-providers",
             ]
-            if self.policy_file and Path(self.policy_file).exists():
-                create_args += ["--policy", self.policy_file]
+            # Compute the effective policy (baseline + applied presets)
+            # for this agent. If the agent has any presets applied in
+            # the DB, we write a merged YAML to a tempfile and pass THAT
+            # instead of the raw baseline. gateway.policies is imported
+            # inside the try so we don't reintroduce a circular import
+            # at module load time — gateway.policies imports back from
+            # this module for _openshell + _sanitize_sandbox_name.
+            _policy_arg: Optional[str] = None
+            try:
+                from gateway.auth import db as _policies_auth_db
+                _agent_row = _policies_auth_db.get_agent_by_name(config.name)
+                if _agent_row:
+                    from gateway import policies as _gp
+                    _effective_policy_tmp = _gp.write_effective_policy_to_tempfile(
+                        _agent_row["id"]
+                    )
+                    _policy_arg = str(_effective_policy_tmp)
+                    logger.info(
+                        "spawn(%s): using effective policy with %d applied "
+                        "preset(s)", sandbox_name,
+                        len(_gp.get_applied_presets(_agent_row["id"])),
+                    )
+            except Exception as _policy_exc:
+                logger.warning(
+                    "spawn(%s): effective policy computation failed, "
+                    "falling back to baseline %s: %s",
+                    sandbox_name, self.policy_file, _policy_exc,
+                )
+            if not _policy_arg and self.policy_file and Path(self.policy_file).exists():
+                _policy_arg = self.policy_file
+            if _policy_arg:
+                create_args += ["--policy", _policy_arg]
             # CRITICAL: trailing `-- true` is required.
             #
             # `openshell sandbox create` with NO trailing command (after
@@ -871,15 +910,72 @@ class OpenShellExecutor:
                 gateway=openshell_gw, check=True,
             )
 
+            # Upload SOUL.md to $HERMES_HOME so the sandbox agent can
+            # read it. Destination changed from /tmp/hermes/SOUL.md to
+            # /sandbox/.hermes-data/SOUL.md (M10, 2026-04-12) to match
+            # the sandbox image's HERMES_HOME env var — see
+            # docker/Dockerfile.hermes-sandbox:103.
+            #
+            # In the M10 Phase 1 sandbox_worker.py, AIAgent runs with
+            # skip_context_files=True (the gateway builds the full
+            # system prompt host-side via build_agent_system_prompt and
+            # passes it as ephemeral_system_prompt), so SOUL.md isn't
+            # actively read from inside the sandbox today. Keeping the
+            # upload for forward-compat: flipping skip_context_files
+            # to False in Phase 2 works immediately without another
+            # executor change.
             if config.soul_name and config.soul_name != "default":
                 soul_dir = _HERMES_HOME / "souls"
                 soul_file = soul_dir / f"{config.soul_name}.md"
                 if soul_file.exists():
                     _openshell(
                         "sandbox", "upload", sandbox_name,
-                        str(soul_file), "/tmp/hermes/SOUL.md",
+                        str(soul_file), "/sandbox/.hermes-data/SOUL.md",
                         gateway=openshell_gw, check=True,
                     )
+
+            # Seed memories so the sandbox agent starts with the host's
+            # canonical MEMORY.md + USER.md if they exist. These are
+            # the two files AIAgent's _memory_store loads via
+            # format_for_system_prompt("memory") / ("user") when
+            # skip_memory=False (the default the M10 sandbox worker
+            # uses, so memory_tool writes during chats persist under
+            # /sandbox/.hermes-data/memories/).
+            #
+            # Best-effort: failures log a warning but don't fail the
+            # spawn. The agent starts with an empty memories dir if
+            # seeding fails or the host files don't exist — the
+            # sandbox's HERMES_HOME layout is pre-created by the
+            # Dockerfile so the agent has somewhere to write even on
+            # a cold start.
+            #
+            # Phase 2 (MISSING.md M10 scope item 8) adds a periodic
+            # sync-back daemon that pulls memory writes from the
+            # sandbox back to the host so state survives sandbox
+            # re-creation. Until that lands, each sandbox starts with
+            # the host snapshot at spawn time and memories persist
+            # only within the pod lifetime (sleep infinity).
+            _memories_src_dir = _HERMES_HOME / "memories"
+            for _memory_name in ("MEMORY.md", "USER.md"):
+                _memory_src = _memories_src_dir / _memory_name
+                if _memory_src.exists() and _memory_src.is_file():
+                    try:
+                        _openshell(
+                            "sandbox", "upload", sandbox_name,
+                            str(_memory_src),
+                            f"/sandbox/.hermes-data/memories/{_memory_name}",
+                            gateway=openshell_gw, check=True,
+                        )
+                        logger.info(
+                            "spawn(%s): seeded memory file %s from host",
+                            sandbox_name, _memory_name,
+                        )
+                    except Exception as _seed_exc:
+                        logger.warning(
+                            "spawn(%s): failed to seed memory %s "
+                            "(non-fatal): %s",
+                            sandbox_name, _memory_name, _seed_exc,
+                        )
 
             # ── Step 3: mark the sandbox ready ──────────────────────
             #
@@ -944,6 +1040,11 @@ class OpenShellExecutor:
             if config_tmpfile:
                 try:
                     os.unlink(config_tmpfile.name)
+                except OSError:
+                    pass
+            if _effective_policy_tmp:
+                try:
+                    os.unlink(_effective_policy_tmp)
                 except OSError:
                     pass
 
