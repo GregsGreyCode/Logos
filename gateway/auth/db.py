@@ -1023,7 +1023,15 @@ def update_agent(agent_id: str, **fields) -> Optional[dict]:
 
 
 def delete_agent(agent_id: str) -> None:
+    # Hard delete: the three orphan tables (dispatches, agent_runs,
+    # evolution_proposals) have no FK cascade because they're not owned
+    # by the agent lifecycle, but leaving rows behind produces dangling
+    # agent_id values in admin dashboards. Purge them here so "delete"
+    # means delete. platform_routing cascades via FK (see schema).
     with _conn() as conn:
+        conn.execute("DELETE FROM dispatches WHERE agent_id = ?", (agent_id,))
+        conn.execute("DELETE FROM agent_runs WHERE agent_id = ?", (agent_id,))
+        conn.execute("DELETE FROM evolution_proposals WHERE agent_id = ?", (agent_id,))
         conn.execute("DELETE FROM agents WHERE id = ?", (agent_id,))
 
 

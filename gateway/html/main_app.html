@@ -521,7 +521,7 @@
       </div>
 
       <!-- Chat panel (tall, fills height) -->
-      <div class="flex-1 min-w-0 flex flex-col h-full">
+      <div class="flex-1 min-w-0 flex flex-col h-full" data-chat-panel>
         <div class="bg-gray-900 border border-gray-700 rounded-xl overflow-hidden flex flex-col h-full">
 
           <!-- Card header -->
@@ -576,6 +576,19 @@
                   @click="open = !open;
                           if (open && activeAgent && (!agentToolsState || agentToolsState._agentId !== activeAgent.id)) {
                             loadAgentTools(activeAgent.id);
+                          }
+                          if (open) {
+                            $nextTick(() => {
+                              const panel = $el.closest('[data-chat-panel]');
+                              const dd = $refs.tdd;
+                              if (!panel || !dd) return;
+                              const btnRect = $el.getBoundingClientRect();
+                              const panelRect = panel.getBoundingClientRect();
+                              const width = Math.max(300, panelRect.right - btnRect.left - 12);
+                              const height = Math.max(280, panelRect.bottom - btnRect.bottom - 80);
+                              dd.style.width = width + 'px';
+                              dd.style.maxHeight = height + 'px';
+                            });
                           }"
                   data-testid="stamp-t"
                   class="text-[10px] px-1.5 py-0.5 rounded font-mono border transition-colors cursor-pointer flex items-center gap-1"
@@ -592,7 +605,9 @@
                   </span>
                 </button>
                 <div x-show="open" x-cloak
-                  class="absolute top-full left-0 mt-1 w-80 max-h-[26rem] overflow-y-auto bg-gray-900 border border-gray-700 rounded-lg shadow-xl z-50">
+                  x-ref="tdd"
+                  class="absolute top-full left-0 mt-1 overflow-y-auto bg-gray-900 border border-gray-700 rounded-lg shadow-xl z-50"
+                  style="width: 56rem; max-height: 22rem;">
 
                   <!-- Header — shows loading state + agent context -->
                   <div class="px-3 py-2 text-[9px] text-gray-600 uppercase tracking-wider border-b border-gray-800 flex items-center justify-between sticky top-0 bg-gray-900 z-10">
@@ -612,27 +627,29 @@
                       <span class="text-gray-700 normal-case"
                         x-text="(() => { const r = agentToolsState?.readiness || []; const ok = r.filter(t => t.status === 'ready').length; return ok + '/' + r.length + ' ready'; })()"></span>
                     </div>
-                    <template x-for="t in (agentToolsState?.readiness || [])" :key="'rdy-' + t.name">
-                      <div class="flex items-center gap-2 px-3 py-1 text-[11px]">
-                        <span x-show="t.status === 'ready'" class="text-green-400 flex-shrink-0" title="Ready">&#x2705;</span>
-                        <span x-show="t.status !== 'ready'" class="text-yellow-400 flex-shrink-0" title="Needs configuration">&#x26a0;&#xfe0f;</span>
-                        <div class="flex-1 min-w-0">
-                          <span class="text-gray-300 font-mono" x-text="t.name"></span>
-                          <span x-show="t.optional" class="text-gray-600 text-[9px] ml-1">(optional)</span>
+                    <div class="grid grid-cols-2" style="column-gap: 0.25rem;">
+                      <template x-for="t in (agentToolsState?.readiness || [])" :key="'rdy-' + t.name">
+                        <div class="flex items-start gap-2 px-3 py-1 text-[11px]">
+                          <span x-show="t.status === 'ready'" class="text-green-400 flex-shrink-0 mt-0.5" title="Ready">&#x2705;</span>
+                          <span x-show="t.status !== 'ready'" class="text-yellow-400 flex-shrink-0 mt-0.5" title="Needs configuration">&#x26a0;&#xfe0f;</span>
+                          <div class="flex-1 min-w-0">
+                            <div class="flex items-center gap-1.5">
+                              <span class="text-gray-100 font-mono" x-text="t.name"></span>
+                              <span x-show="t.optional" class="text-gray-600 text-[9px]">(optional)</span>
+                            </div>
+                            <template x-if="t.status === 'needs_config'">
+                              <a :href="t.setup_url" target="_blank" rel="noopener"
+                                class="block text-yellow-500 text-[10px] hover:text-yellow-300 underline underline-offset-2 truncate"
+                                :title="t.reason || 'needs API key'"
+                                x-text="t.reason || 'needs API key'"></a>
+                            </template>
+                            <template x-if="t.status === 'needs_preset'">
+                              <span class="block text-orange-500 text-[10px] truncate" :title="t.reason || 'needs preset'" x-text="t.reason || 'needs preset'"></span>
+                            </template>
+                          </div>
                         </div>
-                        <template x-if="t.status === 'ready'">
-                          <span class="text-green-600 text-[9px]">ready</span>
-                        </template>
-                        <template x-if="t.status === 'needs_config'">
-                          <a :href="t.setup_url" target="_blank" rel="noopener"
-                            class="text-yellow-500 text-[9px] hover:text-yellow-300 underline underline-offset-2"
-                            x-text="t.reason || 'needs API key'"></a>
-                        </template>
-                        <template x-if="t.status === 'needs_preset'">
-                          <span class="text-orange-500 text-[9px]" x-text="t.reason || 'needs preset'"></span>
-                        </template>
-                      </div>
-                    </template>
+                      </template>
+                    </div>
                     <div class="px-3 py-1.5 text-[10px] text-gray-600 border-b border-gray-800 mb-1">
                       Type <span class="font-mono text-gray-500">/setup tools</span> in chat to configure missing tools.
                     </div>
@@ -645,20 +662,22 @@
                       <span class="text-gray-700 normal-case"
                         x-text="'(' + (agentToolsState?.toolsets?.enabled?.length || 0) + '/' + (agentToolsState?.toolsets?.available?.length || 0) + ')'"></span>
                     </div>
-                    <template x-for="t in (agentToolsState?.toolsets?.available || [])" :key="'ts-' + t.name">
-                      <label class="flex items-start gap-2 px-3 py-1.5 text-[11px] hover:bg-gray-800 cursor-pointer">
-                        <input type="checkbox"
-                          :checked="(agentToolsState?.toolsets?.enabled || []).includes(t.name)"
-                          :disabled="!!(agentToolsToggling && agentToolsToggling['ts:' + t.name])"
-                          @change="toggleToolset(activeAgent.id, t.name, $event.target.checked)"
-                          class="mt-0.5 h-3 w-3 rounded border-gray-700 bg-gray-900 text-indigo-500 focus:ring-0 focus:ring-offset-0 flex-shrink-0">
-                        <div class="flex-1 min-w-0">
-                          <div class="text-gray-200 font-mono" x-text="t.name"></div>
-                          <div class="text-gray-600 text-[10px] leading-tight" x-text="t.description" x-show="t.description"></div>
-                        </div>
-                        <span x-show="agentToolsToggling && agentToolsToggling['ts:' + t.name]" class="text-yellow-500 text-[9px]">…</span>
-                      </label>
-                    </template>
+                    <div class="grid grid-cols-3" style="column-gap: 0.25rem;">
+                      <template x-for="t in (agentToolsState?.toolsets?.available || [])" :key="'ts-' + t.name">
+                        <label class="flex items-start gap-2 px-3 py-1.5 text-[11px] hover:bg-gray-800 cursor-pointer" :title="t.description || t.name">
+                          <input type="checkbox"
+                            :checked="(agentToolsState?.toolsets?.enabled || []).includes(t.name)"
+                            :disabled="!!(agentToolsToggling && agentToolsToggling['ts:' + t.name])"
+                            @change="toggleToolset(activeAgent.id, t.name, $event.target.checked)"
+                            class="mt-0.5 h-3 w-3 rounded border-gray-700 bg-gray-900 text-indigo-500 focus:ring-0 focus:ring-offset-0 flex-shrink-0">
+                          <div class="flex-1 min-w-0">
+                            <div class="text-gray-100 font-mono" x-text="t.name"></div>
+                            <div class="text-gray-400 text-[11px] leading-snug line-clamp-2" x-text="t.description" x-show="t.description"></div>
+                          </div>
+                          <span x-show="agentToolsToggling && agentToolsToggling['ts:' + t.name]" class="text-yellow-500 text-[9px]">…</span>
+                        </label>
+                      </template>
+                    </div>
                   </div>
 
                   <!-- Presets (infrastructure layer) -->
@@ -669,20 +688,22 @@
                       <span class="text-gray-700 normal-case"
                         x-text="'(' + (agentToolsState?.presets?.applied?.length || 0) + '/' + (agentToolsState?.presets?.available?.length || 0) + ')'"></span>
                     </div>
-                    <template x-for="p in (agentToolsState?.presets?.available || [])" :key="'pre-' + p.name">
-                      <label class="flex items-start gap-2 px-3 py-1.5 text-[11px] hover:bg-gray-800 cursor-pointer">
-                        <input type="checkbox"
-                          :checked="(agentToolsState?.presets?.applied || []).includes(p.name)"
-                          :disabled="!!(agentToolsToggling && agentToolsToggling['pre:' + p.name])"
-                          @change="togglePreset(activeAgent.id, p.name, $event.target.checked)"
-                          class="mt-0.5 h-3 w-3 rounded border-gray-700 bg-gray-900 text-emerald-500 focus:ring-0 focus:ring-offset-0 flex-shrink-0">
-                        <div class="flex-1 min-w-0">
-                          <div class="text-gray-200 font-mono" x-text="p.name"></div>
-                          <div class="text-gray-600 text-[10px] leading-tight" x-text="p.description" x-show="p.description"></div>
-                        </div>
-                        <span x-show="agentToolsToggling && agentToolsToggling['pre:' + p.name]" class="text-yellow-500 text-[9px]">…</span>
-                      </label>
-                    </template>
+                    <div class="grid grid-cols-3" style="column-gap: 0.25rem;">
+                      <template x-for="p in (agentToolsState?.presets?.available || [])" :key="'pre-' + p.name">
+                        <label class="flex items-start gap-2 px-3 py-1.5 text-[11px] hover:bg-gray-800 cursor-pointer" :title="p.description || p.name">
+                          <input type="checkbox"
+                            :checked="(agentToolsState?.presets?.applied || []).includes(p.name)"
+                            :disabled="!!(agentToolsToggling && agentToolsToggling['pre:' + p.name])"
+                            @change="togglePreset(activeAgent.id, p.name, $event.target.checked)"
+                            class="mt-0.5 h-3 w-3 rounded border-gray-700 bg-gray-900 text-emerald-500 focus:ring-0 focus:ring-offset-0 flex-shrink-0">
+                          <div class="flex-1 min-w-0">
+                            <div class="text-gray-100 font-mono" x-text="p.name"></div>
+                            <div class="text-gray-400 text-[11px] leading-snug line-clamp-2" x-text="p.description" x-show="p.description"></div>
+                          </div>
+                          <span x-show="agentToolsToggling && agentToolsToggling['pre:' + p.name]" class="text-yellow-500 text-[9px]">…</span>
+                        </label>
+                      </template>
+                    </div>
                     <div x-show="(agentToolsState?.presets?.available?.length || 0) === 0"
                       class="px-3 py-2 text-[10px] text-gray-600">
                       No presets available in gateway/policies/presets/.
@@ -771,15 +792,30 @@
 
           <!-- Messages (fills remaining height) -->
           <div id="chat-messages" class="chat-scroll px-4 py-3 space-y-3">
-            <!-- Ghost logo — fades out on first message -->
+            <!-- Ghost logo + starter hints — fades out on first message -->
             <div x-show="chatMessages.length === 0"
                  x-transition:leave="transition ease-out duration-500"
                  x-transition:leave-start="opacity-100"
                  x-transition:leave-end="opacity-0"
-                 class="flex items-end justify-center pb-6 h-full pointer-events-none select-none"
-                 style="opacity:0.15">
+                 class="flex flex-col items-center justify-center pb-6 h-full select-none">
               <img src="/static/logo.svg" aria-hidden="true"
-                   style="width:100px;height:100px;object-fit:contain;filter:hue-rotate(var(--hue-deg,0deg));">
+                   class="pointer-events-none"
+                   style="width:100px;height:100px;object-fit:contain;filter:hue-rotate(var(--hue-deg,0deg));opacity:0.15;">
+              <div class="mt-6 max-w-md text-center space-y-3" style="opacity:0.55">
+                <div class="text-xs uppercase tracking-widest text-gray-500">Getting started</div>
+                <div class="text-[11px] text-gray-400 leading-relaxed">
+                  Type
+                  <button @click="chatInput = '/setup tools'; $nextTick(() => document.querySelector('[data-testid=chat-input]')?.focus())"
+                          class="font-mono text-[var(--accent)] hover:underline cursor-pointer">/setup&nbsp;tools</button>
+                  to configure API keys for web search, vision, and other tools.
+                </div>
+                <div class="text-[11px] text-gray-500 leading-relaxed">
+                  Click the <span class="font-mono text-gray-300">T</span> pill above to pick which toolsets and network presets this agent can use.
+                </div>
+                <div class="text-[11px] text-gray-600 leading-relaxed">
+                  Or just send a message below to start chatting.
+                </div>
+              </div>
             </div>
             <template x-for="(msg,i) in chatMessages" :key="i">
               <div class="chat-msg-anim" :class="msg.role==='user' ? 'text-right' : 'text-left'">
@@ -2397,7 +2433,8 @@
                        class="mt-2 space-y-1.5 pt-2 border-t border-red-900/50 min-w-0 max-w-full overflow-hidden">
                     <p class="text-[10px] text-red-400 leading-snug">
                       Delete <span class="font-semibold" x-text="a.name"></span>?
-                      This destroys the agent and its sandbox. Type
+                      This wipes the agent, its sandbox, memories, logs,
+                      sessions, and run history. Cannot be undone. Type
                       <span class="font-mono text-red-300" x-text="a.name"></span>
                       to confirm.
                     </p>
