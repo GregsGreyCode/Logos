@@ -1,0 +1,34 @@
+# M11 — Thin wrapper around the upstream hermes-agent image.
+#
+# Adds the 'sandbox' user (uid/gid 10001) required by OpenShell and
+# re-installs hermes-agent as a non-editable package so it lands in
+# /usr/local/lib/python3.13/dist-packages/ (readable by the sandbox
+# user). OpenShell's sandboxing policy blocks /opt/ at runtime, so the
+# editable install at /opt/hermes is inaccessible from inside the sandbox.
+#
+# Build:
+#   docker build -f docker/Dockerfile.hermes-upstream -t hermes-sandbox:m11 docker/
+#
+# The upstream image (hermes-upstream:latest) is built from:
+#   projects/knowledge-repos/hermes-agent/Dockerfile
+
+FROM hermes-upstream:latest
+
+# OpenShell sandbox agent needs iproute2 for network namespace setup.
+# The upstream hermes image is debian-based but doesn't include it.
+RUN apt-get update && apt-get install -y --no-install-recommends iproute2 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Re-install hermes-agent as a non-editable package. The upstream image
+# uses `pip install -e ".[all]"` which creates an editable install that
+# reads source from /opt/hermes — but OpenShell's sandbox policy blocks
+# /opt/ at runtime. A non-editable install copies the code into
+# site-packages where the sandbox user can read it.
+RUN pip install --no-cache-dir --break-system-packages /opt/hermes
+
+# OpenShell requires a 'sandbox' user with uid/gid 10001
+RUN groupadd -g 10001 sandbox && \
+    useradd -u 10001 -g sandbox -m -s /bin/bash sandbox
+
+# Config directory (populated at runtime via `openshell sandbox upload`)
+RUN mkdir -p /tmp/hermes && chown sandbox:sandbox /tmp/hermes
