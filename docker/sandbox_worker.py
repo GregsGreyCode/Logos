@@ -1,65 +1,58 @@
 """
-Sandbox Worker — per-task ``AIAgent.run_conversation`` bootstrap.
+Sandbox Worker — one-shot task dispatcher for OpenShell sandboxes.
 
-Runs inside the sandbox pod, invoked fresh for every task dispatch via
-``openshell sandbox exec --no-tty --name <sandbox> -- python3
-/app/sandbox_worker.py``. The gateway pipes one task JSON on stdin +
-closes stdin, the worker reads it, instantiates ``AIAgent``, runs
-``agent.run_conversation(...)`` in a thread executor (streaming
-token/thinking/tool_progress frames to stdout via callbacks), emits
-the terminal ``task_result`` frame, and exits.
-
-M10 restoration (2026-04-12): earlier Plan-A-prime versions of this
-file were a naive chat-completion forwarder — they POSTed directly to
-``inference.local/v1/chat/completions`` with no ``tools`` field, never
-imported ``AIAgent``, and skipped memory writes / skill management /
-tool use / delegation / run recording / nudges entirely. This version
-restores the full Hermes agent loop inside the sandbox, making memory
-and skill writes happen during chats for the first time since the
-original Plan A reverse-WebSocket worker was retired.
-
-Cold-start cost per dispatch: ~0.5–1s — Python interpreter + OpenAI
-SDK + ``agents.hermes.agent`` import. Amortized over multi-second
-inference calls. The sandbox pod stays alive between dispatches
-(``sleep infinity``); only this worker process is ephemeral.
+Runs inside the sandbox pod, invoked fresh for every task by the Logos
+gateway via ``openshell sandbox exec --no-tty --name <sandbox> --
+python3 /app/sandbox_worker.py``. The gateway pipes one task JSON on
+stdin + closes stdin, the worker reads it, runs the LLM call via
+``https://inference.local/v1`` (OpenShell's privacy router), streams
+back token/thinking/result events as JSON lines on stdout, and exits.
+Cold-start cost per task: ~0.2s (python import + aiohttp import). The
+sandbox pod stays alive between tasks; only the worker process is
+ephemeral.
 
 Why one-shot and not a persistent stdin/stdout loop
 ────────────────────────────────────────────────────
-Directly tested and documented in ``gateway/worker_registry.py:25-33``:
-``openshell sandbox exec --no-tty`` refuses to invoke the in-sandbox
-command until stdin reaches EOF. Writing bytes without closing the
-pipe does NOT unblock it. Any design that keeps stdin open for ongoing
-dispatch or bidirectional control is physically impossible on this
-transport. The per-task subprocess model matches the primitive's
-actual contract — each task gets a fresh process, stdin closes on
-task delivery, stdout streams until task_result, process exits.
+Earlier versions of this file ran a persistent loop reading multiple
+tasks from stdin. That was impossible on ``openshell sandbox exec``:
+the exec primitive refuses to invoke the in-sandbox process until
+stdin reaches EOF. Writing bytes isn't enough — the gRPC exec stream
+sits blocked waiting for the stdin write end to close. Proven with
+direct side-by-side tests:
 
-Protocol (line-delimited JSON on stdin/stdout) — unchanged from the
-previous revision so ``gateway/worker_registry.py:dispatch_task``
-parses the same frames:
+    openshell sandbox exec --no-tty ... -- python3 -u -c 'print("x")'
+        < /dev/null              → runs in ~1s, "x" on stdout
+        < empty_fifo_stay_open   → timeout, nothing on stdout ever
+
+So any design that keeps stdin open for ongoing dispatch is a dead
+end on this transport. Instead we spawn one subprocess per task, pipe
+the task + close stdin immediately, and stream stdout until exit. The
+gateway's ``WorkerRegistry.dispatch_task`` handles that lifecycle.
+
+Why stdin/stdout and not HTTP:
+    * ``openshell sandbox exec`` is the blessed gRPC/mTLS control path
+      and gives us a ready-made bidirectional stream — no new transport
+      to build, no port-forward to manage, no CORS, no TLS certs.
+    * Matches OpenShell's isolation model: sandbox is a passive
+      execution environment, the gateway drives.
+    * Simple to debug: ``echo '{"type":"task",...}' | openshell sandbox
+      exec -n <name> -- python3 /app/sandbox_worker.py`` is the exact
+      same primitive a human operator uses at the shell.
+
+Protocol (line-delimited JSON on stdin/stdout):
 
     Gateway → worker (stdin, one line then EOF):
-        {"type":"run_conversation" (or "task"),
-         "task_id":"<uuid>",
-         "session_id":"<session-key>",
-         "message":"<user message>",
-         "history":[<prior messages>],
-         "context_prompt":"<soul + user context, built host-side>",
-         "toolsets":["hermes-cli", ...],
-         "max_iterations":90,
-         "model":"<model name>" (optional override)}
+        {"type":"task","task_id":"<id>","message":"...","history":[...],
+         "context_prompt":"...","model":"..."}
 
     Worker → gateway (stdout):
-        {"type":"ready","worker_id":"..."}                 (sanity, first line)
-        {"type":"thinking","task_id":"...","content":"..."}  (streamed reasoning)
-        {"type":"token","task_id":"...","content":"..."}     (streamed text deltas)
-        {"type":"tool_progress","task_id":"...",
-         "tool":"<name>","preview":"..."}                    (per-tool)
+        {"type":"ready","worker_id":"..."}           (sanity, first line)
+        {"type":"thinking","task_id":"...","content":"..."}  (streamed)
+        {"type":"token","task_id":"...","content":"..."}     (streamed)
         {"type":"task_result","task_id":"...","status":"ok",
-         "final_response":"...","api_calls":N,
-         "tools_used":[...]}                                 (last line, ok)
+         "final_response":"..."}                              (last line, ok)
         {"type":"task_result","task_id":"...","status":"error",
-         "final_response":"","error":"..."}                  (last line, err)
+         "error":"..."}                                       (last line, err)
 
 Worker exits cleanly (returncode=0) after emitting task_result.
 Logging goes to **stderr** (separate from the stdout protocol channel)
@@ -211,231 +204,165 @@ async def read_stdin_line(
 
 
 # ── Task handler ──────────────────────────────────────────────────────────
-#
-# M10 restoration (2026-04-12): instantiates ``AIAgent`` per dispatch and
-# calls ``run_conversation`` with streaming callbacks that emit protocol
-# frames to stdout. The earlier chat-completion forwarder that lived here
-# is gone — see the module docstring for the full story.
-
 
 async def _handle_task(task: Dict[str, Any], config: Dict[str, Any]) -> None:
-    """Execute one task end-to-end via ``AIAgent.run_conversation``.
-
-    Instantiates an ephemeral ``AIAgent`` with streaming callbacks wired
-    to ``emit()`` so tool progress, reasoning content, and response text
-    stream back to the gateway as protocol frames during the run. The
-    terminal ``task_result`` frame reports the final response plus
-    metadata (api_calls, tools_used) when the agent returns.
-
-    Persistent state (memories, skills, sessions, logs) lives on disk
-    under ``$HERMES_HOME`` inside the sandbox pod and survives across
-    dispatches because the pod runs ``sleep infinity`` between them.
-    Only the Python process is ephemeral, not the data.
-
-    Scope (Phase 1): the agent uses ``ephemeral_system_prompt`` = the
-    ``context_prompt`` the gateway built (which already includes the
-    soul + user/session context via ``build_agent_system_prompt``), so
-    ``skip_context_files=True`` is set to avoid re-reading SOUL.md /
-    AGENTS.md from the sandbox filesystem. Memory IS loaded
-    (``skip_memory=False``, the default) so ``memory_tool`` writes
-    persist to ``$HERMES_HOME/memories/``.
-
-    Error paths always emit a terminal ``task_result`` frame with
-    ``status="error"`` and the error string so the gateway can render
-    the failure as an in-chat error bubble instead of hanging.
-    """
+    """Execute one task end-to-end, streaming events to stdout."""
     task_id = task.get("task_id", "")
     message = task.get("message", "")
     history = task.get("history", [])
     context_prompt = task.get("context_prompt", "")
-    session_id = task.get("session_id") or task_id
 
-    logger.info(
-        "Task %s: message=%r session=%s history=%d",
-        task_id, message[:80], session_id, len(history) if isinstance(history, list) else 0,
-    )
+    logger.info("Task %s: message=%r", task_id, message[:80])
 
-    def _emit_error(reason: str) -> None:
+    try:
+        response = await _run_inference(message, history, context_prompt, config, task_id)
+        emit({
+            "type": "task_result",
+            "task_id": task_id,
+            "status": "ok",
+            # Canonical key the gateway's _handle_chat looks for. Sending
+            # "response" here instead of "final_response" meant the
+            # assistant turn was never appended to the transcript —
+            # every subsequent turn the model saw history as
+            # user, user, user, … (see commit comment on the original
+            # _handle_task for the full story).
+            "final_response": response,
+        })
+    except BrokenPipeError:
+        # Gateway closed stdout mid-task. Let the main loop handle exit.
+        raise
+    except Exception as exc:
+        logger.error("Task %s failed: %s", task_id, exc)
         try:
             emit({
                 "type": "task_result",
                 "task_id": task_id,
                 "status": "error",
-                "final_response": "",
-                "error": reason,
+                "error": str(exc),
             })
         except BrokenPipeError:
             raise
 
-    # ── Import the agent lazily so a clean startup failure (missing
-    # dep, broken venv) surfaces as a task_result error rather than a
-    # Python traceback on stderr that the gateway has to guess at.
-    try:
-        from agents.hermes.agent import AIAgent
-    except Exception as exc:
-        logger.exception("Task %s: failed to import AIAgent", task_id)
-        _emit_error(f"AIAgent import failed: {exc}")
-        return
 
-    # ── Resolve inference config ──
-    # Task payload overrides the instance config when fields are present.
-    # The final inference call goes to inference.local via the OpenShell
-    # privacy router, which injects the provider credential at egress —
-    # the sandbox never sees the real API key.
-    model = (
-        task.get("model")
-        or config.get("model")
-        or os.environ.get("HERMES_MODEL", "")
-    )
+# ── Inference ─────────────────────────────────────────────────────────────
+
+async def _run_inference(
+    message: str,
+    history: list,
+    context_prompt: str,
+    config: Dict[str, Any],
+    task_id: str,
+) -> str:
+    """Call the LLM via OpenAI-compatible API, streaming tokens back via emit()."""
+    import aiohttp
+
     base_url = os.environ.get("OPENAI_BASE_URL", "https://inference.local/v1")
     api_key = os.environ.get("OPENAI_API_KEY", "unused")
-    toolsets = task.get("toolsets") or config.get("toolsets") or ["hermes-cli"]
-    try:
-        max_iterations = int(
-            task.get("max_iterations")
-            or os.environ.get("HERMES_MAX_ITERATIONS", "90")
-        )
-    except (TypeError, ValueError):
-        max_iterations = 90
+    model = config.get("model", os.environ.get("HERMES_MODEL", ""))
 
     if not model:
-        _emit_error(
-            "No model configured — set `model` in the task payload or "
-            "/tmp/hermes/instance-config.json, or set HERMES_MODEL in the "
-            "sandbox environment."
+        fallback = (
+            f"[sandbox worker {config.get('worker_id', '?')}] "
+            f"Connected! No model configured — set model in agent config to enable inference."
         )
-        return
+        emit({"type": "token", "task_id": task_id, "content": fallback})
+        return fallback
 
-    # ── Streaming callbacks ──
-    # AIAgent invokes these from its main thread during response
-    # streaming and tool execution. Each callback emits one protocol
-    # frame per event. BrokenPipeError propagates up so the outer
-    # loop can exit cleanly if the gateway tears down mid-task.
-    def _on_tool_progress(tool_name: str, preview: Optional[str] = None,
-                          args: Optional[dict] = None) -> None:
-        try:
-            emit({
-                "type": "tool_progress",
-                "task_id": task_id,
-                "tool": tool_name or "",
-                "preview": preview or "",
-            })
-        except BrokenPipeError:
-            raise
-        except Exception as exc:
-            logger.debug("tool_progress emit failed: %s", exc)
+    messages = []
+    if context_prompt:
+        messages.append({"role": "system", "content": context_prompt})
+    for h in history:
+        role = h.get("role", "user")
+        content = h.get("content", "")
+        if content:
+            messages.append({"role": role, "content": content})
+    messages.append({"role": "user", "content": message})
 
-    def _on_thinking(content: str) -> None:
-        if not content:
-            return
-        try:
-            emit({"type": "thinking", "task_id": task_id, "content": content})
-        except BrokenPipeError:
-            raise
-        except Exception as exc:
-            logger.debug("thinking emit failed: %s", exc)
-
-    def _on_stream(delta: str) -> None:
-        # ``stream_callback`` fires with each text delta during response
-        # streaming. AIAgent's upstream use case is TTS; we repurpose it
-        # for SSE token events so the browser gets the typewriter effect.
-        if not delta:
-            return
-        try:
-            emit({"type": "token", "task_id": task_id, "content": delta})
-        except BrokenPipeError:
-            raise
-        except Exception as exc:
-            logger.debug("token emit failed: %s", exc)
-
-    # ── Instantiate AIAgent ──
-    try:
-        agent = AIAgent(
-            model=model,
-            base_url=base_url,
-            api_key=api_key,
-            enabled_toolsets=toolsets,
-            session_id=session_id,
-            ephemeral_system_prompt=context_prompt or None,
-            max_iterations=max_iterations,
-            quiet_mode=True,
-            verbose_logging=False,
-            # Gateway already built the full system prompt including
-            # soul + session context — skip re-reading context files
-            # from the sandbox filesystem to avoid duplication.
-            skip_context_files=True,
-            # Memory IS loaded so memory_tool has a backing store inside
-            # the sandbox; writes persist to $HERMES_HOME/memories/.
-            # This is the M10 core change — memory writes during chats.
-            skip_memory=False,
-            tool_progress_callback=_on_tool_progress,
-            thinking_callback=_on_thinking,
-        )
-    except Exception as exc:
-        logger.exception("Task %s: AIAgent instantiation failed", task_id)
-        _emit_error(f"AIAgent init failed: {exc}")
-        return
-
-    # ── Run the conversation in a thread executor ──
-    # run_conversation is synchronous (returns a dict). Running it in
-    # the default thread executor keeps the asyncio event loop free so
-    # emit() writes and logger calls don't block on the agent's I/O.
-    loop = asyncio.get_running_loop()
-    try:
-        result = await loop.run_in_executor(
-            None,
-            lambda: agent.run_conversation(
-                user_message=message,
-                conversation_history=history if isinstance(history, list) else [],
-                task_id=task_id,
-                stream_callback=_on_stream,
-            ),
-        )
-    except BrokenPipeError:
-        raise
-    except Exception as exc:
-        logger.exception("Task %s: run_conversation raised", task_id)
-        _emit_error(f"run_conversation failed: {exc}")
-        return
-
-    # ── Terminal task_result frame ──
-    if not isinstance(result, dict):
-        logger.warning("Task %s: run_conversation returned non-dict %r", task_id, type(result))
-        _emit_error(f"run_conversation returned unexpected type: {type(result).__name__}")
-        return
-
-    final_response = result.get("final_response", "") or ""
-    api_calls = result.get("api_calls", 0) or 0
-    tools_used = result.get("tools_used", []) or []
-    error_str = result.get("error", "") or ""
-    completed = result.get("completed", True)
-    interrupted = result.get("interrupted", False)
-
-    # Treat interrupt as a success with a truncated response; only
-    # explicit errors (exception or error field) produce status=error.
-    if error_str and not interrupted:
-        status = "error"
-    else:
-        status = "ok"
-
-    out: Dict[str, Any] = {
-        "type": "task_result",
-        "task_id": task_id,
-        "status": status,
-        "final_response": final_response,
-        "api_calls": api_calls,
-        "tools_used": tools_used,
-        "completed": bool(completed),
+    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+    # max_tokens=16384 — generous ceiling so reasoning models like
+    # qwen3.5-9b have room to finish thinking AND emit a visible answer.
+    # Without this LM Studio's default cuts the response off mid-reasoning
+    # (~600-1000 tokens) and the user sees a truncated thinking trace
+    # with no actual reply. The model still stops naturally on its own
+    # </think> + answer; this is an upper bound, not a target.
+    payload = {
+        "model": model,
+        "messages": messages,
+        "stream": True,
+        "max_tokens": 16384,
     }
-    if error_str:
-        out["error"] = error_str
-    if interrupted:
-        out["interrupted"] = True
+    accumulated = ""
+    accumulated_reasoning = ""
 
-    try:
-        emit(out)
-    except BrokenPipeError:
-        raise
+    ssl_ctx = None
+    ca_bundle = "/etc/openshell-tls/ca.crt"
+    if os.path.exists(ca_bundle):
+        import ssl
+        ssl_ctx = ssl.create_default_context(cafile=ca_bundle)
+
+    # ClientTimeout=600 (10 min) matches the patched OpenShell router ceiling
+    # in crates/openshell-router/src/lib.rs (was 60s, bumped to 600s — see
+    # TASKS.md #22 for the full debug story). Real inference calls beyond 120s
+    # would otherwise get clipped client-side even though the proxy now
+    # allows up to 10 minutes. Worker and proxy budgets are aligned.
+    async with aiohttp.ClientSession(trust_env=True) as session:
+        async with session.post(
+            f"{base_url}/chat/completions", json=payload, headers=headers,
+            ssl=ssl_ctx, timeout=aiohttp.ClientTimeout(total=600),
+        ) as resp:
+            if resp.status != 200:
+                body = await resp.text()
+                raise RuntimeError(f"LLM API returned {resp.status}: {body[:200]}")
+
+            async for line in resp.content:
+                line = line.decode("utf-8", errors="replace").strip()
+                if not line.startswith("data: "):
+                    continue
+                data_str = line[6:]
+                if data_str == "[DONE]":
+                    break
+                try:
+                    chunk = json.loads(data_str)
+                    delta = chunk.get("choices", [{}])[0].get("delta", {})
+                    # Reasoning models (qwen3.5, gpt-oss, etc) emit their
+                    # internal thinking via LM Studio's reasoning extension
+                    # to the OpenAI-compat format. The field name varies
+                    # by model + LM Studio version:
+                    #   * `reasoning_content` — qwen3.5-9b streaming
+                    #   * `reasoning`         — gpt-oss-20b non-streaming
+                    # Read both so we don't silently drop the entire output
+                    # of any model that picks the other field.
+                    reasoning = (
+                        delta.get("reasoning_content")
+                        or delta.get("reasoning")
+                        or ""
+                    )
+                    if reasoning:
+                        accumulated_reasoning += reasoning
+                        emit({"type": "thinking", "task_id": task_id, "content": reasoning})
+                    content = delta.get("content", "")
+                    if content:
+                        accumulated += content
+                        emit({"type": "token", "task_id": task_id, "content": content})
+                except json.JSONDecodeError:
+                    continue
+
+    # Fallback: if the model emitted ONLY reasoning and no actual content
+    # (qwen3.5 has been observed doing this on short prompts under certain
+    # chat templates), surface the reasoning as the visible reply so the
+    # caller sees something instead of an empty string.
+    if not accumulated and accumulated_reasoning:
+        logger.info(
+            "Inference returned only reasoning_content (%d chars) — "
+            "falling back to reasoning as visible reply",
+            len(accumulated_reasoning),
+        )
+        emit({
+            "type": "token", "task_id": task_id,
+            "content": accumulated_reasoning,
+        })
+        return accumulated_reasoning
+    return accumulated
 
 
 # ── One-shot entry point ──────────────────────────────────────────────────

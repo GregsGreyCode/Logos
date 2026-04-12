@@ -1,156 +1,50 @@
-# Hermes agent sandbox image — runs the full AIAgent loop per dispatch.
+# Minimal sandbox image for the Hermes agent worker.
 #
-# M10 restoration (2026-04-12). Replaces the earlier minimal image (python3
-# + aiohttp + sandbox_worker.py forwarder) with a full Logos install so
-# `from agents.hermes.agent import AIAgent` resolves inside the sandbox
-# and `AIAgent.run_conversation` can execute the real tool loop per task.
+# Plan A architecture (TASKS.md #24): the container idles with `sleep
+# infinity` until the host Logos gateway calls
+# `openshell sandbox exec --no-tty --name <sandbox> -- python3
+# /app/sandbox_worker.py`, at which point the worker runs inside the
+# sandbox and talks to the gateway via stdin/stdout. The worker calls
+# the LLM via https://inference.local/v1 (OpenShell's privacy router).
 #
-# Architecture (unchanged from Plan A-prime — only the WORKER code changes):
-# the container runs `sleep infinity` as PID 1. Every chat dispatch spawns
-# a fresh `openshell sandbox exec --no-tty --name <sandbox> -- python3
-# /app/sandbox_worker.py` subprocess that instantiates AIAgent, runs
-# run_conversation, streams events back over stdout, and exits.
+# Build:
+#   docker build -f docker/Dockerfile.hermes-sandbox -t hermes-sandbox:local docker/
 #
-# Why python:3.11-slim and not ubuntu:24.04
-# ─────────────────────────────────────────
-# The install pattern is the exact one proven in docker/Dockerfile.docker-
-# sandbox (DockerSandboxExecutor's image). Slim base, uv for fast deps,
-# [messaging] extras (brings aiohttp, python-telegram-bot, discord.py,
-# slack-sdk, argon2-cffi — the same set that's already proven to boot
-# AIAgent). We deliberately avoid [all] because it pulls in k8s client,
-# sounddevice (ALSA deps), faster-whisper, ptyprocess, and other packages
-# the sandbox never needs — hundreds of MB of bloat with no payoff.
-#
-# Build — IMPORTANT: run from the repo root, not from docker/
-# ───────────────────────────────────────────────────────────
-# The final `COPY . /app/` layer needs the full Logos source tree as
-# its build context so pip's editable install resolves the internal
-# `agent`, `agents`, `tools`, `core`, etc. packages.
-#
-#   cd <repo-root>
-#   docker build -f docker/Dockerfile.hermes-sandbox -t hermes-sandbox:local .
-#
-# OpenShellExecutor prefers an already-built tag via the
-# LOGOS_OPENSHELL_IMAGE env var when present; set it to
-# `hermes-sandbox:local` after building to avoid letting openshell
-# attempt an auto-build with the wrong context. See
-# gateway/executors/openshell.py:_DEFAULT_IMAGE.
+# Note: Do NOT use COPY --chmod (no BuildKit inside OpenShell's builder).
 
-FROM python:3.11-slim
-
-WORKDIR /app
+FROM ubuntu:24.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-# System deps — minimal set needed by pip's editable install and
-# the agent's runtime diagnostics inside the sandbox.
-#   ca-certificates : HTTPS to inference.local
-#   curl            : uv install + debugging
-#   git             : pip's editable install resolves git-sourced
-#                     submodules if any are referenced
-#   iproute2        : `ss` / `ip` for the agent's network diagnostics
-#                     and the structured log sink's debug probes
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3 \
+    python3-pip \
+    python3-venv \
+    iproute2 \
     ca-certificates \
     curl \
-    git \
-    iproute2 \
- && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/*
 
-# uv — the faster pip used by the top-level Logos Dockerfile and
-# Dockerfile.docker-sandbox. Installed for root only; the venv we
-# create below holds the actual runtime packages.
-RUN curl -LsSf https://astral.sh/uv/install.sh | sh
-ENV PATH="/root/.local/bin:$PATH"
-
-# Install dependencies first (cached layer) — this only rebuilds when
-# pyproject.toml changes, not when Logos source changes. [messaging]
-# brings the full set of Python deps agents.hermes.agent transitively
-# needs without the [all] bloat.
-COPY pyproject.toml ./
-RUN uv venv venv --python 3.11 --clear
-ENV VIRTUAL_ENV="/app/venv"
-ENV PATH="/app/venv/bin:$PATH"
-ENV PYTHONPATH="/app"
-RUN uv pip install ".[messaging]" || true
-
-# Copy the rest of the Logos source. This layer rebuilds on every
-# code change but the expensive pip install above is cached.
-COPY . /app/
-
-# Re-install in editable mode so Python imports from /app/ (the
-# source tree) not site-packages (the cached snapshot from the
-# previous layer). This is the pattern Dockerfile.docker-sandbox
-# and the top-level Dockerfile both use.
-RUN uv pip install -e ".[messaging]"
-
-# Create the sandbox user (uid 10001). Name MUST be `sandbox` because
-# gateway/policies/openshell_default.yaml hardcodes `run_as_user:
-# sandbox` and OpenShell enforces that at container start.
+# Create sandbox user (required by OpenShell — uid 10001)
 RUN groupadd -g 10001 sandbox && \
     useradd -u 10001 -g sandbox -m -s /bin/bash sandbox
 
-# HERMES_HOME layout — where AIAgent reads SOUL.md, writes memories,
-# skills, sessions, and errors.log. Placed under /sandbox (a path the
-# default OpenShell filesystem policy marks read-write) so writes
-# work with Landlock LSM in best-effort mode.
-#
-# AIAgent.__init__ creates missing subdirs lazily via
-# mkdir(parents=True, exist_ok=True) but we pre-create them here so
-# the executor's `openshell sandbox upload` step at spawn time can
-# drop files directly into the right locations without an extra mkdir
-# dance.
-ENV HERMES_HOME=/sandbox/.hermes-data
-RUN mkdir -p \
-      /sandbox/.hermes-data/memories \
-      /sandbox/.hermes-data/skills \
-      /sandbox/.hermes-data/sessions \
-      /sandbox/.hermes-data/logs \
-      /tmp/hermes \
- && chown -R 10001:10001 /sandbox /tmp/hermes /app \
- && chmod 700 /sandbox/.hermes-data
+# App directory
+WORKDIR /app
 
-# Inference endpoint — the OpenShell privacy router intercepts calls
-# to inference.local, injects the provider credential at egress, and
-# forwards to the real upstream. The sandbox never sees the real API
-# key. Both can be overridden at dispatch time via `openshell sandbox
-# exec -e` if a specific task needs a different endpoint.
-ENV OPENAI_BASE_URL=https://inference.local/v1 \
-    OPENAI_API_KEY=unused
+# Create venv and install dependencies
+RUN python3 -m venv /app/venv
+ENV PATH="/app/venv/bin:$PATH"
+RUN pip install --no-cache-dir aiohttp
 
-# mini-swe-agent silencing — agents/hermes/agent.py:65-66 already sets
-# these on import, but exporting them at the container level makes the
-# behavior explicit and means `openshell sandbox exec` subprocesses
-# inherit the values even when the agent module hasn't been imported
-# yet (e.g. early in the worker's startup).
-ENV MSWEA_GLOBAL_CONFIG_DIR=/sandbox/.hermes-data \
-    MSWEA_SILENT_STARTUP=1
+# Copy worker script and entrypoint
+COPY sandbox_worker.py /app/sandbox_worker.py
+COPY entrypoint-hermes.sh /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh
 
-# Final root-level setup before dropping privileges:
-#   1. Symlink sandbox_worker.py to the well-known path dispatch uses.
-#      gateway/worker_registry.py:329-341 hardcodes the command as
-#      `python3 /app/sandbox_worker.py`, so the symlink keeps the
-#      dispatch contract stable across repo layout changes.
-#   2. Make the entrypoint script executable (COPY preserves mode but
-#      `chmod +x` is cheap insurance against a source tree where the
-#      bit got stripped by a copy/unzip step).
-RUN ln -sf /app/docker/sandbox_worker.py /app/sandbox_worker.py \
- && chmod +x /app/docker/entrypoint-hermes.sh
+# Config directory (populated at runtime via --upload)
+RUN mkdir -p /tmp/hermes && chown sandbox:sandbox /tmp/hermes
 
-# Expose 8080 for symmetry with the earlier image revision. The sandbox
-# doesn't actually listen on any port in the Plan A-prime per-task-exec
-# model, but keeping EXPOSE documents intent and lets tooling inspect
-# the container without a special flag.
 EXPOSE 8080
 
-# Drop privileges — everything after this point runs as the sandbox
-# user (uid 10001), matching the OpenShell filesystem policy's
-# `run_as_user: sandbox` enforcement.
-USER sandbox
-
-# Entry point: the sandbox pod stays alive with `sleep infinity` so
-# `openshell sandbox exec` can reach in per-dispatch. The entrypoint
-# script handles graceful shutdown on SIGTERM (`exec sleep infinity`
-# makes sleep PID 1 directly, so SIGTERM is forwarded without a bash
-# signal-forwarding layer).
-CMD ["/app/docker/entrypoint-hermes.sh"]
+CMD ["/app/entrypoint.sh"]

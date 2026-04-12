@@ -910,72 +910,23 @@ class OpenShellExecutor:
                 gateway=openshell_gw, check=True,
             )
 
-            # Upload SOUL.md to $HERMES_HOME so the sandbox agent can
-            # read it. Destination changed from /tmp/hermes/SOUL.md to
-            # /sandbox/.hermes-data/SOUL.md (M10, 2026-04-12) to match
-            # the sandbox image's HERMES_HOME env var — see
-            # docker/Dockerfile.hermes-sandbox:103.
-            #
-            # In the M10 Phase 1 sandbox_worker.py, AIAgent runs with
-            # skip_context_files=True (the gateway builds the full
-            # system prompt host-side via build_agent_system_prompt and
-            # passes it as ephemeral_system_prompt), so SOUL.md isn't
-            # actively read from inside the sandbox today. Keeping the
-            # upload for forward-compat: flipping skip_context_files
-            # to False in Phase 2 works immediately without another
-            # executor change.
+            # Upload SOUL.md — destination path is deliberately left
+            # at the pre-M11 location (/tmp/hermes/SOUL.md) because
+            # the sandbox image is going back to a versioned upstream
+            # hermes build whose HERMES_HOME layout we don't own. When
+            # M11 lands, this upload target gets rewritten against the
+            # agent manifest's config.immutable_dir path (the same way
+            # NemoClaw's agents/hermes/manifest.yaml declares it at
+            # line 37-38 as /sandbox/.hermes).
             if config.soul_name and config.soul_name != "default":
                 soul_dir = _HERMES_HOME / "souls"
                 soul_file = soul_dir / f"{config.soul_name}.md"
                 if soul_file.exists():
                     _openshell(
                         "sandbox", "upload", sandbox_name,
-                        str(soul_file), "/sandbox/.hermes-data/SOUL.md",
+                        str(soul_file), "/tmp/hermes/SOUL.md",
                         gateway=openshell_gw, check=True,
                     )
-
-            # Seed memories so the sandbox agent starts with the host's
-            # canonical MEMORY.md + USER.md if they exist. These are
-            # the two files AIAgent's _memory_store loads via
-            # format_for_system_prompt("memory") / ("user") when
-            # skip_memory=False (the default the M10 sandbox worker
-            # uses, so memory_tool writes during chats persist under
-            # /sandbox/.hermes-data/memories/).
-            #
-            # Best-effort: failures log a warning but don't fail the
-            # spawn. The agent starts with an empty memories dir if
-            # seeding fails or the host files don't exist — the
-            # sandbox's HERMES_HOME layout is pre-created by the
-            # Dockerfile so the agent has somewhere to write even on
-            # a cold start.
-            #
-            # Phase 2 (MISSING.md M10 scope item 8) adds a periodic
-            # sync-back daemon that pulls memory writes from the
-            # sandbox back to the host so state survives sandbox
-            # re-creation. Until that lands, each sandbox starts with
-            # the host snapshot at spawn time and memories persist
-            # only within the pod lifetime (sleep infinity).
-            _memories_src_dir = _HERMES_HOME / "memories"
-            for _memory_name in ("MEMORY.md", "USER.md"):
-                _memory_src = _memories_src_dir / _memory_name
-                if _memory_src.exists() and _memory_src.is_file():
-                    try:
-                        _openshell(
-                            "sandbox", "upload", sandbox_name,
-                            str(_memory_src),
-                            f"/sandbox/.hermes-data/memories/{_memory_name}",
-                            gateway=openshell_gw, check=True,
-                        )
-                        logger.info(
-                            "spawn(%s): seeded memory file %s from host",
-                            sandbox_name, _memory_name,
-                        )
-                    except Exception as _seed_exc:
-                        logger.warning(
-                            "spawn(%s): failed to seed memory %s "
-                            "(non-fatal): %s",
-                            sandbox_name, _memory_name, _seed_exc,
-                        )
 
             # ── Step 3: mark the sandbox ready ──────────────────────
             #
