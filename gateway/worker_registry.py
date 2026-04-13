@@ -354,11 +354,22 @@ class WorkerRegistry:
             task = {"type": "task", **task}
 
         try:
+            # asyncio.StreamReader's default readline buffer is 64 KiB
+            # (asyncio.streams._DEFAULT_LIMIT). A single JSON frame from
+            # the worker can exceed that: a full browser snapshot of a
+            # long page (~15 KiB), wrapped in the untrusted-content tags,
+            # tool_call metadata + usage + token stream state can all
+            # land in one task_result. When readline hits the limit it
+            # silently returns a truncated line → the gateway logs
+            # "malformed stdout line" and never sees task_result →
+            # dispatch times out. Bump the limit to 8 MiB which is
+            # plenty for any realistic single frame.
             proc = await asyncio.create_subprocess_exec(
                 *cmd,
                 stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
+                limit=8 * 1024 * 1024,
             )
         except FileNotFoundError as exc:
             raise ConnectionError(
