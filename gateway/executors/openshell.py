@@ -102,7 +102,7 @@ _PRUNE_GRACE_SECONDS = 90.0
 # cluster's containerd before creating the sandbox (see _ensure_image_in_cluster).
 # Override with the LOGOS_OPENSHELL_IMAGE env var.
 _REPO_ROOT = Path(__file__).parent.parent.parent
-_DEFAULT_IMAGE = os.getenv("LOGOS_OPENSHELL_IMAGE", "hermes-sandbox:m11")
+_DEFAULT_IMAGE = os.getenv("LOGOS_OPENSHELL_IMAGE", "hermes-sandbox:m12")
 
 # Logos agent image registry. When set, the spawn flow will `docker pull`
 # from this registry before importing into the cluster. This ensures images
@@ -159,7 +159,7 @@ def _state_lock() -> Iterator[None]:
 
 # ── Image management helpers ──────────────────────────────────────────────
 
-def _ensure_image_in_cluster(image: str, gateway: str) -> None:
+def _ensure_image_in_cluster(image: str, gateway: str) -> bool:
     """Ensure a Docker image is available in the target OpenShell cluster's containerd.
 
     OpenShell runs k3s inside a Docker container. Each cluster has its own
@@ -171,6 +171,10 @@ def _ensure_image_in_cluster(image: str, gateway: str) -> None:
       1. Resolve the cluster container name from the gateway name.
       2. Check if the image already exists in the cluster's containerd.
       3. If not, ``docker save <image> | docker exec -i <cluster> ctr import -``.
+
+    Returns True if the image had to be imported (slow path, ~60-120s) and
+    False if it was already present (fast path, ~1s). Callers use this to
+    distinguish warm vs cold spawns when recording duration metrics.
 
     The image must already exist in the host Docker daemon (pulled from the
     Logos registry or built locally).
@@ -190,7 +194,7 @@ def _ensure_image_in_cluster(image: str, gateway: str) -> None:
         )
         if check_ref in (result.stdout or ""):
             logger.debug("_ensure_image_in_cluster: %s already in %s", image, cluster_container)
-            return
+            return False
     except Exception:
         pass  # check failed, proceed with import
 
@@ -224,6 +228,7 @@ def _ensure_image_in_cluster(image: str, gateway: str) -> None:
     except Exception as exc:
         logger.error("_ensure_image_in_cluster: failed for %s: %s", image, exc)
         raise
+    return True
 
 
 # ── OpenShell CLI helpers ──────────────────────────────────────────────────
@@ -807,12 +812,57 @@ class OpenShellExecutor:
         # M10 Phase 1 sandbox_worker.py rewrite instantiates AIAgent
         # in-process (talking only to inference.local via the OpenShell
         # privacy router) — nothing reads gateway_url any more.
+        # Bridge tool credentials from the gateway's services DB to the
+        # sandbox via instance-config. The gateway and sandbox are
+        # separate processes — gateway os.environ does NOT propagate —
+        # so we ship the dict in the config and sandbox_worker.py
+        # applies it to its own os.environ before constructing AIAgent.
+        # Without this, tool code like firecrawl_search() reads None
+        # from os.getenv("FIRECRAWL_API_URL") even after you set it
+        # in Config → Tools.
+        try:
+            from gateway import services as _services
+            _service_env = _services._get_credentials() or {}
+        except Exception as _exc:
+            logger.debug("instance-config: services credential lookup failed: %s", _exc)
+            _service_env = {}
+
+        # Website blocklist (Layer 1 URL consent) — pull from agent record
+        # and pass through. sandbox_worker writes it to ~/.hermes/config.yaml
+        # where hermes's website_policy.py looks for it.
+        _website_blocklist = None
+        try:
+            _agent_lookup = auth_db.get_agent_by_name(config.name)
+            if _agent_lookup and _agent_lookup.get("website_blocklist"):
+                _website_blocklist = json.loads(_agent_lookup["website_blocklist"])
+        except Exception:
+            _website_blocklist = None
+
+        # Allowed-hosts visibility — derive from the effective policy so the
+        # worker can inject "you can navigate these hosts: …" into the
+        # agent's system prompt. Without this, agents trial-and-error
+        # against the firewall (try coinmarketcap → 403 → try coingecko →
+        # 403 → give up) which wastes API calls and produces wrong
+        # answers. Best-effort; empty list is a safe no-op (worker just
+        # skips the injection).
+        _allowed_hosts: List[str] = []
+        try:
+            from gateway import policies as _gp_h
+            _agent_for_hosts = auth_db.get_agent_by_name(config.name)
+            if _agent_for_hosts:
+                _allowed_hosts = _gp_h.get_allowed_hosts_for_agent(_agent_for_hosts["id"])
+        except Exception as _hosts_exc:
+            logger.debug("instance-config: allowed-hosts lookup failed: %s", _hosts_exc)
+
         instance_config = {
             "worker_id": worker_id,
             "instance_name": config.name,
             "soul": config.soul_name or "general",
             "toolsets": config.toolsets or [],
             "model": resolved_model,
+            "env": _service_env,
+            "website_blocklist": _website_blocklist,
+            "allowed_hosts": _allowed_hosts,
         }
 
         record = {
@@ -904,6 +954,9 @@ class OpenShellExecutor:
         # to the narrowest available policy is always preferred over
         # aborting the spawn.
         _effective_policy_tmp: Optional[Path] = None
+        # Spawn-duration tracking — populated below and recorded on success.
+        _spawn_started_at = time.time()
+        _image_was_imported = False
         try:
             # ── Step 0: ensure the sandbox image is in the cluster ─
             #
@@ -912,7 +965,7 @@ class OpenShellExecutor:
             # them. This step imports the image if it's missing,
             # taking ~60-120s for a fresh import (layers are cached
             # after the first import, making subsequent spawns fast).
-            _ensure_image_in_cluster(self.sandbox_image, openshell_gw)
+            _image_was_imported = _ensure_image_in_cluster(self.sandbox_image, openshell_gw)
 
             # ── Step 1: create the sandbox CR ──────────────────────
             #
@@ -1137,6 +1190,21 @@ class OpenShellExecutor:
                 except OSError:
                     pass
 
+        # Record spawn duration so the UI hint can show a learned
+        # estimate ("usually ~95s") instead of hardcoded copy. Best-effort —
+        # never block return on a metrics write.
+        try:
+            from gateway import spawn_metrics as _sm
+            _sm.record(
+                gateway=openshell_gw,
+                image=self.sandbox_image,
+                duration_ms=int((time.time() - _spawn_started_at) * 1000),
+                image_imported=_image_was_imported,
+                agent_name=config.name,
+            )
+        except Exception:
+            pass
+
         return SpawnedInstance(
             name=config.name,
             url="",  # no direct URL — routed through gateway via worker_id
@@ -1168,6 +1236,151 @@ class OpenShellExecutor:
             if pruned > 0:
                 _save_state(kept)
         return kept
+
+    def refresh_instance_config(self, name: str) -> bool:
+        """Re-upload ``/tmp/hermes/instance-config.json`` from current DB state.
+
+        Plan A-prime spawns a fresh ``sandbox_worker.py`` per dispatch and
+        each subprocess re-reads the config file at startup, so the next
+        chat after this call sees the updated toolsets / model / env
+        without a sandbox restart. Used by the toolset toggle handler in
+        ``admin_handlers`` so ticking a checkbox in STAMP T actually
+        takes effect on the next message instead of requiring destroy
+        + respawn. Also called when service credentials change so newly
+        configured tool URLs reach the sandbox immediately.
+
+        Returns True on successful upload, False on any failure (no
+        sandbox / no gateway / openshell error). Best-effort by design —
+        a stray toggle should never tank the request that triggered it.
+        """
+        from gateway.openshell_routes import get_default_gateway_name
+        import gateway.auth.db as _adb
+
+        agent = _adb.get_agent_by_name(name)
+        if not agent:
+            logger.warning("refresh_instance_config: no agent named %r", name)
+            return False
+
+        sandbox_name = _sanitize_sandbox_name(f"hermes-{name}")
+        # Resolve the gateway the sandbox lives inside (state file first,
+        # default route as fallback) — same approach as delete_instance
+        # since sandbox-to-gateway routing isn't carried in the DB.
+        fallback_gw = get_default_gateway_name()
+        target_gw: Optional[str] = fallback_gw
+        for inst in _load_state():
+            if inst.get("name") == name or inst.get("sandbox_name") == sandbox_name:
+                target_gw = inst.get("openshell_name") or fallback_gw
+                break
+        if not target_gw:
+            logger.warning(
+                "refresh_instance_config(%s): no gateway resolvable — skipping",
+                name,
+            )
+            return False
+
+        # Resolve model the same way spawn() does so the refreshed config
+        # matches what a fresh spawn would have produced.
+        resolved_model = agent.get("model") or ""
+        route_id = agent.get("model_route_id")
+        if route_id:
+            try:
+                route = _adb.get_model_route(route_id)
+                if route and route.get("model"):
+                    resolved_model = route["model"]
+            except Exception:
+                pass
+
+        toolsets_raw = agent.get("toolsets") or "[]"
+        try:
+            toolsets = json.loads(toolsets_raw) if isinstance(toolsets_raw, str) else list(toolsets_raw)
+        except json.JSONDecodeError:
+            toolsets = []
+
+        # Same env-bridge as spawn(): credentials for tool code that
+        # needs to dial out to user-configured services. Re-pulled here
+        # so a refresh after saving a new credential picks it up.
+        try:
+            from gateway import services as _services
+            _service_env = _services._get_credentials() or {}
+        except Exception:
+            _service_env = {}
+
+        # Website blocklist (Layer 1 URL consent). Same shape as spawn().
+        _website_blocklist = None
+        try:
+            if agent.get("website_blocklist"):
+                _website_blocklist = json.loads(agent["website_blocklist"])
+        except Exception:
+            _website_blocklist = None
+
+        # Allowed-hosts visibility — same as spawn() so the worker can
+        # inject the firewall allowlist into the agent's system prompt
+        # after a capability toggle without needing a full respawn.
+        _allowed_hosts: List[str] = []
+        try:
+            from gateway import policies as _gp_h2
+            _allowed_hosts = _gp_h2.get_allowed_hosts_for_agent(agent["id"])
+        except Exception:
+            pass
+
+        instance_config = {
+            "worker_id": sandbox_name,
+            "instance_name": name,
+            "soul": agent.get("soul_slug") or "general",
+            "toolsets": toolsets,
+            "model": resolved_model,
+            "env": _service_env,
+            "website_blocklist": _website_blocklist,
+            "allowed_hosts": _allowed_hosts,
+        }
+
+        config_tmpfile = tempfile.NamedTemporaryFile(
+            mode="w", suffix=".json", prefix="hermes-config-", delete=False,
+        )
+        try:
+            json.dump(instance_config, config_tmpfile)
+            config_tmpfile.close()
+            _openshell(
+                "sandbox", "upload", sandbox_name,
+                config_tmpfile.name, "/tmp/hermes/instance-config.json",
+                gateway=target_gw, check=True, timeout=30,
+            )
+            logger.info(
+                "refresh_instance_config(%s): re-uploaded with %d toolset(s), %d env var(s) on gateway %s",
+                name, len(toolsets), len(_service_env), target_gw,
+            )
+            return True
+        except Exception as exc:
+            logger.warning(
+                "refresh_instance_config(%s): upload failed: %s", name, exc,
+            )
+            return False
+        finally:
+            try:
+                os.unlink(config_tmpfile.name)
+            except OSError:
+                pass
+
+    def refresh_all_instance_configs(self) -> int:
+        """Re-upload instance-config.json to every running sandbox.
+
+        Called after a credential change in Config → Tools so the new
+        env var reaches every agent at once instead of requiring a
+        per-agent toggle. Returns the number of successful refreshes;
+        failures are logged but don't abort the loop.
+        """
+        import gateway.auth.db as _adb
+        ok = 0
+        for agent in _adb.list_agents():
+            try:
+                if self.refresh_instance_config(agent["name"]):
+                    ok += 1
+            except Exception as exc:
+                logger.warning(
+                    "refresh_all_instance_configs: agent %s failed: %s",
+                    agent.get("name"), exc,
+                )
+        return ok
 
     def delete_instance(self, name: str) -> None:
         # Resolve the sandbox name authoritatively from the agent name

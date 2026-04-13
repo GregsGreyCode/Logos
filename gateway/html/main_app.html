@@ -269,7 +269,7 @@
     <button class="pb-2 text-sm font-medium border-b-2 border-transparent"
       :class="tab==='agents'?'tab-active':'text-gray-400 hover:text-white'"
       data-testid="nav-agents"
-      @click="tab='agents'; loadInstances(); loadSouls(); loadAdminMachines(); loadNamedAgents(); loadToolsets(); loadModelRoutes(); initWorld()">Agents</button>
+      @click="tab='agents'; loadInstances(); loadSouls(); loadAdminMachines(); loadNamedAgents(); loadToolsets(); loadModelRoutes(); loadAgentCosts(); initWorld()">Agents</button>
     <button class="pb-2 text-sm font-medium border-b-2 border-transparent"
       :class="tab==='sessions'?'tab-active':'text-gray-400 hover:text-white'"
       data-testid="nav-chats"
@@ -614,9 +614,21 @@
                         : 'bg-gray-800/50 text-gray-600 border-gray-800')"
                   :title="activeAgent ? 'Tools — click to change' : 'No agent bound'">
                   <span class="font-bold text-gray-500">T</span>
+                  <!-- T pill = enabled-toolset count only. Network access
+                       (presets) moved to P, so this stays focused on
+                       "what tools the agent CAN call" — leaving "what
+                       endpoints the sandbox can reach" to its proper
+                       home under permissions. -->
+                  <!-- Show count immediately from activeAgent.toolsets (loaded
+                       with the agent list) so the badge isn't blank/"tools"
+                       until the dropdown is opened. agentToolsState wins once
+                       it's been fetched (which happens on open) so dynamic
+                       enable/disable still reflects in real time. -->
                   <span x-text="(agentToolsState && activeAgent && agentToolsState._agentId === activeAgent.id)
-                    ? ((agentToolsState.toolsets?.enabled?.length || 0) + ' ts · ' + (agentToolsState.presets?.applied?.length || 0) + ' pre')
-                    : (webSession?.tool_count ? webSession.tool_count + ' active' : (chatStats?.tool_count ? chatStats.tool_count + ' ready' : 'tools'))">
+                    ? ((agentToolsState.toolsets?.enabled?.length || 0) + ' tools')
+                    : (activeAgent?.toolsets
+                        ? ((() => { try { return JSON.parse(activeAgent.toolsets).length; } catch(e) { return 0; } })() + ' tools')
+                        : (webSession?.tool_count ? webSession.tool_count + ' active' : (chatStats?.tool_count ? chatStats.tool_count + ' ready' : 'tools')))">
                   </span>
                 </button>
                 <div x-show="open" x-cloak
@@ -659,7 +671,9 @@
                                 x-text="t.reason || 'needs API key'"></a>
                             </template>
                             <template x-if="t.status === 'needs_preset'">
-                              <span class="block text-orange-500 text-[10px] truncate" :title="t.reason || 'needs preset'" x-text="t.reason || 'needs preset'"></span>
+                              <span class="block text-orange-500 text-[10px] truncate"
+                                    :title="(t.reason || 'needs network access') + ' — open the P pill to enable it'"
+                                    x-text="'needs P → ' + (t.preset || 'access')"></span>
                             </template>
                           </div>
                         </div>
@@ -695,35 +709,9 @@
                     </div>
                   </div>
 
-                  <!-- Presets (infrastructure layer) -->
-                  <div x-show="activeAgent && agentToolsState && agentToolsState._agentId === activeAgent.id"
-                    class="border-t border-gray-800 mt-1 pt-1">
-                    <div class="px-3 pt-2 pb-1 text-[9px] text-gray-500 uppercase tracking-wider flex items-center justify-between">
-                      <span>Network presets (sandbox)</span>
-                      <span class="text-gray-700 normal-case"
-                        x-text="'(' + (agentToolsState?.presets?.applied?.length || 0) + '/' + (agentToolsState?.presets?.available?.length || 0) + ')'"></span>
-                    </div>
-                    <div class="grid grid-cols-3" style="column-gap: 0.25rem;">
-                      <template x-for="p in (agentToolsState?.presets?.available || [])" :key="'pre-' + p.name">
-                        <label class="flex items-start gap-2 px-3 py-1.5 text-[11px] hover:bg-gray-800 cursor-pointer" :title="p.description || p.name">
-                          <input type="checkbox"
-                            :checked="(agentToolsState?.presets?.applied || []).includes(p.name)"
-                            :disabled="!!(agentToolsToggling && agentToolsToggling['pre:' + p.name])"
-                            @change="togglePreset(activeAgent.id, p.name, $event.target.checked)"
-                            class="mt-0.5 h-3 w-3 rounded border-gray-700 bg-gray-900 text-emerald-500 focus:ring-0 focus:ring-offset-0 flex-shrink-0">
-                          <div class="flex-1 min-w-0">
-                            <div class="text-gray-100 font-mono" x-text="p.name"></div>
-                            <div class="text-gray-400 text-[11px] leading-snug line-clamp-2" x-text="p.description" x-show="p.description"></div>
-                          </div>
-                          <span x-show="agentToolsToggling && agentToolsToggling['pre:' + p.name]" class="text-yellow-500 text-[9px]">…</span>
-                        </label>
-                      </template>
-                    </div>
-                    <div x-show="(agentToolsState?.presets?.available?.length || 0) === 0"
-                      class="px-3 py-2 text-[10px] text-gray-600">
-                      No presets available in gateway/policies/presets/.
-                    </div>
-                  </div>
+                  <!-- Network access (presets) moved to the P dropdown.
+                       T = capability ("agent has these tools"); P = permission
+                       ("sandbox can reach these endpoints"). See P below. -->
 
                   <!-- Error banner — surfaces any fetch / toggle failure -->
                   <div x-show="agentToolsError"
@@ -798,12 +786,214 @@
                   </p>
                 </div>
               </div>
-              <!-- P: Policy -->
-              <span data-testid="stamp-p" class="text-[10px] px-1.5 py-0.5 rounded font-mono bg-emerald-950 text-emerald-400 border border-emerald-900 flex items-center gap-1"
-                title="Action policy">
-                <span class="font-bold text-emerald-600">P</span>
-                <span x-text="activeInstance.action_policy || 'default'"></span>
-              </span>
+              <!-- P: Permissions — what the agent is ALLOWED to do.
+                   Two layers, both tracked here:
+                     1. Action policy (network/filesystem/exec/write/provider
+                        behavior limits) — read-only label for now since
+                        editing requires the Admin → Security flow.
+                     2. Network access (formerly "presets") — checkbox grid
+                        unlocking specific outbound endpoints (Slack,
+                        GitHub, Browserbase, etc.) per applied YAML
+                        bundle in gateway/policies/presets/.
+                   Reuses the same agentToolsState fetched by T so opening
+                   either dropdown after the other is instant. Dropdown
+                   sizing mirrors T's so it doesn't blow past the chat panel. -->
+              <div class="relative" x-data="{ open: false }" @click.away="open = false">
+                <button
+                  @click="open = !open;
+                          if (open && activeAgent) {
+                            if (!agentCapsState || agentCapsState._agentId !== activeAgent.id) loadAgentCaps(activeAgent.id);
+                            if (!agentToolsState || agentToolsState._agentId !== activeAgent.id) loadAgentTools(activeAgent.id);
+                          }
+                          if (open) {
+                            $nextTick(() => {
+                              const panel = $el.closest('[data-chat-panel]');
+                              const dd = $refs.pdd;
+                              if (!panel || !dd) return;
+                              const btnRect = $el.getBoundingClientRect();
+                              const panelRect = panel.getBoundingClientRect();
+                              const width = Math.max(360, panelRect.right - btnRect.left - 12);
+                              const height = Math.max(320, panelRect.bottom - btnRect.bottom - 80);
+                              dd.style.width = width + 'px';
+                              dd.style.maxHeight = height + 'px';
+                            });
+                          }"
+                  data-testid="stamp-p"
+                  class="text-[10px] px-1.5 py-0.5 rounded font-mono border transition-colors cursor-pointer flex items-center gap-1"
+                  :class="open
+                    ? 'bg-emerald-900 text-white border-emerald-500'
+                    : (activeAgent
+                        ? 'bg-emerald-950 text-emerald-400 border-emerald-900 hover:border-emerald-600'
+                        : 'bg-gray-800/50 text-gray-600 border-gray-800')"
+                  :title="activeAgent ? 'Permissions — capabilities + action policy' : 'No agent bound'">
+                  <span class="font-bold text-emerald-600">P</span>
+                  <!-- Count immediately from activeAgent.applied_presets so
+                       the badge isn't blank/'default' before the dropdown
+                       is opened. Exclude always-on / legacy presets
+                       (worldscene = always-on, browserless = vestigial v16
+                       migration) to roughly match the user-toggleable
+                       capabilities the dropdown surfaces. agentCapsState's
+                       precise count wins once it's been fetched. -->
+                  <span x-text="(agentCapsState && activeAgent && agentCapsState._agentId === activeAgent.id)
+                    ? ((agentCapsState.capabilities || []).filter(c => c.enabled).length + ' on')
+                    : (activeAgent?.applied_presets
+                        ? ((() => { try { const ps = JSON.parse(activeAgent.applied_presets).filter(p => p !== 'worldscene' && p !== 'browserless'); return ps.length; } catch(e) { return 0; } })() + ' on')
+                        : (activeInstance.action_policy || 'default'))">
+                  </span>
+                </button>
+                <div x-show="open" x-cloak
+                  x-ref="pdd"
+                  class="absolute top-full left-0 mt-1 overflow-y-auto bg-gray-900 border border-gray-700 rounded-lg shadow-xl z-50"
+                  style="width: 56rem; max-height: 22rem;">
+
+                  <!-- Header -->
+                  <div class="px-3 py-2 text-[9px] text-gray-600 uppercase tracking-wider border-b border-gray-800 flex items-center justify-between sticky top-0 bg-gray-900 z-10">
+                    <span x-text="'Permissions · ' + (activeAgent?.name || '(no agent)')"></span>
+                    <span x-show="agentToolsLoading" class="text-yellow-400 normal-case">loading…</span>
+                  </div>
+
+                  <!-- No agent -->
+                  <div x-show="!activeAgent" class="px-3 py-3 text-[11px] text-gray-600">
+                    No agent bound to this chat. Select or create one to edit its permissions.
+                  </div>
+
+                  <!-- Action policy summary (read-only header) -->
+                  <div x-show="activeAgent" class="px-3 pt-2 pb-2 border-b border-gray-800">
+                    <div class="flex items-center gap-2 text-[11px]">
+                      <span class="text-[9px] text-gray-600 uppercase tracking-wider">Action policy</span>
+                      <span class="font-mono text-gray-300" x-text="activeInstance.action_policy || 'default'"></span>
+                      <span class="text-gray-600 text-[10px] ml-auto">change in Admin → Security</span>
+                    </div>
+                  </div>
+
+                  <!-- Capabilities — primary toggle list. Lazy-loaded on
+                       first dropdown open (see button @click). Grouped by
+                       trust tier (local-first first, third-party second)
+                       so the consent surface reads "your machine" before
+                       "external service". Each row = one capability,
+                       which atomically toggles a bundle of toolsets +
+                       presets on the backend. -->
+                  <div x-show="activeAgent && agentCapsState && agentCapsState._agentId === activeAgent.id">
+                    <div class="px-3 pt-2 pb-1 text-[9px] text-gray-500 uppercase tracking-wider flex items-center justify-between">
+                      <span>Capabilities</span>
+                      <span class="text-gray-700 normal-case"
+                        x-text="(agentCapsState.capabilities||[]).filter(c=>c.enabled).length + ' / ' + (agentCapsState.capabilities||[]).length + ' on'"></span>
+                    </div>
+                    <!-- Local-first capabilities first -->
+                    <template x-for="c in (agentCapsState.capabilities||[]).filter(x => x.trust === 'local')" :key="'cap-'+c.id">
+                      <label class="flex items-start gap-2 px-3 py-2 text-[11px] hover:bg-gray-800/40 cursor-pointer border-l-2 border-emerald-700/30"
+                             :class="!c.ready ? 'opacity-60' : ''"
+                             :title="c.trust_note || ''">
+                        <input type="checkbox"
+                          :checked="c.enabled"
+                          :disabled="!c.ready || !!(agentCapsToggling && agentCapsToggling['cap:'+c.id])"
+                          @change="toggleCapability(activeAgent.id, c.id, $event.target.checked)"
+                          class="mt-0.5 h-3.5 w-3.5 rounded border-gray-700 bg-gray-900 text-emerald-500 focus:ring-0 focus:ring-offset-0 flex-shrink-0">
+                        <div class="flex-1 min-w-0">
+                          <div class="flex items-center gap-1.5">
+                            <span x-text="c.icon"></span>
+                            <span class="text-gray-100 font-medium" x-text="c.name"></span>
+                            <span class="text-[9px] px-1 py-0.5 rounded bg-emerald-950 text-emerald-400 border border-emerald-900">local</span>
+                          </div>
+                          <div class="text-gray-500 text-[10px] mt-0.5" x-text="c.description"></div>
+                          <div x-show="!c.ready" class="text-amber-500 text-[10px] mt-0.5"
+                               x-text="'⚠ needs ' + (c.missing_creds || []).join(', ')"></div>
+                        </div>
+                        <span x-show="agentCapsToggling && agentCapsToggling['cap:'+c.id]" class="text-yellow-500 text-[9px]">…</span>
+                      </label>
+                    </template>
+                    <!-- Third-party capabilities -->
+                    <div x-show="(agentCapsState.capabilities||[]).some(c=>c.trust==='third_party')"
+                         class="px-3 pt-2 pb-1 text-[9px] text-gray-600 uppercase tracking-wider">External services</div>
+                    <template x-for="c in (agentCapsState.capabilities||[]).filter(x => x.trust === 'third_party')" :key="'cap-'+c.id">
+                      <label class="flex items-start gap-2 px-3 py-2 text-[11px] hover:bg-gray-800/40 cursor-pointer border-l-2 border-amber-700/30"
+                             :class="!c.ready ? 'opacity-60' : ''"
+                             :title="c.trust_note || ''">
+                        <input type="checkbox"
+                          :checked="c.enabled"
+                          :disabled="!c.ready || !!(agentCapsToggling && agentCapsToggling['cap:'+c.id])"
+                          @change="toggleCapability(activeAgent.id, c.id, $event.target.checked)"
+                          class="mt-0.5 h-3.5 w-3.5 rounded border-gray-700 bg-gray-900 text-amber-500 focus:ring-0 focus:ring-offset-0 flex-shrink-0">
+                        <div class="flex-1 min-w-0">
+                          <div class="flex items-center gap-1.5">
+                            <span x-text="c.icon"></span>
+                            <span class="text-gray-100 font-medium" x-text="c.name"></span>
+                            <span class="text-[9px] px-1 py-0.5 rounded bg-amber-950 text-amber-400 border border-amber-900">cloud</span>
+                          </div>
+                          <div class="text-gray-500 text-[10px] mt-0.5" x-text="c.description"></div>
+                          <div class="text-gray-600 text-[10px] mt-0.5 italic" x-text="c.trust_note"></div>
+                          <div x-show="!c.ready" class="text-amber-500 text-[10px] mt-0.5"
+                               x-text="'⚠ needs ' + (c.missing_creds || []).join(', ') + ' (set in Config → Tools)'"></div>
+                        </div>
+                        <span x-show="agentCapsToggling && agentCapsToggling['cap:'+c.id]" class="text-yellow-500 text-[9px]">…</span>
+                      </label>
+                    </template>
+
+                    <!-- Always-on footer — small informational note that
+                         these capabilities are local-only and granted by
+                         default. Not togglable; purely consent transparency. -->
+                    <div class="px-3 pt-3 pb-2 border-t border-gray-800/60 text-[10px] text-gray-600">
+                      <div class="text-[9px] uppercase tracking-wider text-gray-700 mb-1">Always on (local-only, no consent needed)</div>
+                      <div class="flex flex-wrap gap-x-2 gap-y-0.5">
+                        <template x-for="a in (agentCapsState.always_on || [])" :key="'ao-'+a.id">
+                          <span :title="a.description"><span x-text="a.icon"></span> <span x-text="a.name"></span></span>
+                        </template>
+                      </div>
+                    </div>
+
+                    <!-- Advanced disclosure — raw toolset + preset checkbox grid
+                         for power users who want fine-grained control. Reuses
+                         the same agentToolsState fetch the toolset toggles in
+                         T already populate. -->
+                    <div class="border-t border-gray-800">
+                      <button @click="capsAdvancedOpen = !capsAdvancedOpen"
+                        class="w-full px-3 py-2 text-[10px] text-gray-500 hover:text-gray-300 flex items-center gap-1.5">
+                        <span :class="capsAdvancedOpen ? 'rotate-90' : ''" class="inline-block transition-transform">▶</span>
+                        <span>Advanced — raw toolsets &amp; presets</span>
+                      </button>
+                      <div x-show="capsAdvancedOpen" x-cloak class="border-t border-gray-800/40">
+                        <!-- Power tools (rare; shown only when Advanced expanded) -->
+                        <div class="px-3 pt-2 pb-1 text-[9px] text-gray-600 uppercase tracking-wider">Power tools</div>
+                        <template x-for="c in (agentCapsState.power_tools || [])" :key="'pt-'+c.id">
+                          <label class="flex items-start gap-2 px-3 py-1.5 text-[11px] hover:bg-gray-800/40 cursor-pointer">
+                            <input type="checkbox"
+                              :checked="c.enabled"
+                              :disabled="!!(agentCapsToggling && agentCapsToggling['cap:'+c.id])"
+                              @change="toggleCapability(activeAgent.id, c.id, $event.target.checked)"
+                              class="mt-0.5 h-3 w-3 rounded border-gray-700 bg-gray-900 text-orange-500 focus:ring-0 focus:ring-offset-0 flex-shrink-0">
+                            <div class="flex-1 min-w-0">
+                              <div class="flex items-center gap-1.5">
+                                <span x-text="c.icon"></span>
+                                <span class="text-gray-200" x-text="c.name"></span>
+                              </div>
+                              <div class="text-gray-600 text-[10px] mt-0.5 italic" x-text="c.trust_note"></div>
+                            </div>
+                          </label>
+                        </template>
+                        <!-- Raw toolsets (read-only summary in Advanced mode) -->
+                        <div x-show="agentToolsState && agentToolsState._agentId === activeAgent.id" class="px-3 pt-3 pb-2 text-[10px] text-gray-600">
+                          <div class="text-[9px] uppercase tracking-wider text-gray-700 mb-1">Raw toolsets enabled</div>
+                          <div class="font-mono text-gray-500 leading-snug"
+                               x-text="(agentToolsState?.toolsets?.enabled || []).join(', ') || '(none)'"></div>
+                          <div class="text-[9px] uppercase tracking-wider text-gray-700 mt-2 mb-1">Raw presets applied</div>
+                          <div class="font-mono text-gray-500 leading-snug"
+                               x-text="(agentToolsState?.presets?.applied || []).join(', ') || '(none)'"></div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <!-- Loading + error states -->
+                  <div x-show="agentCapsLoading && !(agentCapsState && agentCapsState._agentId === activeAgent?.id)"
+                    class="px-3 py-3 text-[10px] text-gray-600">Loading capabilities…</div>
+                  <div x-show="agentCapsError"
+                    class="px-3 py-2 text-[10px] text-red-400 border-t border-red-900/50 bg-red-950/30"
+                    x-text="agentCapsError"></div>
+                  <div x-show="agentToolsError"
+                    class="px-3 py-2 text-[10px] text-red-400 border-t border-red-900/50 bg-red-950/30"
+                    x-text="agentToolsError"></div>
+                </div>
+              </div>
             </div>
 
 
@@ -843,6 +1033,16 @@
                   <span class="inline-block max-w-3xl text-left px-3 py-2 rounded-xl text-sm leading-relaxed bg-indigo-700 text-white"
                     x-text="msg.content"></span>
                 </template>
+                <!-- System notices (plain text — model-switch progress,
+                     reset confirmations, etc.). Centred, low-saturation,
+                     no copy bar. _html system messages (setup cards) are
+                     handled in the assistant template via the _html flag. -->
+                <template x-if="msg.role==='system' && !msg._html">
+                  <div class="text-center my-1">
+                    <span class="inline-block max-w-2xl px-3 py-1.5 rounded-lg text-[11px] text-gray-400 bg-gray-800/40 border border-gray-700/40 italic"
+                      x-text="msg.content"></span>
+                  </div>
+                </template>
                 <!-- Error cards: distinct from normal messages -->
                 <template x-if="msg.isError">
                   <div class="inline-block max-w-3xl text-left" x-data="{ detailsOpen: false }">
@@ -871,8 +1071,10 @@
                     </div>
                   </div>
                 </template>
-                <!-- Assistant messages: rendered + bottom bar (stats toggle + copy) -->
-                <template x-if="msg.role!=='user' && !msg.isError">
+                <!-- Assistant messages: rendered + bottom bar (stats toggle + copy).
+                     Skip plain system messages (handled above) but still
+                     handle _html system messages (setup cards) here. -->
+                <template x-if="msg.role!=='user' && !msg.isError && !(msg.role==='system' && !msg._html)">
                   <div class="msg-wrap inline-block max-w-3xl" x-data="{statsOpen:false,copied:false}">
                     <div class="text-left px-3 pt-2 pb-2 rounded-t-xl text-sm bg-gray-800 text-gray-100"
                       :class="[chatRenderMode==='mono' ? 'chat-mono' : 'chat-md', !msg.stats ? 'rounded-b-xl' : '']">
@@ -994,18 +1196,29 @@
                  Prominent banner so the user can immediately see why the chat
                  input is disabled — earlier this was a small yellow text line
                  that was easy to miss next to the spinner. -->
-            <div x-show="!chatLoading && activeInstance?.source === 'named' && !canSendChat" x-cloak
-                 class="mx-4 mt-2 mb-1 px-4 py-3 rounded-lg bg-yellow-950/40 border border-yellow-900/60 flex items-center gap-3 text-sm text-yellow-300 shrink-0">
-              <span class="animate-spin inline-block text-lg">&#9881;</span>
+            <!-- Provisioning banner — visible from the moment the user
+                 switches model / spawns an agent until the worker is
+                 connected. The progress bar fills toward the learned
+                 median (or 90s as a hardcoded fallback) so the user has
+                 a sense of pace. The bar caps at 95% so a slow spawn
+                 doesn't visually "complete" before it actually does;
+                 the spinner keeps moving the whole time. The seconds
+                 counter is gone — it was noisy and the bar conveys the
+                 same "still going" signal more humanely. -->
+            <div x-show="!chatLoading && activeInstance?.source === 'named' && !(activeInstance.worker_connected && activeInstance.worker_healthy)" x-cloak
+                 class="mx-4 mt-2 mb-1 px-4 py-3 rounded-lg bg-yellow-950/40 border border-yellow-900/60 flex items-start gap-3 text-sm text-yellow-300 shrink-0">
+              <span class="animate-spin inline-block text-lg shrink-0 mt-0.5">&#9881;</span>
               <div class="flex-1 min-w-0">
-                <div class="font-medium">
-                  <span x-text="'Sandbox for ' + (activeInstance?.name || 'agent') + ' is provisioning…'"></span>
-                  <span class="ml-2 font-mono text-yellow-200/80 tabular-nums"
-                        x-show="activeAgent && provisioningElapsed(activeAgent.id) > 0"
-                        x-text="provisioningElapsed(activeAgent?.id) + 's'"></span>
-                </div>
+                <div class="font-medium"
+                     x-text="(switchingAgentIds.includes(activeAgent?.id) ? 'Switching model for ' : 'Sandbox for ') + (activeInstance?.name || 'agent') + (switchingAgentIds.includes(activeAgent?.id) ? '…' : ' is provisioning…')"></div>
                 <div class="text-xs text-yellow-500/70 mt-0.5"
                      x-text="activeAgent ? provisioningHint(activeAgent.id) : 'Chat unlocks automatically when the worker connects.'"></div>
+                <!-- Progress bar — width = elapsed/expected, capped at 95%. -->
+                <div class="mt-2 h-1 w-full bg-yellow-900/40 rounded overflow-hidden"
+                     x-show="activeAgent && provisioningElapsed(activeAgent.id) > 0">
+                  <div class="h-full bg-yellow-500/70 transition-[width] duration-1000 ease-linear"
+                       :style="'width: ' + Math.min(95, Math.round((provisioningElapsed(activeAgent?.id) / Math.max(15, provisioningExpectedSec(activeAgent?.id))) * 100)) + '%'"></div>
+                </div>
               </div>
             </div>
             <!-- No agents at all (e.g. post-setup before sandbox finishes) -->
@@ -1132,7 +1345,7 @@
                 class="block w-full bg-gray-800 border border-gray-700 rounded-lg px-4 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-indigo-500 transition-colors resize-none disabled:opacity-50 disabled:cursor-not-allowed"
                 :class="chatDragOver ? 'border-indigo-400 bg-indigo-950/30' : ''"
                 style="height:38px;min-height:38px;max-height:7rem;line-height:20px;overflow-y:hidden;padding-top:8px;padding-bottom:8px;vertical-align:bottom;"
-                :placeholder="!canSendChat ? (activeInstance.source === 'named' ? 'Sandbox is provisioning — chat will unlock when it is ready\u2026' : 'Create an agent to start chatting\u2026') : (micRecording ? ('Recording… ' + micCountdown + 's') : micTranscribing ? 'Transcribing…' : ('Message ' + (activeChat?.agent_name || activeInstance.name || 'agent') + '\u2026 (Enter · Shift+Enter for newline)'))"
+                :placeholder="!canSendChat ? 'Create an agent to start chatting\u2026' : (micRecording ? ('Recording… ' + micCountdown + 's') : micTranscribing ? 'Transcribing…' : (activeInstance.source === 'named' && !(activeInstance.worker_connected && activeInstance.worker_healthy) ? 'Message ' + (activeChat?.agent_name || activeInstance.name || 'agent') + ' (sandbox will spawn on send)\u2026' : 'Message ' + (activeChat?.agent_name || activeInstance.name || 'agent') + '\u2026 (Enter · Shift+Enter for newline)'))"
                 :disabled="micTranscribing || !canSendChat"
                 :readonly="!chatInputReady"></textarea>
               <!-- Drag-drop overlay hint -->
@@ -1423,11 +1636,15 @@
                       <span class="font-bold text-gray-500">T</span>
                       <span x-text="(() => { try { return JSON.parse(pane.toolsets || '[]').length; } catch(e) { return 0; } })() + ' tools'"></span>
                     </span>
-                    <!-- A: Agent runtime -->
+                    <!-- A: Agent runtime. Hermes is the only runtime today
+                         (openshell is the *executor* that spawns the
+                         hermes-agent sandbox pod, not the runtime itself).
+                         Hardcoded until agents grow a real agent_type
+                         column — matches the main-chat A pill's fallback. -->
                     <span class="text-[10px] px-1.5 py-0.5 rounded font-mono bg-gray-800 text-gray-400 border border-gray-700 flex items-center gap-1"
-                          title="Runtime: openshell">
+                          title="Runtime: hermes (agent SDK) · executor: openshell">
                       <span class="font-bold text-gray-500">A</span>
-                      <span>openshell</span>
+                      <span>hermes</span>
                     </span>
                     <!-- M: Model -->
                     <span class="text-[10px] px-1.5 py-0.5 rounded font-mono bg-[var(--accent-subtle)] text-[var(--accent)] border border-[var(--accent)]/40 flex items-center gap-1 truncate max-w-[180px]"
@@ -2284,19 +2501,37 @@
           </div>
           <!-- Single-line legend — flex-wrap so it folds gracefully on
                narrow screens. Sits directly under the canvas, same width. -->
-          <div class="mt-2 px-3 py-2 rounded-lg border border-gray-800/70 bg-gray-900/40 text-xs text-gray-400 flex flex-wrap items-center gap-x-5 gap-y-1.5"
+          <!-- Each legend chip is its own bordered pill — emoji widths
+               vary per font, and a flat gap-x-N row left it ambiguous
+               where one chip's icon ended and the next chip's text began.
+               Borders + per-chip padding make the boundaries unambiguous
+               regardless of which emoji font fallback the OS picks. -->
+          <div class="mt-2 text-xs text-gray-400 flex flex-wrap items-center gap-2"
                style="width:min(100%, calc(100vh - 9rem));"
                title="Map key">
-            <span class="inline-flex items-center gap-1.5"><span class="w-2 h-2 rounded-full bg-green-500"></span>running</span>
-            <span class="inline-flex items-center gap-1.5"><span class="w-2 h-2 rounded-full bg-yellow-500"></span>provisioning</span>
-            <span class="inline-flex items-center gap-1.5"><span class="text-sm leading-none">&#x23f3;</span><span>cold</span></span>
-            <span class="inline-flex items-center gap-1.5"><span class="text-sm leading-none">&#x1f4ad;</span><span>thinking</span></span>
-            <span class="inline-flex items-center gap-1.5"><span class="inline-flex items-center justify-center w-4 h-4 rounded text-[10px] font-bold text-white" style="background:#6366f1">A</span>initial</span>
-            <span class="inline-flex items-center gap-1.5"
-              title="Maturity progression: Sprout (🌱) → Sapling (🌿) → Branch (🌳) → Tree (🌲) → Old Growth (🪵). Driven by dispatches, sessions, and memories."
-              ><span class="text-sm leading-none">&#x1f331;&rarr;&#x1f33f;&rarr;&#x1f333;&rarr;&#x1f332;&rarr;&#x1fab5;</span><span>tier</span></span>
-            <span class="inline-flex items-center gap-1.5"><span class="w-3 h-3 rounded bg-gray-500" style="opacity:0.6"></span>disconnected</span>
-            <span class="ml-auto text-gray-600 text-[10px]">click an agent to chat</span>
+            <span class="inline-flex items-center gap-2 px-2.5 py-1 rounded-md border border-gray-800 bg-gray-900/60 whitespace-nowrap">
+              <span class="w-2 h-2 rounded-full bg-green-500"></span>running
+            </span>
+            <span class="inline-flex items-center gap-2 px-2.5 py-1 rounded-md border border-gray-800 bg-gray-900/60 whitespace-nowrap">
+              <span class="w-2 h-2 rounded-full bg-yellow-500"></span>provisioning
+            </span>
+            <span class="inline-flex items-center gap-2 px-2.5 py-1 rounded-md border border-gray-800 bg-gray-900/60 whitespace-nowrap">
+              <span class="text-sm leading-none">&#x23f3;</span>cold
+            </span>
+            <span class="inline-flex items-center gap-2 px-2.5 py-1 rounded-md border border-gray-800 bg-gray-900/60 whitespace-nowrap">
+              <span class="text-sm leading-none">&#x1f4ad;</span>thinking
+            </span>
+            <span class="inline-flex items-center gap-2 px-2.5 py-1 rounded-md border border-gray-800 bg-gray-900/60 whitespace-nowrap">
+              <span class="inline-flex items-center justify-center w-4 h-4 rounded text-[10px] font-bold text-white" style="background:#6366f1">A</span>initial
+            </span>
+            <span class="inline-flex items-center gap-2 px-2.5 py-1 rounded-md border border-gray-800 bg-gray-900/60 whitespace-nowrap"
+                  title="Maturity progression: Sprout (🌱) → Sapling (🌿) → Branch (🌳) → Tree (🌲) → Old Growth (🪵). Driven by dispatches, sessions, and memories.">
+              <span class="text-sm leading-none">&#x1f331;&rarr;&#x1f33f;&rarr;&#x1f333;&rarr;&#x1f332;&rarr;&#x1fab5;</span>tier
+            </span>
+            <span class="inline-flex items-center gap-2 px-2.5 py-1 rounded-md border border-gray-800 bg-gray-900/60 whitespace-nowrap">
+              <span class="w-3 h-3 rounded bg-gray-500" style="opacity:0.6"></span>disconnected
+            </span>
+            <span class="ml-auto text-gray-600 text-[10px] italic">click an agent to chat</span>
           </div>
         </div>
       </div>
@@ -2509,6 +2744,25 @@
                         <span><span class="text-gray-700">·</span> <span x-text="agentMaturity(a).dispatches + ' msg'"></span></span>
                       </template>
                     </div>
+                    <!-- Today's cloud spend — only shown when the bound route is
+                         a cloud provider. Greyed when no data, yellow when >70%
+                         of budget, red when at/over. Click opens a drill-down.
+                         Data comes from agentCosts[a.id] populated by
+                         loadAgentCosts() polled every ~15s on the Agents tab. -->
+                    <template x-if="agentCosts[a.id] && agentCosts[a.id].is_cloud">
+                      <div class="flex items-center gap-1.5 mb-1 text-[10px]"
+                           :class="agentCosts[a.id].pct >= 100 ? 'text-red-400' : agentCosts[a.id].pct >= 70 ? 'text-yellow-400' : 'text-gray-500'"
+                           :title="agentCosts[a.id].title">
+                        <span>💰</span>
+                        <span x-text="'$' + (agentCosts[a.id].total_usd || 0).toFixed(3) + ' today'"></span>
+                        <template x-if="a.daily_budget_usd">
+                          <span><span class="text-gray-700">/</span> <span x-text="'$' + Number(a.daily_budget_usd).toFixed(2) + ' cap'"></span></span>
+                        </template>
+                        <template x-if="agentCosts[a.id].count > 0">
+                          <span><span class="text-gray-700">·</span> <span x-text="agentCosts[a.id].count + ' req'"></span></span>
+                        </template>
+                      </div>
+                    </template>
                   </div>
                 </div>
 
@@ -2538,7 +2792,7 @@
                 </template>
 
                 <div class="mt-2 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity" @click.stop>
-                  <button @click.stop="a._editing = true; a._edit = { name: a.name, soul_slug: a.soul_slug, model: a.model || '', description: a.description || '', toolsets: JSON.parse(a.toolsets || '[]') }"
+                  <button @click.stop="a._editing = true; a._edit = { name: a.name, soul_slug: a.soul_slug, model: a.model || '', description: a.description || '', toolsets: JSON.parse(a.toolsets || '[]'), daily_budget_usd: a.daily_budget_usd || '', fallback_route_id: a.fallback_route_id || '' }"
                     class="text-[9px] px-1.5 py-0.5 rounded border border-gray-700 text-gray-500 hover:text-white hover:border-gray-500 transition-colors">Edit</button>
                   <button @click.stop="duplicateNamedAgent(a)"
                     title="Clone this agent — opens the create form pre-filled so you can tweak STAMP fields before saving"
@@ -2617,6 +2871,34 @@
                             <span class="font-mono" x-text="tsName"></span>
                           </label>
                         </template>
+                      </div>
+                    </template>
+                    <!-- Cost controls — only render when a cloud route is bound.
+                         Local routes (lmstudio/ollama) don't charge, so the
+                         budget knob would be confusing noise. -->
+                    <template x-if="(modelRoutes.find(r => r.id === a.model_route_id) || {}).provider
+                                    && !['lmstudio','ollama'].includes((modelRoutes.find(r => r.id === a.model_route_id) || {}).provider)">
+                      <div class="pt-2 border-t border-gray-800 space-y-1.5">
+                        <div class="text-[9px] uppercase tracking-wider text-gray-600">Cost controls</div>
+                        <div class="grid grid-cols-2 gap-2 items-center">
+                          <label class="text-[9px] text-gray-500">Daily budget (USD)</label>
+                          <input x-model="a._edit.daily_budget_usd" type="number" min="0" step="0.01" placeholder="no cap"
+                            class="px-2 py-1 rounded bg-gray-800 border border-gray-700 text-[10px] text-white focus:outline-none focus:border-indigo-500">
+                        </div>
+                        <div class="grid grid-cols-2 gap-2 items-center">
+                          <label class="text-[9px] text-gray-500">Fallback route</label>
+                          <select x-model="a._edit.fallback_route_id"
+                            class="px-2 py-1 rounded bg-gray-800 border border-gray-700 text-[10px] text-white focus:outline-none focus:border-indigo-500">
+                            <option value="">(none — refuse when over)</option>
+                            <template x-for="r in modelRoutes.filter(r => r.status === 'ready' && ['lmstudio','ollama'].includes(r.provider))" :key="r.id">
+                              <option :value="r.id" x-text="r.model"></option>
+                            </template>
+                          </select>
+                        </div>
+                        <div class="text-[9px] text-gray-600 italic leading-snug">
+                          When today's spend hits the cap, Logos will auto-swap
+                          to the fallback route (must be local). Leave budget empty for no cap.
+                        </div>
                       </div>
                     </template>
                     <div class="flex gap-1.5">
@@ -3800,6 +4082,7 @@
           <div>
             <label class="text-[10px] text-gray-500 uppercase tracking-wider">Provider</label>
             <select x-model="provisionForm.provider"
+              @change="loadCloudProviderModels(provisionForm.provider)"
               class="w-full mt-1 px-3 py-2 bg-gray-800 border border-gray-700 rounded text-white text-sm">
               <option value="lmstudio">lmstudio</option>
               <option value="ollama">ollama</option>
@@ -3825,15 +4108,33 @@
               the list (e.g. testing a cloud model that hasn't been
               registered as a machine).
             -->
+            <!-- Provider-aware model list. Local providers (lmstudio/ollama)
+                 read the union of registered-machine catalogs. Cloud providers
+                 (anthropic/openai/openrouter) call /admin/cloud-provider-models
+                 which fetches the live catalog from the provider's /v1/models
+                 endpoint — that way the list never goes stale as new models
+                 ship. Falls back to a small hardcoded set if the provider
+                 call fails (no API key configured, network down, etc.).
+                 Custom-id escape hatch is always available. -->
             <select x-model="provisionForm.model"
               class="w-full mt-1 px-3 py-2 bg-gray-800 border border-gray-700 rounded text-white text-sm font-mono"
               @change="if (provisionForm.model === '__custom__') { provisionForm.model = ''; provisionFormCustom = true; }">
               <option value="" disabled>— pick a model —</option>
-              <template x-for="m in allMachineModels" :key="m">
-                <option :value="m" x-text="m"></option>
+              <template x-if="['anthropic','openai','openrouter'].includes(provisionForm.provider)">
+                <template x-for="m in (cloudProviderModelsList[provisionForm.provider] || cloudProviderModelsFallback[provisionForm.provider] || [])" :key="'c-'+m">
+                  <option :value="m" x-text="m"></option>
+                </template>
+              </template>
+              <template x-if="!['anthropic','openai','openrouter'].includes(provisionForm.provider)">
+                <template x-for="m in allMachineModels" :key="'l-'+m">
+                  <option :value="m" x-text="m"></option>
+                </template>
               </template>
               <option value="__custom__">Custom model id…</option>
             </select>
+            <p x-show="['anthropic','openai','openrouter'].includes(provisionForm.provider) && cloudProviderModelsError[provisionForm.provider]"
+               class="mt-1 text-[10px] text-amber-500"
+               x-text="'Live catalog unavailable (' + cloudProviderModelsError[provisionForm.provider] + ') — showing fallback list. Add an API key under Config → Tools to enable live fetch.'"></p>
             <input x-show="provisionFormCustom" x-model="provisionForm.model" type="text"
               placeholder="provider/model-id"
               class="w-full mt-2 px-3 py-2 bg-gray-800 border border-gray-700 rounded text-white text-sm font-mono"
@@ -5251,6 +5552,14 @@ function app() {
     isWakingUp: true,
     lastRefresh: '',
     clientNow: Date.now(),
+    // Capabilities (P dropdown) — lazy-fetched per agent. _agentId pinned
+    // so a stale state from a previous agent is detectable without an
+    // extra "is this for the right agent" flag.
+    agentCapsState: null,
+    agentCapsLoading: false,
+    agentCapsError: null,
+    agentCapsToggling: {},
+    capsAdvancedOpen: false,
     // Tracks when each agent first showed up as `worker_connected=false`
     // so the chat banner can display elapsed-time + progressive messaging
     // ("Usually ~30s" → "Still going" → "Taking longer than expected").
@@ -5501,6 +5810,28 @@ function app() {
     // up the change when we reassign with a new array literal in
     // switchAgentRoute.
     switchingAgentIds: [],
+    // Cached spawn-duration stats from /admin/spawn-stats. Shape:
+    //   { warm: {count, median_ms, p90_ms}, cold: {count, median_ms, p90_ms} }
+    // null until first fetch; medians may be null until enough samples
+    // accumulate (provisioningHint falls back to hardcoded copy then).
+    spawnStats: null,
+    // Per-agent cost rollup (today window). Populated by loadAgentCosts,
+    // polled every 15s while the Agents tab is visible. Keyed by agent.id
+    // with shape {total_usd, count, is_cloud, pct, title}. Rendered as
+    // the 💰 row on each agent card when is_cloud=true.
+    agentCosts: {},
+    // Per-provider model catalogs fetched live from the provider's /v1/models.
+    // Keyed by provider name; null = not yet attempted; [] = empty/error.
+    cloudProviderModelsList: {},
+    cloudProviderModelsError: {},
+    // Hardcoded fallback list shown when the live fetch fails (no API key,
+    // network down, etc.) so the user can still pick from a reasonable set
+    // without resorting to Custom-id entry. Updated rarely, intentionally minimal.
+    cloudProviderModelsFallback: {
+      anthropic:  ['claude-opus-4-6', 'claude-sonnet-4-6', 'claude-haiku-4-5'],
+      openai:     ['gpt-5', 'gpt-5-mini', 'gpt-4o', 'gpt-4o-mini', 'o1', 'o1-mini'],
+      openrouter: ['anthropic/claude-sonnet-4.6', 'openai/gpt-5', 'meta-llama/llama-3.3-70b-instruct'],
+    },
     // platforms (Admin → Platforms)
     platforms: [],
     platformsLoading: false,
@@ -5615,11 +5946,16 @@ function app() {
     },
 
     get canSendChat() {
-      // The chat can only dispatch if we have a named agent AND its sandbox
-      // worker is currently connected. During provisioning, or after a
-      // disconnect, the UI is greyed out.
+      // Allow typing + sending as long as a named agent is selected.
+      // The dispatch path in the gateway auto-spawns a sandbox on first
+      // use, so gating on worker_connected locked users out of agents
+      // whose pod was deleted (or never spawned) — a bootstrap paradox
+      // where you couldn't trigger spawn because typing was disabled
+      // because no sandbox existed. The provisioning banner still shows
+      // progress while the spawn is in flight; the user just isn't
+      // blocked from queueing the message that triggers it.
       const inst = this.activeInstance;
-      return inst && inst.source === 'named' && inst.worker_connected && inst.worker_healthy;
+      return inst && inst.source === 'named';
     },
     get instanceUrl() {
       return (this.activeInstance.url || '').replace(/\/$/, '');
@@ -5858,15 +6194,23 @@ function app() {
       }
       // Scroll to bottom after Alpine renders the restored messages
       this.$nextTick(() => this._scrollChat());
-      await Promise.all([this.loadStatus(), this.loadRouterState(), this.loadCanary(), this.loadInstances(), this.loadSpawnTemplates(), this.loadWorkers(), this.loadAdminMachines(), this.loadNamedAgents(), this.loadModelRoutes()]);
-      // Auto-select the primary named agent's most recent chat on load.
-      // If no agent chat exists yet, create one for the first named agent.
-      // Only run on the chats tab — otherwise chatWithAgent's side effect of
-      // setting tab='sessions' would override the URL-driven tab that init()
-      // resolved from window.location.pathname.
+      await Promise.all([this.loadStatus(), this.loadRouterState(), this.loadCanary(), this.loadInstances(), this.loadSpawnTemplates(), this.loadWorkers(), this.loadAdminMachines(), this.loadNamedAgents(), this.loadModelRoutes(), this.loadSpawnStats()]);
+      // Auto-select the *last-active* agent's most recent chat on refresh
+      // — derived from whichever chat the user most recently updated.
+      // Falls back to namedAgents[0] for first-load (no chats yet) or if
+      // the previously-active agent has been deleted. Only run on the
+      // chats tab so chatWithAgent's tab='sessions' side effect doesn't
+      // clobber the URL-driven tab that init() resolved.
       if (this.tab === 'sessions' && this.namedAgents.length > 0) {
-        const primary = this.namedAgents[0];
-        const agentChat = this.chats
+        const validAgentIds = new Set(this.namedAgents.map(a => a.id));
+        // Most-recent chat whose agent still exists wins.
+        const lastChat = this.chats
+          .filter(c => c.agent_id && validAgentIds.has(c.agent_id))
+          .sort((a, b) => (b.updated_at || 0) - (a.updated_at || 0))[0];
+        const primary = lastChat
+          ? this.namedAgents.find(a => a.id === lastChat.agent_id)
+          : this.namedAgents[0];
+        const agentChat = lastChat || this.chats
           .filter(c => c.agent_id === primary.id)
           .sort((a, b) => (b.updated_at || 0) - (a.updated_at || 0))[0];
         if (agentChat) {
@@ -7151,14 +7495,19 @@ function app() {
     _updateProvisioningTracker() {
       const now = Date.now();
       const seen = new Set();
+      let _completedSpawn = false;
       for (const a of (this.namedAgents || [])) {
         seen.add(a.id);
         if (a.worker_connected && a.worker_healthy) {
-          if (this._provisioningStarts[a.id]) delete this._provisioningStarts[a.id];
+          if (this._provisioningStarts[a.id]) {
+            delete this._provisioningStarts[a.id];
+            _completedSpawn = true;  // a spawn just finished — refresh stats
+          }
         } else if (!this._provisioningStarts[a.id]) {
           this._provisioningStarts[a.id] = now;
         }
       }
+      if (_completedSpawn) this.loadSpawnStats();
       // Drop entries for agents that no longer exist (deleted).
       for (const id of Object.keys(this._provisioningStarts)) {
         if (!seen.has(id)) delete this._provisioningStarts[id];
@@ -7169,13 +7518,53 @@ function app() {
       if (!start) return 0;
       return Math.floor((this.clientNow - start) / 1000);
     },
+    // Expected seconds for the progress bar — uses learned p90 if we have
+    // ≥3 samples in the relevant bucket, else a sensible default.
+    // Cold (model switch) bucket fallback is ~180s, warm respawn ~60s.
+    provisioningExpectedSec(agentId) {
+      const switching = this.switchingAgentIds.includes(agentId);
+      const bucket = switching ? 'cold' : 'warm';
+      const learned = this.spawnStats && this.spawnStats[bucket];
+      if (learned && learned.p90_ms) return Math.round(learned.p90_ms / 1000);
+      return switching ? 180 : 60;
+    },
     // Honest, progressive messaging based on actual elapsed time. The
     // earlier "(~10–30s)" hint was misleading — restarts can take
     // 2-3 min when the old sandbox is destroying or the cluster needs
-    // to re-import an image. Brackets chosen from real measured data
-    // (Hermes restart in this session: 2:49).
+    // to re-import an image. Hardcoded brackets are fall-backs; once
+    // enough spawns accumulate, this hint switches to learned medians
+    // from /admin/spawn-stats (see spawnStats + loadSpawnStats).
+    //
+    // Model-switch path is special: each model has its own k3s cluster,
+    // so switching models means importing hermes-sandbox:m12 into a new
+    // cluster (~60–120s) before the pod even starts. Show the longer
+    // estimate from the start so users don't think it's stuck.
     provisioningHint(agentId) {
       const sec = this.provisioningElapsed(agentId);
+      const switching = this.switchingAgentIds.includes(agentId);
+      const bucket = switching ? 'cold' : 'warm';
+      const learned = this.spawnStats && this.spawnStats[bucket];
+      // Learned-estimate path: only if we have a median (≥3 samples).
+      if (learned && learned.median_ms) {
+        const medSec = Math.round(learned.median_ms / 1000);
+        const p90Sec = Math.round((learned.p90_ms || learned.median_ms) / 1000);
+        const verb = switching ? 'Switching models' : 'Provisioning';
+        const overrun = sec > p90Sec * 1.5;
+        if (overrun) {
+          return verb + ' — past p90 (' + p90Sec + 's). Check Activity → Dashboards.';
+        }
+        const label = switching
+          ? 'Switching models — image is importing into the new cluster.'
+          : 'Provisioning sandbox.';
+        return label + ' Median ~' + medSec + 's, p90 ~' + p90Sec + 's (from ' + learned.count + ' past spawns).';
+      }
+      // Fallback hardcoded copy (no learned data yet).
+      if (switching) {
+        if (sec < 60)  return 'Switching models — image is importing into the new cluster. Up to 3 min on first switch.';
+        if (sec < 180) return 'Switching models — image imported, sandbox starting up. Almost there.';
+        if (sec < 300) return 'Switching models — taking longer than expected. Check Activity → Dashboards.';
+        return 'Stuck. Try the agent\'s Restart button, or inspect Activity → Dashboards → Sandboxes.';
+      }
       if (sec < 30)  return 'Usually 30–60s on a warm cluster.';
       if (sec < 90)  return 'Still going — first run after image changes can take 2–3 min.';
       if (sec < 180) return 'Almost there — cluster startup can be slow on cold boot.';
@@ -7183,9 +7572,122 @@ function app() {
       return 'Stuck. Try the agent\'s Restart button, or inspect Activity → Dashboards → Sandboxes.';
     },
 
+    async loadSpawnStats() {
+      try {
+        const r = await fetch('/admin/spawn-stats', {credentials: 'include'});
+        if (r.ok) this.spawnStats = await r.json();
+      } catch (e) { /* silent — falls back to hardcoded hint */ }
+    },
+
+    // Poll per-agent cost rollups. Runs opportunistically — caller decides
+    // whether to call (we invoke from the Agents tab entry and from the
+    // chat after each dispatch to get a live update). Only fetches for
+    // agents bound to a cloud route since local-model agents have zero
+    // cost and showing "$0.000" is visual noise.
+    async loadAgentCosts() {
+      const CLOUD = new Set(['anthropic', 'openai', 'openrouter']);
+      const next = {...this.agentCosts};
+      for (const a of (this.namedAgents || [])) {
+        const route = (this.modelRoutes || []).find(r => r.id === a.model_route_id);
+        const is_cloud = !!(route && CLOUD.has(route.provider));
+        if (!is_cloud) { next[a.id] = {is_cloud: false}; continue; }
+        try {
+          const r = await fetch('/admin/costs?agent_id=' + encodeURIComponent(a.id) + '&window=24h',
+            {credentials: 'include'});
+          if (!r.ok) continue;
+          const d = await r.json();
+          const total = Number(d.total_usd || 0);
+          const count = Number(d.count || 0);
+          const cap   = Number(a.daily_budget_usd || 0);
+          const pct   = cap > 0 ? Math.round((total / cap) * 100) : 0;
+          const last  = d.last_request ? `last: $${Number(d.last_request.cost_usd || 0).toFixed(4)}` : '';
+          const big   = d.largest_request ? `max: $${Number(d.largest_request.cost_usd || 0).toFixed(4)}` : '';
+          const avg   = d.avg_per_minute_usd ? `avg: $${Number(d.avg_per_minute_usd).toFixed(4)}/min` : '';
+          next[a.id] = {
+            is_cloud: true, total_usd: total, count, pct,
+            title: [total > 0 ? `today: $${total.toFixed(4)}` : 'no cloud spend yet', avg, last, big].filter(Boolean).join(' · '),
+          };
+        } catch (e) { /* skip — leave previous value */ }
+      }
+      this.agentCosts = next;
+    },
+
+    async loadCloudProviderModels(provider) {
+      if (!['anthropic','openai','openrouter'].includes(provider)) return;
+      if (this.cloudProviderModelsList[provider]) return;  // already cached
+      try {
+        const r = await fetch('/admin/cloud-provider-models?provider=' + encodeURIComponent(provider),
+          {credentials: 'include'});
+        if (!r.ok) {
+          this.cloudProviderModelsError = {...this.cloudProviderModelsError, [provider]: 'HTTP ' + r.status};
+          return;
+        }
+        const d = await r.json();
+        if (d.error || !d.models?.length) {
+          this.cloudProviderModelsError = {...this.cloudProviderModelsError, [provider]: d.error || 'no models returned'};
+          return;
+        }
+        this.cloudProviderModelsList = {...this.cloudProviderModelsList, [provider]: d.models};
+      } catch (e) {
+        this.cloudProviderModelsError = {...this.cloudProviderModelsError, [provider]: e.message || 'fetch failed'};
+      }
+    },
+
     elapsed(toolStartedAt) {
       if (!toolStartedAt) return 0;
       return Math.max(0, Math.floor((this.clientNow - toolStartedAt * 1000) / 1000));
+    },
+
+    // ── Capabilities (P dropdown — user-facing layer over toolsets+presets) ──
+    // Lazy-loaded per agent + cached on agentCapsState. Keyed by agent.id so
+    // switching between agents re-fetches the correct view. Toggling calls the
+    // backend's atomic apply endpoint which returns the recomputed state.
+    async loadAgentCaps(agentId) {
+      if (!agentId) return;
+      this.agentCapsLoading = true;
+      this.agentCapsError = null;
+      try {
+        const r = await fetch('/admin/agents/' + encodeURIComponent(agentId) + '/capabilities',
+          {credentials: 'include'});
+        if (!r.ok) throw new Error(await r.text() || r.statusText);
+        const d = await r.json();
+        d._agentId = agentId;
+        this.agentCapsState = d;
+      } catch(e) {
+        this.agentCapsError = 'Load failed: ' + (e.message || e);
+        this.agentCapsState = null;
+      } finally {
+        this.agentCapsLoading = false;
+      }
+    },
+    async toggleCapability(agentId, capId, enabled) {
+      if (!agentId || !capId) return;
+      const key = 'cap:' + capId;
+      if (!this.agentCapsToggling) this.agentCapsToggling = {};
+      this.agentCapsToggling[key] = true;
+      this.agentCapsError = null;
+      try {
+        const r = await fetch(
+          '/admin/agents/' + encodeURIComponent(agentId) + '/capabilities/toggle',
+          {
+            method: 'POST',
+            credentials: 'include',
+            headers: {'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken()},
+            body: JSON.stringify({capability: capId, enabled}),
+          },
+        );
+        if (!r.ok) throw new Error(await r.text() || r.statusText);
+        const d = await r.json();
+        d._agentId = agentId;
+        this.agentCapsState = d;
+        // Also bump the underlying agentToolsState so the Advanced view
+        // reflects the change without an extra round-trip.
+        this.loadAgentTools(agentId);
+      } catch(e) {
+        this.agentCapsError = 'Toggle "' + capId + '" failed: ' + (e.message || e);
+        this.loadAgentCaps(agentId);  // re-fetch canonical state
+      }
+      delete this.agentCapsToggling[key];
     },
 
     // Compose a maturity tier from age + activity. The score uses log
@@ -7202,14 +7704,23 @@ function app() {
       const dispatches = Number(a.dispatch_count || 0);
       const sessions   = Number(a.session_count || 0);
       const memories   = Number(a.memory_count || 0);
-      const score = Math.log2(1 + dispatches) + Math.log2(1 + sessions) + memories;
+      // All three terms log-scaled so no single dimension dominates —
+      // earlier `memories` was linear and a handful tripped the agent
+      // to Old Growth. Thresholds raised so the tiers actually mean
+      // something: a young chat with a few dispatches now sits firmly
+      // in Sapling/Branch instead of jumping the queue. To reach
+      // Old Growth realistically: ~150+ dispatches AND ~30+ sessions
+      // AND ~10+ persisted memories (or some richer combination).
+      const score = Math.log2(1 + dispatches)
+                  + Math.log2(1 + sessions)
+                  + Math.log2(1 + memories);
       const createdMs = Number(a.created_at || 0);
       const days = createdMs ? Math.max(0, Math.floor((Date.now() - createdMs) / 86400000)) : 0;
       let tier, glyph;
-      if      (score < 1)  { tier = 'Sprout';     glyph = '\ud83c\udf31'; }  // 🌱
-      else if (score < 3)  { tier = 'Sapling';    glyph = '\ud83c\udf3f'; }  // 🌿
-      else if (score < 6)  { tier = 'Branch';     glyph = '\ud83c\udf33'; }  // 🌳
-      else if (score < 10) { tier = 'Tree';       glyph = '\ud83c\udf32'; }  // 🌲
+      if      (score < 2)  { tier = 'Sprout';     glyph = '\ud83c\udf31'; }  // 🌱
+      else if (score < 5)  { tier = 'Sapling';    glyph = '\ud83c\udf3f'; }  // 🌿
+      else if (score < 9)  { tier = 'Branch';     glyph = '\ud83c\udf33'; }  // 🌳
+      else if (score < 14) { tier = 'Tree';       glyph = '\ud83c\udf32'; }  // 🌲
       else                 { tier = 'Old Growth'; glyph = '\ud83e\udeb5'; }  // 🪵
       return { score, tier, glyph, days, dispatches, sessions, memories };
     },
@@ -9184,6 +9695,13 @@ function app() {
       // every other agent's M-dropdown badge say "switching…" too even
       // though only one agent was being rebound).
       this.switchingAgentIds = [...this.switchingAgentIds, agent.id];
+      // Drop a system message in the active chat so the user has a
+      // visible "something is happening" signal without having to look
+      // at the banner — the chat is where their attention lives.
+      // Marker IDs let us update/replace the same line as we progress.
+      const _switchMsgId = 'sysmsg-switch-' + Date.now();
+      this._appendSystemMessage(chat, _switchMsgId,
+        `🔄 Switching ${agent.name} to ${route.model} — sandbox respawning… (typically 60–180s on cold cluster)`);
       try {
         // 1. Rebind the agent to the new route
         const patchResp = await fetch(`/admin/agents/${encodeURIComponent(agent.id)}`, {
@@ -9230,18 +9748,54 @@ function app() {
         //    of the UI disagreed about whether the swap was done.
         //    Now the M-pill stays "switching…" until worker_connected
         //    flips true (or we hit a 60s safety deadline).
-        const deadline = Date.now() + 60_000;
+        // Cold-cluster spawns can take ~3 min when the image needs
+        // importing; warm respawns are ~60s. Bumped from 60s to 240s
+        // so the wait covers the realistic worst case before timing out.
+        const deadline = Date.now() + 240_000;
+        let _ready = false;
         while (Date.now() < deadline) {
           await new Promise(r => setTimeout(r, 1000));
           try { await this.loadNamedAgents(); } catch (_) {}
           const fresh = this.namedAgents?.find(a => a.id === agent.id);
-          if (fresh && fresh.worker_connected && fresh.worker_healthy) break;
+          if (fresh && fresh.worker_connected && fresh.worker_healthy) {
+            _ready = true;
+            break;
+          }
         }
+        this._appendSystemMessage(chat, _switchMsgId, _ready
+          ? `✅ ${agent.name} is now running on ${route.model}. Send your next message.`
+          : `⚠️ ${agent.name} switch is taking longer than expected. The chat will unlock when the sandbox is ready — check Activity → Dashboards → Sandboxes if it stays stuck.`);
       } catch(e) {
+        this._appendSystemMessage(chat, _switchMsgId,
+          `❌ Switch failed: ${e.message || e}`);
         alert(`Switch failed: ${e.message || e}`);
       }
       // Clear the switching marker for THIS agent only.
       this.switchingAgentIds = this.switchingAgentIds.filter(id => id !== agent.id);
+    },
+
+    // System-message helper: append-or-replace by markerId so the
+    // initial "switching…" line gets upgraded to "✓ ready" in place
+    // instead of stacking three notifications. Marked role='system'
+    // so the chat renderer styles it differently from user/assistant.
+    _appendSystemMessage(chat, markerId, content) {
+      if (!chat) return;
+      const existing = (chat.messages || []).find(m => m._marker === markerId);
+      if (existing) {
+        existing.content = content;
+        existing.timestamp = Date.now();
+      } else {
+        if (!Array.isArray(chat.messages)) chat.messages = [];
+        chat.messages.push({
+          role: 'system',
+          content,
+          timestamp: Date.now(),
+          _marker: markerId,
+        });
+      }
+      chat.updated_at = Date.now();
+      this._saveChats();
+      this.$nextTick(() => this._scrollChat());
     },
 
     async loadModelRoutes() {

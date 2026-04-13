@@ -446,7 +446,25 @@ async def _handle_services_set_key(request: web.Request) -> web.Response:
         return web.json_response({"ok": False, "error": "env_var and value required"}, status=400)
     from gateway.services import set_credential, get_tool_integrations
     set_credential(env_var, value)
-    return web.json_response({"ok": True, "integrations": get_tool_integrations()})
+    # Push the new credential to every running sandbox via instance-config
+    # so the next chat already has it (sandbox_worker.py applies env from
+    # config at startup). Without this, saving e.g. BROWSERLESS_URL only
+    # affects the gateway's env — sandboxes wouldn't see the URL until a
+    # full destroy+respawn. Best-effort: failures log but don't tank the
+    # save, since the credential is already in the DB and the next sandbox
+    # spawn (or per-agent toolset toggle) will pick it up too.
+    executor = request.app.get("executor")
+    pushed = 0
+    if executor and hasattr(executor, "refresh_all_instance_configs"):
+        try:
+            pushed = executor.refresh_all_instance_configs()
+        except Exception as exc:
+            logger.warning("services_set_key: refresh broadcast failed: %s", exc)
+    return web.json_response({
+        "ok": True,
+        "integrations": get_tool_integrations(),
+        "sandboxes_refreshed": pushed,
+    })
 
 
 async def _handle_services_delete_key(request: web.Request) -> web.Response:
@@ -3054,6 +3072,88 @@ async def _handle_tools_configure(request: web.Request) -> web.Response:
     })
 
 
+async def _reconcile_sandbox_state() -> None:
+    """One-shot startup reconciliation between state file + cluster reality.
+
+    Walks ~/.logos/openshell_instances.json, dedupes per sandbox_name
+    (favouring ready > provisioning > error), then for each survivor
+    polls `openshell sandbox list` on the relevant gateway and updates
+    phase based on what k3s actually shows. Entries whose pods are gone
+    are dropped so the UI doesn't show ghost agents.
+
+    Without this the gateway boots with whatever the state file last
+    contained, which may include stale "provisioning" entries from a
+    crash mid-spawn — and `worker_registry.get()` returns the first
+    match, so the UI flags running agents as "not ready" until the user
+    sends a message that re-runs the dispatch path.
+    """
+    import asyncio as _asyncio
+    from gateway.executors.openshell import _load_state, _save_state, _openshell
+
+    instances = _load_state()
+    if not instances:
+        return
+
+    # Dedupe per sandbox_name. ready always wins; among same phase the
+    # most recently created entry wins.
+    rank = {"ready": 3, "provisioning": 2, "error": 1}
+    by_name: dict[str, dict] = {}
+    for inst in instances:
+        name = inst.get("sandbox_name", "")
+        if not name:
+            continue
+        existing = by_name.get(name)
+        if not existing:
+            by_name[name] = inst
+            continue
+        new_r = rank.get(inst.get("phase", ""), 0)
+        old_r = rank.get(existing.get("phase", ""), 0)
+        if new_r > old_r or (new_r == old_r and inst.get("created_at", 0) > existing.get("created_at", 0)):
+            by_name[name] = inst
+
+    # Group by gateway so we make one CLI call per cluster.
+    by_gateway: dict[str, list[dict]] = {}
+    for inst in by_name.values():
+        gw = inst.get("openshell_name") or ""
+        by_gateway.setdefault(gw, []).append(inst)
+
+    updated: list[dict] = []
+    for gw, group in by_gateway.items():
+        if not gw:
+            updated.extend(group)
+            continue
+        try:
+            res = await _asyncio.to_thread(
+                _openshell, "sandbox", "list",
+                gateway=gw, check=False, timeout=10,
+            )
+            stdout = (res.stdout or "") if res.returncode == 0 else ""
+        except Exception as exc:
+            logger.debug("startup reconcile: list failed for %s: %s — keeping cached entries", gw, exc)
+            updated.extend(group)
+            continue
+        for inst in group:
+            sandbox_name = inst.get("sandbox_name", "")
+            if not sandbox_name:
+                continue
+            line = next((l for l in stdout.splitlines() if sandbox_name in l), None)
+            if not line:
+                # Pod is gone in k3s — drop the stale state entry.
+                logger.info("startup reconcile: dropping stale entry for %s (pod missing in %s)", sandbox_name, gw)
+                continue
+            new_phase = "ready" if "Ready" in line else "provisioning"
+            if inst.get("phase") != new_phase:
+                logger.info(
+                    "startup reconcile: %s phase %s -> %s (gateway=%s)",
+                    sandbox_name, inst.get("phase"), new_phase, gw,
+                )
+                inst["phase"] = new_phase
+            updated.append(inst)
+
+    _save_state(updated)
+    logger.info("startup reconcile: %d sandbox entries kept", len(updated))
+
+
 async def _handle_chat(request: web.Request) -> web.StreamResponse:
     # /chat is intentionally unauthenticated (same-origin dashboard, LAN-only NodePort).
     # Rate limiting prevents runaway agent spawning from a single IP.
@@ -3152,17 +3252,35 @@ async def _handle_chat(request: web.Request) -> web.StreamResponse:
     if not _agent_config:
         raise web.HTTPNotFound(reason=f"agent {agent_id} not found")
 
-    # On-demand LM Studio model load. Logos has always known how to call
-    # /api/v1/models/load (run.py preloads the gateway-wide active model
-    # at startup, setup_handlers uses it for benchmarks). The chat
-    # dispatch path didn't call it, so an agent bound to a model that
-    # LM Studio hadn't loaded yet would dispatch to its worker, the
-    # worker would POST /v1/chat/completions, and LM Studio would
-    # respond with "Unexpected endpoint or method" because no model
-    # was loaded into the slot. ensure_loaded fills that gap and is
-    # cached after the first successful call per (host, model) pair.
+    # On-demand LM Studio model load — only for agents whose model
+    # actually runs on LM Studio (or another local OpenAI-compat server).
+    # Cloud-routed models (anthropic/openai/openrouter) live on their
+    # provider's API; pinging LM Studio with their model IDs wastes a
+    # round-trip and produces confusing 400s in LM Studio's log.
+    #
+    # Derive "is cloud" from the agent's bound model_route rather than
+    # matching magic prefixes on the model name. When someone adds a new
+    # provider (mistral, deepseek, etc.) it just works — no code change.
     _agent_model_for_load = (_agent_config.get("model") or "").strip()
-    if _agent_model_for_load:
+    _LOCAL_PROVIDERS = {"lmstudio", "ollama"}
+    _is_cloud_model = False
+    _route_id = _agent_config.get("model_route_id")
+    if _route_id:
+        try:
+            _route = auth_db.get_model_route(_route_id)
+            _route_provider = ((_route or {}).get("provider") or "").lower()
+            if _route_provider and _route_provider not in _LOCAL_PROVIDERS:
+                _is_cloud_model = True
+        except Exception:
+            pass  # fall through to heuristic
+    # Fallback heuristic for agents without a route binding (shouldn't
+    # happen normally; kept as a belt-and-braces guard).
+    if not _is_cloud_model and _agent_model_for_load:
+        _ml = _agent_model_for_load.lower()
+        if (_ml.startswith(("claude-", "gpt-", "o1", "o3", "o4", "gemini-"))
+            or ("/" in _ml and _ml.split("/", 1)[0] in {"anthropic", "openai", "google"})):
+            _is_cloud_model = True
+    if _agent_model_for_load and not _is_cloud_model:
         try:
             _machines = auth_db.list_machines()
             for _m in _machines:
@@ -3275,9 +3393,16 @@ async def _handle_chat(request: web.Request) -> web.StreamResponse:
     )
     worker_registry = request.app.get("worker_registry")
     worker_entry = worker_registry.get(target_worker) if worker_registry else None
+    # Previously we appended a per-sandbox "-w<registered_at>" incarnation
+    # tag to the session_id to force amnesia across sandbox recreation.
+    # That broke mid-conversation history: the first dispatch (no sandbox
+    # yet) used key "chat_xyz" and the second (sandbox now spawned) used
+    # "chat_xyz-w12345" — different keys, so Claude's second reply had no
+    # memory of the first. Keep the tag empty; persistence of history
+    # across sandbox respawns is the correct default for a user-visible
+    # chat UI, and agent-identity confusion is handled by the separate
+    # `target_worker` routing above (derived from agent_id, not session).
     incarnation_tag = ""
-    if worker_entry and worker_entry.registered_at:
-        incarnation_tag = f"-w{int(worker_entry.registered_at)}"
 
     # Diagnostic: log every dispatch decision so future "wrong agent
     # responded" bugs can be traced from the gateway log alone instead
@@ -3480,6 +3605,80 @@ async def _handle_chat(request: web.Request) -> web.StreamResponse:
             except Exception as _dsp_exc:
                 logger.debug("dispatch ledger create skipped: %s", _dsp_exc)
 
+            # ── Budget gate ─────────────────────────────────────────────
+            # Refuse this dispatch if the agent's daily_budget_usd has
+            # already been exceeded by today's cost_log rows. For agents
+            # with fallback_route_id set, we could auto-swap models here;
+            # for now we refuse with a clear error and let the user
+            # decide. The UI renders the refusal as an error bubble with
+            # a "switch to fallback" button.
+            _budget = _agent_config.get("daily_budget_usd")
+            if _budget is not None and _budget > 0:
+                try:
+                    _fallback = _agent_config.get("fallback_route_id") or None
+                    _rollup = auth_db.cost_rollup(
+                        agent_id=_agent_config.get("id"),
+                        since_ts=int(time.time() * 1000) - 86_400_000,  # last 24h
+                        until_ts=int(time.time() * 1000),
+                    )
+                    _spent = float(_rollup.get("total_usd") or 0)
+                    if _spent >= float(_budget):
+                        # Optional auto-swap to fallback route: rebind +
+                        # carry on with the new model. Only kicks in if
+                        # the agent has a fallback configured. Swap is
+                        # persistent (via update_agent) so the agent stays
+                        # on the fallback until the budget rolls over or
+                        # the user re-selects the cloud route manually.
+                        _swapped = False
+                        if _fallback:
+                            try:
+                                _fallback_route = auth_db.get_model_route(_fallback)
+                                if (_fallback_route and
+                                        _fallback_route.get("provider") in ("lmstudio", "ollama") and
+                                        _fallback_route.get("status") == "ready"):
+                                    auth_db.update_agent(
+                                        _agent_config["id"],
+                                        model_route_id=_fallback,
+                                        model=_fallback_route.get("model") or _agent_model,
+                                    )
+                                    _swapped = True
+                                    logger.info(
+                                        "budget: agent %s hit $%.2f/$%.2f cap — auto-swapped to fallback route %s (%s)",
+                                        _agent_config.get("name"), _spent, _budget,
+                                        _fallback, _fallback_route.get("model"),
+                                    )
+                                    # Surface a system message in the stream so the
+                                    # user sees what happened instead of a silent swap.
+                                    await send_event({
+                                        "type": "message", "role": "system",
+                                        "content": (
+                                            f"⚠️ {_agent_config.get('name')} hit the daily "
+                                            f"budget (${_spent:.2f}/${_budget:.2f}). "
+                                            f"Auto-switched to local model "
+                                            f"{_fallback_route.get('model')}. "
+                                            "Raise the budget or wait for the 24h window to reset."
+                                        ),
+                                    })
+                            except Exception as _bsw_exc:
+                                logger.warning("budget auto-swap failed: %s", _bsw_exc)
+                        if not _swapped:
+                            await send_event({
+                                "type": "error",
+                                "error_title": "Daily budget exceeded",
+                                "error_type": "budget",
+                                "error_action": (
+                                    f"{_agent_config.get('name')} has spent "
+                                    f"${_spent:.2f} of ${_budget:.2f} today. "
+                                    "Raise the budget, configure a local fallback route, "
+                                    "or wait for the 24h window to roll over."
+                                ),
+                                "content": f"budget_exceeded spent=${_spent:.2f} cap=${_budget:.2f}",
+                            })
+                            await send_event({"type": "message", "content": ""})
+                            return resp
+                except Exception as _bgate_exc:
+                    logger.warning("budget gate skipped: %s", _bgate_exc)
+
             worker_result = await worker_registry.dispatch_task(
                 target_worker, task_payload, timeout=600,
                 on_stream_event=_on_worker_stream,
@@ -3545,6 +3744,19 @@ async def _handle_chat(request: web.Request) -> web.StreamResponse:
                 await send_event({"type": "message", "content": ""})
             else:
                 final = result.get("final_response", "")
+                # Guard: an empty user-facing reply is never acceptable.
+                # Common cause: the model wraps its whole reply in <think>
+                # tags and the stripper eats everything. Surface a
+                # diagnostic placeholder so the user sees *something* and
+                # the silent-failure mode shows up in dispatch logs instead
+                # of looking like a UI bug.
+                if not (final or "").strip():
+                    logger.warning(
+                        "chat: worker returned empty final_response (session=%s, agent=%s) — "
+                        "likely thinking-tag stripping; surfacing fallback",
+                        session_entry.session_id, agent_id,
+                    )
+                    final = "⚠️ The agent finished without producing a reply. (Likely a reasoning-model formatting issue — try rephrasing or starting a new chat.)"
                 await send_event({"type": "message", "content": final})
 
             # ── Persist this turn so the next message in the same sandbox
@@ -3834,6 +4046,36 @@ async def start_http_api(runner: Any, port: int = 8091) -> None:
     if worker_registry:
         worker_registry.start_background_sync_tasks()
 
+    # ── Pre-fetch cloud-model pricing from OpenRouter ──────────────────────
+    # So the first dispatch doesn't stall waiting on a cold catalogue
+    # fetch. Best-effort — if OpenRouter is unreachable at boot the
+    # cost tracker silently records rows with pricing_known=False and
+    # the UI surfaces "N requests with unknown pricing".
+    try:
+        from gateway import pricing as _pricing
+        import asyncio as _asyncio_local
+        await _asyncio_local.to_thread(_pricing.ensure_loaded)
+    except Exception as exc:
+        logger.debug("startup pricing fetch skipped: %s", exc)
+
+    # ── Reconcile state file with reality on startup ───────────────────────
+    # The state file at ~/.logos/openshell_instances.json persists across
+    # restarts but can drift from the actual cluster (sandbox deleted via
+    # CLI, gateway crashed mid-spawn leaving a stale "provisioning" entry,
+    # etc.). Without reconciliation the UI shows agents as "not ready"
+    # after a gateway restart even though their pods are alive — the user
+    # has to send a message to "wake them up" via the dispatch path.
+    # This reconciler:
+    #   1. dedupes per sandbox_name (ready > provisioning > error)
+    #   2. for each entry, polls `openshell sandbox list` on the relevant
+    #      gateway and overwrites phase based on the actual k8s state
+    #      (Ready -> "ready", anything else -> drop)
+    # Cheap (one CLI call per gateway, ~1-2s total) and only runs once.
+    try:
+        await _reconcile_sandbox_state()
+    except Exception as exc:
+        logger.warning("startup state reconciliation failed: %s", exc)
+
     # ── Centralized MCP gateway service ────────────────────────────────────
     # Boots all configured MCP servers once and exposes them over HTTP so
     # agents in any executor mode (local, OpenShell, k8s) can connect via URL.
@@ -3870,10 +4112,18 @@ async def start_http_api(runner: Any, port: int = 8091) -> None:
 
     # ── Inject tool credentials from DB into os.environ ────────────────
     try:
-        from gateway.services import inject_credentials
+        from gateway.services import inject_credentials, autodetect_local_services
         _n_creds = inject_credentials()
         if _n_creds:
             logger.info("Injected %d tool credential(s) from DB", _n_creds)
+        # Local-first auto-detect: if browserless / firecrawl / other
+        # selfhosted services are running and unconfigured, save them.
+        # Probes the gateway's network context for any reachable form
+        # but persists the canonical *.internal URL the sandbox uses.
+        _n_auto = autodetect_local_services()
+        if _n_auto:
+            logger.info("Autodetected %d local self-hosted service(s): %s",
+                        len(_n_auto), _n_auto)
     except Exception as _cred_err:
         logger.debug("Could not inject credentials: %s", _cred_err)
 
@@ -4083,6 +4333,10 @@ async def start_http_api(runner: Any, port: int = 8091) -> None:
     _ap  = require_permission("assign_profile")
     _vrd = require_permission("view_routing_debug")
 
+    app.router.add_get("/admin/spawn-stats",   _mm(admin_handlers.handle_spawn_stats))
+    app.router.add_get("/admin/costs",         _mm(admin_handlers.handle_costs))
+    app.router.add_get("/admin/pricing/status",    _mm(admin_handlers.handle_pricing_status))
+    app.router.add_post("/admin/pricing/refresh",  _mm(require_csrf(admin_handlers.handle_pricing_refresh)))
     app.router.add_get("/admin/model-classes", _mm(admin_handlers.handle_model_classes))
     app.router.add_get("/admin/machines",      _mm(admin_handlers.handle_machines_list))
     app.router.add_post("/admin/machines",     _mm(require_csrf(admin_handlers.handle_machines_post)))
@@ -4096,6 +4350,7 @@ async def start_http_api(runner: Any, port: int = 8091) -> None:
     app.router.add_get("/admin/machines/{id}/health", _mm(admin_handlers.handle_machine_health))
     # Cloud providers
     app.router.add_get("/admin/cloud-providers",              _mm(admin_handlers.handle_cloud_providers_list))
+    app.router.add_get("/admin/cloud-provider-models",        _mm(admin_handlers.handle_cloud_provider_models))
     app.router.add_post("/admin/cloud-providers",             _mm(require_csrf(admin_handlers.handle_cloud_providers_post)))
     app.router.add_patch("/admin/cloud-providers/{id}",       _mm(require_csrf(admin_handlers.handle_cloud_providers_patch)))
     app.router.add_delete("/admin/cloud-providers/{id}",      _mm(require_csrf(admin_handlers.handle_cloud_providers_delete)))
@@ -4165,6 +4420,18 @@ async def start_http_api(runner: Any, port: int = 8091) -> None:
                         _mm(require_csrf(admin_handlers.handle_agent_toolsets_toggle)))
     app.router.add_post("/admin/agents/{id}/tools/presets/toggle",
                         _mm(require_csrf(admin_handlers.handle_agent_presets_toggle)))
+    # Capabilities — user-facing collapse of toolsets + presets + creds.
+    # GET returns the catalogue annotated with per-agent state; POST
+    # toggles a capability (atomic apply/remove of all bundled toolsets
+    # and presets). Same auth as the legacy tools endpoints.
+    app.router.add_get("/admin/agents/{id}/capabilities",
+                       _mm(admin_handlers.handle_agent_capabilities_get))
+    app.router.add_post("/admin/agents/{id}/capabilities/toggle",
+                        _mm(require_csrf(admin_handlers.handle_agent_capabilities_toggle)))
+    # Layer 1 URL consent — per-agent website blocklist that the local
+    # browser tool checks before every navigation.
+    app.router.add_put("/admin/agents/{id}/website-blocklist",
+                       _mm(require_csrf(admin_handlers.handle_agent_website_blocklist_put)))
     app.router.add_get("/admin/policies",      _mpr(admin_handlers.handle_policies_list))
     app.router.add_post("/admin/policies",     _mpr(require_csrf(admin_handlers.handle_policies_post)))
     app.router.add_patch("/admin/policies/{id}", _mpr(require_csrf(admin_handlers.handle_policies_patch)))

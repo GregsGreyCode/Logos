@@ -778,6 +778,35 @@ def push_effective_policy(
 # ── Utility: preset-aware baseline path (for spawn-time merge) ────────────
 
 
+def get_allowed_hosts_for_agent(agent_id: str) -> List[str]:
+    """Return a deduplicated, sorted list of hosts the agent's effective
+    network policy permits.
+
+    Used to inject "you can navigate these hosts: ..." into the agent's
+    system prompt so it doesn't trial-and-error against the firewall.
+    Pulls from `network_policies.<bucket>.endpoints[].host` across every
+    bucket in the merged baseline+presets policy. Drops bare wildcards
+    ("*") since they're not actionable for an LLM. Keeps narrow
+    wildcards ("*.example.com") so the model can still infer subdomain
+    coverage.
+
+    Returns [] on any error — empty list is safe (worker just skips
+    the injection and behaviour matches the pre-injection baseline).
+    """
+    try:
+        effective = compute_effective_policy(agent_id)
+    except Exception:
+        return []
+    hosts: set = set()
+    for bucket in (effective.get("network_policies") or {}).values():
+        for ep in (bucket.get("endpoints") or []):
+            h = ep.get("host")
+            if not h or h == "*":
+                continue
+            hosts.add(h)
+    return sorted(hosts)
+
+
 def write_effective_policy_to_tempfile(agent_id: str) -> Path:
     """Compute the effective policy for an agent, serialize it, and
     return the tempfile path.
