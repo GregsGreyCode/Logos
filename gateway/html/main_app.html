@@ -8003,8 +8003,16 @@ function app() {
     // ── Cloud provider methods ──────────────────────────────────────────────
     // ── Named agents methods ────────────────────────────────────────────────
     async loadNamedAgents() {
+      // Track whether the fetch actually succeeded. If it didn't (auth
+      // race right after a hard-refresh, transient network error, etc.)
+      // we MUST NOT run the orphan-chat cleanup below — a failed fetch
+      // leaves namedAgents=[], which would make every agent-bound chat
+      // look orphaned and get filtered out + persisted as an empty list
+      // to localStorage. That was destroying users' chats on Ctrl+Shift+R.
+      let fetchOk = false;
       try {
         const r = await fetch('/admin/agents', { credentials: 'include' });
+        if (!r.ok) throw new Error('HTTP ' + r.status);
         const d = await r.json();
         const fresh = d.agents || [];
         // Preserve transient UI state (_editing / _edit / _confirmDelete)
@@ -8021,16 +8029,25 @@ function app() {
         }
         this.namedAgents = fresh;
         this._updateProvisioningTracker();
-      } catch { this.namedAgents = []; }
-      // Drop orphan chats whose agent has been deleted server-side.
-      // A chat with no agent_id is "unassigned" and stays (legacy chats).
-      const validIds = new Set((this.namedAgents || []).map(a => a.id));
-      const before = this.chats.length;
-      this.chats = this.chats.filter(c => !c.agent_id || validIds.has(c.agent_id));
-      if (this.chats.length !== before) {
-        this._saveChats();
-        if (this.activeChatId && !this.chats.find(c => c.id === this.activeChatId)) {
-          this.activeChatId = this.chats[0]?.id || null;
+        fetchOk = true;
+      } catch (e) {
+        // Leave the existing namedAgents in place — clearing it on a
+        // transient error caused the world canvas to go empty AND wiped
+        // the chat list. If the user genuinely has zero agents the next
+        // successful poll will set it to []; until then, last-known-good.
+        console.warn('loadNamedAgents failed (keeping last-known-good):', e);
+      }
+      // Orphan-chat cleanup — only run on a SUCCESSFUL fetch. A chat with
+      // no agent_id is "unassigned" and always stays (legacy chats).
+      if (fetchOk) {
+        const validIds = new Set((this.namedAgents || []).map(a => a.id));
+        const before = this.chats.length;
+        this.chats = this.chats.filter(c => !c.agent_id || validIds.has(c.agent_id));
+        if (this.chats.length !== before) {
+          this._saveChats();
+          if (this.activeChatId && !this.chats.find(c => c.id === this.activeChatId)) {
+            this.activeChatId = this.chats[0]?.id || null;
+          }
         }
       }
       // Push the fresh agent list directly to the world so deletions
