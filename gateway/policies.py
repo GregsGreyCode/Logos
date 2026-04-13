@@ -134,27 +134,47 @@ class PolicyMergeError(Exception):
 TOOL_PRESET_MAP: Dict[str, Dict[str, Any]] = {
     # Web search & extraction — Firecrawl API
     "web_search": {
+        # The right preset is chosen by which env var was just saved:
+        # FIRECRAWL_API_KEY → "firecrawl" (cloud), FIRECRAWL_API_URL →
+        # "firecrawl-selfhosted" (homelab). auto_apply_presets_for_env
+        # selects only the preset(s) keyed to the saved env var.
         "presets": ["firecrawl"],
+        "presets_by_env": {
+            "FIRECRAWL_API_KEY": ["firecrawl"],
+            "FIRECRAWL_API_URL": ["firecrawl-selfhosted"],
+        },
         "env": ["FIRECRAWL_API_KEY"],
-        "env_alt": ["FIRECRAWL_API_URL"],  # self-hosted alternative
+        "env_alt": ["FIRECRAWL_API_URL"],
         "toolset": "web",
         "description": "Web search and content extraction",
         "setup_url": "https://firecrawl.dev",
     },
     "web_extract": {
         "presets": ["firecrawl"],
+        "presets_by_env": {
+            "FIRECRAWL_API_KEY": ["firecrawl"],
+            "FIRECRAWL_API_URL": ["firecrawl-selfhosted"],
+        },
         "env": ["FIRECRAWL_API_KEY"],
         "env_alt": ["FIRECRAWL_API_URL"],
         "toolset": "web",
         "description": "Web page content extraction",
         "setup_url": "https://firecrawl.dev",
     },
-    # Browser automation — Browserbase (cloud) or local (no preset needed)
+    # Browser automation — Browserbase (cloud), self-hosted Browserless,
+    # or local agent-browser Chromium (no preset needed for local).
     "browser_navigate": {
         "presets": ["browserbase"],
+        "presets_by_env": {
+            "BROWSERBASE_API_KEY": ["browserbase"],
+            "BROWSERBASE_PROJECT_ID": ["browserbase"],
+            "BROWSERLESS_URL": ["browserless"],
+            "BROWSERLESS_TOKEN": ["browserless"],
+        },
         "env": ["BROWSERBASE_API_KEY", "BROWSERBASE_PROJECT_ID"],
+        "env_alt": ["BROWSERLESS_URL", "BROWSERLESS_TOKEN"],
         "toolset": "browser",
-        "description": "Cloud browser automation (Browserbase)",
+        "description": "Cloud or self-hosted browser automation",
         "setup_url": "https://browserbase.com",
         "optional": True,  # local browser works without this
     },
@@ -310,13 +330,19 @@ def auto_apply_presets_for_env(env_key: str) -> List[str]:
     """
     from gateway.auth import db as auth_db
 
-    # Find which presets this env key unlocks
+    # Find which presets this env key unlocks. Tools may declare a per-env
+    # routing table (`presets_by_env`) so cloud and self-hosted variants of
+    # the same tool can target different presets — saving FIRECRAWL_API_URL
+    # applies the homelab preset rather than the cloud one, etc.
     presets_to_apply: Dict[str, str] = {}  # preset_name -> toolset
     for tool_name, info in TOOL_PRESET_MAP.items():
         all_env = info.get("env", []) + info.get("env_alt", [])
-        if env_key in all_env:
-            for preset in info.get("presets", []):
-                presets_to_apply[preset] = info["toolset"]
+        if env_key not in all_env:
+            continue
+        per_env = info.get("presets_by_env") or {}
+        chosen = per_env.get(env_key) or info.get("presets", [])
+        for preset in chosen:
+            presets_to_apply[preset] = info["toolset"]
 
     if not presets_to_apply:
         return []

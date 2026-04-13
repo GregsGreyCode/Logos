@@ -769,15 +769,24 @@ async def _handle_sandbox_logs(request: web.Request) -> web.Response:
     """GET /admin/sandboxes/{name}/logs — tail the worker log inside the sandbox.
 
     The openshell CLI does not have a `sandbox logs` subcommand (only
-    create/list/delete/exec/connect/upload/download/ssh-config). The
-    earlier implementation called `openshell sandbox logs <name>`
-    which always errored out with "unrecognized subcommand", so the
-    Logs button in the admin UI silently returned nothing.
+    create/list/delete/exec/connect/upload/download/ssh-config), so we
+    read log files directly via `sandbox exec`.
 
-    Fix: read /tmp/worker.log directly via `sandbox exec`. That's
-    where the worker writes its stdout/stderr (the spawn flow runs
-    `nohup /app/entrypoint.sh > /tmp/worker.log 2>&1`). Tail the last
-    200 lines so we don't blow up the response on a chatty worker."""
+    Architecture note (Plan A-prime / commit c36c1af): there is NO
+    persistent worker process in the current runtime. Each chat
+    dispatch spawns a fresh ``python3 /app/sandbox_worker.py``
+    subprocess via ``openshell sandbox exec``. The earlier
+    implementation looked for ``/tmp/worker.log`` written by an
+    ``entrypoint.sh`` that no longer exists, so the Logs button
+    silently returned "(no worker log yet)" no matter how busy the
+    sandbox was.
+
+    Current source-of-truth log file: ``/tmp/worker.jsonl`` — the
+    structured JSON sink that ``sandbox_worker.py`` opens via
+    ``logging.FileHandler`` (see docker/sandbox_worker.py:134). It
+    accumulates one JSON record per log line across every dispatch,
+    so tailing it gives a chronological feed of recent worker
+    activity. We tail the last 200 lines."""
     name = request.match_info["name"]
     try:
         from gateway.executors.openshell import _openshell, _load_state
@@ -796,9 +805,17 @@ async def _handle_sandbox_logs(request: web.Request) -> web.Response:
             return web.json_response(
                 {"logs": "", "stderr": "no model routes configured — run /setup first"}
             )
+        # Try /tmp/worker.jsonl first (current Plan A-prime source).
+        # Fall back to /tmp/worker.log for any legacy/custom image that
+        # still uses the old layout. Final fallback is a clear message
+        # — better than the silent "(no worker log yet)" the old code
+        # produced for every healthy sandbox.
         result = _openshell(
             "sandbox", "exec", "-n", name, "--no-tty", "--",
-            "sh", "-c", "tail -n 200 /tmp/worker.log 2>/dev/null || echo '(no worker log yet)'",
+            "sh", "-c",
+            "if [ -s /tmp/worker.jsonl ]; then tail -n 200 /tmp/worker.jsonl; "
+            "elif [ -s /tmp/worker.log ]; then tail -n 200 /tmp/worker.log; "
+            "else echo '(no dispatches yet — log file is created on first chat to this sandbox)'; fi",
             gateway=target_gw, check=False, timeout=15,
         )
         return web.json_response({"logs": result.stdout or "", "stderr": result.stderr or ""})
@@ -1275,6 +1292,125 @@ async def _handle_setup_reset(request: web.Request) -> web.Response:
     reset_setup_completed()
     write_audit_log(user_id, "setup_reset", ip_address=request.remote)
     return web.json_response({"ok": True})
+
+
+async def _handle_setup_wipe(request: web.Request) -> web.Response:
+    """POST /api/setup/wipe — destructive factory reset.
+
+    True first-install simulation: wipes everything user-scoped so the
+    next visit goes through the full /setup wizard including the admin
+    account-creation step.
+
+    Wipes:
+      - Every agent (DB row + on-disk ~/.logos/agents/<name>/ via
+        delete_agent's filesystem hook + OpenShell sandbox via the
+        executor's destroy path)
+      - Every model route (OpenShell gateway destroyed when reachable;
+        DB row removed unconditionally)
+      - Dispatch ledger, agent_runs, evolution_proposals, audit log
+      - All users (caller is logging themselves out — the wizard's
+        admin-create step will mint the next admin account)
+      - Auth session cookie (force a clean re-auth flow)
+      - The setup_completed flag (so /setup re-prompts on next load)
+
+    Deliberately KEEPS:
+      - Souls / skills / themes (platform fixtures, not user data)
+      - Action policies / routing policies (the wizard re-seeds basics)
+
+    Body must contain {"confirm": "WIPE"} — the literal string. The
+    UI's type-to-confirm modal sends exactly that, so a stray POST
+    can't accidentally nuke a deployment.
+    """
+    from gateway.auth.db import (
+        list_agents, delete_agent, list_model_routes, write_audit_log,
+        reset_setup_completed, _conn,
+    )
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "invalid_json"}, status=400)
+    if (body.get("confirm") or "") != "WIPE":
+        return web.json_response(
+            {"error": "confirmation_missing", "detail": "Body must contain {\"confirm\": \"WIPE\"}."},
+            status=400,
+        )
+
+    user_id = request["current_user"]["sub"]
+    counts = {"agents": 0, "model_routes": 0, "users": 0}
+
+    # Delete all agents — delete_agent() already wipes ~/.logos/agents/<name>/
+    # (sessions, memories, logs) and cleans dispatches/agent_runs/proposals
+    # for that agent. Also tries to destroy the OpenShell sandbox via the
+    # executor when one exists.
+    executor = request.app.get("executor")
+    for a in list_agents():
+        try:
+            if executor:
+                try:
+                    executor.delete_instance(a["name"])
+                except Exception as exc:
+                    logger.warning("wipe: executor delete failed for %s: %s", a["name"], exc)
+            delete_agent(a["id"])
+            counts["agents"] += 1
+        except Exception as exc:
+            logger.warning("wipe: failed to delete agent %s (%s): %s", a.get("name"), a["id"], exc)
+
+    # Destroy each model route's underlying OpenShell gateway, then nuke
+    # the DB row. We bypass openshell_routes.destroy_route's "must keep
+    # one route" guard because the whole point of factory reset is to
+    # land on zero routes.
+    try:
+        from gateway import openshell_routes as _osr
+        for r in list_model_routes():
+            try:
+                gw_name = r.get("openshell_name")
+                if gw_name:
+                    try:
+                        _osr._run_openshell("gateway", "destroy", "--force",
+                                            gateway=gw_name, check=False, timeout=120)
+                    except Exception as exc:
+                        logger.warning("wipe: openshell destroy %s failed: %s", gw_name, exc)
+                with _conn() as conn:
+                    conn.execute("DELETE FROM model_routes WHERE id = ?", (r["id"],))
+                counts["model_routes"] += 1
+            except Exception as exc:
+                logger.warning("wipe: failed to remove route %s: %s", r.get("id"), exc)
+    except Exception as exc:
+        logger.warning("wipe: openshell route cleanup failed: %s", exc)
+
+    # Audit log BEFORE we truncate it + wipe the user (FK on user_id).
+    # Logged at warn level since this is a high-impact action.
+    write_audit_log(user_id, "setup_wipe", metadata=counts, ip_address=request.remote)
+
+    # Truncate orphan tables that aren't tied to a specific agent.
+    with _conn() as conn:
+        for tbl in ("dispatches", "agent_runs", "evolution_proposals", "audit_log"):
+            try:
+                conn.execute(f"DELETE FROM {tbl}")
+            except Exception:
+                pass  # missing table is fine
+
+        # Wipe ALL users — this is true factory reset, not just data.
+        # The next /setup visit will mint a fresh admin account from
+        # the wizard's user-creation step. Caller's session cookie is
+        # cleared on the response below so the redirect lands on /setup
+        # without an auth loop.
+        try:
+            cur = conn.execute("DELETE FROM users")
+            counts["users"] = cur.rowcount
+        except Exception as exc:
+            logger.warning("wipe: user delete failed: %s", exc)
+
+    reset_setup_completed()
+    logger.warning("setup wipe by user_id=%s: deleted %d agent(s), %d model route(s), %d user(s)",
+                   user_id, counts["agents"], counts["model_routes"], counts["users"])
+    resp = web.json_response({"ok": True, "deleted": counts})
+    # Strip the session cookies so the browser can't keep using a token
+    # whose user no longer exists — clear_auth_cookies handles all three
+    # (access_token / refresh_token / csrf_token) with the right paths.
+    from gateway.auth.tokens import clear_auth_cookies
+    clear_auth_cookies(resp)
+    return resp
 
 
 async def _handle_index(request: web.Request) -> web.Response:
@@ -2631,6 +2767,25 @@ async def _handle_approvals_reject(request: web.Request) -> web.Response:
 
 # ── Workflow handlers ──────────────────────────────────────────────────────
 
+async def _handle_world_state(request: web.Request) -> web.Response:
+    """GET /world/state — snapshot of all named agents for world awareness.
+
+    Consumed by the ``get_agent_world`` tool inside sandboxes so an
+    agent can check who else is around, their soul, appearance, and
+    whether they are currently busy. Also used by the dashboard to
+    render the world roster without hitting the admin ``/agents``
+    endpoint (which returns much richer, caller-restricted data).
+
+    Query params:
+      ?agent_id=<id>  — mark this agent as "self" in the response
+                        (``is_self: true`` on the matching row).
+    """
+    from gateway.world_awareness import build_world_snapshot
+    self_id = request.query.get("agent_id")
+    snapshot = build_world_snapshot(self_agent_id=self_id, include_self=True)
+    return web.json_response(snapshot)
+
+
 async def _handle_workflows_list(request: web.Request) -> web.Response:
     rows = auth_db.list_workflow_definitions()
     from workflows.model import WorkflowDefinition as _WD
@@ -2917,6 +3072,14 @@ async def _handle_chat(request: web.Request) -> web.StreamResponse:
     message = body.get("message", "")
     session_id = body.get("session_id", "http-default")
     agent_id = body.get("agent_id")
+    # Transient mode: Compare tab uses this so probe traffic doesn't
+    # pollute the agent's identity. Affects two visible behaviours:
+    #   1. dispatch ledger origin = 'compare' (so Activity → Events
+    #      can filter the noise out)
+    #   2. session JSON / memory writes — should also be skipped, but
+    #      that requires sandbox_worker.py changes that ship with M10.
+    #      Tracked here so the wiring is one half-done piece, not two.
+    is_transient = bool(body.get("transient", False))
 
     # ── Gateway command: /setup tools ──────────────────────────────────
     # Intercept before any session/dispatch logic. Returns tool readiness
@@ -3305,10 +3468,11 @@ async def _handle_chat(request: web.Request) -> web.StreamResponse:
                     agent_id=agent_id or "",
                     sandbox_name=target_worker,
                     model=_agent_model,
-                    origin="user_chat",
+                    origin=("compare" if is_transient else "user_chat"),
                     origin_detail=json.dumps({
                         "user_id": (_real_user_id or ""),
                         "chat_id": body.get("chat_id", ""),
+                        "transient": is_transient,
                     }),
                     session_id=session_entry.session_id if session_entry else "",
                     user_id=_real_user_id or "",
@@ -3779,6 +3943,7 @@ async def start_http_api(runner: Any, port: int = 8091) -> None:
     app.router.add_get("/api/setup/model-catalog",       _sh.handle_model_catalog)
     app.router.add_post("/api/setup/validate-provider", _sh.handle_validate_provider)
     app.router.add_post("/api/setup/complete",    _sh.handle_setup_complete)
+    app.router.add_get("/api/setup/progress",     _sh.handle_setup_progress)
     app.router.add_get("/api/setup/discover",       _sh.handle_setup_discover)
     app.router.add_post("/api/setup/set-remote",   _sh.handle_setup_set_remote)
     app.router.add_get("/api/setup/env-probe",       _sh.handle_setup_env_probe)
@@ -3787,6 +3952,8 @@ async def start_http_api(runner: Any, port: int = 8091) -> None:
     app.router.add_post("/api/setup/launch-docker",  _sh.handle_setup_launch_docker)
     app.router.add_post("/api/setup/reset",
         require_csrf(require_permission("manage_platform")(_handle_setup_reset)))
+    app.router.add_post("/api/setup/wipe",
+        require_csrf(require_permission("manage_platform")(_handle_setup_wipe)))
 
     app.router.add_get("/",              _handle_index)
     # Per-tab URL paths. Each one serves the same SPA (main_app.html);
@@ -3795,21 +3962,35 @@ async def start_http_api(runner: Any, port: int = 8091) -> None:
     for _tab_path in (
         "/agents",
         "/chats",
+        "/compare",
+        # New IA (post-reorg)
+        "/config",
+        "/config/inference",
+        "/config/tools",
+        "/config/messaging",
+        "/config/workflows",
+        "/activity",
+        "/activity/events",
+        "/activity/dashboards",
+        "/activity/approvals",
+        "/activity/proposals",
+        "/admin",
+        "/admin/users",
+        "/admin/security",
+        "/admin/audit",
+        # Legacy aliases — kept so existing bookmarks redirect via SPA's
+        # _applyUrlToState soft-redirect logic instead of 404'ing.
         "/settings",
         "/settings/inference",
         "/settings/routing",
         "/settings/tools",
         "/settings/channels",
         "/settings/proposals",
-        "/admin",
-        "/admin/users",
-        "/admin/security",
         "/admin/workflows",
         "/admin/runs",
         "/admin/sandboxes",
         "/admin/model-routes",
         "/admin/platforms",
-        "/admin/audit",
         "/admin/approvals",
     ):
         app.router.add_get(_tab_path, _handle_index)
@@ -3846,6 +4027,7 @@ async def start_http_api(runner: Any, port: int = 8091) -> None:
     )
     app.router.add_get("/souls",         _handle_souls_get)
     app.router.add_get("/souls/{slug}",  _handle_soul_detail)
+    app.router.add_get("/api/world/state",   _handle_world_state)
     app.router.add_get(
         "/instances",
         require_permission("view_instances")(_handle_instances_get),

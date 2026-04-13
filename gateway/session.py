@@ -361,6 +361,21 @@ def build_agent_system_prompt(agent_record: dict, session_context_prompt: str) -
     parts.append(f"You are {name}.")
     parts.append("")
 
+    # World awareness — self appearance + peer roster. Lets an agent
+    # answer "what do you look like?" correctly and know who else is
+    # around without waiting for a tool call. Best-effort: a failure
+    # here must never block dispatch, and the snippet is skipped on
+    # single-agent installs (no peers → nothing added beyond the self
+    # description, which the renderer also decides).
+    try:
+        from gateway.world_awareness import render_self_and_peers_prompt
+        awareness = render_self_and_peers_prompt(agent_record)
+        if awareness:
+            parts.append(awareness)
+            parts.append("")
+    except Exception as exc:
+        logger.debug("world_awareness failed (non-fatal): %s", exc)
+
     # Soul persona — pulled from the registry, not from disk per-call,
     # so this is fast even on the dispatch hot path.
     if soul_slug:

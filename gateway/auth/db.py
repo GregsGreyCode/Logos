@@ -518,6 +518,133 @@ def _run_migrations() -> None:
             CREATE INDEX IF NOT EXISTS idx_disp_status  ON dispatches(status);
         """)
 
+        # v12: migrate per-agent char_index from the legacy 0..23 encoding
+        # (slot index into a 24-variant sheet) to the new 0..95 encoding
+        # (body*12 + skin*4 + hair for an 8×3×4 variant matrix).
+        # Legacy mapping:
+        #   old 0..7   → body N, skin 0 (light), hair 0 (original)   = N * 12
+        #   old 8..15  → body N, skin 1 (medium), hair 0             = N * 12 + 4
+        #   old 16..23 → body N, skin 2 (dark),   hair 2 (180°)      = N * 12 + 10
+        # Guarded by a schema_flags row so it only runs once.
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS schema_flags (
+                key        TEXT PRIMARY KEY,
+                value      TEXT,
+                applied_at INTEGER
+            );
+        """)
+        already = conn.execute(
+            "SELECT value FROM schema_flags WHERE key = 'char_index_v2'"
+        ).fetchone()
+        if not already:
+            conn.execute("""
+                UPDATE agents SET char_index = CASE
+                    WHEN char_index BETWEEN 0  AND 7  THEN  char_index       * 12
+                    WHEN char_index BETWEEN 8  AND 15 THEN (char_index - 8)  * 12 + 4
+                    WHEN char_index BETWEEN 16 AND 23 THEN (char_index - 16) * 12 + 10
+                    ELSE char_index
+                END
+                WHERE char_index IS NOT NULL AND char_index BETWEEN 0 AND 23
+            """)
+            conn.execute(
+                "INSERT INTO schema_flags (key, value, applied_at) VALUES (?, ?, ?)",
+                ("char_index_v2", "1", int(time.time() * 1000)),
+            )
+
+        # v13: migrate char_index from the 8×3×4 (0..95) encoding to the
+        # new 8×4×5 (0..159) encoding. Old skin 0/1/2 map to new skin
+        # 0/2/3 (new skin 1 is a freshly-added mid-light tone that no
+        # existing agent can be on). Old hair 0..3 all map to new hair 0
+        # (original) — the old sheet's non-zero hair was a 90°/180°/270°
+        # hue shift of the source, which is not the same palette as the
+        # new theme colours, so collapsing to Original is the safest
+        # visual. Agents can re-pick a theme in the picker if desired.
+        already_v3 = conn.execute(
+            "SELECT value FROM schema_flags WHERE key = 'char_index_v3'"
+        ).fetchone()
+        if not already_v3:
+            conn.execute("""
+                UPDATE agents SET char_index = (
+                    (char_index / 12) * 20
+                    + CASE (char_index % 12) / 4
+                        WHEN 0 THEN 0
+                        WHEN 1 THEN 2
+                        WHEN 2 THEN 3
+                      END * 5
+                    + 0
+                )
+                WHERE char_index IS NOT NULL AND char_index BETWEEN 0 AND 95
+            """)
+            conn.execute(
+                "INSERT INTO schema_flags (key, value, applied_at) VALUES (?, ?, ?)",
+                ("char_index_v3", "1", int(time.time() * 1000)),
+            )
+
+        # v15: backfill agents.toolsets when empty. Agents created before
+        # the default-enabled toolset expansion (or with explicit empty
+        # selection) hit "model promised to use a tool but didn't" because
+        # AIAgent received an empty enabled_toolsets list. Stamp them with
+        # a sane default — the union of enforced + default_enabled from
+        # gateway/souls/general/soul.manifest.yaml — so existing agents
+        # work without a manual edit. Per-soul defaults could be richer,
+        # but the General soul's list covers the common case and Greg
+        # confirmed "give them everything by default" for now.
+        already_v15 = conn.execute(
+            "SELECT value FROM schema_flags WHERE key = 'agent_toolsets_backfill_v1'"
+        ).fetchone()
+        if not already_v15:
+            import json as _json
+            default_toolsets = _json.dumps([
+                "web", "memory", "clarify", "session_search", "todo",
+                "file", "world", "browser", "image_gen", "tts",
+                "delegation", "terminal",
+            ])
+            cur = conn.execute(
+                "UPDATE agents SET toolsets = ? "
+                "WHERE toolsets IS NULL OR toolsets = '' OR toolsets = '[]'",
+                (default_toolsets,),
+            )
+            logger.info(
+                "agent_toolsets_backfill_v1: stamped %d agent(s) with default toolsets",
+                cur.rowcount,
+            )
+            conn.execute(
+                "INSERT INTO schema_flags (key, value, applied_at) VALUES (?, ?, ?)",
+                ("agent_toolsets_backfill_v1", "1", int(time.time() * 1000)),
+            )
+
+        # v14: backfill agents.model_route_id from the default route. Agents
+        # created before handle_agents_post auto-binding (or before any
+        # routes were provisioned) carry NULL here and look "unattached"
+        # on the Dashboards bound-agents column even though the executor
+        # is happily resolving the default at spawn time. Make the DB the
+        # source of truth so the count is accurate. Idempotent: only
+        # touches NULL rows, only runs once.
+        already_v4 = conn.execute(
+            "SELECT value FROM schema_flags WHERE key = 'agent_route_backfill_v1'"
+        ).fetchone()
+        if not already_v4:
+            default_row = conn.execute(
+                "SELECT id FROM model_routes WHERE is_default = 1 LIMIT 1"
+            ).fetchone()
+            if default_row:
+                cur = conn.execute(
+                    "UPDATE agents SET model_route_id = ? WHERE model_route_id IS NULL",
+                    (default_row["id"],),
+                )
+                logger.info(
+                    "agent_route_backfill_v1: bound %d agent(s) to default route %s",
+                    cur.rowcount, default_row["id"],
+                )
+            # Stamp the flag even if no default route exists so we don't
+            # re-scan on every startup. If a default is provisioned later,
+            # the auto-bind in handle_agents_post covers new agents and
+            # existing nulls remain rare (only the explicit-no-route case).
+            conn.execute(
+                "INSERT INTO schema_flags (key, value, applied_at) VALUES (?, ?, ?)",
+                ("agent_route_backfill_v1", "1", int(time.time() * 1000)),
+            )
+
 
 @contextmanager
 def _conn():
@@ -954,10 +1081,12 @@ def create_agent(name: str, soul_slug: str = "general", model: str = "",
                  model_route_id: Optional[str] = None) -> dict:
     aid = _new_id("agent")
     now = int(time.time() * 1000)
-    # Clamp char_index to the 0..7 sprite-sheet range, or store NULL so the
-    # frontend falls back to its name-hash default.
+    # Clamp char_index to the 0..159 sprite-sheet range, or store NULL so the
+    # frontend falls back to its name-hash default (the picker's "?" slot
+    # corresponds to this NULL state). Encoding: body*20 + skin*5 + hair
+    # where body ∈ [0..7], skin ∈ [0..3], hair ∈ [0..4]. Max = 7*20+3*5+4 = 159.
     ci = int(char_index) if char_index is not None else None
-    if ci is not None and not (0 <= ci <= 7):
+    if ci is not None and not (0 <= ci <= 159):
         ci = None
     with _conn() as conn:
         conn.execute(
@@ -1007,7 +1136,7 @@ def update_agent(agent_id: str, **fields) -> Optional[dict]:
             ci = int(ci) if ci is not None else None
         except (TypeError, ValueError):
             ci = None
-        if ci is not None and not (0 <= ci <= 7):
+        if ci is not None and not (0 <= ci <= 159):
             ci = None
         updates["char_index"] = ci
     if not updates:
@@ -1028,11 +1157,37 @@ def delete_agent(agent_id: str) -> None:
     # by the agent lifecycle, but leaving rows behind produces dangling
     # agent_id values in admin dashboards. Purge them here so "delete"
     # means delete. platform_routing cascades via FK (see schema).
+    #
+    # Also nuke the agent's on-disk session/memory/log directory at
+    # ~/.logos/agents/<name>/. That dir survives across deployments
+    # (lives in $HOME, not in any deployment-scoped path), and the
+    # session_search tool reads from it — so without this cleanup, a
+    # freshly-recreated agent with the same name would surface the old
+    # transcripts as "memory" and confuse users into thinking memory
+    # bled across deployments. Best-effort: log and continue if the
+    # filesystem op fails (DB delete already succeeded).
+    name = None
     with _conn() as conn:
+        row = conn.execute("SELECT name FROM agents WHERE id = ?", (agent_id,)).fetchone()
+        if row:
+            name = row["name"]
         conn.execute("DELETE FROM dispatches WHERE agent_id = ?", (agent_id,))
         conn.execute("DELETE FROM agent_runs WHERE agent_id = ?", (agent_id,))
         conn.execute("DELETE FROM evolution_proposals WHERE agent_id = ?", (agent_id,))
         conn.execute("DELETE FROM agents WHERE id = ?", (agent_id,))
+    if name:
+        try:
+            import shutil
+            from pathlib import Path
+            agent_dir = Path.home() / ".logos" / "agents" / name
+            if agent_dir.is_dir():
+                shutil.rmtree(agent_dir)
+                logger.info("delete_agent: wiped on-disk dir %s", agent_dir)
+        except Exception as exc:
+            logger.warning(
+                "delete_agent(%s): failed to remove on-disk dir for %r: %s",
+                agent_id, name, exc,
+            )
 
 
 def get_agent_applied_presets(agent_id: str) -> list[str]:

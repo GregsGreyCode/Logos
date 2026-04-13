@@ -1,0 +1,35 @@
+# Browserless access preset — self-hosted browser automation.
+#
+# Enables the browser_* tools to connect to a self-hosted Browserless
+# (https://github.com/browserless/browserless) container running in your
+# homelab. Unlike the Browserbase preset, no traffic leaves your network.
+#
+# Apply via:
+#   gateway.policies.apply_preset(agent_id, "browserless")
+#
+# Requires BROWSERLESS_URL (and optionally BROWSERLESS_TOKEN). Edit the
+# `host` line below to match your Browserless deployment hostname.
+# Defaults assume `browserless.internal` is reachable from sandboxes
+# (consistent with the openshell *.internal:53 DNS allowance).
+
+preset:
+  name: browserless
+  description: "Self-hosted Browserless CDP endpoint"
+
+network_policies:
+  browserless:
+    name: browserless
+    endpoints:
+      # CDP WebSocket endpoint. Adjust host/port for your deployment.
+      - host: browserless.internal
+        port: 3000
+        enforcement: enforce
+        tls: passthrough
+        access: full
+    binaries:
+      - { path: /app/venv/bin/python }
+      - { path: /app/venv/bin/python3 }
+      - { path: /app/venv/bin/python3.11 }
+      - { path: /app/venv/bin/python3.12 }
+      - { path: /usr/bin/python3 }
+      - { path: /usr/bin/python3.13 }
