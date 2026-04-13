@@ -1611,6 +1611,17 @@
                       <span class="text-[10px] px-1.5 py-0.5 rounded bg-gray-800 text-gray-400 font-semibold">queued…</span>
                     </template>
                     <span class="ml-auto text-[10px] text-gray-700 font-mono uppercase" x-text="slotIdx === 0 ? 'pane a' : 'pane b'"></span>
+                    <!-- Promote-to-chat: copy this pane's transcript into
+                         a regular Chats-tab conversation and jump the user
+                         there. Lets you keep talking to just the winning
+                         agent without the other pane's agent also receiving
+                         your follow-ups. Disabled until the pane has at
+                         least one exchange — empty promote = no-op. -->
+                    <button class="text-[10px] px-2 py-0.5 rounded border border-indigo-700/60 text-indigo-300 hover:bg-indigo-900/40 transition-colors"
+                            @click="promotePaneToChat(slotIdx)"
+                            :disabled="!(compareTranscripts[pane.id] && compareTranscripts[pane.id].length)"
+                            :class="(compareTranscripts[pane.id] && compareTranscripts[pane.id].length) ? '' : 'opacity-40 cursor-not-allowed'"
+                            title="Continue this conversation one-on-one in the Chats tab">→ Continue</button>
                     <button class="text-gray-600 hover:text-red-400 text-lg leading-none px-1"
                             @click="compareRemovePane(slotIdx)"
                             title="Remove this agent">&times;</button>
@@ -2873,11 +2884,17 @@
                         </template>
                       </div>
                     </template>
-                    <!-- Cost controls — only render when a cloud route is bound.
-                         Local routes (lmstudio/ollama) don't charge, so the
-                         budget knob would be confusing noise. -->
-                    <template x-if="(modelRoutes.find(r => r.id === a.model_route_id) || {}).provider
-                                    && !['lmstudio','ollama'].includes((modelRoutes.find(r => r.id === a.model_route_id) || {}).provider)">
+                    <!-- Cost controls — only render when a cloud route is
+                         bound. Local routes (lmstudio/ollama) don't charge,
+                         so the budget knob would be noise. If modelRoutes
+                         hasn't loaded yet, `find` returns undefined → the
+                         block renders nothing (same as "not cloud"), which
+                         is the right bias: safer to hide than to show an
+                         uncontrollable budget field. -->
+                    <template x-if="(() => {
+                      const r = (modelRoutes || []).find(x => x.id === a.model_route_id);
+                      return !!(r && r.provider && !['lmstudio','ollama'].includes(r.provider));
+                    })()">
                       <div class="pt-2 border-t border-gray-800 space-y-1.5">
                         <div class="text-[9px] uppercase tracking-wider text-gray-600">Cost controls</div>
                         <div class="grid grid-cols-2 gap-2 items-center">
@@ -8627,6 +8644,44 @@ function app() {
       const next = [...this.comparePanes];
       next[slotIdx] = null;
       this.comparePanes = next;
+    },
+
+    // Promote a Compare pane into a real Chats-tab conversation so the
+    // user can keep talking to just that agent (without the other pane's
+    // agent also receiving follow-up messages). Copies the pane's
+    // transcript into a new chat keyed to that agent and switches the UI
+    // to the Chats tab with the new chat active.
+    promotePaneToChat(slotIdx) {
+      const pane = this.comparePanes[slotIdx];
+      if (!pane) return;
+      const transcript = this.compareTranscripts[pane.id] || [];
+      if (!transcript.length) return;
+      // Build a fresh chat record. Use the agent's name as the chat name
+      // so the sidebar reads "Adam" (or similar) rather than a generic
+      // "Continued from Compare".
+      const chatId = 'chat_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6);
+      const now = Date.now();
+      const messages = transcript.map(m => ({
+        role: m.role || (m.sender === 'user' ? 'user' : 'assistant'),
+        content: m.content || m.text || '',
+        timestamp: m.timestamp || now,
+      })).filter(m => m.content);
+      const chat = {
+        id: chatId,
+        name: pane.name || 'Continued',
+        messages,
+        created_at: now,
+        updated_at: now,
+        agent_id: pane.id,
+        agent_name: pane.name,
+      };
+      // Put the new chat at the top of the list + mark it active so the
+      // user lands there immediately on the tab switch.
+      this.chats = [chat, ...this.chats];
+      this.activeChatId = chatId;
+      this._saveChats();
+      this.tab = 'sessions';
+      this.$nextTick(() => this._scrollChat());
     },
 
     // Send the current input to every filled pane.
