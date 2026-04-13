@@ -3639,8 +3639,29 @@ async def _handle_chat(request: web.Request) -> web.StreamResponse:
                                     auth_db.update_agent(
                                         _agent_config["id"],
                                         model_route_id=_fallback,
-                                        model=_fallback_route.get("model") or _agent_model,
+                                        model=_fallback_route.get("model") or _agent_model_for_load,
                                     )
+                                    # Push the new model into the running
+                                    # sandbox's instance-config.json so THIS
+                                    # dispatch uses the fallback, not the
+                                    # next one. Without the refresh the
+                                    # sandbox_worker reads the OLD model
+                                    # from instance-config on startup and
+                                    # the very request that triggered the
+                                    # swap still goes to the expensive
+                                    # cloud endpoint, contradicting the
+                                    # "Auto-switched" message the user sees.
+                                    try:
+                                        _executor = request.app.get("executor")
+                                        if _executor and hasattr(_executor, "refresh_instance_config"):
+                                            await asyncio.to_thread(
+                                                _executor.refresh_instance_config,
+                                                _agent_config.get("name", ""),
+                                            )
+                                    except Exception as _rfx:
+                                        logger.warning(
+                                            "budget auto-swap: refresh_instance_config failed: %s", _rfx,
+                                        )
                                     _swapped = True
                                     logger.info(
                                         "budget: agent %s hit $%.2f/$%.2f cap — auto-swapped to fallback route %s (%s)",
