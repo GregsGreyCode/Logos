@@ -1,0 +1,44 @@
+# Telegram Bot API access preset — api.telegram.org.
+#
+# Enables Logos's Telegram platform adapter (backed by python-telegram-bot)
+# to send and receive messages, upload/download files, and manage bot
+# commands.
+#
+# Apply via:
+#   gateway.policies.apply_preset(agent_id, "telegram")
+#
+# NB: NemoClaw's Hermes image build disables a Telegram "fallback
+# transport" path that rewrites api.telegram.org to raw IPs — the
+# L7 proxy rejects IP-based requests because policy matching is
+# hostname-based. Logos's python-telegram-bot uses httpx's default
+# transport which honors HTTPS_PROXY and routes through the proxy
+# correctly, so no build-time patch is needed. If upstream ever
+# adds IP-based fallback we'll need to mirror NemoClaw's patch at
+# docker/Dockerfile.hermes-sandbox.
+#
+# Path scoping: /bot<token>/... (the standard Bot API prefix) plus
+# /file/bot<token>/... (for file downloads). Wildcards on the token
+# because it's a secret we don't want to bake into the policy.
+
+preset:
+  name: telegram
+  description: "Telegram Bot API (messages, files, bot commands)"
+
+network_policies:
+  telegram_bot:
+    name: telegram_bot
+    endpoints:
+      - host: api.telegram.org
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        tls: terminate
+        rules:
+          - allow: { method: GET, path: "/bot*/**" }
+          - allow: { method: POST, path: "/bot*/**" }
+          - allow: { method: GET, path: "/file/bot*/**" }
+    binaries:
+      - { path: /app/venv/bin/python }
+      - { path: /app/venv/bin/python3 }
+      - { path: /app/venv/bin/python3.11 }
+      - { path: /app/venv/bin/python3.12 }

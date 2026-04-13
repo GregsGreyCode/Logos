@@ -4,7 +4,7 @@
  * Owns: animated sprite, name label, soul label, status dot, state bubble.
  * Handles: pathfinding movement, idle wandering, zone assignment, interactions.
  */
-import { TILE_SIZE, WORLD_COLS, WORLD_ROWS, ZONES } from './WorldConfig.js';
+import { TILE_SIZE, WORLD_COLS, WORLD_ROWS, ZONES } from './WorldConfig.js?v=11';
 
 const WALK_SPEED = 60;  // pixels per second
 const IDLE_WANDER_MIN = 3000; // ms — how long to stand still between walk phases
@@ -23,8 +23,10 @@ function hashCode(str) {
   return h;
 }
 
+const CHARACTER_COUNT = 160;
+
 function nameToCharIndex(name) {
-  return Math.abs(hashCode(name)) % 8;
+  return Math.abs(hashCode(name)) % CHARACTER_COUNT;
 }
 
 function nameToTint(name) {
@@ -47,11 +49,12 @@ export class AgentSprite {
     const explicitCI = (inst && inst.char_index !== undefined && inst.char_index !== null)
       ? Number(inst.char_index)
       : null;
-    this.charIndex = (explicitCI !== null && explicitCI >= 0 && explicitCI <= 7)
+    this.charIndex = (explicitCI !== null && explicitCI >= 0 && explicitCI < CHARACTER_COUNT)
       ? explicitCI
       : nameToCharIndex(inst.name);
     this.direction = 'down';
     this.isMoving = false;
+    this._fading = false;
     this.path = [];          // current A* path [{col, row}, ...]
     this.pathIndex = 0;
     this.targetWorldX = 0;
@@ -141,6 +144,24 @@ export class AgentSprite {
     }).setOrigin(0.5, 0.5).setDepth(13);
     this.logoBg = null;
 
+    // Maturity tier glyph (🌱→🪵) sits to the LEFT of the letter badge.
+    // Status dot lives on the RIGHT of the badge, so the glyph balances
+    // the cluster visually. Pulled from inst.tier_glyph which is set in
+    // _worldAgentList() from the same agentMaturity() helper the agent
+    // panel cards use — single source of truth, no duplicate formula.
+    // Hidden when the glyph is missing (e.g. legacy non-named agents).
+    //
+    // Spacing: badge is 16px wide centered on x; emoji renders ~14-16px
+    // wide depending on font fallback; status dot is 6px diameter. Push
+    // glyph out to x-18 and dot to x+18 so neither crowds the badge —
+    // gives ~2-4px of breathing room on each side instead of the prior
+    // ~5px overlap that made the cluster read as one mushy blob.
+    this.tierGlyph = scene.add.text(startPos.x - 18, startPos.y - 52, inst.tier_glyph || '', {
+      fontSize: '14px',
+      align: 'center',
+    }).setOrigin(0.5, 0.5).setDepth(14);
+    if (!inst.tier_glyph) this.tierGlyph.setVisible(false);
+
     // No name or soul labels — the badge above the sprite is the only identifier.
     this.nameLabel = null;
     this.soulLabel = null;
@@ -221,10 +242,21 @@ export class AgentSprite {
       this.lastStatus = status;
     }
 
+    // Refresh the maturity glyph if the underlying agent's tier moved
+    // (a new dispatch nudged Sapling → Branch). Cheap string compare.
+    if (this.tierGlyph) {
+      const newGlyph = inst.tier_glyph || '';
+      if (newGlyph !== this.tierGlyph.text) {
+        this.tierGlyph.setText(newGlyph);
+        this.tierGlyph.setVisible(!!newGlyph);
+      }
+    }
+
     // No labels to update — only the logo badge identifies the agent.
   }
 
   update(time, delta) {
+    if (this._fading) return;
     const isRunning = this._isRunning(this.inst);
 
     // Provisioning / disconnected agents are visibly grey AND frozen
@@ -255,9 +287,10 @@ export class AgentSprite {
       }
       // Sync UI elements (badge, bubble, status dot) to current pos
       // so they don't drift if the sprite was moved by other code.
-      this.statusDot.setPosition(this.sprite.x + 13, this.sprite.y - 52);
+      this.statusDot.setPosition(this.sprite.x + 18, this.sprite.y - 52);
       this.bubble.setPosition(this.sprite.x, this.sprite.y - 72);
       this.logoText.setPosition(this.sprite.x, this.sprite.y - 52);
+      if (this.tierGlyph) this.tierGlyph.setPosition(this.sprite.x - 18, this.sprite.y - 52);
       // Still record position for persistence (cheap, in-memory).
       if (this.scene.recordPosition) {
         this.scene.recordPosition(this.inst.name, this.sprite.x, this.sprite.y, this.direction);
@@ -318,10 +351,12 @@ export class AgentSprite {
     // sprite head (y - 52) with the bubble/hourglass layered above that so
     // nothing overlaps the character itself. Status dot hangs off the right
     // edge of the letter badge so running/idle state is visible next to the
-    // identifier rather than floating over the sprite's face.
-    this.statusDot.setPosition(this.sprite.x + 13, this.sprite.y - 52);
+    // identifier rather than floating over the sprite's face. Tier glyph
+    // mirrors the status dot on the LEFT side of the badge.
+    this.statusDot.setPosition(this.sprite.x + 18, this.sprite.y - 52);
     this.bubble.setPosition(this.sprite.x, this.sprite.y - 72);
     this.logoText.setPosition(this.sprite.x, this.sprite.y - 52);
+    if (this.tierGlyph) this.tierGlyph.setPosition(this.sprite.x - 18, this.sprite.y - 52);
 
     // Apply the tree-proximity glow tint. Cheap (~50 lines of math)
     // and self-throttled — only re-applies when the tint actually
@@ -612,6 +647,42 @@ export class AgentSprite {
     this.bubble.destroy();
     if (this.logoBg) this.logoBg.destroy();
     this.logoText.destroy();
+    if (this.tierGlyph) this.tierGlyph.destroy();
+  }
+
+  // Tasteful departure: float upward ~30px while fading to transparent,
+  // then hard-destroy. Use this instead of destroy() when an agent is
+  // being removed due to user action (hard-delete) rather than a
+  // transient sync artefact.
+  fadeAndDestroy(onComplete) {
+    if (this._fading) return;
+    this._fading = true;
+    this._stopBusyTween();
+    if (this.isMoving) {
+      this.isMoving = false;
+      this.sprite.anims?.stop();
+    }
+    const targets = [
+      this.sprite,
+      this.statusDot,
+      this.bubble,
+      this.logoText,
+    ];
+    if (this.nameLabel) targets.push(this.nameLabel);
+    if (this.soulLabel) targets.push(this.soulLabel);
+    if (this.logoBg) targets.push(this.logoBg);
+    if (this.tierGlyph) targets.push(this.tierGlyph);
+    this.scene.tweens.add({
+      targets,
+      y: '-=30',
+      alpha: 0,
+      duration: 1500,
+      ease: 'Sine.easeOut',
+      onComplete: () => {
+        this.destroy();
+        if (onComplete) onComplete();
+      },
+    });
   }
 }
 
@@ -620,5 +691,5 @@ export class AgentSprite {
 export function nameToCharIndexExport(name) {
   let h = 0;
   for (let i = 0; i < name.length; i++) h = ((h << 5) - h + name.charCodeAt(i)) | 0;
-  return Math.abs(h) % 8;
+  return Math.abs(h) % CHARACTER_COUNT;
 }

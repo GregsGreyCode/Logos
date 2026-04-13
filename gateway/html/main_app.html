@@ -278,21 +278,29 @@
       :class="tab==='compare'?'tab-active':'text-gray-400 hover:text-white'"
       data-testid="nav-compare"
       @click="tab='compare'; if(!namedAgents.length) loadNamedAgents()">Compare</button>
-    <template x-if="can('manage_machines') || can('view_evolution')">
+    <template x-if="can('manage_machines') || can('view_evolution') || can('manage_workflows') || can('view_workflows')">
       <button class="pb-2 text-sm font-medium border-b-2 border-transparent"
         :class="tab==='infra'?'tab-active':'text-gray-400 hover:text-white'"
         data-testid="nav-settings"
-        @click="tab='infra'; loadAdminMachines(); loadCloudProviders()">Settings</button>
+        @click="tab='infra'; loadAdminMachines(); loadCloudProviders(); if(infraTab==='servers') probeAllMachines()">Config</button>
     </template>
-    <template x-if="can('manage_users') || can('view_audit_logs') || can('manage_workflows') || can('view_runs')">
+    <template x-if="can('view_runs') || can('view_approvals') || can('view_evolution')">
       <button class="pb-2 text-sm font-medium border-b-2 border-transparent relative"
+        :class="tab==='activity'?'tab-active':'text-gray-400 hover:text-white'"
+        data-testid="nav-activity"
+        @click="tab='activity'; _loadActivityTabData(activityTab)">
+        Activity
+        <template x-if="pendingApprovalCount > 0">
+          <span class="absolute -top-1 -right-3 min-w-[16px] h-4 px-1 rounded-full bg-red-500 text-[9px] text-white font-bold flex items-center justify-center" x-text="pendingApprovalCount > 99 ? '99+' : pendingApprovalCount"></span>
+        </template>
+      </button>
+    </template>
+    <template x-if="can('manage_users') || can('view_audit_logs') || can('manage_action_policies')">
+      <button class="pb-2 text-sm font-medium border-b-2 border-transparent"
         :class="tab==='admin'?'tab-active':'text-gray-400 hover:text-white'"
         data-testid="nav-admin"
         @click="tab='admin'; loadAdminData()">
         Admin
-        <template x-if="pendingApprovalCount > 0">
-          <span class="absolute -top-1 -right-3 min-w-[16px] h-4 px-1 rounded-full bg-red-500 text-[9px] text-white font-bold flex items-center justify-center" x-text="pendingApprovalCount > 99 ? '99+' : pendingApprovalCount"></span>
-        </template>
       </button>
     </template>
     <!-- Canary pill (inline, between Admin and Theme) -->
@@ -401,12 +409,19 @@
               </template>
             </div>
           </template>
-          <!-- Admin: Re-run setup wizard -->
+          <!-- Admin: setup-related actions. Two intentional rungs:
+                 1. Reconfigure — re-opens the wizard; agents / users / routes survive
+                 2. Factory reset — destructive wipe; admin user + souls survive,
+                    everything else is destroyed and the wizard re-prompts -->
           <template x-if="authUser?.role === 'admin'">
-            <div class="px-4 py-3 border-t border-gray-800">
+            <div class="px-4 py-3 border-t border-gray-800 space-y-2">
               <button @click="resetSetup()"
                 class="text-xs text-gray-500 hover:text-amber-400 transition-colors w-full text-left">
-                Re-run setup wizard…
+                Reconfigure setup…
+              </button>
+              <button @click="setupWipeModalOpen=true; setupWipeText=''"
+                class="text-xs text-gray-500 hover:text-red-400 transition-colors w-full text-left">
+                Factory reset…
               </button>
             </div>
           </template>
@@ -521,7 +536,7 @@
       </div>
 
       <!-- Chat panel (tall, fills height) -->
-      <div class="flex-1 min-w-0 flex flex-col h-full">
+      <div class="flex-1 min-w-0 flex flex-col h-full" data-chat-panel>
         <div class="bg-gray-900 border border-gray-700 rounded-xl overflow-hidden flex flex-col h-full">
 
           <!-- Card header -->
@@ -556,7 +571,7 @@
                   <span class="font-bold text-indigo-500">S</span>
                   <span x-text="activeInstance.soul?.name || selectedSoul || 'General'"></span>
                 </button>
-                <div x-show="open" x-cloak class="absolute top-full left-0 mt-1 w-44 max-h-48 overflow-y-auto bg-gray-900 border border-gray-700 rounded-lg shadow-xl z-50 py-1">
+                <div x-show="open" x-cloak class="absolute top-full left-0 mt-1 w-44 max-h-96 overflow-y-auto bg-gray-900 border border-gray-700 rounded-lg shadow-xl z-50 py-1">
                   <template x-for="s in (souls.length ? souls : [{slug:'general',name:'General'}])" :key="s.slug">
                     <button @click="switchSoul(s.slug); open = false"
                       class="block w-full text-left px-3 py-1.5 text-[11px] transition-colors"
@@ -565,13 +580,157 @@
                   </template>
                 </div>
               </div>
-              <!-- T: Tools — only show count when tools exist -->
-              <span data-testid="stamp-t" class="text-[10px] px-1.5 py-0.5 rounded font-mono border flex items-center gap-1"
-                :class="(webSession?.tool_count || chatStats?.tool_count) ? 'bg-gray-800 text-gray-400 border-gray-700' : 'bg-gray-800/50 text-gray-600 border-gray-800'"
-                :title="(webSession?.tool_count ? webSession.tool_count + ' tools used this session' : (chatStats?.tool_count || 0) + ' tools available')">
-                <span class="font-bold text-gray-500">T</span>
-                <span x-text="webSession?.tool_count ? webSession.tool_count + ' active' : (chatStats?.tool_count ? chatStats.tool_count + ' ready' : 'none')"></span>
-              </span>
+              <!-- T: Tools — clickable dropdown with two sections.
+                   Application-layer toolsets (agents.toolsets) +
+                   infrastructure-layer network policy presets
+                   (agents.applied_presets). MISSING.md M1 / M10 item 5.
+                   Lazy-loads on first open; re-fetches when the bound
+                   agent changes. -->
+              <div class="relative" x-data="{ open: false }" @click.away="open = false">
+                <button
+                  @click="open = !open;
+                          if (open && activeAgent && (!agentToolsState || agentToolsState._agentId !== activeAgent.id)) {
+                            loadAgentTools(activeAgent.id);
+                          }
+                          if (open) {
+                            $nextTick(() => {
+                              const panel = $el.closest('[data-chat-panel]');
+                              const dd = $refs.tdd;
+                              if (!panel || !dd) return;
+                              const btnRect = $el.getBoundingClientRect();
+                              const panelRect = panel.getBoundingClientRect();
+                              const width = Math.max(300, panelRect.right - btnRect.left - 12);
+                              const height = Math.max(280, panelRect.bottom - btnRect.bottom - 80);
+                              dd.style.width = width + 'px';
+                              dd.style.maxHeight = height + 'px';
+                            });
+                          }"
+                  data-testid="stamp-t"
+                  class="text-[10px] px-1.5 py-0.5 rounded font-mono border transition-colors cursor-pointer flex items-center gap-1"
+                  :class="open
+                    ? 'bg-gray-700 text-white border-gray-500'
+                    : (activeAgent
+                        ? 'bg-gray-800 text-gray-400 border-gray-700 hover:border-gray-500'
+                        : 'bg-gray-800/50 text-gray-600 border-gray-800')"
+                  :title="activeAgent ? 'Tools — click to change' : 'No agent bound'">
+                  <span class="font-bold text-gray-500">T</span>
+                  <span x-text="(agentToolsState && activeAgent && agentToolsState._agentId === activeAgent.id)
+                    ? ((agentToolsState.toolsets?.enabled?.length || 0) + ' ts · ' + (agentToolsState.presets?.applied?.length || 0) + ' pre')
+                    : (webSession?.tool_count ? webSession.tool_count + ' active' : (chatStats?.tool_count ? chatStats.tool_count + ' ready' : 'tools'))">
+                  </span>
+                </button>
+                <div x-show="open" x-cloak
+                  x-ref="tdd"
+                  class="absolute top-full left-0 mt-1 overflow-y-auto bg-gray-900 border border-gray-700 rounded-lg shadow-xl z-50"
+                  style="width: 56rem; max-height: 22rem;">
+
+                  <!-- Header — shows loading state + agent context -->
+                  <div class="px-3 py-2 text-[9px] text-gray-600 uppercase tracking-wider border-b border-gray-800 flex items-center justify-between sticky top-0 bg-gray-900 z-10">
+                    <span x-text="'Tools · ' + (activeAgent?.name || '(no agent)')"></span>
+                    <span x-show="agentToolsLoading" class="text-yellow-400 normal-case">loading…</span>
+                  </div>
+
+                  <!-- No agent -->
+                  <div x-show="!activeAgent" class="px-3 py-3 text-[11px] text-gray-600">
+                    No agent bound to this chat. Select or create one to edit its tools.
+                  </div>
+
+                  <!-- Tool readiness — per-tool status at a glance -->
+                  <div x-show="activeAgent && agentToolsState && agentToolsState._agentId === activeAgent.id && (agentToolsState.readiness || []).length > 0">
+                    <div class="px-3 pt-2 pb-1 text-[9px] text-gray-500 uppercase tracking-wider flex items-center justify-between">
+                      <span>Tool readiness</span>
+                      <span class="text-gray-700 normal-case"
+                        x-text="(() => { const r = agentToolsState?.readiness || []; const ok = r.filter(t => t.status === 'ready').length; return ok + '/' + r.length + ' ready'; })()"></span>
+                    </div>
+                    <div class="grid grid-cols-2" style="column-gap: 0.25rem;">
+                      <template x-for="t in (agentToolsState?.readiness || [])" :key="'rdy-' + t.name">
+                        <div class="flex items-start gap-2 px-3 py-1 text-[11px]">
+                          <span x-show="t.status === 'ready'" class="text-green-400 flex-shrink-0 mt-0.5" title="Ready">&#x2705;</span>
+                          <span x-show="t.status !== 'ready'" class="text-yellow-400 flex-shrink-0 mt-0.5" title="Needs configuration">&#x26a0;&#xfe0f;</span>
+                          <div class="flex-1 min-w-0">
+                            <div class="flex items-center gap-1.5">
+                              <span class="text-gray-100 font-mono" x-text="t.name"></span>
+                              <span x-show="t.optional" class="text-gray-600 text-[9px]">(optional)</span>
+                            </div>
+                            <template x-if="t.status === 'needs_config'">
+                              <a :href="t.setup_url" target="_blank" rel="noopener"
+                                class="block text-yellow-500 text-[10px] hover:text-yellow-300 underline underline-offset-2 truncate"
+                                :title="t.reason || 'needs API key'"
+                                x-text="t.reason || 'needs API key'"></a>
+                            </template>
+                            <template x-if="t.status === 'needs_preset'">
+                              <span class="block text-orange-500 text-[10px] truncate" :title="t.reason || 'needs preset'" x-text="t.reason || 'needs preset'"></span>
+                            </template>
+                          </div>
+                        </div>
+                      </template>
+                    </div>
+                    <div class="px-3 py-1.5 text-[10px] text-gray-600 border-b border-gray-800 mb-1">
+                      Type <span class="font-mono text-gray-500">/setup tools</span> in chat to configure missing tools.
+                    </div>
+                  </div>
+
+                  <!-- Toolsets (application layer) -->
+                  <div x-show="activeAgent && agentToolsState && agentToolsState._agentId === activeAgent.id">
+                    <div class="px-3 pt-2 pb-1 text-[9px] text-gray-500 uppercase tracking-wider flex items-center justify-between">
+                      <span>Toolsets (in-agent)</span>
+                      <span class="text-gray-700 normal-case"
+                        x-text="'(' + (agentToolsState?.toolsets?.enabled?.length || 0) + '/' + (agentToolsState?.toolsets?.available?.length || 0) + ')'"></span>
+                    </div>
+                    <div class="grid grid-cols-3" style="column-gap: 0.25rem;">
+                      <template x-for="t in (agentToolsState?.toolsets?.available || [])" :key="'ts-' + t.name">
+                        <label class="flex items-start gap-2 px-3 py-1.5 text-[11px] hover:bg-gray-800 cursor-pointer" :title="t.description || t.name">
+                          <input type="checkbox"
+                            :checked="(agentToolsState?.toolsets?.enabled || []).includes(t.name)"
+                            :disabled="!!(agentToolsToggling && agentToolsToggling['ts:' + t.name])"
+                            @change="toggleToolset(activeAgent.id, t.name, $event.target.checked)"
+                            class="mt-0.5 h-3 w-3 rounded border-gray-700 bg-gray-900 text-indigo-500 focus:ring-0 focus:ring-offset-0 flex-shrink-0">
+                          <div class="flex-1 min-w-0">
+                            <div class="text-gray-100 font-mono" x-text="t.name"></div>
+                            <div class="text-gray-400 text-[11px] leading-snug line-clamp-2" x-text="t.description" x-show="t.description"></div>
+                          </div>
+                          <span x-show="agentToolsToggling && agentToolsToggling['ts:' + t.name]" class="text-yellow-500 text-[9px]">…</span>
+                        </label>
+                      </template>
+                    </div>
+                  </div>
+
+                  <!-- Presets (infrastructure layer) -->
+                  <div x-show="activeAgent && agentToolsState && agentToolsState._agentId === activeAgent.id"
+                    class="border-t border-gray-800 mt-1 pt-1">
+                    <div class="px-3 pt-2 pb-1 text-[9px] text-gray-500 uppercase tracking-wider flex items-center justify-between">
+                      <span>Network presets (sandbox)</span>
+                      <span class="text-gray-700 normal-case"
+                        x-text="'(' + (agentToolsState?.presets?.applied?.length || 0) + '/' + (agentToolsState?.presets?.available?.length || 0) + ')'"></span>
+                    </div>
+                    <div class="grid grid-cols-3" style="column-gap: 0.25rem;">
+                      <template x-for="p in (agentToolsState?.presets?.available || [])" :key="'pre-' + p.name">
+                        <label class="flex items-start gap-2 px-3 py-1.5 text-[11px] hover:bg-gray-800 cursor-pointer" :title="p.description || p.name">
+                          <input type="checkbox"
+                            :checked="(agentToolsState?.presets?.applied || []).includes(p.name)"
+                            :disabled="!!(agentToolsToggling && agentToolsToggling['pre:' + p.name])"
+                            @change="togglePreset(activeAgent.id, p.name, $event.target.checked)"
+                            class="mt-0.5 h-3 w-3 rounded border-gray-700 bg-gray-900 text-emerald-500 focus:ring-0 focus:ring-offset-0 flex-shrink-0">
+                          <div class="flex-1 min-w-0">
+                            <div class="text-gray-100 font-mono" x-text="p.name"></div>
+                            <div class="text-gray-400 text-[11px] leading-snug line-clamp-2" x-text="p.description" x-show="p.description"></div>
+                          </div>
+                          <span x-show="agentToolsToggling && agentToolsToggling['pre:' + p.name]" class="text-yellow-500 text-[9px]">…</span>
+                        </label>
+                      </template>
+                    </div>
+                    <div x-show="(agentToolsState?.presets?.available?.length || 0) === 0"
+                      class="px-3 py-2 text-[10px] text-gray-600">
+                      No presets available in gateway/policies/presets/.
+                    </div>
+                  </div>
+
+                  <!-- Error banner — surfaces any fetch / toggle failure -->
+                  <div x-show="agentToolsError"
+                    class="px-3 py-2 text-[10px] text-red-400 border-t border-red-900/50 bg-red-950/30"
+                    x-text="agentToolsError"></div>
+                </div>
+              </div>
               <!--
                 A: Agent — placeholder for future multi-agent UX. Today
                 a chat is bound to exactly one agent so this just shows
@@ -582,11 +741,15 @@
                 activeAgent (chat.agent_id → namedAgents lookup) for
                 consistency with the M dropdown's resolution path.
               -->
+              <!-- A stamp: runtime type · agent name.
+                   Only one runtime (hermes) today — the `|| 'hermes'` fallback
+                   will be replaced when agents gain a real agent_type column
+                   and a second runtime lands. -->
               <span data-testid="stamp-a" class="text-[10px] px-1.5 py-0.5 rounded font-mono border flex items-center gap-1"
                 :class="activeAgent ? 'bg-gray-800 text-gray-400 border-gray-700' : 'bg-gray-800/50 text-gray-600 border-gray-800'"
-                :title="activeAgent ? 'Active agent: ' + activeAgent.name : 'No agent bound to this chat'">
+                :title="activeAgent ? ((activeAgent.agent_type || 'hermes') + ' runtime — agent: ' + activeAgent.name) : 'No agent bound to this chat'">
                 <span class="font-bold text-gray-500">A</span>
-                <span x-text="activeAgent ? activeAgent.name : 'none'"></span>
+                <span x-text="activeAgent ? ((activeAgent.agent_type || 'hermes') + ' · ' + activeAgent.name) : 'none'"></span>
               </span>
               <!--
                 M: Model — clickable dropdown driven by model_routes.
@@ -631,7 +794,7 @@
                   </template>
                   <p x-show="modelRoutes.filter(r => r.status === 'ready').length === 0"
                     class="px-3 py-3 text-[10px] text-gray-600">
-                    No ready routes. <a href="#" @click.prevent="tab='admin'; adminTab='model-routes'; loadModelRoutes(); open=false" class="text-[var(--accent)] hover:opacity-80">Provision one &rarr;</a>
+                    No ready routes. <a href="#" @click.prevent="tab='activity'; activityTab='dashboards'; loadModelRoutes(); loadSandboxes(); open=false" class="text-[var(--accent)] hover:opacity-80">Provision one &rarr;</a>
                   </p>
                 </div>
               </div>
@@ -648,15 +811,30 @@
 
           <!-- Messages (fills remaining height) -->
           <div id="chat-messages" class="chat-scroll px-4 py-3 space-y-3">
-            <!-- Ghost logo — fades out on first message -->
+            <!-- Ghost logo + starter hints — fades out on first message -->
             <div x-show="chatMessages.length === 0"
                  x-transition:leave="transition ease-out duration-500"
                  x-transition:leave-start="opacity-100"
                  x-transition:leave-end="opacity-0"
-                 class="flex items-end justify-center pb-6 h-full pointer-events-none select-none"
-                 style="opacity:0.15">
+                 class="flex flex-col items-center justify-center pb-6 h-full select-none">
               <img src="/static/logo.svg" aria-hidden="true"
-                   style="width:100px;height:100px;object-fit:contain;filter:hue-rotate(var(--hue-deg,0deg));">
+                   class="pointer-events-none"
+                   style="width:100px;height:100px;object-fit:contain;filter:hue-rotate(var(--hue-deg,0deg));opacity:0.15;">
+              <div class="mt-6 max-w-md text-center space-y-3" style="opacity:0.55">
+                <div class="text-xs uppercase tracking-widest text-gray-500">Getting started</div>
+                <div class="text-[11px] text-gray-400 leading-relaxed">
+                  Type
+                  <button @click="chatInput = '/setup tools'; $nextTick(() => document.querySelector('[data-testid=chat-input]')?.focus())"
+                          class="font-mono text-[var(--accent)] hover:underline cursor-pointer">/setup&nbsp;tools</button>
+                  to configure API keys for web search, vision, and other tools.
+                </div>
+                <div class="text-[11px] text-gray-500 leading-relaxed">
+                  Click the <span class="font-mono text-gray-300">T</span> pill above to pick which toolsets and network presets this agent can use.
+                </div>
+                <div class="text-[11px] text-gray-600 leading-relaxed">
+                  Or just send a message below to start chatting.
+                </div>
+              </div>
             </div>
             <template x-for="(msg,i) in chatMessages" :key="i">
               <div class="chat-msg-anim" :class="msg.role==='user' ? 'text-right' : 'text-left'">
@@ -820,8 +998,14 @@
                  class="mx-4 mt-2 mb-1 px-4 py-3 rounded-lg bg-yellow-950/40 border border-yellow-900/60 flex items-center gap-3 text-sm text-yellow-300 shrink-0">
               <span class="animate-spin inline-block text-lg">&#9881;</span>
               <div class="flex-1 min-w-0">
-                <div class="font-medium" x-text="'Sandbox for ' + (activeInstance?.name || 'agent') + ' is provisioning…'"></div>
-                <div class="text-xs text-yellow-500/70 mt-0.5">Chat unlocks automatically when the worker connects (~10–30 s).</div>
+                <div class="font-medium">
+                  <span x-text="'Sandbox for ' + (activeInstance?.name || 'agent') + ' is provisioning…'"></span>
+                  <span class="ml-2 font-mono text-yellow-200/80 tabular-nums"
+                        x-show="activeAgent && provisioningElapsed(activeAgent.id) > 0"
+                        x-text="provisioningElapsed(activeAgent?.id) + 's'"></span>
+                </div>
+                <div class="text-xs text-yellow-500/70 mt-0.5"
+                     x-text="activeAgent ? provisioningHint(activeAgent.id) : 'Chat unlocks automatically when the worker connects.'"></div>
               </div>
             </div>
             <!-- No agents at all (e.g. post-setup before sandbox finishes) -->
@@ -1136,36 +1320,43 @@
   <div x-show="tab==='compare'" x-cloak style="height:calc(100vh - 84px)">
     <div class="flex flex-col gap-3 h-full">
 
-      <!-- ── Top palette: horizontal pill row (drag source) ───────── -->
-      <div class="shrink-0 border border-gray-800 rounded-2xl bg-gray-900/40 px-3 py-2.5">
-        <div class="flex items-center gap-2 flex-wrap">
-          <span class="text-[10px] font-semibold uppercase tracking-wider text-gray-500 mr-1">Agents</span>
-          <template x-if="!namedAgents.length">
-            <span class="text-[11px] text-gray-600 italic">No agents yet.</span>
-          </template>
-          <template x-for="agent in namedAgents" :key="agent.id">
-            <div class="px-2.5 py-1 rounded-lg border text-xs flex items-center gap-1.5 select-none transition-colors"
-                 :class="(agent.worker_connected && agent.worker_healthy)
-                         ? 'border-gray-800 bg-gray-900 hover:border-indigo-700 cursor-grab active:cursor-grabbing text-gray-200'
-                         : 'border-gray-900 bg-gray-950/60 text-gray-600 cursor-not-allowed'"
-                 :draggable="(agent.worker_connected && agent.worker_healthy) ? 'true' : 'false'"
-                 @dragstart="if (agent.worker_connected && agent.worker_healthy) { $event.dataTransfer.effectAllowed = 'move'; $event.dataTransfer.setData('text/x-logos-agent-id', agent.id); }"
-                 @click="if (agent.worker_connected && agent.worker_healthy) compareDropAgent(agent, comparePanes.findIndex(p => !p) === -1 ? 0 : comparePanes.findIndex(p => !p))"
-                 :title="(agent.worker_connected && agent.worker_healthy) ? 'Drag into a pane (or click to add to next empty)' : 'Sandbox not ready'">
-              <span class="w-1.5 h-1.5 rounded-full"
-                    :class="(agent.worker_connected && agent.worker_healthy) ? 'bg-emerald-500' : 'bg-gray-700'"></span>
-              <span class="font-medium" x-text="agent.name"></span>
-            </div>
-          </template>
-          <span class="ml-auto text-[10px] text-gray-600">Drag two into a pane below, or click to add</span>
-        </div>
+      <!-- ── Top agent pill bar — mirrors the Chats tab's bar so the
+           Compare and Chats experience reads as one consistent surface.
+           Pills are draggable into the panes below (Compare's unique
+           interaction) but the visual treatment, "Agent" prefix tag,
+           and active-state dot all match Chats verbatim. -->
+      <div class="flex items-center gap-2 mb-3 flex-wrap shrink-0" data-fl="1">
+        <template x-for="agent in namedAgents" :key="agent.id">
+          <button
+            class="flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium transition-colors"
+            :class="comparePanes.some(p => p && p.id === agent.id)
+                      ? 'inst-active'
+                      : (agent.worker_connected && agent.worker_healthy)
+                        ? 'bg-gray-800 text-gray-400 hover:bg-gray-700 hover:text-white cursor-grab active:cursor-grabbing'
+                        : 'bg-gray-900 text-gray-600 cursor-not-allowed opacity-60'"
+            :draggable="(agent.worker_connected && agent.worker_healthy) ? 'true' : 'false'"
+            @dragstart="if (agent.worker_connected && agent.worker_healthy) { $event.dataTransfer.effectAllowed = 'move'; $event.dataTransfer.setData('text/x-logos-agent-id', agent.id); }"
+            @click="if (agent.worker_connected && agent.worker_healthy) compareDropAgent(agent, comparePanes.findIndex(p => !p) === -1 ? 0 : comparePanes.findIndex(p => !p))"
+            :title="(agent.worker_connected && agent.worker_healthy) ? 'Drag into a pane (or click to add to next empty)' : 'Sandbox not ready'">
+            <span class="text-[10px] font-bold tracking-wider uppercase px-1 py-0.5 rounded bg-emerald-900 text-emerald-300 mr-0.5">Agent</span>
+            <span x-text="agent.name"></span>
+            <span x-show="comparePanes.some(p => p && p.id === agent.id)" class="w-1.5 h-1.5 bg-green-400 rounded-full ml-0.5 shrink-0"></span>
+          </button>
+        </template>
+        <template x-if="namedAgents.length === 0">
+          <button @click="tab='agents'; loadSouls(); loadNamedAgents()"
+            class="flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium bg-gray-800 text-gray-500 border border-gray-700 border-dashed hover:text-white hover:border-gray-500 transition-colors">
+            <span>＋</span><span>Create your first agent</span>
+          </button>
+        </template>
+        <span x-show="namedAgents.length > 0" class="ml-auto text-[10px] text-gray-600">Drag two into a pane below, or click to add</span>
       </div>
 
       <!-- Pane row: two slots side-by-side, full remaining height -->
       <div class="flex-1 flex gap-3 min-h-0">
         <template x-for="(pane, slotIdx) in comparePanes" :key="slotIdx">
-          <div class="flex-1 border rounded-2xl flex flex-col min-w-0 transition-colors"
-               :class="pane ? 'border-gray-800 bg-gray-900/30' : 'border-2 border-dashed border-gray-800 bg-transparent hover:border-indigo-700'"
+          <div class="flex-1 flex flex-col min-w-0 transition-colors rounded-xl overflow-hidden"
+               :class="pane ? 'bg-gray-900 border border-gray-700' : 'border-2 border-dashed border-gray-800 bg-transparent hover:border-indigo-700'"
                @dragover.prevent="$event.dataTransfer.dropEffect = 'move'"
                @drop.prevent="(() => {
                  const aid = $event.dataTransfer.getData('text/x-logos-agent-id');
@@ -1184,27 +1375,73 @@
               </div>
             </template>
 
-            <!-- Filled pane: header + transcript area -->
+            <!-- Filled pane: header + transcript area. Header markup mirrors
+                 the Chats panel header (chat-header testid block, status
+                 indicator dot, base-size agent name, accent badges) so
+                 Compare reads as the same surface. -->
             <template x-if="pane">
               <div class="flex-1 flex flex-col min-h-0">
                 <!-- Pane header -->
-                <div class="px-3 py-2 border-b border-gray-800 flex items-center gap-2">
-                  <div class="flex-1 min-w-0">
-                    <div class="text-sm font-semibold text-white truncate flex items-center gap-2">
-                      <span x-text="pane.name"></span>
-                      <template x-if="compareStreaming[pane.id]">
-                        <span class="text-[9px] px-1.5 py-0.5 rounded-full bg-indigo-950 text-indigo-300 border border-indigo-800 font-medium tracking-wide animate-pulse">streaming</span>
-                      </template>
-                      <template x-if="compareQueued[pane.id] && !compareStreaming[pane.id]">
-                        <span class="text-[9px] px-1.5 py-0.5 rounded-full bg-gray-800 text-gray-400 border border-gray-700 font-medium tracking-wide">queued…</span>
-                      </template>
-                    </div>
-                    <div class="text-[10px] text-gray-500 font-mono truncate"
-                         x-text="(pane.model || 'no model') + ' · ' + (pane.soul_slug || 'general')"></div>
+                <div class="px-4 pt-3 pb-2 border-b border-gray-800 shrink-0">
+                  <div class="flex items-center gap-2.5">
+                    <!-- Status indicator: green=ready, indigo pulse=streaming, gray pulse=queued -->
+                    <span class="w-2.5 h-2.5 rounded-full shrink-0 ring-2 ring-gray-900"
+                      :class="compareStreaming[pane.id] ? 'bg-indigo-500 animate-pulse'
+                            : compareQueued[pane.id] ? 'bg-gray-500 animate-pulse'
+                            : 'bg-green-500'"
+                      :title="compareStreaming[pane.id] ? 'Streaming…' : compareQueued[pane.id] ? 'Queued' : 'Ready'"></span>
+                    <span class="text-base font-semibold text-white truncate" x-text="pane.name"></span>
+                    <template x-if="compareStreaming[pane.id]">
+                      <span class="text-[10px] px-1.5 py-0.5 rounded bg-indigo-900 text-indigo-300 font-semibold animate-pulse">streaming</span>
+                    </template>
+                    <template x-if="compareQueued[pane.id] && !compareStreaming[pane.id]">
+                      <span class="text-[10px] px-1.5 py-0.5 rounded bg-gray-800 text-gray-400 font-semibold">queued…</span>
+                    </template>
+                    <span class="ml-auto text-[10px] text-gray-700 font-mono uppercase" x-text="slotIdx === 0 ? 'pane a' : 'pane b'"></span>
+                    <button class="text-gray-600 hover:text-red-400 text-lg leading-none px-1"
+                            @click="compareRemovePane(slotIdx)"
+                            title="Remove this agent">&times;</button>
                   </div>
-                  <button class="text-gray-600 hover:text-red-400 text-lg leading-none px-1"
-                          @click="compareRemovePane(slotIdx)"
-                          title="Remove this agent">&times;</button>
+                  <!-- Read-only STAMP: same visual rhythm as the Chats
+                       header so a user reading "agent A vs agent B" can
+                       compare configurations at a glance (Soul, Tools,
+                       Agent runtime, Model, Policy). No click handlers
+                       — Compare's whole point is a fixed-config
+                       experiment; mid-test soul/model swap would
+                       invalidate the comparison. Use Chats to actually
+                       change settings on either agent. -->
+                  <div class="flex items-center gap-1.5 mt-1.5 flex-wrap">
+                    <!-- S: Soul -->
+                    <span class="text-[10px] px-1.5 py-0.5 rounded font-mono bg-indigo-950 text-indigo-300 border border-indigo-900 flex items-center gap-1"
+                          :title="'Soul: ' + (pane.soul_slug || 'general')">
+                      <span class="font-bold text-indigo-500">S</span>
+                      <span x-text="pane.soul_slug || 'general'"></span>
+                    </span>
+                    <!-- T: Tools count -->
+                    <span class="text-[10px] px-1.5 py-0.5 rounded font-mono bg-gray-800 text-gray-400 border border-gray-700 flex items-center gap-1"
+                          :title="'Toolsets enabled: ' + (() => { try { return JSON.parse(pane.toolsets || '[]').join(', ') || 'none'; } catch(e) { return 'none'; } })()">
+                      <span class="font-bold text-gray-500">T</span>
+                      <span x-text="(() => { try { return JSON.parse(pane.toolsets || '[]').length; } catch(e) { return 0; } })() + ' tools'"></span>
+                    </span>
+                    <!-- A: Agent runtime -->
+                    <span class="text-[10px] px-1.5 py-0.5 rounded font-mono bg-gray-800 text-gray-400 border border-gray-700 flex items-center gap-1"
+                          title="Runtime: openshell">
+                      <span class="font-bold text-gray-500">A</span>
+                      <span>openshell</span>
+                    </span>
+                    <!-- M: Model -->
+                    <span class="text-[10px] px-1.5 py-0.5 rounded font-mono bg-[var(--accent-subtle)] text-[var(--accent)] border border-[var(--accent)]/40 flex items-center gap-1 truncate max-w-[180px]"
+                          :title="'Model: ' + (pane.model || 'auto')">
+                      <span class="font-bold">M</span>
+                      <span class="truncate" x-text="pane.model || 'auto'"></span>
+                    </span>
+                    <!-- P: Policy -->
+                    <span class="text-[10px] px-1.5 py-0.5 rounded font-mono bg-emerald-950 text-emerald-400 border border-emerald-900 flex items-center gap-1"
+                          :title="'Action policy: ' + (pane.action_policy || 'default')">
+                      <span class="font-bold text-emerald-600">P</span>
+                      <span x-text="pane.action_policy || 'default'"></span>
+                    </span>
+                  </div>
                 </div>
 
                 <!-- Transcript area -->
@@ -1381,25 +1618,25 @@
   <!-- ── Routing Tab ───────────────────────────────────────────────── -->
   <div x-show="tab==='infra'" x-cloak>
 
-    <!-- Infra sub-tabs -->
+    <!-- Config sub-tabs -->
     <div class="flex gap-4 mb-4 border-b border-gray-800">
-      <button class="pb-2 text-xs font-medium border-b-2 transition-colors"
+      <button class="pb-2 text-sm font-medium border-b-2 transition-colors"
         :class="infraTab==='servers' ? 'border-[var(--accent)] text-white' : 'border-transparent text-gray-500 hover:text-gray-300'"
         @click="infraTab='servers'; localStorage.setItem('logos_infra_tab','servers'); loadAdminMachines(); loadCloudProviders(); probeAllMachines()">Inference</button>
       <template x-if="can('manage_machines')">
-        <button class="pb-2 text-xs font-medium border-b-2 transition-colors"
+        <button class="pb-2 text-sm font-medium border-b-2 transition-colors"
           :class="infraTab==='tools' ? 'border-[var(--accent)] text-white' : 'border-transparent text-gray-500 hover:text-gray-300'"
           @click="infraTab='tools'; localStorage.setItem('logos_infra_tab','tools'); loadToolsTab(); loadServices()">Tools</button>
       </template>
-      <template x-if="can('manage_machines')">
-        <button class="pb-2 text-xs font-medium border-b-2 transition-colors"
-          :class="infraTab==='channels' ? 'border-[var(--accent)] text-white' : 'border-transparent text-gray-500 hover:text-gray-300'"
-          @click="infraTab='channels'; localStorage.setItem('logos_infra_tab','channels'); loadMessagingChannels()">Channels</button>
+      <template x-if="can('manage_machines') || can('manage_users')">
+        <button class="pb-2 text-sm font-medium border-b-2 transition-colors"
+          :class="infraTab==='messaging' ? 'border-[var(--accent)] text-white' : 'border-transparent text-gray-500 hover:text-gray-300'"
+          @click="infraTab='messaging'; localStorage.setItem('logos_infra_tab','messaging'); loadMessagingChannels(); loadPlatforms()">Messaging</button>
       </template>
-      <template x-if="can('view_evolution')">
-        <button class="pb-2 text-xs font-medium border-b-2 transition-colors"
-          :class="infraTab==='proposals' ? 'border-[var(--accent)] text-white' : 'border-transparent text-gray-500 hover:text-gray-300'"
-          @click="infraTab='proposals'; localStorage.setItem('logos_infra_tab','proposals'); loadEvolutionProposals(); loadEvolutionSettings()">Proposals</button>
+      <template x-if="can('manage_workflows') || can('view_workflows')">
+        <button class="pb-2 text-sm font-medium border-b-2 transition-colors"
+          :class="infraTab==='workflows' ? 'border-[var(--accent)] text-white' : 'border-transparent text-gray-500 hover:text-gray-300'"
+          @click="infraTab='workflows'; localStorage.setItem('logos_infra_tab','workflows'); loadWorkflows()">Workflows</button>
       </template>
     </div>
 
@@ -1822,32 +2059,6 @@
               </div>
             </template>
 
-            <!-- Capabilities row -->
-            <div class="border-t border-gray-800/60 px-4 py-2.5">
-              <div class="flex items-center gap-4 mb-1.5">
-                <span class="text-xs text-gray-700 shrink-0">Capabilities</span>
-                <div class="flex flex-wrap gap-2">
-                  <template x-for="cls in ['lightweight','coding','general','reasoning','vision','embedding']" :key="cls">
-                    <label class="flex items-center gap-1 text-xs cursor-pointer select-none">
-                      <input type="checkbox"
-                        :checked="m.capabilities.includes(cls)"
-                        @change="toggleCapability(m, cls, $event.target.checked)"
-                        class="rounded border-gray-700 bg-gray-800 accent-[var(--accent)]">
-                      <span :class="m.capabilities.includes(cls) ? 'text-gray-300' : 'text-gray-600'"
-                        x-text="cls"></span>
-                    </label>
-                  </template>
-                </div>
-              </div>
-              <!-- Warning when capabilities are limited -->
-              <template x-if="m.capabilities.length < 3">
-                <p class="text-[10px] text-amber-700 leading-relaxed">
-                  Only <span class="font-medium text-amber-600" x-text="m.capabilities.join(', ') || 'none'"></span> enabled.
-                  Requests for unchecked types will not route to this machine &mdash; they will fail unless another machine handles them.
-                  <span x-show="m.capabilities.length === 0" class="text-red-500 font-medium">No capabilities enabled — this machine will receive no traffic.</span>
-                </p>
-              </template>
-            </div>
 
           </div>
         </template>
@@ -1899,18 +2110,6 @@
                     x-text="srv.done ? (srv.error ? 'error' : (srv.best ? srv.best + ' · ' + (srv.score ?? '?') + '/6' : 'done')) : (srv.testing ? srv.testing : 'queued')"></div>
                 </div>
               </template>
-            </div>
-          </template>
-          <!-- Apply benchmark results -->
-          <template x-if="!capBenchRunning && Object.values(capBenchServers).some(s => s.done && s.best && s.machineId)">
-            <div class="flex items-center justify-between mt-2 mb-2 p-2.5 rounded-lg border border-gray-800 bg-gray-900/60">
-              <span class="text-xs text-gray-400">Save recommended models as machine defaults?</span>
-              <button @click="applyCapBenchResults()"
-                :disabled="capBenchApplying"
-                class="text-xs px-3 py-1 rounded border border-indigo-600 bg-indigo-900/40 text-indigo-300 hover:bg-indigo-800/50 disabled:opacity-40 transition-colors">
-                <span x-show="!capBenchApplying">Apply results</span>
-                <span x-show="capBenchApplying" class="animate-pulse">Saving…</span>
-              </button>
             </div>
           </template>
           <!-- Log stream -->
@@ -2072,18 +2271,32 @@
            available column width and the available column height
            (calc(100vh - 7rem) matches the parent's height calc). -->
       <div class="flex-1 min-w-0 flex flex-col items-center">
-        <!-- Outer flex pins the square to the top of the column so it sits
-             flush under the navbar; horizontal centring keeps it middled
-             when the column is wider than the box. -->
-        <div class="flex-1 min-h-0 w-full flex items-start justify-center">
+        <!-- Stack canvas + legend together. No flex-1 wrapper around the
+             square — that's what created the dead space; the legend now
+             sits flush against the bottom edge of the world. -->
+        <div class="w-full flex flex-col items-center">
           <!-- Square viewport: aspect-ratio:1 + width:min(100%,available-height)
                guarantees the box stays a perfect square that always fits the
-               column. The height clamp matches the parent container's
-               `height: calc(100vh - 7rem)` so the box can use the full
-               vertical space without overflowing. -->
+               column. Height clamp leaves room for the ~26px legend strip. -->
           <div class="relative rounded-xl border border-gray-800 ring-1 ring-indigo-500/20 overflow-hidden shadow-[0_0_40px_rgba(99,102,241,0.08)_inset]"
-               style="aspect-ratio:1/1; width:min(100%, calc(100vh - 7rem)); background:#0a0a0f;">
+               style="aspect-ratio:1/1; width:min(100%, calc(100vh - 9rem)); background:#0a0a0f;">
             <div id="agent-world" class="absolute inset-0"></div>
+          </div>
+          <!-- Single-line legend — flex-wrap so it folds gracefully on
+               narrow screens. Sits directly under the canvas, same width. -->
+          <div class="mt-2 px-3 py-2 rounded-lg border border-gray-800/70 bg-gray-900/40 text-xs text-gray-400 flex flex-wrap items-center gap-x-5 gap-y-1.5"
+               style="width:min(100%, calc(100vh - 9rem));"
+               title="Map key">
+            <span class="inline-flex items-center gap-1.5"><span class="w-2 h-2 rounded-full bg-green-500"></span>running</span>
+            <span class="inline-flex items-center gap-1.5"><span class="w-2 h-2 rounded-full bg-yellow-500"></span>provisioning</span>
+            <span class="inline-flex items-center gap-1.5"><span class="text-sm leading-none">&#x23f3;</span><span>cold</span></span>
+            <span class="inline-flex items-center gap-1.5"><span class="text-sm leading-none">&#x1f4ad;</span><span>thinking</span></span>
+            <span class="inline-flex items-center gap-1.5"><span class="inline-flex items-center justify-center w-4 h-4 rounded text-[10px] font-bold text-white" style="background:#6366f1">A</span>initial</span>
+            <span class="inline-flex items-center gap-1.5"
+              title="Maturity progression: Sprout (🌱) → Sapling (🌿) → Branch (🌳) → Tree (🌲) → Old Growth (🪵). Driven by dispatches, sessions, and memories."
+              ><span class="text-sm leading-none">&#x1f331;&rarr;&#x1f33f;&rarr;&#x1f333;&rarr;&#x1f332;&rarr;&#x1fab5;</span><span>tier</span></span>
+            <span class="inline-flex items-center gap-1.5"><span class="w-3 h-3 rounded bg-gray-500" style="opacity:0.6"></span>disconnected</span>
+            <span class="ml-auto text-gray-600 text-[10px]">click an agent to chat</span>
           </div>
         </div>
       </div>
@@ -2103,7 +2316,7 @@
            :style="(namedAgentFormOpen || (namedAgents||[]).some(a => a._editing)) ? 'width:24rem;max-width:24rem;' : 'width:16rem;max-width:16rem;'">
 
         <!-- Create Agent toggle -->
-        <button @click="namedAgentFormOpen = !namedAgentFormOpen; namedAgentMsg = null"
+        <button @click="namedAgentFormOpen = !namedAgentFormOpen; namedAgentMsg = null; if (namedAgentFormOpen && !souls.length) { soulsLoaded = false; loadSouls(); }"
           class="w-full px-3 py-2 rounded-lg text-xs font-medium transition-colors"
           :class="namedAgentFormOpen ? 'bg-gray-800 text-gray-400 border border-gray-700' : 'bg-indigo-600 text-white hover:bg-indigo-500'">
           <span x-text="namedAgentFormOpen ? 'Cancel' : '+ Create Agent'"></span>
@@ -2118,20 +2331,59 @@
         <div x-show="namedAgentFormOpen" x-cloak class="p-3 rounded-xl border border-indigo-800/50 bg-indigo-950/10 space-y-2">
           <input x-model="namedAgentForm.name" type="text" placeholder="Agent name (e.g. Atlas, DevOps-Bot)"
             class="w-full px-3 py-2 rounded-lg bg-gray-800 border border-gray-700 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-indigo-500">
-          <!-- Sprite picker — 8 characters, click to select. Stored as char_index 0..7 -->
-          <div>
-            <label class="text-[10px] text-gray-500 mb-1 block">Character</label>
-            <div class="flex flex-wrap gap-1.5">
-              <template x-for="ci in [0,1,2,3,4,5,6,7]" :key="ci">
-                <button type="button" @click="namedAgentForm.char_index = ci"
-                  :title="'Character ' + (ci + 1)"
-                  :style="agentSpriteStyle(ci) + (namedAgentForm.char_index === ci ? 'border:2px solid rgb(99 102 241);border-radius:8px;' : 'border:2px solid transparent;')"
-                  class="shrink-0 hover:scale-110 transition-transform"></button>
-              </template>
+          <!-- Three-axis character picker: body (8) × skin (4) × Logos theme (5) = 160 combinations.
+               Encoded as a single char_index = body*20 + skin*5 + hair. NULL ⇒ random. -->
+          <div class="space-y-2">
+            <label class="text-[10px] text-gray-500 block">Character</label>
+            <!-- Random (default — auto-assign from agent name) -->
+            <div class="flex items-center gap-2">
+              <button type="button" @click="namedAgentForm.char_index = null"
+                title="Random — auto-assign a character from the agent's name"
+                :class="'shrink-0 hover:scale-110 transition-transform flex items-center justify-center text-2xl font-bold text-gray-300 bg-gray-800/60 rounded-lg ' + (namedAgentForm.char_index === null ? 'ring-2 ring-indigo-500' : '')"
+                style="width:64px;height:64px;border:2px solid transparent;">?</button>
+              <p x-show="namedAgentForm.char_index === null" class="text-[10px] text-gray-600">
+                Random — a character will be auto-assigned from the agent's name. Pick below to override.
+              </p>
+              <p x-show="namedAgentForm.char_index !== null" class="text-[10px] text-gray-600">
+                Tap ? to go back to random.
+              </p>
             </div>
-            <p x-show="namedAgentForm.char_index === null" class="text-[10px] text-gray-600 mt-1">
-              Pick a character, or leave unselected to auto-assign from the name.
-            </p>
+            <!-- Body selector (wraps based on container width) -->
+            <div>
+              <div class="text-[10px] text-gray-600 mb-1">Body</div>
+              <div class="flex flex-wrap gap-1">
+                <template x-for="bi in [0,1,2,3,4,5,6,7]" :key="bi">
+                  <button type="button" @click="pickBody(bi)"
+                    :title="'Body ' + (bi + 1)"
+                    :style="agentSpriteStyle(bi * 20 + currentSkin() * 5 + currentHair()) + (currentBody() === bi && namedAgentForm.char_index !== null ? 'border:2px solid rgb(99 102 241);border-radius:8px;' : 'border:2px solid transparent;')"
+                    class="shrink-0 hover:scale-110 transition-transform"></button>
+                </template>
+              </div>
+            </div>
+            <!-- Skin tone selector -->
+            <div>
+              <div class="text-[10px] text-gray-600 mb-1">Skin tone</div>
+              <div class="flex gap-1">
+                <template x-for="si in [0,1,2,3]" :key="si">
+                  <button type="button" @click="pickSkin(si)"
+                    :title="['Lightest','Light','Medium','Dark'][si]"
+                    :style="agentSpriteStyle(currentBody() * 20 + si * 5 + currentHair()) + (currentSkin() === si && namedAgentForm.char_index !== null ? 'border:2px solid rgb(99 102 241);border-radius:8px;' : 'border:2px solid transparent;')"
+                    class="shrink-0 hover:scale-110 transition-transform"></button>
+                </template>
+              </div>
+            </div>
+            <!-- Logos theme color selector -->
+            <div>
+              <div class="text-[10px] text-gray-600 mb-1">Logos theme</div>
+              <div class="flex gap-1">
+                <template x-for="hi in [0,1,2,3,4]" :key="hi">
+                  <button type="button" @click="pickHair(hi)"
+                    :title="['Original','Midnight','Crimson','Terminal','Dusk'][hi]"
+                    :style="agentSpriteStyle(currentBody() * 20 + currentSkin() * 5 + hi) + (currentHair() === hi && namedAgentForm.char_index !== null ? 'border:2px solid rgb(99 102 241);border-radius:8px;' : 'border:2px solid transparent;')"
+                    class="shrink-0 hover:scale-110 transition-transform"></button>
+                </template>
+              </div>
+            </div>
           </div>
           <div class="grid grid-cols-2 gap-2">
             <div>
@@ -2146,7 +2398,7 @@
             <div>
               <label class="text-[10px] text-gray-500 mb-1 block flex items-center justify-between">
                 <span>Model Route</span>
-                <a href="#" @click.prevent="tab='admin'; adminTab='model-routes'; loadModelRoutes()"
+                <a href="#" @click.prevent="tab='activity'; activityTab='dashboards'; loadModelRoutes(); loadSandboxes()"
                   class="text-[9px] text-[var(--accent)] hover:opacity-80 normal-case">manage routes &rarr;</a>
               </label>
               <!--
@@ -2168,7 +2420,7 @@
                 </template>
               </select>
               <p x-show="!modelRoutes.length" class="text-[9px] text-gray-600 mt-1">
-                No routes provisioned yet. The new agent will use the executor bootstrap fallback. <a href="#" @click.prevent="tab='admin'; adminTab='model-routes'; loadModelRoutes()" class="text-[var(--accent)] hover:opacity-80">Provision a route &rarr;</a>
+                No routes provisioned yet. The new agent will use the executor bootstrap fallback. <a href="#" @click.prevent="tab='activity'; activityTab='dashboards'; loadModelRoutes(); loadSandboxes()" class="text-[var(--accent)] hover:opacity-80">Provision a route &rarr;</a>
               </p>
             </div>
           </div>
@@ -2232,14 +2484,41 @@
                         :class="(status.active_sessions||[]).some(s => s.agent_name === a.name) ? 'bg-green-500 animate-pulse' : 'bg-green-600'"></span>
                       <span class="text-sm font-semibold text-white group-hover:text-indigo-300 transition-colors truncate" x-text="a.name"></span>
                     </div>
-                    <div class="flex items-center gap-1.5 mb-1">
+                    <div class="flex items-center gap-1.5 mb-1 flex-wrap">
                       <span x-show="a.model" class="text-[9px] px-1 py-0.5 rounded font-mono bg-gray-800 text-gray-500 border border-gray-700 truncate max-w-[140px]" x-text="a.model"></span>
                       <span x-show="a.toolsets && JSON.parse(a.toolsets || '[]').length" class="text-[9px] px-1 py-0.5 rounded font-mono bg-emerald-950 text-emerald-400 border border-emerald-900 shrink-0"
                         x-text="JSON.parse(a.toolsets || '[]').length + ' tools'"></span>
+                      <!-- Warning when toolsets is empty: model still chats but with zero
+                           callable tools, so symptoms read as "agent promised to browse
+                           but didn't" (cause: AIAgent receives enabled_toolsets=[]).
+                           Surfacing here makes the misconfig obvious before the user
+                           wonders why their agent feels useless. -->
+                      <span x-show="!a.toolsets || JSON.parse(a.toolsets || '[]').length === 0"
+                            class="text-[9px] px-1 py-0.5 rounded font-mono bg-amber-950 text-amber-400 border border-amber-900 shrink-0 cursor-help"
+                            title="No toolsets enabled — agent can chat but can't call any tools (browser, memory, file, etc.). Edit the agent and pick at least one toolset.">⚠ no tools</span>
                     </div>
-                    <p x-show="a.description" class="text-[10px] text-gray-500 mb-0 truncate" x-text="a.description"></p>
+                    <!-- Maturity row: tier glyph + tier name + age + activity counts. Tooltip on the chip
+                         shows the raw breakdown (dispatches/sessions/memories) for the curious. -->
+                    <div class="flex items-center gap-1.5 mb-1 text-[10px] text-gray-500"
+                         :title="(() => { const m = agentMaturity(a); return m.tier + ' · ' + m.dispatches + ' messages · ' + m.sessions + ' sessions · ' + m.memories + ' memories'; })()">
+                      <span class="text-xs leading-none" x-text="agentMaturity(a).glyph"></span>
+                      <span class="font-medium text-gray-400" x-text="agentMaturity(a).tier"></span>
+                      <span class="text-gray-700">·</span>
+                      <span x-text="'Day ' + agentMaturity(a).days"></span>
+                      <template x-if="agentMaturity(a).dispatches > 0">
+                        <span><span class="text-gray-700">·</span> <span x-text="agentMaturity(a).dispatches + ' msg'"></span></span>
+                      </template>
+                    </div>
                   </div>
                 </div>
+
+                <!-- Description: full-width row below the sprite/info cluster
+                     so longer "I'm a coding assistant who…" descriptions can
+                     wrap across the whole card instead of getting truncated
+                     in the narrow info column next to the sprite. -->
+                <p x-show="a.description"
+                   class="text-[10px] text-gray-500 mt-2 leading-snug whitespace-pre-line break-words"
+                   x-text="a.description"></p>
 
                 <!-- Live execution info for this agent -->
                 <template x-for="s in (status.active_sessions||[]).filter(s => s.agent_name === a.name)" :key="s.session_key">
@@ -2274,7 +2553,8 @@
                        class="mt-2 space-y-1.5 pt-2 border-t border-red-900/50 min-w-0 max-w-full overflow-hidden">
                     <p class="text-[10px] text-red-400 leading-snug">
                       Delete <span class="font-semibold" x-text="a.name"></span>?
-                      This destroys the agent and its sandbox. Type
+                      This wipes the agent, its sandbox, memories, logs,
+                      sessions, and run history. Cannot be undone. Type
                       <span class="font-mono text-red-300" x-text="a.name"></span>
                       to confirm.
                     </p>
@@ -2566,12 +2846,27 @@
       <p class="text-xs text-gray-600 mb-3">API keys for external tool providers. Keys set here are stored in the gateway and available to all agents.</p>
       <div class="space-y-2">
         <template x-for="ti in servicesTools" :key="ti.env_var">
-          <div class="px-3 py-3 rounded-lg bg-gray-800 border border-gray-700 text-xs" x-data="{editing: false, keyInput: '', validating: false, result: null}">
+          <div class="px-3 py-3 rounded-lg bg-gray-800 border text-xs"
+            :class="ti.selfhosted ? 'border-emerald-900/60' : 'border-gray-700'"
+            :data-env-var="ti.env_var"
+            x-data="{editing: false, keyInput: '', validating: false, result: null}"
+            x-init="if (ti.selfhosted && !ti.has_key && ti.compose_default) keyInput = ti.compose_default">
             <div class="flex items-center gap-3">
               <span class="w-2 h-2 rounded-full" :class="ti.has_key ? 'bg-green-400' : 'bg-gray-600'"></span>
               <div class="flex-1">
                 <span class="text-white font-medium" x-text="ti.label"></span>
+                <template x-if="ti.selfhosted">
+                  <span class="ml-1 text-[9px] uppercase tracking-wider px-1.5 py-0.5 rounded bg-emerald-950 text-emerald-400 border border-emerald-900">self-hosted</span>
+                </template>
                 <span class="text-gray-500 ml-1" x-text="ti.description"></span>
+                <!-- When a cloud integration also has a self-hosted counterpart, surface a quick switch link. -->
+                <template x-if="ti.selfhosted_alt && !ti.has_key">
+                  <span class="text-[10px] text-emerald-500 ml-2">
+                    or
+                    <a href="#" @click.prevent="$el.closest('.space-y-2').querySelector('[data-env-var=&quot;' + ti.selfhosted_alt + '&quot;]')?.scrollIntoView({behavior:'smooth', block:'center'})"
+                      class="underline hover:text-emerald-300">use self-hosted</a>
+                  </span>
+                </template>
               </div>
               <template x-if="ti.has_key">
                 <div class="flex items-center gap-2">
@@ -2594,8 +2889,8 @@
             </div>
             <!-- Key input row (shown when editing) -->
             <div x-show="editing" x-cloak class="mt-2 flex items-center gap-2">
-              <input type="password" x-model="keyInput"
-                :placeholder="'Enter ' + ti.env_var"
+              <input :type="ti.value_kind === 'url' ? 'text' : 'password'" x-model="keyInput"
+                :placeholder="ti.value_kind === 'url' ? (ti.compose_default || 'http://host:port') : ('Enter ' + ti.env_var)"
                 class="flex-1 bg-gray-900 border border-gray-600 rounded px-2 py-1.5 text-xs text-white placeholder-gray-600 focus:outline-none focus:border-indigo-500 font-mono"
                 @keydown.enter="if(keyInput.trim()) { validating=true; result=null; fetch('/api/services/validate',{method:'POST',credentials:'include',headers:{'Content-Type':'application/json','X-CSRF-Token':getCsrfToken()},body:JSON.stringify({env_var:ti.env_var,value:keyInput.trim()})}).then(r=>r.json()).then(d=>{result=d;validating=false;if(d.ok){fetch('/api/services/keys',{method:'POST',credentials:'include',headers:{'Content-Type':'application/json','X-CSRF-Token':getCsrfToken()},body:JSON.stringify({env_var:ti.env_var,value:keyInput.trim()})}).then(()=>{editing=false;keyInput='';loadServices()})}}).catch(e=>{result={ok:false,message:String(e)};validating=false}) }">
               <button @click="if(keyInput.trim()) { validating=true; result=null; fetch('/api/services/validate',{method:'POST',credentials:'include',headers:{'Content-Type':'application/json','X-CSRF-Token':getCsrfToken()},body:JSON.stringify({env_var:ti.env_var,value:keyInput.trim()})}).then(r=>r.json()).then(d=>{result=d;validating=false;if(d.ok){fetch('/api/services/keys',{method:'POST',credentials:'include',headers:{'Content-Type':'application/json','X-CSRF-Token':getCsrfToken()},body:JSON.stringify({env_var:ti.env_var,value:keyInput.trim()})}).then(()=>{editing=false;keyInput='';loadServices()})}}).catch(e=>{result={ok:false,message:String(e)};validating=false}) }"
@@ -2626,8 +2921,9 @@
     <p class="text-[10px] text-gray-700">Keys from environment variables or .env take priority over keys saved here. Changes take effect on the next message.</p>
   </div>
 
-  <!-- ── Channels sub-tab (Messaging Platforms) ──────────────────── -->
-  <div x-show="tab==='infra' && infraTab==='channels'" x-cloak class="space-y-6">
+  <!-- ── Messaging → Credentials section (formerly: Channels) ───────── -->
+  <div x-show="tab==='infra' && infraTab==='messaging'" x-cloak class="space-y-6">
+    <div class="text-[10px] font-semibold text-gray-500 uppercase tracking-[0.15em] border-b border-gray-800 pb-2 mb-3">Credentials</div>
     <div class="flex items-center justify-between mb-2">
       <h2 class="text-sm font-semibold text-white">Messaging Channels</h2>
       <button @click="loadMessagingChannels()" class="text-xs text-gray-500 hover:text-gray-300">Refresh</button>
@@ -2725,11 +3021,16 @@
     <p class="text-[10px] text-gray-700">Tokens from environment variables take priority over saved tokens. Platform adapters restart automatically when tokens change.</p>
   </div>
 
-  <!-- ── Admin Tab ────────────────────────────────────────────────── -->
-  <div x-show="tab==='admin'" x-cloak>
+  <!-- ── Admin / Activity wrapper ──────────────────────────────────────
+       Single un-gated wrapper. Each sub-tab block self-gates via its own
+       x-show predicate (tab==='admin' && adminTab==='users', etc., or
+       tab==='activity' && activityTab==='runs', etc.). This lets blocks
+       that visually live inside this section render under either the
+       Admin tab or the Activity tab without physically moving HTML. -->
+  <div x-cloak>
 
-    <!-- Sub-tabs -->
-    <div class="flex gap-4 border-b border-gray-800 mb-5">
+    <!-- Admin sub-tab bar (slimmed) -->
+    <div x-show="tab==='admin'" class="flex gap-4 border-b border-gray-800 mb-5">
       <button x-show="can('manage_users')"
         class="pb-2 text-sm font-medium"
         :class="adminTab==='users'?'tab-active':'text-gray-500 hover:text-white'"
@@ -2738,43 +3039,38 @@
         class="pb-2 text-sm font-medium"
         :class="adminTab==='action-policies'?'tab-active':'text-gray-500 hover:text-white'"
         @click="adminTab='action-policies'; loadAdminActionPolicies()">Security</button>
-      <button x-show="can('view_workflows') || can('manage_workflows')"
-        class="pb-2 text-sm font-medium"
-        :class="adminTab==='workflows'?'tab-active':'text-gray-500 hover:text-white'"
-        @click="adminTab='workflows'; loadWorkflows()">Workflows</button>
-      <button x-show="can('view_runs')"
-        class="pb-2 text-sm font-medium"
-        :class="adminTab==='runs'?'tab-active':'text-gray-500 hover:text-white'"
-        @click="adminTab='runs'; loadAgentRuns()">Runs</button>
-      <button x-show="can('view_runs')"
-        class="pb-2 text-sm font-medium"
-        :class="adminTab==='sandboxes'?'tab-active':'text-gray-500 hover:text-white'"
-        @click="adminTab='sandboxes'; loadSandboxes()">Sandboxes</button>
-      <button x-show="can('manage_machines')"
-        class="pb-2 text-sm font-medium"
-        :class="adminTab==='model-routes'?'tab-active':'text-gray-500 hover:text-white'"
-        @click="adminTab='model-routes'; loadModelRoutes()">Model Routes</button>
-      <button x-show="can('manage_users')"
-        class="pb-2 text-sm font-medium"
-        :class="adminTab==='platforms'?'tab-active':'text-gray-500 hover:text-white'"
-        @click="adminTab='platforms'; loadPlatforms()">Platforms</button>
       <button x-show="can('view_audit_logs')"
         class="pb-2 text-sm font-medium"
         :class="adminTab==='audit'?'tab-active':'text-gray-500 hover:text-white'"
         @click="adminTab='audit'; loadAdminAudit()">Audit Log</button>
+    </div>
+
+    <!-- Activity sub-tab bar -->
+    <div x-show="tab==='activity'" class="flex gap-4 border-b border-gray-800 mb-5">
+      <button class="pb-2 text-sm font-medium"
+        :class="activityTab==='events'?'tab-active':'text-gray-500 hover:text-white'"
+        @click="activityTab='events'; loadDispatches()">Events</button>
+      <button x-show="can('manage_machines') || can('view_runs')"
+        class="pb-2 text-sm font-medium"
+        :class="activityTab==='dashboards'?'tab-active':'text-gray-500 hover:text-white'"
+        @click="activityTab='dashboards'; loadModelRoutes(); loadSandboxes()">Dashboards</button>
       <button x-show="can('view_approvals')"
         class="pb-2 text-sm font-medium relative"
-        :class="adminTab==='approvals'?'tab-active':'text-gray-500 hover:text-white'"
-        @click="adminTab='approvals'; loadApprovals()">
+        :class="activityTab==='approvals'?'tab-active':'text-gray-500 hover:text-white'"
+        @click="activityTab='approvals'; loadApprovals()">
         Approvals
         <template x-if="pendingApprovalCount > 0">
           <span class="absolute -top-1 -right-3 min-w-[16px] h-4 px-1 rounded-full bg-red-500 text-[9px] text-white font-bold flex items-center justify-center" x-text="pendingApprovalCount > 99 ? '99+' : pendingApprovalCount"></span>
         </template>
       </button>
+      <button x-show="can('view_evolution')"
+        class="pb-2 text-sm font-medium"
+        :class="activityTab==='proposals'?'tab-active':'text-gray-500 hover:text-white'"
+        @click="activityTab='proposals'; loadEvolutionProposals(); loadEvolutionSettings()">Proposals</button>
     </div>
 
     <!-- ── Users sub-tab ── -->
-    <div x-show="adminTab==='users' && can('manage_users')">
+    <div x-show="tab==='admin' && adminTab==='users' && can('manage_users')">
       <div class="flex items-center justify-between mb-4">
         <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Users</div>
         <button @click="adminUserForm={email:'',username:'',password:'',role:'user',display_name:''}; adminUserFormOpen=true"
@@ -3004,7 +3300,7 @@
     </div>
 
     <!-- ── Action Policies sub-tab ── -->
-    <div x-show="adminTab==='action-policies' && can('manage_action_policies')">
+    <div x-show="tab==='admin' && adminTab==='action-policies' && can('manage_action_policies')">
       <div class="flex items-center justify-between mb-4">
         <div>
           <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Action Policies</div>
@@ -3146,11 +3442,23 @@
       </div>
     </div>
 
-    <!-- ── Sandboxes sub-tab ── -->
-    <div x-show="adminTab==='sandboxes'" x-cloak>
+    <!-- ── Dashboards two-column grid ──
+         Sandboxes (left) + Model Routes (right) sit side-by-side so
+         neither stretches uselessly across the full width when one of
+         them only has a handful of rows. `items-start` keeps each
+         column anchored to the top so a tall Model Routes table doesn't
+         drag the short Sandboxes panel down with it. The Routing-Debug
+         section below is a sibling of this grid and stays full-width. -->
+    <div x-show="tab==='activity' && activityTab==='dashboards'" x-cloak
+         class="grid grid-cols-1 xl:grid-cols-2 gap-6 items-start">
 
-      <!-- Overview cards -->
-      <div class="grid grid-cols-4 gap-3 mb-5">
+    <!-- ── Sandboxes (Activity → Dashboards, left column) ── -->
+    <div>
+
+      <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">Sandboxes</div>
+
+      <!-- Overview cards (2-up at column width, 4-up below xl when grid collapses to 1-col) -->
+      <div class="grid grid-cols-2 2xl:grid-cols-4 gap-3 mb-5">
         <div class="bg-gray-900 border border-gray-800 rounded-lg px-4 py-3">
           <div class="text-2xl font-bold text-white" x-text="sandboxes.length"></div>
           <div class="text-[10px] text-gray-500 uppercase tracking-wider">Active Sandboxes</div>
@@ -3158,7 +3466,7 @@
         <div class="bg-gray-900 border border-gray-800 rounded-lg px-4 py-3">
           <div class="text-2xl font-bold" :class="sandboxes.filter(s => s.worker_healthy).length === sandboxes.length ? 'text-green-400' : 'text-yellow-400'"
             x-text="sandboxes.filter(s => s.worker_healthy).length + '/' + sandboxes.length"></div>
-          <div class="text-[10px] text-gray-500 uppercase tracking-wider">Healthy Workers</div>
+          <div class="text-[10px] text-gray-500 uppercase tracking-wider">Ready Sandboxes</div>
         </div>
         <div class="bg-gray-900 border border-gray-800 rounded-lg px-4 py-3">
           <div class="text-2xl font-bold text-white">
@@ -3191,8 +3499,7 @@
               <th class="text-left px-4 py-3 font-medium">Sandbox</th>
               <th class="text-left px-4 py-3 font-medium">Agent</th>
               <th class="text-left px-4 py-3 font-medium">Phase</th>
-              <th class="text-left px-4 py-3 font-medium">Worker</th>
-              <th class="text-left px-4 py-3 font-medium">Health</th>
+              <th class="text-left px-4 py-3 font-medium">Ready</th>
               <th class="text-left px-4 py-3 font-medium">Uptime</th>
               <th class="text-right px-4 py-3 font-medium">Actions</th>
             </tr>
@@ -3212,20 +3519,12 @@
                     x-text="isSandboxSwitching(sb) ? 'switching' : (sb.phase || 'unknown')"></span>
                 </td>
                 <td class="px-4 py-2">
-                  <span class="px-1.5 py-0.5 rounded text-[10px] font-medium border"
-                    :class="isSandboxSwitching(sb) ? 'bg-yellow-950 text-yellow-400 border-yellow-900 animate-pulse'
-                      : sb.worker_status === 'busy' ? 'bg-yellow-950 text-yellow-400 border-yellow-900'
-                      : sb.worker_status === 'idle' ? 'bg-green-950 text-green-400 border-green-900'
-                      : 'bg-red-950 text-red-400 border-red-900'"
-                    x-text="isSandboxSwitching(sb) ? 'switching…' : sb.worker_status"></span>
-                </td>
-                <td class="px-4 py-2">
                   <span class="flex items-center gap-1.5">
                     <span class="w-2 h-2 rounded-full"
                       :class="isSandboxSwitching(sb) ? 'bg-yellow-400 animate-pulse'
                         : sb.worker_healthy ? 'bg-green-500' : 'bg-red-500'"></span>
                     <span class="text-gray-500"
-                      x-text="isSandboxSwitching(sb) ? 'switching…' : (sb.worker_healthy ? 'healthy' : 'unhealthy')"></span>
+                      x-text="isSandboxSwitching(sb) ? 'switching…' : (sb.worker_healthy ? 'yes' : 'no')"></span>
                   </span>
                 </td>
                 <td class="px-4 py-2 text-gray-500" x-text="sb.worker_uptime_s > 3600 ? Math.floor(sb.worker_uptime_s/3600) + 'h ' + Math.floor((sb.worker_uptime_s%3600)/60) + 'm' : sb.worker_uptime_s > 60 ? Math.floor(sb.worker_uptime_s/60) + 'm' : sb.worker_uptime_s + 's'"></td>
@@ -3332,7 +3631,7 @@
 
     </div>
 
-    <!-- ── Model Routes sub-tab ── -->
+    <!-- ── Model Routes (Activity → Dashboards) ── -->
     <!--
       Multi-OpenShell-gateway routing dashboard. Each row is one
       OpenShell sub-gateway pinned to a single (provider, model) pair
@@ -3341,10 +3640,12 @@
       without OpenShell's "one forced model per gateway" design
       becoming a bottleneck.
     -->
-    <div x-show="adminTab==='model-routes' && can('manage_machines')" x-cloak>
+    <div x-show="tab==='activity' && activityTab==='dashboards' && can('manage_machines')" x-cloak>
 
-      <!-- Overview cards -->
-      <div class="grid grid-cols-4 gap-3 mb-5">
+      <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">Model Routes</div>
+
+      <!-- Overview cards (2-up at column width, 4-up below xl when grid collapses to 1-col) -->
+      <div class="grid grid-cols-2 2xl:grid-cols-4 gap-3 mb-5">
         <div class="bg-gray-900 border border-gray-800 rounded-lg px-4 py-3">
           <div class="text-2xl font-bold text-white" x-text="modelRoutes.length"></div>
           <div class="text-[10px] text-gray-500 uppercase tracking-wider">Configured Routes</div>
@@ -3442,7 +3743,7 @@
               <tr>
                 <td colspan="8" class="px-4 py-8 text-center text-gray-600">
                   No model routes provisioned yet. Click <span class="text-[var(--accent)]">+ Provision Model</span> to create one,
-                  or finish <button @click="tab='infra'; infraTab='servers'" class="underline text-[var(--accent)] hover:opacity-80">Settings → Inference</button>
+                  or finish <button @click="tab='infra'; infraTab='servers'" class="underline text-[var(--accent)] hover:opacity-80">Config → Inference</button>
                   if you haven't picked a model yet.
                 </td>
               </tr>
@@ -3550,7 +3851,7 @@
               <div class="text-[10px] mt-1 space-y-1">
                 <template x-if="!adminMachines.length">
                   <p class="text-gray-600">
-                    No machines registered yet — go to <a href="#" @click.prevent="provisionModalOpen=false; tab='infra'; infraTab='servers'" class="text-[var(--accent)] hover:opacity-80">Settings &rarr; Inference</a> to add one, or use Custom model id.
+                    No machines registered yet — go to <a href="#" @click.prevent="provisionModalOpen=false; tab='infra'; infraTab='servers'" class="text-[var(--accent)] hover:opacity-80">Config &rarr; Inference</a> to add one, or use Custom model id.
                   </p>
                 </template>
                 <template x-if="adminMachines.length && machineProbeStatuses.length">
@@ -3562,7 +3863,7 @@
                       </div>
                     </template>
                     <p class="text-gray-600 pt-1">
-                      Fix the issue in <a href="#" @click.prevent="provisionModalOpen=false; tab='infra'; infraTab='servers'" class="text-[var(--accent)] hover:opacity-80">Settings &rarr; Inference</a>, then click <em>refresh list</em> above. Or use Custom model id.
+                      Fix the issue in <a href="#" @click.prevent="provisionModalOpen=false; tab='infra'; infraTab='servers'" class="text-[var(--accent)] hover:opacity-80">Config &rarr; Inference</a>, then click <em>refresh list</em> above. Or use Custom model id.
                     </p>
                   </div>
                 </template>
@@ -3593,9 +3894,11 @@
       </div>
     </div>
 
+    </div><!-- /Dashboards two-column grid -->
+
     <!-- ── Debug section (moved from Settings/Routing 2026-04-11, pass-3 S1) ── -->
-    <!-- Gated as sibling of model-routes block; only renders when that sub-tab is active. -->
-    <div x-show="adminTab==='model-routes' && can('view_routing_debug')" x-cloak class="mb-6 border-t border-gray-800 pt-6">
+    <!-- Sibling of the two-column grid; full-width below the columns. -->
+    <div x-show="tab==='activity' && activityTab==='dashboards' && can('view_routing_debug')" x-cloak class="mb-6 border-t border-gray-800 pt-6">
       <button @click="debugOpen=!debugOpen; if(debugOpen) loadAdminUsers()"
         class="flex items-center justify-between w-full text-left mb-4 group">
         <span class="text-sm font-semibold text-white group-hover:text-gray-200">Routing Debug — Simulate Route</span>
@@ -3797,8 +4100,9 @@
     </div><!-- /debugOpen -->
     </div><!-- /debug section -->
 
-    <!-- ── Platforms sub-tab ── -->
-    <div x-show="adminTab==='platforms' && can('manage_users')" x-cloak>
+    <!-- ── Platforms (Config → Messaging, "Routing" section) ── -->
+    <div x-show="tab==='infra' && infraTab==='messaging' && can('manage_users')" x-cloak class="mt-8">
+      <div class="text-[10px] font-semibold text-gray-500 uppercase tracking-[0.15em] border-b border-gray-800 pb-2 mb-3">Routing</div>
       <div class="flex items-center justify-between mb-4">
         <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Platforms &amp; Routing</div>
         <button @click="loadPlatforms()" class="text-xs text-[var(--accent)] hover:opacity-80 flex items-center gap-1">
@@ -3933,7 +4237,7 @@
     </div>
 
     <!-- ── Audit Log sub-tab ── -->
-    <div x-show="adminTab==='audit' && can('view_audit_logs')">
+    <div x-show="tab==='admin' && adminTab==='audit' && can('view_audit_logs')">
       <div class="flex items-center justify-between mb-4">
         <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Audit Log</div>
         <button @click="loadAdminAudit()"
@@ -3974,8 +4278,8 @@
       </div>
     </div>
 
-    <!-- ── Approvals sub-tab ── -->
-    <div x-show="adminTab==='approvals' && can('view_approvals')">
+    <!-- ── Approvals (Activity) ── -->
+    <div x-show="tab==='activity' && activityTab==='approvals' && can('view_approvals')">
       <div class="flex items-center justify-between mb-4">
         <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Approval Requests</div>
         <div class="flex items-center gap-3">
@@ -4042,6 +4346,77 @@
       </div>
     </div>
 
+    <!-- ── Events / dispatch ledger (Activity → Events) ── -->
+    <div x-show="tab==='activity' && activityTab==='events'">
+      <div class="flex items-center justify-between mb-4">
+        <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Dispatch Activity</div>
+        <div class="flex items-center gap-3">
+          <select x-model="dispatchOriginFilter" @change="loadDispatches()"
+            class="bg-gray-800 border border-gray-700 rounded-lg text-xs px-2 py-1 text-gray-300">
+            <option value="">All origins</option>
+            <option value="user_chat">User chat</option>
+            <option value="compare">Compare (transient)</option>
+            <option value="platform">Platform</option>
+            <option value="cron">Cron</option>
+            <option value="session_flush">Session flush</option>
+          </select>
+          <button @click="loadDispatches()"
+            class="text-xs text-gray-500 hover:text-white">Refresh</button>
+        </div>
+      </div>
+      <div x-show="dispatchesLoading" class="text-xs text-gray-500 py-4 text-center">Loading...</div>
+      <div class="overflow-x-auto" x-show="!dispatchesLoading">
+        <table class="w-full text-xs">
+          <thead>
+            <tr class="text-gray-500 text-left border-b border-gray-800">
+              <th class="px-3 py-2">Agent</th>
+              <th class="px-3 py-2">Origin</th>
+              <th class="px-3 py-2">Model</th>
+              <th class="px-3 py-2">Status</th>
+              <th class="px-3 py-2">Elapsed</th>
+              <th class="px-3 py-2">Tokens</th>
+              <th class="px-3 py-2">Time</th>
+            </tr>
+          </thead>
+          <tbody>
+            <template x-for="d in dispatches" :key="d.id">
+              <tr class="border-b border-gray-800/50 hover:bg-gray-800/30">
+                <td class="px-3 py-2 font-mono text-gray-300" x-text="d.sandbox_name || d.agent_id || '—'"></td>
+                <td class="px-3 py-2">
+                  <span class="px-1.5 py-0.5 rounded text-[9px] font-medium"
+                    :class="{
+                      'bg-blue-950 text-blue-400': d.origin==='user_chat',
+                      'bg-purple-950 text-purple-400': d.origin?.startsWith('platform'),
+                      'bg-yellow-950 text-yellow-400': d.origin==='cron',
+                      'bg-gray-800 text-gray-400': !['user_chat','cron'].includes(d.origin) && !d.origin?.startsWith('platform'),
+                    }" x-text="d.origin"></span>
+                </td>
+                <td class="px-3 py-2 text-gray-500 font-mono" x-text="(d.model || '—').split('/').pop()"></td>
+                <td class="px-3 py-2">
+                  <span class="text-[10px] font-medium"
+                    :class="{
+                      'text-green-400': d.status==='ok',
+                      'text-red-400': d.status==='error',
+                      'text-yellow-400': d.status==='running',
+                      'text-gray-500': d.status==='timeout' || d.status==='cancelled',
+                    }" x-text="d.status"></span>
+                </td>
+                <td class="px-3 py-2 text-gray-500" x-text="d.elapsed_s ? d.elapsed_s.toFixed(1) + 's' : '—'"></td>
+                <td class="px-3 py-2 text-gray-500" x-text="(d.prompt_tokens || 0) + (d.completion_tokens || 0) || '—'"></td>
+                <td class="px-3 py-2 text-gray-600" x-text="d.started_at ? new Date(d.started_at).toLocaleTimeString() : '—'"></td>
+              </tr>
+            </template>
+            <template x-if="dispatches.length === 0">
+              <tr><td colspan="7" class="px-4 py-8 text-center text-gray-600">No dispatches recorded yet</td></tr>
+            </template>
+          </tbody>
+        </table>
+        <div class="flex items-center justify-between mt-3 text-xs text-gray-500">
+          <span x-text="'Showing ' + dispatches.length + ' of ' + dispatchesTotal + ' dispatches'"></span>
+        </div>
+      </div>
+    </div>
+
     <!-- Shared admin message bar -->
     <template x-if="adminMsg && !adminUserFormOpen && !adminMachineFormOpen && !adminPolicyFormOpen">
       <div class="mt-4 text-xs px-3 py-2 rounded-lg"
@@ -4051,8 +4426,8 @@
 
   </div>
 
-  <!-- ── Workflows Tab ────────────────────────────────────────────── -->
-  <div x-show="tab==='admin' && adminTab==='workflows'" x-cloak class="p-6 max-w-5xl mx-auto space-y-6">
+  <!-- ── Workflows Tab (Config → Workflows) ─────────────────────────── -->
+  <div x-show="tab==='infra' && infraTab==='workflows'" x-cloak class="p-6 max-w-5xl mx-auto space-y-6">
 
     <!-- Header row -->
     <div class="flex items-center justify-between">
@@ -4210,7 +4585,7 @@
             </div>
             <div class="flex items-center gap-2 shrink-0">
               <button @click="selectedWorkflow=wf; loadWorkflowRuns(wf.id)"
-                class="text-xs px-3 py-1.5 rounded-lg border border-gray-700 text-gray-300 hover:border-[var(--accent)] hover:text-[var(--accent)]">Runs</button>
+                class="text-xs px-3 py-1.5 rounded-lg border border-gray-700 text-gray-300 hover:border-[var(--accent)] hover:text-[var(--accent)]">History</button>
               <button x-show="can('trigger_workflow')" @click="triggerWorkflow(wf.id)"
                 class="text-xs px-3 py-1.5 rounded-lg bg-[var(--accent)] text-white hover:opacity-90">▶ Run</button>
               <button x-show="can('manage_workflows')" @click="deleteWorkflow(wf.id)"
@@ -4231,7 +4606,7 @@
       <div>
         <div class="flex items-center justify-between mb-3">
           <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider"
-            x-text="'Runs — ' + selectedWorkflow.name"></div>
+            x-text="'History — ' + selectedWorkflow.name"></div>
           <button @click="selectedWorkflow=null; wfRuns=[]" class="text-xs text-gray-500 hover:text-white">✕ Close</button>
         </div>
         <div class="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
@@ -4345,154 +4720,13 @@
 
   </div>
 
-  <!-- ── Runs Tab ─────────────────────────────────────────────────────── -->
-  <div x-show="tab==='admin' && adminTab==='runs'" x-cloak class="p-6 max-w-5xl mx-auto space-y-6">
+  <!-- Runs sub-tab removed: agent_runs writes are bypassed in the current
+       OpenShell runtime (Plan A-prime in sandbox_worker.py). M10 is the
+       restoration ticket — when it lands, re-add the Runs sub-tab + block
+       (history at git rev pre-removal). -->
 
-    <!-- Header row -->
-    <div class="flex items-center justify-between">
-      <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Agent Runs</div>
-      <div class="flex items-center gap-3">
-        <select x-model="agentRunsStatusFilter" @change="agentRunsOffset=0; loadAgentRuns()"
-          class="text-xs bg-gray-800 border border-gray-700 rounded-lg px-2 py-1.5 text-gray-300 focus:outline-none focus:border-[var(--accent)]">
-          <option value="">All statuses</option>
-          <option value="running">Running</option>
-          <option value="success">Success</option>
-          <option value="failed">Failed</option>
-          <option value="cancelled">Cancelled</option>
-        </select>
-        <button @click="loadAgentRuns()" class="text-xs text-[var(--accent)] hover:opacity-80 flex items-center gap-1"><span>&#8635;</span> Refresh</button>
-      </div>
-    </div>
-
-    <!-- Runs list table -->
-    <div class="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
-      <table class="w-full text-xs">
-        <thead>
-          <tr class="border-b border-gray-800 text-gray-500">
-            <th class="text-left px-4 py-3 font-medium">Started</th>
-            <th class="text-left px-4 py-3 font-medium">Status</th>
-            <th class="text-left px-4 py-3 font-medium">User</th>
-            <th class="text-left px-4 py-3 font-medium">Model</th>
-            <th class="text-left px-4 py-3 font-medium">Tools</th>
-            <th class="text-left px-4 py-3 font-medium">Duration</th>
-            <th class="text-left px-4 py-3 font-medium">Detail</th>
-          </tr>
-        </thead>
-        <tbody>
-          <template x-for="run in agentRuns" :key="run.id">
-            <tr class="border-b border-gray-800/50 hover:bg-gray-800/30 cursor-pointer"
-                @click="loadAgentRunDetail(run.id)">
-              <td class="px-4 py-2 text-gray-600 whitespace-nowrap"
-                x-text="run.created_at ? new Date(run.created_at).toLocaleString(undefined,{dateStyle:'short',timeStyle:'short'}) : '—'"></td>
-              <td class="px-4 py-2">
-                <span class="px-1.5 py-0.5 rounded text-[10px] font-medium border"
-                  :class="_runStatusClass(run.status)"
-                  x-text="run.status"></span>
-              </td>
-              <td class="px-4 py-2 text-gray-400" x-text="run.username || run.user_id || '—'"></td>
-              <td class="px-4 py-2 text-gray-400 font-mono truncate max-w-[10rem]" x-text="run.model || '—'"></td>
-              <td class="px-4 py-2 text-gray-500"
-                x-text="(run.tool_sequence && run.tool_sequence.length) ? run.tool_sequence.length + ' calls' : '0'"></td>
-              <td class="px-4 py-2 text-gray-500" x-text="_runDuration(run)"></td>
-              <td class="px-4 py-2">
-                <button @click.stop="loadAgentRunDetail(run.id)"
-                  class="text-[10px] px-2 py-1 rounded border border-gray-700 text-gray-400 hover:border-[var(--accent)] hover:text-[var(--accent)]">View</button>
-              </td>
-            </tr>
-          </template>
-          <template x-if="!agentRunsLoading && agentRuns.length===0">
-            <tr><td colspan="7" class="px-4 py-8 text-center text-gray-600">No runs recorded yet.</td></tr>
-          </template>
-          <template x-if="agentRunsLoading && agentRuns.length===0">
-            <tr><td colspan="7" class="px-4 py-8 text-center text-gray-600">Loading…</td></tr>
-          </template>
-        </tbody>
-      </table>
-    </div>
-
-    <!-- Pagination -->
-    <div class="flex items-center gap-3 text-xs text-gray-500" x-show="agentRunsTotal > agentRunsLimit">
-      <button @click="agentRunsOffset=Math.max(0,agentRunsOffset-agentRunsLimit); loadAgentRuns()" :disabled="agentRunsOffset===0"
-        class="px-2 py-1 rounded border border-gray-700 disabled:opacity-40">← Prev</button>
-      <span x-text="'Showing ' + (agentRunsOffset+1) + '–' + Math.min(agentRunsOffset+agentRunsLimit,agentRunsTotal) + ' of ' + agentRunsTotal"></span>
-      <button @click="agentRunsOffset+=agentRunsLimit; loadAgentRuns()" :disabled="agentRunsOffset+agentRunsLimit>=agentRunsTotal"
-        class="px-2 py-1 rounded border border-gray-700 disabled:opacity-40">Next →</button>
-    </div>
-
-    <!-- Run Detail Panel -->
-    <template x-if="selectedAgentRun">
-      <div class="bg-gray-900 border border-gray-700 rounded-xl p-5 space-y-4">
-        <!-- Header -->
-        <div class="flex items-start justify-between gap-3">
-          <div>
-            <div class="flex items-center gap-2 mb-1">
-              <span class="text-sm font-semibold text-white font-mono" x-text="selectedAgentRun.id"></span>
-              <span class="px-1.5 py-0.5 rounded text-[10px] font-medium border"
-                :class="_runStatusClass(selectedAgentRun.status)"
-                x-text="selectedAgentRun.status"></span>
-            </div>
-            <div class="text-xs text-gray-500 flex items-center gap-4 flex-wrap">
-              <span x-text="selectedAgentRun.model || 'unknown model'"></span>
-              <span x-show="selectedAgentRun.api_calls" x-text="selectedAgentRun.api_calls + ' API calls'"></span>
-              <span x-text="_runDuration(selectedAgentRun)"></span>
-            </div>
-          </div>
-          <div class="flex items-center gap-2 shrink-0">
-            <button @click="cloneAgentRun(selectedAgentRun.id)"
-              title="Clone this run — prefill chat with the same message"
-              class="text-xs px-3 py-1.5 rounded-lg border border-gray-700 text-gray-300 hover:border-[var(--accent)] hover:text-[var(--accent)]">Clone ↗</button>
-            <button @click="selectedAgentRun=null" class="text-gray-500 hover:text-white text-lg">✕</button>
-          </div>
-        </div>
-
-        <!-- User message -->
-        <div x-show="selectedAgentRun.user_message">
-          <div class="text-[10px] text-gray-600 uppercase tracking-wider mb-1">User Message</div>
-          <div class="text-xs text-gray-300 bg-gray-800 rounded-lg p-3 whitespace-pre-wrap font-mono max-h-32 overflow-y-auto"
-            x-text="selectedAgentRun.user_message"></div>
-        </div>
-
-        <!-- Tool timeline -->
-        <div x-show="selectedAgentRun.tool_detail && selectedAgentRun.tool_detail.length">
-          <div class="text-[10px] text-gray-600 uppercase tracking-wider mb-2">Tool Timeline</div>
-          <div class="space-y-1">
-            <template x-for="(t, i) in selectedAgentRun.tool_detail" :key="i">
-              <div class="flex items-center gap-2 text-xs">
-                <span class="text-gray-700 w-5 text-right shrink-0" x-text="i+1+'.'"></span>
-                <span class="font-mono text-[var(--accent)] shrink-0" x-text="t.tool || t"></span>
-                <span class="text-gray-600 truncate" x-text="t.preview || ''"></span>
-              </div>
-            </template>
-          </div>
-        </div>
-
-        <!-- Output summary -->
-        <div x-show="selectedAgentRun.output_summary">
-          <div class="text-[10px] text-gray-600 uppercase tracking-wider mb-1">Output Summary</div>
-          <div class="text-xs text-gray-400 bg-gray-800 rounded-lg p-3 whitespace-pre-wrap max-h-40 overflow-y-auto"
-            x-text="selectedAgentRun.output_summary"></div>
-        </div>
-
-        <!-- Error -->
-        <div x-show="selectedAgentRun.error">
-          <div class="text-[10px] text-red-600 uppercase tracking-wider mb-1">Error</div>
-          <div class="text-xs text-red-400 bg-red-950/40 border border-red-900 rounded-lg p-3 whitespace-pre-wrap"
-            x-text="selectedAgentRun.error"></div>
-        </div>
-
-        <!-- Policy snapshot -->
-        <div x-show="selectedAgentRun.action_policy_snapshot">
-          <div class="text-[10px] text-gray-600 uppercase tracking-wider mb-1">Policy Snapshot</div>
-          <div class="text-xs text-gray-600 font-mono bg-gray-800 rounded-lg p-3 whitespace-pre-wrap"
-            x-text="JSON.stringify(JSON.parse(selectedAgentRun.action_policy_snapshot||'{}'), null, 2)"></div>
-        </div>
-      </div>
-    </template>
-
-  </div>
-
-  <!-- ── Proposals (was: Evolution) ─────────────────────────────────── -->
-  <div x-show="tab==='infra' && infraTab==='proposals'" x-cloak class="p-6 max-w-5xl mx-auto space-y-6">
+  <!-- ── Proposals (Activity → Proposals; was: Evolution) ───────────── -->
+  <div x-show="tab==='activity' && activityTab==='proposals'" x-cloak class="p-6 max-w-5xl mx-auto space-y-6">
 
     <!-- Sub-nav -->
     <div class="flex items-center gap-5 border-b border-gray-800 pb-2">
@@ -4801,6 +5035,59 @@
 
   </div>
 
+  <!-- ── Factory-reset (wipe) confirmation modal — type-to-confirm so a
+       misclick can't destroy the deployment. Pairs with /api/setup/wipe
+       which itself requires {confirm:"WIPE"} in the request body, so
+       both ends of the wire enforce the guard. ───────────────────── -->
+  <div x-show="setupWipeModalOpen" x-cloak
+    class="fixed inset-0 z-50 flex items-center justify-center p-4"
+    @keydown.escape.window="setupWipeModalOpen=false">
+    <div class="absolute inset-0 bg-black/70 backdrop-blur-sm" @click="setupWipeModalOpen=false"></div>
+    <div class="relative w-full max-w-md rounded-2xl border border-red-700/60 flex flex-col"
+      style="background:var(--surface-col,#111827)">
+      <div class="flex items-center justify-between px-5 py-4 border-b border-gray-800 shrink-0">
+        <div class="text-sm font-semibold text-red-400">Factory reset?</div>
+        <button @click="setupWipeModalOpen=false"
+          class="text-gray-500 hover:text-white text-xl leading-none w-7 h-7 flex items-center justify-center rounded hover:bg-gray-800 transition-colors">×</button>
+      </div>
+      <div class="px-5 py-4 space-y-3 text-sm text-gray-300">
+        <p>This will <span class="font-semibold text-red-300">destroy</span>:</p>
+        <ul class="text-xs text-gray-400 list-disc list-inside space-y-1">
+          <li>Every agent, its sandbox, sessions, memories, and logs</li>
+          <li>Every model route and its OpenShell gateway</li>
+          <li>The dispatch ledger, run history, evolution proposals, and audit log</li>
+          <li><span class="text-amber-300">All users — including yours.</span> You'll be logged out and the setup wizard will mint a fresh admin account.</li>
+        </ul>
+        <p class="text-xs text-gray-500">
+          Souls + skill catalogue are kept (platform fixtures, not your data).
+          <span class="text-red-400 font-medium">This cannot be undone.</span>
+        </p>
+        <div class="pt-2">
+          <label class="text-[11px] text-gray-400 block mb-1.5">
+            Type <span class="font-mono text-red-300">WIPE</span> to confirm:
+          </label>
+          <input x-model="setupWipeText" type="text"
+            placeholder="WIPE"
+            @keydown.enter="setupWipeText.trim() === 'WIPE' && !setupWipeRunning && confirmWipeSetup()"
+            class="w-full px-3 py-2 rounded-lg bg-gray-800 border border-red-900 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-red-500 font-mono">
+        </div>
+      </div>
+      <div class="flex gap-3 px-5 py-4 border-t border-gray-800">
+        <button @click="setupWipeModalOpen=false"
+          :disabled="setupWipeRunning"
+          class="flex-1 py-2 rounded-xl text-sm border border-gray-700 text-gray-400 hover:text-white hover:border-gray-500 disabled:opacity-40 transition-colors">
+          Cancel
+        </button>
+        <button @click="confirmWipeSetup()"
+          :disabled="setupWipeText.trim() !== 'WIPE' || setupWipeRunning"
+          class="flex-1 py-2 rounded-xl text-sm bg-red-600 hover:bg-red-500 disabled:bg-gray-800 disabled:text-gray-600 disabled:cursor-not-allowed text-white font-medium transition-colors">
+          <span x-show="!setupWipeRunning">Wipe everything</span>
+          <span x-show="setupWipeRunning" class="animate-pulse">Wiping…</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
   <!-- ── Re-run setup confirmation modal ────────────────────────────── -->
   <div x-show="setupResetModalOpen" x-cloak
     class="fixed inset-0 z-50 flex items-center justify-center p-4"
@@ -4880,6 +5167,47 @@ function getCsrfToken() {
     ?.split('=')[1] ?? '';
 }
 
+/** Save tool API key from the /setup tools card. Called by the inline
+ *  "Save & Enable" button rendered in the setup_tools SSE handler. */
+window._saveToolConfig = async function(btn) {
+  const card = btn.closest('[data-tool-config]');
+  if (!card) return;
+  const inputs = card.querySelectorAll('input[data-env-key]');
+  const credentials = {};
+  for (const inp of inputs) {
+    const key = inp.dataset.envKey;
+    const val = inp.value.trim();
+    if (key && val) credentials[key] = val;
+  }
+  if (Object.keys(credentials).length === 0) return;
+
+  btn.disabled = true;
+  btn.textContent = 'Saving...';
+  try {
+    const resp = await fetch('/tools/configure', {
+      method: 'POST', credentials: 'include',
+      headers: {'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken()},
+      body: JSON.stringify({ credentials }),
+    });
+    const data = await resp.json();
+    if (data.saved && data.saved.length > 0) {
+      card.innerHTML = '<div class="flex items-center gap-2 py-1"><span class="text-green-400">&#x2705;</span>'
+        + '<span class="text-green-300 text-xs font-medium">Configured! Tool is now available.</span></div>';
+    } else {
+      btn.textContent = 'Error';
+      btn.classList.replace('bg-indigo-600', 'bg-red-600');
+      const errMsg = (data.errors || []).map(e => e.error).join(', ') || 'Unknown error';
+      const errDiv = document.createElement('div');
+      errDiv.className = 'text-[10px] text-red-400 mt-1';
+      errDiv.textContent = errMsg;
+      card.appendChild(errDiv);
+    }
+  } catch (err) {
+    btn.textContent = 'Failed';
+    btn.classList.replace('bg-indigo-600', 'bg-red-600');
+  }
+};
+
 function app() {
   return {
     tab: 'sessions',
@@ -4923,6 +5251,14 @@ function app() {
     isWakingUp: true,
     lastRefresh: '',
     clientNow: Date.now(),
+    // Tracks when each agent first showed up as `worker_connected=false`
+    // so the chat banner can display elapsed-time + progressive messaging
+    // ("Usually ~30s" → "Still going" → "Taking longer than expected").
+    // Restarted agents have stale created_at, so client-side tracking is
+    // the only honest signal. Cleared when the worker reconnects. Keyed
+    // by agent.id; populated/cleared by _updateProvisioningTracker() on
+    // every loadNamedAgents() poll.
+    _provisioningStarts: {},
     chatAgents: [],
     manualAgents: [],
     activeInstanceId: 'self',
@@ -5012,15 +5348,30 @@ function app() {
     appVersion: window.__LOGOS__?.version || '',
     // agents sub-tabs
     agentsTab: 'running',  // kept for compat; sub-tabs removed
-    // infra sub-tabs
-    infraTab: localStorage.getItem('logos_infra_tab') || 'servers',
-    // admin
-    adminTab: localStorage.getItem('hermes_admin_tab') || 'users',
+    // config sub-tabs (state key kept as `infraTab` for back-compat with persisted localStorage and URL handlers)
+    infraTab: (() => {
+      const v = localStorage.getItem('logos_infra_tab');
+      // Migrate stale values: 'channels' → 'messaging'; 'proposals' moved to Activity → fall back to 'servers'
+      if (v === 'channels') return 'messaging';
+      if (v === 'proposals') return 'servers';
+      return v || 'servers';
+    })(),
+    // admin (slimmed: only users/action-policies/audit live here now; runs/sandboxes/etc. moved to Activity)
+    adminTab: (() => {
+      const v = localStorage.getItem('hermes_admin_tab') || 'users';
+      const moved = ['workflows','runs','sandboxes','model-routes','platforms','approvals','activity'];
+      return moved.includes(v) ? 'users' : v;
+    })(),
+    // activity sub-tabs (events/runs/dashboards/approvals/proposals)
+    activityTab: localStorage.getItem('logos_activity_tab') || 'events',
     adminSetPwUserId: null,
     adminSetPwVal: '',
     adminSetPwMsg: null,
     activityModalOpen: false,
     setupResetModalOpen: false,
+    setupWipeModalOpen: false,
+    setupWipeText: '',
+    setupWipeRunning: false,
     prevActiveSessions: [],
     completedSessions: {},
     // Tools tab
@@ -5063,6 +5414,10 @@ function app() {
     approvalRequests: [],
     approvalsStatusFilter: 'pending',
     pendingApprovalCount: 0,
+    dispatches: [],
+    dispatchesTotal: 0,
+    dispatchesLoading: false,
+    dispatchOriginFilter: '',
     allMachineModels: [],
     // Per-machine probe results from the most recent loadAllMachineModels()
     // call. Drives the provision-modal hint so the user can tell whether
@@ -5112,6 +5467,23 @@ function app() {
     // setTimeout handle for auto-polling rows still in `provisioning`
     // status — set/cleared by loadModelRoutes().
     _modelRoutesPollTimer: null,
+
+    // ── T pill state (per-agent Tools editor, MISSING.md M10 item 5) ──
+    //
+    // Populated on first T pill dropdown open via loadAgentTools().
+    // Shape: { toolsets: {enabled, available}, presets: {applied,
+    // available}, _agentId } — see admin_handlers.handle_agent_tools_get
+    // for the canonical response schema. _agentId is stamped locally so
+    // the render path can detect stale state when the user switches
+    // chats while a fetch is in flight.
+    agentToolsState: null,
+    agentToolsLoading: false,
+    // {key: bool} — tracks in-flight toggle requests so individual
+    // checkboxes can show a spinner / stay disabled without locking
+    // the rest of the dropdown. Keys are "ts:<name>" for toolsets
+    // and "pre:<name>" for presets.
+    agentToolsToggling: {},
+    agentToolsError: null,
     selectedRoute: null,
     provisionModalOpen: false,
     provisioningRoute: false,
@@ -5362,6 +5734,7 @@ function app() {
       } catch {}
 
       this.$watch('adminTab',       val => localStorage.setItem('hermes_admin_tab', val));
+      this.$watch('activityTab',    val => localStorage.setItem('logos_activity_tab', val));
       // chatRenderMode intentionally not persisted — always defaults to markdown on load
 
       // URL <-> state sync so refresh and browser back/forward preserve the
@@ -5440,6 +5813,7 @@ function app() {
       this._applyUrlToState(window.location.pathname);
       this.$watch('adminTab', () => { if (this.tab === 'admin') this._syncStateToUrl(); });
       this.$watch('infraTab', () => { if (this.tab === 'infra') this._syncStateToUrl(); });
+      this.$watch('activityTab', () => { if (this.tab === 'activity') this._syncStateToUrl(); });
 
       // Force a world resize whenever the agent column expands/collapses
       // (create form open/close, edit form open/close). The ResizeObserver
@@ -5459,26 +5833,20 @@ function app() {
       await this.loadAuth();
 
       // Validate restored tabs against actual permissions — fall back if needed.
-      const adminAllowed   = this.can('manage_users') || this.can('view_audit_logs');
-      if (this.tab === 'admin'   && !adminAllowed)   this.tab = 'sessions';
+      const adminAllowed    = this.can('manage_users') || this.can('view_audit_logs');
+      const activityAllowed = this.can('view_runs') || this.can('view_approvals') || this.can('view_evolution');
+      if (this.tab === 'admin'    && !adminAllowed)    this.tab = 'sessions';
+      if (this.tab === 'activity' && !activityAllowed) this.tab = 'sessions';
       if (this.adminTab === 'users' && !this.can('manage_users'))
         this.adminTab = 'audit';
       // Trigger initial data load for whichever tab is active on restore.
-      // The Settings sub-tab loaders previously only ran from sub-tab click
-      // handlers, so refreshing on /settings/channels (or /settings/tools,
-      // /settings/proposals) left the page empty until the user clicked
-      // the Refresh button. Run the same loader the click would have run.
-      if (this.tab === 'infra')   this._loadInfraTabData(this.infraTab);
-      if (this.tab === 'admin') {
-        if (this.adminTab === 'approvals') this.loadApprovals();
-        else this.loadAdminData();
-        // Run the sub-tab specific loader on top of the base admin data
-        // (users + policies) so deep-linking to /admin/sandboxes etc.
-        // fills the dashboard immediately instead of after a poll cycle.
-        this._loadAdminTabData(this.adminTab);
-      }
-      if (this.tab === 'workflows') this.loadWorkflows();
-      if (this.tab === 'runs') this.loadAgentRuns();
+      // The Config sub-tab loaders previously only ran from sub-tab click
+      // handlers, so refreshing on /settings/messaging (or /settings/tools,
+      // etc.) left the page empty until the user clicked the Refresh button.
+      // Run the same loader the click would have run.
+      if (this.tab === 'infra')    this._loadInfraTabData(this.infraTab);
+      if (this.tab === 'activity') this._loadActivityTabData(this.activityTab);
+      if (this.tab === 'admin')   { this.loadAdminData(); this._loadAdminTabData(this.adminTab); }
 
       this.manualAgents = this._loadManualAgents();
       this._buildChatAgents();
@@ -5525,8 +5893,8 @@ function app() {
       setInterval(() => this.loadCanary(), 10000);
       setInterval(() => { this.clientNow = Date.now(); }, 1000);
       setInterval(() => { this._now = Math.floor(Date.now() / 1000); }, 15000);
-      setInterval(() => { if (this.tab === 'admin' && this.adminTab === 'sandboxes') this.loadSandboxes(); }, 3000);
-      setInterval(() => { if (this.tab === 'admin' && this.adminTab === 'model-routes') this.loadModelRoutes(); }, 5000);
+      setInterval(() => { if (this.tab === 'activity' && this.activityTab === 'dashboards') this.loadSandboxes(); }, 3000);
+      setInterval(() => { if (this.tab === 'activity' && this.activityTab === 'dashboards') this.loadModelRoutes(); }, 5000);
       // Poll named agents every 3s so worker_connected flips from false→true
       // the moment a sandbox finishes provisioning and its worker connects
       // to /ws/worker. This drives the chat input's enabled/greyed state.
@@ -5553,56 +5921,62 @@ function app() {
     //   /                       → tab = sessions (default)
     //   /agents                 → tab = agents
     //   /chats                  → tab = sessions
-    //   /settings               → tab = infra, infraTab = (restored)
-    //   /settings/inference     → tab = infra, infraTab = servers
-    //   /settings/tools         → tab = infra, infraTab = tools
-    //   /settings/channels      → tab = infra, infraTab = channels
-    //   /settings/proposals     → tab = infra, infraTab = proposals
+    //   /config                 → tab = infra, infraTab = (restored)
+    //   /config/inference       → tab = infra, infraTab = servers
+    //   /config/tools           → tab = infra, infraTab = tools
+    //   /config/messaging       → tab = infra, infraTab = messaging
+    //   /config/workflows       → tab = infra, infraTab = workflows
+    //   /activity               → tab = activity, activityTab = (restored)
+    //   /activity/events        → tab = activity, activityTab = events
+    //   /activity/runs          → tab = activity, activityTab = runs
+    //   /activity/dashboards    → tab = activity, activityTab = dashboards
+    //   /activity/approvals     → tab = activity, activityTab = approvals
+    //   /activity/proposals     → tab = activity, activityTab = proposals
     //   /admin                  → tab = admin, adminTab = (restored)
     //   /admin/users            → tab = admin, adminTab = users
     //   /admin/security         → tab = admin, adminTab = action-policies
-    //   /admin/workflows        → tab = admin, adminTab = workflows
-    //   /admin/runs             → tab = admin, adminTab = runs
-    //   /admin/sandboxes        → tab = admin, adminTab = sandboxes
     //   /admin/audit            → tab = admin, adminTab = audit
-    //   /admin/approvals        → tab = admin, adminTab = approvals
+    //   /settings/*             → legacy alias for /config/* (kept for bookmarks)
     _INFRA_URL_MAP: {
       inference: 'servers',
       tools:     'tools',
-      channels:  'channels',
-      proposals: 'proposals',
+      messaging: 'messaging',
+      workflows: 'workflows',
+      // Legacy URL aliases (pre-reorg bookmarks):
+      channels:  'messaging',
+      proposals: 'servers',  // proposals moved to /activity/proposals; soft-redirect to inference
     },
     // Run the appropriate loader for an infraTab value. Mirrors the
-    // per-tab click handlers (lines ~1072-1090) so that URL-driven
-    // navigation (refresh on /settings/channels, popstate, init) gets
-    // the same data fetched as a manual click would have.
+    // per-tab click handlers so that URL-driven navigation (refresh on
+    // /config/messaging, popstate, init) gets the same data fetched as
+    // a manual click would have.
     _loadInfraTabData(name) {
       if (name === 'servers')   { this.loadAdminMachines(); this.loadCloudProviders?.(); this.probeAllMachines?.(); return; }
       if (name === 'tools')     { this.loadToolsTab?.(); this.loadServices?.(); return; }
-      if (name === 'channels')  { this.loadMessagingChannels(); return; }
-      if (name === 'proposals') { this.loadEvolutionProposals?.(); this.loadEvolutionSettings?.(); return; }
-    },
-    // Same idea for the Admin sub-tabs. loadAdminData() only fetches
-    // users + policies — sandboxes/platforms/runs/etc. each have their
-    // own loaders that previously only fired from sub-tab clicks, so
-    // refreshing the page on /admin/sandboxes left the dashboard empty
-    // for ~3s until the polling interval caught up.
-    _loadAdminTabData(name) {
-      if (name === 'sandboxes') { this.loadSandboxes?.(); return; }
-      if (name === 'platforms') { this.loadPlatforms?.(); return; }
-      if (name === 'runs')      { this.loadAgentRuns?.(); return; }
+      if (name === 'messaging') { this.loadMessagingChannels?.(); this.loadPlatforms?.(); return; }
       if (name === 'workflows') { this.loadWorkflows?.(); return; }
     },
+    _loadAdminTabData(name) {
+      // Slimmed Admin: users + policies are fetched by loadAdminData(),
+      // audit by loadAdminAudit(). Nothing else lives here anymore.
+      if (name === 'audit') { this.loadAdminAudit?.(); return; }
+    },
+    _loadActivityTabData(name) {
+      if (name === 'events')     { this.loadDispatches?.(); return; }
+      if (name === 'dashboards') { this.loadModelRoutes?.(); this.loadSandboxes?.(); return; }
+      if (name === 'approvals')  { this.loadApprovals?.(); return; }
+      if (name === 'proposals')  { this.loadEvolutionProposals?.(); this.loadEvolutionSettings?.(); return; }
+    },
     _ADMIN_URL_MAP: {
-      users:          'users',
-      security:       'action-policies',
-      workflows:      'workflows',
-      runs:           'runs',
-      sandboxes:      'sandboxes',
-      'model-routes': 'model-routes',
-      platforms:      'platforms',
-      audit:          'audit',
-      approvals:      'approvals',
+      users:    'users',
+      security: 'action-policies',
+      audit:    'audit',
+    },
+    _ACTIVITY_URL_MAP: {
+      events:     'events',
+      dashboards: 'dashboards',
+      approvals:  'approvals',
+      proposals:  'proposals',
     },
     _applyUrlToState(pathname) {
       const parts = (pathname || '/').split('/').filter(Boolean);
@@ -5616,14 +5990,28 @@ function app() {
           this.tab = 'agents';
         } else if (top === 'chats') {
           this.tab = 'sessions';
-        } else if (top === 'settings') {
+        } else if (top === 'compare') {
+          this.tab = 'compare';
+        } else if (top === 'config' || top === 'settings') {
           this.tab = 'infra';
           const mapped = this._INFRA_URL_MAP[sub];
           if (mapped) this.infraTab = mapped;
+        } else if (top === 'activity') {
+          this.tab = 'activity';
+          const mapped = this._ACTIVITY_URL_MAP[sub];
+          if (mapped) this.activityTab = mapped;
         } else if (top === 'admin') {
           this.tab = 'admin';
           const mapped = this._ADMIN_URL_MAP[sub];
           if (mapped) this.adminTab = mapped;
+          // Legacy /admin/<moved> URLs (workflows/runs/sandboxes/model-routes/platforms/approvals/activity)
+          // — soft-redirect to the new home so old bookmarks land on something useful.
+          else if (sub === 'workflows')                          { this.tab = 'infra';    this.infraTab    = 'workflows'; }
+          else if (sub === 'platforms')                          { this.tab = 'infra';    this.infraTab    = 'messaging'; }
+          else if (sub === 'runs')                               { this.tab = 'activity'; this.activityTab = 'events'; }
+          else if (sub === 'sandboxes' || sub === 'model-routes'){ this.tab = 'activity'; this.activityTab = 'dashboards'; }
+          else if (sub === 'approvals')                          { this.tab = 'activity'; this.activityTab = 'approvals'; }
+          else if (sub === 'activity')                           { this.tab = 'activity'; this.activityTab = 'events'; }
         }
         // else: unknown path — leave the restored default (sessions)
       } finally {
@@ -5635,9 +6023,16 @@ function app() {
     _stateToUrl() {
       if (this.tab === 'agents')   return '/agents';
       if (this.tab === 'sessions') return '/chats';
+      if (this.tab === 'compare')  return '/compare';
       if (this.tab === 'infra') {
-        const rev = Object.entries(this._INFRA_URL_MAP).find(([, v]) => v === this.infraTab);
-        return rev ? `/settings/${rev[0]}` : '/settings';
+        // Forward map only — exclude legacy aliases (channels/proposals)
+        const fwd = ['inference','tools','messaging','workflows'];
+        const rev = fwd.find(k => this._INFRA_URL_MAP[k] === this.infraTab);
+        return rev ? `/config/${rev}` : '/config';
+      }
+      if (this.tab === 'activity') {
+        const rev = Object.entries(this._ACTIVITY_URL_MAP).find(([, v]) => v === this.activityTab);
+        return rev ? `/activity/${rev[0]}` : '/activity';
       }
       if (this.tab === 'admin') {
         const rev = Object.entries(this._ADMIN_URL_MAP).find(([, v]) => v === this.adminTab);
@@ -5705,6 +6100,33 @@ function app() {
         window.location.href = '/setup';
       } else {
         alert('Failed to reset setup state.');
+      }
+    },
+    async confirmWipeSetup() {
+      // Type-to-confirm guards: backend ALSO requires {confirm:"WIPE"} so a
+      // stray POST can't bypass this. Frontend match keeps the button
+      // disabled until the user types the magic word exactly.
+      if (this.setupWipeText.trim() !== 'WIPE') return;
+      this.setupWipeRunning = true;
+      try {
+        const r = await fetch('/api/setup/wipe', {
+          method: 'POST',
+          headers: { 'X-CSRF-Token': getCsrfToken(), 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
+          body: JSON.stringify({ confirm: 'WIPE' }),
+        });
+        if (!r.ok) {
+          const detail = await r.json().catch(() => ({}));
+          alert('Wipe failed: ' + (detail.error || r.status));
+          this.setupWipeRunning = false;
+          return;
+        }
+        // Hard navigate so any in-page state (cached agents, routes,
+        // chats) is dropped along with the deployment.
+        window.location.href = '/setup';
+      } catch (e) {
+        alert('Wipe failed: ' + e);
+        this.setupWipeRunning = false;
       }
     },
 
@@ -6072,21 +6494,47 @@ function app() {
       let charIndex;
       if (typeof nameOrIndex === 'number' && explicitIndex === undefined) {
         charIndex = nameOrIndex;
-      } else if (explicitIndex !== undefined && explicitIndex !== null && explicitIndex >= 0 && explicitIndex <= 7) {
+      } else if (explicitIndex !== undefined && explicitIndex !== null && explicitIndex >= 0 && explicitIndex <= 159) {
         charIndex = Number(explicitIndex);
       } else {
         const name = String(nameOrIndex || '');
         let h = 0;
         for (let i = 0; i < name.length; i++) h = ((h << 5) - h + name.charCodeAt(i)) | 0;
-        charIndex = Math.abs(h) % 8;
+        charIndex = Math.abs(h) % 160;
       }
-      const blockCol = (charIndex % 4) * 3;          // 0, 3, 6, 9
-      const blockRow = Math.floor(charIndex / 4) * 4; // 0 or 4
-      // 2x scale: each 32px frame becomes 64px; sheet becomes 768x512
+      // char_index encoding: body*20 + skin*5 + hair.
+      // Sheet: 1920×1024 = 20 cols × 8 rows of 96×128 blocks.
+      //   row = body, col = skin*5 + hair.
+      // Pick the MIDDLE frame (index 1) of the 3-frame "down" walk cycle =
+      // feet-together face-on idle pose. Matches WorldScene.getCharIdleFrame.
+      // 2× scale for display: sheet becomes 3840×2048.
+      const body = Math.floor(charIndex / 20);
+      const col  = charIndex % 20;               // 0..19 (skin*5+hair)
+      const blockCol = col * 3 + 1;              // middle frame of walk cycle
+      const blockRow = body * 4;                 // top direction row (down)
       const x = -(blockCol * 32 * 2);
       const y = -(blockRow * 32 * 2);
-      return `width:64px;height:64px;background-image:url('/static/world/characters.png');background-position:${x}px ${y}px;background-size:768px 512px;image-rendering:pixelated;`;
+      return `width:64px;height:64px;background-image:url('/static/world/characters.png?v=7');background-position:${x}px ${y}px;background-size:3840px 2048px;background-repeat:no-repeat;image-rendering:pixelated;`;
     },
+
+    // -- Three-axis character picker helpers -------------------------------
+    // char_index = body*20 + skin*5 + hair. NULL means "random (from name hash)".
+    // When decoding a NULL index for preview purposes, default to (0,0,0).
+    currentBody() {
+      const ci = this.namedAgentForm.char_index;
+      return ci === null || ci === undefined ? 0 : Math.floor(ci / 20);
+    },
+    currentSkin() {
+      const ci = this.namedAgentForm.char_index;
+      return ci === null || ci === undefined ? 0 : Math.floor((ci % 20) / 5);
+    },
+    currentHair() {
+      const ci = this.namedAgentForm.char_index;
+      return ci === null || ci === undefined ? 0 : ci % 5;
+    },
+    pickBody(bi)  { this.namedAgentForm.char_index = bi * 20 + this.currentSkin() * 5 + this.currentHair(); },
+    pickSkin(si)  { this.namedAgentForm.char_index = this.currentBody() * 20 + si * 5 + this.currentHair(); },
+    pickHair(hi)  { this.namedAgentForm.char_index = this.currentBody() * 20 + this.currentSkin() * 5 + hi; },
 
     fmtChatTime(ts) {
       if (!ts) return '';
@@ -6135,6 +6583,7 @@ function app() {
       return (this.namedAgents || []).map(a => {
         const isReady = !!(a.worker_connected && a.worker_healthy);
         const status = isReady ? 'running' : 'starting';
+        const m = this.agentMaturity(a);
         return {
           name: a.name,
           instance_name: a.name,
@@ -6146,6 +6595,12 @@ function app() {
           // Pass through the explicit sprite selection so AgentSprite renders
           // the chosen character instead of the name-hash fallback.
           char_index: (a.char_index !== undefined && a.char_index !== null) ? Number(a.char_index) : null,
+          // Maturity glyph for the world view (above the letter badge).
+          // Computed from the same agentMaturity() the agent panel cards
+          // use so the two views never disagree.
+          tier_glyph: m.glyph,
+          tier_name: m.tier,
+          tier_days: m.days,
           _namedAgent: a,
         };
       });
@@ -6160,8 +6615,12 @@ function app() {
       const el = document.getElementById('agent-world');
       if (!el || typeof Phaser === 'undefined') return;
 
-      // Dynamic import of Phaser world modules
-      const { WorldManager } = await import('/world/WorldManager.js');
+      // Dynamic import of Phaser world modules. The `?v=` query string
+      // is a cache-bust so changes to WorldScene/AgentSprite/SpriteData
+      // (which import each other relatively) actually reach the browser
+      // — ES module caches are sticky and a regular Ctrl-Shift-R doesn't
+      // always invalidate them. Bump this when the world internals change.
+      const { WorldManager } = await import('/world/WorldManager.js?v=11');
       this.worldManager = new WorldManager(el, {
         onAgentClick: (name) => {
           // Every world entity is a named agent — look it up and open its
@@ -6683,9 +7142,76 @@ function app() {
 
     // ── Helpers ───────────────────────────────────────────────────
 
+    // Stamp/clear _provisioningStarts based on current worker_connected
+    // state. Called after each loadNamedAgents() poll (every 3s) so the
+    // chat banner's elapsed counter starts the moment the UI first sees
+    // the agent in starting state and stops the moment the worker comes
+    // up. Idempotent — re-stamping while still provisioning keeps the
+    // original timestamp.
+    _updateProvisioningTracker() {
+      const now = Date.now();
+      const seen = new Set();
+      for (const a of (this.namedAgents || [])) {
+        seen.add(a.id);
+        if (a.worker_connected && a.worker_healthy) {
+          if (this._provisioningStarts[a.id]) delete this._provisioningStarts[a.id];
+        } else if (!this._provisioningStarts[a.id]) {
+          this._provisioningStarts[a.id] = now;
+        }
+      }
+      // Drop entries for agents that no longer exist (deleted).
+      for (const id of Object.keys(this._provisioningStarts)) {
+        if (!seen.has(id)) delete this._provisioningStarts[id];
+      }
+    },
+    provisioningElapsed(agentId) {
+      const start = this._provisioningStarts[agentId];
+      if (!start) return 0;
+      return Math.floor((this.clientNow - start) / 1000);
+    },
+    // Honest, progressive messaging based on actual elapsed time. The
+    // earlier "(~10–30s)" hint was misleading — restarts can take
+    // 2-3 min when the old sandbox is destroying or the cluster needs
+    // to re-import an image. Brackets chosen from real measured data
+    // (Hermes restart in this session: 2:49).
+    provisioningHint(agentId) {
+      const sec = this.provisioningElapsed(agentId);
+      if (sec < 30)  return 'Usually 30–60s on a warm cluster.';
+      if (sec < 90)  return 'Still going — first run after image changes can take 2–3 min.';
+      if (sec < 180) return 'Almost there — cluster startup can be slow on cold boot.';
+      if (sec < 300) return 'Taking longer than expected. Check Activity → Dashboards for sandbox phase.';
+      return 'Stuck. Try the agent\'s Restart button, or inspect Activity → Dashboards → Sandboxes.';
+    },
+
     elapsed(toolStartedAt) {
       if (!toolStartedAt) return 0;
       return Math.max(0, Math.floor((this.clientNow - toolStartedAt * 1000) / 1000));
+    },
+
+    // Compose a maturity tier from age + activity. The score uses log
+    // scale so a busy agent doesn't pin the chart in a week, but a
+    // never-talked-to agent doesn't outrank a heavily-used new one
+    // purely on calendar age. Memory term is inert until M10 lands and
+    // sandbox_worker.py starts writing to ~/.logos/agents/<name>/memories/.
+    // Tier names follow the world's tree theme; glyphs are emoji so they
+    // ship without an asset pipeline. To bias formula or rename a tier,
+    // edit this single function — the agent card and (eventually) world
+    // sprite both read through it.
+    agentMaturity(a) {
+      if (!a) return { score: 0, tier: 'Sprout', glyph: '\ud83c\udf31', days: 0 };
+      const dispatches = Number(a.dispatch_count || 0);
+      const sessions   = Number(a.session_count || 0);
+      const memories   = Number(a.memory_count || 0);
+      const score = Math.log2(1 + dispatches) + Math.log2(1 + sessions) + memories;
+      const createdMs = Number(a.created_at || 0);
+      const days = createdMs ? Math.max(0, Math.floor((Date.now() - createdMs) / 86400000)) : 0;
+      let tier, glyph;
+      if      (score < 1)  { tier = 'Sprout';     glyph = '\ud83c\udf31'; }  // 🌱
+      else if (score < 3)  { tier = 'Sapling';    glyph = '\ud83c\udf3f'; }  // 🌿
+      else if (score < 6)  { tier = 'Branch';     glyph = '\ud83c\udf33'; }  // 🌳
+      else if (score < 10) { tier = 'Tree';       glyph = '\ud83c\udf32'; }  // 🌲
+      else                 { tier = 'Old Growth'; glyph = '\ud83e\udeb5'; }  // 🪵
+      return { score, tier, glyph, days, dispatches, sessions, memories };
     },
 
     fmtUptime(s) {
@@ -7022,6 +7548,74 @@ function app() {
                         duration_ms: d.duration_ms,
                     }};
                 }
+              }
+              if (d.type === 'setup_tools') {
+                // Gateway command: /setup tools — render interactive config card
+                this.isWakingUp = false;
+                const readiness = d.readiness || [];
+                const presetMap = d.preset_map || {};
+                let cardHtml = '<div class="bg-gray-900 border border-gray-700 rounded-lg p-4 my-2 max-w-lg">';
+                cardHtml += '<div class="text-sm font-semibold text-gray-200 mb-3">Tool Configuration</div>';
+                const needsConfig = readiness.filter(t => t.status !== 'ready');
+                const ready = readiness.filter(t => t.status === 'ready');
+                if (needsConfig.length > 0) {
+                  for (const t of needsConfig) {
+                    cardHtml += `<div class="mb-3 p-2 bg-gray-800 rounded border border-gray-700" data-tool-config="${t.name}">`;
+                    cardHtml += `<div class="flex items-center gap-2 mb-1">`;
+                    cardHtml += `<span class="text-yellow-400">&#x26a0;&#xfe0f;</span>`;
+                    cardHtml += `<span class="text-gray-200 font-mono text-xs">${t.name}</span>`;
+                    cardHtml += `<span class="text-gray-500 text-[10px]">${t.description || ''}</span>`;
+                    cardHtml += `</div>`;
+                    cardHtml += `<div class="text-[10px] text-gray-500 mb-1.5">${t.reason || 'Needs API key'}</div>`;
+                    // Input for each env var
+                    const envKeys = Object.keys(presetMap).filter(k => {
+                      const m = presetMap[k]; return m && m.tool === t.name;
+                    });
+                    for (const ek of envKeys) {
+                      cardHtml += `<div class="flex items-center gap-2 mb-1">`;
+                      cardHtml += `<input type="password" placeholder="${ek}" data-env-key="${ek}"`;
+                      cardHtml += ` class="flex-1 bg-gray-900 border border-gray-600 rounded px-2 py-1 text-xs text-gray-200 font-mono placeholder:text-gray-600 focus:border-indigo-500 focus:outline-none">`;
+                      cardHtml += `</div>`;
+                    }
+                    if (envKeys.length === 0 && t.reason) {
+                      // Fallback: show the reason as a generic input hint
+                      const guessKey = t.reason.replace(' not set', '').replace(', ', '_').toUpperCase();
+                      cardHtml += `<input type="password" placeholder="${guessKey}" data-env-key="${guessKey}"`;
+                      cardHtml += ` class="w-full bg-gray-900 border border-gray-600 rounded px-2 py-1 text-xs text-gray-200 font-mono placeholder:text-gray-600 focus:border-indigo-500 focus:outline-none mb-1">`;
+                    }
+                    cardHtml += `<div class="flex items-center justify-between mt-1.5">`;
+                    if (t.setup_url) {
+                      cardHtml += `<a href="${t.setup_url}" target="_blank" class="text-[10px] text-indigo-400 hover:text-indigo-300">Get API key &rarr;</a>`;
+                    } else {
+                      cardHtml += `<span></span>`;
+                    }
+                    cardHtml += `<button onclick="window._saveToolConfig(this)" data-tool-name="${t.name}"`;
+                    cardHtml += ` class="px-2 py-0.5 bg-indigo-600 hover:bg-indigo-500 text-white text-[10px] rounded font-medium">Save &amp; Enable</button>`;
+                    cardHtml += `</div></div>`;
+                  }
+                }
+                if (ready.length > 0) {
+                  cardHtml += '<div class="text-[10px] text-gray-500 uppercase tracking-wider mb-1 mt-2">Ready</div>';
+                  for (const t of ready) {
+                    cardHtml += `<div class="flex items-center gap-2 px-1 py-0.5 text-xs">`;
+                    cardHtml += `<span class="text-green-400">&#x2705;</span>`;
+                    cardHtml += `<span class="text-gray-400 font-mono">${t.name}</span>`;
+                    cardHtml += `</div>`;
+                  }
+                }
+                if (readiness.length === 0) {
+                  cardHtml += '<div class="text-xs text-gray-500">No agent selected or no tools configured.</div>';
+                }
+                cardHtml += '</div>';
+                chat.messages = [...chat.messages, { role: 'system', content: cardHtml, _html: true }];
+                this._scrollChat();
+              }
+              if (d.type === 'memory_write') {
+                // Agent saved a memory — show inline notification card
+                const preview = d.preview || 'saved a memory';
+                const memCard = `<div class="flex items-center gap-2 py-1 px-2 my-1 bg-gray-800/50 border border-gray-700/50 rounded text-[11px] text-gray-400"><span class="text-purple-400 flex-shrink-0">&#x1f4ad;</span><span>` + preview + `</span></div>`;
+                chat.messages = [...chat.messages, { role: 'system', content: memCard, _html: true }];
+                this._scrollChat();
               }
               if (d.type === 'token') {
                 // Streaming token from worker
@@ -7426,6 +8020,7 @@ function app() {
           }
         }
         this.namedAgents = fresh;
+        this._updateProvisioningTracker();
       } catch { this.namedAgents = []; }
       // Drop orphan chats whose agent has been deleted server-side.
       // A chat with no agent_id is "unassigned" and stays (legacy chats).
@@ -7593,6 +8188,12 @@ function app() {
             message: userMessage,
             session_id: sessionId,
             agent_id: agentId,
+            // Compare is a test bench, not a relationship. Backend tags
+            // the dispatch as origin='compare' so Activity → Events can
+            // filter probes out, and (once M10 lands) the sandbox_worker
+            // will skip session-JSON + memory writes for transient
+            // requests so probes don't pollute the agent's identity.
+            transient: true,
           }),
         });
         if (r.status === 401) {
@@ -8205,6 +8806,20 @@ function app() {
       } catch(e) {}
     },
 
+    async loadDispatches() {
+      this.dispatchesLoading = true;
+      try {
+        const params = new URLSearchParams({ limit: '50' });
+        if (this.dispatchOriginFilter) params.set('origin', this.dispatchOriginFilter);
+        const r = await fetch('/admin/dispatches?' + params, {credentials:'include'});
+        if (!r.ok) { this.dispatches = []; this.dispatchesTotal = 0; return; }
+        const d = await r.json();
+        this.dispatches = d.dispatches || [];
+        this.dispatchesTotal = d.total || 0;
+      } catch(e) { this.dispatches = []; this.dispatchesTotal = 0; }
+      this.dispatchesLoading = false;
+    },
+
     async loadApprovals() {
       try {
         const params = new URLSearchParams({ limit: 100 });
@@ -8644,13 +9259,127 @@ function app() {
         if (this._modelRoutesPollTimer) clearTimeout(this._modelRoutesPollTimer);
         this._modelRoutesPollTimer = setTimeout(() => {
           this._modelRoutesPollTimer = null;
-          // Only re-poll if the user is still on the Model Routes
+          // Only re-poll if the user is still on the Dashboards
           // tab — don't burn requests in the background forever.
-          if (this.tab === 'admin' && this.adminTab === 'model-routes') {
+          if (this.tab === 'activity' && this.activityTab === 'dashboards') {
             this.loadModelRoutes();
           }
         }, 3000);
       }
+    },
+
+    // ── T pill methods (per-agent Tools editor, M10 item 5) ────────────
+    //
+    // Three methods: load the bundle, toggle one toolset, toggle one
+    // preset. All three are lazy — nothing runs until the user opens
+    // the T pill dropdown. Errors from the backend surface as
+    // agentToolsError which the dropdown renders as a banner.
+    //
+    // State shape (populated by loadAgentTools):
+    //   agentToolsState = {
+    //     toolsets: {
+    //       enabled: string[],           // agents.toolsets JSON
+    //       available: [{name, description}],
+    //     },
+    //     presets: {
+    //       applied: string[],           // agents.applied_presets JSON
+    //       available: [{name, description}],
+    //     },
+    //     _agentId: string,              // local stamp; used to detect
+    //                                    // stale state when the user
+    //                                    // switches chats mid-fetch.
+    //   }
+
+    async loadAgentTools(agentId) {
+      if (!agentId) return;
+      this.agentToolsLoading = true;
+      this.agentToolsError = null;
+      try {
+        const r = await fetch(
+          '/admin/agents/' + encodeURIComponent(agentId) + '/tools',
+          {credentials: 'include'},
+        );
+        if (!r.ok) throw new Error(await r.text() || r.statusText);
+        const d = await r.json();
+        // Stamp with the requested agentId so the render path can
+        // detect stale state (user switched chats while the fetch
+        // was in flight). Template bindings check _agentId against
+        // activeAgent.id before rendering.
+        d._agentId = agentId;
+        // Defensive defaults so template bindings never hit undefined
+        d.toolsets = d.toolsets || {};
+        d.toolsets.enabled = d.toolsets.enabled || [];
+        d.toolsets.available = d.toolsets.available || [];
+        d.presets = d.presets || {};
+        d.presets.applied = d.presets.applied || [];
+        d.presets.available = d.presets.available || [];
+        this.agentToolsState = d;
+      } catch(e) {
+        this.agentToolsError = 'Failed to load tools: ' + (e.message || e);
+      }
+      this.agentToolsLoading = false;
+    },
+
+    async toggleToolset(agentId, toolset, enabled) {
+      if (!agentId || !toolset) return;
+      const key = 'ts:' + toolset;
+      if (!this.agentToolsToggling) this.agentToolsToggling = {};
+      this.agentToolsToggling[key] = true;
+      this.agentToolsError = null;
+      try {
+        const r = await fetch(
+          '/admin/agents/' + encodeURIComponent(agentId) + '/tools/toolsets/toggle',
+          {
+            method: 'POST',
+            credentials: 'include',
+            headers: {'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken()},
+            body: JSON.stringify({toolset, enabled}),
+          },
+        );
+        if (!r.ok) throw new Error(await r.text() || r.statusText);
+        const d = await r.json();
+        // Update the in-memory state with the server's canonical list
+        // so the checkbox state matches the DB exactly even if
+        // concurrent toggles arrived out-of-order.
+        if (this.agentToolsState && this.agentToolsState._agentId === agentId) {
+          this.agentToolsState.toolsets.enabled = d.enabled || [];
+        }
+      } catch(e) {
+        this.agentToolsError = 'Toggle "' + toolset + '" failed: ' + (e.message || e);
+        // Re-fetch to recover canonical state — the checkbox might
+        // be out of sync with the DB if the server-side update
+        // partially succeeded.
+        this.loadAgentTools(agentId);
+      }
+      delete this.agentToolsToggling[key];
+    },
+
+    async togglePreset(agentId, preset, enabled) {
+      if (!agentId || !preset) return;
+      const key = 'pre:' + preset;
+      if (!this.agentToolsToggling) this.agentToolsToggling = {};
+      this.agentToolsToggling[key] = true;
+      this.agentToolsError = null;
+      try {
+        const r = await fetch(
+          '/admin/agents/' + encodeURIComponent(agentId) + '/tools/presets/toggle',
+          {
+            method: 'POST',
+            credentials: 'include',
+            headers: {'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken()},
+            body: JSON.stringify({preset, enabled}),
+          },
+        );
+        if (!r.ok) throw new Error(await r.text() || r.statusText);
+        const d = await r.json();
+        if (this.agentToolsState && this.agentToolsState._agentId === agentId) {
+          this.agentToolsState.presets.applied = d.applied || [];
+        }
+      } catch(e) {
+        this.agentToolsError = 'Preset "' + preset + '" ' + (enabled ? 'apply' : 'remove') + ' failed: ' + (e.message || e);
+        this.loadAgentTools(agentId);
+      }
+      delete this.agentToolsToggling[key];
     },
 
     async provisionRoute() {

@@ -473,11 +473,177 @@ def _run_migrations() -> None:
             # takes when an agent was created before this column existed
             # or when the user explicitly wants the platform default.
             "ALTER TABLE agents ADD COLUMN model_route_id TEXT REFERENCES model_routes(id)",
+            # v10: per-agent network policy presets layered on top of the
+            # baseline in gateway/policies/openshell_default.yaml. JSON
+            # array of preset names from gateway/policies/presets/*.yaml
+            # (e.g. ["github", "slack"]). NULL means "no presets applied,
+            # baseline only". Read by gateway.policies.get_applied_presets()
+            # and merged into the effective policy at spawn time + when the
+            # Tools editor UI toggles presets (MISSING.md M10 scope items
+            # 4-5). Use get_agent_applied_presets() / set_agent_applied_presets()
+            # below for JSON-aware access instead of reading the column
+            # directly.
+            "ALTER TABLE agents ADD COLUMN applied_presets TEXT",
         ):
             try:
                 conn.execute(stmt)
             except sqlite3.OperationalError:
                 pass  # column already exists
+
+        # v11: dispatch activity ledger (M8 Phase B). Durable record of
+        # every task dispatch — who, what agent, which model, origin,
+        # timing, token counts, and outcome. Feeds the Admin Activity tab.
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS dispatches (
+                id                TEXT PRIMARY KEY,
+                task_id           TEXT NOT NULL,
+                agent_id          TEXT,
+                sandbox_name      TEXT,
+                model             TEXT,
+                origin            TEXT NOT NULL DEFAULT 'user_chat',
+                origin_detail     TEXT,
+                session_id        TEXT,
+                user_id           TEXT,
+                prompt_tokens     INTEGER,
+                completion_tokens INTEGER,
+                elapsed_s         REAL,
+                status            TEXT NOT NULL DEFAULT 'running',
+                error             TEXT,
+                started_at        INTEGER NOT NULL,
+                ended_at          INTEGER
+            );
+            CREATE INDEX IF NOT EXISTS idx_disp_agent   ON dispatches(agent_id);
+            CREATE INDEX IF NOT EXISTS idx_disp_origin  ON dispatches(origin);
+            CREATE INDEX IF NOT EXISTS idx_disp_ts      ON dispatches(started_at);
+            CREATE INDEX IF NOT EXISTS idx_disp_status  ON dispatches(status);
+        """)
+
+        # v12: migrate per-agent char_index from the legacy 0..23 encoding
+        # (slot index into a 24-variant sheet) to the new 0..95 encoding
+        # (body*12 + skin*4 + hair for an 8×3×4 variant matrix).
+        # Legacy mapping:
+        #   old 0..7   → body N, skin 0 (light), hair 0 (original)   = N * 12
+        #   old 8..15  → body N, skin 1 (medium), hair 0             = N * 12 + 4
+        #   old 16..23 → body N, skin 2 (dark),   hair 2 (180°)      = N * 12 + 10
+        # Guarded by a schema_flags row so it only runs once.
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS schema_flags (
+                key        TEXT PRIMARY KEY,
+                value      TEXT,
+                applied_at INTEGER
+            );
+        """)
+        already = conn.execute(
+            "SELECT value FROM schema_flags WHERE key = 'char_index_v2'"
+        ).fetchone()
+        if not already:
+            conn.execute("""
+                UPDATE agents SET char_index = CASE
+                    WHEN char_index BETWEEN 0  AND 7  THEN  char_index       * 12
+                    WHEN char_index BETWEEN 8  AND 15 THEN (char_index - 8)  * 12 + 4
+                    WHEN char_index BETWEEN 16 AND 23 THEN (char_index - 16) * 12 + 10
+                    ELSE char_index
+                END
+                WHERE char_index IS NOT NULL AND char_index BETWEEN 0 AND 23
+            """)
+            conn.execute(
+                "INSERT INTO schema_flags (key, value, applied_at) VALUES (?, ?, ?)",
+                ("char_index_v2", "1", int(time.time() * 1000)),
+            )
+
+        # v13: migrate char_index from the 8×3×4 (0..95) encoding to the
+        # new 8×4×5 (0..159) encoding. Old skin 0/1/2 map to new skin
+        # 0/2/3 (new skin 1 is a freshly-added mid-light tone that no
+        # existing agent can be on). Old hair 0..3 all map to new hair 0
+        # (original) — the old sheet's non-zero hair was a 90°/180°/270°
+        # hue shift of the source, which is not the same palette as the
+        # new theme colours, so collapsing to Original is the safest
+        # visual. Agents can re-pick a theme in the picker if desired.
+        already_v3 = conn.execute(
+            "SELECT value FROM schema_flags WHERE key = 'char_index_v3'"
+        ).fetchone()
+        if not already_v3:
+            conn.execute("""
+                UPDATE agents SET char_index = (
+                    (char_index / 12) * 20
+                    + CASE (char_index % 12) / 4
+                        WHEN 0 THEN 0
+                        WHEN 1 THEN 2
+                        WHEN 2 THEN 3
+                      END * 5
+                    + 0
+                )
+                WHERE char_index IS NOT NULL AND char_index BETWEEN 0 AND 95
+            """)
+            conn.execute(
+                "INSERT INTO schema_flags (key, value, applied_at) VALUES (?, ?, ?)",
+                ("char_index_v3", "1", int(time.time() * 1000)),
+            )
+
+        # v15: backfill agents.toolsets when empty. Agents created before
+        # the default-enabled toolset expansion (or with explicit empty
+        # selection) hit "model promised to use a tool but didn't" because
+        # AIAgent received an empty enabled_toolsets list. Stamp them with
+        # a sane default — the union of enforced + default_enabled from
+        # gateway/souls/general/soul.manifest.yaml — so existing agents
+        # work without a manual edit. Per-soul defaults could be richer,
+        # but the General soul's list covers the common case and Greg
+        # confirmed "give them everything by default" for now.
+        already_v15 = conn.execute(
+            "SELECT value FROM schema_flags WHERE key = 'agent_toolsets_backfill_v1'"
+        ).fetchone()
+        if not already_v15:
+            import json as _json
+            default_toolsets = _json.dumps([
+                "web", "memory", "clarify", "session_search", "todo",
+                "file", "world", "browser", "image_gen", "tts",
+                "delegation", "terminal",
+            ])
+            cur = conn.execute(
+                "UPDATE agents SET toolsets = ? "
+                "WHERE toolsets IS NULL OR toolsets = '' OR toolsets = '[]'",
+                (default_toolsets,),
+            )
+            logger.info(
+                "agent_toolsets_backfill_v1: stamped %d agent(s) with default toolsets",
+                cur.rowcount,
+            )
+            conn.execute(
+                "INSERT INTO schema_flags (key, value, applied_at) VALUES (?, ?, ?)",
+                ("agent_toolsets_backfill_v1", "1", int(time.time() * 1000)),
+            )
+
+        # v14: backfill agents.model_route_id from the default route. Agents
+        # created before handle_agents_post auto-binding (or before any
+        # routes were provisioned) carry NULL here and look "unattached"
+        # on the Dashboards bound-agents column even though the executor
+        # is happily resolving the default at spawn time. Make the DB the
+        # source of truth so the count is accurate. Idempotent: only
+        # touches NULL rows, only runs once.
+        already_v4 = conn.execute(
+            "SELECT value FROM schema_flags WHERE key = 'agent_route_backfill_v1'"
+        ).fetchone()
+        if not already_v4:
+            default_row = conn.execute(
+                "SELECT id FROM model_routes WHERE is_default = 1 LIMIT 1"
+            ).fetchone()
+            if default_row:
+                cur = conn.execute(
+                    "UPDATE agents SET model_route_id = ? WHERE model_route_id IS NULL",
+                    (default_row["id"],),
+                )
+                logger.info(
+                    "agent_route_backfill_v1: bound %d agent(s) to default route %s",
+                    cur.rowcount, default_row["id"],
+                )
+            # Stamp the flag even if no default route exists so we don't
+            # re-scan on every startup. If a default is provisioned later,
+            # the auto-bind in handle_agents_post covers new agents and
+            # existing nulls remain rare (only the explicit-no-route case).
+            conn.execute(
+                "INSERT INTO schema_flags (key, value, applied_at) VALUES (?, ?, ?)",
+                ("agent_route_backfill_v1", "1", int(time.time() * 1000)),
+            )
 
 
 @contextmanager
@@ -915,10 +1081,12 @@ def create_agent(name: str, soul_slug: str = "general", model: str = "",
                  model_route_id: Optional[str] = None) -> dict:
     aid = _new_id("agent")
     now = int(time.time() * 1000)
-    # Clamp char_index to the 0..7 sprite-sheet range, or store NULL so the
-    # frontend falls back to its name-hash default.
+    # Clamp char_index to the 0..159 sprite-sheet range, or store NULL so the
+    # frontend falls back to its name-hash default (the picker's "?" slot
+    # corresponds to this NULL state). Encoding: body*20 + skin*5 + hair
+    # where body ∈ [0..7], skin ∈ [0..3], hair ∈ [0..4]. Max = 7*20+3*5+4 = 159.
     ci = int(char_index) if char_index is not None else None
-    if ci is not None and not (0 <= ci <= 7):
+    if ci is not None and not (0 <= ci <= 159):
         ci = None
     with _conn() as conn:
         conn.execute(
@@ -960,7 +1128,7 @@ def list_agents(user_id: str = "") -> list[dict]:
 
 def update_agent(agent_id: str, **fields) -> Optional[dict]:
     allowed = {"name", "soul_slug", "model", "description", "shared", "toolsets",
-               "char_index", "model_route_id"}
+               "char_index", "model_route_id", "applied_presets"}
     updates = {k: v for k, v in fields.items() if k in allowed}
     if "char_index" in updates:
         ci = updates["char_index"]
@@ -968,7 +1136,7 @@ def update_agent(agent_id: str, **fields) -> Optional[dict]:
             ci = int(ci) if ci is not None else None
         except (TypeError, ValueError):
             ci = None
-        if ci is not None and not (0 <= ci <= 7):
+        if ci is not None and not (0 <= ci <= 159):
             ci = None
         updates["char_index"] = ci
     if not updates:
@@ -984,8 +1152,94 @@ def update_agent(agent_id: str, **fields) -> Optional[dict]:
 
 
 def delete_agent(agent_id: str) -> None:
+    # Hard delete: the three orphan tables (dispatches, agent_runs,
+    # evolution_proposals) have no FK cascade because they're not owned
+    # by the agent lifecycle, but leaving rows behind produces dangling
+    # agent_id values in admin dashboards. Purge them here so "delete"
+    # means delete. platform_routing cascades via FK (see schema).
+    #
+    # Also nuke the agent's on-disk session/memory/log directory at
+    # ~/.logos/agents/<name>/. That dir survives across deployments
+    # (lives in $HOME, not in any deployment-scoped path), and the
+    # session_search tool reads from it — so without this cleanup, a
+    # freshly-recreated agent with the same name would surface the old
+    # transcripts as "memory" and confuse users into thinking memory
+    # bled across deployments. Best-effort: log and continue if the
+    # filesystem op fails (DB delete already succeeded).
+    name = None
     with _conn() as conn:
+        row = conn.execute("SELECT name FROM agents WHERE id = ?", (agent_id,)).fetchone()
+        if row:
+            name = row["name"]
+        conn.execute("DELETE FROM dispatches WHERE agent_id = ?", (agent_id,))
+        conn.execute("DELETE FROM agent_runs WHERE agent_id = ?", (agent_id,))
+        conn.execute("DELETE FROM evolution_proposals WHERE agent_id = ?", (agent_id,))
         conn.execute("DELETE FROM agents WHERE id = ?", (agent_id,))
+    if name:
+        try:
+            import shutil
+            from pathlib import Path
+            agent_dir = Path.home() / ".logos" / "agents" / name
+            if agent_dir.is_dir():
+                shutil.rmtree(agent_dir)
+                logger.info("delete_agent: wiped on-disk dir %s", agent_dir)
+        except Exception as exc:
+            logger.warning(
+                "delete_agent(%s): failed to remove on-disk dir for %r: %s",
+                agent_id, name, exc,
+            )
+
+
+def get_agent_applied_presets(agent_id: str) -> list[str]:
+    """Return the list of network policy preset names applied to an agent.
+
+    Returns an empty list for agents with no presets (either NULL in the
+    DB or an explicit empty JSON array). Invalid JSON in the column is
+    logged and treated as empty — callers should not crash on malformed
+    state. See gateway/policies.py for the merge/apply/remove logic that
+    consumes this.
+    """
+    agent = get_agent(agent_id)
+    if not agent:
+        return []
+    raw = agent.get("applied_presets")
+    if not raw:
+        return []
+    try:
+        loaded = json.loads(raw)
+    except json.JSONDecodeError:
+        logger.warning(
+            "get_agent_applied_presets(%s): applied_presets is not valid JSON: %r",
+            agent_id, raw,
+        )
+        return []
+    if not isinstance(loaded, list):
+        return []
+    return [str(p) for p in loaded if isinstance(p, str)]
+
+
+def set_agent_applied_presets(agent_id: str, presets: list[str]) -> None:
+    """Replace the applied preset list for an agent with the given list.
+
+    Deduplicates (preserving order) and coerces each entry to str.
+    Callers are responsible for validating that each preset name
+    matches a real file in gateway/policies/presets/ — this function
+    stores whatever it's given. gateway.policies.set_applied_presets
+    is the validating wrapper.
+    """
+    seen: set[str] = set()
+    clean: list[str] = []
+    for name in presets or []:
+        s = str(name)
+        if s in seen:
+            continue
+        seen.add(s)
+        clean.append(s)
+    with _conn() as conn:
+        conn.execute(
+            "UPDATE agents SET applied_presets = ?, updated_at = ? WHERE id = ?",
+            (json.dumps(clean), int(time.time() * 1000), agent_id),
+        )
 
 
 # ── Model routes ────────────────────────────────────────────────────────────
@@ -2334,3 +2588,84 @@ def delete_mcp_server(server_id: str) -> bool:
     with _conn() as conn:
         cursor = conn.execute("DELETE FROM mcp_servers WHERE id=?", (server_id,))
     return cursor.rowcount > 0
+
+
+# ── Dispatch ledger (M8 Phase B) ───────────────────────────────────────────
+
+
+def create_dispatch(
+    task_id: str,
+    agent_id: str = "",
+    sandbox_name: str = "",
+    model: str = "",
+    origin: str = "user_chat",
+    origin_detail: str = "",
+    session_id: str = "",
+    user_id: str = "",
+) -> str:
+    """Insert a new dispatch record at the start of a task. Returns the id."""
+    import uuid
+    dispatch_id = f"dsp_{uuid.uuid4().hex[:12]}"
+    now_ms = int(time.time() * 1000)
+    with _conn() as conn:
+        conn.execute(
+            """INSERT INTO dispatches
+               (id, task_id, agent_id, sandbox_name, model, origin,
+                origin_detail, session_id, user_id, status, started_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+            (dispatch_id, task_id, agent_id, sandbox_name, model, origin,
+             origin_detail, session_id, user_id, "running", now_ms),
+        )
+    return dispatch_id
+
+
+def complete_dispatch(
+    dispatch_id: str,
+    status: str = "ok",
+    elapsed_s: float = 0.0,
+    prompt_tokens: int = None,
+    completion_tokens: int = None,
+    error: str = None,
+) -> None:
+    """Update a dispatch record when the task finishes."""
+    now_ms = int(time.time() * 1000)
+    with _conn() as conn:
+        conn.execute(
+            """UPDATE dispatches
+               SET status=?, elapsed_s=?, prompt_tokens=?,
+                   completion_tokens=?, error=?, ended_at=?
+               WHERE id=?""",
+            (status, elapsed_s, prompt_tokens, completion_tokens, error,
+             now_ms, dispatch_id),
+        )
+
+
+def list_dispatches(
+    agent_id: str = None,
+    origin: str = None,
+    status: str = None,
+    limit: int = 50,
+    offset: int = 0,
+) -> tuple:
+    """Query the dispatch ledger. Returns (rows, total_count)."""
+    where_parts = []
+    params = []
+    if agent_id:
+        where_parts.append("agent_id = ?")
+        params.append(agent_id)
+    if origin:
+        where_parts.append("origin = ?")
+        params.append(origin)
+    if status:
+        where_parts.append("status = ?")
+        params.append(status)
+    where_clause = (" WHERE " + " AND ".join(where_parts)) if where_parts else ""
+    with _conn() as conn:
+        total = conn.execute(
+            f"SELECT COUNT(*) FROM dispatches{where_clause}", params,
+        ).fetchone()[0]
+        rows = conn.execute(
+            f"SELECT * FROM dispatches{where_clause} ORDER BY started_at DESC LIMIT ? OFFSET ?",
+            [*params, limit, offset],
+        ).fetchall()
+    return [dict(r) for r in rows], total
