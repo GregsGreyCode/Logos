@@ -229,3 +229,101 @@ async def ensure_loaded(
     except Exception as exc:
         logger.warning("ensure_loaded: exception loading %r on %s: %s", model_id, host, exc)
         return False
+
+
+# ── Model download (LM Studio 0.4.x+ REST API) ─────────────────────────
+#
+# LM Studio exposes three REST endpoints for programmatic model management:
+#   POST /api/v1/models/download             — start a download, returns job_id
+#   GET  /api/v1/models/download/status/:id  — poll progress / completion
+#   POST /api/v1/models/load                 — load a downloaded model into a slot
+#
+# We use (1)+(2) here to give Logos the ability to install a known-good
+# agent-capable model without making the user hunt on Hugging Face. The
+# load path already lives above in ensure_loaded. Both the download and
+# status endpoints accept the same Bearer token as the rest of the LM
+# Studio API, or no auth if the user hasn't configured a token.
+
+async def download_model(
+    base_url: str,
+    model: str,
+    quantization: Optional[str] = None,
+    api_key: Optional[str] = None,
+    *,
+    timeout: float = 30.0,
+) -> dict:
+    """Kick off a download via POST /api/v1/models/download.
+
+    Returns a dict with at least ``status`` (one of downloading / paused /
+    completed / failed / already_downloaded) and ``job_id`` when the
+    download actually started (already_downloaded skips the job_id).
+    Body parity with the LM Studio spec — we don't strip or rename fields
+    so ``total_size_bytes``, ``started_at``, etc. pass through unchanged.
+
+    Raises aiohttp.ClientError / asyncio.TimeoutError on transport failure;
+    callers should guard with try/except and surface the error to the UI.
+    """
+    import aiohttp
+    host = _strip_v1_suffix(base_url)
+    url = f"{host}/api/v1/models/download"
+    headers = {"Content-Type": "application/json"}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+    payload: dict = {"model": model}
+    if quantization:
+        payload["quantization"] = quantization
+    async with aiohttp.ClientSession() as session:
+        async with session.post(
+            url, json=payload, headers=headers,
+            timeout=aiohttp.ClientTimeout(total=timeout),
+        ) as resp:
+            body = await resp.text()
+            try:
+                data = json.loads(body)
+            except Exception:
+                data = {"status": "failed", "error": f"non-JSON response: {body[:200]}"}
+            if resp.status >= 400:
+                # LM Studio's error bodies vary; wrap whatever we got
+                # with the status code so the UI can distinguish
+                # auth failures from model-not-found.
+                data.setdefault("status", "failed")
+                data.setdefault("error", f"HTTP {resp.status}")
+                data["http_status"] = resp.status
+            return data
+
+
+async def download_status(
+    base_url: str,
+    job_id: str,
+    api_key: Optional[str] = None,
+    *,
+    timeout: float = 10.0,
+) -> dict:
+    """Poll GET /api/v1/models/download/status/:job_id.
+
+    Returns the raw LM Studio response dict — ``status``, ``downloaded_bytes``,
+    ``total_size_bytes``, ``bytes_per_second``, ``estimated_completion``,
+    ``completed_at`` — letting the UI render progress directly without
+    a translation layer. Raises on transport failure.
+    """
+    import aiohttp
+    host = _strip_v1_suffix(base_url)
+    url = f"{host}/api/v1/models/download/status/{job_id}"
+    headers = {}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+    async with aiohttp.ClientSession() as session:
+        async with session.get(
+            url, headers=headers,
+            timeout=aiohttp.ClientTimeout(total=timeout),
+        ) as resp:
+            body = await resp.text()
+            try:
+                data = json.loads(body)
+            except Exception:
+                data = {"status": "failed", "error": f"non-JSON response: {body[:200]}"}
+            if resp.status >= 400:
+                data.setdefault("status", "failed")
+                data.setdefault("error", f"HTTP {resp.status}")
+                data["http_status"] = resp.status
+            return data
