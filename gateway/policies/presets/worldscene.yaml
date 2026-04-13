@@ -1,0 +1,36 @@
+# Agent World scene access preset — lets the sandbox call back to the
+# gateway's /api/world/state endpoint to refresh awareness of peers.
+#
+# Passive world awareness (list of peers embedded in the system prompt)
+# works without this preset. Apply it only if you want the
+# ``get_agent_world`` tool to fetch a LIVE snapshot mid-session — useful
+# for agents that might collaborate, or for long-running tasks where
+# peer status changes matter.
+#
+# Apply via:
+#   gateway.policies.apply_preset(agent_id, "worldscene")
+#
+# Adjust the `host` line to match how sandboxes reach your gateway.
+# Default assumes `gateway.internal:8080` resolves inside the sandbox.
+
+preset:
+  name: worldscene
+  description: "Agent World state callback (get_agent_world tool)"
+
+network_policies:
+  worldscene:
+    name: worldscene
+    endpoints:
+      - host: gateway.internal
+        port: 8080
+        protocol: rest
+        enforcement: enforce
+        tls: passthrough
+        access: full
+    binaries:
+      - { path: /app/venv/bin/python }
+      - { path: /app/venv/bin/python3 }
+      - { path: /app/venv/bin/python3.11 }
+      - { path: /app/venv/bin/python3.12 }
+      - { path: /usr/bin/python3 }
+      - { path: /usr/bin/python3.13 }

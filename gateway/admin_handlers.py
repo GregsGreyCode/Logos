@@ -516,6 +516,26 @@ async def handle_agents_list(request: web.Request) -> web.Response:
     except Exception:
         _sanitize_sandbox_name = lambda s: s  # noqa: E731
 
+    # Aggregate dispatch counts per agent in a single query so the world
+    # view's per-agent maturity tier ("Sprout/Sapling/Branch/Tree/Old
+    # Growth") doesn't need N round-trips. Sessions are filesystem-backed
+    # at ~/.logos/agents/<name>/sessions/*.json — count via a directory
+    # listing per agent (cheap, O(agents) stat calls). Memory count is
+    # currently always 0 in the OpenShell runtime (M10) so we stamp the
+    # field but the maturity formula's memory term is inert until
+    # sandbox_worker.py starts writing to ~/.logos/agents/<name>/memories/.
+    import sqlite3 as _sqlite3
+    from pathlib import Path as _Path
+    dispatch_counts: dict[str, int] = {}
+    try:
+        with auth_db._conn() as _conn:
+            for row in _conn.execute(
+                "SELECT agent_id, COUNT(*) AS n FROM dispatches WHERE agent_id IS NOT NULL GROUP BY agent_id"
+            ).fetchall():
+                dispatch_counts[row["agent_id"]] = int(row["n"])
+    except _sqlite3.Error:
+        pass  # leave map empty; UI handles missing counts as 0
+
     worker_registry = request.app.get("worker_registry")
     for a in agents:
         name = a.get("name", "")
@@ -549,6 +569,29 @@ async def handle_agents_list(request: web.Request) -> web.Response:
             worker_registry.active_task_count(sandbox_name)
             if worker_registry and sandbox_name else 0
         )
+
+        # Maturity inputs (tier computation lives in the frontend so the
+        # tier names + glyphs can iterate without a server roundtrip).
+        a["dispatch_count"] = dispatch_counts.get(a["id"], 0)
+        sess_count = 0
+        mem_count = 0
+        if name:
+            try:
+                _sess_dir = _Path.home() / ".logos" / "agents" / name / "sessions"
+                if _sess_dir.is_dir():
+                    sess_count = sum(1 for _ in _sess_dir.glob("session_*.json"))
+            except OSError:
+                pass
+            try:
+                _mem_dir = _Path.home() / ".logos" / "agents" / name / "memories"
+                if _mem_dir.is_dir():
+                    # Count any file — memory format may evolve; total
+                    # files is a reasonable proxy for "stuff remembered".
+                    mem_count = sum(1 for _ in _mem_dir.iterdir() if _.is_file())
+            except OSError:
+                pass
+        a["session_count"] = sess_count
+        a["memory_count"] = mem_count
 
     return web.json_response({"agents": agents})
 
@@ -584,12 +627,12 @@ async def handle_agents_post(request: web.Request) -> web.Response:
         char_index = int(char_index) if char_index is not None else None
     except (TypeError, ValueError):
         char_index = None
-    # Optional binding to a model_routes row. The UI's route picker
-    # populates this; "Auto (use default)" sends NULL and the executor's
-    # _resolve_route() falls back to the row marked is_default=1. When
-    # set, the route's model overrides whatever the caller put in
-    # `model` (the OpenShell gateway is forcing exactly that model
-    # anyway, so the agent record's model field is purely cosmetic).
+    # Bind to a model_routes row. UI route picker provides one; "Auto
+    # (use default)" sends NULL and we resolve the default here so the
+    # DB record is never NULL — keeps the Dashboards "bound agents"
+    # count accurate and lets the executor + admin queries treat the
+    # binding as the single source of truth instead of relying on a
+    # spawn-time fallback that leaves the DB looking unattached.
     model_route_id = body.get("model_route_id") or None
     if model_route_id:
         _route = auth_db.get_model_route(model_route_id)
@@ -599,12 +642,21 @@ async def handle_agents_post(request: web.Request) -> web.Response:
             model = _route.get("model") or model
         else:
             # UI sent a stale id (route deleted between fetch and POST)
-            # — drop the binding and fall back to the default route.
+            # — drop the binding so the default-route fallback below kicks in.
             logger.warning(
                 "create_agent: model_route_id=%r not found, dropping binding",
                 model_route_id,
             )
             model_route_id = None
+    if not model_route_id:
+        _default = auth_db.get_default_model_route()
+        if _default:
+            model_route_id = _default["id"]
+            model = _default.get("model") or model
+            logger.info(
+                "create_agent(%s): no route specified, auto-binding to default route %s (%s)",
+                name, model_route_id, model,
+            )
     agent = auth_db.create_agent(
         name=name,
         soul_slug=soul_slug,
