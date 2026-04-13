@@ -16,7 +16,16 @@ FROM hermes-upstream:latest
 
 # OpenShell sandbox agent needs iproute2 for network namespace setup.
 # The upstream hermes image is debian-based but doesn't include it.
-RUN apt-get update && apt-get install -y --no-install-recommends iproute2 \
+#
+# libnss3-tools provides `certutil`, which sandbox_worker.py uses at
+# startup to install OpenShell's TLS MITM CA into chromium's NSS user
+# database ($HOME/.pki/nssdb). Without this, chromium refuses every
+# HTTPS request because the proxy presents its own-signed cert.
+# pkill (procps) is used by sandbox_worker.py for chromium lifecycle.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    iproute2 \
+    libnss3-tools \
+    procps \
     && rm -rf /var/lib/apt/lists/*
 
 # Re-install hermes-agent as a non-editable package. The upstream image
@@ -25,6 +34,40 @@ RUN apt-get update && apt-get install -y --no-install-recommends iproute2 \
 # /opt/ at runtime. A non-editable install copies the code into
 # site-packages where the sandbox user can read it.
 RUN pip install --no-cache-dir --break-system-packages /opt/hermes
+
+# Local browser: install Chromium via agent-browser so browser_navigate
+# works inside the sandbox with zero external dependencies. Pure
+# local-first — no Browserbase, no Browserless, no host bridge, no
+# preset gymnastics. The agent-browser CLI is a node wrapper
+# (bin/agent-browser.js) that exec's a sibling platform binary
+# (bin/agent-browser-linux-x64); they MUST live in the same directory,
+# so we copy the whole agent-browser package to a sandbox-readable path
+# under /usr/local/share/ (/opt/* is blocked at runtime by OpenShell's
+# sandbox policy, which is why hermes-agent itself is re-installed to
+# site-packages above).
+#
+# AGENT_BROWSER_HOME pins the chromium cache so both root (build time)
+# and the sandbox user (runtime, uid 10001) see the same browser binary.
+ENV AGENT_BROWSER_HOME=/usr/local/share/agent-browser
+ENV PLAYWRIGHT_BROWSERS_PATH=/usr/local/share/ms-playwright
+# Layout: we stage agent-browser the way `npm install -g` would — inside
+# a node_modules/ tree so Node's module resolution can walk up and find
+# playwright-core, ws, zod, webdriverio (agent-browser's runtime deps).
+# The hermes image installs those at /opt/hermes/node_modules which is
+# blocked for the sandbox user at runtime, so we re-stage under
+# /usr/local/lib/node_modules which is on Node's global module search
+# path and readable by uid 10001. ~170MB image growth; worth it since
+# the alternative (re-running `npm install` in the build context) needs
+# registry access + many more seconds.
+RUN mkdir -p /usr/local/lib/node_modules && \
+    cp -r /opt/hermes/node_modules/. /usr/local/lib/node_modules/ && \
+    chmod +x /usr/local/lib/node_modules/agent-browser/bin/agent-browser.js && \
+    chmod +x /usr/local/lib/node_modules/agent-browser/bin/agent-browser-linux-x64 && \
+    ln -sf /usr/local/lib/node_modules/agent-browser /usr/local/share/agent-browser && \
+    ln -sf /usr/local/lib/node_modules/agent-browser/bin/agent-browser.js /usr/local/bin/agent-browser && \
+    mkdir -p /usr/local/share/ms-playwright && \
+    /usr/local/bin/agent-browser install --with-deps && \
+    chmod -R a+rX /usr/local/lib/node_modules /usr/local/share/ms-playwright
 
 # Config / state directory (populated at runtime via `openshell sandbox upload`).
 # Created before the sandbox user so we can set it as HOME — avoids the
@@ -35,6 +78,9 @@ RUN mkdir -p /tmp/hermes
 # OpenShell requires a 'sandbox' user with uid/gid 10001.
 # HOME is set to /tmp/hermes (writable) instead of /home/sandbox
 # (read-only after OpenShell's workspace init overlays it).
-RUN groupadd -g 10001 sandbox && \
-    useradd -u 10001 -g sandbox -d /tmp/hermes -s /bin/bash sandbox && \
-    chown sandbox:sandbox /tmp/hermes
+# Guarded for idempotency — when the base image already had this user
+# created (e.g. an m11→m12 layer-on-layer rebuild after image pruning)
+# groupadd/useradd exit non-zero. Skip gracefully in that case.
+RUN (groupadd -g 10001 sandbox 2>/dev/null || true) && \
+    (useradd -u 10001 -g sandbox -d /tmp/hermes -s /bin/bash sandbox 2>/dev/null || true) && \
+    chown -R sandbox:sandbox /tmp/hermes

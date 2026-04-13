@@ -20,8 +20,15 @@ network_policies:
   browserless:
     name: browserless
     endpoints:
-      # CDP WebSocket endpoint. Adjust host/port for your deployment.
-      - host: browserless.internal
+      # CDP WebSocket endpoint. Targets host.openshell.internal — the
+      # hostname OpenShell injects into sandbox DNS resolving to the
+      # docker bridge gateway (172.17.0.1). The host's docker-compose
+      # `logos-browserless` container binds 0.0.0.0:3000 so the sandbox
+      # can reach it through that bridge once this preset is applied.
+      # If you front browserless with a different hostname (e.g. a
+      # cluster-internal service), edit this and the BROWSERLESS_URL
+      # credential together.
+      - host: host.openshell.internal
         port: 3000
         enforcement: enforce
         tls: passthrough

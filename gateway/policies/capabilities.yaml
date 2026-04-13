@@ -1,0 +1,266 @@
+# Capability map — the user-facing simplification of toolsets + presets.
+#
+# Each capability is what an end user actually thinks about: "can my agent
+# browse the web?" / "can my agent post to Slack?" — never "is the
+# browserless preset applied?". The map below collapses the engineering
+# vocabulary (toolsets + network presets + env credentials) into a single
+# human-readable choice per row.
+#
+# UI rendering (in STAMP P, replacing today's preset checkbox grid):
+#   - "Always available" capabilities render as a static informational
+#     block — these are local-only and always granted, no toggle needed.
+#   - "On request" capabilities render as a toggle list grouped by trust
+#     bucket (local-first first, cloud last). Toggling ON applies the
+#     listed toolsets + presets atomically; toggling OFF removes them.
+#   - "Advanced (raw)" disclosure exposes the original toolset + preset
+#     checkboxes for power users who want fine-grained control.
+#
+# Layer 1 URL allowlist (per-capability) is rendered next to capabilities
+# that touch the open web — currently just `web` — as a textarea. Lives
+# in instance-config.json so sandbox_worker uploads it alongside everything
+# else; hermes's website_policy.py reads it on every nav.
+
+version: 1
+
+# ── Always-available (local, no consent needed) ─────────────────────────
+# These have no network reach + no credentials, so they're safe to grant
+# unconditionally. UI shows them as a small informational footer ("Always
+# on: memory, files, schedule, ...") rather than as togglable rows so the
+# consent surface stays focused on capabilities that actually matter.
+always_on:
+  - id: memory
+    name: Memory
+    icon: 🧠
+    description: Remember things across conversations.
+    toolsets: [memory, session_search]
+  - id: files
+    name: Files
+    icon: 📁
+    description: Read and write files in the agent's workspace.
+    toolsets: [file]
+  - id: skills
+    name: Skills
+    icon: ✨
+    description: Author and reuse named skills (workflow recipes).
+    toolsets: [skills]
+  - id: schedule
+    name: Schedule
+    icon: 📅
+    description: Schedule a task to run later — reminders, recurring jobs.
+    toolsets: [cronjob]
+  - id: plan
+    name: Plan
+    icon: ✅
+    description: Track multi-step work with a todo list.
+    toolsets: [todo]
+  - id: clarify
+    name: Clarify
+    icon: ❓
+    description: Ask the user a clarifying question mid-task.
+    toolsets: [clarify]
+  - id: delegate
+    name: Delegate
+    icon: 🤝
+    description: Spin up a subagent for a focused subtask.
+    toolsets: [delegation]
+  - id: world
+    name: World
+    icon: 🌍
+    description: See and act in the agent world (move, interact).
+    toolsets: [world]
+    # worldscene preset is the network policy that lets the sandbox talk
+    # to the agent-world stream; it's part of Logos's own infrastructure,
+    # not a user-facing service, so it lives in always_on rather than as
+    # a toggle (per Greg's feedback — "built into logos, don't turn off").
+    presets: [worldscene]
+
+# ── On request (require explicit consent) ───────────────────────────────
+# Each entry is a toggle in the Permissions UI. Toggling ON applies all
+# listed toolsets + presets in one atomic operation. Trust labels make
+# the data-flow consequence explicit so users can decide informed.
+capabilities:
+
+  # ── Local-first capabilities (data stays on your machine) ──
+  - id: web
+    name: Use the web
+    icon: 🌐
+    trust: local
+    trust_note: Chromium runs inside your sandbox. The browser reaches external sites directly, but no data flows through a third-party provider.
+    description: Browse, search, and read web pages.
+    toolsets: [browser, web]
+    # web-browse grants the in-sandbox Chromium outbound HTTPS/HTTP
+    # (wildcard host, 443+80, scoped to the chrome binary only). Browser
+    # itself is bundled in the image — no cred.
+    presets: [web-browse]
+    creds: []
+    default_on_create: true   # B-tier default — local, universally useful
+    layer1:
+      key: website_blocklist
+      label: Allowed websites
+      placeholder: |
+        # one pattern per line, glob-style
+        # leave empty to allow all
+        # examples:
+        # *.wikipedia.org
+        # github.com
+        # !facebook.com   # leading ! = blocklist entry
+
+  - id: smart_home
+    name: Control smart home
+    icon: 🏠
+    trust: local
+    trust_note: Talks only to your Home Assistant — never leaves your network.
+    description: Read sensors, toggle devices, run automations.
+    toolsets: [homeassistant]
+    presets: []
+    creds: [HOME_ASSISTANT_URL, HOME_ASSISTANT_TOKEN]
+    default_on_create: true   # DEBUG: all-tools-on-by-default experiment
+
+  # ── Messaging (data sent to platform) ──
+  - id: slack
+    name: Send messages on Slack
+    icon: 💬
+    trust: third_party
+    trust_note: Messages and channel data are sent to Slack.
+    description: Post messages, read channels, react.
+    toolsets: [messaging]
+    presets: [slack]
+    creds: [SLACK_BOT_TOKEN]
+
+  - id: discord
+    name: Send messages on Discord
+    icon: 💬
+    trust: third_party
+    trust_note: Messages and channel data are sent to Discord.
+    description: Post messages, read channels.
+    toolsets: [messaging]
+    presets: [discord]
+    creds: [DISCORD_BOT_TOKEN]
+
+  - id: telegram
+    name: Send messages on Telegram
+    icon: ✈️
+    trust: third_party
+    trust_note: Messages are sent to Telegram.
+    description: Post messages to chats.
+    toolsets: [messaging]
+    presets: [telegram]
+    creds: [TELEGRAM_BOT_TOKEN]
+
+  # ── Code & repos (data sent to provider) ──
+  - id: github
+    name: Manage GitHub
+    icon: 🛠
+    trust: third_party
+    trust_note: Code, issue text, and repo metadata are sent to GitHub.
+    description: Open issues, comment on PRs, push commits.
+    toolsets: [github]
+    presets: [github]
+    creds: [GITHUB_TOKEN]
+
+  # ── Cloud AI providers (prompts/responses sent to provider) ──
+  # Split per-provider so each toggle says exactly which company's
+  # servers your text is going to. Per Greg: fine-grained control over
+  # which clouds an agent is permitted to reach matters more than the
+  # tidiness of a single "Cloud AI" toggle.
+  - id: cloud_ai_openrouter
+    name: OpenRouter
+    icon: 🤖
+    trust: third_party
+    trust_note: Prompts and responses are sent to OpenRouter (and onward to whichever model you select).
+    description: Multi-provider model gateway — Llama, Claude, GPT, etc. via one API.
+    toolsets: [vision]
+    presets: [openrouter]
+    creds: [OPENROUTER_API_KEY]
+
+  - id: cloud_ai_openai
+    name: OpenAI
+    icon: 🤖
+    trust: third_party
+    trust_note: Prompts and responses are sent to OpenAI.
+    description: GPT-4o, GPT-5, embeddings, etc. via OpenAI's API.
+    toolsets: [vision]
+    presets: [openai-api]
+    creds: [OPENAI_API_KEY]
+
+  - id: cloud_ai_anthropic
+    name: Anthropic
+    icon: 🤖
+    trust: third_party
+    trust_note: Prompts and responses are sent to Anthropic.
+    description: Claude 4.6 Sonnet / Opus via Anthropic's API.
+    toolsets: [vision]
+    presets: []   # no dedicated preset YAML yet — add anthropic.yaml when wiring this up
+    creds: [ANTHROPIC_API_KEY]
+
+  - id: cloud_ai_huggingface
+    name: HuggingFace
+    icon: 🤗
+    trust: third_party
+    trust_note: Model and dataset metadata are fetched from HuggingFace; private inference goes to HF endpoints.
+    description: Pull models, run hosted inference, browse datasets.
+    toolsets: []
+    presets: [huggingface]
+    creds: [HUGGINGFACE_API_KEY]
+
+  # ── Run code (powerful but useful enough to live in main list, per Greg) ──
+  - id: code_execution
+    name: Run Python code
+    icon: 🐍
+    trust: local
+    trust_note: Runs in a sandboxed Python interpreter — code can read/write files in the agent's workspace.
+    description: Execute Python for data wrangling, calculations, scripted tool chains.
+    toolsets: [code_execution]
+    presets: []
+    creds: []
+    default_on_create: true   # B-tier default — sandboxed, broadly useful
+
+  # ── Media generation (prompts sent to provider) ──
+  - id: image_gen
+    name: Generate images
+    icon: 🎨
+    trust: third_party
+    trust_note: Prompts and generated images are sent to and stored by fal.ai.
+    description: Generate images from text via FLUX, SDXL, etc.
+    toolsets: [image_gen]
+    presets: [fal]
+    creds: [FAL_KEY]
+
+  - id: voice
+    name: Premium voice
+    icon: 🔊
+    trust: third_party
+    trust_note: Text being read aloud is sent to ElevenLabs.
+    description: High-quality text-to-speech via ElevenLabs.
+    toolsets: [tts]
+    presets: [elevenlabs]
+    creds: [ELEVENLABS_API_KEY]
+
+# ── Power tools (advanced — collapsed by default in UI) ─────────────────
+# Two left here:
+#   - pypi: not a capability on its own; it's a network grant that pairs
+#     with "Run Python code" for runtime package installs. Hidden so most
+#     users don't see two related toggles.
+#   - terminal: higher blast radius than Run Python code (full shell vs
+#     sandboxed interpreter). Power users who explicitly want it can
+#     enable via Advanced; default is off.
+power_tools:
+  - id: pypi
+    name: Install Python packages
+    icon: 📦
+    trust: local
+    trust_note: Downloads packages from pypi.org. Untrusted packages can run arbitrary code inside the sandbox.
+    description: pip install at runtime — usually paired with "Run Python code".
+    toolsets: []
+    presets: [pypi]
+    creds: []
+
+  - id: terminal
+    name: Run shell commands
+    icon: 💻
+    trust: local
+    trust_note: Executes shell inside the sandbox — broader blast radius than "Run Python code". Prefer Python where possible.
+    description: Run arbitrary shell commands (sh, bash, etc.).
+    toolsets: [terminal]
+    presets: []
+    creds: []
