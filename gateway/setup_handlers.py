@@ -642,6 +642,92 @@ def _eval_hard_instruct(text: str) -> bool:
     )
 
 
+# Hard 5 — Post-tool summarization. Small models (qwen3.5-9b etc) frequently
+# emit the tool call and then return EMPTY content on the follow-up turn
+# because they "think" the tool result is the answer. This prompt simulates
+# the second turn of an agent loop: model receives a tool_response and must
+# write a 1-2 sentence summary grounded in the data. Pass = summary contains
+# the key numeric value AND is under 200 chars AND is not empty/just
+# whitespace/just the raw JSON. This is THE test that qwen3.5-9b fails in
+# the real Chat UI ("response_len=7" in the dispatch log).
+_HARD_AGENT_SUMMARIZE_PROMPT = (
+    "You just called the get_crypto_price tool. It returned this JSON:\n"
+    '{"ripple":{"gbp":0.99,"usd":1.34},"timestamp":"2026-04-13T20:00Z"}\n\n'
+    "Now write a single-sentence answer to the user's question "
+    "\"What's the price of XRP right now?\". Do NOT emit another tool call. "
+    "Do NOT repeat the raw JSON. Your answer should mention the price in GBP."
+)
+
+
+def _eval_hard_agent_summarize(text: str) -> bool:
+    t = (text or "").strip()
+    if len(t) < 15 or len(t) > 400:
+        return False
+    # Must cite the GBP figure (£0.99 / 0.99 / £1 approx). Strict enough
+    # to catch hallucinated numbers but flexible on formatting.
+    has_gbp = ("0.99" in t) or ("£0.99" in t) or ("99p" in t.lower()) or ("0.99 gbp" in t.lower())
+    # Must not just be the JSON dump — the model has to paraphrase.
+    is_not_raw_json = not t.startswith("{") and '"ripple"' not in t
+    return has_gbp and is_not_raw_json
+
+
+# Hard 6 — Error recovery. Simulates the second turn after a tool call
+# failed with a specific error. Pass = model suggests an alternative
+# approach or a concrete next step, rather than just giving up ("I can't"
+# or "sorry") or ignoring the error. Catches the defeatism we saw with
+# Tracey hallucinating "network blocked" without retrying.
+_HARD_AGENT_RECOVERY_PROMPT = (
+    "You just called browser_navigate('https://coinmarketcap.com/currencies/ripple/'). "
+    "It returned this error:\n"
+    '{"error":"403 Forbidden — host not in allowlist","allowed_hosts":["api.coingecko.com","wikipedia.org","html.duckduckgo.com"]}\n\n'
+    "In a single short reply (max 2 sentences), propose ONE specific next "
+    "step that uses one of the allowed_hosts. Do not apologise. Do not say "
+    "you cannot help. Propose the concrete URL you would try next."
+)
+
+
+def _eval_hard_agent_recovery(text: str) -> bool:
+    t = (text or "").lower().strip()
+    if len(t) < 15 or len(t) > 600:
+        return False
+    # Gives up? Fail.
+    DEFEAT_TERMS = ("sorry", "i cannot", "i can't access", "unable to", "i apologize", "apologise")
+    if any(d in t for d in DEFEAT_TERMS):
+        return False
+    # References an allowed host? Pass.
+    ALLOWED = ("api.coingecko.com", "wikipedia.org", "html.duckduckgo.com")
+    return any(h in t for h in ALLOWED)
+
+
+# Hard 7 — Multi-turn grounding. After two turns of context, does the
+# model reference previous messages correctly? Catches the "lost history"
+# failure mode where Claude asked "in GBP please" and the agent said
+# "I'm missing context". (For our benchmark this is prompt-only, but
+# it's the same skill.)
+_HARD_AGENT_GROUNDING_PROMPT = (
+    "Previous conversation:\n"
+    "User: What's the price of bitcoin today?\n"
+    "Assistant: Bitcoin is $72,380 USD right now.\n"
+    "User: in GBP please\n\n"
+    "Reply to the LAST user message. Your response should cite the "
+    "bitcoin price in GBP using the earlier $72,380 USD figure and "
+    "a roughly 0.74 USD-to-GBP rate. Keep it to one sentence."
+)
+
+
+def _eval_hard_agent_grounding(text: str) -> bool:
+    t = (text or "").lower().strip()
+    if len(t) < 10 or len(t) > 300:
+        return False
+    # 72380 * 0.74 ≈ 53560 — accept anything in the £50k-57k range to be
+    # forgiving of arithmetic variance. Must also be about BITCOIN (not
+    # hallucinating a different coin).
+    import re as _re
+    has_gbp_approx = bool(_re.search(r"£?5[0-7][,.]?\d{3}", t))
+    has_bitcoin_context = "bitcoin" in t or "btc" in t
+    return has_gbp_approx and has_bitcoin_context
+
+
 def _strip_think(text: str) -> str:
     """Strip <think>...</think> (and <thinking>) blocks produced by reasoning models.
 
@@ -862,11 +948,24 @@ def _compare_score(r: dict) -> float:
     speed      = min(r["tok_s"], 40) / 40            # cap at 40 tok/s
     sz         = _parse_model_size_b(r["model"], r.get("size_b", 0.0))
     size_b     = min(sz, 13) / 13 * 0.05 if sz > 0 else 0
-    # Advanced eval bonus: hard + agent tiers reward models that passed higher bars
-    hard_score  = (r.get("hard_eval") or r.get("eval", {}).get("hard") or {}).get("score", 0)
-    agent_score = (r.get("agent_eval") or {}).get("score", 0)
-    hard_max    = 4 if r.get("eval", {}).get("hard") else 3  # compat=4, native=3
-    advanced    = (hard_score / max(hard_max, 1) * 0.6 + agent_score / 3 * 0.4) if (hard_score or agent_score) else 0
+    # Advanced eval bonus — the hard tier now contains 4 classic tests
+    # (tool-name routing, deep JSON, 5-step arithmetic, constrained
+    # instructions) PLUS 3 agent-loop tests (post-tool summarization,
+    # error recovery, multi-turn grounding). Total out of 7.
+    #
+    # Agent-loop competence matters far more than static eval pass-rates
+    # when ranking an AGENT platform's default model. Earlier this was
+    # weighted at 0.6×hard + 0.4×agent (a single score), which undervalued
+    # the agent tests — a model could score top on static eval while
+    # failing every agent-loop test and still rank highest. Rebalanced
+    # to 0.3×hard_classic + 0.7×agent_tests so the ranking reflects the
+    # thing users actually care about.
+    hard_all    = (r.get("hard_eval") or r.get("eval", {}).get("hard") or {})
+    classic_ks  = ("hard_tool", "hard_json", "hard_reasoning", "hard_instruct")
+    agent_ks    = ("agent_summarize", "agent_recovery", "agent_grounding")
+    classic_sc  = sum(1 for k in classic_ks if hard_all.get(k))
+    agent_sc    = sum(1 for k in agent_ks if hard_all.get(k))
+    advanced    = (classic_sc / 4 * 0.3 + agent_sc / 3 * 0.7) if (classic_sc or agent_sc) else 0
     # Capability metadata bonus: models reporting tool_use/vision via server API
     caps_bonus = 0.0
     if r.get("tool_use"):
@@ -890,7 +989,15 @@ def _compare_score(r: dict) -> float:
         snappiness_penalty = -min(0.15, (greeting_ms - 5000) / 100000)
     else:
         snappiness_penalty = 0.0
-    return 0.50 * eval_frac + 0.20 * speed + 0.05 * advanced + size_b + caps_bonus + specialized_penalty + ctx_penalty + snappiness_penalty
+    # Weights updated 2026-04-13 — rationale: we shipped Hermes on OpenShell
+    # and the distinction between "benchmarks well" and "works as an agent"
+    # became decisive. Small models (qwen3.5-9b, gpt-oss-20b) pass 6/6
+    # standard evals and hit 40+ tok/s but fail the real agent loop
+    # (empty post-tool responses, hallucinated failures, history loss).
+    # Bumping advanced from 5% → 25% lets those agent-loop failures
+    # actually move the ranking. Eval reduced 50% → 40% and speed 20% →
+    # 15% to accommodate without removing either.
+    return 0.40 * eval_frac + 0.15 * speed + 0.25 * advanced + size_b + caps_bonus + specialized_penalty + ctx_penalty + snappiness_penalty
 
 
 def _greeting_note(r: dict) -> str:
@@ -2314,11 +2421,36 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
                     h4_pass, _ = await _eval_once(_HARD_INSTRUCT_PROMPT, _eval_hard_instruct, 2048)
                     await send({"log": f"    {'✓' if h4_pass else '✗'} constrained instructions (include+exclude)"})
 
-                    hard_score = sum([h1_pass, h2_pass, h3_pass, h4_pass])
-                    await send({"log": f"  ★ Hard eval score: {hard_score}/4"})
+                    # Agent-loop tests — catch the competence gap that static
+                    # benchmarks miss. A model can nail JSON + reasoning but
+                    # still fail as an agent because it can't summarize after
+                    # a tool result (h5), gives up on errors (h6), or loses
+                    # context between turns (h7). These three tests matched
+                    # the exact failures we saw live: qwen3.5-9b empty after
+                    # tool calls, gpt-oss-20b hallucinating "network blocked",
+                    # agents claiming "missing context" on follow-ups.
+                    h5_pass, h5_resp = await _eval_once(_HARD_AGENT_SUMMARIZE_PROMPT, _eval_hard_agent_summarize, 512)
+                    await send({"log": f"    {'✓' if h5_pass else '✗'} agent: post-tool summarization (cite tool data)"})
+                    if not h5_pass:
+                        await _log_eval_detail(_HARD_AGENT_SUMMARIZE_PROMPT, h5_resp, ["must cite £0.99 without dumping raw JSON"])
+
+                    h6_pass, h6_resp = await _eval_once(_HARD_AGENT_RECOVERY_PROMPT, _eval_hard_agent_recovery, 512)
+                    await send({"log": f"    {'✓' if h6_pass else '✗'} agent: error recovery (propose alternative host)"})
+                    if not h6_pass:
+                        await _log_eval_detail(_HARD_AGENT_RECOVERY_PROMPT, h6_resp, ["must propose an allowed_hosts URL, not give up"])
+
+                    h7_pass, h7_resp = await _eval_once(_HARD_AGENT_GROUNDING_PROMPT, _eval_hard_agent_grounding, 512)
+                    await send({"log": f"    {'✓' if h7_pass else '✗'} agent: multi-turn grounding (use earlier context)"})
+                    if not h7_pass:
+                        await _log_eval_detail(_HARD_AGENT_GROUNDING_PROMPT, h7_resp, ["must cite the bitcoin figure converted to GBP"])
+
+                    hard_score = sum([h1_pass, h2_pass, h3_pass, h4_pass, h5_pass, h6_pass, h7_pass])
+                    await send({"log": f"  ★ Hard eval score: {hard_score}/7"})
                     hard_eval = {
                         "hard_tool": h1_pass, "hard_json": h2_pass,
                         "hard_reasoning": h3_pass, "hard_instruct": h4_pass,
+                        "agent_summarize": h5_pass, "agent_recovery": h6_pass,
+                        "agent_grounding": h7_pass,
                         "score": hard_score,
                     }
 

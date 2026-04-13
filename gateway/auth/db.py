@@ -168,16 +168,17 @@ CREATE TABLE IF NOT EXISTS cloud_providers (
 CREATE INDEX IF NOT EXISTS idx_rlog_ts       ON routing_log(created_at);
 
 CREATE TABLE IF NOT EXISTS agents (
-    id           TEXT PRIMARY KEY,
-    name         TEXT UNIQUE NOT NULL,
-    soul_slug    TEXT NOT NULL DEFAULT 'general',
-    model        TEXT,
-    description  TEXT,
-    creator_id   TEXT REFERENCES users(id),
-    shared       INTEGER NOT NULL DEFAULT 1,
-    toolsets     TEXT,
-    created_at   INTEGER NOT NULL,
-    updated_at   INTEGER NOT NULL
+    id                TEXT PRIMARY KEY,
+    name              TEXT UNIQUE NOT NULL,
+    soul_slug         TEXT NOT NULL DEFAULT 'general',
+    model             TEXT,
+    description       TEXT,
+    creator_id        TEXT REFERENCES users(id),
+    shared            INTEGER NOT NULL DEFAULT 1,
+    toolsets          TEXT,
+    daily_budget_usd  REAL,          -- NULL = no cap; else refuse dispatch once today's cost_log sum exceeds this value
+    created_at        INTEGER NOT NULL,
+    updated_at        INTEGER NOT NULL
 );
 
 -- ── Action policies ────────────────────────────────────────────────────────
@@ -484,6 +485,12 @@ def _run_migrations() -> None:
             # below for JSON-aware access instead of reading the column
             # directly.
             "ALTER TABLE agents ADD COLUMN applied_presets TEXT",
+            # v17: per-agent website blocklist (Layer 1 of URL control).
+            # JSON {"enabled": bool, "patterns": [...glob...]} read by hermes
+            # tools/website_policy.py before every browser navigation. Lives
+            # next to applied_presets since both are policy-shaped fields the
+            # capability system writes to.
+            "ALTER TABLE agents ADD COLUMN website_blocklist TEXT",
         ):
             try:
                 conn.execute(stmt)
@@ -516,6 +523,34 @@ def _run_migrations() -> None:
             CREATE INDEX IF NOT EXISTS idx_disp_origin  ON dispatches(origin);
             CREATE INDEX IF NOT EXISTS idx_disp_ts      ON dispatches(started_at);
             CREATE INDEX IF NOT EXISTS idx_disp_status  ON dispatches(status);
+
+            -- Cost ledger — one row per agent dispatch that consumed cloud
+            -- tokens. Local models (lmstudio/ollama) also get rows with
+            -- cost_usd=0 so activity is visible; cost only accrues for
+            -- cloud providers. Input columns are the raw counts straight
+            -- from the model response (Anthropic: input_tokens, cache_read,
+            -- cache_creation; OpenAI: prompt_tokens, completion_tokens).
+            -- cost_usd is computed at insert time using gateway.pricing
+            -- so historical rows stay accurate if pricing later shifts.
+            CREATE TABLE IF NOT EXISTS cost_log (
+                id             TEXT PRIMARY KEY,
+                ts             INTEGER NOT NULL,
+                agent_id       TEXT,
+                agent_name     TEXT,
+                session_id     TEXT,
+                task_id        TEXT,
+                provider       TEXT,
+                model          TEXT NOT NULL,
+                input_tokens   INTEGER NOT NULL DEFAULT 0,
+                output_tokens  INTEGER NOT NULL DEFAULT 0,
+                cache_read_tok INTEGER NOT NULL DEFAULT 0,
+                cache_write_tok INTEGER NOT NULL DEFAULT 0,
+                cost_usd       REAL NOT NULL DEFAULT 0,
+                pricing_known  INTEGER NOT NULL DEFAULT 0
+            );
+            CREATE INDEX IF NOT EXISTS idx_cost_agent ON cost_log(agent_id);
+            CREATE INDEX IF NOT EXISTS idx_cost_ts    ON cost_log(ts);
+            CREATE INDEX IF NOT EXISTS idx_cost_model ON cost_log(model);
         """)
 
         # v12: migrate per-agent char_index from the legacy 0..23 encoding
@@ -578,6 +613,116 @@ def _run_migrations() -> None:
             conn.execute(
                 "INSERT INTO schema_flags (key, value, applied_at) VALUES (?, ?, ?)",
                 ("char_index_v3", "1", int(time.time() * 1000)),
+            )
+
+        # v18: apply B-tier capability defaults to agents that spawned with
+        # empty toolsets (e.g., Adam — created after the v15 backfill stamped
+        # its flag but before handle_agents_post wired capability defaults).
+        # Narrower than v15: only touches agents where toolsets is literally
+        # '[]' or NULL, so agents the user has deliberately customised stay
+        # untouched. Idempotent via schema_flags.
+        already_v18 = conn.execute(
+            "SELECT value FROM schema_flags WHERE key = 'agent_b_defaults_v1'"
+        ).fetchone()
+        if not already_v18:
+            empties = conn.execute(
+                "SELECT id, name FROM agents WHERE toolsets IS NULL OR toolsets = '' OR toolsets = '[]'"
+            ).fetchall()
+            if empties:
+                # Import lazily so the migration module stays dependency-lite.
+                try:
+                    from gateway import capabilities as _caps
+                    fixed = 0
+                    for row in empties:
+                        try:
+                            _caps.apply_initial_defaults(row["id"])
+                            fixed += 1
+                        except Exception as exc:
+                            logger.warning(
+                                "agent_b_defaults_v1: agent %s failed: %s",
+                                row["name"], exc,
+                            )
+                    logger.info(
+                        "agent_b_defaults_v1: stamped %d empty-toolset agent(s) with B-tier defaults",
+                        fixed,
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "agent_b_defaults_v1: could not import capabilities: %s — skipping",
+                        exc,
+                    )
+            conn.execute(
+                "INSERT INTO schema_flags (key, value, applied_at) VALUES (?, ?, ?)",
+                ("agent_b_defaults_v1", "1", int(time.time() * 1000)),
+            )
+
+        # v19: add daily_budget_usd column + fallback_route_id column to
+        # existing agents tables. Cost-tracker feature: a cap on how much
+        # a cloud-backed agent can spend per rolling 24h. When breached,
+        # dispatch refuses (or falls back to a local route if one is
+        # configured). Existing agents get NULL (no cap) by default.
+        already_v19 = conn.execute(
+            "SELECT value FROM schema_flags WHERE key = 'agent_budget_columns_v1'"
+        ).fetchone()
+        if not already_v19:
+            # ALTER TABLE ADD COLUMN is idempotent via try/except because
+            # SQLite will raise "duplicate column" on re-run.
+            for col_ddl in (
+                "ALTER TABLE agents ADD COLUMN daily_budget_usd REAL",
+                "ALTER TABLE agents ADD COLUMN fallback_route_id TEXT",
+            ):
+                try:
+                    conn.execute(col_ddl)
+                except Exception as exc:
+                    if "duplicate column" not in str(exc).lower():
+                        logger.warning("v19 migration: %s failed: %s", col_ddl, exc)
+            conn.execute(
+                "INSERT INTO schema_flags (key, value, applied_at) VALUES (?, ?, ?)",
+                ("agent_budget_columns_v1", "1", int(time.time() * 1000)),
+            )
+            logger.info("v19: added daily_budget_usd + fallback_route_id to agents")
+
+        # v16: apply the `browserless` preset to every existing agent so the
+        # local browser tool works out of the box. Pairs with the matching
+        # default in handle_agents_post (new agents get it too) and with the
+        # browserless.yaml preset that targets host.openshell.internal:3000.
+        # Idempotent — skips rows that already have it. Safe even if no
+        # browserless container is running; the network grant just sits there
+        # unused until one is.
+        already_v16 = conn.execute(
+            "SELECT value FROM schema_flags WHERE key = 'browserless_preset_default_v1'"
+        ).fetchone()
+        if not already_v16:
+            import json as _json
+            try:
+                rows = conn.execute(
+                    "SELECT id, applied_presets FROM agents"
+                ).fetchall()
+            except sqlite3.OperationalError:
+                rows = []
+            updated = 0
+            for row in rows:
+                raw = row["applied_presets"] or "[]"
+                try:
+                    presets = _json.loads(raw) if isinstance(raw, str) else list(raw)
+                    if not isinstance(presets, list):
+                        presets = []
+                except (ValueError, TypeError):
+                    presets = []
+                if "browserless" not in presets:
+                    presets.append("browserless")
+                    conn.execute(
+                        "UPDATE agents SET applied_presets = ? WHERE id = ?",
+                        (_json.dumps(presets), row["id"]),
+                    )
+                    updated += 1
+            logger.info(
+                "browserless_preset_default_v1: stamped %d agent(s) with the browserless preset",
+                updated,
+            )
+            conn.execute(
+                "INSERT INTO schema_flags (key, value, applied_at) VALUES (?, ?, ?)",
+                ("browserless_preset_default_v1", "1", int(time.time() * 1000)),
             )
 
         # v15: backfill agents.toolsets when empty. Agents created before
@@ -1128,8 +1273,19 @@ def list_agents(user_id: str = "") -> list[dict]:
 
 def update_agent(agent_id: str, **fields) -> Optional[dict]:
     allowed = {"name", "soul_slug", "model", "description", "shared", "toolsets",
-               "char_index", "model_route_id", "applied_presets"}
+               "char_index", "model_route_id", "applied_presets", "website_blocklist",
+               "daily_budget_usd", "fallback_route_id"}
     updates = {k: v for k, v in fields.items() if k in allowed}
+    # Normalize daily_budget_usd: accept 0/empty as "clear the cap"
+    if "daily_budget_usd" in updates:
+        v = updates["daily_budget_usd"]
+        if v in (None, "", 0, 0.0):
+            updates["daily_budget_usd"] = None
+        else:
+            try:
+                updates["daily_budget_usd"] = max(0.0, float(v))
+            except (TypeError, ValueError):
+                updates["daily_budget_usd"] = None
     if "char_index" in updates:
         ci = updates["char_index"]
         try:
@@ -2669,3 +2825,118 @@ def list_dispatches(
             [*params, limit, offset],
         ).fetchall()
     return [dict(r) for r in rows], total
+
+
+# ── Cost log ─────────────────────────────────────────────────────────────
+# Insert + rollup queries feeding the Costs dashboard. The gateway
+# writes one row per dispatch; the admin endpoint reads aggregates.
+
+def insert_cost_entry(
+    agent_id: str = None,
+    agent_name: str = None,
+    session_id: str = None,
+    task_id: str = None,
+    provider: str = None,
+    model: str = "",
+    input_tokens: int = 0,
+    output_tokens: int = 0,
+    cache_read_tokens: int = 0,
+    cache_write_tokens: int = 0,
+    cost_usd: float = 0.0,
+    pricing_known: bool = False,
+    ts: int = None,
+) -> str:
+    """Record one request's token usage + cost.
+
+    Returns the inserted row id. Safe to call even when pricing is
+    unknown — the row goes in with cost_usd=0 and pricing_known=0 so
+    the dashboard can surface "N requests with unknown pricing" without
+    silently dropping data.
+    """
+    import uuid as _uuid
+    if ts is None:
+        ts = int(time.time() * 1000)
+    row_id = "cost_" + _uuid.uuid4().hex[:18]
+    with _conn() as conn:
+        conn.execute(
+            "INSERT INTO cost_log ("
+            "id, ts, agent_id, agent_name, session_id, task_id, provider, model, "
+            "input_tokens, output_tokens, cache_read_tok, cache_write_tok, "
+            "cost_usd, pricing_known) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (row_id, ts, agent_id, agent_name, session_id, task_id, provider, model,
+             int(input_tokens or 0), int(output_tokens or 0),
+             int(cache_read_tokens or 0), int(cache_write_tokens or 0),
+             float(cost_usd or 0), 1 if pricing_known else 0),
+        )
+    return row_id
+
+
+def cost_rollup(
+    agent_id: str = None,
+    since_ts: int = None,
+    until_ts: int = None,
+) -> dict:
+    """Return summary stats for the Costs dashboard card.
+
+    Shape:
+      {
+        "count": int,                  # total requests in window
+        "total_usd": float,
+        "avg_per_minute_usd": float,   # total / minutes covered
+        "known_price_count": int,
+        "unknown_price_count": int,
+        "by_model": [{"model","count","total_usd"}],
+        "last_request": {...} | None,
+        "largest_request": {...} | None,
+        "window": {"since": ..., "until": ...},
+      }
+    """
+    where = []
+    params: list = []
+    if agent_id:
+        where.append("agent_id = ?"); params.append(agent_id)
+    if since_ts is not None:
+        where.append("ts >= ?"); params.append(since_ts)
+    if until_ts is not None:
+        where.append("ts <= ?"); params.append(until_ts)
+    wc = (" WHERE " + " AND ".join(where)) if where else ""
+
+    with _conn() as conn:
+        row = conn.execute(
+            f"SELECT COUNT(*) as c, COALESCE(SUM(cost_usd),0) as s, "
+            f"MIN(ts) as mn, MAX(ts) as mx, "
+            f"SUM(CASE WHEN pricing_known=1 THEN 1 ELSE 0 END) as kc "
+            f"FROM cost_log{wc}", params,
+        ).fetchone()
+        count = row["c"]
+        total = float(row["s"])
+        mn = row["mn"]; mx = row["mx"]
+        known_count = row["kc"] or 0
+        minutes = max((mx - mn) / 60000, 1) if (mn and mx and count > 0) else 1
+        avg_per_min = total / minutes if count > 0 else 0
+
+        by_model = conn.execute(
+            f"SELECT model, COUNT(*) as count, SUM(cost_usd) as total_usd "
+            f"FROM cost_log{wc} GROUP BY model ORDER BY total_usd DESC LIMIT 10",
+            params,
+        ).fetchall()
+
+        last = conn.execute(
+            f"SELECT * FROM cost_log{wc} ORDER BY ts DESC LIMIT 1", params,
+        ).fetchone()
+        largest = conn.execute(
+            f"SELECT * FROM cost_log{wc} ORDER BY cost_usd DESC LIMIT 1", params,
+        ).fetchone()
+
+    return {
+        "count": count,
+        "total_usd": total,
+        "avg_per_minute_usd": avg_per_min,
+        "known_price_count": known_count,
+        "unknown_price_count": count - known_count,
+        "by_model": [dict(r) for r in by_model],
+        "last_request": dict(last) if last else None,
+        "largest_request": dict(largest) if largest else None,
+        "window": {"since": since_ts, "until": until_ts},
+    }

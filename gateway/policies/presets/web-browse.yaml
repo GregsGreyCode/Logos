@@ -1,0 +1,88 @@
+# General web browsing preset — wildcard outbound HTTPS/HTTP for the
+# in-sandbox Chromium instance.
+#
+# Applied automatically by the "Use the web" capability (see
+# gateway/policies/capabilities.yaml). Needed because agents that browse
+# the web don't know upfront which hosts they'll visit — the firewall
+# needs to permit arbitrary outbound TCP 443 (and 80 for legacy/captive
+# portal redirects) for the Chrome binary. DNS is already allowed by
+# openshell_default.yaml's `dns` policy.
+#
+# Binaries whitelist is tight: only Chrome itself, the agent-browser
+# Node daemon (which spawns Chrome), and the `node` runtime that exec's
+# the daemon. Everything else in the sandbox continues to be default-deny.
+#
+# tls: skip — newer openshell-sandbox auto-MITMs by default and verifies
+# upstream certs against bundled webpki-roots, which fails on common
+# chains (e.g. example.com via Cloudflare → SSL.com → Comodo AAA).
+# `skip` makes the proxy a pure CONNECT tunnel: chrome talks TLS straight
+# to the real site and sees the real cert. Trade-off: no L7 inspection,
+# but the binary+host allowlist still enforces the boundary.
+
+preset:
+  name: web-browse
+  description: "Chromium outbound HTTPS/HTTP for general web browsing"
+
+network_policies:
+  web-browse:
+    name: web-browse
+    endpoints:
+      # OpenShell refuses bare "*" — safety guard against "allow the world".
+      # We enumerate a minimal starter allowlist of sites a general agent
+      # typically needs. Users extend via the "Allowed websites" textarea
+      # on the Web capability in STAMP → P (when that UI lands).
+      #
+      # Categories covered:
+      #   search + knowledge: google, wikipedia, duckduckgo, bing
+      #   dev references:    github, stackoverflow, mdn
+      #   general reference: example, archive.org
+      #   news aggregators:  reddit, news.ycombinator.com
+      # Ports 443 (HTTPS) only — HTTP is legacy + usually redirects to HTTPS
+      # anyway, and permitting it broadens the attack surface.
+      - { host: "example.com",          port: 443, tls: skip, access: full, enforcement: enforce }
+      - { host: "*.example.com",        port: 443, tls: skip, access: full, enforcement: enforce }
+      - { host: "google.com",           port: 443, tls: skip, access: full, enforcement: enforce }
+      - { host: "*.google.com",         port: 443, tls: skip, access: full, enforcement: enforce }
+      # gstatic serves CSS/JS for google search pages; without it the
+      # search results page renders broken and agents misread that as
+      # "Google blocked me" / "bot detection".
+      - { host: "gstatic.com",          port: 443, tls: skip, access: full, enforcement: enforce }
+      - { host: "*.gstatic.com",        port: 443, tls: skip, access: full, enforcement: enforce }
+      - { host: "duckduckgo.com",       port: 443, tls: skip, access: full, enforcement: enforce }
+      - { host: "*.duckduckgo.com",     port: 443, tls: skip, access: full, enforcement: enforce }
+      - { host: "bing.com",             port: 443, tls: skip, access: full, enforcement: enforce }
+      - { host: "*.bing.com",           port: 443, tls: skip, access: full, enforcement: enforce }
+      - { host: "wikipedia.org",        port: 443, tls: skip, access: full, enforcement: enforce }
+      - { host: "*.wikipedia.org",      port: 443, tls: skip, access: full, enforcement: enforce }
+      - { host: "github.com",           port: 443, tls: skip, access: full, enforcement: enforce }
+      - { host: "*.github.com",         port: 443, tls: skip, access: full, enforcement: enforce }
+      - { host: "githubusercontent.com", port: 443, tls: skip, access: full, enforcement: enforce }
+      - { host: "*.githubusercontent.com", port: 443, tls: skip, access: full, enforcement: enforce }
+      - { host: "stackoverflow.com",    port: 443, tls: skip, access: full, enforcement: enforce }
+      - { host: "*.stackoverflow.com",  port: 443, tls: skip, access: full, enforcement: enforce }
+      - { host: "stackexchange.com",    port: 443, tls: skip, access: full, enforcement: enforce }
+      - { host: "*.stackexchange.com",  port: 443, tls: skip, access: full, enforcement: enforce }
+      - { host: "developer.mozilla.org", port: 443, tls: skip, access: full, enforcement: enforce }
+      - { host: "archive.org",          port: 443, tls: skip, access: full, enforcement: enforce }
+      - { host: "*.archive.org",        port: 443, tls: skip, access: full, enforcement: enforce }
+      - { host: "reddit.com",           port: 443, tls: skip, access: full, enforcement: enforce }
+      - { host: "*.reddit.com",         port: 443, tls: skip, access: full, enforcement: enforce }
+      - { host: "news.ycombinator.com", port: 443, tls: skip, access: full, enforcement: enforce }
+      # ── Reliable structured-data APIs (no bot detection, no CAPTCHA) ──
+      # Prefer these over scraping when the data is structured. Free,
+      # no-auth tier is enough for typical agent queries.
+      - { host: "api.coingecko.com",          port: 443, tls: skip, access: full, enforcement: enforce }   # crypto prices: /api/v3/simple/price?ids=ripple&vs_currencies=gbp
+      - { host: "api.duckduckgo.com",         port: 443, tls: skip, access: full, enforcement: enforce }   # instant answers: /?q=…&format=json
+      - { host: "wttr.in",                    port: 443, tls: skip, access: full, enforcement: enforce }   # weather: /London?format=j1
+      - { host: "html.duckduckgo.com",        port: 443, tls: skip, access: full, enforcement: enforce }   # JS-free DDG search HTML — dodges most fingerprinting
+      - { host: "query1.finance.yahoo.com",   port: 443, tls: skip, access: full, enforcement: enforce }   # stock quotes: /v7/finance/chart/AAPL?range=1d (no auth)
+      - { host: "query2.finance.yahoo.com",   port: 443, tls: skip, access: full, enforcement: enforce }   # stock summary: /v10/finance/quoteSummary/AAPL?modules=price
+    binaries:
+      # Explicit paths (no glob) — chromium version pinned to the
+      # one baked into hermes-sandbox:m12. Revisit when bumping the
+      # playwright chromium pin (see Dockerfile's PLAYWRIGHT_BROWSERS_PATH).
+      - { path: /usr/local/share/ms-playwright/chromium-1217/chrome-linux64/chrome }
+      - { path: /usr/local/share/ms-playwright/chromium_headless_shell-1217/chrome-linux64/headless_shell }
+      # agent-browser Rust CLI + its Node daemon runtime.
+      - { path: /usr/local/lib/node_modules/agent-browser/bin/agent-browser-linux-x64 }
+      - { path: /usr/bin/node }

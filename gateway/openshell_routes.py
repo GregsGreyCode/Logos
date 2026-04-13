@@ -275,6 +275,68 @@ def _resolve_lmstudio_provider_args() -> tuple[str, str]:
     return f"OPENAI_API_KEY={cred_value}", f"OPENAI_BASE_URL={base_url}"
 
 
+# Mapping of Logos provider names → (OpenShell --type, credential env-var name,
+# default base URL). The OpenShell `--type anthropic` provider knows how to
+# speak Anthropic's API natively; openrouter is OpenAI-compatible so it uses
+# `--type openai` with the OpenRouter base URL.
+_CLOUD_PROVIDER_PROFILES = {
+    "anthropic":  {"openshell_type": "anthropic", "cred_key": "ANTHROPIC_API_KEY", "default_base": "https://api.anthropic.com"},
+    "openai":     {"openshell_type": "openai",    "cred_key": "OPENAI_API_KEY",    "default_base": "https://api.openai.com/v1"},
+    "openrouter": {"openshell_type": "openai",    "cred_key": "OPENAI_API_KEY",    "default_base": "https://openrouter.ai/api/v1"},
+}
+
+
+def _resolve_provider_args(provider: str) -> tuple[str, str, str]:
+    """Resolve (openshell_type, cred_arg, config_arg) for any provider.
+
+    Dispatches by Logos provider name:
+      - lmstudio / ollama: existing local-machine logic via
+        ``_resolve_lmstudio_provider_args``. Returns OpenShell type=openai
+        with the registered machine's URL + key.
+      - anthropic / openai / openrouter: reads from the ``cloud_providers``
+        table (where the user stored their API key via Config → Tools).
+        Returns the appropriate OpenShell --type with provider-specific
+        credential env-var name.
+
+    Raises RuntimeError if the provider isn't configured (no enabled
+    cloud_providers row with an api_key for cloud providers, or no
+    machine for local providers).
+    """
+    if provider in ("lmstudio", "ollama"):
+        cred_arg, config_arg = _resolve_lmstudio_provider_args()
+        return "openai", cred_arg, config_arg
+
+    profile = _CLOUD_PROVIDER_PROFILES.get(provider)
+    if not profile:
+        raise RuntimeError(
+            f"Unknown provider {provider!r}. Supported: lmstudio, ollama, "
+            "anthropic, openai, openrouter."
+        )
+
+    # Find the matching enabled cloud_providers row.
+    rows = auth_db.list_cloud_providers() if hasattr(auth_db, "list_cloud_providers") else []
+    prov = next(
+        (p for p in rows if p.get("provider") == provider and p.get("enabled")),
+        None,
+    )
+    if not prov or not prov.get("api_key"):
+        raise RuntimeError(
+            f"No enabled '{provider}' cloud provider with an API key. "
+            f"Add one via Config → Tools → {provider.capitalize()}."
+        )
+
+    base_url = (prov.get("base_url") or "").rstrip("/") or profile["default_base"]
+    cred_arg = f"{profile['cred_key']}={prov['api_key']}"
+    # OpenShell convention: config keys mirror the credential's prefix
+    # (OPENAI_BASE_URL for the openai-compatible types, ANTHROPIC_BASE_URL
+    # for the anthropic type). Anthropic only needs the URL when pointing
+    # at a non-default endpoint, but always passing it keeps the wiring
+    # symmetric with LM Studio.
+    config_key = profile["cred_key"].replace("_API_KEY", "_BASE_URL")
+    config_arg = f"{config_key}={base_url}"
+    return profile["openshell_type"], cred_arg, config_arg
+
+
 def ensure_provider_configured(gateway_name: str, provider_name: str) -> bool:
     """Re-sync an OpenShell provider's credential + config from auth.db.
 
@@ -312,7 +374,13 @@ def ensure_provider_configured(gateway_name: str, provider_name: str) -> bool:
     Logged but not raised so the spawn flow can proceed either way.
     """
     try:
-        cred_arg, config_arg = _resolve_lmstudio_provider_args()
+        # provider_name is the same string we used at provision time
+        # (lmstudio / anthropic / openai / openrouter), so it dispatches
+        # cleanly through the same resolver. Earlier this hardcoded
+        # _resolve_lmstudio_provider_args, which silently overwrote
+        # cloud-provider creds with LM Studio's on every spawn — that's
+        # how we ended up with an "anthropic" provider pointing at port 1234.
+        _osh_type, cred_arg, config_arg = _resolve_provider_args(provider_name)
     except RuntimeError as exc:
         logger.error(
             "Cannot sync provider '%s' on gateway '%s' — %s",
@@ -486,21 +554,27 @@ def finish_provisioning(route_id: str, set_as_default: bool = False) -> dict:
 
     # Step 3: Register the provider on the new gateway.
     #
-    # CRITICAL: must pass BOTH the credential (OPENAI_API_KEY) AND the
-    # config (OPENAI_BASE_URL) so the new gateway knows where to send
-    # inference requests. Earlier code only passed --credential, leaving
-    # the new gateway with no LM Studio host URL — workers connected,
-    # made their first chat-completions call, got a connection error,
-    # and crashed within ~16 seconds of registering. ``ensure_provider_configured``
-    # heals routes provisioned before this fix; new routes get it from
-    # ``_resolve_lmstudio_provider_args`` directly.
-    cred_arg, config_arg = _resolve_lmstudio_provider_args()
+    # CRITICAL: must pass BOTH the credential AND the base URL so the new
+    # gateway knows where to send inference requests. ``_resolve_provider_args``
+    # dispatches by provider name — local providers (lmstudio/ollama) get
+    # the registered machine's URL + key; cloud providers (anthropic/openai/
+    # openrouter) get the api_key + base URL stored in cloud_providers.
+    # Earlier code hardcoded the LM Studio resolver + ``--type openai``
+    # which silently broke ALL cloud-provider routes — they'd register an
+    # openai-typed provider pointing at LM Studio's URL with LM Studio's
+    # placeholder token, and the first inference call would 400 because
+    # LM Studio doesn't have e.g. ``claude-sonnet-4-6``.
+    try:
+        openshell_type, cred_arg, config_arg = _resolve_provider_args(provider)
+    except RuntimeError as exc:
+        _fail(str(exc), cleanup_gateway=True)
+        raise
 
     try:
         _run_openshell(
             "provider", "create",
             "--name", provider,
-            "--type", "openai",
+            "--type", openshell_type,
             "--credential", cred_arg,
             "--config", config_arg,
             gateway=name,

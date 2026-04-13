@@ -1,0 +1,277 @@
+"""Capabilities — user-facing collapse of toolsets + presets + credentials.
+
+End users don't think "is the browserless preset applied" — they think "can
+my agent browse the web". This module loads the human-readable capability
+catalogue from ``gateway/policies/capabilities.yaml`` and exposes:
+
+  * ``load_catalogue()`` — parsed YAML, cached after first load.
+  * ``compute_state(agent_id)`` — for each capability, returns
+    {enabled, missing_creds, ready} so the UI knows which toggles are on,
+    off, or off-but-blocked-by-missing-credentials.
+  * ``apply(agent_id, cap_id, enabled)`` — atomically toggles all toolsets +
+    presets the capability bundles. Returns the recomputed state so the
+    caller (the toggle endpoint) can re-render without a follow-up GET.
+
+The capability YAML is the single source of truth for the bundling. Do
+not call ``policies.apply_preset`` / ``toggleToolset`` directly from the
+capability layer — go through ``apply()`` so the bundling stays atomic.
+"""
+from __future__ import annotations
+
+import json
+import logging
+import os
+from pathlib import Path
+from typing import Any, Optional
+
+import yaml
+
+from gateway.auth import db as auth_db
+from gateway import policies as gp
+
+logger = logging.getLogger(__name__)
+
+_CATALOGUE_PATH = Path(__file__).parent / "policies" / "capabilities.yaml"
+_cached: Optional[dict] = None
+
+
+def load_catalogue() -> dict:
+    """Load + cache the capability YAML. Re-reads only on import (cheap)."""
+    global _cached
+    if _cached is None:
+        try:
+            with open(_CATALOGUE_PATH) as f:
+                _cached = yaml.safe_load(f) or {}
+        except FileNotFoundError:
+            logger.warning("capabilities.yaml not found at %s — empty catalogue", _CATALOGUE_PATH)
+            _cached = {"version": 1, "always_on": [], "capabilities": [], "power_tools": []}
+    return _cached
+
+
+def _all_caps_flat() -> list[dict]:
+    """All capabilities (always_on + capabilities + power_tools) flat."""
+    cat = load_catalogue()
+    return [
+        *(cat.get("always_on") or []),
+        *(cat.get("capabilities") or []),
+        *(cat.get("power_tools") or []),
+    ]
+
+
+def find(cap_id: str) -> Optional[dict]:
+    """Return one capability by id, or None."""
+    return next((c for c in _all_caps_flat() if c.get("id") == cap_id), None)
+
+
+def _agent_state(agent_id: str) -> tuple[set[str], set[str]]:
+    """Read agent's current (toolsets, presets) as sets."""
+    agent = auth_db.get_agent(agent_id) or {}
+    raw_ts = agent.get("toolsets") or "[]"
+    try:
+        toolsets = set(json.loads(raw_ts) if isinstance(raw_ts, str) else raw_ts)
+    except (json.JSONDecodeError, TypeError):
+        toolsets = set()
+    presets = set(gp.get_applied_presets(agent_id))
+    return toolsets, presets
+
+
+def _creds_present(creds: list[str], any_one: bool = False) -> tuple[bool, list[str]]:
+    """Check which required env vars are set. Returns (ok, missing).
+
+    ``any_one=True`` (legacy ``creds_any``): treat the list as alternatives
+    where any single one satisfies the requirement. Used to be relevant
+    for the merged Cloud AI capability — kept for forward compatibility
+    if a capability ever wants this semantics again.
+    """
+    if not creds:
+        return True, []
+    if any_one:
+        ok = any(os.environ.get(k) for k in creds)
+        missing = [] if ok else creds
+    else:
+        missing = [k for k in creds if not os.environ.get(k)]
+        ok = not missing
+    return ok, missing
+
+
+def compute_state(agent_id: str) -> dict:
+    """Return the per-capability enabled/ready map for one agent.
+
+    Output shape (consumed by the UI):
+
+        {
+          "always_on": [{id, name, icon, description, ...}, ...],
+          "capabilities": [
+            {
+              id, name, icon, description, trust, trust_note,
+              toolsets, presets, creds, layer1,
+              enabled: bool,         # all toolsets+presets currently applied?
+              ready: bool,           # creds requirement satisfied?
+              missing_creds: [...],  # blocker for going from off → ready
+            },
+            ...
+          ],
+          "power_tools": [...same shape as capabilities...],
+        }
+
+    A capability is ``enabled`` when every toolset and every preset it
+    declares is currently applied to the agent (full bundle, not partial).
+    A capability is ``ready`` when its required env vars are present, so
+    the UI can disable the toggle and surface a "needs API key" hint
+    rather than letting the user toggle into a known-broken state.
+    """
+    toolsets_have, presets_have = _agent_state(agent_id)
+    cat = load_catalogue()
+
+    def annotate(cap: dict) -> dict:
+        ts = set(cap.get("toolsets") or [])
+        ps = set(cap.get("presets") or [])
+        creds = cap.get("creds") or []
+        enabled = ts.issubset(toolsets_have) and ps.issubset(presets_have)
+        ready, missing = _creds_present(creds, any_one=bool(cap.get("creds_any")))
+        out = dict(cap)
+        out["enabled"] = enabled
+        out["ready"] = ready
+        out["missing_creds"] = missing
+        return out
+
+    return {
+        "version": cat.get("version", 1),
+        "always_on": [annotate(c) for c in (cat.get("always_on") or [])],
+        "capabilities": [annotate(c) for c in (cat.get("capabilities") or [])],
+        "power_tools": [annotate(c) for c in (cat.get("power_tools") or [])],
+    }
+
+
+def apply(agent_id: str, cap_id: str, enabled: bool) -> dict:
+    """Atomically apply or remove all toolsets + presets for one capability.
+
+    Returns the recomputed full state (same shape as ``compute_state``)
+    so the toggle endpoint can return it directly and the UI can re-render
+    without a follow-up GET.
+
+    Bundling: a single capability may map to multiple toolsets and presets;
+    we apply them all (or remove them all) so the agent never lands in a
+    half-state where e.g. the toolset is enabled but the matching network
+    grant is missing.
+    """
+    cap = find(cap_id)
+    if not cap:
+        raise ValueError(f"unknown_capability:{cap_id}")
+
+    agent = auth_db.get_agent(agent_id)
+    if not agent:
+        raise ValueError(f"agent_not_found:{agent_id}")
+
+    target_toolsets = set(cap.get("toolsets") or [])
+    target_presets = set(cap.get("presets") or [])
+
+    # ── Toolsets: read–mutate–write the JSON column on agents.toolsets
+    raw_ts = agent.get("toolsets") or "[]"
+    try:
+        current_ts = json.loads(raw_ts) if isinstance(raw_ts, str) else list(raw_ts)
+        if not isinstance(current_ts, list):
+            current_ts = []
+    except json.JSONDecodeError:
+        current_ts = []
+    current_ts_set = set(current_ts)
+    if enabled:
+        new_ts = sorted(current_ts_set | target_toolsets)
+    else:
+        # Don't strip a toolset that another (still-enabled) capability
+        # also wants. Compute "still wanted" by walking the catalogue.
+        keep = _other_capabilities_still_using_toolsets(agent_id, cap_id, "toolsets")
+        new_ts = sorted((current_ts_set - target_toolsets) | keep)
+    if new_ts != current_ts:
+        auth_db.update_agent(agent_id, toolsets=json.dumps(new_ts))
+
+    # ── Presets: each one round-trips through gateway.policies which also
+    #    pushes the merged effective policy to the running sandbox.
+    if enabled:
+        for preset in target_presets:
+            try:
+                gp.apply_preset(agent_id, preset)
+            except gp.PresetNotFound:
+                logger.warning(
+                    "capability %s references unknown preset %s — skipping",
+                    cap_id, preset,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "capability %s: apply_preset(%s) failed: %s",
+                    cap_id, preset, exc,
+                )
+    else:
+        keep_presets = _other_capabilities_still_using_toolsets(agent_id, cap_id, "presets")
+        for preset in target_presets:
+            if preset in keep_presets:
+                continue
+            try:
+                gp.remove_preset(agent_id, preset)
+            except Exception as exc:
+                logger.warning(
+                    "capability %s: remove_preset(%s) failed: %s",
+                    cap_id, preset, exc,
+                )
+
+    return compute_state(agent_id)
+
+
+def apply_initial_defaults(agent_id: str) -> list[str]:
+    """Apply B-tier defaults to a freshly-created agent.
+
+    B-tier = "safe by default, dangerous by choice":
+      - every capability in ``always_on`` (local-only internals: memory,
+        files, skills, schedule, plan, clarify, delegate, world)
+      - every capability flagged ``default_on_create: true`` in the YAML
+        (today: web + code_execution — both local-only, broadly useful)
+
+    Called once from ``handle_agents_post`` so every new agent spawns
+    with a useful toolbox instead of an empty one. Third-party
+    capabilities (anything that sends data outside the machine) stay
+    off until the user explicitly toggles them in STAMP → P.
+
+    Returns the list of capability ids applied so the caller can log
+    them for audit / debugging.
+    """
+    cat = load_catalogue()
+    applied: list[str] = []
+    for cap in (cat.get("always_on") or []):
+        try:
+            apply(agent_id, cap["id"], True)
+            applied.append(cap["id"])
+        except Exception as exc:
+            logger.warning(
+                "apply_initial_defaults: always_on %s failed: %s",
+                cap.get("id"), exc,
+            )
+    for cap in (cat.get("capabilities") or []):
+        if cap.get("default_on_create"):
+            try:
+                apply(agent_id, cap["id"], True)
+                applied.append(cap["id"])
+            except Exception as exc:
+                logger.warning(
+                    "apply_initial_defaults: default_on_create %s failed: %s",
+                    cap.get("id"), exc,
+                )
+    return applied
+
+
+def _other_capabilities_still_using_toolsets(agent_id: str, exclude_cap_id: str, key: str) -> set[str]:
+    """Compute the set of toolsets/presets that OTHER enabled capabilities
+    on this agent still want, so we don't strip a shared dependency when
+    the user toggles one capability off.
+
+    `key` is "toolsets" or "presets".
+    """
+    state = compute_state(agent_id)
+    keep: set[str] = set()
+    for bucket in ("always_on", "capabilities", "power_tools"):
+        for c in state.get(bucket) or []:
+            if c.get("id") == exclude_cap_id:
+                continue
+            # always_on is always wanted; on/off doesn't matter here.
+            if bucket == "always_on" or c.get("enabled"):
+                keep.update(c.get(key) or [])
+    return keep

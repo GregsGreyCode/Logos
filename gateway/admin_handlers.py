@@ -1,5 +1,6 @@
 """Admin handlers: machines, routing policies, user-policy assignment, routing resolver."""
 
+import json
 import logging
 import os
 import time as _time
@@ -481,6 +482,81 @@ async def handle_cloud_providers_test(request: web.Request) -> web.Response:
     return web.json_response(result)
 
 
+async def handle_cloud_provider_models(request: web.Request) -> web.Response:
+    """Fetch the live model catalog from a configured cloud provider.
+
+    Used by the model-route provisioning UI so the dropdown shows
+    whatever models the provider currently exposes (instead of a
+    hardcoded list that rots as new models ship). On failure the UI
+    falls back to a small hardcoded list of known-good IDs so the
+    user can still type-pick if the provider's /v1/models is unreachable.
+    """
+    provider = request.rel_url.query.get("provider", "").strip().lower()
+    if provider not in ("anthropic", "openai", "openrouter"):
+        return web.json_response(
+            {"models": [], "error": f"dynamic listing unsupported for provider {provider!r}"},
+            status=200,
+        )
+
+    # Find the active cloud provider record for this provider name. We
+    # look up by provider type so the UI doesn't have to know the row id.
+    rows = auth_db.list_cloud_providers() or []
+    prov = next(
+        (p for p in rows if p.get("provider") == provider and p.get("enabled")),
+        None,
+    )
+    if not prov or not prov.get("api_key"):
+        return web.json_response(
+            {"models": [], "error": f"no enabled {provider} provider with an API key"},
+            status=200,
+        )
+
+    api_key = prov["api_key"]
+    base_url = (prov.get("base_url") or "").rstrip("/") or {
+        "anthropic":  "https://api.anthropic.com",
+        "openai":     "https://api.openai.com",
+        "openrouter": "https://openrouter.ai/api",
+    }[provider]
+
+    headers = {"Accept": "application/json"}
+    if provider == "anthropic":
+        headers["x-api-key"] = api_key
+        headers["anthropic-version"] = "2023-06-01"
+        url = f"{base_url}/v1/models"
+    elif provider == "openai":
+        headers["Authorization"] = f"Bearer {api_key}"
+        url = f"{base_url}/v1/models"
+    else:  # openrouter
+        headers["Authorization"] = f"Bearer {api_key}"
+        url = f"{base_url}/v1/models"
+
+    try:
+        timeout = aiohttp.ClientTimeout(total=10)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.get(url, headers=headers) as resp:
+                if resp.status != 200:
+                    body = (await resp.text())[:200]
+                    return web.json_response(
+                        {"models": [], "error": f"HTTP {resp.status}: {body}"},
+                        status=200,
+                    )
+                data = await resp.json()
+    except Exception as exc:
+        return web.json_response(
+            {"models": [], "error": f"fetch failed: {exc}"},
+            status=200,
+        )
+
+    # Normalize: each provider returns the catalog in a different shape.
+    if provider == "anthropic":
+        # {"data": [{"id": "claude-opus-4-6", "type": "model", ...}], ...}
+        models = [m["id"] for m in (data.get("data") or []) if m.get("id")]
+    else:
+        # OpenAI-compatible: {"data": [{"id": "gpt-5", ...}], ...}
+        models = [m["id"] for m in (data.get("data") or []) if m.get("id")]
+    return web.json_response({"models": sorted(models), "provider": provider})
+
+
 # ── Dispatch ledger (M8 Phase B) ─────────────────────────────────────────────
 
 async def handle_dispatches_list(request: web.Request) -> web.Response:
@@ -669,6 +745,24 @@ async def handle_agents_post(request: web.Request) -> web.Response:
         model_route_id=model_route_id,
     )
 
+    # B-tier defaults: apply always_on capabilities + any flagged
+    # default_on_create in capabilities.yaml (today: web + code_execution).
+    # Replaces the old "auto-apply browserless preset" path — that was
+    # the host-bridge architecture; m12's sandbox image bundles local
+    # Chromium so no network preset is needed for browser_navigate.
+    try:
+        from gateway import capabilities as _caps
+        _applied = _caps.apply_initial_defaults(agent["id"])
+        logger.info(
+            "create_agent(%s): applied B-tier defaults: %s",
+            agent["id"], _applied,
+        )
+    except Exception as _exc:
+        logger.warning(
+            "create_agent(%s): apply_initial_defaults failed: %s",
+            agent["id"], _exc,
+        )
+
     # If OpenShell runtime is active, spawn a sandbox for this agent.
     # `executor.spawn()` runs `openshell sandbox create` synchronously,
     # which can take >60s while the underlying k8s Sandbox CR provisions.
@@ -720,7 +814,8 @@ async def handle_agents_patch(request: web.Request) -> web.Response:
     body = await request.json()
     import json as _json
     updates = {}
-    for k in ("name", "soul_slug", "model", "description", "shared", "char_index"):
+    for k in ("name", "soul_slug", "model", "description", "shared", "char_index",
+              "daily_budget_usd", "fallback_route_id"):
         if k in body:
             updates[k] = body[k]
     if "toolsets" in body:
@@ -981,6 +1076,22 @@ async def handle_agent_toolsets_toggle(request: web.Request) -> web.Response:
         "agent_toolsets_toggle(%s, %s=%s): enabled=%s",
         aid, toolset, enabled, current,
     )
+    # Push the new config to the running sandbox so the change takes
+    # effect on the NEXT dispatch (no sandbox restart needed). Plan
+    # A-prime spawns sandbox_worker.py per dispatch; each subprocess
+    # re-reads /tmp/hermes/instance-config.json at startup, so a fresh
+    # upload here is enough. Best-effort — if the sandbox isn't running
+    # yet (provisioning) or the gateway isn't reachable, the next
+    # spawn will pick up the new toolsets from the DB anyway.
+    executor = request.app.get("executor")
+    if executor and hasattr(executor, "refresh_instance_config"):
+        try:
+            executor.refresh_instance_config(agent["name"])
+        except Exception as exc:
+            logger.warning(
+                "agent_toolsets_toggle: refresh_instance_config failed for %s: %s",
+                agent["name"], exc,
+            )
     return web.json_response({"enabled": current})
 
 
@@ -1048,6 +1159,115 @@ async def handle_agent_presets_toggle(request: web.Request) -> web.Response:
         aid, preset, enabled, applied,
     )
     return web.json_response({"applied": applied})
+
+
+# ── Capabilities (user-facing collapse of toolsets+presets) ──────────────────
+
+async def handle_agent_capabilities_get(request: web.Request) -> web.Response:
+    """GET /admin/agents/{id}/capabilities — full capability state for the UI.
+
+    Returns the catalogue (always_on / capabilities / power_tools) annotated
+    with per-agent enabled/ready/missing_creds. UI consumes this to render
+    the P dropdown without needing any further round-trips.
+    """
+    aid = request.match_info["id"]
+    agent = auth_db.get_agent(aid)
+    if not agent:
+        return web.json_response({"error": "not_found"}, status=404)
+    try:
+        from gateway import capabilities as _caps
+        return web.json_response(_caps.compute_state(aid))
+    except Exception as exc:
+        logger.exception("capabilities GET failed for %s", aid)
+        return web.json_response({"error": str(exc)}, status=500)
+
+
+async def handle_agent_capabilities_toggle(request: web.Request) -> web.Response:
+    """POST /admin/agents/{id}/capabilities/toggle
+
+    Body: ``{"capability": "<id>", "enabled": <bool>}``
+
+    Atomically applies or removes ALL toolsets + presets the capability
+    bundles. Returns the recomputed full state so the UI re-renders in
+    one call. Also pushes the resulting config to the running sandbox
+    via ``executor.refresh_instance_config`` so the next dispatch
+    already has the new tools available.
+    """
+    aid = request.match_info["id"]
+    agent = auth_db.get_agent(aid)
+    if not agent:
+        return web.json_response({"error": "not_found"}, status=404)
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "invalid_json"}, status=400)
+    cap_id = (body.get("capability") or "").strip()
+    enabled = bool(body.get("enabled"))
+    if not cap_id:
+        return web.json_response({"error": "capability is required"}, status=400)
+    try:
+        from gateway import capabilities as _caps
+        new_state = _caps.apply(aid, cap_id, enabled)
+    except ValueError as exc:
+        return web.json_response({"error": str(exc)}, status=400)
+    except Exception as exc:
+        logger.exception("capability toggle failed for %s/%s", aid, cap_id)
+        return web.json_response({"error": str(exc)}, status=500)
+
+    # Push the new config to the running sandbox so the next dispatch has it
+    # — same hook the toolset toggle handler uses.
+    executor = request.app.get("executor")
+    if executor and hasattr(executor, "refresh_instance_config"):
+        try:
+            executor.refresh_instance_config(agent["name"])
+        except Exception as exc:
+            logger.warning(
+                "capability toggle: refresh_instance_config(%s) failed: %s",
+                agent["name"], exc,
+            )
+    return web.json_response(new_state)
+
+
+async def handle_agent_website_blocklist_put(request: web.Request) -> web.Response:
+    """PUT /admin/agents/{id}/website-blocklist
+
+    Body: ``{"patterns": ["*.example.com", "!facebook.com"], "enabled": <bool>}``
+
+    Layer 1 of URL control — patterns the local browser tool checks before
+    every navigation (hermes's tools/website_policy.py). Saved per-agent
+    in the DB and pushed to the sandbox via instance-config. Glob syntax;
+    leading ``!`` flips the entry from allow → block.
+    """
+    aid = request.match_info["id"]
+    agent = auth_db.get_agent(aid)
+    if not agent:
+        return web.json_response({"error": "not_found"}, status=404)
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "invalid_json"}, status=400)
+    raw = body.get("patterns") or []
+    if isinstance(raw, str):
+        # accept newline-separated text from a textarea
+        patterns = [p.strip() for p in raw.splitlines() if p.strip() and not p.strip().startswith("#")]
+    elif isinstance(raw, list):
+        patterns = [str(p).strip() for p in raw if str(p).strip()]
+    else:
+        return web.json_response({"error": "patterns must be list or string"}, status=400)
+    enabled = bool(body.get("enabled", True))
+    config = {"enabled": enabled, "patterns": patterns}
+    auth_db.update_agent(aid, website_blocklist=json.dumps(config))
+    # Push to the sandbox immediately
+    executor = request.app.get("executor")
+    if executor and hasattr(executor, "refresh_instance_config"):
+        try:
+            executor.refresh_instance_config(agent["name"])
+        except Exception as exc:
+            logger.warning(
+                "website_blocklist PUT: refresh_instance_config(%s) failed: %s",
+                agent["name"], exc,
+            )
+    return web.json_response({"ok": True, **config})
 
 
 # ── Routing policies ──────────────────────────────────────────────────────────
@@ -1621,3 +1841,55 @@ async def handle_routing_log(request: web.Request) -> web.Response:
         limit=limit,
     )
     return web.json_response({"entries": rows, "total": total, "page": page, "limit": limit})
+
+
+async def handle_costs(request: web.Request) -> web.Response:
+    """GET /admin/costs — rollup stats for the Costs dashboard.
+
+    Query params:
+      agent_id — filter to a specific agent (optional)
+      window   — "1h" | "24h" | "7d" | "30d" | "all" (default 24h)
+
+    Returns aggregated counts, total/average USD, last/largest request,
+    and a by-model breakdown. Designed for a single dashboard render —
+    the UI polls this every few seconds while the Activity tab is open.
+    """
+    import time as _time
+    agent_id = request.rel_url.query.get("agent_id") or None
+    window = (request.rel_url.query.get("window") or "24h").lower()
+    now_ms = int(_time.time() * 1000)
+    deltas = {"1h": 3600, "24h": 86400, "7d": 86400 * 7, "30d": 86400 * 30}
+    since = None
+    if window != "all":
+        since = now_ms - (deltas.get(window, 86400) * 1000)
+    return web.json_response(auth_db.cost_rollup(
+        agent_id=agent_id, since_ts=since, until_ts=now_ms,
+    ))
+
+
+async def handle_pricing_status(request: web.Request) -> web.Response:
+    """GET /admin/pricing/status — pricing catalogue health."""
+    from gateway import pricing
+    return web.json_response(pricing.catalogue_summary())
+
+
+async def handle_pricing_refresh(request: web.Request) -> web.Response:
+    """POST /admin/pricing/refresh — force re-fetch from OpenRouter."""
+    from gateway import pricing
+    count = pricing.ensure_loaded(force_refresh=True)
+    return web.json_response({"models_loaded": count, **pricing.catalogue_summary()})
+
+
+async def handle_spawn_stats(request: web.Request) -> web.Response:
+    """Return aggregated sandbox spawn-duration stats.
+
+    Read by the chat UI to render an honest "this usually takes ~Ns" hint
+    while a sandbox is provisioning, instead of a hardcoded guess. Two
+    buckets: warm (image already in cluster) vs cold (image had to be
+    imported — typical when switching models into a fresh cluster).
+
+    Returns null medians when fewer than `MIN_FOR_LEARNED` samples exist
+    in a bucket; the UI then falls back to its hardcoded copy.
+    """
+    from gateway import spawn_metrics
+    return web.json_response(spawn_metrics.stats())

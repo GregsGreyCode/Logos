@@ -672,17 +672,27 @@ export class AgentSprite {
     if (this.soulLabel) targets.push(this.soulLabel);
     if (this.logoBg) targets.push(this.logoBg);
     if (this.tierGlyph) targets.push(this.tierGlyph);
+    let _destroyed = false;
+    const _doDestroy = () => {
+      if (_destroyed) return;
+      _destroyed = true;
+      try { this.destroy(); } catch (_) {}
+      if (onComplete) onComplete();
+    };
     this.scene.tweens.add({
       targets,
       y: '-=30',
       alpha: 0,
       duration: 1500,
       ease: 'Sine.easeOut',
-      onComplete: () => {
-        this.destroy();
-        if (onComplete) onComplete();
-      },
+      onComplete: _doDestroy,
     });
+    // Safety fallback — if the tween doesn't fire onComplete (scene
+    // suspended, error in a callback, sprite already torn down by the
+    // time it runs, etc.), force destroy after 2s so a deleted agent
+    // never lingers visibly on screen. Catches the "animation failed"
+    // case the user reported where deleted sprites stayed up forever.
+    setTimeout(_doDestroy, 2000);
   }
 }
 
