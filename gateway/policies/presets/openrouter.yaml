@@ -1,0 +1,32 @@
+# OpenRouter access preset — multi-model API gateway.
+#
+# Enables vision_analyze and mixture_of_agents tools, which use the
+# OpenRouter API to access models from multiple providers (Anthropic,
+# OpenAI, Google, Meta, etc.) through a single endpoint.
+#
+# Apply via:
+#   gateway.policies.apply_preset(agent_id, "openrouter")
+#
+# Requires OPENROUTER_API_KEY.
+
+preset:
+  name: openrouter
+  description: "OpenRouter multi-model API (vision, MoA)"
+
+network_policies:
+  openrouter:
+    name: openrouter
+    endpoints:
+      - host: openrouter.ai
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        tls: terminate
+        access: full
+    binaries:
+      - { path: /app/venv/bin/python }
+      - { path: /app/venv/bin/python3 }
+      - { path: /app/venv/bin/python3.11 }
+      - { path: /app/venv/bin/python3.12 }
+      - { path: /usr/bin/python3 }
+      - { path: /usr/bin/python3.13 }

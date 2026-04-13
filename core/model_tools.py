@@ -95,6 +95,7 @@ def _discover_tools():
         "tools.bug_notes_tool",
         "tools.knowledge_tool",
         "tools.workflow_tool",
+        "tools.world_tool",
         # Gateway MCP access tool — request_mcp_access + get_mcp_catalogue
         # Always registered so agents can request MCP access regardless of mode.
         "tools.mcp_access_tool",

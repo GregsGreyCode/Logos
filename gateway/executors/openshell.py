@@ -96,33 +96,22 @@ _STATE_LOCK_FILE = _HERMES_HOME / "openshell_instances.lock"
 # get cleaned up on the next list_instances() pass.
 _PRUNE_GRACE_SECONDS = 90.0
 
-# Default sandbox image source. Two modes:
-#   1. A pre-built image tag (e.g. "ghcr.io/myorg/hermes-sandbox:1.0") — used
-#      when the image is published to a registry the cluster can pull from.
-#   2. An absolute path to a Dockerfile — OpenShell builds and imports it
-#      into the gateway on demand. Used for dev/local and one-off setups.
-#
-# We default to mode #2 by computing the path to docker/Dockerfile.hermes-sandbox
-# in the repo (../../docker/ relative to this file). Override either with the
-# LOGOS_OPENSHELL_IMAGE env var.
+# Default sandbox image. M11: references a pre-built image tag that exists
+# in the local Docker daemon (built from docker/Dockerfile.hermes-upstream).
+# The spawn flow ensures the image is imported into the target OpenShell
+# cluster's containerd before creating the sandbox (see _ensure_image_in_cluster).
+# Override with the LOGOS_OPENSHELL_IMAGE env var.
 _REPO_ROOT = Path(__file__).parent.parent.parent
-_BUNDLED_DOCKERFILE = _REPO_ROOT / "docker" / "Dockerfile.hermes-sandbox"
-_DEFAULT_IMAGE = os.getenv(
-    "LOGOS_OPENSHELL_IMAGE",
-    str(_BUNDLED_DOCKERFILE) if _BUNDLED_DOCKERFILE.exists() else "hermes-sandbox:local",
-)
+_DEFAULT_IMAGE = os.getenv("LOGOS_OPENSHELL_IMAGE", "hermes-sandbox:m11")
+
+# Logos agent image registry. When set, the spawn flow will `docker pull`
+# from this registry before importing into the cluster. This ensures images
+# persist across containerd garbage collection cycles. Users will eventually
+# browse and install agent images from a UI backed by this registry.
+_REGISTRY_URL = os.getenv("LOGOS_REGISTRY_URL", "localhost:5000")
 
 # Path to the default egress policy applied to every sandbox.
 _DEFAULT_POLICY = Path(__file__).parent.parent / "policies" / "openshell_default.yaml"
-
-# Gateway port — must match what Logos is listening on
-_GATEWAY_PORT = int(
-    os.getenv("LOGOS_PORT") or os.getenv("HERMES_PORT") or "8091"
-)
-
-# How long to wait for the worker to register after sandbox creation
-_WORKER_REGISTER_TIMEOUT = 60
-
 
 # ── State persistence ──────────────────────────────────────────────────────
 
@@ -166,6 +155,75 @@ def _state_lock() -> Iterator[None]:
         except OSError:
             pass
         f.close()
+
+
+# ── Image management helpers ──────────────────────────────────────────────
+
+def _ensure_image_in_cluster(image: str, gateway: str) -> None:
+    """Ensure a Docker image is available in the target OpenShell cluster's containerd.
+
+    OpenShell runs k3s inside a Docker container. Each cluster has its own
+    containerd image store that is separate from the host Docker daemon.
+    Images get garbage-collected when no pods reference them, so we must
+    re-import before every sandbox create.
+
+    Flow:
+      1. Resolve the cluster container name from the gateway name.
+      2. Check if the image already exists in the cluster's containerd.
+      3. If not, ``docker save <image> | docker exec -i <cluster> ctr import -``.
+
+    The image must already exist in the host Docker daemon (pulled from the
+    Logos registry or built locally).
+    """
+    cluster_container = f"openshell-cluster-{gateway}"
+
+    # Check if image already exists in containerd
+    # docker.io/library/ prefix is added by containerd for unqualified names
+    check_ref = image
+    if "/" not in image:
+        check_ref = f"docker.io/library/{image}"
+    try:
+        result = subprocess.run(
+            ["docker", "exec", cluster_container, "ctr", "-n", "k8s.io",
+             "images", "check", f"name=={check_ref}"],
+            capture_output=True, text=True, timeout=10,
+        )
+        if check_ref in (result.stdout or ""):
+            logger.debug("_ensure_image_in_cluster: %s already in %s", image, cluster_container)
+            return
+    except Exception:
+        pass  # check failed, proceed with import
+
+    logger.info(
+        "_ensure_image_in_cluster: importing %s into %s (this takes ~60-120s for large images)",
+        image, cluster_container,
+    )
+    try:
+        save = subprocess.Popen(
+            ["docker", "save", image],
+            stdout=subprocess.PIPE,
+        )
+        load = subprocess.run(
+            ["docker", "exec", "-i", cluster_container,
+             "ctr", "-n", "k8s.io", "images", "import", "-"],
+            stdin=save.stdout,
+            capture_output=True, text=True, timeout=600,
+        )
+        save.stdout.close()
+        save.wait()
+        if load.returncode != 0:
+            logger.warning(
+                "_ensure_image_in_cluster: ctr import returned %d: %s",
+                load.returncode, (load.stderr or "").strip(),
+            )
+        else:
+            logger.info("_ensure_image_in_cluster: imported %s into %s", image, cluster_container)
+    except subprocess.TimeoutExpired:
+        logger.error("_ensure_image_in_cluster: timed out importing %s", image)
+        raise
+    except Exception as exc:
+        logger.error("_ensure_image_in_cluster: failed for %s: %s", image, exc)
+        raise
 
 
 # ── OpenShell CLI helpers ──────────────────────────────────────────────────
@@ -737,11 +795,21 @@ class OpenShellExecutor:
                 "Pre-spawn provider sync raised (continuing anyway): %s", exc
             )
 
-        # Write instance config to a temp file for upload
+        # Write instance config to a temp file for upload. The sandbox
+        # worker reads this from /tmp/hermes/instance-config.json at
+        # dispatch time via load_config() and uses it to resolve the
+        # model + toolsets when the task payload doesn't supply them.
+        #
+        # M10 cleanup (2026-04-12): dropped the ``gateway_url`` field
+        # that was carried over from the original Plan A reverse-
+        # connection architecture. Plan A-prime's per-task exec transport
+        # doesn't have the sandbox dial back into the gateway, and the
+        # M10 Phase 1 sandbox_worker.py rewrite instantiates AIAgent
+        # in-process (talking only to inference.local via the OpenShell
+        # privacy router) — nothing reads gateway_url any more.
         instance_config = {
             "worker_id": worker_id,
             "instance_name": config.name,
-            "gateway_url": f"http://host.openshell.internal:{_GATEWAY_PORT}",
             "soul": config.soul_name or "general",
             "toolsets": config.toolsets or [],
             "model": resolved_model,
@@ -828,36 +896,108 @@ class OpenShellExecutor:
         # for waiting for the worker to register via the gateway's
         # worker_registry — see the wait_for_worker helper there.
         config_tmpfile = None
+        # M10 scope item 5: effective policy = baseline + applied presets.
+        # Looked up by agent name (config.name → auth_db.get_agent_by_name)
+        # so the InstanceConfig dataclass doesn't need a new field. Falls
+        # back to self.policy_file (the raw baseline) if the lookup or
+        # merge fails, so a broken preset can't block spawning — degrading
+        # to the narrowest available policy is always preferred over
+        # aborting the spawn.
+        _effective_policy_tmp: Optional[Path] = None
         try:
+            # ── Step 0: ensure the sandbox image is in the cluster ─
+            #
+            # OpenShell's k3s containerd is separate from the host
+            # Docker daemon. Images get GC'd when no pods reference
+            # them. This step imports the image if it's missing,
+            # taking ~60-120s for a fresh import (layers are cached
+            # after the first import, making subsequent spawns fast).
+            _ensure_image_in_cluster(self.sandbox_image, openshell_gw)
+
             # ── Step 1: create the sandbox CR ──────────────────────
-            create_args = [
-                "sandbox", "create",
-                "--name", sandbox_name,
-                "--from", self.sandbox_image,
-                "--no-auto-providers",
-            ]
-            if self.policy_file and Path(self.policy_file).exists():
-                create_args += ["--policy", self.policy_file]
-            # CRITICAL: trailing `-- true` is required.
             #
-            # `openshell sandbox create` with NO trailing command (after
-            # `--`) defaults to opening an interactive PTY shell once
-            # the CR is ready, and the create call blocks for the
-            # lifetime of that shell. Without a trailing command we get
-            # `ssh -tt -o RequestTTY=force` zombies that never exit and
-            # the create call hangs until the timeout reaper kills it
-            # — exactly the symptom that motivated task #9, just on a
-            # different code path.
-            #
-            # Passing `-- true` runs `/usr/bin/true` inside the sandbox
-            # which exits in milliseconds. Without `--no-keep` the
-            # sandbox stays alive after the initial command exits, so
-            # we can run the upload + worker exec steps below as
-            # independent calls. NB: do NOT add `--no-keep` here, that
-            # would tear the sandbox down when `true` returns.
-            create_args += ["--", "true"]
-            result = _openshell(*create_args, gateway=openshell_gw, check=True)
-            logger.debug("openshell sandbox create stdout: %s", result.stdout.strip())
+            # Pre-create check: if a sandbox with this name already
+            # exists and is Ready (e.g. from a previous gateway
+            # instance that spawned it before crashing), skip the
+            # create and go straight to uploads. This avoids the
+            # openshell CLI hanging for 300s+ on a duplicate create.
+            _sandbox_already_exists = False
+            try:
+                _list_result = _openshell(
+                    "sandbox", "list",
+                    gateway=openshell_gw, check=False, timeout=15,
+                )
+                if _list_result.returncode == 0 and sandbox_name in (_list_result.stdout or ""):
+                    # Check if it's Ready (not Provisioning/Failed)
+                    for _line in (_list_result.stdout or "").splitlines():
+                        if sandbox_name in _line and "Ready" in _line:
+                            logger.info(
+                                "spawn(%s): sandbox already exists and is Ready — "
+                                "skipping create, proceeding to uploads",
+                                sandbox_name,
+                            )
+                            _sandbox_already_exists = True
+                            break
+            except Exception:
+                pass  # list failed, proceed with create
+
+            if not _sandbox_already_exists:
+                create_args = [
+                    "sandbox", "create",
+                    "--name", sandbox_name,
+                    "--from", self.sandbox_image,
+                    "--no-auto-providers",
+                ]
+                # Compute the effective policy (baseline + applied presets)
+                # for this agent. If the agent has any presets applied in
+                # the DB, we write a merged YAML to a tempfile and pass THAT
+                # instead of the raw baseline. gateway.policies is imported
+                # inside the try so we don't reintroduce a circular import
+                # at module load time — gateway.policies imports back from
+                # this module for _openshell + _sanitize_sandbox_name.
+                _policy_arg: Optional[str] = None
+                try:
+                    from gateway.auth import db as _policies_auth_db
+                    _agent_row = _policies_auth_db.get_agent_by_name(config.name)
+                    if _agent_row:
+                        from gateway import policies as _gp
+                        _effective_policy_tmp = _gp.write_effective_policy_to_tempfile(
+                            _agent_row["id"]
+                        )
+                        _policy_arg = str(_effective_policy_tmp)
+                        logger.info(
+                            "spawn(%s): using effective policy with %d applied "
+                            "preset(s)", sandbox_name,
+                            len(_gp.get_applied_presets(_agent_row["id"])),
+                        )
+                except Exception as _policy_exc:
+                    logger.warning(
+                        "spawn(%s): effective policy computation failed, "
+                        "falling back to baseline %s: %s",
+                        sandbox_name, self.policy_file, _policy_exc,
+                    )
+                if not _policy_arg and self.policy_file and Path(self.policy_file).exists():
+                    _policy_arg = self.policy_file
+                if _policy_arg:
+                    create_args += ["--policy", _policy_arg]
+                # CRITICAL: trailing `-- true` is required.
+                #
+                # `openshell sandbox create` with NO trailing command
+                # (after `--`) defaults to opening an interactive PTY
+                # shell once the CR is ready, and the create call blocks
+                # for the lifetime of that shell. Without a trailing
+                # command we get `ssh -tt -o RequestTTY=force` zombies
+                # that never exit and the create call hangs until the
+                # timeout reaper kills it.
+                #
+                # Passing `-- true` runs `/usr/bin/true` inside the
+                # sandbox which exits in milliseconds. Without
+                # `--no-keep` the sandbox stays alive after the initial
+                # command exits, so we can run the upload + worker exec
+                # steps below as independent calls.
+                create_args += ["--", "true"]
+                result = _openshell(*create_args, gateway=openshell_gw, check=True)
+                logger.debug("openshell sandbox create stdout: %s", result.stdout.strip())
 
             # ── Step 2: upload the instance config (and soul) ──────
             config_tmpfile = tempfile.NamedTemporaryFile(
@@ -871,6 +1011,29 @@ class OpenShellExecutor:
                 gateway=openshell_gw, check=True,
             )
 
+            # ── Step 2b: upload the sandbox worker script ─────────
+            #
+            # The upstream image doesn't have /app/sandbox_worker.py —
+            # it has hermes at /opt/hermes. Logos owns the protocol
+            # bridge (sandbox_worker.py), the image owns the agent
+            # runtime. Upload the worker so dispatch_task's exec call
+            # can invoke it.
+            _worker_script = _REPO_ROOT / "docker" / "sandbox_worker.py"
+            if _worker_script.exists():
+                _openshell(
+                    "sandbox", "upload", sandbox_name,
+                    str(_worker_script), "/tmp/",
+                    gateway=openshell_gw, check=True,
+                )
+
+            # Upload SOUL.md — destination path is deliberately left
+            # at the pre-M11 location (/tmp/hermes/SOUL.md) because
+            # the sandbox image is going back to a versioned upstream
+            # hermes build whose HERMES_HOME layout we don't own. When
+            # M11 lands, this upload target gets rewritten against the
+            # agent manifest's config.immutable_dir path (the same way
+            # NemoClaw's agents/hermes/manifest.yaml declares it at
+            # line 37-38 as /sandbox/.hermes).
             if config.soul_name and config.soul_name != "default":
                 soul_dir = _HERMES_HOME / "souls"
                 soul_file = soul_dir / f"{config.soul_name}.md"
@@ -880,6 +1043,28 @@ class OpenShellExecutor:
                         str(soul_file), "/tmp/hermes/SOUL.md",
                         gateway=openshell_gw, check=True,
                     )
+
+            # ── Step 2c: upload persisted agent memories ────────────
+            #
+            # Each agent has its own memory directory on the gateway host
+            # at ~/.logos/agents/<name>/memories/. If the directory exists
+            # and has files, upload them into the sandbox so the agent
+            # resumes with its accumulated knowledge.
+            _agent_memories_dir = _HERMES_HOME / "agents" / config.name / "memories"
+            if _agent_memories_dir.is_dir() and any(_agent_memories_dir.iterdir()):
+                for mem_file in _agent_memories_dir.iterdir():
+                    if mem_file.is_file():
+                        _openshell(
+                            "sandbox", "upload", sandbox_name,
+                            str(mem_file), "/tmp/hermes/memories/",
+                            gateway=openshell_gw, check=True,
+                        )
+                logger.info(
+                    "spawn(%s): uploaded %d memory file(s) from %s",
+                    sandbox_name,
+                    len(list(_agent_memories_dir.iterdir())),
+                    _agent_memories_dir,
+                )
 
             # ── Step 3: mark the sandbox ready ──────────────────────
             #
@@ -944,6 +1129,11 @@ class OpenShellExecutor:
             if config_tmpfile:
                 try:
                     os.unlink(config_tmpfile.name)
+                except OSError:
+                    pass
+            if _effective_policy_tmp:
+                try:
+                    os.unlink(_effective_policy_tmp)
                 except OSError:
                     pass
 

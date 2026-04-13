@@ -4,15 +4,23 @@
  * Renders the tilemap, manages agent sprites, handles camera,
  * and drives pathfinding + zone behaviour.
  */
-import { TILE_SIZE, WORLD_COLS, WORLD_ROWS, WORLD_W, WORLD_H, TILE, TILE_COLORS, ZONES } from './WorldConfig.js';
-import { CHARACTER_TEXTURE } from './SpriteData.js';
-import { AgentSprite } from './AgentSprite.js';
-import { Pathfinder } from './Pathfinder.js';
+import { TILE_SIZE, WORLD_COLS, WORLD_ROWS, WORLD_W, WORLD_H, TILE, TILE_COLORS, ZONES } from './WorldConfig.js?v=11';
+import { CHARACTER_TEXTURE } from './SpriteData.js?v=11';
+import { AgentSprite } from './AgentSprite.js?v=11';
+import { Pathfinder } from './Pathfinder.js?v=11';
 
 const CELL = 32;
 const BLOCK_W = CELL * 3;
 const BLOCK_H = CELL * 4;
-const SHEET_COLS = 4;
+// Number of CHARACTER BLOCKS per row in characters.png. The sheet is now
+// 1920×1024 with 160 variants in a 20×8 block grid (8 bodies × 4 skin
+// tones × 5 hair/theme colors). Keep this in lock-step with SpriteData.js
+// COLS — they index the same sheet from two different code paths.
+const SHEET_COLS = 20;
+// Number of 32px CELLS per row in the sheet (1920 / 32 = 60). This is the
+// stride used to translate (block, cell-within-block) into a flat frame
+// index for Phaser's spritesheet loader.
+const SHEET_CELL_COLS = 60;
 
 export class WorldScene extends Phaser.Scene {
   constructor() {
@@ -28,6 +36,10 @@ export class WorldScene extends Phaser.Scene {
     this._hueOffset = 0;
     this._ready = false;           // set true after create() completes
     this._pendingSync = null;      // buffered syncAgents call
+    // Wake animation: full-night → real time-of-day ramp, triggered on
+    // first agent arrival. null = world is empty / dormant; ms timestamp
+    // = ramp in progress or completed (the update() loop checks elapsed).
+    this._wakeStartedAt = null;
     // Persisted agent positions (loaded from localStorage in create())
     // shape: { [agentName]: { x, y, dir } }
     this._storedPositions = {};
@@ -131,7 +143,33 @@ export class WorldScene extends Phaser.Scene {
     // Day/night phase: 0 = full day, 1 = full night. 4-minute cycle
     // (sinusoidal so transitions feel natural). Atmospheric for a
     // homelab dashboard without being distracting.
-    const nightStrength = this._dayNightStrength();
+    //
+    // "Waking" override: while the agent list is empty (initial fetch
+    // in flight, or genuinely zero agents), force the world to full
+    // night so the canopy glow does the heavy lifting and the empty
+    // map doesn't look broken. Once at least one agent renders, run
+    // a smooth ~1.5s ramp from full-night → real time-of-day so the
+    // world reads as "the world wakes when its inhabitants arrive".
+    let nightStrength = this._dayNightStrength();
+    const realNS = nightStrength;
+    const WAKE_MS = 1500;
+    if (this.agents.size === 0) {
+      nightStrength = 1.0;
+      this._wakeStartedAt = null;  // reset so the next arrival re-triggers the dawn
+    } else {
+      if (this._wakeStartedAt === null || this._wakeStartedAt === undefined) {
+        this._wakeStartedAt = Date.now();
+      }
+      const elapsed = Date.now() - this._wakeStartedAt;
+      if (elapsed < WAKE_MS) {
+        // Smoothstep ease so the dawn doesn't look mechanical.
+        const t = elapsed / WAKE_MS;
+        const ease = t * t * (3 - 2 * t);
+        nightStrength = 1.0 + (realNS - 1.0) * ease;
+      } else {
+        nightStrength = realNS;
+      }
+    }
     // Stash on the instance so AgentSprite.update() can read it for
     // the proximity-glow tint without us having to thread it through
     // the agent.update() signature.
@@ -169,11 +207,15 @@ export class WorldScene extends Phaser.Scene {
     }
     const currentNames = new Set(instances.map(i => i.name));
 
-    // Remove departed agents
+    // Remove departed agents — play a fade-and-float-up animation first
+    // so a hard-delete reads as a tasteful departure rather than a pop.
+    // The sprite is dropped from the live map immediately so a new agent
+    // created under the same name during the fade spawns fresh alongside
+    // the departing one.
     for (const [name, agent] of this.agents) {
       if (!currentNames.has(name)) {
-        agent.destroy();
         this.agents.delete(name);
+        agent.fadeAndDestroy();
       }
     }
 
@@ -524,14 +566,15 @@ export class WorldScene extends Phaser.Scene {
     const dirMap = { down: 0, left: 1, right: 2, up: 3 };
     const dirRow = dirMap[direction] || 0;
 
-    // Character's top-left in the global grid
-    const blockCol = (charIndex % SHEET_COLS) * 3;  // 0, 3, 6, or 9
-    const blockRow = Math.floor(charIndex / SHEET_COLS) * 4;  // 0 or 4
+    // Character's top-left in the global grid. Each character block is
+    // 3 cells wide × 4 cells tall (one row per direction). With 20 blocks
+    // per row in the new 1920×1024 sheet, blockCol cycles 0,3,6,...,57
+    // and blockRow steps by 4 every 20 chars.
+    const blockCol = (charIndex % SHEET_COLS) * 3;
+    const blockRow = Math.floor(charIndex / SHEET_COLS) * 4;
 
     const globalRow = blockRow + dirRow;
-    const sheetCols = 12; // 384 / 32
-
-    return [0, 1, 2].map(f => globalRow * sheetCols + blockCol + f);
+    return [0, 1, 2].map(f => globalRow * SHEET_CELL_COLS + blockCol + f);
   }
 
   getCharIdleFrame(charIndex, direction) {

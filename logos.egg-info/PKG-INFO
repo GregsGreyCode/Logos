@@ -1,6 +1,6 @@
 Metadata-Version: 2.4
 Name: logos
-Version: 0.6.14
+Version: 0.10.4
 Summary: A self-hosted agent platform — inference routing, multi-model benchmarking, and policy-governed agent runs across local and cloud hardware
 Author: gregsgreycode
 License: MIT
@@ -19,15 +19,13 @@ Requires-Dist: requests
 Requires-Dist: jinja2
 Requires-Dist: pydantic>=2.0
 Requires-Dist: prompt_toolkit
+Requires-Dist: numpy>=1.24.0
+Requires-Dist: psutil>=5.9.0
 Requires-Dist: firecrawl-py
 Requires-Dist: fal-client
 Requires-Dist: edge-tts
 Requires-Dist: faster-whisper>=1.0.0
-Requires-Dist: typer
-Requires-Dist: platformdirs
 Requires-Dist: PyJWT[crypto]
-Provides-Extra: modal
-Requires-Dist: swe-rex[modal]>=1.4.0; extra == "modal"
 Provides-Extra: daytona
 Requires-Dist: daytona>=0.148.0; extra == "daytona"
 Provides-Extra: dev
@@ -53,12 +51,9 @@ Provides-Extra: tts-premium
 Requires-Dist: elevenlabs; extra == "tts-premium"
 Provides-Extra: voice
 Requires-Dist: sounddevice>=0.4.6; extra == "voice"
-Requires-Dist: numpy>=1.24.0; extra == "voice"
 Provides-Extra: pty
 Requires-Dist: ptyprocess>=0.7.0; sys_platform != "win32" and extra == "pty"
 Requires-Dist: pywinpty>=2.0.0; sys_platform == "win32" and extra == "pty"
-Provides-Extra: honcho
-Requires-Dist: honcho-ai>=2.0.1; extra == "honcho"
 Provides-Extra: mcp
 Requires-Dist: mcp>=1.2.0; extra == "mcp"
 Provides-Extra: homeassistant
@@ -67,16 +62,7 @@ Provides-Extra: k8s
 Requires-Dist: kubernetes>=29.0.0; extra == "k8s"
 Provides-Extra: acp
 Requires-Dist: agent-client-protocol==0.8.1; extra == "acp"
-Provides-Extra: rl
-Requires-Dist: atroposlib @ git+https://github.com/NousResearch/atropos.git ; extra == "rl"
-Requires-Dist: tinker @ git+https://github.com/thinking-machines-lab/tinker.git ; extra == "rl"
-Requires-Dist: fastapi>=0.104.0; extra == "rl"
-Requires-Dist: uvicorn[standard]>=0.24.0; extra == "rl"
-Requires-Dist: wandb>=0.15.0; extra == "rl"
-Provides-Extra: yc-bench
-Requires-Dist: yc-bench @ git+https://github.com/collinear-ai/yc-bench.git ; extra == "yc-bench"
 Provides-Extra: all
-Requires-Dist: logos[modal]; extra == "all"
 Requires-Dist: logos[daytona]; extra == "all"
 Requires-Dist: logos[messaging]; extra == "all"
 Requires-Dist: logos[cron]; extra == "all"
@@ -85,7 +71,6 @@ Requires-Dist: logos[dev]; extra == "all"
 Requires-Dist: logos[tts-premium]; extra == "all"
 Requires-Dist: logos[slack]; extra == "all"
 Requires-Dist: logos[pty]; extra == "all"
-Requires-Dist: logos[honcho]; extra == "all"
 Requires-Dist: logos[mcp]; extra == "all"
 Requires-Dist: logos[homeassistant]; extra == "all"
 Requires-Dist: logos[acp]; extra == "all"
@@ -300,7 +285,7 @@ Host OS
 
 **To start:**
 ```bash
-cp .env.example .env   # add your API keys + HERMES_JWT_SECRET
+cp .env.example .env   # add your API keys + LOGOS_JWT_SECRET
 docker compose up -d
 ```
 
@@ -320,7 +305,7 @@ Host OS
 
 **To start:**
 ```bash
-cp .env.example .env   # add HERMES_JWT_SECRET (required)
+cp .env.example .env   # add LOGOS_JWT_SECRET (required)
 docker compose -f docker-compose.k3s.yml up -d
 # In setup wizard step 4: choose Kubernetes → "Logos is outside the cluster"
 # Leave kubeconfig empty — it is mounted automatically.
@@ -337,7 +322,7 @@ kubectl apply -f k8s/
 
 # 2. Set required secrets
 kubectl create secret generic logos-secrets -n logos \
-  --from-literal=HERMES_JWT_SECRET=$(openssl rand -hex 32) \
+  --from-literal=LOGOS_JWT_SECRET=$(openssl rand -hex 32) \
   --from-literal=OPENAI_API_KEY=<your-key>   # or whichever provider you use
 
 # 3. Check rollout
@@ -373,13 +358,13 @@ Agent security is defense-in-depth — multiple independent layers, not a single
 
 ### 🔑 Secrets and auth
 
-**`HERMES_JWT_SECRET`**
+**`LOGOS_JWT_SECRET`** _(legacy alias: `HERMES_JWT_SECRET`)_
 All session tokens are signed with this secret. Generate it once with `openssl rand -hex 32` and store it somewhere safe.
 - If you lose it, all active sessions are invalidated on next restart (users will need to log in again — no data is lost).
 - Rotating it intentionally: change the value, restart Logos.
 - Never commit it to version control.
 
-**`HERMES_COOKIE_SECURE`**
+**`LOGOS_COOKIE_SECURE`** _(legacy alias: `HERMES_COOKIE_SECURE`)_
 Set to `true` if Logos is behind an HTTPS reverse proxy (nginx, Caddy, Traefik). This adds the `Secure` flag to auth cookies so they are only sent over HTTPS.
 - Leave empty for plain HTTP (local or docker-compose without TLS termination).
 - **Do not expose Logos directly on the internet without TLS.**
@@ -789,22 +774,6 @@ What gets imported: `SOUL.md`, memories, skills, command allowlist, messaging se
 
 ---
 
-## ☁️ Optional cloud integrations
-
-These are **disabled by default** and require explicit configuration. Enabling them sends data to third-party providers.
-
-### Honcho (user modelling)
-
-[Honcho](https://app.honcho.dev) builds a persistent model of each user across conversations and feeds it back into the agent context on future sessions.
-
-**What it does when enabled:** syncs conversation messages to Honcho's cloud API, uploads `MEMORY.md`/`USER.md`/`SOUL.md`, runs inference on Honcho's backend to inject user insights into context.
-
-**Privacy:** your conversations leave your network and are processed by a third party. Do not enable this if data privacy is a requirement.
-
-**To enable:** set `HONCHO_API_KEY` in your environment or `~/.honcho/config.json`.
-
----
-
 ## 🛠️ Developer reference
 
 Source in `gateway/`, `tools/`, and `agent/`. See [`AGENTS.md`](AGENTS.md) for internals, local dev setup, gateway architecture, and how to add tools.
@@ -876,12 +845,6 @@ uv pip install -e "./mini-swe-agent"
 
 Integration tests require live API keys (`OPENROUTER_API_KEY`, `OPENAI_API_KEY`, etc.) and hit real external services. Unit tests blank all keys automatically and never make network calls.
 
-> **RL Training (optional):** To work on the RL/Tinker-Atropos integration:
-> ```bash
-> git submodule update --init tinker-atropos
-> uv pip install -e "./tinker-atropos"
-> ```
-
 ---
 
 ## 📜 License
@@ -895,7 +858,7 @@ MIT — see [LICENSE](LICENSE).
 This project would not exist without the open-source work it stands on:
 
 - **[Anthropic / Claude](https://www.anthropic.com)** — Claude wrote a significant portion of the gateway, UI, tooling, and this documentation.
-- **[Nous Research / hermes-agent](https://github.com/NousResearch/hermes-agent)** — the Hermes agent runtime (`agents/hermes/`) is a heavily extended fork of their open-source hermes-agent. The platform layer (gateway, auth, dashboard, STAMP system, policy enforcement) is original work built on top of it. The `tinker-atropos` RL submodule combines [Atropos](https://github.com/NousResearch/atropos) (Nous Research) and [Tinker](https://github.com/thinking-machines-lab/tinker) (Thinking Machines Lab).
+- **[Nous Research / hermes-agent](https://github.com/NousResearch/hermes-agent)** — the Hermes agent runtime (`agents/hermes/`) is a heavily extended fork of their open-source hermes-agent. The platform layer (gateway, auth, dashboard, STAMP system, policy enforcement) is original work built on top of it.
 - **[SWE-agent / mini-swe-agent](https://github.com/SWE-agent/mini-swe-agent)** — vendored directly into the repo (MIT licence), powers the terminal tool's PTY-based shell execution.
 - **[Ollama](https://github.com/ollama/ollama)** — makes running local LLMs approachable. Powers the homelab GPU machines that handle inference.
 - **[LM Studio](https://lmstudio.ai)** — excellent local model serving, especially for experimentation and first-time model setup.

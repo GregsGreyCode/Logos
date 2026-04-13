@@ -13,22 +13,23 @@
 
 ---
 
-## Status summary (verified 2026-04-11 end of session)
+## Status summary (verified 2026-04-12)
 
 | Ticket | Status | Notes |
 |---|---|---|
-| M1 — Editable Tools (T) in STAMP pill | **NOT STARTED** | T pill is a display-only `<span>` at `main_app.html:569`. Blocked until M10 Option D gives STAMP-T runtime teeth. |
-| M2 — Editable Policy (P) + approvals | **NOT STARTED** | P pill is a display-only `<span>` at `main_app.html:639`. Blocked until M10 Option D gives STAMP-P runtime teeth. |
+| M1 — Editable Tools (T) in STAMP pill | **UI SHIPPED, RUNTIME UNBLOCKED** | T pill dropdown UI shipped (M10 item 5). M11 landed — in-sandbox agent now honors `enabled_toolsets`. Infrastructure-layer presets have runtime effect via `openshell policy set`. Application-layer toolset toggles persist to DB and are passed through to AIAgent in sandbox. |
+| M2 — Editable Policy (P) + approvals | **NOT STARTED** | P pill is display-only. Needs M10 items 6-7 (Policy editor UI + in-sandbox approval callback). M11 unblocked the runtime prerequisite. |
 | M3 — Per-user inference routing | **NOT STARTED** | `machine_users` table exists, zero UI. No claimMachine JS, no My Inference tab. |
 | M4 — Multi-user UX polish | **NOT STARTED** | No owner badges, no shared toggle, no per-user chat filter. |
-| M5 — World view first-class surface | **PARTIALLY SHIPPED** | Phase A thought bubble from M8 landed (`AgentSprite._updateBubble` — 💭 scale-pulse when `active_tasks > 0`). Full-tab / click-to-enter-chat / multi-user world still pending. |
-| M6 — Unified observability | **DONE (MVP)** | `JsonRedactingFormatter` + `_SessionFilter` + `set_log_context` in `gateway/run.py`. `unified.jsonl` actively writing. `logos debug tail` CLI works. 4 of 5 minimum-viable items landed. |
-| M7 — Sandbox health UX | **PREMISE OUTDATED** | Original premise assumed a NemoClaw port-forward + HTTP /health probe. Plan A-prime uses per-task `openshell sandbox exec` instead, so the rename/probe design needs to be re-grounded on what Plan A-prime actually offers as a health signal. Field rename and richer observability goals still valid. |
-| M8 — Dispatch activity ledger | **PHASE A SHIPPED, PHASE B NOT STARTED** | `WorkerRegistry._active_tasks` counter, `admin_handlers` surfaces it, world view renders thought bubble. `dispatches` table, origin tagging, Admin → Activity tab still pending. |
-| M9 — Autonomous activity (visibility) | **NOT STARTED** | The three consolidation mechanisms exist (memory nudge + skill nudge + pre-reset flush) but are invisible in the UI. Memory writes during chats don't actually happen today because M10 blocks them. |
-| M10 — Plan A-prime bypasses agent loop | **NOT STARTED** | `sandbox_worker.py` is a naive chat forwarder with no `tools` payload. Option D (agent inside, action tools outside, STAMP-gated bridges) documented and recommended. Blocks M1, M2, M9. |
+| M5 — World view first-class surface | **PARTIALLY SHIPPED** | Phase A thought bubble from M8 landed. Full-tab / click-to-enter-chat / multi-user world still pending. |
+| M6 — Unified observability | **DONE (MVP)** | `JsonRedactingFormatter` + `_SessionFilter` + `set_log_context`. `unified.jsonl` actively writing. `logos debug tail` CLI works. |
+| M7 — Sandbox health UX | **PREMISE OUTDATED** | Needs re-grounding on Plan A-prime's per-task exec model. Field rename and richer observability goals still valid. |
+| M8 — Dispatch activity ledger | **PHASE A SHIPPED, PHASE B NOT STARTED** | `active_tasks` counter + world view thought bubble done. `dispatches` table, origin tagging, Admin Activity tab still pending. |
+| M9 — Autonomous activity (visibility) | **UNBLOCKED BY M11** | Memory nudges + skill nudges + pre-reset flush all exist. Memory writes now happen during web-UI chats (M11 restored AIAgent in sandbox). Remaining work: make them visible in the UI. |
+| M10 — Restore AIAgent inside the sandbox | **DONE (via M11)** | Items 4-5 shipped (network policy presets, T pill UI). Items 1-3 superseded by M11's image-per-agent-release pattern which solved the same problem correctly. |
+| M11 — Agents as versioned drop-in sandbox images | **DONE** | Full AIAgent running inside OpenShell sandbox from `hermes-upstream` image. 7 issues discovered and fixed during testing. Per-agent memory persistence + tiered state sync (memories on-write, logs/sessions periodic) + auto-import from local registry + state reconciliation on gateway restart all shipped. |
 
-**Recommended next execution target**: **M10 via Option D**. It unblocks M1, M2, and M9, and it's the architecture that makes STAMP's T/P axes real governance instead of decorative labels. Estimated 3-5 days of focused work — scope as its own session.
+**Recommended next execution target**: **M11 — prove one full agent runs inside a sandbox from a versioned drop-in image.** The M10 Phase 1 build-test cycle on 2026-04-12 surfaced that bundling Logos's Hermes fork into the sandbox via `pip install -e .` was the wrong architectural direction — the right shape is the NemoClaw-style "sandbox image = the agent runtime release, Logos references it by tag." M10 Phase 1 items 4-8 (network policies, DB, editor UI) stay intact because they're infrastructure-layer, not runtime-layer. **Unblocks the runtime half of M1 / M2 / M9.**
 
 ---
 
@@ -52,7 +53,7 @@
 
 ## M2 — Editable Policy (P) in the Chats STAMP pill + approval surfacing
 
-**Status**: NOT STARTED. Verified: P pill is `<span data-testid="stamp-p">` at `gateway/html/main_app.html:639`, display-only, no click handler, no slide-out. Blocked on M10 Option D to give per-tool approval enforcement a runtime path.
+**Status**: NOT STARTED. Verified: P pill is `<span data-testid="stamp-p">` at `gateway/html/main_app.html:639`, display-only, no click handler, no slide-out. Blocked on M10 items 1-3 + 7 (restore in-sandbox agent loop so `action_policy` is consulted, plus the in-sandbox approval callback for per-tool-call gating) to give per-tool approval enforcement a runtime path.
 
 **State today**: P pill shows the policy name badge, no interaction. Pending approvals are badged only on the top-level Admin tab and live in Admin → Approvals. A non-admin user in the middle of a chat has no way to see or respond to an approval for their own tool call — the chat just stalls.
 
@@ -247,7 +248,7 @@ logos debug tail --since 5m
 
 ## M7 — Sandbox health observability in the UI
 
-**Status**: PREMISE OUTDATED, needs re-grounding. The original M7 draft assumed the TASKS.md #24 refactor would land as a NemoClaw-style port-forward + HTTP /health probe architecture — under that design, "sandbox health" meant "can the gateway HTTP-GET `/health` on a forwarded port and does the agent reply with `{"status":"ok"}`". **Plan A-prime instead landed as per-task `openshell sandbox exec` subprocesses**, which doesn't have a port-forward or an HTTP endpoint to probe. What constitutes "sandbox healthy" under Plan A-prime is different: the sandbox CR is in `phase=ready` (per `openshell sandbox list`) and the last `dispatch_task` invocation returned a clean `task_result`. The field rename and richer observability goals from M7's "What's missing" list are still valid, but they need to be re-grounded on the per-task-exec model rather than port-forward probes. Low priority until M10 Option D lands — after that, sandbox health will include "can the agent loop inside the sandbox reach its self-directed tools" which IS probeable.
+**Status**: PREMISE OUTDATED, needs re-grounding. The original M7 draft assumed the TASKS.md #24 refactor would land as a NemoClaw-style port-forward + HTTP /health probe architecture — under that design, "sandbox health" meant "can the gateway HTTP-GET `/health` on a forwarded port and does the agent reply with `{"status":"ok"}`". **Plan A-prime instead landed as per-task `openshell sandbox exec` subprocesses**, which doesn't have a port-forward or an HTTP endpoint to probe. What constitutes "sandbox healthy" under Plan A-prime is different: the sandbox CR is in `phase=ready` (per `openshell sandbox list`) and the last `dispatch_task` invocation returned a clean `task_result`. The field rename and richer observability goals from M7's "What's missing" list are still valid, but they need to be re-grounded on the per-task-exec model rather than port-forward probes. Low priority until M10 items 1-3 land — after that, sandbox health will include "can the agent loop inside the sandbox reach its self-directed tools" which IS probeable.
 
 **State today**: The `/admin/agents` endpoint returns two booleans per agent — `worker_connected` and `worker_healthy` — which the UI reads in ~8 places to decide whether to render an agent as "chat-ready" (green pill, drag-enabled, etc.). Under Plan A-prime those booleans now reflect **state-file entry presence + phase=="ready"** (from `_SandboxHealthEntry` in `gateway/worker_registry.py`). The old reverse-WebSocket semantics are gone, the new semantics are "does the state file show this sandbox as Ready". M8 Phase A added `active_tasks` as a third field that actually reflects real-time activity.
 
@@ -412,149 +413,291 @@ The nudges handle "incremental consolidation during active use", the flush handl
 
 ---
 
-## M10 — Plan A-prime bypasses the Hermes agent loop entirely
+## M10 — Restore `AIAgent.run_conversation` inside the OpenShell sandbox
 
-**Status**: NOT STARTED. Discovered 2026-04-11 during M9 scoping. The most architecturally significant finding in the doc — blocks M1, M2, M9's chat-path discoverability, and the tamagotchi product identity generally. Recommended fix: Option D below (agent inside, action tools outside, STAMP-gated bridges). Estimated 3-5 days of focused work.
+**Status**: NOT STARTED, SCOPED. Validated against code 2026-04-12. The fix is **Option A** — run the full `AIAgent` per-dispatch inside the sandbox pod. The previous Option D in this ticket (a bidirectional stdin/stdout bridge protocol with host-side action tools) is discarded: its return channel was built on a false premise about stdin being usable after the task is delivered, and it gives up the security boundary the sandbox was meant to provide. Phase 1 is shippable in stages; items 1-3 of the scope breakdown below close the core gap in ~4-7 days, and the full Phase 1 (items 1-8, including Tools/Policy editor UIs and the in-sandbox approval callback) is ~2-3 weeks.
 
-**State today — a fundamental finding surfaced while scoping M9**: Plan A-prime's `docker/sandbox_worker.py` is a **naive chat-completion forwarder**. It builds `messages = [system(context_prompt), ...history, user(message)]`, sends `{model, messages, stream, max_tokens}` to `inference.local/v1/chat/completions`, and streams back `delta.content` + `delta.reasoning_content` as token/thinking events. **There is no `tools` field in the payload, no `tool_choice`, no `tool_calls` handling in the response loop, and no invocation of `AIAgent.run_conversation` anywhere in the sandbox path.**
+### State today — verified in code 2026-04-12
 
-**Concrete implications for every primary chat** (user sends message to Tali/Grace via the browser):
+Every web-UI chat in OpenShell mode flows through this exact path:
 
-| Feature | Active? |
-|---|---|
-| Soul text as system prompt | Yes (via `context_prompt`) |
-| Conversation history | Yes |
-| Reasoning content streaming (`reasoning_content`) | Yes |
-| `memory_tool` — any call | **No** (not in payload, no handler) |
-| `skill_manage` / `skills_list` / `skill_view` | **No** |
-| `memory_nudge` (every 10 user turns, `agent.py:4118`) | **No** — fires inside `AIAgent.run_conversation`, which the worker never invokes |
-| `skill_nudge` (every 15 tool iterations) | **No** — same |
-| `delegate_tool` (sub-agent spawn) | **No** |
-| `terminal_tool` (shell exec) | **No** |
-| `browser_tool` | **No** |
-| `schedule_cronjob` / `list_cronjobs` / `remove_cronjob` | **No** |
-| `knowledge_search` / `knowledge_add` | **No** |
-| Every other tool declared in `tools/` | **No** |
-| RunRecorder / `agent_runs` table writes | **No** (recorder init lives inside `AIAgent.run_conversation`) |
-| Workspace TTL cleanup trigger | **No** |
+1. **`gateway/http_api.py:_handle_chat:2789`** is the only `/chat` handler. Line 2832-2835 requires `agent_id` and explicitly refuses any in-process fallback: *"OpenShell-only routing: every chat must target a named agent that has its own sandbox worker. No in-process fallback."* Line 3089-3104 is equally explicit when the worker is unhealthy — *"Do NOT silently fall back to an in-process runner — that would run the user's message through the gateway process itself, bypassing every network/filesystem policy the sandbox was meant to enforce."* The handler emits a `sandbox_unavailable` error instead.
 
-The full `AIAgent` class (`agents/hermes/agent.py`, ~4500 lines) only runs in three places:
-1. `_flush_memories_for_session` — session expiry / `/reset` / `/resume`, in-process on the host (bypasses sandbox — see M9)
-2. Direct CLI invocations (`hermes` at the terminal — out-of-scope for the web UI)
-3. Legacy paths that predate Plan A-prime and may be partially dead
+2. **Line 2961** resolves `target_worker = _sanitize_sandbox_name(f"hermes-{agent_name}")` — one sandbox per named agent. Multi-user / multi-agent routing happens at the Logos-gateway layer (the HTTP handler picks which sandbox to dispatch to based on the authenticated user's `agent_id` request parameter), not at the Hermes layer.
 
-**What this means concretely**: the "Hermes" your agents present as is currently *just the soul prompt in a system message followed by a bare LM Studio chat*. No tool use. No memories written during chats. No self-improvement. No delegation. No workspace management. No knowledge search. The entire multi-thousand-line agent loop is sitting unused for every single web-UI chat you have.
+3. **Line 3112-3123** builds a task payload with `"type": "run_conversation"`, `toolsets`, and `max_iterations: 90`. All three fields are aspirational — the current sandbox worker ignores them. The `run_conversation` type name is a historical vestige from `gateway/worker.py:AgentWorker` (see below).
 
-This **was not the case** pre-Plan-A. The old reverse-WebSocket worker design ran the full `AIAgent` inside the sandbox — the sandbox was the home of the agent loop, not just a chat-completion proxy. Plan A and Plan A-prime both stripped that out to get the transport working, with the intention of adding it back. It wasn't added back.
+4. **Line 3146-3149** — `worker_result = await worker_registry.dispatch_task(target_worker, task_payload, timeout=600, on_stream_event=_on_worker_stream)`.
 
-**How we got here** (for the record so this doesn't get mis-blamed on a later hand): the original Plan A and Plan A-prime refactors intentionally kept `sandbox_worker.py` minimal — a single `_run_inference` call — because the priority was "make the dispatch transport work at all". The idea was to restore full agent functionality after the transport was proven. The transport IS proven now. This is that restoration work.
+5. **`gateway/worker_registry.py:329-341`** spawns `openshell sandbox exec --no-tty --name <sandbox> -- python3 /app/sandbox_worker.py`, pipes the task JSON to stdin, and **closes stdin immediately** at line 379 — that EOF is what unblocks openshell's exec primitive. The comments at `worker_registry.py:25-33` and `sandbox_worker.py:14-30` document side-by-side tests proving an open stdin is unusable on this transport.
 
-**Four paths forward**, with Option D as the recommended choice after the user articulated the trust-boundary model it codifies:
+6. **`docker/sandbox_worker.py:249-365`** `_run_inference`: builds `messages = [system(context_prompt), *history, user(message)]`, POSTs to `inference.local/v1/chat/completions` with `{model, messages, stream, max_tokens}`, streams back `delta.content` + `delta.reasoning_content` as token/thinking events. **No `tools` array in the payload, no `tool_choice`, no `tool_calls` handling, no `AIAgent` import.** The worker exits after emitting the terminal `task_result`.
 
-### Option D — Agent inside, action tools outside, STAMP-gated bridges (RECOMMENDED)
+7. **`docker/Dockerfile.hermes-sandbox:38`** — the sandbox image installs only `aiohttp`. The Hermes source code (`agents/hermes/agent.py`, 5947 lines) is **not copied into the image**. The import would fail.
 
-**The principle**: what crosses the sandbox boundary is an explicit, user-governed decision — not an implicit consequence of where code happens to live. The sandbox IS the permission boundary. STAMP's T and P axes become functional governance instead of decorative labels.
+### What this means
 
-**What lives inside the sandbox**:
-- `AIAgent.run_conversation` and its tool-loop
-- Self-directed tools (the ones the agent uses to grow and remember): `memory_tool`, `skill_manager_tool`, `skill_view`, `skills_list`
-- Memory/skill files persist on the sandbox pod filesystem
-- Soul, reasoning, context, conversation state, run recorder
+Per web-UI chat turn, the sandbox runs:
+- One Python process startup (~0.2s for aiohttp)
+- One chat-completion HTTPS call to `inference.local`
+- Token/thinking streaming back to the gateway
+- Exit
 
-**What lives outside the sandbox**:
-- Action tools that touch the real world: `terminal_tool`, `browser_tool`, `delegate_tool`, `knowledge_search`, `knowledge_add`, `schedule_cronjob`, `platform_send`, `home_message`, any future "do something external" tool
-- These execute on the host, gated by STAMP-T (grant list per agent) and STAMP-P (approval policy per tool)
+No tool loop. No memory writes. No skill invocations. **No `memory_nudge` / `skill_nudge`** (they live at `agents/hermes/agent.py:4118-4140` inside `run_conversation`, which the worker never calls). No `RunRecorder`. No delegation. No workspace cleanup. No `ephemeral_system_prompt` interpretation beyond inserting it as a system message.
 
-**How the bridge works**: the stdin/stdout JSON protocol grows three new message types:
+### Where the full `AIAgent` DOES run today
 
-| Direction | Type | Purpose |
-|---|---|---|
-| sandbox → gateway | `tool_request` | "Execute `terminal_tool('ls -la')` on the host and return the result" |
-| gateway → sandbox | `tool_grant` | "Approved — here's the result" (delivered via stdin) |
-| gateway → sandbox | `tool_denied` | "User denied / policy rejected" (via stdin) |
+Grep `AIAgent\(` across the codebase returns **10 live call sites**, all host-side in-process:
 
-Gateway-side handling:
-1. Reads `tool_request` from subprocess stdout (interleaved with token/thinking/task_result events)
-2. Checks the STAMP-T grant list for this agent — is the requested tool even in the granted set?
-3. Checks `action_policies` (STAMP-P): auto / require-approval / deny
-4. If require-approval: writes a row to `approval_requests`, emits an SSE event to the chat UI, blocks on user response
-5. On approval: executes the tool on the host, captures output
-6. Writes `tool_grant` (or `tool_denied`) back to the subprocess stdin
-7. The agent's in-sandbox tool proxy receives the result and continues its loop
+- `gateway/run.py:3648` — `_run_agent` method, called from platform dispatch paths (Telegram, Discord, Slack, email, ACP)
+- `gateway/run.py:741` — `_flush_memories_for_session` (session expire / `/reset` / `/resume`)
+- `gateway/run.py:2645, 2849, 4507, 4649` — four other in-process instantiations (compression, background tasks, etc.)
+- `cron/scheduler.py:258` — scheduled jobs
+- `core/batch_runner.py:311` — batch processing
+- `acp_adapter/session.py:203` — IDE integration (VS Code, Zed, JetBrains)
+- `tools/delegate_tool.py:219` + `tools/handoff_tool.py:320` — in-agent sub-agent spawns
+- `logos_cli/cli.py:1558, 3126` — direct CLI invocation
+- `gateway/worker.py:219` — `AgentWorker._run_agent_sync`. **Half-built headless-worker infrastructure from the `docs/project/AGENT_WORKER.md` planning doc ("Status: Planning"). `grep AgentWorker` returns only the class definition and its own factory at line 263 — nothing else in the codebase imports or instantiates it.** It's a parked building block, not live code.
 
-The agent inside the sandbox has **proxy implementations** of each host-side tool — same function signature, but instead of executing locally they serialize the call and `await` a result on stdin. Transparent to the agent loop.
+So the full agent loop runs for platform messages, cron, batch, ACP, CLI, flush, and delegation — just **not inside the OpenShell sandbox for web-UI chats**. M10 is specifically about making the web-UI path match the other entry points.
 
-**STAMP mapping** (why this is the right architecture):
+### The fix — Option A, validated 2026-04-12
 
-- **S (Soul)** — stays inside the sandbox as it does today
-- **T (Tools)** — now has teeth. The STAMP-T pill becomes an editable grant list, user decides which tools cross the boundary. **First time T is a real governance axis and not a decorative label.** M1 in this file ("editable T in the STAMP pill") becomes concretely buildable.
-- **A (Agent)** — lives inside, run history writes to a sandbox-local DB or syncs back periodically
-- **M (Model)** — same as today, sandbox calls `inference.local` for inference
-- **P (Policy)** — now has teeth for action tools: per-tool approval policy wired into the existing `approval_requests` table. M2 ("editable P in the STAMP pill") also becomes concretely buildable.
+Replace `sandbox_worker.py:_run_inference` with a ~50-line bootstrap that instantiates `AIAgent` and calls `run_conversation` per dispatch. The sandbox pod stays passive (`sleep infinity`). Dispatch still goes through `openshell sandbox exec --no-tty -- python3 /app/sandbox_worker.py`. Each dispatch runs a fresh Python process that:
 
-This is the version where STAMP is the user's real governance interface for the sandbox trust boundary, not just vocabulary.
+1. Loads `/tmp/hermes/instance-config.json` (already uploaded at spawn time by `gateway/executors/openshell.py:866-872`)
+2. Reads one task JSON from stdin — existing flow, unchanged
+3. Instantiates `AIAgent` with callbacks that `emit()` JSON frames to stdout — same `emit()` helper and stdout protocol we have today:
+   ```python
+   from agents.hermes.agent import AIAgent
+   agent = AIAgent(
+       model=task["model"] or config["model"],
+       base_url="https://inference.local/v1",
+       api_key="unused",
+       enabled_toolsets=task.get("toolsets") or ["hermes-cli"],
+       session_id=task["session_id"],
+       ephemeral_system_prompt=task.get("context_prompt"),
+       max_iterations=task.get("max_iterations", 90),
+       quiet_mode=True,
+       tool_progress_callback=lambda t, p=None, a=None: emit({"type": "tool_progress", "task_id": task_id, "tool": t, "preview": p or ""}),
+       tool_complete_callback=lambda cid, t, ok, ms, p=None: emit({"type": "tool_end", "task_id": task_id, "call_id": cid, "tool": t, "success": ok, "duration_ms": ms}),
+       thinking_callback=lambda c: emit({"type": "thinking", "task_id": task_id, "content": c}),
+   )
+   ```
+4. Runs it in a thread so streaming callbacks flush between turns:
+   ```python
+   result = await asyncio.get_event_loop().run_in_executor(None, lambda: agent.run_conversation(
+       user_message=task["message"],
+       conversation_history=task.get("history", []),
+       task_id=task_id,
+   ))
+   ```
+5. Emits the terminal `task_result` frame and exits.
 
-**Persistence model for memory/skill files** (inside-the-sandbox writes that need to survive pod destruction):
-- Memories/skills write to `/tmp/hermes/memories/` + `/tmp/hermes/skills/` inside the pod
-- Survive across dispatches naturally (pod runs `sleep infinity`, filesystem persists)
-- Do NOT survive pod destruction or gateway restart without sync-back
-- **Gateway sync-back daemon**: periodically calls `openshell sandbox download` to pull the files out to `~/.logos/memories/<agent_name>/`, canonical copy on the host. On pod re-create, `openshell sandbox upload` restores them. The pod is the live copy during a session; the host is the durable backup. This sync-back is itself a controlled boundary crossing — exactly the kind of thing the Option D trust model is designed to make explicit.
+The proven template is `gateway/worker.py:AgentWorker._run_agent_sync:186-246` — same shape, same callbacks, but dispatched via WebSocket instead of per-task exec. M10 takes the exec transport and points it at the same instantiation pattern.
 
-**Pros**:
-- Correct trust boundary: compromise containment for the agent, user governance for real-world actions
-- Makes STAMP's T and P axes functional, unblocks M1 and M2
-- Memory/skill writes happen during chats (M10's core fix)
-- Action tools stay on the host where they have the filesystem and network access they need
-- User has explicit control over what tools each agent can touch — aligns with the multi-user / multi-agent product identity
+The output frames the worker emits (`tool_progress`, `tool_end`, `thinking`, `token`, `task_result`) are **already parsed** by `gateway/worker_registry.py:dispatch_task` at line 449 — the parser was written for this case and has been waiting on the restoration.
 
-**Cons**:
-- Largest lift of the four options — 3-5 days spanning sandbox image, protocol extension, agent rewrite, sync-back daemon, and STAMP UI work
-- The protocol extension is the biggest risk: interleaving `tool_request` frames with the existing token/thinking/task_result stream needs careful testing against concurrent dispatches
-- Sync-back has edge cases (crashed pod mid-write, two dispatches touching the same memory file, gateway restart during sync)
+### Validated 2026-04-12
 
-**Scope breakdown** (~3-5 days):
-1. Extend `docker/Dockerfile.hermes-sandbox` to include `agents/hermes/agent.py` + `tools/memory_tool.py` + `tools/skill_manager_tool.py` + their imports (pure Python, manageable)
-2. Rewrite `docker/sandbox_worker.py` as a thin bootstrap: load config, instantiate `AIAgent` with proxy tools for the action surface, call `run_conversation`, emit events to stdout
-3. Extend the stdin/stdout JSON protocol with `tool_request` / `tool_grant` / `tool_denied` types. Update the protocol doc.
-4. Extend `gateway/worker_registry.py dispatch_task` to handle `tool_request` messages from stdout: check STAMP-T grants, route through `action_policies`, block on user approval when required, execute the tool on the host, reply via the subprocess stdin
-5. Build the tool proxy framework inside the sandbox: a base class that serializes `tool_request` and awaits a `tool_grant`/`tool_denied` on stdin
-6. Build the STAMP-T grant editor UI (closes M1)
-7. Build the STAMP-P approval-policy editor UI (closes M2)
-8. Sync-back daemon for memory/skill files (periodic `openshell sandbox download` → `~/.logos/memories/<agent>/`)
+Before committing to this plan, the viability of ephemeral `AIAgent` instantiation from inside a bare Python script was verified directly in `agents/hermes/agent.py`:
 
-**Dependency**: Nothing else blocks this. M1, M2, M9 all become concretely buildable AFTER M10-via-Option-D lands because they depend on the STAMP grant/policy system having teeth.
+- **`__init__` signature** (lines 223-267): all parameters except `model` have defaults. `base_url` / `api_key` fall through to a provider router. `session_db`, `action_policy`, `iteration_budget`, `workspace_path` all optional.
+- **`run_conversation` signature** (lines 4011-4019): synchronous, returns `{"final_response", "messages", "api_calls", "completed", "interrupted", ...}`. Takes `user_message`, `conversation_history`, `task_id`, optional `ephemeral_system_prompt` and `stream_callback`.
+- **No host-gateway coupling**: grep for `^from gateway\.` / `^from logos\.` / `localhost:` / `127\.0\.0\.1` / `host\.docker\.internal` / `host\.openshell` across the 5947-line file returns **one match** — line 19, a docstring example. `AIAgent` has zero imports from `gateway.*` or `logos.*` and no hardcoded URLs to any host-side service. It can run anywhere Python can import `agent/`, `core/`, `tools/`, and the OpenAI SDK.
+- **Context file and memory loading are gated on flags**: `skip_context_files=False` (default, line 257) loads SOUL.md / AGENTS.md / .cursorrules at line 1630. `skip_memory=False` (default, line 258) loads memories at line 700. For the sandbox case we keep both defaults — the agent has its own soul and memories inside the sandbox via an uploaded `$HERMES_HOME`.
+- **Streaming is callback-based**: `tool_progress_callback`, `tool_complete_callback`, `thinking_callback`, `reasoning_callback`, `step_callback`. Each callback wires trivially to an `emit()` call that writes a JSON frame to stdout.
+- **Filesystem needs inside the sandbox**: `$HERMES_HOME/logs/errors.log` (line 399), `$HERMES_HOME/sessions/` (line 646), `$HERMES_HOME/SOUL.md` + `memories/` + `skills/` if context files and memory are enabled. All under one env-configurable root. `AIAgent` creates missing directories at runtime (`mkdir(parents=True, exist_ok=True)`); only SOUL.md + seed memories need to be uploaded at spawn time.
+
+### Why the previous Option D was wrong
+
+Option D proposed a bidirectional stdin/stdout protocol: the sandbox emits a `tool_request` frame for any action tool, the gateway runs the tool host-side, then writes a `tool_grant` / `tool_denied` reply back to the subprocess's stdin. The sandbox's tool proxy awaits the response on stdin and continues the agent loop.
+
+**That is physically impossible on the Plan A-prime transport.** `gateway/worker_registry.py:370-384` closes the subprocess's stdin *before* openshell's exec primitive will start the in-sandbox process — the EOF is load-bearing. Without it, the in-sandbox command sits in a gRPC wait state forever. The comments at `worker_registry.py:25-33` and `sandbox_worker.py:14-30` document the empirical side-by-side tests proving this. There is no way to keep stdin open as a return channel after the task is delivered. Option D's bridge would have killed itself on the first approval request.
+
+**Even if stdin were usable**, running action tools on the host would invert the security story: `terminal_tool`, `browser_tool`, `delegate_tool` running in the gateway process would be unconstrained by Landlock, seccomp, capability drops, or the OpenShell network policy — exactly the layers the sandbox was meant to provide. Option D would give up the security boundary it was trying to codify. NVIDIA's NemoClaw (prior art — see below) takes the opposite stance: everything runs inside the sandbox, enforcement is at the infrastructure layer *below* the agent.
+
+### Two-layer STAMP model — same outcome, cleaner implementation
+
+The April 2026 migration plan (`docs/migration/logos-openshell-migration.md`, marked *"HISTORICAL — Migration largely complete"*) already committed to a two-layer enforcement split: *"Logos tool-level policy becomes a layer **above** OpenShell network policy. MCP tool access requests continue through the Logos gateway; outbound connections from MCP servers are governed by OpenShell egress rules. The combination is strictly stronger than either alone."* M10 implements that split:
+
+- **S (Soul)** — unchanged. SOUL.md uploaded to `$HERMES_HOME/SOUL.md` at spawn (already happens at `gateway/executors/openshell.py:874-882`, destination path needs adjusting to match the new `$HERMES_HOME` layout).
+- **T (Tools)** — two layers.
+  - *Infrastructure* (NemoClaw-style, coarse, per-sandbox): which binaries are installed in the sandbox image + which network endpoints the OpenShell policy allows + binary-scoping via `/proc/<pid>/exe` SHA256. Hot-reloadable via `openshell policy set`.
+  - *Application* (fine, per-agent, per-dispatch): which tool names are enabled per-agent, stored in `agents.toolsets` (column already exists), passed in the dispatch task payload to `AIAgent(enabled_toolsets=...)`. Honored by the agent's own tool registry at `agents/hermes/agent.py:586`. **No grant list, no bridge.**
+- **A (Agent)** — runs inside the sandbox. Run history writes to `$HERMES_HOME/sessions/`, synced back to the host periodically via the daemon in scope item 8.
+- **M (Model)** — unchanged. Sandbox calls `inference.local`, OpenShell's privacy router injects the provider credential at egress. Per-agent model binding already stored in `model_routes`.
+- **P (Policy)** — stays in the existing `action_policies` + `approval_requests` tables. Consulted **inside the agent** via `AIAgent.__init__`'s `action_policy` parameter (`agent.py:265`), enforced in `_invoke_tool`. Per-tool-call approvals flow as an outbound HTTPS callback from the sandbox to a Logos-side approval endpoint (new named endpoint on the OpenShell L7 proxy, same mechanism as `inference.local`).
+
+Each layer is independently buildable. M10 ships the agent-loop-inside-sandbox part; the policy expansion + preset system + editor UIs are the build-out on top.
+
+### Scope breakdown — Phase 1, shippable in stages
+
+| # | Item | Effort | Closes |
+|---|---|---|---|
+| 1 | **Sandbox image rebuild** — rewrite `docker/Dockerfile.hermes-sandbox` to install the Logos Python package so `from agents.hermes.agent import AIAgent` works inside the container. Crib the `uv pip install -e ".[all]"` pattern from `docker/Dockerfile.docker-sandbox:27-36`. Keep `CMD ["/app/entrypoint.sh"]` → `exec sleep infinity`. Audit `tools/` for required apt packages (shell for `terminal_tool`, etc.). Create `$HERMES_HOME` skeleton at `/sandbox/.hermes-data/{memories,skills,sessions,logs}` with sandbox-user ownership. | 2-4 days | M10 image prereq |
+| 2 | **Sandbox worker rewrite** — replace `docker/sandbox_worker.py:_handle_task` with the `AIAgent.run_conversation` bootstrap. ~50 lines. Template: `gateway/worker.py:AgentWorker._run_agent_sync:186-246`. Protocol unchanged (same stdin task shape, same stdout frame types). | 1-2 days | **M10 core** |
+| 3 | **Executor upload changes** — `gateway/executors/openshell.py:spawn()`: change SOUL.md upload destination from `/tmp/hermes/SOUL.md` (line 880) to `$HERMES_HOME/SOUL.md`, seed `memories/` from `~/.logos/instances/<agent>/memories/` if it exists, drop or repurpose the unused `gateway_url` field (line 744). | 1 day | M10 glue |
+| 4 | **Policy expansion** — rewrite `gateway/policies/openshell_default.yaml` (currently 63 lines, 2 entries) with binary-scoped, L7-inspected entries for every endpoint the agent legitimately needs. Add `gateway/policies/presets/` with per-integration opt-in overlays (github, slack, discord, telegram, huggingface, pypi, npm — shapes portable from `knowledge-repos/NemoClaw/nemoclaw-blueprint/policies/presets/*.yaml`). Add `gateway/policies.py` module with `apply_preset(agent_id, preset_name)`, `get_applied_presets(agent_id)`, `compute_effective_policy(agent_id)` — Python port of `knowledge-repos/NemoClaw/src/lib/policies.ts`. Add `agents.applied_policies` column or join table. | 3-5 days | unblocks M1 infrastructure layer |
+| 5 | **Tools editor UI** — dropdown behind the T pill in the Chats tab (the M1 surface). Reads `agents.toolsets` + `applied_policies`, lets the user toggle application-layer tool enable/disable and apply/remove infrastructure presets. Apply triggers `apply_preset()` + `openshell policy set` for runtime effect. | 3-5 days | **closes M1** |
+| 6 | **Policy editor UI** — slide-out behind the P pill (the M2 surface). Shows the agent's `action_policy` with per-tool gating (auto / require-approval / deny), plus pending `approval_requests` for the current chat. | 3-5 days | closes M2 UI (pairs with item 7 for runtime) |
+| 7 | **In-sandbox approval callback** — the one genuinely new bit of transport glue. Register a second named endpoint on the OpenShell L7 proxy (e.g. `logos-approval.local`, same mechanism as `inference.local`). Logos gateway exposes `POST /v1/approvals/decide` that holds the response open until the user decides in the chat UI. The agent inside the sandbox makes an outbound HTTPS call to this endpoint when `action_policy` requires approval, blocks on the response body `{"decision": "approve"\|"deny", "reason": "..."}`. Requires OpenShell L7 proxy support for a second named endpoint — if that needs an OpenShell-side change, the minimum-viable variant uses direct LAN IP egress through the network policy. | 2-3 days | closes M2 runtime + M9 chat visibility |
+| 8 | **Sync-back daemon** — periodic `openshell sandbox download` pulls `$HERMES_HOME/memories/` + `$HERMES_HOME/skills/` out to `~/.logos/instances/<agent>/` on the host. Canonical durability copy across sandbox re-creation. On re-create, upload restores from the host copy. | 2-3 days | durability (not M10-blocking) |
+
+**Phase 1 minimum** (shippable alone): items 1-3 close the core M10 gap — web chats run the full agent loop, memory writes happen during chats, nudges fire, delegation works from the web UI. **4-7 days of focused work.**
+
+**Phase 1 full**: items 1-8, **2-3 weeks**. Closes M1, M2, M9 chat-path visibility, and adds durability.
+
+### Why the scope is smaller than the earlier Option D estimate
+
+The earlier "3-5 days" estimate covered Option D's bridge protocol — designing, implementing, and concurrency-testing a new bidirectional stdin/stdout message protocol with error paths, sandbox-side tool proxies, and host-side grant routing. That's no longer in scope. The sandbox worker rewrite replaces an existing file with a similar file using the same protocol frames. The Dockerfile work is "port NemoClaw's hardening patterns into Logos's directory". The policy work is "port NemoClaw's YAML structure into `gateway/policies/`". **None of it is novel architecture** — it's mechanical adaptation of patterns that exist and work in either Logos (the per-dispatch exec transport) or NemoClaw (the hardened image + policy language).
+
+### Prior art — NemoClaw
+
+NVIDIA's **NemoClaw** (`knowledge-repos/NemoClaw`) is a separate opinionated reference stack on top of OpenShell that implements exactly this architecture for Nous Research's upstream `hermes-agent`. Their `agents/hermes/` directory contains a complete hardened deployment:
+
+- **`Dockerfile`** (124 lines) — image build with integrity-hashed config, immutable/writable dir split, SOUL.md seed + symlink, DAC hardening (root ownership, chmod 444), build-time patch for Hermes's `TelegramFallbackTransport` (which bypasses the L7 proxy via raw IPs)
+- **`start.sh`** (411 lines) — runtime hardening entrypoint: capability drops via `capsh`, PATH hardening, ulimit, config integrity verification at startup, symlink validation, `chattr +i` immutable hardening, HTTP_PROXY setup, privilege separation via `gosu gateway`
+- **`manifest.yaml`** — declarative agent integration contract (binary_path, gateway_command, health_probe, config paths, state_dirs, messaging platforms)
+- **`policy-additions.yaml`** / **`policy-permissive.yaml`** — per-agent policy overlays
+- **`decode-proxy.py`** (103 lines) — asyncio TCP proxy that URL-decodes paths before forwarding to the L7 proxy, working around Python httpx's URL-encoding of colons that would otherwise break OpenShell's `openshell:resolve:env:KEY` placeholder rewriting. **Directly reusable in Logos when we adopt the placeholder pattern for secrets.**
+- **`plugin/__init__.py`** (164 lines) — important finding: the NemoClaw "plugin" for Hermes is **pure UX sugar**. It registers two tools (`nemoclaw_status`, `nemoclaw_info`) and a startup banner. It does NOT intercept other tool calls, does NOT enforce policy, does NOT bridge between sandbox and host. **All hardening is at the OpenShell layer, below Hermes.** The Hermes runtime inside the sandbox is unmodified upstream Hermes with one build-time patch. This is decisive confirmation that Logos does not need to modify `agents/hermes/agent.py` to adopt this model — the agent runs as-is, the sandbox boundary does the work.
+- **`nemoclaw-blueprint/policies/openclaw-sandbox.yaml`** (204 lines) — the binary-scoped, L7-inspected reference network policy. Worked examples include Claude Code → `api.anthropic.com` (POST to inference paths only, TLS-terminated, binary-scoped to `/usr/local/bin/claude`), Sentry → GET-only (with comment explaining the threat model: unrestricted POST would be a generic exfiltration channel), and opt-in presets for every messaging / package / service integration.
+
+**We do not adopt NemoClaw directly.** It targets Hermes ≥0.8.0 (Logos is on 0.7.x); it's explicitly single-user; it's single-agent (one always-on assistant per sandbox); its `nemoclaw/src/blueprint/ssrf.ts` SSRF check unconditionally rejects RFC1918 / CGNAT / loopback IPs, which breaks Logos's LM Studio on 192.168.x use case; it hard-codes NVIDIA Endpoints as the default provider; and STAMP, run replay, soul system, workflows, multi-user, evolution have no home in NemoClaw's mental model. **We port the patterns** — Dockerfile structure, hardening script, policy YAML language, preset model, config-generator pattern, decode-proxy — into Logos's own `docker/`, `gateway/policies/`, and `gateway/policies.py` directories, and maintain them as Logos code. Same goal, different vehicle.
+
+### Dependencies
+
+- **Blocks M1** (editable Tools pill) — the dropdown needs the in-sandbox agent to honor `enabled_toolsets` from the dispatch payload. Requires scope items 1-3.
+- **Blocks M2** (editable Policy pill + approvals) — the editor needs the in-sandbox agent to consult `action_policy` and surface pending approvals. Requires scope items 1-3 + 7.
+- **Blocks M9** (chat-path visibility) — memory writes have to happen during chats before they can be surfaced in the UI. Requires scope items 1-3.
+- **No dependency on M8 Phase B** — the dispatch ledger can land before or after.
+- **Not blocked by anything upstream** — M6 (unified logs) is done, TASKS.md #24 (Plan A-prime transport) is done, M8 Phase A (active_tasks + thought bubble) is done. M10 is the next unblocked execution target.
+
+### Direction established
+
+- **2026-04-11** — discovered during M9 scoping that `docker/sandbox_worker.py` bypasses `AIAgent.run_conversation`. Earlier Option D proposal (stdin-delivered grant protocol, action tools host-side) drafted and recommended.
+- **2026-04-12 (morning)** — validated in code against `_handle_chat`, `worker_registry.dispatch_task`, the three Dockerfiles (`Dockerfile`, `Dockerfile.hermes-sandbox`, `Dockerfile.docker-sandbox`), the four executors (`openshell.py`, `docker.py`, `base.py`, `__init__.py`), all 10 `AIAgent(...)` call sites, and `AIAgent.__init__` + `run_conversation` signatures. Studied NemoClaw as prior art (full architecture read + code validation). Confirmed Option D's stdin bridge was physically impossible. Rewrote this section as Option A with verified scope breakdown.
+- **2026-04-12 (evening)** — implemented Phase 1 items 1-5 on branch `m10-phase1-aiagent-in-sandbox`, then ran the build-test cycle. First `docker build` produced a 4.26 GB image because `COPY . /app/` + `pip install -e ".[messaging]"` bundled the entire Logos Python package (including `gateway/`, `logos_cli/`, `cron/`, `acp_adapter/`) into the sandbox. **Greg identified the architectural error**: the sandbox should contain the agent runtime (preferably a versioned upstream image like Nous Research's `hermes-agent`), not Logos's platform layer. "The image should honestly just be the original hermes repo as the gateway... that way we can just drop any agent into a sandbox and present multiple agents as options later in logos... multi agent just comes naturally by raising a new sandbox with a new agent or a sandbox of hermes a second time or third. We just need to prove it works once with a full agent sandboxed away." **Items 1-3 reverted, redirected to M11 (image-per-agent-release pattern)**. Items 4-5 (network policies, DB, editor UI) kept — they're infrastructure-layer and agent-runtime-agnostic.
 
 ---
 
-### Option A: Full AIAgent in the sandbox (architecturally correct, biggest lift)
+## M11 — Agents as versioned drop-in sandbox images
 
-Replace `sandbox_worker._run_inference` with `AIAgent.run_conversation`. Import `AIAgent` and its dependencies into `Dockerfile.hermes-sandbox`. Every tool the agent might call needs to be available inside the sandbox (filesystem-wise and import-wise). The agent runs fully inside the pod; tool calls execute inside the pod; memory writes go to paths inside the pod and need to sync back to the host for persistence.
+**Status**: DONE (2026-04-12). Superseded M10 Phase 1 items 1-3. All 4 core implementation items landed, plus 7 issues discovered and fixed during testing (see M11.md), plus stretch items: per-agent memory persistence across sandbox lifecycle (`76502d4`), tiered state sync — memories on-write, logs/sessions periodic (`99b1fa4`), local agent image registry + auto-import (`2edcb03`), pre-create check + state reconciliation on gateway restart (`453007d`).
 
-- **Pros**: architecturally pure. Tool calls are truly isolated. Matches the pre-Plan-A design.
-- **Cons**: large scope. Every tool needs to be shipped into the sandbox image (current image is minimal: Python + aiohttp). Memory/skills need persistent mount or sync-back. Workspace paths inside the sandbox vs host filesystem diverge. The sandbox image balloons from ~250MB to probably >1GB. Cold-start time on first spawn jumps significantly.
-- **Estimated scope**: 2-3 days of careful work. High risk of "now we have tool-call bugs in the sandbox environment" follow-ups.
+### Why M10 items 1-3 went wrong
 
-### Option B: AIAgent in the gateway, inference via sandbox (hybrid, pragmatic)
+M10's Option A (full `AIAgent.run_conversation` inside the sandbox) was architecturally sound — the tool loop belongs inside the security boundary. But the **implementation** bundled the whole Logos Python package into the sandbox image (`COPY . /app/` + `uv pip install -e ".[messaging]"`), which meant:
 
-Run `AIAgent` in the gateway process (like `_flush_memories_for_session` already does). Tool calls execute on the host. When the agent needs to call the LLM, route that call through the sandbox — either via the existing `openshell sandbox exec` per-task path (the agent becomes a gateway-side loop that farms each chat-completion call out to the sandbox for isolation), OR by having the agent hit `https://inference.local/v1` directly from the host (bypassing the sandbox entirely, like flush already does).
+1. **4.26 GB sandbox image** — most of it is host-side code and platform adapter deps the agent never runs (see below)
+2. **Host-side code inside the security boundary** — `gateway/http_api.py`, `gateway/admin_handlers.py`, `gateway/policies.py`, `gateway/executors/openshell.py`, `gateway/auth/db.py`, `gateway/html/*` all ended up inside the sandbox. If the agent is compromised, the attacker has a copy of the admin HTTP handler surface sitting at `/app/gateway/`.
+3. **Tight coupling to Logos releases** — every Logos release forces a sandbox image rebuild. When Nous Research ships Hermes 0.9.0, we'd have to pull it into the Logos fork, release a Logos version, rebuild the image, and redeploy — a multi-step release dance for a single upstream dependency bump.
+4. **No path to multi-agent** — `sandbox_worker.py` hardcodes `from agents.hermes.agent import AIAgent`. Swapping to Claude Code or OpenClaw would require either parallel sandbox_worker variants per agent type or a runtime dispatch mechanism that doesn't exist yet. Both are architectural reworks, not configuration changes.
+5. **Cross-layer dep bomb** — grep during the build-test revealed that `agent/auxiliary_client.py`, `tools/environments/singularity.py`, `tools/environments/base.py`, `tools/skills_tool.py`, and `tools/process_registry.py` all import from `logos_cli.config`, meaning the Hermes runtime has drifted into depending on the Logos CLI layer. This coupling would need to be unwound before any clean extraction is possible.
 
-- **Pros**: restores full agent functionality fast. Tool calls inherit the gateway's filesystem access so `memory_tool`, `skill_manager_tool`, `workspace`, etc. all just work. No sandbox image bloat. Low cold-start cost. Reuses the proven `_flush_memories_for_session` pattern.
-- **Cons**: tool execution is on the host, not sandboxed. If the user wanted the sandbox to be a security boundary for tools (terminal, browser, filesystem), this path doesn't provide that. The sandbox becomes essentially a proxy for inference calls only — its isolation becomes cosmetic for the chat path.
-- **Estimated scope**: 1 day. The machinery is already built (`_flush_memories_for_session` proves the shape works).
+### The right shape
 
-### Option C: Add a tool-loop to `sandbox_worker.py` without pulling in full AIAgent (middle ground)
+Each agent lives in its own **versioned upstream container image**, built from its own source (not the Logos repo). Logos references the image by tag, doesn't build or bundle it, and needs to know only the dispatch protocol. Version bumps = tag bumps, no Logos release.
 
-Keep `sandbox_worker.py` lightweight but extend `_run_inference` to parse `tool_calls` from the LM Studio response and execute a whitelist of sandbox-safe tools inline (memory_tool, skill_manage). Keep terminal/browser/delegate out of scope for the sandbox. Send `tools=[...]` in the payload so the model can actually request tool use.
+**This is exactly NVIDIA NemoClaw's pattern** (prior art, already studied during M10 research). Their `nemoclaw-blueprint/blueprint.yaml:32` pins the sandbox image by sha256 digest: `ghcr.io/nvidia/openshell-community/sandboxes/openclaw@sha256:...`. Their `agents/hermes/manifest.yaml:15-24` declares Hermes as a drop-in agent with `binary_path: /usr/local/bin/hermes`, `gateway_command: "hermes gateway run"`, `health_probe.url: http://localhost:8642/health`, and `forward_ports: [8642]`. NemoClaw doesn't build Hermes — it references it.
 
-- **Pros**: sandbox stays slim. Memory and skill consolidation work during chats (the user's original expectation). No host-side agent loop. Scope-bounded.
-- **Cons**: reimplements a fraction of `AIAgent.run_conversation` in `sandbox_worker.py` — duplication risk. Any new tool the user wants in chats needs to be ported over. The "full Hermes experience" is partially delivered — the most-important tools work but the long tail doesn't. Memory_tool and skill_manage need to be importable inside the sandbox image (they're both pure Python so that's easy).
-- **Estimated scope**: ~1 day. Well-bounded. Doesn't preclude doing Option A or B later.
+### Three concrete consequences of the shape
 
-**Recommended tackling order** (updated after user framing): **Option D**. A, B, and C are all weaker answers to the same question — they compromise the trust boundary in different ways. Option D maps the split onto the user's actual mental model (sandbox = agent self, host = real-world actuators, STAMP = governance of the bridge) and is the architecture that makes the multi-user, multi-agent product identity work correctly. It's the biggest lift but it's also the one that doesn't leave something important broken.
+1. **Agent updates = image tag bumps, no Logos rebuild.** When Nous Research releases `hermes-agent` 0.9.0 upstream, the Logos user pulls `nousresearch/hermes-agent:0.9.0` (or whatever registry the image lives at) and Logos's M11-era executor spawns it inside an OpenShell sandbox unchanged. Logos's code stays on 0.10.x.
 
-**Dependency**: Must land before M9 (visible memory writes). M9 depends on memory writes actually *happening* during chats, which requires this restoration. M1 (editable STAMP-T) and M2 (editable STAMP-P) become concretely buildable *after* Option D because they depend on the grant/policy system having runtime teeth.
+2. **Multi-agent falls out for free.** Once one agent works inside a sandbox, spinning up a second is just calling `spawn()` with a different `agent.name` and possibly a different image tag. Different instances of the same agent image (Tali + Grace, both running Hermes with different souls) come for free. Different agent TYPES (Hermes + Claude Code + OpenClaw running concurrently) come for free too — the Logos dashboard's agent picker just needs to know which image to use for which agent type. Per Greg 2026-04-12 evening: *"multi agent just comes naturally by raising a new sandbox with a new agent or a sandbox of hermes a second time or third. We just need to prove it works once with a full agent sandboxed away."*
 
-**Direction established**: 2026-04-11 session — user asked to ship "visible memory writes" and during scoping I discovered that memory writes don't happen during chats at all because the sandbox worker doesn't run the agent loop. I presented three options (A: full agent in sandbox, B: agent on host, C: minimal tool loop in sandbox). User responded with the correct fourth framing: "from a protective save policy drive perspective it's probably better to have the entire agent on the inside. But with regards to tooling, apart from ones the agent needs to improve and remember, tools to act should probably be available on the outside and confirmed by users to be given to the agent. Part of the STAMP model." That framing became Option D above, and supersedes the earlier recommendation of Option B.
+3. **Security boundary is actually meaningful.** Host-side Logos code (gateway, admin handlers, policies management, DB, HTTP API) doesn't leak into the sandbox. If an agent is compromised, blast radius is whatever the image contains plus whatever the OpenShell network policy allows — not "a copy of the entire Logos admin handler surface."
+
+### The protocol question — how does Logos talk to the in-sandbox agent?
+
+Two viable patterns, both proven in prior art:
+
+- **Pattern A (port-forward HTTP)**: the agent inside the sandbox runs its own HTTP server on a known port (e.g. 8642 for Hermes, or whatever the agent's manifest declares in `forward_ports`). Logos's executor calls `openshell sandbox create --forward 8642` to expose that port to the host; chat dispatch is `POST http://127.0.0.1:<forwarded-port>/v1/chat/completions` (or whatever endpoint the agent's gateway exposes) from the Logos host to the in-sandbox agent's gateway. Streaming happens over SSE or chunked HTTP. **This is NemoClaw's pattern** (`agents/hermes/manifest.yaml:32-33`) and is also what Logos's existing `DockerSandboxExecutor` does (`gateway/executors/docker.py:138-151` — publishes port 8080 to localhost and polls `/health`).
+
+- **Pattern B (stdin/stdout per-task exec)**: call `openshell sandbox exec --name <sandbox> -- <agent-binary> <chat-subcommand>` per chat turn. The agent binary has its own one-shot invocation mode that reads a task from stdin and emits events to stdout. This is what M10 Phase 1 items 1-3 attempted (via the Python `sandbox_worker.py` shim) — the shim approach is the architectural error we're undoing. A real Pattern B would delete the shim and invoke the agent binary directly.
+
+**Pattern A is the right answer for M11** because:
+
+- It matches NemoClaw's blessed NVIDIA reference architecture
+- Logos's historical `DockerSandboxExecutor` already implements this shape — we can mine it for code
+- Port forwarding is a well-known OpenShell feature (`--forward`)
+- It doesn't require per-agent CLI glue — HTTP is a universal protocol
+- Streaming tokens work naturally over SSE or chunked responses
+- Multi-session within one sandbox works because HTTP is stateless per-request; just pass a `session_id` in the request body
+
+### Scope — narrow proof-of-concept (~2-3 days)
+
+1. **Pick the image source.** The only architecturally-correct answer is "upstream Nous Research `hermes-agent`" — the agent is the agent, Logos is the platform around it. The "Logos fork" is mostly an illusion: `agents/hermes/agent.py` has only 8 occurrences of "logos" across its 5947 lines, and the rest of the fork (`agent/*`, `tools/*`, `core/*`) is mostly agent-runtime support with one real problem — a few cross-layer imports of `logos_cli.config` (for `get_hermes_home`, `load_env`, `_ENV_VAR_NAME_RE`) that leaked in during development and should be refactored out. The `agents/hermes/logos-agent.yaml` file is a Logos-platform registration manifest that's sitting inside the agent fork directory — it belongs in Logos's own `agents/<name>/manifest.yaml` slot (NemoClaw's shape) as orchestrator metadata, not colocated with the agent code.
+
+   What we don't know yet (and should discover before deciding the path):
+   - **How much does Logos's `agents/hermes/agent.py` + `agent/` + `tools/` + `core/` actually differ from Nous Research's upstream `hermes-agent`?** We haven't cloned upstream and diffed. The git log shows many commits to `agents/hermes/` (lazy tool loading, qwen3 parsing fixes, LM Studio retry, etc.) but almost all of those are general agent improvements that probably belong upstream as PRs, not Logos-specific features.
+   - **Does Nous Research publish a runnable Hermes image or a Dockerfile?** If yes, we reference it. If no, we build from their repo the same way NemoClaw does.
+
+   Paths forward, priority order now reflects the right architecture:
+
+   - **(a)** **Use Nous Research's upstream `hermes-agent` directly.** Clone it (or pull an official image if they publish one), build or reference it as `hermes-agent:<version>`, reference it by tag in Logos's executor. Anything that "doesn't work" on first run is either (i) a feature that should move to Logos's platform layer (the `logos-agent.yaml` case), (ii) a Logos-platform leak into the agent (the `logos_cli.config` cross-imports), or (iii) a genuine agent improvement Logos has that isn't upstream yet — in which case PR it to Nous Research. **This is the end state.**
+
+   - **(b)** **Reuse Logos's `Dockerfile.docker-sandbox` as a stepping stone** if (a) can't happen in the 2-3 day POC budget. It already builds a working Logos-gateway-in-a-container that includes the fork's agent runtime, so it's a fast way to prove the Pattern A port-forward HTTP dispatch shape works. **Explicitly a debt to be paid in M11 Phase 2** — migrate to (a) once the pattern is proven.
+
+   - **(c)** **Build a leaner image from the Logos repo subset** — just `agents/`, `agent/`, `tools/`, `core/` plus the `logos_cli.config` shim. This is worse than (a) (still using the fork) and worse than (b) (more custom build work), so it's only valuable if we want to keep something Logos-specific in the fork that we can't easily upstream. Probably skip.
+
+   **Recommendation: start with (a) if we can get a working upstream image + dispatch path in <1 day; otherwise fall back to (b) for the POC and file "migrate to (a)" as M11 Phase 2.** The call depends on how usable upstream Nous hermes-agent is out of the box — I haven't checked yet and should before committing.
+
+2. **Rewrite `gateway/executors/openshell.py:spawn()`** to:
+   - Accept an image tag and a forwarded port (both from a per-agent config/manifest)
+   - Call `openshell sandbox create --from <image> --forward <port>` — no `--policy` on the initial create (the effective policy merge already landed in M10 Phase 1 item 5 and stays)
+   - Drop the `instance_config.json` upload path (that was for `sandbox_worker.py`'s config reading — not needed when the agent's own gateway reads config from wherever its image expects)
+   - Drop the SOUL.md upload path (Hermes gateway inside the image reads SOUL.md from its own HERMES_HOME on container start, or we pass it via environment variable at sandbox create time)
+   - Keep the `gateway.policies.write_effective_policy_to_tempfile(agent_id)` call for the policy file — that's infrastructure-layer and still applies
+
+3. **Rewrite `gateway/worker_registry.py:dispatch_task`** to HTTP-POST to `http://127.0.0.1:<port>/chat` (or the appropriate endpoint) on the sandbox instead of `openshell sandbox exec python3 /app/sandbox_worker.py`. The streaming callback interface stays the same — forward whatever the agent's HTTP endpoint returns (SSE or chunked) to `on_stream_event`.
+
+4. **Delete `docker/sandbox_worker.py`** — not needed. The agent's own gateway runs inside the sandbox.
+
+5. **Delete `docker/Dockerfile.hermes-sandbox`** — replaced by `Dockerfile.docker-sandbox` (already exists) or a future `Dockerfile.hermes-runtime` once the cross-layer cleanup lands.
+
+6. **Add a per-agent manifest** — just enough for the proof. Something like `agents/<name>/manifest.yaml` with `name`, `image`, `forward_port`, `health_probe.url`. Steal the shape from NemoClaw's `agents/hermes/manifest.yaml` but keep it minimal. A single file per agent type.
+
+7. **Address the `logos_cli.config` cross-layer coupling** — move `get_hermes_home`, `load_env`, and `_ENV_VAR_NAME_RE` from `logos_cli/config.py` into `core/paths.py` or similar. Update the five affected files in `agent/` and `tools/`. Low-risk mechanical refactor, 5-10 line changes per file. **Can be deferred** if we pick image option (a) since the Logos gateway imports `logos_cli.config` fine from inside its own container.
+
+8. **Build + smoke test end-to-end**: spawn one sandbox, send a chat, verify the full agent loop runs (memory write, tool invocation, nudges). This is the "prove it works once" milestone Greg scoped.
+
+9. **Multi-agent smoke test**: spawn a second sandbox (same image, different `agent.name`), verify both work concurrently. This is the "multi-agent for free" validation — if it works for one, it should work for N.
+
+### What's preserved from M10 Phase 1
+
+Items 4-5 ship as-is. They're infrastructure-layer and agent-runtime-agnostic:
+
+| Artifact | Stays |
+|---|---|
+| `gateway/policies.py` + the 6 presets in `gateway/policies/presets/` + the new `gateway/policies/openshell_default.yaml` baseline | ✓ Network policies apply to whichever agent runs inside the sandbox |
+| `gateway/auth/db.py` v10 migration + `get_agent_applied_presets` / `set_agent_applied_presets` helpers | ✓ Per-agent applied-preset list survives the agent-runtime swap |
+| `gateway/admin_handlers.py` new handlers (`handle_agent_tools_get`, `handle_agent_toolsets_toggle`, `handle_agent_presets_toggle`) + `gateway/http_api.py` route registrations | ✓ Still serve the T pill UI; preset toggles still push via `openshell policy set`; toolset toggles still write `agents.toolsets` (runtime effect returns once M11 ships) |
+| `gateway/html/main_app.html` T pill dropdown UI | ✓ Users can toggle presets + toolsets today; preset runtime-effect works; toolset runtime-effect returns with M11 |
+| `gateway/executors/openshell.py` non-reverted edits: `_GATEWAY_PORT` + `_WORKER_REGISTER_TIMEOUT` removal, `gateway_url` field drop from `instance_config`, `gateway.policies.write_effective_policy_to_tempfile(agent_id)` wire-up | ✓ Cleanup + effective-policy pass-through survives |
+| MISSING.md M10 section | ✓ Historical narrative of "why Option D was wrong" stays as documentation |
+
+### Dependencies
+
+- **Blocks the runtime half of M1** — Tools editor toolset toggles land on `agents.toolsets` today (infrastructure-layer T pill works), but the in-sandbox agent won't honor `enabled_toolsets` until M11 ships a runtime that reads it.
+- **Blocks the runtime half of M2 + all of M9 chat-path visibility** — same shape: memory writes during chats, tool invocations, and nudges all need an in-sandbox agent loop.
+- **Does NOT block M3 / M4 / M5 / M7 / M8 Phase B** — those are independent tracks.
+- **Depends on nothing upstream** — all the M10 infrastructure-layer pieces are shipped already; M11 is pure agent-runtime work.
+
+### Open questions
+
+1. **Which image option do we start with — (a) reuse `Dockerfile.docker-sandbox`, (b) build a cleaner subset, or (c) use upstream Nous Research directly?** (a) is fastest, (c) is most correct long-term.
+2. **Does the in-sandbox agent's gateway need to route through `inference.local`, or does it make direct LLM calls?** If direct, credentials leak into the sandbox (bad). If through `inference.local`, we need to make sure the agent's gateway respects `HTTPS_PROXY` or `OPENAI_BASE_URL` env vars.
+3. **How does per-agent config get into the sandbox?** NemoClaw uses the `instance-config.json` upload pattern (which we're dropping). Alternative: env vars set at `openshell sandbox create` time, or a small config file uploaded to a well-known path, or HTTP POST to the in-sandbox agent after spawn to configure it.
+4. **Streaming responses**: HTTP SSE or chunked? NDJSON?
+5. **Session state** — does the sandbox's in-memory session store persist across chats, or does each chat include full history in the task payload (stateless server)? Today Logos passes history per-chat, so stateless is the easy answer.
+6. **Auth between Logos and the in-sandbox agent** — the forwarded port is local-only by default (127.0.0.1 binding), but should we add a bearer token in case of multi-user situations where different users' agents share a host? Probably punt to M11 Phase 2.
+
+### Direction established
+
+- **2026-04-12 (evening)** — during the M10 Phase 1 build-test cycle, the first `docker build` produced a 4.26 GB image that bundled the entire Logos package. Greg identified the architectural error and redirected scope: *"the image should honestly just be the original hermes repo as the gateway... that way we can just drop any agent into a sandbox and present multiple agents as options later in logos... The point is to just be able to drop the actual hermes agent and even be able to update it by just bringing up the new release of the agent and same with any agent... multi agent just comes naturally by raising a new sandbox with a new agent or a sandbox of hermes a second time or third. We just need to prove it works once with a full agent sandboxed away."* M10 Phase 1 items 1-3 reverted, this M11 section written to capture the new scope.
 
 ---
 
@@ -570,20 +713,33 @@ M8 Phase A (active_tasks + bubble) → DONE — world view reflects live activit
 
 ─── blockers remain below this line ───
 
-M10 (sandbox_worker ⟷ AIAgent) ══╦══→ Option D: agent inside, tools outside,
-                                  ║     STAMP-gated bridges
-                                  ║
-                                  ╠══→ BLOCKS M1 (STAMP-T has no runtime teeth
-                                  ║                until Option D lands)
-                                  ╠══→ BLOCKS M2 (STAMP-P has no runtime teeth
-                                  ║                until Option D lands)
-                                  ╚══→ BLOCKS M9 chat-path visibility
-                                        (memory writes don't happen during
-                                         chats without the agent loop)
+M10 Phase 1 items 4-5 (policies + UI) ══→ SHIPPED — network policies +
+                                           presets + Tools editor UI +
+                                           DB migration are agent-runtime-
+                                           agnostic, ride through M11
+                                           unchanged. T pill dropdown
+                                           works for preset toggling
+                                           at runtime today.
 
-M1 (T editable) ─┐
-                 ├──→ depend on M10 Option D
-M2 (P editable) ─┘
+M10 Phase 1 items 1-3 (sandbox bundling) ═→ SUPERSEDED by M11.
+
+M11 (agents as drop-in sandbox images) ══→ DONE (2026-04-12).
+                                           Full AIAgent in OpenShell
+                                           sandbox + memory persistence
+                                           + tiered state sync + auto-
+                                           import + state reconciliation.
+                                           UNBLOCKED: runtime half of
+                                           M1, M2, M9.
+
+M1 (T editable) ──→ UI shipped (M10 item 5). Infrastructure-layer
+                    toggles (presets) have runtime effect today via
+                    gateway/policies.py + `openshell policy set`.
+                    Application-layer toggles (toolsets) persist to DB
+                    today; runtime effect blocked on M11.
+
+M2 (P editable) ──→ Blocked on M11 (need in-sandbox agent first) +
+                    M10 Phase 1 items 6-7 (Policy editor UI +
+                    in-sandbox approval callback, not yet built).
 
 M3 (per-user routing) ──→ M4 (multi-user polish) [M3 is the infrastructure M4 needs]
                       └──→ fixes the dupe-surface accident root cause
@@ -601,16 +757,16 @@ M7 (sandbox health UX) ──→ premise needs re-grounding on Plan A-prime's
 M8 Phase B (ledger) ──→ depends on M6 (shipped)
                     ──→ unlocks M9 analytics surface
 
-M9 (activity visibility) ──→ depends on M10 Option D (for chat-path visibility)
+M9 (activity visibility) ──→ depends on M11 (for chat-path visibility)
                          ──→ depends on M8 Phase B (for ledger tagging)
                          ──→ the tamagotchi / living-agent identity feature
 ```
 
-**Recommended tackling order (updated end of 2026-04-11)**:
+**Recommended tackling order (updated 2026-04-12)**:
 
-**M10 (Option D) → M1 + M2 (both become buildable after Option D) → M8 Phase B → M9 → M3 → M4 → M7 → M5 (full-tab world)**
+**M10 items 6-7 (Policy editor UI + in-sandbox approval callback, closes M2) → M9 (make memory writes visible in UI) → M8 Phase B (dispatch ledger) → M3 → M4 → M7 → M5 (full-tab world)**
 
-Rationale: **M6 is already done** and paid for itself multiple times today. **TASKS.md #24 is already done** — Plan A-prime ships end-to-end. **M8 Phase A is already done** — the thought bubble makes live agent state visible for the first time. The next focused chunk is **M10 via Option D**, because it unblocks THREE other tickets (M1, M2, M9's chat-path discoverability) and is the architecture that makes STAMP's T/P axes real governance. After Option D lands, M1 and M2 become concrete UI work; after that, the dispatch ledger (M8 Phase B) and visible memory writes (M9) are the next natural cluster. Multi-user (M3 → M4) and world-view polish (M5 full-tab) can run in parallel with the Option D work or follow after. M7 needs re-grounding before it can move forward — its original premise (NemoClaw port-forward + HTTP probe) was superseded by Plan A-prime's per-task exec model.
+Rationale: **M11 is DONE** — full AIAgent runs inside OpenShell sandbox with memory persistence, state sync, and auto-import. **M10 items 4-5 shipped** (network policy presets, T pill UI). M1's runtime half is now unblocked (toolset toggles flow through to AIAgent). The next highest-value work is M2 (Policy editor + approvals) which needs M10 items 6-7, then M9 (making the existing autonomous mechanisms visible — now that memory writes actually happen during web-UI chats). M8 Phase B, M3/M4, M7, and M5 are independent tracks.
 
 ---
 

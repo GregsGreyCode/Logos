@@ -481,6 +481,25 @@ async def handle_cloud_providers_test(request: web.Request) -> web.Response:
     return web.json_response(result)
 
 
+# ── Dispatch ledger (M8 Phase B) ─────────────────────────────────────────────
+
+async def handle_dispatches_list(request: web.Request) -> web.Response:
+    """GET /admin/dispatches — query the dispatch activity ledger.
+
+    Query params: agent_id, origin, status, limit (max 200), offset.
+    """
+    agent_id = request.rel_url.query.get("agent_id")
+    origin = request.rel_url.query.get("origin")
+    status = request.rel_url.query.get("status")
+    limit = min(int(request.rel_url.query.get("limit", 50)), 200)
+    offset = int(request.rel_url.query.get("offset", 0))
+    rows, total = auth_db.list_dispatches(
+        agent_id=agent_id, origin=origin, status=status,
+        limit=limit, offset=offset,
+    )
+    return web.json_response({"dispatches": rows, "total": total})
+
+
 # ── Named agents ─────────────────────────────────────────────────────────────
 
 async def handle_agents_list(request: web.Request) -> web.Response:
@@ -496,6 +515,26 @@ async def handle_agents_list(request: web.Request) -> web.Response:
         from gateway.executors.openshell import _sanitize_sandbox_name
     except Exception:
         _sanitize_sandbox_name = lambda s: s  # noqa: E731
+
+    # Aggregate dispatch counts per agent in a single query so the world
+    # view's per-agent maturity tier ("Sprout/Sapling/Branch/Tree/Old
+    # Growth") doesn't need N round-trips. Sessions are filesystem-backed
+    # at ~/.logos/agents/<name>/sessions/*.json — count via a directory
+    # listing per agent (cheap, O(agents) stat calls). Memory count is
+    # currently always 0 in the OpenShell runtime (M10) so we stamp the
+    # field but the maturity formula's memory term is inert until
+    # sandbox_worker.py starts writing to ~/.logos/agents/<name>/memories/.
+    import sqlite3 as _sqlite3
+    from pathlib import Path as _Path
+    dispatch_counts: dict[str, int] = {}
+    try:
+        with auth_db._conn() as _conn:
+            for row in _conn.execute(
+                "SELECT agent_id, COUNT(*) AS n FROM dispatches WHERE agent_id IS NOT NULL GROUP BY agent_id"
+            ).fetchall():
+                dispatch_counts[row["agent_id"]] = int(row["n"])
+    except _sqlite3.Error:
+        pass  # leave map empty; UI handles missing counts as 0
 
     worker_registry = request.app.get("worker_registry")
     for a in agents:
@@ -531,6 +570,29 @@ async def handle_agents_list(request: web.Request) -> web.Response:
             if worker_registry and sandbox_name else 0
         )
 
+        # Maturity inputs (tier computation lives in the frontend so the
+        # tier names + glyphs can iterate without a server roundtrip).
+        a["dispatch_count"] = dispatch_counts.get(a["id"], 0)
+        sess_count = 0
+        mem_count = 0
+        if name:
+            try:
+                _sess_dir = _Path.home() / ".logos" / "agents" / name / "sessions"
+                if _sess_dir.is_dir():
+                    sess_count = sum(1 for _ in _sess_dir.glob("session_*.json"))
+            except OSError:
+                pass
+            try:
+                _mem_dir = _Path.home() / ".logos" / "agents" / name / "memories"
+                if _mem_dir.is_dir():
+                    # Count any file — memory format may evolve; total
+                    # files is a reasonable proxy for "stuff remembered".
+                    mem_count = sum(1 for _ in _mem_dir.iterdir() if _.is_file())
+            except OSError:
+                pass
+        a["session_count"] = sess_count
+        a["memory_count"] = mem_count
+
     return web.json_response({"agents": agents})
 
 
@@ -565,12 +627,12 @@ async def handle_agents_post(request: web.Request) -> web.Response:
         char_index = int(char_index) if char_index is not None else None
     except (TypeError, ValueError):
         char_index = None
-    # Optional binding to a model_routes row. The UI's route picker
-    # populates this; "Auto (use default)" sends NULL and the executor's
-    # _resolve_route() falls back to the row marked is_default=1. When
-    # set, the route's model overrides whatever the caller put in
-    # `model` (the OpenShell gateway is forcing exactly that model
-    # anyway, so the agent record's model field is purely cosmetic).
+    # Bind to a model_routes row. UI route picker provides one; "Auto
+    # (use default)" sends NULL and we resolve the default here so the
+    # DB record is never NULL — keeps the Dashboards "bound agents"
+    # count accurate and lets the executor + admin queries treat the
+    # binding as the single source of truth instead of relying on a
+    # spawn-time fallback that leaves the DB looking unattached.
     model_route_id = body.get("model_route_id") or None
     if model_route_id:
         _route = auth_db.get_model_route(model_route_id)
@@ -580,12 +642,21 @@ async def handle_agents_post(request: web.Request) -> web.Response:
             model = _route.get("model") or model
         else:
             # UI sent a stale id (route deleted between fetch and POST)
-            # — drop the binding and fall back to the default route.
+            # — drop the binding so the default-route fallback below kicks in.
             logger.warning(
                 "create_agent: model_route_id=%r not found, dropping binding",
                 model_route_id,
             )
             model_route_id = None
+    if not model_route_id:
+        _default = auth_db.get_default_model_route()
+        if _default:
+            model_route_id = _default["id"]
+            model = _default.get("model") or model
+            logger.info(
+                "create_agent(%s): no route specified, auto-binding to default route %s (%s)",
+                name, model_route_id, model,
+            )
     agent = auth_db.create_agent(
         name=name,
         soul_slug=soul_slug,
@@ -686,26 +757,297 @@ async def handle_agents_delete(request: web.Request) -> web.Response:
     if not agent:
         return web.json_response({"error": "not_found"}, status=404)
 
-    # If OpenShell runtime is active, destroy the agent's sandbox.
-    # Run in a background thread so we don't block the asyncio event
-    # loop on the openshell delete subprocess.
+    # If OpenShell runtime is active, destroy the agent's sandbox AND
+    # purge per-agent host data (memories, logs, sessions synced from
+    # sandbox by worker_registry). Run in a background thread so we
+    # don't block the asyncio event loop. Sandbox teardown must happen
+    # before rmtree — worker_registry may still be writing syncs until
+    # the sandbox is gone.
     executor = request.app.get("executor")
+    agent_name = agent["name"]
     if executor and type(executor).__name__ == "OpenShellExecutor":
         try:
             import asyncio as _asyncio
-            agent_name = agent["name"]
+            import shutil as _shutil
+            from gateway.executors.openshell import _HERMES_HOME as _HH
             async def _delete_bg():
                 try:
                     await _asyncio.to_thread(executor.delete_instance, agent_name)
                     logger.info("Destroyed OpenShell sandbox for agent '%s'", agent_name)
                 except Exception as exc:
                     logger.warning("Failed to destroy sandbox for agent '%s': %s", agent_name, exc)
+                try:
+                    agent_dir = _HH / "agents" / agent_name
+                    if agent_dir.exists():
+                        await _asyncio.to_thread(_shutil.rmtree, str(agent_dir), True)
+                        logger.info("Purged host data dir %s", agent_dir)
+                except Exception as exc:
+                    logger.warning("Failed to purge host data for agent '%s': %s", agent_name, exc)
             _asyncio.create_task(_delete_bg())
         except Exception as exc:
-            logger.warning("Failed to schedule sandbox delete for agent '%s': %s", agent["name"], exc)
+            logger.warning("Failed to schedule sandbox delete for agent '%s': %s", agent_name, exc)
 
     auth_db.delete_agent(aid)
     return web.Response(status=204)
+
+
+# ── Agent tools (per-agent toolset + policy preset editor) ───────────────────
+#
+# These endpoints back the Tools (T) pill dropdown in the Chats tab
+# (MISSING.md M1 / M10 scope item 5). Each agent has two independent
+# dimensions of "tools":
+#
+#   1. Application-layer toolsets (agents.toolsets column, JSON array)
+#      — which tool NAMES are loaded into AIAgent at dispatch time.
+#      Toggled via ``update_agent(toolsets=[...])``, enforced at
+#      run_conversation time by the agent's own tool registry.
+#
+#   2. Infrastructure-layer network policy presets (agents.applied_presets
+#      column, JSON array) — which endpoint groups the sandbox can
+#      reach on the network. Managed by ``gateway.policies.apply_preset``
+#      / ``remove_preset`` which also push the merged effective policy
+#      to the running sandbox via ``openshell policy set``.
+#
+# Both dimensions surface in the same T pill UI because they're
+# conceptually "the tools this agent can use", but the underlying
+# enforcement layers are very different — see MISSING.md M10's
+# two-layer STAMP model for the division.
+
+
+async def handle_agent_tools_get(request: web.Request) -> web.Response:
+    """GET /admin/agents/{id}/tools — bundle the state the T pill needs.
+
+    Returns both dimensions in one round trip so the UI can open the
+    dropdown with a single fetch::
+
+        {
+            "toolsets": {
+                "enabled":   ["hermes-cli"],         // agents.toolsets
+                "available": [
+                    {"name": "web", "description": "Web research..."},
+                    ...
+                ]
+            },
+            "presets": {
+                "applied":   ["github"],              // agents.applied_presets
+                "available": [
+                    {"name": "github", "description": "GitHub.com ..."},
+                    ...
+                ]
+            }
+        }
+
+    Unknown or malformed state is degraded gracefully (empty lists +
+    a warning log) so a broken preset directory or a corrupt JSON
+    column doesn't block the editor UI from rendering.
+    """
+    aid = request.match_info["id"]
+    agent = auth_db.get_agent(aid)
+    if not agent:
+        return web.json_response({"error": "not_found"}, status=404)
+
+    # ── Application layer: available + enabled toolsets ──
+    available_toolsets: list[dict] = []
+    try:
+        from core.toolsets import TOOLSETS
+        for name, meta in sorted(TOOLSETS.items()):
+            description = ""
+            if isinstance(meta, dict):
+                description = str(meta.get("description", ""))
+            available_toolsets.append({"name": name, "description": description})
+    except Exception as exc:
+        logger.warning(
+            "handle_agent_tools_get(%s): failed to load core.toolsets.TOOLSETS: %s",
+            aid, exc,
+        )
+
+    import json as _json
+    enabled_toolsets: list[str] = []
+    raw_ts = agent.get("toolsets")
+    if raw_ts:
+        try:
+            loaded = _json.loads(raw_ts)
+            if isinstance(loaded, list):
+                enabled_toolsets = [str(t) for t in loaded if isinstance(t, str)]
+        except _json.JSONDecodeError:
+            logger.warning(
+                "handle_agent_tools_get(%s): agents.toolsets is not valid JSON: %r",
+                aid, raw_ts,
+            )
+
+    # ── Infrastructure layer: available + applied presets ──
+    available_presets: list[dict] = []
+    applied_presets: list[str] = []
+    try:
+        from gateway import policies as gp
+        for p in gp.list_presets():
+            available_presets.append({
+                "name": p.name,
+                "description": p.description,
+            })
+        applied_presets = gp.get_applied_presets(aid)
+    except Exception as exc:
+        logger.warning(
+            "handle_agent_tools_get(%s): failed to load policy presets: %s",
+            aid, exc,
+        )
+
+    # ── Tool readiness — per-tool status check ──
+    tool_readiness: list[dict] = []
+    try:
+        from gateway import policies as gp
+        tool_readiness = gp.get_tool_readiness(aid)
+    except Exception as exc:
+        logger.warning(
+            "handle_agent_tools_get(%s): failed to compute tool readiness: %s",
+            aid, exc,
+        )
+
+    return web.json_response({
+        "toolsets": {
+            "enabled": enabled_toolsets,
+            "available": available_toolsets,
+        },
+        "presets": {
+            "applied": applied_presets,
+            "available": available_presets,
+        },
+        "readiness": tool_readiness,
+    })
+
+
+async def handle_agent_toolsets_toggle(request: web.Request) -> web.Response:
+    """POST /admin/agents/{id}/tools/toolsets/toggle
+
+    Body: ``{"toolset": "<name>", "enabled": <bool>}``
+
+    Adds or removes the named toolset from ``agents.toolsets``.
+    Unknown toolset names are rejected with 400 so typos don't
+    silently persist as dead entries. Returns the updated enabled
+    list as the canonical "after" state the UI can render directly::
+
+        {"enabled": ["hermes-cli", "web"]}
+
+    Application-layer only — does not touch the network policy.
+    """
+    aid = request.match_info["id"]
+    agent = auth_db.get_agent(aid)
+    if not agent:
+        return web.json_response({"error": "not_found"}, status=404)
+
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "invalid_json"}, status=400)
+
+    toolset = (body.get("toolset") or "").strip()
+    enabled = bool(body.get("enabled"))
+    if not toolset:
+        return web.json_response({"error": "toolset is required"}, status=400)
+
+    # Validate against the canonical toolset registry before writing.
+    try:
+        from core.toolsets import TOOLSETS
+        if toolset not in TOOLSETS:
+            return web.json_response(
+                {"error": f"unknown toolset: {toolset}"},
+                status=400,
+            )
+    except Exception as exc:
+        return web.json_response(
+            {"error": f"toolsets module unavailable: {exc}"},
+            status=500,
+        )
+
+    # Read, mutate, write-back the current JSON list.
+    import json as _json
+    current: list[str] = []
+    raw_ts = agent.get("toolsets")
+    if raw_ts:
+        try:
+            loaded = _json.loads(raw_ts)
+            if isinstance(loaded, list):
+                current = [str(t) for t in loaded if isinstance(t, str)]
+        except _json.JSONDecodeError:
+            pass  # treat corrupt state as empty — the toggle will fix it
+
+    if enabled and toolset not in current:
+        current.append(toolset)
+    elif not enabled and toolset in current:
+        current.remove(toolset)
+
+    auth_db.update_agent(aid, toolsets=_json.dumps(current))
+    logger.info(
+        "agent_toolsets_toggle(%s, %s=%s): enabled=%s",
+        aid, toolset, enabled, current,
+    )
+    return web.json_response({"enabled": current})
+
+
+async def handle_agent_presets_toggle(request: web.Request) -> web.Response:
+    """POST /admin/agents/{id}/tools/presets/toggle
+
+    Body: ``{"preset": "<name>", "enabled": <bool>}``
+
+    When ``enabled=true`` calls ``gateway.policies.apply_preset``,
+    otherwise ``remove_preset``. Both update ``agents.applied_presets``
+    in the DB AND push the merged effective policy to the running
+    sandbox via ``openshell policy set --wait``.
+
+    The push is best-effort — if the sandbox isn't spawned yet, or
+    openshell is unreachable, the DB update still happens and the
+    next spawn picks up the new effective policy. Returns the full
+    applied list so the UI can re-render without an extra GET::
+
+        {"applied": ["github", "slack"]}
+
+    Unknown preset names return 400 (validated up front in
+    ``apply_preset`` via ``load_preset``). Any other exception from
+    the policies module surfaces as a 500 with the error text.
+    """
+    aid = request.match_info["id"]
+    agent = auth_db.get_agent(aid)
+    if not agent:
+        return web.json_response({"error": "not_found"}, status=404)
+
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "invalid_json"}, status=400)
+
+    preset = (body.get("preset") or "").strip()
+    enabled = bool(body.get("enabled"))
+    if not preset:
+        return web.json_response({"error": "preset is required"}, status=400)
+
+    try:
+        from gateway import policies as gp
+    except Exception as exc:
+        return web.json_response(
+            {"error": f"policies module unavailable: {exc}"},
+            status=500,
+        )
+
+    try:
+        if enabled:
+            gp.apply_preset(aid, preset)
+        else:
+            gp.remove_preset(aid, preset)
+        applied = gp.get_applied_presets(aid)
+    except gp.PresetNotFound as exc:
+        return web.json_response({"error": str(exc)}, status=400)
+    except Exception as exc:
+        logger.exception(
+            "agent_presets_toggle(%s, %s=%s): failed",
+            aid, preset, enabled,
+        )
+        return web.json_response({"error": str(exc)}, status=500)
+
+    logger.info(
+        "agent_presets_toggle(%s, %s=%s): applied=%s",
+        aid, preset, enabled, applied,
+    )
+    return web.json_response({"applied": applied})
 
 
 # ── Routing policies ──────────────────────────────────────────────────────────

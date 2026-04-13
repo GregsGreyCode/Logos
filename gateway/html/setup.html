@@ -253,7 +253,7 @@
 
       <!-- ── Step 0a: Setup overview (wide intro) ─────────────────────── -->
       <div x-show="step===0 && setupMode === 'new' && !introConfirmed">
-        <div class="text-center mb-7">
+        <div class="text-center mb-6">
           <h1 class="text-2xl font-bold mb-2">Welcome to Logos</h1>
           <p class="text-gray-400 text-sm" x-text="tldr ? 'Run AI agents on your own hardware.' : 'A control plane for agentic AI.'"></p>
         </div>
@@ -261,40 +261,49 @@
         <!-- Overview card -->
         <div class="rounded-2xl border border-gray-800 bg-gray-900/60 overflow-hidden mb-6">
           <!-- Header text -->
-          <div class="px-7 py-6 border-b border-gray-800/60">
-            <div class="flex items-center justify-between gap-4 mb-1">
-              <div class="text-base font-semibold text-white" x-text="tldr ? &quot;What you're about to do:&quot; : &quot;What setup configures&quot;"></div>
+          <div class="px-7 py-6 border-b border-gray-800/60 space-y-3">
+            <div class="flex items-center justify-between gap-4">
+              <div class="text-base font-semibold text-white" x-text="tldr ? &quot;What you're about to do&quot; : 'What setup configures'"></div>
               <!-- TL;DR toggle — top-right of the card header -->
               <button @click="tldr=!tldr"
                 class="text-xs px-4 py-1.5 rounded-full border font-semibold tracking-wide transition-colors flex-shrink-0"
                 :class="tldr ? 'tldr-on' : 'bg-gray-900 border-gray-600 text-gray-400 hover:border-gray-400 hover:text-gray-200'"
                 title="Toggle TL;DR mode">
-                <span x-text="tldr ? 'TL;DR ON ⚡' : 'Click here for TL;DR'"></span>
+                <span x-text="tldr ? 'TL;DR on' : 'TL;DR off'"></span>
               </button>
             </div>
-            <div class="text-sm text-gray-500 mb-4" x-text="tldr ? 'Seven steps.' : 'Seven steps, from model discovery to launch.'"></div>
+            <div class="text-sm text-gray-500" x-text="tldr ? 'Seven quick steps.' : 'Seven steps, from model discovery to launch.'"></div>
             <p class="text-sm text-gray-500 leading-relaxed" x-show="!tldr">
-              Setup connects your models, benchmarks them, configures where agents run and how safely they're sandboxed, and secures your account.
-              These choices define the platform&rsquo;s initial profile. Everything here can be adjusted from the dashboard after launch.
+              Setup connects your models, benchmarks them, sandboxes how agents run, and secures your account.
+              Every choice is editable from the dashboard later.
             </p>
             <p class="text-sm text-gray-500 leading-relaxed" x-show="tldr" x-cloak>
-              Connect your model, run a quick benchmark, pick an agent, set a soul, create an account. Everything can be changed later.
-            </p>
-            <p class="text-sm text-gray-500 leading-relaxed mt-2" x-show="!tldr">
-              Each agent run is recorded as a <span class="text-gray-300 font-medium">STAMP</span> &mdash;
-              Soul &plus; Tools &plus; Agent &plus; Model &plus; Policy &mdash; making sessions reproducible, comparable, and auditable.
-              Setup defines the defaults that every STAMP inherits.
-            </p>
-            <p class="text-sm text-gray-500 leading-relaxed mt-2" x-show="tldr" x-cloak>
-              Every session is logged so you can replay or compare runs later.
+              Connect a model, run a benchmark, pick an agent and soul, create an account. Everything is editable later.
             </p>
           </div>
 
-          <!-- 2-column step grid -->
-          <div class="px-7 py-5 grid grid-cols-2 gap-3">
+          <!-- STAMP concept callout -->
+          <div class="px-7 py-4 border-b border-gray-800/60 bg-gray-900/40">
+            <div class="flex items-start gap-3">
+              <span class="text-[9px] px-1.5 py-0.5 rounded-full border border-amber-800 text-amber-400 font-medium uppercase tracking-wider flex-shrink-0 mt-0.5">concept</span>
+              <p class="text-sm text-gray-400 leading-relaxed" x-show="!tldr">
+                Each agent run is recorded as a <span class="text-gray-200 font-medium">STAMP</span> &mdash;
+                Soul + Tools + Agent + Model + Policy &mdash; making sessions reproducible, comparable, and auditable.
+                Setup defines the defaults every STAMP inherits.
+              </p>
+              <p class="text-sm text-gray-400 leading-relaxed" x-show="tldr" x-cloak>
+                Every session is recorded as a <span class="text-gray-200 font-medium">STAMP</span> so you can replay or compare runs later.
+              </p>
+            </div>
+          </div>
+
+          <!-- 2-column step grid. The final step (odd-count) spans both
+               columns and centers itself so it doesn't sit lopsided in the
+               bottom-left cell. -->
+          <div class="px-7 py-6 grid grid-cols-2 gap-3">
             <template x-for="s in setupSteps" :key="s.n">
               <div class="flex items-start gap-3 p-4 rounded-xl bg-gray-800/30 border border-gray-700/30"
-                :class="s.n === setupSteps.length ? 'col-span-2 max-w-[calc(50%-6px)] mx-auto w-full' : ''">
+                :class="s.n === setupSteps.length ? 'col-span-2 mx-auto w-full max-w-[calc(50%-6px)]' : ''">
                 <div class="w-6 h-6 rounded-full bg-gray-800 border border-gray-700 flex items-center justify-center text-xs font-mono text-gray-400 flex-shrink-0 mt-0.5"
                   x-text="s.n"></div>
                 <div class="min-w-0 flex-1">
@@ -309,13 +318,23 @@
             </template>
           </div>
 
-          <!-- When complete — same treatment as the header section above the grid -->
+          <!-- After launch: dashboard surfaces -->
+          <div class="px-7 py-5 border-t border-gray-800/60 bg-gray-900/40">
+            <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2" x-text="tldr ? 'After launch' : 'Next, from the dashboard'"></div>
+            <ul class="text-xs text-gray-500 leading-relaxed space-y-1">
+              <li>&middot; <span class="text-gray-300">Tool integrations</span> &mdash; <span x-text="tldr ? 'Browserbase, Firecrawl, self-hosted variants.' : 'Connect Browserbase or Firecrawl, or point at self-hosted Browserless / Firecrawl on your network.'"></span></li>
+              <li>&middot; <span class="text-gray-300">Agent creation</span> &mdash; <span x-text="tldr ? 'Spawn more agents.' : 'Spawn additional named agents with their own souls, models, and tool sets.'"></span></li>
+              <li>&middot; <span class="text-gray-300">Network policies</span> &mdash; <span x-text="tldr ? 'Pick what each agent can reach.' : 'Apply per-agent network presets to control which external services each sandbox can reach.'"></span></li>
+            </ul>
+          </div>
+
+          <!-- When complete -->
           <div class="px-7 py-6 border-t border-gray-800/60">
-            <div class="text-base font-semibold text-white mb-1" x-text="tldr ? 'When done' : 'When complete'"></div>
+            <div class="text-base font-semibold text-white mb-2" x-text="tldr ? 'When done' : 'When complete'"></div>
             <p class="text-sm text-gray-500 leading-relaxed" x-show="!tldr">
-              You&rsquo;ll have a fully configured platform: inference routed to a benchmarked local model,
+              You&rsquo;ll have a fully configured platform: inference routed to a benchmarked model,
               agent runs sandboxed with policy-enforced isolation, a soul selected, and a secured admin account.
-              The platform is ready for agent runs.
+              Ready for agent runs.
             </p>
             <p class="text-sm text-gray-500 leading-relaxed" x-show="tldr" x-cloak>
               Logos is running, your model is connected, agents are sandboxed, and you have a login. You&rsquo;re ready to go.
@@ -1028,20 +1047,6 @@
             </div>
           </div>
 
-          <!-- Always-visible compact legend — names each column left→right -->
-          <div class="mb-2 text-[11px] text-gray-500 leading-relaxed">
-            Each model row (left→right):
-            <span class="font-mono text-gray-300">tok/s</span> streaming speed
-            <span class="text-gray-700">·</span>
-            <span class="font-mono text-gray-300">Xms</span> time to first token
-            <span class="text-gray-700">·</span>
-            <span class="font-mono text-gray-300">Hi! Xms</span> full round-trip on a "Hi!" prompt
-            <span class="text-gray-700">·</span>
-            <span class="font-mono text-gray-300">XK ctx</span> context window
-            <span class="text-gray-700">·</span>
-            <span class="font-mono text-gray-300">X/6</span> capability eval
-          </div>
-
           <!-- Detailed score legend — collapsed by default, expands on click -->
           <details class="mb-4 group">
             <summary class="text-[11px] text-gray-600 hover:text-gray-400 cursor-pointer list-none flex items-center gap-1.5 select-none">
@@ -1082,8 +1087,23 @@
                 <span class="text-gray-400">Models with ≥128K context support 4 concurrent users at 32K/slot. For smaller models, reduce <span class="text-white font-medium">"Max Concurrent Predictions"</span> in LM Studio advanced settings to increase per-slot context.</span>
               </div>
               <div>
-                <span class="font-semibold text-gray-300">&#10003; / &#9888;</span> — whether the model passed the quality eval (instruction following, reasoning, structured output, tool selection).
-                Models that fail the format or tool-call tests are de-prioritised because they will break agent loops.
+                <span class="font-semibold text-gray-300">N/6</span> (with <span class="text-green-500">&#10003;</span> or <span class="text-yellow-600">&#9888;</span>) — base capability eval. Six standardised tests:
+                instruction following, reasoning, structured output (JSON), tool selection, nested JSON, and multi-step arithmetic.
+                Models that fail format or tool-call tests are de-prioritised because they break agent loops mid-conversation.
+                Click any tested model to see the per-test breakdown.
+              </div>
+              <div>
+                <span class="font-semibold text-amber-500">&#9733;N</span> (gold star) — <span class="text-gray-300">hard eval</span>: extra harder cases that separate "okay" models from genuinely strong ones (longer reasoning chains, trickier formatting, edge-case prompts).
+                Higher is better. Only present when the model has been benchmarked against the hard suite.
+              </div>
+              <div>
+                <span class="font-semibold text-purple-400">&#9733;&#9733;N</span> (purple double-star) — <span class="text-gray-300">agent eval</span>, scored out of 3:
+                multi-turn tool loops that simulate real agent sessions (chained tool calls, recovering from a wrong call, holding a plan across turns). The clearest signal of "will this model actually work as an agent" — pay close attention to this one.
+              </div>
+              <div>
+                <span class="text-[10px] px-1 py-0.5 rounded bg-emerald-950 text-emerald-400 border border-emerald-900">tools</span>
+                <span class="text-[10px] px-1 py-0.5 rounded bg-indigo-950 text-indigo-400 border border-indigo-900 ml-1">vision</span>
+                — capability badges. <span class="text-gray-300">tools</span> means the model accepts function-calling requests in OpenAI format; <span class="text-gray-300">vision</span> means it accepts image inputs. Driven by the model card, not the benchmark.
               </div>
               <div class="text-gray-600 border-t border-gray-800 pt-2">
                 Results depend on current server load. For accurate scores, avoid running other workloads on your inference machines during the benchmark.
@@ -1574,19 +1594,53 @@
               Defaults to <span class="font-mono text-gray-500">Hermes</span> if left blank.
             </p>
           </div>
-          <div>
-            <label class="block text-xs font-medium text-gray-400 mb-1.5">Pick a character</label>
-            <div class="flex flex-wrap gap-2">
-              <template x-for="ci in [0,1,2,3,4,5,6,7]" :key="ci">
-                <button type="button" @click="agentCharIndex = ci"
-                  :title="'Character ' + (ci + 1)"
-                  :style="agentSpriteStyle(ci) + (agentCharIndex === ci ? 'border:2px solid rgb(99 102 241);border-radius:8px;' : 'border:2px solid transparent;')"
-                  class="shrink-0 hover:scale-110 transition-transform"></button>
-              </template>
+          <div class="space-y-2">
+            <label class="block text-xs font-medium text-gray-400">Pick a character</label>
+            <!-- Random (default — auto-assign from agent name) -->
+            <div class="flex items-center gap-2">
+              <button type="button" @click="agentCharIndex = null"
+                title="Random — auto-assign a character from the agent's name"
+                :class="'shrink-0 hover:scale-110 transition-transform flex items-center justify-center text-2xl font-bold text-gray-300 bg-gray-800/60 rounded-lg ' + (agentCharIndex === null ? 'ring-2 ring-indigo-500' : '')"
+                style="width:56px;height:56px;border:2px solid transparent;">?</button>
+              <span x-show="agentCharIndex === null" class="text-[11px] text-gray-600">Random — auto-assigned from agent name. Pick below to override.</span>
+              <span x-show="agentCharIndex !== null" class="text-[11px] text-gray-600">Tap ? to go back to random.</span>
             </div>
-            <p x-show="agentCharIndex === null" class="text-[11px] text-gray-600 mt-1">
-              Leave unselected to auto-assign a character from the name.
-            </p>
+            <!-- Body (wraps to container) -->
+            <div>
+              <div class="text-[10px] text-gray-500 mb-1">Body</div>
+              <div class="flex flex-wrap gap-1">
+                <template x-for="bi in [0,1,2,3,4,5,6,7]" :key="bi">
+                  <button type="button" @click="setBody(bi)"
+                    :title="'Body ' + (bi + 1)"
+                    :style="agentSpriteStyle(bi * 20 + curSkin() * 5 + curHair()) + (curBody() === bi && agentCharIndex !== null ? 'border:2px solid rgb(99 102 241);border-radius:8px;' : 'border:2px solid transparent;')"
+                    class="shrink-0 hover:scale-110 transition-transform"></button>
+                </template>
+              </div>
+            </div>
+            <!-- Skin (4) -->
+            <div>
+              <div class="text-[10px] text-gray-500 mb-1">Skin tone</div>
+              <div class="flex gap-1">
+                <template x-for="si in [0,1,2,3]" :key="si">
+                  <button type="button" @click="setSkin(si)"
+                    :title="['Lightest','Light','Medium','Dark'][si]"
+                    :style="agentSpriteStyle(curBody() * 20 + si * 5 + curHair()) + (curSkin() === si && agentCharIndex !== null ? 'border:2px solid rgb(99 102 241);border-radius:8px;' : 'border:2px solid transparent;')"
+                    class="shrink-0 hover:scale-110 transition-transform"></button>
+                </template>
+              </div>
+            </div>
+            <!-- Logos theme (5) -->
+            <div>
+              <div class="text-[10px] text-gray-500 mb-1">Logos theme</div>
+              <div class="flex gap-1">
+                <template x-for="hi in [0,1,2,3,4]" :key="hi">
+                  <button type="button" @click="setHair(hi)"
+                    :title="['Original','Midnight','Crimson','Terminal','Dusk'][hi]"
+                    :style="agentSpriteStyle(curBody() * 20 + curSkin() * 5 + hi) + (curHair() === hi && agentCharIndex !== null ? 'border:2px solid rgb(99 102 241);border-radius:8px;' : 'border:2px solid transparent;')"
+                    class="shrink-0 hover:scale-110 transition-transform"></button>
+                </template>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -2029,9 +2083,24 @@
           <span x-show="!completing" x-text="completeError?.warning ? 'Go to Dashboard \u2192' : 'Launch Logos \u2192'"></span>
           <span x-show="completing" class="flex items-center justify-center gap-2">
             <div class="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin"></div>
-            Finishing up&hellip;
+            <span x-text="completeStageLabel || 'Finishing up\u2026'"></span>
           </span>
         </button>
+        <!-- Live progress under the button — fed by polling /api/setup/progress
+             every ~700ms while the request is in flight. Without this the
+             user sees a static spinner for 10\u201330s and assumes the page is
+             wedged. The 120s client-side AbortController fallback below
+             surfaces a "taking longer than expected" error rather than
+             spinning indefinitely. -->
+        <div x-show="completing" x-cloak class="mt-3 text-center text-xs text-gray-500 leading-relaxed">
+          <div x-show="completeElapsedSec > 0" class="text-[11px] text-gray-600">
+            <span x-text="completeElapsedSec + 's elapsed'"></span><span x-show="completeStage" class="text-gray-700"> &middot; </span><span x-show="completeStage" class="text-gray-500" x-text="completeStage"></span>
+          </div>
+          <div x-show="!completeStageLabel">This usually takes <span class="text-gray-300 font-medium">10&ndash;30 seconds</span>.</div>
+          <div class="text-[11px] text-gray-600 mt-1">
+            Provisioning the model route, spawning the sandbox, and loading your first agent. First-ever install can take up to a minute while images download.
+          </div>
+        </div>
       </div>
 
     </div><!-- /step fade wrapper -->
@@ -2067,13 +2136,13 @@ function setup() {
     introConfirmed: false,
     tldr: true,
     setupSteps: [
-      { n: 1, name: 'Connect inference servers',  tag: 'detects',    desc: 'Logos scans your local network for Ollama and LM Studio. You can also add remote servers — on a LAN, VPC, or cloud VM — using a custom address. No Logos installation is needed on the inference machine.', tldrDesc: 'Logos finds your models (Ollama, LM Studio) or you add one manually.' },
-      { n: 2, name: 'Benchmark models',       tag: 'measures',   desc: 'Candidate models run 6 eval tests: instruction following, reasoning, JSON format, tool selection, nested JSON, and multi-step arithmetic. The best fit is pre-selected; you can override freely.', tldrDesc: 'Each model runs a few tests. Logos picks the best one by default.' },
+      { n: 1, name: 'Connect inference servers',  tag: 'detects',    desc: 'Logos scans your network for Ollama and LM Studio. Add remote servers manually — LAN, VPC, or cloud — without installing anything on the model host.', tldrDesc: 'Find your models — auto or manual.' },
+      { n: 2, name: 'Benchmark models',       tag: 'measures',   desc: 'Candidate models run 6 eval tests: instruction following, reasoning, JSON format, tool selection, nested JSON, and multi-step arithmetic. The best fit is pre-selected; you can override.', tldrDesc: 'Test models. Logos picks the winner.' },
       { n: 3, name: 'Agent runtime',          tag: 'configures', desc: 'Choose which agent engine handles your sessions. Hermes is available now; additional runtimes plug in as they are released.', tldrDesc: 'Choose what runs your agents (Hermes for now).' },
-      { n: 4, name: 'Agent sandbox',           tag: 'secures',    desc: 'Choose how agent code runs: NVIDIA OpenShell on Docker for local sandboxing, or k3s/Kubernetes for production-grade isolation. Logos auto-detects what\u2019s available and recommends the safest option.', tldrDesc: 'Choose where agents run — OpenShell, k3s, or Kubernetes.' },
-      { n: 5, name: 'Soul',                   tag: 'configures', desc: "A soul defines the agent's communication style and default behaviour. It is a starting point — editable at any time from the dashboard.", tldrDesc: 'Sets how the agent behaves. You can change it anytime.' },
+      { n: 4, name: 'Sandbox isolation',      tag: 'secures',    desc: 'Pick the boundary agent code runs inside. OpenShell on Docker is the default for desktops and homelabs; k3s or an existing Kubernetes cluster are available for production. Logos picks the safest available option by default.', tldrDesc: 'Pick the sandbox — OpenShell by default, k3s/k8s for production.' },
+      { n: 5, name: 'Soul',                   tag: 'configures', desc: 'A soul shapes how the agent thinks, talks, and which tools it reaches for. You can swap it any time.', tldrDesc: 'Sets how the agent behaves. Swap any time.' },
       { n: 6, name: 'Your account',           tag: 'secures',    desc: 'Set the email, username, and password for the admin account that protects the dashboard and API.', tldrDesc: 'Create a login to secure your setup.' },
-      { n: 7, name: 'Review & launch',        tag: 'confirms',   desc: 'Review every setting, confirm the model endpoint is reachable, and launch the platform.', tldrDesc: 'Check everything, then start Logos.' },
+      { n: 7, name: 'Review & launch',        tag: 'confirms',   desc: 'Verify settings, ping the model, launch.', tldrDesc: 'Verify, launch.' },
     ],
 
     // Step 1
@@ -2163,12 +2232,28 @@ function setup() {
      */
     agentSpriteStyle(charIndex) {
       const ci = Number(charIndex) || 0;
-      const blockCol = (ci % 4) * 3;
-      const blockRow = Math.floor(ci / 4) * 4;
-      const x = -(blockCol * 32 * 2);
-      const y = -(blockRow * 32 * 2);
-      return `width:56px;height:56px;background-image:url('/static/world/characters.png');background-position:${x}px ${y}px;background-size:768px 512px;image-rendering:pixelated;`;
+      // char_index encoding: body*20 + skin*5 + hair.
+      // Sheet: 1920×1024 = 20 cols × 8 rows of 96×128 blocks.
+      // Display at 1.75× so each 32px frame fits a 56px button exactly.
+      const SCALE = 1.75;
+      const body = Math.floor(ci / 20);
+      const col  = ci % 20;
+      const blockCol = col * 3 + 1;    // middle frame of 3-frame walk cycle
+      const blockRow = body * 4;       // top row of block = "down" direction
+      const x = -(blockCol * 32 * SCALE);
+      const y = -(blockRow * 32 * SCALE);
+      const sheetW = 1920 * SCALE; // 3360
+      const sheetH = 1024 * SCALE; // 1792
+      return `width:56px;height:56px;background-image:url('/static/world/characters.png?v=7');background-position:${x}px ${y}px;background-size:${sheetW}px ${sheetH}px;background-repeat:no-repeat;image-rendering:pixelated;`;
     },
+
+    // Three-axis decoders for the setup-wizard picker
+    curBody() { const ci = this.agentCharIndex; return ci === null || ci === undefined ? 0 : Math.floor(ci / 20); },
+    curSkin() { const ci = this.agentCharIndex; return ci === null || ci === undefined ? 0 : Math.floor((ci % 20) / 5); },
+    curHair() { const ci = this.agentCharIndex; return ci === null || ci === undefined ? 0 : ci % 5; },
+    setBody(bi) { this.agentCharIndex = bi * 20 + this.curSkin() * 5 + this.curHair(); },
+    setSkin(si) { this.agentCharIndex = this.curBody() * 20 + si * 5 + this.curHair(); },
+    setHair(hi) { this.agentCharIndex = this.curBody() * 20 + this.curSkin() * 5 + hi; },
 
     // Account setup (step 6 / final creds)
     setupEmail: '',
@@ -2369,6 +2454,17 @@ function setup() {
     // Step 6
     completing: false,
     completeError: null,
+    // Live progress state — driven by polling /api/setup/progress while
+    // complete() is in flight. completeStage is the short slug from the
+    // backend (e.g. "spawn_sandbox"); completeStageLabel is the
+    // user-facing sentence; completeElapsedSec is wall-clock seconds
+    // since the user clicked Launch.
+    completeStage: '',
+    completeStageLabel: '',
+    completeStageStarted: 0,
+    completeElapsedSec: 0,
+    _completePollTimer: null,
+    _completeElapsedTimer: null,
 
     // Server-instance timestamp — read once from <meta name="setup-ts"> so all
     // methods can use it without scope issues (set in init, used in _saveProgress)
@@ -3713,13 +3809,50 @@ function setup() {
       await new Promise(r => setTimeout(r, 460));
     },
 
+    _startCompletePolling() {
+      // Poll /api/setup/progress every 700ms while complete() is in flight.
+      // Updates completeStage + completeStageLabel so the UI shows live
+      // progress instead of a static "Finishing up..." spinner.
+      this.completeStage = '';
+      this.completeStageLabel = '';
+      this.completeStageStarted = Date.now();
+      this.completeElapsedSec = 0;
+      this._completeElapsedTimer = setInterval(() => {
+        this.completeElapsedSec = Math.floor((Date.now() - this.completeStageStarted) / 1000);
+      }, 1000);
+      this._completePollTimer = setInterval(async () => {
+        try {
+          const r = await fetch('/api/setup/progress', { credentials: 'include' });
+          if (!r.ok) return;
+          const d = await r.json();
+          if (d && d.label) {
+            this.completeStage = d.stage || '';
+            this.completeStageLabel = d.label;
+          }
+          if (d && d.done) this._stopCompletePolling();
+        } catch (e) { /* swallow — polling is best-effort */ }
+      }, 700);
+    },
+    _stopCompletePolling() {
+      if (this._completePollTimer) { clearInterval(this._completePollTimer); this._completePollTimer = null; }
+      if (this._completeElapsedTimer) { clearInterval(this._completeElapsedTimer); this._completeElapsedTimer = null; }
+    },
+
     async complete() {
       if (this.completeError?.warning) { await this._flyLogoToNav(); await this._fadeOutPage(); window.location.href = '/'; return; }
       this.completing = true;
       this.completeError = null;
+      this._startCompletePolling();
+      // 120s client-side timeout — covers the worst-case happy path
+      // (cold image pull + sandbox spawn). Anything longer means
+      // something is wedged; surface a real error rather than spinning
+      // forever. AbortController fires the catch branch below.
+      const abort = new AbortController();
+      const timeoutId = setTimeout(() => abort.abort(), 120000);
       try {
         const r = await fetch('/api/setup/complete', {
           method: 'POST', credentials: 'include',
+          signal: abort.signal,
           headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken() },
           body: JSON.stringify({
             endpoint:      this.activeServer ? this.activeServer.endpoint : '',
@@ -3754,6 +3887,8 @@ function setup() {
           }),
         });
         if (r.ok) {
+          clearTimeout(timeoutId);
+          this._stopCompletePolling();
           const d = await r.json().catch(() => ({}));
           if (d.warning) {
             // Endpoint unreachable but setup saved — show warning then proceed
@@ -3770,11 +3905,25 @@ function setup() {
           window.location.href = d.needs_login ? '/login' : '/';
           return;
         }
+        clearTimeout(timeoutId);
+        this._stopCompletePolling();
         const d = await r.json().catch(() => ({}));
         this.completeError = { warning: false, message: d.detail || d.error || `Setup failed (HTTP ${r.status}) — check server logs.` };
         this.completing = false;
       } catch (e) {
-        this.completeError = { warning: false, message: 'Network error: ' + e.message };
+        clearTimeout(timeoutId);
+        this._stopCompletePolling();
+        // AbortError = our 120s client-side timeout fired. Distinguish
+        // that from a generic network error so the user gets actionable
+        // guidance instead of "Network error: AbortError".
+        if (e.name === 'AbortError') {
+          this.completeError = {
+            warning: false,
+            message: 'Setup is taking longer than 120 seconds. Likely culprit: image pull or sandbox spawn is wedged. Tail ~/.logos/logs/gateway.log to see the stuck stage. The server may still complete in the background — refresh in a minute or check the dashboard.'
+          };
+        } else {
+          this.completeError = { warning: false, message: 'Network error: ' + e.message };
+        }
         this.completing = false;
       }
     },

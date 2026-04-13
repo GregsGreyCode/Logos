@@ -1,0 +1,46 @@
+# fal.ai access preset — image generation and ML inference.
+#
+# Enables the image_generate tool, which uses fal.ai's serverless
+# inference API for Stable Diffusion, FLUX, and other image models.
+#
+# Apply via:
+#   gateway.policies.apply_preset(agent_id, "fal")
+#
+# Requires FAL_KEY.
+
+preset:
+  name: fal
+  description: "fal.ai serverless inference (image generation)"
+
+network_policies:
+  fal:
+    name: fal
+    endpoints:
+      # Main API endpoint (submit jobs, get results)
+      - host: fal.run
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        tls: terminate
+        access: full
+      # Queue API (async job submission and polling)
+      - host: queue.fal.run
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        tls: terminate
+        access: full
+      # REST gateway (alternative endpoint used by fal_client)
+      - host: rest.fal.run
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        tls: terminate
+        access: full
+    binaries:
+      - { path: /app/venv/bin/python }
+      - { path: /app/venv/bin/python3 }
+      - { path: /app/venv/bin/python3.11 }
+      - { path: /app/venv/bin/python3.12 }
+      - { path: /usr/bin/python3 }
+      - { path: /usr/bin/python3.13 }

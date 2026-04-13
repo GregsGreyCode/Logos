@@ -4,6 +4,5 @@ agents
 core
 cron
 gateway
-honcho_integration
 logos_cli
 tools

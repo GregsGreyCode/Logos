@@ -517,6 +517,24 @@ OPTIONAL_ENV_VARS = {
         "password": False,
         "category": "tool",
     },
+    "BROWSERLESS_URL": {
+        "description": "Self-hosted Browserless CDP endpoint (e.g. ws://browserless.internal:3000) — alternative to Browserbase, runs entirely on your homelab",
+        "prompt": "Browserless URL (leave empty if not self-hosting)",
+        "url": "https://github.com/browserless/browserless",
+        "tools": ["browser_navigate", "browser_click"],
+        "password": False,
+        "category": "tool",
+        "advanced": True,
+    },
+    "BROWSERLESS_TOKEN": {
+        "description": "Auth token for self-hosted Browserless instance (optional, only if your deployment requires one)",
+        "prompt": "Browserless token (leave empty if not needed)",
+        "url": None,
+        "tools": ["browser_navigate", "browser_click"],
+        "password": True,
+        "category": "tool",
+        "advanced": True,
+    },
     "FAL_KEY": {
         "description": "FAL API key for image generation",
         "prompt": "FAL API key",
@@ -1368,6 +1386,7 @@ def set_config_value(key: str, value: str):
     api_keys = [
         'OPENROUTER_API_KEY', 'OPENAI_API_KEY', 'ANTHROPIC_API_KEY', 'VOICE_TOOLS_OPENAI_KEY',
         'FIRECRAWL_API_KEY', 'FIRECRAWL_API_URL', 'BROWSERBASE_API_KEY', 'BROWSERBASE_PROJECT_ID',
+        'BROWSERLESS_URL', 'BROWSERLESS_TOKEN',
         'FAL_KEY', 'TELEGRAM_BOT_TOKEN', 'DISCORD_BOT_TOKEN',
         'TERMINAL_SSH_HOST', 'TERMINAL_SSH_USER', 'TERMINAL_SSH_KEY',
         'SUDO_PASSWORD', 'SLACK_BOT_TOKEN', 'SLACK_APP_TOKEN',

@@ -13,16 +13,23 @@ toolsets:
   enforced:
     - web
     - memory
+  # Default-enable everything reasonable for the General soul. Until we
+  # have heuristics that strip tools an agent doesn't need, every General
+  # agent should ship with the full toolbox so users don't hit "Atlas
+  # said it would browse the web but didn't" surprises (the cause was
+  # toolsets=[] in the agent record). Refine later when we add per-task
+  # tool-pruning intelligence.
   default_enabled:
     - clarify
     - session_search
     - todo
     - file
-  optional:
+    - world
     - browser
     - image_gen
     - tts
     - delegation
     - terminal
+  optional: []
   forbidden:
     - rl
