@@ -4384,6 +4384,11 @@ async def start_http_api(runner: Any, port: int = 8091) -> None:
 
     app.router.add_get("/admin/spawn-stats",   _mm(admin_handlers.handle_spawn_stats))
     app.router.add_get("/admin/costs",         _mm(admin_handlers.handle_costs))
+    app.router.add_get("/admin/recommended-models", _mm(admin_handlers.handle_recommended_models))
+    app.router.add_post("/admin/machines/{id}/download",
+                         _mm(require_csrf(admin_handlers.handle_machine_download_start)))
+    app.router.add_get("/admin/machines/{id}/download/{job_id}",
+                         _mm(admin_handlers.handle_machine_download_status))
     app.router.add_get("/admin/pricing/status",    _mm(admin_handlers.handle_pricing_status))
     app.router.add_post("/admin/pricing/refresh",  _mm(require_csrf(admin_handlers.handle_pricing_refresh)))
     app.router.add_get("/admin/model-classes", _mm(admin_handlers.handle_model_classes))

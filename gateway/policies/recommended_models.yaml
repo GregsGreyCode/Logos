@@ -1,0 +1,105 @@
+# Curated local models known to work as agents.
+#
+# The UI surfaces these under Admin → Machines → "Install an agent-ready
+# model" so users don't have to hunt on Hugging Face for something that
+# passes the h5/h6/h7 agent-loop tests (post-tool summarisation, error
+# recovery, multi-turn grounding). Each entry's `model` field is what
+# goes in the POST /api/v1/models/download body — either a LM Studio
+# catalogue id (e.g. "openai/gpt-oss-20b") or a full Hugging Face URL.
+#
+# Update this list when:
+#   - A new model passes your agent-loop benchmark with hard_score ≥ 5/7
+#   - A previously listed model is deprecated / removed upstream
+#   - A new quantisation shows measurably better agent-loop reliability
+#
+# Fields:
+#   id            — stable short slug for UI keys (kebab-case)
+#   name          — human display name
+#   model         — what to send to LM Studio's download endpoint
+#   quantization  — optional; only used for HF URL entries
+#   size_gb       — approximate disk footprint (for the "this takes ~5min" UI hint)
+#   context_k     — max context window in thousand-tokens
+#   size_b        — parameter count (billions) for display
+#   agent_tier    — one of "excellent" | "good" | "okay" — drives sort order + colour
+#   good_for      — freeform list of tags surfaced as chips in the UI
+#   notes         — one-sentence why-pick-this copy
+#
+# Ordered roughly best-agent-first within tier so the default UI render is sensible.
+
+recommended:
+
+  # ── Excellent: consistent pass on every agent-loop test we throw at it ──
+
+  - id: qwen2_5-72b-instruct
+    name: Qwen 2.5 72B Instruct
+    model: qwen/qwen2.5-72b-instruct
+    size_gb: 42
+    context_k: 128
+    size_b: 72
+    agent_tier: excellent
+    good_for: [agent, reasoning, tool-use, multi-turn]
+    notes: Flagship local open-weights model. Reliable multi-step tool calls + summarises tool results without prompting. Needs a strong GPU (≥48GB VRAM at Q4).
+
+  - id: llama-3_3-70b-instruct
+    name: Llama 3.3 70B Instruct
+    model: meta-llama/llama-3.3-70b-instruct
+    size_gb: 40
+    context_k: 128
+    size_b: 70
+    agent_tier: excellent
+    good_for: [agent, reasoning, tool-use, general]
+    notes: Meta's frontier open-weights release. Excellent agent-loop behaviour, slightly behind Qwen 2.5-72B on tool-use benchmarks but equal on raw reasoning.
+
+  # ── Good: reliable on simple agent loops, occasionally fumbles multi-step recovery ──
+
+  - id: qwen3-coder-30b
+    name: Qwen 3 Coder 30B
+    model: qwen/qwen3-coder-30b
+    size_gb: 17
+    context_k: 32
+    size_b: 30
+    agent_tier: good
+    good_for: [agent, code, tool-use]
+    notes: Coder-specialised but generalises well to tool use. Strong at structured output (JSON, tool args). Good fit for code-heavy agents.
+
+  - id: mistral-small-3_1-24b-instruct
+    name: Mistral Small 3.1 24B Instruct
+    model: mistralai/mistral-small-3.1-24b-instruct
+    size_gb: 14
+    context_k: 128
+    size_b: 24
+    agent_tier: good
+    good_for: [agent, tool-use, fast]
+    notes: Built-in vision. Mistral's 3.1 release explicitly targets tool-calling — punches above its size on agent tasks.
+
+  - id: gpt-oss-20b
+    name: GPT-OSS 20B
+    model: openai/gpt-oss-20b
+    size_gb: 13
+    context_k: 32
+    size_b: 20
+    agent_tier: good
+    good_for: [agent, reasoning, chat]
+    notes: OpenAI's open-source release. Solid general model, but agent-loop reliability is weaker than Qwen 2.5 32B+ — prefer for mid-difficulty tasks.
+
+  - id: qwen2_5-32b-instruct
+    name: Qwen 2.5 32B Instruct
+    model: qwen/qwen2.5-32b-instruct
+    size_gb: 18
+    context_k: 128
+    size_b: 32
+    agent_tier: good
+    good_for: [agent, reasoning, general]
+    notes: The sweet spot for local agents on a single 24GB GPU. Reliable tool use + long context. If 72B is too much for your hardware, this is the default pick.
+
+  # ── Okay: works for simple queries but fails on multi-turn agent tasks ──
+
+  - id: qwen3-4b
+    name: Qwen 3 4B
+    model: qwen/qwen3-4b
+    size_gb: 2.5
+    context_k: 32
+    size_b: 4
+    agent_tier: okay
+    good_for: [chat, fast, lightweight]
+    notes: Tiny and fast. Fine for quick chat or as a fallback when a cloud-routed agent hits its budget. Not recommended for multi-step agent loops.
