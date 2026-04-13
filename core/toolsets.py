@@ -180,6 +180,12 @@ TOOLSETS = {
         "includes": []
     },
 
+    "world": {
+        "description": "Agent World awareness — look up other named agents on this install, their souls, appearances, and status",
+        "tools": ["get_agent_world"],
+        "includes": []
+    },
+
     "homeassistant": {
         "description": "Home Assistant smart home control and monitoring",
         "tools": ["ha_list_entities", "ha_get_state", "ha_list_services", "ha_call_service"],

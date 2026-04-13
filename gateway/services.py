@@ -32,6 +32,7 @@ TOOL_INTEGRATIONS = {
         "validate_method": "POST",
         "validate_headers": lambda key: {"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
         "validate_body": {"url": "https://example.com", "formats": ["markdown"], "limit": 1},
+        "selfhosted_alt": "FIRECRAWL_API_URL",
     },
     "FAL_KEY": {
         "label": "fal.ai",
@@ -62,6 +63,31 @@ TOOL_INTEGRATIONS = {
         "validate_url": "https://www.browserbase.com/v1/sessions",
         "validate_method": "GET",
         "validate_headers": lambda key: {"x-bb-api-key": key},
+        "selfhosted_alt": "BROWSERLESS_URL",
+    },
+    "BROWSERLESS_URL": {
+        "label": "Browserless (self-hosted)",
+        "description": "Self-hosted browser automation — no traffic leaves your network",
+        "tools": ["browser_navigate", "browser_click", "browser_type", "browser_snapshot"],
+        "toolset": "browser",
+        "help_url": "https://github.com/browserless/browserless",
+        "selfhosted": True,
+        "value_kind": "url",  # not an API key — accept ws://host:port form
+        "compose_profile": "browserless",
+        "compose_default": "ws://browserless:3000",
+        "alt_of": "BROWSERBASE_API_KEY",
+    },
+    "FIRECRAWL_API_URL": {
+        "label": "Firecrawl (self-hosted)",
+        "description": "Self-hosted web search and scraping — no traffic leaves your network",
+        "tools": ["web_search", "web_extract"],
+        "toolset": "web",
+        "help_url": "https://github.com/mendableai/firecrawl",
+        "selfhosted": True,
+        "value_kind": "url",
+        "compose_profile": "firecrawl",
+        "compose_default": "http://firecrawl-api:3002",
+        "alt_of": "FIRECRAWL_API_KEY",
     },
     "ELEVENLABS_API_KEY": {
         "label": "ElevenLabs",
@@ -233,6 +259,15 @@ def get_tool_integrations() -> list[dict]:
             "available": available,
             "help_url": meta["help_url"],
             "source": "env" if os.environ.get(env_var) and env_var not in creds else "db" if env_var in creds else None,
+            # Extras for self-hosted variants — UI uses these to render
+            # a "(self-hosted)" badge, prefill the compose-default URL,
+            # and group cloud + selfhosted alternatives together.
+            "selfhosted": bool(meta.get("selfhosted")),
+            "value_kind": meta.get("value_kind", "key"),
+            "compose_profile": meta.get("compose_profile"),
+            "compose_default": meta.get("compose_default"),
+            "selfhosted_alt": meta.get("selfhosted_alt"),
+            "alt_of": meta.get("alt_of"),
         })
     return result
 

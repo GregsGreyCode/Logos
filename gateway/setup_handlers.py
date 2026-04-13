@@ -45,6 +45,39 @@ _bench_cancels: dict[str, set[str]] = {}
 # bench_id → {endpoint: {model, server_type, api_key, base_url}} tracking currently-loaded model
 _bench_active: dict[str, dict[str, dict]] = {}
 
+# In-memory progress tracker for /api/setup/complete. The complete handler
+# blocks for 10–30s on first install (provision route + spawn sandbox);
+# without progress feedback users assume the spinner is wedged. The
+# handler updates this dict at each stage boundary; the frontend polls
+# /api/setup/progress every ~700ms and renders the live label.
+# Single-writer, single-reader, no concurrency concerns since /setup is
+# a one-shot first-run flow.
+_SETUP_PROGRESS: dict[str, object] = {
+    "stage": "idle",
+    "label": "",
+    "started_at": 0,
+    "updated_at": 0,
+    "done": False,
+    "ok": False,
+    "error": "",
+}
+
+
+def _setup_progress_update(stage: str, label: str, *, done: bool = False, ok: bool = False, error: str = "") -> None:
+    """Record a setup-flow stage transition. Cheap; called inline from the
+    /api/setup/complete handler. See ``_SETUP_PROGRESS`` for shape."""
+    now = int(time.time() * 1000)
+    if _SETUP_PROGRESS.get("stage") == "idle":
+        _SETUP_PROGRESS["started_at"] = now
+    _SETUP_PROGRESS["stage"] = stage
+    _SETUP_PROGRESS["label"] = label
+    _SETUP_PROGRESS["updated_at"] = now
+    _SETUP_PROGRESS["done"] = done
+    _SETUP_PROGRESS["ok"] = ok
+    _SETUP_PROGRESS["error"] = error
+    logger.info("setup_progress: %s — %s%s", stage, label, " (done)" if done else "")
+
+
 _PROBE_TIMEOUT = aiohttp.ClientTimeout(total=4)
 _SCAN_TIMEOUT  = aiohttp.ClientTimeout(total=1)   # aggressive — we're sweeping 254 hosts
 _SCAN_PORTS    = [11434, 1234, 8080]   # Ollama, LM Studio, llama.cpp/vLLM default
@@ -2752,6 +2785,12 @@ async def handle_setup_complete(request: web.Request) -> web.Response:
     if not endpoint or not model:
         return web.json_response({"error": "endpoint and model required"}, status=400)
 
+    # Reset progress tracker at the start of every complete attempt so
+    # retries get a fresh state instead of stale "done" from the last run.
+    _SETUP_PROGRESS.update({"stage": "idle", "label": "", "started_at": 0,
+                            "updated_at": 0, "done": False, "ok": False, "error": ""})
+    _setup_progress_update("init", "Saving setup configuration\u2026")
+
     try:
         # Clear stale config from previous installations (PVC may persist across deploys)
         import pathlib as _pathlib
@@ -2787,6 +2826,7 @@ async def handle_setup_complete(request: web.Request) -> web.Response:
 
         # Register inference machines — one per selected server.
         # Fall back to single-server path if no servers list provided.
+        _setup_progress_update("register_machines", "Registering inference servers\u2026")
         servers = body.get("servers") or []
         if not auth_db.list_machines():
             if servers and len(servers) > 1:
@@ -3079,6 +3119,7 @@ async def handle_setup_complete(request: web.Request) -> web.Response:
         # route. The user can fix the route later from
         # /admin/model-routes instead of having setup block on a
         # recoverable failure.
+        _setup_progress_update("provision_route", "Provisioning model route (this can take 5\u201315 seconds)\u2026")
         provisioned_route = None  # populated below if provision succeeds
         try:
             from gateway import openshell_routes as _osr
@@ -3111,6 +3152,7 @@ async def handle_setup_complete(request: web.Request) -> web.Response:
         # This gives the user a chat-ready agent the moment they land on
         # the main app after setup. The sandbox provisions in the background;
         # the frontend greys out the chat UI until the worker registers.
+        _setup_progress_update("create_agent", f"Creating your first agent ({agent_name})\u2026")
         try:
             existing_default = auth_db.get_agent_by_name(agent_name)
             if not existing_default:
@@ -3193,6 +3235,7 @@ async def handle_setup_complete(request: web.Request) -> web.Response:
                 model_route_id=default_agent.get("model_route_id"),
             )
 
+            _setup_progress_update("spawn_sandbox", "Spawning the agent's sandbox (the slow part \u2014 10\u201330 seconds)\u2026")
             try:
                 await _asyncio.to_thread(_executor.spawn, _cfg)
                 logger.info("setup: spawned default sandbox for agent '%s'", agent_name)
@@ -3223,6 +3266,7 @@ async def handle_setup_complete(request: web.Request) -> web.Response:
         # main app.  This is best-effort: if token issuance fails for any reason
         # (missing secret, DB write error, etc.) we still return a successful
         # setup response and tell the frontend to fall back to the login page.
+        _setup_progress_update("issue_session", "Logging you in\u2026")
         autologin_ok = False
         access_token = raw_refresh = rtk_hash = None
         try:
@@ -3252,13 +3296,27 @@ async def handle_setup_complete(request: web.Request) -> web.Response:
         if warning:
             payload["warning"] = warning
 
+        _setup_progress_update("done", "Ready!", done=True, ok=True)
         resp = web.json_response(payload)
         if autologin_ok:
             set_auth_cookies(resp, access_token, raw_refresh)
         return resp
     except Exception as exc:
         logger.exception("setup/complete failed: %s", exc)
+        _setup_progress_update("done", f"Setup failed: {exc}", done=True, ok=False, error=str(exc)[:300])
         return web.json_response({"error": "internal_error", "detail": str(exc)[:300]}, status=500)
+
+
+async def handle_setup_progress(request: web.Request) -> web.Response:
+    """GET /api/setup/progress — current stage of the running /setup/complete flow.
+
+    The frontend polls this every ~700ms while the Launch button is
+    spinning, so the user sees a live label like "Spawning the agent's
+    sandbox (10\u201330s)..." instead of a static "Finishing up...".
+    Public endpoint (already in _PUBLIC_PATHS as /api/setup/* is allowed
+    during the first-run flow before any session exists).
+    """
+    return web.json_response(dict(_SETUP_PROGRESS))
 
 
 # ---------------------------------------------------------------------------
