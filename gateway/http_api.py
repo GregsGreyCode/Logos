@@ -3088,7 +3088,7 @@ async def _reconcile_sandbox_state() -> None:
     sends a message that re-runs the dispatch path.
     """
     import asyncio as _asyncio
-    from gateway.executors.openshell import _load_state, _save_state, _openshell
+    from gateway.executors.openshell import _load_state, _save_state, _openshell, _state_lock
 
     instances = _load_state()
     if not instances:
@@ -3136,12 +3136,32 @@ async def _reconcile_sandbox_state() -> None:
             sandbox_name = inst.get("sandbox_name", "")
             if not sandbox_name:
                 continue
-            line = next((l for l in stdout.splitlines() if sandbox_name in l), None)
+            # Exact-match the first whitespace token instead of substring —
+            # substring would false-positive when one sandbox name is a
+            # prefix of another (e.g. "hermes-adam" matches a line for
+            # "hermes-adam-v2" too, so both would share that single line's
+            # phase).
+            line = next(
+                (l for l in stdout.splitlines()
+                 if l.split() and l.split()[0] == sandbox_name),
+                None,
+            )
             if not line:
                 # Pod is gone in k3s — drop the stale state entry.
                 logger.info("startup reconcile: dropping stale entry for %s (pod missing in %s)", sandbox_name, gw)
                 continue
-            new_phase = "ready" if "Ready" in line else "provisioning"
+            # Map k3s phase words → our three-state vocabulary. Terminal
+            # failures should show as "error" so the UI renders them
+            # distinctly instead of "still spinning up any second now"
+            # (which is what "provisioning" implies).
+            _upper = line.upper()
+            if "READY" in _upper:
+                new_phase = "ready"
+            elif ("FAILED" in _upper or "TERMINATED" in _upper
+                  or "ERROR" in _upper or "EVICTED" in _upper):
+                new_phase = "error"
+            else:
+                new_phase = "provisioning"
             if inst.get("phase") != new_phase:
                 logger.info(
                     "startup reconcile: %s phase %s -> %s (gateway=%s)",
@@ -3150,7 +3170,15 @@ async def _reconcile_sandbox_state() -> None:
                 inst["phase"] = new_phase
             updated.append(inst)
 
-    _save_state(updated)
+    # Hold the state lock only for the write — spawn() acquires the same
+    # lock for its state-file mutations, so without this a spawn that
+    # lands during reconcile's polling loop would get overwritten when
+    # we _save_state below.
+    try:
+        with _state_lock():
+            _save_state(updated)
+    except Exception as exc:
+        logger.warning("startup reconcile: _save_state failed (kept in-memory only): %s", exc)
     logger.info("startup reconcile: %d sandbox entries kept", len(updated))
 
 
