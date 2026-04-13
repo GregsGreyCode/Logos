@@ -926,8 +926,9 @@ def _sanitize_for_json(obj: object) -> object:
 def _compare_score(r: dict) -> float:
     """Composite score for ranking models within a gated candidate pool.
 
-    Weights: eval capability 50%, throughput 20%, model size 5%,
-    advanced evals 5%, capability metadata 5%, snappiness penalty up to -15%.
+    Weights: eval capability 40%, throughput 15%, model size up to 5%,
+    advanced evals 25%, capability metadata up to 5%, snappiness penalty
+    up to -15%, context/specialisation penalties also negative.
 
     `ttft_ms` (LM Studio's first-token-of-any-kind on the long eval prompt)
     is recorded for display but no longer scored — for reasoning models it
@@ -965,7 +966,20 @@ def _compare_score(r: dict) -> float:
     agent_ks    = ("agent_summarize", "agent_recovery", "agent_grounding")
     classic_sc  = sum(1 for k in classic_ks if hard_all.get(k))
     agent_sc    = sum(1 for k in agent_ks if hard_all.get(k))
-    advanced    = (classic_sc / 4 * 0.3 + agent_sc / 3 * 0.7) if (classic_sc or agent_sc) else 0
+    # Legacy records (benchmarked before the agent-tier was added) have the
+    # four classic keys but NONE of the agent_* keys. Don't punish them
+    # for not taking tests that didn't exist — fall back to classic-only
+    # scoring at the full 1.0 weight so their ranking stays comparable
+    # until they're re-benchmarked. The moment we see any agent key
+    # present (pass or fail), we treat the record as new-schema and apply
+    # the 0.3/0.7 split that actually penalises agent-loop failures.
+    _has_agent_results = any(k in hard_all for k in agent_ks)
+    if not (classic_sc or agent_sc):
+        advanced = 0
+    elif _has_agent_results:
+        advanced = classic_sc / 4 * 0.3 + agent_sc / 3 * 0.7
+    else:
+        advanced = classic_sc / 4    # legacy: classic-only, full credit
     # Capability metadata bonus: models reporting tool_use/vision via server API
     caps_bonus = 0.0
     if r.get("tool_use"):
