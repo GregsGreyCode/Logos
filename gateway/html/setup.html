@@ -1417,6 +1417,40 @@
                     <div class="spinner-hue"><div class="w-3 h-3 border border-gray-700 border-t-indigo-400 rounded-full animate-spin"></div></div>
                     <span x-text="compareTargetsForServer(server.endpoint).filter(mid => !compareResults[mid] && !compareTesting[mid]).length + ' model' + (compareTargetsForServer(server.endpoint).filter(mid => !compareResults[mid] && !compareTesting[mid]).length === 1 ? '' : 's') + ' remaining\u2026'"></span>
                   </div>
+
+                  <!-- Untested models for this server. Shows up once the
+                       benchmark has finished (compareDone) and there are
+                       models on this server that weren't in the test set
+                       — typically because they were downloaded after the
+                       benchmark started, or the user wants to try one
+                       that failed the pre-filter. Picking an untested
+                       model sets it as the selection with a "not
+                       verified" badge so the downstream route + agent
+                       card can warn the user. -->
+                  <template x-if="compareDone && untestedModelsForServer(server.endpoint).length > 0">
+                    <details class="group mt-3 border-t border-gray-800 pt-3">
+                      <summary class="text-[11px] text-gray-500 hover:text-gray-300 cursor-pointer list-none flex items-center gap-1.5 py-1">
+                        <svg class="w-3 h-3 transition-transform group-open:rotate-90" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+                        <span x-text="untestedModelsForServer(server.endpoint).length + ' untested model' + (untestedModelsForServer(server.endpoint).length !== 1 ? 's' : '') + ' on this server'"></span>
+                      </summary>
+                      <div class="mt-2 space-y-1.5">
+                        <p class="text-[10px] text-gray-600 leading-snug">
+                          These weren't included in the benchmark run. Pick one at your own risk — no quality/speed data to compare. Re-run the benchmark to get scores.
+                        </p>
+                        <template x-for="mid in untestedModelsForServer(server.endpoint)" :key="mid">
+                          <button @click="pickServerModel(server.endpoint, mid)"
+                            :class="serverModelForServer(server.endpoint) === mid ? 'border-amber-600 bg-amber-950/30 text-white' : 'border-gray-800 hover:border-gray-700 text-gray-400'"
+                            class="w-full text-left px-3 py-2 rounded-lg bg-gray-900 border transition-colors text-xs font-mono flex items-center justify-between gap-2">
+                            <span class="truncate" x-text="mid"></span>
+                            <span class="shrink-0 flex items-center gap-1.5">
+                              <span class="text-[9px] px-1.5 py-0.5 rounded bg-amber-950 text-amber-400 border border-amber-900">not tested</span>
+                              <span x-show="serverModelForServer(server.endpoint) === mid" class="text-amber-400 text-[11px]">✓ picked</span>
+                            </span>
+                          </button>
+                        </template>
+                      </div>
+                    </details>
+                  </template>
                 </div>
               </div>
             </template>
@@ -3521,6 +3555,19 @@ function setup() {
       if (this.compareTargets.length === 0) return epModels;
       const byEp = new Set(epModels);
       return this.compareTargets.filter(mid => byEp.has(mid));
+    },
+
+    // Models on this server that are NOT in the benchmark target list —
+    // i.e. present in LM Studio's catalogue but skipped by the benchmark
+    // pre-filter (typically because they're too small / marked non-chat /
+    // downloaded AFTER the benchmark started). Surfaced in the UI with
+    // a "not tested" badge so the user can still pick them but knows
+    // they have no score data.
+    untestedModelsForServer(ep) {
+      const tested = new Set(this.compareTargetsForServer(ep));
+      return this.getModels()
+        .filter(m => m._serverEndpoint === ep && !tested.has(m.id))
+        .map(m => m.id);
     },
 
     // User-selected (or benchmark-recommended) model for a given server endpoint
