@@ -448,7 +448,23 @@ class WorkerRegistry:
                             logger.debug("on_stream_event(ready) raised: %s", exc)
                     continue
 
-                if msg_type in ("token", "thinking", "tool_progress"):
+                # Stream-relay frames: forward the full envelope to the
+                # SSE client so the chat UI's live-tool panel can render
+                # tool_start / tool_end (with previews + duration_ms) and
+                # the streaming token / thinking ticker can update.
+                #
+                # tool_start and tool_end were dropped from this list
+                # during the Plan A-prime per-task exec refactor (the
+                # previous persistent-worker WS forwarded everything
+                # generically); re-adding them here restores the live
+                # execution display in the chat header.
+                if msg_type in (
+                    "token",
+                    "thinking",
+                    "tool_progress",
+                    "tool_start",
+                    "tool_end",
+                ):
                     if on_stream_event is not None:
                         try:
                             await on_stream_event(msg)
