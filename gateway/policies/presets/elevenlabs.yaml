@@ -1,0 +1,32 @@
+# ElevenLabs access preset — text-to-speech API.
+#
+# Enables the text_to_speech tool when using the ElevenLabs provider.
+# The TTS tool also supports free Edge TTS (no preset needed) and
+# OpenAI TTS (needs openai-api preset instead).
+#
+# Apply via:
+#   gateway.policies.apply_preset(agent_id, "elevenlabs")
+#
+# Requires ELEVENLABS_API_KEY.
+
+preset:
+  name: elevenlabs
+  description: "ElevenLabs text-to-speech API"
+
+network_policies:
+  elevenlabs:
+    name: elevenlabs
+    endpoints:
+      - host: api.elevenlabs.io
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        tls: terminate
+        access: full
+    binaries:
+      - { path: /app/venv/bin/python }
+      - { path: /app/venv/bin/python3 }
+      - { path: /app/venv/bin/python3.11 }
+      - { path: /app/venv/bin/python3.12 }
+      - { path: /usr/bin/python3 }
+      - { path: /usr/bin/python3.13 }

@@ -1,0 +1,33 @@
+# Firecrawl self-hosted access preset.
+#
+# Counterpart to firecrawl.yaml that opens egress to a homelab-hosted
+# Firecrawl instance instead of api.firecrawl.dev. Use this when
+# FIRECRAWL_API_URL points at a local container — no traffic leaves
+# the network.
+#
+# Apply via:
+#   gateway.policies.apply_preset(agent_id, "firecrawl-selfhosted")
+#
+# Adjust the `host` line below to match your Firecrawl deployment.
+
+preset:
+  name: firecrawl-selfhosted
+  description: "Self-hosted Firecrawl web search and extraction"
+
+network_policies:
+  firecrawl-selfhosted:
+    name: firecrawl-selfhosted
+    endpoints:
+      - host: firecrawl.internal
+        port: 3002
+        protocol: rest
+        enforcement: enforce
+        tls: passthrough
+        access: full
+    binaries:
+      - { path: /app/venv/bin/python }
+      - { path: /app/venv/bin/python3 }
+      - { path: /app/venv/bin/python3.11 }
+      - { path: /app/venv/bin/python3.12 }
+      - { path: /usr/bin/python3 }
+      - { path: /usr/bin/python3.13 }

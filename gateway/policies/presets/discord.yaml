@@ -1,0 +1,69 @@
+# Discord API, Gateway, and CDN access preset.
+#
+# Enables Logos's Discord platform adapter (backed by discord.py) to
+# send and receive messages, upload attachments, manage reactions,
+# and maintain the persistent gateway WebSocket for presence +
+# real-time events.
+#
+# Apply via:
+#   gateway.policies.apply_preset(agent_id, "discord")
+#
+# Binary scoping: venv Python only. Logos's Discord adapter is pure
+# Python; NemoClaw uses Node.js for theirs which is why their preset
+# scopes to /usr/local/bin/node.
+
+preset:
+  name: discord
+  description: "Discord REST API, gateway WebSocket, and CDN"
+
+network_policies:
+  discord:
+    name: discord
+    endpoints:
+      # Main REST API — bot commands, message send/edit/delete,
+      # guild/channel management. Limited DELETE to message and
+      # reaction endpoints (NemoClaw learned the hard way that
+      # allowing DELETE on /** lets a compromised bot nuke entire
+      # channels via /api/v*/channels/*).
+      - host: discord.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        tls: terminate
+        rules:
+          - allow: { method: GET, path: "/**" }
+          - allow: { method: POST, path: "/**" }
+          - allow: { method: PUT, path: "/**" }
+          - allow: { method: PATCH, path: "/**" }
+          # DELETE restricted to message + reaction paths.
+          - allow: { method: DELETE, path: "/api/v*/channels/*/messages/*" }
+          - allow: { method: DELETE, path: "/api/v*/channels/*/messages/*/reactions/*/*" }
+      # Gateway WebSocket — persistent bidirectional connection for
+      # presence, events, voice state. MUST use `access: full` (L4
+      # CONNECT tunnel) instead of `protocol: rest` because the L7
+      # proxy's HTTP idle timeout would kill the long-lived socket.
+      # Same pattern as slack Socket Mode. See NemoClaw #409.
+      - host: gateway.discord.gg
+        port: 443
+        access: full
+      # Message attachment CDN (read-only — uploads go via discord.com).
+      - host: cdn.discordapp.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        tls: terminate
+        rules:
+          - allow: { method: GET, path: "/**" }
+      # Media proxy (GIFs, stickers, embeds — also read-only).
+      - host: media.discordapp.net
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        tls: terminate
+        rules:
+          - allow: { method: GET, path: "/**" }
+    binaries:
+      - { path: /app/venv/bin/python }
+      - { path: /app/venv/bin/python3 }
+      - { path: /app/venv/bin/python3.11 }
+      - { path: /app/venv/bin/python3.12 }

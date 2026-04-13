@@ -1,0 +1,41 @@
+# Browserbase access preset — cloud browser automation.
+#
+# Enables the browser_* tools in cloud mode. Browserbase provides
+# headless Chromium sessions with stealth, proxy, and CAPTCHA solving.
+# Only needed when using cloud mode (BROWSERBASE_API_KEY set) — local
+# browser mode (agent-browser + Chromium) needs no network preset
+# since it runs entirely inside the sandbox.
+#
+# Apply via:
+#   gateway.policies.apply_preset(agent_id, "browserbase")
+#
+# Requires BROWSERBASE_API_KEY and BROWSERBASE_PROJECT_ID.
+
+preset:
+  name: browserbase
+  description: "Browserbase cloud browser automation (session management)"
+
+network_policies:
+  browserbase:
+    name: browserbase
+    endpoints:
+      # Session management API (create, list, close sessions)
+      - host: api.browserbase.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        tls: terminate
+        access: full
+      # WebSocket connection for CDP (Chrome DevTools Protocol)
+      - host: connect.browserbase.com
+        port: 443
+        enforcement: enforce
+        tls: terminate
+        access: full
+    binaries:
+      - { path: /app/venv/bin/python }
+      - { path: /app/venv/bin/python3 }
+      - { path: /app/venv/bin/python3.11 }
+      - { path: /app/venv/bin/python3.12 }
+      - { path: /usr/bin/python3 }
+      - { path: /usr/bin/python3.13 }
