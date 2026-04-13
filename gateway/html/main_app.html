@@ -2296,6 +2296,76 @@
       </div>
     </div>
 
+    <!-- ── Install an agent-ready model ── -->
+    <!-- Curated list of models known to pass our h5/h6/h7 agent-loop
+         benchmarks. Lets a user one-click download a model that actually
+         works as an agent instead of hunting on Hugging Face. Uses LM
+         Studio's REST /api/v1/models/download endpoint; polls /status
+         while downloading. -->
+    <div x-show="can('manage_machines') && adminMachines.length>0" class="mb-6 border-t border-gray-800 pt-6">
+      <button @click="recommendedModelsOpen = !recommendedModelsOpen; if (recommendedModelsOpen && !recommendedModels.length) loadRecommendedModels()"
+              class="flex items-center gap-2 text-xs font-semibold text-gray-300 mb-3 hover:text-white">
+        <span class="text-gray-600 transition-transform" :class="recommendedModelsOpen ? 'rotate-90' : ''" style="display:inline-block">▶</span>
+        Install an agent-ready model
+        <span class="text-[10px] px-2 py-0.5 rounded-full bg-emerald-950 text-emerald-400 border border-emerald-900 font-normal">curated</span>
+      </button>
+      <div x-show="recommendedModelsOpen" x-cloak class="space-y-3">
+        <div class="flex items-center gap-2">
+          <label class="text-[10px] text-gray-500">Download to machine:</label>
+          <select x-model="installTargetMachineId" class="text-xs px-2 py-1 bg-gray-900 border border-gray-700 rounded text-white">
+            <template x-for="m in adminMachines" :key="m.id">
+              <option :value="m.id" x-text="(m.name || m.endpoint_url || m.id) + (m.enabled ? '' : ' (disabled)')"></option>
+            </template>
+          </select>
+          <button @click="loadRecommendedModels()" class="text-[10px] text-gray-500 hover:text-white" title="Refresh list">↻</button>
+        </div>
+        <p class="text-[10px] text-gray-500 leading-snug max-w-2xl">
+          These models pass our agent-loop benchmarks (post-tool summarisation, error recovery, multi-turn grounding).
+          Picking one here POSTs to LM Studio's download endpoint on the selected machine — your gateway is just the messenger.
+          Sorted best-agent-first within each tier.
+        </p>
+        <template x-for="rm in recommendedModels" :key="rm.id">
+          <div class="bg-gray-900 border border-gray-800 rounded-xl p-4 flex items-start gap-4">
+            <div class="flex-shrink-0 text-[10px] uppercase tracking-wider px-2 py-0.5 rounded border font-semibold"
+                 :class="rm.agent_tier==='excellent' ? 'border-emerald-700 text-emerald-400 bg-emerald-950/40' :
+                         rm.agent_tier==='good' ? 'border-indigo-700 text-indigo-300 bg-indigo-950/40' :
+                         'border-gray-700 text-gray-500 bg-gray-950/40'"
+                 x-text="rm.agent_tier"></div>
+            <div class="flex-1 min-w-0">
+              <div class="flex items-center gap-2 flex-wrap">
+                <span class="text-sm font-semibold text-white truncate" x-text="rm.name"></span>
+                <span class="text-[10px] text-gray-600" x-text="(rm.size_b || '?') + 'B'"></span>
+                <span class="text-[10px] text-gray-600" x-text="(rm.context_k || '?') + 'K ctx'"></span>
+                <span class="text-[10px] text-gray-600" x-text="'~' + (rm.size_gb || '?') + 'GB'"></span>
+              </div>
+              <div class="text-[11px] text-gray-400 mt-1 leading-snug" x-text="rm.notes || ''"></div>
+              <div class="mt-1.5 flex items-center gap-1 flex-wrap">
+                <template x-for="tag in (rm.good_for || [])" :key="tag">
+                  <span class="text-[9px] px-1.5 py-0.5 rounded bg-gray-800 text-gray-500 border border-gray-700" x-text="tag"></span>
+                </template>
+              </div>
+              <div x-show="downloadJobs[rm.id]" class="mt-2 text-[10px] text-yellow-400 font-mono">
+                <span x-text="downloadJobs[rm.id]?.status || ''"></span>
+                <span x-show="downloadJobs[rm.id]?.downloaded_bytes" class="ml-2" x-text="(() => { const j = downloadJobs[rm.id]; if (!j || !j.downloaded_bytes) return ''; const pct = j.total_size_bytes ? Math.round(j.downloaded_bytes/j.total_size_bytes*100) + '% — ' : ''; const mb = Math.round(j.downloaded_bytes/1024/1024); return pct + mb + 'MB'; })()"></span>
+                <span x-show="downloadJobs[rm.id]?.bytes_per_second" class="ml-2 text-gray-500" x-text="'(' + Math.round((downloadJobs[rm.id]?.bytes_per_second || 0)/1024/1024*10)/10 + ' MB/s)'"></span>
+                <span x-show="downloadJobs[rm.id]?.error" class="ml-2 text-red-400" x-text="downloadJobs[rm.id]?.error"></span>
+              </div>
+            </div>
+            <button @click="startModelDownload(rm)"
+                    :disabled="downloadJobs[rm.id]?.status === 'downloading' || !installTargetMachineId"
+                    :class="(downloadJobs[rm.id]?.status === 'downloading' || !installTargetMachineId) ? 'opacity-40 cursor-not-allowed' : 'hover:bg-indigo-500'"
+                    class="shrink-0 px-3 py-1.5 rounded bg-indigo-600 text-white text-xs font-medium transition-colors">
+              <span x-show="!downloadJobs[rm.id] || downloadJobs[rm.id]?.status === 'failed'">Download</span>
+              <span x-show="downloadJobs[rm.id]?.status === 'downloading'">Downloading…</span>
+              <span x-show="downloadJobs[rm.id]?.status === 'completed'">✓ Done</span>
+              <span x-show="downloadJobs[rm.id]?.status === 'already_downloaded'">Installed</span>
+            </button>
+          </div>
+        </template>
+        <div x-show="recommendedModelsLoading" class="text-[11px] text-gray-500 italic">Loading catalogue…</div>
+      </div>
+    </div>
+
     <!-- ── Benchmark section (moved from Settings/Routing 2026-04-11, pass-3 S1) ── -->
     <div x-show="can('manage_machines')" class="mb-6 border-t border-gray-800 pt-6">
       <button @click="benchmarkOpen=!benchmarkOpen"
@@ -5832,6 +5902,17 @@ function app() {
     // null until first fetch; medians may be null until enough samples
     // accumulate (provisioningHint falls back to hardcoded copy then).
     spawnStats: null,
+    // LM Studio model-download picker state. Populated lazily when the
+    // user opens the "Install an agent-ready model" disclosure.
+    recommendedModelsOpen: false,
+    recommendedModelsLoading: false,
+    recommendedModels: [],
+    installTargetMachineId: '',
+    // Per-recommendation download state, keyed by rm.id. Shape after start:
+    //   {status: 'downloading' | 'completed' | 'failed' | 'already_downloaded',
+    //    job_id, downloaded_bytes, total_size_bytes, bytes_per_second, error}
+    // Polled by startModelDownload's inner loop until status is terminal.
+    downloadJobs: {},
     // Per-agent cost rollup (today window). Populated by loadAgentCosts,
     // polled every 15s while the Agents tab is visible. Keyed by agent.id
     // with shape {total_usd, count, is_cloud, pct, title}. Rendered as
@@ -7594,6 +7675,82 @@ function app() {
         const r = await fetch('/admin/spawn-stats', {credentials: 'include'});
         if (r.ok) this.spawnStats = await r.json();
       } catch (e) { /* silent — falls back to hardcoded hint */ }
+    },
+
+    async loadRecommendedModels() {
+      this.recommendedModelsLoading = true;
+      try {
+        const r = await fetch('/admin/recommended-models', {credentials: 'include'});
+        if (r.ok) {
+          const d = await r.json();
+          this.recommendedModels = d.recommended || [];
+          // Default the target machine to the first enabled one if not set
+          if (!this.installTargetMachineId && this.adminMachines.length) {
+            const enabled = this.adminMachines.find(m => m.enabled) || this.adminMachines[0];
+            this.installTargetMachineId = enabled.id;
+          }
+        }
+      } catch (e) { console.warn('loadRecommendedModels:', e); }
+      this.recommendedModelsLoading = false;
+    },
+
+    // Kick off a download and poll until done. Keyed to the recommendation
+    // id so the button UI can show per-row status without collision when
+    // the user queues two downloads in a row.
+    async startModelDownload(rm) {
+      if (!this.installTargetMachineId) {
+        alert('Pick a target machine first.');
+        return;
+      }
+      const rid = rm.id;
+      this.downloadJobs = {...this.downloadJobs, [rid]: {status: 'downloading'}};
+      try {
+        const r = await fetch(
+          '/admin/machines/' + encodeURIComponent(this.installTargetMachineId) + '/download',
+          {
+            method: 'POST',
+            credentials: 'include',
+            headers: {'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken()},
+            body: JSON.stringify({
+              model: rm.model,
+              ...(rm.quantization ? {quantization: rm.quantization} : {}),
+            }),
+          }
+        );
+        const d = await r.json();
+        this.downloadJobs = {...this.downloadJobs, [rid]: {...this.downloadJobs[rid], ...d}};
+        if (d.status === 'already_downloaded' || d.status === 'completed' || d.status === 'failed') return;
+        // Poll until terminal
+        const jobId = d.job_id;
+        if (!jobId) return;
+        const poll = async () => {
+          try {
+            const pr = await fetch(
+              '/admin/machines/' + encodeURIComponent(this.installTargetMachineId) +
+              '/download/' + encodeURIComponent(jobId),
+              {credentials: 'include'}
+            );
+            if (!pr.ok) {
+              this.downloadJobs = {...this.downloadJobs, [rid]: {...this.downloadJobs[rid], status: 'failed', error: 'HTTP ' + pr.status}};
+              return;
+            }
+            const pd = await pr.json();
+            this.downloadJobs = {...this.downloadJobs, [rid]: {...this.downloadJobs[rid], ...pd}};
+            if (pd.status === 'downloading' || pd.status === 'paused') {
+              setTimeout(poll, 2000);
+            } else if (pd.status === 'completed') {
+              // Refresh machine catalogue so the new model shows up in dropdowns
+              if (typeof this.loadAdminMachines === 'function') this.loadAdminMachines();
+              if (typeof this.probeAllMachines === 'function') this.probeAllMachines();
+            }
+          } catch (e) {
+            this.downloadJobs = {...this.downloadJobs, [rid]: {...this.downloadJobs[rid], status: 'failed', error: String(e)}};
+          }
+        };
+        setTimeout(poll, 2000);
+      } catch (e) {
+        this.downloadJobs = {...this.downloadJobs, [rid]: {status: 'failed', error: String(e)}};
+      }
     },
 
     // Poll per-agent cost rollups. Runs opportunistically — caller decides

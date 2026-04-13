@@ -1843,6 +1843,90 @@ async def handle_routing_log(request: web.Request) -> web.Response:
     return web.json_response({"entries": rows, "total": total, "page": page, "limit": limit})
 
 
+async def handle_recommended_models(request: web.Request) -> web.Response:
+    """GET /admin/recommended-models — curated list of agent-capable local models.
+
+    Sourced from gateway/policies/recommended_models.yaml. The UI uses this
+    as the picker in Admin → Machines → Install an agent model. No caching
+    here since the file is tiny and read once per UI render — change the
+    YAML, hit refresh, see new entries.
+    """
+    from pathlib import Path as _Path
+    import yaml as _yaml
+    p = _Path(__file__).parent / "policies" / "recommended_models.yaml"
+    try:
+        data = _yaml.safe_load(p.read_text(encoding="utf-8")) or {}
+    except FileNotFoundError:
+        return web.json_response({"recommended": [], "error": "recommended_models.yaml missing"})
+    except Exception as exc:
+        return web.json_response({"recommended": [], "error": str(exc)}, status=500)
+    return web.json_response({"recommended": data.get("recommended") or []})
+
+
+async def handle_machine_download_start(request: web.Request) -> web.Response:
+    """POST /admin/machines/{id}/download — kick off a model download.
+
+    Body: {"model": "catalog/id-or-hf-url", "quantization": "Q4_K_M"}
+
+    Proxies to the machine's LM Studio REST endpoint, returns the LM
+    Studio job_id unmodified so the UI can poll status. Uses the machine's
+    stored api_key as the Bearer token.
+    """
+    mid = request.match_info["id"]
+    machine = auth_db.get_machine(mid) if hasattr(auth_db, "get_machine") else None
+    if not machine:
+        # Fallback: look up by id in the list (older db helper shape)
+        machines = auth_db.list_machines() or []
+        machine = next((m for m in machines if m.get("id") == mid), None)
+    if not machine:
+        return web.json_response({"error": "machine not found"}, status=404)
+    endpoint = machine.get("endpoint_url") or ""
+    if not endpoint:
+        return web.json_response({"error": "machine has no endpoint_url"}, status=400)
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    model = (body.get("model") or "").strip()
+    if not model:
+        return web.json_response({"error": "model field required"}, status=400)
+    quantization = (body.get("quantization") or "").strip() or None
+
+    from gateway.lmstudio_loader import download_model
+    try:
+        result = await download_model(
+            endpoint, model,
+            quantization=quantization,
+            api_key=machine.get("api_key"),
+        )
+    except Exception as exc:
+        logger.warning("download_model(%s, %s) failed: %s", mid, model, exc)
+        return web.json_response({"error": f"download request failed: {exc}"}, status=502)
+    return web.json_response(result)
+
+
+async def handle_machine_download_status(request: web.Request) -> web.Response:
+    """GET /admin/machines/{id}/download/{job_id} — poll download progress."""
+    mid = request.match_info["id"]
+    job_id = request.match_info["job_id"]
+    machines = auth_db.list_machines() or []
+    machine = next((m for m in machines if m.get("id") == mid), None)
+    if not machine:
+        return web.json_response({"error": "machine not found"}, status=404)
+    endpoint = machine.get("endpoint_url") or ""
+    if not endpoint:
+        return web.json_response({"error": "machine has no endpoint_url"}, status=400)
+    from gateway.lmstudio_loader import download_status
+    try:
+        result = await download_status(
+            endpoint, job_id,
+            api_key=machine.get("api_key"),
+        )
+    except Exception as exc:
+        return web.json_response({"error": f"status request failed: {exc}"}, status=502)
+    return web.json_response(result)
+
+
 async def handle_costs(request: web.Request) -> web.Response:
     """GET /admin/costs — rollup stats for the Costs dashboard.
 
