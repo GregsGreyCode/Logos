@@ -838,10 +838,32 @@ class GatewayRunner:
         except Exception as exc:
             logger.debug("Auto-ingest failed for session %s: %s", session_id[:12], exc)
 
-    async def _async_flush_memories(self, old_session_id: str):
-        """Run the sync memory flush in a thread pool so it won't block the event loop."""
+    async def _async_flush_memories(self, old_session_id: str, timeout: float = 30.0):
+        """Run the sync memory flush in a thread pool so it won't block the event loop.
+
+        Hard-capped at ``timeout`` seconds (default 30). The flush path
+        runs a full AIAgent turn (LLM call + optional tool calls) which
+        can stall for 30-60s per attempt against a dead/misconfigured
+        auxiliary provider. Without a cap, a cold gateway with dozens of
+        expired sessions in its backlog would park every available thread
+        pool worker in retry loops — and aiohttp's own static file serving
+        uses the same default executor, so the HTTP listener effectively
+        stops responding. The cap lets the watcher move on to the next
+        session instead of stalling indefinitely.
+        """
         loop = asyncio.get_event_loop()
-        await loop.run_in_executor(None, self._flush_memories_for_session, old_session_id)
+        try:
+            await asyncio.wait_for(
+                loop.run_in_executor(None, self._flush_memories_for_session, old_session_id),
+                timeout=timeout,
+            )
+        except asyncio.TimeoutError:
+            logger.info(
+                "Memory flush for session %s exceeded %.0fs — continuing; "
+                "the flush will run opportunistically on the next message "
+                "to this session instead.",
+                old_session_id, timeout,
+            )
     
     @staticmethod
     def _load_prefill_messages() -> List[Dict[str, Any]]:
@@ -1141,21 +1163,32 @@ class GatewayRunner:
         
         return True
     
-    async def _session_expiry_watcher(self, interval: int = 300):
+    async def _session_expiry_watcher(self, interval: int = 300,
+                                       max_per_cycle: int = 3):
         """Background task that proactively flushes memories for expired sessions.
-        
-        Runs every `interval` seconds (default 5 min).  For each session that
-        has expired according to its reset policy, flushes memories in a thread
-        pool and marks the session so it won't be flushed again.
 
-        This means memories are already saved by the time the user sends their
-        next message, so there's no blocking delay.
+        Runs every ``interval`` seconds (default 5 min). Each cycle flushes
+        up to ``max_per_cycle`` expired sessions (default 3) — the remaining
+        backlog is picked up next cycle. This bound matters on cold boots
+        where a day's worth of expired sessions have accumulated: without
+        the cap, one cycle would serialise ~N × 30s of aux-LLM retries
+        through the default thread pool and starve the HTTP listener,
+        which ALSO uses ``run_in_executor`` for static file serving.
+
+        At interval=300 and max_per_cycle=3, the worst-case drain rate
+        is 36 sessions / hour — plenty for normal usage, and a 50-session
+        cold-boot backlog drains in ~1.4 hours without ever monopolising
+        the event loop.
         """
         await asyncio.sleep(60)  # initial delay — let the gateway fully start
         while self._running:
             try:
                 self.session_store._ensure_loaded()
+                _flushed_this_cycle = 0
                 for key, entry in list(self.session_store._entries.items()):
+                    if _flushed_this_cycle >= max_per_cycle:
+                        # Yield the rest of the backlog to the next cycle.
+                        break
                     if entry.session_id in self.session_store._pre_flushed_sessions:
                         continue  # already flushed this session
                     if not self.session_store._is_session_expired(entry):
@@ -1168,8 +1201,13 @@ class GatewayRunner:
                     try:
                         await self._async_flush_memories(entry.session_id)
                         self.session_store._pre_flushed_sessions.add(entry.session_id)
+                        _flushed_this_cycle += 1
                     except Exception as e:
                         logger.debug("Proactive memory flush failed for %s: %s", entry.session_id, e)
+                        # Count timeouts toward the cycle budget too —
+                        # otherwise a misconfigured aux provider can make
+                        # us retry every expired session every cycle.
+                        _flushed_this_cycle += 1
             except Exception as e:
                 logger.debug("Session expiry watcher error: %s", e)
             # Sleep in small increments so we can stop quickly
@@ -1516,14 +1554,33 @@ class GatewayRunner:
 
         worker_entry = self.worker_registry.get(worker_id)
         if not worker_entry or not worker_entry.healthy:
-            logger.info(
-                "dispatch_platform_message: worker %s not connected (platform=%s)",
-                worker_id, platform_name,
-            )
-            return (
-                f"⚠️ {agent_name}'s sandbox isn't connected right now. "
-                "Check Admin → Sandboxes on the dashboard, then try again."
-            )
+            # Reactive auto-respawn: the sandbox is absent (host reboot,
+            # admin-deleted, gateway crash). Trigger a fresh spawn using
+            # the same executor + InstanceConfig shape as the startup
+            # resurrect pass. Platform messages don't stream, so no
+            # on_event callback — the user just waits 10-30s for the
+            # reply instead of getting "check Admin → Sandboxes."
+            try:
+                from gateway.sandbox_heal import ensure_sandbox_alive
+                from gateway.executors.openshell import OpenShellExecutor
+                _heal_ok, worker_entry = await ensure_sandbox_alive(
+                    worker_registry=self.worker_registry,
+                    executor=OpenShellExecutor(),
+                    worker_id=worker_id,
+                    agent_record=agent,
+                )
+            except Exception:
+                logger.exception("dispatch_platform_message: auto-respawn failed")
+                _heal_ok = False
+            if not _heal_ok:
+                logger.info(
+                    "dispatch_platform_message: worker %s not connected and auto-respawn failed (platform=%s)",
+                    worker_id, platform_name,
+                )
+                return (
+                    f"⚠️ {agent_name}'s sandbox isn't running and auto-respawn failed. "
+                    "Check Admin → Sandboxes on the dashboard, then try again."
+                )
 
         # ── 3. Build session + history ────────────────────────────────
         session_id = ""

@@ -59,6 +59,8 @@ basic flow is working.
 from __future__ import annotations
 
 import logging
+import os
+import pathlib
 import re
 import shutil
 import subprocess
@@ -74,10 +76,21 @@ logger = logging.getLogger(__name__)
 
 # Auto-allocation pool for OpenShell gateway host ports. The first route
 # provisioned on a fresh install starts at 9090 and subsequent routes
-# walk upward. Cap is intentional — running >10 OpenShell containers on
-# a homelab host will exhaust RAM. Raise if needed.
-_PORT_ALLOC_START = 9090
-_PORT_ALLOC_END = 9099
+# walk upward. Override per-host with LOGOS_OPENSHELL_PORT_START /
+# LOGOS_OPENSHELL_PORT_END env vars when the default 50-port window is
+# too small (or you want to move the range to avoid a port conflict).
+# Each gateway is a thin proxy process — RAM cost is small; the real
+# limit is the inference backend, not OpenShell itself.
+# Default range 10100–10199. Chosen because:
+#   * 9090/9091 = Prometheus, 9100 = node_exporter, 9200 = Elasticsearch
+#     — the 9000s are crowded with metrics tooling on a typical homelab.
+#   * 10100–10199 has no IANA-registered services and isn't claimed by
+#     any common container ecosystem default.
+# Existing routes that were allocated in the legacy 9090–9099 window
+# keep working; only NEW allocations land in the new range. Override
+# per-host with LOGOS_OPENSHELL_PORT_START / LOGOS_OPENSHELL_PORT_END.
+_PORT_ALLOC_START = int(os.environ.get("LOGOS_OPENSHELL_PORT_START") or 10100)
+_PORT_ALLOC_END = int(os.environ.get("LOGOS_OPENSHELL_PORT_END") or 10199)
 
 
 # ── Helpers ─────────────────────────────────────────────────────────────────
@@ -168,13 +181,40 @@ def _next_free_port() -> int:
     except Exception as exc:
         logger.debug("_next_free_port: docker ps probe failed (non-fatal): %s", exc)
 
+    # Final guard: ask the kernel whether the port is actually free on this
+    # host. The DB + docker-ps checks above only see ports we OR another
+    # openshell container have allocated; they don't catch unrelated
+    # services squatting in our range (node_exporter on 9100 is the
+    # canonical example). Without this check the allocator hands out a
+    # busy port, `openshell gateway start` silently binds nothing useful,
+    # and `gateway info` then fails with "underlying gateway is unreachable".
+    import socket as _socket
+
+    def _host_port_free(port: int) -> bool:
+        for family, addr in ((_socket.AF_INET, ("127.0.0.1", port)),
+                             (_socket.AF_INET6, ("::1", port))):
+            try:
+                with _socket.socket(family, _socket.SOCK_STREAM) as s:
+                    s.settimeout(0.3)
+                    if s.connect_ex(addr) == 0:
+                        return False  # something already accepts here
+            except Exception:
+                continue
+        return True
+
     for p in range(_PORT_ALLOC_START, _PORT_ALLOC_END + 1):
-        if p not in used:
-            return p
+        if p in used:
+            continue
+        if not _host_port_free(p):
+            logger.info("_next_free_port: %d is taken by another process — skipping", p)
+            used.add(p)
+            continue
+        return p
     raise RuntimeError(
         f"No free port in OpenShell allocation range "
         f"{_PORT_ALLOC_START}-{_PORT_ALLOC_END}. "
-        f"Destroy an unused route or raise the cap."
+        f"Destroy an unused route or raise the cap "
+        f"(LOGOS_OPENSHELL_PORT_START / LOGOS_OPENSHELL_PORT_END)."
     )
 
 
@@ -522,7 +562,52 @@ def finish_provisioning(route_id: str, set_as_default: bool = False) -> dict:
     provider = route["provider"]
     model = route["model"]
 
+    def _diagnose(detail: str) -> str:
+        """Rewrite cryptic openshell failures into actionable hints.
+
+        Known patterns that confuse users:
+          - "Gateway failed to start" with no container logs → k3s
+            healthcheck loop, almost always inotify exhaustion.
+          - "all predefined address pools have been fully subnetted"
+            → Docker network IPAM ceiling; user needs to prune or
+            raise default-address-pools.
+        """
+        low = (detail or "").lower()
+        if "gateway failed" in low or "underlying gateway is unreachable" in low:
+            try:
+                mui = int(pathlib.Path("/proc/sys/fs/inotify/max_user_instances").read_text().strip())
+            except Exception:
+                mui = 0
+            try:
+                import subprocess as _sp
+                _n = int(_sp.run(["docker", "ps", "--filter", "name=openshell-cluster-",
+                                  "--format", "{{.Names}}"],
+                                 capture_output=True, text=True, timeout=5).stdout.strip().splitlines().__len__())
+            except Exception:
+                _n = 0
+            if mui and _n and (_n * 70) > (mui * 0.8):
+                return (
+                    f"Gateway failed because the host's inotify limit is exhausted. "
+                    f"fs.inotify.max_user_instances={mui}, "
+                    f"but you already have {_n} OpenShell k3s clusters running "
+                    f"(~{_n*70} instances in use). "
+                    f"Fix:  sudo sysctl -w fs.inotify.max_user_instances=8192  "
+                    f"(and persist: echo 'fs.inotify.max_user_instances=8192' | sudo "
+                    f"tee -a /etc/sysctl.d/99-openshell.conf && sudo sysctl --system). "
+                    f"Then destroy this failed route and retry."
+                )
+        if "predefined address pools" in low:
+            return (
+                "Gateway failed because Docker ran out of IPv4 subnets. "
+                "Quick fix:  docker network prune -f. "
+                "Durable fix: add default-address-pools to /etc/docker/daemon.json "
+                "(e.g. {\"default-address-pools\":[{\"base\":\"172.80.0.0/12\",\"size\":24}]}) "
+                "and restart Docker."
+            )
+        return detail
+
     def _fail(detail: str, cleanup_gateway: bool = False) -> None:
+        rewritten = _diagnose(detail)
         if cleanup_gateway:
             try:
                 _run_openshell("gateway", "destroy", "--force",
@@ -532,7 +617,7 @@ def finish_provisioning(route_id: str, set_as_default: bool = False) -> dict:
                     "openshell gateway destroy cleanup failed for %s: %s",
                     name, cleanup_err,
                 )
-        auth_db.update_model_route(route_id, status="error", status_detail=detail[:500])
+        auth_db.update_model_route(route_id, status="error", status_detail=rewritten[:500])
 
     # Step 2: Start the gateway (slow, ~30-60s on cold start)
     try:
@@ -570,18 +655,63 @@ def finish_provisioning(route_id: str, set_as_default: bool = False) -> dict:
         _fail(str(exc), cleanup_gateway=True)
         raise
 
+    # Pre-check: if the provider already exists on this gateway, skip
+    # `provider create` entirely. The previous version did the create
+    # unconditionally and then swallowed any error mentioning "exists",
+    # "in use", or "duplicate" — too lenient. A failed create whose
+    # error happened to contain one of those words got silently ignored,
+    # leaving the gateway with no provider; step 4 (`inference set`)
+    # then failed with the cryptic "provider 'lmstudio' not found".
+    # Probing first lets us treat any non-zero exit from `provider create`
+    # as a real failure.
+    _provider_exists = False
     try:
-        _run_openshell(
-            "provider", "create",
-            "--name", provider,
-            "--type", openshell_type,
-            "--credential", cred_arg,
-            "--config", config_arg,
-            gateway=name,
+        _list_out = subprocess.run(
+            ["openshell", "-g", name, "provider", "list"],
+            capture_output=True, text=True, timeout=15, check=False,
         )
-    except subprocess.CalledProcessError as exc:
-        msg = _stderr_or_stdout(exc).lower()
-        if "exists" not in msg and "in use" not in msg and "duplicate" not in msg:
+        if _list_out.returncode == 0:
+            # openshell 0.0.23 prints a plain table — first column is NAME.
+            # Match on word-boundary so e.g. "openai" doesn't false-match
+            # against "openai-compat".
+            for line in (_list_out.stdout or "").splitlines():
+                tokens = line.split()
+                if tokens and tokens[0] == provider:
+                    _provider_exists = True
+                    break
+    except Exception as _probe_exc:
+        logger.debug(
+            "provider-exists probe failed (non-fatal, will attempt create): %s",
+            _probe_exc,
+        )
+
+    if _provider_exists:
+        # Re-sync credential + config so a stale URL/key from an older
+        # provision run doesn't survive. ``provider update`` is idempotent.
+        try:
+            _run_openshell(
+                "provider", "update",
+                "--name", provider,
+                "--credential", cred_arg,
+                "--config", config_arg,
+                gateway=name,
+            )
+        except subprocess.CalledProcessError as exc:
+            logger.warning(
+                "provider update on existing %s/%s failed (non-fatal): %s",
+                name, provider, _stderr_or_stdout(exc),
+            )
+    else:
+        try:
+            _run_openshell(
+                "provider", "create",
+                "--name", provider,
+                "--type", openshell_type,
+                "--credential", cred_arg,
+                "--config", config_arg,
+                gateway=name,
+            )
+        except subprocess.CalledProcessError as exc:
             _fail(_stderr_or_stdout(exc), cleanup_gateway=True)
             raise RuntimeError(
                 f"failed to create provider on '{name}': {_stderr_or_stdout(exc)}"

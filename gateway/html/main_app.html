@@ -834,11 +834,15 @@
                        migration) to roughly match the user-toggleable
                        capabilities the dropdown surfaces. agentCapsState's
                        precise count wins once it's been fetched. -->
+                  <!-- Display logic: once the cap catalogue is fetched for
+                       THIS agent, show the authoritative enabled count.
+                       While it's loading, show a neutral "…" rather than a
+                       preset-based guess that was one off from the real
+                       number — the old heuristic produced a visible 12 → 13
+                       flicker because presets and capabilities don't map 1:1. -->
                   <span x-text="(agentCapsState && activeAgent && agentCapsState._agentId === activeAgent.id)
                     ? ((agentCapsState.capabilities || []).filter(c => c.enabled).length + ' on')
-                    : (activeAgent?.applied_presets
-                        ? ((() => { try { const ps = JSON.parse(activeAgent.applied_presets).filter(p => p !== 'worldscene' && p !== 'browserless'); return ps.length; } catch(e) { return 0; } })() + ' on')
-                        : (activeInstance.action_policy || 'default'))">
+                    : '…'">
                   </span>
                 </button>
                 <div x-show="open" x-cloak
@@ -1179,9 +1183,17 @@
                 </template>
               </div>
             </template>
-            <!-- Thinking / wake dots -->
-            <div x-show="chatLoading && !webSession" class="flex items-center gap-2 text-gray-500 text-sm">
-              <!-- wake state: breathe-pulse -->
+            <!-- Thinking / wake indicator — runs for the full duration of
+                 chatLoading (i.e. from sendChat() until the SSE `done` or
+                 `error` frame). Previously gated on `!webSession` so the
+                 tool-bar below could replace it, but in per-dispatch
+                 OpenShell mode the active_sessions list is usually empty
+                 so the spinner just vanished. Always-on is clearer: the
+                 user never has to wonder "is it still working or dead?"
+                 and the tool-bar below still shows alongside when the
+                 worker is mid-tool. -->
+            <div x-show="chatLoading" class="flex items-center gap-2 text-gray-500 text-sm">
+              <!-- wake state: breathe-pulse (first-message / idle resumption) -->
               <div x-show="isWakingUp" class="flex gap-1.5 items-center">
                 <span class="logos-wake-dot"></span>
                 <span class="logos-wake-dot"></span>
@@ -1597,17 +1609,31 @@
                 <!-- Pane header -->
                 <div class="px-4 pt-3 pb-2 border-b border-gray-800 shrink-0">
                   <div class="flex items-center gap-2.5">
-                    <!-- Status indicator: green=ready, indigo pulse=streaming, gray pulse=queued -->
+                    <!-- Status indicator:
+                           amber pulse = spawning sandbox (ensure_sandbox_alive SSE)
+                           indigo pulse = streaming
+                           gray pulse   = queued
+                           green        = ready -->
                     <span class="w-2.5 h-2.5 rounded-full shrink-0 ring-2 ring-gray-900"
-                      :class="compareStreaming[pane.id] ? 'bg-indigo-500 animate-pulse'
+                      :class="compareProvisioning[pane.id] ? 'bg-amber-500 animate-pulse'
+                            : compareStreaming[pane.id] ? 'bg-indigo-500 animate-pulse'
                             : compareQueued[pane.id] ? 'bg-gray-500 animate-pulse'
                             : 'bg-green-500'"
-                      :title="compareStreaming[pane.id] ? 'Streaming…' : compareQueued[pane.id] ? 'Queued' : 'Ready'"></span>
+                      :title="compareProvisioning[pane.id] ? 'Spawning sandbox…' : compareStreaming[pane.id] ? 'Streaming…' : compareQueued[pane.id] ? 'Queued' : 'Ready'"></span>
                     <span class="text-base font-semibold text-white truncate" x-text="pane.name"></span>
-                    <template x-if="compareStreaming[pane.id]">
+                    <!-- Precedence: provisioning wins over streaming because
+                         the streaming SSE opens first and stays open while
+                         the backend's ensure_sandbox_alive blocks 10-30s.
+                         Without the check the user sees a mismatched
+                         "streaming" label with no tokens for half a
+                         minute — then tokens appear. -->
+                    <template x-if="compareProvisioning[pane.id]">
+                      <span class="text-[10px] px-1.5 py-0.5 rounded bg-amber-900 text-amber-200 font-semibold animate-pulse">spawning sandbox…</span>
+                    </template>
+                    <template x-if="compareStreaming[pane.id] && !compareProvisioning[pane.id]">
                       <span class="text-[10px] px-1.5 py-0.5 rounded bg-indigo-900 text-indigo-300 font-semibold animate-pulse">streaming</span>
                     </template>
-                    <template x-if="compareQueued[pane.id] && !compareStreaming[pane.id]">
+                    <template x-if="compareQueued[pane.id] && !compareStreaming[pane.id] && !compareProvisioning[pane.id]">
                       <span class="text-[10px] px-1.5 py-0.5 rounded bg-gray-800 text-gray-400 font-semibold">queued…</span>
                     </template>
                     <span class="ml-auto text-[10px] text-gray-700 font-mono uppercase" x-text="slotIdx === 0 ? 'pane a' : 'pane b'"></span>
@@ -1617,6 +1643,9 @@
                          agent without the other pane's agent also receiving
                          your follow-ups. Disabled until the pane has at
                          least one exchange — empty promote = no-op. -->
+                    <button class="text-[10px] px-2 py-0.5 rounded border border-gray-700 text-gray-400 hover:text-white hover:border-gray-500 transition-colors"
+                            @click="openAgentLogs(pane)"
+                            title="View this agent's runtime log tail">📋 Logs</button>
                     <button class="text-[10px] px-2 py-0.5 rounded border border-indigo-700/60 text-indigo-300 hover:bg-indigo-900/40 transition-colors"
                             @click="promotePaneToChat(slotIdx)"
                             :disabled="!(compareTranscripts[pane.id] && compareTranscripts[pane.id].length)"
@@ -2070,6 +2099,21 @@
             class="text-xs px-3 py-1.5 rounded-lg bg-[var(--accent)] text-white hover:opacity-90 transition-opacity">+ Register</button>
         </div>
       </div>
+
+      <!-- Scan error / empty status -->
+      <template x-if="adminScanError">
+        <div class="mb-4 p-3 rounded-xl border border-red-900/60 bg-red-950/40 text-xs text-red-300">
+          <span class="font-medium">Scan failed:</span>
+          <span class="ml-1 font-mono" x-text="adminScanError"></span>
+        </div>
+      </template>
+      <template x-if="adminScanDone && !adminScanError && adminScanResults.length === 0">
+        <div class="mb-4 p-3 rounded-xl border border-gray-800 bg-gray-900/40 text-xs text-gray-500">
+          No new servers discovered
+          <span x-show="adminScanSubnet" x-text="'on ' + adminScanSubnet + '.0/24'"></span>.
+          Already-registered machines are hidden.
+        </div>
+      </template>
 
       <!-- Scan results — discovered servers not yet registered -->
       <template x-if="adminScanResults.length > 0">
@@ -2878,6 +2922,9 @@
                   <button @click.stop="duplicateNamedAgent(a)"
                     title="Clone this agent — opens the create form pre-filled so you can tweak STAMP fields before saving"
                     class="text-[9px] px-1.5 py-0.5 rounded border border-gray-700 text-gray-500 hover:text-indigo-300 hover:border-indigo-500 transition-colors">Dup</button>
+                  <button @click.stop="openAgentLogs(a)"
+                    title="View this agent's runtime log tail — what it's been doing, tool calls, errors, etc."
+                    class="text-[9px] px-1.5 py-0.5 rounded border border-gray-700 text-gray-500 hover:text-white hover:border-gray-500 transition-colors">📋 Logs</button>
                   <button @click.stop="chatWithAgent(a)"
                     class="text-[9px] px-2 py-0.5 rounded-lg bg-indigo-600 text-white hover:bg-indigo-500 transition-colors font-medium">Chat</button>
                 </div>
@@ -3414,15 +3461,17 @@
         @click="adminTab='audit'; loadAdminAudit()">Audit Log</button>
     </div>
 
-    <!-- Activity sub-tab bar -->
+    <!-- Activity sub-tab bar — Dashboards first so landing on Activity
+         shows the at-a-glance view (routes, sandboxes, health) rather
+         than a raw event feed. Events still accessible one click away. -->
     <div x-show="tab==='activity'" class="flex gap-4 border-b border-gray-800 mb-5">
-      <button class="pb-2 text-sm font-medium"
-        :class="activityTab==='events'?'tab-active':'text-gray-500 hover:text-white'"
-        @click="activityTab='events'; loadDispatches()">Events</button>
       <button x-show="can('manage_machines') || can('view_runs')"
         class="pb-2 text-sm font-medium"
         :class="activityTab==='dashboards'?'tab-active':'text-gray-500 hover:text-white'"
-        @click="activityTab='dashboards'; loadModelRoutes(); loadSandboxes()">Dashboards</button>
+        @click="activityTab='dashboards'; loadModelRoutes(); loadSandboxes(); loadNamedAgents()">Dashboards</button>
+      <button class="pb-2 text-sm font-medium"
+        :class="activityTab==='events'?'tab-active':'text-gray-500 hover:text-white'"
+        @click="activityTab='events'; loadDispatches()">Events</button>
       <button x-show="can('view_approvals')"
         class="pb-2 text-sm font-medium relative"
         :class="activityTab==='approvals'?'tab-active':'text-gray-500 hover:text-white'"
@@ -4082,7 +4131,34 @@
                       : 'bg-red-950 text-red-400 border-red-900'"
                     x-text="r.status"></span>
                 </td>
-                <td class="px-4 py-2 text-gray-400" x-text="r.bound_agents || 0"></td>
+                <td class="px-4 py-2">
+                  <!-- Show the actual agent names bound to this route.
+                       Cross-ref from ``namedAgents`` (loaded on the
+                       Agents tab and kept fresh by the world-view
+                       polling) rather than asking the backend for a
+                       join — the data is already in memory.
+
+                       Each pill is clickable: jumps to Sessions +
+                       opens/creates a chat with that agent.
+
+                       Falls back to the numeric count if ``namedAgents``
+                       is empty (not loaded yet) so the column never
+                       goes blank. -->
+                  <template x-if="(namedAgents || []).filter(a => a.model_route_id === r.id).length > 0">
+                    <div class="flex flex-wrap gap-1">
+                      <template x-for="a in (namedAgents || []).filter(a => a.model_route_id === r.id)" :key="a.id">
+                        <button
+                          @click.stop="chatWithAgent(a)"
+                          class="px-1.5 py-0.5 rounded text-[10px] font-medium bg-indigo-950/60 text-indigo-300 border border-indigo-900 hover:bg-indigo-900/60 hover:text-white transition-colors"
+                          :title="'Chat with ' + a.name + ' (' + (a.soul_slug || 'general') + ')'"
+                          x-text="a.name"></button>
+                      </template>
+                    </div>
+                  </template>
+                  <template x-if="(namedAgents || []).filter(a => a.model_route_id === r.id).length === 0">
+                    <span class="text-gray-600 text-[10px]" x-text="(r.bound_agents || 0) === 0 ? '—' : ('(' + r.bound_agents + ' unbound)')"></span>
+                  </template>
+                </td>
                 <td class="px-4 py-2">
                   <template x-if="r.is_default">
                     <span class="px-1.5 py-0.5 rounded text-[10px] font-medium bg-indigo-950 text-indigo-300 border border-indigo-900">default</span>
@@ -5642,7 +5718,18 @@ function app() {
     // Capabilities (P dropdown) — lazy-fetched per agent. _agentId pinned
     // so a stale state from a previous agent is detectable without an
     // extra "is this for the right agent" flag.
-    agentCapsState: null,
+    agentCapsState: {},
+    // Agent logs modal state — opened from compare panes + agent cards.
+    // Single-instance modal so there's never ambiguity about which
+    // agent's logs you're staring at.
+    logsModalAgent: null,         // {id, name} of agent currently open
+    logsModalLines: [],           // array of log lines
+    logsModalLoading: false,
+    logsModalAutoTail: true,      // auto-poll every 2s while open
+    logsModalErrors: false,       // toggle errors.log vs agent.log
+    logsModalTail: 200,
+    logsModalMeta: null,          // {path, size_bytes, mtime_iso, truncated}
+    _logsModalTimer: null,
     agentCapsLoading: false,
     agentCapsError: null,
     agentCapsToggling: {},
@@ -5706,6 +5793,7 @@ function app() {
     compareSessions: {},      // {agent_id: session_id}
     compareTranscripts: {},   // {agent_id: [{role, content, _streaming?}]}
     compareStreaming: {},     // {agent_id: bool}
+    compareProvisioning: {},  // {agent_id: {elapsed_s: number, expected_s: number}}
     compareThinking: {},      // {agent_id: in-progress reasoning text}
     compareInput: '',
     // Send mode: 'sequential' fires panes one at a time (each gets the
@@ -5715,7 +5803,7 @@ function app() {
     // truncates one or both streams at ~30/60s — root cause unknown,
     // tracked as TASKS.md follow-up).
     // Default: 'sequential' since it actually works.
-    compareSendMode: 'sequential',
+    compareSendMode: 'parallel',
     // Set per-agent while a parallel/sequential dispatch is queued
     // but not yet started, so the UI can show "queued…" instead of
     // appearing dead.
@@ -5759,7 +5847,7 @@ function app() {
       return moved.includes(v) ? 'users' : v;
     })(),
     // activity sub-tabs (events/runs/dashboards/approvals/proposals)
-    activityTab: localStorage.getItem('logos_activity_tab') || 'events',
+    activityTab: localStorage.getItem('logos_activity_tab') || 'dashboards',
     adminSetPwUserId: null,
     adminSetPwVal: '',
     adminSetPwMsg: null,
@@ -5790,6 +5878,9 @@ function app() {
     adminMachines: [],
     adminScanRunning: false,
     adminScanResults: [],
+    adminScanError: '',
+    adminScanSubnet: '',
+    adminScanDone: false,
     // Cloud providers
     cloudProviders: [],
     cloudProviderFormOpen: false,
@@ -6405,7 +6496,7 @@ function app() {
     },
     _loadActivityTabData(name) {
       if (name === 'events')     { this.loadDispatches?.(); return; }
-      if (name === 'dashboards') { this.loadModelRoutes?.(); this.loadSandboxes?.(); return; }
+      if (name === 'dashboards') { this.loadModelRoutes?.(); this.loadSandboxes?.(); this.loadNamedAgents?.(); return; }
       if (name === 'approvals')  { this.loadApprovals?.(); return; }
       if (name === 'proposals')  { this.loadEvolutionProposals?.(); this.loadEvolutionSettings?.(); return; }
     },
@@ -7455,12 +7546,18 @@ function app() {
     // ── Soul registry ─────────────────────────────────────────────
 
     async loadSouls() {
-      if (this.soulsLoaded) return;
+      // Don't gate on soulsLoaded alone — if the first fetch hit a 401
+      // pre-auth or a transient error, `souls` stays [] but soulsLoaded
+      // was never set true and the call was effectively silent. Re-fetch
+      // whenever `souls` is empty; once the list is populated the gate
+      // skips the redundant call.
+      if (this.soulsLoaded && this.souls.length > 0) return;
       try {
-        const r = await fetch('/souls');
+        const r = await fetch('/souls', { credentials: 'include' });
+        if (!r.ok) throw new Error('HTTP ' + r.status);
         const d = await r.json();
         this.souls = d.souls || [];
-        this.soulsLoaded = true;
+        this.soulsLoaded = this.souls.length > 0;
       } catch(e) { console.error('loadSouls failed', e); }
     },
 
@@ -7829,7 +7926,7 @@ function app() {
         this.agentCapsState = d;
       } catch(e) {
         this.agentCapsError = 'Load failed: ' + (e.message || e);
-        this.agentCapsState = null;
+        this.agentCapsState = {};
       } finally {
         this.agentCapsLoading = false;
       }
@@ -7889,7 +7986,11 @@ function app() {
                   + Math.log2(1 + sessions)
                   + Math.log2(1 + memories);
       const createdMs = Number(a.created_at || 0);
-      const days = createdMs ? Math.max(0, Math.floor((Date.now() - createdMs) / 86400000)) : 0;
+      // 1-indexed: "Day 1" is an agent's first calendar day alive (0-24h).
+      // Floor of age_in_days+1 makes a freshly-made agent read as Day 1
+      // rather than Day 0 (which looked like it didn't exist yet). A day
+      // rolls over at the 24h mark, not at local midnight.
+      const days = createdMs ? Math.max(1, Math.floor((Date.now() - createdMs) / 86400000) + 1) : 1;
       let tier, glyph;
       if      (score < 2)  { tier = 'Sprout';     glyph = '\ud83c\udf31'; }  // 🌱
       else if (score < 5)  { tier = 'Sapling';    glyph = '\ud83c\udf3f'; }  // 🌿
@@ -8186,6 +8287,17 @@ function app() {
             // rejects requests without agent_id.
             agent_id: chat.agent_id || this.activeInstance?.id || undefined,
             worker_id: this.activeInstance?.worker_id || undefined,
+            // Client-side history fallback — only used by the backend when
+            // its session_store has no transcript for this session_id.
+            // Covers the "promoted from Compare" flow (compare sends
+            // transient:true so backend never wrote the session) and any
+            // future "seed a new chat from existing context" case.
+            // We include the prior turns only (not the message we just
+            // appended to chat.messages a few lines up) — the backend
+            // adds the current `message` to the transcript itself.
+            history: (chat.messages && chat.messages.length > 1)
+              ? chat.messages.slice(0, -1).map(m => ({ role: m.role, content: m.content }))
+              : undefined,
           }),
         });
         if (r.status === 401) {
@@ -8674,14 +8786,31 @@ function app() {
       if (this.adminScanRunning) return;
       this.adminScanRunning = true;
       this.adminScanResults = [];
+      this.adminScanError = '';
+      this.adminScanDone = false;
       try {
         const r = await fetch('/api/setup/scan', {credentials: 'include'});
-        const servers = await r.json();
+        if (!r.ok) {
+          this.adminScanError = `HTTP ${r.status} ${r.statusText}`;
+          console.error('admin scan failed:', this.adminScanError);
+          return;
+        }
+        const d = await r.json();
+        // Backend returns {servers: [...], subnet: "..."} — earlier versions of
+        // this code treated `d` as a bare array, which silently threw
+        // `d.filter is not a function` and produced an empty results list.
+        const servers = Array.isArray(d) ? d : (d.servers || []);
+        this.adminScanSubnet = d.subnet || '';
         const registeredEndpoints = new Set(this.adminMachines.map(m => m.endpoint_url));
-        this.adminScanResults = (servers || []).filter(s =>
-          s.status === 'up' || s.status === 'auth_required'
-        ).filter(s => !registeredEndpoints.has(s.endpoint));
-      } catch(e) { console.error('admin scan failed', e); }
+        const liveServers = servers.filter(s => s.status === 'up' || s.status === 'auth_required');
+        this.adminScanResults = liveServers.filter(s => !registeredEndpoints.has(s.endpoint));
+        console.info('[scan] subnet=%s raw=%d live=%d new=%d',
+          this.adminScanSubnet, servers.length, liveServers.length, this.adminScanResults.length);
+      } catch(e) {
+        this.adminScanError = String(e);
+        console.error('admin scan failed', e);
+      }
+      this.adminScanDone = true;
       this.adminScanRunning = false;
     },
 
@@ -8957,7 +9086,38 @@ function app() {
             if (!line.startsWith('data:')) continue;
             try {
               const d = JSON.parse(line.slice(5).trim());
-              if (d.type === 'token') {
+              if (d.type === 'provisioning') {
+                // Gateway-side ensure_sandbox_alive kicked in — show a
+                // "spawning sandbox" badge on this pane so the user
+                // doesn't wonder why "streaming" hasn't produced any
+                // text yet. Fires on the first compare message to an
+                // agent whose sandbox was torn down (or never spawned).
+                this.compareProvisioning = {
+                  ...this.compareProvisioning,
+                  [agentId]: {
+                    elapsed_s: 0,
+                    expected_s: d.expected_seconds || 25,
+                    message: d.message || 'Spawning sandbox…',
+                  },
+                };
+              } else if (d.type === 'provisioning_done') {
+                // Spawn succeeded — drop the badge. Streaming continues
+                // into the actual reply, which arrives as `token` frames
+                // immediately after.
+                const p = { ...this.compareProvisioning };
+                delete p[agentId];
+                this.compareProvisioning = p;
+              } else if (d.type === 'provisioning_failed') {
+                const p = { ...this.compareProvisioning };
+                delete p[agentId];
+                this.compareProvisioning = p;
+                this._compareDropStreamingPlaceholder(agentId);
+                this._compareAppendError(
+                  agentId,
+                  'Sandbox could not be started',
+                  d.error || 'Auto-respawn failed. Check gateway logs.',
+                );
+              } else if (d.type === 'token') {
                 reply += (d.content || '');
                 // Strip leading whitespace from the accumulated reply
                 // (same rationale as the Chats tab handler — some
@@ -9207,6 +9367,77 @@ function app() {
       this.chats = [chat, ...this.chats];
       this.activeChatId = chatId;
       this._saveChats();
+    },
+
+    // ── Agent logs modal ─────────────────────────────────────────────
+    // Opens a right-docked modal showing the live tail of
+    // ~/.logos/agents/<name>/logs/agent.log. Invoked from compare pane
+    // headers + the agent card on the Agents tab.
+    async openAgentLogs(agent) {
+      if (!agent || !agent.id) return;
+      this.logsModalAgent = { id: agent.id, name: agent.name };
+      this.logsModalLines = [];
+      this.logsModalMeta = null;
+      this.logsModalLoading = true;
+      this.logsModalErrors = false;
+      this.logsModalTail = 200;
+      this.logsModalAutoTail = true;
+      await this._fetchAgentLogs();
+      if (this._logsModalTimer) clearInterval(this._logsModalTimer);
+      this._logsModalTimer = setInterval(() => {
+        if (this.logsModalAgent && this.logsModalAutoTail) {
+          this._fetchAgentLogs();
+        }
+      }, 2000);
+    },
+
+    async _fetchAgentLogs() {
+      if (!this.logsModalAgent) return;
+      try {
+        const params = new URLSearchParams();
+        params.set('tail', String(this.logsModalTail || 200));
+        if (this.logsModalErrors) params.set('errors', '1');
+        const r = await fetch(
+          `/admin/agents/${this.logsModalAgent.id}/logs?${params}`,
+          { credentials: 'include' },
+        );
+        if (!r.ok) {
+          this.logsModalLines = [`[fetch failed: HTTP ${r.status} ${r.statusText}]`];
+          this.logsModalMeta = null;
+          return;
+        }
+        const d = await r.json();
+        this.logsModalLines = d.lines || [];
+        this.logsModalMeta = {
+          path: d.path, size: d.size_bytes, mtime: d.mtime_iso,
+          truncated: d.truncated, exists: d.exists, logName: d.log_name,
+        };
+        this.$nextTick(() => {
+          const el = this.$refs.logsScroll;
+          if (el && this.logsModalAutoTail) el.scrollTop = el.scrollHeight;
+        });
+      } catch (e) {
+        this.logsModalLines = [`[fetch error: ${String(e).slice(0, 160)}]`];
+      } finally {
+        this.logsModalLoading = false;
+      }
+    },
+
+    closeAgentLogs() {
+      this.logsModalAgent = null;
+      this.logsModalLines = [];
+      this.logsModalMeta = null;
+      if (this._logsModalTimer) {
+        clearInterval(this._logsModalTimer);
+        this._logsModalTimer = null;
+      }
+    },
+
+    copyLogsToClipboard() {
+      const text = (this.logsModalLines || []).join('\n');
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).catch(() => {});
+      }
     },
 
     async loadCloudProviders() {
@@ -10811,5 +11042,91 @@ function app() {
   };
 }
 </script>
+
+<!-- ── Agent Logs modal ─────────────────────────────────────────────
+     Right-docked panel showing the live tail of
+     ~/.logos/agents/<name>/logs/agent.log. Opened from:
+       • Compare pane headers (📋 Logs button next to → Continue)
+       • Agents tab card actions (📋 Logs next to Chat)
+     Auto-refreshes every 2s while visible (toggleable). Admin/operator
+     only — the backend returns 403 for regular users. Esc or clicking
+     the backdrop closes it. -->
+<div x-show="logsModalAgent" x-cloak
+     class="fixed inset-0 bg-black/60 z-50 flex justify-end"
+     @click="closeAgentLogs()"
+     @keydown.escape.window="closeAgentLogs()">
+  <div class="bg-gray-950 border-l border-gray-800 w-full max-w-3xl h-full flex flex-col shadow-2xl"
+       @click.stop>
+    <!-- Header -->
+    <div class="flex items-center justify-between px-5 py-3 border-b border-gray-800 shrink-0">
+      <div class="flex items-center gap-3 min-w-0">
+        <span class="text-base font-semibold text-white truncate"
+              x-text="logsModalAgent ? ('Logs · ' + logsModalAgent.name) : ''"></span>
+        <span class="text-[10px] text-gray-600 font-mono truncate"
+              x-show="logsModalMeta && logsModalMeta.path"
+              x-text="logsModalMeta?.path || ''"></span>
+      </div>
+      <div class="flex items-center gap-2 shrink-0">
+        <!-- Tail size selector -->
+        <select x-model.number="logsModalTail" @change="_fetchAgentLogs()"
+                class="text-[10px] bg-gray-900 border border-gray-800 rounded px-2 py-1 text-gray-300">
+          <option value="100">100 lines</option>
+          <option value="200">200 lines</option>
+          <option value="500">500 lines</option>
+          <option value="1000">1000 lines</option>
+          <option value="2000">2000 lines</option>
+        </select>
+        <!-- agent.log vs errors.log toggle -->
+        <button @click="logsModalErrors = !logsModalErrors; _fetchAgentLogs()"
+                :class="logsModalErrors ? 'bg-red-950 text-red-300 border-red-900' : 'bg-gray-900 text-gray-500 border-gray-800'"
+                class="text-[10px] px-2 py-1 rounded border transition-colors"
+                :title="logsModalErrors ? 'Showing errors.log — click to show agent.log' : 'Showing agent.log — click to show errors.log only'"
+                x-text="logsModalErrors ? 'errors.log' : 'agent.log'"></button>
+        <!-- Auto-tail toggle -->
+        <button @click="logsModalAutoTail = !logsModalAutoTail"
+                :class="logsModalAutoTail ? 'bg-emerald-950 text-emerald-300 border-emerald-900' : 'bg-gray-900 text-gray-500 border-gray-800'"
+                class="text-[10px] px-2 py-1 rounded border transition-colors"
+                :title="logsModalAutoTail ? 'Auto-refreshing every 2s' : 'Auto-refresh off — click to resume'"
+                x-text="logsModalAutoTail ? 'live' : 'paused'"></button>
+        <button @click="_fetchAgentLogs()"
+                class="text-[10px] px-2 py-1 rounded border border-gray-800 text-gray-500 hover:text-white hover:border-gray-600">↻</button>
+        <button @click="copyLogsToClipboard()"
+                class="text-[10px] px-2 py-1 rounded border border-gray-800 text-gray-500 hover:text-white hover:border-gray-600"
+                title="Copy all visible log lines to clipboard">Copy</button>
+        <button @click="closeAgentLogs()"
+                class="text-gray-500 hover:text-white text-lg px-2">&times;</button>
+      </div>
+    </div>
+
+    <!-- Metadata bar -->
+    <div class="px-5 py-1.5 border-b border-gray-800 bg-gray-900/50 text-[10px] text-gray-500 flex items-center gap-4 shrink-0"
+         x-show="logsModalMeta">
+      <span x-show="logsModalMeta?.mtime" x-text="'modified: ' + (logsModalMeta?.mtime || '—')"></span>
+      <span x-show="logsModalMeta?.size !== undefined"
+            x-text="'size: ' + ((logsModalMeta?.size || 0) / 1024).toFixed(1) + ' KB'"></span>
+      <span x-show="logsModalMeta?.truncated" class="text-yellow-400">truncated</span>
+      <span x-show="logsModalMeta && !logsModalMeta.exists" class="text-gray-600 italic">no log file yet — agent hasn't been dispatched to</span>
+      <span class="ml-auto" x-text="(logsModalLines || []).length + ' line' + ((logsModalLines || []).length === 1 ? '' : 's')"></span>
+    </div>
+
+    <!-- Log body -->
+    <div x-ref="logsScroll"
+         class="flex-1 overflow-auto px-5 py-3 font-mono text-[11px] leading-relaxed whitespace-pre-wrap break-all"
+         :class="logsModalErrors ? 'bg-red-950/10 text-red-200' : 'bg-black/40 text-gray-300'">
+      <template x-if="logsModalLoading && logsModalLines.length === 0">
+        <div class="text-gray-600 italic">Loading…</div>
+      </template>
+      <template x-if="!logsModalLoading && logsModalLines.length === 0">
+        <div class="text-gray-600 italic">(log is empty)</div>
+      </template>
+      <template x-for="(line, i) in logsModalLines" :key="i">
+        <div class="hover:bg-gray-800/30"
+             :class="line.includes('ERROR') || line.includes('WARNING') ? 'text-amber-300' : ''"
+             x-text="line"></div>
+      </template>
+    </div>
+  </div>
+</div>
+
 </body>
 </html>
