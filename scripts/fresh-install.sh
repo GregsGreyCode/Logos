@@ -273,6 +273,53 @@ if [[ "$INSTALL_OPENSHELL" == "1" ]]; then
     fi
 fi
 
+# ── Sandbox image (OpenShell mode) ──
+# The OpenShell sandbox runs a pre-built Docker image. At spawn time
+# gateway/executors/openshell.py:_ensure_image_in_cluster() copies
+# this image from the host's Docker daemon into each k3s cluster's
+# containerd. If the image isn't on the host, the setup wizard's
+# Finish step fails at sandbox-spawn with "no such image".
+#
+# Until we publish the image to a public registry, we build it
+# locally here. First build takes ~5-10 minutes (apt install + pip
+# wheels inside the image); re-runs are <30s thanks to Docker's
+# layer cache. Pass LOGOS_SKIP_SANDBOX_BUILD=1 to bypass (e.g., when
+# you already have the image from a registry pull or a prior build).
+if [[ "$INSTALL_OPENSHELL" == "1" ]] \
+   && command -v docker >/dev/null 2>&1 \
+   && [[ "${LOGOS_SKIP_SANDBOX_BUILD:-0}" != "1" ]]; then
+    # Pull the current default image tag out of the Python source so
+    # the local build always matches whatever ``_DEFAULT_IMAGE`` in
+    # gateway/executors/openshell.py points at. Falls back to the
+    # well-known ``hermes-sandbox:m12`` if the grep doesn't match.
+    SANDBOX_TAG=$(grep -oE '"hermes-sandbox:[^"]+"' \
+        "$REPO_DIR/gateway/executors/openshell.py" 2>/dev/null \
+        | head -1 | tr -d '"')
+    SANDBOX_TAG="${SANDBOX_TAG:-hermes-sandbox:m12}"
+
+    hdr "Sandbox image ($SANDBOX_TAG)"
+    if docker image inspect "$SANDBOX_TAG" >/dev/null 2>&1; then
+        ok "$SANDBOX_TAG already present — skipping build (set LOGOS_FORCE_SANDBOX_BUILD=1 to rebuild)"
+        if [[ "${LOGOS_FORCE_SANDBOX_BUILD:-0}" == "1" ]]; then
+            log "LOGOS_FORCE_SANDBOX_BUILD=1 — rebuilding anyway …"
+            docker build -f "$REPO_DIR/docker/Dockerfile.hermes-sandbox" \
+                         -t "$SANDBOX_TAG" "$REPO_DIR/docker/" \
+                && ok "$SANDBOX_TAG rebuilt" \
+                || warn "rebuild failed — previous image is still usable"
+        fi
+    else
+        log "building $SANDBOX_TAG from docker/Dockerfile.hermes-sandbox (first build: 5-10 min) …"
+        if docker build -f "$REPO_DIR/docker/Dockerfile.hermes-sandbox" \
+                        -t "$SANDBOX_TAG" "$REPO_DIR/docker/"; then
+            ok "$SANDBOX_TAG built"
+        else
+            warn "sandbox image build failed — the setup wizard will fail at"
+            warn "sandbox-spawn until this image exists on the host. Retry:"
+            warn "  docker build -f $REPO_DIR/docker/Dockerfile.hermes-sandbox -t $SANDBOX_TAG $REPO_DIR/docker/"
+        fi
+    fi
+fi
+
 # ── Optional: bump inotify ──
 if [[ "$BUMP_INOTIFY" == "1" ]]; then
     hdr "Sysctl: fs.inotify.max_user_instances"
