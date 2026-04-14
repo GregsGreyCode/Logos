@@ -74,6 +74,18 @@ def find_gateway_pids() -> list:
                 # Skip grep and current process
                 if 'grep' in line or str(os.getpid()) in line:
                     continue
+                # The patterns below ("logos gateway", "hermes gateway",
+                # "gateway.run", etc.) also match the user's parent shell
+                # when they invoke e.g. `bash -c "logos gateway start"` —
+                # because the shell's argv contains the full command
+                # string. Require "python" in the process line so only
+                # the Python interpreter actually running the gateway
+                # gets counted. Every gateway code path (systemd, detached
+                # launcher, foreground `logos gateway run`, `python -m
+                # gateway.run`) is a Python process; none of the shell
+                # wrappers are.
+                if 'python' not in line:
+                    continue
                 for pattern in patterns:
                     if pattern in line:
                         parts = line.split()
@@ -1188,13 +1200,13 @@ def gateway_setup():
                                 print_error(f"  Start failed: {e}")
                     except subprocess.CalledProcessError as e:
                         print_error(f"  Install failed: {e}")
-                        print_info("  You can try manually: hermes gateway install")
+                        print_info("  You can try manually: logos gateway install")
                 else:
-                    print_info("  You can install later: hermes gateway install")
-                    print_info("  Or run in foreground:  hermes gateway")
+                    print_info("  You can install later: logos gateway install")
+                    print_info("  Or run in foreground:  logos gateway run")
             else:
                 print_info("  Service install not supported on this platform.")
-                print_info("  Run in foreground: hermes gateway")
+                print_info("  Run in foreground: logos gateway run")
     else:
         print()
         print_info("No platforms configured. Run 'hermes gateway setup' when ready.")
@@ -1389,10 +1401,10 @@ def gateway_command(args):
                 print("  (Running manually, not as a system service)")
                 print()
                 print("To install as a service:")
-                print("  hermes gateway install")
+                print("  logos gateway install")
             else:
                 print("✗ Gateway is not running")
                 print()
                 print("To start:")
-                print("  hermes gateway          # Run in foreground")
-                print("  hermes gateway install  # Install as service")
+                print("  logos gateway run       # Run in foreground")
+                print("  logos gateway install   # Install as service")

@@ -143,7 +143,10 @@ if [[ "$SKIP_NPM" != "1" ]]; then
         fi
         ok "node deps installed"
     else
-        warn "npm not found — browser tools / WhatsApp bridge won't work. Install Node.js ≥20 to enable them."
+        warn "npm not found — browser tools and the WhatsApp bridge will be DISABLED."
+        warn "Install Node.js ≥20 first if you need them:"
+        warn "  curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash - && sudo apt install -y nodejs"
+        warn "Then re-run this installer. Set SKIP_NPM=1 to silence this warning if you don't need browser/WhatsApp."
     fi
 else
     warn "SKIP_NPM=1 — skipping npm install (browser + WhatsApp disabled)"
@@ -153,9 +156,18 @@ fi
 hdr "~/.logos directory"
 mkdir -p "$HOME/.logos"/{cron,sessions,logs,memories,skills,pairing,hooks,image_cache,audio_cache,whatsapp/session,agents}
 if [[ ! -f "$HOME/.logos/config.yaml" ]]; then
+    # Template has lived at both the repo root (old) and docs/ (new).
+    # Check both so the installer survives the path reshuffle.
     if [[ -f "cli-config.yaml.example" ]]; then
-        cp cli-config.yaml.example "$HOME/.logos/config.yaml"
-        ok "copied default config.yaml"
+        TPL="cli-config.yaml.example"
+    elif [[ -f "docs/cli-config.yaml.example" ]]; then
+        TPL="docs/cli-config.yaml.example"
+    else
+        TPL=""
+    fi
+    if [[ -n "$TPL" ]]; then
+        cp "$TPL" "$HOME/.logos/config.yaml"
+        ok "copied default config.yaml (from $TPL)"
     else
         : > "$HOME/.logos/config.yaml"
         ok "created empty config.yaml (no template found)"
