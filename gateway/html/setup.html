@@ -2983,6 +2983,12 @@ function setup() {
           } else if (!this.selectedSoul) {
             this.selectedSoul = 'general';
           }
+          // Pre-warm the slow setup-complete steps while the user reads
+          // and fills in Soul + Account. Measured first-install time
+          // was 4m 21s; ~3m of that is image-import-into-cluster which
+          // is idempotent and safe to start now. Fire-and-forget — the
+          // server returns 202 and finishes in the background.
+          this._prewarmRoute();
         });
         return;
       }
@@ -3438,6 +3444,33 @@ function setup() {
       const server = this.selectedServers.find(s => (s.models || []).some(x => x.id === m.id));
       if (server) this.activeServer = server;
       this._saveProgress();
+    },
+
+    // Fire-and-forget: ask the server to do the slow parts of setup-
+    // complete (provision the OpenShell cluster + import the
+    // hermes-sandbox image) in the background while the user is still
+    // on Soul / Account steps. Both operations are idempotent; the
+    // final ``complete()`` call just finds the work already done. If
+    // the user changes their model pick, we call this again for the
+    // new cluster — the old one orphans but nothing breaks.
+    async _prewarmRoute() {
+      if (!this.selectedModel || !this.activeServer) return;
+      try {
+        await fetch('/api/setup/prewarm', {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken() },
+          body: JSON.stringify({
+            endpoint:     this.activeServer.endpoint || '',
+            model:        this.selectedModel,
+            server_type:  this.activeServer.type || 'lmstudio',
+            runtime_mode: 'openshell',
+          }),
+        });
+      } catch (_e) {
+        // Best-effort — if prewarm can't be kicked off, the user's
+        // Finish click will do the work then, the slow way.
+      }
     },
 
     modelSize(id) {

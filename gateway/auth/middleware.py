@@ -38,6 +38,7 @@ _PUBLIC_PATHS = frozenset({
     "/api/setup/test",
     "/api/setup/test-k8s",
     "/api/setup/complete",
+    "/api/setup/prewarm",
     "/api/setup/progress",
     "/api/setup/env-probe",
     "/api/setup/sandbox-setup",

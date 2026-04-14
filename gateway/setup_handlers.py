@@ -3563,6 +3563,102 @@ async def handle_setup_complete(request: web.Request) -> web.Response:
         return web.json_response({"error": "internal_error", "detail": str(exc)[:300]}, status=500)
 
 
+async def handle_setup_prewarm(request: web.Request) -> web.Response:
+    """POST /api/setup/prewarm — pre-warm the slow setup-complete steps
+    in the background while the user is still on Soul / Account steps.
+
+    The setup-complete flow spends ~3 minutes of its 4-minute budget in
+    two idempotent steps: provisioning the OpenShell route (spins up
+    the k3s cluster for the picked model) and importing the
+    hermes-sandbox image into that cluster's containerd. Both are safe
+    to run before the user has finished the wizard — the final
+    ``complete()`` call just finds the work already done and skips it.
+
+    Trigger point: step 4 → step 5 of /setup (right after the user
+    picks a model). At that point we know ``endpoint``, ``model``,
+    ``server_type``, and ``runtime_mode`` — everything the slow steps
+    need. Soul and account are not inputs for either one.
+
+    Re-entrant: if the user goes back and re-picks a different model
+    the frontend calls prewarm again; the old cluster is left to
+    orphan (~2 min of wasted background work, GC'd later). There's no
+    response polling or progress tracking — the existing
+    ``/api/setup/progress`` endpoint still owns the Finish spinner.
+
+    Returns 202 immediately. 400 only for missing/invalid model.
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+
+    endpoint     = (body.get("endpoint") or "").strip()
+    model        = (body.get("model") or "").strip()
+    server_type  = (body.get("server_type") or "lmstudio").strip()
+    runtime_mode = (body.get("runtime_mode") or "openshell").strip()
+
+    if not model:
+        return web.json_response({"error": "missing_model"}, status=400)
+
+    # Only OpenShell mode imports images into a per-route cluster. Docker
+    # and local runtimes have nothing to pre-warm; return 202 so the
+    # frontend doesn't treat it as a real error.
+    if runtime_mode != "openshell":
+        return web.json_response(
+            {"status": "noop", "reason": "non-openshell runtime"}, status=202,
+        )
+
+    async def _prewarm():
+        try:
+            logger.info(
+                "setup/prewarm: provisioning route for %s/%s (endpoint=%s)",
+                server_type, model, endpoint or "(unset)",
+            )
+            from gateway import openshell_routes as _osr
+            # provision_or_reuse_route: idempotent create/reuse, starts the
+            # openshell cluster. Don't set as default — the real complete()
+            # call decides that.
+            route = await asyncio.to_thread(
+                _osr.provision_or_reuse_route, server_type, model, False,
+            )
+            gw_name = (route or {}).get("openshell_name") or ""
+            if not gw_name:
+                logger.warning(
+                    "setup/prewarm: route for %s/%s had no openshell_name; "
+                    "skipping image import",
+                    server_type, model,
+                )
+                return
+            logger.info(
+                "setup/prewarm: route ready (%s, status=%s); importing image",
+                gw_name, (route or {}).get("status"),
+            )
+
+            from gateway.executors.openshell import (
+                _ensure_image_in_cluster,
+                _DEFAULT_IMAGE,
+            )
+            imported = await asyncio.to_thread(
+                _ensure_image_in_cluster, _DEFAULT_IMAGE, gw_name,
+            )
+            logger.info(
+                "setup/prewarm: finished for %s/%s — image %s into %s (%s)",
+                server_type, model, _DEFAULT_IMAGE, gw_name,
+                "newly imported" if imported else "already present",
+            )
+        except Exception as _err:
+            # Prewarm is best-effort. If it fails, the user's Finish click
+            # will just do the work then — with the timing surprise we're
+            # trying to avoid, but at least nothing is broken.
+            logger.warning(
+                "setup/prewarm: failed for %s/%s: %s: %s",
+                server_type, model, type(_err).__name__, _err,
+            )
+
+    asyncio.create_task(_prewarm())
+    return web.json_response({"status": "accepted"}, status=202)
+
+
 async def handle_setup_progress(request: web.Request) -> web.Response:
     """GET /api/setup/progress — current stage of the running /setup/complete flow.
 
