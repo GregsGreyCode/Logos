@@ -3049,7 +3049,43 @@ async def handle_setup_complete(request: web.Request) -> web.Response:
         # created as an "additional user" during a previous setup run.
         primary_admin = auth_db.get_primary_admin()
         if not primary_admin:
-            return web.json_response({"error": "no_admin_user"}, status=500)
+            # No admin exists. This happens after a "setup wipe" deletes the
+            # seeded admin without restarting the gateway to re-seed. Create
+            # one now from the credentials the user just typed into the
+            # wizard — the same fields the update-admin-credentials block
+            # below would normally apply as an update.
+            _setup_email    = (body.get("setup_email") or "").strip()
+            _setup_username = (body.get("setup_username") or "").strip()
+            _setup_password = (body.get("setup_password") or "").strip()
+            if _setup_email and _setup_username and _setup_password:
+                try:
+                    from gateway.auth.password import hash_password as _hp_bootstrap
+                    primary_admin = auth_db.create_user(
+                        email=_setup_email,
+                        username=_setup_username,
+                        password_hash=_hp_bootstrap(_setup_password),
+                        role="admin",
+                    )
+                    logger.info(
+                        "setup: seeded admin %s on-the-fly "
+                        "(no primary admin existed — likely post-wipe)",
+                        primary_admin.get("id"),
+                    )
+                except Exception as _seed_err:
+                    logger.error("setup: on-the-fly admin seed failed: %s", _seed_err)
+                    return web.json_response(
+                        {"error": "no_admin_user",
+                         "detail": f"Could not create admin account: {_seed_err}"},
+                        status=500,
+                    )
+            else:
+                return web.json_response(
+                    {"error": "no_admin_user",
+                     "detail": "No admin account exists and no credentials were "
+                               "submitted in the wizard. Fill in the email, "
+                               "username, and password fields on the account step."},
+                    status=500,
+                )
         user_id = primary_admin["id"]
         agent_type   = (body.get("agent_type") or "general").strip()
         # OpenShell is now the only supported runtime for agent workloads.
