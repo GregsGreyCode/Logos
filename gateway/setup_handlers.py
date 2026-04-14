@@ -3487,7 +3487,11 @@ async def handle_setup_complete(request: web.Request) -> web.Response:
                 model_route_id=default_agent.get("model_route_id"),
             )
 
-            _setup_progress_update("spawn_sandbox", "Spawning the agent's sandbox (the slow part \u2014 10\u201330 seconds)\u2026")
+            _setup_progress_update(
+                "spawn_sandbox",
+                "Spawning the agent's sandbox (the slow part \u2014 1\u20134 minutes "
+                "on first install while the sandbox image imports into the k3s cluster)\u2026",
+            )
             try:
                 await _asyncio.to_thread(_executor.spawn, _cfg)
                 logger.info("setup: spawned default sandbox for agent '%s'", agent_name)
