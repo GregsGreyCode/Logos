@@ -144,23 +144,43 @@ if [[ "$SKIP_NPM" != "1" ]]; then
     # out entirely.
     if ! command -v npm >/dev/null 2>&1; then
         if command -v apt-get >/dev/null 2>&1; then
-            log "npm not found — installing Node.js 20 via nodesource (will prompt for sudo) …"
-            if [[ $EUID -ne 0 ]]; then
-                sudo -v || {
-                    warn "sudo authentication failed — install Node.js manually:"
-                    warn "  curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -"
-                    warn "  sudo apt install -y nodejs"
-                    warn "Then re-run this installer, or pass SKIP_NPM=1 to skip browser/WhatsApp."
-                }
-            fi
-            if command -v sudo >/dev/null 2>&1 || [[ $EUID -eq 0 ]]; then
-                if curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash - >/dev/null 2>&1; then
-                    sudo apt-get install -y nodejs >/dev/null 2>&1 || true
+            # Decide whether we can actually run sudo without blocking:
+            #   - root: no sudo needed
+            #   - passwordless sudo: proceed
+            #   - TTY available: sudo -v prompts for password interactively
+            #   - no TTY (running via ``curl | bash``): can't prompt; skip with clear guidance
+            _can_sudo=0
+            if [[ $EUID -eq 0 ]]; then
+                _can_sudo=1
+            elif sudo -n true 2>/dev/null; then
+                _can_sudo=1
+            elif [[ -t 0 ]]; then
+                log "npm not found — installing Node.js 20 via nodesource (will prompt for sudo) …"
+                if sudo -v 2>/dev/null; then
+                    _can_sudo=1
+                else
+                    warn "sudo authentication failed — skipping Node install."
                 fi
-                if command -v npm >/dev/null 2>&1; then
+            else
+                warn "npm not found and sudo requires a password, but this script is running without a TTY"
+                warn "(likely via ``curl | bash``) so we can't prompt. Two options:"
+                warn "  1. Re-run this installer locally where sudo can prompt:"
+                warn "       git clone https://github.com/GregsGreyCode/Logos && cd Logos && ./scripts/fresh-install.sh"
+                warn "  2. Install Node.js manually, then re-run:"
+                warn "       curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -"
+                warn "       sudo apt install -y nodejs"
+                warn "Set SKIP_NPM=1 to silence this warning if you don't need browser/WhatsApp."
+            fi
+
+            if [[ $_can_sudo -eq 1 ]]; then
+                log "installing Node.js 20 via nodesource …"
+                if curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash - >/dev/null 2>&1 \
+                   && sudo apt-get install -y nodejs >/dev/null 2>&1 \
+                   && command -v npm >/dev/null 2>&1; then
                     ok "Node.js $(node --version) installed"
                 else
                     warn "Node install via nodesource did not produce a working npm — browser/WhatsApp will be DISABLED."
+                    warn "Install manually: curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash - && sudo apt install -y nodejs"
                 fi
             fi
         else
