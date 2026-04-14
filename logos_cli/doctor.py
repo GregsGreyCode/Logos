@@ -1,7 +1,7 @@
 """
-Doctor command for hermes CLI.
+Doctor command for logos CLI.
 
-Diagnoses issues with Hermes Agent setup.
+Diagnoses issues with Logos setup.
 """
 
 import os
@@ -119,7 +119,7 @@ def run_doctor(args):
     
     print()
     print(color("┌─────────────────────────────────────────────────────────┐", Colors.CYAN))
-    print(color("│                 🩺 Hermes Doctor                        │", Colors.CYAN))
+    print(color("│                 🩺 Logos Doctor                         │", Colors.CYAN))
     print(color("└─────────────────────────────────────────────────────────┘", Colors.CYAN))
     
     # =========================================================================
@@ -190,36 +190,36 @@ def run_doctor(args):
     # Check ~/.hermes/.env (primary location for user config)
     env_path = HERMES_HOME / '.env'
     if env_path.exists():
-        check_ok("~/.hermes/.env file exists")
+        check_ok("~/.logos/.env file exists")
         
         # Check for common issues
         content = env_path.read_text()
         if _has_provider_env_config(content):
             check_ok("API key or custom endpoint configured")
         else:
-            check_warn("No API key found in ~/.hermes/.env")
-            issues.append("Run 'hermes setup' to configure API keys")
+            check_warn("No API key found in ~/.logos/.env")
+            issues.append("Run 'logos setup' to configure API keys")
     else:
         # Also check project root as fallback
         fallback_env = PROJECT_ROOT / '.env'
         if fallback_env.exists():
             check_ok(".env file exists (in project directory)")
         else:
-            check_fail("~/.hermes/.env file missing")
+            check_fail("~/.logos/.env file missing")
             if should_fix:
                 env_path.parent.mkdir(parents=True, exist_ok=True)
                 env_path.touch()
-                check_ok("Created empty ~/.hermes/.env")
-                check_info("Run 'hermes setup' to configure API keys")
+                check_ok("Created empty ~/.logos/.env")
+                check_info("Run 'logos setup' to configure API keys")
                 fixed_count += 1
             else:
-                check_info("Run 'hermes setup' to create one")
-                issues.append("Run 'hermes setup' to create .env")
+                check_info("Run 'logos setup' to create one")
+                issues.append("Run 'logos setup' to create .env")
     
     # Check ~/.hermes/config.yaml (primary) or project cli-config.yaml (fallback)
     config_path = HERMES_HOME / 'config.yaml'
     if config_path.exists():
-        check_ok("~/.hermes/config.yaml exists")
+        check_ok("~/.logos/config.yaml exists")
     else:
         fallback_config = PROJECT_ROOT / 'cli-config.yaml'
         if fallback_config.exists():
@@ -229,11 +229,11 @@ def run_doctor(args):
             if should_fix and example_config.exists():
                 config_path.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(str(example_config), str(config_path))
-                check_ok("Created ~/.hermes/config.yaml from cli-config.yaml.example")
+                check_ok("Created ~/.logos/config.yaml from cli-config.yaml.example")
                 fixed_count += 1
             elif should_fix:
                 check_warn("config.yaml not found and no example to copy from")
-                manual_issues.append("Create ~/.hermes/config.yaml manually")
+                manual_issues.append("Create ~/.logos/config.yaml manually")
             else:
                 check_warn("config.yaml not found", "(using defaults)")
     
@@ -275,29 +275,29 @@ def run_doctor(args):
     
     hermes_home = HERMES_HOME
     if hermes_home.exists():
-        check_ok("~/.hermes directory exists")
+        check_ok("~/.logos directory exists")
     else:
         if should_fix:
             hermes_home.mkdir(parents=True, exist_ok=True)
-            check_ok("Created ~/.hermes directory")
+            check_ok("Created ~/.logos directory")
             fixed_count += 1
         else:
-            check_warn("~/.hermes not found", "(will be created on first use)")
-    
+            check_warn("~/.logos not found", "(will be created on first use)")
+
     # Check expected subdirectories
     expected_subdirs = ["cron", "sessions", "logs", "skills", "memories"]
     for subdir_name in expected_subdirs:
         subdir_path = hermes_home / subdir_name
         if subdir_path.exists():
-            check_ok(f"~/.hermes/{subdir_name}/ exists")
+            check_ok(f"~/.logos/{subdir_name}/ exists")
         else:
             if should_fix:
                 subdir_path.mkdir(parents=True, exist_ok=True)
-                check_ok(f"Created ~/.hermes/{subdir_name}/")
+                check_ok(f"Created ~/.logos/{subdir_name}/")
                 fixed_count += 1
             else:
-                check_warn(f"~/.hermes/{subdir_name}/ not found", "(will be created on first use)")
-    
+                check_warn(f"~/.logos/{subdir_name}/ not found", "(will be created on first use)")
+
     # Check for SOUL.md persona file
     soul_path = hermes_home / "SOUL.md"
     if soul_path.exists():
@@ -305,26 +305,26 @@ def run_doctor(args):
         # Check if it's just the template comments (no real content)
         lines = [l for l in content.splitlines() if l.strip() and not l.strip().startswith(("<!--", "-->", "#"))]
         if lines:
-            check_ok("~/.hermes/SOUL.md exists (persona configured)")
+            check_ok("~/.logos/SOUL.md exists (persona configured)")
         else:
-            check_info("~/.hermes/SOUL.md exists but is empty — edit it to customize personality")
+            check_info("~/.logos/SOUL.md exists but is empty — edit it to customize personality")
     else:
-        check_warn("~/.hermes/SOUL.md not found", "(create it to give Hermes a custom personality)")
+        check_warn("~/.logos/SOUL.md not found", "(create it to give Logos a custom personality)")
         if should_fix:
             soul_path.parent.mkdir(parents=True, exist_ok=True)
             soul_path.write_text(
-                "# Hermes Agent Persona\n\n"
-                "<!-- Edit this file to customize how Hermes communicates. -->\n\n"
-                "You are Hermes, a helpful AI assistant.\n",
+                "# Logos Persona\n\n"
+                "<!-- Edit this file to customize how Logos communicates. -->\n\n"
+                "You are Logos, a helpful AI assistant.\n",
                 encoding="utf-8",
             )
-            check_ok("Created ~/.hermes/SOUL.md with basic template")
+            check_ok("Created ~/.logos/SOUL.md with basic template")
             fixed_count += 1
-    
+
     # Check memory directory
     memories_dir = hermes_home / "memories"
     if memories_dir.exists():
-        check_ok("~/.hermes/memories/ directory exists")
+        check_ok("~/.logos/memories/ directory exists")
         memory_file = memories_dir / "MEMORY.md"
         user_file = memories_dir / "USER.md"
         if memory_file.exists():
@@ -338,12 +338,12 @@ def run_doctor(args):
         else:
             check_info("USER.md not created yet (will be created when the agent first writes a memory)")
     else:
-        check_warn("~/.hermes/memories/ not found", "(will be created on first use)")
+        check_warn("~/.logos/memories/ not found", "(will be created on first use)")
         if should_fix:
             memories_dir.mkdir(parents=True, exist_ok=True)
-            check_ok("Created ~/.hermes/memories/")
+            check_ok("Created ~/.logos/memories/")
             fixed_count += 1
-    
+
     # Check SQLite session store
     state_db_path = hermes_home / "state.db"
     if state_db_path.exists():
@@ -353,11 +353,11 @@ def run_doctor(args):
             cursor = conn.execute("SELECT COUNT(*) FROM sessions")
             count = cursor.fetchone()[0]
             conn.close()
-            check_ok(f"~/.hermes/state.db exists ({count} sessions)")
+            check_ok(f"~/.logos/state.db exists ({count} sessions)")
         except Exception as e:
-            check_warn(f"~/.hermes/state.db exists but has issues: {e}")
+            check_warn(f"~/.logos/state.db exists but has issues: {e}")
     else:
-        check_info("~/.hermes/state.db not created yet (will be created on first session)")
+        check_info("~/.logos/state.db not created yet (will be created on first session)")
 
     _check_gateway_service_linger(issues)
     
@@ -615,7 +615,7 @@ def run_doctor(args):
         # Count disabled tools with API key requirements
         api_disabled = [u for u in unavailable if (u.get("missing_vars") or u.get("env_vars"))]
         if api_disabled:
-            issues.append("Run 'hermes setup' to configure missing API keys for full tool access")
+            issues.append("Run 'logos setup' to configure missing API keys for full tool access")
     except Exception as e:
         check_warn("Could not check tool availability", f"({e})")
     
@@ -642,14 +642,14 @@ def run_doctor(args):
         if q_count > 0:
             check_warn(f"{q_count} skill(s) in quarantine", "(pending review)")
     else:
-        check_warn("Skills Hub directory not initialized", "(run: hermes skills list)")
+        check_warn("Skills Hub directory not initialized", "(skills are managed per-agent in the dashboard)")
 
     from logos_cli.config import get_env_value
     github_token = get_env_value("GITHUB_TOKEN") or get_env_value("GH_TOKEN")
     if github_token:
         check_ok("GitHub token configured (authenticated API access)")
     else:
-        check_warn("No GITHUB_TOKEN", "(60 req/hr rate limit — set in ~/.hermes/.env for better rates)")
+        check_warn("No GITHUB_TOKEN", "(60 req/hr rate limit — set in ~/.logos/.env for better rates)")
 
     # =========================================================================
     # Summary
@@ -676,7 +676,7 @@ def run_doctor(args):
             print(f"  {i}. {issue}")
         print()
         if not should_fix:
-            print(color("  Tip: run 'hermes doctor --fix' to auto-fix what's possible.", Colors.DIM))
+            print(color("  Tip: run 'logos doctor --fix' to auto-fix what's possible.", Colors.DIM))
     else:
         print(color("─" * 60, Colors.GREEN))
         print(color("  All checks passed! 🎉", Colors.GREEN, Colors.BOLD))

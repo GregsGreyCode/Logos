@@ -1,7 +1,7 @@
 """
-Status command for hermes CLI.
+Status command for logos CLI.
 
-Shows the status of all Hermes Agent components.
+Shows the status of all Logos components.
 """
 
 import os
@@ -78,15 +78,15 @@ def _effective_provider_label() -> str:
 
 
 def show_status(args):
-    """Show status of all Hermes Agent components."""
+    """Show status of all Logos components."""
     show_all = getattr(args, 'all', False)
     deep = getattr(args, 'deep', False)
-    
+
     print()
     print(color("┌─────────────────────────────────────────────────────────┐", Colors.CYAN))
-    print(color("│                 ⚕ Hermes Agent Status                  │", Colors.CYAN))
+    print(color("│                    ⚕ Logos Status                      │", Colors.CYAN))
     print(color("└─────────────────────────────────────────────────────────┘", Colors.CYAN))
-    
+
     # =========================================================================
     # Environment
     # =========================================================================
@@ -94,7 +94,7 @@ def show_status(args):
     print(color("◆ Environment", Colors.CYAN, Colors.BOLD))
     print(f"  Project:      {PROJECT_ROOT}")
     print(f"  Python:       {sys.version.split()[0]}")
-    
+
     env_path = get_env_path()
     print(f"  .env file:    {check_mark(env_path.exists())} {'exists' if env_path.exists() else 'not found'}")
 
@@ -103,9 +103,49 @@ def show_status(args):
     except Exception:
         config = {}
 
-    print(f"  Model:        {_configured_model_label(config)}")
-    print(f"  Provider:     {_effective_provider_label()}")
-    
+    # =========================================================================
+    # Gateway
+    # =========================================================================
+    print()
+    print(color("◆ Gateway", Colors.CYAN, Colors.BOLD))
+
+    try:
+        from logos_cli.gateway import (
+            find_gateway_pids,
+            get_systemd_unit_path,
+            get_launchd_plist_path,
+            _port_listening,
+        )
+        pids = find_gateway_pids()
+        gateway_running = bool(pids)
+        print(
+            f"  Process:      {check_mark(gateway_running)} "
+            f"{'running (' + str(len(pids)) + ' pid' + ('s' if len(pids) != 1 else '') + ')' if gateway_running else 'not running'}"
+        )
+
+        if sys.platform.startswith('linux'):
+            unit_installed = get_systemd_unit_path().exists()
+            print(
+                f"  Service unit: {check_mark(unit_installed)} "
+                f"{'installed (systemd --user)' if unit_installed else 'not installed'}"
+            )
+        elif sys.platform == 'darwin':
+            plist_installed = get_launchd_plist_path().exists()
+            print(
+                f"  Service unit: {check_mark(plist_installed)} "
+                f"{'installed (launchd)' if plist_installed else 'not installed'}"
+            )
+        else:
+            print(f"  Service unit: {color('N/A', Colors.DIM)} (platform not supported)")
+
+        port_up = _port_listening(8091)
+        print(
+            f"  Port 8091:    {check_mark(port_up)} "
+            f"{'listening' if port_up else 'not listening'}"
+        )
+    except Exception as e:
+        print(f"  (error checking gateway: {e})")
+
     # =========================================================================
     # API Keys
     # =========================================================================
@@ -157,7 +197,7 @@ def show_status(args):
     nous_logged_in = bool(nous_status.get("logged_in"))
     print(
         f"  {'Nous Portal':<12}  {check_mark(nous_logged_in)} "
-        f"{'logged in' if nous_logged_in else 'not logged in (run: hermes model)'}"
+        f"{'logged in' if nous_logged_in else 'not logged in (run: logos login --provider nous)'}"
     )
     if nous_logged_in:
         portal_url = nous_status.get("portal_base_url") or "(unknown)"
@@ -172,7 +212,7 @@ def show_status(args):
     codex_logged_in = bool(codex_status.get("logged_in"))
     print(
         f"  {'OpenAI Codex':<12}  {check_mark(codex_logged_in)} "
-        f"{'logged in' if codex_logged_in else 'not logged in (run: hermes model)'}"
+        f"{'logged in' if codex_logged_in else 'not logged in (run: logos login --provider openai-codex)'}"
     )
     codex_auth_file = codex_status.get("auth_store")
     if codex_auth_file:
@@ -202,7 +242,7 @@ def show_status(args):
             if key_val:
                 break
         configured = bool(key_val)
-        label = "configured" if configured else "not configured (run: hermes model)"
+        label = "configured" if configured else "not configured (run: logos login --provider <name>)"
         print(f"  {pname:<16} {check_mark(configured)} {label}")
 
     # =========================================================================
@@ -265,35 +305,6 @@ def show_status(args):
             status += f" (home: {home_channel})"
         
         print(f"  {name:<12}  {check_mark(has_token)} {status}")
-    
-    # =========================================================================
-    # Gateway Status
-    # =========================================================================
-    print()
-    print(color("◆ Gateway Service", Colors.CYAN, Colors.BOLD))
-    
-    if sys.platform.startswith('linux'):
-        result = subprocess.run(
-            ["systemctl", "--user", "is-active", "hermes-gateway"],
-            capture_output=True,
-            text=True
-        )
-        is_active = result.stdout.strip() == "active"
-        print(f"  Status:       {check_mark(is_active)} {'running' if is_active else 'stopped'}")
-        print(f"  Manager:      systemd (user)")
-        
-    elif sys.platform == 'darwin':
-        result = subprocess.run(
-            ["launchctl", "list", "ai.hermes.gateway"],
-            capture_output=True,
-            text=True
-        )
-        is_loaded = result.returncode == 0
-        print(f"  Status:       {check_mark(is_loaded)} {'loaded' if is_loaded else 'not loaded'}")
-        print(f"  Manager:      launchd")
-    else:
-        print(f"  Status:       {color('N/A', Colors.DIM)}")
-        print(f"  Manager:      (not supported on this platform)")
     
     # =========================================================================
     # Cron Jobs
@@ -371,6 +382,6 @@ def show_status(args):
     
     print()
     print(color("─" * 60, Colors.DIM))
-    print(color("  Run 'hermes doctor' for detailed diagnostics", Colors.DIM))
-    print(color("  Run 'hermes setup' to configure", Colors.DIM))
+    print(color("  Run 'logos doctor' for detailed diagnostics", Colors.DIM))
+    print(color("  Run 'logos setup' to configure", Colors.DIM))
     print()

@@ -565,7 +565,7 @@ def cmd_whatsapp(args):
             print("  ✓ Session cleared")
         else:
             print("\n✓ WhatsApp is configured and paired!")
-            print("  Start the gateway with: hermes gateway")
+            print("  Start the gateway with: logos gateway run")
             return
 
     # ── Step 6: QR code pairing ──────────────────────────────────────────
@@ -596,23 +596,23 @@ def cmd_whatsapp(args):
         print()
         if wa_mode == "bot":
             print("  Next steps:")
-            print("    1. Start the gateway:  hermes gateway")
+            print("    1. Start the gateway:  logos gateway run")
             print("    2. Send a message to the bot's WhatsApp number")
             print("    3. The agent will reply automatically")
             print()
-            print("  Tip: Agent responses are prefixed with '⚕ Hermes Agent'")
+            print("  Tip: Agent responses are prefixed with '⚕ Logos'")
         else:
             print("  Next steps:")
-            print("    1. Start the gateway:  hermes gateway")
+            print("    1. Start the gateway:  logos gateway run")
             print("    2. Open WhatsApp → Message Yourself")
             print("    3. Type a message — the agent will reply")
             print()
-            print("  Tip: Agent responses are prefixed with '⚕ Hermes Agent'")
+            print("  Tip: Agent responses are prefixed with '⚕ Logos'")
             print("  so you can tell them apart from your own messages.")
         print()
-        print("  Or install as a service: hermes gateway install")
+        print("  Or install as a service: logos gateway install")
     else:
-        print("⚠ Pairing may not have completed. Run 'hermes whatsapp' to try again.")
+        print("⚠ Pairing may not have completed. Run 'logos whatsapp' to try again.")
 
 
 def cmd_setup(args):
@@ -897,7 +897,7 @@ def _model_flow_custom(config):
     else:
         if base_url or api_key:
             deactivate_provider()
-        print("Endpoint saved. Use `/model` in chat or `hermes model` to set a model.")
+        print("Endpoint saved. Run `logos gateway setup` to configure routes.")
 
     # Auto-save to custom_providers so it appears in the menu next time
     _save_custom_provider(effective_url, effective_key, model_name or "")
@@ -1396,7 +1396,7 @@ def _run_anthropic_oauth_flow(save_env_value):
         print("    1. Install Claude Code:  npm install -g @anthropic-ai/claude-code")
         print("    2. Run:                  claude setup-token")
         print("    3. Follow the browser prompts to authorize")
-        print("    4. Re-run:               hermes model")
+        print("    4. Re-run:               logos gateway setup")
         print()
         print("  Or paste an existing setup-token now (sk-ant-oat-...):")
         print()
@@ -1547,7 +1547,7 @@ def _model_flow_anthropic(config, current_model=""):
 
 
 def cmd_login(args):
-    """Authenticate Hermes CLI with a provider."""
+    """Authenticate Logos CLI with a provider."""
     from logos_cli.auth import login_command
     login_command(args)
 
@@ -1586,7 +1586,7 @@ def cmd_config(args):
 
 def cmd_version(args):
     """Show version."""
-    print(f"Hermes Agent v{__version__} ({__release_date__})")
+    print(f"Logos v{__version__} ({__release_date__})")
     print(f"Project: {PROJECT_ROOT}")
     
     # Show Python version
@@ -1771,7 +1771,7 @@ def _restore_stashed_changes(
 
     subprocess.run(git_cmd + ["stash", "drop", stash_ref], cwd=cwd, check=True)
     print("⚠ Local changes were restored on top of the updated codebase.")
-    print("  Review `git diff` / `git status` if Hermes behaves unexpectedly.")
+    print("  Review `git diff` / `git status` if Logos behaves unexpectedly.")
     return True
 
 
@@ -1780,7 +1780,7 @@ def cmd_update(args):
     """Update Logos to the latest version."""
     import shutil
 
-    print("⚕ Updating Hermes Agent...")
+    print("⚕ Updating Logos...")
     print()
     
     # Try git-based update first, fall back to ZIP download on Windows
@@ -1938,7 +1938,7 @@ def cmd_update(args):
                     print("✓ Configuration updated!")
             else:
                 print()
-                print("Skipped. Run 'hermes config migrate' later to configure.")
+                print("Skipped. Run 'logos config migrate' later to configure.")
         else:
             print("  ✓ Configuration is up to date")
         
@@ -1962,13 +1962,13 @@ def cmd_update(args):
                     print("✓ Gateway restarted.")
                 else:
                     print(f"⚠ Gateway restart failed: {restart.stderr.strip()}")
-                    print("  Try manually: hermes gateway restart")
+                    print("  Try manually: logos gateway restart")
         except (FileNotFoundError, subprocess.TimeoutExpired):
             pass  # No systemd (macOS, WSL1, etc.) — skip silently
         
         print()
-        print("Tip: You can now select a provider and model:")
-        print("  hermes model              # Select provider and model")
+        print("Tip: You can now configure providers and routes:")
+        print("  logos gateway setup       # Configure routes and providers")
         
     except subprocess.CalledProcessError as e:
         if sys.platform == "win32":
@@ -2124,13 +2124,13 @@ For more help on a command:
     setup_parser = subparsers.add_parser(
         "setup",
         help="Interactive setup wizard",
-        description="Configure Hermes Agent with an interactive wizard. "
-                    "Run a specific section: hermes setup model|terminal|gateway|tools|agent"
+        description="Run the Logos first-time setup wizard. "
+                    "Run a specific section: logos setup gateway"
     )
     setup_parser.add_argument(
         "section",
         nargs="?",
-        choices=["model", "terminal", "gateway", "tools", "agent"],
+        choices=["gateway"],
         default=None,
         help="Run a specific setup section instead of the full wizard"
     )
@@ -2162,7 +2162,7 @@ For more help on a command:
     login_parser = subparsers.add_parser(
         "login",
         help="Authenticate with an inference provider",
-        description="Run OAuth device authorization flow for Hermes CLI"
+        description="Run OAuth device authorization flow for Logos CLI"
     )
     login_parser.add_argument(
         "--provider",
@@ -2232,7 +2232,7 @@ For more help on a command:
     status_parser = subparsers.add_parser(
         "status",
         help="Show status of all components",
-        description="Display status of Hermes Agent components"
+        description="Display status of Logos components"
     )
     status_parser.add_argument(
         "--all",
@@ -2252,7 +2252,7 @@ For more help on a command:
     doctor_parser = subparsers.add_parser(
         "doctor",
         help="Check configuration and dependencies",
-        description="Diagnose issues with Hermes Agent setup"
+        description="Diagnose issues with Logos setup"
     )
     doctor_parser.add_argument(
         "--fix",
@@ -2342,7 +2342,7 @@ For more help on a command:
     config_parser = subparsers.add_parser(
         "config",
         help="View and edit configuration",
-        description="Manage Hermes Agent configuration"
+        description="Manage Logos configuration"
     )
     config_subparsers = config_parser.add_subparsers(dest="config_command")
     
@@ -2431,14 +2431,14 @@ For more help on a command:
     claw_parser = subparsers.add_parser(
         "claw",
         help="OpenClaw migration tools",
-        description="Migrate settings, memories, skills, and API keys from OpenClaw to Hermes"
+        description="Migrate settings, memories, skills, and API keys from OpenClaw to Logos"
     )
     claw_subparsers = claw_parser.add_subparsers(dest="claw_action")
 
     # claw migrate
     claw_migrate = claw_subparsers.add_parser(
         "migrate",
-        help="Migrate from OpenClaw to Hermes",
+        help="Migrate from OpenClaw to Logos",
         description="Import settings, memories, skills, and API keys from an OpenClaw installation"
     )
     claw_migrate.add_argument(
@@ -2513,7 +2513,7 @@ For more help on a command:
     uninstall_parser = subparsers.add_parser(
         "uninstall",
         help="Uninstall Logos",
-        description="Remove Hermes Agent from your system. Can keep configs/data for reinstall."
+        description="Remove Logos from your system. Can keep configs/data for reinstall."
     )
     uninstall_parser.add_argument(
         "--full",
@@ -2533,7 +2533,7 @@ For more help on a command:
     acp_parser = subparsers.add_parser(
         "acp",
         help="Run Logos as an ACP (Agent Client Protocol) server",
-        description="Start Hermes Agent in ACP mode for editor integration (VS Code, Zed, JetBrains)",
+        description="Start Logos in ACP mode for editor integration (VS Code, Zed, JetBrains)",
     )
 
     def cmd_acp(args):
