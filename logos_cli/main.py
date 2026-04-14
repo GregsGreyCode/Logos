@@ -1,31 +1,22 @@
 #!/usr/bin/env python3
 """
-Logos CLI - Main entry point for the Logos platform.
+Logos CLI — main entry point for the Logos platform.
 
-The ``logos`` command is the platform CLI — gateway, config, setup, admin.
-The ``hermes`` command is the agent CLI — local chat, session resume.
+``logos`` is the platform control-plane CLI. It brings up the gateway,
+configures the install, and provides investigation/admin tools. Agents
+themselves run inside OpenShell sandboxes and are addressed via the
+gateway (web dashboard, Telegram, Discord, ACP) — not via this CLI.
 
-Usage (platform — ``logos``):
-    logos gateway              # Run gateway in foreground
-    logos gateway start        # Start gateway as service
-    logos gateway stop         # Stop gateway service
+Common commands:
+    logos gateway              # Run the platform in foreground
+    logos gateway start        # Start the platform as a service
     logos gateway setup        # Configure messaging platforms
-    logos setup                # Interactive setup wizard
-    logos model                # Select default model
-    logos config               # View configuration
-    logos doctor               # Check configuration and dependencies
-    logos tools                # Configure which tools are enabled
-    logos skills               # Search, install, manage skills
-    logos update               # Update to latest version
+    logos setup                # First-time setup wizard
+    logos config               # View / edit configuration
+    logos doctor               # Diagnose install + dependencies
+    logos status               # Show platform status
+    logos update               # Update Logos to the latest version
     logos version              # Show version
-
-Usage (agent — ``hermes``):
-    hermes                     # Interactive chat (default)
-    hermes chat                # Interactive chat
-    hermes -c                  # Resume the most recent session
-    hermes -c "my project"     # Resume a session by name
-    hermes chat -q "Hello"     # Single query mode
-    hermes sessions browse     # Interactive session picker
 """
 
 import argparse
@@ -406,98 +397,6 @@ def _resolve_session_by_name_or_id(name_or_id: str) -> Optional[str]:
     return None
 
 
-def cmd_chat(args):
-    """Run interactive chat CLI."""
-    # Resolve --continue into --resume with the latest CLI session or by name
-    continue_val = getattr(args, "continue_last", None)
-    if continue_val and not getattr(args, "resume", None):
-        if isinstance(continue_val, str):
-            # -c "session name" — resolve by title or ID
-            resolved = _resolve_session_by_name_or_id(continue_val)
-            if resolved:
-                args.resume = resolved
-            else:
-                print(f"No session found matching '{continue_val}'.")
-                print("Use 'hermes sessions list' to see available sessions.")
-                sys.exit(1)
-        else:
-            # -c with no argument — continue the most recent session
-            last_id = _resolve_last_cli_session()
-            if last_id:
-                args.resume = last_id
-            else:
-                print("No previous CLI session found to continue.")
-                sys.exit(1)
-
-    # Resolve --resume by title if it's not a direct session ID
-    resume_val = getattr(args, "resume", None)
-    if resume_val:
-        resolved = _resolve_session_by_name_or_id(resume_val)
-        if resolved:
-            args.resume = resolved
-        # If resolution fails, keep the original value — _init_agent will
-        # report "Session not found" with the original input
-
-    # First-run guard: check if any provider is configured before launching
-    if not _has_any_provider_configured():
-        print()
-        print("It looks like Hermes isn't configured yet -- no API keys or providers found.")
-        print()
-        print("  Run:  hermes setup")
-        print()
-
-        from logos_cli.setup import is_interactive_stdin, print_noninteractive_setup_guidance
-
-        if not is_interactive_stdin():
-            print_noninteractive_setup_guidance(
-                "No interactive TTY detected for the first-run setup prompt."
-            )
-            sys.exit(1)
-
-        try:
-            reply = input("Run setup now? [Y/n] ").strip().lower()
-        except (EOFError, KeyboardInterrupt):
-            reply = "n"
-        if reply in ("", "y", "yes"):
-            cmd_setup(args)
-            return
-        print()
-        print("You can run 'hermes setup' at any time to configure.")
-        sys.exit(1)
-
-    # Sync bundled skills on every CLI launch (fast -- skips unchanged skills)
-    try:
-        from tools.skills_sync import sync_skills
-        sync_skills(quiet=True)
-    except Exception:
-        pass
-
-    # --yolo: bypass all dangerous command approvals
-    if getattr(args, "yolo", False):
-        os.environ["HERMES_YOLO_MODE"] = "1"
-
-    # Import and run the CLI
-    from logos_cli.cli import main as cli_main
-    
-    # Build kwargs from args
-    kwargs = {
-        "model": args.model,
-        "provider": getattr(args, "provider", None),
-        "toolsets": args.toolsets,
-        "verbose": args.verbose,
-        "quiet": getattr(args, "quiet", False),
-        "query": args.query,
-        "resume": getattr(args, "resume", None),
-        "worktree": getattr(args, "worktree", False),
-        "checkpoints": getattr(args, "checkpoints", False),
-        "pass_session_id": getattr(args, "pass_session_id", False),
-    }
-    # Filter out None values
-    kwargs = {k: v for k, v in kwargs.items() if v is not None}
-    
-    cli_main(**kwargs)
-
-
 def cmd_gateway(args):
     """Gateway management commands."""
     from logos_cli.gateway import gateway_command
@@ -720,146 +619,6 @@ def cmd_setup(args):
     """Interactive setup wizard."""
     from logos_cli.setup import run_setup_wizard
     run_setup_wizard(args)
-
-
-def cmd_model(args):
-    """Select default model — starts with provider selection, then model picker."""
-    from logos_cli.auth import (
-        resolve_provider, get_provider_auth_state, PROVIDER_REGISTRY,
-        _prompt_model_selection, _save_model_choice, _update_config_for_provider,
-        resolve_nous_runtime_credentials, fetch_nous_models, AuthError, format_auth_error,
-        _login_nous,
-    )
-    from logos_cli.config import load_config, save_config, get_env_value, save_env_value
-
-    config = load_config()
-    current_model = config.get("model")
-    if isinstance(current_model, dict):
-        current_model = current_model.get("default", "")
-    current_model = current_model or "(not set)"
-
-    # Read effective provider the same way the CLI does at startup:
-    # config.yaml model.provider > env var > auto-detect
-    import os
-    config_provider = None
-    model_cfg = config.get("model")
-    if isinstance(model_cfg, dict):
-        config_provider = model_cfg.get("provider")
-
-    effective_provider = (
-        config_provider
-        or os.getenv("HERMES_INFERENCE_PROVIDER")
-        or "auto"
-    )
-    try:
-        active = resolve_provider(effective_provider)
-    except AuthError as exc:
-        warning = format_auth_error(exc)
-        print(f"Warning: {warning} Falling back to auto provider detection.")
-        active = resolve_provider("auto")
-
-    # Detect custom endpoint
-    if active == "openrouter" and get_env_value("OPENAI_BASE_URL"):
-        active = "custom"
-
-    provider_labels = {
-        "openrouter": "OpenRouter",
-        "nous": "Nous Portal",
-        "openai-codex": "OpenAI Codex",
-        "anthropic": "Anthropic",
-        "zai": "Z.AI / GLM",
-        "kimi-coding": "Kimi / Moonshot",
-        "minimax": "MiniMax",
-        "minimax-cn": "MiniMax (China)",
-        "custom": "Custom endpoint",
-    }
-    active_label = provider_labels.get(active, active)
-
-    print()
-    print(f"  Current model:    {current_model}")
-    print(f"  Active provider:  {active_label}")
-    print()
-
-    # Step 1: Provider selection — put active provider first with marker
-    providers = [
-        ("openrouter", "OpenRouter (100+ models, pay-per-use)"),
-        ("nous", "Nous Portal (Nous Research subscription)"),
-        ("openai-codex", "OpenAI Codex"),
-        ("anthropic", "Anthropic (Claude models — API key or Claude Code)"),
-        ("zai", "Z.AI / GLM (Zhipu AI direct API)"),
-        ("kimi-coding", "Kimi / Moonshot (Moonshot AI direct API)"),
-        ("minimax", "MiniMax (global direct API)"),
-        ("minimax-cn", "MiniMax China (domestic direct API)"),
-    ]
-
-    # Add user-defined custom providers from config.yaml
-    custom_providers_cfg = config.get("custom_providers") or []
-    _custom_provider_map = {}  # key → {name, base_url, api_key}
-    if isinstance(custom_providers_cfg, list):
-        for entry in custom_providers_cfg:
-            if not isinstance(entry, dict):
-                continue
-            name = entry.get("name", "").strip()
-            base_url = entry.get("base_url", "").strip()
-            if not name or not base_url:
-                continue
-            # Generate a stable key from the name
-            key = "custom:" + name.lower().replace(" ", "-")
-            short_url = base_url.replace("https://", "").replace("http://", "").rstrip("/")
-            saved_model = entry.get("model", "")
-            model_hint = f" — {saved_model}" if saved_model else ""
-            providers.append((key, f"{name} ({short_url}){model_hint}"))
-            _custom_provider_map[key] = {
-                "name": name,
-                "base_url": base_url,
-                "api_key": entry.get("api_key", ""),
-                "model": saved_model,
-            }
-
-    # Always add the manual custom endpoint option last
-    providers.append(("custom", "Custom endpoint (enter URL manually)"))
-
-    # Add removal option if there are saved custom providers
-    if _custom_provider_map:
-        providers.append(("remove-custom", "Remove a saved custom provider"))
-
-    # Reorder so the active provider is at the top
-    known_keys = {k for k, _ in providers}
-    active_key = active if active in known_keys else "custom"
-    ordered = []
-    for key, label in providers:
-        if key == active_key:
-            ordered.insert(0, (key, f"{label}  ← currently active"))
-        else:
-            ordered.append((key, label))
-    ordered.append(("cancel", "Cancel"))
-
-    provider_idx = _prompt_provider_choice([label for _, label in ordered])
-    if provider_idx is None or ordered[provider_idx][0] == "cancel":
-        print("No change.")
-        return
-
-    selected_provider = ordered[provider_idx][0]
-
-    # Step 2: Provider-specific setup + model selection
-    if selected_provider == "openrouter":
-        _model_flow_openrouter(config, current_model)
-    elif selected_provider == "nous":
-        _model_flow_nous(config, current_model)
-    elif selected_provider == "openai-codex":
-        _model_flow_openai_codex(config, current_model)
-    elif selected_provider == "custom":
-        _model_flow_custom(config)
-    elif selected_provider.startswith("custom:") and selected_provider in _custom_provider_map:
-        _model_flow_named_custom(config, _custom_provider_map[selected_provider])
-    elif selected_provider == "remove-custom":
-        _remove_custom_provider(config)
-    elif selected_provider == "anthropic":
-        _model_flow_anthropic(config, current_model)
-    elif selected_provider == "kimi-coding":
-        _model_flow_kimi(config, current_model)
-    elif selected_provider in ("zai", "minimax", "minimax-cn"):
-        _model_flow_api_key_provider(config, selected_provider, current_model)
 
 
 def _prompt_provider_choice(choices):
@@ -1805,12 +1564,6 @@ def cmd_status(args):
     show_status(args)
 
 
-def cmd_cron(args):
-    """Cron job management."""
-    from logos_cli.cron import cron_command
-    cron_command(args)
-
-
 def cmd_doctor(args):
     """Check configuration and dependencies."""
     from logos_cli.doctor import run_doctor
@@ -1848,15 +1601,15 @@ def cmd_version(args):
 
 
 def cmd_uninstall(args):
-    """Uninstall Hermes Agent."""
+    """Uninstall Logos."""
     from logos_cli.uninstall import run_uninstall
     run_uninstall(args)
 
 
 def _update_via_zip(args):
-    """Update Hermes Agent by downloading a ZIP archive.
-    
-    Used on Windows when git file I/O is broken (antivirus, NTFS filter 
+    """Update Logos by downloading a ZIP archive.
+
+    Used on Windows when git file I/O is broken (antivirus, NTFS filter
     drivers causing 'Invalid argument' errors on file creation).
     """
     import shutil
@@ -2024,9 +1777,9 @@ def _restore_stashed_changes(
 
 
 def cmd_update(args):
-    """Update Hermes Agent to the latest version."""
+    """Update Logos to the latest version."""
     import shutil
-    
+
     print("⚕ Updating Hermes Agent...")
     print()
     
@@ -2277,22 +2030,15 @@ Examples:
     logos gateway                  Launch the gateway + web dashboard
     logos gateway start            Run gateway as a background service
     logos gateway setup            Configure messaging platforms
-    logos setup                    Run setup wizard
-    logos model                    Select default model
+    logos setup                    Run first-time setup wizard
+    logos status                   Show platform status
     logos config                   View configuration
     logos config edit              Edit config in $EDITOR
     logos config set model gpt-4   Set a config value
-    logos doctor                   Diagnose issues
-    logos tools                    Configure enabled tools
-    logos skills search k8s        Search for skills
-    logos sessions list            List past sessions
-    logos sessions browse          Interactive session picker
-    logos update                   Update to latest version
-
-For local agent chat, use the ``hermes`` command:
-    hermes                         Start interactive chat
-    hermes -c                      Resume the most recent session
-    hermes chat -q "Hello"         Single query mode
+    logos doctor                   Diagnose install + dependencies
+    logos debug tail               Tail unified platform logs
+    logos insights                 Show usage insights
+    logos update                   Update Logos to the latest version
 
 For more help on a command:
     logos <command> --help
@@ -2304,127 +2050,8 @@ For more help on a command:
         action="store_true",
         help="Show version and exit"
     )
-    parser.add_argument(
-        "--resume", "-r",
-        metavar="SESSION",
-        default=None,
-        help="Resume a previous session by ID or title"
-    )
-    parser.add_argument(
-        "--continue", "-c",
-        dest="continue_last",
-        nargs="?",
-        const=True,
-        default=None,
-        metavar="SESSION_NAME",
-        help="Resume a session by name, or the most recent if no name given"
-    )
-    parser.add_argument(
-        "--worktree", "-w",
-        action="store_true",
-        default=False,
-        help="Run in an isolated git worktree (for parallel agents)"
-    )
-    parser.add_argument(
-        "--yolo",
-        action="store_true",
-        default=False,
-        help="Bypass all dangerous command approval prompts (use at your own risk)"
-    )
-    parser.add_argument(
-        "--pass-session-id",
-        action="store_true",
-        default=False,
-        help="Include the session ID in the agent's system prompt"
-    )
-    
-    subparsers = parser.add_subparsers(dest="command", help="Command to run")
-    
-    # =========================================================================
-    # chat command
-    # =========================================================================
-    chat_parser = subparsers.add_parser(
-        "chat",
-        help="Interactive chat with the agent",
-        description="Start an interactive chat session with Hermes Agent"
-    )
-    chat_parser.add_argument(
-        "-q", "--query",
-        help="Single query (non-interactive mode)"
-    )
-    chat_parser.add_argument(
-        "-m", "--model",
-        help="Model to use (e.g., anthropic/claude-sonnet-4)"
-    )
-    chat_parser.add_argument(
-        "-t", "--toolsets",
-        help="Comma-separated toolsets to enable"
-    )
-    chat_parser.add_argument(
-        "--provider",
-        choices=["auto", "openrouter", "nous", "openai-codex", "anthropic", "zai", "kimi-coding", "minimax", "minimax-cn"],
-        default=None,
-        help="Inference provider (default: auto)"
-    )
-    chat_parser.add_argument(
-        "-v", "--verbose",
-        action="store_true",
-        help="Verbose output"
-    )
-    chat_parser.add_argument(
-        "-Q", "--quiet",
-        action="store_true",
-        help="Quiet mode for programmatic use: suppress banner, spinner, and tool previews. Only output the final response and session info."
-    )
-    chat_parser.add_argument(
-        "--resume", "-r",
-        metavar="SESSION_ID",
-        help="Resume a previous session by ID (shown on exit)"
-    )
-    chat_parser.add_argument(
-        "--continue", "-c",
-        dest="continue_last",
-        nargs="?",
-        const=True,
-        default=None,
-        metavar="SESSION_NAME",
-        help="Resume a session by name, or the most recent if no name given"
-    )
-    chat_parser.add_argument(
-        "--worktree", "-w",
-        action="store_true",
-        default=False,
-        help="Run in an isolated git worktree (for parallel agents on the same repo)"
-    )
-    chat_parser.add_argument(
-        "--checkpoints",
-        action="store_true",
-        default=False,
-        help="Enable filesystem checkpoints before destructive file operations (use /rollback to restore)"
-    )
-    chat_parser.add_argument(
-        "--yolo",
-        action="store_true",
-        default=False,
-        help="Bypass all dangerous command approval prompts (use at your own risk)"
-    )
-    chat_parser.add_argument(
-        "--pass-session-id",
-        action="store_true",
-        default=False,
-        help="Include the session ID in the agent's system prompt"
-    )
-    chat_parser.set_defaults(func=cmd_chat)
 
-    # =========================================================================
-    # model command
-    # =========================================================================
-    model_parser = subparsers.add_parser(
-        "model",
-        help="Select default model and provider",
-        description="Interactively select your inference provider and default model"
-    )
-    model_parser.set_defaults(func=cmd_model)
+    subparsers = parser.add_subparsers(dest="command", help="Command to run")
 
     # =========================================================================
     # gateway command
@@ -2618,29 +2245,7 @@ For more help on a command:
         help="Run deep checks (may take longer)"
     )
     status_parser.set_defaults(func=cmd_status)
-    
-    # =========================================================================
-    # cron command
-    # =========================================================================
-    cron_parser = subparsers.add_parser(
-        "cron",
-        help="Cron job management",
-        description="Manage scheduled tasks"
-    )
-    cron_subparsers = cron_parser.add_subparsers(dest="cron_command")
-    
-    # cron list
-    cron_list = cron_subparsers.add_parser("list", help="List scheduled jobs")
-    cron_list.add_argument("--all", action="store_true", help="Include disabled jobs")
-    
-    # cron status
-    cron_subparsers.add_parser("status", help="Check if cron scheduler is running")
-    
-    # cron tick (mostly for debugging)
-    cron_subparsers.add_parser("tick", help="Run due jobs once and exit")
-    
-    cron_parser.set_defaults(func=cmd_cron)
-    
+
     # =========================================================================
     # doctor command
     # =========================================================================
@@ -2795,271 +2400,6 @@ For more help on a command:
     pairing_parser.set_defaults(func=cmd_pairing)
 
     # =========================================================================
-    # skills command
-    # =========================================================================
-    skills_parser = subparsers.add_parser(
-        "skills",
-        help="Search, install, configure, and manage skills",
-        description="Search, install, inspect, audit, configure, and manage skills from GitHub, ClawHub, and other registries."
-    )
-    skills_subparsers = skills_parser.add_subparsers(dest="skills_action")
-
-    skills_browse = skills_subparsers.add_parser("browse", help="Browse all available skills (paginated)")
-    skills_browse.add_argument("--page", type=int, default=1, help="Page number (default: 1)")
-    skills_browse.add_argument("--size", type=int, default=20, help="Results per page (default: 20)")
-    skills_browse.add_argument("--source", default="all",
-                               choices=["all", "official", "github", "clawhub", "lobehub"],
-                               help="Filter by source (default: all)")
-
-    skills_search = skills_subparsers.add_parser("search", help="Search skill registries")
-    skills_search.add_argument("query", help="Search query")
-    skills_search.add_argument("--source", default="all", choices=["all", "official", "github", "clawhub", "lobehub"])
-    skills_search.add_argument("--limit", type=int, default=10, help="Max results")
-
-    skills_install = skills_subparsers.add_parser("install", help="Install a skill")
-    skills_install.add_argument("identifier", help="Skill identifier (e.g. openai/skills/skill-creator)")
-    skills_install.add_argument("--category", default="", help="Category folder to install into")
-    skills_install.add_argument("--force", action="store_true", help="Install despite caution verdict")
-
-    skills_inspect = skills_subparsers.add_parser("inspect", help="Preview a skill without installing")
-    skills_inspect.add_argument("identifier", help="Skill identifier")
-
-    skills_list = skills_subparsers.add_parser("list", help="List installed skills")
-    skills_list.add_argument("--source", default="all", choices=["all", "hub", "builtin", "local"])
-
-    skills_audit = skills_subparsers.add_parser("audit", help="Re-scan installed hub skills")
-    skills_audit.add_argument("name", nargs="?", help="Specific skill to audit (default: all)")
-
-    skills_uninstall = skills_subparsers.add_parser("uninstall", help="Remove a hub-installed skill")
-    skills_uninstall.add_argument("name", help="Skill name to remove")
-
-    skills_publish = skills_subparsers.add_parser("publish", help="Publish a skill to a registry")
-    skills_publish.add_argument("skill_path", help="Path to skill directory")
-    skills_publish.add_argument("--to", default="github", choices=["github", "clawhub"], help="Target registry")
-    skills_publish.add_argument("--repo", default="", help="Target GitHub repo (e.g. openai/skills)")
-
-    skills_snapshot = skills_subparsers.add_parser("snapshot", help="Export/import skill configurations")
-    snapshot_subparsers = skills_snapshot.add_subparsers(dest="snapshot_action")
-    snap_export = snapshot_subparsers.add_parser("export", help="Export installed skills to a file")
-    snap_export.add_argument("output", help="Output JSON file path")
-    snap_import = snapshot_subparsers.add_parser("import", help="Import and install skills from a file")
-    snap_import.add_argument("input", help="Input JSON file path")
-    snap_import.add_argument("--force", action="store_true", help="Force install despite caution verdict")
-
-    skills_tap = skills_subparsers.add_parser("tap", help="Manage skill sources")
-    tap_subparsers = skills_tap.add_subparsers(dest="tap_action")
-    tap_subparsers.add_parser("list", help="List configured taps")
-    tap_add = tap_subparsers.add_parser("add", help="Add a GitHub repo as skill source")
-    tap_add.add_argument("repo", help="GitHub repo (e.g. owner/repo)")
-    tap_rm = tap_subparsers.add_parser("remove", help="Remove a tap")
-    tap_rm.add_argument("name", help="Tap name to remove")
-
-    # config sub-action: interactive enable/disable
-    skills_subparsers.add_parser("config", help="Interactive skill configuration — enable/disable individual skills")
-
-    def cmd_skills(args):
-        # Route 'config' action to skills_config module
-        if getattr(args, 'skills_action', None) == 'config':
-            from logos_cli.skills_config import skills_command as skills_config_command
-            skills_config_command(args)
-        else:
-            from logos_cli.skills_hub import skills_command
-            skills_command(args)
-
-    skills_parser.set_defaults(func=cmd_skills)
-
-    # =========================================================================
-    # tools command
-    # =========================================================================
-    tools_parser = subparsers.add_parser(
-        "tools",
-        help="Configure which tools are enabled per platform",
-        description="Interactive tool configuration — enable/disable tools for CLI, Telegram, Discord, etc."
-    )
-    tools_parser.add_argument(
-        "--summary",
-        action="store_true",
-        help="Print a summary of enabled tools per platform and exit"
-    )
-
-    def cmd_tools(args):
-        from logos_cli.tools_config import tools_command
-        tools_command(args)
-
-    tools_parser.set_defaults(func=cmd_tools)
-    # =========================================================================
-    # sessions command
-    # =========================================================================
-    sessions_parser = subparsers.add_parser(
-        "sessions",
-        help="Manage session history (list, rename, export, prune, delete)",
-        description="View and manage the SQLite session store"
-    )
-    sessions_subparsers = sessions_parser.add_subparsers(dest="sessions_action")
-
-    sessions_list = sessions_subparsers.add_parser("list", help="List recent sessions")
-    sessions_list.add_argument("--source", help="Filter by source (cli, telegram, discord, etc.)")
-    sessions_list.add_argument("--limit", type=int, default=20, help="Max sessions to show")
-
-    sessions_export = sessions_subparsers.add_parser("export", help="Export sessions to a JSONL file")
-    sessions_export.add_argument("output", help="Output JSONL file path")
-    sessions_export.add_argument("--source", help="Filter by source")
-    sessions_export.add_argument("--session-id", help="Export a specific session")
-
-    sessions_delete = sessions_subparsers.add_parser("delete", help="Delete a specific session")
-    sessions_delete.add_argument("session_id", help="Session ID to delete")
-    sessions_delete.add_argument("--yes", "-y", action="store_true", help="Skip confirmation")
-
-    sessions_prune = sessions_subparsers.add_parser("prune", help="Delete old sessions")
-    sessions_prune.add_argument("--older-than", type=int, default=90, help="Delete sessions older than N days (default: 90)")
-    sessions_prune.add_argument("--source", help="Only prune sessions from this source")
-    sessions_prune.add_argument("--yes", "-y", action="store_true", help="Skip confirmation")
-
-    sessions_stats = sessions_subparsers.add_parser("stats", help="Show session store statistics")
-
-    sessions_rename = sessions_subparsers.add_parser("rename", help="Set or change a session's title")
-    sessions_rename.add_argument("session_id", help="Session ID to rename")
-    sessions_rename.add_argument("title", nargs="+", help="New title for the session")
-
-    sessions_browse = sessions_subparsers.add_parser(
-        "browse",
-        help="Interactive session picker — browse, search, and resume sessions",
-    )
-    sessions_browse.add_argument("--source", help="Filter by source (cli, telegram, discord, etc.)")
-    sessions_browse.add_argument("--limit", type=int, default=50, help="Max sessions to load (default: 50)")
-
-    def cmd_sessions(args):
-        import json as _json
-        try:
-            from core.state import SessionDB
-            db = SessionDB()
-        except Exception as e:
-            print(f"Error: Could not open session database: {e}")
-            return
-
-        action = args.sessions_action
-
-        if action == "list":
-            sessions = db.list_sessions_rich(source=args.source, limit=args.limit)
-            if not sessions:
-                print("No sessions found.")
-                return
-            has_titles = any(s.get("title") for s in sessions)
-            if has_titles:
-                print(f"{'Title':<22} {'Preview':<40} {'Last Active':<13} {'ID'}")
-                print("─" * 100)
-            else:
-                print(f"{'Preview':<50} {'Last Active':<13} {'Src':<6} {'ID'}")
-                print("─" * 90)
-            for s in sessions:
-                last_active = _relative_time(s.get("last_active"))
-                preview = s.get("preview", "")[:38] if has_titles else s.get("preview", "")[:48]
-                if has_titles:
-                    title = (s.get("title") or "—")[:20]
-                    sid = s["id"][:20]
-                    print(f"{title:<22} {preview:<40} {last_active:<13} {sid}")
-                else:
-                    sid = s["id"][:20]
-                    print(f"{preview:<50} {last_active:<13} {s['source']:<6} {sid}")
-
-        elif action == "export":
-            if args.session_id:
-                data = db.export_session(args.session_id)
-                if not data:
-                    print(f"Session '{args.session_id}' not found.")
-                    return
-                with open(args.output, "w", encoding="utf-8") as f:
-                    f.write(_json.dumps(data, ensure_ascii=False) + "\n")
-                print(f"Exported 1 session to {args.output}")
-            else:
-                sessions = db.export_all(source=args.source)
-                with open(args.output, "w", encoding="utf-8") as f:
-                    for s in sessions:
-                        f.write(_json.dumps(s, ensure_ascii=False) + "\n")
-                print(f"Exported {len(sessions)} sessions to {args.output}")
-
-        elif action == "delete":
-            if not args.yes:
-                confirm = input(f"Delete session '{args.session_id}' and all its messages? [y/N] ")
-                if confirm.lower() not in ("y", "yes"):
-                    print("Cancelled.")
-                    return
-            if db.delete_session(args.session_id):
-                print(f"Deleted session '{args.session_id}'.")
-            else:
-                print(f"Session '{args.session_id}' not found.")
-
-        elif action == "prune":
-            days = args.older_than
-            source_msg = f" from '{args.source}'" if args.source else ""
-            if not args.yes:
-                confirm = input(f"Delete all ended sessions older than {days} days{source_msg}? [y/N] ")
-                if confirm.lower() not in ("y", "yes"):
-                    print("Cancelled.")
-                    return
-            count = db.prune_sessions(older_than_days=days, source=args.source)
-            print(f"Pruned {count} session(s).")
-
-        elif action == "rename":
-            title = " ".join(args.title)
-            try:
-                if db.set_session_title(args.session_id, title):
-                    print(f"Session '{args.session_id}' renamed to: {title}")
-                else:
-                    print(f"Session '{args.session_id}' not found.")
-            except ValueError as e:
-                print(f"Error: {e}")
-
-        elif action == "browse":
-            limit = getattr(args, "limit", 50) or 50
-            source = getattr(args, "source", None)
-            sessions = db.list_sessions_rich(source=source, limit=limit)
-            db.close()
-            if not sessions:
-                print("No sessions found.")
-                return
-
-            selected_id = _session_browse_picker(sessions)
-            if not selected_id:
-                print("Cancelled.")
-                return
-
-            # Launch hermes --resume <id> by replacing the current process
-            print(f"Resuming session: {selected_id}")
-            import shutil
-            hermes_bin = shutil.which("hermes")
-            if hermes_bin:
-                os.execvp(hermes_bin, ["hermes", "--resume", selected_id])
-            else:
-                # Fallback: re-invoke via python -m
-                os.execvp(
-                    sys.executable,
-                    [sys.executable, "-m", "logos_cli.main", "--resume", selected_id],
-                )
-            return  # won't reach here after execvp
-
-        elif action == "stats":
-            total = db.session_count()
-            msgs = db.message_count()
-            print(f"Total sessions: {total}")
-            print(f"Total messages: {msgs}")
-            for src in ["cli", "telegram", "discord", "whatsapp", "slack"]:
-                c = db.session_count(source=src)
-                if c > 0:
-                    print(f"  {src}: {c} sessions")
-            db_path = db.db_path
-            if db_path.exists():
-                size_mb = os.path.getsize(db_path) / (1024 * 1024)
-                print(f"Database size: {size_mb:.1f} MB")
-
-        else:
-            sessions_parser.print_help()
-
-        db.close()
-
-    sessions_parser.set_defaults(func=cmd_sessions)
-
-    # =========================================================================
     # insights command
     # =========================================================================
     insights_parser = subparsers.add_parser(
@@ -3162,7 +2502,7 @@ For more help on a command:
     # =========================================================================
     update_parser = subparsers.add_parser(
         "update",
-        help="Update Hermes Agent to the latest version",
+        help="Update Logos to the latest version",
         description="Pull the latest changes from git and reinstall dependencies"
     )
     update_parser.set_defaults(func=cmd_update)
@@ -3172,7 +2512,7 @@ For more help on a command:
     # =========================================================================
     uninstall_parser = subparsers.add_parser(
         "uninstall",
-        help="Uninstall Hermes Agent",
+        help="Uninstall Logos",
         description="Remove Hermes Agent from your system. Can keep configs/data for reinstall."
     )
     uninstall_parser.add_argument(
@@ -3192,12 +2532,12 @@ For more help on a command:
     # =========================================================================
     acp_parser = subparsers.add_parser(
         "acp",
-        help="Run Hermes Agent as an ACP (Agent Client Protocol) server",
+        help="Run Logos as an ACP (Agent Client Protocol) server",
         description="Start Hermes Agent in ACP mode for editor integration (VS Code, Zed, JetBrains)",
     )
 
     def cmd_acp(args):
-        """Launch Hermes Agent as an ACP server."""
+        """Launch Logos as an ACP server."""
         try:
             from acp_adapter.entry import main as acp_main
             acp_main()
@@ -3211,191 +2551,15 @@ For more help on a command:
     # =========================================================================
     # Parse and execute
     # =========================================================================
-    # Pre-process argv so unquoted multi-word session names after -c / -r
-    # are merged into a single token before argparse sees them.
-    # e.g. ``hermes -c Pokemon Agent Dev`` → ``hermes -c 'Pokemon Agent Dev'``
-    _processed_argv = _coalesce_session_name_args(sys.argv[1:])
-    args = parser.parse_args(_processed_argv)
-    
+    args = parser.parse_args()
+
     # Handle --version flag
     if args.version:
         cmd_version(args)
         return
-    
-    # Handle top-level --resume / --continue as shortcut to chat
-    if (args.resume or args.continue_last) and args.command is None:
-        args.command = "chat"
-        args.query = None
-        args.model = None
-        args.provider = None
-        args.toolsets = None
-        args.verbose = False
-        if not hasattr(args, "worktree"):
-            args.worktree = False
-        cmd_chat(args)
-        return
-    
-    # Default to chat if no command specified
-    if args.command is None:
-        args.query = None
-        args.model = None
-        args.provider = None
-        args.toolsets = None
-        args.verbose = False
-        args.resume = None
-        args.continue_last = None
-        if not hasattr(args, "worktree"):
-            args.worktree = False
-        cmd_chat(args)
-        return
-    
+
     # Execute the command
     if hasattr(args, 'func'):
-        args.func(args)
-    else:
-        parser.print_help()
-
-
-def main_agent():
-    """Entry point for the ``hermes`` agent CLI (local chat only).
-
-    This is a thin wrapper that exposes only the chat-related subset of the
-    full ``logos`` CLI: interactive chat, session resume, and session browsing.
-    """
-    parser = argparse.ArgumentParser(
-        prog="hermes",
-        description="Hermes — local AI agent chat",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-Examples:
-    hermes                        Start interactive chat
-    hermes chat -q "Hello"        Single query mode
-    hermes -c                     Resume the most recent session
-    hermes -c "my project"        Resume a session by name
-    hermes --resume <session_id>  Resume a specific session by ID
-    hermes -w                     Start in isolated git worktree
-    hermes sessions browse        Interactive session picker
-
-For platform management (gateway, config, setup, etc.) use the ``logos`` command:
-    logos gateway                  Launch the gateway + web dashboard
-    logos setup                    Run setup wizard
-    logos doctor                   Diagnose issues
-"""
-    )
-
-    parser.add_argument("--version", "-V", action="store_true", help="Show version and exit")
-    parser.add_argument("--resume", "-r", metavar="SESSION", default=None,
-                        help="Resume a previous session by ID or title")
-    parser.add_argument("--continue", "-c", dest="continue_last", nargs="?", const=True,
-                        default=None, metavar="SESSION_NAME",
-                        help="Resume a session by name, or the most recent if no name given")
-    parser.add_argument("--worktree", "-w", action="store_true", default=False,
-                        help="Run in an isolated git worktree (for parallel agents)")
-    parser.add_argument("--yolo", action="store_true", default=False,
-                        help="Bypass all dangerous command approval prompts (use at your own risk)")
-    parser.add_argument("--pass-session-id", action="store_true", default=False,
-                        help="Include the session ID in the agent's system prompt")
-
-    subparsers = parser.add_subparsers(dest="command", help="Command to run")
-
-    # chat command
-    chat_parser = subparsers.add_parser("chat", help="Interactive chat with the agent")
-    chat_parser.add_argument("-q", "--query", help="Single query (non-interactive mode)")
-    chat_parser.add_argument("-m", "--model", help="Model to use")
-    chat_parser.add_argument("-t", "--toolsets", help="Comma-separated toolsets to enable")
-    chat_parser.add_argument("--provider", choices=["auto", "openrouter", "nous", "openai-codex",
-                             "anthropic", "zai", "kimi-coding", "minimax", "minimax-cn"],
-                             default=None, help="Inference provider")
-    chat_parser.add_argument("-v", "--verbose", action="store_true")
-    chat_parser.add_argument("-Q", "--quiet", action="store_true",
-                             help="Quiet mode for programmatic use")
-    chat_parser.add_argument("--resume", "-r", metavar="SESSION_ID",
-                             help="Resume a previous session by ID")
-    chat_parser.add_argument("--continue", "-c", dest="continue_last", nargs="?", const=True,
-                             default=None, metavar="SESSION_NAME",
-                             help="Resume a session by name, or the most recent if no name given")
-    chat_parser.add_argument("--worktree", "-w", action="store_true", default=False,
-                             help="Run in an isolated git worktree")
-    chat_parser.add_argument("--checkpoints", action="store_true", default=False,
-                             help="Enable filesystem checkpoints before destructive file operations")
-    chat_parser.add_argument("--yolo", action="store_true", default=False,
-                             help="Bypass all dangerous command approval prompts")
-    chat_parser.add_argument("--pass-session-id", action="store_true", default=False,
-                             help="Include the session ID in the agent's system prompt")
-    chat_parser.set_defaults(func=cmd_chat)
-
-    # sessions command (browse only)
-    sessions_parser = subparsers.add_parser("sessions", help="Session management")
-    sessions_sub = sessions_parser.add_subparsers(dest="sessions_action")
-    browse_parser = sessions_sub.add_parser("browse",
-                                            help="Interactive session picker — browse, search, and resume")
-    browse_parser.add_argument("--source", help="Filter by source")
-    browse_parser.add_argument("--limit", type=int, default=50)
-
-    def _cmd_sessions_agent(args):
-        """Handle sessions subcommand in agent CLI."""
-        if getattr(args, "sessions_action", None) == "browse":
-            from core.state import SessionDB
-            db = SessionDB()
-            sessions = db.list_sessions_rich(
-                source=getattr(args, "source", None),
-                limit=getattr(args, "limit", 50) or 50,
-            )
-            db.close()
-            if not sessions:
-                print("No sessions found.")
-                return
-            selected_id = _session_browse_picker(sessions)
-            if not selected_id:
-                print("Cancelled.")
-                return
-            print(f"Resuming session: {selected_id}")
-            import shutil
-            hermes_bin = shutil.which("hermes")
-            if hermes_bin:
-                os.execvp(hermes_bin, ["hermes", "--resume", selected_id])
-            else:
-                os.execvp(sys.executable,
-                          [sys.executable, "-m", "logos_cli.main", "--resume", selected_id])
-        else:
-            sessions_parser.print_help()
-
-    sessions_parser.set_defaults(func=_cmd_sessions_agent)
-
-    # Parse and execute
-    _processed_argv = _coalesce_session_name_args(sys.argv[1:])
-    args = parser.parse_args(_processed_argv)
-
-    if args.version:
-        cmd_version(args)
-        return
-
-    if (args.resume or args.continue_last) and args.command is None:
-        args.command = "chat"
-        args.query = None
-        args.model = None
-        args.provider = None
-        args.toolsets = None
-        args.verbose = False
-        if not hasattr(args, "worktree"):
-            args.worktree = False
-        cmd_chat(args)
-        return
-
-    if args.command is None:
-        args.query = None
-        args.model = None
-        args.provider = None
-        args.toolsets = None
-        args.verbose = False
-        args.resume = None
-        args.continue_last = None
-        if not hasattr(args, "worktree"):
-            args.worktree = False
-        cmd_chat(args)
-        return
-
-    if hasattr(args, "func"):
         args.func(args)
     else:
         parser.print_help()
