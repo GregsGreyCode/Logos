@@ -3917,7 +3917,6 @@
               <th class="text-left px-4 py-3 font-medium">Sandbox</th>
               <th class="text-left px-4 py-3 font-medium">Agent</th>
               <th class="text-left px-4 py-3 font-medium">Phase</th>
-              <th class="text-left px-4 py-3 font-medium">Ready</th>
               <th class="text-left px-4 py-3 font-medium">Uptime</th>
               <th class="text-right px-4 py-3 font-medium">Actions</th>
             </tr>
@@ -3934,16 +3933,7 @@
                       : (sb.phase === 'ready' || sb.phase === 'Ready') ? 'bg-green-950 text-green-400 border-green-900'
                       : (sb.phase === 'provisioning' || sb.phase === 'Provisioning') ? 'bg-yellow-950 text-yellow-400 border-yellow-900'
                       : 'bg-gray-900 text-gray-500 border-gray-800'"
-                    x-text="isSandboxSwitching(sb) ? 'switching' : (sb.phase || 'unknown')"></span>
-                </td>
-                <td class="px-4 py-2">
-                  <span class="flex items-center gap-1.5">
-                    <span class="w-2 h-2 rounded-full"
-                      :class="isSandboxSwitching(sb) ? 'bg-yellow-400 animate-pulse'
-                        : sb.worker_healthy ? 'bg-green-500' : 'bg-red-500'"></span>
-                    <span class="text-gray-500"
-                      x-text="isSandboxSwitching(sb) ? 'switching…' : (sb.worker_healthy ? 'yes' : 'no')"></span>
-                  </span>
+                    x-text="isSandboxSwitching(sb) ? 'switching' : (sb.phase || 'unknown').toLowerCase()"></span>
                 </td>
                 <td class="px-4 py-2 text-gray-500" x-text="sb.worker_uptime_s > 3600 ? Math.floor(sb.worker_uptime_s/3600) + 'h ' + Math.floor((sb.worker_uptime_s%3600)/60) + 'm' : sb.worker_uptime_s > 60 ? Math.floor(sb.worker_uptime_s/60) + 'm' : sb.worker_uptime_s + 's'"></td>
                 <td class="px-4 py-2 text-right">

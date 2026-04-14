@@ -147,40 +147,6 @@ def show_status(args):
         print(f"  (error checking gateway: {e})")
 
     # =========================================================================
-    # API Keys
-    # =========================================================================
-    print()
-    print(color("◆ API Keys", Colors.CYAN, Colors.BOLD))
-    
-    keys = {
-        "OpenRouter": "OPENROUTER_API_KEY",
-        "OpenAI": "OPENAI_API_KEY",
-        "Z.AI/GLM": "GLM_API_KEY",
-        "Kimi": "KIMI_API_KEY",
-        "MiniMax": "MINIMAX_API_KEY",
-        "MiniMax-CN": "MINIMAX_CN_API_KEY",
-        "Firecrawl": "FIRECRAWL_API_KEY",
-        "Browserbase": "BROWSERBASE_API_KEY",  # Optional — local browser works without this
-        "FAL": "FAL_KEY",
-        "ElevenLabs": "ELEVENLABS_API_KEY",
-        "GitHub": "GITHUB_TOKEN",
-    }
-    
-    for name, env_var in keys.items():
-        value = get_env_value(env_var) or ""
-        has_key = bool(value)
-        display = redact_key(value) if not show_all else value
-        print(f"  {name:<12}  {check_mark(has_key)} {display}")
-
-    anthropic_value = (
-        get_env_value("ANTHROPIC_TOKEN")
-        or get_env_value("ANTHROPIC_API_KEY")
-        or ""
-    )
-    anthropic_display = redact_key(anthropic_value) if not show_all else anthropic_value
-    print(f"  {'Anthropic':<12}  {check_mark(bool(anthropic_value))} {anthropic_display}")
-
-    # =========================================================================
     # Auth Providers (OAuth)
     # =========================================================================
     print()
@@ -223,60 +189,6 @@ def show_status(args):
     if codex_status.get("error") and not codex_logged_in:
         print(f"    Error:      {codex_status.get('error')}")
 
-    # =========================================================================
-    # API-Key Providers
-    # =========================================================================
-    print()
-    print(color("◆ API-Key Providers", Colors.CYAN, Colors.BOLD))
-
-    apikey_providers = {
-        "Z.AI / GLM":       ("GLM_API_KEY", "ZAI_API_KEY", "Z_AI_API_KEY"),
-        "Kimi / Moonshot":  ("KIMI_API_KEY",),
-        "MiniMax":          ("MINIMAX_API_KEY",),
-        "MiniMax (China)":  ("MINIMAX_CN_API_KEY",),
-    }
-    for pname, env_vars in apikey_providers.items():
-        key_val = ""
-        for ev in env_vars:
-            key_val = get_env_value(ev) or ""
-            if key_val:
-                break
-        configured = bool(key_val)
-        label = "configured" if configured else "not configured (run: logos login --provider <name>)"
-        print(f"  {pname:<16} {check_mark(configured)} {label}")
-
-    # =========================================================================
-    # Terminal Configuration
-    # =========================================================================
-    print()
-    print(color("◆ Terminal Backend", Colors.CYAN, Colors.BOLD))
-    
-    terminal_env = os.getenv("TERMINAL_ENV", "")
-    if not terminal_env:
-        # Fall back to config file value when env var isn't set
-        # (hermes status doesn't go through cli.py's config loading)
-        try:
-            _cfg = load_config()
-            terminal_env = _cfg.get("terminal", {}).get("backend", "local")
-        except Exception:
-            terminal_env = "local"
-    print(f"  Backend:      {terminal_env}")
-    
-    if terminal_env == "ssh":
-        ssh_host = os.getenv("TERMINAL_SSH_HOST", "")
-        ssh_user = os.getenv("TERMINAL_SSH_USER", "")
-        print(f"  SSH Host:     {ssh_host or '(not set)'}")
-        print(f"  SSH User:     {ssh_user or '(not set)'}")
-    elif terminal_env == "docker":
-        docker_image = os.getenv("TERMINAL_DOCKER_IMAGE", "python:3.11-slim")
-        print(f"  Docker Image: {docker_image}")
-    elif terminal_env == "daytona":
-        daytona_image = os.getenv("TERMINAL_DAYTONA_IMAGE", "nikolaik/python-nodejs:python3.11-nodejs20")
-        print(f"  Daytona Image: {daytona_image}")
-    
-    sudo_password = os.getenv("SUDO_PASSWORD", "")
-    print(f"  Sudo:         {check_mark(bool(sudo_password))} {'enabled' if sudo_password else 'disabled'}")
-    
     # =========================================================================
     # Messaging Platforms
     # =========================================================================

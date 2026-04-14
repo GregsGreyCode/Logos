@@ -1586,7 +1586,13 @@ def cmd_config(args):
 
 def cmd_version(args):
     """Show version."""
-    print(f"Logos v{__version__} ({__release_date__})")
+    # __release_date__ was never kept in lockstep with __version__ so
+    # we stopped shipping it by default. If a release pipeline ever
+    # populates it, show it; otherwise just print the version.
+    if __release_date__:
+        print(f"Logos v{__version__} ({__release_date__})")
+    else:
+        print(f"Logos v{__version__}")
     print(f"Project: {PROJECT_ROOT}")
     
     # Show Python version

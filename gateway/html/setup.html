@@ -3918,12 +3918,14 @@ function setup() {
       this.completing = true;
       this.completeError = null;
       this._startCompletePolling();
-      // 120s client-side timeout — covers the worst-case happy path
-      // (cold image pull + sandbox spawn). Anything longer means
-      // something is wedged; surface a real error rather than spinning
-      // forever. AbortController fires the catch branch below.
+      // 5-minute client-side timeout — covers a first-time install on
+      // a slow box (cold image pull, k3s boot, sandbox spawn). The
+      // previous 120s budget was a best-case estimate and fired as an
+      // error well before the backend actually gave up, even though
+      // the backend would usually finish a minute or two later.
+      // AbortController fires the catch branch below.
       const abort = new AbortController();
-      const timeoutId = setTimeout(() => abort.abort(), 120000);
+      const timeoutId = setTimeout(() => abort.abort(), 300000);
       try {
         const r = await fetch('/api/setup/complete', {
           method: 'POST', credentials: 'include',
