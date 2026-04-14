@@ -1,8 +1,0 @@
-acp_adapter
-agent
-agents
-core
-cron
-gateway
-logos_cli
-tools

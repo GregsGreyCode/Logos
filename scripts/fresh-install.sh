@@ -132,7 +132,15 @@ if [[ "$SKIP_NPM" != "1" ]]; then
     hdr "Node dependencies (browser + WhatsApp)"
     if command -v npm >/dev/null 2>&1; then
         log "installing node modules …"
-        npm install --silent || warn "npm install emitted warnings — check output"
+        # Use ``npm ci`` when a lockfile is present — it's the reproducible
+        # path and doesn't rewrite package-lock.json, so re-running the
+        # installer no longer leaves the clone dirty with lockfile churn.
+        # Fall back to ``npm install`` when there's no lockfile yet.
+        if [[ -f "package-lock.json" ]]; then
+            npm ci --silent || warn "npm ci emitted warnings — check output"
+        else
+            npm install --silent || warn "npm install emitted warnings — check output"
+        fi
         ok "node deps installed"
     else
         warn "npm not found — browser tools / WhatsApp bridge won't work. Install Node.js ≥20 to enable them."
