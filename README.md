@@ -204,21 +204,59 @@ By default Logos binds to `0.0.0.0:8080`, making the dashboard reachable from an
 
 ## ⚡ Quick install
 
-### Linux / macOS — from source (current path)
+### Linux / WSL2 — one-shot installer (recommended)
+
+Three steps. The install script handles everything else — uv, venv, deps, ~/.logos layout, CLI symlinks, and optionally OpenShell + sysctl bumps.
+
+```bash
+# 1. Docker (required if you want the default OpenShell sandboxed multi-agent mode)
+curl -fsSL https://get.docker.com | sh
+sudo usermod -aG docker $USER
+
+# 2. Log out and log back in so the new 'docker' group membership applies.
+
+# 3. Run the installer (prompts once for sudo to bump inotify limits)
+curl -fsSL https://raw.githubusercontent.com/GregsGreyCode/Logos/main/scripts/fresh-install.sh \
+  | INSTALL_OPENSHELL=1 BUMP_INOTIFY=1 bash
+```
+
+Afterwards:
+
+```bash
+logos gateway start
+# open http://<host>:8091/setup — the wizard provisions model routes and creates your first agent
+```
+
+Env flags for the installer:
+
+| Flag | Default | What it does |
+| --- | --- | --- |
+| `INSTALL_OPENSHELL=1` | off | Fetches the OpenShell static binary into `~/.local/bin/openshell` |
+| `BUMP_INOTIFY=1` | off | Raises `fs.inotify.max_user_instances` to 8192 (needed for ≥8 OpenShell routes) |
+| `SKIP_NPM=1` | off | Skips `npm install` (browser tools + WhatsApp bridge won't work) |
+| `START_AFTER=1` | off | Launches `logos gateway start` at the end |
+| `PYTHON_VERSION=3.11` | `3.12` | Pins the venv's Python version |
+| `LOGOS_REPO_DIR=/path` | `$HOME/logos` | Where to clone the repo |
+
+The script is idempotent — safe to re-run as a repair tool.
+
+### Linux / macOS — manual install
+
+If you don't want to run the one-shot script:
 
 ```bash
 git clone https://github.com/GregsGreyCode/Logos.git
 cd Logos
 curl -LsSf https://astral.sh/uv/install.sh | sh
-uv venv venv --python 3.11
+uv venv venv --python 3.12
 source venv/bin/activate
 uv pip install -e ".[all]"
 python -m gateway.run
 ```
 
-Then open <http://localhost:8080> — the **setup wizard launches automatically on first run** (whenever `auth.db` doesn't have the `setup_completed` feature flag).
+Then open <http://localhost:8091/setup> — the **setup wizard launches automatically on first run** (whenever `auth.db` doesn't have the `setup_completed` feature flag).
 
-> **OpenShell:** to use the default `openshell` runtime mode, install the [OpenShell CLI](https://github.com/openshell-ai/openshell) first. The setup wizard will detect it. If OpenShell is missing, you'll be steered to the `docker` fallback.
+> **OpenShell:** to use the default `openshell` runtime mode, install the [OpenShell CLI](https://github.com/NVIDIA/OpenShell) first (the one-shot installer does this for you with `INSTALL_OPENSHELL=1`). The setup wizard will detect it. If OpenShell is missing, you'll be steered to the `docker` fallback.
 
 ### Windows installer
 
