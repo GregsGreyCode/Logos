@@ -9240,6 +9240,28 @@ function app() {
           this.namedAgentFormOpen = false;
           this.namedAgentForm = { name: '', soul_slug: 'general', model: '', model_route_id: null, description: '', toolsets: [], char_index: null };
           await this.loadNamedAgents();
+          // Force the world to resync after the form closes. Closing
+          // the form collapses the agent column from 24rem back to
+          // 16rem, which resizes the Phaser canvas mid-add — the
+          // ResizeObserver fires + the scene re-lays out, and the
+          // new sprite added by loadNamedAgents()'s implicit sync
+          // can land before the scene has finished repositioning.
+          // The user reported new agents weren't appearing in the
+          // world until hard-refresh; adding the agent has landed,
+          // but the render state was stale. A forceResize + a second
+          // deferred sync covers both the layout and the possibility
+          // that Phaser's scene is still catching up from the DOM
+          // churn.
+          if (this.worldManager) {
+            try { this.worldManager.forceResize?.(); } catch (_) {}
+            // One more sync a tick later so whatever pending layout
+            // settled after forceResize sees the fresh agent list.
+            setTimeout(() => {
+              if (this.worldManager && this._worldAgentList) {
+                try { this.worldManager.syncAgents(this._worldAgentList()); } catch (_) {}
+              }
+            }, 250);
+          }
         } else {
           const d = await r.json().catch(() => ({}));
           this.namedAgentMsg = { type: 'error', text: d.error || 'Failed to create agent' };
