@@ -178,14 +178,23 @@ if [[ "$INSTALL_OPENSHELL" == "1" ]]; then
     if command -v openshell >/dev/null 2>&1; then
         ok "openshell already installed: $(openshell --version 2>&1 | head -1)"
     else
-        log "fetching openshell binary …"
-        OSH_URL="$(curl -fsSL https://api.github.com/repos/nvidia/openshell/releases/latest \
-                   | grep -oE 'https://[^"]+linux[^"]*x86_64[^"]*\.tar\.gz' | head -1 || true)"
-        if [[ -z "$OSH_URL" ]]; then
-            warn "could not find an openshell linux/x86_64 release — install manually from https://github.com/nvidia/openshell/releases"
-        else
+        log "fetching openshell release …"
+        # Prefer the Python wheel — it installs straight into the venv
+        # alongside every other CLI, so ``openshell`` is already on PATH
+        # via the venv symlink. The standalone binary tarball is a
+        # fallback for unusual Python layouts.
+        OSH_JSON="$(curl -fsSL https://api.github.com/repos/NVIDIA/OpenShell/releases/latest || true)"
+        OSH_WHL="$(printf '%s' "$OSH_JSON" | grep -oE 'https://[^"]+manylinux[^"]*x86_64\.whl' | head -1)"
+        OSH_TGZ="$(printf '%s' "$OSH_JSON" | grep -oE 'https://[^"]+x86_64-unknown-linux-musl\.tar\.gz' | head -1)"
+        if [[ -n "$OSH_WHL" ]]; then
+            log "installing openshell wheel into venv ($(basename "$OSH_WHL"))"
+            uv pip install "$OSH_WHL" \
+                && ok "openshell installed into venv — on PATH via the logos symlink" \
+                || warn "wheel install failed — try the tarball manually"
+        elif [[ -n "$OSH_TGZ" ]]; then
+            log "installing openshell binary ($(basename "$OSH_TGZ"))"
             TMP=$(mktemp -d)
-            curl -fsSL "$OSH_URL" | tar -xz -C "$TMP"
+            curl -fsSL "$OSH_TGZ" | tar -xz -C "$TMP"
             BIN="$(find "$TMP" -type f -name openshell | head -1)"
             if [[ -n "$BIN" ]]; then
                 install -m 0755 "$BIN" "$HOME/.local/bin/openshell"
@@ -194,6 +203,8 @@ if [[ "$INSTALL_OPENSHELL" == "1" ]]; then
                 warn "openshell binary not found in archive — install manually"
             fi
             rm -rf "$TMP"
+        else
+            warn "could not locate an openshell linux/x86_64 asset — install manually from https://github.com/NVIDIA/OpenShell/releases"
         fi
     fi
     # Docker check — openshell needs it
@@ -236,16 +247,19 @@ fi
 
 # ── Done ──
 hdr "Done"
-printf '%s\n' "${C_GREEN}Logos installed at $REPO_DIR${C_RESET}"
-printf '\nNext steps:\n'
-printf '  1. Open a new shell (or run ${C_DIM}source ~/.bashrc${C_RESET}) so ${C_DIM}logos${C_RESET} is on PATH.\n'
-printf '  2. Launch the gateway:            ${C_CYAN}logos gateway start${C_RESET}\n'
-printf '  3. Open the setup wizard in your browser:\n'
-printf '     ${C_CYAN}http://localhost:8091/setup${C_RESET}\n'
-printf '     (it will discover LM Studio/Ollama, provision routes, and create your first agent.)\n'
-printf '\nDirectly edit config:  ${C_DIM}%s/.env${C_RESET}\n' "$HOME/.logos"
-printf 'Install as a service:  ${C_DIM}logos gateway install${C_RESET}\n'
-printf 'Diagnostics:           ${C_DIM}logos doctor${C_RESET}\n'
+# Note: double-quoted printf strings so bash expands ${C_DIM} etc before
+# printf ever sees them. Single quotes were swallowing the colour vars
+# and dumping literal ${C_DIM} into the terminal.
+printf "%s\n" "${C_GREEN}Logos installed at $REPO_DIR${C_RESET}"
+printf "\nNext steps:\n"
+printf "  1. Open a new shell (or run ${C_DIM}source ~/.bashrc${C_RESET}) so ${C_DIM}logos${C_RESET} is on PATH.\n"
+printf "  2. Launch the gateway:            ${C_CYAN}logos gateway start${C_RESET}\n"
+printf "  3. Open the setup wizard in your browser:\n"
+printf "     ${C_CYAN}http://localhost:8091/setup${C_RESET}\n"
+printf "     (it will discover LM Studio/Ollama, provision routes, and create your first agent.)\n"
+printf "\nDirectly edit config:  ${C_DIM}%s/.env${C_RESET}\n" "$HOME/.logos"
+printf "Install as a service:  ${C_DIM}logos gateway install${C_RESET}\n"
+printf "Diagnostics:           ${C_DIM}logos doctor${C_RESET}\n"
 
 if [[ "$START_AFTER" == "1" ]]; then
     hdr "Launching gateway"
