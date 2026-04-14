@@ -363,7 +363,13 @@ def register_logos_server(runner: Any, service: Any) -> InProcessMCPServer:
     """
     server = InProcessMCPServer(
         name="logos",
-        description="Logos gateway capabilities (platform, session, memory, cron, agents)",
+        # Keep the description honest to what's actually registered.
+        # Previously this said "(platform, session, memory, cron, agents)"
+        # but only platform is implemented — the other four were
+        # aspirational for a future phase and never shipped. When/if
+        # additional tool modules land under gateway/mcp_logos/tools/,
+        # this line should be updated to match.
+        description="Logos gateway capabilities — platform messaging",
         runner=runner,
     )
 
