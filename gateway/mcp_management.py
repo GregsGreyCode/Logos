@@ -55,6 +55,10 @@ async def handle_servers_list(request: web.Request) -> web.Response:
                 "url": entry.get("url", ""),
                 "description": entry.get("description") or entry.get("category", ""),
                 "tool_count": entry.get("tool_count", 0),
+                # Forward tool_names so the dashboard can show the actual
+                # tool list when the row is expanded, instead of the user
+                # seeing "2 tools" with no way to find out which two.
+                "tool_names": entry.get("tool_names", []),
                 "category": entry.get("category", "general"),
                 "readonly": True,
             })
