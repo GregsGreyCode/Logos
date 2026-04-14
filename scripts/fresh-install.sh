@@ -52,7 +52,7 @@ hdr()  { printf '\n%s\n%s\n' "${C_CYAN}$*${C_RESET}" "${C_DIM}$(printf '%.0s─'
 REPO_URL="${LOGOS_REPO_URL:-https://github.com/GregsGreyCode/logos.git}"
 REPO_DIR="${LOGOS_REPO_DIR:-$HOME/logos}"
 BRANCH="${LOGOS_BRANCH:-main}"
-PYTHON_VERSION="${PYTHON_VERSION:-3.11}"
+PYTHON_VERSION="${PYTHON_VERSION:-3.12}"
 INSTALL_OPENSHELL="${INSTALL_OPENSHELL:-0}"
 BUMP_INOTIFY="${BUMP_INOTIFY:-0}"
 SKIP_NPM="${SKIP_NPM:-0}"
