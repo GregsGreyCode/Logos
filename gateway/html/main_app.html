@@ -2487,59 +2487,6 @@
           </div>
         </div>
 
-        <!-- Models Live drift check -->
-        <div class="bg-gray-900 border border-gray-800 rounded-xl p-4 mb-4">
-          <div class="flex items-center justify-between mb-3">
-            <div>
-              <div class="text-xs font-semibold text-gray-300 mb-0.5">Model Drift Check</div>
-              <div class="text-xs text-gray-600">Compare what's configured in providers.yaml against what's currently loaded.</div>
-            </div>
-            <button @click="loadModelsLive()" :disabled="modelsLiveLoading"
-              class="text-xs px-3 py-1.5 rounded border border-gray-700 text-gray-400 hover:text-white transition-colors disabled:opacity-40 shrink-0 ml-4">
-              <span x-show="!modelsLiveLoading">Check Live Models</span>
-              <span x-show="modelsLiveLoading" class="animate-pulse">Checking…</span>
-            </button>
-          </div>
-          <template x-if="modelsLiveResult && !modelsLiveResult._error">
-            <div class="space-y-3">
-              <template x-for="(info, pk) in modelsLiveResult.providers" :key="pk">
-                <div class="rounded-lg border px-3 py-2"
-                  :class="info.missing && info.missing.length ? 'border-yellow-900 bg-yellow-950/30' : 'border-gray-800'">
-                  <div class="flex items-center gap-2 mb-1">
-                    <div class="w-2 h-2 rounded-full shrink-0"
-                      :class="info.status==='ok' ? 'bg-green-500' : 'bg-red-500'"></div>
-                    <span class="text-xs font-medium text-gray-300" x-text="pk"></span>
-                    <span class="text-xs text-gray-600" x-text="info.status==='ok' ? info.live.length + ' loaded' : info.status"></span>
-                    <template x-if="info.missing && info.missing.length">
-                      <span class="text-xs px-1.5 py-0.5 rounded bg-yellow-900 text-yellow-400"
-                        x-text="info.missing.length + ' missing'"></span>
-                    </template>
-                    <template x-if="info.extra && info.extra.length">
-                      <span class="text-xs px-1.5 py-0.5 rounded bg-sky-900 text-sky-400"
-                        x-text="info.extra.length + ' extra'"></span>
-                    </template>
-                  </div>
-                  <template x-if="info.missing && info.missing.length">
-                    <div class="text-xs text-yellow-600 mt-1">
-                      <span class="text-yellow-700">Missing: </span>
-                      <span x-text="info.missing.join(', ')"></span>
-                    </div>
-                  </template>
-                  <template x-if="info.extra && info.extra.length">
-                    <div class="text-xs text-sky-700 mt-1">
-                      <span class="text-sky-800">Extra: </span>
-                      <span x-text="info.extra.join(', ')"></span>
-                    </div>
-                  </template>
-                </div>
-              </template>
-            </div>
-          </template>
-          <template x-if="modelsLiveResult?._error">
-            <div class="text-xs text-red-400 mt-2" x-text="modelsLiveResult._error"></div>
-          </template>
-        </div>
-
         <!-- Synthetic benchmark -->
         <div class="bg-gray-900 border border-gray-800 rounded-xl p-4">
           <div class="flex items-center gap-4 mb-4 flex-wrap">
@@ -6198,8 +6145,6 @@ function app() {
     capBenchLogOpen: false,
     capBenchCopied: false,
     capBenchServers: {},   // ep → {done, error, testing, best, score, machineName, machineId}
-    modelsLiveLoading: false,
-    modelsLiveResult: null,
     // routing debug
     routeDebugUserId: '',
     routeDebugModel: 'balanced',
@@ -9882,16 +9827,6 @@ function app() {
         this.benchmarkResult = await r.json();
       } catch(e) { this.benchmarkResult = {error: String(e)}; }
       this.benchmarkRunning = false;
-    },
-
-    async loadModelsLive() {
-      this.modelsLiveLoading = true;
-      this.modelsLiveResult = null;
-      try {
-        const r = await fetch('/proxy/models-live', {credentials:'include'});
-        this.modelsLiveResult = await r.json();
-      } catch(e) { this.modelsLiveResult = {error: String(e)}; }
-      this.modelsLiveLoading = false;
     },
 
     async loadAdminPolicies() {
