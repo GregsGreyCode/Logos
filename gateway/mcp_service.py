@@ -164,13 +164,18 @@ class MCPGatewayService:
                 transport = "http"
             else:
                 transport = "stdio"
+            _tool_names = list(getattr(server, "_registered_tool_names", [])) if connected else []
             catalogue.append({
                 "name":        name,
                 "description": cfg.get("description", ""),
                 "category":    cfg.get("category", "general"),
                 "transport":   transport,
                 "connected":   connected,
-                "tool_count":  len(getattr(server, "_registered_tool_names", [])) if connected else 0,
+                "tool_count":  len(_tool_names),
+                # Expose the full tool name list so the dashboard can show
+                # "which tools are exposed by this MCP server" on click
+                # instead of just "N tools" with no way to introspect.
+                "tool_names":  _tool_names,
                 "approval_tier": self.get_policy_tier(cfg.get("category", "general")),
             })
         return catalogue
