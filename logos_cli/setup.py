@@ -2136,13 +2136,13 @@ def setup_gateway(config: dict):
                             print_error(f"  Start failed: {e}")
                 except Exception as e:
                     print_error(f"  Install failed: {e}")
-                    print_info("  You can try manually: hermes gateway install")
+                    print_info("  You can try manually: logos gateway install")
             else:
-                print_info("  You can install later: hermes gateway install")
-                print_info("  Or run in foreground:  hermes gateway")
+                print_info("  You can install later: logos gateway install")
+                print_info("  Or run in foreground:  logos gateway run")
         else:
             print_info("Start the gateway to bring your bots online:")
-            print_info("   hermes gateway              # Run in foreground")
+            print_info("   logos gateway run           # Run in foreground")
 
         print_info("━" * 50)
 
