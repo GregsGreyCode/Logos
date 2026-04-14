@@ -16,8 +16,9 @@
 #
 # This baseline policy restricts what the in-sandbox agent can reach
 # on the network. Only the absolute minimum is allowed by default —
-# the LLM proxy (inference.local) and DNS resolution for *.internal
-# hostnames. Everything else is opt-in via presets in ./presets/.
+# the LLM proxy (inference.local) and DNS resolution for the
+# OpenShell internal mesh (*.openshell.internal) plus inference.local
+# itself. Everything else is opt-in via presets in ./presets/.
 #
 # Least-privilege rationale: the same reason NemoClaw moved GitHub
 # out of its base policy (see issue #1583 in their repo). A sandbox
@@ -85,9 +86,11 @@ process:
 #      Binary scoping covers the venv Python (all version flavors
 #      via glob) plus curl for smoke testing from within the sandbox.
 #
-#   2. dns — resolve *.internal hostnames, which OpenShell uses for
-#      its internal service mesh (including inference.local itself).
-#      Without this, the sandbox can't even look up the proxy.
+#   2. dns — resolve hostnames in the OpenShell internal mesh
+#      (*.openshell.internal) plus the privacy-router hostname
+#      (inference.local). Without this, the sandbox can't even
+#      look up the proxy. TLD-level wildcards (*.internal) are
+#      rejected by OpenShell ≥0.0.26.
 #
 # Everything else — GitHub, Slack, Telegram, Discord, Hugging Face,
 # PyPI, etc. — lives in ./presets/*.yaml and must be explicitly
@@ -121,8 +124,18 @@ network_policies:
       - path: /usr/bin/curl
 
   dns:
-    name: "DNS resolution (*.internal)"
+    name: "DNS resolution (OpenShell internal mesh)"
     endpoints:
-      - host: "*.internal"
+      # Subdomain wildcard for OpenShell's internal service mesh
+      # (e.g. host.openshell.internal). OpenShell ≥0.0.26 rejects
+      # bare TLD wildcards like "*.internal" — the star must have at
+      # least one dot to its right.
+      - host: "*.openshell.internal"
+        port: 53
+        access: full
+      # Explicit allowance for the privacy router hostname, which the
+      # sandbox resolves before opening the 443 connection in
+      # inference_local above.
+      - host: inference.local
         port: 53
         access: full
