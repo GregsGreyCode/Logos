@@ -3199,135 +3199,215 @@
   </div>
 
   <!-- ── Tool Integrations ──────────────────────────────────────────
-       Second block on the Tools page. Focused purely on third-party
-       API credentials the gateway injects when an agent calls a tool
-       that needs them (Firecrawl, Browserbase, Anthropic, etc.).
-       Previously this block also hosted:
-         - An "Inference Server" parallel-slots setting — removed
-           because LM Studio doesn't let us control its "Max
-           Concurrent Predictions" from the API; we were only mirroring
-           the value and the UI copy was misleading.
-         - A second "MCP Servers" list — removed because the MCP Tool
-           Servers block above already unifies config.yaml + DB-backed
-           servers via /api/tools/servers ("all managed + config-file
-           servers").
-       What remains is grouped by toolset so each category (browser,
-       web, image, etc.) renders as its own small card grid rather
-       than one flat wall of full-width rows. -->
-  <div x-show="tab==='infra' && infraTab==='tools'" x-cloak class="space-y-6" style="margin-top:2rem">
+       Third-party API credentials the gateway injects when an agent
+       calls a tool that needs them (Firecrawl, Browserbase, Anthropic,
+       etc.). Rendered as dense PILLS grouped by toolset so the whole
+       catalogue fits in a small vertical slice of the page. Clicking
+       a pill opens a single shared detail panel below — only one
+       pill is expanded at a time, so card-grid layouts and per-card
+       state are gone. State (selectedIntegration / editing /
+       keyInput / validating / result) lives on the wrapper x-data. -->
+  <div x-show="tab==='infra' && infraTab==='tools'" x-cloak class="space-y-4"
+       style="margin-top:2rem"
+       x-data="{
+         selectedIntegration: null,
+         editing: false,
+         keyInput: '',
+         validating: false,
+         result: null,
+         selectPill(ti) {
+           if (this.selectedIntegration && this.selectedIntegration.env_var === ti.env_var) {
+             this.selectedIntegration = null;
+             this.editing = false;
+             this.result = null;
+             this.keyInput = '';
+             return;
+           }
+           this.selectedIntegration = ti;
+           this.editing = !ti.has_key;
+           this.result = null;
+           this.keyInput = (ti.selfhosted && !ti.has_key && ti.compose_default) ? ti.compose_default : '';
+         },
+         async saveKey() {
+           const ti = this.selectedIntegration;
+           const val = this.keyInput.trim();
+           if (!ti || !val) return;
+           this.validating = true; this.result = null;
+           try {
+             const vres = await fetch('/api/services/validate', {
+               method: 'POST', credentials: 'include',
+               headers: {'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken()},
+               body: JSON.stringify({env_var: ti.env_var, value: val}),
+             }).then(r => r.json());
+             this.result = vres;
+             if (vres.ok) {
+               await fetch('/api/services/keys', {
+                 method: 'POST', credentials: 'include',
+                 headers: {'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken()},
+                 body: JSON.stringify({env_var: ti.env_var, value: val}),
+               });
+               await this.loadServices();
+               // Re-pick the now-refreshed integration entry so the
+               // detail panel shows the updated has_key state.
+               const fresh = this.servicesTools.find(t => t.env_var === ti.env_var);
+               this.selectedIntegration = fresh || null;
+               this.editing = false;
+               this.keyInput = '';
+             }
+           } catch (e) {
+             this.result = {ok: false, message: String(e)};
+           } finally {
+             this.validating = false;
+           }
+         },
+         async removeKey() {
+           const ti = this.selectedIntegration;
+           if (!ti) return;
+           if (!confirm('Remove this key?')) return;
+           await fetch('/api/services/keys', {
+             method: 'DELETE', credentials: 'include',
+             headers: {'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken()},
+             body: JSON.stringify({env_var: ti.env_var}),
+           });
+           await this.loadServices();
+           this.selectedIntegration = this.servicesTools.find(t => t.env_var === ti.env_var) || null;
+           this.editing = false;
+         },
+       }">
     <div class="flex items-center justify-between mb-1">
       <h2 class="text-sm font-semibold text-white">Tool Integrations</h2>
       <button @click="loadServices()" class="text-xs text-gray-500 hover:text-gray-300">Refresh</button>
     </div>
     <p class="text-xs text-gray-500 -mt-1 mb-3">
-      API keys for external tool providers. Keys are stored in the gateway and shared by all agents.
+      API keys for external tool providers, grouped by capability. Click any pill to configure.
       Environment variables (<code class="text-gray-400">.env</code>, shell) take precedence over keys saved here.
     </p>
 
     <!-- Groups rendered in a fixed order so layout is stable across
          reloads. Groups with no integrations for this install are
-         hidden. _INTEGRATION_GROUPS maps toolset → human label; the
-         list lives in the Alpine data block below. -->
+         hidden. _INTEGRATION_GROUPS lives in the Alpine data block. -->
     <template x-for="group in _INTEGRATION_GROUPS" :key="group.key">
-      <div x-show="servicesTools.some(t => t.toolset === group.key)">
-        <h3 class="text-[10px] font-semibold text-gray-600 uppercase tracking-[0.15em] mb-2" x-text="group.label"></h3>
-        <div class="grid grid-cols-1 md:grid-cols-2 gap-3 mb-5">
+      <div x-show="servicesTools.some(t => t.toolset === group.key)" class="mb-3">
+        <div class="text-[10px] font-semibold text-gray-600 uppercase tracking-[0.15em] mb-1.5" x-text="group.label"></div>
+        <div class="flex flex-wrap gap-1.5">
           <template x-for="ti in servicesTools.filter(t => t.toolset === group.key)" :key="ti.env_var">
-            <!-- Integration card — collapses the earlier 6-row flat
-                 layout into a compact vertical stack that fits a grid
-                 cell. Each card owns its own editing / validating /
-                 result state so opening one inline key editor
-                 doesn't close others. -->
-            <div class="p-3 rounded-xl border text-xs flex flex-col gap-1.5"
-              :class="ti.selfhosted ? 'border-emerald-900/60 bg-gray-900' : 'border-gray-800 bg-gray-900'"
-              :data-env-var="ti.env_var"
-              x-data="{editing: false, keyInput: '', validating: false, result: null}"
-              x-init="if (ti.selfhosted && !ti.has_key && ti.compose_default) keyInput = ti.compose_default">
-              <!-- Header row: status + label + self-hosted badge + action on the right -->
-              <div class="flex items-start gap-2">
-                <span class="w-2 h-2 rounded-full mt-1.5 flex-shrink-0"
-                  :class="ti.has_key ? 'bg-green-400' : 'bg-gray-600'"></span>
-                <div class="flex-1 min-w-0">
-                  <div class="flex items-center gap-1.5 flex-wrap">
-                    <span class="text-white font-medium" x-text="ti.label"></span>
-                    <template x-if="ti.selfhosted">
-                      <span class="text-[9px] uppercase tracking-wider px-1.5 py-0.5 rounded bg-emerald-950 text-emerald-400 border border-emerald-900">self-hosted</span>
-                    </template>
-                  </div>
-                  <p class="text-gray-500 mt-0.5 leading-snug" x-text="ti.description"></p>
-                </div>
-                <!-- Action — either "key set" with change/remove, or "Add key" -->
-                <template x-if="ti.has_key && !editing">
-                  <div class="flex items-center gap-2 flex-shrink-0">
-                    <span class="text-green-600 text-[10px] font-medium">key set</span>
-                    <span x-show="ti.source === 'env'" class="text-[9px] text-gray-600" title="Overridden by an environment variable / .env file">(env)</span>
-                    <button @click="editing = true" class="text-gray-500 hover:text-gray-300">change</button>
-                    <button x-show="ti.source === 'db'"
-                      @click="if(confirm('Remove this key?')) { fetch('/api/services/keys', {method:'DELETE', credentials:'include', headers:{'Content-Type':'application/json','X-CSRF-Token':getCsrfToken()}, body:JSON.stringify({env_var:ti.env_var})}).then(r=>r.json()).then(d=>{if(d.ok) loadServices()}) }"
-                      class="text-red-700 hover:text-red-400">remove</button>
-                  </div>
-                </template>
-                <template x-if="!ti.has_key && !editing">
-                  <button @click="editing = true" class="text-indigo-500 hover:text-indigo-300 flex-shrink-0">Add key</button>
-                </template>
-              </div>
-
-              <!-- Tools provided by this integration (when any) -->
-              <div x-show="ti.tools && ti.tools.length > 0" class="text-[10px] text-gray-600 pl-4">
-                Tools: <span x-text="ti.tools.join(', ')"></span>
-              </div>
-
-              <!-- Inline edit row — appears when Add key / change clicked -->
-              <div x-show="editing" x-cloak class="flex flex-col gap-1.5 pt-1">
-                <div class="flex items-center gap-2">
-                  <input :type="ti.value_kind === 'url' ? 'text' : 'password'" x-model="keyInput"
-                    :placeholder="ti.value_kind === 'url' ? (ti.compose_default || 'http://host:port') : ('Enter ' + ti.env_var)"
-                    class="flex-1 min-w-0 bg-gray-900 border border-gray-600 rounded px-2 py-1.5 text-xs text-white placeholder-gray-600 focus:outline-none focus:border-indigo-500 font-mono"
-                    @keydown.enter="if(keyInput.trim()) { validating=true; result=null; fetch('/api/services/validate',{method:'POST',credentials:'include',headers:{'Content-Type':'application/json','X-CSRF-Token':getCsrfToken()},body:JSON.stringify({env_var:ti.env_var,value:keyInput.trim()})}).then(r=>r.json()).then(d=>{result=d;validating=false;if(d.ok){fetch('/api/services/keys',{method:'POST',credentials:'include',headers:{'Content-Type':'application/json','X-CSRF-Token':getCsrfToken()},body:JSON.stringify({env_var:ti.env_var,value:keyInput.trim()})}).then(()=>{editing=false;keyInput='';loadServices()})}}).catch(e=>{result={ok:false,message:String(e)};validating=false}) }">
-                  <button @click="if(keyInput.trim()) { validating=true; result=null; fetch('/api/services/validate',{method:'POST',credentials:'include',headers:{'Content-Type':'application/json','X-CSRF-Token':getCsrfToken()},body:JSON.stringify({env_var:ti.env_var,value:keyInput.trim()})}).then(r=>r.json()).then(d=>{result=d;validating=false;if(d.ok){fetch('/api/services/keys',{method:'POST',credentials:'include',headers:{'Content-Type':'application/json','X-CSRF-Token':getCsrfToken()},body:JSON.stringify({env_var:ti.env_var,value:keyInput.trim()})}).then(()=>{editing=false;keyInput='';loadServices()})}}).catch(e=>{result={ok:false,message:String(e)};validating=false}) }"
-                    :disabled="validating || !keyInput.trim()"
-                    class="px-3 py-1.5 rounded border border-gray-600 text-xs font-medium transition-colors disabled:opacity-40 flex-shrink-0"
-                    :class="validating ? 'text-gray-400' : 'text-indigo-400 hover:border-indigo-500'">
-                    <span x-show="!validating">Save</span>
-                    <span x-show="validating" class="flex items-center gap-1">
-                      <div class="w-3 h-3 border border-gray-600 border-t-indigo-400 rounded-full animate-spin"></div>
-                      Testing
-                    </span>
-                  </button>
-                  <button @click="editing=false; keyInput=''; result=null" class="text-gray-600 hover:text-gray-400 text-xs flex-shrink-0">Cancel</button>
-                </div>
-                <!-- Validation result -->
-                <div x-show="result" x-cloak class="text-[10px]"
-                  :class="result?.ok ? 'text-green-400' : 'text-red-400'"
-                  x-text="result?.ok ? '\u2713 ' + result.message : '\u2717 ' + result.message"></div>
-              </div>
-
-              <!-- Help link — only when no key is set and no editor open -->
-              <a x-show="!ti.has_key && !editing"
-                :href="ti.help_url" target="_blank"
-                class="text-[10px] text-indigo-600 hover:text-indigo-400 pl-4">Get an API key &rarr;</a>
-            </div>
+            <!-- Integration pill. Colour-coded by state:
+                   • selected   → indigo border, white text
+                   • has key    → emerald border + soft fill
+                   • no key     → grey outline, slightly dimmed -->
+            <button @click="selectPill(ti)"
+              class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-xs transition-colors"
+              :class="selectedIntegration && selectedIntegration.env_var === ti.env_var
+                ? 'border-indigo-500 bg-indigo-950/50 text-white'
+                : ti.has_key
+                  ? 'border-emerald-900/60 bg-emerald-950/20 text-emerald-200 hover:border-emerald-700'
+                  : 'border-gray-800 bg-gray-900 text-gray-400 hover:border-gray-600 hover:text-gray-200'">
+              <span class="w-1.5 h-1.5 rounded-full"
+                :class="ti.has_key ? 'bg-emerald-400' : 'bg-gray-600'"></span>
+              <span x-text="ti.label"></span>
+              <template x-if="ti.selfhosted">
+                <span class="text-[9px] opacity-60">(self-hosted)</span>
+              </template>
+            </button>
           </template>
         </div>
       </div>
     </template>
 
     <!-- Catch-all: any integration whose toolset isn't in our known
-         groups (new providers added without updating _INTEGRATION_GROUPS)
-         still renders, under an "Other" heading, so nothing silently
-         disappears from the UI. -->
+         groups (new providers added without updating
+         _INTEGRATION_GROUPS) still renders as its own pill group so
+         nothing silently disappears from the UI. -->
     <template x-if="servicesTools.some(t => !_INTEGRATION_GROUPS.some(g => g.key === t.toolset))">
-      <div>
-        <h3 class="text-[10px] font-semibold text-gray-600 uppercase tracking-[0.15em] mb-2">Other</h3>
-        <div class="grid grid-cols-1 md:grid-cols-2 gap-3 mb-5">
+      <div class="mb-3">
+        <div class="text-[10px] font-semibold text-gray-600 uppercase tracking-[0.15em] mb-1.5">Other</div>
+        <div class="flex flex-wrap gap-1.5">
           <template x-for="ti in servicesTools.filter(t => !_INTEGRATION_GROUPS.some(g => g.key === t.toolset))" :key="ti.env_var">
-            <div class="p-3 rounded-xl border border-gray-800 bg-gray-900 text-xs">
-              <div class="text-white font-medium" x-text="ti.label"></div>
-              <div class="text-gray-500" x-text="ti.description"></div>
-              <div class="text-gray-600 text-[10px] mt-1">toolset=<span x-text="ti.toolset"></span> · env=<span class="font-mono" x-text="ti.env_var"></span></div>
-            </div>
+            <button @click="selectPill(ti)"
+              class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border border-gray-800 bg-gray-900 text-xs text-gray-400 hover:border-gray-600 hover:text-gray-200 transition-colors"
+              :class="selectedIntegration && selectedIntegration.env_var === ti.env_var ? 'border-indigo-500 bg-indigo-950/50 text-white' : ''">
+              <span class="w-1.5 h-1.5 rounded-full" :class="ti.has_key ? 'bg-emerald-400' : 'bg-gray-600'"></span>
+              <span x-text="ti.label"></span>
+            </button>
           </template>
         </div>
+      </div>
+    </template>
+
+    <!-- Detail panel — rendered when a pill is selected. Uses x-if
+         (not x-show) so x-text expressions on the inner template
+         don't evaluate with a null selectedIntegration. -->
+    <template x-if="selectedIntegration">
+      <div class="p-4 rounded-xl border border-indigo-700/60 bg-indigo-950/10 text-xs space-y-3 mt-2">
+        <div class="flex items-start justify-between gap-3">
+          <div class="flex-1 min-w-0">
+            <div class="flex items-center gap-2 flex-wrap">
+              <span class="text-white font-semibold text-sm" x-text="selectedIntegration.label"></span>
+              <template x-if="selectedIntegration.selfhosted">
+                <span class="text-[9px] uppercase tracking-wider px-1.5 py-0.5 rounded bg-emerald-950 text-emerald-400 border border-emerald-900">self-hosted</span>
+              </template>
+              <template x-if="selectedIntegration.has_key">
+                <span class="text-[10px] text-green-400 font-medium">● key set<span x-show="selectedIntegration.source === 'env'" class="text-gray-600 ml-1">(from env)</span></span>
+              </template>
+            </div>
+            <p class="text-gray-400 mt-1" x-text="selectedIntegration.description"></p>
+            <div x-show="selectedIntegration.tools && selectedIntegration.tools.length > 0" class="text-[10px] text-gray-600 mt-1">
+              Tools: <span x-text="(selectedIntegration.tools || []).join(', ')"></span>
+            </div>
+          </div>
+          <button @click="selectedIntegration = null; editing = false; result = null; keyInput = ''"
+            class="text-gray-600 hover:text-gray-300 text-base leading-none flex-shrink-0">&times;</button>
+        </div>
+
+        <!-- Action row — either show edit form, or show buttons -->
+        <template x-if="!editing">
+          <div class="flex items-center gap-3">
+            <template x-if="selectedIntegration.has_key">
+              <button @click="editing = true; result = null; keyInput = ''"
+                class="px-3 py-1 rounded border border-gray-600 text-[11px] text-gray-300 hover:border-gray-400">Change key</button>
+            </template>
+            <template x-if="!selectedIntegration.has_key">
+              <button @click="editing = true; result = null; keyInput = (selectedIntegration.selfhosted && selectedIntegration.compose_default) || ''"
+                class="px-3 py-1 rounded bg-indigo-600 hover:bg-indigo-500 text-white text-[11px] font-medium">Add key</button>
+            </template>
+            <template x-if="selectedIntegration.has_key && selectedIntegration.source === 'db'">
+              <button @click="removeKey()" class="text-red-500 hover:text-red-400 text-[11px]">Remove</button>
+            </template>
+            <a :href="selectedIntegration.help_url" target="_blank"
+              class="text-[10px] text-indigo-500 hover:text-indigo-400 ml-auto">Get an API key &rarr;</a>
+          </div>
+        </template>
+
+        <!-- Edit form — appears when "Add key" / "Change key" clicked -->
+        <template x-if="editing">
+          <div class="flex flex-col gap-2">
+            <div class="flex items-center gap-2">
+              <input :type="selectedIntegration.value_kind === 'url' ? 'text' : 'password'"
+                x-model="keyInput"
+                :placeholder="selectedIntegration.value_kind === 'url' ? (selectedIntegration.compose_default || 'http://host:port') : ('Enter ' + selectedIntegration.env_var)"
+                class="flex-1 min-w-0 bg-gray-900 border border-gray-600 rounded px-2 py-1.5 text-xs text-white placeholder-gray-600 focus:outline-none focus:border-indigo-500 font-mono"
+                @keydown.enter="saveKey()">
+              <button @click="saveKey()"
+                :disabled="validating || !keyInput.trim()"
+                class="px-3 py-1.5 rounded border border-gray-600 text-[11px] font-medium transition-colors disabled:opacity-40"
+                :class="validating ? 'text-gray-400' : 'text-indigo-400 hover:border-indigo-500'">
+                <span x-show="!validating">Save</span>
+                <span x-show="validating" class="flex items-center gap-1">
+                  <div class="w-3 h-3 border border-gray-600 border-t-indigo-400 rounded-full animate-spin"></div>
+                  Testing
+                </span>
+              </button>
+              <button @click="editing = false; keyInput = ''; result = null"
+                class="text-gray-500 hover:text-gray-300 text-[11px] flex-shrink-0">Cancel</button>
+            </div>
+            <!-- Validation result — x-if so x-text doesn't evaluate on null -->
+            <template x-if="result">
+              <div class="text-[10px]"
+                :class="result.ok ? 'text-green-400' : 'text-red-400'"
+                x-text="(result.ok ? '\u2713 ' : '\u2717 ') + (result.message || '')"></div>
+            </template>
+          </div>
+        </template>
       </div>
     </template>
   </div>
