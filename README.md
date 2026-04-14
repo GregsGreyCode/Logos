@@ -8,6 +8,9 @@
   <a href="https://github.com/GregsGreyCode/Logos/issues">Open an issue</a> if you hit a bug.
 </p>
 
+<!-- screenshot: hero — main dashboard with 2–3 agents and live sandboxes panel visible.
+     Shown below the tagline; this is the first thing most visitors see. -->
+
 > **Release history note:** v0.4 shipped 57 tagged patch releases (v0.4.26–v0.4.105) before graduating to v0.5. Pre-v0.5 tags have been removed from GitHub to keep the releases page clean; the commit history is fully intact.
 
 ---
@@ -51,6 +54,9 @@ Run it on your laptop, a homelab box, or a $5 VPS. During the first-run setup wi
                         │                                           │     OpenAI
                         └───────────────────────────────────────────┘     OpenRouter
 ```
+
+<!-- screenshot: architecture-in-ui — a dashboard view that makes the ASCII boxes
+     tangible: gateway process panel, worker registry table, a live sandbox. -->
 
 **Request lifecycle:**
 
@@ -104,7 +110,7 @@ Test agentic combinations, then modify, extend, and break the platform and its a
 - **Records everything** — every run captures its full STAMP: agent, model, soul, tools, policy, tool sequence, approval events, token counts, and outcome
 - **Enforces policy** — workspace isolation, command approval, filesystem scoping, OpenShell egress policy, built-in policy evals
 - **Reaches you anywhere** — Telegram and a built-in web dashboard, all from a single gateway process
-- **Web dashboard** — full chat UI at `http://localhost:8080`; real-time streaming, per-message stats, voice input, metrics, multiple named agents, world view with live agent sprites, live execution panel
+- **Web dashboard** — full chat UI at `http://localhost:8091`; real-time streaming, per-message stats, voice input, metrics, multiple named agents, world view with live agent sprites, live execution panel
 - **Persistent history** — searchable conversation history in SQLite with full-text search across all past conversations
 - **Voice input** — speak via Telegram or the dashboard; faster-whisper transcribes locally by default
 - **Image support** — send images directly; the vision pipeline enriches context before passing it to the model
@@ -194,7 +200,7 @@ In OpenShell mode, provider API keys are never exposed to the sandbox at all —
 
 ### Network exposure
 
-By default Logos binds to `0.0.0.0:8080`, making the dashboard reachable from any interface. In a homelab or VPS deployment:
+By default Logos binds to `0.0.0.0:8091`, making the dashboard reachable from any interface. In a homelab or VPS deployment:
 
 - Put it behind a reverse proxy (nginx, Caddy) with TLS.
 - Use firewall rules to restrict access to trusted IPs if you don't have a proxy.
@@ -229,8 +235,21 @@ Afterwards:
 
 ```bash
 logos gateway start
-# open http://<host>:8091/setup — the wizard provisions model routes and creates your first agent
+logos status          # confirm Process + Port 8091 are green
+
+# open http://<host>:8091/setup — the wizard provisions model routes
+# and creates your first agent. On first install the wizard's
+# "Complete" step runs for 1–3 minutes (cold sandbox-image pull +
+# k3s boot + agent spawn). Subsequent agents spin up much faster.
+
+# Optional — keep the gateway running after logout / reboot:
+logos gateway install                   # installs a systemd user unit
+sudo loginctl enable-linger $USER        # service survives logout
 ```
+
+<!-- screenshot: setup-wizard-landing — the /setup page as a new user first sees it -->
+<!-- screenshot: setup-benchmark — benchmark results page with several scored models -->
+<!-- screenshot: setup-complete — the final provisioning spinner (shows 1-3 minute copy) -->
 
 Env flags for the installer:
 
@@ -240,14 +259,14 @@ Env flags for the installer:
 | `BUMP_INOTIFY=1` | off | Raises `fs.inotify.max_user_instances` to 8192 (needed for ≥8 OpenShell routes) |
 | `SKIP_NPM=1` | off | Skips `npm install` (browser tools + WhatsApp bridge won't work) |
 | `START_AFTER=1` | off | Launches `logos gateway start` at the end |
-| `PYTHON_VERSION=3.11` | `3.12` | Pins the venv's Python version |
 | `LOGOS_REPO_DIR=/path` | `$HOME/logos` | Where to clone the repo |
+| `PYTHON_VERSION=<ver>` | `3.12` | Pins the venv's Python version (3.11 also supported) |
 
 The script is idempotent — safe to re-run as a repair tool.
 
 ### Linux / macOS — manual install
 
-If you don't want to run the one-shot script:
+> ⚠ **Not recommended for first-time users.** This path skips several things the one-shot installer does for you — the `~/.logos/` directory scaffold, the `logos` CLI symlink, `npm install` for browser tools + WhatsApp, and the OpenShell binary download. Use only if you have a specific reason (e.g. packaging Logos yourself, or you already have uv + an unusual Python pinned).
 
 ```bash
 git clone https://github.com/GregsGreyCode/Logos.git
@@ -256,7 +275,22 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 uv venv venv --python 3.12
 source venv/bin/activate
 uv pip install -e ".[all]"
-python -m gateway.run
+
+# The gateway expects ~/.logos/ to exist with a specific layout.
+mkdir -p ~/.logos/{agents,sessions,memories,skills,cron,logs,pairing,hooks,image_cache,audio_cache,whatsapp/session}
+cp docs/cli-config.yaml.example ~/.logos/config.yaml
+touch ~/.logos/.env
+
+# Put the `logos` command on PATH.
+mkdir -p ~/.local/bin
+ln -sf "$PWD/venv/bin/logos" ~/.local/bin/logos
+
+# Optional but needed for full functionality:
+#   npm ci                     # browser automation tools + WhatsApp bridge
+#   Install the OpenShell CLI  # https://github.com/NVIDIA/OpenShell/releases
+#                              # (or re-run fresh-install.sh with INSTALL_OPENSHELL=1)
+
+logos gateway start
 ```
 
 Then open <http://localhost:8091/setup> — the **setup wizard launches automatically on first run** (whenever `auth.db` doesn't have the `setup_completed` feature flag).
@@ -274,7 +308,7 @@ A native Windows installer (`.exe`) is published on the [GitHub Releases](https:
 
 **After installation:**
 1. Logos opens in the system tray — right-click the icon to open the dashboard
-2. Navigate to `http://localhost:8080` in your browser
+2. Navigate to `http://localhost:8091` in your browser
 3. The setup wizard launches automatically — it will prompt you for any API keys it needs
 4. Your configuration is saved to `%USERPROFILE%\.logos\config.yaml`
 
@@ -309,15 +343,21 @@ To re-run the setup wizard, an admin user can hit `POST /api/setup/reset` (or ju
 
 **0:00 — Install and start**
 
-Run the installer (or `python -m gateway.run` from source) and open `http://localhost:8080`. You should see the setup wizard.
+Run the installer (or `python -m gateway.run` from source) and open `http://localhost:8091`. You should see the setup wizard.
+
+<!-- screenshot: wizard-step1-providers — provider picker at the start of /setup -->
 
 **2:00 — Complete the setup wizard**
 
 Pick a model (cloud API key or local Ollama/LM Studio endpoint), let the benchmark run, choose a runtime mode (OpenShell if it's available — otherwise Docker), and leave policy at the default. You can change everything later.
 
+<!-- screenshot: wizard-benchmark-results — the benchmark scoreboard with tok/s + eval columns -->
+
 **4:00 — Send your first message**
 
 Open the dashboard's **Agents** tab, create an agent, then jump to **Chats** and send something simple. Watch the **live execution panel** — you'll see exactly which tools the agent calls, in order, and how long each step takes. This is the STAMP model in action.
+
+<!-- screenshot: first-chat — chat view with live execution panel showing tool calls streaming in -->
 
 > *Try: "What can you see about the machine you're running on?"*
 
@@ -387,6 +427,9 @@ score = 0.45 × (eval_tests_passed / 4)
 
 Eval quality dominates. Speed is capped at 40 tok/s — diminishing returns for interactive use above that.
 
+<!-- screenshot: benchmark-scoreboard — full benchmark UI with multiple models scored,
+     showing tok/s, ttft, ctx, and eval pass/fail columns. Illustrates this section. -->
+
 ---
 
 ## 🎛️ Customising your STAMP
@@ -401,6 +444,9 @@ Eval quality dominates. Speed is capped at 40 tok/s — diminishing returns for 
 
 **Policy** — set the action policy for an agent via the dashboard's Admin tab, or assign a policy ID per session at chat-start time.
 
+<!-- screenshot: stamp-editor — agent-edit view showing the five STAMP dimensions
+     (Soul picker, Tools toggles, Agent runtime, Model picker, Policy selector). -->
+
 ---
 
 ## 🔭 Observability
@@ -410,6 +456,10 @@ Every log line includes a `[session_id]` field set via a `contextvars.ContextVar
 `GET /healthz` returns per-platform success and error counters (`platform_stats`), useful for spotting silent adapter failures across Telegram, Discord, Slack, and other connected platforms.
 
 `GET /api/runs` and the **Settings → Runs** view in the dashboard expose the per-run STAMP records — model, soul, tool sequence, token counts, outcome.
+
+<!-- screenshot: observability-run-detail — a single STAMP run detail view with the
+     tool trace, token counts, outcome; pair with a sandboxes-table shot showing
+     the live Phase / Uptime columns. -->
 
 ---
 
@@ -518,6 +568,17 @@ docker buildx build \
 ```
 
 > **`--build-arg BUILD_SHA=...` is required** — omit it and the version footer displays `unknown` instead of the actual commit SHA.
+
+---
+
+## 🖼️ Gallery
+
+<!-- screenshot-grid: a 2×2 of views not already shown above:
+       • messaging-telegram — a Telegram DM conversation with an agent
+       • cost-tracker — per-model / per-session spend breakdown
+       • mcp-gateway — MCP server config + readiness checks
+       • pairing-users — admin view approving / revoking pairing codes
+     Render as four small thumbnails side-by-side. -->
 
 ---
 
