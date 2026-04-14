@@ -124,7 +124,7 @@ fi
 
 # ── 5. CLI symlinks ──
 hdr "CLI symlinks"
-for link in "$HOME/.local/bin/logos" "$HOME/.local/bin/hermes"; do
+for link in "$HOME/.local/bin/logos"; do
     if [[ -L "$link" || -e "$link" ]]; then
         rm -f "$link"
         ok "removed $link"

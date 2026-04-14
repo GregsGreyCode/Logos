@@ -182,7 +182,6 @@ ok "$HOME/.logos layout ready"
 hdr "CLI symlinks"
 mkdir -p "$HOME/.local/bin"
 ln -sf "$REPO_DIR/venv/bin/logos" "$HOME/.local/bin/logos"
-[[ -x "$REPO_DIR/venv/bin/hermes" ]] && ln -sf "$REPO_DIR/venv/bin/hermes" "$HOME/.local/bin/hermes" || true
 ok "symlinked logos → ~/.local/bin/logos"
 
 # If ~/.local/bin isn't on PATH, add it for this shell and suggest a durable fix
