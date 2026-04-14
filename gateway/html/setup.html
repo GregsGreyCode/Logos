@@ -1151,10 +1151,15 @@
                                  : 'border-transparent bg-gray-900',
                            compareTesting[mid] && !compareResults[mid] ? 'bench-testing' : ''
                          ]">
-                      <!-- Summary row — clickable once results are in; click selects and toggles detail -->
+                      <!-- Summary row — clickable once results are in OR once the
+                           benchmark finishes without results for this model (user
+                           stopped the run, or the model was queued but never got
+                           its turn). In the "stopped before run" case there's no
+                           score data, but the user can still pick at their own
+                           risk — marked below with a "not tested" badge. -->
                       <div class="flex items-center justify-between px-3 py-2.5"
-                        :class="compareResults[mid] && !compareResults[mid].error && !(compareResults[mid].max_context && compareResults[mid].max_context < 64000) ? 'cursor-pointer hover:bg-white/5' : ''"
-                        @click="if (compareResults[mid] && !compareResults[mid].error && !(compareResults[mid].max_context && compareResults[mid].max_context < 64000)) { pickServerModel(server.endpoint, mid); compareExpanded = compareExpanded === mid ? null : mid; }">
+                        :class="(compareResults[mid] && !compareResults[mid].error && !(compareResults[mid].max_context && compareResults[mid].max_context < 64000)) || (compareDone && !compareResults[mid]) ? 'cursor-pointer hover:bg-white/5' : ''"
+                        @click="if ((compareResults[mid] && !compareResults[mid].error && !(compareResults[mid].max_context && compareResults[mid].max_context < 64000)) || (compareDone && !compareResults[mid])) { pickServerModel(server.endpoint, mid); compareExpanded = compareExpanded === mid ? null : mid; }">
                         <div class="flex items-center gap-2 min-w-0 flex-wrap">
                           <!-- Default — shown when this model is the server's pick and has a valid result -->
                           <span x-show="serverModelForServer(server.endpoint) === mid && compareDone && compareResults[mid] && !compareResults[mid].error && !compareResults[mid].skipped"
@@ -1163,6 +1168,13 @@
                           <span x-show="compareResults[mid]?.max_context && compareResults[mid].max_context < 64000 && compareDone"
                             class="text-[9px] px-1.5 py-0.5 rounded-full bg-red-950 text-red-400 border border-red-900 font-semibold uppercase tracking-wider flex-shrink-0"
                             title="Context too small — at 4 parallel slots, each slot gets less than 16K. Use a model with ≥128K context or reduce 'Max Concurrent Predictions' in LM Studio.">Not eligible</span>
+                          <!-- Not tested — benchmark finished without a result for
+                               this model (user stopped before its turn). The card
+                               stays pickable but flagged so the user knows there's
+                               no score data to compare against. -->
+                          <span x-show="compareDone && !compareResults[mid]"
+                            class="text-[9px] px-1.5 py-0.5 rounded-full bg-amber-950 text-amber-400 border border-amber-900 font-semibold uppercase tracking-wider flex-shrink-0"
+                            title="Benchmark was stopped before this model ran. You can still pick it — but there are no scores to compare.">Not tested</span>
                           <span class="font-mono text-xs truncate transition-colors duration-300"
                             :class="compareTesting[mid] ? 'text-white' : 'text-gray-200'"
                             x-text="mid"></span>
@@ -2091,7 +2103,7 @@
             <span x-show="step7ProbeStatus === 'ok'" class="shrink-0 mt-0.5">&#10003;</span>
             <span x-show="step7ProbeStatus === 'warn' || step7ProbeStatus === 'error'" class="shrink-0 mt-0.5">&#9888;</span>
             <span x-text="step7ProbeStatus === 'checking' ? 'Checking model server\u2026'
-                        : step7ProbeStatus === 'ok' ? 'Model server and agent are reachable and ready.'
+                        : step7ProbeStatus === 'ok' ? 'Model server is reachable. The sandbox + agent will be provisioned when you finish the wizard.'
                         : step7ProbeMsg || 'Model server did not respond.'"></span>
           </div>
         </template>
@@ -2130,9 +2142,9 @@
           <div x-show="completeElapsedSec > 0" class="text-[11px] text-gray-600">
             <span x-text="completeElapsedSec + 's elapsed'"></span><span x-show="completeStage" class="text-gray-700"> &middot; </span><span x-show="completeStage" class="text-gray-500" x-text="completeStage"></span>
           </div>
-          <div x-show="!completeStageLabel">This usually takes <span class="text-gray-300 font-medium">10&ndash;30 seconds</span>.</div>
+          <div x-show="!completeStageLabel">This usually takes <span class="text-gray-300 font-medium">1&ndash;3 minutes</span>.</div>
           <div class="text-[11px] text-gray-600 mt-1">
-            Provisioning the model route, spawning the sandbox, and loading your first agent. First-ever install can take up to a minute while images download.
+            Provisioning the model route, spawning the OpenShell sandbox (k3s cluster + sandbox image), and loading your first agent. First-ever install can take several minutes while the sandbox image is pulled.
           </div>
         </div>
       </div>
