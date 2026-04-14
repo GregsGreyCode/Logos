@@ -179,19 +179,15 @@ if [[ "$INSTALL_OPENSHELL" == "1" ]]; then
         ok "openshell already installed: $(openshell --version 2>&1 | head -1)"
     else
         log "fetching openshell release …"
-        # Prefer the Python wheel — it installs straight into the venv
-        # alongside every other CLI, so ``openshell`` is already on PATH
-        # via the venv symlink. The standalone binary tarball is a
-        # fallback for unusual Python layouts.
+        # Prefer the static Rust binary (musl tarball) over the Python
+        # wheel. Reason: openshell 0.0.28+ ships wheels that require
+        # Python >=3.12, but we pin our venv to 3.11 to keep the agent
+        # runtime on a widely-available Python. The binary has no
+        # Python dependency so it works regardless of venv version.
         OSH_JSON="$(curl -fsSL https://api.github.com/repos/NVIDIA/OpenShell/releases/latest || true)"
-        OSH_WHL="$(printf '%s' "$OSH_JSON" | grep -oE 'https://[^"]+manylinux[^"]*x86_64\.whl' | head -1)"
         OSH_TGZ="$(printf '%s' "$OSH_JSON" | grep -oE 'https://[^"]+x86_64-unknown-linux-musl\.tar\.gz' | head -1)"
-        if [[ -n "$OSH_WHL" ]]; then
-            log "installing openshell wheel into venv ($(basename "$OSH_WHL"))"
-            uv pip install "$OSH_WHL" \
-                && ok "openshell installed into venv — on PATH via the logos symlink" \
-                || warn "wheel install failed — try the tarball manually"
-        elif [[ -n "$OSH_TGZ" ]]; then
+        OSH_WHL="$(printf '%s' "$OSH_JSON" | grep -oE 'https://[^"]+manylinux[^"]*x86_64\.whl' | head -1)"
+        if [[ -n "$OSH_TGZ" ]]; then
             log "installing openshell binary ($(basename "$OSH_TGZ"))"
             TMP=$(mktemp -d)
             curl -fsSL "$OSH_TGZ" | tar -xz -C "$TMP"
@@ -203,6 +199,13 @@ if [[ "$INSTALL_OPENSHELL" == "1" ]]; then
                 warn "openshell binary not found in archive — install manually"
             fi
             rm -rf "$TMP"
+        elif [[ -n "$OSH_WHL" ]]; then
+            log "binary tarball not found — trying wheel ($(basename "$OSH_WHL"))"
+            if uv pip install "$OSH_WHL" 2>&1 | tail -20; then
+                ok "openshell installed into venv"
+            else
+                warn "wheel install failed (often: wheel requires newer Python than our 3.11 venv). Install manually from https://github.com/NVIDIA/OpenShell/releases"
+            fi
         else
             warn "could not locate an openshell linux/x86_64 asset — install manually from https://github.com/NVIDIA/OpenShell/releases"
         fi
@@ -222,18 +225,24 @@ if [[ "$BUMP_INOTIFY" == "1" ]]; then
     if [[ "$CUR" -ge 8192 ]]; then
         ok "max_user_instances=$CUR (already sufficient)"
     else
-        log "raising max_user_instances from $CUR to 8192 (requires sudo) …"
-        if sudo -n true 2>/dev/null || [[ $EUID -eq 0 ]]; then
-            echo 'fs.inotify.max_user_instances=8192' | sudo tee -a /etc/sysctl.d/99-openshell.conf >/dev/null
-            echo 'fs.inotify.max_user_watches=1048576'  | sudo tee -a /etc/sysctl.d/99-openshell.conf >/dev/null
-            sudo sysctl --system >/dev/null
-            ok "inotify limits bumped (persisted in /etc/sysctl.d/99-openshell.conf)"
-        else
-            warn "sudo not available — run these manually:"
-            printf "  echo 'fs.inotify.max_user_instances=8192' | sudo tee -a /etc/sysctl.d/99-openshell.conf\n"
-            printf "  echo 'fs.inotify.max_user_watches=1048576'  | sudo tee -a /etc/sysctl.d/99-openshell.conf\n"
-            printf "  sudo sysctl --system\n"
+        log "raising max_user_instances from $CUR to 8192 (will prompt for sudo password) …"
+        # Just try sudo — it prompts if needed. Previous check used
+        # ``sudo -n`` which only succeeds with *passwordless* sudo and
+        # bailed on every normal desktop. A single ``sudo -v`` pre-
+        # authenticates so the three calls below don't re-prompt.
+        if [[ $EUID -ne 0 ]]; then
+            sudo -v || {
+                warn "sudo authentication failed — run these manually:"
+                printf "  echo 'fs.inotify.max_user_instances=8192' | sudo tee -a /etc/sysctl.d/99-openshell.conf\n"
+                printf "  echo 'fs.inotify.max_user_watches=1048576'  | sudo tee -a /etc/sysctl.d/99-openshell.conf\n"
+                printf "  sudo sysctl --system\n"
+                exit 0
+            }
         fi
+        echo 'fs.inotify.max_user_instances=8192' | sudo tee -a /etc/sysctl.d/99-openshell.conf >/dev/null
+        echo 'fs.inotify.max_user_watches=1048576'  | sudo tee -a /etc/sysctl.d/99-openshell.conf >/dev/null
+        sudo sysctl --system >/dev/null
+        ok "inotify limits bumped (persisted in /etc/sysctl.d/99-openshell.conf)"
     fi
 fi
 
