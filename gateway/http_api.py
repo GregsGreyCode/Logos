@@ -4167,6 +4167,20 @@ async def start_http_api(runner: Any, port: int = 8091) -> None:
     from gateway import seed as _seed
     _seed.run_seed()
 
+    # Zombie-dispatch sweep: any dispatch row still at status='running'
+    # when the process starts was orphaned by a crash or restart of the
+    # previous gateway instance — no worker is alive to complete it, so
+    # leaving it 'running' contaminates the Activity → Events view as
+    # though a task is in-flight. Mark all such rows as 'interrupted'
+    # with a short explanatory error. One-shot; subsequent dispatches
+    # follow the normal running → ok/error lifecycle.
+    try:
+        _swept = auth_db.sweep_orphaned_dispatches()
+        if _swept:
+            logger.info("startup: swept %d orphaned dispatch row(s) (gateway restarted mid-flight)", _swept)
+    except Exception as _sweep_err:
+        logger.warning("startup: dispatch sweep failed: %s", _sweep_err)
+
     @web.middleware
     async def cors_middleware(request: web.Request, handler):
         if request.method == "OPTIONS":
