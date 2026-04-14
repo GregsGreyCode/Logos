@@ -34,6 +34,11 @@ def find_gateway_pids() -> list:
         "logos gateway",
         "logos_cli.main gateway",
         "gateway/run.py",
+        # ``python -m gateway.run`` — how the CLI's detached launcher and
+        # any manual ``python -m …`` invocation shows up in ps. Without
+        # this pattern the stop/restart commands miss those processes
+        # and the "two gateways on 8091" zombie class comes back.
+        "gateway.run",
     ]
 
     try:
@@ -90,7 +95,7 @@ def kill_gateway_processes(force: bool = False) -> int:
     """Kill any running gateway processes. Returns count killed."""
     pids = find_gateway_pids()
     killed = 0
-    
+
     for pid in pids:
         try:
             if force and not is_windows():
@@ -103,8 +108,133 @@ def kill_gateway_processes(force: bool = False) -> int:
             pass
         except PermissionError:
             print(f"⚠ Permission denied to kill PID {pid}")
-    
+
     return killed
+
+
+def _pid_alive(pid: int) -> bool:
+    """Return True if the PID corresponds to a running process we can signal."""
+    try:
+        os.kill(pid, 0)
+        return True
+    except (ProcessLookupError, PermissionError):
+        return False
+
+
+def _port_listening(port: int) -> bool:
+    """Return True if anything is listening on TCP ``port`` on localhost."""
+    import socket as _socket
+    for family, addr in ((_socket.AF_INET, ("127.0.0.1", port)),
+                         (_socket.AF_INET6, ("::1", port))):
+        try:
+            with _socket.socket(family, _socket.SOCK_STREAM) as s:
+                s.settimeout(0.2)
+                if s.connect_ex(addr) == 0:
+                    return True
+        except Exception:
+            continue
+    return False
+
+
+def stop_and_wait_for_gateway(grace_seconds: float = 10.0,
+                               verify_port: int = 8091) -> int:
+    """Graceful stop: SIGTERM every gateway PID, wait for each to exit,
+    escalate to SIGKILL after ``grace_seconds``, then verify the port is
+    free. Returns the number of processes that were running at start.
+
+    This replaces the old ``kill_gateway_processes() + time.sleep(2)``
+    restart pattern which produced the "two gateways fighting for the
+    port" failure mode — if the old process took >2s to tear down (common
+    during graceful aiohttp shutdown), the new one bound concurrently and
+    every request ended up on whichever copy the kernel picked.
+    """
+    import time as _time
+    pids = find_gateway_pids()
+    if not pids:
+        return 0
+
+    # Step 1: SIGTERM all in parallel
+    for pid in pids:
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+        except PermissionError:
+            print(f"⚠ Permission denied to SIGTERM {pid}")
+
+    # Step 2: poll until every PID is gone or grace window elapses
+    deadline = _time.monotonic() + grace_seconds
+    pending = list(pids)
+    while pending and _time.monotonic() < deadline:
+        pending = [p for p in pending if _pid_alive(p)]
+        if pending:
+            _time.sleep(0.25)
+
+    # Step 3: SIGKILL stragglers
+    if pending:
+        print(f"⚠ {len(pending)} gateway process(es) didn't exit within "
+              f"{grace_seconds:.0f}s — escalating to SIGKILL: {pending}")
+        for pid in pending:
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+        # Brief wait for kernel reaping
+        _time.sleep(0.5)
+
+    # Step 4: confirm the port is actually free (catches the case where
+    # something other than our gateway is squatting 8091, or the SIGKILL
+    # hasn't finished tearing down the listener yet)
+    port_deadline = _time.monotonic() + 3
+    while _time.monotonic() < port_deadline:
+        if not _port_listening(verify_port):
+            break
+        _time.sleep(0.2)
+    else:
+        print(f"⚠ Port {verify_port} is still in use after stop — "
+              f"the new gateway will fail to bind.")
+
+    return len(pids)
+
+
+def run_gateway_detached(verbose: bool = False) -> int:
+    """Start the gateway as a background, detached process.
+
+    Returns the PID of the detached child. The child inherits
+    ``LOGOS_HOME`` + ``LOGOS_JWT_SECRET`` from the current env and
+    writes stdout/stderr to ``~/.logos/logs/gateway.bg.log``. stdin is
+    redirected from /dev/null and ``setsid`` creates a new session so
+    closing this terminal won't kill the gateway.
+    """
+    log_dir = get_logos_home() / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_file = log_dir / "gateway.bg.log"
+
+    cmd = [get_python_path(), "-m", "gateway.run"]
+    if verbose:
+        cmd.append("--verbose")
+
+    # Propagate a JWT secret from the persisted file if the current env
+    # doesn't have one, so tokens issued by the running gateway remain
+    # valid across restarts.
+    env = os.environ.copy()
+    if not env.get("LOGOS_JWT_SECRET"):
+        secret_path = get_logos_home() / ".jwt_secret"
+        if secret_path.exists():
+            env["LOGOS_JWT_SECRET"] = secret_path.read_text().strip()
+
+    with open(log_file, "ab") as _log:
+        proc = subprocess.Popen(
+            cmd,
+            cwd=str(PROJECT_ROOT),
+            stdin=subprocess.DEVNULL,
+            stdout=_log,
+            stderr=_log,
+            start_new_session=True,  # setsid — detaches from our TTY
+            env=env,
+        )
+
+    return proc.pid
 
 
 def is_linux() -> bool:
@@ -1113,24 +1243,60 @@ def gateway_command(args):
             sys.exit(1)
     
     elif subcmd == "start":
-        if is_linux():
-            systemd_start()
-        elif is_macos():
-            launchd_start()
-        else:
-            print("Not supported on this platform.")
-            sys.exit(1)
-    
-    elif subcmd == "stop":
-        # Try service first, then sweep any stray/manual gateway processes.
+        # Prefer systemd/launchd if installed, otherwise fall back to a
+        # detached background launch via run_gateway_detached. Previously
+        # the non-service start path errored out ("service not installed")
+        # and the user had to remember to run `nohup python -m gateway.run &`
+        # — doubling as the bug that left zombies around.
         service_available = False
-        
+        if is_linux() and get_systemd_unit_path().exists():
+            try:
+                systemd_start()
+                service_available = True
+            except subprocess.CalledProcessError:
+                pass
+        elif is_macos() and get_launchd_plist_path().exists():
+            try:
+                launchd_start()
+                service_available = True
+            except subprocess.CalledProcessError:
+                pass
+
+        if not service_available:
+            existing = find_gateway_pids()
+            if existing:
+                print(f"Gateway is already running (PIDs: {existing}). "
+                      f"Use `logos gateway restart` to cycle it.")
+                sys.exit(0)
+            print("Starting gateway in background…")
+            pid = run_gateway_detached(verbose=False)
+            print(f"✓ Spawned PID {pid}")
+            import time as _time
+            deadline = _time.monotonic() + 30
+            while _time.monotonic() < deadline:
+                if _port_listening(8091):
+                    print("✓ Gateway is listening on port 8091")
+                    break
+                if not _pid_alive(pid):
+                    log_path = get_logos_home() / "logs" / "gateway.bg.log"
+                    print(f"✗ Gateway PID {pid} exited before binding. "
+                          f"See {log_path} for details.")
+                    sys.exit(1)
+                _time.sleep(0.5)
+            else:
+                print(f"⚠ Gateway didn't bind to 8091 within 30s "
+                      f"(PID {pid} still running).")
+
+    elif subcmd == "stop":
+        # Service path first, then sweep any stray manual PIDs.
+        service_available = False
+
         if is_linux() and get_systemd_unit_path().exists():
             try:
                 systemd_stop()
                 service_available = True
             except subprocess.CalledProcessError:
-                pass  # Fall through to process kill
+                pass
         elif is_macos() and get_launchd_plist_path().exists():
             try:
                 launchd_stop()
@@ -1138,7 +1304,10 @@ def gateway_command(args):
             except subprocess.CalledProcessError:
                 pass
 
-        killed = kill_gateway_processes()
+        # Use graceful-stop with 10s grace so in-flight SSE chats get to
+        # drain before we escalate to SIGKILL. Same primitive restart uses.
+        killed = stop_and_wait_for_gateway(grace_seconds=10.0) if not service_available \
+            else kill_gateway_processes()
         if not service_available:
             if killed:
                 print(f"✓ Stopped {killed} gateway process(es)")
@@ -1150,7 +1319,7 @@ def gateway_command(args):
     elif subcmd == "restart":
         # Try service first, fall back to killing and restarting
         service_available = False
-        
+
         if is_linux() and get_systemd_unit_path().exists():
             try:
                 systemd_restart()
@@ -1163,19 +1332,46 @@ def gateway_command(args):
                 service_available = True
             except subprocess.CalledProcessError:
                 pass
-        
+
         if not service_available:
-            # Manual restart: kill existing processes
-            killed = kill_gateway_processes()
+            # Atomic manual restart: SIGTERM → waitpid → SIGKILL → verify
+            # port free → detached start. Replaces the old "SIGTERM +
+            # sleep 2 + run foreground" pattern that produced the
+            # "two gateways fighting on 8091" failure mode (stdout's
+            # asyncio default executor ended up shut down on one process
+            # while the other kept listening — every request 500'd with
+            # "Executor shutdown has been called"). The 10s grace is
+            # enough for aiohttp's graceful shutdown to complete
+            # (flushes in-flight SSE, closes worker subprocess streams,
+            # persists session state).
+            killed = stop_and_wait_for_gateway(grace_seconds=10.0)
             if killed:
                 print(f"✓ Stopped {killed} gateway process(es)")
-            
-            import time
-            time.sleep(2)
-            
-            # Start fresh
-            print("Starting gateway...")
-            run_gateway(verbose=False)
+
+            print("Starting gateway in background…")
+            pid = run_gateway_detached(verbose=False)
+            print(f"  spawned PID {pid}")
+
+            # Poll the port until the new gateway is accepting connections,
+            # up to ~30s. Keeps the CLI from returning before the gateway
+            # is actually serving requests — otherwise the next automated
+            # command (e.g. an admin handler rebind) would race the boot.
+            import time as _time
+            deadline = _time.monotonic() + 30
+            while _time.monotonic() < deadline:
+                if _port_listening(8091):
+                    print("✓ Gateway is listening on port 8091")
+                    break
+                if not _pid_alive(pid):
+                    log_path = get_logos_home() / "logs" / "gateway.bg.log"
+                    print(f"✗ Gateway PID {pid} exited before binding. "
+                          f"See {log_path} for details.")
+                    sys.exit(1)
+                _time.sleep(0.5)
+            else:
+                print(f"⚠ Gateway didn't bind to 8091 within 30s "
+                      f"(PID {pid} still running). Tail its log to diagnose:"
+                      f"\n  tail -f {get_logos_home() / 'logs' / 'gateway.bg.log'}")
     
     elif subcmd == "status":
         deep = getattr(args, 'deep', False)

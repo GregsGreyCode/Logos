@@ -3013,6 +3013,33 @@ async def handle_setup_complete(request: web.Request) -> web.Response:
                         if (_m.get("endpoint_url") or "").rstrip("/") == endpoint.rstrip("/"):
                             auth_db.update_machine(_m["id"], default_model=_single_rec)
                             break
+        else:
+            # Reconfigure path: machines already exist from a prior setup run.
+            # Refresh the default_model on the machine matching the chosen
+            # endpoint and repoint the default policy's catch-all rule so
+            # routing follows the user's new choice. Without this the
+            # machine's default_model and the policy rules stay pinned to
+            # the old model while config.yaml silently moves on.
+            _chosen_ep = endpoint.rstrip("/")
+            _target_machine = next(
+                (_m for _m in auth_db.list_machines()
+                 if (_m.get("endpoint_url") or "").rstrip("/") == _chosen_ep),
+                None,
+            )
+            if _target_machine and model:
+                auth_db.update_machine(_target_machine["id"], default_model=model)
+                _default_policy = next(
+                    (p for p in auth_db.list_policies() if p.get("name") == "default"),
+                    None,
+                )
+                if _default_policy:
+                    auth_db.set_policy_rules(_default_policy["id"], [
+                        {"model_class": "*", "machine_id": _target_machine["id"], "rank": 1},
+                    ])
+                logger.info(
+                    "setup: reconfigure — set machine %s default_model=%s and repointed default policy",
+                    _target_machine["id"], model,
+                )
 
         # Save model preference on the admin user.
         # During first-run setup the browser has no session yet, so we look up
@@ -3300,9 +3327,21 @@ async def handle_setup_complete(request: web.Request) -> web.Response:
         # the frontend greys out the chat UI until the worker registers.
         _setup_progress_update("create_agent", f"Creating your first agent ({agent_name})\u2026")
         try:
+            # Resolve the soul's default toolset list so the agent ships with
+            # the full toolbox (web, memory, browser, file, terminal, …)
+            # rather than an empty list. Falls back to [] if the soul can't
+            # be loaded — the UI can still let the user enable tools later.
+            import json as _json
+            try:
+                from gateway.souls import get_soul_registry, compute_effective_toolsets
+                _soul = get_soul_registry().get(agent_type or "general")
+                _default_toolsets = compute_effective_toolsets(_soul, {}) if _soul else []
+            except Exception as _soul_err:
+                logger.warning("setup: could not resolve default toolsets: %s", _soul_err)
+                _default_toolsets = []
+
             existing_default = auth_db.get_agent_by_name(agent_name)
             if not existing_default:
-                import json as _json
                 default_agent = auth_db.create_agent(
                     name=agent_name,
                     soul_slug=agent_type or "general",
@@ -3310,7 +3349,7 @@ async def handle_setup_complete(request: web.Request) -> web.Response:
                     description="Default agent created by setup wizard.",
                     creator_id=user_id,
                     shared=True,
-                    toolsets=_json.dumps([]),
+                    toolsets=_json.dumps(_default_toolsets),
                     char_index=agent_char_index,
                     model_route_id=(provisioned_route["id"] if provisioned_route else None),
                 )
@@ -3320,24 +3359,55 @@ async def handle_setup_complete(request: web.Request) -> web.Response:
                     provisioned_route["id"] if provisioned_route else "<none>",
                 )
             else:
-                # Re-running setup with the same agent name — re-bind it
-                # to the (possibly newly-provisioned) route so the next
-                # spawn lands in the right gateway. Without this re-bind,
-                # the existing agent would keep its original (possibly
-                # NULL) model_route_id and the executor would resolve to
-                # the default route, which may now be a different model
-                # than the user just chose.
+                # Re-running setup with the same agent name — update the
+                # agent's model/soul and re-bind it to the (possibly
+                # newly-provisioned) route so the next spawn lands in
+                # the right gateway with the user's latest choice.
+                # Without this update, the agent row's stale `model`
+                # column would win over the fresh choice in config.yaml
+                # (the executor passes `default_agent.get("model") or
+                # model` to InstanceConfig below), and the main page —
+                # which reads the agent record — would keep showing the
+                # old model.
+                _agent_updates: dict = {"model": model}
+                if agent_type:
+                    _agent_updates["soul_slug"] = agent_type
                 if provisioned_route:
-                    auth_db.update_agent(
-                        existing_default["id"],
-                        model_route_id=provisioned_route["id"],
-                    )
+                    _agent_updates["model_route_id"] = provisioned_route["id"]
+                # Backfill toolsets if the existing agent was created before
+                # the default-toolsets fix landed (toolsets=[] makes the
+                # agent "tool-less" — no browser/memory/terminal/etc.).
+                try:
+                    _existing_ts = _json.loads(existing_default.get("toolsets") or "[]")
+                except Exception:
+                    _existing_ts = []
+                if not _existing_ts and _default_toolsets:
+                    _agent_updates["toolsets"] = _json.dumps(_default_toolsets)
+                auth_db.update_agent(existing_default["id"], **_agent_updates)
                 default_agent = auth_db.get_agent(existing_default["id"]) or existing_default
                 logger.info(
                     "setup: default agent '%s' already exists — re-bound to route %s",
                     agent_name,
                     provisioned_route["id"] if provisioned_route else "<unchanged>",
                 )
+
+            # Apply B-tier capability defaults (always_on + default_on_create)
+            # so the agent actually has working permissions, not just a
+            # toolsets list. For a brand-new agent this is the first
+            # application; for a reconfigured agent this is idempotent —
+            # `apply()` is a no-op when toolsets+presets are already in
+            # place. Third-party capabilities (slack, telegram, …) stay
+            # off until the user wires credentials in STAMP → P.
+            try:
+                from gateway import capabilities as _caps
+                _applied = _caps.apply_initial_defaults(default_agent["id"])
+                logger.info(
+                    "setup: applied %d default capabilities to %s: %s",
+                    len(_applied), agent_name, _applied,
+                )
+                default_agent = auth_db.get_agent(default_agent["id"]) or default_agent
+            except Exception as _cap_err:
+                logger.warning("setup: apply_initial_defaults failed: %s", _cap_err)
 
             # Spawn the sandbox and BLOCK the /setup/complete response on
             # it. The previous version fired spawn in a background task

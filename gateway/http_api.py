@@ -3459,6 +3459,37 @@ async def _handle_chat(request: web.Request) -> web.StreamResponse:
     session_entry = runner.session_store.get_or_create_session(source)
     session_key = session_entry.session_key
     history = runner.session_store.load_transcript(session_entry.session_id)
+    # Client-provided history fallback — used when the session is brand new
+    # (load_transcript returns []) and the client has prior turns it wants
+    # the agent to remember. This is how the compare tab's "→ Continue"
+    # button preserves context when promoting a compare pane into a real
+    # chat: compare sessions are sent with ``transient: true`` so the
+    # session_store never wrote them, which meant the new chat's first
+    # message went to an amnesiac agent ("I don't have context about what
+    # you're referring to"). We only accept client history when the server
+    # has none — once the backend has a real transcript for this session,
+    # that's the source of truth and we ignore anything the client sends.
+    if not history:
+        _client_history = body.get("history") or []
+        if isinstance(_client_history, list) and _client_history:
+            # Defensive normalisation: keep only {role, content} with
+            # string content, drop anything else. Prevents a malformed
+            # payload from poisoning the prompt builder.
+            _clean = []
+            for m in _client_history:
+                if not isinstance(m, dict):
+                    continue
+                role = m.get("role")
+                content = m.get("content", "")
+                if role in ("user", "assistant", "system") and isinstance(content, str):
+                    _clean.append({"role": role, "content": content})
+            if _clean:
+                history = _clean
+                logger.info(
+                    "chat dispatch: seeded %d history message(s) from client "
+                    "for new session_id=%s",
+                    len(_clean), session_entry.session_id,
+                )
     context = build_session_context(source, runner.config, session_entry)
     # Compose the FULL system prompt: identity ("You are Jay.") + soul +
     # description + session context. The sandbox worker forwards this to
@@ -3550,25 +3581,42 @@ async def _handle_chat(request: web.Request) -> web.StreamResponse:
     try:
         # Worker + incarnation tag were resolved above, before the session
         # was built. Re-check liveness here in case the worker dropped off
-        # between session creation and dispatch.
+        # between session creation and dispatch. If the sandbox is gone
+        # (host reboot, admin deleted, gateway crash), kick off a reactive
+        # respawn via sandbox_heal.ensure_sandbox_alive — the UI streams
+        # the "provisioning…" events through send_event so the existing
+        # overlay renders live, and the spawn call blocks this dispatch
+        # for 10-30s before we proceed to the real task. This replaces
+        # the old bail-out that told users to "check Admin → Sandboxes."
         if not (worker_entry and worker_entry.healthy):
-            # Sandbox worker is not connected or not healthy. Do NOT silently
-            # fall back to an in-process runner — that would run the user's
-            # message through the gateway process itself, bypassing every
-            # network/filesystem policy the sandbox was meant to enforce.
-            await send_event({
-                "type": "error",
-                "error_type": "sandbox_unavailable",
-                "error_title": "Agent sandbox is not ready",
-                "error_action": (
-                    "Wait for the sandbox to finish provisioning, then try again. "
-                    "Check Admin → Sandboxes for worker status."
-                ),
-                "content": f"worker '{target_worker}' is not connected",
-                "error_class": "SandboxUnavailable",
-            })
-            result = {"final_response": ""}
-        else:
+            from gateway.sandbox_heal import ensure_sandbox_alive
+            _heal_ok, worker_entry = await ensure_sandbox_alive(
+                worker_registry=worker_registry,
+                executor=request.app.get("executor"),
+                worker_id=target_worker,
+                agent_record=_agent_config,
+                on_event=send_event,
+            )
+            if not _heal_ok:
+                # Heal failed — fall back to the old behaviour: clear error,
+                # don't silently run in-process (would bypass sandbox policy).
+                await send_event({
+                    "type": "error",
+                    "error_type": "sandbox_unavailable",
+                    "error_title": "Agent sandbox could not be started",
+                    "error_action": (
+                        "Auto-respawn failed. Check gateway logs for the "
+                        "spawn error, or visit Admin → Sandboxes to investigate."
+                    ),
+                    "content": f"worker '{target_worker}' auto-respawn failed",
+                    "error_class": "SandboxUnavailable",
+                })
+                result = {"final_response": ""}
+            else:
+                # Heal succeeded — fall through to the else branch below by
+                # re-evaluating the same condition on the freshly-healed entry.
+                pass
+        if (worker_entry and worker_entry.healthy):
             # Dispatch to the connected OpenShell sandbox worker.  The worker
             # manages its own inference config (via inference.local or its
             # uploaded instance-config.json) — we only send conversation
@@ -3849,6 +3897,23 @@ async def _handle_chat(request: web.Request) -> web.StreamResponse:
                 "The sandbox worker disconnected while processing your message. "
                 "Wait a few seconds for it to reconnect, then try sending again."
             )
+        elif (isinstance(exc, TimeoutError) or "did not return task_result within" in err_lower
+              or "timed out waiting for the next stdout line" in err_lower
+              or "timed out" in err_lower and "task" in err_lower):
+            # Dispatch-level timeout: worker_registry's hard cap elapsed
+            # before the sandbox emitted its task_result. Usually means
+            # the model is just slow (big prompt + reasoning), or the
+            # underlying provider is hanging. Distinct from "network" —
+            # the sandbox IS running, it just hasn't finished. Show a
+            # dedicated message so the user knows the difference.
+            error_type = "dispatch_timeout"
+            error_title = "Agent reply timed out"
+            error_action = (
+                "The model didn't finish within the gateway's dispatch window. "
+                "Try again — if it keeps timing out, the model may be stuck or "
+                "the prompt may be too long; consider switching models or "
+                "trimming the conversation."
+            )
         elif "credit balance" in err_lower or "insufficient" in err_lower and "credit" in err_lower or "billing" in err_lower or "402" in err_str:
             error_type = "billing"
             error_title = "Out of credits"
@@ -4031,6 +4096,55 @@ async def start_http_api(runner: Any, port: int = 8091) -> None:
             os.environ["LOGOS_JWT_SECRET"] = _new_secret
             os.environ["HERMES_JWT_SECRET"] = _new_secret
             logger.info("Generated new JWT secret at %s", _jwt_secret_path)
+
+    # ── Host preflight: fs.inotify.max_user_instances ──────────────
+    # Every OpenShell gateway runs a full k3s cluster inside its
+    # container, and k3s's kubelet/containerd/coredns/CNI chain
+    # consumes ~50-80 inotify instances per cluster. The kernel
+    # default (``512`` on most distros) caps you at ~7 gateways
+    # before provisioning starts failing with "k3s healthcheck loop"
+    # which surfaces in the UI as the generic "gateway info reported
+    # the underlying gateway is unreachable."
+    #
+    # We can't bump the sysctl from inside the gateway process (needs
+    # root), but a warning at boot + the fix inline saves an onboarding
+    # trap where someone adds a 4th-8th agent months later and has no
+    # idea why the route won't come up.
+    try:
+        _mui_path = pathlib.Path("/proc/sys/fs/inotify/max_user_instances")
+        _muw_path = pathlib.Path("/proc/sys/fs/inotify/max_user_watches")
+        _mui = int(_mui_path.read_text().strip()) if _mui_path.exists() else 0
+        _muw = int(_muw_path.read_text().strip()) if _muw_path.exists() else 0
+        # Rough rule of thumb: one openshell k3s cluster ~= 70 instances.
+        # Warn below 2048 (which gives ~28 clusters headroom, enough for
+        # any realistic homelab multi-agent setup).
+        _MUI_SAFE_THRESHOLD = 2048
+        _MUW_SAFE_THRESHOLD = 524288
+        _route_budget = max(1, _mui // 70) if _mui else 0
+        if _mui and _mui < _MUI_SAFE_THRESHOLD:
+            logger.warning(
+                "preflight: fs.inotify.max_user_instances=%d — you can reliably "
+                "run ~%d OpenShell routes on this host before provisioning "
+                "starts failing with 'gateway info reported unreachable'. "
+                "Raise with:  sudo sysctl -w fs.inotify.max_user_instances=8192  "
+                "(and persist: echo 'fs.inotify.max_user_instances=8192' | sudo "
+                "tee -a /etc/sysctl.d/99-openshell.conf && sudo sysctl --system)",
+                _mui, _route_budget,
+            )
+        elif _mui:
+            logger.info(
+                "preflight: fs.inotify.max_user_instances=%d (~%d routes headroom) ✓",
+                _mui, _route_budget,
+            )
+        if _muw and _muw < _MUW_SAFE_THRESHOLD:
+            logger.warning(
+                "preflight: fs.inotify.max_user_watches=%d — bump to 1048576 "
+                "to avoid containerd stalls on large sandbox filesystems.",
+                _muw,
+            )
+    except Exception as _pf_exc:
+        logger.debug("preflight inotify check skipped: %s", _pf_exc)
+
     # LOGOS_WIPE_ON_START: wipe setup state so /setup always runs fresh (setup-test deployments)
     _wipe_flag = (
         os.environ.get("LOGOS_WIPE_ON_START")
@@ -4470,6 +4584,13 @@ async def start_http_api(runner: Any, port: int = 8091) -> None:
     # effective policy to the running sandbox via `openshell policy set`.
     app.router.add_get("/admin/agents/{id}/tools",
                        _mm(admin_handlers.handle_agent_tools_get))
+    # Agent runtime logs — tails ~/.logos/agents/<name>/logs/agent.log.
+    # Read-only, JSONL-ish response; paginated by ``?tail=N`` (default 200,
+    # max 2000). Admin/operator only; regular users get 403. Used by the
+    # "📋 Logs" modal on the Agents tab + compare pane so a user can see
+    # what their agent was actually doing without shelling into the host.
+    app.router.add_get("/admin/agents/{id}/logs",
+                       _mm(admin_handlers.handle_agent_logs_get))
     app.router.add_post("/admin/agents/{id}/tools/toolsets/toggle",
                         _mm(require_csrf(admin_handlers.handle_agent_toolsets_toggle)))
     app.router.add_post("/admin/agents/{id}/tools/presets/toggle",

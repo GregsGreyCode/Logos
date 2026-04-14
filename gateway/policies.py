@@ -257,12 +257,29 @@ def get_tool_readiness(agent_id: str) -> List[Dict[str, Any]]:
         # Check env vars
         env_keys = info.get("env", [])
         env_alt = info.get("env_alt", [])
-        has_env = all(os.environ.get(k) for k in env_keys) or any(
-            os.environ.get(k) for k in env_alt
-        )
+        primary_ok = bool(env_keys) and all(os.environ.get(k) for k in env_keys)
+        alt_satisfied = next((k for k in env_alt if os.environ.get(k)), None)
+        has_env = primary_ok or alt_satisfied is not None
 
-        # Check presets
-        needed_presets = info.get("presets", [])
+        # Check presets — but pick the right preset set based on which
+        # env var is actually satisfied. The default ``presets`` field
+        # corresponds to the primary env, while ``presets_by_env`` maps
+        # each env-key to its matching preset (e.g. BROWSERLESS_URL →
+        # ``browserless`` instead of the default ``browserbase``).
+        # Without this dispatch, an agent on Browserless with
+        # ``BROWSERLESS_URL`` set + ``browserless`` preset applied still
+        # showed "needs P-browserbase" because the readiness check
+        # ignored ``presets_by_env`` entirely.
+        presets_by_env = info.get("presets_by_env", {}) or {}
+        if primary_ok:
+            # Primary env is satisfied — prefer presets_by_env mapping
+            # for the first satisfied primary key, fall back to default.
+            _key = next((k for k in env_keys if os.environ.get(k)), None)
+            needed_presets = presets_by_env.get(_key) or info.get("presets", [])
+        elif alt_satisfied:
+            needed_presets = presets_by_env.get(alt_satisfied) or info.get("presets", [])
+        else:
+            needed_presets = info.get("presets", [])
         has_presets = all(p in applied for p in needed_presets)
 
         if has_env and has_presets:
@@ -276,12 +293,20 @@ def get_tool_readiness(agent_id: str) -> List[Dict[str, Any]]:
             status = "needs_preset"
             reason = f"preset '{needed_presets[0]}' not applied"
 
+        # Surface which preset is actually missing (the first one in
+        # the env-resolved ``needed_presets`` list, not the default
+        # field) — keeps the UI's "needs P-X" hint truthful when the
+        # user has chosen a non-default backend like browserless.
+        missing_preset = next(
+            (p for p in needed_presets if p not in applied),
+            needed_presets[0] if needed_presets else None,
+        )
         results.append({
             "name": tool_name,
             "toolset": toolset,
             "status": status,
             "reason": reason,
-            "preset": needed_presets[0] if needed_presets else None,
+            "preset": missing_preset,
             "setup_url": info.get("setup_url", ""),
             "description": info.get("description", ""),
             "optional": info.get("optional", False),

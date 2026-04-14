@@ -20,16 +20,27 @@ toolsets:
   # toolsets=[] in the agent record). Refine later when we add per-task
   # tool-pruning intelligence.
   default_enabled:
-    - clarify
-    - session_search
-    - todo
-    - file
-    - world
     - browser
-    - image_gen
-    - tts
+    - clarify
+    - code_execution
+    - cronjob
+    - debugging
     - delegation
+    - file
+    - github
+    - homeassistant
+    - image_gen
+    - messaging
+    - moa
+    - safe
+    - search
+    - session_search
+    - skills
     - terminal
+    - todo
+    - tts
+    - vision
+    - world
   optional: []
   forbidden:
     - rl
