@@ -1151,15 +1151,18 @@
                                  : 'border-transparent bg-gray-900',
                            compareTesting[mid] && !compareResults[mid] ? 'bench-testing' : ''
                          ]">
-                      <!-- Summary row — clickable once results are in OR once the
-                           benchmark finishes without results for this model (user
-                           stopped the run, or the model was queued but never got
-                           its turn). In the "stopped before run" case there's no
-                           score data, but the user can still pick at their own
-                           risk — marked below with a "not tested" badge. -->
+                      <!-- Summary row — clickable whenever the model is in a
+                           usable state for selection:
+                             • has a valid result (no error, context ≥64K), OR
+                             • has no result yet and isn't currently being
+                               tested (queued during a running benchmark, or
+                               stopped before its turn, or never in target).
+                           Currently-testing models are intentionally NOT
+                           clickable — wait for the in-flight test to finish
+                           so the user doesn't clobber the result mid-write. -->
                       <div class="flex items-center justify-between px-3 py-2.5"
-                        :class="(compareResults[mid] && !compareResults[mid].error && !(compareResults[mid].max_context && compareResults[mid].max_context < 64000)) || (compareDone && !compareResults[mid]) ? 'cursor-pointer hover:bg-white/5' : ''"
-                        @click="if ((compareResults[mid] && !compareResults[mid].error && !(compareResults[mid].max_context && compareResults[mid].max_context < 64000)) || (compareDone && !compareResults[mid])) { pickServerModel(server.endpoint, mid); compareExpanded = compareExpanded === mid ? null : mid; }">
+                        :class="!compareTesting[mid] && !(compareResults[mid] && compareResults[mid].error) && !(compareResults[mid] && compareResults[mid].max_context && compareResults[mid].max_context < 64000) ? 'cursor-pointer hover:bg-white/5' : ''"
+                        @click="if (!compareTesting[mid] && !(compareResults[mid] && compareResults[mid].error) && !(compareResults[mid] && compareResults[mid].max_context && compareResults[mid].max_context < 64000)) { pickServerModel(server.endpoint, mid); compareExpanded = compareExpanded === mid ? null : mid; }">
                         <div class="flex items-center gap-2 min-w-0 flex-wrap">
                           <!-- Default — shown when this model is the server's pick and has a valid result -->
                           <span x-show="serverModelForServer(server.endpoint) === mid && compareDone && compareResults[mid] && !compareResults[mid].error && !compareResults[mid].skipped"
@@ -2959,9 +2962,17 @@ function setup() {
       if (this.step === 3) { await this._goStep(4, () => { this.probeSandbox(); }); return; }
       if (this.step === 4) {
         await this._goStep(5, () => {
-          // Auto-suggest General (Lite) if the selected model has limited context
+          // Soul defaults: auto-suggest General (Lite) if the selected
+          // model has limited context; otherwise default to General.
+          // Always force the pick so the user isn't dumped onto an
+          // empty soul step — the reset() path + some resume-from-
+          // localStorage paths can leave selectedSoul null even though
+          // the Alpine initial value is 'general'. Setting it here
+          // ensures the default is always shown as pre-selected.
           if (this.selectedModelMaxCtx && this.selectedModelMaxCtx < 64000) {
             this.selectedSoul = 'general-lite';
+          } else if (!this.selectedSoul) {
+            this.selectedSoul = 'general';
           }
         });
         return;
