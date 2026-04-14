@@ -4,10 +4,10 @@
  * Renders the tilemap, manages agent sprites, handles camera,
  * and drives pathfinding + zone behaviour.
  */
-import { TILE_SIZE, WORLD_COLS, WORLD_ROWS, WORLD_W, WORLD_H, TILE, TILE_COLORS, ZONES } from './WorldConfig.js?v=11';
-import { CHARACTER_TEXTURE } from './SpriteData.js?v=11';
-import { AgentSprite } from './AgentSprite.js?v=11';
-import { Pathfinder } from './Pathfinder.js?v=11';
+import { TILE_SIZE, WORLD_COLS, WORLD_ROWS, WORLD_W, WORLD_H, TILE, TILE_COLORS, ZONES } from './WorldConfig.js?v=12';
+import { CHARACTER_TEXTURE } from './SpriteData.js?v=12';
+import { AgentSprite } from './AgentSprite.js?v=12';
+import { Pathfinder } from './Pathfinder.js?v=12';
 
 const CELL = 32;
 const BLOCK_W = CELL * 3;

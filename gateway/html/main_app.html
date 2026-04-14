@@ -7143,7 +7143,7 @@ function app() {
       // (which import each other relatively) actually reach the browser
       // — ES module caches are sticky and a regular Ctrl-Shift-R doesn't
       // always invalidate them. Bump this when the world internals change.
-      const { WorldManager } = await import('/world/WorldManager.js?v=11');
+      const { WorldManager } = await import('/world/WorldManager.js?v=12');
       this.worldManager = new WorldManager(el, {
         onAgentClick: (name) => {
           // Every world entity is a named agent — look it up and open its
