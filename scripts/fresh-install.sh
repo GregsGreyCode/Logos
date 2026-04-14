@@ -130,6 +130,47 @@ ok "Python deps installed"
 # ── Node deps ──
 if [[ "$SKIP_NPM" != "1" ]]; then
     hdr "Node dependencies (browser + WhatsApp)"
+
+    # Auto-install Node.js if npm isn't on PATH and we can detect a
+    # supported package manager. The browser tool (agent-browser
+    # subprocess on CDP :9222) and the WhatsApp bridge both need
+    # Node ≥20 — without them, agents with the 'web' capability try
+    # to open a browser that isn't there and fail at runtime. Docker
+    # + OpenShell also get auto-installed above, so treating Node
+    # the same way keeps the install story consistent.
+    #
+    # Only apt-based distros get the auto path; on everything else we
+    # warn and let the user install manually. Set SKIP_NPM=1 to opt
+    # out entirely.
+    if ! command -v npm >/dev/null 2>&1; then
+        if command -v apt-get >/dev/null 2>&1; then
+            log "npm not found — installing Node.js 20 via nodesource (will prompt for sudo) …"
+            if [[ $EUID -ne 0 ]]; then
+                sudo -v || {
+                    warn "sudo authentication failed — install Node.js manually:"
+                    warn "  curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -"
+                    warn "  sudo apt install -y nodejs"
+                    warn "Then re-run this installer, or pass SKIP_NPM=1 to skip browser/WhatsApp."
+                }
+            fi
+            if command -v sudo >/dev/null 2>&1 || [[ $EUID -eq 0 ]]; then
+                if curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash - >/dev/null 2>&1; then
+                    sudo apt-get install -y nodejs >/dev/null 2>&1 || true
+                fi
+                if command -v npm >/dev/null 2>&1; then
+                    ok "Node.js $(node --version) installed"
+                else
+                    warn "Node install via nodesource did not produce a working npm — browser/WhatsApp will be DISABLED."
+                fi
+            fi
+        else
+            warn "npm not found and apt-get is not available on this host."
+            warn "Browser tools and WhatsApp bridge will be DISABLED."
+            warn "Install Node.js ≥20 with your distro's package manager, then re-run this installer."
+            warn "Set SKIP_NPM=1 to silence this warning if you don't need browser/WhatsApp."
+        fi
+    fi
+
     if command -v npm >/dev/null 2>&1; then
         log "installing node modules …"
         # Use ``npm ci`` when a lockfile is present — it's the reproducible
@@ -142,11 +183,6 @@ if [[ "$SKIP_NPM" != "1" ]]; then
             npm install --silent || warn "npm install emitted warnings — check output"
         fi
         ok "node deps installed"
-    else
-        warn "npm not found — browser tools and the WhatsApp bridge will be DISABLED."
-        warn "Install Node.js ≥20 first if you need them:"
-        warn "  curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash - && sudo apt install -y nodejs"
-        warn "Then re-run this installer. Set SKIP_NPM=1 to silence this warning if you don't need browser/WhatsApp."
     fi
 else
     warn "SKIP_NPM=1 — skipping npm install (browser + WhatsApp disabled)"
