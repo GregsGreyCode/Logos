@@ -67,6 +67,7 @@ forwarding to the gateway's unified.jsonl (MISSING.md M6 stretch).
 import json
 import logging
 import os
+import re
 import signal
 import sys
 import time
@@ -528,6 +529,7 @@ def _import_aiagent():
         _patch_strip_think_blocks(AIAgent)
         _patch_browser_untrusted_wrap()
         _patch_web_search_with_ddg()
+        _patch_qwen_openai_safety_net()
         return AIAgent
     except ImportError as exc:
         logger.error(
@@ -574,6 +576,205 @@ def _patch_strip_think_blocks(AIAgent) -> None:
     AIAgent._strip_think_blocks = _patched
     AIAgent._logos_strip_patched = True
     logger.info("patched AIAgent._strip_think_blocks (empty-after-strip recovery)")
+
+
+# ── Qwen tool-calling safety net ────────────────────────────────────────────
+# Every known bug in the Qwen 3.5 tool-calling plumbing (LM Studio / Ollama /
+# llama.cpp / vLLM) surfaces in one of three ways at the OpenAI-compatible
+# response layer:
+#   (1) XML tool calls (<function=foo><parameter=bar>…</parameter></function>)
+#       arrive as plain-text `content` instead of parsed `tool_calls`.
+#   (2) `<think>` tags leak into `content` (tags unclosed or entire reasoning
+#       channel mis-dispatched to content).
+#   (3) `finish_reason` is wrong: "stop" / "eos_token" / "" / null when real
+#       tool calls ARE present, confusing the agent loop into treating a
+#       partial response as final.
+#
+# We patch the OpenAI SDK's ChatCompletions.create at import time so every
+# response — streaming or not — passes through a normalizer that fixes all
+# three. Each recovery logs at INFO so the unified log tells us in real time
+# which bug hit which model.
+
+_QWEN_XML_TOOL_RE = re.compile(
+    r"<function=([\w.\-]+)>([\s\S]*?)</function>",
+    re.IGNORECASE,
+)
+_QWEN_XML_PARAM_RE = re.compile(
+    r"<parameter=([\w.\-]+)>([\s\S]*?)</parameter>",
+    re.IGNORECASE,
+)
+_QWEN_THINK_LEAK_RE = re.compile(
+    r"<think>[\s\S]*?</think>|^\s*</think>\s*",
+    re.IGNORECASE,
+)
+_BAD_STOP_REASONS = {"stop", "error", "eos_token", "", None}
+
+
+def _parse_qwen_xml_tools(text: str) -> list[dict]:
+    """Extract Qwen-style XML tool calls that leaked into text content.
+
+    Returns OpenAI-shaped tool_call dicts: [{id, type, function:{name, arguments}}].
+    Empty list if no XML tool syntax is present — this is the fast path.
+    """
+    if not text or "<function=" not in text:
+        return []
+    import uuid as _uuid
+    out: list[dict] = []
+    for m in _QWEN_XML_TOOL_RE.finditer(text):
+        name = m.group(1)
+        body = m.group(2)
+        args: dict = {}
+        for p in _QWEN_XML_PARAM_RE.finditer(body):
+            k = p.group(1).strip()
+            v = p.group(2).strip()
+            try:
+                v = json.loads(v)
+            except Exception:
+                pass
+            args[k] = v
+        out.append({
+            "id": f"call_{_uuid.uuid4().hex[:24]}",
+            "type": "function",
+            "function": {"name": name, "arguments": json.dumps(args)},
+        })
+    return out
+
+
+def _strip_qwen_think_leak(text: str) -> str:
+    """Remove fully-formed <think>…</think> blocks AND a leading orphan </think>.
+
+    Covers the llama.cpp bug where `enable_thinking:false` is ignored and the
+    Ollama regression where the closing tag arrives alone on the first chunk.
+    """
+    if not text:
+        return text
+    return _QWEN_THINK_LEAK_RE.sub("", text).strip()
+
+
+def _normalize_finish_reason(finish_reason, has_tool_calls: bool):
+    """Flip garbage finish_reasons to 'tool_calls' when tools are present."""
+    if has_tool_calls and finish_reason in _BAD_STOP_REASONS:
+        return "tool_calls"
+    return finish_reason
+
+
+def _apply_qwen_safety_to_choice(choice) -> tuple[bool, bool, bool]:
+    """Mutate one OpenAI response choice in place. Returns (fired_xml, fired_think, fired_finish)."""
+    msg = getattr(choice, "message", None) or (choice.get("message") if isinstance(choice, dict) else None)
+    if msg is None:
+        return (False, False, False)
+
+    def _get(obj, key, default=None):
+        if isinstance(obj, dict):
+            return obj.get(key, default)
+        return getattr(obj, key, default)
+
+    def _set(obj, key, value):
+        if isinstance(obj, dict):
+            obj[key] = value
+        else:
+            setattr(obj, key, value)
+
+    content = _get(msg, "content") or ""
+    existing_tools = _get(msg, "tool_calls") or []
+
+    fired_think = False
+    if content:
+        cleaned = _strip_qwen_think_leak(content)
+        if cleaned != content:
+            _set(msg, "content", cleaned)
+            content = cleaned
+            fired_think = True
+
+    fired_xml = False
+    if content and not existing_tools:
+        recovered = _parse_qwen_xml_tools(content)
+        if recovered:
+            _set(msg, "tool_calls", recovered)
+            # Blank the content — the XML IS the tool call, not a message.
+            stripped = _QWEN_XML_TOOL_RE.sub("", content).strip()
+            _set(msg, "content", stripped or None)
+            existing_tools = recovered
+            fired_xml = True
+
+    fired_finish = False
+    if existing_tools:
+        fr = _get(choice, "finish_reason")
+        new_fr = _normalize_finish_reason(fr, True)
+        if new_fr != fr:
+            _set(choice, "finish_reason", new_fr)
+            fired_finish = True
+
+    return (fired_xml, fired_think, fired_finish)
+
+
+def _patch_qwen_openai_safety_net() -> None:
+    """Wrap openai ChatCompletions.create so every response is sanitized.
+
+    Applies to both the sync and async clients. Streaming responses are
+    not touched — the agent's streaming aggregator handles delta merges;
+    the final assembled message is what reaches the safety net.
+
+    Idempotent: only patches once per process.
+    """
+    try:
+        from openai.resources.chat.completions import Completions, AsyncCompletions
+    except Exception as exc:
+        logger.warning("qwen safety net: openai SDK not importable (%s)", exc)
+        return
+
+    if getattr(Completions, "_logos_qwen_safety_patched", False):
+        return
+
+    _sync_create = Completions.create
+    _async_create = AsyncCompletions.create
+
+    def _apply_to_response(resp, model_hint: str):
+        try:
+            choices = getattr(resp, "choices", None)
+            if choices is None and isinstance(resp, dict):
+                choices = resp.get("choices")
+            if not choices:
+                return
+            any_xml = any_think = any_finish = False
+            for c in choices:
+                fx, ft, ff = _apply_qwen_safety_to_choice(c)
+                any_xml = any_xml or fx
+                any_think = any_think or ft
+                any_finish = any_finish or ff
+            if any_xml or any_think or any_finish:
+                parts = []
+                if any_xml:    parts.append("recovered XML tool_calls")
+                if any_think:  parts.append("stripped <think> leak")
+                if any_finish: parts.append("fixed finish_reason→tool_calls")
+                logger.info(
+                    "qwen safety net: %s on model=%s",
+                    "; ".join(parts), model_hint or "?",
+                )
+        except Exception as exc:
+            logger.warning("qwen safety net: post-process failed: %s", exc)
+
+    def _sync_wrapper(self, *args, **kwargs):
+        stream = kwargs.get("stream", False)
+        resp = _sync_create(self, *args, **kwargs)
+        if not stream:
+            _apply_to_response(resp, kwargs.get("model", ""))
+        return resp
+
+    async def _async_wrapper(self, *args, **kwargs):
+        stream = kwargs.get("stream", False)
+        resp = await _async_create(self, *args, **kwargs)
+        if not stream:
+            _apply_to_response(resp, kwargs.get("model", ""))
+        return resp
+
+    Completions.create = _sync_wrapper
+    AsyncCompletions.create = _async_wrapper
+    Completions._logos_qwen_safety_patched = True
+    logger.info(
+        "patched openai ChatCompletions.create with Qwen tool-call safety net "
+        "(XML recovery, think-leak strip, finish_reason fix)"
+    )
 
 
 # Sentinel + tag names used by the browser-output wrapper. The agent's
@@ -743,6 +944,50 @@ def _patch_browser_untrusted_wrap() -> None:
     logger.info("patched browser tools with untrusted-content delimiters: %s", ", ".join(_to_wrap))
 
 
+# ── Exit-reason diagnostic (always-on) ────────────────────────────────────
+# Tracks in-flight task state so an abnormal exit (BrokenPipe, signal,
+# unhandled exception in a spawned thread, etc.) prints a clear
+# WORKER_EXIT_WITHOUT_TASK_RESULT line to stderr with the last known
+# phase + tool. Without this the gateway saw "Worker exited (rc=0)
+# without emitting task_result. Check /tmp/worker.jsonl" and the root
+# cause was lost. On by default while the platform is still shaking out.
+import atexit as _atexit_mod
+import traceback as _tb_mod
+
+_TASK_STATE: Dict[str, Any] = {
+    "task_id": None,
+    "worker_id": None,
+    "phase": "boot",
+    "last_api_call": 0,
+    "last_tool": None,
+    "emitted_task_result": False,
+}
+
+
+def _atexit_exit_diag() -> None:
+    st = _TASK_STATE
+    if st.get("emitted_task_result"):
+        return
+    if st.get("task_id") is None:
+        # Never received a task → stdin-EOF or import failure. The
+        # existing log lines cover this case already.
+        return
+    import sys as _sys
+    try:
+        _sys.stderr.write(
+            "WORKER_EXIT_WITHOUT_TASK_RESULT: "
+            f"worker={st.get('worker_id')} task={st.get('task_id')} "
+            f"phase={st.get('phase')} last_api_call={st.get('last_api_call')} "
+            f"last_tool={st.get('last_tool')}\n"
+        )
+        _sys.stderr.flush()
+    except Exception:
+        pass
+
+
+_atexit_mod.register(_atexit_exit_diag)
+
+
 # ── Task handler ──────────────────────────────────────────────────────────
 
 def _handle_task(task: Dict[str, Any], config: Dict[str, Any]) -> None:
@@ -751,6 +996,22 @@ def _handle_task(task: Dict[str, Any], config: Dict[str, Any]) -> None:
     message = task.get("message", "")
     history = task.get("history", [])
     context_prompt = task.get("context_prompt", "")
+
+    # Mark this task as in-flight so the atexit handler knows whether we
+    # emitted a terminal task_result or died without one. The gateway
+    # interprets "worker exited (rc=0) without task_result" as a hard
+    # failure with no cause info — updating _TASK_STATE lets us dump the
+    # last-known phase + tool to stderr on abnormal exit so we can tell
+    # whether the loop hit max iterations, crashed in a tool, or was
+    # killed mid-stream.
+    _TASK_STATE.update({
+        "task_id": task_id,
+        "worker_id": config.get("worker_id", "?"),
+        "phase": "starting",
+        "last_api_call": 0,
+        "last_tool": None,
+        "emitted_task_result": False,
+    })
 
     logger.info("Task %s: message=%r", task_id, message[:80])
 
@@ -800,6 +1061,9 @@ def _handle_task(task: Dict[str, Any], config: Dict[str, Any]) -> None:
         """
         _tool_call_counter[0] += 1
         call_id = f"{task_id}_{_tool_call_counter[0]}"
+        _TASK_STATE["phase"] = "tool_running"
+        _TASK_STATE["last_tool"] = tool_name or "?"
+        logger.info("tool_start: task=%s call=%s tool=%s", task_id, call_id, tool_name)
         try:
             emit({"type": "tool_start", "task_id": task_id, "call_id": call_id,
                   "tool": tool_name or "", "preview": str(preview or "")[:200]})
@@ -813,6 +1077,12 @@ def _handle_task(task: Dict[str, Any], config: Dict[str, Any]) -> None:
         Signature from AIAgent: callback(tool_name, call_id, success, duration_ms,
         error=<preview on failure>, result=<preview on success>).
         """
+        _TASK_STATE["phase"] = "llm_thinking"
+        logger.info(
+            "tool_end: task=%s call=%s tool=%s success=%s duration_ms=%s%s",
+            task_id, call_id, tool_name, success, duration_ms,
+            f" error={str(error)[:120]!r}" if not success and error else "",
+        )
         try:
             emit({"type": "tool_end", "task_id": task_id, "call_id": call_id or "",
                   "tool": tool_name or "", "success": bool(success),
@@ -942,16 +1212,19 @@ def _handle_task(task: Dict[str, Any], config: Dict[str, Any]) -> None:
             context_prompt = _injection
 
     try:
+        _TASK_STATE["phase"] = "run_conversation"
         result = agent.run_conversation(
             user_message=message,
             system_message=context_prompt or None,
             conversation_history=conversation_history if conversation_history else None,
             task_id=task_id,
         )
+        _TASK_STATE["phase"] = "finalising"
 
         final_response = result.get("final_response", "") or ""
         completed = result.get("completed", True)
         api_calls = result.get("api_calls", 0)
+        _TASK_STATE["last_api_call"] = int(api_calls or 0)
 
         logger.info(
             "Task %s finished: completed=%s api_calls=%d response_len=%d",
@@ -980,11 +1253,17 @@ def _handle_task(task: Dict[str, Any], config: Dict[str, Any]) -> None:
             "final_response": final_response,
             "usage": _usage,
         })
+        _TASK_STATE["emitted_task_result"] = True
 
     except BrokenPipeError:
+        # Gateway closed the stream while we were producing output. The
+        # atexit diag line will print the last known phase/tool so the
+        # gateway log shows what the worker was doing when it died.
+        _TASK_STATE["phase"] = "broken_pipe"
         raise
     except Exception as exc:
         logger.error("Task %s failed: %s", task_id, exc, exc_info=True)
+        _TASK_STATE["phase"] = f"exception:{type(exc).__name__}"
         try:
             emit({
                 "type": "task_result",
@@ -992,6 +1271,7 @@ def _handle_task(task: Dict[str, Any], config: Dict[str, Any]) -> None:
                 "status": "error",
                 "error": str(exc),
             })
+            _TASK_STATE["emitted_task_result"] = True
         except BrokenPipeError:
             raise
 

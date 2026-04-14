@@ -1977,3 +1977,102 @@ async def handle_spawn_stats(request: web.Request) -> web.Response:
     """
     from gateway import spawn_metrics
     return web.json_response(spawn_metrics.stats())
+
+
+async def handle_agent_logs_get(request: web.Request) -> web.Response:
+    """GET /admin/agents/{id}/logs?tail=N — return the last N lines of
+    ``~/.logos/agents/<name>/logs/agent.log``.
+
+    Query params:
+      tail   Number of trailing lines (default 200, max 2000).
+      errors If set ("1", "true"), return errors.log instead of agent.log.
+
+    Returns JSON::
+
+        {
+          "agent": "Adam",
+          "path": "/home/.../Adam/logs/agent.log",
+          "lines": ["2026-04-14 11:24:52 INFO ...", ...],
+          "truncated": false,     // true when file had more lines than tail
+          "size_bytes": 12345,
+          "mtime_iso": "2026-04-14T11:24:52"
+        }
+
+    403 when the caller isn't admin/operator. 404 when the agent exists
+    but has no log file yet (new agent, no dispatches). 204 (empty body)
+    when the log rotated/is empty.
+    """
+    # RBAC: only admins + operators can read raw logs. Auth middleware
+    # stores decoded claims under ``request["current_user"]`` — mirror
+    # the other admin handlers in this module rather than inventing a
+    # new auth shape.
+    user = request.get("current_user") or {}
+    role = user.get("role", "")
+    if role not in ("admin", "operator"):
+        return web.json_response({"error": "forbidden", "role_seen": role}, status=403)
+
+    aid = request.match_info["id"]
+    agent = auth_db.get_agent(aid)
+    if not agent:
+        return web.json_response({"error": "agent_not_found"}, status=404)
+    name = agent.get("name") or ""
+    if not name:
+        return web.json_response({"error": "agent_has_no_name"}, status=400)
+
+    try:
+        tail = int(request.query.get("tail", "200"))
+    except (TypeError, ValueError):
+        tail = 200
+    tail = max(1, min(tail, 2000))
+
+    errors_only = request.query.get("errors", "").lower() in ("1", "true", "yes")
+    log_name = "errors.log" if errors_only else "agent.log"
+
+    import pathlib as _pathlib
+    import datetime as _dt
+    logos_home = _pathlib.Path(
+        os.environ.get("LOGOS_HOME") or os.environ.get("HERMES_HOME")
+        or str(_pathlib.Path.home() / ".logos")
+    )
+    log_path = logos_home / "agents" / name / "logs" / log_name
+    if not log_path.exists():
+        return web.json_response({
+            "agent": name,
+            "path": str(log_path),
+            "lines": [],
+            "truncated": False,
+            "size_bytes": 0,
+            "mtime_iso": None,
+            "exists": False,
+        })
+
+    try:
+        stat = log_path.stat()
+        # Read only the tail of the file to keep memory bounded — even
+        # for multi-GB logs we pull the last ~256KB and slice to the
+        # requested line count, never the whole file.
+        READ_MAX = 512 * 1024
+        size = stat.st_size
+        with log_path.open("rb") as f:
+            if size > READ_MAX:
+                f.seek(size - READ_MAX)
+                # Skip partial first line
+                f.readline()
+            raw = f.read()
+        text = raw.decode("utf-8", errors="replace")
+        all_lines = text.splitlines()
+        tail_lines = all_lines[-tail:] if len(all_lines) > tail else all_lines
+        truncated = (len(all_lines) > tail) or (size > READ_MAX)
+        return web.json_response({
+            "agent": name,
+            "path": str(log_path),
+            "lines": tail_lines,
+            "truncated": truncated,
+            "size_bytes": size,
+            "mtime_iso": _dt.datetime.fromtimestamp(stat.st_mtime).isoformat(timespec="seconds"),
+            "exists": True,
+            "log_name": log_name,
+        })
+    except Exception as exc:
+        logger.exception("handle_agent_logs_get failed for %s", name)
+        return web.json_response({"error": "read_failed", "detail": str(exc)[:200]}, status=500)
