@@ -221,10 +221,14 @@ sudo usermod -aG docker $USER
 
 # 2. Log out and log back in so the new 'docker' group membership applies.
 
-# 3. Run the installer (prompts once for sudo to bump inotify limits
-#    and, if Node.js ≥20 isn't already installed, to auto-install it
-#    via nodesource — needed for browser automation + WhatsApp. Pass
-#    SKIP_NPM=1 if you'd rather skip Node entirely.)
+# 3. Run the installer. Takes ~10-15 minutes on a fresh box — most of
+#    that is the one-time `docker build` of the hermes-sandbox image
+#    (~5-10 min, cached after). Prompts once for sudo to bump inotify
+#    limits and, if Node.js ≥20 isn't already installed, to auto-
+#    install it via nodesource (needed for browser automation +
+#    WhatsApp). Pass SKIP_NPM=1 to skip Node entirely;
+#    LOGOS_SKIP_SANDBOX_BUILD=1 to skip the image build (agents
+#    won't be able to spawn sandboxes until you build it manually).
 curl -fsSL https://raw.githubusercontent.com/GregsGreyCode/Logos/main/scripts/fresh-install.sh \
   | INSTALL_OPENSHELL=1 BUMP_INOTIFY=1 bash
 ```
@@ -253,9 +257,11 @@ Env flags for the installer:
 
 | Flag | Default | What it does |
 | --- | --- | --- |
-| `INSTALL_OPENSHELL=1` | off | Fetches the OpenShell static binary into `~/.local/bin/openshell` |
+| `INSTALL_OPENSHELL=1` | off | Fetches the OpenShell static binary into `~/.local/bin/openshell` and builds the `hermes-sandbox` Docker image (first build: ~5-10 min) |
 | `BUMP_INOTIFY=1` | off | Raises `fs.inotify.max_user_instances` to 8192 (needed for ≥8 OpenShell routes) |
 | `SKIP_NPM=1` | off | Skips `npm install` (browser tools + WhatsApp bridge won't work) |
+| `LOGOS_SKIP_SANDBOX_BUILD=1` | off | Skips the local `docker build` of the sandbox image. Use when pulling from a pre-built registry |
+| `LOGOS_FORCE_SANDBOX_BUILD=1` | off | Forces a rebuild of the sandbox image even when it already exists locally (use after editing `docker/sandbox_worker.py`) |
 | `START_AFTER=1` | off | Launches `logos gateway start` at the end |
 | `LOGOS_REPO_DIR=/path` | `$HOME/logos` | Where to clone the repo |
 | `PYTHON_VERSION=<ver>` | `3.12` | Pins the venv's Python version (3.11 also supported) |
