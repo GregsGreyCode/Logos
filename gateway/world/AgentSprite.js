@@ -4,7 +4,7 @@
  * Owns: animated sprite, name label, soul label, status dot, state bubble.
  * Handles: pathfinding movement, idle wandering, zone assignment, interactions.
  */
-import { TILE_SIZE, WORLD_COLS, WORLD_ROWS, ZONES } from './WorldConfig.js?v=11';
+import { TILE_SIZE, WORLD_COLS, WORLD_ROWS, ZONES } from './WorldConfig.js?v=12';
 
 const WALK_SPEED = 60;  // pixels per second
 const IDLE_WANDER_MIN = 3000; // ms — how long to stand still between walk phases
@@ -59,8 +59,17 @@ export class AgentSprite {
     this.pathIndex = 0;
     this.targetWorldX = 0;
     this.targetWorldY = 0;
-    this.idleTimer = 0;
+    // First movement should happen almost immediately after spawn so a
+    // page refresh doesn't leave the world frozen for 3-6 seconds. We
+    // seed ``idleTimer`` close to the random threshold — within
+    // ~0-500ms of the target — so the next ``update()`` tick picks a
+    // wander destination. Only *subsequent* idles fall back to the
+    // full 3-6s range so between-walk pauses still feel lazy rather
+    // than robotic. Without this seeding the world looks broken on
+    // refresh: sprites are visible but stand motionless until the
+    // first random timer elapses.
     this.nextIdleTime = this._randomIdleDelay();
+    this.idleTimer = Math.max(0, this.nextIdleTime - 500 * Math.random());
     this.walkPhaseStart = 0;  // ms (Date.now) when the current walk phase began
     // Seed lastStatus to the current status so the first syncState() call
     // does NOT trip the "status changed" branch and snap the freshly-spawned

@@ -7,8 +7,8 @@
  *   .syncAgents(instances)
  *   .destroy()
  */
-import { WORLD_W, WORLD_H } from './WorldConfig.js?v=11';
-import { WorldScene } from './WorldScene.js?v=11';
+import { WORLD_W, WORLD_H } from './WorldConfig.js?v=12';
+import { WorldScene } from './WorldScene.js?v=12';
 
 export class WorldManager {
   constructor(containerEl, options = {}) {
