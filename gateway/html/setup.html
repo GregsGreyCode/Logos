@@ -1152,17 +1152,20 @@
                            compareTesting[mid] && !compareResults[mid] ? 'bench-testing' : ''
                          ]">
                       <!-- Summary row — clickable whenever the model is in a
-                           usable state for selection:
-                             • has a valid result (no error, context ≥64K), OR
-                             • has no result yet and isn't currently being
-                               tested (queued during a running benchmark, or
-                               stopped before its turn, or never in target).
-                           Currently-testing models are intentionally NOT
-                           clickable — wait for the in-flight test to finish
-                           so the user doesn't clobber the result mid-write. -->
+                           usable state for selection. Three blocks:
+                             • currently being tested → wait for the in-flight
+                               test to finish so we don't clobber the write
+                             • real error (error is set but NOT the "Stopped"
+                               sentinel stopServerBenchmark injects) → the
+                               backend actually errored trying to test it
+                             • context <64K on a completed result → won't work
+                               under the default 4-parallel-slot split
+                           Anything else — no result at all, or a result with
+                           {skipped: true} from hitting Stop — is pickable
+                           with the "Not tested" badge. -->
                       <div class="flex items-center justify-between px-3 py-2.5"
-                        :class="!compareTesting[mid] && !(compareResults[mid] && compareResults[mid].error) && !(compareResults[mid] && compareResults[mid].max_context && compareResults[mid].max_context < 64000) ? 'cursor-pointer hover:bg-white/5' : ''"
-                        @click="if (!compareTesting[mid] && !(compareResults[mid] && compareResults[mid].error) && !(compareResults[mid] && compareResults[mid].max_context && compareResults[mid].max_context < 64000)) { pickServerModel(server.endpoint, mid); compareExpanded = compareExpanded === mid ? null : mid; }">
+                        :class="!compareTesting[mid] && !(compareResults[mid] && compareResults[mid].error && !compareResults[mid].skipped) && !(compareResults[mid] && compareResults[mid].max_context && compareResults[mid].max_context < 64000) ? 'cursor-pointer hover:bg-white/5' : ''"
+                        @click="if (!compareTesting[mid] && !(compareResults[mid] && compareResults[mid].error && !compareResults[mid].skipped) && !(compareResults[mid] && compareResults[mid].max_context && compareResults[mid].max_context < 64000)) { pickServerModel(server.endpoint, mid); compareExpanded = compareExpanded === mid ? null : mid; }">
                         <div class="flex items-center gap-2 min-w-0 flex-wrap">
                           <!-- Default — shown when this model is the server's pick and has a valid result -->
                           <span x-show="serverModelForServer(server.endpoint) === mid && compareDone && compareResults[mid] && !compareResults[mid].error && !compareResults[mid].skipped"
@@ -1171,11 +1174,17 @@
                           <span x-show="compareResults[mid]?.max_context && compareResults[mid].max_context < 64000 && compareDone"
                             class="text-[9px] px-1.5 py-0.5 rounded-full bg-red-950 text-red-400 border border-red-900 font-semibold uppercase tracking-wider flex-shrink-0"
                             title="Context too small — at 4 parallel slots, each slot gets less than 16K. Use a model with ≥128K context or reduce 'Max Concurrent Predictions' in LM Studio.">Not eligible</span>
-                          <!-- Not tested — benchmark finished without a result for
-                               this model (user stopped before its turn). The card
-                               stays pickable but flagged so the user knows there's
-                               no score data to compare against. -->
-                          <span x-show="compareDone && !compareResults[mid]"
+                          <!-- Not tested — benchmark finished without a usable
+                               result for this model. Covers two cases:
+                                 (a) no compareResults entry at all (stopped
+                                     before its turn, or never in targets)
+                                 (b) result exists but was marked
+                                     {skipped: true} by stopServerBenchmark
+                               The card stays pickable but flagged so the user
+                               knows there's no score data. Real errors (where
+                               .error is set but .skipped is not) are handled
+                               by a different branch — they're not pickable. -->
+                          <span x-show="compareDone && (!compareResults[mid] || compareResults[mid].skipped)"
                             class="text-[9px] px-1.5 py-0.5 rounded-full bg-amber-950 text-amber-400 border border-amber-900 font-semibold uppercase tracking-wider flex-shrink-0"
                             title="Benchmark was stopped before this model ran. You can still pick it — but there are no scores to compare.">Not tested</span>
                           <span class="font-mono text-xs truncate transition-colors duration-300"
