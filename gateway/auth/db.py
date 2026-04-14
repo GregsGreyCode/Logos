@@ -2796,6 +2796,40 @@ def complete_dispatch(
         )
 
 
+def sweep_orphaned_dispatches() -> int:
+    """Mark any ``status='running'`` dispatches as ``status='interrupted'``.
+
+    Called exactly once on gateway startup. The dispatch lifecycle is:
+      1. ``create_dispatch()`` inserts with status='running'
+      2. Worker runs the task
+      3. ``complete_dispatch()`` updates to 'ok' / 'error'
+
+    If the gateway process dies between (1) and (3) — SIGKILL, restart,
+    crash — the row is stuck at 'running' forever. Events → Activity
+    shows them as active tasks even though nothing is executing.
+
+    On startup, by definition no task we previously dispatched is still
+    running in memory (the worker registry is built fresh and in-flight
+    tasks don't survive a process restart). So any pre-existing
+    'running' row is an orphan. Update it to 'interrupted' with
+    ``error='gateway restarted before task completed'`` so it stops
+    contaminating the "currently active" view.
+
+    Returns the number of rows updated.
+    """
+    now_ms = int(time.time() * 1000)
+    with _conn() as conn:
+        cur = conn.execute(
+            """UPDATE dispatches
+               SET status='interrupted',
+                   error=COALESCE(error, 'gateway restarted before task completed'),
+                   ended_at=?
+               WHERE status='running'""",
+            (now_ms,),
+        )
+        return cur.rowcount
+
+
 def list_dispatches(
     agent_id: str = None,
     origin: str = None,
