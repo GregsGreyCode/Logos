@@ -74,7 +74,6 @@ all = [
 
 [project.scripts]
 logos = "logos_cli.main:main"
-hermes = "logos_cli.main:main_agent"
 hermes-agent = "agents.hermes.agent:main"
 logos-acp = "acp_adapter.entry:main"
 
