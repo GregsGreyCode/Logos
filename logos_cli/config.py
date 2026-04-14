@@ -890,7 +890,7 @@ def migrate_config(interactive: bool = True, quiet: bool = False) -> Dict[str, A
                         print(f"  ✓ Saved {name}")
                     print()
             else:
-                print("  Set later with: hermes config set KEY VALUE")
+                print("  Set later with: logos config set KEY VALUE")
     
     # Check for missing config fields
     missing_config = get_missing_config_fields()
@@ -1226,7 +1226,7 @@ def show_config():
     
     print()
     print(color("┌─────────────────────────────────────────────────────────┐", Colors.CYAN))
-    print(color("│              ⚕ Hermes Configuration                    │", Colors.CYAN))
+    print(color("│              ⚕ Logos Configuration                     │", Colors.CYAN))
     print(color("└─────────────────────────────────────────────────────────┘", Colors.CYAN))
     
     # Paths
@@ -1345,9 +1345,9 @@ def show_config():
     
     print()
     print(color("─" * 60, Colors.DIM))
-    print(color("  hermes config edit     # Edit config file", Colors.DIM))
-    print(color("  hermes config set KEY VALUE", Colors.DIM))
-    print(color("  hermes setup           # Run setup wizard", Colors.DIM))
+    print(color("  logos config edit     # Edit config file", Colors.DIM))
+    print(color("  logos config set KEY VALUE", Colors.DIM))
+    print(color("  logos setup           # Run setup wizard", Colors.DIM))
     print()
 
 
@@ -1472,12 +1472,12 @@ def config_command(args):
         key = getattr(args, 'key', None)
         value = getattr(args, 'value', None)
         if not key or not value:
-            print("Usage: hermes config set KEY VALUE")
+            print("Usage: logos config set KEY VALUE")
             print()
             print("Examples:")
-            print("  hermes config set model anthropic/claude-sonnet-4")
-            print("  hermes config set terminal.backend docker")
-            print("  hermes config set OPENROUTER_API_KEY sk-or-...")
+            print("  logos config set model anthropic/claude-sonnet-4")
+            print("  logos config set terminal.backend docker")
+            print("  logos config set OPENROUTER_API_KEY sk-or-...")
             sys.exit(1)
         set_config_value(key, value)
     
@@ -1577,7 +1577,7 @@ def config_command(args):
         if missing_config:
             print()
             print(color(f"  {len(missing_config)} new config option(s) available", Colors.YELLOW))
-            print("    Run 'hermes config migrate' to add them")
+            print("    Run 'logos config migrate' to add them")
         
         print()
     
@@ -1585,11 +1585,11 @@ def config_command(args):
         print(f"Unknown config command: {subcmd}")
         print()
         print("Available commands:")
-        print("  hermes config           Show current configuration")
-        print("  hermes config edit      Open config in editor")
-        print("  hermes config set K V   Set a config value")
-        print("  hermes config check     Check for missing/outdated config")
-        print("  hermes config migrate   Update config with new options")
-        print("  hermes config path      Show config file path")
-        print("  hermes config env-path  Show .env file path")
+        print("  logos config           Show current configuration")
+        print("  logos config edit      Open config in editor")
+        print("  logos config set K V   Set a config value")
+        print("  logos config check     Check for missing/outdated config")
+        print("  logos config migrate   Update config with new options")
+        print("  logos config path      Show config file path")
+        print("  logos config env-path  Show .env file path")
         sys.exit(1)

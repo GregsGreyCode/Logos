@@ -1,5 +1,5 @@
 """
-Interactive setup wizard for Hermes Agent.
+Interactive setup wizard for Logos.
 
 Modular wizard with independently-runnable sections:
   1. Model & Provider — choose your AI provider and model
@@ -190,19 +190,19 @@ def is_interactive_stdin() -> bool:
 def print_noninteractive_setup_guidance(reason: str | None = None) -> None:
     """Print guidance for headless/non-interactive setup flows."""
     print()
-    print(color("⚕ Hermes Setup — Non-interactive mode", Colors.CYAN, Colors.BOLD))
+    print(color("⚕ Logos Setup — Non-interactive mode", Colors.CYAN, Colors.BOLD))
     print()
     if reason:
         print_info(reason)
     print_info("The interactive wizard cannot be used here.")
     print()
-    print_info("Configure Hermes using environment variables or config commands:")
-    print_info("  hermes config set model.provider custom")
-    print_info("  hermes config set model.base_url http://localhost:8080/v1")
-    print_info("  hermes config set model.default your-model-name")
+    print_info("Configure Logos using environment variables or config commands:")
+    print_info("  logos config set model.provider custom")
+    print_info("  logos config set model.base_url http://localhost:8080/v1")
+    print_info("  logos config set model.default your-model-name")
     print()
     print_info("Or set OPENROUTER_API_KEY / OPENAI_API_KEY in your environment.")
-    print_info("Run 'hermes setup' in an interactive terminal to use the full wizard.")
+    print_info("Run 'logos setup' in an interactive terminal to use the full wizard.")
     print()
 
 
@@ -449,7 +449,7 @@ def _prompt_api_key(var: dict):
         save_env_value(var["name"], value)
         print_success(f"  ✓ Saved")
     else:
-        print_warning(f"  Skipped (configure later with 'hermes setup')")
+        print_warning(f"  Skipped (configure later with 'logos setup')")
 
 
 def _print_setup_summary(config: dict, hermes_home):
@@ -546,9 +546,9 @@ def _print_setup_summary(config: dict, hermes_home):
     disabled_tools = [(name, var) for name, avail, var in tool_status if not avail]
     if disabled_tools:
         print_warning(
-            "Some tools are disabled. Run 'hermes setup tools' to configure them,"
+            "Some tools are disabled. Configure them per-agent in the dashboard"
         )
-        print_warning("or edit ~/.hermes/.env directly to add the missing API keys.")
+        print_warning("at http://localhost:8091/setup, or edit ~/.logos/.env to add the missing API keys.")
         print()
 
     # Done banner
@@ -571,7 +571,7 @@ def _print_setup_summary(config: dict, hermes_home):
     print()
 
     # Show file locations prominently
-    print(color("📁 All your files are in ~/.hermes/:", Colors.CYAN, Colors.BOLD))
+    print(color("📁 All your files are in ~/.logos/:", Colors.CYAN, Colors.BOLD))
     print()
     print(f"   {color('Settings:', Colors.YELLOW)}  {get_config_path()}")
     print(f"   {color('API Keys:', Colors.YELLOW)}  {get_env_path()}")
@@ -584,18 +584,15 @@ def _print_setup_summary(config: dict, hermes_home):
     print()
     print(color("📝 To edit your configuration:", Colors.CYAN, Colors.BOLD))
     print()
-    print(f"   {color('hermes setup', Colors.GREEN)}          Re-run the full wizard")
-    print(f"   {color('hermes setup model', Colors.GREEN)}    Change model/provider")
-    print(f"   {color('hermes setup terminal', Colors.GREEN)} Change terminal backend")
-    print(f"   {color('hermes setup gateway', Colors.GREEN)}  Configure messaging")
-    print(f"   {color('hermes setup tools', Colors.GREEN)}    Configure tool providers")
+    print(f"   {color('logos setup', Colors.GREEN)}            Re-run the full wizard")
+    print(f"   {color('logos gateway setup', Colors.GREEN)}    Configure messaging platforms")
     print()
-    print(f"   {color('hermes config', Colors.GREEN)}         View current settings")
+    print(f"   {color('logos config', Colors.GREEN)}           View current settings")
     print(
-        f"   {color('hermes config edit', Colors.GREEN)}    Open config in your editor"
+        f"   {color('logos config edit', Colors.GREEN)}      Open config in your editor"
     )
-    print(f"   {color('hermes config set KEY VALUE', Colors.GREEN)}")
-    print(f"                          Set a specific value")
+    print(f"   {color('logos config set KEY VALUE', Colors.GREEN)}")
+    print(f"                            Set a specific value")
     print()
     print(f"   Or edit the files directly:")
     print(f"   {color(f'nano {get_config_path()}', Colors.DIM)}")
@@ -606,9 +603,9 @@ def _print_setup_summary(config: dict, hermes_home):
     print()
     print(color("🚀 Ready to go!", Colors.CYAN, Colors.BOLD))
     print()
-    print(f"   {color('hermes', Colors.GREEN)}              Start chatting")
-    print(f"   {color('hermes gateway', Colors.GREEN)}      Start messaging gateway")
-    print(f"   {color('hermes doctor', Colors.GREEN)}       Check for issues")
+    print(f"   {color('logos gateway run', Colors.GREEN)}      Launch the gateway + dashboard")
+    print(f"   {color('logos gateway start', Colors.GREEN)}    Run gateway as a background service")
+    print(f"   {color('logos doctor', Colors.GREEN)}           Check for issues")
     print()
 
 
@@ -804,11 +801,11 @@ def setup_model_provider(config: dict):
 
         except SystemExit:
             print_warning("Nous Portal login was cancelled or failed.")
-            print_info("You can try again later with: hermes model")
+            print_info("You can try again later with: logos login --provider nous")
             selected_provider = None
         except Exception as e:
             print_error(f"Login failed: {e}")
-            print_info("You can try again later with: hermes model")
+            print_info("You can try again later with: logos login --provider nous")
             selected_provider = None
 
     elif provider_idx == 1:  # OpenAI Codex
@@ -830,11 +827,11 @@ def setup_model_provider(config: dict):
             _set_model_provider(config, "openai-codex", DEFAULT_CODEX_BASE_URL)
         except SystemExit:
             print_warning("OpenAI Codex login was cancelled or failed.")
-            print_info("You can try again later with: hermes model")
+            print_info("You can try again later with: logos login --provider openai-codex")
             selected_provider = None
         except Exception as e:
             print_error(f"Login failed: {e}")
-            print_info("You can try again later with: hermes model")
+            print_info("You can try again later with: logos login --provider openai-codex")
             selected_provider = None
 
     elif provider_idx == 2:  # OpenRouter
@@ -2031,12 +2028,12 @@ def setup_gateway(config: dict):
     existing_whatsapp = get_env_value("WHATSAPP_ENABLED")
     if not existing_whatsapp and prompt_yes_no("Set up WhatsApp?", False):
         print_info("WhatsApp connects via a built-in bridge (Baileys).")
-        print_info("Requires Node.js. Run 'hermes whatsapp' for guided setup.")
+        print_info("Requires Node.js. Run 'logos whatsapp' for guided setup.")
         print()
         if prompt_yes_no("Enable WhatsApp now?", True):
             save_env_value("WHATSAPP_ENABLED", "true")
             print_success("WhatsApp enabled")
-            print_info("Run 'hermes whatsapp' to choose your mode (separate bot number")
+            print_info("Run 'logos whatsapp' to choose your mode (separate bot number")
             print_info("or personal self-chat) and pair via QR code.")
 
     # ── Gateway Service Setup ──
@@ -2072,7 +2069,7 @@ def setup_gateway(config: dict):
             print_info("   Set one later with /set-home in your chat, or:")
             for plat in missing_home:
                 print_info(
-                    f"     hermes config set {plat.upper()}_HOME_CHANNEL <channel_id>"
+                    f"     logos config set {plat.upper()}_HOME_CHANNEL <channel_id>"
                 )
 
         # Offer to install the gateway as a system service
@@ -2292,12 +2289,8 @@ def run_setup_wizard(args):
     """Run the interactive setup wizard.
 
     Supports full, quick, and section-specific setup:
-      hermes setup           — full or quick (auto-detected)
-      hermes setup model     — just model/provider
-      hermes setup terminal  — just terminal backend
-      hermes setup gateway   — just messaging platforms
-      hermes setup tools     — just tool configuration
-      hermes setup agent     — just agent settings
+      logos setup           — full or quick (auto-detected)
+      logos setup gateway   — just messaging platforms
     """
     ensure_hermes_home()
 
@@ -2327,7 +2320,7 @@ def run_setup_wizard(args):
                         Colors.MAGENTA,
                     )
                 )
-                print(color(f"│     ⚕ Hermes Setup — {label:<34s} │", Colors.MAGENTA))
+                print(color(f"│     ⚕ Logos Setup — {label:<35s} │", Colors.MAGENTA))
                 print(
                     color(
                         "└─────────────────────────────────────────────────────────┘",
@@ -2363,7 +2356,7 @@ def run_setup_wizard(args):
     )
     print(
         color(
-            "│             ⚕ Hermes Agent Setup Wizard                │", Colors.MAGENTA
+            "│               ⚕ Logos Setup Wizard                     │", Colors.MAGENTA
         )
     )
     print(
@@ -2374,7 +2367,7 @@ def run_setup_wizard(args):
     )
     print(
         color(
-            "│  Let's configure your Hermes Agent installation.       │", Colors.MAGENTA
+            "│  Let's configure your Logos installation.              │", Colors.MAGENTA
         )
     )
     print(
@@ -2393,7 +2386,7 @@ def run_setup_wizard(args):
         # ── Returning User Menu ──
         print()
         print_header("Welcome Back!")
-        print_success("You already have Hermes configured.")
+        print_success("You already have Logos configured.")
         print()
 
         menu_choices = [
@@ -2422,10 +2415,10 @@ def run_setup_wizard(args):
             pass
         elif choice in (2, 8):
             # Separator — treat as exit
-            print_info("Exiting. Run 'hermes setup' again when ready.")
+            print_info("Exiting. Run 'logos setup' again when ready.")
             return
         elif choice == 9:
-            print_info("Exiting. Run 'hermes setup' again when ready.")
+            print_info("Exiting. Run 'logos setup' again when ready.")
             return
         elif 3 <= choice <= 7:
             # Individual section
@@ -2464,7 +2457,7 @@ def run_setup_wizard(args):
     print_info(f"Data folder:  {hermes_home}")
     print_info(f"Install dir:  {PROJECT_ROOT}")
     print()
-    print_info("You can edit these files directly or use 'hermes config edit'")
+    print_info("You can edit these files directly or use 'logos config edit'")
 
     # Section 1: Model & Provider
     setup_model_provider(config)
@@ -2518,7 +2511,7 @@ def _run_quick_setup(config: dict, hermes_home):
     if not has_anything_missing:
         print_success("Everything is configured! Nothing to do.")
         print()
-        print_info("Run 'hermes setup' and choose 'Full Setup' to reconfigure,")
+        print_info("Run 'logos setup' and choose 'Full Setup' to reconfigure,")
         print_info("or pick a specific section from the menu.")
         return
 
@@ -2580,8 +2573,8 @@ def _run_quick_setup(config: dict, hermes_home):
     if missing_messaging:
         print()
         print_header("Messaging Platforms")
-        print_info("Connect Hermes to messaging apps to chat from anywhere.")
-        print_info("You can configure these later with 'hermes setup gateway'.")
+        print_info("Connect Logos to messaging apps to chat from anywhere.")
+        print_info("You can configure these later with 'logos gateway setup'.")
 
         # Group by platform (preserving order)
         platform_order = []

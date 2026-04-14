@@ -909,9 +909,9 @@ def _setup_standard_platform(platform: dict):
                     print_warning("  Open access enabled — anyone can use your bot!")
                 elif access_idx == 1:
                     print_success("  DM pairing mode — users will receive a code to request access.")
-                    print_info("  Approve with: hermes pairing approve {platform} {code}")
+                    print_info("  Approve with: logos pairing approve {platform} {code}")
                 else:
-                    print_info("  Skipped — configure later with 'hermes gateway setup'")
+                    print_info("  Skipped — configure later with 'logos gateway setup'")
             continue
 
         value = prompt(f"  {var['prompt']}", password=var.get("password", False))
@@ -1166,7 +1166,7 @@ def gateway_setup():
                         launchd_restart()
                     else:
                         kill_gateway_processes()
-                        print_info("Start manually: hermes gateway")
+                        print_info("Start manually: logos gateway run")
                 except subprocess.CalledProcessError as e:
                     print_error(f"  Restart failed: {e}")
         elif service_installed:
@@ -1209,7 +1209,7 @@ def gateway_setup():
                 print_info("  Run in foreground: logos gateway run")
     else:
         print()
-        print_info("No platforms configured. Run 'hermes gateway setup' when ready.")
+        print_info("No platforms configured. Run 'logos gateway setup' when ready.")
 
     print()
 
@@ -1242,7 +1242,7 @@ def gateway_command(args):
             launchd_install(force)
         else:
             print("Service installation not supported on this platform.")
-            print("Run manually: hermes gateway run")
+            print("Run manually: logos gateway run")
             sys.exit(1)
     
     elif subcmd == "uninstall":
