@@ -219,14 +219,12 @@ Three steps. The install script handles everything else — uv, venv, deps, ~/.l
 curl -fsSL https://get.docker.com | sh
 sudo usermod -aG docker $USER
 
-# 2. Node.js ≥20 (required for browser automation tools + WhatsApp bridge —
-#    skip this step only if you pass SKIP_NPM=1 below)
-curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
-sudo apt install -y nodejs
+# 2. Log out and log back in so the new 'docker' group membership applies.
 
-# 3. Log out and log back in so the new 'docker' group membership applies.
-
-# 4. Run the installer (prompts once for sudo to bump inotify limits)
+# 3. Run the installer (prompts once for sudo to bump inotify limits
+#    and, if Node.js ≥20 isn't already installed, to auto-install it
+#    via nodesource — needed for browser automation + WhatsApp. Pass
+#    SKIP_NPM=1 if you'd rather skip Node entirely.)
 curl -fsSL https://raw.githubusercontent.com/GregsGreyCode/Logos/main/scripts/fresh-install.sh \
   | INSTALL_OPENSHELL=1 BUMP_INOTIFY=1 bash
 ```

@@ -74,6 +74,28 @@ import time
 from typing import Any, Dict, Optional
 
 
+# ── stdout isolation ──────────────────────────────────────────────────────
+#
+# The gateway reads newline-delimited JSON from this worker's stdout —
+# every line must parse as a protocol frame. The imported agent code
+# (AIAgent, its transitive deps, patched libraries) uses ``print()``
+# liberally for trace output ("┊ 🌐 navigate  www.google.com  1.3s"
+# etc.) which lands on stdout by default and corrupts the frame parser.
+#
+# Rather than audit every print call site, we redirect the whole
+# process-level stdout fd to stderr at startup and preserve a private
+# copy of the real stdout fd for ``emit()`` below to write to. Net
+# result: any library code that does print() or sys.stdout.write()
+# now writes to stderr (captured by the gateway's stream-reader and
+# surfaced in the worker log), while our frame emitter keeps writing
+# clean JSON to the gateway's protocol pipe.
+
+_FRAME_FD = os.dup(1)        # preserve real stdout for emit()
+os.dup2(2, 1)                # fd 1 (stdout) now points to stderr
+# sys.stdout is still a TextIOWrapper over fd 1, so print() works and
+# just lands on stderr instead. No per-library patching needed.
+
+
 # ── Logging setup ──────────────────────────────────────────────────────────
 #
 # Critical: logs must go to STDERR, not stdout. Stdout is our protocol
@@ -454,17 +476,20 @@ def load_config() -> dict:
 # future changes and to ensure deterministic ordering.
 
 def emit(msg: Dict[str, Any]) -> None:
-    """Write one JSON-line protocol message to stdout and flush.
+    """Write one JSON-line protocol message to the preserved stdout fd.
 
-    Catches I/O errors (stdout closed because gateway killed the exec
-    subprocess) and re-raises as BrokenPipeError so the outer loop can
-    exit cleanly. Logs to stderr, never to stdout — same channel
-    discipline as everywhere else in this file.
+    We write to ``_FRAME_FD`` (the os.dup'd copy of the real stdout)
+    rather than ``sys.stdout`` because the module-init code above
+    redirected fd 1 to stderr to prevent library ``print()`` calls
+    from corrupting the frame stream. sys.stdout therefore routes to
+    stderr; only ``_FRAME_FD`` reaches the gateway.
+
+    Catches I/O errors (gateway killed the exec subprocess) and re-
+    raises as BrokenPipeError so the outer loop can exit cleanly.
     """
     try:
-        line = json.dumps(msg, default=str, ensure_ascii=False)
-        sys.stdout.write(line + "\n")
-        sys.stdout.flush()
+        line = json.dumps(msg, default=str, ensure_ascii=False) + "\n"
+        os.write(_FRAME_FD, line.encode("utf-8"))
     except BrokenPipeError:
         # Gateway closed stdout — nothing more we can do. Re-raise so
         # the caller can abort the task handler.
