@@ -282,13 +282,13 @@
       <button class="pb-2 text-sm font-medium border-b-2 border-transparent"
         :class="tab==='infra'?'tab-active':'text-gray-400 hover:text-white'"
         data-testid="nav-settings"
-        @click="tab='infra'; loadAdminMachines(); loadCloudProviders(); if(infraTab==='servers') probeAllMachines()">Config</button>
+        @click="tab='infra'; infraTab='servers'; localStorage.setItem('logos_infra_tab','servers'); loadAdminMachines(); loadCloudProviders(); probeAllMachines()">Config</button>
     </template>
     <template x-if="can('view_runs') || can('view_approvals') || can('view_evolution')">
       <button class="pb-2 text-sm font-medium border-b-2 border-transparent relative"
         :class="tab==='activity'?'tab-active':'text-gray-400 hover:text-white'"
         data-testid="nav-activity"
-        @click="tab='activity'; _loadActivityTabData(activityTab)">
+        @click="tab='activity'; activityTab='dashboards'; localStorage.setItem('logos_activity_tab','dashboards'); _loadActivityTabData('dashboards')">
         Activity
         <template x-if="pendingApprovalCount > 0">
           <span class="absolute -top-1 -right-3 min-w-[16px] h-4 px-1 rounded-full bg-red-500 text-[9px] text-white font-bold flex items-center justify-center" x-text="pendingApprovalCount > 99 ? '99+' : pendingApprovalCount"></span>
@@ -1875,24 +1875,30 @@
   <!-- ── Routing Tab ───────────────────────────────────────────────── -->
   <div x-show="tab==='infra'" x-cloak>
 
-    <!-- Config sub-tabs -->
-    <div class="flex gap-4 mb-4 border-b border-gray-800">
-      <button class="pb-2 text-sm font-medium border-b-2 transition-colors"
-        :class="infraTab==='servers' ? 'border-[var(--accent)] text-white' : 'border-transparent text-gray-500 hover:text-gray-300'"
+    <!-- Config sub-tabs — uses the same ``tab-active`` CSS class as
+         the top-level nav and the Activity / Admin sub-navs, so all
+         three rows of tabs share a single look (accent underline +
+         accent text on active, grey + hover-white on inactive).
+         Previously this block was styled inline with border color
+         utilities and used white text for active which was visually
+         inconsistent with the rest of the app. -->
+    <div class="flex gap-4 mb-5 border-b border-gray-800">
+      <button class="pb-2 text-sm font-medium border-b-2 border-transparent"
+        :class="infraTab==='servers' ? 'tab-active' : 'text-gray-500 hover:text-white'"
         @click="infraTab='servers'; localStorage.setItem('logos_infra_tab','servers'); loadAdminMachines(); loadCloudProviders(); probeAllMachines()">Inference</button>
       <template x-if="can('manage_machines')">
-        <button class="pb-2 text-sm font-medium border-b-2 transition-colors"
-          :class="infraTab==='tools' ? 'border-[var(--accent)] text-white' : 'border-transparent text-gray-500 hover:text-gray-300'"
+        <button class="pb-2 text-sm font-medium border-b-2 border-transparent"
+          :class="infraTab==='tools' ? 'tab-active' : 'text-gray-500 hover:text-white'"
           @click="infraTab='tools'; localStorage.setItem('logos_infra_tab','tools'); loadToolsTab(); loadServices()">Tools</button>
       </template>
       <template x-if="can('manage_machines') || can('manage_users')">
-        <button class="pb-2 text-sm font-medium border-b-2 transition-colors"
-          :class="infraTab==='messaging' ? 'border-[var(--accent)] text-white' : 'border-transparent text-gray-500 hover:text-gray-300'"
+        <button class="pb-2 text-sm font-medium border-b-2 border-transparent"
+          :class="infraTab==='messaging' ? 'tab-active' : 'text-gray-500 hover:text-white'"
           @click="infraTab='messaging'; localStorage.setItem('logos_infra_tab','messaging'); loadMessagingChannels(); loadPlatforms()">Messaging</button>
       </template>
       <template x-if="can('manage_workflows') || can('view_workflows')">
-        <button class="pb-2 text-sm font-medium border-b-2 transition-colors"
-          :class="infraTab==='workflows' ? 'border-[var(--accent)] text-white' : 'border-transparent text-gray-500 hover:text-gray-300'"
+        <button class="pb-2 text-sm font-medium border-b-2 border-transparent"
+          :class="infraTab==='workflows' ? 'tab-active' : 'text-gray-500 hover:text-white'"
           @click="infraTab='workflows'; localStorage.setItem('logos_infra_tab','workflows'); loadWorkflows()">Workflows</button>
       </template>
     </div>
@@ -3445,35 +3451,39 @@
        Admin tab or the Activity tab without physically moving HTML. -->
   <div x-cloak>
 
-    <!-- Admin sub-tab bar (slimmed) -->
+    <!-- Admin sub-tab bar (slimmed). Uses the shared nav styling
+         (`border-b-2 border-transparent` baseline + `tab-active` for
+         the selected state) so this row matches the top-level nav
+         and the Config / Activity sub-navs. -->
     <div x-show="tab==='admin'" class="flex gap-4 border-b border-gray-800 mb-5">
       <button x-show="can('manage_users')"
-        class="pb-2 text-sm font-medium"
+        class="pb-2 text-sm font-medium border-b-2 border-transparent"
         :class="adminTab==='users'?'tab-active':'text-gray-500 hover:text-white'"
         @click="adminTab='users'; loadAdminUsers()">Users</button>
       <button x-show="can('manage_action_policies')"
-        class="pb-2 text-sm font-medium"
+        class="pb-2 text-sm font-medium border-b-2 border-transparent"
         :class="adminTab==='action-policies'?'tab-active':'text-gray-500 hover:text-white'"
         @click="adminTab='action-policies'; loadAdminActionPolicies()">Security</button>
       <button x-show="can('view_audit_logs')"
-        class="pb-2 text-sm font-medium"
+        class="pb-2 text-sm font-medium border-b-2 border-transparent"
         :class="adminTab==='audit'?'tab-active':'text-gray-500 hover:text-white'"
         @click="adminTab='audit'; loadAdminAudit()">Audit Log</button>
     </div>
 
     <!-- Activity sub-tab bar — Dashboards first so landing on Activity
          shows the at-a-glance view (routes, sandboxes, health) rather
-         than a raw event feed. Events still accessible one click away. -->
+         than a raw event feed. Events still accessible one click away.
+         Styling matches the Config / Admin sub-navs. -->
     <div x-show="tab==='activity'" class="flex gap-4 border-b border-gray-800 mb-5">
       <button x-show="can('manage_machines') || can('view_runs')"
-        class="pb-2 text-sm font-medium"
+        class="pb-2 text-sm font-medium border-b-2 border-transparent"
         :class="activityTab==='dashboards'?'tab-active':'text-gray-500 hover:text-white'"
         @click="activityTab='dashboards'; loadModelRoutes(); loadSandboxes(); loadNamedAgents()">Dashboards</button>
-      <button class="pb-2 text-sm font-medium"
+      <button class="pb-2 text-sm font-medium border-b-2 border-transparent"
         :class="activityTab==='events'?'tab-active':'text-gray-500 hover:text-white'"
         @click="activityTab='events'; loadDispatches()">Events</button>
       <button x-show="can('view_approvals')"
-        class="pb-2 text-sm font-medium relative"
+        class="pb-2 text-sm font-medium border-b-2 border-transparent relative"
         :class="activityTab==='approvals'?'tab-active':'text-gray-500 hover:text-white'"
         @click="activityTab='approvals'; loadApprovals()">
         Approvals
@@ -3482,7 +3492,7 @@
         </template>
       </button>
       <button x-show="can('view_evolution')"
-        class="pb-2 text-sm font-medium"
+        class="pb-2 text-sm font-medium border-b-2 border-transparent"
         :class="activityTab==='proposals'?'tab-active':'text-gray-500 hover:text-white'"
         @click="activityTab='proposals'; loadEvolutionProposals(); loadEvolutionSettings()">Proposals</button>
     </div>
