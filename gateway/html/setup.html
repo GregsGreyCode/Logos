@@ -3557,16 +3557,32 @@ function setup() {
       return this.compareTargets.filter(mid => byEp.has(mid));
     },
 
-    // Models on this server that are NOT in the benchmark target list —
-    // i.e. present in LM Studio's catalogue but skipped by the benchmark
-    // pre-filter (typically because they're too small / marked non-chat /
-    // downloaded AFTER the benchmark started). Surfaced in the UI with
-    // a "not tested" badge so the user can still pick them but knows
-    // they have no score data.
+    // Models on this server that lack usable benchmark data. Three
+    // cases, all surfaced with a "not tested" badge so the user can
+    // still pick them knowing there are no scores to compare:
+    //
+    //   (1) Never in the target list at all — present in the server
+    //       catalogue but skipped by the pre-filter (too small /
+    //       non-chat / downloaded after the benchmark started).
+    //   (2) In the target list but the benchmark was stopped before
+    //       its turn — no compareResults entry.
+    //   (3) In the target list and ran, but errored out — compareResults
+    //       entry exists but is marked .error.
+    //
+    // Previously only case (1) was handled, so stopping the benchmark
+    // mid-run stranded every still-queued model: not clickable in the
+    // main list (no result), not listed in the untested disclosure.
     untestedModelsForServer(ep) {
       const tested = new Set(this.compareTargetsForServer(ep));
       return this.getModels()
-        .filter(m => m._serverEndpoint === ep && !tested.has(m.id))
+        .filter(m => m._serverEndpoint === ep)
+        .filter(m => {
+          if (!tested.has(m.id)) return true;                 // (1)
+          const r = this.compareResults[m.id];
+          if (!r) return true;                                // (2)
+          if (r.error) return true;                           // (3)
+          return false;
+        })
         .map(m => m.id);
     },
 
