@@ -2695,6 +2695,27 @@ async def _handle_api_session_messages(request: web.Request) -> web.Response:
     return web.json_response(filtered)
 
 
+async def _handle_chat_cancel(request: web.Request) -> web.Response:
+    """POST /chat/{task_id}/cancel — abort an in-flight chat turn.
+
+    SIGTERMs the ``openshell sandbox exec`` subprocess for ``task_id``;
+    the dispatch loop unwinds via its existing cleanup paths (stdout
+    EOF, 5s wait_for, in_flight pop). Returns:
+
+    - 204 — task found and signalled (cancellation in progress)
+    - 404 — no in-flight task with this id (already finished, or never
+            existed for this gateway)
+    """
+    task_id = request.match_info["task_id"]
+    app = request.app
+    wr = app.get("worker_registry")
+    if wr is None or not hasattr(wr, "cancel_task"):
+        return web.json_response({"error": "cancel_unsupported"}, status=501)
+    if wr.cancel_task(task_id):
+        return web.Response(status=204)
+    return web.json_response({"error": "not_found"}, status=404)
+
+
 async def _handle_transcribe(request: web.Request) -> web.Response:
     """POST /chat/transcribe — accept a webm/wav/ogg audio blob, return transcript."""
     try:
@@ -3890,9 +3911,15 @@ async def _handle_chat(request: web.Request) -> web.StreamResponse:
             # uploaded instance-config.json) — we only send conversation
             # context.
             import uuid as _uuid
+            _task_uuid = str(_uuid.uuid4())
+            # Tell the client the task_id up-front so it can POST to
+            # /chat/{task_id}/cancel if the user hits the abort button.
+            # Fires before dispatch so there's no race where the user
+            # tries to cancel before the client knows the id.
+            await send_event({"type": "task_started", "task_id": _task_uuid})
             task_payload = {
                 "type": "run_conversation",
-                "task_id": str(_uuid.uuid4()),
+                "task_id": _task_uuid,
                 "session_id": session_entry.session_id,
                 "session_key": session_key,
                 "message": message,
@@ -4895,6 +4922,7 @@ async def start_http_api(runner: Any, port: int = 8091) -> None:
     app.router.add_get("/api/platform-sessions", _handle_api_platform_sessions)
     app.router.add_get("/api/platform-sessions/{session_id}/messages", _handle_api_session_messages)
     app.router.add_post("/chat",               _handle_chat)
+    app.router.add_post("/chat/{task_id}/cancel", require_csrf(_handle_chat_cancel))
     app.router.add_post("/chat/transcribe",    require_csrf(_handle_transcribe))
     app.router.add_post("/tools/configure",    require_csrf(_handle_tools_configure))
     app.router.add_route("OPTIONS", "/chat",   _handle_index)

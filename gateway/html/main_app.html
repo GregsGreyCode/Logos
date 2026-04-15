@@ -555,9 +555,15 @@
               <template x-if="canary.active">
                 <span class="text-[10px] px-1.5 py-0.5 rounded bg-yellow-900 text-yellow-400 font-semibold animate-pulse">canary</span>
               </template>
-              <!-- Spacer + logs button + chat ID -->
-              <button class="ml-auto text-[10px] px-2 py-0.5 rounded border border-gray-700 text-gray-400 hover:text-white hover:border-gray-500 transition-colors"
+              <!-- Spacer + stop + logs button + chat ID -->
+              <button class="ml-auto text-[10px] px-2 py-0.5 rounded border border-red-900 text-red-400 hover:text-red-300 hover:border-red-700 transition-colors animate-pulse"
+                @click="cancelActiveTask()"
+                x-show="activeTaskId"
+                x-cloak
+                title="Abort the in-flight request">■ Stop</button>
+              <button class="text-[10px] px-2 py-0.5 rounded border border-gray-700 text-gray-400 hover:text-white hover:border-gray-500 transition-colors"
                 @click="(() => { const chat = chats.find(c => c.id === activeChatId); if (chat && chat.agent_id) { openAgentLogs({id: chat.agent_id, name: chat.agent_name}); } })()"
+                :class="activeTaskId ? '' : 'ml-auto'"
                 x-show="activeChatId && chats.find(c => c.id === activeChatId)?.agent_id"
                 title="View this agent's runtime log tail — tool calls, thinking, errors">📋 Logs</button>
               <span class="text-[10px] text-gray-700 font-mono"
@@ -6215,6 +6221,10 @@ function app() {
     // backend). The first streaming event (token / tool_start / message)
     // flips this to false and reveals the kawaii thinking phrase.
     isWakingUp: true,
+    // Task-id of the in-flight chat turn (if any). Populated when the
+    // gateway emits task_started; cleared on done/error. Used by the
+    // Stop button in the chat header to call /chat/{id}/cancel.
+    activeTaskId: null,
     lastRefresh: '',
     clientNow: Date.now(),
     // Capabilities (P dropdown) — lazy-fetched per agent. _agentId pinned
@@ -8774,6 +8784,23 @@ function app() {
       } catch (e) { console.error('switchModel error:', e); }
     },
 
+    async cancelActiveTask() {
+      if (!this.activeTaskId) return;
+      const id = this.activeTaskId;
+      // Optimistic clear — if the cancel arrives after done/error we
+      // still want the button to stop showing. The 'done'/'error'
+      // handlers will also clear, whichever lands first.
+      this.activeTaskId = null;
+      try {
+        await fetch(`/chat/${encodeURIComponent(id)}/cancel`, {
+          method: 'POST', credentials: 'include',
+          headers: { 'X-CSRF-Token': getCsrfToken() },
+        });
+      } catch (e) {
+        console.warn('cancel failed:', e && e.message);
+      }
+    },
+
     async sendChat() {
       const msg = this.chatInput.trim();
       if (!msg) return;
@@ -8876,6 +8903,12 @@ function app() {
             try {
               const d = JSON.parse(line.slice(5).trim());
               if (d.type === 'status') { this._setStatusOverride(d.text || d.content || ''); }
+              if (d.type === 'task_started' && d.task_id) {
+                // Remember the task_id so the user can cancel via the
+                // Stop button in the chat header. Cleared on 'done' /
+                // 'error'.
+                this.activeTaskId = d.task_id;
+              }
               if (d.type === 'tool_progress') {
                 // Live tool progress from worker (legacy)
                 this.isWakingUp = false;
@@ -9016,6 +9049,9 @@ function app() {
                 }
               }
               if (d.type === 'message') { reply = d.content; this.isWakingUp = false; }
+              if (d.type === 'done' || d.type === 'error') {
+                this.activeTaskId = null;
+              }
               if (d.type === 'done') {
                 // Keep _liveTools visible so the user can inspect what happened
                 // (cleared on next sendChat instead)
@@ -10155,7 +10191,15 @@ network_policies:
           return;
         }
         const d = await r.json();
-        this.logsModalLines = d.lines || [];
+        // Strip leading/trailing blank lines — splitlines() on the
+        // server preserves empties, and a run of blanks at the top of
+        // the tail window renders as a visible gap between the
+        // metadata bar and the first real log line.
+        let lines = d.lines || [];
+        let start = 0, end = lines.length;
+        while (start < end && !lines[start].trim()) start++;
+        while (end > start && !lines[end - 1].trim()) end--;
+        this.logsModalLines = lines.slice(start, end);
         this.logsModalMeta = {
           path: d.path, size: d.size_bytes, mtime: d.mtime_iso,
           truncated: d.truncated, exists: d.exists, logName: d.log_name,

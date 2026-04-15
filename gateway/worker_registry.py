@@ -183,6 +183,14 @@ class WorkerRegistry:
         # in-flight tasks for that sandbox.
         self._active_tasks: Dict[str, int] = {}
 
+        # In-flight task registry — maps task_id → Process handle for
+        # the currently-running ``openshell sandbox exec`` subprocess.
+        # Populated in ``_dispatch_task_impl`` right after spawn, cleared
+        # in the finally. Used by ``cancel_task()`` so the /chat cancel
+        # endpoint can SIGTERM the subprocess and unblock a hung run
+        # without waiting for the full timeout.
+        self._in_flight: Dict[str, "asyncio.subprocess.Process"] = {}
+
     # ─── Read accessors (back-compat with old persistent-worker API) ────
 
     @property
@@ -234,6 +242,33 @@ class WorkerRegistry:
         agents that are currently processing a task.
         """
         return self._active_tasks.get(sandbox_name, 0)
+
+    def cancel_task(self, task_id: str) -> bool:
+        """Abort an in-flight task by terminating its worker subprocess.
+
+        Looks up the running ``openshell sandbox exec`` process by
+        ``task_id``, sends SIGTERM, and lets the dispatch loop's
+        cleanup paths (stdout EOF, ``wait_for(proc.wait(), 5s)``, the
+        ``_in_flight.pop`` in the finally) unwind the rest.
+
+        Returns True if a matching in-flight task was found and
+        signalled, False if no such task exists (caller should return
+        404). Never blocks on the subprocess — the dispatch loop
+        handles reap + cleanup.
+        """
+        proc = self._in_flight.get(task_id)
+        if proc is None:
+            return False
+        try:
+            proc.terminate()
+        except ProcessLookupError:
+            # Already exited between our lookup and terminate — treat
+            # as success; the dispatch finally will clean up.
+            pass
+        except Exception as exc:
+            logger.warning("cancel_task(%s): terminate failed: %s", task_id, exc)
+            return False
+        return True
 
     # ─── Task dispatch ──────────────────────────────────────────────────
 
@@ -380,6 +415,10 @@ class WorkerRegistry:
                 f"Failed to spawn `openshell sandbox exec` for {sandbox_name}: {exc}"
             ) from exc
 
+        # Register the proc so /chat/{task_id}/cancel can reach it.
+        # Cleared in the outer finally (below).
+        self._in_flight[task_id] = proc
+
         # Pipe the task + close stdin. **This close is critical.**
         # openshell's exec primitive waits for stdin EOF before
         # invoking the in-sandbox process; without it the subprocess
@@ -391,6 +430,7 @@ class WorkerRegistry:
             await proc.stdin.drain()
             proc.stdin.close()
         except Exception as exc:
+            self._in_flight.pop(task_id, None)
             await self._cleanup_proc(proc)
             raise ConnectionError(
                 f"Failed to pipe task to {sandbox_name}: {exc}"
@@ -518,6 +558,10 @@ class WorkerRegistry:
                 await stderr_task
             except Exception:
                 pass
+            # Drop the in-flight proc handle regardless of exit path so
+            # a cancel_task() call after completion is a no-op (404)
+            # rather than touching an already-reaped subprocess.
+            self._in_flight.pop(task_id, None)
 
         if final_result is None:
             raise RuntimeError(
