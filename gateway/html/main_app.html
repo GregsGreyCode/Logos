@@ -2629,7 +2629,7 @@
            :style="(namedAgentFormOpen || (namedAgents||[]).some(a => a._editing)) ? 'width:24rem;max-width:24rem;' : 'width:16rem;max-width:16rem;'">
 
         <!-- Create Agent toggle -->
-        <button @click="namedAgentFormOpen = !namedAgentFormOpen; namedAgentMsg = null; if (namedAgentFormOpen && !souls.length) { soulsLoaded = false; loadSouls(); }"
+        <button @click="namedAgentFormOpen = !namedAgentFormOpen; namedAgentMsg = null; if (namedAgentFormOpen) { namedAgentForm.duplicate_from = null; namedAgentForm.duplicate_from_name = null; if (!souls.length) { soulsLoaded = false; loadSouls(); } }"
           class="w-full px-3 py-2 rounded-lg text-xs font-medium transition-colors"
           :class="namedAgentFormOpen ? 'bg-gray-800 text-gray-400 border border-gray-700' : 'bg-indigo-600 text-white hover:bg-indigo-500'">
           <span x-text="namedAgentFormOpen ? 'Cancel' : '+ Create Agent'"></span>
@@ -2642,6 +2642,27 @@
 
         <!-- Create agent form -->
         <div x-show="namedAgentFormOpen" x-cloak class="p-3 rounded-xl border border-indigo-800/50 bg-indigo-950/10 space-y-2">
+          <!-- Duplicate banner — only shown when the form was opened via
+               the "Duplicate" action on an existing agent's card. Explains
+               exactly what's about to be copied so there's no ambiguity
+               between "copy config" and "copy the agent's state". -->
+          <div x-show="namedAgentForm.duplicate_from" x-cloak
+               class="px-3 py-2 rounded-lg bg-indigo-950/40 border border-indigo-800 text-[11px] text-indigo-200 flex items-start gap-2">
+            <span class="text-base leading-none">⎘</span>
+            <div class="flex-1">
+              <div>
+                Duplicating
+                <span class="font-semibold text-white" x-text="namedAgentForm.duplicate_from_name || ''"></span>
+                as it stands right now.
+              </div>
+              <div class="text-[10px] text-indigo-300/70 mt-0.5">
+                On save, the new agent inherits this one's memories and past sessions. Logs and the live sandbox stay with the original.
+                <button type="button"
+                        @click="namedAgentForm.duplicate_from = null; namedAgentForm.duplicate_from_name = null"
+                        class="underline hover:text-white ml-1">Clear</button>
+              </div>
+            </div>
+          </div>
           <input x-model="namedAgentForm.name" type="text" placeholder="Agent name (e.g. Atlas, DevOps-Bot)"
             class="w-full px-3 py-2 rounded-lg bg-gray-800 border border-gray-700 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-indigo-500">
           <!-- Three-axis character picker: body (8) × skin (4) × Logos theme (5) = 160 combinations.
@@ -2880,8 +2901,8 @@
                   <button @click.stop="a._editing = true; a._edit = { name: a.name, soul_slug: a.soul_slug, model: a.model || '', description: a.description || '', toolsets: JSON.parse(a.toolsets || '[]'), daily_budget_usd: a.daily_budget_usd || '', fallback_route_id: a.fallback_route_id || '' }"
                     class="text-[9px] px-1.5 py-0.5 rounded border border-gray-700 text-gray-500 hover:text-white hover:border-gray-500 transition-colors">Edit</button>
                   <button @click.stop="duplicateNamedAgent(a)"
-                    title="Clone this agent — opens the create form pre-filled so you can tweak STAMP fields before saving"
-                    class="text-[9px] px-1.5 py-0.5 rounded border border-gray-700 text-gray-500 hover:text-indigo-300 hover:border-indigo-500 transition-colors">Dup</button>
+                    title="Duplicate this agent — opens the create form pre-filled and, on save, copies memories + past sessions from this agent as they are right now"
+                    class="text-[9px] px-1.5 py-0.5 rounded border border-gray-700 text-gray-500 hover:text-indigo-300 hover:border-indigo-500 transition-colors">Duplicate</button>
                   <button @click.stop="openAgentLogs(a)"
                     title="View this agent's runtime log tail — what it's been doing, tool calls, errors, etc."
                     class="text-[9px] px-1.5 py-0.5 rounded border border-gray-700 text-gray-500 hover:text-white hover:border-gray-500 transition-colors">📋 Logs</button>
@@ -10097,7 +10118,7 @@ network_policies:
         });
         if (r.ok) {
           this.namedAgentFormOpen = false;
-          this.namedAgentForm = { name: '', soul_slug: 'general', model: '', model_route_id: null, description: '', toolsets: [], char_index: null };
+          this.namedAgentForm = { name: '', soul_slug: 'general', model: '', model_route_id: null, description: '', toolsets: [], char_index: null, duplicate_from: null, duplicate_from_name: null };
           await this.loadNamedAgents();
           // Force the world to resync after the form closes. Closing
           // the form collapses the agent column from 24rem back to
@@ -10176,6 +10197,12 @@ network_policies:
         char_index: (agent.char_index !== undefined && agent.char_index !== null)
           ? Number(agent.char_index)
           : null,
+        // Flag for the backend: on save, copy memories + sessions from
+        // the source agent's dir. The backend reads `duplicate_from`
+        // in handle_agents_post; the form banner below surfaces what's
+        // about to happen to the user.
+        duplicate_from: agent.id,
+        duplicate_from_name: agent.name,
       };
       this.namedAgentMsg = null;
       this.namedAgentFormOpen = true;
