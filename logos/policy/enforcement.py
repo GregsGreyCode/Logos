@@ -1,29 +1,27 @@
-"""Logos policy enforcement — single import surface for all approval and security gates.
+"""Logos policy enforcement — re-exports for approval and command-security gates.
 
-Centralises the functions previously scattered across tools/approval.py and
-tools/tirith_security.py so agent implementations only need one import path.
+Policy gate flow (after the README-audit cleanup):
+  1. check_all_command_guards() — DANGEROUS_PATTERNS regex + Tirith scan
+     (the only live pre-exec policy gate)
+  2. create_policy_approval_request() — persists approval rows to auth DB
+     (used by the MCP access flow)
 
-Policy gate flow:
-  1. check_policy_for_tool()  — ActionPolicy dimension check (write/exec/fs)
-  2. check_all_command_guards() — dangerous-pattern + tirith scan (exec tools)
-  3. create_policy_approval_request() — persists approval requests to auth DB
+The former ``check_policy_for_tool`` / ``check_tool`` dispatch-time gate has
+been removed; it was never wired into ``tools/registry.py:dispatch()``.
+Workspace scoping is enforced inline in ``agents/hermes/agent.py``.
 
 Usage::
 
     from logos.policy.enforcement import (
-        check_policy_for_tool,
         create_policy_approval_request,
         check_all_command_guards,
     )
 """
 
-# -- Policy-based tool gate (ActionPolicy dimensions) -------------------------
-from tools.approval import (
-    check_policy_for_tool,
-    create_policy_approval_request,
-)
+# -- Approval request persistence --------------------------------------------
+from tools.approval import create_policy_approval_request
 
-# -- Pre-exec command guards (dangerous patterns + tirith) --------------------
+# -- Pre-exec command guards (dangerous patterns + tirith) -------------------
 from tools.approval import (
     check_dangerous_command,
     check_all_command_guards,
@@ -31,20 +29,16 @@ from tools.approval import (
     DANGEROUS_PATTERNS,
 )
 
-# -- Tirith binary security scanner -------------------------------------------
+# -- Tirith binary security scanner ------------------------------------------
 from tools.tirith_security import check_command_security, ensure_installed
 
 
 __all__ = [
-    # Policy gate
-    "check_policy_for_tool",
     "create_policy_approval_request",
-    # Command guards
     "check_dangerous_command",
     "check_all_command_guards",
     "detect_dangerous_command",
     "DANGEROUS_PATTERNS",
-    # Tirith
     "check_command_security",
     "ensure_installed",
 ]

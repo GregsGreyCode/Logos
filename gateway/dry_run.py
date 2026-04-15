@@ -12,10 +12,13 @@ Exec command classification
 ---------------------------
 For terminal/shell tools, dry_run behaviour depends on command classification:
 
-  read_only   — command is on the conservative safe-read allowlist.  Under
-                write_policy=dry_run these are allowed to *actually execute*
-                (they do not mutate state).  check_policy_for_tool() in
-                approval.py gates this decision.
+  read_only   — command is on the conservative safe-read allowlist. No
+                dispatch-time ActionPolicy gate consults this today (the
+                dry_run / approval_required modes referenced in the 6-dim
+                UI were deleted on the README-audit cleanup), so the
+                classification is currently used only by callers that
+                explicitly want to distinguish "safe to actually run"
+                from "would mutate state if we let it."
 
   mutating    — command is known to mutate state.  Blocked with a simulation
                 response describing what would have happened.
