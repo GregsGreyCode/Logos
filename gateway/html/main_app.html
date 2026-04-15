@@ -3044,8 +3044,8 @@
                     :class="srv.status === 'running' || srv.status === 'external' ? 'bg-green-400' : srv.status === 'deploying' || srv.status === 'pending' ? 'bg-yellow-400 animate-pulse' : srv.status === 'error' ? 'bg-red-400' : 'bg-gray-600'"></span>
                   <span class="text-sm font-medium text-white truncate" x-text="srv.name"></span>
                   <span class="text-[9px] px-1.5 py-0.5 rounded-full border font-medium uppercase tracking-wider flex-shrink-0"
-                    :class="srv.source === 'config' ? 'bg-gray-800 text-gray-500 border-gray-700' : srv.deploy_mode === 'k8s' ? 'bg-indigo-950 text-indigo-400 border-indigo-800' : 'bg-gray-800 text-gray-400 border-gray-700'"
-                    x-text="srv.source === 'config' ? 'config' : srv.deploy_mode === 'k8s' ? 'k8s' : 'external'"></span>
+                    :class="'bg-gray-800 text-gray-400 border-gray-700'"
+                    x-text="srv.source === 'config' ? 'config' : (srv.deploy_mode || 'external')"></span>
                 </div>
                 <div class="flex items-center gap-2 flex-shrink-0" @click.stop>
                   <span x-show="srv.tool_count" class="text-[10px] text-gray-500" x-text="srv.tool_count + ' tools'"></span>
@@ -5881,7 +5881,7 @@ function app() {
     authUser: null,
     authPermissions: [],
     isCanary: window.__LOGOS__?.isCanary || false,
-    runtimeMode: window.__LOGOS__?.runtimeMode || 'kubernetes',
+    runtimeMode: window.__LOGOS__?.runtimeMode || 'openshell',
     appVersion: window.__LOGOS__?.version || '',
     // agents sub-tabs
     agentsTab: 'running',  // kept for compat; sub-tabs removed
@@ -6783,13 +6783,16 @@ function app() {
     _buildChatAgents() {
       // No more "self" pseudo-agent — every agent must be a real named agent
       // with its own sandbox. Empty chatAgents is a valid state.
+      // Non-local cluster instances are OpenShell sandboxes; the legacy
+      // 'k8s' source kept its name so older backend rows still render
+      // (handle_agents_list still emits source='k8s' for compat).
       const k8s = (this.clusterInstances || [])
         .filter(i => i.node_port && i.source !== 'local')
         .map(i => ({
-          id:           'k8s-' + i.name,
+          id:           'sandbox-' + i.name,
           name:         i.instance_name,
           url:          'http://' + window.location.hostname + ':' + i.node_port,
-          source:       'k8s',
+          source:       'openshell',
           editable:     false,
           soul:         i.soul         || null,
           model_alias:  i.model_alias  || null,
@@ -7161,7 +7164,7 @@ function app() {
       }).catch(() => {});
     },
 
-    // ── k8s Instances + Toolsets ──────────────────────────────────
+    // ── Sandbox instances + Toolsets ──────────────────────────────
 
     // ── Agent World ─────────────────────────────────────────────
 
@@ -8661,7 +8664,11 @@ function app() {
           body: JSON.stringify({
             name: this.toolsDeployTarget.catalogue_id,
             catalogue_id: this.toolsDeployTarget.catalogue_id,
-            deploy_mode: 'k8s',
+            // Container-based MCP deploy is being rewritten — the server
+            // will currently return 501 for 'docker'. The UI still posts
+            // it so the error surfaces in the dev console without a path
+            // that silently worked via k8s.
+            deploy_mode: 'docker',
             config: this.toolsDeployConfig,
           }),
         });

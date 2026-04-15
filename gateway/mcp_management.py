@@ -76,7 +76,12 @@ async def handle_servers_list(request: web.Request) -> web.Response:
 # ── Create server ─────────────────��──────────────────────────────────────────
 
 async def handle_server_create(request: web.Request) -> web.Response:
-    """POST /api/tools/servers — create a new managed server (deploy or external)."""
+    """POST /api/tools/servers — create a new managed server (external only).
+
+    Container-based deploy is being rewritten (Docker-based) — until that
+    lands, ``deploy_mode`` must be ``external``. The previous k8s path has
+    been removed along with the rest of the legacy sandbox runtimes.
+    """
     db = _get_auth_db()
     try:
         body = await request.json()
@@ -91,6 +96,22 @@ async def handle_server_create(request: web.Request) -> web.Response:
         return _json({"error": f"Server '{name}' already exists"}, 409)
 
     deploy_mode = body.get("deploy_mode", "external")
+    if deploy_mode == "k8s":
+        return _json(
+            {"error": "k8s_removed",
+             "detail": "k8s sandbox deploy was removed; use deploy_mode=external "
+                       "(or deploy_mode=docker, coming next)"},
+            status=400,
+        )
+    if deploy_mode not in ("external", "docker"):
+        return _json({"error": f"unsupported deploy_mode: {deploy_mode}"}, 400)
+    if deploy_mode == "docker":
+        return _json(
+            {"error": "not_implemented",
+             "detail": "MCP container deploy is being rewritten — see follow-up"},
+            status=501,
+        )
+
     catalogue_id = body.get("catalogue_id")
     config_values = body.get("config", {})
     url = (body.get("url") or "").strip()
@@ -105,26 +126,15 @@ async def handle_server_create(request: web.Request) -> web.Response:
     server = db.create_mcp_server(
         name=name,
         catalogue_id=catalogue_id,
-        source="ui" if deploy_mode == "k8s" else "external",
+        source="external",
         deploy_mode=deploy_mode,
         url=url if deploy_mode == "external" else None,
         token=token if deploy_mode == "external" else None,
-        k8s_image=cat_entry["image"] if cat_entry else body.get("image"),
         config_json=json.dumps(config_values),
         tools_filter=json.dumps(body.get("tools_filter", {})),
         category=cat_entry["category"] if cat_entry else body.get("category", "general"),
         description=cat_entry["description"] if cat_entry else body.get("description"),
     )
-
-    # If k8s deploy, trigger it
-    if deploy_mode == "k8s":
-        try:
-            result = await _deploy_server(request.app, server, cat_entry, config_values)
-            server = db.update_mcp_server(server["id"], **result)
-        except Exception as exc:
-            logger.exception("Failed to deploy MCP server %s", name)
-            db.update_mcp_server(server["id"], status="error", last_error=str(exc))
-            server = db.get_mcp_server(server["id"])
 
     # If external, auto-wire immediately
     if deploy_mode == "external" and url:
@@ -141,20 +151,12 @@ async def handle_server_create(request: web.Request) -> web.Response:
 # ── Delete server ──────��─────────────────────────────────────────────────────
 
 async def handle_server_delete(request: web.Request) -> web.Response:
-    """DELETE /api/tools/servers/{id} — undeploy + delete."""
+    """DELETE /api/tools/servers/{id} — unwire + delete."""
     db = _get_auth_db()
     server_id = request.match_info["id"]
     server = db.get_mcp_server(server_id)
     if not server:
         return _json({"error": "not_found"}, 404)
-
-    # Undeploy from k8s if applicable
-    if server["deploy_mode"] == "k8s" and server["status"] not in ("pending", "error"):
-        try:
-            from gateway.mcp_deploy import undeploy_mcp_server
-            undeploy_mcp_server(server["name"], namespace=server.get("k8s_namespace") or "hermes")
-        except Exception as exc:
-            logger.warning("Failed to undeploy %s: %s", server["name"], exc)
 
     # Un-wire from gateway
     try:
@@ -224,11 +226,6 @@ async def handle_server_health(request: web.Request) -> web.Response:
     if not server:
         return _json({"error": "not_found"}, 404)
 
-    if server["deploy_mode"] == "k8s":
-        from gateway.mcp_deploy import get_mcp_deploy_status
-        status = get_mcp_deploy_status(server["name"], namespace=server.get("k8s_namespace") or "hermes")
-        return _json(status)
-
     # External: check if MCP gateway has it connected
     svc = request.app.get("mcp_service")
     if svc and svc.is_connected(server["name"]):
@@ -236,60 +233,7 @@ async def handle_server_health(request: web.Request) -> web.Response:
     return _json({"status": "disconnected", "connected": False})
 
 
-# ── Internal: deploy + wire helpers ───────────���──────────────────────────────
-
-async def _deploy_server(app, server: dict, cat_entry: dict | None, config_values: dict) -> dict:
-    """Deploy an MCP server to k8s and return DB update fields."""
-    import asyncio
-    from gateway.mcp_deploy import deploy_mcp_server
-
-    image = server.get("k8s_image") or (cat_entry or {}).get("image", "")
-    port = (cat_entry or {}).get("port", 8000)
-    mcp_path = (cat_entry or {}).get("mcp_path", "/mcp")
-    resources = (cat_entry or {}).get("resources")
-
-    # Split config into secret vs plain env vars
-    secret_keys = set()
-    if cat_entry:
-        for field in cat_entry.get("config_schema", []):
-            if field.get("type") == "secret":
-                secret_keys.add(field["key"])
-
-    env_vars = {}
-    secret_vars = {}
-    # Always set transport to streamable-http for k8s deployments
-    env_vars["MCP_TRANSPORT"] = "streamable-http"
-    for k, v in config_values.items():
-        if k in secret_keys:
-            secret_vars[k] = str(v)
-        else:
-            env_vars[k] = str(v)
-
-    loop = asyncio.get_event_loop()
-    result = await loop.run_in_executor(None, lambda: deploy_mcp_server(
-        name=server["name"],
-        image=image,
-        port=port,
-        env_vars=env_vars,
-        secret_vars=secret_vars,
-        resources=resources,
-        mcp_path=mcp_path,
-    ))
-
-    # Auto-wire after deploy
-    url = result["url"]
-    token = config_values.get("MCP_CLIENT_TOKEN", "")
-    try:
-        await _auto_wire_server(app, server["name"], url, token)
-    except Exception as exc:
-        logger.warning("Auto-wire after deploy failed for %s (server may still be starting): %s", server["name"], exc)
-
-    return {
-        "url": url,
-        "k8s_namespace": result["namespace"],
-        "status": "deploying",
-    }
-
+# ── Internal: wire helpers ────────────────────────────���──────────────────────
 
 async def _auto_wire_server(app, name: str, url: str, token: str = ""):
     """Wire a server into the running MCPGatewayService."""
@@ -314,7 +258,6 @@ async def _auto_wire_server(app, name: str, url: str, token: str = ""):
     try:
         await svc.restart_server(name)
     except Exception:
-        # Server might not be ready yet (k8s pod still starting)
         logger.debug("restart_server failed for %s (may still be starting)", name)
 
 
