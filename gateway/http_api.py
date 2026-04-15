@@ -5089,6 +5089,18 @@ async def start_http_api(runner: Any, port: int = 8091) -> None:
     # what their agent was actually doing without shelling into the host.
     app.router.add_get("/admin/agents/{id}/logs",
                        _mm(admin_handlers.handle_agent_logs_get))
+    # Per-agent lifetime-state endpoints backing the "🧠 Mind" modal:
+    # memories (curated entries), sessions (list only — no transcripts
+    # for now), activity (dispatches + cost rollup), files (on-disk
+    # tree under ~/.logos/agents/<name>/).
+    app.router.add_get("/admin/agents/{id}/memories",
+                       _mm(admin_handlers.handle_agent_memories_get))
+    app.router.add_get("/admin/agents/{id}/sessions",
+                       _mm(admin_handlers.handle_agent_sessions_get))
+    app.router.add_get("/admin/agents/{id}/activity",
+                       _mm(admin_handlers.handle_agent_activity_get))
+    app.router.add_get("/admin/agents/{id}/files",
+                       _mm(admin_handlers.handle_agent_files_get))
     app.router.add_post("/admin/agents/{id}/tools/toolsets/toggle",
                         _mm(require_csrf(admin_handlers.handle_agent_toolsets_toggle)))
     app.router.add_post("/admin/agents/{id}/tools/presets/toggle",
