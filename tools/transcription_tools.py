@@ -197,13 +197,35 @@ def _transcribe_local(file_path: str, model_name: str) -> Dict[str, Any]:
 
     try:
         from faster_whisper import WhisperModel
-        # Lazy-load the model (downloads on first use, ~150 MB for 'base')
+        # Lazy-load the model (downloads on first use, ~150 MB for 'base').
+        # device="auto" picks CUDA when the GPU libs are present, but hosts
+        # with NVIDIA drivers but no libcublas.so.12 (common on bare Linux
+        # boxes without the full CUDA runtime) crash mid-transcribe. Try
+        # auto first, fall back to CPU on any cublas/cudnn load failure.
         if _local_model is None or _local_model_name != model_name:
             logger.info("Loading faster-whisper model '%s' (first load downloads the model)...", model_name)
-            _local_model = WhisperModel(model_name, device="auto", compute_type="auto")
+            try:
+                _local_model = WhisperModel(model_name, device="auto", compute_type="auto")
+            except Exception as load_err:
+                if "cublas" in str(load_err).lower() or "cudnn" in str(load_err).lower():
+                    logger.warning("faster-whisper: CUDA libs missing (%s) — falling back to CPU", load_err)
+                    _local_model = WhisperModel(model_name, device="cpu", compute_type="int8")
+                else:
+                    raise
             _local_model_name = model_name
 
-        segments, info = _local_model.transcribe(file_path, beam_size=5)
+        try:
+            segments, info = _local_model.transcribe(file_path, beam_size=5)
+        except RuntimeError as run_err:
+            # Model loaded on GPU but transcribe call hit missing cublas.
+            # Re-create on CPU and retry once.
+            if "cublas" in str(run_err).lower() or "cudnn" in str(run_err).lower():
+                logger.warning("faster-whisper: CUDA runtime failure (%s) — retrying on CPU", run_err)
+                _local_model = WhisperModel(model_name, device="cpu", compute_type="int8")
+                _local_model_name = model_name
+                segments, info = _local_model.transcribe(file_path, beam_size=5)
+            else:
+                raise
         transcript = " ".join(segment.text.strip() for segment in segments)
 
         logger.info(
