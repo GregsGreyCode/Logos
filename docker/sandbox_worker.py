@@ -515,6 +515,23 @@ def load_config() -> dict:
                 len(mcp_cfg), sorted(mcp_cfg.keys()),
             )
 
+        # model.context_length — bypasses upstream run_agent's probe at
+        # https://inference.local/v1/models/{id}, which always fails for
+        # OpenShell-routed local inference (the privacy router doesn't
+        # expose model metadata) and spams "Could not detect context
+        # length … probe-down" on every dispatch. Write a value so the
+        # probe is skipped. Source of truth, in order:
+        #   1. instance-config "model.context_length" (gateway-provided)
+        #   2. 128000 default — matches upstream's probe-failure fallback
+        #      exactly, so behaviour is identical, just quieter.
+        _model_cfg = cfg.get("model") if isinstance(cfg.get("model"), dict) else {}
+        _model_ctx = (_model_cfg or {}).get("context_length")
+        try:
+            _model_ctx = int(_model_ctx) if _model_ctx is not None else 128000
+        except (TypeError, ValueError):
+            _model_ctx = 128000
+        _yaml_parts.append(f"model:\n  context_length: {_model_ctx}")
+
         if _yaml_parts:
             cfg_path.write_text("\n\n".join(_yaml_parts) + "\n")
         elif cfg_path.exists():
