@@ -4654,6 +4654,49 @@
             </button>
           </div>
 
+          <!-- Home channel (outbound destination for home_message) -->
+          <template x-if="p.supports_home_channel">
+            <div class="px-4 py-3 border-b border-gray-800 bg-gray-950/40">
+              <div class="flex items-center justify-between mb-2">
+                <div>
+                  <div class="text-[11px] font-semibold text-gray-300">Home channel</div>
+                  <div class="text-[10px] text-gray-600">Destination for proactive messages from agents (home_message tool).</div>
+                </div>
+                <template x-if="p.home_channel && p.home_channel.chat_id">
+                  <span class="text-[10px] text-green-500">configured</span>
+                </template>
+              </div>
+              <div class="flex items-center gap-2">
+                <input type="text"
+                       :placeholder="'Chat/Channel ID' + (p.name === 'email' ? ' or email address' : '')"
+                       x-model="homeChannelDraft[p.name] !== undefined ? homeChannelDraft[p.name] : (p.home_channel?.chat_id || '')"
+                       @input="homeChannelDraft[p.name] = $event.target.value"
+                       class="flex-1 bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs text-white font-mono"/>
+                <input type="text" placeholder="Label (optional)"
+                       x-model="homeChannelNameDraft[p.name] !== undefined ? homeChannelNameDraft[p.name] : (p.home_channel?.name || '')"
+                       @input="homeChannelNameDraft[p.name] = $event.target.value"
+                       class="w-32 bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs text-white"/>
+                <button @click="saveHomeChannel(p.name)"
+                        :disabled="homeChannelBusy[p.name]"
+                        class="text-[10px] px-2.5 py-1 rounded border border-gray-700 text-white hover:border-gray-500 disabled:opacity-50">Save</button>
+                <button x-show="p.home_channel && p.home_channel.chat_id"
+                        @click="testHomeChannel(p.name)"
+                        :disabled="homeChannelBusy[p.name] || !p.connected"
+                        :title="p.connected ? 'Send a test message' : 'Platform not connected'"
+                        class="text-[10px] px-2.5 py-1 rounded border border-gray-700 text-gray-300 hover:border-gray-500 disabled:opacity-50">Test</button>
+                <button x-show="p.home_channel && p.home_channel.chat_id"
+                        @click="deleteHomeChannel(p.name)"
+                        :disabled="homeChannelBusy[p.name]"
+                        class="text-[10px] px-2 py-1 rounded border border-gray-800 text-gray-500 hover:text-red-400 hover:border-red-900">Clear</button>
+              </div>
+              <template x-if="homeChannelMsg[p.name]">
+                <div class="mt-2 text-[10px]"
+                     :class="homeChannelMsg[p.name].ok ? 'text-green-500' : 'text-red-400'"
+                     x-text="homeChannelMsg[p.name].text"></div>
+              </template>
+            </div>
+          </template>
+
           <!-- Rules table -->
           <table class="w-full text-xs">
             <thead>
@@ -6095,6 +6138,10 @@ function app() {
     platformAgents: [],
     platformRoutingFormOpen: false,
     platformRoutingForm: {platform: "", scope: "chat", scope_id: "", agent_id: ""},
+    homeChannelDraft: {},
+    homeChannelNameDraft: {},
+    homeChannelBusy: {},
+    homeChannelMsg: {},
     // evolution
     evoPanel: 'proposals',
     evolutionProposals: [],
@@ -10620,6 +10667,73 @@ function app() {
         await this.loadPlatforms();
       } catch(e) {
         alert("Save failed: " + (e.message || e));
+      }
+    },
+
+    async saveHomeChannel(platformName) {
+      const chatId = (this.homeChannelDraft[platformName] ?? "").trim();
+      if (!chatId) { alert("Enter a chat/channel ID first."); return; }
+      const name = (this.homeChannelNameDraft[platformName] ?? "").trim();
+      this.homeChannelBusy[platformName] = true;
+      this.homeChannelMsg[platformName] = null;
+      try {
+        const r = await fetch("/api/admin/platforms/home-channel", {
+          method: "POST",
+          credentials: "include",
+          headers: {"Content-Type": "application/json", "X-CSRF-Token": getCsrfToken()},
+          body: JSON.stringify({platform: platformName, chat_id: chatId, name}),
+        });
+        const d = await r.json();
+        if (!r.ok || !d.ok) throw new Error(d.error || "save failed");
+        this.homeChannelMsg[platformName] = {ok: true, text: "Saved."};
+        delete this.homeChannelDraft[platformName];
+        delete this.homeChannelNameDraft[platformName];
+        await this.loadPlatforms();
+      } catch(e) {
+        this.homeChannelMsg[platformName] = {ok: false, text: e.message || String(e)};
+      } finally {
+        this.homeChannelBusy[platformName] = false;
+      }
+    },
+
+    async deleteHomeChannel(platformName) {
+      if (!confirm("Clear the home channel for " + platformName + "?")) return;
+      this.homeChannelBusy[platformName] = true;
+      this.homeChannelMsg[platformName] = null;
+      try {
+        const r = await fetch("/api/admin/platforms/home-channel", {
+          method: "DELETE",
+          credentials: "include",
+          headers: {"Content-Type": "application/json", "X-CSRF-Token": getCsrfToken()},
+          body: JSON.stringify({platform: platformName}),
+        });
+        const d = await r.json();
+        if (!r.ok || !d.ok) throw new Error(d.error || "delete failed");
+        await this.loadPlatforms();
+      } catch(e) {
+        this.homeChannelMsg[platformName] = {ok: false, text: e.message || String(e)};
+      } finally {
+        this.homeChannelBusy[platformName] = false;
+      }
+    },
+
+    async testHomeChannel(platformName) {
+      this.homeChannelBusy[platformName] = true;
+      this.homeChannelMsg[platformName] = null;
+      try {
+        const r = await fetch("/api/admin/platforms/home-channel/test", {
+          method: "POST",
+          credentials: "include",
+          headers: {"Content-Type": "application/json", "X-CSRF-Token": getCsrfToken()},
+          body: JSON.stringify({platform: platformName}),
+        });
+        const d = await r.json();
+        if (!r.ok || !d.ok) throw new Error(d.error || "test failed");
+        this.homeChannelMsg[platformName] = {ok: true, text: "Test sent" + (d.message_id ? " (id " + d.message_id + ")" : "") + "."};
+      } catch(e) {
+        this.homeChannelMsg[platformName] = {ok: false, text: e.message || String(e)};
+      } finally {
+        this.homeChannelBusy[platformName] = false;
       }
     },
 
