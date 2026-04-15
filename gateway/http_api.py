@@ -2760,86 +2760,9 @@ async def _handle_transcribe(request: web.Request) -> web.Response:
     return web.json_response({"transcript": result.get("transcript", "")})
 
 
-# ── Action policy handlers ─────────────────────────────────────────────────
-
-async def _handle_action_policies_list(request: web.Request) -> web.Response:
-    rows = auth_db.list_action_policies()
-    return web.json_response({"action_policies": rows})
 
 
-async def _handle_action_policies_post(request: web.Request) -> web.Response:
-    try:
-        body = await request.json()
-    except Exception:
-        raise web.HTTPBadRequest(reason="Invalid JSON")
-    name = body.get("name", "").strip()
-    if not name:
-        raise web.HTTPBadRequest(reason="name required")
-    try:
-        row = auth_db.create_action_policy(
-            name=name,
-            description=body.get("description", ""),
-            network_policy=body.get("network_policy", "internet_enabled"),
-            network_allowlist=body.get("network_allowlist", "[]")
-                if isinstance(body.get("network_allowlist"), str)
-                else json.dumps(body.get("network_allowlist", [])),
-            filesystem_policy=body.get("filesystem_policy", "workspace_only"),
-            exec_policy=body.get("exec_policy", "restricted"),
-            write_policy=body.get("write_policy", "auto_apply"),
-            provider_policy=body.get("provider_policy", "any"),
-            secret_policy=body.get("secret_policy", "tool_only"),
-        )
-    except Exception as e:
-        raise web.HTTPConflict(reason=str(e))
-    auth_db.write_audit_log(
-        request.get("current_user", {}).get("sub"),
-        "create_action_policy",
-        target_type="action_policy", target_id=row["id"],
-    )
-    return web.json_response({"action_policy": row}, status=201)
-
-
-async def _handle_action_policies_get(request: web.Request) -> web.Response:
-    row = auth_db.get_action_policy(request.match_info["id"])
-    if not row:
-        raise web.HTTPNotFound(reason="Action policy not found")
-    return web.json_response({"action_policy": row})
-
-
-async def _handle_action_policies_patch(request: web.Request) -> web.Response:
-    policy_id = request.match_info["id"]
-    try:
-        body = await request.json()
-    except Exception:
-        raise web.HTTPBadRequest(reason="Invalid JSON")
-    # Serialise allowlist if passed as list
-    if "network_allowlist" in body and isinstance(body["network_allowlist"], list):
-        body["network_allowlist"] = json.dumps(body["network_allowlist"])
-    row = auth_db.update_action_policy(policy_id, **body)
-    if not row:
-        raise web.HTTPNotFound(reason="Action policy not found")
-    auth_db.write_audit_log(
-        request.get("current_user", {}).get("sub"),
-        "update_action_policy",
-        target_type="action_policy", target_id=policy_id,
-    )
-    return web.json_response({"action_policy": row})
-
-
-async def _handle_action_policies_delete(request: web.Request) -> web.Response:
-    policy_id = request.match_info["id"]
-    deleted = auth_db.delete_action_policy(policy_id)
-    if not deleted:
-        raise web.HTTPNotFound(reason="Action policy not found")
-    auth_db.write_audit_log(
-        request.get("current_user", {}).get("sub"),
-        "delete_action_policy",
-        target_type="action_policy", target_id=policy_id,
-    )
-    return web.json_response({"deleted": True})
-
-
-# ── OpenShell sandbox policy preset handlers ─────────────────────────────
+# ── Sandbox policy presets handlers ────────────────────────────────────────
 
 async def _handle_sandbox_presets_list(request: web.Request) -> web.Response:
     """GET /api/openshell/presets — list all presets with agent counts."""
@@ -2961,23 +2884,6 @@ async def _handle_sandbox_presets_delete(request: web.Request) -> web.Response:
     return web.json_response({"ok": True})
 
 
-async def _handle_user_action_policy_patch(request: web.Request) -> web.Response:
-    user_id = request.match_info["id"]
-    try:
-        body = await request.json()
-    except Exception:
-        raise web.HTTPBadRequest(reason="Invalid JSON")
-    policy_id = body.get("action_policy_id")  # None to clear
-    auth_db.assign_user_action_policy(user_id, policy_id)
-    auth_db.write_audit_log(
-        request.get("current_user", {}).get("sub"),
-        "assign_action_policy",
-        target_type="user", target_id=user_id,
-        metadata={"action_policy_id": policy_id},
-    )
-    return web.json_response({"user_id": user_id, "action_policy_id": policy_id})
-
-
 # ── Approval request handlers ──────────────────────────────────────────────
 
 async def _handle_approvals_list(request: web.Request) -> web.Response:
@@ -3092,211 +2998,6 @@ async def _handle_world_state(request: web.Request) -> web.Response:
     snapshot = build_world_snapshot(self_agent_id=self_id, include_self=True)
     return web.json_response(snapshot)
 
-
-async def _handle_workflows_list(request: web.Request) -> web.Response:
-    rows = auth_db.list_workflow_definitions()
-    from workflows.model import WorkflowDefinition as _WD
-    return web.json_response({"workflows": [_WD.from_row(r).to_dict() for r in rows]})
-
-
-async def _handle_workflows_post(request: web.Request) -> web.Response:
-    caller = request.get("current_user") or {}
-    try:
-        body = await request.json()
-    except Exception:
-        return web.json_response({"error": "invalid_json"}, status=400)
-
-    name = (body.get("name") or "").strip()
-    if not name:
-        return web.json_response({"error": "name is required"}, status=400)
-
-    # Validate steps
-    steps_raw = body.get("steps", [])
-    if not isinstance(steps_raw, list):
-        return web.json_response({"error": "steps must be an array"}, status=400)
-    try:
-        from workflows.model import StepDefinition as _SD
-        _ = [_SD.from_dict(s) for s in steps_raw]
-    except Exception as exc:
-        return web.json_response({"error": f"invalid step definition: {exc}"}, status=400)
-
-    import json as _json
-    row = auth_db.create_workflow_definition(
-        name=name,
-        steps_json=_json.dumps(steps_raw),
-        description=body.get("description", ""),
-        version=body.get("version", "1.0"),
-        tags=_json.dumps(body.get("tags", [])),
-        created_by=caller.get("sub"),
-    )
-    auth_db.write_audit_log(
-        caller.get("sub"), "create_workflow",
-        target_type="workflow", target_id=row["id"],
-        metadata={"name": name},
-    )
-    from workflows.model import WorkflowDefinition as _WD
-    return web.json_response({"workflow": _WD.from_row(row).to_dict()}, status=201)
-
-
-async def _handle_workflows_get(request: web.Request) -> web.Response:
-    wf_id = request.match_info["id"]
-    row = auth_db.get_workflow_definition(wf_id)
-    if not row:
-        raise web.HTTPNotFound(reason="Workflow not found")
-    from workflows.model import WorkflowDefinition as _WD
-    return web.json_response({"workflow": _WD.from_row(row).to_dict()})
-
-
-async def _handle_workflows_patch(request: web.Request) -> web.Response:
-    wf_id = request.match_info["id"]
-    caller = request.get("current_user") or {}
-    try:
-        body = await request.json()
-    except Exception:
-        return web.json_response({"error": "invalid_json"}, status=400)
-    import json as _json
-    kwargs = {}
-    if "name" in body:
-        kwargs["name"] = body["name"]
-    if "description" in body:
-        kwargs["description"] = body["description"]
-    if "version" in body:
-        kwargs["version"] = body["version"]
-    if "tags" in body:
-        kwargs["tags"] = _json.dumps(body["tags"])
-    if "steps" in body:
-        try:
-            from workflows.model import StepDefinition as _SD
-            _ = [_SD.from_dict(s) for s in body["steps"]]
-            kwargs["steps_json"] = _json.dumps(body["steps"])
-        except Exception as exc:
-            return web.json_response({"error": f"invalid step definition: {exc}"}, status=400)
-    row = auth_db.update_workflow_definition(wf_id, **kwargs)
-    if not row:
-        raise web.HTTPNotFound(reason="Workflow not found")
-    from workflows.model import WorkflowDefinition as _WD
-    return web.json_response({"workflow": _WD.from_row(row).to_dict()})
-
-
-async def _handle_workflows_delete(request: web.Request) -> web.Response:
-    wf_id = request.match_info["id"]
-    caller = request.get("current_user") or {}
-    deleted = auth_db.delete_workflow_definition(wf_id)
-    if not deleted:
-        raise web.HTTPNotFound(reason="Workflow not found")
-    auth_db.write_audit_log(
-        caller.get("sub"), "delete_workflow",
-        target_type="workflow", target_id=wf_id,
-    )
-    return web.json_response({"deleted": True})
-
-
-async def _handle_workflow_trigger(request: web.Request) -> web.Response:
-    wf_id = request.match_info["id"]
-    caller = request.get("current_user") or {}
-    caller_id = caller.get("sub")
-    try:
-        body = await request.json()
-    except Exception:
-        body = {}
-    inputs = body.get("inputs") or {}
-
-    # Resolve caller's action policy for the run.
-    _action_policy = None
-    if caller_id and caller_id.startswith("usr_"):
-        try:
-            from gateway.auth.policy import ActionPolicy as _AP
-            _pr = auth_db.get_user_action_policy_row(caller_id)
-            _action_policy = _AP.from_row(_pr) if _pr else None
-        except Exception:
-            pass
-
-    engine = request.app.get("workflow_engine")
-    if not engine:
-        return web.json_response({"error": "workflow engine not available"}, status=503)
-    try:
-        run_id = await engine.start_run(
-            workflow_id=wf_id,
-            triggered_by=caller_id,
-            inputs=inputs,
-            action_policy=_action_policy,
-            auth_user_id=caller_id,
-        )
-    except ValueError as exc:
-        return web.json_response({"error": str(exc)}, status=404)
-    except Exception as exc:
-        logger.exception("Failed to start workflow run")
-        return web.json_response({"error": str(exc)}, status=500)
-
-    auth_db.write_audit_log(
-        caller_id, "trigger_workflow",
-        target_type="workflow_run", target_id=run_id,
-        metadata={"workflow_id": wf_id, "inputs": inputs},
-    )
-    return web.json_response({"run_id": run_id, "workflow_id": wf_id}, status=202)
-
-
-async def _handle_workflow_runs_list(request: web.Request) -> web.Response:
-    wf_id  = request.rel_url.query.get("workflow_id")
-    status = request.rel_url.query.get("status")
-    limit  = min(int(request.rel_url.query.get("limit", 50)), 200)
-    offset = int(request.rel_url.query.get("offset", 0))
-    runs, total = auth_db.list_workflow_runs(workflow_id=wf_id, status=status,
-                                              limit=limit, offset=offset)
-    return web.json_response({"runs": runs, "total": total})
-
-
-async def _handle_workflow_run_get(request: web.Request) -> web.Response:
-    run_id = request.match_info["id"]
-    run = auth_db.get_workflow_run(run_id)
-    if not run:
-        raise web.HTTPNotFound(reason="Workflow run not found")
-    steps = auth_db.get_workflow_step_runs(run_id)
-    return web.json_response({"run": run, "steps": steps})
-
-
-async def _handle_workflow_run_cancel(request: web.Request) -> web.Response:
-    run_id = request.match_info["id"]
-    caller = request.get("current_user") or {}
-    run = auth_db.get_workflow_run(run_id)
-    if not run:
-        raise web.HTTPNotFound(reason="Workflow run not found")
-    if run["status"] in ("success", "failed", "cancelled"):
-        return web.json_response({"error": "run already terminal"}, status=409)
-    engine = request.app.get("workflow_engine")
-    if engine:
-        await engine.cancel_run(run_id)
-    else:
-        auth_db.update_workflow_run(run_id, status="cancelled",
-                                    finished_at=int(time.time() * 1000))
-    auth_db.write_audit_log(
-        caller.get("sub"), "cancel_workflow_run",
-        target_type="workflow_run", target_id=run_id,
-    )
-    return web.json_response({"cancelled": True, "run_id": run_id})
-
-
-async def _handle_workflow_approval_decide(request: web.Request) -> web.Response:
-    """Approve or reject a workflow approval step via its approval_request id."""
-    approval_id = request.match_info["id"]
-    decision    = request.match_info["decision"]   # 'approve' | 'reject'
-    if decision not in ("approve", "reject"):
-        return web.json_response({"error": "decision must be 'approve' or 'reject'"}, status=400)
-    caller = request.get("current_user") or {}
-    decided_by = caller.get("sub")
-
-    engine = request.app.get("workflow_engine")
-    if engine:
-        await engine.resume_approval(
-            approval_id=approval_id,
-            approved=(decision == "approve"),
-            decided_by=decided_by,
-        )
-    else:
-        # Engine not running (e.g. tests) — just update the DB record.
-        status = "approved" if decision == "approve" else "rejected"
-        auth_db.resolve_approval_request(approval_id, status=status, decided_by=decided_by)
-    return web.json_response({"decided": True, "decision": decision, "approval_id": approval_id})
 
 
 async def _handle_tools_configure(request: web.Request) -> web.Response:
@@ -3666,28 +3367,6 @@ async def _handle_chat(request: web.Request) -> web.StreamResponse:
         raise web.HTTPBadRequest(reason="message is required")
 
     runner: Any = request.app["runner"]
-
-    # Resolve the authenticated user's action policy (if any).
-    # Applies only to auth-db users (usr_... IDs); platform/anonymous users get DEFAULT_POLICY.
-    _action_policy = None
-    _auth_user_id = None
-    _real_user_id = auth_user.get("sub", "")
-    if _real_user_id and _real_user_id.startswith("usr_"):
-        _auth_user_id = _real_user_id
-        try:
-            from gateway.auth.policy import ActionPolicy as _AP, merge_policies as _merge
-            _policy_row = auth_db.get_user_action_policy_row(_real_user_id)
-            _action_policy = _AP.from_row(_policy_row) if _policy_row else None
-            # Session-level tightening: caller may request a stricter policy for this request only.
-            # Requires manage_action_policies permission (admins/operators creating sandboxed sessions).
-            _session_policy_id = body.get("action_policy_id")
-            from gateway.auth.rbac import has_permission as _has_perm
-            if _session_policy_id and _has_perm(auth_user.get("role", "viewer"), "manage_action_policies"):
-                _sess_row = auth_db.get_action_policy(_session_policy_id)
-                if _sess_row:
-                    _action_policy = _merge(_action_policy, _AP.from_row(_sess_row))
-        except Exception as _pe:
-            logger.warning("Failed to resolve action policy for %s: %s", _real_user_id, _pe)
 
     # ── Resolve the target sandbox worker first ──
     # We need the worker's `registered_at` timestamp BEFORE building the
@@ -4786,15 +4465,6 @@ async def start_http_api(runner: Any, port: int = 8091) -> None:
     except Exception as _cred_err:
         logger.debug("Could not inject credentials: %s", _cred_err)
 
-    # Workflow engine — lazily imported to avoid circular deps at module load.
-    try:
-        from workflows.engine import WorkflowEngine as _WFEngine
-        app["workflow_engine"] = _WFEngine(runner)
-        logger.info("Workflow engine initialised")
-    except Exception as _wf_err:
-        logger.warning("Workflow engine failed to initialise: %s", _wf_err)
-        app["workflow_engine"] = None
-
     _load_souls()
 
     # ── Public routes ──────────────────────────────────────────────────────
@@ -4875,7 +4545,6 @@ async def start_http_api(runner: Any, port: int = 8091) -> None:
         "/config/inference",
         "/config/tools",
         "/config/messaging",
-        "/config/workflows",
         "/activity",
         "/activity/events",
         "/activity/dashboards",
@@ -4893,7 +4562,6 @@ async def start_http_api(runner: Any, port: int = 8091) -> None:
         "/settings/tools",
         "/settings/channels",
         "/settings/proposals",
-        "/admin/workflows",
         "/admin/runs",
         "/admin/sandboxes",
         "/admin/model-routes",
@@ -5125,17 +4793,8 @@ async def start_http_api(runner: Any, port: int = 8091) -> None:
     app.router.add_patch("/admin/users/{id}/policy", _ap(require_csrf(admin_handlers.handle_user_policy_patch)))
 
     # ── Action policies (behaviour enforcement) ────────────────────────────
-    _map = require_permission("manage_action_policies")
-    _aap = require_permission("assign_action_policy")
     _vap = require_permission("view_approvals")
     _dap = require_permission("decide_approvals")
-
-    app.router.add_get("/action-policies",         _map(_handle_action_policies_list))
-    app.router.add_post("/action-policies",        _map(require_csrf(_handle_action_policies_post)))
-    app.router.add_get("/action-policies/{id}",    _map(_handle_action_policies_get))
-    app.router.add_patch("/action-policies/{id}",  _map(require_csrf(_handle_action_policies_patch)))
-    app.router.add_delete("/action-policies/{id}", _map(require_csrf(_handle_action_policies_delete)))
-    app.router.add_patch("/users/{id}/action-policy", _aap(require_csrf(_handle_user_action_policy_patch)))
 
     # ── OpenShell sandbox policy presets ──────────────────────────────────
     _vsp = require_permission("view_sandbox_policies")
@@ -5150,23 +4809,6 @@ async def start_http_api(runner: Any, port: int = 8091) -> None:
     app.router.add_get("/approvals/{id}",         _vap(_handle_approvals_get))
     app.router.add_post("/approvals/{id}/approve", _dap(require_csrf(_handle_approvals_approve)))
     app.router.add_post("/approvals/{id}/reject",  _dap(require_csrf(_handle_approvals_reject)))
-
-    # ── Workflow execution layer ────────────────────────────────────────────
-    _mwf = require_permission("manage_workflows")
-    _twf = require_permission("trigger_workflow")
-    _vwf = require_permission("view_workflows")
-    _dwf = require_permission("decide_workflow_approvals")
-
-    app.router.add_get("/workflows",               _vwf(_handle_workflows_list))
-    app.router.add_post("/workflows",              _mwf(require_csrf(_handle_workflows_post)))
-    app.router.add_get("/workflows/{id}",          _vwf(_handle_workflows_get))
-    app.router.add_patch("/workflows/{id}",        _mwf(require_csrf(_handle_workflows_patch)))
-    app.router.add_delete("/workflows/{id}",       _mwf(require_csrf(_handle_workflows_delete)))
-    app.router.add_post("/workflows/{id}/trigger", _twf(require_csrf(_handle_workflow_trigger)))
-    app.router.add_get("/workflow-runs",           _vwf(_handle_workflow_runs_list))
-    app.router.add_get("/workflow-runs/{id}",      _vwf(_handle_workflow_run_get))
-    app.router.add_post("/workflow-runs/{id}/cancel", _twf(require_csrf(_handle_workflow_run_cancel)))
-    app.router.add_post("/workflow-runs/approvals/{id}/{decision}", _dwf(require_csrf(_handle_workflow_approval_decide)))
 
     # ── Agent run records ───────────────────────────────────────────────────
     _vrun = require_permission("view_runs")
