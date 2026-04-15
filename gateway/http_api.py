@@ -2552,17 +2552,22 @@ async def _handle_favicon(request: web.Request) -> web.Response:
     if getattr(_sys2, "frozen", False):
         candidates.append(_pl2.Path(_sys2._MEIPASS) / "launcher" / "logos.ico")
     candidates.append(_pl2.Path(__file__).parent.parent / "launcher" / "logos.ico")
+    # 1-year immutable cache. The favicon is a tiny static asset that
+    # changes at most once per release; browsers skip even the
+    # conditional GET when max-age is this high with immutable, which
+    # clears the /favicon.ico line-noise out of DevTools Network tab.
+    cache_hdr = "public, max-age=31536000, immutable"
     for p in candidates:
         if p.exists():
             data = p.read_bytes()
             import hashlib
             etag = '"' + hashlib.md5(data).hexdigest()[:16] + '"'
             if request.headers.get("If-None-Match") == etag:
-                return web.Response(status=304, headers={"ETag": etag, "Cache-Control": "public, max-age=86400"})
+                return web.Response(status=304, headers={"ETag": etag, "Cache-Control": cache_hdr})
             return web.Response(
                 body=data,
                 content_type="image/x-icon",
-                headers={"Cache-Control": "public, max-age=86400", "ETag": etag},
+                headers={"Cache-Control": cache_hdr, "ETag": etag},
             )
     raise web.HTTPNotFound()
 
