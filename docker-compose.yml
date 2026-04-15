@@ -1,16 +1,13 @@
 # Logos — simple Docker Compose deployment
 #
-# Agents run as child processes INSIDE this container (HERMES_RUNTIME_MODE=local).
-# The container boundary isolates agent tool use from the host — agents cannot
-# see or touch anything outside this container.
+# Agents run as OpenShell sandboxes (the only supported runtime). The
+# gateway container talks to OpenShell's embedded k3s on the host, which
+# in turn manages per-agent sandbox pods.
 #
 # Quick start:
 #   cp .env.example .env   # fill in HERMES_JWT_SECRET (required)
 #   docker compose up -d
 #   open http://localhost:8080
-#
-# For pod-level agent isolation (each agent in its own container) use
-# docker-compose.k3s.yml instead.
 #
 # Optional self-hosted tool stack (Browserless + Firecrawl) — disabled by
 # default. Bring them up alongside Logos with one of:
@@ -35,13 +32,6 @@ services:
       # Generate with: openssl rand -hex 32
       LOGOS_JWT_SECRET: "${LOGOS_JWT_SECRET:-${HERMES_JWT_SECRET:-}}"
       HERMES_JWT_SECRET: "${LOGOS_JWT_SECRET:-${HERMES_JWT_SECRET:-}}"  # deprecated alias
-
-      # ── Agent execution ─────────────────────────────────────────────────────
-      # "openshell" (default) → sandboxed via OpenShell + k3s
-      # "local"               → agents spawn as child processes inside this container
-      # "kubernetes"          → agents spawn as k8s pods (see docker-compose.k3s.yml)
-      LOGOS_RUNTIME_MODE: "${LOGOS_RUNTIME_MODE:-${HERMES_RUNTIME_MODE:-local}}"
-      HERMES_RUNTIME_MODE: "${LOGOS_RUNTIME_MODE:-${HERMES_RUNTIME_MODE:-local}}"  # deprecated alias
 
       # ── Gateway ─────────────────────────────────────────────────────────────
       LOGOS_PORT: "8080"

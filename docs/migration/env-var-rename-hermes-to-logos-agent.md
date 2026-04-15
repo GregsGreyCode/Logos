@@ -35,7 +35,7 @@ If you can't decide, ask: "if I have two agents on the same gateway with differe
 
 A few specific calls from the audit where the answer wasn't obvious:
 
-- **`HERMES_RUNTIME_MODE`** → **`LOGOS_RUNTIME_MODE`**. Picks the executor (openshell vs docker vs local). One gateway = one executor. Per-agent runtime modes aren't a real use case — agents are dispatched into whatever sandbox the gateway can spawn.
+- **`HERMES_RUNTIME_MODE` / `LOGOS_RUNTIME_MODE`** — **removed.** OpenShell is now the only supported sandbox runtime; there is nothing to select. The env var is still accepted silently but has no effect.
 - **`HERMES_INTERACTIVE` / `HERMES_GATEWAY_SESSION`** → **`LOGOS_INTERACTIVE` / `LOGOS_GATEWAY_SESSION`**. These describe the *invocation environment* of the Logos process itself (TTY vs gateway-spawned), not the agent. The audit suggested `AGENT_GATEWAY_SESSION` for the latter — disagree. The gateway-vs-CLI distinction is process-level.
 - **`HERMES_REDACT_SECRETS`** → **`LOGOS_REDACT_SECRETS`**. Security policy belongs to the platform, not to individual agents. We don't want a "noisy logging agent" toggle.
 - **`HERMES_HUMAN_DELAY_*`** → **`LOGOS_HUMAN_DELAY_*`**. Messaging-platform pacing applies to every reply the gateway sends, not per-agent.
@@ -241,7 +241,6 @@ To keep this from sprawling:
 | Tests assume `HERMES_*` is in `os.environ` | Audit `tests/` for direct `os.environ["HERMES_FOO"] = ...` and `monkeypatch.setenv("HERMES_FOO", ...)`. Update all of them in Phase 1 to use the new names. The fallback chain in production code means tests can use *either*, but consistency is better. |
 | Sandbox image rebuild needed for Phase 2c worker rename | Bump the sandbox image tag. The resurrect-on-startup pass already handles "agent record exists, sandbox does not" — operators can trigger a re-spawn by deleting and re-creating the OpenShell sandbox via the dashboard. |
 | `HERMES_JWT_SECRET` is security-critical and has no fallback today | Phase 1 reads `LOGOS_JWT_SECRET or HERMES_JWT_SECRET`. The persistent secret file at `~/.logos/.jwt_secret` (`gateway/http_api.py:2879-2886`) is the source of truth anyway — env vars are bootstrap-only. Tests should rotate cleanly. |
-| Renaming `HERMES_RUNTIME_MODE` breaks executor selection | Critical path test: spin up the gateway with each runtime mode (`local`, `docker`, `openshell`), verify `executor` resolves correctly, verify a chat dispatches. |
 
 ## Test plan
 
@@ -295,8 +294,6 @@ These tests should be run at the end of each phase against a fresh gateway:
 | `HERMES_IS_CANARY` | `LOGOS_IS_CANARY` | canary indicator |
 | `HERMES_PORT` | `LOGOS_PORT` | already has fallback in `run.py:4936` |
 | `HERMES_MCP_PORT` | `LOGOS_MCP_PORT` | in-gateway MCP server port |
-| `HERMES_K8S_NAMESPACE` | `LOGOS_K8S_NAMESPACE` | k8s deployment ns |
-| `HERMES_RUNTIME_MODE` | `LOGOS_RUNTIME_MODE` | executor selection — critical path |
 | `HERMES_LOG_LEVEL` | `LOGOS_LOG_LEVEL` | log verbosity |
 | `HERMES_ADMIN_EMAIL` | `LOGOS_ADMIN_EMAIL` | first-run admin seed |
 | `HERMES_ADMIN_PASSWORD` | `LOGOS_ADMIN_PASSWORD` | first-run admin seed |

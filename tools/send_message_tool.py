@@ -451,20 +451,9 @@ def _check_send_message():
     )
     if platform and platform != "local":
         return True
-    # In OpenShell sandbox or gateway foreground mode, the agent runs inside
-    # the gateway process itself — there's no PID file, but the gateway is alive.
-    runtime_mode = (
-        os.getenv("LOGOS_RUNTIME_MODE")
-        or os.getenv("HERMES_RUNTIME_MODE")
-        or ""
-    )
-    if runtime_mode == "openshell":
-        return True
-    try:
-        from gateway.status import is_gateway_running
-        return is_gateway_running()
-    except Exception:
-        return False
+    # OpenShell is the only supported runtime and every agent runs inside
+    # the gateway process; the tool is always available.
+    return True
 
 
 # --- Registry ---

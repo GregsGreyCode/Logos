@@ -352,14 +352,6 @@ DEFAULT_CONFIG = {
         "tirith_fail_open": True,
     },
 
-    # Runtime execution mode.
-    # "openshell"  — agents run as OpenShell sandboxes (default; full policy
-    #                enforcement, network isolation, credential injection)
-    # "docker"     — agents run as plain Docker containers (no policy engine)
-    "runtime": {
-        "mode": "openshell",                # "openshell" | "docker"
-    },
-
     # Config schema version - bump this when adding new required fields
     "_config_version": 8,
 }

@@ -166,7 +166,6 @@ _browser_lock = threading.Lock()
 def _start_gateway() -> None:
     global _gateway_loop, _gateway_thread
 
-    os.environ.setdefault("HERMES_RUNTIME_MODE", "local")
     _LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
 
     def _run() -> None:

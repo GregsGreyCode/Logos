@@ -18,7 +18,7 @@ logos/
 ├── tools/                    # 47 tool implementations and terminal environments
 ├── gateway/                  # always-on HTTP server, web dashboard, executors, messaging adapters
 │   ├── html/                 # web dashboard (login, main app, setup wizard)
-│   ├── executors/            # agent isolation backends (kubernetes, docker, openshell, local)
+│   ├── executors/            # agent isolation backend (openshell — the only supported runtime)
 │   ├── platforms/            # messaging adapters (telegram, discord, slack, whatsapp, signal, email)
 │   └── auth/                 # JWT auth, RBAC, audit logging
 ├── agent/                    # prompt building, compression, caching, metadata, trajectories

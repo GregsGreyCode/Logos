@@ -337,6 +337,38 @@ BUILTIN_CATALOGUE: Dict[str, Dict[str, Any]] = {
             "cpu_limit": "250m", "mem_limit": "256Mi",
         },
     },
+
+    # ── Verification-only entry — not for production use ──────────────
+    # Points at a locally-built test image (see docker/testing/mcp-echo/)
+    # that speaks the MCP streamable-HTTP transport and exposes a single
+    # ``echo`` tool. Used to smoke-test the Docker-container deploy
+    # pipeline end-to-end without needing a real registry image or
+    # backing infrastructure. Deploying this should always work (no
+    # config required); if it fails, the MCP deploy flow has a bug.
+    "echo-test": {
+        "name": "Echo (test server)",
+        "description": (
+            "Zero-config smoke-test MCP server. The ``echo`` tool wraps its "
+            "input in a per-container marker (``echo-test[<container-id> "
+            "pid=<pid> call=<n>]: <text>``) the model cannot invent without "
+            "actually reaching the container — so a real call is "
+            "distinguishable from a hallucinated response. NOT FOR PRODUCTION "
+            "USE. Build the image first: ``docker build -f docker/testing/"
+            "mcp-echo/Dockerfile -t logos-mcp-echo-test:local docker/testing/"
+            "mcp-echo``."
+        ),
+        "category": "testing",
+        "image": "logos-mcp-echo-test:local",
+        "port": 8000,
+        "transport": "streamable-http",
+        "mcp_path": "/mcp",
+        "config_schema": [],   # intentionally empty — zero config
+        "default_tools": ["echo"],
+        "resources": {
+            "cpu_request": "20m", "mem_request": "32Mi",
+            "cpu_limit": "100m", "mem_limit": "64Mi",
+        },
+    },
 }
 
 

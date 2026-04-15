@@ -371,7 +371,7 @@ CREATE TABLE IF NOT EXISTS mcp_servers (
     status          TEXT NOT NULL DEFAULT 'pending'
                         CHECK (status IN ('pending', 'deploying', 'running', 'stopped', 'error', 'external')),
     deploy_mode     TEXT NOT NULL DEFAULT 'external'
-                        CHECK (deploy_mode IN ('k8s', 'external')),
+                        CHECK (deploy_mode IN ('external', 'docker')),
     url             TEXT,
     token           TEXT,
     k8s_namespace   TEXT,
@@ -491,11 +491,35 @@ def _run_migrations() -> None:
             # next to applied_presets since both are policy-shaped fields the
             # capability system writes to.
             "ALTER TABLE agents ADD COLUMN website_blocklist TEXT",
+            # v21: per-MCP-server auto_grant toggle. When True, the
+            # server's tools are injected into every agent's effective
+            # toolset automatically at spawn/refresh time. When False,
+            # the agent has to go through the request_mcp_access flow
+            # for a per-session grant. Column default is NULL so the
+            # create path can distinguish "never set" (apply deploy-
+            # mode default) from an explicit user choice.
+            "ALTER TABLE mcp_servers ADD COLUMN auto_grant INTEGER",
         ):
             try:
                 conn.execute(stmt)
             except sqlite3.OperationalError:
                 pass  # column already exists
+
+        # v21 backfill: pre-migration rows have auto_grant=NULL. Give
+        # docker-deployed servers the opt-in default (user clicked
+        # Deploy — that's consent). External-URL servers stay off
+        # until the user explicitly toggles auto-grant in the UI.
+        try:
+            conn.execute(
+                "UPDATE mcp_servers SET auto_grant=1 "
+                "WHERE auto_grant IS NULL AND deploy_mode='docker'"
+            )
+            conn.execute(
+                "UPDATE mcp_servers SET auto_grant=0 "
+                "WHERE auto_grant IS NULL"
+            )
+        except sqlite3.OperationalError:
+            pass
 
         # v11: dispatch activity ledger (M8 Phase B). Durable record of
         # every task dispatch — who, what agent, which model, origin,
@@ -789,6 +813,90 @@ def _run_migrations() -> None:
                 "INSERT INTO schema_flags (key, value, applied_at) VALUES (?, ?, ?)",
                 ("agent_route_backfill_v1", "1", int(time.time() * 1000)),
             )
+
+        # v20: migrate mcp_servers.deploy_mode CHECK constraint from
+        # ('k8s', 'external') to ('external', 'docker'). The k8s deploy path
+        # has been removed along with the rest of the legacy sandbox
+        # runtimes; existing 'k8s' rows are downgraded to 'external' and
+        # their k8s_namespace/k8s_image cleared so the catalogue survives
+        # but the user knows the deploy is broken until they re-wire it.
+        # SQLite can't alter a CHECK constraint in-place so we table-swap.
+        _migrate_mcp_deploy_mode_v1(conn)
+
+
+def _migrate_mcp_deploy_mode_v1(conn) -> None:
+    """Re-create mcp_servers with the new deploy_mode CHECK constraint.
+
+    Idempotent via schema_flags.mcp_deploy_mode_v1. Copies every existing
+    row, rewriting deploy_mode='k8s' → 'external' and nulling the
+    k8s_namespace/k8s_image columns on those rows (the data is dead: the
+    k8s deploy path has been removed).
+    """
+    already = conn.execute(
+        "SELECT value FROM schema_flags WHERE key = 'mcp_deploy_mode_v1'"
+    ).fetchone()
+    if already:
+        return
+
+    # Check whether the constraint already matches target (fresh DB from
+    # new schema). If the current CHECK mentions 'docker', skip the
+    # recreate and just stamp the flag.
+    existing_sql = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='mcp_servers'"
+    ).fetchone()
+    needs_recreate = True
+    if existing_sql and existing_sql[0]:
+        sql_text = existing_sql[0]
+        if "'docker'" in sql_text and "'external'" in sql_text and "'k8s'" not in sql_text:
+            needs_recreate = False
+
+    if needs_recreate:
+        # Rewrite k8s → external and clear the now-meaningless k8s_* columns
+        conn.execute(
+            "UPDATE mcp_servers SET deploy_mode='external', "
+            "k8s_namespace=NULL, k8s_image=NULL "
+            "WHERE deploy_mode='k8s'"
+        )
+
+        conn.executescript("""
+            CREATE TABLE mcp_servers_new (
+                id              TEXT PRIMARY KEY,
+                name            TEXT UNIQUE NOT NULL,
+                catalogue_id    TEXT,
+                source          TEXT NOT NULL DEFAULT 'ui'
+                                    CHECK (source IN ('ui', 'external')),
+                status          TEXT NOT NULL DEFAULT 'pending'
+                                    CHECK (status IN ('pending', 'deploying', 'running', 'stopped', 'error', 'external')),
+                deploy_mode     TEXT NOT NULL DEFAULT 'external'
+                                    CHECK (deploy_mode IN ('external', 'docker')),
+                url             TEXT,
+                token           TEXT,
+                k8s_namespace   TEXT,
+                k8s_image       TEXT,
+                config_json     TEXT NOT NULL DEFAULT '{}',
+                tools_filter    TEXT NOT NULL DEFAULT '{}',
+                category        TEXT NOT NULL DEFAULT 'general',
+                description     TEXT,
+                auto_wire       INTEGER NOT NULL DEFAULT 1,
+                enabled         INTEGER NOT NULL DEFAULT 1,
+                created_at      INTEGER NOT NULL,
+                updated_at      INTEGER NOT NULL,
+                last_error      TEXT
+            );
+            INSERT INTO mcp_servers_new SELECT
+                id, name, catalogue_id, source, status, deploy_mode,
+                url, token, k8s_namespace, k8s_image, config_json,
+                tools_filter, category, description, auto_wire, enabled,
+                created_at, updated_at, last_error
+            FROM mcp_servers;
+            DROP TABLE mcp_servers;
+            ALTER TABLE mcp_servers_new RENAME TO mcp_servers;
+        """)
+
+    conn.execute(
+        "INSERT INTO schema_flags (key, value, applied_at) VALUES (?, ?, ?)",
+        ("mcp_deploy_mode_v1", "1", int(time.time() * 1000)),
+    )
 
 
 @contextmanager
@@ -2691,30 +2799,40 @@ def create_mcp_server(
     deploy_mode: str = "external",
     url: str | None = None,
     token: str | None = None,
-    k8s_namespace: str | None = None,
-    k8s_image: str | None = None,
     config_json: str = "{}",
     tools_filter: str = "{}",
     category: str = "general",
     description: str | None = None,
     auto_wire: bool = True,
+    auto_grant: bool | None = None,
 ) -> dict:
-    """Create a new managed MCP server record."""
+    """Create a new managed MCP server record.
+
+    ``auto_grant`` controls whether this server's tools are injected
+    into every agent's effective toolset at spawn/refresh time. When
+    ``None`` (default), docker-deployed servers get ``True`` (the user
+    clicked Deploy, that's consent) and external-URL servers get
+    ``False`` (user gave us a URL, not a blanket grant).
+    """
+    if auto_grant is None:
+        auto_grant = (deploy_mode == "docker")
     server_id = f"mcp_{uuid.uuid4().hex[:20]}"
     now = int(time.time() * 1000)
     with _conn() as conn:
         conn.execute(
             """INSERT INTO mcp_servers
                (id, name, catalogue_id, source, status, deploy_mode,
-                url, token, k8s_namespace, k8s_image,
+                url, token,
                 config_json, tools_filter, category, description,
-                auto_wire, enabled, created_at, updated_at)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,?,?)""",
+                auto_wire, auto_grant, enabled, created_at, updated_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,?,?)""",
             (server_id, name, catalogue_id, source,
              "external" if deploy_mode == "external" else "pending",
-             deploy_mode, url, token, k8s_namespace, k8s_image,
+             deploy_mode, url, token,
              config_json, tools_filter, category, description,
-             1 if auto_wire else 0, now, now),
+             1 if auto_wire else 0,
+             1 if auto_grant else 0,
+             now, now),
         )
     return get_mcp_server(server_id)
 
@@ -2722,9 +2840,10 @@ def create_mcp_server(
 def update_mcp_server(server_id: str, **fields) -> dict | None:
     """Update fields on an MCP server record."""
     allowed = {
-        "name", "status", "url", "token", "k8s_namespace", "k8s_image",
+        "name", "status", "url", "token",
         "config_json", "tools_filter", "category", "description",
         "auto_wire", "enabled", "last_error", "deploy_mode",
+        "auto_grant",
     }
     updates = {k: v for k, v in fields.items() if k in allowed}
     if not updates:

@@ -139,3 +139,51 @@ network_policies:
       - host: inference.local
         port: 53
         access: full
+
+  gateway_mcp:
+    name: "Gateway MCP proxy (auto-granted tool servers)"
+    # Lets the sandbox dial back to the Logos gateway's ``/mcp/<name>``
+    # HTTP endpoint. Every auto-granted MCP server is proxied through
+    # there; the container it forwards to binds 127.0.0.1 on the host
+    # which the sandbox can't reach directly.
+    #
+    # Three OpenShell pieces make this work:
+    #   1. ``host.openshell.internal`` — /etc/hosts alias OpenShell
+    #      injects into the sandbox, pointing at the docker bridge
+    #      (172.17.0.1). The gateway listens on that bridge.
+    #   2. ``allowed_ips`` — sanctioned OpenShell mechanism for
+    #      allowing requests to private-IP ranges. Without it the
+    #      L7 proxy rejects with ``ssrf_denied`` (HTTP 403) because
+    #      172.x targets are blocked by default. Documented in
+    #      knowledge-repos/openshell/architecture/security-policy.md
+    #      ("Private IP Access via allowed_ips").
+    #   3. Explicit L7 ``rules`` — restrict the sandbox to the
+    #      ``/mcp/*`` path only, so an auto-granted MCP capability
+    #      can't be abused to hit ``/admin`` or other gateway
+    #      endpoints. POST and GET cover JSON-RPC POSTs and the
+    #      streamable-http SSE notification channel respectively.
+    #
+    # Binaries match the Hermes venv Python set used by the worker
+    # — same list as inference_local above.
+    endpoints:
+      - host: host.openshell.internal
+        port: 8091
+        protocol: rest
+        enforcement: enforce
+        allowed_ips:
+          - "172.0.0.0/8"
+        rules:
+          - allow:
+              method: POST
+              path: /mcp/*
+          - allow:
+              method: GET
+              path: /mcp/*
+    binaries:
+      - path: /app/venv/bin/python
+      - path: /app/venv/bin/python3
+      - path: /app/venv/bin/python3.11
+      - path: /app/venv/bin/python3.12
+      - path: /usr/bin/python3
+      - path: /usr/bin/python3.11
+      - path: /usr/bin/python3.12
