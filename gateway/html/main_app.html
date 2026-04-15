@@ -3952,15 +3952,32 @@
       </template>
     </div>
 
-    <!-- ── Action Policies sub-tab ── -->
+    <!-- ── Action Policies sub-tab ──
+         Only the dimensions that are actually enforced at runtime are
+         exposed in the UI. write_policy, exec_policy, network_policy,
+         network_allowlist, and secret_policy remain in the schema for
+         back-compat but are not surfaced because nothing reads them
+         yet. Sandbox egress is enforced via Sandbox Policies; approval
+         gating fires from hard-coded dangerous-command patterns. -->
     <div x-show="tab==='admin' && adminTab==='action-policies' && can('manage_action_policies')">
-      <div class="flex items-center justify-between mb-4">
+      <div class="flex items-center justify-between mb-3">
         <div>
           <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Action Policies</div>
-          <div class="text-xs text-gray-600 mt-0.5">Named permission presets — assign to users to control what agents can do on their behalf.</div>
+          <div class="text-xs text-gray-600 mt-0.5">Per-user runtime policies. Assigned to a user, merged with the agent's soul policy at session start.</div>
         </div>
-        <button @click="actionPolicyForm={name:'',description:'',network_policy:'internet_enabled',filesystem_policy:'workspace_only',exec_policy:'restricted',write_policy:'auto_apply',provider_policy:'any',secret_policy:'tool_only'}; actionPolicyFormOpen=true"
+        <button @click="actionPolicyForm={name:'',description:'',filesystem_policy:'workspace_only',provider_policy:'any',write_policy:'auto_apply',exec_policy:'restricted',network_policy:'internet_enabled',secret_policy:'tool_only'}; actionPolicyFormOpen=true"
           class="text-xs px-3 py-1.5 rounded-lg bg-[var(--accent)] text-white hover:opacity-90 transition-opacity">+ New Policy</button>
+      </div>
+
+      <!-- What is this / what actually fires -->
+      <div class="mb-4 p-3 rounded-xl border border-indigo-900/50 bg-indigo-950/10 text-[11px] text-gray-300 leading-relaxed">
+        <div class="font-semibold text-indigo-300 mb-1">What each dimension does today</div>
+        <ul class="list-disc list-inside space-y-0.5 text-gray-400">
+          <li><span class="font-mono text-gray-300">filesystem_policy</span> — <span class="text-white">Enforced.</span> <span class="font-mono">workspace_only</span> / <span class="font-mono">repo_scoped</span> clamp the <span class="font-mono">workdir</span> of exec tools to the agent's workspace (or workspace + configured repos).</li>
+          <li><span class="font-mono text-gray-300">provider_policy</span> — <span class="text-white">Enforced.</span> Sent as <span class="font-mono">X-Provider-Policy</span> header to the ai-router; controls which inference providers the agent can reach.</li>
+          <li>Sandbox egress rules live in <button class="text-indigo-400 hover:text-indigo-300 underline" @click="adminTab='sandbox-policies'">Sandbox Policies</button> — the infra-layer OpenShell presets. That's what actually blocks/allows outbound traffic from agent sandboxes.</li>
+          <li>Approval gating fires from hard-coded dangerous-command patterns (<span class="font-mono">rm -rf</span>, <span class="font-mono">chmod 777</span>, etc.), not from anything you configure here.</li>
+        </ul>
       </div>
 
       <!-- New / edit policy form -->
@@ -3979,58 +3996,28 @@
                 class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm text-white focus:border-[var(--accent)] focus:outline-none">
             </div>
             <div>
-              <label class="text-xs text-gray-500 block mb-1">Write Policy</label>
-              <select x-model="actionPolicyForm.write_policy"
-                class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm text-white focus:border-[var(--accent)] focus:outline-none">
-                <option value="auto_apply">auto_apply — act without asking</option>
-                <option value="approval_required">approval_required — pause for confirmation</option>
-                <option value="dry_run">dry_run — no writes at all</option>
-              </select>
-            </div>
-            <div>
-              <label class="text-xs text-gray-500 block mb-1">Exec Policy</label>
-              <select x-model="actionPolicyForm.exec_policy"
-                class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm text-white focus:border-[var(--accent)] focus:outline-none">
-                <option value="none">none — no shell execution</option>
-                <option value="restricted">restricted — local terminal only</option>
-                <option value="full">full — unrestricted exec + SSH</option>
-              </select>
-            </div>
-            <div>
-              <label class="text-xs text-gray-500 block mb-1">Filesystem Policy</label>
+              <label class="text-xs text-gray-500 block mb-1">
+                Filesystem Policy
+                <span class="text-[10px] text-green-500 font-normal">(enforced)</span>
+              </label>
               <select x-model="actionPolicyForm.filesystem_policy"
                 class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm text-white focus:border-[var(--accent)] focus:outline-none">
                 <option value="read_only">read_only — no writes</option>
-                <option value="workspace_only">workspace_only — write to workspace only</option>
+                <option value="workspace_only">workspace_only — clamp exec workdir to workspace</option>
                 <option value="repo_scoped">repo_scoped — workspace + configured repos</option>
                 <option value="full">full — any path</option>
               </select>
             </div>
             <div>
-              <label class="text-xs text-gray-500 block mb-1">Network Policy</label>
-              <select x-model="actionPolicyForm.network_policy"
-                class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm text-white focus:border-[var(--accent)] focus:outline-none">
-                <option value="local_only">local_only — LAN / in-cluster only</option>
-                <option value="allowlisted">allowlisted — explicit domain list</option>
-                <option value="internet_enabled">internet_enabled — unrestricted outbound</option>
-              </select>
-            </div>
-            <div>
-              <label class="text-xs text-gray-500 block mb-1">Provider Policy</label>
+              <label class="text-xs text-gray-500 block mb-1">
+                Provider Policy
+                <span class="text-[10px] text-green-500 font-normal">(enforced)</span>
+              </label>
               <select x-model="actionPolicyForm.provider_policy"
                 class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm text-white focus:border-[var(--accent)] focus:outline-none">
                 <option value="local_only">local_only — local inference only</option>
                 <option value="trusted_external">trusted_external — local + trusted cloud</option>
                 <option value="any">any — all providers</option>
-              </select>
-            </div>
-            <div>
-              <label class="text-xs text-gray-500 block mb-1">Secret Policy</label>
-              <select x-model="actionPolicyForm.secret_policy"
-                class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm text-white focus:border-[var(--accent)] focus:outline-none">
-                <option value="redacted">redacted — mask secrets in output</option>
-                <option value="tool_only">tool_only — usable in tool calls only</option>
-                <option value="unrestricted">unrestricted — no masking</option>
               </select>
             </div>
           </div>
@@ -4055,10 +4042,8 @@
           <thead>
             <tr class="border-b border-gray-800 text-xs text-gray-500">
               <th class="text-left px-4 py-3 font-medium">Name</th>
-              <th class="text-left px-4 py-3 font-medium">Write</th>
-              <th class="text-left px-4 py-3 font-medium">Exec</th>
               <th class="text-left px-4 py-3 font-medium">Filesystem</th>
-              <th class="text-left px-4 py-3 font-medium">Network</th>
+              <th class="text-left px-4 py-3 font-medium">Provider</th>
               <th class="px-4 py-3"></th>
             </tr>
           </thead>
@@ -4069,14 +4054,8 @@
                   <div class="text-white text-xs font-medium" x-text="ap.name"></div>
                   <div class="text-gray-600 text-xs mt-0.5" x-text="ap.description"></div>
                 </td>
-                <td class="px-4 py-3">
-                  <span class="text-xs px-2 py-0.5 rounded-full"
-                    :class="ap.write_policy==='approval_required' ? 'bg-yellow-950 text-yellow-300' : ap.write_policy==='dry_run' ? 'bg-red-950 text-red-400' : 'bg-gray-800 text-gray-400'"
-                    x-text="ap.write_policy"></span>
-                </td>
-                <td class="px-4 py-3 text-xs text-gray-400" x-text="ap.exec_policy"></td>
                 <td class="px-4 py-3 text-xs text-gray-400" x-text="ap.filesystem_policy"></td>
-                <td class="px-4 py-3 text-xs text-gray-400" x-text="ap.network_policy"></td>
+                <td class="px-4 py-3 text-xs text-gray-400" x-text="ap.provider_policy"></td>
                 <td class="px-4 py-3 text-right">
                   <div class="flex gap-2 justify-end">
                     <button @click="actionPolicyForm={...ap}; actionPolicyFormOpen=true"
@@ -4088,7 +4067,7 @@
               </tr>
             </template>
             <template x-if="adminActionPolicies.length===0">
-              <tr><td colspan="6" class="px-4 py-8 text-center text-xs text-gray-600">No action policies defined. Create one to restrict what agents can do for a user.</td></tr>
+              <tr><td colspan="4" class="px-4 py-8 text-center text-xs text-gray-600">No action policies defined. Create one to restrict what agents can do for a user.</td></tr>
             </template>
           </tbody>
         </table>
