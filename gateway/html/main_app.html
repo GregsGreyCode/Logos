@@ -1360,6 +1360,7 @@
               @drop.prevent="handleChatDrop($event)">
               <textarea x-model="chatInput"
                 @keydown.enter="if(!$event.shiftKey){ $event.preventDefault(); sendChat(); }"
+                @paste="handleChatPaste($event)"
                 @input="autoResizeChat($el)"
                 x-ref="chatTextarea"
                 autocomplete="off"
@@ -8889,6 +8890,20 @@ function app() {
       this._addAttachments(files);
     },
 
+    handleChatPaste(event) {
+      const items = (event.clipboardData && event.clipboardData.items) || [];
+      const files = [];
+      for (const it of items) {
+        if (it.kind === 'file') {
+          const f = it.getAsFile();
+          if (f) files.push(f);
+        }
+      }
+      if (!files.length) return;
+      event.preventDefault();
+      this._addAttachments(files);
+    },
+
     handleFileSelect(event) {
       const files = Array.from(event.target.files || []);
       if (!files.length) return;
@@ -8962,7 +8977,9 @@ function app() {
 
     async sendChat() {
       const msg = this.chatInput.trim();
-      if (!msg) return;
+      // Allow attachment-only sends (e.g. "here's an image, describe it").
+      // Previously empty text bailed before attachments were even read.
+      if (!msg && !this.chatAttachments.length) return;
       // Rate-limit: large messages (>200 words) capped at one per second
       const wordCount = msg.split(/\s+/).length;
       if (wordCount > 200) {
@@ -12149,7 +12166,7 @@ network_policies:
          bottom resumes it. -->
     <div x-ref="logsScroll"
          @scroll="(() => { const el = $refs.logsScroll; if (!el) return; const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 8; if (!atBottom && logsModalAutoTail) { logsModalAutoTail = false; } else if (atBottom && !logsModalAutoTail) { logsModalAutoTail = true; } })()"
-         class="flex-1 overflow-auto px-5 py-3 font-mono text-[11px] leading-relaxed whitespace-pre-wrap break-all"
+         class="flex-1 overflow-auto px-5 py-3 font-mono text-[11px] leading-relaxed"
          :class="logsModalErrors ? 'bg-red-950/10 text-red-200' : 'bg-black/40 text-gray-300'">
       <template x-if="logsModalLoading && logsModalLines.length === 0">
         <div class="text-gray-600 italic">Loading…</div>
@@ -12158,7 +12175,7 @@ network_policies:
         <div class="text-gray-600 italic">(log is empty — agent hasn't run any tasks yet, or sandbox hasn't synced)</div>
       </template>
       <template x-for="(line, i) in logsModalLines" :key="i">
-        <div class="hover:bg-gray-800/30"
+        <div class="hover:bg-gray-800/30 whitespace-pre-wrap break-all"
              :class="line.includes('ERROR') || line.includes('WARNING') ? 'text-amber-300' : ''"
              x-text="line"></div>
       </template>
