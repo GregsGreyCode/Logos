@@ -73,7 +73,7 @@ Run it on your laptop, a homelab box, or a $5 VPS. During the first-run setup wi
 - `gateway/` — the always-on process: HTTP server, Telegram adapter, auth, routing, web dashboard, MCP gateway, worker registry
 - `agents/hermes/` — the Hermes runtime that runs *inside* sandbox workers
 - `tools/` — capabilities the agent can call; scoped per session and per policy level
-- `gateway/executors/` — the two runtime backends: `openshell.py` (default) and `docker.py`
+- `gateway/executors/` — the OpenShell executor (`openshell.py`), the only supported sandbox runtime
 - `docker/sandbox_worker.py` — the lightweight worker that runs inside an OpenShell sandbox, invoked per task by `openshell sandbox exec`
 
 ---
@@ -328,7 +328,7 @@ On first run, the setup wizard at `/setup` walks you through:
 
 1. **Model provider** — local inference (Ollama or LM Studio), or a cloud provider (Anthropic, OpenAI, OpenRouter)
 2. **Inference servers** — Logos scans your local network automatically for Ollama / LM Studio endpoints via `GET /api/setup/scan` (ports 11434, 1234, 8080)
-3. **Benchmarking** — TTFT + tok/s + 6 capability evals (instruction following, 2-part reasoning, strict JSON, tool selection, nested JSON, multi-step reasoning), plus 3 hard-tier evals if a model passes ≥5/6 standard evals
+3. **Benchmarking** — TTFT + tok/s + 6 capability evals (instruction following, 2-part reasoning, strict JSON, tool selection, nested JSON, multi-step reasoning), plus a 7-test hard tier (4 advanced static tests + 3 agent-loop tests) if a model passes ≥5/6 standard evals
 4. **Sandbox runtime** — OpenShell is the only supported runtime. The CLI setup also asks about a `terminal` backend (local / SSH / Daytona / Singularity) — that's where shell commands *executed by the agent's terminal tool* run, not where the agent itself is sandboxed.
 5. **Soul + first agent** — pick a starting persona; you can edit it later
 6. **Telegram (optional)** — connect a bot token if you want to chat from your phone
@@ -415,19 +415,23 @@ Two passes per model on different prompt types. Results are averaged. Time-to-fi
 | 2 | **Arithmetic reasoning** | Two-part maths problem: both answers correct |
 | 3 | **Strict JSON format** | Output parses cleanly as JSON with exact field values; extra prose fails |
 | 4 | **Tool selection** | Routes two scenarios to the right tool; both must be correct |
+| 5 | **Nested JSON schema** | JSON with required nesting, an array, and mixed types — no surrounding prose |
+| 6 | **Multi-step reasoning** | Three chained multiplications in one word problem; single numeric answer |
 
-A model passes the capability bar at **≥ 3/4** tests.
+A model passes the capability bar at **≥ 4/6** tests. Passing ≥ 5/6 unlocks a hard-tier run — advanced tool routing across 5 tools, deep-nested JSON, a harder reasoning problem, plus agent-loop tests (post-tool summarisation, error recovery, multi-turn grounding).
 
 ### Scoring formula
 
 ```
-score = 0.45 × (eval_tests_passed / 4)
-      + 0.30 × min(tok_s, 40) / 40
-      + 0.15 × ttft_score              (1.0 at ≤500ms, 0.0 at ≥4s)
-      + 0.10 × min(param_count_B, 13) / 13
+score = 0.40 × (eval_tests_passed / 6)
+      + 0.15 × min(tok_s, 40) / 40
+      + 0.25 × advanced_eval_score     (hard + agent-loop tiers; only runs if model passed ≥ 5/6 standard)
+      +        param_size_bonus        (≤ 0.05, peaks near ~13B)
+      +        capability_bonus        (+0.035 tool_use, +0.015 vision)
+      +        penalties               (−0.15 specialised models, context viability, slow greeting-latency)
 ```
 
-Eval quality dominates. Speed is capped at 40 tok/s — diminishing returns for interactive use above that.
+Eval quality and advanced-tier performance dominate. Speed is capped at 40 tok/s — diminishing returns for interactive use above that. Weights rebalanced 2026-04-13 so agent-loop failures can actually move a model's ranking.
 
 <!-- screenshot: benchmark-scoreboard — full benchmark UI with multiple models scored,
      showing tok/s, ttft, ctx, and eval pass/fail columns. Illustrates this section. -->
@@ -575,7 +579,7 @@ docker buildx build \
 git clone https://github.com/GregsGreyCode/Logos.git
 cd Logos
 curl -LsSf https://astral.sh/uv/install.sh | sh
-uv venv venv --python 3.11
+uv venv venv --python 3.12
 source venv/bin/activate
 uv pip install -e ".[all,dev]"
 ./scripts/test.sh
@@ -583,7 +587,7 @@ uv pip install -e ".[all,dev]"
 
 **Why these choices:**
 - `uv` — significantly faster than pip for dependency resolution; the project uses it throughout
-- Python 3.11 — minimum supported version; 3.12+ untested
+- Python 3.12 — the canonical dev + installer version. 3.11 is the minimum (`requires-python = ">=3.11"`) and what CI runs against, so either works
 
 **Test script options:**
 
