@@ -250,10 +250,60 @@ def _run_single_child(
         if hasattr(parent_agent, '_active_children'):
             parent_agent._active_children.append(child)
 
+        # Emit dispatch for the subagent so delegated work shows up in
+        # the Events tab — otherwise a parent's single chat turn hides
+        # N children's activity. Best-effort: never blocks delegation.
+        _dispatch_id = None
+        _dispatch_started = time.time()
+        try:
+            import json as _json
+            from gateway.auth import db as _auth_db
+            _dispatch_id = _auth_db.create_dispatch(
+                task_id=f"delegate_{task_index}_{id(child)}",
+                agent_id=getattr(parent_agent, "agent_id", "") or "",
+                model=effective_model or "",
+                origin="delegate",
+                origin_detail=_json.dumps({
+                    "parent_platform": parent_agent.platform,
+                    "task_index": task_index,
+                    "depth": child._delegate_depth,
+                    "goal_preview": (goal or "")[:200],
+                }),
+                session_id=getattr(parent_agent, "session_id", "") or "",
+                user_id=getattr(parent_agent, "auth_user_id", "") or "",
+            )
+        except Exception:
+            pass
+
         # Run with stdout/stderr suppressed to prevent interleaved output
         devnull = io.StringIO()
-        with contextlib.redirect_stdout(devnull), contextlib.redirect_stderr(devnull):
-            result = child.run_conversation(user_message=goal)
+        try:
+            with contextlib.redirect_stdout(devnull), contextlib.redirect_stderr(devnull):
+                result = child.run_conversation(user_message=goal)
+        except BaseException as _exc:
+            if _dispatch_id:
+                try:
+                    from gateway.auth import db as _auth_db
+                    _auth_db.complete_dispatch(
+                        _dispatch_id, status="error",
+                        elapsed_s=time.time() - _dispatch_started,
+                        error=str(_exc)[:500],
+                    )
+                except Exception:
+                    pass
+            raise
+
+        if _dispatch_id:
+            try:
+                from gateway.auth import db as _auth_db
+                _auth_db.complete_dispatch(
+                    _dispatch_id, status="ok",
+                    elapsed_s=time.time() - _dispatch_started,
+                    prompt_tokens=(result.get("usage") or {}).get("prompt_tokens"),
+                    completion_tokens=(result.get("usage") or {}).get("completion_tokens"),
+                )
+            except Exception:
+                pass
 
         # Flush any remaining batched progress to gateway
         if child_progress_cb and hasattr(child_progress_cb, '_flush'):

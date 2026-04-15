@@ -387,6 +387,31 @@ class WorkflowEngine:
         )
         session_id = f"wf_{run_id}_{step_def.id}"
 
+        # Emit dispatch so workflow step activity shows up in the
+        # Events tab alongside user-initiated chats. All failures here
+        # are swallowed — observability must never break the workflow.
+        import json as _json
+        import time as _time
+        _dispatch_id = None
+        _dispatch_started = _time.time()
+        try:
+            from gateway.auth import db as _auth_db
+            _dispatch_id = _auth_db.create_dispatch(
+                task_id=session_id,
+                agent_id=getattr(step_def, "agent_id", "") or "",
+                model=getattr(step_def, "model", "") or "",
+                origin="workflow",
+                origin_detail=_json.dumps({
+                    "run_id": run_id,
+                    "step_id": step_def.id,
+                    "workflow_name": getattr(self, "_workflow_name", ""),
+                }),
+                session_id=session_id,
+                user_id=auth_user_id or "",
+            )
+        except Exception:
+            pass
+
         try:
             result = await asyncio.wait_for(
                 self._runner._run_agent(
@@ -400,12 +425,33 @@ class WorkflowEngine:
                 ),
                 timeout=step_def.timeout,
             )
+            if _dispatch_id:
+                try:
+                    from gateway.auth import db as _auth_db
+                    _auth_db.complete_dispatch(
+                        _dispatch_id, status="ok",
+                        elapsed_s=_time.time() - _dispatch_started,
+                        prompt_tokens=(result.get("usage") or {}).get("prompt_tokens"),
+                        completion_tokens=(result.get("usage") or {}).get("completion_tokens"),
+                    )
+                except Exception:
+                    pass
             return {
                 "status": StepStatus.SUCCESS,
                 "output": result.get("final_response", ""),
                 "error": "",
             }
         except asyncio.TimeoutError:
+            if _dispatch_id:
+                try:
+                    from gateway.auth import db as _auth_db
+                    _auth_db.complete_dispatch(
+                        _dispatch_id, status="error",
+                        elapsed_s=_time.time() - _dispatch_started,
+                        error=f"timeout after {step_def.timeout}s",
+                    )
+                except Exception:
+                    pass
             return {
                 "status": StepStatus.FAILED,
                 "output": "",

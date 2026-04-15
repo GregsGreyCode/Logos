@@ -5210,6 +5210,8 @@
             <option value="compare">Compare (transient)</option>
             <option value="platform">Platform</option>
             <option value="cron">Cron</option>
+            <option value="workflow">Workflow</option>
+            <option value="delegate">Delegated subagent</option>
             <option value="session_flush">Session flush</option>
           </select>
           <button @click="loadDispatches()"
@@ -5240,7 +5242,9 @@
                       'bg-blue-950 text-blue-400': d.origin==='user_chat',
                       'bg-purple-950 text-purple-400': d.origin?.startsWith('platform'),
                       'bg-yellow-950 text-yellow-400': d.origin==='cron',
-                      'bg-gray-800 text-gray-400': !['user_chat','cron'].includes(d.origin) && !d.origin?.startsWith('platform'),
+                      'bg-indigo-950 text-indigo-400': d.origin==='workflow',
+                      'bg-pink-950 text-pink-400': d.origin==='delegate',
+                      'bg-gray-800 text-gray-400': !['user_chat','cron','workflow','delegate'].includes(d.origin) && !d.origin?.startsWith('platform'),
                     }" x-text="d.origin"></span>
                 </td>
                 <td class="px-3 py-2 text-gray-500 font-mono" x-text="(d.model || '—').split('/').pop()"></td>
