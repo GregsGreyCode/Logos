@@ -2210,24 +2210,25 @@ async def handle_agent_logs_get(request: web.Request) -> web.Response:
 
 
 def _resolve_agent_dir(agent_id: str):
-    """Look up an agent by id, return (name, host_dir) or (None, err_response).
+    """Look up an agent by id, return (name, host_dir, None) on success
+    or (None, None, err_response) on failure.
 
-    Shared preamble for the three state handlers below — agents live
-    under ``~/.logos/agents/<name>/`` where ``<name>`` is the DB name
-    (not the id). Rejects ids that don't resolve to a real agent.
+    Shared preamble for the state handlers below — agents live under
+    ``~/.logos/agents/<name>/`` where ``<name>`` is the DB name (not
+    the id). Rejects ids that don't resolve to a real agent.
     """
     import pathlib as _pathlib
     agent = auth_db.get_agent(agent_id)
     if not agent:
-        return None, web.json_response({"error": "agent_not_found"}, status=404)
+        return None, None, web.json_response({"error": "agent_not_found"}, status=404)
     name = agent.get("name") or ""
     if not name:
-        return None, web.json_response({"error": "agent_has_no_name"}, status=400)
+        return None, None, web.json_response({"error": "agent_has_no_name"}, status=400)
     logos_home = _pathlib.Path(
         os.environ.get("LOGOS_HOME") or os.environ.get("HERMES_HOME")
         or str(_pathlib.Path.home() / ".logos")
     )
-    return (name, logos_home / "agents" / name), None
+    return name, logos_home / "agents" / name, None
 
 
 async def handle_agent_memories_get(request: web.Request) -> web.Response:
@@ -2261,10 +2262,9 @@ async def handle_agent_memories_get(request: web.Request) -> web.Response:
     if user.get("role", "") not in ("admin", "operator"):
         return web.json_response({"error": "forbidden"}, status=403)
 
-    name, agent_dir_or_err = _resolve_agent_dir(request.match_info["id"])
-    if name is None:
-        return agent_dir_or_err
-    agent_dir = agent_dir_or_err
+    name, agent_dir, err = _resolve_agent_dir(request.match_info["id"])
+    if err is not None:
+        return err
 
     import datetime as _dt
     mem_dir = agent_dir / "memories"
@@ -2322,10 +2322,9 @@ async def handle_agent_sessions_get(request: web.Request) -> web.Response:
     if user.get("role", "") not in ("admin", "operator"):
         return web.json_response({"error": "forbidden"}, status=403)
 
-    name, agent_dir_or_err = _resolve_agent_dir(request.match_info["id"])
-    if name is None:
-        return agent_dir_or_err
-    agent_dir = agent_dir_or_err
+    name, agent_dir, err = _resolve_agent_dir(request.match_info["id"])
+    if err is not None:
+        return err
 
     try:
         limit = max(1, min(int(request.query.get("limit", "50")), 500))
@@ -2411,9 +2410,9 @@ async def handle_agent_activity_get(request: web.Request) -> web.Response:
     if user.get("role", "") not in ("admin", "operator"):
         return web.json_response({"error": "forbidden"}, status=403)
 
-    name, agent_dir_or_err = _resolve_agent_dir(request.match_info["id"])
-    if name is None:
-        return agent_dir_or_err
+    name, agent_dir, err = _resolve_agent_dir(request.match_info["id"])
+    if err is not None:
+        return err
     aid = request.match_info["id"]
 
     import datetime as _dt
@@ -2479,10 +2478,9 @@ async def handle_agent_files_get(request: web.Request) -> web.Response:
     if user.get("role", "") not in ("admin", "operator"):
         return web.json_response({"error": "forbidden"}, status=403)
 
-    name, agent_dir_or_err = _resolve_agent_dir(request.match_info["id"])
-    if name is None:
-        return agent_dir_or_err
-    agent_dir = agent_dir_or_err
+    name, agent_dir, err = _resolve_agent_dir(request.match_info["id"])
+    if err is not None:
+        return err
 
     if not agent_dir.is_dir():
         return web.json_response({
