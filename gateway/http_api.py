@@ -2813,6 +2813,128 @@ async def _handle_action_policies_delete(request: web.Request) -> web.Response:
     return web.json_response({"deleted": True})
 
 
+# ── OpenShell sandbox policy preset handlers ─────────────────────────────
+
+async def _handle_sandbox_presets_list(request: web.Request) -> web.Response:
+    """GET /api/openshell/presets — list all presets with agent counts."""
+    from gateway import policies as _sp
+    presets = _sp.list_presets()
+    out = []
+    for p in presets:
+        try:
+            agents_using = _sp.get_agents_using_preset(p.name)
+        except Exception as exc:
+            logger.debug("get_agents_using_preset(%s) failed: %s", p.name, exc)
+            agents_using = []
+        out.append({
+            "name": p.name,
+            "description": p.description,
+            "agent_count": len(agents_using),
+            "agents": agents_using,
+        })
+    # Sort: in-use first (by agent count desc), then alphabetical. This
+    # surfaces policies that will actually affect live agents when the
+    # admin is scanning the list.
+    out.sort(key=lambda r: (-r["agent_count"], r["name"]))
+    return web.json_response({"presets": out})
+
+
+async def _handle_sandbox_presets_get(request: web.Request) -> web.Response:
+    """GET /api/openshell/presets/{name} — raw YAML + parsed structure."""
+    from gateway import policies as _sp
+    name = request.match_info["name"]
+    try:
+        data = _sp.load_preset(name)
+    except _sp.PresetNotFound:
+        raise web.HTTPNotFound(reason="Preset not found")
+    path = _sp._PRESETS_DIR / f"{name}.yaml"
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        text = ""
+    return web.json_response({
+        "name": name,
+        "yaml": text,
+        "parsed": data,
+        "agents": _sp.get_agents_using_preset(name),
+    })
+
+
+async def _handle_sandbox_presets_put(request: web.Request) -> web.Response:
+    """PUT /api/openshell/presets/{name} — create or update preset YAML.
+
+    Body: ``{"yaml": "<full YAML text>"}``. Validates, writes to disk,
+    then hot-reloads every agent currently using the preset so the
+    change takes effect without respawning sandboxes.
+    """
+    from gateway import policies as _sp
+    name = request.match_info["name"]
+    try:
+        body = await request.json()
+    except Exception:
+        raise web.HTTPBadRequest(reason="Invalid JSON")
+    yaml_text = body.get("yaml")
+    if not isinstance(yaml_text, str):
+        raise web.HTTPBadRequest(reason="body.yaml is required (string)")
+
+    try:
+        _sp.write_preset(name, yaml_text)
+    except _sp.PolicyMergeError as exc:
+        return web.json_response({"error": "validation_failed", "detail": str(exc)}, status=400)
+
+    # Hot-reload every agent applying this preset. Failures are logged
+    # but don't fail the whole request — the YAML is already on disk
+    # and the next sandbox spawn will pick it up cleanly.
+    affected = _sp.get_agents_using_preset(name)
+    reload_errors = []
+    for agent_id in affected:
+        try:
+            _sp.push_effective_policy(agent_id)
+        except Exception as exc:
+            reload_errors.append({"agent_id": agent_id, "error": str(exc)})
+            logger.warning("push_effective_policy(%s) failed: %s", agent_id, exc)
+
+    auth_db.write_audit_log(
+        request.get("current_user", {}).get("sub"),
+        "update_sandbox_preset",
+        target_type="sandbox_preset", target_id=name,
+    )
+    return web.json_response({
+        "ok": True,
+        "affected_agents": affected,
+        "reload_errors": reload_errors,
+    })
+
+
+async def _handle_sandbox_presets_delete(request: web.Request) -> web.Response:
+    """DELETE /api/openshell/presets/{name} — remove preset YAML.
+
+    Refuses if any agent still applies it — caller must remove it
+    from those agents first to avoid silent policy drift.
+    """
+    from gateway import policies as _sp
+    name = request.match_info["name"]
+    affected = _sp.get_agents_using_preset(name)
+    if affected:
+        return web.json_response({
+            "error": "in_use",
+            "detail": f"{len(affected)} agent(s) still apply this preset",
+            "agents": affected,
+        }, status=409)
+    try:
+        removed = _sp.delete_preset(name)
+    except _sp.PolicyMergeError as exc:
+        return web.json_response({"error": "validation_failed", "detail": str(exc)}, status=400)
+    if not removed:
+        raise web.HTTPNotFound(reason="Preset not found")
+    auth_db.write_audit_log(
+        request.get("current_user", {}).get("sub"),
+        "delete_sandbox_preset",
+        target_type="sandbox_preset", target_id=name,
+    )
+    return web.json_response({"ok": True})
+
+
 async def _handle_user_action_policy_patch(request: web.Request) -> web.Response:
     user_id = request.match_info["id"]
     try:
@@ -4861,6 +4983,14 @@ async def start_http_api(runner: Any, port: int = 8091) -> None:
     app.router.add_patch("/action-policies/{id}",  _map(require_csrf(_handle_action_policies_patch)))
     app.router.add_delete("/action-policies/{id}", _map(require_csrf(_handle_action_policies_delete)))
     app.router.add_patch("/users/{id}/action-policy", _aap(require_csrf(_handle_user_action_policy_patch)))
+
+    # ── OpenShell sandbox policy presets ──────────────────────────────────
+    _vsp = require_permission("view_sandbox_policies")
+    _msp = require_permission("manage_sandbox_policies")
+    app.router.add_get("/api/openshell/presets",          _vsp(_handle_sandbox_presets_list))
+    app.router.add_get("/api/openshell/presets/{name}",   _vsp(_handle_sandbox_presets_get))
+    app.router.add_put("/api/openshell/presets/{name}",   _msp(require_csrf(_handle_sandbox_presets_put)))
+    app.router.add_delete("/api/openshell/presets/{name}", _msp(require_csrf(_handle_sandbox_presets_delete)))
 
     # ── Approval requests ──────────────────────────────────────────────────
     app.router.add_get("/approvals",              _vap(_handle_approvals_list))
