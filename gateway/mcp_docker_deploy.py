@@ -156,15 +156,26 @@ def deploy_container(
         logger.info("mcp_docker_deploy: removing stale container %s before redeploy", container)
         _docker("rm", "--force", container, check=False)
 
-    # Pull the image. On failure (image missing / registry auth), the
-    # downstream run will surface the error too, but pulling first
-    # gives us a clearer failure message.
+    # Pull the image. If pull fails (image missing from the registry,
+    # registry auth, or the tag is ``:local`` for a locally-built
+    # image), fall back to checking whether the image already exists
+    # in the host Docker daemon — if so we proceed without a pull.
+    # The verification ``:local`` flow depends on this: the echo test
+    # image is built from docker/testing/mcp-echo/ and never pushed.
     try:
         _docker("pull", image, timeout=300.0)
-    except subprocess.CalledProcessError as exc:
-        raise RuntimeError(
-            f"docker pull {image} failed: {exc.stderr.strip()[:200] if exc.stderr else exc}"
-        )
+    except subprocess.CalledProcessError as pull_err:
+        try:
+            _docker("image", "inspect", image, check=True, timeout=10.0)
+            logger.info(
+                "mcp_docker_deploy: pull failed for %s but image exists locally — using the local copy",
+                image,
+            )
+        except subprocess.CalledProcessError:
+            raise RuntimeError(
+                f"docker pull {image} failed and no local image with that tag exists: "
+                f"{pull_err.stderr.strip()[:200] if pull_err.stderr else pull_err}"
+            )
 
     # Pick a host port if the caller didn't. _pick_free_port binds and
     # releases, so there's a tiny TOCTOU window before ``docker run``
