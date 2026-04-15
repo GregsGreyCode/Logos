@@ -11925,15 +11925,19 @@ network_policies:
       <span class="ml-auto" x-text="(logsModalLines || []).length + ' line' + ((logsModalLines || []).length === 1 ? '' : 's')"></span>
     </div>
 
-    <!-- Log body -->
+    <!-- Log body. Scroll handler: when the user scrolls away from the
+         bottom, auto-tail is paused so they can read history without
+         getting yanked back by the 2s poll. Scrolling back to the
+         bottom resumes it. -->
     <div x-ref="logsScroll"
+         @scroll="(() => { const el = $refs.logsScroll; if (!el) return; const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 8; if (!atBottom && logsModalAutoTail) { logsModalAutoTail = false; } else if (atBottom && !logsModalAutoTail) { logsModalAutoTail = true; } })()"
          class="flex-1 overflow-auto px-5 py-3 font-mono text-[11px] leading-relaxed whitespace-pre-wrap break-all"
          :class="logsModalErrors ? 'bg-red-950/10 text-red-200' : 'bg-black/40 text-gray-300'">
       <template x-if="logsModalLoading && logsModalLines.length === 0">
         <div class="text-gray-600 italic">Loading…</div>
       </template>
       <template x-if="!logsModalLoading && logsModalLines.length === 0">
-        <div class="text-gray-600 italic">(log is empty)</div>
+        <div class="text-gray-600 italic">(log is empty — agent hasn't run any tasks yet, or sandbox hasn't synced)</div>
       </template>
       <template x-for="(line, i) in logsModalLines" :key="i">
         <div class="hover:bg-gray-800/30"
