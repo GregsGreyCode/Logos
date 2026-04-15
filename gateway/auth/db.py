@@ -2575,6 +2575,7 @@ def list_agent_runs(
     session_id: Optional[str] = None,
     limit: int = 50,
     offset: int = 0,
+    q: Optional[str] = None,
 ) -> tuple[list[dict], int]:
     conditions: list[str] = []
     params: list = []
@@ -2587,6 +2588,19 @@ def list_agent_runs(
     if session_id:
         conditions.append("session_id=?")
         params.append(session_id)
+    if q:
+        # Free-text search across the fields a user is most likely to
+        # scan for: instance name, model, soul, session id, and the
+        # truncated user_message that's already stored on the row.
+        like = f"%{q}%"
+        conditions.append(
+            "(COALESCE(instance_name,'') LIKE ? "
+            "OR COALESCE(model,'') LIKE ? "
+            "OR COALESCE(soul,'') LIKE ? "
+            "OR COALESCE(session_id,'') LIKE ? "
+            "OR COALESCE(user_message,'') LIKE ?)"
+        )
+        params.extend([like, like, like, like, like])
     where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
     with _conn() as conn:
         total = conn.execute(
@@ -2956,6 +2970,7 @@ def list_dispatches(
     session_id: str = None,
     limit: int = 50,
     offset: int = 0,
+    q: str = None,
 ) -> tuple:
     """Query the dispatch ledger. Returns (rows, total_count).
 
@@ -2978,6 +2993,17 @@ def list_dispatches(
     if session_id:
         where_parts.append("session_id = ?")
         params.append(session_id)
+    if q:
+        # LIKE-based free-text filter across the columns most users want
+        # to search on: agent id, sandbox name, model, session id, and
+        # the free-form origin_detail. Kept as a single OR-over-columns
+        # clause so the index on started_at still drives ordering.
+        like = f"%{q}%"
+        where_parts.append(
+            "(agent_id LIKE ? OR sandbox_name LIKE ? OR model LIKE ? "
+            "OR session_id LIKE ? OR COALESCE(origin_detail,'') LIKE ?)"
+        )
+        params.extend([like, like, like, like, like])
     where_clause = (" WHERE " + " AND ".join(where_parts)) if where_parts else ""
     with _conn() as conn:
         total = conn.execute(

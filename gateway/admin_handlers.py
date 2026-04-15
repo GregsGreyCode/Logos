@@ -645,18 +645,28 @@ async def handle_cloud_provider_models(request: web.Request) -> web.Response:
 async def handle_dispatches_list(request: web.Request) -> web.Response:
     """GET /admin/dispatches — query the dispatch activity ledger.
 
-    Query params: agent_id, origin, status, limit (max 200), offset.
+    Query params: agent_id, origin, status, q, limit (max 200), offset.
     """
     agent_id = request.rel_url.query.get("agent_id")
     origin = request.rel_url.query.get("origin")
     status = request.rel_url.query.get("status")
-    limit = min(int(request.rel_url.query.get("limit", 50)), 200)
-    offset = int(request.rel_url.query.get("offset", 0))
+    q = (request.rel_url.query.get("q") or "").strip() or None
+    try:
+        limit = min(int(request.rel_url.query.get("limit", 20)), 200)
+    except (TypeError, ValueError):
+        limit = 20
+    try:
+        offset = max(0, int(request.rel_url.query.get("offset", 0)))
+    except (TypeError, ValueError):
+        offset = 0
     rows, total = auth_db.list_dispatches(
-        agent_id=agent_id, origin=origin, status=status,
+        agent_id=agent_id, origin=origin, status=status, q=q,
         limit=limit, offset=offset,
     )
-    return web.json_response({"dispatches": rows, "total": total})
+    return web.json_response({
+        "dispatches": rows, "total": total,
+        "limit": limit, "offset": offset,
+    })
 
 
 # ── Named agents ─────────────────────────────────────────────────────────────

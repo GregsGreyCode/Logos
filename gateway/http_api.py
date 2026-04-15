@@ -4022,12 +4022,20 @@ async def _handle_runs_list(request: web.Request) -> web.Response:
     params = request.rel_url.query
     status_f = params.get("status") or None
     session_f = params.get("session_id") or None
-    limit = min(int(params.get("limit", 50)), 200)
-    offset = int(params.get("offset", 0))
+    q_f = (params.get("q") or "").strip() or None
+    try:
+        limit = min(int(params.get("limit", 20)), 200)
+    except (TypeError, ValueError):
+        limit = 20
+    try:
+        offset = max(0, int(params.get("offset", 0)))
+    except (TypeError, ValueError):
+        offset = 0
     runs, total = auth_db.list_agent_runs(
         user_id=None if see_all else uid,
         status=status_f,
         session_id=session_f,
+        q=q_f,
         limit=limit,
         offset=offset,
     )
@@ -4046,7 +4054,10 @@ async def _handle_runs_list(request: web.Request) -> web.Response:
                 r[field] = []
         if r.get("user_id"):
             r["username"] = user_map.get(r["user_id"], r["user_id"])
-    return web.json_response({"runs": runs, "total": total})
+    return web.json_response({
+        "runs": runs, "total": total,
+        "limit": limit, "offset": offset,
+    })
 
 
 async def _handle_run_get(request: web.Request) -> web.Response:
