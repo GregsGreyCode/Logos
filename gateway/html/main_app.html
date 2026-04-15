@@ -6698,16 +6698,30 @@ function app() {
       const _favImg = new Image(); _favImg.src = '/static/logo.svg';
       const _favLink = document.querySelector('link[rel="icon"][type="image/svg+xml"]');
       let _favTs = 0;
+      // Favicon is only repainted while the agent is thinking
+      // (_hueRate === 30). When idle we leave the SVG link pointing at
+      // the static /static/logo.svg so the browser can cache it once —
+      // repainting 10 fps at idle was flooding the DevTools Network
+      // panel and also constantly invalidating the tab's icon cache.
+      let _favIdleReset = true;  // ensure we restore the static SVG once when we stop
       const _hueTick = () => {
         const deg = _hueRate === 6 ? _wallDeg() : (((_hueBase + _hueRate * (Date.now() - _hueRef) / 1000) % 360) + 360) % 360;
         document.documentElement.style.setProperty('--hue-deg', deg.toFixed(1) + 'deg');
+        const _thinking = _hueRate !== 6;
         const _now = Date.now();
-        if (_now - _favTs > 100 && _favCtx && _favImg.complete && _favLink) {
-          _favTs = _now;
-          _favCtx.clearRect(0, 0, 32, 32);
-          _favCtx.filter = `hue-rotate(${deg.toFixed(1)}deg)`;
-          _favCtx.drawImage(_favImg, 0, 0, 32, 32);
-          _favLink.href = _favCanvas.toDataURL();
+        if (_thinking) {
+          _favIdleReset = false;
+          if (_now - _favTs > 100 && _favCtx && _favImg.complete && _favLink) {
+            _favTs = _now;
+            _favCtx.clearRect(0, 0, 32, 32);
+            _favCtx.filter = `hue-rotate(${deg.toFixed(1)}deg)`;
+            _favCtx.drawImage(_favImg, 0, 0, 32, 32);
+            _favLink.href = _favCanvas.toDataURL();
+          }
+        } else if (!_favIdleReset && _favLink) {
+          // One-shot reset to the static SVG when we transition idle.
+          _favIdleReset = true;
+          _favLink.href = '/static/logo.svg';
         }
         requestAnimationFrame(_hueTick);
       };
