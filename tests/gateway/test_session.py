@@ -340,8 +340,9 @@ class TestSessionStoreRewriteTranscript:
 
 
 class TestWhatsAppDMSessionKeyConsistency:
-    """Regression: all session-key construction must go through build_session_key
-    so WhatsApp DMs include chat_id while other DMs do not."""
+    """Regression: session-key construction goes through build_session_key and
+    includes chat_id for every DM (not only WhatsApp) so agents don't share
+    transcripts across chats."""
 
     @pytest.fixture()
     def store(self, tmp_path):
@@ -372,15 +373,16 @@ class TestWhatsAppDMSessionKeyConsistency:
         )
         assert store._generate_session_key(source) == build_session_key(source)
 
-    def test_telegram_dm_omits_chat_id(self):
-        """Non-WhatsApp DMs should still omit chat_id (single owner DM)."""
+    def test_telegram_dm_includes_chat_id(self):
+        """Telegram DMs include chat_id so multi-user bots don't share a single
+        transcript across different conversations."""
         source = SessionSource(
             platform=Platform.TELEGRAM,
             chat_id="99",
             chat_type="dm",
         )
         key = build_session_key(source)
-        assert key == "agent:main:telegram:dm"
+        assert key == "agent:main:telegram:dm:99"
 
     def test_discord_group_includes_chat_id(self):
         """Group/channel keys include chat_type and chat_id."""

@@ -85,28 +85,25 @@ def get_agent_world(include_self: bool = True) -> str:
 
 
 WORLD_TOOL_SCHEMA = {
-    "type": "function",
-    "function": {
-        "name": "get_agent_world",
-        "description": (
-            "Look up every named agent currently in the Agent World on this "
-            "Logos install — their names, souls, models, visual appearances, "
-            "running/offline status, and whether they are busy with a task. "
-            "Use this to reason about peers you might delegate to, to refer "
-            "to other agents by name, or to answer questions about who else "
-            "is on the system."
-        ),
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "include_self": {
-                    "type": "boolean",
-                    "description": "Include yourself in the list (true, default) or filter yourself out (false).",
-                    "default": True,
-                },
+    "name": "get_agent_world",
+    "description": (
+        "Look up every named agent currently in the Agent World on this "
+        "Logos install — their names, souls, models, visual appearances, "
+        "running/offline status, and whether they are busy with a task. "
+        "Use this to reason about peers you might delegate to, to refer "
+        "to other agents by name, or to answer questions about who else "
+        "is on the system."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "include_self": {
+                "type": "boolean",
+                "description": "Include yourself in the list (true, default) or filter yourself out (false).",
+                "default": True,
             },
-            "required": [],
         },
+        "required": [],
     },
 }
 
