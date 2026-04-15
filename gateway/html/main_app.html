@@ -3051,7 +3051,10 @@
                   <span x-show="srv.tool_count" class="text-[10px] text-gray-500" x-text="srv.tool_count + ' tools'"></span>
                   <template x-if="!srv.readonly">
                     <div class="flex items-center gap-1">
-                      <button @click="restartToolsServer(srv.id)" class="text-[10px] text-gray-500 hover:text-gray-300" title="Restart">&#x21bb;</button>
+                      <button @click="restartToolsServer(srv.id)" class="text-[10px] text-gray-500 hover:text-gray-300" title="Reconnect MCP client">&#x21bb;</button>
+                      <template x-if="srv.deploy_mode === 'docker'">
+                        <button @click="restartToolsContainer(srv.id)" class="text-[10px] text-gray-500 hover:text-gray-300" title="Restart docker container">&#x27f3;</button>
+                      </template>
                       <button @click="deleteToolsServer(srv.id, srv.name)" class="text-[10px] text-red-500/60 hover:text-red-400" title="Delete">&#x2715;</button>
                     </div>
                   </template>
@@ -3146,7 +3149,49 @@
 
     <!-- Section: Catalogue (expandable) -->
     <div x-show="toolsShowCatalogue" x-cloak>
-      <h3 class="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">Catalogue</h3>
+      <div class="flex items-center justify-between mb-3">
+        <h3 class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Catalogue</h3>
+        <div class="flex items-center gap-2">
+          <button @click="refreshCatalogue()" class="text-[10px] text-gray-500 hover:text-gray-300" title="Refresh remote sources">&#x21bb; Refresh</button>
+          <button @click="toolsShowSources = !toolsShowSources" class="text-[10px] text-gray-500 hover:text-gray-300" title="Configure catalogue sources">Sources</button>
+        </div>
+      </div>
+
+      <!-- Source configuration (collapsible) -->
+      <div x-show="toolsShowSources" x-cloak class="mb-3 p-3 rounded-xl border border-gray-800 bg-gray-900/60">
+        <div class="text-xs font-medium text-gray-300 mb-2">Catalogue sources</div>
+        <p class="text-[10px] text-gray-500 mb-2">
+          Built-in entries always appear. Add remote sources to extend the list. Docker Hub namespace sources pull repos from <span class="font-mono">hub.docker.com/u/&lt;namespace&gt;</span>.
+        </p>
+        <div class="space-y-2">
+          <template x-for="(src, idx) in toolsCatalogueSources" :key="idx">
+            <div class="flex items-center gap-2 p-2 rounded-lg bg-gray-800/60 border border-gray-700">
+              <input type="checkbox" x-model="src.enabled" class="accent-indigo-500">
+              <select x-model="src.type" class="px-2 py-1 rounded bg-gray-800 border border-gray-700 text-xs text-white">
+                <option value="docker_hub_namespace">Docker Hub namespace</option>
+                <option value="http_json">HTTP JSON URL</option>
+              </select>
+              <template x-if="src.type === 'docker_hub_namespace'">
+                <input x-model="src.namespace" type="text" placeholder="e.g. mcp"
+                  class="flex-1 px-2 py-1 rounded bg-gray-800 border border-gray-700 text-xs text-white placeholder-gray-600">
+              </template>
+              <template x-if="src.type === 'http_json'">
+                <input x-model="src.url" type="text" placeholder="https://example.com/catalogue.json"
+                  class="flex-1 px-2 py-1 rounded bg-gray-800 border border-gray-700 text-xs text-white placeholder-gray-600">
+              </template>
+              <button @click="toolsCatalogueSources.splice(idx, 1)" class="text-[11px] text-red-500/60 hover:text-red-400">&times;</button>
+            </div>
+          </template>
+        </div>
+        <div class="flex items-center gap-2 mt-2">
+          <button @click="toolsCatalogueSources.push({type: 'docker_hub_namespace', namespace: 'mcp', enabled: true})"
+            class="text-[10px] px-2 py-1 rounded border border-gray-700 bg-gray-800 text-gray-300 hover:border-gray-500">+ Docker Hub</button>
+          <button @click="toolsCatalogueSources.push({type: 'http_json', url: '', enabled: true})"
+            class="text-[10px] px-2 py-1 rounded border border-gray-700 bg-gray-800 text-gray-300 hover:border-gray-500">+ HTTP JSON</button>
+          <button @click="saveCatalogueSources()"
+            class="text-[10px] px-3 py-1 rounded bg-indigo-600 hover:bg-indigo-500 text-white font-medium ml-auto">Save &amp; reload</button>
+        </div>
+      </div>
 
       <!-- Add External Server -->
       <div class="mb-3 p-3 rounded-xl border border-gray-800 bg-gray-900/60">
@@ -3165,19 +3210,42 @@
         </button>
       </div>
 
+      <!-- Source filter pills -->
+      <div class="flex items-center gap-1 flex-wrap mb-2">
+        <button @click="toolsCatalogueFilter = ''"
+          class="text-[10px] px-2 py-0.5 rounded-full border transition-colors"
+          :class="toolsCatalogueFilter === '' ? 'border-indigo-500 bg-indigo-900/40 text-indigo-300' : 'border-gray-800 bg-gray-900 text-gray-500 hover:border-gray-600'">
+          All (<span x-text="toolsCatalogue.length"></span>)
+        </button>
+        <template x-for="s in toolsCatalogueSourceList" :key="s">
+          <button @click="toolsCatalogueFilter = s"
+            class="text-[10px] px-2 py-0.5 rounded-full border transition-colors"
+            :class="toolsCatalogueFilter === s ? 'border-indigo-500 bg-indigo-900/40 text-indigo-300' : 'border-gray-800 bg-gray-900 text-gray-500 hover:border-gray-600'">
+            <span x-text="s"></span>
+          </button>
+        </template>
+      </div>
+
       <!-- Catalogue grid -->
       <div class="grid grid-cols-2 gap-2">
-        <template x-for="cat in toolsCatalogue" :key="cat.catalogue_id">
-          <button @click="toolsDeployTarget = cat; toolsDeployConfig = {}; cat.config_schema.forEach(f => { if (f.default) toolsDeployConfig[f.key] = f.default })"
+        <template x-for="cat in filteredCatalogue" :key="cat.catalogue_id">
+          <button @click="toolsDeployTarget = cat; toolsDeployConfig = {}; (cat.config_schema||[]).forEach(f => { if (f.default) toolsDeployConfig[f.key] = f.default })"
             class="text-left p-3 rounded-xl border border-gray-800 bg-gray-900 hover:border-indigo-600 transition-colors group">
-            <div class="text-sm font-medium text-white mb-0.5" x-text="cat.name"></div>
-            <div class="text-[10px] text-gray-500 leading-relaxed" x-text="cat.description"></div>
+            <div class="flex items-center justify-between gap-2">
+              <div class="text-sm font-medium text-white mb-0.5 truncate" x-text="cat.name"></div>
+              <span class="text-[9px] px-1.5 py-0.5 rounded-full bg-gray-800 text-gray-500 border border-gray-700 flex-shrink-0" x-text="cat.source || 'builtin'"></span>
+            </div>
+            <div class="text-[10px] text-gray-500 leading-relaxed line-clamp-2" x-text="cat.description"></div>
             <div class="flex items-center gap-2 mt-2">
               <span class="text-[9px] px-1.5 py-0.5 rounded-full bg-indigo-950 text-indigo-400 border border-indigo-800" x-text="cat.category"></span>
-              <span class="text-[10px] text-gray-600" x-text="(cat.default_tools||[]).length + ' tools'"></span>
+              <span x-show="(cat.default_tools||[]).length" class="text-[10px] text-gray-600" x-text="(cat.default_tools||[]).length + ' tools'"></span>
+              <span x-show="cat.source_detail && cat.source_detail.pull_count" class="text-[10px] text-gray-600" x-text="(cat.source_detail && cat.source_detail.pull_count ? cat.source_detail.pull_count.toLocaleString() + ' pulls' : '')"></span>
             </div>
           </button>
         </template>
+      </div>
+      <div x-show="filteredCatalogue.length === 0" class="text-center py-6 text-xs text-gray-500">
+        No catalogue entries for this source.
       </div>
     </div>
 
@@ -6008,6 +6076,9 @@ function app() {
     // Tools tab
     toolsServers: [],
     toolsCatalogue: [],
+    toolsCatalogueSources: [],
+    toolsCatalogueFilter: '',
+    toolsShowSources: false,
     toolsLoading: false,
     toolsShowCatalogue: false,
     toolsDeployTarget: null,
@@ -6017,6 +6088,14 @@ function app() {
     toolsExtName: '',
     toolsExtUrl: '',
     toolsExtToken: '',
+    get toolsCatalogueSourceList() {
+      const s = new Set((this.toolsCatalogue || []).map(c => c.source || 'builtin'));
+      return Array.from(s).sort();
+    },
+    get filteredCatalogue() {
+      if (!this.toolsCatalogueFilter) return this.toolsCatalogue;
+      return (this.toolsCatalogue || []).filter(c => (c.source || 'builtin') === this.toolsCatalogueFilter);
+    },
     // Services tab
     servicesMcp: [],
     servicesTools: [],
@@ -8747,9 +8826,37 @@ function app() {
           fetch('/api/tools/catalogue', {credentials: 'include'}),
         ]);
         if (srvRes.ok) this.toolsServers = (await srvRes.json()).servers || [];
-        if (catRes.ok) this.toolsCatalogue = (await catRes.json()).catalogue || [];
+        if (catRes.ok) {
+          const j = await catRes.json();
+          this.toolsCatalogue = j.catalogue || [];
+          this.toolsCatalogueSources = j.sources || [];
+        }
       } catch(e) { console.warn('loadToolsTab failed:', e.message); }
       finally { this.toolsLoading = false; }
+    },
+    async refreshCatalogue() {
+      try {
+        await fetch('/api/tools/catalogue/refresh', {
+          method: 'POST', credentials: 'include',
+          headers: {'X-CSRF-Token': getCsrfToken()},
+        });
+        await this.loadToolsTab();
+      } catch(e) { console.warn('refreshCatalogue failed:', e.message); }
+    },
+    async saveCatalogueSources() {
+      try {
+        const r = await fetch('/api/tools/catalogue/sources', {
+          method: 'PUT', credentials: 'include',
+          headers: {'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken()},
+          body: JSON.stringify({sources: this.toolsCatalogueSources}),
+        });
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok) {
+          alert("Save failed: " + (j.error || r.statusText));
+          return;
+        }
+        await this.loadToolsTab();
+      } catch(e) { console.warn('saveCatalogueSources failed:', e.message); }
     },
     async deployFromCatalogue() {
       if (!this.toolsDeployTarget) return;
@@ -8809,6 +8916,20 @@ function app() {
         });
         await this.loadToolsTab();
       } catch(e) { console.warn('restart failed:', e.message); }
+    },
+    async restartToolsContainer(id) {
+      if (!confirm("Restart the docker container? The server will be briefly unavailable.")) return;
+      try {
+        const r = await fetch(`/api/tools/servers/${id}/restart-container`, {
+          method: 'POST', credentials: 'include',
+          headers: {'X-CSRF-Token': getCsrfToken()},
+        });
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok || j.ok === false) {
+          alert("Container restart failed: " + (j.error || r.statusText));
+        }
+        await this.loadToolsTab();
+      } catch(e) { console.warn('container restart failed:', e.message); }
     },
     async deleteToolsServer(id, name) {
       if (!confirm(`Remove MCP server "${name}"? This will undeploy it from the cluster.`)) return;

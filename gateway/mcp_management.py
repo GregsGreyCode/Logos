@@ -26,13 +26,69 @@ def _json(data, status=200):
 # ── Catalogue ───────��────────────────────────────────────��───────────────────
 
 async def handle_catalogue(request: web.Request) -> web.Response:
-    """GET /api/tools/catalogue — merged built-in + remote catalogue."""
-    from gateway.mcp_catalogue import get_catalogue
+    """GET /api/tools/catalogue — merged catalogue across all sources.
+
+    Sources are configured via ``platform_feature_flags.mcp_catalogue_sources``
+    (list of ``{type, url?, namespace?, enabled}``). Legacy
+    ``mcp_catalogue_url`` is still honoured and treated as a single
+    ``http_json`` source.
+    """
+    from gateway.mcp_catalogue import get_catalogue_merged
     db = _get_auth_db()
     flags = db.get_platform_feature_flags()
-    remote_url = flags.get("mcp_catalogue_url")
-    entries = get_catalogue(remote_url=remote_url)
-    return _json({"catalogue": entries})
+
+    sources = flags.get("mcp_catalogue_sources") or []
+    if not sources and flags.get("mcp_catalogue_url"):
+        sources = [{"type": "http_json", "url": flags["mcp_catalogue_url"], "enabled": True}]
+
+    entries = await asyncio.to_thread(get_catalogue_merged, sources)
+    return _json({"catalogue": entries, "sources": sources})
+
+
+async def handle_catalogue_sources_update(request: web.Request) -> web.Response:
+    """PUT /api/tools/catalogue/sources — replace the configured source list.
+
+    Body: ``{"sources": [{"type": "...", ...}, ...]}``. Validates each
+    entry's ``type`` field; unknown types are rejected. Clears the
+    catalogue cache so the next GET refetches everything.
+    """
+    from gateway.mcp_catalogue import clear_catalogue_cache
+    db = _get_auth_db()
+    try:
+        body = await request.json()
+    except Exception:
+        return _json({"error": "invalid_json"}, 400)
+
+    sources = body.get("sources")
+    if not isinstance(sources, list):
+        return _json({"error": "sources must be a list"}, 400)
+
+    allowed_types = {"builtin", "http_json", "docker_hub_namespace"}
+    cleaned = []
+    for s in sources:
+        if not isinstance(s, dict):
+            return _json({"error": "each source must be an object"}, 400)
+        t = s.get("type")
+        if t not in allowed_types:
+            return _json({"error": f"unknown source type: {t!r}"}, 400)
+        cleaned.append({
+            "type": t,
+            "url": s.get("url") or "",
+            "namespace": s.get("namespace") or "",
+            "enabled": bool(s.get("enabled", True)),
+            "label": (s.get("label") or "").strip(),
+        })
+
+    db.set_platform_feature_flag("mcp_catalogue_sources", cleaned)
+    clear_catalogue_cache()
+    return _json({"ok": True, "sources": cleaned})
+
+
+async def handle_catalogue_refresh(request: web.Request) -> web.Response:
+    """POST /api/tools/catalogue/refresh — drop remote-source cache."""
+    from gateway.mcp_catalogue import clear_catalogue_cache
+    clear_catalogue_cache()
+    return _json({"ok": True})
 
 
 # ── Server list (DB managed + config-file read-only) ─��───────────────────────
@@ -401,6 +457,47 @@ async def handle_server_restart(request: web.Request) -> web.Response:
         return _json({"ok": False, "error": str(exc)})
 
 
+# ── Restart docker container ────────────────────────────────────────────────
+
+async def handle_server_restart_container(request: web.Request) -> web.Response:
+    """POST /api/tools/servers/{id}/restart-container — docker restart + re-wire.
+
+    Unlike ``/restart`` (which only reconnects the MCP client), this
+    stops and starts the underlying docker container, then re-wires.
+    Only valid for ``deploy_mode='docker'`` rows.
+    """
+    db = _get_auth_db()
+    server_id = request.match_info["id"]
+    server = db.get_mcp_server(server_id)
+    if not server:
+        return _json({"error": "not_found"}, 404)
+    if server.get("deploy_mode") != "docker":
+        return _json({"error": "not_applicable", "detail": "container restart only for docker-deployed servers"}, 400)
+
+    from gateway.mcp_docker_deploy import restart_container
+    try:
+        ok = await asyncio.to_thread(restart_container, server["name"])
+    except Exception as exc:
+        db.update_mcp_server(server_id, status="error", last_error=str(exc))
+        return _json({"ok": False, "error": str(exc)}, 500)
+
+    if not ok:
+        db.update_mcp_server(server_id, status="error", last_error="container missing or restart failed")
+        return _json({"ok": False, "error": "container missing or restart failed"}, 400)
+
+    url = server.get("url")
+    token = server.get("token")
+    if url:
+        try:
+            await _auto_wire_server(request.app, server["name"], url, token)
+            db.update_mcp_server(server_id, status="running", last_error=None)
+        except Exception as exc:
+            db.update_mcp_server(server_id, status="error", last_error=str(exc))
+            return _json({"ok": True, "rewire_error": str(exc)})
+
+    return _json({"ok": True})
+
+
 # ── Health check ──────────���─────────────────────────��────────────────────────
 
 async def handle_server_logs(request: web.Request) -> web.Response:
@@ -497,10 +594,13 @@ async def _auto_unwire_server(app, name: str):
 def register_routes(app: web.Application):
     """Register /api/tools/* routes on the aiohttp app."""
     app.router.add_get("/api/tools/catalogue", handle_catalogue)
+    app.router.add_put("/api/tools/catalogue/sources", handle_catalogue_sources_update)
+    app.router.add_post("/api/tools/catalogue/refresh", handle_catalogue_refresh)
     app.router.add_get("/api/tools/servers", handle_servers_list)
     app.router.add_post("/api/tools/servers", handle_server_create)
     app.router.add_patch("/api/tools/servers/{id}", handle_server_update)
     app.router.add_delete("/api/tools/servers/{id}", handle_server_delete)
     app.router.add_post("/api/tools/servers/{id}/restart", handle_server_restart)
+    app.router.add_post("/api/tools/servers/{id}/restart-container", handle_server_restart_container)
     app.router.add_get("/api/tools/servers/{id}/health", handle_server_health)
     app.router.add_get("/api/tools/servers/{id}/logs", handle_server_logs)
