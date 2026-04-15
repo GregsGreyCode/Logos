@@ -465,6 +465,101 @@ async def handle_server_restart(request: web.Request) -> web.Response:
         return _json({"ok": False, "error": str(exc)})
 
 
+# ── Reconfigure (edit env vars + redeploy) ──────────────────────────────────
+
+async def handle_server_reconfigure(request: web.Request) -> web.Response:
+    """PUT /api/tools/servers/{id}/config — replace env vars + redeploy.
+
+    Body: ``{"config": {"KEY": "value", ...}}``. Only valid for
+    ``deploy_mode='docker'`` rows. Stops the existing container,
+    starts a fresh one with the merged env, re-wires. Idempotent
+    (same as initial deploy).
+
+    Intended for the crash-loop recovery UX: user sees the orange
+    dot, opens the row, fixes the missing ``BRAVE_API_KEY``, saves,
+    container restarts healthy without the user touching docker.
+    """
+    db = _get_auth_db()
+    server_id = request.match_info["id"]
+    server = db.get_mcp_server(server_id)
+    if not server:
+        return _json({"error": "not_found"}, 404)
+    if server.get("deploy_mode") != "docker":
+        return _json({"error": "not_applicable", "detail": "config edit only for docker-deployed servers"}, 400)
+
+    try:
+        body = await request.json()
+    except Exception:
+        return _json({"error": "invalid_json"}, 400)
+
+    new_config = body.get("config")
+    if not isinstance(new_config, dict):
+        return _json({"error": "config must be an object"}, 400)
+
+    # Look up the catalogue entry (if any) for image/port/mcp_path.
+    # Fall back to existing URL parsing for legacy rows that lost the
+    # catalogue link.
+    catalogue_id = server.get("catalogue_id")
+    image = body.get("image") or ""
+    port = int(body.get("port") or 8000)
+    mcp_path = body.get("mcp_path") or "/mcp"
+    if catalogue_id and not image:
+        try:
+            from gateway.mcp_catalogue import get_catalogue_entry
+            cat_entry = get_catalogue_entry(catalogue_id) or {}
+            image = cat_entry.get("image") or image
+            port = int(cat_entry.get("port") or port)
+            mcp_path = cat_entry.get("mcp_path") or mcp_path
+        except Exception:
+            pass
+    if not image:
+        # Last-ditch fallback: ask docker what image the existing
+        # container was built from. Works even when the catalogue
+        # entry is a remote source (Docker Hub) we can't resolve.
+        try:
+            from gateway.mcp_docker_deploy import container_image
+            image = await asyncio.to_thread(container_image, server["name"])
+        except Exception:
+            image = ""
+    if not image:
+        return _json({
+            "error": "missing_image",
+            "detail": "cannot rebuild container: image not known. Delete + redeploy from catalogue.",
+        }, 400)
+
+    from gateway.mcp_docker_deploy import deploy_container
+    try:
+        result = await asyncio.to_thread(
+            deploy_container,
+            name=server["name"], image=image, port=port,
+            env_vars=dict(new_config), mcp_path=mcp_path,
+        )
+    except Exception as exc:
+        db.update_mcp_server(server_id, status="error", last_error=str(exc)[:500])
+        return _json({"ok": False, "error": str(exc)}, 500)
+
+    db.update_mcp_server(
+        server_id,
+        status="running",
+        url=result["url"],
+        config_json=json.dumps(new_config),
+        last_error=None,
+    )
+
+    try:
+        await _auto_wire_server(request.app, server["name"], result["url"], server.get("token") or "")
+    except Exception as exc:
+        db.update_mcp_server(server_id, status="error", last_error=str(exc)[:500])
+        return _json({"ok": True, "rewire_error": str(exc)})
+
+    db.write_audit_log(
+        request.get("current_user", {}).get("sub"),
+        "reconfigure_mcp_server",
+        target_type="mcp_server", target_id=server_id,
+    )
+    return _json({"ok": True, "url": result["url"], "host_port": result["host_port"]})
+
+
 # ── Restart docker container ────────────────────────────────────────────────
 
 async def handle_server_restart_container(request: web.Request) -> web.Response:
@@ -610,5 +705,6 @@ def register_routes(app: web.Application):
     app.router.add_delete("/api/tools/servers/{id}", handle_server_delete)
     app.router.add_post("/api/tools/servers/{id}/restart", handle_server_restart)
     app.router.add_post("/api/tools/servers/{id}/restart-container", handle_server_restart_container)
+    app.router.add_put("/api/tools/servers/{id}/config", handle_server_reconfigure)
     app.router.add_get("/api/tools/servers/{id}/health", handle_server_health)
     app.router.add_get("/api/tools/servers/{id}/logs", handle_server_logs)

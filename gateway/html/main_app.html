@@ -3338,6 +3338,74 @@
                   </div>
                 </div>
               </template>
+
+              <!-- Edit config (env vars) — only for docker-deployed rows.
+                   Primary recovery path for crash-loops: user sees the
+                   orange dot, fixes the missing key here, saves, and the
+                   backend stops + redeploys the container. -->
+              <template x-if="srv.deploy_mode === 'docker' && !srv.readonly">
+                <div x-data="{
+                  editing: false, saving: false, err: '', saved: '',
+                  envs: {}, newKey: '', newVal: '',
+                  open() {
+                    try { this.envs = JSON.parse(srv.config_json || '{}'); } catch(_) { this.envs = {}; }
+                    this.editing = true; this.err = ''; this.saved = '';
+                  },
+                  async save() {
+                    this.saving = true; this.err = ''; this.saved = '';
+                    try {
+                      const r = await fetch('/api/tools/servers/' + srv.id + '/config', {
+                        method: 'PUT', credentials: 'include',
+                        headers: {'Content-Type':'application/json','X-CSRF-Token': getCsrfToken()},
+                        body: JSON.stringify({config: this.envs}),
+                      });
+                      const d = await r.json().catch(() => ({}));
+                      if (!r.ok) { this.err = d.detail || d.error || r.statusText; return; }
+                      this.saved = 'Saved. Container restarted.';
+                      this.editing = false;
+                      await $root.loadToolsTab();
+                    } catch(e) { this.err = e.message; }
+                    finally { this.saving = false; }
+                  }
+                }">
+                  <button x-show="!editing" @click="open()"
+                    class="text-[10px] text-indigo-500 hover:text-indigo-300">Edit config &rarr;</button>
+
+                  <div x-show="editing" x-cloak class="mt-2 p-2 rounded bg-gray-950 border border-gray-800">
+                    <div class="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-1">Environment variables</div>
+                    <div class="text-[10px] text-gray-500 mb-2">Saving stops the container, pulls the image if needed, and restarts with these env vars.</div>
+
+                    <template x-for="(v, k) in envs" :key="k">
+                      <div class="flex items-center gap-1 mb-1">
+                        <span class="text-[10px] font-mono text-gray-400 flex-1 truncate" x-text="k + ' = ' + (String(v).length > 20 ? '••••••' : v)"></span>
+                        <button @click="delete envs[k]; envs = {...envs}"
+                          class="px-2 py-0.5 rounded border border-red-900 text-red-700 hover:text-red-400 text-[10px]">Remove</button>
+                      </div>
+                    </template>
+
+                    <div class="flex items-center gap-1 mt-2">
+                      <input x-model="newKey" type="text" placeholder="KEY"
+                        class="flex-1 px-2 py-1 rounded bg-gray-900 border border-gray-700 text-[11px] font-mono text-white placeholder-gray-600">
+                      <input x-model="newVal" type="text" placeholder="value"
+                        class="flex-1 px-2 py-1 rounded bg-gray-900 border border-gray-700 text-[11px] font-mono text-white placeholder-gray-600"
+                        @keydown.enter="if (newKey.trim()) { envs[newKey.trim()] = newVal; envs = {...envs}; newKey = ''; newVal = '' }">
+                      <button @click="if (newKey.trim()) { envs[newKey.trim()] = newVal; envs = {...envs}; newKey = ''; newVal = '' }"
+                        class="px-2 py-1 rounded border border-gray-700 text-gray-500 hover:text-white hover:border-gray-500 text-[10px]">Add</button>
+                    </div>
+
+                    <div class="flex items-center gap-2 mt-2">
+                      <button @click="save()" :disabled="saving"
+                        class="px-3 py-1 rounded bg-indigo-600 hover:bg-indigo-500 text-white text-[10px] font-medium disabled:opacity-40">
+                        <span x-show="!saving">Save &amp; redeploy</span>
+                        <span x-show="saving">Saving&hellip;</span>
+                      </button>
+                      <button @click="editing=false" class="px-3 py-1 rounded border border-gray-700 text-gray-400 hover:text-white hover:border-gray-500 text-[10px]">Cancel</button>
+                      <span x-show="err" class="text-[10px] text-red-400" x-text="err"></span>
+                      <span x-show="saved" class="text-[10px] text-green-400" x-text="saved"></span>
+                    </div>
+                  </div>
+                </div>
+              </template>
             </div>
           </div>
         </template>
