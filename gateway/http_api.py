@@ -4380,7 +4380,55 @@ async def _handle_run_get(request: web.Request) -> web.Response:
             run[field] = json.loads(run[field] or "[]")
         except Exception:
             run[field] = []
-    return web.json_response({"run": run})
+
+    # STAMP enrichment — the README frames a run as a unified record
+    # spanning agent (soul, model, tools, policy) and observability
+    # (tokens, cost, dispatch origin, approvals). The underlying data
+    # lives across agent_runs + dispatches + cost_log + approval_requests
+    # keyed by session_id. Rather than a new DB view (migration risk),
+    # stitch the satellite tables into the response here.
+    session_id = run.get("session_id") or ""
+    stamp: dict = {
+        "dispatches": [],
+        "cost": {"total_usd": 0.0, "entries": []},
+        "approvals": [],
+        "token_totals": {"prompt": 0, "completion": 0},
+    }
+    if session_id:
+        try:
+            disps = auth_db.list_dispatches(session_id=session_id, limit=50) if hasattr(auth_db, "list_dispatches") else []
+            # list_dispatches returns either a list or (list, total) — handle both.
+            if isinstance(disps, tuple):
+                disps = disps[0]
+            stamp["dispatches"] = disps or []
+            for d in (disps or []):
+                stamp["token_totals"]["prompt"] += d.get("prompt_tokens") or 0
+                stamp["token_totals"]["completion"] += d.get("completion_tokens") or 0
+        except Exception as exc:
+            logger.debug("run %s: dispatch enrichment failed: %s", run_id, exc)
+        try:
+            if hasattr(auth_db, "list_cost_entries_by_session"):
+                entries = auth_db.list_cost_entries_by_session(session_id) or []
+            else:
+                # Fallback: hit cost_log directly via a parameterised query.
+                with auth_db._conn() as _c:  # type: ignore[attr-defined]
+                    entries = [dict(r) for r in _c.execute(
+                        "SELECT * FROM cost_log WHERE session_id=? ORDER BY ts DESC LIMIT 100",
+                        (session_id,),
+                    ).fetchall()]
+            stamp["cost"]["entries"] = entries
+            stamp["cost"]["total_usd"] = round(sum((e.get("cost_usd") or 0.0) for e in entries), 6)
+        except Exception as exc:
+            logger.debug("run %s: cost enrichment failed: %s", run_id, exc)
+    for approval_id in (run.get("approval_ids") or []):
+        try:
+            row = auth_db.get_approval_request(approval_id) if hasattr(auth_db, "get_approval_request") else None
+            if row:
+                stamp["approvals"].append(row)
+        except Exception:
+            continue
+
+    return web.json_response({"run": run, "stamp": stamp})
 
 
 async def _handle_run_clone(request: web.Request) -> web.Response:
