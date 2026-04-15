@@ -1,5 +1,6 @@
 """Admin handlers: machines, routing policies, user-policy assignment, routing resolver."""
 
+import asyncio
 import json
 import logging
 import os
@@ -374,7 +375,23 @@ async def handle_cloud_providers_post(request: web.Request) -> web.Response:
         provider=provider, name=name, api_key=api_key,
         base_url=base_url, active_model=active_model,
     )
+
+    # Auto-activate the first provider added. If nothing is currently
+    # active, the user is almost certainly going to want this one live
+    # — the separate Activate step only makes sense when switching
+    # between multiple stored providers, not for the first one.
+    auto_activated = False
+    try:
+        existing = [x for x in auth_db.list_cloud_providers() if x.get("is_active")]
+        if not existing and api_key:
+            await _activate_cloud_provider(p["id"])
+            auto_activated = True
+    except Exception as exc:
+        logger.warning("auto-activate on provider create failed: %s", exc)
+
+    p = auth_db.get_cloud_provider(p["id"])
     p["has_api_key"] = bool(p.get("api_key"))
+    p["auto_activated"] = auto_activated
     p.pop("api_key", None)
     return web.json_response(p, status=201)
 
@@ -402,20 +419,54 @@ async def handle_cloud_providers_delete(request: web.Request) -> web.Response:
     existing = auth_db.get_cloud_provider(pid)
     if not existing:
         return web.json_response({"error": "not_found"}, status=404)
+
+    # Teardown any model_routes we auto-provisioned (or the user
+    # manually created) for this provider. Without this, deleting a
+    # provider leaves orphaned OpenShell gateways running with a
+    # broken API key — agents bound to those routes start failing
+    # mid-session. Best-effort: route-by-route errors are logged but
+    # don't block provider deletion.
+    torn_down: list[str] = []
+    torn_down_errors: list[dict] = []
+    try:
+        from gateway.openshell_routes import destroy_route
+        provider_type = existing.get("provider") or ""
+        for r in auth_db.list_model_routes():
+            if r.get("provider") == provider_type:
+                try:
+                    await asyncio.to_thread(destroy_route, r["id"])
+                    torn_down.append(r["id"])
+                except Exception as exc:
+                    torn_down_errors.append({"route_id": r["id"], "error": str(exc)[:200]})
+                    logger.warning("delete provider %s: route %s teardown failed: %s", pid, r["id"], exc)
+    except Exception as exc:
+        logger.warning("delete provider %s: route cleanup skipped: %s", pid, exc)
+
     auth_db.delete_cloud_provider(pid)
-    return web.Response(status=204)
+    return web.json_response({
+        "ok": True,
+        "routes_destroyed": torn_down,
+        "route_teardown_errors": torn_down_errors,
+    })
 
 
-async def handle_cloud_providers_activate(request: web.Request) -> web.Response:
-    """Set a cloud provider as active and sync env vars + config.yaml."""
-    pid = request.match_info["id"]
+async def _activate_cloud_provider(pid: str) -> None:
+    """Shared activation path used by both the /activate handler and
+    the auto-activate-on-first-add flow in ``handle_cloud_providers_post``.
+
+    Idempotent. Writes env vars + config.yaml + kicks off route
+    provisioning in the background so the first agent dispatch after
+    activation has a ready route to bind to. Provisioning can take
+    30-60s on a cold start, so we don't block the HTTP response on
+    it — the model-routes table polls and the UI will see the row
+    appear once OpenShell is up.
+    """
     prov = auth_db.get_cloud_provider(pid)
     if not prov:
-        return web.json_response({"error": "not_found"}, status=404)
+        return
 
     auth_db.set_active_cloud_provider(pid)
 
-    # Sync to .env and os.environ so agent picks up immediately
     from gateway.setup_handlers import _FRONTIER_PROVIDERS
     provider_type = prov["provider"]
     api_key = prov.get("api_key") or ""
@@ -439,7 +490,6 @@ async def handle_cloud_providers_activate(request: web.Request) -> web.Response:
     if frov.get("server_type"):
         os.environ["HERMES_SERVER_TYPE"] = frov["server_type"]
 
-    # Update config.yaml
     try:
         import pathlib
         import yaml
@@ -459,6 +509,39 @@ async def handle_cloud_providers_activate(request: web.Request) -> web.Response:
         _config_path.write_text(yaml.dump(cfg, default_flow_style=False, allow_unicode=True))
     except Exception as e:
         logger.warning("cloud provider activate: config.yaml write failed: %s", e)
+
+    # Auto-provision a route for the active model if one doesn't
+    # already exist. Runs in a background task because cold-start
+    # provision_new_route is 30-60s — we don't want to hold the
+    # /activate response that long. If there's no active_model we
+    # skip; routes are per (provider, model) and need both.
+    if active_model:
+        async def _provision_bg():
+            try:
+                from gateway.openshell_routes import provision_or_reuse_route
+                await asyncio.to_thread(
+                    provision_or_reuse_route,
+                    provider_type, active_model,
+                    # First route ever? Make it the default so agents
+                    # without an explicit route_id fall back to it.
+                    not auth_db.list_model_routes(),
+                )
+            except Exception as exc:
+                logger.warning(
+                    "auto-provision route for %s/%s failed: %s",
+                    provider_type, active_model, exc,
+                )
+        asyncio.create_task(_provision_bg())
+
+
+async def handle_cloud_providers_activate(request: web.Request) -> web.Response:
+    """Set a cloud provider as active and sync env vars + config.yaml."""
+    pid = request.match_info["id"]
+    prov = auth_db.get_cloud_provider(pid)
+    if not prov:
+        return web.json_response({"error": "not_found"}, status=404)
+
+    await _activate_cloud_provider(pid)
 
     result = auth_db.get_cloud_provider(pid)
     result["has_api_key"] = bool(result.get("api_key"))
