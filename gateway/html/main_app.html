@@ -2811,7 +2811,7 @@
                      accident. Only visible on hover so it doesn't clutter the card. -->
                 <button @click.stop="a._confirmDelete = true; a._deleteText = ''"
                   title="Delete agent"
-                  class="absolute top-1.5 right-1.5 w-5 h-5 flex items-center justify-center rounded-full text-gray-600 hover:text-red-400 hover:bg-red-950/40 opacity-0 group-hover:opacity-100 transition-opacity text-sm leading-none z-10">
+                  class="absolute top-1.5 right-1.5 w-5 h-5 flex items-center justify-center rounded-full text-gray-600 hover:text-red-400 hover:bg-red-950/40 transition-colors text-sm leading-none z-10">
                   &times;
                 </button>
                 <!-- Top row: sprite + summary (name, badges, description).
@@ -2822,10 +2822,17 @@
                 <div class="flex gap-3 items-start">
                   <div class="shrink-0" :style="agentSpriteStyle(a.name, a.char_index)"></div>
                   <div class="flex-1 min-w-0">
-                    <div class="flex items-center gap-2 mb-1">
-                      <span class="w-2 h-2 rounded-full shrink-0"
-                        :class="(status.active_sessions||[]).some(s => s.agent_name === a.name) ? 'bg-green-500 animate-pulse' : 'bg-green-600'"></span>
+                    <!-- Name row. The active-session indicator lives
+                         inline at the trailing edge of the name so the
+                         text itself starts flush with the pills row
+                         below — previously a leading status dot +
+                         gap-2 pushed the name ~16px right of where the
+                         first pill started. -->
+                    <div class="flex items-center gap-1.5 mb-1">
                       <span class="text-sm font-semibold text-white group-hover:text-indigo-300 transition-colors truncate" x-text="a.name"></span>
+                      <span class="w-2 h-2 rounded-full shrink-0"
+                        :class="(status.active_sessions||[]).some(s => s.agent_name === a.name) ? 'bg-green-500 animate-pulse' : 'bg-green-600'"
+                        :title="(status.active_sessions||[]).some(s => s.agent_name === a.name) ? 'Active session' : 'Idle'"></span>
                     </div>
                     <div class="flex items-center gap-1.5 mb-1 flex-wrap">
                       <span x-show="a.model" class="text-[9px] px-1 py-0.5 rounded font-mono bg-gray-800 text-gray-500 border border-gray-700 truncate max-w-[140px]" x-text="a.model"></span>
@@ -2899,7 +2906,7 @@
                   </div>
                 </template>
 
-                <div class="mt-2 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity" @click.stop>
+                <div class="mt-2 flex items-center gap-1" @click.stop>
                   <button @click.stop="a._editing = true; a._edit = { name: a.name, soul_slug: a.soul_slug, model: a.model || '', description: a.description || '', toolsets: JSON.parse(a.toolsets || '[]'), daily_budget_usd: a.daily_budget_usd || '', fallback_route_id: a.fallback_route_id || '' }"
                     class="text-[9px] px-1.5 py-0.5 rounded border border-gray-700 text-gray-500 hover:text-white hover:border-gray-500 transition-colors">Edit</button>
                   <button @click.stop="duplicateNamedAgent(a)"
