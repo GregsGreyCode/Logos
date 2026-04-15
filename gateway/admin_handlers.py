@@ -846,6 +846,52 @@ async def handle_agents_post(request: web.Request) -> web.Response:
             agent["id"], _exc,
         )
 
+    # Duplicate-from: when the caller came through the "Duplicate" action
+    # on an existing agent, copy the source agent's persisted state
+    # (memories + sessions) into the new agent's dir. Logs are
+    # intentionally NOT copied — they're execution history of the source
+    # and would mislead future observability on the clone. The sandbox
+    # itself is always spawned fresh on first dispatch; copying the
+    # memories dir is what makes the duplicate start with the source's
+    # accumulated knowledge rather than a blank slate. Best-effort:
+    # failures here don't undo the agent creation (user can always
+    # delete + retry), but we surface them in the response.
+    duplicate_from_id = body.get("duplicate_from")
+    duplicate_result = None
+    if duplicate_from_id:
+        try:
+            import pathlib as _pathlib
+            import shutil as _shutil
+            src_agent = auth_db.get_agent(str(duplicate_from_id))
+            if not src_agent:
+                duplicate_result = {"ok": False, "error": "source_not_found"}
+            else:
+                src_name = src_agent.get("name") or ""
+                logos_home = _pathlib.Path(
+                    os.environ.get("LOGOS_HOME") or os.environ.get("HERMES_HOME")
+                    or str(_pathlib.Path.home() / ".logos")
+                )
+                src_dir = logos_home / "agents" / src_name
+                dst_dir = logos_home / "agents" / name
+                copied = []
+                for sub in ("memories", "sessions"):
+                    src_sub = src_dir / sub
+                    if src_sub.is_dir():
+                        dst_sub = dst_dir / sub
+                        dst_sub.mkdir(parents=True, exist_ok=True)
+                        for p in src_sub.iterdir():
+                            if p.is_file():
+                                _shutil.copy2(p, dst_sub / p.name)
+                        copied.append(sub)
+                duplicate_result = {"ok": True, "from": src_name, "copied": copied}
+                logger.info(
+                    "create_agent(%s): duplicated %s from %s",
+                    name, copied, src_name,
+                )
+        except Exception as _dexc:
+            logger.exception("create_agent(%s): duplicate copy failed", name)
+            duplicate_result = {"ok": False, "error": str(_dexc)[:200]}
+
     # If OpenShell runtime is active, spawn a sandbox for this agent.
     # `executor.spawn()` runs `openshell sandbox create` synchronously,
     # which can take >60s while the underlying k8s Sandbox CR provisions.
@@ -886,6 +932,8 @@ async def handle_agents_post(request: web.Request) -> web.Response:
     resp = dict(agent)
     if spawn_result:
         resp["spawn"] = spawn_result
+    if duplicate_result is not None:
+        resp["duplicate"] = duplicate_result
     return web.json_response(resp, status=201)
 
 
