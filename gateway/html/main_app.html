@@ -1983,9 +1983,10 @@
                   x-text="p._testing ? 'Testing...' : 'Test'"></button>
                 <button x-show="!p.is_active" @click="activateCloudProvider(p.id)"
                   class="text-[10px] px-2 py-0.5 rounded border border-indigo-700 text-indigo-400 hover:text-white hover:border-indigo-500 transition-colors">Activate</button>
-                <button x-show="!p._editing" @click="p._editing = true; p._edit = { name: p.name, api_key: '', base_url: p.base_url || '', active_model: p.active_model || '' }"
+                <button x-show="!p._editing" @click="p._editing = true; p._edit = { name: p.name, api_key: '', base_url: p.base_url || '', active_model: p.active_model || '' }; loadCloudProviderModels(p.provider)"
                   class="text-[10px] px-2 py-0.5 rounded border border-gray-700 text-gray-500 hover:text-white hover:border-gray-500 transition-colors">Edit</button>
-                <button x-show="!p.is_active" @click="deleteCloudProvider(p.id)"
+                <button @click="deleteCloudProvider(p.id, p.is_active, p.name)"
+                  :title="p.is_active ? 'Delete this provider (it is currently active; any bound routes will also be destroyed)' : 'Delete this provider'"
                   class="text-[10px] px-2 py-0.5 rounded border border-red-900 text-red-500 hover:text-red-400 hover:border-red-700 transition-colors">Delete</button>
               </div>
             </div>
@@ -2004,8 +2005,33 @@
                 class="w-full px-2 py-1.5 rounded-lg bg-gray-800 border border-gray-700 text-xs text-white placeholder-gray-600 focus:outline-none focus:border-indigo-500">
               <input x-show="p.provider === 'custom'" x-model="p._edit.base_url" type="text" placeholder="Base URL"
                 class="w-full px-2 py-1.5 rounded-lg bg-gray-800 border border-gray-700 text-xs text-white placeholder-gray-600 focus:outline-none focus:border-indigo-500">
-              <input x-model="p._edit.active_model" type="text" placeholder="Default model"
-                class="w-full px-2 py-1.5 rounded-lg bg-gray-800 border border-gray-700 text-xs text-white placeholder-gray-600 focus:outline-none focus:border-indigo-500">
+
+              <!-- Model selection: live catalog dropdown when available,
+                   free-text fallback when the provider isn't in the
+                   live-catalog set (e.g. custom). Users can still type
+                   a custom model by toggling the "Type a model ID"
+                   link below the select. -->
+              <div x-data="{ manual: false }">
+                <template x-if="!manual && (cloudProviderModelsList[p.provider] || cloudProviderModelsFallback[p.provider])">
+                  <select x-model="p._edit.active_model"
+                    class="w-full px-2 py-1.5 rounded-lg bg-gray-800 border border-gray-700 text-xs text-white focus:outline-none focus:border-indigo-500">
+                    <option value="">— no default —</option>
+                    <template x-for="m in (cloudProviderModelsList[p.provider] || cloudProviderModelsFallback[p.provider] || [])" :key="m">
+                      <option :value="m" x-text="m"></option>
+                    </template>
+                  </select>
+                </template>
+                <template x-if="manual || !(cloudProviderModelsList[p.provider] || cloudProviderModelsFallback[p.provider])">
+                  <input x-model="p._edit.active_model" type="text" placeholder="Default model (e.g. gpt-4o-mini)"
+                    class="w-full px-2 py-1.5 rounded-lg bg-gray-800 border border-gray-700 text-xs text-white placeholder-gray-600 focus:outline-none focus:border-indigo-500">
+                </template>
+                <div class="flex items-center gap-2 mt-1">
+                  <button @click="manual = !manual" class="text-[10px] text-gray-500 hover:text-gray-300"
+                    x-text="manual ? 'Pick from list' : 'Type a model ID'"></button>
+                  <span x-show="cloudProviderModelsError[p.provider]" class="text-[10px] text-amber-500" x-text="'Live catalog unavailable — showing fallback list'"></span>
+                </div>
+              </div>
+
               <div class="flex gap-2">
                 <button @click="updateCloudProvider(p.id)"
                   class="text-xs px-3 py-1.5 rounded-lg bg-indigo-600 text-white hover:bg-indigo-500 transition-colors">Save</button>
@@ -10209,14 +10235,25 @@ network_policies:
       } catch {}
     },
 
-    async deleteCloudProvider(pid) {
-      if (!confirm('Remove this cloud provider?')) return;
+    async deleteCloudProvider(pid, isActive, name) {
+      const prompt = isActive
+        ? `"${name}" is currently active. Deleting it will also destroy every model route bound to this provider. Continue?`
+        : `Remove "${name}"?`;
+      if (!confirm(prompt)) return;
       try {
-        await fetch('/admin/cloud-providers/' + pid, {
+        const r = await fetch('/admin/cloud-providers/' + pid, {
           method: 'DELETE', credentials: 'include',
           headers: { 'X-CSRF-Token': getCsrfToken() },
         });
+        const j = await r.json().catch(() => ({}));
+        if ((j.routes_destroyed || []).length) {
+          console.info('cloud-provider delete: destroyed routes', j.routes_destroyed);
+        }
+        if ((j.route_teardown_errors || []).length) {
+          alert('Provider deleted but some routes failed to teardown — check gateway logs.');
+        }
         await this.loadCloudProviders();
+        if (this.loadModelRoutes) this.loadModelRoutes();
       } catch {}
     },
 
