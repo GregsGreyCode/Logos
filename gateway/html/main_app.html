@@ -1303,11 +1303,10 @@
             </template>
             <span class="font-mono text-gray-700" x-text="'\\u2191 ' + fmtUptime(status.uptime_s)"></span>
             <span class="text-gray-800">·</span>
-            <template x-if="(status.active_sessions||[]).length > 0">
-              <span class="text-green-500 font-medium"
-                x-text="(status.active_sessions||[]).length + ' executing'"></span>
+            <template x-if="webSession">
+              <span class="text-green-500 font-medium">executing</span>
             </template>
-            <template x-if="(status.active_sessions||[]).length === 0">
+            <template x-if="!webSession">
               <span class="text-gray-700">idle</span>
             </template>
             <span class="ml-auto text-gray-700" x-text="lastRefresh ? 'updated ' + lastRefresh : ''"></span>
@@ -4268,7 +4267,10 @@
                       : 'bg-gray-900 text-gray-500 border-gray-800'"
                     x-text="isSandboxSwitching(sb) ? 'switching' : (sb.phase || 'unknown').toLowerCase()"></span>
                 </td>
-                <td class="px-4 py-2 text-gray-500" x-text="sb.worker_uptime_s > 3600 ? Math.floor(sb.worker_uptime_s/3600) + 'h ' + Math.floor((sb.worker_uptime_s%3600)/60) + 'm' : sb.worker_uptime_s > 60 ? Math.floor(sb.worker_uptime_s/60) + 'm' : sb.worker_uptime_s + 's'"></td>
+                <td class="px-4 py-2 text-gray-500"
+                    x-text="(sb.phase === 'Ready' || sb.phase === 'ready')
+                      ? (sb.worker_uptime_s > 3600 ? Math.floor(sb.worker_uptime_s/3600) + 'h ' + Math.floor((sb.worker_uptime_s%3600)/60) + 'm' : sb.worker_uptime_s > 60 ? Math.floor(sb.worker_uptime_s/60) + 'm' : sb.worker_uptime_s + 's')
+                      : '—'"></td>
                 <td class="px-4 py-2 text-right">
                   <div class="flex items-center gap-1 justify-end" @click.stop>
                     <button @click="selectedSandbox = sb; sandboxLogs=''; loadSandboxLogs(sb.sandbox_name)"
@@ -4323,52 +4325,15 @@
         </div>
       </template>
 
-      <!-- Applied Policy -->
-      <details class="mb-5">
-        <summary class="text-xs font-semibold text-gray-400 uppercase tracking-wider cursor-pointer hover:text-gray-300 select-none">
-          Applied Policy (openshell_default.yaml)
-        </summary>
-        <div class="mt-3 bg-gray-900 border border-gray-800 rounded-xl p-4 space-y-3 text-xs">
-          <!-- Network -->
-          <div x-show="sandboxPolicy.network && sandboxPolicy.network.length">
-            <div class="text-[10px] text-gray-600 uppercase tracking-wider mb-1.5">Network Policies</div>
-            <template x-for="pol in (sandboxPolicy.network || [])" :key="pol.key">
-              <div class="flex items-start gap-2 mb-1.5 pl-2">
-                <span class="text-gray-600 shrink-0">&#9500;&#9472;</span>
-                <div>
-                  <span class="text-gray-300 font-medium" x-text="pol.name"></span>
-                  <template x-for="ep in pol.endpoints" :key="ep.host">
-                    <span class="text-gray-500 ml-1" x-text="ep.host + ':' + ep.port + ' (' + (ep.protocol || 'tcp') + (ep.tls ? ', TLS ' + ep.tls : '') + ')'"></span>
-                  </template>
-                  <template x-for="ep in pol.endpoints.filter(e => e.allowed_ips?.length)" :key="ep.host + '_ips'">
-                    <span class="text-gray-600 ml-2 text-[10px]">allowed: <span x-text="ep.allowed_ips.join(', ')"></span></span>
-                  </template>
-                </div>
-              </div>
-            </template>
-          </div>
-          <!-- Filesystem -->
-          <div x-show="sandboxPolicy.filesystem">
-            <div class="text-[10px] text-gray-600 uppercase tracking-wider mb-1.5">Filesystem</div>
-            <div class="pl-2 space-y-0.5">
-              <div><span class="text-gray-600">read-only:</span> <span class="text-gray-400 font-mono" x-text="(sandboxPolicy.filesystem?.read_only || []).join(', ')"></span></div>
-              <div><span class="text-gray-600">read-write:</span> <span class="text-gray-400 font-mono" x-text="(sandboxPolicy.filesystem?.read_write || []).join(', ')"></span></div>
-            </div>
-          </div>
-          <!-- Process -->
-          <div x-show="sandboxPolicy.process?.user">
-            <div class="text-[10px] text-gray-600 uppercase tracking-wider mb-1">Process</div>
-            <div class="pl-2 text-gray-400">
-              run as <span class="font-mono text-gray-300" x-text="sandboxPolicy.process?.user + ':' + sandboxPolicy.process?.group"></span>
-            </div>
-          </div>
-          <!-- Binaries -->
-          <div x-show="sandboxPolicy.binaries?.length">
-            <div class="text-[10px] text-gray-600 uppercase tracking-wider mb-1">Allowed Binaries</div>
-            <div class="pl-2 text-gray-400 font-mono text-[10px]" x-text="(sandboxPolicy.binaries || []).join(', ')"></div>
-          </div>
-        </div>
-      </details>
+      <!-- Policy config lives in Admin → Sandbox Policies (help panel,
+           preset list, editor, hot-reload). The previous read-only
+           disclosure here was strictly less capable and duplicated
+           state, so it was removed in favour of a single source. -->
+      <div class="text-[10px] text-gray-600 mb-5">
+        Policy config:
+        <button class="text-indigo-400 hover:text-indigo-300 underline"
+                @click="tab='admin'; adminTab='sandbox-policies'">Admin → Sandbox Policies</button>
+      </div>
 
     </div>
 
@@ -6644,14 +6609,12 @@ function app() {
     // sandboxes (Admin → Sandboxes)
     sandboxes: [],
     sandboxesLoading: false,
-    sandboxPolicy: {},
     sandboxResources: {},
     sandboxCliAvailable: false,
     selectedSandbox: null,
     sandboxLogs: '',
     sandboxLogsLoading: false,
     sandboxLogsSelectedName: null,
-    sandboxPolicyOpen: false,
     // model routes (Admin → Model Routes) — multi-OpenShell-gateway
     // routing dashboard. Each row is one OpenShell sub-gateway pinned
     // to one (provider, model) pair via `openshell inference set`.
@@ -10977,12 +10940,10 @@ network_policies:
         if (!r.ok) throw new Error(await r.text());
         const d = await r.json();
         this.sandboxes = d.sandboxes || [];
-        this.sandboxPolicy = d.policy || {};
         this.sandboxResources = d.resources || {};
         this.sandboxCliAvailable = !!d.cli_available;
       } catch(e) {
         this.sandboxes = [];
-        this.sandboxPolicy = {};
         this.sandboxResources = {};
         this.sandboxCliAvailable = false;
       }
