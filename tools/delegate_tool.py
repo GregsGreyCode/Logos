@@ -71,9 +71,18 @@ def _build_child_system_prompt(goal: str, context: Optional[str] = None) -> str:
 
 
 def _strip_blocked_tools(toolsets: List[str]) -> List[str]:
-    """Remove toolsets that contain only blocked tools."""
+    """Remove toolsets that contain only blocked tools.
+
+    ``delegation`` blocks grandchildren (no recursion); ``clarify``
+    blocks asking the user questions (only the parent owns that
+    channel); ``memory`` blocks writes to persistent memory (subagent
+    work is ephemeral). ``code_execution`` is intentionally allowed —
+    subagents often need to run Python for math/data work and
+    forcing them through ``terminal`` + ``python3 -c`` just makes
+    small models more likely to skip tool use and hallucinate.
+    """
     blocked_toolset_names = {
-        "delegation", "clarify", "memory", "code_execution",
+        "delegation", "clarify", "memory",
     }
     return [t for t in toolsets if t not in blocked_toolset_names]
 
