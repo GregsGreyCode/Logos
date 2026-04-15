@@ -6351,7 +6351,6 @@ function app() {
     logsModalLines: [],           // array of log lines
     logsModalLoading: false,
     logsModalAutoTail: true,      // auto-poll every 2s while open
-    logsModalErrors: false,       // toggle errors.log vs agent.log
     logsModalTail: 200,
     logsModalMeta: null,          // {path, size_bytes, mtime_iso, truncated}
     _logsModalTimer: null,
@@ -10228,7 +10227,6 @@ network_policies:
       this.logsModalLines = [];
       this.logsModalMeta = null;
       this.logsModalLoading = true;
-      this.logsModalErrors = false;
       this.logsModalTail = 200;
       this.logsModalAutoTail = true;
       await this._fetchAgentLogs();
@@ -10245,7 +10243,6 @@ network_policies:
       try {
         const params = new URLSearchParams();
         params.set('tail', String(this.logsModalTail || 200));
-        if (this.logsModalErrors) params.set('errors', '1');
         const r = await fetch(
           `/admin/agents/${this.logsModalAgent.id}/logs?${params}`,
           { credentials: 'include' },
@@ -12016,12 +12013,6 @@ network_policies:
           <option value="1000">1000 lines</option>
           <option value="2000">2000 lines</option>
         </select>
-        <!-- agent.log vs errors.log toggle -->
-        <button @click="logsModalErrors = !logsModalErrors; _fetchAgentLogs()"
-                :class="logsModalErrors ? 'bg-red-950 text-red-300 border-red-900' : 'bg-gray-900 text-gray-500 border-gray-800'"
-                class="text-[10px] px-2 py-1 rounded border transition-colors"
-                :title="logsModalErrors ? 'Showing errors.log — click to show agent.log' : 'Showing agent.log — click to show errors.log only'"
-                x-text="logsModalErrors ? 'errors.log' : 'agent.log'"></button>
         <!-- Auto-tail toggle -->
         <button @click="logsModalAutoTail = !logsModalAutoTail"
                 :class="logsModalAutoTail ? 'bg-emerald-950 text-emerald-300 border-emerald-900' : 'bg-gray-900 text-gray-500 border-gray-800'"
@@ -12055,8 +12046,7 @@ network_policies:
          bottom resumes it. -->
     <div x-ref="logsScroll"
          @scroll="(() => { const el = $refs.logsScroll; if (!el) return; const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 8; if (!atBottom && logsModalAutoTail) { logsModalAutoTail = false; } else if (atBottom && !logsModalAutoTail) { logsModalAutoTail = true; } })()"
-         class="flex-1 overflow-auto px-5 py-3 font-mono text-[11px] leading-relaxed"
-         :class="logsModalErrors ? 'bg-red-950/10 text-red-200' : 'bg-black/40 text-gray-300'">
+         class="flex-1 min-h-0 overflow-auto px-5 py-3 font-mono text-[11px] leading-relaxed bg-black/40 text-gray-300">
       <template x-if="logsModalLoading && logsModalLines.length === 0">
         <div class="text-gray-600 italic">Loading…</div>
       </template>
