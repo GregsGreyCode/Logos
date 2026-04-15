@@ -3168,7 +3168,7 @@
         <div class="flex items-center gap-2">
           <button @click="deployFromCatalogue()" :disabled="toolsDeploying"
             class="px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-medium transition-colors disabled:opacity-40">
-            <span x-show="!toolsDeploying">Deploy to cluster &rarr;</span>
+            <span x-show="!toolsDeploying">Deploy as container &rarr;</span>
             <span x-show="toolsDeploying" class="flex items-center gap-1.5">
               <div class="w-3 h-3 border border-white/30 border-t-white rounded-full animate-spin"></div>
               Deploying&hellip;
@@ -8664,10 +8664,11 @@ function app() {
           body: JSON.stringify({
             name: this.toolsDeployTarget.catalogue_id,
             catalogue_id: this.toolsDeployTarget.catalogue_id,
-            // Container-based MCP deploy is being rewritten — the server
-            // will currently return 501 for 'docker'. The UI still posts
-            // it so the error surfaces in the dev console without a path
-            // that silently worked via k8s.
+            // Docker deploy: server pulls the catalogue image and
+            // starts it as a container on the host Docker daemon,
+            // binding to 127.0.0.1:<pick-a-free-port>. The returned
+            // row has the local URL; the gateway's MCP proxy routes
+            // agent requests from /mcp/<name> to that URL.
             deploy_mode: 'docker',
             config: this.toolsDeployConfig,
           }),

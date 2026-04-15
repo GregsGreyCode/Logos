@@ -4,6 +4,7 @@ Endpoints under /api/tools/ for listing, deploying, and managing MCP
 tool servers from the dashboard.
 """
 
+import asyncio
 import json
 import logging
 from aiohttp import web
@@ -105,28 +106,33 @@ async def handle_server_create(request: web.Request) -> web.Response:
         )
     if deploy_mode not in ("external", "docker"):
         return _json({"error": f"unsupported deploy_mode: {deploy_mode}"}, 400)
-    if deploy_mode == "docker":
-        return _json(
-            {"error": "not_implemented",
-             "detail": "MCP container deploy is being rewritten — see follow-up"},
-            status=501,
-        )
 
     catalogue_id = body.get("catalogue_id")
     config_values = body.get("config", {})
     url = (body.get("url") or "").strip()
     token = (body.get("token") or "").strip()
 
-    # Look up catalogue entry for defaults
+    # Look up catalogue entry for defaults + docker deploy parameters
     cat_entry = None
     if catalogue_id:
         from gateway.mcp_catalogue import get_catalogue_entry
         cat_entry = get_catalogue_entry(catalogue_id)
 
+    # Validate docker deploy has an image to pull — either the user
+    # provided it in ``body.image`` or it came from the catalogue.
+    if deploy_mode == "docker":
+        image = (body.get("image") or (cat_entry or {}).get("image") or "").strip()
+        if not image:
+            return _json(
+                {"error": "missing_image",
+                 "detail": "deploy_mode=docker requires either body.image or a catalogue entry with 'image' set"},
+                400,
+            )
+
     server = db.create_mcp_server(
         name=name,
         catalogue_id=catalogue_id,
-        source="external",
+        source="external" if deploy_mode == "external" else "ui",
         deploy_mode=deploy_mode,
         url=url if deploy_mode == "external" else None,
         token=token if deploy_mode == "external" else None,
@@ -136,7 +142,7 @@ async def handle_server_create(request: web.Request) -> web.Response:
         description=cat_entry["description"] if cat_entry else body.get("description"),
     )
 
-    # If external, auto-wire immediately
+    # External: just auto-wire to the user-provided URL.
     if deploy_mode == "external" and url:
         db.update_mcp_server(server["id"], status="external")
         server = db.get_mcp_server(server["id"])
@@ -145,13 +151,53 @@ async def handle_server_create(request: web.Request) -> web.Response:
         except Exception as exc:
             logger.warning("Auto-wire failed for external server %s: %s", name, exc)
 
+    # Docker: pull the image, start the container, then auto-wire the
+    # local URL ``docker run`` assigned. Failure at any step flips the
+    # row to status='error' so the UI surfaces it; the row still exists
+    # so the user can retry via the restart button without recreating.
+    if deploy_mode == "docker":
+        from gateway.mcp_docker_deploy import deploy_container
+        try:
+            port        = int((cat_entry or {}).get("port") or body.get("port") or 8000)
+            mcp_path    = (cat_entry or {}).get("mcp_path") or body.get("mcp_path") or "/mcp"
+            env_vars    = dict(config_values)  # catalogue config_schema fills env_vars directly
+            result = await asyncio.to_thread(
+                deploy_container,
+                name=name, image=image, port=port,
+                env_vars=env_vars, mcp_path=mcp_path,
+            )
+            db.update_mcp_server(
+                server["id"],
+                status="running",
+                url=result["url"],
+                last_error=None,
+            )
+            server = db.get_mcp_server(server["id"])
+            try:
+                await _auto_wire_server(request.app, name, result["url"], token="")
+            except Exception as exc:
+                logger.warning("Auto-wire failed for docker server %s: %s", name, exc)
+        except Exception as exc:
+            logger.exception("Failed to deploy MCP container %s", name)
+            db.update_mcp_server(
+                server["id"], status="error", last_error=str(exc)[:300],
+            )
+            server = db.get_mcp_server(server["id"])
+
     return _json({"server": server}, 201)
 
 
 # ── Delete server ──────��─────────────────────────────────────────────────────
 
 async def handle_server_delete(request: web.Request) -> web.Response:
-    """DELETE /api/tools/servers/{id} — unwire + delete."""
+    """DELETE /api/tools/servers/{id} — unwire + delete.
+
+    For docker-deployed servers the container is also stopped and
+    removed so ``docker ps`` doesn't keep the now-orphaned container
+    running. Errors during container removal are logged and the
+    gateway DB row is still deleted — the user expects a clean slate
+    after they click delete.
+    """
     db = _get_auth_db()
     server_id = request.match_info["id"]
     server = db.get_mcp_server(server_id)
@@ -163,6 +209,14 @@ async def handle_server_delete(request: web.Request) -> web.Response:
         await _auto_unwire_server(request.app, server["name"])
     except Exception as exc:
         logger.warning("Auto-unwire failed for %s: %s", server["name"], exc)
+
+    # Stop + remove the Docker container for docker-deployed servers.
+    if server.get("deploy_mode") == "docker":
+        from gateway.mcp_docker_deploy import undeploy_container
+        try:
+            await asyncio.to_thread(undeploy_container, server["name"])
+        except Exception as exc:
+            logger.warning("Undeploy container %s failed: %s", server["name"], exc)
 
     db.delete_mcp_server(server_id)
     return _json({"ok": True})
