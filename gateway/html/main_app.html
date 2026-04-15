@@ -3044,8 +3044,8 @@
                     :class="srv.status === 'running' || srv.status === 'external' ? 'bg-green-400' : srv.status === 'deploying' || srv.status === 'pending' ? 'bg-yellow-400 animate-pulse' : srv.status === 'error' ? 'bg-red-400' : 'bg-gray-600'"></span>
                   <span class="text-sm font-medium text-white truncate" x-text="srv.name"></span>
                   <span class="text-[9px] px-1.5 py-0.5 rounded-full border font-medium uppercase tracking-wider flex-shrink-0"
-                    :class="srv.source === 'config' ? 'bg-gray-800 text-gray-500 border-gray-700' : srv.deploy_mode === 'k8s' ? 'bg-indigo-950 text-indigo-400 border-indigo-800' : 'bg-gray-800 text-gray-400 border-gray-700'"
-                    x-text="srv.source === 'config' ? 'config' : srv.deploy_mode === 'k8s' ? 'k8s' : 'external'"></span>
+                    :class="'bg-gray-800 text-gray-400 border-gray-700'"
+                    x-text="srv.source === 'config' ? 'config' : (srv.deploy_mode || 'external')"></span>
                 </div>
                 <div class="flex items-center gap-2 flex-shrink-0" @click.stop>
                   <span x-show="srv.tool_count" class="text-[10px] text-gray-500" x-text="srv.tool_count + ' tools'"></span>
@@ -3060,11 +3060,11 @@
               <div x-show="srv.description" class="text-xs text-gray-500 mt-1 truncate pl-5" x-text="srv.description"></div>
               <div x-show="srv.last_error" class="text-xs text-red-400 mt-1 pl-5" x-text="srv.last_error"></div>
             </div>
-            <!-- Tools drawer. Shows the list of tool names this MCP
-                 server exposes (populated from tool_names in the
-                 /api/tools/servers response — see mcp_service.py
-                 get_catalogue). -->
-            <div x-show="expanded" x-cloak class="px-3 pb-3 pl-10">
+            <!-- Expand drawer — shows tools, docker container state
+                 (for deploy_mode=docker), URL, and a logs peek. -->
+            <div x-show="expanded" x-cloak class="px-3 pb-3 pl-10 space-y-3"
+                 x-data="{ showLogs: false, logs: '', logsLoading: false }">
+              <!-- Tools exposed -->
               <template x-if="srv.tool_names && srv.tool_names.length > 0">
                 <div>
                   <div class="text-[10px] font-semibold text-gray-600 uppercase tracking-wider mb-1.5">Tools exposed</div>
@@ -3079,8 +3079,59 @@
                 <div class="text-[10px] text-gray-600 italic">
                   <span x-show="!srv.tool_count">No tools registered.</span>
                   <span x-show="srv.tool_count">
-                    Server reports <span x-text="srv.tool_count"></span> tool(s) but no names yet — usually this means the MCP connection is still warming up. Retry in a second.
+                    Server reports <span x-text="srv.tool_count"></span> tool(s) but no names yet — the MCP connection may still be warming up. Hit ↻ to re-wire.
                   </span>
+                </div>
+              </template>
+
+              <!-- Docker container detail — only for deploy_mode=docker -->
+              <template x-if="srv.deploy_mode === 'docker'">
+                <div class="grid grid-cols-2 gap-x-4 gap-y-1 text-[11px]">
+                  <div class="text-gray-500">Container</div>
+                  <div class="font-mono" :class="srv.container_status === 'running' ? 'text-green-400' : srv.container_status === 'exited' ? 'text-red-400' : 'text-gray-400'">
+                    <span x-text="'mcp-' + srv.name"></span>
+                    <span class="text-gray-600" x-text="'(' + (srv.container_status || '?') + ')'"></span>
+                  </div>
+                  <div class="text-gray-500">URL</div>
+                  <div class="font-mono text-gray-300 truncate" x-text="srv.url || '—'"></div>
+                  <template x-if="srv.host_port">
+                    <div class="text-gray-500">Host port</div>
+                  </template>
+                  <template x-if="srv.host_port">
+                    <div class="font-mono text-gray-300" x-text="srv.host_port"></div>
+                  </template>
+                </div>
+              </template>
+
+              <!-- Auto-grant toggle — controls whether this server's
+                   tools are injected into every agent's toolset list
+                   automatically at spawn. When off, the agent has to
+                   call request_mcp_access to get a per-session grant. -->
+              <div class="flex items-center justify-between pt-1">
+                <div>
+                  <div class="text-[11px] text-gray-300">Auto-grant to every agent</div>
+                  <div class="text-[10px] text-gray-500">On: every agent sees the tools. Off: agent must request access.</div>
+                </div>
+                <button @click="toggleMcpAutoGrant(srv)"
+                  :class="srv.auto_grant ? 'bg-indigo-600' : 'bg-gray-700'"
+                  class="relative inline-flex h-5 w-9 items-center rounded-full transition-colors">
+                  <span :class="srv.auto_grant ? 'translate-x-5' : 'translate-x-1'"
+                    class="inline-block h-3 w-3 transform rounded-full bg-white transition-transform"></span>
+                </button>
+              </div>
+
+              <!-- Logs peek — only for deploy_mode=docker -->
+              <template x-if="srv.deploy_mode === 'docker'">
+                <div>
+                  <button @click="showLogs = !showLogs; if (showLogs && !logs) { logsLoading = true; fetch('/api/tools/servers/' + srv.id + '/logs?tail=200', {credentials:'include'}).then(r => r.json()).then(d => { logs = d.logs || '(no logs)'; logsLoading = false; }).catch(e => { logs = 'Error: ' + e.message; logsLoading = false; }); }"
+                    class="text-[10px] text-indigo-500 hover:text-indigo-300">
+                    <span x-show="!showLogs">Show container logs &rarr;</span>
+                    <span x-show="showLogs">Hide logs</span>
+                  </button>
+                  <div x-show="showLogs" x-cloak class="mt-2 max-h-64 overflow-auto bg-gray-950 border border-gray-800 rounded p-2 text-[10px] font-mono text-gray-400 whitespace-pre-wrap">
+                    <span x-show="logsLoading" class="text-gray-600">loading…</span>
+                    <span x-show="!logsLoading" x-text="logs"></span>
+                  </div>
                 </div>
               </template>
             </div>
@@ -3168,7 +3219,7 @@
         <div class="flex items-center gap-2">
           <button @click="deployFromCatalogue()" :disabled="toolsDeploying"
             class="px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-medium transition-colors disabled:opacity-40">
-            <span x-show="!toolsDeploying">Deploy to cluster &rarr;</span>
+            <span x-show="!toolsDeploying">Deploy as container &rarr;</span>
             <span x-show="toolsDeploying" class="flex items-center gap-1.5">
               <div class="w-3 h-3 border border-white/30 border-t-white rounded-full animate-spin"></div>
               Deploying&hellip;
@@ -5924,7 +5975,7 @@ function app() {
     authUser: null,
     authPermissions: [],
     isCanary: window.__LOGOS__?.isCanary || false,
-    runtimeMode: window.__LOGOS__?.runtimeMode || 'kubernetes',
+    runtimeMode: window.__LOGOS__?.runtimeMode || 'openshell',
     appVersion: window.__LOGOS__?.version || '',
     // agents sub-tabs
     agentsTab: 'running',  // kept for compat; sub-tabs removed
@@ -6830,13 +6881,16 @@ function app() {
     _buildChatAgents() {
       // No more "self" pseudo-agent — every agent must be a real named agent
       // with its own sandbox. Empty chatAgents is a valid state.
+      // Non-local cluster instances are OpenShell sandboxes; the legacy
+      // 'k8s' source kept its name so older backend rows still render
+      // (handle_agents_list still emits source='k8s' for compat).
       const k8s = (this.clusterInstances || [])
         .filter(i => i.node_port && i.source !== 'local')
         .map(i => ({
-          id:           'k8s-' + i.name,
+          id:           'sandbox-' + i.name,
           name:         i.instance_name,
           url:          'http://' + window.location.hostname + ':' + i.node_port,
-          source:       'k8s',
+          source:       'openshell',
           editable:     false,
           soul:         i.soul         || null,
           model_alias:  i.model_alias  || null,
@@ -7208,7 +7262,7 @@ function app() {
       }).catch(() => {});
     },
 
-    // ── k8s Instances + Toolsets ──────────────────────────────────
+    // ── Sandbox instances + Toolsets ──────────────────────────────
 
     // ── Agent World ─────────────────────────────────────────────
 
@@ -8708,7 +8762,12 @@ function app() {
           body: JSON.stringify({
             name: this.toolsDeployTarget.catalogue_id,
             catalogue_id: this.toolsDeployTarget.catalogue_id,
-            deploy_mode: 'k8s',
+            // Docker deploy: server pulls the catalogue image and
+            // starts it as a container on the host Docker daemon,
+            // binding to 127.0.0.1:<pick-a-free-port>. The returned
+            // row has the local URL; the gateway's MCP proxy routes
+            // agent requests from /mcp/<name> to that URL.
+            deploy_mode: 'docker',
             config: this.toolsDeployConfig,
           }),
         });
@@ -8760,6 +8819,21 @@ function app() {
         });
         await this.loadToolsTab();
       } catch(e) { console.warn('delete failed:', e.message); }
+    },
+    async toggleMcpAutoGrant(srv) {
+      const next = srv.auto_grant ? 0 : 1;
+      srv.auto_grant = next;
+      try {
+        await fetch(`/api/tools/servers/${srv.id}`, {
+          method: 'PATCH', credentials: 'include',
+          headers: {'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken()},
+          body: JSON.stringify({auto_grant: next}),
+        });
+        await this.loadToolsTab();
+      } catch(e) {
+        srv.auto_grant = next ? 0 : 1;
+        console.warn('auto_grant toggle failed:', e.message);
+      }
     },
 
     async loadServices() {

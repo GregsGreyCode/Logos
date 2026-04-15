@@ -1,5 +1,12 @@
 # LOGOS × NVIDIA OpenShell — Engineering Migration & Refactorisation Plan
 
+> **Superseded — k3s/external-k8s sandbox paths removed on branch `remove-legacy-deploy`.**
+> OpenShell is now the only supported agent-sandbox runtime. The
+> `DockerSandboxExecutor`, the k3s auto-install flow, the external-Kubernetes
+> kubeconfig path, and the k8s-based MCP deployer have all been deleted.
+> See `docs/openshell-integration.md` and `docker/sandbox_worker.py` for the
+> shipped architecture; this file remains as the original planning record.
+
 **Version 1.0 | April 2026**
 **Author:** Greg (GregsGreyCode)
 **Repo:** github.com/GregsGreyCode/Logos
