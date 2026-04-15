@@ -1254,18 +1254,12 @@
             </div>
           </template>
 
-          <!-- Active tool bar -->
-          <template x-if="chatLoading && webSession">
-            <div class="mx-4 mb-2 px-3 py-1.5 rounded-lg bg-gray-800 border border-gray-700 flex items-center gap-2 text-xs shrink-0">
-              <span class="animate-spin text-indigo-400">&#9881;</span>
-              <span class="font-mono text-gray-300" x-text="webSession.current_tool"></span>
-              <span class="text-gray-600" x-text="'(' + elapsed(webSession.tool_started_at) + 's)'"></span>
-              <span class="ml-auto px-1.5 py-0.5 rounded text-xs font-medium"
-                :class="webSession.stuck ? 's-stuck' : elapsed(webSession.tool_started_at) > 180 ? 's-slow' : 's-run'"
-                x-text="webSession.stuck ? '\\uD83D\\uDD34 stuck' : elapsed(webSession.tool_started_at) > 180 ? '\\u26A0\\uFE0F slow' : '\\u2705 running'">
-              </span>
-            </div>
-          </template>
+          <!-- Active tool bar removed from the chat input area — it was
+               covering the Message <Agent>… placeholder text while the
+               agent thought. Tool progress is still visible in the Live
+               Executions panel on the right, and the kawaii ASCII
+               indicator above shows that the agent is working. -->
+
 
           <!-- Stats row -->
           <div class="px-4 py-2 border-t border-gray-800/60 flex items-center gap-3 text-xs text-gray-600 shrink-0 flex-wrap">
@@ -3803,11 +3797,7 @@
         @click="activityTab='dashboards'; loadModelRoutes(); loadSandboxes(); loadNamedAgents()">Dashboards</button>
       <button class="pb-2 text-sm font-medium border-b-2 border-transparent"
         :class="activityTab==='events'?'tab-active':'text-gray-500 hover:text-white'"
-        @click="activityTab='events'; loadDispatches()">Events</button>
-      <button x-show="can('view_runs')"
-        class="pb-2 text-sm font-medium border-b-2 border-transparent"
-        :class="activityTab==='runs'?'tab-active':'text-gray-500 hover:text-white'"
-        @click="activityTab='runs'; loadAgentRuns()">Runs</button>
+        @click="activityTab='events'; loadDispatches()">Runs</button>
       <button x-show="can('view_approvals')"
         class="pb-2 text-sm font-medium border-b-2 border-transparent relative"
         :class="activityTab==='approvals'?'tab-active':'text-gray-500 hover:text-white'"
@@ -4287,13 +4277,24 @@
       </div>
     </div>
 
-    <!-- ── Events / dispatch ledger (Activity → Events) ── -->
+    <!-- ── Runs (Activity → Runs) — unified dispatch ledger ──
+         Previously two tabs (Events + Runs) backed by two tables
+         (dispatches + agent_runs) with heavy overlap. Merged: this
+         tab reads dispatches (every chat turn writes a row) and
+         shows it as the single "run" concept. -->
     <div x-show="tab==='activity' && activityTab==='events'">
-      <div class="flex items-center justify-between mb-4">
-        <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Dispatch Activity</div>
-        <div class="flex items-center gap-3">
-          <select x-model="dispatchOriginFilter" @change="loadDispatches()"
-            class="bg-gray-800 border border-gray-700 rounded-lg text-xs px-2 py-1 text-gray-300">
+      <div class="flex items-center justify-between mb-4 gap-3 flex-wrap">
+        <div>
+          <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Runs</div>
+          <div class="text-[10px] text-gray-500 mt-0.5">Every agent event — one row per chat turn. Backed by the <span class="font-mono">dispatches</span> table.</div>
+        </div>
+        <div class="flex items-center gap-2 flex-wrap">
+          <input type="text" x-model="dispatchesQuery"
+            @input="clearTimeout(_dispatchesSearchTimer); _dispatchesSearchTimer = setTimeout(() => { dispatchesOffset = 0; loadDispatches(); }, 250)"
+            placeholder="Search agent, model, session…"
+            class="bg-gray-800 border border-gray-700 rounded-lg text-xs px-3 py-1.5 text-gray-300 placeholder-gray-600 focus:outline-none focus:border-indigo-500 w-56">
+          <select x-model="dispatchOriginFilter" @change="dispatchesOffset = 0; loadDispatches()"
+            class="bg-gray-800 border border-gray-700 rounded-lg text-xs px-2 py-1.5 text-gray-300">
             <option value="">All origins</option>
             <option value="user_chat">User chat</option>
             <option value="compare">Compare (transient)</option>
@@ -4303,7 +4304,7 @@
             <option value="session_flush">Session flush</option>
           </select>
           <button @click="loadDispatches()"
-            class="text-xs text-gray-500 hover:text-white">Refresh</button>
+            class="text-xs px-3 py-1.5 rounded-lg border border-gray-700 text-gray-400 hover:text-white transition-colors">Refresh</button>
         </div>
       </div>
       <div x-show="dispatchesLoading" class="text-xs text-gray-500 py-4 text-center">Loading...</div>
@@ -4355,172 +4356,20 @@
           </tbody>
         </table>
         <div class="flex items-center justify-between mt-3 text-xs text-gray-500">
-          <span x-text="'Showing ' + dispatches.length + ' of ' + dispatchesTotal + ' dispatches'"></span>
-        </div>
-      </div>
-    </div>
-
-    <!-- ── Runs sub-tab (Activity → Runs) ──
-         Per-run STAMP records from the agent_runs table: agent, model,
-         soul, tool sequence, status, elapsed, api calls. Each row is
-         clickable for a detail drawer (below). -->
-    <div x-show="tab==='activity' && activityTab==='runs' && can('view_runs')" x-cloak>
-      <div class="flex items-center justify-between mb-4">
-        <div>
-          <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Agent Runs</div>
-          <div class="text-[10px] text-gray-500 mt-0.5">Per-turn STAMP records — model, soul, tool trace, outcome. Backed by the <span class="font-mono">agent_runs</span> table.</div>
-        </div>
-        <div class="flex items-center gap-2">
-          <select x-model="agentRunsStatusFilter" @change="loadAgentRuns()"
-            class="bg-gray-800 border border-gray-700 rounded-lg text-xs px-2 py-1 text-gray-300">
-            <option value="">All status</option>
-            <option value="success">success</option>
-            <option value="error">error</option>
-            <option value="running">running</option>
-            <option value="cancelled">cancelled</option>
-          </select>
-          <button @click="loadAgentRuns()" class="text-xs text-[var(--accent)] hover:opacity-80 flex items-center gap-1"><span>&#8635;</span> Refresh</button>
-        </div>
-      </div>
-
-      <div x-show="agentRunsLoading" class="text-xs text-gray-500 py-4 text-center">Loading...</div>
-      <div class="overflow-x-auto" x-show="!agentRunsLoading">
-        <table class="w-full text-xs">
-          <thead>
-            <tr class="text-gray-500 text-left border-b border-gray-800">
-              <th class="px-3 py-2">Agent</th>
-              <th class="px-3 py-2">Model</th>
-              <th class="px-3 py-2">Soul</th>
-              <th class="px-3 py-2">Status</th>
-              <th class="px-3 py-2">API calls</th>
-              <th class="px-3 py-2">Tools</th>
-              <th class="px-3 py-2">User</th>
-              <th class="px-3 py-2">When</th>
-            </tr>
-          </thead>
-          <tbody>
-            <template x-for="r in agentRuns" :key="r.id">
-              <tr class="border-b border-gray-800/50 hover:bg-gray-800/30 cursor-pointer"
-                  @click="openAgentRunDetail(r)">
-                <td class="px-3 py-2 text-white font-medium" x-text="r.agent_name || r.agent_id || '—'"></td>
-                <td class="px-3 py-2 text-gray-500 font-mono" x-text="(r.model || '').split('/').pop() || '—'"></td>
-                <td class="px-3 py-2 text-gray-500 font-mono" x-text="r.soul || '—'"></td>
-                <td class="px-3 py-2">
-                  <span class="text-[10px] font-medium px-1.5 py-0.5 rounded"
-                    :class="{
-                      'bg-green-950 text-green-400': r.status==='success',
-                      'bg-red-950 text-red-400': r.status==='error',
-                      'bg-yellow-950 text-yellow-400': r.status==='running',
-                      'bg-gray-800 text-gray-400': ['cancelled','timeout'].includes(r.status) || !['success','error','running'].includes(r.status||''),
-                    }" x-text="r.status || '—'"></span>
-                </td>
-                <td class="px-3 py-2 text-gray-400" x-text="r.api_calls ?? 0"></td>
-                <td class="px-3 py-2 text-gray-500 font-mono truncate max-w-[200px]" x-text="(r.tool_sequence || []).slice(0, 4).join(', ')"></td>
-                <td class="px-3 py-2 text-gray-500" x-text="r.username || r.user_id || '—'"></td>
-                <td class="px-3 py-2 text-gray-500" x-text="r.created_at ? new Date((typeof r.created_at === 'number' ? r.created_at * 1000 : Date.parse(r.created_at))).toLocaleString() : '—'"></td>
-              </tr>
-            </template>
-            <template x-if="!agentRunsLoading && agentRuns.length === 0">
-              <tr><td colspan="8" class="px-3 py-8 text-center text-gray-600">No runs recorded yet.</td></tr>
-            </template>
-          </tbody>
-        </table>
-      </div>
-      <div x-show="!agentRunsLoading && agentRuns.length > 0" class="flex items-center justify-between mt-3 text-xs text-gray-500">
-        <span x-text="'Showing ' + agentRuns.length + ' of ' + agentRunsTotal + ' runs'"></span>
-      </div>
-
-      <!-- Detail drawer -->
-      <div x-show="selectedAgentRun" x-cloak
-           class="fixed inset-0 bg-black/60 z-50 flex justify-end"
-           @click="selectedAgentRun = null" @keydown.escape.window="selectedAgentRun = null">
-        <div class="bg-gray-950 border-l border-gray-800 w-full max-w-2xl h-full overflow-auto" @click.stop>
-          <div class="px-5 py-3 border-b border-gray-800 flex items-center justify-between">
-            <div class="text-sm font-semibold text-white">Run <span class="font-mono text-gray-500 text-xs" x-text="selectedAgentRun?.id"></span></div>
-            <button @click="selectedAgentRun = null" class="text-gray-500 hover:text-white text-xl px-2">&times;</button>
-          </div>
-          <div class="p-5 space-y-3 text-xs" x-show="selectedAgentRun">
-            <div class="grid grid-cols-2 gap-3">
-              <div><div class="text-gray-500 uppercase tracking-wider text-[10px] mb-0.5">Agent</div><div class="text-white" x-text="selectedAgentRun?.agent_name || selectedAgentRun?.agent_id || '—'"></div></div>
-              <div><div class="text-gray-500 uppercase tracking-wider text-[10px] mb-0.5">Status</div><div class="text-white" x-text="selectedAgentRun?.status || '—'"></div></div>
-              <div><div class="text-gray-500 uppercase tracking-wider text-[10px] mb-0.5">Model</div><div class="font-mono text-white" x-text="selectedAgentRun?.model || '—'"></div></div>
-              <div><div class="text-gray-500 uppercase tracking-wider text-[10px] mb-0.5">Soul</div><div class="font-mono text-white" x-text="selectedAgentRun?.soul || '—'"></div></div>
-              <div><div class="text-gray-500 uppercase tracking-wider text-[10px] mb-0.5">Provider</div><div class="text-white" x-text="selectedAgentRun?.provider || '—'"></div></div>
-              <div><div class="text-gray-500 uppercase tracking-wider text-[10px] mb-0.5">API calls</div><div class="text-white" x-text="selectedAgentRun?.api_calls ?? 0"></div></div>
-            </div>
-            <div>
-              <div class="text-gray-500 uppercase tracking-wider text-[10px] mb-1">User message</div>
-              <div class="text-gray-200 bg-gray-900 border border-gray-800 rounded p-2 whitespace-pre-wrap break-all max-h-40 overflow-auto" x-text="selectedAgentRun?.user_message || '—'"></div>
-            </div>
-            <div>
-              <div class="text-gray-500 uppercase tracking-wider text-[10px] mb-1">Tool sequence</div>
-              <div class="font-mono text-gray-300 bg-gray-900 border border-gray-800 rounded p-2">
-                <template x-for="(t, i) in (selectedAgentRun?.tool_sequence || [])" :key="i"><span class="inline-block px-1.5 py-0.5 mr-1 mb-1 bg-gray-800 rounded" x-text="t"></span></template>
-                <span x-show="!(selectedAgentRun?.tool_sequence?.length)" class="text-gray-600 italic">(no tools called)</span>
-              </div>
-            </div>
-            <div x-show="selectedAgentRun?.error">
-              <div class="text-red-400 uppercase tracking-wider text-[10px] mb-1">Error</div>
-              <div class="text-red-300 bg-red-950/30 border border-red-900 rounded p-2 whitespace-pre-wrap break-all" x-text="selectedAgentRun?.error"></div>
-            </div>
-            <div x-show="(selectedAgentRun?.approval_ids || []).length">
-              <div class="text-gray-500 uppercase tracking-wider text-[10px] mb-1">Approvals</div>
-              <div class="font-mono text-gray-400" x-text="(selectedAgentRun?.approval_ids || []).join(', ')"></div>
-            </div>
-
-            <!-- STAMP enrichment: tokens, cost, dispatches. Populated
-                 by openAgentRunDetail() from the /api/runs/{id}
-                 response's stamp{} block. -->
-            <template x-if="agentRunStamp">
-              <div class="space-y-3 pt-3 border-t border-gray-800">
-                <div class="grid grid-cols-3 gap-3">
-                  <div>
-                    <div class="text-gray-500 uppercase tracking-wider text-[10px] mb-0.5">Prompt tokens</div>
-                    <div class="text-white" x-text="(agentRunStamp.token_totals?.prompt || 0).toLocaleString()"></div>
-                  </div>
-                  <div>
-                    <div class="text-gray-500 uppercase tracking-wider text-[10px] mb-0.5">Completion tokens</div>
-                    <div class="text-white" x-text="(agentRunStamp.token_totals?.completion || 0).toLocaleString()"></div>
-                  </div>
-                  <div>
-                    <div class="text-gray-500 uppercase tracking-wider text-[10px] mb-0.5">Cost (USD)</div>
-                    <div class="text-white" x-text="'$' + (agentRunStamp.cost?.total_usd || 0).toFixed(4)"></div>
-                  </div>
-                </div>
-                <div x-show="(agentRunStamp.dispatches || []).length">
-                  <div class="text-gray-500 uppercase tracking-wider text-[10px] mb-1" x-text="'Dispatches (' + (agentRunStamp.dispatches || []).length + ')'"></div>
-                  <div class="space-y-1">
-                    <template x-for="d in (agentRunStamp.dispatches || [])" :key="d.id">
-                      <div class="flex items-center gap-2 text-[11px] bg-gray-900 border border-gray-800 rounded px-2 py-1">
-                        <span class="font-mono text-gray-500 w-16 truncate" x-text="d.origin"></span>
-                        <span class="font-mono text-gray-600 w-20 truncate" x-text="(d.model || '').split('/').pop()"></span>
-                        <span class="flex-1 text-gray-400" x-text="(d.status || '—') + (d.elapsed_s ? ' · ' + d.elapsed_s + 's' : '')"></span>
-                        <span x-show="d.error" class="text-red-400 truncate max-w-[200px]" x-text="d.error"></span>
-                      </div>
-                    </template>
-                  </div>
-                </div>
-              </div>
-            </template>
+          <span x-text="dispatchesTotal === 0 ? 'No runs' : ('Showing ' + (dispatchesOffset + 1) + '-' + Math.min(dispatchesOffset + dispatches.length, dispatchesTotal) + ' of ' + dispatchesTotal)"></span>
+          <div class="flex items-center gap-1" x-show="dispatchesTotal > dispatchesLimit">
+            <button @click="dispatchesOffset = Math.max(0, dispatchesOffset - dispatchesLimit); loadDispatches()"
+              :disabled="dispatchesOffset === 0"
+              class="px-2 py-1 rounded border border-gray-700 text-gray-400 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed transition-colors">‹ Prev</button>
+            <span class="px-2 text-gray-600 font-mono"
+              x-text="(Math.floor(dispatchesOffset / dispatchesLimit) + 1) + ' / ' + Math.max(1, Math.ceil(dispatchesTotal / dispatchesLimit))"></span>
+            <button @click="dispatchesOffset = dispatchesOffset + dispatchesLimit; loadDispatches()"
+              :disabled="dispatchesOffset + dispatchesLimit >= dispatchesTotal"
+              class="px-2 py-1 rounded border border-gray-700 text-gray-400 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed transition-colors">Next ›</button>
           </div>
         </div>
       </div>
     </div>
-
-    <!-- Shared admin message bar -->
-    <template x-if="adminMsg && !adminUserFormOpen && !adminMachineFormOpen">
-      <div class="mt-4 text-xs px-3 py-2 rounded-lg"
-        :class="adminMsg.ok ? 'bg-green-950 text-green-300 border border-green-800' : 'bg-red-950 text-red-300 border border-red-800'"
-        x-text="adminMsg.text"></div>
-    </template>
-
-  </div>
-
-
-  <!-- Runs sub-tab removed: agent_runs writes are bypassed in the current
-       OpenShell runtime (Plan A-prime in sandbox_worker.py). M10 is the
-       restoration ticket — when it lands, re-add the Runs sub-tab + block
-       (history at git rev pre-removal). -->
 
   <!-- ── Proposals (Activity → Proposals; was: Evolution) ───────────── -->
   <div x-show="tab==='activity' && activityTab==='proposals'" x-cloak class="p-6 max-w-5xl mx-auto space-y-6">
@@ -5280,6 +5129,10 @@ function app() {
     dispatches: [],
     dispatchesTotal: 0,
     dispatchesLoading: false,
+    dispatchesLimit: 20,
+    dispatchesOffset: 0,
+    dispatchesQuery: '',
+    _dispatchesSearchTimer: null,
     // Agent Runs tab — runs detail enrichment (STAMP join). Core
     // agentRuns*/selectedAgentRun state is declared below (line ~6598);
     // this entry only adds the stamp-satellite payload.
@@ -5296,12 +5149,14 @@ function app() {
     agentRuns: [],
     agentRunsTotal: 0,
     agentRunsOffset: 0,
-    agentRunsLimit: 50,
+    agentRunsLimit: 20,
     agentRunsStatusFilter: '',
+    agentRunsQuery: '',
     agentRunsLoading: false,
     selectedAgentRun: null,
     agentRunsMsg: null,
     clonePayload: null,
+    _agentRunsSearchTimer: null,
     // sandboxes (Admin → Sandboxes)
     sandboxes: [],
     sandboxesLoading: false,
@@ -5888,6 +5743,7 @@ function app() {
     },
     _ACTIVITY_URL_MAP: {
       events:     'events',
+      runs:       'events',  // merged — legacy /activity/runs bookmarks land on Runs (was Events)
       dashboards: 'dashboards',
       approvals:  'approvals',
       proposals:  'proposals',
@@ -9377,8 +9233,12 @@ network_policies:
     async loadDispatches() {
       this.dispatchesLoading = true;
       try {
-        const params = new URLSearchParams({ limit: '50' });
+        const params = new URLSearchParams({
+          limit: String(this.dispatchesLimit || 20),
+          offset: String(this.dispatchesOffset || 0),
+        });
         if (this.dispatchOriginFilter) params.set('origin', this.dispatchOriginFilter);
+        if ((this.dispatchesQuery || '').trim()) params.set('q', this.dispatchesQuery.trim());
         const r = await fetch('/admin/dispatches?' + params, {credentials:'include'});
         if (!r.ok) { this.dispatches = []; this.dispatchesTotal = 0; return; }
         const d = await r.json();
