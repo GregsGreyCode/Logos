@@ -278,7 +278,7 @@
       :class="tab==='compare'?'tab-active':'text-gray-400 hover:text-white'"
       data-testid="nav-compare"
       @click="tab='compare'; if(!namedAgents.length) loadNamedAgents()">Compare</button>
-    <template x-if="can('manage_machines') || can('view_evolution') || can('manage_workflows') || can('view_workflows')">
+    <template x-if="can('manage_machines') || can('view_evolution')">
       <button class="pb-2 text-sm font-medium border-b-2 border-transparent"
         :class="tab==='infra'?'tab-active':'text-gray-400 hover:text-white'"
         data-testid="nav-settings"
@@ -295,7 +295,7 @@
         </template>
       </button>
     </template>
-    <template x-if="can('manage_users') || can('view_audit_logs') || can('manage_action_policies')">
+    <template x-if="can('manage_users') || can('view_audit_logs')">
       <button class="pb-2 text-sm font-medium border-b-2 border-transparent"
         :class="tab==='admin'?'tab-active':'text-gray-400 hover:text-white'"
         data-testid="nav-admin"
@@ -873,15 +873,6 @@
                   <!-- No agent -->
                   <div x-show="!activeAgent" class="px-3 py-3 text-[11px] text-gray-600">
                     No agent bound to this chat. Select or create one to edit its permissions.
-                  </div>
-
-                  <!-- Action policy summary (read-only header) -->
-                  <div x-show="activeAgent" class="px-3 pt-2 pb-2 border-b border-gray-800">
-                    <div class="flex items-center gap-2 text-[11px]">
-                      <span class="text-[9px] text-gray-600 uppercase tracking-wider">Action policy</span>
-                      <span class="font-mono text-gray-300" x-text="activeInstance.action_policy || 'default'"></span>
-                      <span class="text-gray-600 text-[10px] ml-auto">change in Admin → Security</span>
-                    </div>
                   </div>
 
                   <!-- Capabilities — primary toggle list. Lazy-loaded on
@@ -1666,12 +1657,6 @@
                       <span class="font-bold">M</span>
                       <span class="truncate" x-text="pane.model || 'auto'"></span>
                     </span>
-                    <!-- P: Policy -->
-                    <span class="text-[10px] px-1.5 py-0.5 rounded font-mono bg-emerald-950 text-emerald-400 border border-emerald-900 flex items-center gap-1"
-                          :title="'Action policy: ' + (pane.action_policy || 'default')">
-                      <span class="font-bold text-emerald-600">P</span>
-                      <span x-text="pane.action_policy || 'default'"></span>
-                    </span>
                   </div>
                 </div>
 
@@ -1869,11 +1854,6 @@
         <button class="pb-2 text-sm font-medium border-b-2 border-transparent"
           :class="infraTab==='messaging' ? 'tab-active' : 'text-gray-500 hover:text-white'"
           @click="infraTab='messaging'; localStorage.setItem('logos_infra_tab','messaging'); loadMessagingChannels(); loadPlatforms()">Messaging</button>
-      </template>
-      <template x-if="can('manage_workflows') || can('view_workflows')">
-        <button class="pb-2 text-sm font-medium border-b-2 border-transparent"
-          :class="infraTab==='workflows' ? 'tab-active' : 'text-gray-500 hover:text-white'"
-          @click="infraTab='workflows'; localStorage.setItem('logos_infra_tab','workflows'); loadWorkflows()">Workflows</button>
       </template>
     </div>
 
@@ -3780,10 +3760,6 @@
         class="pb-2 text-sm font-medium border-b-2 border-transparent"
         :class="adminTab==='users'?'tab-active':'text-gray-500 hover:text-white'"
         @click="adminTab='users'; loadAdminUsers()">Users</button>
-      <button x-show="can('manage_action_policies')"
-        class="pb-2 text-sm font-medium border-b-2 border-transparent"
-        :class="adminTab==='action-policies'?'tab-active':'text-gray-500 hover:text-white'"
-        @click="adminTab='action-policies'; loadAdminActionPolicies()">Security</button>
       <button x-show="can('view_sandbox_policies')"
         class="pb-2 text-sm font-medium border-b-2 border-transparent"
         :class="adminTab==='sandbox-policies'?'tab-active':'text-gray-500 hover:text-white'"
@@ -3895,8 +3871,6 @@
               <th class="text-left px-4 py-3 font-medium">User</th>
               <th class="text-left px-4 py-3 font-medium">Role</th>
               <th class="text-left px-4 py-3 font-medium">Status</th>
-              <th class="text-left px-4 py-3 font-medium">Routing Profile</th>
-              <th class="text-left px-4 py-3 font-medium">Action Policy</th>
               <th class="text-left px-4 py-3 font-medium">Last Login</th>
               <th class="px-4 py-3"></th>
             </tr>
@@ -3946,30 +3920,6 @@
                       : 'border-red-800 bg-red-950 text-red-400 hover:border-green-800 hover:bg-green-950/60 hover:text-green-400'"
                     x-text="u.status==='active' ? '● Active' : '● Suspended'">
                   </button>
-                </td>
-
-                <!-- Routing profile inline select -->
-                <td class="px-4 py-3">
-                  <select :value="u.policy_id || ''"
-                    @change="assignUserPolicy(u.id, $event.target.value || null)"
-                    class="bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs text-white focus:border-[var(--accent)] focus:outline-none max-w-[160px]">
-                    <option value="">— system default —</option>
-                    <template x-for="p in adminPolicies" :key="p.id">
-                      <option :value="p.id" x-text="p.name"></option>
-                    </template>
-                  </select>
-                </td>
-
-                <!-- Action policy inline select -->
-                <td class="px-4 py-3">
-                  <select :value="u.action_policy_id || ''"
-                    @change="assignUserActionPolicy(u.id, $event.target.value || null)"
-                    class="bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs text-white focus:border-[var(--accent)] focus:outline-none max-w-[160px]">
-                    <option value="">— none —</option>
-                    <template x-for="ap in adminActionPolicies" :key="ap.id">
-                      <option :value="ap.id" x-text="ap.name"></option>
-                    </template>
-                  </select>
                 </td>
 
                 <!-- Last login -->
@@ -4057,1001 +4007,6 @@
           </template>
         </div>
       </template>
-    </div>
-
-    <!-- ── Action Policies sub-tab ──
-         Only the dimensions that are actually enforced at runtime are
-         exposed in the UI. write_policy, exec_policy, network_policy,
-         network_allowlist, and secret_policy remain in the schema for
-         back-compat but are not surfaced because nothing reads them
-         yet. Sandbox egress is enforced via Sandbox Policies; approval
-         gating fires from hard-coded dangerous-command patterns. -->
-    <div x-show="tab==='admin' && adminTab==='action-policies' && can('manage_action_policies')">
-      <div class="flex items-center justify-between mb-3">
-        <div>
-          <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Action Policies</div>
-          <div class="text-xs text-gray-600 mt-0.5">Per-user runtime policies. Assigned to a user, merged with the agent's soul policy at session start.</div>
-        </div>
-        <button @click="actionPolicyForm={name:'',description:'',filesystem_policy:'workspace_only',provider_policy:'any',write_policy:'auto_apply',exec_policy:'restricted',network_policy:'internet_enabled',secret_policy:'tool_only'}; actionPolicyFormOpen=true"
-          class="text-xs px-3 py-1.5 rounded-lg bg-[var(--accent)] text-white hover:opacity-90 transition-opacity">+ New Policy</button>
-      </div>
-
-      <!-- What is this / what actually fires -->
-      <div class="mb-4 p-3 rounded-xl border border-indigo-900/50 bg-indigo-950/10 text-[11px] text-gray-300 leading-relaxed">
-        <div class="font-semibold text-indigo-300 mb-1">What each dimension does today</div>
-        <ul class="list-disc list-inside space-y-0.5 text-gray-400">
-          <li><span class="font-mono text-gray-300">filesystem_policy</span> — <span class="text-white">Enforced.</span> <span class="font-mono">workspace_only</span> / <span class="font-mono">repo_scoped</span> clamp the <span class="font-mono">workdir</span> of exec tools to the agent's workspace (or workspace + configured repos).</li>
-          <li><span class="font-mono text-gray-300">provider_policy</span> — <span class="text-white">Enforced.</span> Sent as <span class="font-mono">X-Provider-Policy</span> header to the ai-router; controls which inference providers the agent can reach.</li>
-          <li>Sandbox egress rules live in <button class="text-indigo-400 hover:text-indigo-300 underline" @click="adminTab='sandbox-policies'">Sandbox Policies</button> — the infra-layer OpenShell presets. That's what actually blocks/allows outbound traffic from agent sandboxes.</li>
-          <li>Approval gating fires from hard-coded dangerous-command patterns (<span class="font-mono">rm -rf</span>, <span class="font-mono">chmod 777</span>, etc.), not from anything you configure here.</li>
-        </ul>
-      </div>
-
-      <!-- New / edit policy form -->
-      <template x-if="actionPolicyFormOpen">
-        <div class="bg-gray-900 border border-gray-700 rounded-xl p-4 mb-4">
-          <div class="text-xs font-semibold text-gray-400 mb-3" x-text="actionPolicyForm.id ? 'Edit Policy' : 'Create Policy'"></div>
-          <div class="grid grid-cols-2 gap-3 mb-3">
-            <div>
-              <label class="text-xs text-gray-500 block mb-1">Name</label>
-              <input x-model="actionPolicyForm.name" type="text" placeholder="e.g. strict, developer"
-                class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm text-white focus:border-[var(--accent)] focus:outline-none">
-            </div>
-            <div>
-              <label class="text-xs text-gray-500 block mb-1">Description</label>
-              <input x-model="actionPolicyForm.description" type="text" placeholder="Optional description"
-                class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm text-white focus:border-[var(--accent)] focus:outline-none">
-            </div>
-            <div>
-              <label class="text-xs text-gray-500 block mb-1">
-                Filesystem Policy
-                <span class="text-[10px] text-green-500 font-normal">(enforced)</span>
-              </label>
-              <select x-model="actionPolicyForm.filesystem_policy"
-                class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm text-white focus:border-[var(--accent)] focus:outline-none">
-                <option value="read_only">read_only — no writes</option>
-                <option value="workspace_only">workspace_only — clamp exec workdir to workspace</option>
-                <option value="repo_scoped">repo_scoped — workspace + configured repos</option>
-                <option value="full">full — any path</option>
-              </select>
-            </div>
-            <div>
-              <label class="text-xs text-gray-500 block mb-1">
-                Provider Policy
-                <span class="text-[10px] text-green-500 font-normal">(enforced)</span>
-              </label>
-              <select x-model="actionPolicyForm.provider_policy"
-                class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm text-white focus:border-[var(--accent)] focus:outline-none">
-                <option value="local_only">local_only — local inference only</option>
-                <option value="trusted_external">trusted_external — local + trusted cloud</option>
-                <option value="any">any — all providers</option>
-              </select>
-            </div>
-          </div>
-          <div class="flex gap-2">
-            <button @click="saveActionPolicy()"
-              class="text-xs px-3 py-1.5 rounded-lg bg-[var(--accent)] text-white hover:opacity-90"
-              x-text="actionPolicyForm.id ? 'Save Changes' : 'Create Policy'"></button>
-            <button @click="actionPolicyFormOpen=false; actionPolicyForm={}"
-              class="text-xs px-3 py-1.5 rounded-lg border border-gray-700 text-gray-400 hover:text-white">Cancel</button>
-          </div>
-          <template x-if="actionPolicyMsg">
-            <div class="mt-2 text-xs px-3 py-2 rounded-lg"
-              :class="actionPolicyMsg.ok ? 'bg-green-950 text-green-300 border border-green-800' : 'bg-red-950 text-red-300 border border-red-800'"
-              x-text="actionPolicyMsg.text"></div>
-          </template>
-        </div>
-      </template>
-
-      <!-- Policy list -->
-      <div class="bg-gray-900 border border-gray-800 rounded-xl overflow-x-auto">
-        <table class="w-full text-sm">
-          <thead>
-            <tr class="border-b border-gray-800 text-xs text-gray-500">
-              <th class="text-left px-4 py-3 font-medium">Name</th>
-              <th class="text-left px-4 py-3 font-medium">Filesystem</th>
-              <th class="text-left px-4 py-3 font-medium">Provider</th>
-              <th class="px-4 py-3"></th>
-            </tr>
-          </thead>
-          <tbody>
-            <template x-for="ap in adminActionPolicies" :key="ap.id">
-              <tr class="border-b border-gray-800/50 hover:bg-gray-800/30 transition-colors">
-                <td class="px-4 py-3">
-                  <div class="text-white text-xs font-medium" x-text="ap.name"></div>
-                  <div class="text-gray-600 text-xs mt-0.5" x-text="ap.description"></div>
-                </td>
-                <td class="px-4 py-3 text-xs text-gray-400" x-text="ap.filesystem_policy"></td>
-                <td class="px-4 py-3 text-xs text-gray-400" x-text="ap.provider_policy"></td>
-                <td class="px-4 py-3 text-right">
-                  <div class="flex gap-2 justify-end">
-                    <button @click="actionPolicyForm={...ap}; actionPolicyFormOpen=true"
-                      class="text-xs text-gray-600 hover:text-white transition-colors">Edit</button>
-                    <button @click="deleteActionPolicy(ap.id)"
-                      class="text-xs text-red-800 hover:text-red-400 transition-colors">Delete</button>
-                  </div>
-                </td>
-              </tr>
-            </template>
-            <template x-if="adminActionPolicies.length===0">
-              <tr><td colspan="4" class="px-4 py-8 text-center text-xs text-gray-600">No action policies defined. Create one to restrict what agents can do for a user.</td></tr>
-            </template>
-          </tbody>
-        </table>
-      </div>
-    </div>
-
-    <!-- ── Dashboards two-column grid ──
-         Sandboxes (left) + Model Routes (right) sit side-by-side so
-         neither stretches uselessly across the full width when one of
-         them only has a handful of rows. `items-start` keeps each
-         column anchored to the top so a tall Model Routes table doesn't
-         drag the short Sandboxes panel down with it. The Routing-Debug
-         section below is a sibling of this grid and stays full-width. -->
-    <div x-show="tab==='activity' && activityTab==='dashboards'" x-cloak
-         class="grid grid-cols-1 xl:grid-cols-2 gap-6 items-start">
-
-    <!-- ── Sandboxes (Activity → Dashboards, left column) ── -->
-    <div>
-
-      <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">Sandboxes</div>
-
-      <!-- Overview cards (2-up at column width, 4-up below xl when grid collapses to 1-col) -->
-      <div class="grid grid-cols-2 2xl:grid-cols-4 gap-3 mb-5">
-        <div class="bg-gray-900 border border-gray-800 rounded-lg px-4 py-3">
-          <div class="text-2xl font-bold text-white" x-text="sandboxes.length"></div>
-          <div class="text-[10px] text-gray-500 uppercase tracking-wider">Active Sandboxes</div>
-        </div>
-        <div class="bg-gray-900 border border-gray-800 rounded-lg px-4 py-3">
-          <div class="text-2xl font-bold" :class="sandboxes.filter(s => s.worker_healthy).length === sandboxes.length ? 'text-green-400' : 'text-yellow-400'"
-            x-text="sandboxes.filter(s => s.worker_healthy).length + '/' + sandboxes.length"></div>
-          <div class="text-[10px] text-gray-500 uppercase tracking-wider">Ready Sandboxes</div>
-        </div>
-        <div class="bg-gray-900 border border-gray-800 rounded-lg px-4 py-3">
-          <div class="text-2xl font-bold text-white">
-            <span x-text="sandboxResources.free_cpu ? sandboxResources.free_cpu.toFixed(1) : '—'"></span>
-            <span class="text-xs text-gray-500 font-normal">cores</span>
-          </div>
-          <div class="text-[10px] text-gray-500 uppercase tracking-wider">
-            CPU Free · <span x-text="sandboxResources.free_mem ? (sandboxResources.free_mem / 1073741824).toFixed(1) + ' GB' : '—'"></span> Mem
-          </div>
-        </div>
-        <div class="bg-gray-900 border border-gray-800 rounded-lg px-4 py-3">
-          <div class="text-2xl font-bold" :class="sandboxCliAvailable ? 'text-green-400' : 'text-red-400'"
-            x-text="sandboxCliAvailable ? '\u2713' : '\u2717'"></div>
-          <div class="text-[10px] text-gray-500 uppercase tracking-wider">OpenShell CLI</div>
-        </div>
-      </div>
-
-      <!-- Sandbox table -->
-      <div class="flex items-center justify-between mb-3">
-        <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Live Sandboxes</div>
-        <button @click="loadSandboxes()" class="text-xs text-[var(--accent)] hover:opacity-80 flex items-center gap-1">
-          <span>&#8635;</span> Refresh
-        </button>
-      </div>
-
-      <div class="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden mb-5">
-        <table class="w-full text-xs">
-          <thead>
-            <tr class="border-b border-gray-800 text-gray-500">
-              <th class="text-left px-4 py-3 font-medium">Sandbox</th>
-              <th class="text-left px-4 py-3 font-medium">Agent</th>
-              <th class="text-left px-4 py-3 font-medium">Phase</th>
-              <th class="text-left px-4 py-3 font-medium">Uptime</th>
-              <th class="text-right px-4 py-3 font-medium">Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            <template x-for="sb in sandboxes" :key="sb.sandbox_name">
-              <tr class="border-b border-gray-800/50 hover:bg-gray-800/30 cursor-pointer"
-                  @click="selectedSandbox = selectedSandbox?.sandbox_name === sb.sandbox_name ? null : sb">
-                <td class="px-4 py-2 font-mono text-gray-300" x-text="sb.sandbox_name"></td>
-                <td class="px-4 py-2 text-white font-medium" x-text="sb.name"></td>
-                <td class="px-4 py-2">
-                  <span class="px-1.5 py-0.5 rounded text-[10px] font-medium border"
-                    :class="isSandboxSwitching(sb) ? 'bg-yellow-950 text-yellow-400 border-yellow-900 animate-pulse'
-                      : (sb.phase === 'ready' || sb.phase === 'Ready') ? 'bg-green-950 text-green-400 border-green-900'
-                      : (sb.phase === 'provisioning' || sb.phase === 'Provisioning') ? 'bg-yellow-950 text-yellow-400 border-yellow-900'
-                      : 'bg-gray-900 text-gray-500 border-gray-800'"
-                    x-text="isSandboxSwitching(sb) ? 'switching' : (sb.phase || 'unknown').toLowerCase()"></span>
-                </td>
-                <td class="px-4 py-2 text-gray-500" x-text="sb.worker_uptime_s > 3600 ? Math.floor(sb.worker_uptime_s/3600) + 'h ' + Math.floor((sb.worker_uptime_s%3600)/60) + 'm' : sb.worker_uptime_s > 60 ? Math.floor(sb.worker_uptime_s/60) + 'm' : sb.worker_uptime_s + 's'"></td>
-                <td class="px-4 py-2 text-right">
-                  <div class="flex items-center gap-1 justify-end" @click.stop>
-                    <button @click="selectedSandbox = sb; sandboxLogs=''; loadSandboxLogs(sb.sandbox_name)"
-                      class="px-2 py-1 rounded border border-gray-700 text-gray-500 hover:text-white hover:border-gray-500 text-[10px]">Logs</button>
-                    <button @click="restartSandbox(sb.name)"
-                      class="px-2 py-1 rounded border border-yellow-900 text-yellow-700 hover:text-yellow-400 text-[10px]">Restart</button>
-                    <button @click="deleteSandbox(sb.name)"
-                      class="px-2 py-1 rounded border border-red-900 text-red-700 hover:text-red-400 text-[10px]">Delete</button>
-                  </div>
-                </td>
-              </tr>
-            </template>
-            <template x-if="!sandboxesLoading && sandboxes.length === 0">
-              <tr>
-                <td colspan="7" class="px-4 py-8 text-center text-gray-600">
-                  <span x-show="sandboxCliAvailable">No sandboxes running. Create an agent to spawn one.</span>
-                  <span x-show="!sandboxCliAvailable">OpenShell CLI not installed. Sandboxes require the <code class="text-gray-500">openshell</code> command.</span>
-                </td>
-              </tr>
-            </template>
-            <template x-if="sandboxesLoading && sandboxes.length === 0">
-              <tr><td colspan="7" class="px-4 py-8 text-center text-gray-600">Loading...</td></tr>
-            </template>
-          </tbody>
-        </table>
-      </div>
-
-      <!-- Detail panel (expanded row) -->
-      <template x-if="selectedSandbox">
-        <div class="bg-gray-900 border border-gray-700 rounded-xl p-5 space-y-4 mb-5">
-          <div class="flex items-start justify-between">
-            <div>
-              <div class="text-sm font-semibold text-white" x-text="selectedSandbox.name"></div>
-              <div class="text-[10px] text-gray-500 font-mono" x-text="selectedSandbox.sandbox_name"></div>
-            </div>
-            <button @click="selectedSandbox=null" class="text-gray-500 hover:text-white text-lg">&times;</button>
-          </div>
-          <div class="grid grid-cols-3 gap-4 text-xs">
-            <div><span class="text-gray-600">Model:</span> <span class="text-gray-300" x-text="selectedSandbox.model || 'default'"></span></div>
-            <div><span class="text-gray-600">Requester:</span> <span class="text-gray-300" x-text="selectedSandbox.requester || '—'"></span></div>
-            <div><span class="text-gray-600">Image:</span> <span class="text-gray-300 font-mono" x-text="selectedSandbox.sandbox_image || '—'"></span></div>
-            <div><span class="text-gray-600">Toolsets:</span> <span class="text-gray-300" x-text="(selectedSandbox.toolsets||[]).join(', ') || 'none'"></span></div>
-            <div><span class="text-gray-600">Task:</span> <span class="text-gray-300 font-mono" x-text="selectedSandbox.current_task_id || 'idle'"></span></div>
-            <div><span class="text-gray-600">Created:</span> <span class="text-gray-300" x-text="selectedSandbox.created_at ? new Date(selectedSandbox.created_at * 1000).toLocaleString() : '—'"></span></div>
-          </div>
-          <!-- Logs -->
-          <div x-show="sandboxLogs || sandboxLogsLoading">
-            <div class="text-[10px] text-gray-600 uppercase tracking-wider mb-1">Sandbox Logs</div>
-            <div x-show="sandboxLogsLoading" class="text-xs text-gray-600 py-2">Loading logs...</div>
-            <pre x-show="sandboxLogs" class="text-[10px] text-gray-400 bg-gray-950 rounded-lg p-3 max-h-48 overflow-y-auto font-mono whitespace-pre-wrap" x-text="sandboxLogs"></pre>
-          </div>
-        </div>
-      </template>
-
-      <!-- Applied Policy -->
-      <details class="mb-5">
-        <summary class="text-xs font-semibold text-gray-400 uppercase tracking-wider cursor-pointer hover:text-gray-300 select-none">
-          Applied Policy (openshell_default.yaml)
-        </summary>
-        <div class="mt-3 bg-gray-900 border border-gray-800 rounded-xl p-4 space-y-3 text-xs">
-          <!-- Network -->
-          <div x-show="sandboxPolicy.network && sandboxPolicy.network.length">
-            <div class="text-[10px] text-gray-600 uppercase tracking-wider mb-1.5">Network Policies</div>
-            <template x-for="pol in (sandboxPolicy.network || [])" :key="pol.key">
-              <div class="flex items-start gap-2 mb-1.5 pl-2">
-                <span class="text-gray-600 shrink-0">&#9500;&#9472;</span>
-                <div>
-                  <span class="text-gray-300 font-medium" x-text="pol.name"></span>
-                  <template x-for="ep in pol.endpoints" :key="ep.host">
-                    <span class="text-gray-500 ml-1" x-text="ep.host + ':' + ep.port + ' (' + (ep.protocol || 'tcp') + (ep.tls ? ', TLS ' + ep.tls : '') + ')'"></span>
-                  </template>
-                  <template x-for="ep in pol.endpoints.filter(e => e.allowed_ips?.length)" :key="ep.host + '_ips'">
-                    <span class="text-gray-600 ml-2 text-[10px]">allowed: <span x-text="ep.allowed_ips.join(', ')"></span></span>
-                  </template>
-                </div>
-              </div>
-            </template>
-          </div>
-          <!-- Filesystem -->
-          <div x-show="sandboxPolicy.filesystem">
-            <div class="text-[10px] text-gray-600 uppercase tracking-wider mb-1.5">Filesystem</div>
-            <div class="pl-2 space-y-0.5">
-              <div><span class="text-gray-600">read-only:</span> <span class="text-gray-400 font-mono" x-text="(sandboxPolicy.filesystem?.read_only || []).join(', ')"></span></div>
-              <div><span class="text-gray-600">read-write:</span> <span class="text-gray-400 font-mono" x-text="(sandboxPolicy.filesystem?.read_write || []).join(', ')"></span></div>
-            </div>
-          </div>
-          <!-- Process -->
-          <div x-show="sandboxPolicy.process?.user">
-            <div class="text-[10px] text-gray-600 uppercase tracking-wider mb-1">Process</div>
-            <div class="pl-2 text-gray-400">
-              run as <span class="font-mono text-gray-300" x-text="sandboxPolicy.process?.user + ':' + sandboxPolicy.process?.group"></span>
-            </div>
-          </div>
-          <!-- Binaries -->
-          <div x-show="sandboxPolicy.binaries?.length">
-            <div class="text-[10px] text-gray-600 uppercase tracking-wider mb-1">Allowed Binaries</div>
-            <div class="pl-2 text-gray-400 font-mono text-[10px]" x-text="(sandboxPolicy.binaries || []).join(', ')"></div>
-          </div>
-        </div>
-      </details>
-
-    </div>
-
-    <!-- ── Model Routes (Activity → Dashboards) ── -->
-    <!--
-      Multi-OpenShell-gateway routing dashboard. Each row is one
-      OpenShell sub-gateway pinned to a single (provider, model) pair
-      via `openshell inference set --model <m>`. Adding routes here
-      lets multiple agents target different models simultaneously
-      without OpenShell's "one forced model per gateway" design
-      becoming a bottleneck.
-    -->
-    <div x-show="tab==='activity' && activityTab==='dashboards' && can('manage_machines')" x-cloak>
-
-      <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">Model Routes</div>
-
-      <!-- Overview cards (2-up at column width, 4-up below xl when grid collapses to 1-col) -->
-      <div class="grid grid-cols-2 2xl:grid-cols-4 gap-3 mb-5">
-        <div class="bg-gray-900 border border-gray-800 rounded-lg px-4 py-3">
-          <div class="text-2xl font-bold text-white" x-text="modelRoutes.length"></div>
-          <div class="text-[10px] text-gray-500 uppercase tracking-wider">Configured Routes</div>
-        </div>
-        <div class="bg-gray-900 border border-gray-800 rounded-lg px-4 py-3">
-          <div class="text-2xl font-bold"
-            :class="modelRoutes.filter(r => r.status === 'ready').length === modelRoutes.length && modelRoutes.length ? 'text-green-400' : 'text-yellow-400'"
-            x-text="modelRoutes.filter(r => r.status === 'ready').length + '/' + modelRoutes.length"></div>
-          <div class="text-[10px] text-gray-500 uppercase tracking-wider">Ready</div>
-        </div>
-        <div class="bg-gray-900 border border-gray-800 rounded-lg px-4 py-3">
-          <div class="text-2xl font-bold text-white"
-            x-text="modelRoutes.reduce((acc, r) => acc + (r.bound_agents || 0), 0)"></div>
-          <div class="text-[10px] text-gray-500 uppercase tracking-wider">Bound Agents</div>
-        </div>
-        <div class="bg-gray-900 border border-gray-800 rounded-lg px-4 py-3">
-          <div class="text-sm font-mono text-gray-300 truncate"
-            x-text="(modelRoutes.find(r => r.is_default) || {}).model || 'none'"
-            :title="(modelRoutes.find(r => r.is_default) || {}).model || 'no default route'"></div>
-          <div class="text-[10px] text-gray-500 uppercase tracking-wider">Default Route</div>
-        </div>
-      </div>
-
-      <!-- Route table -->
-      <div class="flex items-center justify-between mb-3">
-        <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Provisioned Routes</div>
-        <div class="flex items-center gap-2">
-          <button @click="loadModelRoutes()" class="text-xs text-[var(--accent)] hover:opacity-80 flex items-center gap-1">
-            <span>&#8635;</span> Refresh
-          </button>
-          <button @click="provisionModalOpen=true; provisionForm={provider:'lmstudio',model:'',set_as_default:false}; provisionError=null; loadAllMachineModels()"
-            class="text-xs px-3 py-1.5 rounded bg-[var(--accent)] text-black font-medium hover:opacity-90">
-            + Provision Model
-          </button>
-        </div>
-      </div>
-
-      <div class="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden mb-5">
-        <table class="w-full text-xs">
-          <thead>
-            <tr class="border-b border-gray-800 text-gray-500">
-              <th class="text-left px-4 py-3 font-medium">Model</th>
-              <th class="text-left px-4 py-3 font-medium">Provider</th>
-              <th class="text-left px-4 py-3 font-medium">OpenShell Gateway</th>
-              <th class="text-left px-4 py-3 font-medium">Port</th>
-              <th class="text-left px-4 py-3 font-medium">Status</th>
-              <th class="text-left px-4 py-3 font-medium">Agents</th>
-              <th class="text-left px-4 py-3 font-medium">Default</th>
-              <th class="text-right px-4 py-3 font-medium">Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            <template x-for="r in modelRoutes" :key="r.id">
-              <tr class="border-b border-gray-800/50 hover:bg-gray-800/30 cursor-pointer"
-                  @click="selectedRoute = selectedRoute?.id === r.id ? null : r">
-                <td class="px-4 py-2 text-white font-medium" x-text="r.model"></td>
-                <td class="px-4 py-2 text-gray-400 font-mono" x-text="r.provider"></td>
-                <td class="px-4 py-2 text-gray-300 font-mono" x-text="r.openshell_name"></td>
-                <td class="px-4 py-2 text-gray-500" x-text="r.openshell_port"></td>
-                <td class="px-4 py-2">
-                  <span class="px-1.5 py-0.5 rounded text-[10px] font-medium border"
-                    :class="r.status === 'ready' ? 'bg-green-950 text-green-400 border-green-900'
-                      : r.status === 'provisioning' ? 'bg-yellow-950 text-yellow-400 border-yellow-900'
-                      : r.status === 'stopped' ? 'bg-gray-900 text-gray-500 border-gray-800'
-                      : 'bg-red-950 text-red-400 border-red-900'"
-                    x-text="r.status"></span>
-                </td>
-                <td class="px-4 py-2">
-                  <!-- Show the actual agent names bound to this route.
-                       Cross-ref from ``namedAgents`` (loaded on the
-                       Agents tab and kept fresh by the world-view
-                       polling) rather than asking the backend for a
-                       join — the data is already in memory.
-
-                       Each pill is clickable: jumps to Sessions +
-                       opens/creates a chat with that agent.
-
-                       Falls back to the numeric count if ``namedAgents``
-                       is empty (not loaded yet) so the column never
-                       goes blank. -->
-                  <template x-if="(namedAgents || []).filter(a => a.model_route_id === r.id).length > 0">
-                    <div class="flex flex-wrap gap-1">
-                      <template x-for="a in (namedAgents || []).filter(a => a.model_route_id === r.id)" :key="a.id">
-                        <button
-                          @click.stop="chatWithAgent(a)"
-                          class="px-1.5 py-0.5 rounded text-[10px] font-medium bg-indigo-950/60 text-indigo-300 border border-indigo-900 hover:bg-indigo-900/60 hover:text-white transition-colors"
-                          :title="'Chat with ' + a.name + ' (' + (a.soul_slug || 'general') + ')'"
-                          x-text="a.name"></button>
-                      </template>
-                    </div>
-                  </template>
-                  <template x-if="(namedAgents || []).filter(a => a.model_route_id === r.id).length === 0">
-                    <span class="text-gray-600 text-[10px]" x-text="(r.bound_agents || 0) === 0 ? '—' : ('(' + r.bound_agents + ' unbound)')"></span>
-                  </template>
-                </td>
-                <td class="px-4 py-2">
-                  <template x-if="r.is_default">
-                    <span class="px-1.5 py-0.5 rounded text-[10px] font-medium bg-indigo-950 text-indigo-300 border border-indigo-900">default</span>
-                  </template>
-                  <template x-if="r.is_primordial">
-                    <span class="ml-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-gray-800 text-gray-400 border border-gray-700">primordial</span>
-                  </template>
-                </td>
-                <td class="px-4 py-2 text-right">
-                  <div class="flex items-center gap-1 justify-end" @click.stop>
-                    <button @click="refreshRoute(r.id)"
-                      class="px-2 py-1 rounded border border-gray-700 text-gray-500 hover:text-white hover:border-gray-500 text-[10px]">Refresh</button>
-                    <button x-show="!r.is_default" @click="setDefaultRoute(r.id)"
-                      class="px-2 py-1 rounded border border-indigo-900 text-indigo-700 hover:text-indigo-400 text-[10px]">Set Default</button>
-                    <button @click="restartRoute(r.id)"
-                      class="px-2 py-1 rounded border border-yellow-900 text-yellow-700 hover:text-yellow-400 text-[10px]">Restart</button>
-                    <button x-show="!r.is_primordial" @click="deleteRoute(r)"
-                      :disabled="(r.bound_agents || 0) > 0"
-                      :class="(r.bound_agents || 0) > 0 ? 'opacity-30 cursor-not-allowed' : ''"
-                      :title="(r.bound_agents || 0) > 0 ? 'Re-bind or delete the ' + r.bound_agents + ' agent(s) using this route first' : 'Destroy the OpenShell gateway and remove this route'"
-                      class="px-2 py-1 rounded border border-red-900 text-red-700 hover:text-red-400 text-[10px]">Delete</button>
-                  </div>
-                </td>
-              </tr>
-            </template>
-            <template x-if="!modelRoutesLoading && modelRoutes.length === 0">
-              <tr>
-                <td colspan="8" class="px-4 py-8 text-center text-gray-600">
-                  No model routes provisioned yet. Click <span class="text-[var(--accent)]">+ Provision Model</span> to create one,
-                  or finish <button @click="tab='infra'; infraTab='servers'" class="underline text-[var(--accent)] hover:opacity-80">Config → Inference</button>
-                  if you haven't picked a model yet.
-                </td>
-              </tr>
-            </template>
-            <template x-if="modelRoutesLoading && modelRoutes.length === 0">
-              <tr><td colspan="8" class="px-4 py-8 text-center text-gray-600">Loading...</td></tr>
-            </template>
-          </tbody>
-        </table>
-      </div>
-
-      <!-- Detail panel (expanded row) -->
-      <template x-if="selectedRoute">
-        <div class="bg-gray-900 border border-gray-700 rounded-xl p-5 space-y-4 mb-5">
-          <div class="flex items-start justify-between">
-            <div>
-              <div class="text-sm font-semibold text-white" x-text="selectedRoute.model"></div>
-              <div class="text-[10px] text-gray-500 font-mono" x-text="selectedRoute.id"></div>
-            </div>
-            <button @click="selectedRoute=null" class="text-gray-500 hover:text-white text-lg">&times;</button>
-          </div>
-          <div class="grid grid-cols-3 gap-4 text-xs">
-            <div><span class="text-gray-600">Provider:</span> <span class="text-gray-300 font-mono" x-text="selectedRoute.provider"></span></div>
-            <div><span class="text-gray-600">Gateway:</span> <span class="text-gray-300 font-mono" x-text="selectedRoute.openshell_name"></span></div>
-            <div><span class="text-gray-600">Port:</span> <span class="text-gray-300 font-mono" x-text="selectedRoute.openshell_port"></span></div>
-            <div><span class="text-gray-600">Status:</span> <span class="text-gray-300" x-text="selectedRoute.status"></span></div>
-            <div><span class="text-gray-600">Bound agents:</span> <span class="text-gray-300" x-text="selectedRoute.bound_agents || 0"></span></div>
-            <div><span class="text-gray-600">Created:</span> <span class="text-gray-300" x-text="selectedRoute.created_at ? new Date(selectedRoute.created_at).toLocaleString() : '—'"></span></div>
-          </div>
-          <template x-if="selectedRoute.status_detail">
-            <div>
-              <div class="text-[10px] text-gray-600 uppercase tracking-wider mb-1">Status Detail</div>
-              <pre class="text-[10px] text-red-400 bg-red-950/20 border border-red-900/40 rounded p-2 whitespace-pre-wrap" x-text="selectedRoute.status_detail"></pre>
-            </div>
-          </template>
-        </div>
-      </template>
-    </div>
-
-    <!-- ── Provision Model Route modal ── -->
-    <div x-show="provisionModalOpen" x-cloak
-      class="fixed inset-0 bg-black/60 flex items-center justify-center z-50"
-      @click="provisionModalOpen=false; provisionFormCustom=false; provisionError=null">
-      <div class="bg-gray-900 border border-gray-700 rounded-xl p-6 max-w-md w-full mx-4 space-y-4"
-        @click.stop>
-        <div class="flex items-start justify-between">
-          <div>
-            <div class="text-sm font-semibold text-white">Provision Model Route</div>
-            <div class="text-[10px] text-gray-500 mt-1">Spins up a new OpenShell sub-gateway pinned to one model. Cold-provisioning takes 30-60 seconds.</div>
-          </div>
-          <button @click="provisionModalOpen=false; provisionFormCustom=false; provisionError=null" class="text-gray-500 hover:text-white text-lg">&times;</button>
-        </div>
-        <div class="space-y-3">
-          <div>
-            <label class="text-[10px] text-gray-500 uppercase tracking-wider">Provider</label>
-            <select x-model="provisionForm.provider"
-              @change="loadCloudProviderModels(provisionForm.provider)"
-              class="w-full mt-1 px-3 py-2 bg-gray-800 border border-gray-700 rounded text-white text-sm">
-              <option value="lmstudio">lmstudio</option>
-              <option value="ollama">ollama</option>
-              <option value="openai">openai</option>
-              <option value="anthropic">anthropic</option>
-            </select>
-          </div>
-          <div>
-            <label class="text-[10px] text-gray-500 uppercase tracking-wider flex items-center justify-between">
-              <span>Model</span>
-              <button type="button" @click="loadAllMachineModels()"
-                class="text-[9px] text-[var(--accent)] hover:opacity-80 normal-case">refresh list &#8635;</button>
-            </label>
-            <!--
-              Populated from allMachineModels — the deduped union of every
-              model exposed by every machine the user registered in /setup
-              or /admin/machines (probed via /api/setup/probe under the
-              hood). For 99% of users on a homelab single-LM-Studio setup
-              this is exactly the LM Studio catalog. For multi-machine
-              setups it's the union across all of them. Custom-id escape
-              hatch (`Custom model id…`) reveals the free-text input for
-              the rare case where the user needs a model that isn't in
-              the list (e.g. testing a cloud model that hasn't been
-              registered as a machine).
-            -->
-            <!-- Provider-aware model list. Local providers (lmstudio/ollama)
-                 read the union of registered-machine catalogs. Cloud providers
-                 (anthropic/openai/openrouter) call /admin/cloud-provider-models
-                 which fetches the live catalog from the provider's /v1/models
-                 endpoint — that way the list never goes stale as new models
-                 ship. Falls back to a small hardcoded set if the provider
-                 call fails (no API key configured, network down, etc.).
-                 Custom-id escape hatch is always available. -->
-            <select x-model="provisionForm.model"
-              class="w-full mt-1 px-3 py-2 bg-gray-800 border border-gray-700 rounded text-white text-sm font-mono"
-              @change="if (provisionForm.model === '__custom__') { provisionForm.model = ''; provisionFormCustom = true; }">
-              <option value="" disabled>— pick a model —</option>
-              <template x-if="['anthropic','openai','openrouter'].includes(provisionForm.provider)">
-                <template x-for="m in (cloudProviderModelsList[provisionForm.provider] || cloudProviderModelsFallback[provisionForm.provider] || [])" :key="'c-'+m">
-                  <option :value="m" x-text="m"></option>
-                </template>
-              </template>
-              <template x-if="!['anthropic','openai','openrouter'].includes(provisionForm.provider)">
-                <template x-for="m in allMachineModels" :key="'l-'+m">
-                  <option :value="m" x-text="m"></option>
-                </template>
-              </template>
-              <option value="__custom__">Custom model id…</option>
-            </select>
-            <p x-show="['anthropic','openai','openrouter'].includes(provisionForm.provider) && cloudProviderModelsError[provisionForm.provider]"
-               class="mt-1 text-[10px] text-amber-500"
-               x-text="'Live catalog unavailable (' + cloudProviderModelsError[provisionForm.provider] + ') — showing fallback list. Add an API key under Config → Tools to enable live fetch.'"></p>
-            <input x-show="provisionFormCustom" x-model="provisionForm.model" type="text"
-              placeholder="provider/model-id"
-              class="w-full mt-2 px-3 py-2 bg-gray-800 border border-gray-700 rounded text-white text-sm font-mono"
-              @keydown.enter="provisionRoute()">
-            <!--
-              Empty-state hint distinguishes three cases:
-              1. No machines registered → tell the user to go add one
-              2. Machines exist but probe returned auth_required → tell
-                 the user the inference backend wants an API key
-              3. Machines exist, probe succeeded, but model_count=0 →
-                 the backend has no models loaded
-              In all three the user can fall back to "Custom model id".
-            -->
-            <template x-if="!allMachineModels.length">
-              <div class="text-[10px] mt-1 space-y-1">
-                <template x-if="!adminMachines.length">
-                  <p class="text-gray-600">
-                    No machines registered yet — go to <a href="#" @click.prevent="provisionModalOpen=false; tab='infra'; infraTab='servers'" class="text-[var(--accent)] hover:opacity-80">Config &rarr; Inference</a> to add one, or use Custom model id.
-                  </p>
-                </template>
-                <template x-if="adminMachines.length && machineProbeStatuses.length">
-                  <div class="space-y-0.5">
-                    <p class="text-yellow-500">No models returned from your inference machine(s):</p>
-                    <template x-for="ps in machineProbeStatuses" :key="ps.endpoint">
-                      <div class="text-gray-500 pl-2 font-mono">
-                        <span x-text="ps.machine_name"></span> (<span x-text="ps.endpoint"></span>): <span class="text-yellow-400" x-text="ps.status === 'auth_required' ? 'auth_required — LM Studio API token missing' : ps.status === 'up' && ps.model_count === 0 ? 'up but 0 models loaded' : ps.status"></span>
-                      </div>
-                    </template>
-                    <p class="text-gray-600 pt-1">
-                      Fix the issue in <a href="#" @click.prevent="provisionModalOpen=false; tab='infra'; infraTab='servers'" class="text-[var(--accent)] hover:opacity-80">Config &rarr; Inference</a>, then click <em>refresh list</em> above. Or use Custom model id.
-                    </p>
-                  </div>
-                </template>
-              </div>
-            </template>
-            <div x-show="allMachineModels.length" class="text-[10px] text-gray-600 mt-1">
-              The exact model id the inference backend expects. The list above is fetched live from your registered machines.
-            </div>
-          </div>
-          <label class="flex items-center gap-2 text-xs text-gray-400">
-            <input type="checkbox" x-model="provisionForm.set_as_default" class="rounded">
-            Set as default route for new agents
-          </label>
-        </div>
-        <template x-if="provisionError">
-          <div class="text-[10px] text-red-400 bg-red-950/20 border border-red-900/40 rounded p-2" x-text="provisionError"></div>
-        </template>
-        <div class="flex items-center gap-2 justify-end">
-          <button @click="provisionModalOpen=false; provisionFormCustom=false; provisionError=null"
-            class="px-3 py-1.5 rounded border border-gray-700 text-gray-400 hover:text-white text-xs">Cancel</button>
-          <button @click="provisionRoute()" :disabled="provisioningRoute || !provisionForm.model"
-            :class="provisioningRoute || !provisionForm.model ? 'opacity-50 cursor-not-allowed' : ''"
-            class="px-3 py-1.5 rounded bg-[var(--accent)] text-black font-medium text-xs">
-            <span x-show="!provisioningRoute">Provision</span>
-            <span x-show="provisioningRoute">Provisioning... (30-60s)</span>
-          </button>
-        </div>
-      </div>
-    </div>
-
-    </div><!-- /Dashboards two-column grid -->
-
-    <!-- ── Debug section (moved from Settings/Routing 2026-04-11, pass-3 S1) ── -->
-    <!-- Sibling of the two-column grid; full-width below the columns. -->
-    <div x-show="tab==='activity' && activityTab==='dashboards' && can('view_routing_debug')" x-cloak class="mb-6 border-t border-gray-800 pt-6">
-      <button @click="debugOpen=!debugOpen; if(debugOpen) loadAdminUsers()"
-        class="flex items-center justify-between w-full text-left mb-4 group">
-        <span class="text-sm font-semibold text-white group-hover:text-gray-200">Routing Debug — Simulate Route</span>
-        <span class="text-xs text-gray-600 transition-transform" :class="debugOpen ? 'rotate-90' : ''" style="display:inline-block">▶</span>
-      </button>
-    <div x-show="debugOpen" x-cloak>
-
-      <!-- Query form -->
-      <div class="bg-gray-900 border border-gray-800 rounded-xl p-4 mb-4">
-        <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">Simulate Route</div>
-        <div class="grid grid-cols-2 gap-3 mb-3">
-          <div>
-            <label class="text-xs text-gray-500 block mb-1">User</label>
-            <select x-model="routeDebugUserId"
-              class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm text-white focus:border-[var(--accent)] focus:outline-none">
-              <option value="">— you —</option>
-              <template x-for="u in adminUsers" :key="u.id">
-                <option :value="u.id" x-text="(u.display_name||u.username) + ' · ' + u.email"></option>
-              </template>
-            </select>
-          </div>
-          <div>
-            <label class="text-xs text-gray-500 block mb-1">Model alias</label>
-            <select x-model="routeDebugModel"
-              class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm text-white focus:border-[var(--accent)] focus:outline-none">
-              <template x-for="group in spawnAliasGroups()" :key="group.cls">
-                <optgroup :label="group.label">
-                  <template x-for="alias in group.aliases" :key="alias">
-                    <option :value="alias" x-text="alias"></option>
-                  </template>
-                </optgroup>
-              </template>
-            </select>
-          </div>
-        </div>
-        <button @click="resolveRouteDebug()"
-          :disabled="routeDebugLoading"
-          class="px-4 py-1.5 rounded-lg bg-[var(--accent)] text-white text-xs font-medium hover:opacity-90 disabled:opacity-40 flex items-center gap-2">
-          <span x-show="routeDebugLoading" class="animate-spin inline-block">&#9881;</span>
-          <span>Resolve</span>
-        </button>
-      </div>
-
-      <!-- Result: routing failed (503 / profile fail mode) -->
-      <template x-if="routeDebugResult && routeDebugResult.error && !routeDebugResult.result">
-        <div class="space-y-3">
-          <div class="bg-red-950 border border-red-900 rounded-xl px-5 py-4">
-            <div class="text-xs font-semibold text-red-400 mb-1">No route found</div>
-            <div class="text-red-300 text-sm"
-              x-text="routeDebugResult.error === 'no_available_machine'
-                ? 'All profile machines are unavailable and the profile is set to fail (no fallback).'
-                : routeDebugResult.error === 'no_machines_registered'
-                ? 'No machines are registered in the system.'
-                : routeDebugResult.error"></div>
-            <template x-if="routeDebugResult.profile">
-              <div class="text-xs text-red-700 mt-1" x-text="'Profile: ' + routeDebugResult.profile"></div>
-            </template>
-          </div>
-          <!-- Still show trace if present -->
-          <template x-if="routeDebugResult.trace && routeDebugResult.trace.length">
-            <div class="bg-gray-900 border border-gray-800 rounded-xl p-4">
-              <div class="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">Trace</div>
-              <div class="space-y-1.5">
-                <template x-for="(t, i) in routeDebugResult.trace" :key="i">
-                  <div class="flex items-start gap-3 text-xs">
-                    <span class="text-gray-700 shrink-0 w-32 font-mono" x-text="t.layer"></span>
-                    <span class="shrink-0 px-1.5 py-0.5 rounded font-medium"
-                      :class="t.result==='match'?'bg-green-950 text-green-400':t.result==='skip'?'bg-gray-800 text-gray-600':'bg-yellow-950 text-yellow-500'"
-                      x-text="t.result"></span>
-                    <span class="text-gray-600" x-text="t.machine||t.profile_name||t.reason||''"></span>
-                  </div>
-                </template>
-              </div>
-            </div>
-          </template>
-        </div>
-      </template>
-
-      <!-- Result: success -->
-      <template x-if="routeDebugResult && routeDebugResult.result">
-        <div class="space-y-3">
-
-          <!-- Resolution banner -->
-          <div class="rounded-xl border border-gray-700 bg-gray-900 px-5 py-4">
-            <div class="flex items-start justify-between">
-              <div>
-                <div class="flex items-center gap-2 mb-1">
-                  <span class="font-mono text-[var(--accent)] text-sm" x-text="routeDebugResult.input.model_alias"></span>
-                  <span class="text-gray-700 text-xs">→</span>
-                  <span class="text-xs px-1.5 py-0.5 rounded border border-gray-700 text-gray-400"
-                    x-text="routeDebugResult.input.model_class"></span>
-                  <span class="text-gray-700 text-xs">→</span>
-                  <span class="font-semibold text-white text-sm" x-text="routeDebugResult.result.machine_name"></span>
-                </div>
-                <div class="text-xs text-gray-600 font-mono" x-text="routeDebugResult.result.endpoint_url"></div>
-              </div>
-              <span class="text-xs px-2 py-1 rounded-full bg-green-950 text-green-400 border border-green-900 shrink-0 ml-4">resolved</span>
-            </div>
-            <div class="mt-2 text-xs text-gray-600"
-              x-text="'For: ' + routeDebugResult.input.user_name + (routeDebugResult.input.user_id !== routeDebugResult.input.user_id ? '' : '')"></div>
-          </div>
-
-          <!-- Layer timeline -->
-          <div class="bg-gray-900 border border-gray-800 rounded-xl p-4">
-            <div class="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">Decision Layers</div>
-            <div class="space-y-0">
-              <template x-for="(t, i) in routeDebugResult.trace" :key="i">
-                <div class="flex items-start gap-3 py-2"
-                  :class="i < routeDebugResult.trace.length - 1 ? 'border-b border-gray-800/50' : ''">
-                  <!-- Layer dot -->
-                  <div class="w-2 h-2 rounded-full mt-1 shrink-0"
-                    :class="t.result==='match' ? 'bg-green-500' : t.result==='skip' ? 'bg-gray-700' : 'bg-yellow-600'"></div>
-                  <div class="flex-1 min-w-0">
-                    <div class="flex items-center gap-2 mb-0.5">
-                      <!-- Human layer label -->
-                      <span class="text-xs font-medium text-gray-300"
-                        x-text="t.layer==='instance_override' ? 'Instance Override'
-                               : t.layer==='user_profile'       ? 'Profile Rules'
-                               : t.layer==='best_effort'        ? 'Best-Effort Fallback'
-                               : t.layer"></span>
-                      <span class="text-xs px-1.5 py-0.5 rounded font-medium"
-                        :class="t.result==='match'     ? 'bg-green-950 text-green-400'
-                               : t.result==='skip'      ? 'bg-gray-800 text-gray-600'
-                               : t.result==='exhausted' ? 'bg-yellow-950 text-yellow-500'
-                               :                          'bg-gray-800 text-gray-600'"
-                        x-text="t.result==='match'     ? '✓ matched'
-                               : t.result==='skip'      ? 'skipped'
-                               : t.result==='exhausted' ? 'all failed'
-                               : t.result"></span>
-                    </div>
-                    <!-- Layer detail -->
-                    <div class="text-xs text-gray-600"
-                      x-text="t.layer==='user_profile' && t.profile_name ? 'Profile: ' + t.profile_name + (t.rule_class ? '  ·  rule: ' + t.rule_class : '') + (t.machine ? '  →  ' + t.machine : '')
-                             : t.layer==='user_profile' && t.reason       ? t.reason
-                             : t.layer==='best_effort' && t.machine       ? t.machine
-                             : t.reason || ''"></div>
-                  </div>
-                </div>
-              </template>
-            </div>
-          </div>
-
-          <!-- Candidate machine checks (profile evaluation) -->
-          <template x-if="routeDebugResult.fallback_chain && routeDebugResult.fallback_chain.length > 0">
-            <div class="bg-gray-900 border border-gray-800 rounded-xl p-4">
-              <div class="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">Candidate Machines</div>
-              <div class="space-y-2">
-                <template x-for="(c, i) in routeDebugResult.fallback_chain" :key="i">
-                  <div class="flex items-center gap-3 text-xs rounded-lg px-3 py-2"
-                    :class="c.selected ? 'bg-green-950/40 border border-green-900/50' : 'bg-gray-800/40'">
-                    <!-- Rank -->
-                    <span class="text-gray-700 w-4 shrink-0 text-center font-mono" x-text="c.rank"></span>
-                    <!-- Name + rule class -->
-                    <div class="flex-1 min-w-0">
-                      <div class="flex items-center gap-1.5">
-                        <span class="font-medium"
-                          :class="c.selected ? 'text-green-300' : 'text-gray-400'"
-                          x-text="c.machine_name"></span>
-                        <span class="text-gray-700 font-mono" x-text="c.rule_class !== '*' ? c.rule_class : ''"></span>
-                        <template x-if="c.selected">
-                          <span class="text-green-500 text-xs">✓ selected</span>
-                        </template>
-                      </div>
-                    </div>
-                    <!-- Check badges -->
-                    <div class="flex gap-1 shrink-0">
-                      <span class="px-1.5 py-0.5 rounded text-xs border"
-                        :class="c.checks.enabled
-                          ? 'border-gray-700 text-gray-500'
-                          : 'border-red-900 bg-red-950 text-red-400'"
-                        x-text="c.checks.enabled ? 'on' : 'disabled'"></span>
-                      <span class="px-1.5 py-0.5 rounded text-xs border"
-                        :class="c.checks.reachable
-                          ? 'border-gray-700 text-gray-500'
-                          : 'border-red-900 bg-red-950 text-red-400'"
-                        x-text="c.checks.reachable ? 'up' : 'down'"></span>
-                      <span class="px-1.5 py-0.5 rounded text-xs border"
-                        :class="c.checks.capable
-                          ? 'border-gray-700 text-gray-500'
-                          : 'border-yellow-900 bg-yellow-950 text-yellow-500'"
-                        x-text="c.checks.capable ? 'capable' : 'wrong class'"></span>
-                    </div>
-                  </div>
-                </template>
-              </div>
-            </div>
-          </template>
-
-        </div>
-      </template>
-
-      <!-- Generic fetch error -->
-      <template x-if="routeDebugResult && !routeDebugResult.result && !routeDebugResult.error && !routeDebugResult.trace">
-        <div class="bg-red-950 border border-red-900 rounded-xl px-4 py-3 text-red-300 text-xs">
-          Unexpected response from server.
-        </div>
-      </template>
-
-    </div><!-- /debugOpen -->
-    </div><!-- /debug section -->
-
-    <!-- ── Platforms (Config → Messaging, "Routing" section) ── -->
-    <div x-show="tab==='infra' && infraTab==='messaging' && can('manage_users')" x-cloak class="mt-8">
-      <div class="text-[10px] font-semibold text-gray-500 uppercase tracking-[0.15em] border-b border-gray-800 pb-2 mb-3">Routing</div>
-      <div class="flex items-center justify-between mb-4">
-        <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Platforms &amp; Routing</div>
-        <button @click="loadPlatforms()" class="text-xs text-[var(--accent)] hover:opacity-80 flex items-center gap-1">
-          <span>&#8635;</span> Refresh
-        </button>
-      </div>
-
-      <div class="text-xs text-gray-500 mb-4 max-w-2xl">
-        Inbound messages from each connected platform are routed to a specific agent's sandbox.
-        The most-specific match wins: <span class="text-gray-400 font-medium">chat</span> &rsaquo;
-        <span class="text-gray-400 font-medium">user</span> &rsaquo;
-        <span class="text-gray-400 font-medium">global</span>.
-        Setup wizard seeds one <span class="text-gray-400 font-medium">global</span> rule per
-        enabled platform; you can override per-chat or per-user here.
-      </div>
-
-      <template x-for="p in platforms" :key="p.name">
-        <div class="bg-gray-900 border border-gray-800 rounded-xl mb-4 overflow-hidden">
-          <!-- Header -->
-          <div class="flex items-center justify-between px-4 py-3 border-b border-gray-800">
-            <div class="flex items-center gap-3">
-              <span class="w-2 h-2 rounded-full"
-                    :class="p.connected ? 'bg-green-500' : (p.enabled ? 'bg-yellow-500' : 'bg-gray-600')"></span>
-              <span class="text-sm font-semibold text-white capitalize" x-text="p.name"></span>
-              <span class="text-[10px] uppercase tracking-wider"
-                    :class="p.connected ? 'text-green-400' : (p.enabled ? 'text-yellow-400' : 'text-gray-600')"
-                    x-text="p.connected ? 'connected' : (p.enabled ? 'configured' : 'disabled')"></span>
-            </div>
-            <button @click="platformRoutingForm = {platform: p.name, scope: 'chat', scope_id: '', agent_id: (platformAgents[0]?.id || '')}; platformRoutingFormOpen = true"
-                    class="text-[10px] px-2.5 py-1 rounded border border-gray-700 text-gray-400 hover:text-white hover:border-gray-500">
-              + Routing rule
-            </button>
-          </div>
-
-          <!-- Home channel (outbound destination for home_message) -->
-          <template x-if="p.supports_home_channel">
-            <div class="px-4 py-3 border-b border-gray-800 bg-gray-950/40">
-              <div class="flex items-center justify-between mb-2">
-                <div>
-                  <div class="text-[11px] font-semibold text-gray-300">Home channel</div>
-                  <div class="text-[10px] text-gray-600">Destination for proactive messages from agents (home_message tool).</div>
-                </div>
-                <template x-if="p.home_channel && p.home_channel.chat_id">
-                  <span class="text-[10px] text-green-500">configured</span>
-                </template>
-              </div>
-              <div class="flex items-center gap-2">
-                <input type="text"
-                       :placeholder="'Chat/Channel ID' + (p.name === 'email' ? ' or email address' : '')"
-                       x-model="homeChannelDraft[p.name] !== undefined ? homeChannelDraft[p.name] : (p.home_channel?.chat_id || '')"
-                       @input="homeChannelDraft[p.name] = $event.target.value"
-                       class="flex-1 bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs text-white font-mono"/>
-                <input type="text" placeholder="Label (optional)"
-                       x-model="homeChannelNameDraft[p.name] !== undefined ? homeChannelNameDraft[p.name] : (p.home_channel?.name || '')"
-                       @input="homeChannelNameDraft[p.name] = $event.target.value"
-                       class="w-32 bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs text-white"/>
-                <button @click="saveHomeChannel(p.name)"
-                        :disabled="homeChannelBusy[p.name]"
-                        class="text-[10px] px-2.5 py-1 rounded border border-gray-700 text-white hover:border-gray-500 disabled:opacity-50">Save</button>
-                <button x-show="p.home_channel && p.home_channel.chat_id"
-                        @click="testHomeChannel(p.name)"
-                        :disabled="homeChannelBusy[p.name] || !p.connected"
-                        :title="p.connected ? 'Send a test message' : 'Platform not connected'"
-                        class="text-[10px] px-2.5 py-1 rounded border border-gray-700 text-gray-300 hover:border-gray-500 disabled:opacity-50">Test</button>
-                <button x-show="p.home_channel && p.home_channel.chat_id"
-                        @click="deleteHomeChannel(p.name)"
-                        :disabled="homeChannelBusy[p.name]"
-                        class="text-[10px] px-2 py-1 rounded border border-gray-800 text-gray-500 hover:text-red-400 hover:border-red-900">Clear</button>
-              </div>
-              <template x-if="homeChannelMsg[p.name]">
-                <div class="mt-2 text-[10px]"
-                     :class="homeChannelMsg[p.name].ok ? 'text-green-500' : 'text-red-400'"
-                     x-text="homeChannelMsg[p.name].text"></div>
-              </template>
-            </div>
-          </template>
-
-          <!-- Rules table -->
-          <table class="w-full text-xs">
-            <thead>
-              <tr class="text-gray-600 border-b border-gray-800">
-                <th class="text-left px-4 py-2 font-medium w-[90px]">Scope</th>
-                <th class="text-left px-4 py-2 font-medium">Match</th>
-                <th class="text-left px-4 py-2 font-medium">Target Agent</th>
-                <th class="text-right px-4 py-2 font-medium w-[60px]"></th>
-              </tr>
-            </thead>
-            <tbody>
-              <template x-for="r in p.routing" :key="r.id">
-                <tr class="border-b border-gray-800/50">
-                  <td class="px-4 py-2">
-                    <span class="px-1.5 py-0.5 rounded text-[10px] font-medium border"
-                          :class="r.scope === 'global' ? 'bg-blue-950 text-blue-400 border-blue-900'
-                                : r.scope === 'chat'   ? 'bg-purple-950 text-purple-400 border-purple-900'
-                                                       : 'bg-amber-950 text-amber-400 border-amber-900'"
-                          x-text="r.scope"></span>
-                  </td>
-                  <td class="px-4 py-2 text-gray-300 font-mono"
-                      x-text="r.scope === 'global' ? '(any)' : r.scope_id"></td>
-                  <td class="px-4 py-2 text-white" x-text="r.agent_name"></td>
-                  <td class="px-4 py-2 text-right">
-                    <button @click="deletePlatformRouting(r.id)"
-                            class="text-red-700 hover:text-red-400 text-xs"
-                            title="Delete routing rule">&times;</button>
-                  </td>
-                </tr>
-              </template>
-              <template x-if="(p.routing || []).length === 0">
-                <tr><td colspan="4" class="px-4 py-4 text-center text-gray-600 text-xs">
-                  No routing rules. Inbound messages will fall back to the first agent.
-                </td></tr>
-              </template>
-            </tbody>
-          </table>
-        </div>
-      </template>
-
-      <template x-if="!platformsLoading && platforms.length === 0">
-        <div class="text-center text-gray-600 text-xs py-8">
-          No platforms configured. Add credentials in Settings → Channels.
-        </div>
-      </template>
-      <template x-if="platformsLoading && platforms.length === 0">
-        <div class="text-center text-gray-600 text-xs py-8">Loading...</div>
-      </template>
-
-      <!-- Routing rule modal -->
-      <div x-show="platformRoutingFormOpen" x-cloak
-           class="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
-           @click.self="platformRoutingFormOpen = false">
-        <div class="bg-gray-900 border border-gray-700 rounded-xl p-5 w-[420px] space-y-4">
-          <div class="flex items-center justify-between">
-            <div class="text-sm font-semibold text-white">
-              New routing rule
-              <span class="text-gray-500 text-xs ml-1" x-text="'· ' + platformRoutingForm.platform"></span>
-            </div>
-            <button @click="platformRoutingFormOpen = false" class="text-gray-500 hover:text-white">&times;</button>
-          </div>
-          <div>
-            <label class="block text-[10px] text-gray-500 uppercase tracking-wider mb-1">Scope</label>
-            <select x-model="platformRoutingForm.scope"
-                    class="w-full bg-gray-950 border border-gray-700 rounded px-3 py-1.5 text-xs text-white">
-              <option value="chat">chat — specific channel/group</option>
-              <option value="user">user — specific user across chats</option>
-              <option value="global">global — fallback for this platform</option>
-            </select>
-          </div>
-          <div x-show="platformRoutingForm.scope !== 'global'">
-            <label class="block text-[10px] text-gray-500 uppercase tracking-wider mb-1">
-              <span x-text="platformRoutingForm.scope === 'chat' ? 'Chat ID' : 'User ID'"></span>
-            </label>
-            <input type="text" x-model="platformRoutingForm.scope_id"
-                   class="w-full bg-gray-950 border border-gray-700 rounded px-3 py-1.5 text-xs text-white font-mono"
-                   placeholder="e.g. 12345 or @greg"/>
-          </div>
-          <div>
-            <label class="block text-[10px] text-gray-500 uppercase tracking-wider mb-1">Agent</label>
-            <select x-model="platformRoutingForm.agent_id"
-                    class="w-full bg-gray-950 border border-gray-700 rounded px-3 py-1.5 text-xs text-white">
-              <template x-for="a in platformAgents" :key="a.id">
-                <option :value="a.id" x-text="a.name"></option>
-              </template>
-            </select>
-          </div>
-          <div class="flex items-center justify-end gap-2 pt-2">
-            <button @click="platformRoutingFormOpen = false"
-                    class="text-xs text-gray-400 hover:text-white px-3 py-1.5">Cancel</button>
-            <button @click="savePlatformRouting()"
-                    class="text-xs px-4 py-1.5 rounded-lg bg-[var(--accent)] text-white hover:opacity-90">
-              Save rule
-            </button>
-          </div>
-        </div>
-      </div>
     </div>
 
     <!-- ── Sandbox Policies sub-tab ──
@@ -5322,7 +4277,6 @@
             <option value="compare">Compare (transient)</option>
             <option value="platform">Platform</option>
             <option value="cron">Cron</option>
-            <option value="workflow">Workflow</option>
             <option value="delegate">Delegated subagent</option>
             <option value="session_flush">Session flush</option>
           </select>
@@ -5354,9 +4308,8 @@
                       'bg-blue-950 text-blue-400': d.origin==='user_chat',
                       'bg-purple-950 text-purple-400': d.origin?.startsWith('platform'),
                       'bg-yellow-950 text-yellow-400': d.origin==='cron',
-                      'bg-indigo-950 text-indigo-400': d.origin==='workflow',
                       'bg-pink-950 text-pink-400': d.origin==='delegate',
-                      'bg-gray-800 text-gray-400': !['user_chat','cron','workflow','delegate'].includes(d.origin) && !d.origin?.startsWith('platform'),
+                      'bg-gray-800 text-gray-400': !['user_chat','cron','delegate'].includes(d.origin) && !d.origin?.startsWith('platform'),
                     }" x-text="d.origin"></span>
                 </td>
                 <td class="px-3 py-2 text-gray-500 font-mono" x-text="(d.model || '—').split('/').pop()"></td>
@@ -5533,7 +4486,7 @@
     </div>
 
     <!-- Shared admin message bar -->
-    <template x-if="adminMsg && !adminUserFormOpen && !adminMachineFormOpen && !adminPolicyFormOpen">
+    <template x-if="adminMsg && !adminUserFormOpen && !adminMachineFormOpen">
       <div class="mt-4 text-xs px-3 py-2 rounded-lg"
         :class="adminMsg.ok ? 'bg-green-950 text-green-300 border border-green-800' : 'bg-red-950 text-red-300 border border-red-800'"
         x-text="adminMsg.text"></div>
@@ -5541,299 +4494,6 @@
 
   </div>
 
-  <!-- ── Workflows Tab (Config → Workflows) ─────────────────────────── -->
-  <div x-show="tab==='infra' && infraTab==='workflows'" x-cloak class="p-6 max-w-5xl mx-auto space-y-6">
-
-    <!-- Header row -->
-    <div class="flex items-center justify-between">
-      <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Workflow Definitions</div>
-      <div class="flex items-center gap-3">
-        <button @click="loadWorkflows()" class="text-xs text-[var(--accent)] hover:opacity-80 flex items-center gap-1"><span>&#8635;</span> Refresh</button>
-        <template x-if="can('manage_workflows')">
-          <div class="flex items-center gap-2">
-            <button @click="wfBuilderOpen=true; wfNewFormOpen=false"
-              class="text-xs px-3 py-1.5 rounded-lg bg-[var(--accent)] text-white hover:opacity-90">+ Build</button>
-            <button @click="wfNewFormOpen=true; wfBuilderOpen=false"
-              class="text-xs px-3 py-1.5 rounded-lg border border-gray-700 text-gray-300 hover:text-white hover:border-gray-500">Import JSON</button>
-          </div>
-        </template>
-      </div>
-    </div>
-
-    <!-- Status message (shared) -->
-    <template x-if="wfMsg">
-      <div class="text-xs px-3 py-2 rounded-lg"
-        :class="wfMsg.ok ? 'bg-green-950 text-green-300 border border-green-800' : 'bg-red-950 text-red-300 border border-red-800'"
-        x-text="wfMsg.text"></div>
-    </template>
-
-    <!-- Visual builder -->
-    <template x-if="wfBuilderOpen">
-      <div class="bg-gray-900 border border-gray-700 rounded-xl p-5 space-y-4">
-        <div class="flex items-center justify-between">
-          <div class="text-xs font-semibold text-gray-300 uppercase tracking-wider">Build Workflow</div>
-          <button @click="wfBuilderOpen=false; wfBuilderSteps=[]" class="text-xs text-gray-500 hover:text-white">✕ Close</button>
-        </div>
-        <!-- Name & description -->
-        <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          <div>
-            <label class="text-[10px] text-gray-500 uppercase tracking-wider block mb-1">Name *</label>
-            <input type="text" x-model="wfBuilderName" placeholder="My Workflow"
-              class="w-full text-xs bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-gray-200 focus:outline-none focus:border-[var(--accent)]" />
-          </div>
-          <div>
-            <label class="text-[10px] text-gray-500 uppercase tracking-wider block mb-1">Description</label>
-            <input type="text" x-model="wfBuilderDesc" placeholder="What this workflow does"
-              class="w-full text-xs bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-gray-200 focus:outline-none focus:border-[var(--accent)]" />
-          </div>
-        </div>
-        <!-- Steps -->
-        <div class="space-y-3">
-          <div class="flex items-center justify-between">
-            <div class="text-[10px] text-gray-500 uppercase tracking-wider">Steps</div>
-            <button @click="_wfBuilderNewStep()"
-              class="text-[10px] px-2 py-1 rounded border border-gray-700 text-gray-400 hover:border-[var(--accent)] hover:text-[var(--accent)]">+ Add Step</button>
-          </div>
-          <template x-if="wfBuilderSteps.length === 0">
-            <div class="text-xs text-gray-600 text-center py-4 border border-dashed border-gray-800 rounded-lg">No steps yet — click "+ Add Step" to begin</div>
-          </template>
-          <template x-for="(step, idx) in wfBuilderSteps" :key="idx">
-            <div class="bg-gray-800 border border-gray-700 rounded-xl p-3 space-y-2">
-              <div class="flex items-center justify-between mb-1">
-                <span class="text-[10px] font-semibold text-gray-400 uppercase tracking-wider" x-text="'Step ' + (idx+1)"></span>
-                <button @click="_wfBuilderRemoveStep(idx)" class="text-[10px] text-red-500 hover:text-red-400">Remove</button>
-              </div>
-              <div class="grid grid-cols-2 gap-2 sm:grid-cols-4">
-                <div>
-                  <label class="text-[9px] text-gray-600 uppercase block mb-0.5">ID</label>
-                  <input type="text" x-model="step.step_id" placeholder="step_1"
-                    class="w-full text-[11px] bg-gray-900 border border-gray-700 rounded px-2 py-1 text-gray-200 focus:outline-none focus:border-[var(--accent)]" />
-                </div>
-                <div>
-                  <label class="text-[9px] text-gray-600 uppercase block mb-0.5">Type</label>
-                  <select x-model="step.step_type"
-                    class="w-full text-[11px] bg-gray-900 border border-gray-700 rounded px-2 py-1 text-gray-200 focus:outline-none focus:border-[var(--accent)]">
-                    <option value="inspect">inspect</option>
-                    <option value="reason">reason</option>
-                    <option value="propose">propose</option>
-                    <option value="apply">apply</option>
-                    <option value="validate">validate</option>
-                    <option value="approval">approval</option>
-                  </select>
-                </div>
-                <div>
-                  <label class="text-[9px] text-gray-600 uppercase block mb-0.5">Name</label>
-                  <input type="text" x-model="step.step_name" placeholder="Descriptive name"
-                    class="w-full text-[11px] bg-gray-900 border border-gray-700 rounded px-2 py-1 text-gray-200 focus:outline-none focus:border-[var(--accent)]" />
-                </div>
-                <div>
-                  <label class="text-[9px] text-gray-600 uppercase block mb-0.5">Timeout (s)</label>
-                  <input type="number" x-model.number="step.timeout_seconds" min="10" max="3600"
-                    class="w-full text-[11px] bg-gray-900 border border-gray-700 rounded px-2 py-1 text-gray-200 focus:outline-none focus:border-[var(--accent)]" />
-                </div>
-              </div>
-              <div>
-                <label class="text-[9px] text-gray-600 uppercase block mb-0.5">Prompt</label>
-                <textarea x-model="step.prompt" rows="2" placeholder="Instructions for the agent at this step…"
-                  class="w-full text-[11px] bg-gray-900 border border-gray-700 rounded px-2 py-1.5 text-gray-200 resize-none focus:outline-none focus:border-[var(--accent)]"></textarea>
-              </div>
-              <div class="grid grid-cols-1 gap-2 sm:grid-cols-3">
-                <div>
-                  <label class="text-[9px] text-gray-600 uppercase block mb-0.5">Tools (comma-separated)</label>
-                  <input type="text" x-model="step.tools" placeholder="web_search, terminal"
-                    class="w-full text-[11px] bg-gray-900 border border-gray-700 rounded px-2 py-1 text-gray-200 focus:outline-none focus:border-[var(--accent)]" />
-                </div>
-                <div>
-                  <label class="text-[9px] text-gray-600 uppercase block mb-0.5">Depends on (step IDs)</label>
-                  <input type="text" x-model="step.depends_on" placeholder="step_1, step_2"
-                    class="w-full text-[11px] bg-gray-900 border border-gray-700 rounded px-2 py-1 text-gray-200 focus:outline-none focus:border-[var(--accent)]" />
-                </div>
-                <div>
-                  <label class="text-[9px] text-gray-600 uppercase block mb-0.5">Parallel group</label>
-                  <input type="text" x-model="step.parallel_group" placeholder="group_a"
-                    class="w-full text-[11px] bg-gray-900 border border-gray-700 rounded px-2 py-1 text-gray-200 focus:outline-none focus:border-[var(--accent)]" />
-                </div>
-              </div>
-            </div>
-          </template>
-        </div>
-        <div class="flex justify-end gap-2 pt-2">
-          <button @click="wfBuilderOpen=false; wfBuilderSteps=[]"
-            class="text-xs px-3 py-1.5 rounded-lg border border-gray-700 text-gray-400 hover:text-white">Cancel</button>
-          <button @click="buildWorkflow()"
-            class="text-xs px-3 py-1.5 rounded-lg bg-[var(--accent)] text-white hover:opacity-90">Create Workflow</button>
-        </div>
-      </div>
-    </template>
-
-    <!-- Import JSON form -->
-    <template x-if="wfNewFormOpen">
-      <div class="bg-gray-900 border border-gray-700 rounded-xl p-4">
-        <div class="text-xs font-semibold text-gray-400 mb-3">Import Workflow (JSON)</div>
-        <textarea x-model="wfImportJson" rows="8"
-          placeholder='{"name":"My Workflow","description":"...","steps":[...]}'
-          class="w-full bg-gray-800 border border-gray-700 rounded-lg text-xs font-mono text-gray-200 p-3 focus:outline-none focus:border-[var(--accent)] resize-y"></textarea>
-        <div class="flex justify-end gap-2 mt-3">
-          <button @click="wfNewFormOpen=false; wfImportJson=''"
-            class="text-xs px-3 py-1.5 rounded-lg border border-gray-700 text-gray-400 hover:text-white">Cancel</button>
-          <button @click="importWorkflow()"
-            class="text-xs px-3 py-1.5 rounded-lg bg-[var(--accent)] text-white hover:opacity-90">Import</button>
-        </div>
-      </div>
-    </template>
-
-    <!-- Definitions list -->
-    <div class="space-y-3">
-      <template x-for="wf in workflows" :key="wf.id">
-        <div class="bg-gray-900 border border-gray-800 rounded-xl p-4">
-          <div class="flex items-start justify-between gap-3">
-            <div class="min-w-0 flex-1">
-              <div class="flex items-center gap-2 mb-1">
-                <span class="font-medium text-sm text-white" x-text="wf.name"></span>
-                <span class="text-[10px] px-1.5 py-0.5 rounded border border-gray-700 text-gray-500" x-text="'v'+wf.version"></span>
-                <template x-for="tag in (wf.tags||[])" :key="tag">
-                  <span class="text-[10px] px-1.5 py-0.5 rounded bg-[var(--accent-muted)] text-[var(--accent-light)]" x-text="tag"></span>
-                </template>
-              </div>
-              <p class="text-xs text-gray-500" x-text="wf.description || '—'"></p>
-              <p class="text-[10px] text-gray-700 mt-1" x-text="(wf.step_count||0)+' steps'"></p>
-            </div>
-            <div class="flex items-center gap-2 shrink-0">
-              <button @click="selectedWorkflow=wf; loadWorkflowRuns(wf.id)"
-                class="text-xs px-3 py-1.5 rounded-lg border border-gray-700 text-gray-300 hover:border-[var(--accent)] hover:text-[var(--accent)]">History</button>
-              <button x-show="can('trigger_workflow')" @click="triggerWorkflow(wf.id)"
-                class="text-xs px-3 py-1.5 rounded-lg bg-[var(--accent)] text-white hover:opacity-90">▶ Run</button>
-              <button x-show="can('manage_workflows')" @click="deleteWorkflow(wf.id)"
-                class="text-xs px-2 py-1.5 rounded-lg border border-red-900 text-red-500 hover:bg-red-950">✕</button>
-            </div>
-          </div>
-        </div>
-      </template>
-      <template x-if="workflows.length===0">
-        <div class="bg-gray-900 border border-gray-800 rounded-xl p-8 text-center text-xs text-gray-600">
-          No workflow definitions yet. Import a JSON definition to get started.
-        </div>
-      </template>
-    </div>
-
-    <!-- Run list for selected workflow -->
-    <template x-if="selectedWorkflow">
-      <div>
-        <div class="flex items-center justify-between mb-3">
-          <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider"
-            x-text="'History — ' + selectedWorkflow.name"></div>
-          <button @click="selectedWorkflow=null; wfRuns=[]" class="text-xs text-gray-500 hover:text-white">✕ Close</button>
-        </div>
-        <div class="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
-          <table class="w-full text-xs">
-            <thead>
-              <tr class="border-b border-gray-800 text-gray-500">
-                <th class="text-left px-4 py-3 font-medium">Started</th>
-                <th class="text-left px-4 py-3 font-medium">Status</th>
-                <th class="text-left px-4 py-3 font-medium">Triggered By</th>
-                <th class="text-left px-4 py-3 font-medium">Duration</th>
-                <th class="text-left px-4 py-3 font-medium">Detail</th>
-              </tr>
-            </thead>
-            <tbody>
-              <template x-for="run in wfRuns" :key="run.id">
-                <tr class="border-b border-gray-800/50 hover:bg-gray-800/30">
-                  <td class="px-4 py-2 text-gray-600 whitespace-nowrap"
-                    x-text="run.created_at ? new Date(run.created_at).toLocaleString(undefined,{dateStyle:'short',timeStyle:'short'}) : '—'"></td>
-                  <td class="px-4 py-2">
-                    <span class="px-1.5 py-0.5 rounded text-[10px] font-medium border"
-                      :class="{
-                        'bg-yellow-950 text-yellow-400 border-yellow-900': run.status==='pending'||run.status==='running',
-                        'bg-blue-950 text-blue-400 border-blue-900':   run.status==='paused',
-                        'bg-green-950 text-green-400 border-green-900': run.status==='success',
-                        'bg-red-950 text-red-400 border-red-900':      run.status==='failed',
-                        'bg-gray-800 text-gray-500 border-gray-700':   run.status==='cancelled',
-                      }" x-text="run.status"></span>
-                  </td>
-                  <td class="px-4 py-2 text-gray-500 font-mono" x-text="(run.triggered_by||'system').slice(0,12)"></td>
-                  <td class="px-4 py-2 text-gray-600"
-                    x-text="(run.started_at && run.finished_at) ? Math.round((run.finished_at-run.started_at)/1000)+'s' : (run.started_at ? 'running…' : '—')"></td>
-                  <td class="px-4 py-2">
-                    <button @click="loadRunDetail(run.id)"
-                      class="text-xs text-[var(--accent)] hover:opacity-80">Steps ›</button>
-                  </td>
-                </tr>
-              </template>
-              <template x-if="wfRuns.length===0">
-                <tr><td colspan="5" class="px-4 py-6 text-center text-gray-600">No runs yet</td></tr>
-              </template>
-            </tbody>
-          </table>
-        </div>
-      </div>
-    </template>
-
-    <!-- Step detail for a selected run -->
-    <template x-if="selectedRun">
-      <div>
-        <div class="flex items-center justify-between mb-3">
-          <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider"
-            x-text="'Steps — run ' + selectedRun.run.id.slice(-8)"></div>
-          <button @click="selectedRun=null" class="text-xs text-gray-500 hover:text-white">✕ Close</button>
-        </div>
-        <div class="space-y-2">
-          <template x-for="step in selectedRun.steps" :key="step.id">
-            <div class="bg-gray-900 border border-gray-800 rounded-xl p-3">
-              <div class="flex items-center justify-between gap-2 mb-1">
-                <div class="flex items-center gap-2">
-                  <span class="px-1.5 py-0.5 rounded text-[10px] font-mono border border-gray-700 text-gray-400" x-text="step.step_type"></span>
-                  <span class="text-sm text-white font-medium" x-text="step.step_name"></span>
-                  <span class="text-[10px] text-gray-600 font-mono" x-text="step.step_id"></span>
-                </div>
-                <span class="px-1.5 py-0.5 rounded text-[10px] font-medium border"
-                  :class="{
-                    'bg-gray-800 text-gray-500 border-gray-700':         step.status==='pending',
-                    'bg-yellow-950 text-yellow-400 border-yellow-900':   step.status==='running',
-                    'bg-green-950 text-green-400 border-green-900':      step.status==='success',
-                    'bg-red-950 text-red-400 border-red-900':            step.status==='failed',
-                    'bg-gray-700 text-gray-400 border-gray-600':         step.status==='skipped',
-                    'bg-blue-950 text-blue-400 border-blue-900':         step.status==='waiting_approval',
-                    'bg-gray-800 text-gray-600 border-gray-700':         step.status==='cancelled',
-                  }" x-text="step.status"></span>
-              </div>
-              <template x-if="step.output_summary">
-                <p class="text-[11px] text-gray-500 mt-1 whitespace-pre-wrap" x-text="step.output_summary.slice(0,400)+(step.output_summary.length>400?'…':'')"></p>
-              </template>
-              <template x-if="step.error">
-                <p class="text-[11px] text-red-400 mt-1" x-text="step.error"></p>
-              </template>
-              <template x-if="step.status==='waiting_approval' && can('decide_workflow_approvals')">
-                <div class="flex gap-2 mt-2">
-                  <button @click="decideWorkflowApproval(step.approval_id,'approve')"
-                    class="px-2 py-1 rounded text-[10px] bg-green-900 text-green-300 hover:bg-green-800 border border-green-800">Approve</button>
-                  <button @click="decideWorkflowApproval(step.approval_id,'reject')"
-                    class="px-2 py-1 rounded text-[10px] bg-red-950 text-red-400 hover:bg-red-900 border border-red-900">Reject</button>
-                </div>
-              </template>
-              <div class="flex items-center gap-4 mt-1.5 text-[10px] text-gray-700">
-                <template x-if="step.started_at">
-                  <span x-text="new Date(step.started_at).toLocaleTimeString()"></span>
-                </template>
-                <template x-if="step.started_at && step.finished_at">
-                  <span x-text="Math.round((step.finished_at-step.started_at)/1000)+'s'"></span>
-                </template>
-                <template x-if="step.parallel_group">
-                  <span class="text-gray-600">⫶ <span x-text="step.parallel_group"></span></span>
-                </template>
-              </div>
-            </div>
-          </template>
-        </div>
-        <template x-if="selectedRun.run.status==='running'||selectedRun.run.status==='paused'">
-          <div class="mt-3 flex justify-end">
-            <button @click="cancelRun(selectedRun.run.id)"
-              class="text-xs px-3 py-1.5 rounded-lg border border-red-900 text-red-400 hover:bg-red-950">Cancel Run</button>
-          </div>
-        </template>
-      </div>
-    </template>
-
-  </div>
 
   <!-- Runs sub-tab removed: agent_runs writes are bypassed in the current
        OpenShell runtime (Plan A-prime in sandbox_worker.py). M10 is the
@@ -6580,8 +5240,6 @@ function app() {
     cloudProviderModels: [],
     cloudProviderValidating: false,
     cloudProviderMsg: null,
-    adminPolicies: [],
-    adminActionPolicies: [],
     // Sandbox policy editor (OpenShell network_policies presets)
     sandboxPresets: [],
     sandboxPresetSelected: null,
@@ -6590,9 +5248,6 @@ function app() {
     sandboxPresetError: '',
     sandboxPresetSaved: '',
     sandboxPresetHelp: false,
-    actionPolicyForm: {},
-    actionPolicyFormOpen: false,
-    actionPolicyMsg: null,
     adminAuditLogs: [],
     auditLogsPage: 1,
     auditLogsLimit: 25,
@@ -6615,19 +5270,6 @@ function app() {
     // but auth_required" vs "unreachable" vs "machine returned 0 models".
     machineProbeStatuses: [],
     adminMsg: null,
-    // workflows
-    workflows: [],
-    wfRuns: [],
-    selectedWorkflow: null,
-    selectedRun: null,
-    wfNewFormOpen: false,
-    wfImportJson: '',
-    wfBuilderOpen: false,
-    wfBuilderName: '',
-    wfBuilderDesc: '',
-    wfBuilderSteps: [],
-    wfBuilderMsg: null,
-    wfMsg: null,
     // agent runs
     agentRuns: [],
     agentRunsTotal: 0,
@@ -6761,10 +5403,6 @@ function app() {
     adminMachineEditForm: {},
     adminMachineModels: [],
     adminMachineModelsLoading: false,
-    adminPolicyFormOpen: false,
-    adminPolicyForm: {},
-    adminPolicyEditId: null,
-    adminPolicyEditForm: {},
     // setup wizard
     setupWizardDismissed: !!localStorage.getItem('hermes_wizard_dismissed'),
     setupWizardStep: null,
@@ -7181,7 +5819,6 @@ function app() {
     //   /config/inference       → tab = infra, infraTab = servers
     //   /config/tools           → tab = infra, infraTab = tools
     //   /config/messaging       → tab = infra, infraTab = messaging
-    //   /config/workflows       → tab = infra, infraTab = workflows
     //   /activity               → tab = activity, activityTab = (restored)
     //   /activity/events        → tab = activity, activityTab = events
     //   /activity/runs          → tab = activity, activityTab = runs
@@ -7197,9 +5834,9 @@ function app() {
       inference: 'servers',
       tools:     'tools',
       messaging: 'messaging',
-      workflows: 'workflows',
       // Legacy URL aliases (pre-reorg bookmarks):
       channels:  'messaging',
+      workflows: 'servers',  // removed; soft-redirect to inference
       proposals: 'servers',  // proposals moved to /activity/proposals; soft-redirect to inference
     },
     // Run the appropriate loader for an infraTab value. Mirrors the
@@ -7210,7 +5847,6 @@ function app() {
       if (name === 'servers')   { this.loadAdminMachines(); this.loadCloudProviders?.(); this.probeAllMachines?.(); return; }
       if (name === 'tools')     { this.loadToolsTab?.(); this.loadServices?.(); return; }
       if (name === 'messaging') { this.loadMessagingChannels?.(); this.loadPlatforms?.(); return; }
-      if (name === 'workflows') { this.loadWorkflows?.(); return; }
     },
     _loadAdminTabData(name) {
       // Slimmed Admin: users + policies are fetched by loadAdminData(),
@@ -7260,9 +5896,9 @@ function app() {
           this.tab = 'admin';
           const mapped = this._ADMIN_URL_MAP[sub];
           if (mapped) this.adminTab = mapped;
-          // Legacy /admin/<moved> URLs (workflows/runs/sandboxes/model-routes/platforms/approvals/activity)
+          // Legacy /admin/<moved> URLs (runs/sandboxes/model-routes/platforms/approvals/activity)
           // — soft-redirect to the new home so old bookmarks land on something useful.
-          else if (sub === 'workflows')                          { this.tab = 'infra';    this.infraTab    = 'workflows'; }
+          else if (sub === 'workflows')                          { this.tab = 'infra';    this.infraTab    = 'servers'; }
           else if (sub === 'platforms')                          { this.tab = 'infra';    this.infraTab    = 'messaging'; }
           else if (sub === 'runs')                               { this.tab = 'activity'; this.activityTab = 'events'; }
           else if (sub === 'sandboxes' || sub === 'model-routes'){ this.tab = 'activity'; this.activityTab = 'dashboards'; }
@@ -7282,7 +5918,7 @@ function app() {
       if (this.tab === 'compare')  return '/compare';
       if (this.tab === 'infra') {
         // Forward map only — exclude legacy aliases (channels/proposals)
-        const fwd = ['inference','tools','messaging','workflows'];
+        const fwd = ['inference','tools','messaging'];
         const rev = fwd.find(k => this._INFRA_URL_MAP[k] === this.infraTab);
         return rev ? `/config/${rev}` : '/config';
       }
@@ -9268,7 +7904,7 @@ function app() {
     // ── Admin ──────────────────────────────────────────────────────────
 
     async loadAdminData() {
-      await Promise.all([this.loadAdminUsers(), this.loadAdminPolicies(), this.loadAdminActionPolicies()]);
+      await Promise.all([this.loadAdminUsers()]);
     },
 
     // ── Tools tab methods ──────────────────────────────────────────────
@@ -9447,7 +8083,7 @@ function app() {
     },
 
     async loadRoutingData() {
-      await Promise.all([this.loadAdminMachines(), this.loadAdminPolicies(), this.loadRouterState()]);
+      await Promise.all([this.loadAdminMachines(), this.loadRouterState()]);
       this.probeAllMachines();  // fire-and-forget; updates health badges as results arrive
     },
 
@@ -9490,14 +8126,6 @@ function app() {
         const d = await r.json();
         this.adminUsers = d.users || [];
       } catch(e) { this.adminUsers = []; }
-    },
-
-    async loadAdminActionPolicies() {
-      try {
-        const r = await fetch('/action-policies', {credentials:'include'});
-        const d = await r.json();
-        this.adminActionPolicies = d.action_policies || [];
-      } catch(e) { this.adminActionPolicies = []; }
     },
 
     // ── Sandbox policy presets (OpenShell network_policies) ─────────────
@@ -9592,64 +8220,6 @@ network_policies:
         this.sandboxPresetYaml = '';
         await this.loadSandboxPresets();
       } catch(e) { this.sandboxPresetError = e.message; }
-    },
-
-    async saveActionPolicy() {
-      this.actionPolicyMsg = null;
-      const f = this.actionPolicyForm;
-      if (!f.name || !f.name.trim()) { this.actionPolicyMsg={ok:false,text:"Name is required"}; return; }
-      try {
-        const isEdit = !!f.id;
-        const url = isEdit ? `/action-policies/${f.id}` : "/action-policies";
-        const method = isEdit ? "PATCH" : "POST";
-        const r = await fetch(url, {
-          method, credentials:"include",
-          headers:{"Content-Type":"application/json","X-CSRF-Token":getCsrfToken()},
-          body: JSON.stringify({
-            name: f.name.trim(), description: f.description||"",
-            network_policy: f.network_policy, filesystem_policy: f.filesystem_policy,
-            exec_policy: f.exec_policy, write_policy: f.write_policy,
-            provider_policy: f.provider_policy, secret_policy: f.secret_policy,
-          }),
-        });
-        const d = await r.json();
-        if (!r.ok) { this.actionPolicyMsg={ok:false,text:d.error||"Failed"}; return; }
-        const ap = d.action_policy;
-        if (isEdit) {
-          this.adminActionPolicies = this.adminActionPolicies.map(p => p.id===ap.id ? ap : p);
-        } else {
-          this.adminActionPolicies = [...this.adminActionPolicies, ap];
-        }
-        this.actionPolicyMsg = {ok:true, text: isEdit ? "Policy updated." : "Policy created."};
-        this.actionPolicyForm = {};
-        this.actionPolicyFormOpen = false;
-      } catch(e) { this.actionPolicyMsg={ok:false,text:String(e)}; }
-    },
-
-    async deleteActionPolicy(pid) {
-      if (!confirm("Delete this action policy? Users assigned to it will revert to no policy.")) return;
-      try {
-        const r = await fetch(`/action-policies/${pid}`, {
-          method:"DELETE", credentials:"include",
-          headers:{"X-CSRF-Token":getCsrfToken()},
-        });
-        if (!r.ok) { const d=await r.json(); alert(d.error||"Delete failed"); return; }
-        this.adminActionPolicies = this.adminActionPolicies.filter(p => p.id!==pid);
-        this.adminUsers = this.adminUsers.map(u => u.action_policy_id===pid ? {...u,action_policy_id:null} : u);
-      } catch(e) { alert(String(e)); }
-    },
-
-    async assignUserActionPolicy(uid, policyId) {
-      try {
-        const r = await fetch(`/users/${uid}/action-policy`, {
-          method:"PATCH", credentials:"include",
-          headers:{"Content-Type":"application/json","X-CSRF-Token":getCsrfToken()},
-          body: JSON.stringify({action_policy_id: policyId || null}),
-        });
-        if (!r.ok) { const d=await r.json(); this._adminMsg(false, d.error||"Failed"); return; }
-        this.adminUsers = this.adminUsers.map(u => u.id===uid ? {...u, action_policy_id: policyId||null} : u);
-        this._adminMsg(true, policyId ? "Action policy assigned." : "Action policy cleared.");
-      } catch(e) { this._adminMsg(false, String(e)); }
     },
 
     async adminScanMachines() {
@@ -10764,14 +9334,6 @@ network_policies:
       this.benchmarkRunning = false;
     },
 
-    async loadAdminPolicies() {
-      try {
-        const r = await fetch('/admin/policies', {credentials:'include'});
-        const d = await r.json();
-        this.adminPolicies = d.policies || [];
-      } catch(e) { this.adminPolicies = []; }
-    },
-
     async loadAdminAudit() {
       try {
         const r = await fetch(`/audit-logs?page=${this.auditLogsPage}&limit=${this.auditLogsLimit}`, {credentials:'include'});
@@ -10846,175 +9408,6 @@ network_policies:
           this._adminMsg(false, d.error || 'Failed');
         }
       } catch(e) { this._adminMsg(false, String(e)); }
-    },
-
-    async loadWorkflows() {
-      try {
-        const r = await fetch('/workflows', {credentials:'include'});
-        const d = await r.json();
-        this.workflows = d.workflows || [];
-      } catch(e) { this.workflows = []; }
-    },
-
-    _wfBuilderNewStep() {
-      this.wfBuilderSteps.push({
-        step_id: 'step_' + (this.wfBuilderSteps.length + 1),
-        step_type: 'reason',
-        step_name: '',
-        prompt: '',
-        tools: '',
-        timeout_seconds: 120,
-        depends_on: '',
-        parallel_group: '',
-        condition: '',
-      });
-    },
-    _wfBuilderRemoveStep(idx) {
-      this.wfBuilderSteps.splice(idx, 1);
-    },
-    async buildWorkflow() {
-      if (!this.wfBuilderName.trim()) { this._wfMsg(false, 'Name is required'); return; }
-      if (this.wfBuilderSteps.length === 0) { this._wfMsg(false, 'Add at least one step'); return; }
-      const steps = this.wfBuilderSteps.map(s => {
-        const step = {
-          step_id: s.step_id.trim() || ('step_' + (this.wfBuilderSteps.indexOf(s)+1)),
-          step_type: s.step_type,
-          step_name: s.step_name.trim() || s.step_id,
-          prompt: s.prompt.trim(),
-        };
-        if (s.tools.trim()) step.tools = s.tools.split(',').map(t => t.trim()).filter(Boolean);
-        if (s.timeout_seconds) step.timeout_seconds = parseInt(s.timeout_seconds) || 120;
-        if (s.depends_on.trim()) step.depends_on = s.depends_on.split(',').map(t => t.trim()).filter(Boolean);
-        if (s.parallel_group.trim()) step.parallel_group = s.parallel_group.trim();
-        if (s.condition.trim()) step.condition = s.condition.trim();
-        return step;
-      });
-      const payload = {name: this.wfBuilderName.trim(), description: this.wfBuilderDesc.trim(), steps};
-      try {
-        const r = await fetch('/workflows', {
-          method: 'POST',
-          headers: {'X-CSRF-Token': getCsrfToken(), 'Content-Type': 'application/json'},
-          credentials: 'include',
-          body: JSON.stringify(payload),
-        });
-        const d = await r.json();
-        if (r.ok) {
-          this._wfMsg(true, 'Workflow created: ' + d.workflow.name);
-          this.wfBuilderOpen = false;
-          this.wfBuilderName = '';
-          this.wfBuilderDesc = '';
-          this.wfBuilderSteps = [];
-          await this.loadWorkflows();
-        } else {
-          this._wfMsg(false, d.error || 'Create failed');
-        }
-      } catch(e) { this._wfMsg(false, String(e)); }
-    },
-
-    async importWorkflow() {
-      try {
-        const parsed = JSON.parse(this.wfImportJson);
-        const r = await fetch('/workflows', {
-          method: 'POST',
-          headers: {'X-CSRF-Token': getCsrfToken(), 'Content-Type':'application/json'},
-          credentials: 'include',
-          body: JSON.stringify(parsed),
-        });
-        const d = await r.json();
-        if (r.ok) {
-          this._wfMsg(true, 'Workflow imported: ' + d.workflow.name);
-          this.wfNewFormOpen = false;
-          this.wfImportJson = '';
-          await this.loadWorkflows();
-        } else {
-          this._wfMsg(false, d.error || 'Import failed');
-        }
-      } catch(e) { this._wfMsg(false, String(e)); }
-    },
-
-    async deleteWorkflow(id) {
-      if (!confirm('Delete this workflow definition?')) return;
-      try {
-        const r = await fetch('/workflows/' + id, {
-          method: 'DELETE',
-          headers: {'X-CSRF-Token': getCsrfToken()},
-          credentials: 'include',
-        });
-        if (r.ok) { await this.loadWorkflows(); }
-        else { const d = await r.json(); this._wfMsg(false, d.error || 'Delete failed'); }
-      } catch(e) { this._wfMsg(false, String(e)); }
-    },
-
-    async triggerWorkflow(id) {
-      try {
-        const r = await fetch('/workflows/' + id + '/trigger', {
-          method: 'POST',
-          headers: {'X-CSRF-Token': getCsrfToken(), 'Content-Type':'application/json'},
-          credentials: 'include',
-          body: JSON.stringify({inputs: {}}),
-        });
-        const d = await r.json();
-        if (r.status === 202) {
-          this._wfMsg(true, 'Run started: ' + d.run_id);
-          if (this.selectedWorkflow && this.selectedWorkflow.id === id) {
-            await this.loadWorkflowRuns(id);
-          }
-        } else {
-          this._wfMsg(false, d.error || 'Trigger failed');
-        }
-      } catch(e) { this._wfMsg(false, String(e)); }
-    },
-
-    async loadWorkflowRuns(wfId) {
-      try {
-        const r = await fetch('/workflow-runs?workflow_id=' + wfId + '&limit=20', {credentials:'include'});
-        const d = await r.json();
-        this.wfRuns = d.runs || [];
-      } catch(e) { this.wfRuns = []; }
-    },
-
-    async loadRunDetail(runId) {
-      try {
-        const r = await fetch('/workflow-runs/' + runId, {credentials:'include'});
-        const d = await r.json();
-        this.selectedRun = d;
-      } catch(e) {}
-    },
-
-    async cancelRun(runId) {
-      if (!confirm('Cancel this workflow run?')) return;
-      try {
-        const r = await fetch('/workflow-runs/' + runId + '/cancel', {
-          method: 'POST',
-          headers: {'X-CSRF-Token': getCsrfToken()},
-          credentials: 'include',
-        });
-        if (r.ok) { await this.loadRunDetail(runId); }
-      } catch(e) {}
-    },
-
-    async decideWorkflowApproval(approvalId, decision) {
-      try {
-        const r = await fetch('/workflow-runs/approvals/' + approvalId + '/' + decision, {
-          method: 'POST',
-          headers: {'X-CSRF-Token': getCsrfToken(), 'Content-Type':'application/json'},
-          credentials: 'include',
-          body: JSON.stringify({}),
-        });
-        if (r.ok) {
-          this._wfMsg(true, 'Step ' + decision + 'd');
-          // Reload the run detail after a short delay to let the engine update.
-          setTimeout(() => this.selectedRun && this.loadRunDetail(this.selectedRun.run.id), 1500);
-        } else {
-          const d = await r.json();
-          this._wfMsg(false, d.error || 'Failed');
-        }
-      } catch(e) { this._wfMsg(false, String(e)); }
-    },
-
-    _wfMsg(ok, text) {
-      this.wfMsg = {ok, text};
-      setTimeout(() => { this.wfMsg = null; }, 5000);
     },
 
     async loadAgentRuns() {
@@ -11908,19 +10301,6 @@ network_policies:
       } catch(e) { this.adminSetPwMsg = {ok:false, text:String(e)}; }
     },
 
-    async assignUserPolicy(uid, policyId) {
-      try {
-        const r = await fetch('/admin/users/'+uid+'/policy', {
-          method:'PATCH', credentials:'include',
-          headers:{'Content-Type':'application/json','X-CSRF-Token':getCsrfToken()},
-          body: JSON.stringify({policy_id: policyId}),
-        });
-        if (!r.ok) { const d=await r.json(); this._adminMsg(false, d.error||'Failed'); return; }
-        this.adminUsers = this.adminUsers.map(u => u.id===uid ? {...u, policy_id: policyId} : u);
-        this._adminMsg(true, 'Profile assigned');
-      } catch(e) { this._adminMsg(false, String(e)); }
-    },
-
     async createMachine() {
       try {
         const r = await fetch('/admin/machines', {
@@ -12054,86 +10434,6 @@ network_policies:
       } catch(e) { this._adminMsg(false, String(e)); }
     },
 
-    async createPolicy() {
-      try {
-        const r = await fetch('/admin/policies', {
-          method:'POST', credentials:'include',
-          headers:{'Content-Type':'application/json','X-CSRF-Token':getCsrfToken()},
-          body: JSON.stringify(this.adminPolicyForm),
-        });
-        const d = await r.json();
-        if (!r.ok) { this._adminMsg(false, d.error || 'Failed'); return; }
-        this.adminPolicies = [...this.adminPolicies, d.policy];
-        this.adminPolicyFormOpen = false;
-        this._adminMsg(true, 'Profile created');
-      } catch(e) { this._adminMsg(false, String(e)); }
-    },
-
-    async deletePolicy(pid) {
-      const p = this.adminPolicies.find(x => x.id===pid);
-      const msg = p && p.user_count > 0
-        ? `Delete profile "${p.name}"? ${p.user_count} user(s) will lose their routing override and fall back to system default.`
-        : `Delete profile "${p?.name || ''}"?`;
-      if (!confirm(msg)) return;
-      try {
-        const r = await fetch('/admin/policies/'+pid, {
-          method:'DELETE', credentials:'include',
-          headers:{'X-CSRF-Token':getCsrfToken()},
-        });
-        if (r.status===204) {
-          this.adminPolicies = this.adminPolicies.filter(p => p.id!==pid);
-          this._adminMsg(true, 'Deleted');
-        }
-      } catch(e) { this._adminMsg(false, String(e)); }
-    },
-
-    async savePolicyRules(policy) {
-      try {
-        const r = await fetch('/admin/policies/'+policy.id+'/rules', {
-          method:'PUT', credentials:'include',
-          headers:{'Content-Type':'application/json','X-CSRF-Token':getCsrfToken()},
-          body: JSON.stringify(policy.rules),
-        });
-        const d = await r.json();
-        if (!r.ok) { this._adminMsg(false, d.error || 'Failed'); return; }
-        this.adminPolicies = this.adminPolicies.map(p => p.id===policy.id ? {...p, rules:d.rules} : p);
-        this._adminMsg(true, 'Rules saved');
-      } catch(e) { this._adminMsg(false, String(e)); }
-    },
-
-    startEditPolicy(p) {
-      this.adminPolicyEditId = p.id;
-      this.adminPolicyEditForm = { name: p.name, description: p.description || '', fallback: p.fallback };
-    },
-
-    cancelEditPolicy() {
-      this.adminPolicyEditId = null;
-      this.adminPolicyEditForm = {};
-    },
-
-    async saveEditPolicy() {
-      const pid = this.adminPolicyEditId;
-      try {
-        const r = await fetch('/admin/policies/'+pid, {
-          method:'PATCH', credentials:'include',
-          headers:{'Content-Type':'application/json','X-CSRF-Token':getCsrfToken()},
-          body: JSON.stringify(this.adminPolicyEditForm),
-        });
-        const d = await r.json();
-        if (!r.ok) { this._adminMsg(false, d.error || 'Failed'); return; }
-        this.adminPolicies = this.adminPolicies.map(p => p.id===pid ? {...d.policy, rules:p.rules, user_count:p.user_count} : p);
-        this.adminPolicyEditId = null;
-        this._adminMsg(true, 'Profile updated');
-      } catch(e) { this._adminMsg(false, String(e)); }
-    },
-
-    movePolicyRule(policy, idx, dir) {
-      const newIdx = idx + dir;
-      if (newIdx < 0 || newIdx >= policy.rules.length) return;
-      const rules = [...policy.rules];
-      [rules[idx], rules[newIdx]] = [rules[newIdx], rules[idx]];
-      this.adminPolicies = this.adminPolicies.map(p => p.id===policy.id ? {...p, rules} : p);
-    },
   };
 }
 </script>
