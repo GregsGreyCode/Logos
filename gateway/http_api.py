@@ -3902,10 +3902,60 @@ async def _handle_chat(request: web.Request) -> web.StreamResponse:
                 "max_iterations": int(os.environ.get("LOGOS_MAX_ITERATIONS",
                                                      os.environ.get("HERMES_MAX_ITERATIONS", "90"))),
             }
-            # Stream callback — forward worker events to client SSE
+            # Seed _session_status for this sandbox run so the Live
+            # Executions panel (/status → main_app.html Live list) shows
+            # it as "thinking" the moment dispatch kicks off, before the
+            # first tool_start arrives. Previously only the legacy
+            # in-process agent path populated _session_status, so the
+            # panel stayed empty for all sandbox chats — the root cause
+            # of "live exec never works" reports.
+            _platform_val = source.platform.value if source and source.platform else "unknown"
+            _now_fn = time.time
+            if session_key:
+                runner._session_status[session_key] = {
+                    "platform": _platform_val,
+                    "agent_name": (agent.name if agent else ""),
+                    "current_tool": "thinking…",
+                    "tool_started_at": _now_fn(),
+                    "session_started_at": _now_fn(),
+                    "tool_count": 0,
+                    "error_count": 0,
+                    "recent_tools": [],
+                    "stuck": False,
+                }
+
+            def _status_on_tool_start(tool_name: str):
+                entry = runner._session_status.get(session_key) if session_key else None
+                if not entry:
+                    return
+                entry["current_tool"] = tool_name or "unknown"
+                entry["tool_started_at"] = _now_fn()
+                entry["tool_count"] = (entry.get("tool_count") or 0) + 1
+                recent = entry.setdefault("recent_tools", [])
+                if not recent or recent[-1] != tool_name:
+                    recent.append(tool_name)
+                    if len(recent) > 10:
+                        recent.pop(0)
+
+            def _status_on_tool_end(success: bool):
+                entry = runner._session_status.get(session_key) if session_key else None
+                if not entry:
+                    return
+                if not success:
+                    entry["error_count"] = (entry.get("error_count") or 0) + 1
+                entry["current_tool"] = "thinking…"
+                entry["tool_started_at"] = _now_fn()
+
+            # Stream callback — forward worker events to client SSE and
+            # mirror tool_start/tool_end into _session_status so the
+            # Live Executions panel reflects live sandbox activity.
             async def _on_worker_stream(event):
                 etype = event.get("type")
-                if etype in ("tool_start", "tool_end"):
+                if etype == "tool_start":
+                    _status_on_tool_start(event.get("tool", ""))
+                    await send_event(event)
+                elif etype == "tool_end":
+                    _status_on_tool_end(bool(event.get("success", True)))
                     await send_event(event)
                 elif etype == "tool_progress":
                     await send_event({
@@ -4044,10 +4094,20 @@ async def _handle_chat(request: web.Request) -> web.StreamResponse:
                 except Exception as _bgate_exc:
                     logger.warning("budget gate skipped: %s", _bgate_exc)
 
-            worker_result = await worker_registry.dispatch_task(
-                target_worker, task_payload, timeout=600,
-                on_stream_event=_on_worker_stream,
-            )
+            try:
+                worker_result = await worker_registry.dispatch_task(
+                    target_worker, task_payload, timeout=600,
+                    on_stream_event=_on_worker_stream,
+                )
+            finally:
+                # Clear Live Executions entry whether the dispatch
+                # succeeded, errored, or raised — otherwise a crashed
+                # sandbox run would leave a ghost "thinking…" row.
+                if session_key and session_key in runner._session_status:
+                    try:
+                        del runner._session_status[session_key]
+                    except Exception:
+                        pass
             result = {
                 "final_response": worker_result.get("final_response", ""),
                 "api_calls": worker_result.get("api_calls", 0),
