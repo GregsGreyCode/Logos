@@ -1642,6 +1642,48 @@ class GatewayRunner:
             )),
         }
 
+        # Emit a dispatch row so platform messages (Discord/Telegram/
+        # WhatsApp/etc.) show up in the Events tab. The /chat path does
+        # this inline at http_api.py:3930; this mirrors it for the
+        # platform-driven code path. Best-effort — never blocks dispatch.
+        import json as _json
+        import time as _time
+        _dispatch_id = None
+        _dispatch_started = _time.time()
+        try:
+            from gateway.auth import db as _auth_db
+            _dispatch_id = _auth_db.create_dispatch(
+                task_id=task_payload["task_id"],
+                agent_id=getattr(agent, "id", "") or getattr(agent, "name", "") or "",
+                sandbox_name=worker_id or "",
+                model=getattr(worker_entry, "model", "") or "",
+                origin=f"platform_{platform_name}" if platform_name else "platform",
+                origin_detail=_json.dumps({
+                    "platform": platform_name,
+                    "user_id": user_id or "",
+                    "chat_id": getattr(source, "chat_id", "") or "",
+                }),
+                session_id=session_id or "",
+                user_id=user_id or "",
+            )
+        except Exception:
+            pass
+
+        def _finish_dispatch(status, err=None, usage=None):
+            if not _dispatch_id:
+                return
+            try:
+                from gateway.auth import db as _auth_db
+                _auth_db.complete_dispatch(
+                    _dispatch_id, status=status,
+                    elapsed_s=_time.time() - _dispatch_started,
+                    prompt_tokens=(usage or {}).get("prompt_tokens"),
+                    completion_tokens=(usage or {}).get("completion_tokens"),
+                    error=err,
+                )
+            except Exception:
+                pass
+
         try:
             result = await self.worker_registry.dispatch_task(
                 worker_id, task_payload,
@@ -1652,18 +1694,26 @@ class GatewayRunner:
                 on_stream_event=None,  # no progress forwarding in v1
             )
         except asyncio.TimeoutError:
+            _finish_dispatch("error", err="timeout")
             logger.warning("dispatch_platform_message: worker %s timed out", worker_id)
             return "⚠️ The agent took too long to respond. Please try again."
         except ConnectionError as exc:
+            _finish_dispatch("error", err=f"disconnected: {exc}")
             logger.info("dispatch_platform_message: worker %s disconnected: %s", worker_id, exc)
             return f"⚠️ {agent_name}'s sandbox disconnected mid-task. Please try again."
         except RuntimeError as exc:
-            # Busy-worker path — WorkerRegistry raises RuntimeError
+            _finish_dispatch("error", err=f"busy: {exc}")
             logger.info("dispatch_platform_message: worker %s busy: %s", worker_id, exc)
             return f"⚠️ {agent_name} is still working on another message. Please wait."
-        except Exception:
+        except Exception as exc:
+            _finish_dispatch("error", err=str(exc)[:500])
             logger.exception("dispatch_platform_message: dispatch_task failed")
             return "⚠️ The agent hit an unexpected error. Check the gateway logs."
+
+        _finish_dispatch(
+            (result or {}).get("status", "ok"),
+            usage=(result or {}).get("usage") or {},
+        )
 
         # ── 5. Return the adapter-friendly final response ────────────
         final = (result or {}).get("final_response") or ""
