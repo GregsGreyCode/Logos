@@ -557,6 +557,89 @@ def merge_presets_into_baseline(preset_names: List[str]) -> Dict[str, Any]:
     return merged
 
 
+def validate_preset_content(data: Dict[str, Any]) -> None:
+    """Raise PolicyMergeError if a preset dict is structurally invalid.
+
+    Guards the subset that matters for safe write + merge: requires
+    ``preset.name`` (non-empty, no path chars) and a ``network_policies``
+    mapping. Deeper schema checks (valid host globs, port types, L7
+    rule shapes) are left to OpenShell itself — it rejects bad
+    policies at ``policy set`` time with a clear error.
+    """
+    if not isinstance(data, dict):
+        raise PolicyMergeError("Preset must be a YAML mapping at the top level")
+    header = data.get("preset")
+    if not isinstance(header, dict):
+        raise PolicyMergeError("Preset must have a 'preset:' header section")
+    name = header.get("name")
+    if not isinstance(name, str) or not name.strip():
+        raise PolicyMergeError("preset.name is required and must be a non-empty string")
+    if "/" in name or "\\" in name or name.startswith("."):
+        raise PolicyMergeError(f"preset.name contains unsafe characters: {name!r}")
+    np = data.get("network_policies")
+    if np is not None and not isinstance(np, dict):
+        raise PolicyMergeError("network_policies must be a YAML mapping when present")
+
+
+def write_preset(name: str, yaml_text: str) -> Dict[str, Any]:
+    """Parse, validate, and write a preset YAML to disk.
+
+    ``name`` is the filename stem (so ``github`` writes to
+    ``presets/github.yaml``). It must match ``preset.name`` inside the
+    YAML to keep filename ↔ identity in sync. Returns the parsed dict
+    on success; raises ``PolicyMergeError`` or ``yaml.YAMLError`` on
+    failure, in which case the file on disk is not touched.
+    """
+    if not name or "/" in name or "\\" in name or name.startswith("."):
+        raise PolicyMergeError(f"Invalid preset filename: {name!r}")
+    try:
+        data = yaml.safe_load(yaml_text) or {}
+    except yaml.YAMLError as exc:
+        raise PolicyMergeError(f"YAML parse error: {exc}") from exc
+    validate_preset_content(data)
+    header_name = data["preset"]["name"]
+    if header_name != name:
+        raise PolicyMergeError(
+            f"preset.name ({header_name!r}) does not match filename ({name!r})"
+        )
+    _PRESETS_DIR.mkdir(parents=True, exist_ok=True)
+    path = _PRESETS_DIR / f"{name}.yaml"
+    path.write_text(yaml_text, encoding="utf-8")
+    return data
+
+
+def delete_preset(name: str) -> bool:
+    """Remove a preset file from disk. Returns True if it existed."""
+    if not name or "/" in name or "\\" in name or name.startswith("."):
+        raise PolicyMergeError(f"Invalid preset filename: {name!r}")
+    path = _PRESETS_DIR / f"{name}.yaml"
+    if not path.exists():
+        return False
+    path.unlink()
+    return True
+
+
+def get_agents_using_preset(name: str) -> List[str]:
+    """Return the ids of agents whose ``applied_presets`` contains ``name``.
+
+    Used by the Sandbox Policy editor to warn the admin how many live
+    agents will be affected by a save (hot-reload target set).
+    """
+    from gateway.auth import db as auth_db
+    agents = auth_db.list_agents() if hasattr(auth_db, "list_agents") else []
+    hits: List[str] = []
+    for agent in agents:
+        applied = agent.get("applied_presets") or []
+        if isinstance(applied, str):
+            try:
+                applied = json.loads(applied)
+            except Exception:
+                applied = []
+        if name in (applied or []):
+            hits.append(str(agent.get("id") or agent.get("name")))
+    return hits
+
+
 def compute_effective_policy(agent_id: str) -> Dict[str, Any]:
     """Return the merged baseline + applied presets for an agent.
 
