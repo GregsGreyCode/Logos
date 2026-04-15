@@ -10172,12 +10172,36 @@ network_policies:
       const existing = new Set(
         (this.namedAgents || []).map(a => (a.name || '').toLowerCase())
       );
-      const base = `${agent.name} copy`;
-      let candidate = base;
-      let n = 2;
-      while (existing.has(candidate.toLowerCase())) {
-        candidate = `${base} ${n}`;
-        n++;
+      // Default duplicate name: "<Source> II", then III, IV, …, XX.
+      // If the source already ends in a Roman numeral, promote it
+      // (Hermes II → Hermes III rather than Hermes II II). Case-insensitive
+      // collision check matches the auth.db UNIQUE index on agents.name.
+      // Falls back to " copy N" if we somehow blow past XX without finding
+      // a free slot — shouldn't happen in practice but keeps the flow
+      // unblocked instead of handing the user an undefined candidate.
+      const ROMAN = ['I','II','III','IV','V','VI','VII','VIII','IX','X',
+                     'XI','XII','XIII','XIV','XV','XVI','XVII','XVIII','XIX','XX'];
+      const toInt = (s) => { const i = ROMAN.indexOf(s); return i < 0 ? 0 : i + 1; };
+      // Split off trailing roman numeral, if any.
+      let base = agent.name;
+      let startAt = 2;
+      const m = agent.name.match(/^(.*?)\s+(I{1,3}|IV|V|VI{0,3}|IX|X|XI{0,3}|XIV|XV|XVI{0,3}|XIX|XX)$/);
+      if (m) {
+        base = m[1];
+        startAt = toInt(m[2]) + 1;  // promote next numeral
+      }
+      let candidate = null;
+      for (let i = startAt; i <= ROMAN.length; i++) {
+        const tryName = `${base} ${ROMAN[i - 1]}`;
+        if (!existing.has(tryName.toLowerCase())) { candidate = tryName; break; }
+      }
+      if (!candidate) {
+        let n = 2;
+        candidate = `${agent.name} copy`;
+        while (existing.has(candidate.toLowerCase())) {
+          candidate = `${agent.name} copy ${n}`;
+          n++;
+        }
       }
       // Parse toolsets from the JSON-string column. Tolerate malformed
       // values defensively — an unparseable toolsets field shouldn't
