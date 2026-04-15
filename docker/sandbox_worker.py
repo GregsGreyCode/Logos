@@ -71,7 +71,7 @@ import re
 import signal
 import sys
 import time
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 
 # ── stdout isolation ──────────────────────────────────────────────────────
@@ -436,33 +436,93 @@ def load_config() -> dict:
         if applied:
             logger.info("Applied %d service env var(s) from instance-config", applied)
 
-    # Layer 1 URL consent: write the website blocklist (if present) into
-    # ~/.hermes/config.yaml where hermes's tools/website_policy.py reads
-    # it. The dict shape is {enabled: bool, patterns: [...glob...]}; the
-    # policy module expects YAML at config.website_blocklist.{enabled,
-    # domains, shared_files} so we re-shape on write.
-    bl = cfg.get("website_blocklist")
-    if bl and isinstance(bl, dict):
-        try:
-            from pathlib import Path
+    # ~/.hermes/config.yaml — hermes reads several sections from here.
+    # We build the file from scratch each dispatch (it's a per-subprocess
+    # disposable, not a user file) so sections we write stay in sync
+    # with the instance-config. Sections currently written:
+    #
+    #   website_blocklist:  read by tools/website_policy.py for Layer 1
+    #       URL consent. Shape is {enabled, domains}.
+    #
+    #   mcp_servers:  read by tools/mcp_tool._load_mcp_config during
+    #       discover_mcp_tools(). Each entry has url + transport; the
+    #       URL targets the gateway's MCP proxy at host.openshell.
+    #       internal:8091/mcp/<name> so tool calls go gateway → 127.
+    #       0.0.1:<host_port> → container without the sandbox needing
+    #       direct access to the host's loopback.
+    #
+    # Minimal YAML formatting — the schemas are flat enough to hand-
+    # format, which avoids pulling pyyaml as a sandbox dep.
+    try:
+        from pathlib import Path
+        # Resolve config.yaml path the same way upstream hermes does via
+        # ``hermes_constants.get_hermes_home()``: honour ``HERMES_HOME``
+        # if set, else fall back to ``$HOME/.hermes``. The dispatch
+        # command in ``gateway/worker_registry.py`` sets HERMES_HOME=/
+        # tmp/hermes, which upstream's resolver treats as the home
+        # itself (not a parent) — so writing to $HOME/.hermes/config.
+        # yaml when HERMES_HOME is set creates a file the upstream
+        # ``hermes_cli.config.load_config()`` never reads, and
+        # ``discover_mcp_tools`` silently registers zero tools.
+        hermes_home_env = os.environ.get("HERMES_HOME")
+        if hermes_home_env:
+            cfg_dir = Path(hermes_home_env)
+        else:
             home = Path(os.environ.get("HOME") or "/tmp/hermes")
             cfg_dir = home / ".hermes"
-            cfg_dir.mkdir(parents=True, exist_ok=True)
-            cfg_path = cfg_dir / "config.yaml"
-            # Minimal YAML write — avoid pulling pyyaml as a sandbox dep.
-            # The schema is flat enough to hand-format reliably.
+        cfg_dir.mkdir(parents=True, exist_ok=True)
+        cfg_path = cfg_dir / "config.yaml"
+
+        _yaml_parts: List[str] = []
+
+        bl = cfg.get("website_blocklist")
+        if bl and isinstance(bl, dict):
             patterns = bl.get("patterns") or []
             enabled = bool(bl.get("enabled", True))
-            lines = ["website_blocklist:", f"  enabled: {str(enabled).lower()}", "  domains:"]
+            section = ["website_blocklist:", f"  enabled: {str(enabled).lower()}", "  domains:"]
             for p in patterns:
-                lines.append(f'    - "{p}"')
-            cfg_path.write_text("\n".join(lines) + "\n")
+                section.append(f'    - "{p}"')
+            _yaml_parts.append("\n".join(section))
             logger.info(
-                "Wrote website_blocklist to %s (%d patterns, enabled=%s)",
-                cfg_path, len(patterns), enabled,
+                "config.yaml: website_blocklist (%d patterns, enabled=%s)",
+                len(patterns), enabled,
             )
-        except Exception as exc:
-            logger.warning("Failed to write website_blocklist: %s", exc)
+
+        mcp_cfg = cfg.get("mcp_servers") or {}
+        if isinstance(mcp_cfg, dict) and mcp_cfg:
+            section = ["mcp_servers:"]
+            for _name, _srv in mcp_cfg.items():
+                if not isinstance(_srv, dict):
+                    continue
+                _url = _srv.get("url") or ""
+                _transport = _srv.get("transport") or "streamable-http"
+                if not _url:
+                    continue
+                section.append(f"  {_name}:")
+                section.append(f'    url: "{_url}"')
+                section.append(f'    transport: "{_transport}"')
+                _hdrs = _srv.get("headers") or {}
+                if isinstance(_hdrs, dict) and _hdrs:
+                    section.append("    headers:")
+                    for _h_k, _h_v in _hdrs.items():
+                        # Quote both key and value — header names like
+                        # X-Session-Id need quoting because the hyphen
+                        # trips the bare YAML key parser on some loaders.
+                        section.append(f'      "{_h_k}": "{_h_v}"')
+            _yaml_parts.append("\n".join(section))
+            logger.info(
+                "config.yaml: mcp_servers (%d): %s",
+                len(mcp_cfg), sorted(mcp_cfg.keys()),
+            )
+
+        if _yaml_parts:
+            cfg_path.write_text("\n\n".join(_yaml_parts) + "\n")
+        elif cfg_path.exists():
+            # Nothing to write — clear any stale file from a prior run
+            # so the MCP client doesn't connect to an undeployed server.
+            cfg_path.unlink()
+    except Exception as exc:
+        logger.warning("Failed to write ~/.hermes/config.yaml: %s", exc)
 
     return cfg
 

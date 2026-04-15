@@ -75,12 +75,12 @@ def _warn_deprecated_hermes_env_vars() -> None:
     """
     import logging as _logging
     _renamed = (
-        "HERMES_HOME", "HERMES_PORT", "HERMES_INSTANCE_NAME", "HERMES_RUNTIME_MODE",
+        "HERMES_HOME", "HERMES_PORT", "HERMES_INSTANCE_NAME",
         "HERMES_JWT_SECRET", "HERMES_INTERNAL_TOKEN", "HERMES_COOKIE_SECURE",
         "HERMES_ADMIN_EMAIL", "HERMES_ADMIN_PASSWORD", "HERMES_ADMIN_NAME",
         "HERMES_OAUTH_TRACE", "HERMES_CODEX_BASE_URL", "HERMES_PORTAL_BASE_URL",
         "HERMES_CA_BUNDLE", "HERMES_LOG_LEVEL", "HERMES_MCP_PORT",
-        "HERMES_K8S_NAMESPACE", "HERMES_IS_CANARY", "HERMES_WIPE_ON_START",
+        "HERMES_IS_CANARY", "HERMES_WIPE_ON_START",
         "HERMES_WORKSPACE_TTL_HOURS", "HERMES_WORKSPACE_DIR",
         "HERMES_WORKSPACE_CLEANUP_INTERVAL_HOURS", "HERMES_REPO_ROOTS",
         "HERMES_GATEWAY_MCP", "HERMES_GATEWAY_URL", "HERMES_QUIET",
@@ -222,18 +222,8 @@ if _cfg:
         _tz_cfg = _cfg.get("timezone", "")
         if _tz_cfg and isinstance(_tz_cfg, str) and "HERMES_TIMEZONE" not in os.environ:
             os.environ["HERMES_TIMEZONE"] = _tz_cfg.strip()
-        # Runtime mode: bridge config.yaml → HERMES_RUNTIME_MODE env var.
-        # Selects which executor backend (openshell, docker) handles agent
-        # instance spawning.
-        _runtime_cfg = _cfg.get("runtime", {})
-        if isinstance(_runtime_cfg, dict):
-            _runtime_mode = str(_runtime_cfg.get("mode", "")).strip()
-            if _runtime_mode and not (
-                os.environ.get("LOGOS_RUNTIME_MODE")
-                or os.environ.get("HERMES_RUNTIME_MODE")
-            ):
-                os.environ["LOGOS_RUNTIME_MODE"] = _runtime_mode
-                os.environ["HERMES_RUNTIME_MODE"] = _runtime_mode
+        # (Runtime mode bridge removed — OpenShell is the only supported
+        # runtime and there is nothing to select.)
         # Security settings
         _security_cfg = _cfg.get("security", {})
         if isinstance(_security_cfg, dict):
@@ -4525,6 +4515,24 @@ class GatewayRunner:
                 if _mcp_grants:
                     for _mcp_server in _mcp_grants:
                         _mcp_ts = f"mcp-{_mcp_server}"
+                        if _mcp_ts not in _effective_toolsets:
+                            _effective_toolsets.append(_mcp_ts)
+            except Exception:
+                pass
+
+            # Auto-inject docker-deployed MCP servers. User explicitly
+            # deployed them via the dashboard "+ Add server → Deploy as
+            # container" flow, which is as strong a consent signal as
+            # clicking Approve on a per-session grant. Skipping the
+            # session-grant dance makes dashboard-deployed tools
+            # immediately usable without the agent having to discover
+            # and request_mcp_access first — which doesn't work anyway
+            # if the agent's toolset config doesn't include mcp-gateway.
+            try:
+                from gateway.auth import db as _auth_db
+                for _srv in _auth_db.list_mcp_servers():
+                    if _srv.get("deploy_mode") == "docker" and _srv.get("status") == "running":
+                        _mcp_ts = f"mcp-{_srv['name']}"
                         if _mcp_ts not in _effective_toolsets:
                             _effective_toolsets.append(_mcp_ts)
             except Exception:

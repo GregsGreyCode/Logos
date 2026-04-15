@@ -4,6 +4,7 @@ Endpoints under /api/tools/ for listing, deploying, and managing MCP
 tool servers from the dashboard.
 """
 
+import asyncio
 import json
 import logging
 from aiohttp import web
@@ -37,15 +38,66 @@ async def handle_catalogue(request: web.Request) -> web.Response:
 # ── Server list (DB managed + config-file read-only) ─��───────────────────────
 
 async def handle_servers_list(request: web.Request) -> web.Response:
-    """GET /api/tools/servers — all managed + config-file servers."""
+    """GET /api/tools/servers — all managed + config-file servers.
+
+    DB-backed rows are augmented with live data the UI needs but the
+    DB schema doesn't store:
+      - ``tool_names``: looked up from the gateway's MCPGatewayService
+        catalogue so the expand drawer can show actual tool names
+        instead of just a count
+      - ``container_status`` / ``host_port``: for docker-deployed rows,
+        live docker daemon state so the row reflects reality when the
+        container has exited or been removed out-of-band
+    """
     db = _get_auth_db()
     db_servers = db.list_mcp_servers()
 
-    # Config-file servers from MCPGatewayService
-    config_servers = []
+    # Catalogue lookup by name — the service keeps a per-server
+    # ``_registered_tool_names`` list we can surface on DB rows that
+    # correspond to wired servers (docker-deploy + external). If the
+    # server isn't wired yet (e.g. gateway restarted), the lookup
+    # misses and the UI falls back to tool_count.
     svc = request.app.get("mcp_service")
+    catalogue_by_name = {}
     if svc:
         for entry in svc.get_catalogue():
+            catalogue_by_name[entry["name"]] = entry
+
+    # Enrich DB rows.
+    for srv in db_servers:
+        cat = catalogue_by_name.get(srv.get("name"))
+        if cat:
+            srv["tool_count"] = cat.get("tool_count", srv.get("tool_count", 0))
+            srv["tool_names"] = cat.get("tool_names", [])
+        else:
+            srv.setdefault("tool_names", [])
+
+        # Live docker state for docker-deployed rows. This is a best-
+        # effort probe — if docker is down or the container was removed
+        # out-of-band, we still return the DB row, just without the
+        # extras.
+        if srv.get("deploy_mode") == "docker":
+            try:
+                from gateway.mcp_docker_deploy import container_status
+                srv["container_status"] = container_status(srv["name"])
+            except Exception:
+                srv["container_status"] = "unknown"
+            url = srv.get("url") or ""
+            if url.startswith("http://127.0.0.1:"):
+                try:
+                    srv["host_port"] = int(url.split(":")[2].split("/")[0])
+                except Exception:
+                    pass
+
+    # Config-file servers from MCPGatewayService (anything in _servers_cfg
+    # that isn't DB-backed). This keeps config.yaml entries visible in the
+    # UI alongside deployed ones.
+    config_servers = []
+    db_names = {s["name"] for s in db_servers}
+    if svc:
+        for name, entry in catalogue_by_name.items():
+            if name in db_names:
+                continue
             config_servers.append({
                 "id": f"config_{entry['name']}",
                 "name": entry["name"],
@@ -55,28 +107,25 @@ async def handle_servers_list(request: web.Request) -> web.Response:
                 "url": entry.get("url", ""),
                 "description": entry.get("description") or entry.get("category", ""),
                 "tool_count": entry.get("tool_count", 0),
-                # Forward tool_names so the dashboard can show the actual
-                # tool list when the row is expanded, instead of the user
-                # seeing "2 tools" with no way to find out which two.
                 "tool_names": entry.get("tool_names", []),
                 "category": entry.get("category", "general"),
                 "readonly": True,
             })
 
-    # Merge: DB servers first, then config servers not already in DB
-    db_names = {s["name"] for s in db_servers}
-    merged = list(db_servers)
-    for cs in config_servers:
-        if cs["name"] not in db_names:
-            merged.append(cs)
-
-    return _json({"servers": merged})
+    # Merge: DB servers first (they're already enriched above), then
+    # config-file servers (already filtered to exclude DB dupes).
+    return _json({"servers": list(db_servers) + config_servers})
 
 
 # ── Create server ─────────────────��──────────────────────────────────────────
 
 async def handle_server_create(request: web.Request) -> web.Response:
-    """POST /api/tools/servers — create a new managed server (deploy or external)."""
+    """POST /api/tools/servers — create a new managed server (external only).
+
+    Container-based deploy is being rewritten (Docker-based) — until that
+    lands, ``deploy_mode`` must be ``external``. The previous k8s path has
+    been removed along with the rest of the legacy sandbox runtimes.
+    """
     db = _get_auth_db()
     try:
         body = await request.json()
@@ -91,42 +140,52 @@ async def handle_server_create(request: web.Request) -> web.Response:
         return _json({"error": f"Server '{name}' already exists"}, 409)
 
     deploy_mode = body.get("deploy_mode", "external")
+    if deploy_mode == "k8s":
+        return _json(
+            {"error": "k8s_removed",
+             "detail": "k8s sandbox deploy was removed; use deploy_mode=external "
+                       "(or deploy_mode=docker, coming next)"},
+            status=400,
+        )
+    if deploy_mode not in ("external", "docker"):
+        return _json({"error": f"unsupported deploy_mode: {deploy_mode}"}, 400)
+
     catalogue_id = body.get("catalogue_id")
     config_values = body.get("config", {})
     url = (body.get("url") or "").strip()
     token = (body.get("token") or "").strip()
 
-    # Look up catalogue entry for defaults
+    # Look up catalogue entry for defaults + docker deploy parameters
     cat_entry = None
     if catalogue_id:
         from gateway.mcp_catalogue import get_catalogue_entry
         cat_entry = get_catalogue_entry(catalogue_id)
 
+    # Validate docker deploy has an image to pull — either the user
+    # provided it in ``body.image`` or it came from the catalogue.
+    if deploy_mode == "docker":
+        image = (body.get("image") or (cat_entry or {}).get("image") or "").strip()
+        if not image:
+            return _json(
+                {"error": "missing_image",
+                 "detail": "deploy_mode=docker requires either body.image or a catalogue entry with 'image' set"},
+                400,
+            )
+
     server = db.create_mcp_server(
         name=name,
         catalogue_id=catalogue_id,
-        source="ui" if deploy_mode == "k8s" else "external",
+        source="external" if deploy_mode == "external" else "ui",
         deploy_mode=deploy_mode,
         url=url if deploy_mode == "external" else None,
         token=token if deploy_mode == "external" else None,
-        k8s_image=cat_entry["image"] if cat_entry else body.get("image"),
         config_json=json.dumps(config_values),
         tools_filter=json.dumps(body.get("tools_filter", {})),
         category=cat_entry["category"] if cat_entry else body.get("category", "general"),
         description=cat_entry["description"] if cat_entry else body.get("description"),
     )
 
-    # If k8s deploy, trigger it
-    if deploy_mode == "k8s":
-        try:
-            result = await _deploy_server(request.app, server, cat_entry, config_values)
-            server = db.update_mcp_server(server["id"], **result)
-        except Exception as exc:
-            logger.exception("Failed to deploy MCP server %s", name)
-            db.update_mcp_server(server["id"], status="error", last_error=str(exc))
-            server = db.get_mcp_server(server["id"])
-
-    # If external, auto-wire immediately
+    # External: just auto-wire to the user-provided URL.
     if deploy_mode == "external" and url:
         db.update_mcp_server(server["id"], status="external")
         server = db.get_mcp_server(server["id"])
@@ -135,32 +194,137 @@ async def handle_server_create(request: web.Request) -> web.Response:
         except Exception as exc:
             logger.warning("Auto-wire failed for external server %s: %s", name, exc)
 
+    # Docker: pull the image, start the container, wait for it to be
+    # ready to serve HTTP, then auto-wire the local URL the
+    # ``docker run`` assigned. Failure at any step flips the row to
+    # status='error' so the UI surfaces it; the row still exists so
+    # the user can retry via the restart button without recreating.
+    #
+    # The readiness-wait matters: before it, auto-wire would fire ~a
+    # second after ``docker run`` returns, and the MCP server inside
+    # the container often hadn't started listening yet. The MCP
+    # client's initialize handshake failed in a TaskGroup that
+    # swallowed the real sub-exception, so logs only showed
+    # "unhandled errors in a TaskGroup (1 sub-exception)". The tool
+    # never got registered, the agent had nothing to call, and the
+    # LLM hallucinated a response.
+    if deploy_mode == "docker":
+        from gateway.mcp_docker_deploy import deploy_container
+        try:
+            port        = int((cat_entry or {}).get("port") or body.get("port") or 8000)
+            mcp_path    = (cat_entry or {}).get("mcp_path") or body.get("mcp_path") or "/mcp"
+            env_vars    = dict(config_values)
+            result = await asyncio.to_thread(
+                deploy_container,
+                name=name, image=image, port=port,
+                env_vars=env_vars, mcp_path=mcp_path,
+            )
+            db.update_mcp_server(
+                server["id"],
+                status="running",
+                url=result["url"],
+                last_error=None,
+            )
+            server = db.get_mcp_server(server["id"])
+
+            # Poll the MCP endpoint until it responds (max ~20s). Any
+            # 2xx / 4xx response proves the TCP listener is up and the
+            # aiohttp app is serving; exact response body doesn't
+            # matter for readiness.
+            import aiohttp
+            ready = False
+            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=2)) as sess:
+                for _ in range(20):
+                    try:
+                        async with sess.post(result["url"], json={"jsonrpc": "2.0", "id": 0, "method": "ping"}) as r:
+                            if r.status < 500:
+                                ready = True
+                                break
+                    except Exception:
+                        pass
+                    await asyncio.sleep(1.0)
+            if not ready:
+                logger.warning("MCP container %s didn't become ready in 20s; auto-wire will try anyway", name)
+
+            # Now try auto-wire. If it still fails, log the full chain
+            # (including TaskGroup sub-exceptions) so the root cause
+            # reaches the log instead of a generic wrapper message.
+            try:
+                await _auto_wire_server(request.app, name, result["url"], token="")
+            except BaseException as exc:
+                _parts = [f"{type(exc).__name__}: {exc}"]
+                for sub in getattr(exc, "exceptions", ()) or ():
+                    _parts.append(f"  └─ {type(sub).__name__}: {sub}")
+                logger.warning("Auto-wire failed for docker server %s: %s", name, "; ".join(_parts))
+                db.update_mcp_server(
+                    server["id"], status="error", last_error="; ".join(_parts)[:300],
+                )
+                server = db.get_mcp_server(server["id"])
+
+            # Push the new MCP toolset (mcp-<name>) to every running
+            # sandbox so agents can see it on their next dispatch
+            # without a manual respawn. Auto-granted servers (default
+            # for docker deploys) get merged into each sandbox's
+            # toolsets list by _auto_granted_mcp_toolsets() inside
+            # refresh_instance_config. Best-effort — a refresh failure
+            # shouldn't tank the create response, the server is
+            # already live for fresh spawns.
+            if server and server.get("auto_grant"):
+                _executor = request.app.get("executor")
+                if _executor and hasattr(_executor, "refresh_all_instance_configs"):
+                    try:
+                        pushed = await asyncio.to_thread(
+                            _executor.refresh_all_instance_configs
+                        )
+                        logger.info(
+                            "mcp deploy %s: refreshed %d sandbox(es) with new toolset",
+                            name, pushed,
+                        )
+                    except Exception as exc:
+                        logger.warning(
+                            "mcp deploy %s: sandbox refresh failed: %s",
+                            name, exc,
+                        )
+        except Exception as exc:
+            logger.exception("Failed to deploy MCP container %s", name)
+            db.update_mcp_server(
+                server["id"], status="error", last_error=str(exc)[:300],
+            )
+            server = db.get_mcp_server(server["id"])
+
     return _json({"server": server}, 201)
 
 
 # ── Delete server ──────��─────────────────────────────────────────────────────
 
 async def handle_server_delete(request: web.Request) -> web.Response:
-    """DELETE /api/tools/servers/{id} — undeploy + delete."""
+    """DELETE /api/tools/servers/{id} — unwire + delete.
+
+    For docker-deployed servers the container is also stopped and
+    removed so ``docker ps`` doesn't keep the now-orphaned container
+    running. Errors during container removal are logged and the
+    gateway DB row is still deleted — the user expects a clean slate
+    after they click delete.
+    """
     db = _get_auth_db()
     server_id = request.match_info["id"]
     server = db.get_mcp_server(server_id)
     if not server:
         return _json({"error": "not_found"}, 404)
 
-    # Undeploy from k8s if applicable
-    if server["deploy_mode"] == "k8s" and server["status"] not in ("pending", "error"):
-        try:
-            from gateway.mcp_deploy import undeploy_mcp_server
-            undeploy_mcp_server(server["name"], namespace=server.get("k8s_namespace") or "hermes")
-        except Exception as exc:
-            logger.warning("Failed to undeploy %s: %s", server["name"], exc)
-
     # Un-wire from gateway
     try:
         await _auto_unwire_server(request.app, server["name"])
     except Exception as exc:
         logger.warning("Auto-unwire failed for %s: %s", server["name"], exc)
+
+    # Stop + remove the Docker container for docker-deployed servers.
+    if server.get("deploy_mode") == "docker":
+        from gateway.mcp_docker_deploy import undeploy_container
+        try:
+            await asyncio.to_thread(undeploy_container, server["name"])
+        except Exception as exc:
+            logger.warning("Undeploy container %s failed: %s", server["name"], exc)
 
     db.delete_mcp_server(server_id)
     return _json({"ok": True})
@@ -182,11 +346,34 @@ async def handle_server_update(request: web.Request) -> web.Response:
         return _json({"error": "invalid_json"}, 400)
 
     updates = {}
-    for field in ("url", "token", "description", "category", "enabled", "auto_wire", "config_json", "tools_filter"):
+    for field in ("url", "token", "description", "category", "enabled",
+                  "auto_wire", "auto_grant", "config_json", "tools_filter"):
         if field in body:
             updates[field] = body[field]
 
+    # Normalize auto_grant/auto_wire/enabled booleans to SQLite ints —
+    # the UI sends 0/1 but some callers may send true/false.
+    for _bf in ("auto_grant", "auto_wire", "enabled"):
+        if _bf in updates:
+            updates[_bf] = 1 if updates[_bf] else 0
+
     server = db.update_mcp_server(server_id, **updates)
+
+    # Toggling auto_grant changes which toolsets every sandbox sees,
+    # so push the updated config to running sandboxes immediately.
+    # Without this, flipping the switch only takes effect after the
+    # next respawn or some other refresh trigger — which is surprising
+    # UX for a toggle the user just clicked.
+    if "auto_grant" in updates:
+        _executor = request.app.get("executor")
+        if _executor and hasattr(_executor, "refresh_all_instance_configs"):
+            try:
+                await asyncio.to_thread(_executor.refresh_all_instance_configs)
+            except Exception as exc:
+                logger.warning(
+                    "auto_grant toggle: refresh_all_instance_configs failed: %s", exc,
+                )
+
     return _json({"server": server})
 
 
@@ -216,6 +403,36 @@ async def handle_server_restart(request: web.Request) -> web.Response:
 
 # ── Health check ──────────���─────────────────────────��────────────────────────
 
+async def handle_server_logs(request: web.Request) -> web.Response:
+    """GET /api/tools/servers/{id}/logs — last N lines of container logs.
+
+    Only meaningful for docker-deployed rows. External and config-
+    file servers return 404 since there's no container to inspect.
+    """
+    db = _get_auth_db()
+    server_id = request.match_info["id"]
+    server = db.get_mcp_server(server_id)
+    if not server:
+        return _json({"error": "not_found"}, 404)
+    if server.get("deploy_mode") != "docker":
+        return _json({"error": "not_applicable", "detail": "logs only available for docker-deployed servers"}, 400)
+
+    try:
+        tail = int(request.query.get("tail", "200"))
+    except ValueError:
+        tail = 200
+
+    from gateway.mcp_docker_deploy import container_logs, container_status
+    try:
+        logs = await asyncio.to_thread(container_logs, server["name"], tail)
+        status = await asyncio.to_thread(container_status, server["name"])
+    except Exception as exc:
+        logs = f"(logs unavailable: {exc})"
+        status = "unknown"
+
+    return _json({"logs": logs, "container_status": status})
+
+
 async def handle_server_health(request: web.Request) -> web.Response:
     """GET /api/tools/servers/{id}/health — live health check."""
     db = _get_auth_db()
@@ -224,11 +441,6 @@ async def handle_server_health(request: web.Request) -> web.Response:
     if not server:
         return _json({"error": "not_found"}, 404)
 
-    if server["deploy_mode"] == "k8s":
-        from gateway.mcp_deploy import get_mcp_deploy_status
-        status = get_mcp_deploy_status(server["name"], namespace=server.get("k8s_namespace") or "hermes")
-        return _json(status)
-
     # External: check if MCP gateway has it connected
     svc = request.app.get("mcp_service")
     if svc and svc.is_connected(server["name"]):
@@ -236,60 +448,7 @@ async def handle_server_health(request: web.Request) -> web.Response:
     return _json({"status": "disconnected", "connected": False})
 
 
-# ── Internal: deploy + wire helpers ───────────���──────────────────────────────
-
-async def _deploy_server(app, server: dict, cat_entry: dict | None, config_values: dict) -> dict:
-    """Deploy an MCP server to k8s and return DB update fields."""
-    import asyncio
-    from gateway.mcp_deploy import deploy_mcp_server
-
-    image = server.get("k8s_image") or (cat_entry or {}).get("image", "")
-    port = (cat_entry or {}).get("port", 8000)
-    mcp_path = (cat_entry or {}).get("mcp_path", "/mcp")
-    resources = (cat_entry or {}).get("resources")
-
-    # Split config into secret vs plain env vars
-    secret_keys = set()
-    if cat_entry:
-        for field in cat_entry.get("config_schema", []):
-            if field.get("type") == "secret":
-                secret_keys.add(field["key"])
-
-    env_vars = {}
-    secret_vars = {}
-    # Always set transport to streamable-http for k8s deployments
-    env_vars["MCP_TRANSPORT"] = "streamable-http"
-    for k, v in config_values.items():
-        if k in secret_keys:
-            secret_vars[k] = str(v)
-        else:
-            env_vars[k] = str(v)
-
-    loop = asyncio.get_event_loop()
-    result = await loop.run_in_executor(None, lambda: deploy_mcp_server(
-        name=server["name"],
-        image=image,
-        port=port,
-        env_vars=env_vars,
-        secret_vars=secret_vars,
-        resources=resources,
-        mcp_path=mcp_path,
-    ))
-
-    # Auto-wire after deploy
-    url = result["url"]
-    token = config_values.get("MCP_CLIENT_TOKEN", "")
-    try:
-        await _auto_wire_server(app, server["name"], url, token)
-    except Exception as exc:
-        logger.warning("Auto-wire after deploy failed for %s (server may still be starting): %s", server["name"], exc)
-
-    return {
-        "url": url,
-        "k8s_namespace": result["namespace"],
-        "status": "deploying",
-    }
-
+# ── Internal: wire helpers ────────────────────────────���──────────────────────
 
 async def _auto_wire_server(app, name: str, url: str, token: str = ""):
     """Wire a server into the running MCPGatewayService."""
@@ -314,7 +473,6 @@ async def _auto_wire_server(app, name: str, url: str, token: str = ""):
     try:
         await svc.restart_server(name)
     except Exception:
-        # Server might not be ready yet (k8s pod still starting)
         logger.debug("restart_server failed for %s (may still be starting)", name)
 
 
@@ -345,3 +503,4 @@ def register_routes(app: web.Application):
     app.router.add_delete("/api/tools/servers/{id}", handle_server_delete)
     app.router.add_post("/api/tools/servers/{id}/restart", handle_server_restart)
     app.router.add_get("/api/tools/servers/{id}/health", handle_server_health)
+    app.router.add_get("/api/tools/servers/{id}/logs", handle_server_logs)

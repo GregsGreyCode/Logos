@@ -86,14 +86,11 @@ Open your browser to **http://localhost:8080**. The web dashboard lets you:
                          (isolated)  (isolated)
 ```
 
-The gateway chooses an execution backend based on your environment:
-
-| Backend | When it's used |
-|---------|---------------|
-| **Kubernetes** | Default when `HERMES_RUNTIME_MODE=kubernetes` (k8s deployments) |
-| **Docker** | Container isolation on servers with Docker |
-| **OpenShell** | Docker + egress policy layer (Linux/macOS) |
-| **Local process** | Fallback for desktop / development / Windows |
+The gateway runs every agent inside an **OpenShell sandbox** — the only supported executor.
+OpenShell layers Docker container isolation + a per-binary egress policy (Linux/macOS) and
+routes inference through a Privacy Router so agents never see API keys. The `k8s/`
+manifests still exist, but they deploy the gateway itself; agents inside that gateway still
+run under OpenShell on the host/node.
 
 ## 4. Try Key Features
 
