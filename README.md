@@ -107,24 +107,23 @@ Test agentic combinations, then modify, extend, and break the platform and its a
 ## 🚀 What Logos does
 
 - **Runs agents** — Hermes is the current runtime. The runtime layer is pluggable; additional runtimes can register as alternative sandbox worker images.
-- **Records everything** — every run captures its full STAMP: agent, model, soul, tools, policy, tool sequence, approval events, token counts, and outcome
-- **Enforces policy** — workspace isolation, command approval, filesystem scoping, OpenShell egress policy, built-in policy evals
+- **Records every run** — agent, model, soul, tool sequence, approvals, api call count, and outcome land in the `agent_runs` table; token and USD-cost totals are joined in from `cost_log`/`dispatches` at read time (`GET /api/runs/{id}` returns the unified "STAMP" view).
+- **Enforces policy** — workspace scoping (realpath-resolved), OpenShell egress policy, Landlock filesystem isolation, dangerous-command gate with regex + Tirith scan. (Dispatch-time ActionPolicy dimensions for write/exec/network/secret are not currently wired; see `gateway/auth/policy.py` for the live set.)
 - **Reaches you anywhere** — Telegram and a built-in web dashboard, all from a single gateway process
 - **Web dashboard** — full chat UI at `http://localhost:8091`; real-time streaming, per-message stats, voice input, metrics, multiple named agents, world view with live agent sprites, live execution panel
 - **Persistent history** — searchable conversation history in SQLite with full-text search across all past conversations
-- **Voice input** — speak via Telegram or the dashboard; faster-whisper transcribes locally by default
+- **Voice input** — speak via Telegram or the dashboard; faster-whisper transcribes locally when the package is installed (falls back to Groq / OpenAI).
 - **Image support** — send images directly; the vision pipeline enriches context before passing it to the model
 - **Live execution view** — watch in real time which tools the agent calls, its chain of reasoning, and elapsed time per step
-- **AI routing layer** — routes requests across machines based on model class, availability, and per-user priority profiles
-- **Parallel sub-agents** — spawn sub-agents via delegation or Mixture-of-Agents, each with independent tool policies and model selection
-- **MCP gateway** — centralized Model Context Protocol server management; MCP servers boot once in the gateway, agents request access dynamically with per-category approval tiers
-- **Memory system** — agent-curated persistent memory, FTS5 session search with LLM summarisation, autonomous skill creation
-- **Scheduling** — cron jobs with Telegram delivery
+- **AI routing layer** — provisions one OpenShell gateway per `(provider, model)` route on the local host, picked per dispatch based on readiness. Today every route is a local OpenShell gateway on its own port; cross-machine / multi-host routing is planned.
+- **Parallel sub-agents** — a parent agent can spawn sub-agents via the `delegate` tool, each with independent toolsets and model selection. (No separate "Mixture-of-Agents" mechanism — that's the same delegation flow.)
+- **MCP gateway** — centralized Model Context Protocol server management; MCP servers boot once in the gateway, agents request access dynamically with per-category approval tiers (`auto_approve` / `user_approve` / `admin_approve` / `deny`).
+- **Memory system** — agent-curated persistent memory, FTS5 full-text session search with LLM summarisation. (Skills under `skills/` are human-authored prompts, not auto-generated.)
+- **Scheduling** — cron jobs with delivery to Telegram, Discord, Slack, WhatsApp adapters.
 - **Workflow engine** — JSON-defined task graphs with DAG execution, parallel steps, conditional branching, and human approval gates
-- **Self-improvement** — the Evolution system lets agents propose code improvements on a schedule; you review, question, or accept each proposal
 - **IDE integration** — ACP protocol for VS Code, Zed, and JetBrains
 - **Model support** — Anthropic, OpenAI, OpenRouter (200+ models), Nous Portal, or any OpenAI-compatible endpoint
-- **Cancel mid-response** — abort any in-flight request without waiting for it to finish
+- **Cancel mid-response** — `POST /chat/{task_id}/cancel` SIGTERMs the in-flight sandbox exec subprocess; a "Stop" button in the chat header fires it for you.
 
 ---
 
@@ -142,13 +141,13 @@ Every run in Logos is defined by five dimensions:
 
 Compose these five and you have an AI agent. Change any one dimension and you have a different seeded agent. Every STAMP is recorded in full — compare runs across configurations, replay them exactly, or clone them into new sessions.
 
-The soul lives in `SOUL.md`, editable without a restart. Tools are scoped per agent and per session. The agent adapter is switchable. The model switches without code changes. Policy is enforced at the workspace, OpenShell sandbox, and approval layers — not just in the prompt.
+The soul lives in `SOUL.md` and is re-read from disk on every message (no cache, no restart required). Tools are scoped per agent and per session. The agent adapter is switchable. The model switches without code changes. Policy enforcement today happens at three layers: workspace scoping in the agent loop, OpenShell kernel-level sandbox isolation + egress allowlist, and a dangerous-command regex + Tirith gate with approval prompts. Per-user `ActionPolicy` dimensions that tighten `filesystem_policy` and `provider_policy` compose with those layers; the remaining dimensions in the schema are reserved for a future unified dispatch-time gate.
 
 ---
 
 ## 🔒 Security & deployment model
 
-**Understanding the isolation boundary matters before you choose how to run Logos.** Agents can read files, execute code, and make network requests — what they _cannot_ reach depends entirely on which runtime mode you pick.
+**Understanding the isolation boundary matters before you choose how to run Logos.** Agents can read files, execute code, and make network requests — what they _cannot_ reach is enforced by OpenShell (the sandbox runtime Logos depends on). Logos itself is a control plane; the isolation primitives described below — Landlock filesystem policy, per-binary egress allowlists, the credential-stripping Privacy Router — are provided by OpenShell and Logos composes with them. Replace OpenShell with a weaker sandbox and most of this section doesn't apply.
 
 ### Runtime modes at a glance
 
@@ -328,9 +327,9 @@ Logos is currently unsigned. Windows SmartScreen may show **"Windows protected y
 On first run, the setup wizard at `/setup` walks you through:
 
 1. **Model provider** — local inference (Ollama or LM Studio), or a cloud provider (Anthropic, OpenAI, OpenRouter)
-2. **Inference servers** — Logos scans your local network automatically for Ollama / LM Studio endpoints
-3. **Benchmarking** — quick TTFT + tok/s + capability evals on candidate models, scoring them so you can pick the best fit for your hardware
-4. **Runtime mode** — OpenShell (preferred), Docker, or local
+2. **Inference servers** — Logos scans your local network automatically for Ollama / LM Studio endpoints via `GET /api/setup/scan` (ports 11434, 1234, 8080)
+3. **Benchmarking** — TTFT + tok/s + 6 capability evals (instruction following, 2-part reasoning, strict JSON, tool selection, nested JSON, multi-step reasoning), plus 3 hard-tier evals if a model passes ≥5/6 standard evals
+4. **Sandbox runtime** — OpenShell is the only supported runtime. The CLI setup also asks about a `terminal` backend (local / SSH / Daytona / Singularity) — that's where shell commands *executed by the agent's terminal tool* run, not where the agent itself is sandboxed.
 5. **Soul + first agent** — pick a starting persona; you can edit it later
 6. **Telegram (optional)** — connect a bot token if you want to chat from your phone
 
@@ -458,24 +457,11 @@ Every log line includes a `[session_id]` field set via a `contextvars.ContextVar
 
 `GET /healthz` returns per-platform success and error counters (`platform_stats`), useful for spotting silent adapter failures across Telegram, Discord, Slack, and other connected platforms.
 
-`GET /api/runs` and the **Settings → Runs** view in the dashboard expose the per-run STAMP records — model, soul, tool sequence, token counts, outcome.
+`GET /api/runs` (and the `Activity → Runs` tab in the dashboard) lists STAMP records. `GET /api/runs/{id}` returns the full enrichment — `agent_runs` row plus `dispatches` chain, `cost_log` entries, and `approval_requests` joined on `session_id`. Open the drawer on a row to see model, soul, tool sequence, token totals, USD cost, and approval history.
 
 <!-- screenshot: observability-run-detail — a single STAMP run detail view with the
      tool trace, token counts, outcome; pair with a sandboxes-table shot showing
      the live Phase / Uptime columns. -->
-
----
-
-## 🧠 Evolution — agent self-improvement
-
-The **Evolution** view (under the Settings tab) gives agents a structured channel to propose improvements to the platform itself, on a schedule you control.
-
-1. **Agents analyse your codebase** on the configured interval. Each agent reads the repository, looks for bugs and complexity hotspots, and drafts a concrete improvement.
-2. **A proposal is submitted** — title, summary, a unified diff, and the list of affected files — and appears in the Evolution view for your review.
-3. **You decide:** Accept, Decline, or Ask a question back to the agent.
-4. **Optionally consult a frontier model** — ask Claude or GPT-4o to review the proposal before you decide.
-
-Each Logos deployment works against **your own fork** of the repository. Fork the canonical repo, configure the fork URL in Evolution Settings, and the agent reads from it and opens PRs against it.
 
 ---
 
