@@ -4520,6 +4520,24 @@ class GatewayRunner:
             except Exception:
                 pass
 
+            # Auto-inject docker-deployed MCP servers. User explicitly
+            # deployed them via the dashboard "+ Add server → Deploy as
+            # container" flow, which is as strong a consent signal as
+            # clicking Approve on a per-session grant. Skipping the
+            # session-grant dance makes dashboard-deployed tools
+            # immediately usable without the agent having to discover
+            # and request_mcp_access first — which doesn't work anyway
+            # if the agent's toolset config doesn't include mcp-gateway.
+            try:
+                from gateway.auth import db as _auth_db
+                for _srv in _auth_db.list_mcp_servers():
+                    if _srv.get("deploy_mode") == "docker" and _srv.get("status") == "running":
+                        _mcp_ts = f"mcp-{_srv['name']}"
+                        if _mcp_ts not in _effective_toolsets:
+                            _effective_toolsets.append(_mcp_ts)
+            except Exception:
+                pass
+
             _runtime_id = self._resolve_runtime(session_id)
 
             if _runtime_id == "claude-direct":
