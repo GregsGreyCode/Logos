@@ -4,6 +4,17 @@ A snapshot of pending work captured during the long debug session of
 2026-04-09 / 04-10. Written so we don't lose context if a session
 crashes again.
 
+## Pending — sandbox image hygiene
+
+### Real slim sandbox image (replace the orphan `Dockerfile.hermes-sandbox`)
+Background: on 2026-04-15 we discovered `hermes-sandbox:m12` was being built from `docker/Dockerfile.hermes-sandbox` (a 50-line Ubuntu+aiohttp image leftover from pre-M11 "Plan A"). That image has **no `run_agent` module**, so every sandbox provisioned from it after commit `5a393bac` died with `ModuleNotFoundError: No module named 'run_agent'` the moment the M11 worker tried `from run_agent import AIAgent`. Fixed by rebuilding `hermes-sandbox:m12` from `Dockerfile.hermes-upstream` (inherits the 7.5 GB upstream hermes image).
+
+The real follow-up — genuinely slim sandbox image:
+- **Audit `/opt/hermes`** in the upstream image: most of the 7.5 GB is browser + model utilities, not `run_agent`. Carve out a minimal hermes-agent install (Python package + required deps only) and publish it as a pre-built image to ghcr.io.
+- **Migrate in-sandbox browser tools to MCP** (`@playwright/mcp` is the obvious candidate). That lets us drop chromium + playwright + agent-browser (~250-300 MB + the staging gymnastics in `Dockerfile.hermes-upstream:39-70`) entirely. Blocker: `browser_vision`, `browser_snapshot` etc. need to map cleanly onto the MCP surface, including `sandbox_worker.py`'s untrusted-content-delimiters patch (`:2222`).
+- **Delete the orphan `Dockerfile.hermes-sandbox`** once the above lands so there's only one sandbox Dockerfile in the tree — no more accidental tag clobber via fresh-install.
+- Target size: ~1-2 GB so fresh-install pulls in minutes instead of requiring a multi-GB local build.
+
 ## Pending — infra regression
 
 ### #24 Sandbox worker registration silently fails over CONNECT tunnel — REGRESSION
