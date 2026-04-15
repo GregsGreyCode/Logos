@@ -373,44 +373,187 @@ BUILTIN_CATALOGUE: Dict[str, Dict[str, Any]] = {
 
 
 def get_catalogue(remote_url: Optional[str] = None) -> List[Dict[str, Any]]:
-    """Return the merged catalogue (built-in + remote if configured).
+    """Return the merged catalogue (built-in + legacy remote URL).
 
-    Each entry includes the catalogue_id (dict key) for reference.
+    Kept for back-compat with callers that only know about the single
+    ``mcp_catalogue_url`` flag. Prefer ``get_catalogue_merged`` for new
+    code — it takes a list of source dicts and supports Docker Hub
+    namespaces.
     """
-    entries = []
-    for cid, entry in BUILTIN_CATALOGUE.items():
-        entries.append({"catalogue_id": cid, **entry})
-
+    sources: List[Dict[str, Any]] = []
     if remote_url:
-        try:
-            remote = _fetch_remote_catalogue(remote_url)
-            # Remote entries use their own IDs; skip duplicates
-            known_ids = {e["catalogue_id"] for e in entries}
-            for re_entry in remote:
-                if re_entry.get("catalogue_id") not in known_ids:
-                    entries.append(re_entry)
-        except Exception as exc:
-            logger.warning("Failed to fetch remote MCP catalogue from %s: %s", remote_url, exc)
-
-    return entries
+        sources.append({"type": "http_json", "url": remote_url, "enabled": True})
+    return get_catalogue_merged(sources)
 
 
 def get_catalogue_entry(catalogue_id: str) -> Optional[Dict[str, Any]]:
     """Look up a single catalogue entry by ID."""
     entry = BUILTIN_CATALOGUE.get(catalogue_id)
     if entry:
-        return {"catalogue_id": catalogue_id, **entry}
+        return {"catalogue_id": catalogue_id, **entry, "source": "builtin"}
     return None
 
 
-def _fetch_remote_catalogue(url: str) -> List[Dict[str, Any]]:
-    """Fetch and parse a remote catalogue JSON."""
+# ── Pluggable sources ───────────────────────────────────────────────────────
+#
+# A source is a small config dict:
+#   {"type": "builtin"}
+#   {"type": "http_json", "url": "https://example.com/catalogue.json"}
+#   {"type": "docker_hub_namespace", "namespace": "mcp"}
+#
+# Each fetcher returns a list of catalogue entries (same shape as
+# BUILTIN_CATALOGUE values, with ``catalogue_id`` + ``source`` fields
+# added). Failures are logged and treated as empty — one bad source
+# doesn't break the browser.
+#
+# Caching: a tiny in-process dict keyed on ``(type, url/namespace)`` with
+# a 6-hour TTL. No thread lock — occasional duplicate fetches on cache
+# miss are harmless.
+
+import time
+
+_CACHE_TTL_SECONDS = 6 * 3600
+_cache: Dict[str, Dict[str, Any]] = {}  # key -> {"ts": float, "entries": [...]}
+
+
+def _cache_get(key: str) -> Optional[List[Dict[str, Any]]]:
+    hit = _cache.get(key)
+    if not hit:
+        return None
+    if time.time() - hit["ts"] > _CACHE_TTL_SECONDS:
+        return None
+    return hit["entries"]
+
+
+def _cache_put(key: str, entries: List[Dict[str, Any]]) -> None:
+    _cache[key] = {"ts": time.time(), "entries": entries}
+
+
+def clear_catalogue_cache() -> None:
+    """Drop all cached remote-source results. Next fetch will refresh."""
+    _cache.clear()
+
+
+def get_catalogue_merged(sources: Optional[List[Dict[str, Any]]]) -> List[Dict[str, Any]]:
+    """Return a merged catalogue across all enabled sources.
+
+    Built-in entries always come first. Remote entries are deduped by
+    ``catalogue_id`` — the first source wins for a given ID, so user-
+    configured sources can't silently shadow a builtin.
+
+    Each returned entry has a ``source`` field naming the source type
+    (``builtin``, ``http_json``, ``docker_hub_namespace``) so the UI
+    can badge or filter them.
+    """
+    entries: List[Dict[str, Any]] = []
+    known_ids: set = set()
+
+    for cid, entry in BUILTIN_CATALOGUE.items():
+        entries.append({"catalogue_id": cid, "source": "builtin", **entry})
+        known_ids.add(cid)
+
+    for src in (sources or []):
+        if not src.get("enabled", True):
+            continue
+        src_type = src.get("type")
+        try:
+            if src_type == "http_json":
+                fetched = _fetch_http_json(src.get("url", ""))
+            elif src_type == "docker_hub_namespace":
+                fetched = _fetch_docker_hub_namespace(src.get("namespace", ""))
+            elif src_type == "builtin":
+                continue  # already added
+            else:
+                logger.warning("Unknown catalogue source type: %r", src_type)
+                continue
+        except Exception as exc:
+            logger.warning("Catalogue source %r failed: %s", src, exc)
+            continue
+
+        for e in fetched:
+            cid = e.get("catalogue_id")
+            if not cid or cid in known_ids:
+                continue
+            e.setdefault("source", src_type)
+            entries.append(e)
+            known_ids.add(cid)
+
+    return entries
+
+
+def _fetch_http_json(url: str) -> List[Dict[str, Any]]:
+    """Fetch a JSON catalogue. Cached for 6 h on success."""
+    if not url:
+        return []
+    cache_key = f"http_json::{url}"
+    cached = _cache_get(cache_key)
+    if cached is not None:
+        return cached
     import httpx
     resp = httpx.get(url, timeout=10, follow_redirects=True)
     resp.raise_for_status()
     data = resp.json()
     if isinstance(data, list):
-        return data
-    if isinstance(data, dict) and "servers" in data:
-        return data["servers"]
-    return []
+        entries = data
+    elif isinstance(data, dict) and "servers" in data:
+        entries = data["servers"]
+    else:
+        entries = []
+    _cache_put(cache_key, entries)
+    return entries
+
+
+def _fetch_docker_hub_namespace(namespace: str) -> List[Dict[str, Any]]:
+    """List public repos in a Docker Hub namespace as catalogue entries.
+
+    Hits ``hub.docker.com/v2/repositories/<namespace>/?page_size=100``
+    unauthenticated. Each repo becomes a catalogue entry with a
+    best-effort image ref of ``<namespace>/<name>:latest`` — users can
+    override the tag when deploying. Description comes from the repo's
+    ``short_description``; category is always ``docker-hub``.
+
+    Cached for 6 h on success. On failure, returns []; the UI still
+    renders builtin + other sources.
+    """
+    if not namespace:
+        return []
+    cache_key = f"docker_hub::{namespace}"
+    cached = _cache_get(cache_key)
+    if cached is not None:
+        return cached
+
+    import httpx
+    url = f"https://hub.docker.com/v2/repositories/{namespace}/?page_size=100"
+    resp = httpx.get(url, timeout=10, follow_redirects=True)
+    resp.raise_for_status()
+    data = resp.json() or {}
+    repos = data.get("results", []) or []
+
+    entries: List[Dict[str, Any]] = []
+    for repo in repos:
+        name = repo.get("name")
+        if not name:
+            continue
+        entries.append({
+            "catalogue_id": f"dockerhub-{namespace}-{name}",
+            "name": name,
+            "description": (repo.get("short_description") or "").strip() or f"Docker Hub: {namespace}/{name}",
+            "category": "docker-hub",
+            "image": f"{namespace}/{name}:latest",
+            "port": 8000,
+            "transport": "streamable-http",
+            "mcp_path": "/mcp",
+            # We don't know env vars from the v2 API — user fills them
+            # in on the deploy form or overrides the image tag.
+            "config_schema": [],
+            "default_tools": [],
+            "resources": {
+                "cpu_request": "50m", "mem_request": "128Mi",
+                "cpu_limit": "500m", "mem_limit": "256Mi",
+            },
+            "source": "docker_hub_namespace",
+            "source_detail": {"namespace": namespace, "pull_count": repo.get("pull_count")},
+        })
+
+    _cache_put(cache_key, entries)
+    return entries
