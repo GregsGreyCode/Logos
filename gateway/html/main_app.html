@@ -555,8 +555,12 @@
               <template x-if="canary.active">
                 <span class="text-[10px] px-1.5 py-0.5 rounded bg-yellow-900 text-yellow-400 font-semibold animate-pulse">canary</span>
               </template>
-              <!-- Spacer + chat ID -->
-              <span class="ml-auto text-[10px] text-gray-700 font-mono"
+              <!-- Spacer + logs button + chat ID -->
+              <button class="ml-auto text-[10px] px-2 py-0.5 rounded border border-gray-700 text-gray-400 hover:text-white hover:border-gray-500 transition-colors"
+                @click="(() => { const chat = chats.find(c => c.id === activeChatId); if (chat && chat.agent_id) { openAgentLogs({id: chat.agent_id, name: chat.agent_name}); } })()"
+                x-show="activeChatId && chats.find(c => c.id === activeChatId)?.agent_id"
+                title="View this agent's runtime log tail — tool calls, thinking, errors">📋 Logs</button>
+              <span class="text-[10px] text-gray-700 font-mono"
                 x-text="activeChatId ? '#' + activeChatId.slice(-6) : ''"></span>
             </div>
 
