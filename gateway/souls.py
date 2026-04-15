@@ -1,8 +1,8 @@
 """
 Soul registry — agent persona definitions.
 
-Extracted from gateway/http_api.py so that both the HTTP API layer and the
-KubernetesExecutor can import soul logic without circular dependencies.
+Extracted from gateway/http_api.py so that both the HTTP API layer and
+executor modules can import soul logic without circular dependencies.
 
 Public API:
   SoulManifest          — dataclass describing an agent soul

@@ -1716,197 +1716,34 @@
           <p class="text-gray-400 text-sm">Choose where agents execute. This controls isolation, security, and resource limits.</p>
         </div>
 
-        <!-- ── Probing spinner ── -->
-        <div x-show="sandboxProbing" class="flex items-center gap-2 text-sm text-gray-500 mb-4">
-          <div class="w-4 h-4 border border-gray-600 border-t-indigo-400 rounded-full animate-spin"></div>
-          Scanning environment&hellip;
+        <!-- ── Sandbox option card (OpenShell only) ── -->
+        <div class="space-y-3">
+
+          <!-- ── OpenShell sandbox (only supported runtime) ── -->
+          <button @click="execEnv = 'openshell'"
+            class="w-full text-left p-4 rounded-xl border transition-colors"
+            :class="execEnv === 'openshell' ? 'border-emerald-500 bg-emerald-950/30' : 'border-gray-800 bg-gray-900 hover:border-gray-700'">
+            <div class="flex items-start gap-3">
+              <span class="w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0 text-xs font-bold"
+                :class="execEnv === 'openshell' ? 'bg-emerald-900 text-emerald-300' : 'bg-gray-800 text-gray-500'">
+                <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M12 1L3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-9-4zm0 2.18l7 3.12v4.7c0 4.83-3.4 9.36-7 10.5-3.6-1.14-7-5.67-7-10.5V6.3l7-3.12z"/></svg>
+              </span>
+              <div class="flex-1">
+                <div class="flex items-center gap-2 flex-wrap">
+                  <span class="text-sm font-semibold text-white">NVIDIA OpenShell</span>
+                  <span class="text-[9px] px-1.5 py-0.5 rounded-full bg-emerald-900 text-emerald-300 border border-emerald-700 font-semibold uppercase tracking-wider">Selected</span>
+                </div>
+                <p class="text-xs text-gray-500 mt-1 leading-relaxed">Each agent runs in a <span class="text-emerald-300 font-medium">policy-governed sandbox</span> with network isolation, L7 egress control, and credential injection. Inference routes through OpenShell's privacy router &mdash; agents never see API keys. Requires Docker.</p>
+              </div>
+            </div>
+          </button>
+
+          <!-- ── Continue button (always enabled — OpenShell is the only option) ── -->
+          <button @click="goNext()"
+            class="btn-primary w-full py-2.5 rounded-xl text-sm">
+            Continue &rarr;
+          </button>
         </div>
-
-        <!-- ── Sandbox option cards ── -->
-        <template x-if="!sandboxProbing">
-          <div class="space-y-3">
-
-            <!-- ── OpenShell sandbox (recommended) ── -->
-            <button @click="execEnv = 'openshell'"
-              class="w-full text-left p-4 rounded-xl border transition-colors"
-              :class="execEnv === 'openshell' ? 'border-emerald-500 bg-emerald-950/30' : 'border-gray-800 bg-gray-900 hover:border-gray-700'">
-              <div class="flex items-start gap-3">
-                <span class="w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0 text-xs font-bold"
-                  :class="execEnv === 'openshell' ? 'bg-emerald-900 text-emerald-300' : 'bg-gray-800 text-gray-500'">
-                  <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M12 1L3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-9-4zm0 2.18l7 3.12v4.7c0 4.83-3.4 9.36-7 10.5-3.6-1.14-7-5.67-7-10.5V6.3l7-3.12z"/></svg>
-                </span>
-                <div class="flex-1">
-                  <div class="flex items-center gap-2 flex-wrap">
-                    <span class="text-sm font-semibold text-white">NVIDIA OpenShell</span>
-                    <span x-show="execEnv === 'openshell'" class="text-[9px] px-1.5 py-0.5 rounded-full bg-emerald-900 text-emerald-300 border border-emerald-700 font-semibold uppercase tracking-wider">Selected</span>
-                    <span x-show="execEnv !== 'openshell'" class="text-[9px] px-1.5 py-0.5 rounded-full bg-emerald-950 text-emerald-500 border border-emerald-800 font-semibold uppercase tracking-wider">Recommended</span>
-                  </div>
-                  <p class="text-xs text-gray-500 mt-1 leading-relaxed">Each agent runs in a <span class="text-emerald-300 font-medium">policy-governed sandbox</span> with network isolation, L7 egress control, and credential injection. Inference routes through OpenShell's privacy router &mdash; agents never see API keys. Requires Docker.</p>
-                </div>
-              </div>
-            </button>
-
-            <!-- ── Docker Desktop (legacy) ── -->
-            <div class="w-full text-left p-4 rounded-xl border border-gray-800 bg-gray-900/40 opacity-40 cursor-not-allowed select-none">
-              <div class="flex items-start gap-3">
-                <span class="w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0 text-sm font-bold bg-gray-800 text-gray-600">D</span>
-                <div class="flex-1">
-                  <div class="flex items-center gap-2 flex-wrap">
-                    <span class="text-sm font-semibold text-gray-500">Docker Desktop</span>
-                    <span class="text-[9px] px-1.5 py-0.5 rounded-full bg-yellow-900 text-yellow-400 border border-yellow-700 font-semibold uppercase tracking-wider">Legacy</span>
-                  </div>
-                  <p class="text-xs text-gray-600 mt-1 leading-relaxed">Basic Docker container isolation without network policy enforcement. Use OpenShell instead for production workloads.</p>
-                </div>
-              </div>
-            </div>
-
-            <!-- ── Linux server (k3s) ── -->
-            <template x-if="sandboxProbe?.platform === 'linux'">
-              <div>
-                <button @click="execEnv = 'k3s'; k8sTestResult = null; k8sTestError = '';"
-                  class="w-full text-left p-4 rounded-xl border transition-colors"
-                  :class="execEnv === 'k3s' ? 'border-emerald-500 bg-emerald-950/30' : 'border-gray-800 bg-gray-900 hover:border-gray-700'">
-                  <div class="flex items-start gap-3">
-                    <span class="w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0 text-[10px] font-bold"
-                      :class="execEnv === 'k3s' ? 'bg-emerald-900 text-emerald-300' : 'bg-gray-800 text-gray-500'">k3s</span>
-                    <div class="flex-1">
-                      <div class="flex items-center gap-2 flex-wrap">
-                        <span class="text-sm font-semibold text-white">Linux server (k3s)</span>
-                        <span class="text-[9px] px-1.5 py-0.5 rounded-full bg-yellow-900 text-yellow-400 border border-yellow-700 font-semibold uppercase tracking-wider">Legacy</span>
-                        <span x-show="execEnv === 'k3s'" class="text-[9px] px-1.5 py-0.5 rounded-full bg-emerald-900 text-emerald-300 border border-emerald-700 font-semibold uppercase tracking-wider">Selected</span>
-                      </div>
-                      <p class="text-xs text-gray-500 mt-1 leading-relaxed">Automatically installs a lightweight Kubernetes cluster (<span class="text-emerald-300 font-medium">k3s</span>) on this machine. Agents and MCP servers run as isolated pods. No existing cluster required.</p>
-                    </div>
-                  </div>
-                </button>
-
-                <!-- ── k3s config panel ── -->
-                <div x-show="execEnv === 'k3s'" x-cloak class="p-3 rounded-xl bg-gray-900 border border-gray-800 space-y-3 mt-3">
-                  <!-- Already running -->
-                  <template x-if="sandboxProbe?.k3s_running">
-                    <div class="flex items-center gap-2 text-xs text-emerald-400">
-                      <span>&#x2713;</span>
-                      <span>k3s is already running on this machine</span>
-                    </div>
-                  </template>
-
-                  <!-- Not yet installed / not running -->
-                  <template x-if="!sandboxProbe?.k3s_running && !k3sInstallDone">
-                    <div class="space-y-3">
-                      <div class="text-[11px] text-gray-400">k3s will be installed on this machine using the official install script. This requires <span class="text-white font-medium">sudo</span> access and an internet connection.</div>
-                      <button @click="installK3s()" :disabled="k3sInstalling"
-                        class="px-3 py-1.5 rounded-lg border border-emerald-700 hover:border-emerald-500 text-xs text-emerald-300 transition-colors disabled:opacity-40">
-                        <span x-show="!k3sInstalling">Install k3s</span>
-                        <span x-show="k3sInstalling" class="flex items-center gap-1.5">
-                          <div class="w-3 h-3 border border-gray-600 border-t-emerald-400 rounded-full animate-spin"></div>
-                          Installing&hellip;
-                        </span>
-                      </button>
-                    </div>
-                  </template>
-
-                  <!-- Install progress log -->
-                  <template x-if="k3sInstallLog.length > 0">
-                    <div class="space-y-1">
-                      <template x-for="entry in k3sInstallLog" :key="entry.step">
-                        <div class="flex items-center gap-2 text-xs">
-                          <span x-show="entry.status === 'running'" class="w-3 h-3 border border-gray-600 border-t-emerald-400 rounded-full animate-spin flex-shrink-0"></span>
-                          <span x-show="entry.status === 'ok'" class="text-emerald-400 flex-shrink-0">&#x2713;</span>
-                          <span x-show="entry.status === 'skip'" class="text-gray-500 flex-shrink-0">&ndash;</span>
-                          <span x-show="entry.status === 'error'" class="text-red-400 flex-shrink-0">&#x2717;</span>
-                          <span :class="entry.status === 'error' ? 'text-red-400' : (entry.status === 'ok' || entry.status === 'skip' ? 'text-gray-400' : 'text-gray-300')" x-text="entry.msg"></span>
-                        </div>
-                      </template>
-                    </div>
-                  </template>
-
-                  <!-- Install done success -->
-                  <template x-if="k3sInstallDone && k8sTestResult === 'ok'">
-                    <div class="flex items-center gap-2 text-xs text-emerald-400">
-                      <span>&#x2713;</span>
-                      <span>k3s installed and connected</span>
-                    </div>
-                  </template>
-                </div>
-              </div>
-            </template>
-
-            <!-- ── Kubernetes ── -->
-            <button @click="execEnv = 'k8s'; k8sTestResult = null; k8sTestError = '';"
-              class="w-full text-left p-4 rounded-xl border transition-colors"
-              :class="execEnv === 'k8s' ? 'border-indigo-500 bg-indigo-950/30' : 'border-gray-800 bg-gray-900 hover:border-gray-700'">
-              <div class="flex items-start gap-3">
-                <span class="w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0 text-[10px] font-bold"
-                  :class="execEnv === 'k8s' ? 'bg-indigo-900 text-indigo-300' : 'bg-gray-800 text-gray-500'">K8s</span>
-                <div class="flex-1">
-                  <div class="flex items-center gap-2 flex-wrap">
-                    <span class="text-sm font-semibold text-white">Kubernetes</span>
-                    <span class="text-[9px] px-1.5 py-0.5 rounded-full bg-yellow-900 text-yellow-400 border border-yellow-700 font-semibold uppercase tracking-wider">Legacy</span>
-                    <span x-show="execEnv === 'k8s'" class="text-[9px] px-1.5 py-0.5 rounded-full bg-indigo-900 text-indigo-300 border border-indigo-700 font-semibold uppercase tracking-wider">Selected</span>
-                    <span x-show="sandboxProbe?.in_cluster" class="text-[9px] px-1.5 py-0.5 rounded-full bg-emerald-900 text-emerald-300 border border-emerald-700 font-semibold uppercase tracking-wider">Detected</span>
-                  </div>
-                  <p class="text-xs text-gray-500 mt-1 leading-relaxed" x-text="sandboxProbe?.in_cluster ? 'Logos is running as a pod in this cluster. In-cluster authentication is automatic — no credentials needed.' : 'Each agent run spawns a dedicated pod with its own filesystem, network namespace, and resource limits. Strongest isolation.'"></p>
-                </div>
-              </div>
-            </button>
-
-            <!-- ── Kubernetes config panel ── -->
-            <div x-show="execEnv === 'k8s'" x-cloak class="p-3 rounded-xl bg-gray-900 border border-gray-800 space-y-3">
-              <div class="text-[11px] font-medium text-gray-400 mb-1">How does Logos connect to the cluster?</div>
-              <div class="flex gap-2">
-                <button @click="k8sMode = 'incluster'; k8sTestResult = null; k8sTestError = '';"
-                  class="flex-1 py-1.5 rounded-lg text-xs font-medium transition-colors"
-                  :class="k8sMode === 'incluster' ? 'bg-indigo-900 text-indigo-200 border border-indigo-700' : 'bg-gray-800 text-gray-400 border border-gray-700 hover:border-gray-600'">
-                  Automatic (in-cluster)
-                </button>
-                <button @click="k8sMode = 'kubeconfig'; k8sTestResult = null; k8sTestError = '';"
-                  class="flex-1 py-1.5 rounded-lg text-xs font-medium transition-colors"
-                  :class="k8sMode === 'kubeconfig' ? 'bg-indigo-900 text-indigo-200 border border-indigo-700' : 'bg-gray-800 text-gray-400 border border-gray-700 hover:border-gray-600'">
-                  Kubeconfig file
-                </button>
-              </div>
-              <div x-show="k8sMode === 'incluster'" class="text-xs text-gray-500">Logos is running as a pod in the cluster. Authentication uses the mounted service account token &mdash; no credentials needed.</div>
-              <div x-show="k8sMode === 'kubeconfig'" class="text-xs text-gray-500">Logos is running outside the cluster (e.g. on your laptop or a separate VM). Provide a kubeconfig file so Logos can reach the Kubernetes API.</div>
-              <div x-show="k8sMode === 'kubeconfig'"
-                   @dragover.prevent="$el.classList.add('border-indigo-600')"
-                   @dragleave="$el.classList.remove('border-indigo-600')"
-                   @drop.prevent="$el.classList.remove('border-indigo-600'); $event.dataTransfer.files[0] && $event.dataTransfer.files[0].text().then(t => kubeconfig = t)"
-                   class="border-2 border-dashed border-gray-700 rounded-lg p-2 transition-colors">
-                <label class="block text-xs text-gray-500 mb-1">
-                  Paste kubeconfig or <span class="text-indigo-400 cursor-pointer hover:text-indigo-300 underline" @click="$refs.kubeconfigFile.click()">browse</span>
-                </label>
-                <input type="file" x-ref="kubeconfigFile" accept=".yaml,.yml,.conf,text/plain" class="hidden"
-                       @change="$event.target.files[0] && $event.target.files[0].text().then(t => { kubeconfig = t; $event.target.value = ''; })">
-                <textarea x-model="kubeconfig" rows="5" placeholder="apiVersion: v1&#10;kind: Config&#10;..."
-                  class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-xs text-white placeholder-gray-600 font-mono focus:outline-none focus:border-indigo-500 resize-none"
-                  style="box-sizing:border-box;"></textarea>
-              </div>
-              <div class="flex items-center gap-3">
-                <button @click="testK8s()" :disabled="k8sTesting || (k8sMode === 'kubeconfig' && !kubeconfig.trim())"
-                  class="px-3 py-1.5 rounded-lg border border-gray-700 hover:border-gray-500 text-xs text-gray-300 transition-colors disabled:opacity-40">
-                  <span x-show="!k8sTesting">Test connection</span>
-                  <span x-show="k8sTesting" class="flex items-center gap-1.5">
-                    <div class="w-3 h-3 border border-gray-600 border-t-indigo-400 rounded-full animate-spin"></div>
-                    Testing&hellip;
-                  </span>
-                </button>
-                <span x-show="k8sTestResult === 'ok'" class="text-xs text-green-400">&#x2713; Connected</span>
-                <span x-show="k8sTestResult === 'error'" class="text-xs text-red-400" x-text="k8sTestError"></span>
-              </div>
-            </div>
-
-            <!-- ── Continue button ── -->
-            <button @click="goNext()"
-              :disabled="(execEnv === 'k8s' && k8sMode === 'kubeconfig' && k8sTestResult !== 'ok') || (execEnv === 'k3s' && k8sTestResult !== 'ok')"
-              class="btn-primary w-full py-2.5 rounded-xl text-sm disabled:opacity-40 disabled:cursor-not-allowed">
-              <span x-show="execEnv === 'openshell'">Continue &rarr;</span>
-              <span x-show="execEnv === 'k3s' && k8sTestResult === 'ok'">Continue &rarr;</span>
-              <span x-show="execEnv === 'k3s' && k8sTestResult !== 'ok'" class="text-gray-500">Install k3s to continue &rarr;</span>
-              <span x-show="execEnv === 'k8s' && (k8sMode === 'incluster' || k8sTestResult === 'ok')">Continue &rarr;</span>
-              <span x-show="execEnv === 'k8s' && k8sMode === 'kubeconfig' && k8sTestResult !== 'ok'" class="text-gray-500">Test connection to continue &rarr;</span>
-            </button>
-          </div>
-        </template>
       </div>
 
 
@@ -2092,12 +1929,8 @@
             <span class="text-white font-medium truncate ml-4 font-mono text-xs" x-text="selectedModel || '&mdash;'"></span>
           </div>
           <div class="flex justify-between text-sm py-2.5">
-            <span class="text-gray-500">Execution</span>
-            <span class="text-white font-medium" x-text="execEnv === 'k8s' ? 'Kubernetes (' + (k8sMode === 'incluster' ? 'automatic' : 'kubeconfig') + ')' : execEnv === 'k3s' ? 'Linux server (k3s)' : execEnv === 'docker' ? 'Container sandbox (Docker)' : 'Full sandbox (OpenShell)'"></span>
-          </div>
-          <div x-show="execEnv === 'k8s'" class="flex justify-between text-sm py-2.5">
-            <span class="text-gray-500">Namespace</span>
-            <span class="text-white font-medium font-mono text-xs" x-text="selectedAgentType || 'hermes'"></span>
+            <span class="text-gray-500">Sandbox</span>
+            <span class="text-white font-medium">OpenShell</span>
           </div>
           <div x-show="testLatency" class="flex justify-between text-sm py-2.5">
             <span class="text-gray-500">Model latency</span>
@@ -2197,7 +2030,7 @@ function setup() {
       { n: 1, name: 'Connect inference servers',  tag: 'detects',    desc: 'Logos scans your network for Ollama and LM Studio. Add remote servers manually — LAN, VPC, or cloud — without installing anything on the model host.', tldrDesc: 'Find your models — auto or manual.' },
       { n: 2, name: 'Benchmark models',       tag: 'measures',   desc: 'Candidate models run 6 eval tests: instruction following, reasoning, JSON format, tool selection, nested JSON, and multi-step arithmetic. The best fit is pre-selected; you can override.', tldrDesc: 'Test models. Logos picks the winner.' },
       { n: 3, name: 'Agent runtime',          tag: 'configures', desc: 'Choose which agent engine handles your sessions. Hermes is available now; additional runtimes plug in as they are released.', tldrDesc: 'Choose what runs your agents (Hermes for now).' },
-      { n: 4, name: 'Sandbox isolation',      tag: 'secures',    desc: 'Pick the boundary agent code runs inside. OpenShell on Docker is the default for desktops and homelabs; k3s or an existing Kubernetes cluster are available for production. Logos picks the safest available option by default.', tldrDesc: 'Pick the sandbox — OpenShell by default, k3s/k8s for production.' },
+      { n: 4, name: 'Sandbox isolation',      tag: 'secures',    desc: 'Agent code runs inside an OpenShell sandbox — an isolated container boundary that keeps each agent session separate from the host.', tldrDesc: 'Agents run inside OpenShell sandboxes.' },
       { n: 5, name: 'Soul',                   tag: 'configures', desc: 'A soul shapes how the agent thinks, talks, and which tools it reaches for. You can swap it any time.', tldrDesc: 'Sets how the agent behaves. Swap any time.' },
       { n: 6, name: 'Your account',           tag: 'secures',    desc: 'Set the email, username, and password for the admin account that protects the dashboard and API.', tldrDesc: 'Create a login to secure your setup.' },
       { n: 7, name: 'Review & launch',        tag: 'confirms',   desc: 'Verify settings, ping the model, launch.', tldrDesc: 'Verify, launch.' },
@@ -2394,120 +2227,8 @@ function setup() {
       },
     ],
 
-    // Step 4 — execution environment
+    // Step 4 — execution environment (OpenShell is the only supported runtime)
     execEnv: 'openshell',
-    k8sMode: 'incluster',
-    kubeconfig: '',
-    k8sTesting: false,
-    k8sTestResult: null,
-    k8sTestError: '',
-
-    // Step 4 — sandbox auto-detect state
-    sandboxProbe: null,        // null = not yet probed
-    sandboxProbing: false,
-    sandboxSetupRunning: false,
-    sandboxSetupLog: [],       // [{step, status, msg}]
-    sandboxSetupDone: false,
-
-    // Step 4 — k3s install state
-    k3sInstalling: false,
-    k3sInstallLog: [],         // [{step, status, msg}]
-    k3sInstallDone: false,
-
-    async probeSandbox() {
-      this.sandboxProbing = true;
-      try {
-        const r = await fetch('/api/setup/env-probe');
-        this.sandboxProbe = await r.json();
-        // Auto-select execEnv based on what's available (best → worst)
-        if (this.sandboxProbe.in_cluster) {
-          // Already running as a pod in k8s — use in-cluster auth automatically
-          this.execEnv = 'k8s';
-          this.k8sMode = 'incluster';
-          // Auto-test the connection
-          this.testK8s();
-        } else if (this.sandboxProbe.k3s_running) {
-          // k3s already running on Linux — use it, auto-fetch kubeconfig
-          this.execEnv = 'k3s';
-          this.installK3s();  // will skip install, read kubeconfig, and auto-test
-        } else if (this.sandboxProbe.sandbox_ready) {
-          // Full OpenShell sandbox — best isolation
-          this.execEnv = 'openshell';
-        } else if (this.sandboxProbe.docker_running && this.sandboxProbe.openshell_supported !== false) {
-          // Docker + OpenShell supported but not yet set up — guide user to set up
-          this.execEnv = 'openshell';
-        } else if (this.sandboxProbe.docker_running) {
-          // Docker available but OpenShell unsupported (Windows) — use Docker sandbox
-          this.execEnv = 'docker';
-        } else if (this.sandboxProbe.platform === 'linux') {
-          // Linux without Docker — suggest k3s
-          this.execEnv = 'k3s';
-        } else {
-          // No Docker, no k3s — default to OpenShell so the user is guided
-          // through Docker install. There is no in-process fallback any more.
-          this.execEnv = 'openshell';
-        }
-      } catch(e) {
-        this.sandboxProbe = { docker_running: false, docker_installed: false,
-                               openshell_present: false, image_present: false, sandbox_ready: false,
-                               docker_sandbox_ready: false, openshell_supported: true };
-        if (!this.execEnv) this.execEnv = 'openshell';
-      } finally {
-        this.sandboxProbing = false;
-      }
-    },
-
-    async runSandboxSetup() {
-      this.sandboxSetupRunning = true;
-      this.sandboxSetupLog = [];
-      this.sandboxSetupDone = false;
-      try {
-        const r = await fetch('/api/setup/sandbox-setup', {
-          method: 'POST',
-          headers: { 'X-CSRF-Token': getCsrfToken() },
-          credentials: 'same-origin',
-        });
-        const reader = r.body.getReader();
-        const dec = new TextDecoder();
-        let buf = '';
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          buf += dec.decode(value, { stream: true });
-          const parts = buf.split('\n\n');
-          buf = parts.pop();
-          for (const part of parts) {
-            const line = part.replace(/^data: /, '').trim();
-            if (!line) continue;
-            try {
-              const ev = JSON.parse(line);
-              if (ev.step === 'done') {
-                // Done is metadata, not a visible progress row
-                this.sandboxSetupDone = true;
-                if (ev.sandbox_ready) {
-                  this.execEnv = 'openshell';
-                  if (this.sandboxProbe) this.sandboxProbe.sandbox_ready = true;
-                } else if (ev.docker_sandbox_ready) {
-                  this.execEnv = 'docker';
-                  if (this.sandboxProbe) this.sandboxProbe.docker_sandbox_ready = true;
-                }
-              } else {
-                // Update existing entry or push new
-                const idx = this.sandboxSetupLog.findIndex(e => e.step === ev.step);
-                if (idx >= 0) { this.sandboxSetupLog[idx] = ev; this.sandboxSetupLog = [...this.sandboxSetupLog]; }
-                else { this.sandboxSetupLog = [...this.sandboxSetupLog, ev]; }
-              }
-            } catch(_) {}
-          }
-        }
-      } catch(e) {
-        this.sandboxSetupLog = [...this.sandboxSetupLog, { step: 'done', status: 'error', msg: String(e) }];
-      } finally {
-        this.sandboxSetupRunning = false;
-        // Re-probe to get fresh state
-        await this.probeSandbox();
-      }
-    },
 
     // Step 6
     completing: false,
@@ -2596,7 +2317,6 @@ function setup() {
             }
             if (s.selectedModel)     this.selectedModel     = s.selectedModel;
             if (s.execEnv)           this.execEnv           = s.execEnv;
-            if (s.k8sMode)           this.k8sMode           = s.k8sMode;
             if (s.selectedSoul)      this.selectedSoul      = s.selectedSoul;
             if (s.selectedAgentType) this.selectedAgentType = s.selectedAgentType;
             if (s.agentName)         this.agentName         = s.agentName;
@@ -2641,7 +2361,6 @@ function setup() {
       // Watch fields set directly from templates
       this.$watch('selectedSoul',      () => this._saveProgress());
       this.$watch('execEnv',           () => this._saveProgress());
-      this.$watch('k8sMode',           () => this._saveProgress());
       this.$watch('selectedAgentType', () => this._saveProgress());
       this.$watch('agentName',         () => this._saveProgress());
       this.$watch('agentCharIndex',    () => this._saveProgress());
@@ -2681,7 +2400,6 @@ function setup() {
           compareDone:            this.compareDone,
           selectedModel:          this.selectedModel,
           execEnv:                this.execEnv,
-          k8sMode:                this.k8sMode,
           selectedSoul:           this.selectedSoul,
           selectedAgentType:      this.selectedAgentType,
           agentName:              this.agentName,
@@ -2721,7 +2439,7 @@ function setup() {
       this.compareTargets = []; this.compareResults = {}; this.compareRecommended = null;
       this.compareFastRecommended = null; this.compareDone = false; this.compareRunning = false;
       this.compareTesting = {}; this.compareSkippedServers = {};
-      this.selectedModel = null; this.execEnv = null; this.k8sMode = null;
+      this.selectedModel = null; this.execEnv = 'openshell';
       this.selectedSoul = null; this.selectedAgentType = null; this.setupEmail = ''; this.setupUsername = '';
     },
 
@@ -2968,7 +2686,7 @@ function setup() {
         await this._goStep(3);
         return;
       }
-      if (this.step === 3) { await this._goStep(4, () => { this.probeSandbox(); }); return; }
+      if (this.step === 3) { await this._goStep(4); return; }
       if (this.step === 4) {
         await this._goStep(5, () => {
           // Soul defaults: auto-suggest General (Lite) if the selected
@@ -3814,77 +3532,6 @@ function setup() {
                          return { tone: 'bad',      icon: '✕', text: 'Too slow and reasoning issues. Drop to a 3–4B model like Qwen3-4B, or use a cloud endpoint.' };
     },
 
-    async testK8s() {
-      this.k8sTesting = true;
-      this.k8sTestResult = null;
-      this.k8sTestError = '';
-      try {
-        const r = await fetch('/api/setup/test-k8s', {
-          method: 'POST', credentials: 'include',
-          headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken() },
-          body: JSON.stringify({
-            mode:       this.k8sMode,
-            namespace:  this.selectedAgentType || 'hermes',
-            kubeconfig: this.kubeconfig,
-          }),
-        });
-        const d = await r.json();
-        this.k8sTestResult = d.ok ? 'ok' : 'error';
-        if (!d.ok) this.k8sTestError = d.error || 'Connection failed';
-      } catch (e) {
-        this.k8sTestResult = 'error';
-        this.k8sTestError = e.message;
-      }
-      this.k8sTesting = false;
-    },
-
-    async installK3s() {
-      this.k3sInstalling = true;
-      this.k3sInstallLog = [];
-      this.k3sInstallDone = false;
-      this.k8sTestResult = null;
-      this.k8sTestError = '';
-      try {
-        const r = await fetch('/api/setup/k3s-install', {
-          method: 'POST', credentials: 'include',
-          headers: { 'X-CSRF-Token': getCsrfToken() },
-        });
-        const reader = r.body.getReader();
-        const dec = new TextDecoder();
-        let buf = '';
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          buf += dec.decode(value, { stream: true });
-          const lines = buf.split('\n');
-          buf = lines.pop();
-          for (const line of lines) {
-            if (!line.startsWith('data: ')) continue;
-            try {
-              const ev = JSON.parse(line.slice(6));
-              if (ev.step === 'done') {
-                if (ev.status === 'ok' && ev.kubeconfig) {
-                  this.kubeconfig = ev.kubeconfig;
-                  this.k3sInstallDone = true;
-                  // Auto-test the connection
-                  this.k8sMode = 'kubeconfig';
-                  await this.testK8s();
-                }
-              } else {
-                // Upsert log entry by step
-                const idx = this.k3sInstallLog.findIndex(e => e.step === ev.step);
-                if (idx >= 0) this.k3sInstallLog[idx] = ev;
-                else this.k3sInstallLog.push(ev);
-              }
-            } catch {}
-          }
-        }
-      } catch (e) {
-        this.k3sInstallLog.push({ step: 'error', status: 'error', msg: e.message });
-      }
-      this.k3sInstalling = false;
-    },
-
     async _probeForStep7() {
       // Re-probe the selected endpoint when step 7 is shown so the user sees
       // real readiness state before clicking Launch.
@@ -3993,9 +3640,6 @@ function setup() {
             agent_type:    this.selectedSoul || 'general',
             agent_name:    (this.agentName || '').trim() || 'Hermes',
             agent_char_index: this.agentCharIndex,
-            exec_env:      this.execEnv === 'k3s' ? 'k8s' : (this.execEnv || 'local'),
-            k8s_namespace: this.selectedAgentType || 'hermes',
-            kubeconfig:    (this.execEnv === 'k3s' || (this.execEnv === 'k8s' && this.k8sMode === 'kubeconfig')) ? this.kubeconfig : '',
             setup_email:    this.setupEmail    || '',
             setup_username: this.setupUsername || '',
             setup_password: this.setupPassword || '',

@@ -133,7 +133,7 @@ class SessionContext:
     updated_at: Optional[datetime] = None
 
     # Deployment environment
-    runtime_mode: str = "openshell"   # "openshell" (default) | "local" | "docker"
+    runtime_mode: str = "openshell"   # Only "openshell" is supported now — field kept for prompt/debug readouts
     host_platform: str = "linux"  # "linux" | "windows" | "darwin"
     
     def to_dict(self) -> Dict[str, Any]:
@@ -236,10 +236,9 @@ def build_session_context_prompt(context: SessionContext) -> str:
     _tzname = _now.tzname() or "UTC"
     lines.append(f"**Current time:** {_now.strftime('%A %Y-%m-%d %H:%M:%S')} {_tzname}")
 
-    # Deployment environment
-    mode_label = {"openshell": "OpenShell", "docker": "Docker"}.get(context.runtime_mode, "Local")
+    # Deployment environment — OpenShell is the only supported runtime now
     platform_label = {"windows": "Windows", "darwin": "macOS"}.get(context.host_platform, "Linux")
-    lines.append(f"**Deployment:** {mode_label} ({platform_label})")
+    lines.append(f"**Deployment:** OpenShell ({platform_label})")
 
     # Source info
     platform_name = context.source.platform.value.title()
@@ -993,11 +992,7 @@ def build_session_context(
         source=source,
         connected_platforms=connected,
         home_channels=home_channels,
-        runtime_mode=(
-            os.environ.get("LOGOS_RUNTIME_MODE")
-            or os.environ.get("HERMES_RUNTIME_MODE")
-            or "openshell"
-        ),
+        runtime_mode="openshell",
         host_platform="windows" if _sys.platform == "win32" else ("darwin" if _sys.platform == "darwin" else "linux"),
     )
     

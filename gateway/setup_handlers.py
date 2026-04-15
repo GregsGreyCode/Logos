@@ -8,8 +8,7 @@ Endpoints:
   POST /api/setup/test     — SSE: full benchmark of selected model
   POST /api/setup/validate-provider — validate a cloud provider API key and list models
   POST /api/setup/complete — save machine config and mark setup done
-  POST /api/setup/test-k8s   — test Kubernetes connectivity
-  POST /api/setup/k3s-install — SSE: install k3s on bare Linux host
+  GET  /api/setup/env-probe — detect Docker + OpenShell + sandbox image presence
 
 Probe query params:
   url      — base URL to probe, e.g. http://192.168.1.50:11434  (omit for localhost auto-scan)
@@ -3088,12 +3087,8 @@ async def handle_setup_complete(request: web.Request) -> web.Response:
                 )
         user_id = primary_admin["id"]
         agent_type   = (body.get("agent_type") or "general").strip()
-        # OpenShell is now the only supported runtime for agent workloads.
-        # Other `exec_env` values are accepted for backwards-compat but are
-        # coerced to "openshell" below when we spawn the default agent.
-        exec_env     = (body.get("exec_env") or "openshell").strip()
-        k8s_ns       = (body.get("k8s_namespace") or "hermes").strip()
-        kubeconfig   = (body.get("kubeconfig") or "").strip()
+        # OpenShell is the only supported sandbox runtime; the client no
+        # longer sends exec_env/k8s_namespace/kubeconfig.
         # Name the first sandboxed agent. Defaults to "Hermes" (the only
         # agent type today); future releases will let users pick a type.
         agent_name   = (body.get("agent_name") or "").strip() or "Hermes"
@@ -3179,37 +3174,13 @@ async def handle_setup_complete(request: web.Request) -> web.Response:
                 if isinstance(_cfg["model"], str):
                     _cfg["model"] = {"default": _cfg["model"]}
                 _cfg["model"]["provider"] = _frontier_provider
-            # OpenShell is the only supported runtime now. We still honour an
-            # explicit LOGOS_RUNTIME_MODE / HERMES_RUNTIME_MODE env var so
-            # existing k8s deployments that force it can continue, but every
-            # new setup writes openshell.
-            if not (os.getenv("LOGOS_RUNTIME_MODE") or os.getenv("HERMES_RUNTIME_MODE")):
-                _cfg["LOGOS_RUNTIME_MODE"] = "openshell"
-                _cfg["HERMES_RUNTIME_MODE"] = "openshell"
-            # For k8s-kubeconfig mode, also write the kubeconfig to a file so
-            # k8s_clients() can pick it up via load_kube_config() on the next start.
-            _kube_raw = kubeconfig if exec_env == "k8s" and kubeconfig else ""
-            if _kube_raw and not os.getenv("KUBECONFIG"):
-                _kube_path = _hermes_home / "kubeconfig.yaml"
-                try:
-                    _kube_path.write_text(_kube_raw, encoding="utf-8")
-                    _kube_path.chmod(0o600)
-                    _cfg["KUBECONFIG"] = str(_kube_path)
-                    logger.info("setup: wrote kubeconfig to %s", _kube_path)
-                except Exception as _kube_err:
-                    logger.warning("setup: could not write kubeconfig: %s", _kube_err)
             _config_path.write_text(_yaml.dump(_cfg, default_flow_style=False, allow_unicode=True))
-            logger.info("setup: wrote HERMES_MODEL=%s HERMES_RUNTIME_MODE=%s to config.yaml",
-                        model, _cfg.get("HERMES_RUNTIME_MODE", "(env)"))
+            logger.info("setup: wrote HERMES_MODEL=%s to config.yaml", model)
         except Exception as _cfg_err:
             logger.warning("setup: could not write model to config.yaml: %s", _cfg_err)
 
         auth_db.ensure_user_settings(user_id)
         auth_db.update_user_settings(user_id, default_model=model, default_soul=agent_type)
-        auth_db.set_platform_feature_flag("exec_env", exec_env)
-        auth_db.set_platform_feature_flag("k8s_namespace", k8s_ns)
-        if kubeconfig:
-            auth_db.set_platform_feature_flag("k8s_kubeconfig", kubeconfig)
         auth_db.mark_setup_completed()
 
         # Update admin account credentials if the user customised them.
@@ -3595,18 +3566,9 @@ async def handle_setup_prewarm(request: web.Request) -> web.Response:
     endpoint     = (body.get("endpoint") or "").strip()
     model        = (body.get("model") or "").strip()
     server_type  = (body.get("server_type") or "lmstudio").strip()
-    runtime_mode = (body.get("runtime_mode") or "openshell").strip()
 
     if not model:
         return web.json_response({"error": "missing_model"}, status=400)
-
-    # Only OpenShell mode imports images into a per-route cluster. Docker
-    # and local runtimes have nothing to pre-warm; return 202 so the
-    # frontend doesn't treat it as a real error.
-    if runtime_mode != "openshell":
-        return web.json_response(
-            {"status": "noop", "reason": "non-openshell runtime"}, status=202,
-        )
 
     async def _prewarm():
         try:
@@ -3831,22 +3793,6 @@ _OPENSHELL_ASSET_MAP = {
 }
 
 
-def _k3s_status() -> dict:
-    """Return {installed: bool, running: bool} describing k3s state on this host."""
-    installed = bool(_shutil.which("k3s"))
-    running = False
-    if installed:
-        try:
-            r = _subprocess.run(
-                ["k3s", "kubectl", "get", "nodes"],
-                capture_output=True, timeout=10,
-            )
-            running = r.returncode == 0
-        except Exception:
-            pass
-    return {"installed": installed, "running": running}
-
-
 def _openshell_exe() -> str:
     """Return path to the openshell binary, checking PATH and ~/.hermes/bin."""
     found = _shutil.which("openshell")
@@ -4004,51 +3950,27 @@ def _sandbox_image_exists() -> bool:
         return False
 
 
-async def handle_setup_launch_docker(request: web.Request) -> web.Response:
-    """
-    POST /api/setup/launch-docker
-
-    Attempt to launch Docker Desktop on the host machine.
-    Returns {ok, error} — non-blocking, the client should poll env-probe to
-    detect when the daemon comes up.
-    """
-    info = _docker_running()
-    desktop = info.get("desktop_path", "")
-    if not desktop:
-        return web.json_response({"ok": False, "error": "Docker Desktop executable not found"})
-    try:
-        if _sys.platform == "win32":
-            _subprocess.Popen([desktop], creationflags=getattr(_subprocess, "DETACHED_PROCESS", 0x00000008))
-        else:
-            _subprocess.Popen([desktop])
-        return web.json_response({"ok": True})
-    except Exception as exc:
-        return web.json_response({"ok": False, "error": str(exc)})
-
-
 async def handle_setup_env_probe(request: web.Request) -> web.Response:
     """
     GET /api/setup/env-probe
 
     Returns the current sandbox readiness state so the setup wizard can
-    decide whether to recommend OpenShell or fall back to in-process.
+    report OpenShell/Docker/image presence to the user.
 
     Response shape:
       {
-        platform:          "windows" | "linux" | "darwin",
-        docker_running:    bool,
-        docker_installed:  bool,
-        docker_desktop_path: str,   # non-empty = Docker Desktop found but not running
-        openshell_present: bool,
-        openshell_path:    str,
-        image_present:     bool,
-        sandbox_ready:     bool,    # true when all three are green
+        platform:            "windows" | "linux" | "darwin",
+        docker_running:      bool,    # OpenShell needs Docker — still probed
+        openshell_present:   bool,
+        openshell_path:      str,
+        openshell_supported: bool,
+        image_present:       bool,
+        sandbox_ready:       bool,    # true when all three are green
       }
     """
     loop = asyncio.get_event_loop()
     docker_info   = await loop.run_in_executor(None, _docker_running)
     openshell_exe = await loop.run_in_executor(None, _openshell_exe)
-    k3s_info      = await loop.run_in_executor(None, _k3s_status)
     image_present = False
     if docker_info["running"]:
         image_present = await loop.run_in_executor(None, _sandbox_image_exists)
@@ -4056,251 +3978,15 @@ async def handle_setup_env_probe(request: web.Request) -> web.Response:
     # OpenShell only ships Linux and macOS binaries — not available on Windows
     openshell_supported = _platform.system() != "Windows"
 
-    # Docker sandbox (container-only, no OpenShell) is available on any platform
-    # where Docker is running and the sandbox image exists.
-    docker_sandbox_ready = docker_info["running"] and image_present
-
     return web.json_response({
-        "platform":              _OS_MAP.get(_platform.system(), _platform.system().lower()),
-        "docker_running":        docker_info["running"],
-        "docker_installed":      docker_info["installed"],
-        "docker_desktop_path":   docker_info.get("desktop_path", ""),
-        "openshell_present":     bool(openshell_exe),
-        "openshell_path":        openshell_exe,
-        "openshell_supported":   openshell_supported,
-        "image_present":         image_present,
-        "sandbox_ready":         docker_info["running"] and bool(openshell_exe) and image_present,
-        "docker_sandbox_ready":  docker_sandbox_ready,
-        "k3s_installed":         k3s_info["installed"],
-        "k3s_running":           k3s_info["running"],
-        # In-cluster detection: if KUBERNETES_SERVICE_HOST is set, we're a pod
-        "in_cluster":            bool(os.environ.get("KUBERNETES_SERVICE_HOST")),
+        "platform":            _OS_MAP.get(_platform.system(), _platform.system().lower()),
+        "docker_running":      docker_info["running"],
+        "openshell_present":   bool(openshell_exe),
+        "openshell_path":      openshell_exe,
+        "openshell_supported": openshell_supported,
+        "image_present":       image_present,
+        "sandbox_ready":       docker_info["running"] and bool(openshell_exe) and image_present,
     })
-
-
-async def handle_setup_k3s_install(request: web.Request) -> web.Response:
-    """
-    POST /api/setup/k3s-install   (SSE stream)
-
-    Installs k3s on a bare Linux host, waits for it to become ready,
-    creates the agent namespace, and returns the kubeconfig.
-
-    Streams progress as SSE events:
-      data: {"step": "k3s_install",      "status": "running"|"ok"|"error"|"skip", "msg": "..."}
-      data: {"step": "k3s_wait",         "status": "running"|"ok"|"error",        "msg": "..."}
-      data: {"step": "namespace_create", "status": "running"|"ok"|"error",        "msg": "..."}
-      data: {"step": "done",             "status": "ok"|"error", "kubeconfig": "..."}
-    """
-    resp = web.StreamResponse(headers={
-        "Content-Type":     "text/event-stream",
-        "Cache-Control":    "no-cache",
-        "X-Accel-Buffering": "no",
-    })
-    await resp.prepare(request)
-
-    async def emit(step: str, status: str, msg: str = "", **extra):
-        payload = json.dumps({"step": step, "status": status, "msg": msg, **extra})
-        await resp.write(f"data: {payload}\n\n".encode())
-
-    loop = asyncio.get_event_loop()
-
-    # ── Gate: Linux only ──
-    if _platform.system() != "Linux":
-        await emit("k3s_install", "error", "k3s is only supported on Linux")
-        await emit("done", "error")
-        return resp
-
-    # ── Step 1: Install k3s (skip if already running) ──
-    k3s = await loop.run_in_executor(None, _k3s_status)
-    if k3s["running"]:
-        await emit("k3s_install", "skip", "k3s is already running")
-    elif k3s["installed"]:
-        # Installed but not running — try to start it
-        await emit("k3s_install", "running", "k3s is installed but not running, starting service...")
-        def _start_k3s():
-            try:
-                r = _subprocess.run(
-                    ["sudo", "systemctl", "start", "k3s"],
-                    capture_output=True, text=True, timeout=30,
-                )
-                return r.returncode == 0, r.stderr.strip()
-            except Exception as e:
-                return False, str(e)
-        ok, err = await loop.run_in_executor(None, _start_k3s)
-        if ok:
-            await emit("k3s_install", "ok", "k3s service started")
-        else:
-            await emit("k3s_install", "error", f"Failed to start k3s: {err}")
-            await emit("done", "error")
-            return resp
-    else:
-        await emit("k3s_install", "running", "Installing k3s (this may take a minute)...")
-        def _install_k3s():
-            try:
-                r = _subprocess.run(
-                    ["sh", "-c",
-                     "curl -sfL https://get.k3s.io | "
-                     "INSTALL_K3S_EXEC='server --disable=traefik --disable=servicelb "
-                     "--write-kubeconfig-mode=644' sh -"],
-                    capture_output=True, text=True, timeout=300,
-                )
-                return r.returncode == 0, r.stdout.strip(), r.stderr.strip()
-            except Exception as e:
-                return False, "", str(e)
-        ok, stdout, stderr = await loop.run_in_executor(None, _install_k3s)
-        if ok:
-            await emit("k3s_install", "ok", "k3s installed successfully")
-        else:
-            await emit("k3s_install", "error", f"Installation failed: {stderr[:300]}")
-            await emit("done", "error")
-            return resp
-
-    # ── Step 2: Wait for k3s to become ready ──
-    await emit("k3s_wait", "running", "Waiting for k3s to be ready...")
-    _kube_path = "/etc/rancher/k3s/k3s.yaml"
-    def _wait_k3s_ready():
-        for _ in range(60):  # up to ~120s
-            if not os.path.exists(_kube_path):
-                time.sleep(2)
-                continue
-            try:
-                r = _subprocess.run(
-                    ["k3s", "kubectl", "get", "nodes"],
-                    capture_output=True, text=True, timeout=10,
-                )
-                if r.returncode == 0 and "Ready" in r.stdout:
-                    return True, ""
-            except Exception:
-                pass
-            time.sleep(2)
-        return False, "Timed out waiting for k3s to become ready"
-    ready, err = await loop.run_in_executor(None, _wait_k3s_ready)
-    if ready:
-        await emit("k3s_wait", "ok", "k3s cluster is ready")
-    else:
-        await emit("k3s_wait", "error", err)
-        await emit("done", "error")
-        return resp
-
-    # ── Step 3: Create hermes namespace ──
-    await emit("namespace_create", "running", "Creating hermes namespace...")
-    def _create_namespace():
-        try:
-            r = _subprocess.run(
-                ["k3s", "kubectl", "create", "namespace", "hermes",
-                 "--dry-run=client", "-o", "yaml"],
-                capture_output=True, text=True, timeout=10,
-            )
-            if r.returncode != 0:
-                return False, r.stderr.strip()
-            r2 = _subprocess.run(
-                ["k3s", "kubectl", "apply", "-f", "-"],
-                input=r.stdout, capture_output=True, text=True, timeout=10,
-            )
-            return r2.returncode == 0, r2.stderr.strip()
-        except Exception as e:
-            return False, str(e)
-    ns_ok, ns_err = await loop.run_in_executor(None, _create_namespace)
-    if ns_ok:
-        await emit("namespace_create", "ok", "hermes namespace ready")
-    else:
-        await emit("namespace_create", "error", f"Failed to create namespace: {ns_err}")
-        await emit("done", "error")
-        return resp
-
-    # ── Step 4: Read kubeconfig ──
-    try:
-        kubeconfig = pathlib.Path(_kube_path).read_text(encoding="utf-8")
-    except Exception as e:
-        await emit("done", "error", msg=f"Could not read kubeconfig: {e}")
-        return resp
-
-    await emit("done", "ok", kubeconfig=kubeconfig)
-    return resp
-
-
-async def handle_setup_sandbox_setup(request: web.Request) -> web.Response:
-    """
-    POST /api/setup/sandbox-setup   (SSE stream)
-
-    Attempts to automatically:
-      1. Install the openshell CLI (tries uv, pip, then binary download)
-      2. Build the hermes-sandbox Docker image
-
-    Streams progress as SSE events:
-      data: {"step": "openshell_install", "status": "running"|"ok"|"error", "msg": "..."}
-      data: {"step": "image_build",       "status": "running"|"ok"|"error", "msg": "..."}
-      data: {"step": "done",              "status": "ok"|"error",           "sandbox_ready": bool}
-    """
-    resp = web.StreamResponse(headers={
-        "Content-Type": "text/event-stream",
-        "Cache-Control": "no-cache",
-        "X-Accel-Buffering": "no",
-    })
-    await resp.prepare(request)
-
-    async def emit(step: str, status: str, msg: str = "", **extra):
-        payload = json.dumps({"step": step, "status": status, "msg": msg, **extra})
-        await resp.write(f"data: {payload}\n\n".encode())
-
-    loop = asyncio.get_event_loop()
-
-    # ── Platform gate: OpenShell only supports Linux and macOS ───────────
-    # On Windows (or other unsupported platforms), skip OpenShell and use
-    # Docker-only sandbox mode instead: just build the image.
-    if _platform.system() == "Windows":
-        await emit("openshell_install", "skip",
-                    "OpenShell is not available on Windows. "
-                    "Setting up Docker container sandbox instead (reduced isolation).")
-
-        # Build the Docker-only sandbox image
-        image_ok = await loop.run_in_executor(None, _sandbox_image_exists)
-        if image_ok:
-            await emit("image_build", "ok", f"Image '{_OPENSHELL_IMAGE}' already present")
-        else:
-            await emit("image_build", "running", f"Building '{_OPENSHELL_IMAGE}' image (this takes ~2 minutes)…")
-            build_ok, build_err = await loop.run_in_executor(
-                None, lambda: _build_sandbox_image(dockerfile_name="docker/Dockerfile.docker-sandbox"))
-            if build_ok:
-                await emit("image_build", "ok", "Image built successfully")
-            else:
-                await emit("image_build", "error", f"Build failed: {build_err}")
-                await emit("done", "error", sandbox_ready=False)
-                return resp
-
-        await emit("done", "ok", sandbox_ready=False, docker_sandbox_ready=True)
-        return resp
-
-    # ── Step 1: install openshell if missing ──────────────────────────────
-    openshell_path = await loop.run_in_executor(None, _openshell_exe)
-    if openshell_path:
-        await emit("openshell_install", "ok", f"openshell found at {openshell_path}")
-    else:
-        await emit("openshell_install", "running", "Installing openshell CLI…")
-        installed_path, err = await loop.run_in_executor(None, _install_openshell)
-        if installed_path:
-            await emit("openshell_install", "ok", f"Installed to {installed_path}")
-        else:
-            await emit("openshell_install", "error", f"Could not install openshell: {err}")
-            await emit("done", "error", sandbox_ready=False)
-            return resp
-
-    # ── Step 2: build sandbox image if missing ────────────────────────────
-    image_ok = await loop.run_in_executor(None, _sandbox_image_exists)
-    if image_ok:
-        await emit("image_build", "ok", f"Image '{_OPENSHELL_IMAGE}' already present")
-    else:
-        await emit("image_build", "running", f"Building '{_OPENSHELL_IMAGE}' image (this takes ~2 minutes)…")
-        build_ok, build_err = await loop.run_in_executor(None, _build_sandbox_image)
-        if build_ok:
-            await emit("image_build", "ok", "Image built successfully")
-        else:
-            await emit("image_build", "error", f"Build failed: {build_err}")
-            await emit("done", "error", sandbox_ready=False)
-            return resp
-
-    await emit("done", "ok", sandbox_ready=True)
-    return resp
 
 
 def _install_openshell() -> tuple[str, str]:
@@ -4382,13 +4068,9 @@ def _install_openshell() -> tuple[str, str]:
         return "", str(exc)
 
 
-def _build_sandbox_image(dockerfile_name: str = "docker/Dockerfile.hermes-sandbox") -> tuple[bool, str]:
+def _build_sandbox_image() -> tuple[bool, str]:
     """
-    Build the hermes-sandbox Docker image.
-
-    Args:
-        dockerfile_name: Which Dockerfile to use.  "docker/Dockerfile.hermes-sandbox"
-            for OpenShell mode, "docker/Dockerfile.docker-sandbox" for Docker-only (legacy).
+    Build the hermes-sandbox Docker image used by OpenShell.
 
     Looks for the Dockerfile relative to the package root (works both in
     development and inside a frozen .exe where files are extracted to a
@@ -4397,6 +4079,8 @@ def _build_sandbox_image(dockerfile_name: str = "docker/Dockerfile.hermes-sandbo
     docker_exe = _shutil.which("docker")
     if not docker_exe:
         return False, "docker not found on PATH"
+
+    dockerfile_name = "docker/Dockerfile.hermes-sandbox"
 
     # Find Dockerfile — check package root, then sys._MEIPASS (PyInstaller temp)
     roots = [pathlib.Path(__file__).parent.parent]

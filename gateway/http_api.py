@@ -70,11 +70,6 @@ _IS_CANARY = (
     or os.environ.get("HERMES_IS_CANARY")
     or ""
 ).lower() in ("1", "true", "yes")
-_RUNTIME_MODE = (
-    os.environ.get("LOGOS_RUNTIME_MODE")
-    or os.environ.get("HERMES_RUNTIME_MODE")
-    or "openshell"
-)  # "openshell" (default) | "docker"
 
 try:
     # Read directly from pyproject.toml — immune to stale installed metadata
@@ -90,7 +85,7 @@ _BUILD_SHA = os.environ.get("BUILD_SHA", "local")[:7]
 _VERSION_LABEL = f"v{_APP_VERSION} · {_BUILD_SHA}{' · canary' if _IS_CANARY else ''}"
 _SERVER_START_TS = str(int(__import__("time").time()))  # unique per pod start; used to invalidate setup localStorage
 # Generic instance-name sanitiser (used by every executor for naming).
-from gateway.executors.k8s_helpers import safe_k8s_name as _safe_k8s_name
+from gateway.executors.base import safe_k8s_name as _safe_k8s_name
 
 # In-memory request queue for instances that couldn't spawn due to resource constraints
 _instance_queue: list[dict] = []
@@ -1435,7 +1430,7 @@ async def _handle_index(request: web.Request) -> web.Response:
     from gateway.auth.db import is_setup_completed
     if not is_setup_completed():
         raise web.HTTPFound("/login")
-    inject = f'<script>window.__LOGOS__={{isCanary:{str(_IS_CANARY).lower()},runtimeMode:"{_RUNTIME_MODE}",version:"{_VERSION_LABEL}"}};window._hueEpochMs={_HUE_EPOCH_MS};</script>'
+    inject = f'<script>window.__LOGOS__={{isCanary:{str(_IS_CANARY).lower()},runtimeMode:"openshell",version:"{_VERSION_LABEL}"}};window._hueEpochMs={_HUE_EPOCH_MS};</script>'
     html = _ADMIN_HTML.replace("</head>", inject + "</head>", 1)
     return web.Response(text=html, content_type="text/html")
 
@@ -4196,10 +4191,10 @@ async def start_http_api(runner: Any, port: int = 8091) -> None:
     app = web.Application(middlewares=[cors_middleware, auth_middleware])
     app["runner"] = runner
 
-    # Executor — selects kubernetes or local-process backend based on runtime mode
+    # Executor — OpenShell is the only supported sandbox runtime.
     from gateway.executors import build_executor
-    app["executor"] = build_executor(_RUNTIME_MODE)
-    logger.info("Instance executor: %s (runtime_mode=%s)", type(app["executor"]).__name__, _RUNTIME_MODE)
+    app["executor"] = build_executor()
+    logger.info("Instance executor: %s", type(app["executor"]).__name__)
 
     # Resurrect any agent records whose sandbox no longer exists in OpenShell,
     # and prune any orphan hermes-* sandboxes whose agent record was deleted
@@ -4375,9 +4370,6 @@ async def start_http_api(runner: Any, port: int = 8091) -> None:
     app.router.add_get("/api/setup/discover",       _sh.handle_setup_discover)
     app.router.add_post("/api/setup/set-remote",   _sh.handle_setup_set_remote)
     app.router.add_get("/api/setup/env-probe",       _sh.handle_setup_env_probe)
-    app.router.add_post("/api/setup/sandbox-setup",  _sh.handle_setup_sandbox_setup)
-    app.router.add_post("/api/setup/k3s-install",    _sh.handle_setup_k3s_install)
-    app.router.add_post("/api/setup/launch-docker",  _sh.handle_setup_launch_docker)
     app.router.add_post("/api/setup/reset",
         require_csrf(require_permission("manage_platform")(_handle_setup_reset)))
     app.router.add_post("/api/setup/wipe",
