@@ -3941,7 +3941,7 @@ async def _handle_chat(request: web.Request) -> web.StreamResponse:
             if session_key:
                 runner._session_status[session_key] = {
                     "platform": _platform_val,
-                    "agent_name": (agent.name if agent else ""),
+                    "agent_name": _agent_config.get("name", ""),
                     "current_tool": "thinking…",
                     "tool_started_at": _now_fn(),
                     "session_started_at": _now_fn(),
@@ -5113,6 +5113,12 @@ async def start_http_api(runner: Any, port: int = 8091) -> None:
     app.router.add_get("/runs",            _vrun(_handle_runs_list))
     app.router.add_get("/runs/{id}",       _vrun(_handle_run_get))
     app.router.add_get("/runs/{id}/clone", _vrun(_handle_run_clone))
+    # /api/runs aliases for consistency with other admin endpoints.
+    # Same handlers; same RBAC; different path for clients that expect
+    # the /api/ prefix.
+    app.router.add_get("/api/runs",            _vrun(_handle_runs_list))
+    app.router.add_get("/api/runs/{id}",       _vrun(_handle_run_get))
+    app.router.add_get("/api/runs/{id}/clone", _vrun(_handle_run_clone))
 
     # ── Evolution ───────────────────────────────────────────────────────────
     from gateway import evolution_handlers as _eh
