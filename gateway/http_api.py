@@ -1227,11 +1227,20 @@ async def _handle_platforms_list(request: web.Request) -> web.Response:
                 })
         except Exception:
             logger.exception("list_platform_routing failed for %s", platform.value)
+        hc = getattr(pconfig, "home_channel", None)
+        home_channel = None
+        if hc is not None:
+            home_channel = {
+                "chat_id": getattr(hc, "chat_id", None),
+                "name":    getattr(hc, "name", None),
+            }
         out.append({
-            "name":      platform.value,
-            "enabled":   bool(getattr(pconfig, "enabled", False)),
-            "connected": connected,
-            "routing":   rules,
+            "name":         platform.value,
+            "enabled":      bool(getattr(pconfig, "enabled", False)),
+            "connected":    connected,
+            "routing":      rules,
+            "home_channel": home_channel,
+            "supports_home_channel": platform.value in _HOME_CHANNEL_ENV,
         })
     return web.json_response({"platforms": out, "agents": [
         {"id": a["id"], "name": a.get("name", a["id"])} for a in _auth_db.list_agents()
@@ -1289,6 +1298,143 @@ async def _handle_platforms_routing_delete(request: web.Request) -> web.Response
         metadata={"id": rid}, ip_address=request.remote,
     )
     return web.json_response({"ok": True})
+
+
+# ---------------------------------------------------------------------------
+# Home channel: outbound destination for home_message MCP tool. Persisted as
+# env-var-style credentials in the DB (same store as bot tokens) so values
+# survive restarts, and updated live on runner.config so `home_message` picks
+# them up without a gateway restart.
+# ---------------------------------------------------------------------------
+
+_HOME_CHANNEL_ENV = {
+    "telegram": ("TELEGRAM_HOME_CHANNEL", "TELEGRAM_HOME_CHANNEL_NAME"),
+    "discord":  ("DISCORD_HOME_CHANNEL",  "DISCORD_HOME_CHANNEL_NAME"),
+    "slack":    ("SLACK_HOME_CHANNEL",    "SLACK_HOME_CHANNEL_NAME"),
+    "signal":   ("SIGNAL_HOME_CHANNEL",   "SIGNAL_HOME_CHANNEL_NAME"),
+    "email":    ("EMAIL_HOME_ADDRESS",    "EMAIL_HOME_ADDRESS_NAME"),
+}
+
+
+def _apply_home_channel(runner, platform_value: str, chat_id: str, name: str) -> None:
+    """Update runner.config.platforms[p].home_channel in-place."""
+    from gateway.config import Platform, PlatformConfig, HomeChannel
+    try:
+        platform = Platform(platform_value)
+    except ValueError:
+        return
+    if platform not in runner.config.platforms:
+        runner.config.platforms[platform] = PlatformConfig()
+    runner.config.platforms[platform].home_channel = HomeChannel(
+        platform=platform, chat_id=chat_id, name=name or "Home",
+    )
+
+
+def _clear_home_channel(runner, platform_value: str) -> None:
+    from gateway.config import Platform
+    try:
+        platform = Platform(platform_value)
+    except ValueError:
+        return
+    pconfig = runner.config.platforms.get(platform)
+    if pconfig is not None:
+        pconfig.home_channel = None
+
+
+async def _handle_platforms_home_channel_set(request: web.Request) -> web.Response:
+    """POST /api/admin/platforms/home-channel — set outbound home channel."""
+    user = request.get("current_user", {})
+    if user.get("role") not in ("admin",):
+        raise web.HTTPForbidden(text='{"error":"admin_required"}', content_type="application/json")
+    body = await request.json()
+    platform_value = (body.get("platform") or "").strip().lower()
+    chat_id = (body.get("chat_id") or "").strip()
+    name = (body.get("name") or "").strip() or "Home"
+    env_pair = _HOME_CHANNEL_ENV.get(platform_value)
+    if not env_pair:
+        return web.json_response(
+            {"ok": False, "error": f"home_channel not supported for '{platform_value}'"}, status=400,
+        )
+    if not chat_id:
+        return web.json_response({"ok": False, "error": "chat_id required"}, status=400)
+    chat_env, name_env = env_pair
+    from gateway.services import set_credential
+    set_credential(chat_env, chat_id)
+    set_credential(name_env, name)
+    runner = request.app.get("runner")
+    if runner:
+        _apply_home_channel(runner, platform_value, chat_id, name)
+    from gateway.auth import db as _auth_db
+    _auth_db.write_audit_log(
+        user.get("sub", ""), "platform_home_channel_set",
+        metadata={"platform": platform_value, "chat_id": chat_id},
+        ip_address=request.remote,
+    )
+    return web.json_response({"ok": True, "home_channel": {"chat_id": chat_id, "name": name}})
+
+
+async def _handle_platforms_home_channel_delete(request: web.Request) -> web.Response:
+    """DELETE /api/admin/platforms/home-channel — clear outbound home channel."""
+    user = request.get("current_user", {})
+    if user.get("role") not in ("admin",):
+        raise web.HTTPForbidden(text='{"error":"admin_required"}', content_type="application/json")
+    body = await request.json()
+    platform_value = (body.get("platform") or "").strip().lower()
+    env_pair = _HOME_CHANNEL_ENV.get(platform_value)
+    if not env_pair:
+        return web.json_response({"ok": False, "error": "unsupported platform"}, status=400)
+    chat_env, name_env = env_pair
+    from gateway.services import delete_credential
+    delete_credential(chat_env)
+    delete_credential(name_env)
+    runner = request.app.get("runner")
+    if runner:
+        _clear_home_channel(runner, platform_value)
+    from gateway.auth import db as _auth_db
+    _auth_db.write_audit_log(
+        user.get("sub", ""), "platform_home_channel_delete",
+        metadata={"platform": platform_value}, ip_address=request.remote,
+    )
+    return web.json_response({"ok": True})
+
+
+async def _handle_platforms_home_channel_test(request: web.Request) -> web.Response:
+    """POST /api/admin/platforms/home-channel/test — send a test message to home."""
+    user = request.get("current_user", {})
+    if user.get("role") not in ("admin",):
+        raise web.HTTPForbidden(text='{"error":"admin_required"}', content_type="application/json")
+    body = await request.json()
+    platform_value = (body.get("platform") or "").strip().lower()
+    text = (body.get("text") or "Test from Logos home_message").strip()
+    if platform_value not in _HOME_CHANNEL_ENV:
+        return web.json_response({"ok": False, "error": "unsupported platform"}, status=400)
+    runner = request.app.get("runner")
+    if not runner:
+        return web.json_response({"ok": False, "error": "gateway not running"}, status=503)
+    from gateway.config import Platform
+    try:
+        platform = Platform(platform_value)
+    except ValueError:
+        return web.json_response({"ok": False, "error": "unknown platform"}, status=400)
+    pconfig = runner.config.platforms.get(platform)
+    hc = getattr(pconfig, "home_channel", None) if pconfig else None
+    if not hc:
+        return web.json_response({"ok": False, "error": "no home channel configured"}, status=400)
+    adapter = runner.adapters.get(platform)
+    if adapter is None:
+        return web.json_response(
+            {"ok": False, "error": f"{platform_value} adapter not connected"}, status=400,
+        )
+    try:
+        result = await adapter.send(chat_id=hc.chat_id, content=text)
+    except Exception as exc:
+        return web.json_response({"ok": False, "error": f"send failed: {exc}"}, status=500)
+    success = getattr(result, "success", False)
+    return web.json_response({
+        "ok":         bool(success),
+        "error":      None if success else (getattr(result, "error", None) or "send failed"),
+        "message_id": getattr(result, "message_id", None),
+    })
 
 
 async def _handle_setup_page(request: web.Request) -> web.Response:
@@ -4586,6 +4732,9 @@ async def start_http_api(runner: Any, port: int = 8091) -> None:
     app.router.add_get("/api/admin/platforms",                            _mm(_handle_platforms_list))
     app.router.add_post("/api/admin/platforms/routing",                   _mm(require_csrf(_handle_platforms_routing_upsert)))
     app.router.add_delete("/api/admin/platforms/routing/{id}",            _mm(require_csrf(_handle_platforms_routing_delete)))
+    app.router.add_post("/api/admin/platforms/home-channel",              _mm(require_csrf(_handle_platforms_home_channel_set)))
+    app.router.add_delete("/api/admin/platforms/home-channel",            _mm(require_csrf(_handle_platforms_home_channel_delete)))
+    app.router.add_post("/api/admin/platforms/home-channel/test",         _mm(require_csrf(_handle_platforms_home_channel_test)))
 
     app.router.add_get("/admin/dispatches",           _mm(admin_handlers.handle_dispatches_list))
     app.router.add_get("/admin/agents",              _mm(admin_handlers.handle_agents_list))
