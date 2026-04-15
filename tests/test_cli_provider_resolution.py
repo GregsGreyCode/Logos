@@ -304,26 +304,8 @@ def test_codex_provider_strips_provider_prefix_from_model(monkeypatch):
     assert shell.model == "gpt-5.3-codex"
 
 
-def test_cmd_model_falls_back_to_auto_on_invalid_provider(monkeypatch, capsys):
-    monkeypatch.setattr(
-        "logos_cli.config.load_config",
-        lambda: {"model": {"default": "gpt-5", "provider": "invalid-provider"}},
-    )
-    monkeypatch.setattr("logos_cli.config.save_config", lambda cfg: None)
-    monkeypatch.setattr("logos_cli.config.get_env_value", lambda key: "")
-    monkeypatch.setattr("logos_cli.config.save_env_value", lambda key, value: None)
-
-    def _resolve_provider(requested, **kwargs):
-        if requested == "invalid-provider":
-            raise AuthError("Unknown provider 'invalid-provider'.", code="invalid_provider")
-        return "openrouter"
-
-    monkeypatch.setattr("logos_cli.auth.resolve_provider", _resolve_provider)
-    monkeypatch.setattr(hermes_main, "_prompt_provider_choice", lambda choices: len(choices) - 1)
-
-    hermes_main.cmd_model(SimpleNamespace())
-    output = capsys.readouterr().out
-
-    assert "Warning:" in output
-    assert "falling back to auto provider detection" in output.lower()
-    assert "No change." in output
+# Removed: test_cmd_model_falls_back_to_auto_on_invalid_provider — the
+# `logos model` subcommand (cmd_model) was stripped from the platform CLI
+# in 8c05b1e along with `chat`, `sessions`, `skills`, `tools`, `cron`. Model
+# selection now happens through the dashboard / config commands; there is
+# no cmd_model entrypoint to test.
