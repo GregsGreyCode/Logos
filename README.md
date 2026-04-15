@@ -113,7 +113,6 @@ Test agentic combinations, then modify, extend, and break the platform and its a
 - **Web dashboard** — full chat UI at `http://localhost:8091`; real-time streaming, per-message stats, voice input, metrics, multiple named agents, world view with live agent sprites, live execution panel
 - **Persistent history** — searchable conversation history in SQLite with full-text search across all past conversations
 - **Voice input** — speak via Telegram or the dashboard; faster-whisper transcribes locally when the package is installed (falls back to Groq / OpenAI).
-- **Image support** — send images directly; the vision pipeline enriches context before passing it to the model
 - **Live execution view** — watch in real time which tools the agent calls, its chain of reasoning, and elapsed time per step
 - **AI routing layer** — provisions one OpenShell gateway per `(provider, model)` route on the local host, picked per dispatch based on readiness. Today every route is a local OpenShell gateway on its own port; cross-machine / multi-host routing is planned.
 - **Parallel sub-agents** — a parent agent can spawn sub-agents via the `delegate` tool, each with independent toolsets and model selection. (No separate "Mixture-of-Agents" mechanism — that's the same delegation flow.)
