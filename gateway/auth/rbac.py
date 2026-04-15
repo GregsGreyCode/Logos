@@ -25,6 +25,9 @@ ROLE_PERMISSIONS: dict[str, set[str]] = {
         "assign_action_policy",     # assign action policy to a user
         "view_approvals",           # view all pending approval requests
         "decide_approvals",         # approve or reject any pending request
+        # OpenShell sandbox policies (network_policies presets)
+        "view_sandbox_policies",    # read preset YAMLs + which agents use them
+        "manage_sandbox_policies",  # create/edit/delete preset YAMLs
         # Workflow execution layer (v1)
         "manage_workflows",         # create/edit/delete workflow definitions
         "trigger_workflow",         # start a workflow run
@@ -53,6 +56,8 @@ ROLE_PERMISSIONS: dict[str, set[str]] = {
         "assign_action_policy",
         "view_approvals",
         "decide_approvals",
+        # OpenShell sandbox policies
+        "view_sandbox_policies",
         # Workflow execution layer (v1)
         "manage_workflows",
         "trigger_workflow",
