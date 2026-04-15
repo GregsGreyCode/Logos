@@ -1,6 +1,5 @@
-"""Logos policy module — approval gates, command security, and enforcement."""
+"""Logos policy module — approval gates and command security."""
 from logos.policy.enforcement import (
-    check_policy_for_tool,
     create_policy_approval_request,
     check_dangerous_command,
     check_all_command_guards,
@@ -8,7 +7,6 @@ from logos.policy.enforcement import (
 )
 
 __all__ = [
-    "check_policy_for_tool",
     "create_policy_approval_request",
     "check_dangerous_command",
     "check_all_command_guards",

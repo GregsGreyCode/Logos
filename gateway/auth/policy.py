@@ -289,59 +289,19 @@ def categorise_tool(tool_name: str) -> str:
 # Policy violation / check
 # ---------------------------------------------------------------------------
 
-class PolicyViolation(Exception):
-    """Hard policy block — action must not proceed even with approval."""
-    def __init__(self, dimension: str, action: str, policy_value: str, message: str = ""):
-        self.dimension   = dimension
-        self.action      = action
-        self.policy_value = policy_value
-        super().__init__(message or f"Policy blocked: {dimension}={policy_value} forbids {action}")
-
-
-def check_tool(tool_name: str, policy: ActionPolicy) -> tuple[bool, bool, str]:
-    """Check a tool call against an action policy.
-
-    Returns:
-        (allowed, requires_approval, reason)
-
-    - allowed=False, requires_approval=False → hard block (PolicyViolation equivalent)
-    - allowed=True,  requires_approval=True  → must go through approval gate
-    - allowed=True,  requires_approval=False → proceed immediately
-    """
-    action_type = categorise_tool(tool_name)
-
-    # ── External network actions ──────────────────────────────────────────
-    if action_type == ACTION_EXTERNAL_API:
-        if policy.network_policy == NetworkPolicy.LOCAL_ONLY:
-            return False, False, f"network_policy=local_only blocks external call {tool_name}"
-        return True, False, ""
-
-    # ── Exec actions ─────────────────────────────────────────────────────
-    if action_type in (ACTION_SSH_EXEC, ACTION_EXEC):
-        if policy.exec_policy == ExecPolicy.NONE:
-            return False, False, f"exec_policy=none blocks {tool_name}"
-        # RESTRICTED: local terminal is allowed but remote exec (ssh) is blocked
-        if policy.exec_policy == ExecPolicy.RESTRICTED and action_type == ACTION_SSH_EXEC:
-            return False, False, f"exec_policy=restricted blocks remote execution: {tool_name}"
-        if policy.write_policy == WritePolicy.DRY_RUN:
-            return False, False, f"write_policy=dry_run blocks exec tool {tool_name}"
-        if policy.write_policy == WritePolicy.APPROVAL_REQUIRED:
-            return True, True, f"write_policy=approval_required: {tool_name} needs approval"
-        return True, False, ""
-
-    # ── Write/mutation actions ────────────────────────────────────────────
-    if action_type in (ACTION_FILE_WRITE, ACTION_GIT_MUTATION,
-                       ACTION_KUBECTL, ACTION_DOCKER):
-        if action_type == ACTION_FILE_WRITE and policy.filesystem_policy == FilesystemPolicy.READ_ONLY:
-            return False, False, f"filesystem_policy=read_only blocks {tool_name}"
-        if policy.write_policy == WritePolicy.DRY_RUN:
-            return False, False, f"write_policy=dry_run blocks {tool_name}"
-        if policy.write_policy == WritePolicy.APPROVAL_REQUIRED:
-            return True, True, f"write_policy=approval_required: {tool_name} needs approval"
-        return True, False, ""
-
-    # All other tools pass through
-    return True, False, ""
+# NOTE: the former ``check_tool()`` and ``PolicyViolation`` lived here.
+# They were never called at runtime — tool dispatch in
+# ``tools/registry.py:dispatch()`` passes the policy as a kwarg and
+# every handler ignores it. Approval gating fires from the hardcoded
+# ``DANGEROUS_PATTERNS`` regex list in ``tools/approval.py`` instead,
+# and workspace scoping is enforced directly in
+# ``agents/hermes/agent.py:3195-3250`` (uses ``FilesystemPolicy`` /
+# ``_get_repo_roots`` from this module). The UI's 6-dimension form
+# was slimmed to reality in commit acaa7f4f; this commit deletes the
+# dead enforcement functions so the next reader isn't misled about
+# what's live. If a unified dispatch-time policy gate is wanted in
+# future, wire it into ``tools/registry.py:dispatch()`` and add a
+# fresh check function — don't resurrect the stale one.
 
 
 def _get_repo_roots() -> list:
