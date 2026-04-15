@@ -491,11 +491,35 @@ def _run_migrations() -> None:
             # next to applied_presets since both are policy-shaped fields the
             # capability system writes to.
             "ALTER TABLE agents ADD COLUMN website_blocklist TEXT",
+            # v21: per-MCP-server auto_grant toggle. When True, the
+            # server's tools are injected into every agent's effective
+            # toolset automatically at spawn/refresh time. When False,
+            # the agent has to go through the request_mcp_access flow
+            # for a per-session grant. Column default is NULL so the
+            # create path can distinguish "never set" (apply deploy-
+            # mode default) from an explicit user choice.
+            "ALTER TABLE mcp_servers ADD COLUMN auto_grant INTEGER",
         ):
             try:
                 conn.execute(stmt)
             except sqlite3.OperationalError:
                 pass  # column already exists
+
+        # v21 backfill: pre-migration rows have auto_grant=NULL. Give
+        # docker-deployed servers the opt-in default (user clicked
+        # Deploy — that's consent). External-URL servers stay off
+        # until the user explicitly toggles auto-grant in the UI.
+        try:
+            conn.execute(
+                "UPDATE mcp_servers SET auto_grant=1 "
+                "WHERE auto_grant IS NULL AND deploy_mode='docker'"
+            )
+            conn.execute(
+                "UPDATE mcp_servers SET auto_grant=0 "
+                "WHERE auto_grant IS NULL"
+            )
+        except sqlite3.OperationalError:
+            pass
 
         # v11: dispatch activity ledger (M8 Phase B). Durable record of
         # every task dispatch — who, what agent, which model, origin,
@@ -2780,8 +2804,18 @@ def create_mcp_server(
     category: str = "general",
     description: str | None = None,
     auto_wire: bool = True,
+    auto_grant: bool | None = None,
 ) -> dict:
-    """Create a new managed MCP server record."""
+    """Create a new managed MCP server record.
+
+    ``auto_grant`` controls whether this server's tools are injected
+    into every agent's effective toolset at spawn/refresh time. When
+    ``None`` (default), docker-deployed servers get ``True`` (the user
+    clicked Deploy, that's consent) and external-URL servers get
+    ``False`` (user gave us a URL, not a blanket grant).
+    """
+    if auto_grant is None:
+        auto_grant = (deploy_mode == "docker")
     server_id = f"mcp_{uuid.uuid4().hex[:20]}"
     now = int(time.time() * 1000)
     with _conn() as conn:
@@ -2790,13 +2824,15 @@ def create_mcp_server(
                (id, name, catalogue_id, source, status, deploy_mode,
                 url, token,
                 config_json, tools_filter, category, description,
-                auto_wire, enabled, created_at, updated_at)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,1,?,?)""",
+                auto_wire, auto_grant, enabled, created_at, updated_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,?,?)""",
             (server_id, name, catalogue_id, source,
              "external" if deploy_mode == "external" else "pending",
              deploy_mode, url, token,
              config_json, tools_filter, category, description,
-             1 if auto_wire else 0, now, now),
+             1 if auto_wire else 0,
+             1 if auto_grant else 0,
+             now, now),
         )
     return get_mcp_server(server_id)
 
@@ -2807,6 +2843,7 @@ def update_mcp_server(server_id: str, **fields) -> dict | None:
         "name", "status", "url", "token",
         "config_json", "tools_filter", "category", "description",
         "auto_wire", "enabled", "last_error", "deploy_mode",
+        "auto_grant",
     }
     updates = {k: v for k, v in fields.items() if k in allowed}
     if not updates:

@@ -348,10 +348,14 @@ BUILTIN_CATALOGUE: Dict[str, Dict[str, Any]] = {
     "echo-test": {
         "name": "Echo (test server)",
         "description": (
-            "Zero-config smoke-test MCP server — exposes a single ``echo`` "
-            "tool that returns its input verbatim. NOT FOR PRODUCTION USE. "
-            "Build the image first: ``docker build -f docker/testing/mcp-echo/"
-            "Dockerfile -t logos-mcp-echo-test:local docker/testing/mcp-echo``."
+            "Zero-config smoke-test MCP server. The ``echo`` tool wraps its "
+            "input in a per-container marker (``echo-test[<container-id> "
+            "pid=<pid> call=<n>]: <text>``) the model cannot invent without "
+            "actually reaching the container — so a real call is "
+            "distinguishable from a hallucinated response. NOT FOR PRODUCTION "
+            "USE. Build the image first: ``docker build -f docker/testing/"
+            "mcp-echo/Dockerfile -t logos-mcp-echo-test:local docker/testing/"
+            "mcp-echo``."
         ),
         "category": "testing",
         "image": "logos-mcp-echo-test:local",

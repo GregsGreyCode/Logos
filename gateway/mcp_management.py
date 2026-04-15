@@ -260,6 +260,31 @@ async def handle_server_create(request: web.Request) -> web.Response:
                     server["id"], status="error", last_error="; ".join(_parts)[:300],
                 )
                 server = db.get_mcp_server(server["id"])
+
+            # Push the new MCP toolset (mcp-<name>) to every running
+            # sandbox so agents can see it on their next dispatch
+            # without a manual respawn. Auto-granted servers (default
+            # for docker deploys) get merged into each sandbox's
+            # toolsets list by _auto_granted_mcp_toolsets() inside
+            # refresh_instance_config. Best-effort — a refresh failure
+            # shouldn't tank the create response, the server is
+            # already live for fresh spawns.
+            if server and server.get("auto_grant"):
+                _executor = request.app.get("executor")
+                if _executor and hasattr(_executor, "refresh_all_instance_configs"):
+                    try:
+                        pushed = await asyncio.to_thread(
+                            _executor.refresh_all_instance_configs
+                        )
+                        logger.info(
+                            "mcp deploy %s: refreshed %d sandbox(es) with new toolset",
+                            name, pushed,
+                        )
+                    except Exception as exc:
+                        logger.warning(
+                            "mcp deploy %s: sandbox refresh failed: %s",
+                            name, exc,
+                        )
         except Exception as exc:
             logger.exception("Failed to deploy MCP container %s", name)
             db.update_mcp_server(
@@ -321,11 +346,34 @@ async def handle_server_update(request: web.Request) -> web.Response:
         return _json({"error": "invalid_json"}, 400)
 
     updates = {}
-    for field in ("url", "token", "description", "category", "enabled", "auto_wire", "config_json", "tools_filter"):
+    for field in ("url", "token", "description", "category", "enabled",
+                  "auto_wire", "auto_grant", "config_json", "tools_filter"):
         if field in body:
             updates[field] = body[field]
 
+    # Normalize auto_grant/auto_wire/enabled booleans to SQLite ints —
+    # the UI sends 0/1 but some callers may send true/false.
+    for _bf in ("auto_grant", "auto_wire", "enabled"):
+        if _bf in updates:
+            updates[_bf] = 1 if updates[_bf] else 0
+
     server = db.update_mcp_server(server_id, **updates)
+
+    # Toggling auto_grant changes which toolsets every sandbox sees,
+    # so push the updated config to running sandboxes immediately.
+    # Without this, flipping the switch only takes effect after the
+    # next respawn or some other refresh trigger — which is surprising
+    # UX for a toggle the user just clicked.
+    if "auto_grant" in updates:
+        _executor = request.app.get("executor")
+        if _executor and hasattr(_executor, "refresh_all_instance_configs"):
+            try:
+                await asyncio.to_thread(_executor.refresh_all_instance_configs)
+            except Exception as exc:
+                logger.warning(
+                    "auto_grant toggle: refresh_all_instance_configs failed: %s", exc,
+                )
+
     return _json({"server": server})
 
 
