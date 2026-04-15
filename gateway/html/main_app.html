@@ -1862,10 +1862,10 @@
 
     <!-- ── Cloud Providers section ── -->
     <div x-show="can('manage_machines')" class="mb-8">
-      <div class="flex items-center justify-between mb-3">
-        <h3 class="text-sm font-semibold text-gray-300">Cloud Providers</h3>
+      <div class="flex items-center justify-between mb-4">
+        <div class="text-sm font-semibold text-white">Cloud Providers</div>
         <button @click="cloudProviderFormOpen = !cloudProviderFormOpen; cloudProviderMsg = null"
-          class="text-[10px] px-2 py-1 rounded border border-gray-700 text-gray-400 hover:text-white hover:border-gray-500 transition-colors">
+          class="text-xs px-3 py-1.5 rounded-lg border border-gray-700 text-gray-400 hover:text-white transition-colors">
           <span x-text="cloudProviderFormOpen ? 'Cancel' : '+ Add Provider'"></span>
         </button>
       </div>
@@ -1913,58 +1913,78 @@
         </button>
       </div>
 
-      <!-- Provider list -->
-      <div class="space-y-2">
+      <!-- Provider list — card shape + button sizing mirrors Local Servers below -->
+      <div class="grid grid-cols-1 gap-3">
         <template x-for="p in cloudProviders" :key="p.id">
-          <div class="p-3 rounded-xl border transition-colors"
-            :class="p.is_active ? 'border-indigo-500/50 bg-indigo-950/10' : 'border-gray-800 bg-gray-900'">
-            <!-- Header row -->
-            <div class="flex items-center justify-between mb-1">
-              <div class="flex items-center gap-2">
-                <span class="text-xs font-semibold" :class="p.is_active ? 'text-white' : 'text-gray-300'" x-text="p.name"></span>
-                <span class="text-[9px] px-1.5 py-0.5 rounded-full font-medium"
-                  :class="p.is_active ? 'bg-green-900 text-green-400 border border-green-700' : 'bg-gray-800 text-gray-500 border border-gray-700'"
-                  x-text="p.is_active ? 'Active' : 'Inactive'"></span>
-                <span class="text-[10px] text-gray-600 font-mono" x-text="p.provider"></span>
+          <div class="bg-gray-900 border rounded-xl overflow-hidden transition-colors"
+            :class="p.is_active ? 'border-indigo-500/50' : 'border-gray-800'">
+            <!-- Card header row -->
+            <div class="flex items-center gap-3 px-4 py-3">
+              <!-- Status dot: green when active, grey otherwise -->
+              <div class="w-2 h-2 rounded-full shrink-0 transition-colors"
+                   :class="p.is_active ? 'bg-green-500' : 'bg-gray-600'"></div>
+
+              <!-- Name + meta -->
+              <div class="flex-1 min-w-0">
+                <div class="flex items-center gap-2 flex-wrap">
+                  <span class="font-medium text-white text-sm" x-text="p.name"></span>
+                  <span class="text-xs px-1.5 py-0.5 rounded"
+                    :class="p.is_active ? 'bg-green-950 text-green-500' : 'bg-gray-800 text-gray-500'"
+                    x-text="p.is_active ? 'active' : 'inactive'"></span>
+                  <span class="text-xs text-gray-600 font-mono" x-text="p.provider"></span>
+                </div>
+                <!-- Info row: key state + default model + last test result -->
+                <div class="flex items-center gap-3 mt-0.5 text-xs text-gray-600">
+                  <span x-text="p.has_api_key ? '\uD83D\uDD11 Key set' : '\u26a0 No key'"></span>
+                  <span x-show="p.active_model" class="font-mono text-gray-500" x-text="p.active_model"></span>
+                  <span x-show="p._testResult?.ok" class="text-green-500">\u2713 Connected (<span x-text="p._testResult?.models"></span> models)</span>
+                  <span x-show="p._testResult && !p._testResult?.ok" class="text-red-400" x-text="p._testResult?.error"></span>
+                </div>
               </div>
-              <div class="flex items-center gap-1.5">
+
+              <!-- Action buttons — matches Local Servers: text-xs px-2 py-1 rounded border -->
+              <div class="flex gap-1.5 items-center shrink-0">
                 <button @click="testCloudProvider(p.id)" :disabled="p._testing"
-                  class="text-[10px] px-2 py-0.5 rounded border border-gray-700 text-gray-500 hover:text-white hover:border-gray-500 disabled:opacity-40 transition-colors"
-                  x-text="p._testing ? 'Testing...' : 'Test'"></button>
+                  class="text-xs px-2 py-1 rounded border border-gray-700 text-gray-500 hover:text-white transition-colors disabled:opacity-40"
+                  x-text="p._testing ? 'Testing…' : 'Test'"></button>
                 <button x-show="!p.is_active" @click="activateCloudProvider(p.id)"
-                  class="text-[10px] px-2 py-0.5 rounded border border-indigo-700 text-indigo-400 hover:text-white hover:border-indigo-500 transition-colors">Activate</button>
+                  class="text-xs px-2 py-1 rounded border border-indigo-700 text-indigo-400 hover:text-white hover:border-indigo-500 transition-colors">Activate</button>
                 <button x-show="!p._editing" @click="p._editing = true; p._edit = { name: p.name, api_key: '', base_url: p.base_url || '', active_model: p.active_model || '' }; loadCloudProviderModels(p.provider)"
-                  class="text-[10px] px-2 py-0.5 rounded border border-gray-700 text-gray-500 hover:text-white hover:border-gray-500 transition-colors">Edit</button>
+                  class="text-xs px-2 py-1 rounded border border-gray-700 text-gray-500 hover:text-white transition-colors">Edit</button>
                 <button @click="deleteCloudProvider(p.id, p.is_active, p.name)"
                   :title="p.is_active ? 'Delete this provider (it is currently active; any bound routes will also be destroyed)' : 'Delete this provider'"
-                  class="text-[10px] px-2 py-0.5 rounded border border-red-900 text-red-500 hover:text-red-400 hover:border-red-700 transition-colors">Delete</button>
+                  class="text-xs px-2 py-1 rounded border border-red-900 text-red-600 hover:text-red-400 transition-colors">Delete</button>
               </div>
             </div>
-            <!-- Info row -->
-            <div class="flex items-center gap-3 text-[10px] text-gray-500">
-              <span x-text="p.has_api_key ? '\uD83D\uDD11 Key set' : '\u26a0 No key'"></span>
-              <span x-show="p.active_model" class="font-mono" x-text="p.active_model"></span>
-              <span x-show="p._testResult?.ok" class="text-green-500">\u2713 Connected (<span x-text="p._testResult?.models"></span> models)</span>
-              <span x-show="p._testResult && !p._testResult?.ok" class="text-red-400" x-text="p._testResult?.error"></span>
-            </div>
-            <!-- Inline edit form -->
-            <div x-show="p._editing" x-cloak class="mt-3 space-y-2 pt-3 border-t border-gray-800">
-              <input x-model="p._edit.name" type="text" placeholder="Display name"
-                class="w-full px-2 py-1.5 rounded-lg bg-gray-800 border border-gray-700 text-xs text-white focus:outline-none focus:border-indigo-500">
-              <input x-model="p._edit.api_key" type="password" placeholder="New API key (leave blank to keep current)"
-                class="w-full px-2 py-1.5 rounded-lg bg-gray-800 border border-gray-700 text-xs text-white placeholder-gray-600 focus:outline-none focus:border-indigo-500">
-              <input x-show="p.provider === 'custom'" x-model="p._edit.base_url" type="text" placeholder="Base URL"
-                class="w-full px-2 py-1.5 rounded-lg bg-gray-800 border border-gray-700 text-xs text-white placeholder-gray-600 focus:outline-none focus:border-indigo-500">
-
+            <!-- Inline edit form — matches the Local Servers edit panel:
+                 same border-t separator, bg-gray-950 body, and input sizing
+                 so both kinds of card feel like the same component. -->
+            <div x-show="p._editing" x-cloak class="border-t border-gray-800 px-4 py-3 bg-gray-950 space-y-2">
+              <div>
+                <label class="text-xs text-gray-500 block mb-1">Display name</label>
+                <input x-model="p._edit.name" type="text"
+                  class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm text-white focus:border-indigo-500 focus:outline-none">
+              </div>
+              <div>
+                <label class="text-xs text-gray-500 block mb-1">API key
+                  <span class="ml-1 text-gray-600 text-[10px]">(leave blank to keep current)</span>
+                </label>
+                <input x-model="p._edit.api_key" type="password"
+                  class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm text-white placeholder-gray-600 focus:border-indigo-500 focus:outline-none font-mono">
+              </div>
+              <div x-show="p.provider === 'custom'">
+                <label class="text-xs text-gray-500 block mb-1">Base URL</label>
+                <input x-model="p._edit.base_url" type="text"
+                  class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm text-white placeholder-gray-600 focus:border-indigo-500 focus:outline-none font-mono">
+              </div>
               <!-- Model selection: live catalog dropdown when available,
                    free-text fallback when the provider isn't in the
-                   live-catalog set (e.g. custom). Users can still type
-                   a custom model by toggling the "Type a model ID"
-                   link below the select. -->
+                   live-catalog set (e.g. custom). -->
               <div x-data="{ manual: false }">
+                <label class="text-xs text-gray-500 block mb-1">Default model</label>
                 <template x-if="!manual && (cloudProviderModelsList[p.provider] || cloudProviderModelsFallback[p.provider])">
                   <select x-model="p._edit.active_model"
-                    class="w-full px-2 py-1.5 rounded-lg bg-gray-800 border border-gray-700 text-xs text-white focus:outline-none focus:border-indigo-500">
+                    class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm text-white focus:border-indigo-500 focus:outline-none font-mono">
                     <option value="">— no default —</option>
                     <template x-for="m in (cloudProviderModelsList[p.provider] || cloudProviderModelsFallback[p.provider] || [])" :key="m">
                       <option :value="m" x-text="m"></option>
@@ -1972,21 +1992,20 @@
                   </select>
                 </template>
                 <template x-if="manual || !(cloudProviderModelsList[p.provider] || cloudProviderModelsFallback[p.provider])">
-                  <input x-model="p._edit.active_model" type="text" placeholder="Default model (e.g. gpt-4o-mini)"
-                    class="w-full px-2 py-1.5 rounded-lg bg-gray-800 border border-gray-700 text-xs text-white placeholder-gray-600 focus:outline-none focus:border-indigo-500">
+                  <input x-model="p._edit.active_model" type="text" placeholder="e.g. gpt-4o-mini"
+                    class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm text-white placeholder-gray-600 focus:border-indigo-500 focus:outline-none font-mono">
                 </template>
                 <div class="flex items-center gap-2 mt-1">
-                  <button @click="manual = !manual" class="text-[10px] text-gray-500 hover:text-gray-300"
+                  <button @click="manual = !manual" class="text-xs text-gray-500 hover:text-gray-300"
                     x-text="manual ? 'Pick from list' : 'Type a model ID'"></button>
-                  <span x-show="cloudProviderModelsError[p.provider]" class="text-[10px] text-amber-500" x-text="'Live catalog unavailable — showing fallback list'"></span>
+                  <span x-show="cloudProviderModelsError[p.provider]" class="text-xs text-amber-500">Live catalog unavailable — showing fallback list</span>
                 </div>
               </div>
-
-              <div class="flex gap-2">
+              <div class="flex gap-2 pt-1">
                 <button @click="updateCloudProvider(p.id)"
-                  class="text-xs px-3 py-1.5 rounded-lg bg-indigo-600 text-white hover:bg-indigo-500 transition-colors">Save</button>
+                  class="text-xs px-3 py-1.5 rounded-lg bg-[var(--accent)] text-white hover:opacity-90">Save</button>
                 <button @click="p._editing = false; p._edit = null"
-                  class="text-xs px-3 py-1.5 rounded-lg border border-gray-700 text-gray-400 hover:text-white transition-colors">Cancel</button>
+                  class="text-xs px-3 py-1.5 rounded-lg border border-gray-700 text-gray-400 hover:text-white">Cancel</button>
               </div>
             </div>
           </div>
@@ -2071,7 +2090,8 @@
         </div>
       </template>
 
-      <!-- Header -->
+      <!-- Header — same visual weight as Cloud Providers: bordered "+ Register"
+           (the accent-filled button is reserved for commit actions inside forms). -->
       <div class="flex items-center justify-between mb-4">
         <div class="text-sm font-semibold text-white">Local Servers</div>
         <div class="flex items-center gap-2">
@@ -2082,7 +2102,9 @@
             <span x-show="adminScanRunning" class="animate-pulse">Scanning…</span>
           </button>
           <button @click="adminMachineForm={name:'',endpoint_url:'',description:''}; adminMachineFormOpen=!adminMachineFormOpen"
-            class="text-xs px-3 py-1.5 rounded-lg bg-[var(--accent)] text-white hover:opacity-90 transition-opacity">+ Register</button>
+            class="text-xs px-3 py-1.5 rounded-lg border border-gray-700 text-gray-400 hover:text-white transition-colors">
+            <span x-text="adminMachineFormOpen ? 'Cancel' : '+ Register'"></span>
+          </button>
         </div>
       </div>
 

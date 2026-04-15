@@ -198,6 +198,38 @@ unless someone asks for it.
 
 ## Pending — infra / cleanup
 
+### #XX Strip workflow + action-policy dead code once schema migration is safe
+Commit `6e05331` removed the user-facing Workflows tab + per-user
+Routing Profile / Action Policy UI surface. Three residues stayed
+on disk because pulling them out requires a DB migration or a
+broader tuple edit across every role:
+
+- `gateway/auth/db.py`: `list_workflow_definitions`,
+  `create_workflow_definition`, `update_workflow_definition`,
+  `delete_workflow_definition`, `list_workflow_runs`,
+  `get_workflow_run`, `list_workflow_step_runs`, `create_workflow_run`,
+  `update_workflow_step_run`, `create_workflow_step_run`, plus the
+  action-policy helpers: `list_action_policies`, `create_action_policy`,
+  `get_action_policy`, `update_action_policy`,
+  `delete_action_policy`, `get_user_action_policy_row`,
+  `assign_user_action_policy`. No callers after commit `6e05331`.
+- DB tables that back those helpers: `workflow_definitions`,
+  `workflow_runs`, `workflow_step_runs`, `action_policies`. Need a
+  forward migration that drops them; keep a down-migration that
+  recreates the schema in case we want workflows back.
+- `gateway/auth/rbac.py` permission strings referenced by the
+  removed routes: `manage_workflows`, `view_workflows`,
+  `trigger_workflow`, `decide_workflow_approvals`,
+  `manage_action_policies`, `assign_action_policy`. Removing these
+  touches every role tuple in the `ROLE_PERMISSIONS` map — low risk
+  per role but noisy diff, so skipped during the UI-only removal.
+- `workflows/` module directory (`engine.py`, step runners). No
+  longer imported; can be deleted once the helpers + tables above
+  are gone.
+
+Do this as a single cleanup pass once we're confident the removal
+sticks (≥ 2 weeks of dogfooding).
+
 ### #17 Cache sandbox details to prevent blank flash on tab click
 When the user clicks on a sandbox in `/admin/sandboxes` the detail
 panel sometimes shows empty momentarily before the next poll fills
