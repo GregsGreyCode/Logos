@@ -3015,10 +3015,202 @@
     <div>
       <div class="flex items-center justify-between mb-3">
         <h2 class="text-sm font-semibold text-white">MCP Tool Servers</h2>
-        <button @click="toolsShowCatalogue = !toolsShowCatalogue"
+        <button @click="toolsShowCatalogue = !toolsShowCatalogue; if (toolsShowCatalogue) loadToolsTab()"
           class="text-xs px-3 py-1.5 rounded-lg border border-indigo-700 bg-indigo-900/30 text-indigo-300 hover:bg-indigo-900/50 transition-colors">
           <span x-text="toolsShowCatalogue ? 'Hide catalogue' : '+ Add server'"></span>
         </button>
+      </div>
+
+      <!-- Catalogue drops down from the top when "Add server" is
+           clicked, pushing the existing server list down. Rendered
+           first in the DOM so it appears above the servers. -->
+      <div x-show="toolsShowCatalogue" x-cloak class="mb-5 p-4 rounded-xl border border-indigo-900/50 bg-indigo-950/10">
+        <div class="flex items-center justify-between mb-3">
+          <h3 class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Catalogue</h3>
+          <div class="flex items-center gap-2">
+            <button @click="toolsShowExternal = !toolsShowExternal"
+              class="px-2 py-1 rounded border border-gray-700 text-gray-500 hover:text-white hover:border-gray-500 text-[10px]"
+              title="Add a pre-existing MCP server by URL">Add external</button>
+            <button @click="refreshCatalogue()"
+              class="px-2 py-1 rounded border border-gray-700 text-gray-500 hover:text-white hover:border-gray-500 text-[10px]"
+              title="Refetch remote sources">Refresh</button>
+            <button @click="toolsShowSources = !toolsShowSources"
+              class="px-2 py-1 rounded border border-gray-700 text-gray-500 hover:text-white hover:border-gray-500 text-[10px]"
+              title="Configure catalogue sources">Sources</button>
+          </div>
+        </div>
+
+        <!-- Source configuration (collapsible) -->
+        <div x-show="toolsShowSources" x-cloak class="mb-3 p-3 rounded-lg border border-gray-800 bg-gray-900/60">
+          <div class="text-xs font-medium text-gray-300 mb-2">Catalogue sources</div>
+          <p class="text-[10px] text-gray-500 mb-2">
+            Built-in entries always appear. Docker Hub namespace sources pull repos from <span class="font-mono">hub.docker.com/u/&lt;namespace&gt;</span>.
+          </p>
+          <div class="space-y-2">
+            <template x-for="(src, idx) in toolsCatalogueSources" :key="idx">
+              <div class="flex items-center gap-2 p-2 rounded-lg bg-gray-800/60 border border-gray-700">
+                <input type="checkbox" x-model="src.enabled" class="accent-indigo-500">
+                <select x-model="src.type" class="px-2 py-1 rounded bg-gray-800 border border-gray-700 text-xs text-white">
+                  <option value="docker_hub_namespace">Docker Hub namespace</option>
+                  <option value="http_json">HTTP JSON URL</option>
+                </select>
+                <template x-if="src.type === 'docker_hub_namespace'">
+                  <input x-model="src.namespace" type="text" placeholder="e.g. mcp"
+                    class="flex-1 px-2 py-1 rounded bg-gray-800 border border-gray-700 text-xs text-white placeholder-gray-600">
+                </template>
+                <template x-if="src.type === 'http_json'">
+                  <input x-model="src.url" type="text" placeholder="https://example.com/catalogue.json"
+                    class="flex-1 px-2 py-1 rounded bg-gray-800 border border-gray-700 text-xs text-white placeholder-gray-600">
+                </template>
+                <button @click="toolsCatalogueSources.splice(idx, 1)"
+                  class="px-2 py-1 rounded border border-red-900 text-red-700 hover:text-red-400 text-[10px]">Remove</button>
+              </div>
+            </template>
+          </div>
+          <div class="flex items-center gap-2 mt-2">
+            <button @click="toolsCatalogueSources.push({type: 'docker_hub_namespace', namespace: 'mcp', enabled: true})"
+              class="px-2 py-1 rounded border border-gray-700 text-gray-500 hover:text-white hover:border-gray-500 text-[10px]">+ Docker Hub</button>
+            <button @click="toolsCatalogueSources.push({type: 'http_json', url: '', enabled: true})"
+              class="px-2 py-1 rounded border border-gray-700 text-gray-500 hover:text-white hover:border-gray-500 text-[10px]">+ HTTP JSON</button>
+            <button @click="saveCatalogueSources()"
+              class="px-3 py-1 rounded bg-indigo-600 hover:bg-indigo-500 text-white text-[10px] font-medium ml-auto">Save &amp; reload</button>
+          </div>
+        </div>
+
+        <!-- Add External Server (collapsed by default; toggled via the
+             "Add external" header button so the catalogue grid gets the
+             vertical space when it's not needed). -->
+        <div x-show="toolsShowExternal" x-cloak class="mb-3 p-3 rounded-lg border border-gray-800 bg-gray-900/60">
+          <div class="text-xs font-medium text-gray-300 mb-2">Add external server</div>
+          <div class="grid grid-cols-3 gap-2">
+            <input x-model="toolsExtName" type="text" placeholder="Name"
+              class="col-span-1 px-2 py-1.5 rounded-lg bg-gray-800 border border-gray-700 text-xs text-white placeholder-gray-600 focus:outline-none focus:border-indigo-500">
+            <input x-model="toolsExtUrl" type="text" placeholder="http://host:port/mcp"
+              class="col-span-1 px-2 py-1.5 rounded-lg bg-gray-800 border border-gray-700 text-xs text-white placeholder-gray-600 focus:outline-none focus:border-indigo-500">
+            <input x-model="toolsExtToken" type="password" placeholder="Token (optional)"
+              class="col-span-1 px-2 py-1.5 rounded-lg bg-gray-800 border border-gray-700 text-xs text-white placeholder-gray-600 focus:outline-none focus:border-indigo-500">
+          </div>
+          <button @click="addExternalServer()" :disabled="!toolsExtName.trim() || !toolsExtUrl.trim()"
+            class="mt-2 px-3 py-1.5 rounded-lg border border-gray-700 bg-gray-800 text-xs text-gray-300 hover:border-gray-500 transition-colors disabled:opacity-40">
+            Add external &rarr;
+          </button>
+        </div>
+
+        <!-- Source filter pills -->
+        <div class="flex items-center gap-1 flex-wrap mb-2">
+          <button @click="toolsCatalogueFilter = ''"
+            class="text-[10px] px-2 py-0.5 rounded-full border transition-colors"
+            :class="toolsCatalogueFilter === '' ? 'border-indigo-500 bg-indigo-900/40 text-indigo-300' : 'border-gray-800 bg-gray-900 text-gray-500 hover:border-gray-600'">
+            All (<span x-text="toolsCatalogue.length"></span>)
+          </button>
+          <template x-for="s in toolsCatalogueSourceList" :key="s">
+            <button @click="toolsCatalogueFilter = s"
+              class="text-[10px] px-2 py-0.5 rounded-full border transition-colors"
+              :class="toolsCatalogueFilter === s ? 'border-indigo-500 bg-indigo-900/40 text-indigo-300' : 'border-gray-800 bg-gray-900 text-gray-500 hover:border-gray-600'">
+              <span x-text="s"></span>
+            </button>
+          </template>
+        </div>
+
+        <!-- Catalogue grid. Clicking a tile expands it inline (full-
+             width in the 2-column grid) into a deploy form, so users
+             don't scroll away to a separate modal. Clicking an already-
+             selected tile collapses it. -->
+        <div class="grid grid-cols-2 gap-2">
+          <template x-for="cat in filteredCatalogue" :key="cat.catalogue_id">
+            <div :class="toolsDeployTarget && toolsDeployTarget.catalogue_id === cat.catalogue_id ? 'col-span-2' : ''">
+              <div @click="toolsDeployTarget && toolsDeployTarget.catalogue_id === cat.catalogue_id
+                              ? (toolsDeployTarget = null)
+                              : (toolsDeployTarget = cat, toolsDeployConfig = {}, toolsDeployError = '', (cat.config_schema||[]).forEach(f => { if (f.default) toolsDeployConfig[f.key] = f.default }))"
+                :class="toolsDeployTarget && toolsDeployTarget.catalogue_id === cat.catalogue_id
+                          ? 'border-indigo-600 bg-indigo-950/20'
+                          : 'border-gray-800 bg-gray-900 hover:border-indigo-600'"
+                class="text-left p-3 rounded-xl border transition-colors cursor-pointer">
+                <div class="flex items-center justify-between gap-2">
+                  <div class="text-sm font-medium text-white mb-0.5 truncate" x-text="cat.name"></div>
+                  <span class="text-[9px] px-1.5 py-0.5 rounded-full bg-gray-800 text-gray-500 border border-gray-700 flex-shrink-0" x-text="cat.source || 'builtin'"></span>
+                </div>
+                <div class="text-[10px] text-gray-500 leading-relaxed line-clamp-2" x-text="cat.description"></div>
+                <div class="flex items-center gap-2 mt-2">
+                  <span class="text-[9px] px-1.5 py-0.5 rounded-full bg-indigo-950 text-indigo-400 border border-indigo-800" x-text="cat.category"></span>
+                  <span x-show="(cat.default_tools||[]).length" class="text-[10px] text-gray-600" x-text="(cat.default_tools||[]).length + ' tools'"></span>
+                  <span x-show="cat.source_detail && cat.source_detail.pull_count" class="text-[10px] text-gray-600" x-text="(cat.source_detail && cat.source_detail.pull_count ? cat.source_detail.pull_count.toLocaleString() + ' pulls' : '')"></span>
+                </div>
+
+                <!-- Inline deploy form — only visible when this tile
+                     is the selected deploy target. -->
+                <template x-if="toolsDeployTarget && toolsDeployTarget.catalogue_id === cat.catalogue_id">
+                  <div class="mt-3 pt-3 border-t border-indigo-900/50" @click.stop>
+                    <div class="text-[10px] text-gray-500 mb-2 font-mono" x-text="cat.image"></div>
+                    <template x-if="(cat.config_schema||[]).length === 0">
+                      <div class="mb-3" x-data="{ envKey: '', envVal: '' }">
+                        <div class="text-[10px] text-gray-500 italic mb-2">
+                          No schema known for this image. If the server needs env vars (e.g. <span class="font-mono">BRAVE_API_KEY</span>), add them below. Otherwise click Deploy.
+                        </div>
+                        <!-- Existing env vars (already added to toolsDeployConfig) -->
+                        <template x-for="(v, k) in toolsDeployConfig" :key="k">
+                          <div class="flex items-center gap-1 mb-1">
+                            <span class="text-[10px] font-mono text-gray-400 flex-1 truncate" x-text="k + ' = ' + (v.length > 20 ? '••••••' : v)"></span>
+                            <button @click="delete toolsDeployConfig[k]; toolsDeployConfig = {...toolsDeployConfig}"
+                              class="px-2 py-0.5 rounded border border-red-900 text-red-700 hover:text-red-400 text-[10px]">Remove</button>
+                          </div>
+                        </template>
+                        <!-- Add new env var -->
+                        <div class="flex items-center gap-1">
+                          <input x-model="envKey" type="text" placeholder="KEY"
+                            class="flex-1 px-2 py-1 rounded bg-gray-800 border border-gray-700 text-[11px] font-mono text-white placeholder-gray-600">
+                          <input x-model="envVal" type="text" placeholder="value"
+                            class="flex-1 px-2 py-1 rounded bg-gray-800 border border-gray-700 text-[11px] font-mono text-white placeholder-gray-600"
+                            @keydown.enter="if (envKey.trim()) { toolsDeployConfig[envKey.trim()] = envVal; toolsDeployConfig = {...toolsDeployConfig}; envKey = ''; envVal = '' }">
+                          <button @click="if (envKey.trim()) { toolsDeployConfig[envKey.trim()] = envVal; toolsDeployConfig = {...toolsDeployConfig}; envKey = ''; envVal = '' }"
+                            class="px-2 py-1 rounded border border-gray-700 text-gray-500 hover:text-white hover:border-gray-500 text-[10px]">Add</button>
+                        </div>
+                      </div>
+                    </template>
+                    <div class="space-y-2 mb-3">
+                      <template x-for="field in (cat.config_schema||[])" :key="field.key">
+                        <div>
+                          <label class="text-xs text-gray-400 mb-0.5 block">
+                            <span x-text="field.label"></span>
+                            <span x-show="field.required" class="text-red-400">*</span>
+                          </label>
+                          <template x-if="field.type === 'json'">
+                            <textarea x-model="toolsDeployConfig[field.key]" rows="3"
+                              :placeholder="field.placeholder || ''"
+                              class="w-full px-2 py-1.5 rounded-lg bg-gray-800 border border-gray-700 text-xs text-white placeholder-gray-600 font-mono focus:outline-none focus:border-indigo-500 resize-none"></textarea>
+                          </template>
+                          <template x-if="field.type !== 'json'">
+                            <input :type="field.type === 'secret' ? 'password' : field.type === 'number' ? 'number' : 'text'"
+                              x-model="toolsDeployConfig[field.key]"
+                              :placeholder="field.placeholder || field.default || ''"
+                              class="w-full px-2 py-1.5 rounded-lg bg-gray-800 border border-gray-700 text-xs text-white placeholder-gray-600 focus:outline-none focus:border-indigo-500">
+                          </template>
+                          <div x-show="field.description" class="text-[10px] text-gray-600 mt-0.5" x-text="field.description"></div>
+                        </div>
+                      </template>
+                    </div>
+                    <div class="flex items-center gap-2">
+                      <button @click="deployFromCatalogue()" :disabled="toolsDeploying"
+                        class="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-medium transition-colors disabled:opacity-40">
+                        <span x-show="!toolsDeploying">Deploy as container &rarr;</span>
+                        <span x-show="toolsDeploying" class="flex items-center gap-1.5">
+                          <div class="w-3 h-3 border border-white/30 border-t-white rounded-full animate-spin"></div>
+                          Deploying&hellip;
+                        </span>
+                      </button>
+                      <button @click="toolsDeployTarget = null"
+                        class="px-3 py-1.5 rounded-lg border border-gray-700 text-gray-400 hover:text-white hover:border-gray-500 text-xs">Cancel</button>
+                      <span x-show="toolsDeployError" class="text-xs text-red-400" x-text="toolsDeployError"></span>
+                    </div>
+                  </div>
+                </template>
+              </div>
+            </div>
+          </template>
+        </div>
+        <div x-show="filteredCatalogue.length === 0 && !toolsLoading" class="text-center py-6 text-xs text-gray-500">
+          No catalogue entries for this source.
+        </div>
       </div>
 
       <!-- Server list. Each row is its own x-data so per-row expand
@@ -3028,7 +3220,7 @@
            the row used to leave hanging. -->
       <div x-show="toolsServers.length > 0" class="space-y-2">
         <template x-for="srv in toolsServers" :key="srv.id">
-          <div class="rounded-xl border transition-colors"
+          <div class="rounded-xl border transition-colors overflow-hidden"
             :class="srv.status === 'running' || srv.status === 'external' ? 'border-gray-700 bg-gray-900' : srv.status === 'error' ? 'border-red-900 bg-red-950/20' : 'border-gray-800 bg-gray-900/60'"
             x-data="{ expanded: false }">
             <!-- Header — clickable to toggle the tool-list drawer. -->
@@ -3041,7 +3233,9 @@
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
                   </svg>
                   <span class="w-2 h-2 rounded-full flex-shrink-0"
-                    :class="srv.status === 'running' || srv.status === 'external' ? 'bg-green-400' : srv.status === 'deploying' || srv.status === 'pending' ? 'bg-yellow-400 animate-pulse' : srv.status === 'error' ? 'bg-red-400' : 'bg-gray-600'"></span>
+                    :class="(srv.container_status === 'restarting' || (srv.container_restart_count || 0) >= 3) ? 'animate-pulse' : (srv.status === 'running' || srv.status === 'external') ? 'bg-green-400' : srv.status === 'deploying' || srv.status === 'pending' ? 'bg-yellow-400 animate-pulse' : srv.status === 'error' ? 'bg-red-400' : 'bg-gray-600'"
+                    :style="(srv.container_status === 'restarting' || (srv.container_restart_count || 0) >= 3) ? 'background-color:#fb923c' : ''"
+                    :title="(srv.container_restart_count || 0) >= 3 ? 'Container has restarted ' + srv.container_restart_count + ' times — possible crash loop' : ''"></span>
                   <span class="text-sm font-medium text-white truncate" x-text="srv.name"></span>
                   <span class="text-[9px] px-1.5 py-0.5 rounded-full border font-medium uppercase tracking-wider flex-shrink-0"
                     :class="'bg-gray-800 text-gray-400 border-gray-700'"
@@ -3051,11 +3245,16 @@
                   <span x-show="srv.tool_count" class="text-[10px] text-gray-500" x-text="srv.tool_count + ' tools'"></span>
                   <template x-if="!srv.readonly">
                     <div class="flex items-center gap-1">
-                      <button @click="restartToolsServer(srv.id)" class="text-[10px] text-gray-500 hover:text-gray-300" title="Reconnect MCP client">&#x21bb;</button>
+                      <button @click="restartToolsServer(srv.id)"
+                        class="px-2 py-1 rounded border border-gray-700 text-gray-500 hover:text-white hover:border-gray-500 text-[10px]"
+                        title="Re-establish the MCP client connection (does not touch the container)">Reconnect</button>
                       <template x-if="srv.deploy_mode === 'docker'">
-                        <button @click="restartToolsContainer(srv.id)" class="text-[10px] text-gray-500 hover:text-gray-300" title="Restart docker container">&#x27f3;</button>
+                        <button @click="restartToolsContainer(srv.id)"
+                          class="px-2 py-1 rounded border border-yellow-900 text-yellow-700 hover:text-yellow-400 text-[10px]"
+                          title="Docker restart + reconnect">Restart</button>
                       </template>
-                      <button @click="deleteToolsServer(srv.id, srv.name)" class="text-[10px] text-red-500/60 hover:text-red-400" title="Delete">&#x2715;</button>
+                      <button @click="deleteToolsServer(srv.id, srv.name)"
+                        class="px-2 py-1 rounded border border-red-900 text-red-700 hover:text-red-400 text-[10px]">Delete</button>
                     </div>
                   </template>
                 </div>
@@ -3126,12 +3325,14 @@
               <!-- Logs peek — only for deploy_mode=docker -->
               <template x-if="srv.deploy_mode === 'docker'">
                 <div>
-                  <button @click="showLogs = !showLogs; if (showLogs && !logs) { logsLoading = true; fetch('/api/tools/servers/' + srv.id + '/logs?tail=200', {credentials:'include'}).then(r => r.json()).then(d => { logs = d.logs || '(no logs)'; logsLoading = false; }).catch(e => { logs = 'Error: ' + e.message; logsLoading = false; }); }"
+                  <button @click="showLogs = !showLogs; if (showLogs && !logs) { logsLoading = true; fetch('/api/tools/servers/' + srv.id + '/logs?tail=20', {credentials:'include'}).then(r => r.json()).then(d => { logs = d.logs || '(no logs)'; logsLoading = false; }).catch(e => { logs = 'Error: ' + e.message; logsLoading = false; }); }"
                     class="text-[10px] text-indigo-500 hover:text-indigo-300">
                     <span x-show="!showLogs">Show container logs &rarr;</span>
                     <span x-show="showLogs">Hide logs</span>
                   </button>
-                  <div x-show="showLogs" x-cloak class="mt-2 max-h-64 overflow-auto bg-gray-950 border border-gray-800 rounded p-2 text-[10px] font-mono text-gray-400 whitespace-pre-wrap">
+                  <div x-show="showLogs" x-cloak
+                    class="mt-2 bg-gray-950 border border-gray-800 rounded p-2 text-[10px] font-mono text-gray-400"
+                    style="max-height:14rem; max-width:100%; overflow:auto; word-break:break-all; white-space:pre-wrap; contain:content;">
                     <span x-show="logsLoading" class="text-gray-600">loading…</span>
                     <span x-show="!logsLoading" x-text="logs"></span>
                   </div>
@@ -3146,158 +3347,6 @@
         No MCP servers configured. Click "Add server" to browse the catalogue.
       </div>
     </div>
-
-    <!-- Section: Catalogue (expandable) -->
-    <div x-show="toolsShowCatalogue" x-cloak>
-      <div class="flex items-center justify-between mb-3">
-        <h3 class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Catalogue</h3>
-        <div class="flex items-center gap-2">
-          <button @click="refreshCatalogue()" class="text-[10px] text-gray-500 hover:text-gray-300" title="Refresh remote sources">&#x21bb; Refresh</button>
-          <button @click="toolsShowSources = !toolsShowSources" class="text-[10px] text-gray-500 hover:text-gray-300" title="Configure catalogue sources">Sources</button>
-        </div>
-      </div>
-
-      <!-- Source configuration (collapsible) -->
-      <div x-show="toolsShowSources" x-cloak class="mb-3 p-3 rounded-xl border border-gray-800 bg-gray-900/60">
-        <div class="text-xs font-medium text-gray-300 mb-2">Catalogue sources</div>
-        <p class="text-[10px] text-gray-500 mb-2">
-          Built-in entries always appear. Add remote sources to extend the list. Docker Hub namespace sources pull repos from <span class="font-mono">hub.docker.com/u/&lt;namespace&gt;</span>.
-        </p>
-        <div class="space-y-2">
-          <template x-for="(src, idx) in toolsCatalogueSources" :key="idx">
-            <div class="flex items-center gap-2 p-2 rounded-lg bg-gray-800/60 border border-gray-700">
-              <input type="checkbox" x-model="src.enabled" class="accent-indigo-500">
-              <select x-model="src.type" class="px-2 py-1 rounded bg-gray-800 border border-gray-700 text-xs text-white">
-                <option value="docker_hub_namespace">Docker Hub namespace</option>
-                <option value="http_json">HTTP JSON URL</option>
-              </select>
-              <template x-if="src.type === 'docker_hub_namespace'">
-                <input x-model="src.namespace" type="text" placeholder="e.g. mcp"
-                  class="flex-1 px-2 py-1 rounded bg-gray-800 border border-gray-700 text-xs text-white placeholder-gray-600">
-              </template>
-              <template x-if="src.type === 'http_json'">
-                <input x-model="src.url" type="text" placeholder="https://example.com/catalogue.json"
-                  class="flex-1 px-2 py-1 rounded bg-gray-800 border border-gray-700 text-xs text-white placeholder-gray-600">
-              </template>
-              <button @click="toolsCatalogueSources.splice(idx, 1)" class="text-[11px] text-red-500/60 hover:text-red-400">&times;</button>
-            </div>
-          </template>
-        </div>
-        <div class="flex items-center gap-2 mt-2">
-          <button @click="toolsCatalogueSources.push({type: 'docker_hub_namespace', namespace: 'mcp', enabled: true})"
-            class="text-[10px] px-2 py-1 rounded border border-gray-700 bg-gray-800 text-gray-300 hover:border-gray-500">+ Docker Hub</button>
-          <button @click="toolsCatalogueSources.push({type: 'http_json', url: '', enabled: true})"
-            class="text-[10px] px-2 py-1 rounded border border-gray-700 bg-gray-800 text-gray-300 hover:border-gray-500">+ HTTP JSON</button>
-          <button @click="saveCatalogueSources()"
-            class="text-[10px] px-3 py-1 rounded bg-indigo-600 hover:bg-indigo-500 text-white font-medium ml-auto">Save &amp; reload</button>
-        </div>
-      </div>
-
-      <!-- Add External Server -->
-      <div class="mb-3 p-3 rounded-xl border border-gray-800 bg-gray-900/60">
-        <div class="text-xs font-medium text-gray-300 mb-2">Add external server</div>
-        <div class="grid grid-cols-3 gap-2">
-          <input x-model="toolsExtName" type="text" placeholder="Name"
-            class="col-span-1 px-2 py-1.5 rounded-lg bg-gray-800 border border-gray-700 text-xs text-white placeholder-gray-600 focus:outline-none focus:border-indigo-500">
-          <input x-model="toolsExtUrl" type="text" placeholder="http://host:port/mcp"
-            class="col-span-1 px-2 py-1.5 rounded-lg bg-gray-800 border border-gray-700 text-xs text-white placeholder-gray-600 focus:outline-none focus:border-indigo-500">
-          <input x-model="toolsExtToken" type="password" placeholder="Token (optional)"
-            class="col-span-1 px-2 py-1.5 rounded-lg bg-gray-800 border border-gray-700 text-xs text-white placeholder-gray-600 focus:outline-none focus:border-indigo-500">
-        </div>
-        <button @click="addExternalServer()" :disabled="!toolsExtName.trim() || !toolsExtUrl.trim()"
-          class="mt-2 px-3 py-1.5 rounded-lg border border-gray-700 bg-gray-800 text-xs text-gray-300 hover:border-gray-500 transition-colors disabled:opacity-40">
-          Add external &rarr;
-        </button>
-      </div>
-
-      <!-- Source filter pills -->
-      <div class="flex items-center gap-1 flex-wrap mb-2">
-        <button @click="toolsCatalogueFilter = ''"
-          class="text-[10px] px-2 py-0.5 rounded-full border transition-colors"
-          :class="toolsCatalogueFilter === '' ? 'border-indigo-500 bg-indigo-900/40 text-indigo-300' : 'border-gray-800 bg-gray-900 text-gray-500 hover:border-gray-600'">
-          All (<span x-text="toolsCatalogue.length"></span>)
-        </button>
-        <template x-for="s in toolsCatalogueSourceList" :key="s">
-          <button @click="toolsCatalogueFilter = s"
-            class="text-[10px] px-2 py-0.5 rounded-full border transition-colors"
-            :class="toolsCatalogueFilter === s ? 'border-indigo-500 bg-indigo-900/40 text-indigo-300' : 'border-gray-800 bg-gray-900 text-gray-500 hover:border-gray-600'">
-            <span x-text="s"></span>
-          </button>
-        </template>
-      </div>
-
-      <!-- Catalogue grid -->
-      <div class="grid grid-cols-2 gap-2">
-        <template x-for="cat in filteredCatalogue" :key="cat.catalogue_id">
-          <button @click="toolsDeployTarget = cat; toolsDeployConfig = {}; (cat.config_schema||[]).forEach(f => { if (f.default) toolsDeployConfig[f.key] = f.default })"
-            class="text-left p-3 rounded-xl border border-gray-800 bg-gray-900 hover:border-indigo-600 transition-colors group">
-            <div class="flex items-center justify-between gap-2">
-              <div class="text-sm font-medium text-white mb-0.5 truncate" x-text="cat.name"></div>
-              <span class="text-[9px] px-1.5 py-0.5 rounded-full bg-gray-800 text-gray-500 border border-gray-700 flex-shrink-0" x-text="cat.source || 'builtin'"></span>
-            </div>
-            <div class="text-[10px] text-gray-500 leading-relaxed line-clamp-2" x-text="cat.description"></div>
-            <div class="flex items-center gap-2 mt-2">
-              <span class="text-[9px] px-1.5 py-0.5 rounded-full bg-indigo-950 text-indigo-400 border border-indigo-800" x-text="cat.category"></span>
-              <span x-show="(cat.default_tools||[]).length" class="text-[10px] text-gray-600" x-text="(cat.default_tools||[]).length + ' tools'"></span>
-              <span x-show="cat.source_detail && cat.source_detail.pull_count" class="text-[10px] text-gray-600" x-text="(cat.source_detail && cat.source_detail.pull_count ? cat.source_detail.pull_count.toLocaleString() + ' pulls' : '')"></span>
-            </div>
-          </button>
-        </template>
-      </div>
-      <div x-show="filteredCatalogue.length === 0" class="text-center py-6 text-xs text-gray-500">
-        No catalogue entries for this source.
-      </div>
-    </div>
-
-    <!-- Deploy config modal -->
-    <template x-if="toolsDeployTarget">
-      <div class="p-4 rounded-xl border border-indigo-700 bg-indigo-950/20">
-        <div class="flex items-center justify-between mb-3">
-          <div>
-            <div class="text-sm font-semibold text-white" x-text="'Deploy: ' + toolsDeployTarget.name"></div>
-            <div class="text-[10px] text-gray-500" x-text="toolsDeployTarget.description"></div>
-          </div>
-          <button @click="toolsDeployTarget = null" class="text-gray-500 hover:text-gray-300 text-sm">&times;</button>
-        </div>
-
-        <!-- Config form -->
-        <div class="space-y-2 mb-3">
-          <template x-for="field in toolsDeployTarget.config_schema" :key="field.key">
-            <div>
-              <label class="text-xs text-gray-400 mb-0.5 block">
-                <span x-text="field.label"></span>
-                <span x-show="field.required" class="text-red-400">*</span>
-              </label>
-              <template x-if="field.type === 'json'">
-                <textarea x-model="toolsDeployConfig[field.key]" rows="3"
-                  :placeholder="field.placeholder || ''"
-                  class="w-full px-2 py-1.5 rounded-lg bg-gray-800 border border-gray-700 text-xs text-white placeholder-gray-600 font-mono focus:outline-none focus:border-indigo-500 resize-none"></textarea>
-              </template>
-              <template x-if="field.type !== 'json'">
-                <input :type="field.type === 'secret' ? 'password' : field.type === 'number' ? 'number' : 'text'"
-                  x-model="toolsDeployConfig[field.key]"
-                  :placeholder="field.placeholder || field.default || ''"
-                  class="w-full px-2 py-1.5 rounded-lg bg-gray-800 border border-gray-700 text-xs text-white placeholder-gray-600 focus:outline-none focus:border-indigo-500">
-              </template>
-              <div x-show="field.description" class="text-[10px] text-gray-600 mt-0.5" x-text="field.description"></div>
-            </div>
-          </template>
-        </div>
-
-        <div class="flex items-center gap-2">
-          <button @click="deployFromCatalogue()" :disabled="toolsDeploying"
-            class="px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-medium transition-colors disabled:opacity-40">
-            <span x-show="!toolsDeploying">Deploy as container &rarr;</span>
-            <span x-show="toolsDeploying" class="flex items-center gap-1.5">
-              <div class="w-3 h-3 border border-white/30 border-t-white rounded-full animate-spin"></div>
-              Deploying&hellip;
-            </span>
-          </button>
-          <button @click="toolsDeployTarget = null" class="px-3 py-2 rounded-lg text-xs text-gray-400 hover:text-gray-200">Cancel</button>
-          <span x-show="toolsDeployError" class="text-xs text-red-400" x-text="toolsDeployError"></span>
-        </div>
-      </div>
-    </template>
 
   </div>
 
@@ -3636,6 +3685,10 @@
         class="pb-2 text-sm font-medium border-b-2 border-transparent"
         :class="adminTab==='action-policies'?'tab-active':'text-gray-500 hover:text-white'"
         @click="adminTab='action-policies'; loadAdminActionPolicies()">Security</button>
+      <button x-show="can('view_sandbox_policies')"
+        class="pb-2 text-sm font-medium border-b-2 border-transparent"
+        :class="adminTab==='sandbox-policies'?'tab-active':'text-gray-500 hover:text-white'"
+        @click="adminTab='sandbox-policies'; loadSandboxPresets()">Sandbox Policies</button>
       <button x-show="can('view_audit_logs')"
         class="pb-2 text-sm font-medium border-b-2 border-transparent"
         :class="adminTab==='audit'?'tab-active':'text-gray-500 hover:text-white'"
@@ -4915,6 +4968,147 @@
       </div>
     </div>
 
+    <!-- ── Sandbox Policies sub-tab ──
+         Edits OpenShell network_policies presets on disk. Anyone with
+         view_sandbox_policies sees the list + read-only YAML; only
+         manage_sandbox_policies can Save/Delete. Changes hot-reload
+         every agent currently applying the preset. -->
+    <div x-show="tab==='admin' && adminTab==='sandbox-policies' && can('view_sandbox_policies')" x-cloak
+         x-effect="if (tab==='admin' && adminTab==='sandbox-policies' && can('view_sandbox_policies')) { loadSandboxPresets() }">
+      <div class="flex items-center justify-between mb-3">
+        <div>
+          <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Sandbox Policies</div>
+          <div class="text-[10px] text-gray-500 mt-0.5">
+            OpenShell network egress rules. Applied per-agent; saving hot-reloads every live sandbox using the preset.
+          </div>
+        </div>
+        <div class="flex items-center gap-2">
+          <button @click="sandboxPresetHelp = !sandboxPresetHelp" class="px-2 py-1 rounded border border-gray-700 text-gray-500 hover:text-white hover:border-gray-500 text-[10px]">
+            <span x-text="sandboxPresetHelp ? 'Hide help' : 'What is this?'"></span>
+          </button>
+          <button @click="loadSandboxPresets()" class="text-xs text-[var(--accent)] hover:opacity-80 flex items-center gap-1">
+            <span>&#8635;</span> Refresh
+          </button>
+        </div>
+      </div>
+
+      <!-- Help panel — on by default for first-time visitors, toggleable. -->
+      <div x-show="sandboxPresetHelp" x-cloak class="mb-4 p-3 rounded-xl border border-indigo-900/50 bg-indigo-950/10 text-[11px] text-gray-300 leading-relaxed">
+        <div class="font-semibold text-indigo-300 mb-2">What are sandbox policies?</div>
+        <p class="mb-2">
+          Every Logos agent runs in an isolated OpenShell sandbox that blocks outbound network traffic by default. A <span class="font-mono text-white">preset</span> is a YAML file that grants access to specific hostnames and ports — e.g. the <span class="font-mono text-white">github</span> preset lets agents reach <span class="font-mono">api.github.com</span>, nothing else.
+        </p>
+        <p class="mb-2">
+          When you apply a preset to an agent (from the agent's Tools tab), the sandbox merges it into the baseline policy and starts allowing those endpoints. Removing a preset revokes access.
+        </p>
+        <div class="font-semibold text-indigo-300 mt-3 mb-1">When to add / edit a preset</div>
+        <ul class="list-disc list-inside space-y-0.5 text-gray-400">
+          <li>A new third-party API your agents need to call (add a preset, apply it to the agent).</li>
+          <li>An existing preset is too permissive or too restrictive (edit its endpoints).</li>
+          <li>A service changed hostnames (update host glob).</li>
+        </ul>
+        <div class="font-semibold text-indigo-300 mt-3 mb-1">Key fields in a preset</div>
+        <ul class="list-disc list-inside space-y-0.5 text-gray-400">
+          <li><span class="font-mono text-gray-300">host</span> — hostname or glob, e.g. <span class="font-mono">api.github.com</span> or <span class="font-mono">*.amazonaws.com</span>.</li>
+          <li><span class="font-mono text-gray-300">port</span> / <span class="font-mono">ports</span> — TCP port(s). 443 for HTTPS.</li>
+          <li><span class="font-mono text-gray-300">protocol</span> — <span class="font-mono">rest</span> for HTTP APIs, <span class="font-mono">sql</span> for databases, omit for L4 only.</li>
+          <li><span class="font-mono text-gray-300">tls</span> — usually <span class="font-mono">terminate</span> (gateway decrypts so L7 rules can match paths).</li>
+          <li><span class="font-mono text-gray-300">enforcement</span> — <span class="font-mono">enforce</span> blocks violations, <span class="font-mono">audit</span> logs only.</li>
+          <li><span class="font-mono text-gray-300">access</span> — shortcut: <span class="font-mono">full</span> / <span class="font-mono">read-only</span> / <span class="font-mono">read-write</span>. Or use <span class="font-mono">rules:</span> for method+path control.</li>
+        </ul>
+        <div class="font-semibold text-indigo-300 mt-3 mb-1">Safe to edit / don't edit</div>
+        <ul class="list-disc list-inside space-y-0.5 text-gray-400">
+          <li>Change endpoints, hosts, ports, L7 rules — hot-reloads without restarting sandboxes.</li>
+          <li>Don't rename the preset (<span class="font-mono">preset.name</span>) — the filename and applied-list won't match and agents will silently lose the policy.</li>
+          <li>Syntax errors are rejected at save time; your changes are never partially written.</li>
+        </ul>
+      </div>
+
+      <div class="grid grid-cols-3 gap-4 items-start">
+        <!-- Preset list (left column) -->
+        <div class="col-span-1 bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
+          <div class="px-3 py-2 border-b border-gray-800 text-[10px] uppercase tracking-wider text-gray-500">
+            Presets (<span x-text="sandboxPresets.length"></span>)
+          </div>
+          <div class="divide-y divide-gray-800">
+            <template x-for="p in sandboxPresets" :key="p.name">
+              <button @click="selectSandboxPreset(p.name)"
+                class="w-full text-left px-3 py-2 hover:bg-gray-800/60 transition-colors"
+                :class="sandboxPresetSelected && sandboxPresetSelected.name === p.name ? 'bg-gray-800/40' : ''">
+                <div class="flex items-center justify-between gap-2">
+                  <div class="text-xs font-mono text-white truncate" x-text="p.name"></div>
+                  <span x-show="p.agent_count > 0"
+                    class="text-[9px] px-1.5 py-0.5 rounded-full bg-indigo-950 text-indigo-400 border border-indigo-800 flex-shrink-0"
+                    x-text="p.agent_count + ' agent' + (p.agent_count === 1 ? '' : 's')"></span>
+                </div>
+                <div x-show="p.description" class="text-[10px] text-gray-500 mt-0.5 truncate" x-text="p.description"></div>
+              </button>
+            </template>
+          </div>
+          <template x-if="can('manage_sandbox_policies')">
+            <div class="p-3 border-t border-gray-800">
+              <button @click="newSandboxPreset()"
+                class="w-full px-2 py-1 rounded border border-gray-700 text-gray-500 hover:text-white hover:border-gray-500 text-[10px]">+ New preset</button>
+            </div>
+          </template>
+        </div>
+
+        <!-- Editor (right) -->
+        <div class="col-span-2">
+          <template x-if="!sandboxPresetSelected">
+            <div class="p-8 rounded-xl border border-gray-800 bg-gray-900/60 text-center text-xs text-gray-500">
+              Select a preset on the left to view or edit its rules.
+            </div>
+          </template>
+
+          <template x-if="sandboxPresetSelected">
+            <div class="rounded-xl border border-gray-800 bg-gray-900 overflow-hidden">
+              <div class="p-3 border-b border-gray-800 flex items-center justify-between gap-2">
+                <div>
+                  <div class="text-xs font-mono text-white" x-text="sandboxPresetSelected.name"></div>
+                  <div class="text-[10px] text-gray-500 mt-0.5">
+                    <span x-show="sandboxPresetSelected.agents.length === 0">No agents currently use this preset.</span>
+                    <span x-show="sandboxPresetSelected.agents.length > 0"
+                      x-text="'Hot-reloads ' + sandboxPresetSelected.agents.length + ' live agent' + (sandboxPresetSelected.agents.length === 1 ? '' : 's') + ' on save.'"></span>
+                  </div>
+                </div>
+                <template x-if="can('manage_sandbox_policies')">
+                  <button @click="deleteSandboxPreset()" :disabled="sandboxPresetSelected.agents.length > 0"
+                    :title="sandboxPresetSelected.agents.length > 0 ? 'Remove from all agents before deleting' : 'Delete preset file'"
+                    class="px-2 py-1 rounded border border-red-900 text-red-700 hover:text-red-400 text-[10px] disabled:opacity-40 disabled:cursor-not-allowed">Delete</button>
+                </template>
+              </div>
+
+              <!-- YAML textarea / read-only view -->
+              <div class="p-3">
+                <template x-if="can('manage_sandbox_policies')">
+                  <textarea x-model="sandboxPresetYaml" rows="22" spellcheck="false"
+                    class="w-full px-3 py-2 rounded-lg bg-gray-950 border border-gray-800 text-[11px] text-gray-200 font-mono focus:outline-none focus:border-indigo-500 resize-none"></textarea>
+                </template>
+                <template x-if="!can('manage_sandbox_policies')">
+                  <pre class="w-full px-3 py-2 rounded-lg bg-gray-950 border border-gray-800 text-[11px] text-gray-400 font-mono whitespace-pre-wrap break-all overflow-auto max-h-[480px]" x-text="sandboxPresetYaml"></pre>
+                </template>
+
+                <template x-if="can('manage_sandbox_policies')">
+                  <div class="flex items-center gap-2 mt-3">
+                    <button @click="saveSandboxPreset()" :disabled="sandboxPresetSaving"
+                      class="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-medium disabled:opacity-40">
+                      <span x-show="!sandboxPresetSaving">Save &amp; hot-reload</span>
+                      <span x-show="sandboxPresetSaving">Saving&hellip;</span>
+                    </button>
+                    <button @click="selectSandboxPreset(sandboxPresetSelected.name)"
+                      class="px-3 py-1.5 rounded-lg border border-gray-700 text-gray-400 hover:text-white hover:border-gray-500 text-xs">Revert</button>
+                    <span x-show="sandboxPresetError" class="text-xs text-red-400" x-text="sandboxPresetError"></span>
+                    <span x-show="sandboxPresetSaved" class="text-xs text-green-400" x-text="sandboxPresetSaved"></span>
+                  </div>
+                </template>
+              </div>
+            </div>
+          </template>
+        </div>
+      </div>
+    </div>
+
     <!-- ── Audit Log sub-tab ── -->
     <div x-show="tab==='admin' && adminTab==='audit' && can('view_audit_logs')">
       <div class="flex items-center justify-between mb-4">
@@ -6079,6 +6273,7 @@ function app() {
     toolsCatalogueSources: [],
     toolsCatalogueFilter: '',
     toolsShowSources: false,
+    toolsShowExternal: false,
     toolsLoading: false,
     toolsShowCatalogue: false,
     toolsDeployTarget: null,
@@ -6132,6 +6327,14 @@ function app() {
     cloudProviderMsg: null,
     adminPolicies: [],
     adminActionPolicies: [],
+    // Sandbox policy editor (OpenShell network_policies presets)
+    sandboxPresets: [],
+    sandboxPresetSelected: null,
+    sandboxPresetYaml: '',
+    sandboxPresetSaving: false,
+    sandboxPresetError: '',
+    sandboxPresetSaved: '',
+    sandboxPresetHelp: false,
     actionPolicyForm: {},
     actionPolicyFormOpen: false,
     actionPolicyMsg: null,
@@ -8863,18 +9066,31 @@ function app() {
       this.toolsDeploying = true;
       this.toolsDeployError = '';
       try {
+        const cat = this.toolsDeployTarget;
+        // Derive a safe docker container name from the catalogue entry.
+        // Builtins use their catalogue_id directly; Docker Hub entries
+        // use the repo name (the last path segment) so "dockerhub-mcp-
+        // filesystem" becomes just "filesystem".
+        const defaultName = cat.source === 'docker_hub_namespace'
+          ? (cat.name || cat.catalogue_id)
+          : cat.catalogue_id;
         const r = await fetch('/api/tools/servers', {
           method: 'POST', credentials: 'include',
           headers: {'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken()},
           body: JSON.stringify({
-            name: this.toolsDeployTarget.catalogue_id,
-            catalogue_id: this.toolsDeployTarget.catalogue_id,
+            name: defaultName,
+            catalogue_id: cat.catalogue_id,
             // Docker deploy: server pulls the catalogue image and
-            // starts it as a container on the host Docker daemon,
-            // binding to 127.0.0.1:<pick-a-free-port>. The returned
-            // row has the local URL; the gateway's MCP proxy routes
-            // agent requests from /mcp/<name> to that URL.
+            // starts it as a container on the host Docker daemon.
+            // For Docker Hub / remote-source entries the backend
+            // can't resolve the image from catalogue_id alone, so we
+            // pass image/port/mcp_path/description explicitly here.
             deploy_mode: 'docker',
+            image: cat.image,
+            port: cat.port || 8000,
+            mcp_path: cat.mcp_path || '/mcp',
+            description: cat.description,
+            category: cat.category || 'general',
             config: this.toolsDeployConfig,
           }),
         });
@@ -8904,6 +9120,7 @@ function app() {
         });
         if (r.ok) {
           this.toolsExtName = ''; this.toolsExtUrl = ''; this.toolsExtToken = '';
+          this.toolsShowExternal = false;
           await this.loadToolsTab();
         }
       } catch(e) { console.warn('addExternalServer failed:', e.message); }
@@ -9030,6 +9247,100 @@ function app() {
         const d = await r.json();
         this.adminActionPolicies = d.action_policies || [];
       } catch(e) { this.adminActionPolicies = []; }
+    },
+
+    // ── Sandbox policy presets (OpenShell network_policies) ─────────────
+    async loadSandboxPresets() {
+      try {
+        const r = await fetch('/api/openshell/presets', {credentials:'include'});
+        if (!r.ok) { this.sandboxPresets = []; return; }
+        const d = await r.json();
+        this.sandboxPresets = d.presets || [];
+      } catch(e) { this.sandboxPresets = []; }
+    },
+    async selectSandboxPreset(name) {
+      this.sandboxPresetError = '';
+      this.sandboxPresetSaved = '';
+      try {
+        const r = await fetch(`/api/openshell/presets/${encodeURIComponent(name)}`, {credentials:'include'});
+        if (!r.ok) { this.sandboxPresetError = 'Failed to load preset'; return; }
+        const d = await r.json();
+        this.sandboxPresetSelected = {name: d.name, agents: d.agents || []};
+        this.sandboxPresetYaml = d.yaml || '';
+      } catch(e) { this.sandboxPresetError = e.message; }
+    },
+    newSandboxPreset() {
+      const name = prompt('New preset filename (no .yaml extension, alphanumeric + dashes):');
+      if (!name || !/^[a-z0-9][a-z0-9\-_]*$/i.test(name)) {
+        alert('Invalid name. Use letters, digits, dashes, underscores.');
+        return;
+      }
+      this.sandboxPresetSelected = {name, agents: []};
+      this.sandboxPresetYaml = `preset:
+  name: ${name}
+  description: ""
+network_policies:
+  ${name}:
+    name: ${name}
+    endpoints:
+      - host: example.com
+        port: 443
+        protocol: rest
+        tls: terminate
+        enforcement: enforce
+        access: read-only
+`;
+      this.sandboxPresetError = '';
+      this.sandboxPresetSaved = '';
+    },
+    async saveSandboxPreset() {
+      if (!this.sandboxPresetSelected) return;
+      this.sandboxPresetSaving = true;
+      this.sandboxPresetError = '';
+      this.sandboxPresetSaved = '';
+      try {
+        const r = await fetch(`/api/openshell/presets/${encodeURIComponent(this.sandboxPresetSelected.name)}`, {
+          method: 'PUT', credentials: 'include',
+          headers: {'Content-Type':'application/json','X-CSRF-Token':getCsrfToken()},
+          body: JSON.stringify({yaml: this.sandboxPresetYaml}),
+        });
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok) {
+          this.sandboxPresetError = d.detail || d.error || r.statusText;
+          return;
+        }
+        const errs = (d.reload_errors || []);
+        if (errs.length) {
+          this.sandboxPresetSaved = `Saved. ${errs.length} agent(s) failed hot-reload — check server logs.`;
+        } else if ((d.affected_agents || []).length) {
+          this.sandboxPresetSaved = `Saved. Hot-reloaded ${d.affected_agents.length} agent(s).`;
+        } else {
+          this.sandboxPresetSaved = 'Saved.';
+        }
+        await this.loadSandboxPresets();
+      } catch(e) {
+        this.sandboxPresetError = e.message;
+      } finally {
+        this.sandboxPresetSaving = false;
+      }
+    },
+    async deleteSandboxPreset() {
+      if (!this.sandboxPresetSelected) return;
+      if (!confirm(`Delete preset "${this.sandboxPresetSelected.name}"? The YAML file will be removed.`)) return;
+      try {
+        const r = await fetch(`/api/openshell/presets/${encodeURIComponent(this.sandboxPresetSelected.name)}`, {
+          method: 'DELETE', credentials: 'include',
+          headers: {'X-CSRF-Token':getCsrfToken()},
+        });
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok) {
+          this.sandboxPresetError = d.detail || d.error || r.statusText;
+          return;
+        }
+        this.sandboxPresetSelected = null;
+        this.sandboxPresetYaml = '';
+        await this.loadSandboxPresets();
+      } catch(e) { this.sandboxPresetError = e.message; }
     },
 
     async saveActionPolicy() {
