@@ -271,6 +271,25 @@ def container_status(name: str) -> str:
         return "unknown"
 
 
+def container_restart_count(name: str) -> int:
+    """Return the container's restart counter. 0 if missing/error.
+
+    Used by the UI to flag crash-loops (``restarting`` state plus a
+    non-trivial restart count) without shelling out a second time.
+    """
+    container = _container_name(name)
+    try:
+        r = _docker(
+            "inspect", "-f", "{{.RestartCount}}", container,
+            check=False,
+        )
+        if r.returncode != 0:
+            return 0
+        return int((r.stdout or "0").strip() or 0)
+    except Exception:
+        return 0
+
+
 def container_logs(name: str, tail: int = 200) -> str:
     """Return the last ``tail`` log lines from an MCP container."""
     container = _container_name(name)
