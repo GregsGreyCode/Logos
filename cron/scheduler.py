@@ -12,6 +12,7 @@ import asyncio
 import logging
 import os
 import sys
+import time
 import traceback
 
 # fcntl is Unix-only; on Windows use msvcrt for file locking
@@ -255,6 +256,7 @@ def run_job(job: dict) -> tuple[bool, str, str, Optional[str]]:
             message = format_runtime_provider_error(exc)
             raise RuntimeError(message) from exc
 
+        session_id = f"cron_{job_id}_{_hermes_now().strftime('%Y%m%d_%H%M%S')}"
         agent = AIAgent(
             model=model,
             api_key=runtime.get("api_key"),
@@ -270,12 +272,61 @@ def run_job(job: dict) -> tuple[bool, str, str, Optional[str]]:
             provider_sort=pr.get("sort"),
             quiet_mode=True,
             platform="cron",
-            session_id=f"cron_{job_id}_{_hermes_now().strftime('%Y%m%d_%H%M%S')}",
+            session_id=session_id,
             session_db=_session_db,
         )
-        
-        result = agent.run_conversation(prompt)
-        
+
+        # Emit a dispatch record so the Events tab shows this cron run
+        # alongside user chat activity. Failures are logged but never
+        # block the agent — observability must not break the feature.
+        _dispatch_id = None
+        _dispatch_started = time.time()
+        try:
+            import json as _json
+            from gateway.auth import db as _auth_db
+            _dispatch_id = _auth_db.create_dispatch(
+                task_id=session_id,
+                agent_id=job.get("agent_id") or "",
+                model=model or "",
+                origin="cron",
+                origin_detail=_json.dumps({
+                    "job_id": job_id,
+                    "job_name": job_name,
+                    "schedule": job.get("schedule_display", ""),
+                }),
+                session_id=session_id,
+                user_id=job.get("user_id") or "",
+            )
+        except Exception as exc:
+            logger.debug("cron: create_dispatch failed for job %s: %s", job_id, exc)
+
+        try:
+            result = agent.run_conversation(prompt)
+        except BaseException as exc:
+            if _dispatch_id:
+                try:
+                    from gateway.auth import db as _auth_db
+                    _auth_db.complete_dispatch(
+                        _dispatch_id, status="error",
+                        elapsed_s=time.time() - _dispatch_started,
+                        error=str(exc)[:500],
+                    )
+                except Exception:
+                    pass
+            raise
+
+        if _dispatch_id:
+            try:
+                from gateway.auth import db as _auth_db
+                _auth_db.complete_dispatch(
+                    _dispatch_id, status="ok",
+                    elapsed_s=time.time() - _dispatch_started,
+                    prompt_tokens=(result.get("usage") or {}).get("prompt_tokens"),
+                    completion_tokens=(result.get("usage") or {}).get("completion_tokens"),
+                )
+            except Exception as exc:
+                logger.debug("cron: complete_dispatch failed for job %s: %s", job_id, exc)
+
         final_response = result.get("final_response", "")
         if not final_response:
             final_response = "(No response generated)"
