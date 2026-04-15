@@ -152,14 +152,13 @@ The soul lives in `SOUL.md`, editable without a restart. Tools are scoped per ag
 
 ### Runtime modes at a glance
 
-Logos has two runtime modes selected by `runtime.mode` in `~/.logos/config.yaml` (or via the setup wizard). They are the two branches of `gateway/executors/build_executor()`:
+OpenShell is the only supported sandbox runtime — `gateway/executors/build_executor()` always returns `OpenShellExecutor`.
 
 | Mode | Default? | How it spawns | Isolation boundary | Egress policy | Platform |
 |------|---|---------------|-------------------|---------------|----------|
-| **`openshell`** | ✅ default | OpenShell CLI provisions a persistent sandbox per agent; the gateway dispatches each task via a one-shot `openshell sandbox exec` subprocess, piping task JSON on stdin and reading event JSON on stdout. Inference egress goes through OpenShell's HTTP CONNECT proxy to the `inference.local` Privacy Router. | Kernel Landlock LSM (filesystem) + OpenShell egress allowlist (network) + container | Per-binary YAML egress policy (`gateway/policies/openshell_default.yaml`) | Linux, macOS |
-| **`docker`** | fallback | Plain Docker container — `--cap-drop=ALL`, `--security-opt=no-new-privileges`, no host filesystem mounts | Docker container | None (outbound unrestricted) | Linux, macOS, Windows (via Docker Desktop) |
+| **`openshell`** | ✅ only | OpenShell CLI provisions a persistent sandbox per agent; the gateway dispatches each task via a one-shot `openshell sandbox exec` subprocess, piping task JSON on stdin and reading event JSON on stdout. Inference egress goes through OpenShell's HTTP CONNECT proxy to the `inference.local` Privacy Router. | Kernel Landlock LSM (filesystem) + OpenShell egress allowlist (network) + container | Per-binary YAML egress policy (`gateway/policies/openshell_default.yaml`) | Linux, macOS |
 
-> **What happened to the Kubernetes and local-process executors?** The Kubernetes pod-per-agent executor was deleted in commit `f6f0972 chore: drop legacy k8s pod-per-agent executor + mini-swe-agent terminal backends`. The `LocalProcessExecutor` (running agents as subprocesses of the gateway) was removed at the same time once OpenShell became the only sandbox runtime exposed in `/setup`. The `k8s/` manifests still work for **deploying the gateway itself** as a Kubernetes Deployment — see [`k8s/README.md`](k8s/README.md) — but agents inside that gateway use OpenShell or Docker just like everywhere else. Any legacy `runtime.mode` value other than `docker` now coerces to OpenShell.
+> **What happened to the Kubernetes, Docker, and local-process executors?** The Kubernetes pod-per-agent executor was deleted in commit `f6f0972`; the `DockerSandboxExecutor`, the k3s install flow, and the `LocalProcessExecutor` were removed in a later cleanup pass once OpenShell became the canonical sandbox runtime exposed in `/setup`. The `k8s/` manifests still work for **deploying the gateway itself** as a Kubernetes Deployment — see [`k8s/README.md`](k8s/README.md) — but agents inside that gateway use OpenShell.
 
 ### Defense layers
 
@@ -174,9 +173,9 @@ Agent security is defense-in-depth — multiple independent layers, not a single
 | **Tirith scanning** | Pre-execution semantic analysis of shell commands for content-level threats (homograph URLs, pipe-to-interpreter, terminal injection). Auto-installed from [GitHub releases](https://github.com/sheeki03/tirith). | Linux, macOS |
 | **Filesystem isolation** | Landlock LSM declarative read-only / read-write policy enforced by the kernel. | OpenShell only |
 | **Egress policy** | Per-binary YAML allowlist (`network_policies` in OpenShell policy). | OpenShell only |
-| **Container isolation** | Docker container with `--cap-drop=ALL`, `--security-opt=no-new-privileges`, no host filesystem mounts. | OpenShell, Docker |
+| **Container isolation** | Docker container with `--cap-drop=ALL`, `--security-opt=no-new-privileges`, no host filesystem mounts. | OpenShell |
 
-**Command review** catches obvious destructive patterns but is bypassable with interpreter one-liners (e.g. `python -c "import shutil; ..."`). It is a convenience layer, not a security boundary. The real protection comes from workspace scoping (all modes), kernel-level filesystem and egress policy (OpenShell), and container isolation (OpenShell, Docker).
+**Command review** catches obvious destructive patterns but is bypassable with interpreter one-liners (e.g. `python -c "import shutil; ..."`). It is a convenience layer, not a security boundary. The real protection comes from workspace scoping, kernel-level filesystem and egress policy, and container isolation — all provided by OpenShell.
 
 **Tirith** is not available on Windows. When absent, the command review regex patterns are the only pre-execution check. On Linux/macOS, Tirith is auto-downloaded at startup and provides deeper analysis.
 
@@ -552,12 +551,10 @@ Source in `gateway/`, `tools/`, and `agents/hermes/`. See [`AGENTS.md`](AGENTS.m
 
 | Backend | Status | Notes |
 |---------|--------|-------|
-| OpenShell sandbox (Linux / macOS) | ✅ Default | Strongest isolation; required for inference credential separation |
-| Docker sandbox | ✅ Tested | Container isolation; no per-binary egress policy |
-| Local process | ⚠️ Unsafe fallback | No isolation; only when nothing else is available |
+| OpenShell sandbox (Linux / macOS) | ✅ Only supported runtime | Strongest isolation; required for inference credential separation |
 | Local model serving (Ollama / LM Studio) | ✅ Tested | Auto-discovered by setup wizard scan |
 | Cloud providers (Anthropic, OpenAI, OpenRouter) | ✅ Tested | Configured in setup wizard |
-| Kubernetes pod-per-agent | ❌ Removed | Deleted in `f6f0972`. The `k8s/` manifests still deploy the gateway itself; agent runtime uses OpenShell. |
+| Docker / Kubernetes pod-per-agent | ❌ Removed | Legacy sandbox runtimes deleted. The `k8s/` manifests still deploy the gateway itself; agent runtime uses OpenShell. |
 
 ---
 

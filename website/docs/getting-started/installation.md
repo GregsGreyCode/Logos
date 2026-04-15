@@ -270,17 +270,17 @@ logos gateway
 
 ## Deployment Options
 
-The gateway spawns agent instances using a pluggable executor. Choose based on your environment:
+Agents always run inside **OpenShell sandboxes** — that's the only supported runtime. What
+differs between deployment styles is how the gateway itself is hosted.
 
 ### Desktop / Development
 
-The gateway runs locally and spawns agents as supervised subprocesses:
-
 ```bash
-logos gateway    # Starts on :8080, uses LocalProcessExecutor
+logos gateway    # Starts on :8080; Logos talks to OpenShell on the host
 ```
 
-No Docker or Kubernetes required. This is what the Windows desktop app does.
+Requires Docker (OpenShell uses it) and the `openshell` CLI (auto-installed on first run on
+Linux / macOS).
 
 ### Docker Compose (recommended for most self-hosted setups)
 
@@ -288,17 +288,8 @@ No Docker or Kubernetes required. This is what the Windows desktop app does.
 docker compose up -d
 ```
 
-The Dockerfile entry point is `logos gateway run` — the container runs the gateway, which then spawns isolated agent instances via the configured executor.
-
-### Kubernetes
-
-Logos includes K8s manifests for pod-per-agent isolation with RBAC and NetworkPolicy:
-
-```bash
-kubectl apply -f k8s/
-```
-
-In Kubernetes mode (`HERMES_RUNTIME_MODE=kubernetes`), the gateway creates a separate Deployment, Service, PVC, and ConfigMap for each agent instance — full pod-level isolation.
+The Compose stack runs the gateway container; OpenShell (and its embedded k3s) runs on the
+host alongside Docker so the gateway can reach it via `host.docker.internal`.
 
 See the [Deployment Guide](../user-guide/deployment.md) for production configuration details.
 
