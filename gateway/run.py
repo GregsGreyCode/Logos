@@ -1684,6 +1684,53 @@ class GatewayRunner:
             except Exception:
                 pass
 
+        # Seed _session_status so the Live Executions panel shows this
+        # platform-initiated run in flight. Without it, Discord/Telegram/
+        # WhatsApp-triggered agent turns never appeared in the live
+        # panel even though dispatches worked fine.
+        _now_fn = _time.time
+        _platform_val = event.source.platform.value if event.source and event.source.platform else "unknown"
+        if session_key:
+            self._session_status[session_key] = {
+                "platform": _platform_val,
+                "agent_name": agent_name or "",
+                "current_tool": "thinking…",
+                "tool_started_at": _now_fn(),
+                "session_started_at": _now_fn(),
+                "tool_count": 0,
+                "error_count": 0,
+                "recent_tools": [],
+                "stuck": False,
+            }
+
+        async def _on_platform_stream(msg):
+            etype = (msg or {}).get("type")
+            if not session_key or session_key not in self._session_status:
+                return
+            entry = self._session_status[session_key]
+            if etype == "tool_start":
+                tool_name = msg.get("tool", "") or "unknown"
+                entry["current_tool"] = tool_name
+                entry["tool_started_at"] = _now_fn()
+                entry["tool_count"] = (entry.get("tool_count") or 0) + 1
+                recent = entry.setdefault("recent_tools", [])
+                if not recent or recent[-1] != tool_name:
+                    recent.append(tool_name)
+                    if len(recent) > 10:
+                        recent.pop(0)
+            elif etype == "tool_end":
+                if not bool(msg.get("success", True)):
+                    entry["error_count"] = (entry.get("error_count") or 0) + 1
+                entry["current_tool"] = "thinking…"
+                entry["tool_started_at"] = _now_fn()
+
+        def _clear_live_status():
+            if session_key and session_key in self._session_status:
+                try:
+                    del self._session_status[session_key]
+                except Exception:
+                    pass
+
         try:
             result = await self.worker_registry.dispatch_task(
                 worker_id, task_payload,
@@ -1691,25 +1738,30 @@ class GatewayRunner:
                     "LOGOS_AGENT_TIMEOUT",
                     os.environ.get("HERMES_AGENT_TIMEOUT", "300"),
                 )),
-                on_stream_event=None,  # no progress forwarding in v1
+                on_stream_event=_on_platform_stream,
             )
         except asyncio.TimeoutError:
+            _clear_live_status()
             _finish_dispatch("error", err="timeout")
             logger.warning("dispatch_platform_message: worker %s timed out", worker_id)
             return "⚠️ The agent took too long to respond. Please try again."
         except ConnectionError as exc:
+            _clear_live_status()
             _finish_dispatch("error", err=f"disconnected: {exc}")
             logger.info("dispatch_platform_message: worker %s disconnected: %s", worker_id, exc)
             return f"⚠️ {agent_name}'s sandbox disconnected mid-task. Please try again."
         except RuntimeError as exc:
+            _clear_live_status()
             _finish_dispatch("error", err=f"busy: {exc}")
             logger.info("dispatch_platform_message: worker %s busy: %s", worker_id, exc)
             return f"⚠️ {agent_name} is still working on another message. Please wait."
         except Exception as exc:
+            _clear_live_status()
             _finish_dispatch("error", err=str(exc)[:500])
             logger.exception("dispatch_platform_message: dispatch_task failed")
             return "⚠️ The agent hit an unexpected error. Check the gateway logs."
 
+        _clear_live_status()
         _finish_dispatch(
             (result or {}).get("status", "ok"),
             usage=(result or {}).get("usage") or {},
