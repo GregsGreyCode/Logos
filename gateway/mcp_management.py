@@ -151,16 +151,26 @@ async def handle_server_create(request: web.Request) -> web.Response:
         except Exception as exc:
             logger.warning("Auto-wire failed for external server %s: %s", name, exc)
 
-    # Docker: pull the image, start the container, then auto-wire the
-    # local URL ``docker run`` assigned. Failure at any step flips the
-    # row to status='error' so the UI surfaces it; the row still exists
-    # so the user can retry via the restart button without recreating.
+    # Docker: pull the image, start the container, wait for it to be
+    # ready to serve HTTP, then auto-wire the local URL the
+    # ``docker run`` assigned. Failure at any step flips the row to
+    # status='error' so the UI surfaces it; the row still exists so
+    # the user can retry via the restart button without recreating.
+    #
+    # The readiness-wait matters: before it, auto-wire would fire ~a
+    # second after ``docker run`` returns, and the MCP server inside
+    # the container often hadn't started listening yet. The MCP
+    # client's initialize handshake failed in a TaskGroup that
+    # swallowed the real sub-exception, so logs only showed
+    # "unhandled errors in a TaskGroup (1 sub-exception)". The tool
+    # never got registered, the agent had nothing to call, and the
+    # LLM hallucinated a response.
     if deploy_mode == "docker":
         from gateway.mcp_docker_deploy import deploy_container
         try:
             port        = int((cat_entry or {}).get("port") or body.get("port") or 8000)
             mcp_path    = (cat_entry or {}).get("mcp_path") or body.get("mcp_path") or "/mcp"
-            env_vars    = dict(config_values)  # catalogue config_schema fills env_vars directly
+            env_vars    = dict(config_values)
             result = await asyncio.to_thread(
                 deploy_container,
                 name=name, image=image, port=port,
@@ -173,10 +183,40 @@ async def handle_server_create(request: web.Request) -> web.Response:
                 last_error=None,
             )
             server = db.get_mcp_server(server["id"])
+
+            # Poll the MCP endpoint until it responds (max ~20s). Any
+            # 2xx / 4xx response proves the TCP listener is up and the
+            # aiohttp app is serving; exact response body doesn't
+            # matter for readiness.
+            import aiohttp
+            ready = False
+            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=2)) as sess:
+                for _ in range(20):
+                    try:
+                        async with sess.post(result["url"], json={"jsonrpc": "2.0", "id": 0, "method": "ping"}) as r:
+                            if r.status < 500:
+                                ready = True
+                                break
+                    except Exception:
+                        pass
+                    await asyncio.sleep(1.0)
+            if not ready:
+                logger.warning("MCP container %s didn't become ready in 20s; auto-wire will try anyway", name)
+
+            # Now try auto-wire. If it still fails, log the full chain
+            # (including TaskGroup sub-exceptions) so the root cause
+            # reaches the log instead of a generic wrapper message.
             try:
                 await _auto_wire_server(request.app, name, result["url"], token="")
-            except Exception as exc:
-                logger.warning("Auto-wire failed for docker server %s: %s", name, exc)
+            except BaseException as exc:
+                _parts = [f"{type(exc).__name__}: {exc}"]
+                for sub in getattr(exc, "exceptions", ()) or ():
+                    _parts.append(f"  └─ {type(sub).__name__}: {sub}")
+                logger.warning("Auto-wire failed for docker server %s: %s", name, "; ".join(_parts))
+                db.update_mcp_server(
+                    server["id"], status="error", last_error="; ".join(_parts)[:300],
+                )
+                server = db.get_mcp_server(server["id"])
         except Exception as exc:
             logger.exception("Failed to deploy MCP container %s", name)
             db.update_mcp_server(
