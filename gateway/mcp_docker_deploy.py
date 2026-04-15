@@ -271,6 +271,26 @@ def container_status(name: str) -> str:
         return "unknown"
 
 
+def container_image(name: str) -> str:
+    """Return the image ref of an existing container, or '' if missing.
+
+    Used by the reconfigure flow so we can redeploy a container whose
+    catalogue entry we've lost track of (e.g. Docker Hub sources
+    aren't in BUILTIN_CATALOGUE so catalogue lookup misses).
+    """
+    container = _container_name(name)
+    try:
+        r = _docker(
+            "inspect", "-f", "{{.Config.Image}}", container,
+            check=False,
+        )
+        if r.returncode != 0:
+            return ""
+        return (r.stdout or "").strip()
+    except Exception:
+        return ""
+
+
 def container_restart_count(name: str) -> int:
     """Return the container's restart counter. 0 if missing/error.
 
