@@ -38,15 +38,66 @@ async def handle_catalogue(request: web.Request) -> web.Response:
 # ── Server list (DB managed + config-file read-only) ─��───────────────────────
 
 async def handle_servers_list(request: web.Request) -> web.Response:
-    """GET /api/tools/servers — all managed + config-file servers."""
+    """GET /api/tools/servers — all managed + config-file servers.
+
+    DB-backed rows are augmented with live data the UI needs but the
+    DB schema doesn't store:
+      - ``tool_names``: looked up from the gateway's MCPGatewayService
+        catalogue so the expand drawer can show actual tool names
+        instead of just a count
+      - ``container_status`` / ``host_port``: for docker-deployed rows,
+        live docker daemon state so the row reflects reality when the
+        container has exited or been removed out-of-band
+    """
     db = _get_auth_db()
     db_servers = db.list_mcp_servers()
 
-    # Config-file servers from MCPGatewayService
-    config_servers = []
+    # Catalogue lookup by name — the service keeps a per-server
+    # ``_registered_tool_names`` list we can surface on DB rows that
+    # correspond to wired servers (docker-deploy + external). If the
+    # server isn't wired yet (e.g. gateway restarted), the lookup
+    # misses and the UI falls back to tool_count.
     svc = request.app.get("mcp_service")
+    catalogue_by_name = {}
     if svc:
         for entry in svc.get_catalogue():
+            catalogue_by_name[entry["name"]] = entry
+
+    # Enrich DB rows.
+    for srv in db_servers:
+        cat = catalogue_by_name.get(srv.get("name"))
+        if cat:
+            srv["tool_count"] = cat.get("tool_count", srv.get("tool_count", 0))
+            srv["tool_names"] = cat.get("tool_names", [])
+        else:
+            srv.setdefault("tool_names", [])
+
+        # Live docker state for docker-deployed rows. This is a best-
+        # effort probe — if docker is down or the container was removed
+        # out-of-band, we still return the DB row, just without the
+        # extras.
+        if srv.get("deploy_mode") == "docker":
+            try:
+                from gateway.mcp_docker_deploy import container_status
+                srv["container_status"] = container_status(srv["name"])
+            except Exception:
+                srv["container_status"] = "unknown"
+            url = srv.get("url") or ""
+            if url.startswith("http://127.0.0.1:"):
+                try:
+                    srv["host_port"] = int(url.split(":")[2].split("/")[0])
+                except Exception:
+                    pass
+
+    # Config-file servers from MCPGatewayService (anything in _servers_cfg
+    # that isn't DB-backed). This keeps config.yaml entries visible in the
+    # UI alongside deployed ones.
+    config_servers = []
+    db_names = {s["name"] for s in db_servers}
+    if svc:
+        for name, entry in catalogue_by_name.items():
+            if name in db_names:
+                continue
             config_servers.append({
                 "id": f"config_{entry['name']}",
                 "name": entry["name"],
@@ -56,22 +107,14 @@ async def handle_servers_list(request: web.Request) -> web.Response:
                 "url": entry.get("url", ""),
                 "description": entry.get("description") or entry.get("category", ""),
                 "tool_count": entry.get("tool_count", 0),
-                # Forward tool_names so the dashboard can show the actual
-                # tool list when the row is expanded, instead of the user
-                # seeing "2 tools" with no way to find out which two.
                 "tool_names": entry.get("tool_names", []),
                 "category": entry.get("category", "general"),
                 "readonly": True,
             })
 
-    # Merge: DB servers first, then config servers not already in DB
-    db_names = {s["name"] for s in db_servers}
-    merged = list(db_servers)
-    for cs in config_servers:
-        if cs["name"] not in db_names:
-            merged.append(cs)
-
-    return _json({"servers": merged})
+    # Merge: DB servers first (they're already enriched above), then
+    # config-file servers (already filtered to exclude DB dupes).
+    return _json({"servers": list(db_servers) + config_servers})
 
 
 # ── Create server ─────────────────��──────────────────────────────────────────
@@ -312,6 +355,36 @@ async def handle_server_restart(request: web.Request) -> web.Response:
 
 # ── Health check ──────────���─────────────────────────��────────────────────────
 
+async def handle_server_logs(request: web.Request) -> web.Response:
+    """GET /api/tools/servers/{id}/logs — last N lines of container logs.
+
+    Only meaningful for docker-deployed rows. External and config-
+    file servers return 404 since there's no container to inspect.
+    """
+    db = _get_auth_db()
+    server_id = request.match_info["id"]
+    server = db.get_mcp_server(server_id)
+    if not server:
+        return _json({"error": "not_found"}, 404)
+    if server.get("deploy_mode") != "docker":
+        return _json({"error": "not_applicable", "detail": "logs only available for docker-deployed servers"}, 400)
+
+    try:
+        tail = int(request.query.get("tail", "200"))
+    except ValueError:
+        tail = 200
+
+    from gateway.mcp_docker_deploy import container_logs, container_status
+    try:
+        logs = await asyncio.to_thread(container_logs, server["name"], tail)
+        status = await asyncio.to_thread(container_status, server["name"])
+    except Exception as exc:
+        logs = f"(logs unavailable: {exc})"
+        status = "unknown"
+
+    return _json({"logs": logs, "container_status": status})
+
+
 async def handle_server_health(request: web.Request) -> web.Response:
     """GET /api/tools/servers/{id}/health — live health check."""
     db = _get_auth_db()
@@ -382,3 +455,4 @@ def register_routes(app: web.Application):
     app.router.add_delete("/api/tools/servers/{id}", handle_server_delete)
     app.router.add_post("/api/tools/servers/{id}/restart", handle_server_restart)
     app.router.add_get("/api/tools/servers/{id}/health", handle_server_health)
+    app.router.add_get("/api/tools/servers/{id}/logs", handle_server_logs)

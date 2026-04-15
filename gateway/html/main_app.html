@@ -3060,11 +3060,11 @@
               <div x-show="srv.description" class="text-xs text-gray-500 mt-1 truncate pl-5" x-text="srv.description"></div>
               <div x-show="srv.last_error" class="text-xs text-red-400 mt-1 pl-5" x-text="srv.last_error"></div>
             </div>
-            <!-- Tools drawer. Shows the list of tool names this MCP
-                 server exposes (populated from tool_names in the
-                 /api/tools/servers response — see mcp_service.py
-                 get_catalogue). -->
-            <div x-show="expanded" x-cloak class="px-3 pb-3 pl-10">
+            <!-- Expand drawer — shows tools, docker container state
+                 (for deploy_mode=docker), URL, and a logs peek. -->
+            <div x-show="expanded" x-cloak class="px-3 pb-3 pl-10 space-y-3"
+                 x-data="{ showLogs: false, logs: '', logsLoading: false }">
+              <!-- Tools exposed -->
               <template x-if="srv.tool_names && srv.tool_names.length > 0">
                 <div>
                   <div class="text-[10px] font-semibold text-gray-600 uppercase tracking-wider mb-1.5">Tools exposed</div>
@@ -3079,8 +3079,42 @@
                 <div class="text-[10px] text-gray-600 italic">
                   <span x-show="!srv.tool_count">No tools registered.</span>
                   <span x-show="srv.tool_count">
-                    Server reports <span x-text="srv.tool_count"></span> tool(s) but no names yet — usually this means the MCP connection is still warming up. Retry in a second.
+                    Server reports <span x-text="srv.tool_count"></span> tool(s) but no names yet — the MCP connection may still be warming up. Hit ↻ to re-wire.
                   </span>
+                </div>
+              </template>
+
+              <!-- Docker container detail — only for deploy_mode=docker -->
+              <template x-if="srv.deploy_mode === 'docker'">
+                <div class="grid grid-cols-2 gap-x-4 gap-y-1 text-[11px]">
+                  <div class="text-gray-500">Container</div>
+                  <div class="font-mono" :class="srv.container_status === 'running' ? 'text-green-400' : srv.container_status === 'exited' ? 'text-red-400' : 'text-gray-400'">
+                    <span x-text="'mcp-' + srv.name"></span>
+                    <span class="text-gray-600" x-text="'(' + (srv.container_status || '?') + ')'"></span>
+                  </div>
+                  <div class="text-gray-500">URL</div>
+                  <div class="font-mono text-gray-300 truncate" x-text="srv.url || '—'"></div>
+                  <template x-if="srv.host_port">
+                    <div class="text-gray-500">Host port</div>
+                  </template>
+                  <template x-if="srv.host_port">
+                    <div class="font-mono text-gray-300" x-text="srv.host_port"></div>
+                  </template>
+                </div>
+              </template>
+
+              <!-- Logs peek — only for deploy_mode=docker -->
+              <template x-if="srv.deploy_mode === 'docker'">
+                <div>
+                  <button @click="showLogs = !showLogs; if (showLogs && !logs) { logsLoading = true; fetch('/api/tools/servers/' + srv.id + '/logs?tail=200', {credentials:'include'}).then(r => r.json()).then(d => { logs = d.logs || '(no logs)'; logsLoading = false; }).catch(e => { logs = 'Error: ' + e.message; logsLoading = false; }); }"
+                    class="text-[10px] text-indigo-500 hover:text-indigo-300">
+                    <span x-show="!showLogs">Show container logs &rarr;</span>
+                    <span x-show="showLogs">Hide logs</span>
+                  </button>
+                  <div x-show="showLogs" x-cloak class="mt-2 max-h-64 overflow-auto bg-gray-950 border border-gray-800 rounded p-2 text-[10px] font-mono text-gray-400 whitespace-pre-wrap">
+                    <span x-show="logsLoading" class="text-gray-600">loading…</span>
+                    <span x-show="!logsLoading" x-text="logs"></span>
+                  </div>
                 </div>
               </template>
             </div>
