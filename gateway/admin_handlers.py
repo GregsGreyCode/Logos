@@ -2118,6 +2118,39 @@ async def handle_agent_logs_get(request: web.Request) -> web.Response:
         or str(_pathlib.Path.home() / ".logos")
     )
     log_path = logos_home / "agents" / name / "logs" / log_name
+
+    # Sync-on-demand from the sandbox side before reading. The
+    # periodic sync task runs every 30 min which is fine for
+    # long-lived background activity but useless when a user is
+    # watching a live log. Pull the sandbox's /tmp/hermes/logs
+    # directory into the host's per-agent logs dir first; the read
+    # below then sees the freshest data. Best-effort — failures
+    # (no sandbox, sandbox down, rsync error) fall through to the
+    # existing on-disk copy without an error response.
+    try:
+        from gateway.executors.openshell import _load_state
+        sandbox_name = None
+        gateway_name = None
+        for inst in _load_state():
+            if inst.get("name") == name and inst.get("phase") == "ready":
+                sandbox_name = inst.get("sandbox_name")
+                gateway_name = inst.get("openshell_name")
+                break
+        if sandbox_name and gateway_name:
+            app = request.app
+            wr = app.get("worker_registry") if app else None
+            if wr and hasattr(wr, "_download_sandbox_dir"):
+                host_logs_dir = logos_home / "agents" / name / "logs"
+                host_logs_dir.mkdir(parents=True, exist_ok=True)
+                await asyncio.to_thread(
+                    wr._download_sandbox_dir,
+                    sandbox_name, gateway_name,
+                    "/tmp/hermes/logs/",
+                    host_logs_dir,
+                )
+    except Exception as exc:
+        logger.debug("agent logs: on-demand sync failed for %s: %s", name, exc)
+
     if not log_path.exists():
         return web.json_response({
             "agent": name,
