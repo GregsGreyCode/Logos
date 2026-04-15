@@ -1419,13 +1419,19 @@ def setup_terminal_backend(config: dict):
     print_info("This affects tool execution, file access, and isolation.")
     print()
 
+    # NB: this picker is for the ``terminal`` *tool's* execution
+    # target — where shell commands invoked by the agent actually
+    # run. It is NOT the sandbox runtime (the thing that isolates the
+    # agent loop). Sandbox runtime is always OpenShell; see
+    # gateway/executors/build_executor() — Docker/k8s/LocalProcess
+    # executors were removed in the OpenShell-only cleanup.
     current_backend = config.get("terminal", {}).get("backend", "local")
     is_linux = _platform.system() == "Linux"
 
     # Build backend choices with descriptions
     terminal_choices = [
-        "Local - run directly on this machine (default)",
-        "SSH - run on a remote machine",
+        "Local - run shell commands directly on this machine (default)",
+        "SSH - run shell commands on a remote machine",
         "Daytona - persistent cloud development environment",
     ]
     idx_to_backend = {0: "local", 1: "ssh", 2: "daytona"}
