@@ -2881,6 +2881,9 @@
                   <button @click.stop="openAgentLogs(a)"
                     title="View this agent's runtime log tail — what it's been doing, tool calls, errors, etc."
                     class="text-[9px] px-1.5 py-0.5 rounded border border-gray-700 text-gray-500 hover:text-white hover:border-gray-500 transition-colors">📋 Logs</button>
+                  <button @click.stop="openAgentMind(a)"
+                    title="What this agent knows — memories, past sessions, files on disk"
+                    class="text-[9px] px-1.5 py-0.5 rounded border border-gray-700 text-gray-500 hover:text-indigo-300 hover:border-indigo-500 transition-colors">🧠 Mind</button>
                   <button @click.stop="chatWithAgent(a)"
                     class="text-[9px] px-2 py-0.5 rounded-lg bg-indigo-600 text-white hover:bg-indigo-500 transition-colors font-medium">Chat</button>
                 </div>
@@ -6354,6 +6357,18 @@ function app() {
     logsModalTail: 200,
     logsModalMeta: null,          // {path, size_bytes, mtime_iso, truncated}
     _logsModalTimer: null,
+    // ── Mind modal (per-agent lifetime state) ──
+    // Same right-docked pattern as the logs modal; shows what the
+    // agent has accumulated across sessions — memories, session
+    // metadata, activity roll-up, and the on-disk tree under
+    // ~/.logos/agents/<name>/. View-only for v1.
+    mindModalAgent: null,         // {id, name}
+    mindModalTab: 'overview',     // overview | memories | sessions | files
+    mindModalLoading: {overview: false, memories: false, sessions: false, files: false},
+    mindModalActivity: null,      // /activity response
+    mindModalMemories: null,      // /memories response
+    mindModalSessions: null,      // /sessions response
+    mindModalFiles: null,         // /files response
     agentCapsLoading: false,
     agentCapsError: null,
     agentCapsToggling: {},
@@ -10304,6 +10319,84 @@ network_policies:
       }
     },
 
+    // ── Mind modal (per-agent lifetime state) ───────────────────────
+    // Four tabs — Overview / Memories / Sessions / Files — each
+    // backed by a dedicated admin endpoint. Tabs are lazy-loaded so
+    // opening the modal only pays for the Overview fetch until the
+    // user clicks around.
+    async openAgentMind(agent) {
+      if (!agent || !agent.id) return;
+      this.mindModalAgent = { id: agent.id, name: agent.name };
+      this.mindModalTab = 'overview';
+      this.mindModalActivity = null;
+      this.mindModalMemories = null;
+      this.mindModalSessions = null;
+      this.mindModalFiles = null;
+      await this._mindLoadTab('overview');
+    },
+
+    closeAgentMind() {
+      this.mindModalAgent = null;
+    },
+
+    async _mindSwitchTab(tab) {
+      this.mindModalTab = tab;
+      const already = {
+        overview: this.mindModalActivity,
+        memories: this.mindModalMemories,
+        sessions: this.mindModalSessions,
+        files:    this.mindModalFiles,
+      }[tab];
+      if (already) return;
+      await this._mindLoadTab(tab);
+    },
+
+    async _mindLoadTab(tab) {
+      if (!this.mindModalAgent) return;
+      const aid = this.mindModalAgent.id;
+      const endpoint = {
+        overview: 'activity',
+        memories: 'memories',
+        sessions: 'sessions',
+        files:    'files',
+      }[tab];
+      if (!endpoint) return;
+      this.mindModalLoading[tab] = true;
+      try {
+        const r = await fetch(`/admin/agents/${aid}/${endpoint}`, { credentials: 'include' });
+        const d = await r.json();
+        if (tab === 'overview') this.mindModalActivity = d;
+        if (tab === 'memories') this.mindModalMemories = d;
+        if (tab === 'sessions') this.mindModalSessions = d;
+        if (tab === 'files')    this.mindModalFiles    = d;
+      } catch (e) {
+        console.warn(`mind modal ${tab} fetch failed`, e);
+      } finally {
+        this.mindModalLoading[tab] = false;
+      }
+    },
+
+    async _mindRefresh() {
+      // Blow away cached data for every tab and re-fetch the active one.
+      this.mindModalActivity = null;
+      this.mindModalMemories = null;
+      this.mindModalSessions = null;
+      this.mindModalFiles = null;
+      await this._mindLoadTab(this.mindModalTab);
+    },
+
+    _mindFmtBytes(n) {
+      if (n == null) return '—';
+      if (n < 1024) return n + ' B';
+      if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB';
+      return (n / (1024 * 1024)).toFixed(1) + ' MB';
+    },
+
+    _mindFmtDate(iso) {
+      if (!iso) return '—';
+      try { return new Date(iso).toLocaleString(); } catch { return iso; }
+    },
+
     async loadCloudProviders() {
       try {
         const r = await fetch('/admin/cloud-providers', { credentials: 'include' });
@@ -12068,6 +12161,197 @@ network_policies:
              :class="line.includes('ERROR') || line.includes('WARNING') ? 'text-amber-300' : ''"
              x-text="line"></div>
       </template>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════
+     🧠 Mind modal — per-agent lifetime state (Overview / Memories /
+     Sessions / Files). Right-docked, same visual language as the logs
+     modal above. View-only for v1: no edit/delete of memories, no
+     transcript viewer for sessions — the list-only presentation keeps
+     the DOM bounded even for agents with hundreds of sessions.
+     ═══════════════════════════════════════════════════════════════════ -->
+<div x-show="mindModalAgent" x-cloak
+     class="fixed inset-0 bg-black/60 z-50 flex justify-end"
+     @click="closeAgentMind()"
+     @keydown.escape.window="closeAgentMind()">
+  <div class="bg-gray-950 border-l border-gray-800 w-full max-w-3xl h-full flex flex-col shadow-2xl"
+       @click.stop>
+    <!-- Header -->
+    <div class="flex items-center justify-between px-5 py-3 border-b border-gray-800 shrink-0">
+      <div class="flex items-center gap-3 min-w-0">
+        <span class="text-base font-semibold text-white truncate"
+              x-text="mindModalAgent ? ('🧠 ' + mindModalAgent.name) : ''"></span>
+        <span class="text-[10px] text-gray-600 font-mono truncate"
+              x-text="mindModalAgent ? mindModalAgent.id : ''"></span>
+      </div>
+      <div class="flex items-center gap-2 shrink-0">
+        <button @click="_mindRefresh()"
+                class="text-[10px] px-2 py-1 rounded border border-gray-800 text-gray-500 hover:text-white hover:border-gray-600">↻</button>
+        <button @click="closeAgentMind()"
+                class="text-gray-500 hover:text-white text-lg px-2">&times;</button>
+      </div>
+    </div>
+    <!-- Tab bar -->
+    <div class="flex items-center gap-0 px-5 border-b border-gray-800 shrink-0 bg-gray-900/30">
+      <template x-for="t in ['overview','memories','sessions','files']" :key="t">
+        <button @click="_mindSwitchTab(t)"
+                class="text-xs px-3 py-2 border-b-2 transition-colors"
+                :class="mindModalTab === t
+                  ? 'border-indigo-500 text-white'
+                  : 'border-transparent text-gray-500 hover:text-gray-300'"
+                x-text="t.charAt(0).toUpperCase() + t.slice(1)"></button>
+      </template>
+    </div>
+
+    <!-- Body — one scrollable region per tab. min-h-0 is the classic
+         flex-overflow fix (without it flex-1 grows to content and the
+         scrollbar never engages). overflow-y-auto (not overflow-auto)
+         because the compiled tailwind.css only ships the y-axis utility. -->
+    <div class="flex-1 min-h-0 overflow-y-auto">
+
+      <!-- Overview tab -->
+      <div x-show="mindModalTab === 'overview'" class="px-5 py-4">
+        <template x-if="mindModalLoading.overview && !mindModalActivity">
+          <div class="text-xs text-gray-600 italic">Loading…</div>
+        </template>
+        <template x-if="mindModalActivity">
+          <div class="space-y-4">
+            <div class="grid grid-cols-2 gap-3">
+              <div class="bg-gray-900 border border-gray-800 rounded-lg p-3">
+                <div class="text-[10px] text-gray-600 uppercase tracking-wider">Total dispatches</div>
+                <div class="text-2xl font-semibold text-white mt-1" x-text="mindModalActivity.dispatches_total ?? 0"></div>
+              </div>
+              <div class="bg-gray-900 border border-gray-800 rounded-lg p-3">
+                <div class="text-[10px] text-gray-600 uppercase tracking-wider">Last 24 hours</div>
+                <div class="text-2xl font-semibold text-white mt-1" x-text="mindModalActivity.dispatches_last_24h ?? 0"></div>
+              </div>
+              <div class="bg-gray-900 border border-gray-800 rounded-lg p-3">
+                <div class="text-[10px] text-gray-600 uppercase tracking-wider">Input tokens</div>
+                <div class="text-2xl font-semibold text-white mt-1" x-text="(mindModalActivity.input_tokens_total ?? 0).toLocaleString()"></div>
+              </div>
+              <div class="bg-gray-900 border border-gray-800 rounded-lg p-3">
+                <div class="text-[10px] text-gray-600 uppercase tracking-wider">Output tokens</div>
+                <div class="text-2xl font-semibold text-white mt-1" x-text="(mindModalActivity.output_tokens_total ?? 0).toLocaleString()"></div>
+              </div>
+            </div>
+            <div class="bg-gray-900 border border-gray-800 rounded-lg p-3 text-xs text-gray-400 space-y-1.5">
+              <div class="flex justify-between">
+                <span class="text-gray-600">Most-used model</span>
+                <span class="font-mono text-gray-300" x-text="mindModalActivity.top_model || '—'"></span>
+              </div>
+              <div class="flex justify-between">
+                <span class="text-gray-600">Last seen</span>
+                <span class="font-mono text-gray-300" x-text="_mindFmtDate(mindModalActivity.last_seen)"></span>
+              </div>
+              <div class="flex justify-between">
+                <span class="text-gray-600">Cost-log rows</span>
+                <span class="font-mono text-gray-300" x-text="mindModalActivity.cost_log_rows ?? 0"></span>
+              </div>
+            </div>
+          </div>
+        </template>
+      </div>
+
+      <!-- Memories tab -->
+      <div x-show="mindModalTab === 'memories'" class="px-5 py-4">
+        <template x-if="mindModalLoading.memories && !mindModalMemories">
+          <div class="text-xs text-gray-600 italic">Loading…</div>
+        </template>
+        <template x-if="mindModalMemories">
+          <div class="space-y-5">
+            <template x-for="group in ['memory','user']" :key="group">
+              <div>
+                <div class="flex items-baseline justify-between mb-2">
+                  <h3 class="text-xs font-semibold uppercase tracking-wider text-gray-400"
+                      x-text="group === 'memory' ? 'Memory (agent-curated)' : 'User profile'"></h3>
+                  <span class="text-[10px] text-gray-600 font-mono"
+                        x-text="(mindModalMemories[group]?.entries?.length || 0) + ' entries · ' + _mindFmtBytes(mindModalMemories[group]?.size_bytes || 0)"></span>
+                </div>
+                <template x-if="!mindModalMemories[group]?.exists">
+                  <div class="text-[11px] text-gray-600 italic">No file yet — the agent hasn't written anything to this bucket.</div>
+                </template>
+                <template x-if="mindModalMemories[group]?.exists && mindModalMemories[group].entries.length === 0">
+                  <div class="text-[11px] text-gray-600 italic">File exists but contains no entries.</div>
+                </template>
+                <div class="space-y-2">
+                  <template x-for="(entry, i) in (mindModalMemories[group]?.entries || [])" :key="group + '-' + i">
+                    <div class="bg-gray-900 border border-gray-800 rounded-lg px-3 py-2 text-[11px] text-gray-300 whitespace-pre-wrap break-words">
+                      <span class="text-gray-600 font-mono text-[9px] mr-2" x-text="'#' + (i+1)"></span>
+                      <span x-text="entry"></span>
+                    </div>
+                  </template>
+                </div>
+              </div>
+            </template>
+          </div>
+        </template>
+      </div>
+
+      <!-- Sessions tab -->
+      <div x-show="mindModalTab === 'sessions'" class="px-5 py-4">
+        <template x-if="mindModalLoading.sessions && !mindModalSessions">
+          <div class="text-xs text-gray-600 italic">Loading…</div>
+        </template>
+        <template x-if="mindModalSessions">
+          <div>
+            <div class="flex items-baseline justify-between mb-3">
+              <h3 class="text-xs font-semibold uppercase tracking-wider text-gray-400">Past sessions</h3>
+              <span class="text-[10px] text-gray-600 font-mono"
+                    x-text="(mindModalSessions.sessions?.length || 0) + ' of ' + (mindModalSessions.total || 0)"></span>
+            </div>
+            <template x-if="(mindModalSessions.sessions || []).length === 0">
+              <div class="text-[11px] text-gray-600 italic">No sessions yet.</div>
+            </template>
+            <div class="space-y-1.5">
+              <template x-for="s in (mindModalSessions.sessions || [])" :key="s.id">
+                <div class="bg-gray-900 border border-gray-800 rounded-lg px-3 py-2">
+                  <div class="flex items-baseline gap-2 flex-wrap">
+                    <span class="text-[11px] font-mono text-gray-400" x-text="s.id"></span>
+                    <span class="text-[10px] text-gray-600" x-text="'· ' + (s.model || 'unknown')"></span>
+                    <span class="text-[10px] text-gray-600" x-text="'· ' + (s.msg_count ?? 0) + ' msg'"></span>
+                    <span class="ml-auto text-[10px] text-gray-600 font-mono" x-text="_mindFmtDate(s.last_updated || s.started)"></span>
+                  </div>
+                  <div x-show="s.preview" class="text-[11px] text-gray-500 mt-1 truncate" x-text="s.preview"></div>
+                </div>
+              </template>
+            </div>
+          </div>
+        </template>
+      </div>
+
+      <!-- Files tab -->
+      <div x-show="mindModalTab === 'files'" class="px-5 py-4">
+        <template x-if="mindModalLoading.files && !mindModalFiles">
+          <div class="text-xs text-gray-600 italic">Loading…</div>
+        </template>
+        <template x-if="mindModalFiles">
+          <div>
+            <div class="flex items-baseline justify-between mb-3">
+              <h3 class="text-xs font-semibold uppercase tracking-wider text-gray-400">On-disk files</h3>
+              <span class="text-[10px] text-gray-600 font-mono truncate"
+                    x-text="mindModalFiles.root || ''"></span>
+            </div>
+            <template x-if="(mindModalFiles.files || []).length === 0">
+              <div class="text-[11px] text-gray-600 italic">Nothing on disk yet.</div>
+            </template>
+            <div class="space-y-0.5 font-mono text-[10px]">
+              <template x-for="f in (mindModalFiles.files || [])" :key="f.rel_path">
+                <div class="flex items-baseline gap-3 px-2 py-1 rounded hover:bg-gray-900">
+                  <span class="text-gray-400 truncate flex-1" x-text="f.rel_path"></span>
+                  <span class="text-gray-600 shrink-0" x-text="_mindFmtBytes(f.size_bytes)"></span>
+                  <span class="text-gray-700 shrink-0" x-text="_mindFmtDate(f.mtime_iso)"></span>
+                </div>
+              </template>
+            </div>
+            <div x-show="mindModalFiles.truncated" class="text-[10px] text-yellow-500 italic mt-3">
+              Listing truncated at 5000 entries.
+            </div>
+          </div>
+        </template>
+      </div>
+
     </div>
   </div>
 </div>
