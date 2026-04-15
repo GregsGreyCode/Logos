@@ -3831,7 +3831,11 @@
           <span class="absolute -top-1 -right-3 min-w-[16px] h-4 px-1 rounded-full bg-red-500 text-[9px] text-white font-bold flex items-center justify-center" x-text="pendingApprovalCount > 99 ? '99+' : pendingApprovalCount"></span>
         </template>
       </button>
-      <button x-show="can('view_evolution')"
+      <!-- Evolution / Proposals tab temporarily removed — feature is
+           being reworked. The backend (DB tables, handlers, routes)
+           is preserved so the tab can be brought back by restoring
+           this button; no migration needed. -->
+      <button x-show="false" x-cloak
         class="pb-2 text-sm font-medium border-b-2 border-transparent"
         :class="activityTab==='proposals'?'tab-active':'text-gray-500 hover:text-white'"
         @click="activityTab='proposals'; loadEvolutionProposals(); loadEvolutionSettings()">Proposals</button>
