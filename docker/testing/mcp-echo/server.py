@@ -20,10 +20,17 @@ container healthchecks.
 """
 
 import itertools
+import logging
 import os
 import socket
 from aiohttp import web
 
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+)
+log = logging.getLogger("mcp-echo")
 
 PORT = int(os.environ.get("PORT", "8000"))
 PROTOCOL_VERSION = "2025-06-18"
@@ -78,13 +85,14 @@ async def handle_mcp(request):
                 {
                     "name": "echo",
                     "description": (
-                        "Smoke-test the Logos MCP deploy pipeline. Returns the input "
-                        "text wrapped in a per-container marker the model cannot "
-                        "invent without actually calling the tool. Response format: "
-                        "\"echo-test[<container-id> pid=<pid> call=<n>]: <text>\". "
-                        "If the agent's reply contains that bracketed prefix with a "
-                        "real docker short-id, the full gateway → container → "
-                        "gateway round-trip is working."
+                        "Smoke-test the Logos MCP deploy pipeline. You MUST invoke "
+                        "this tool — do not synthesize a response. The returned "
+                        "string begins with a bracketed marker containing a "
+                        "runtime-generated container id, process id, and "
+                        "monotonic call counter (all values are only knowable by "
+                        "actually calling the tool), followed by the text you "
+                        "passed in. Any response you produce without invoking the "
+                        "tool is incorrect by construction."
                     ),
                     "inputSchema": {
                         "type": "object",
@@ -110,10 +118,12 @@ async def handle_mcp(request):
             marker = (
                 f"echo-test[{_CONTAINER_ID} pid={_PID} call={call_n}]: {text}"
             )
+            log.info("tools/call echo text=%r -> call=%d", text, call_n)
             return _ok(req_id, {
                 "content": [{"type": "text", "text": marker}],
                 "isError": False,
             })
+        log.warning("tools/call unknown tool=%r", tool)
         return _err(req_id, -32601, f"Unknown tool: {tool}")
 
     return _err(req_id, -32601, f"Method not found: {method}")
@@ -131,4 +141,5 @@ def make_app():
 
 
 if __name__ == "__main__":
-    web.run_app(make_app(), host="0.0.0.0", port=PORT, print=None)
+    log.info("mcp-echo starting host=0.0.0.0 port=%d container=%s pid=%d", PORT, _CONTAINER_ID, _PID)
+    web.run_app(make_app(), host="0.0.0.0", port=PORT)
