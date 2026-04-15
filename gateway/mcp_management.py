@@ -37,9 +37,15 @@ async def handle_catalogue(request: web.Request) -> web.Response:
     db = _get_auth_db()
     flags = db.get_platform_feature_flags()
 
-    sources = flags.get("mcp_catalogue_sources") or []
-    if not sources and flags.get("mcp_catalogue_url"):
-        sources = [{"type": "http_json", "url": flags["mcp_catalogue_url"], "enabled": True}]
+    sources = flags.get("mcp_catalogue_sources")
+    if sources is None:
+        # First-run default: include Docker's MCP namespace so users see
+        # a populated catalog out-of-the-box instead of having to
+        # discover the "Sources" panel and add it by hand. Legacy
+        # ``mcp_catalogue_url`` is preserved as an http_json source.
+        sources = [{"type": "docker_hub_namespace", "namespace": "mcp", "enabled": True}]
+        if flags.get("mcp_catalogue_url"):
+            sources.append({"type": "http_json", "url": flags["mcp_catalogue_url"], "enabled": True})
 
     entries = await asyncio.to_thread(get_catalogue_merged, sources)
     return _json({"catalogue": entries, "sources": sources})
@@ -134,10 +140,12 @@ async def handle_servers_list(request: web.Request) -> web.Response:
         # extras.
         if srv.get("deploy_mode") == "docker":
             try:
-                from gateway.mcp_docker_deploy import container_status
+                from gateway.mcp_docker_deploy import container_status, container_restart_count
                 srv["container_status"] = container_status(srv["name"])
+                srv["container_restart_count"] = container_restart_count(srv["name"])
             except Exception:
                 srv["container_status"] = "unknown"
+                srv["container_restart_count"] = 0
             url = srv.get("url") or ""
             if url.startswith("http://127.0.0.1:"):
                 try:
