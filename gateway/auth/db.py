@@ -2953,10 +2953,17 @@ def list_dispatches(
     agent_id: str = None,
     origin: str = None,
     status: str = None,
+    session_id: str = None,
     limit: int = 50,
     offset: int = 0,
 ) -> tuple:
-    """Query the dispatch ledger. Returns (rows, total_count)."""
+    """Query the dispatch ledger. Returns (rows, total_count).
+
+    ``session_id`` filter is used by the STAMP-run enrichment path
+    (``/runs/{id}``) to pull every dispatch that belongs to a given
+    session so token totals + origin chain can be assembled without
+    a second query from the caller.
+    """
     where_parts = []
     params = []
     if agent_id:
@@ -2968,6 +2975,9 @@ def list_dispatches(
     if status:
         where_parts.append("status = ?")
         params.append(status)
+    if session_id:
+        where_parts.append("session_id = ?")
+        params.append(session_id)
     where_clause = (" WHERE " + " AND ".join(where_parts)) if where_parts else ""
     with _conn() as conn:
         total = conn.execute(
