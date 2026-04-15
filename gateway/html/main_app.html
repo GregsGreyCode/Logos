@@ -6892,11 +6892,15 @@ function app() {
       // Delay enabling the chat input to prevent browser autofill from populating
       // it with saved login credentials immediately after a login redirect.
       setTimeout(() => { this.chatInputReady = true; }, 800);
-      // Auto-collapse live executions panel on narrow screens after a brief look.
-      // On wide screens (≥1400px) it stays open so there's room for both.
-      if (window.innerWidth < 1400) {
-        setTimeout(() => { this.liveExecCollapsed = true; }, 3000);
-      }
+      // Auto-collapse live executions panel ~3s after load unless the user
+      // already expanded it or there's an active session worth watching.
+      // Previously gated on viewport width < 1400px, which left wide
+      // screens with the panel permanently flopped open on refresh.
+      setTimeout(() => {
+        if (this.liveExecCollapsed) return;
+        const hasActive = (this.status?.active_sessions || []).length > 0;
+        if (!hasActive) this.liveExecCollapsed = true;
+      }, 3000);
       // Poll for launcher update status every 60s (only meaningful on Windows tray build)
       const _pollUpdate = async () => {
         try {
@@ -10266,9 +10270,15 @@ network_policies:
           path: d.path, size: d.size_bytes, mtime: d.mtime_iso,
           truncated: d.truncated, exists: d.exists, logName: d.log_name,
         };
+        // Wait one more animation frame after Alpine's nextTick so layout
+        // has actually reflowed the new x-for divs — otherwise scrollHeight
+        // is still the pre-render value (≈ clientHeight) and scrollTop
+        // clamps to 0, leaving the viewport parked at the top.
         this.$nextTick(() => {
-          const el = this.$refs.logsScroll;
-          if (el && this.logsModalAutoTail) el.scrollTop = el.scrollHeight;
+          requestAnimationFrame(() => {
+            const el = this.$refs.logsScroll;
+            if (el && this.logsModalAutoTail) el.scrollTop = el.scrollHeight;
+          });
         });
       } catch (e) {
         this.logsModalLines = [`[fetch error: ${String(e).slice(0, 160)}]`];
@@ -12046,7 +12056,7 @@ network_policies:
          bottom resumes it. -->
     <div x-ref="logsScroll"
          @scroll="(() => { const el = $refs.logsScroll; if (!el) return; const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 8; if (!atBottom && logsModalAutoTail) { logsModalAutoTail = false; } else if (atBottom && !logsModalAutoTail) { logsModalAutoTail = true; } })()"
-         class="flex-1 min-h-0 overflow-auto px-5 py-3 font-mono text-[11px] leading-relaxed bg-black/40 text-gray-300">
+         class="flex-1 min-h-0 overflow-y-auto px-5 py-3 font-mono text-[11px] leading-relaxed bg-black/40 text-gray-300">
       <template x-if="logsModalLoading && logsModalLines.length === 0">
         <div class="text-gray-600 italic">Loading…</div>
       </template>
