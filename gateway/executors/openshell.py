@@ -672,6 +672,121 @@ def _list_all_sandbox_names_with_gateway() -> List[tuple[str, str]]:
     return out
 
 
+# ── MCP auto-grant toolset injection ──────────────────────────────────────
+
+def _auto_granted_mcp_rows() -> List[dict]:
+    """Return DB rows for every auto-granted, running, docker-deployed MCP server.
+
+    Internal shared helper behind :func:`_auto_granted_mcp_toolsets` and
+    :func:`_auto_granted_mcp_configs`. Kept as one query instead of two
+    so every caller sees a consistent snapshot of which servers are
+    "eligible right now."
+
+    External-URL servers are excluded even when auto_grant is set —
+    they require a per-session access grant regardless, because the
+    gateway side doesn't control their container lifecycle and can't
+    assert the same "you clicked Deploy = consent" invariant.
+    """
+    try:
+        from gateway.auth import db as _mcp_auth_db
+    except Exception:
+        return []
+    try:
+        rows = _mcp_auth_db.list_mcp_servers() or []
+    except Exception as exc:
+        logger.debug("auto_granted_mcp_rows: list_mcp_servers failed: %s", exc)
+        return []
+    return [
+        row for row in rows
+        if row.get("deploy_mode") == "docker"
+        and row.get("auto_grant")
+        and row.get("status") == "running"
+        and row.get("name")
+    ]
+
+
+def _auto_granted_mcp_toolsets() -> List[str]:
+    """Return ``mcp-<name>`` toolset names for every auto-granted MCP server."""
+    return [f"mcp-{row['name']}" for row in _auto_granted_mcp_rows()]
+
+
+# Hostname the sandbox resolves to the gateway. OpenShell's sandbox
+# pod has an /etc/hosts entry mapping host.openshell.internal to the
+# host-gateway IP (172.17.0.1 for the default docker bridge). The
+# gateway's HTTP API — including the ``/mcp/<name>`` proxy — listens
+# on that bridge IP so the sandbox can dial back.
+_SANDBOX_GATEWAY_HOST = os.getenv("LOGOS_GATEWAY_HOST_FROM_SANDBOX") or "host.openshell.internal"
+_SANDBOX_GATEWAY_PORT = int(
+    os.getenv("LOGOS_GATEWAY_PORT")
+    or os.getenv("HERMES_GATEWAY_PORT")
+    or "8091"
+)
+
+
+def _auto_granted_mcp_configs(session_id: str) -> Dict[str, dict]:
+    """Return an ``mcp_servers`` config dict for auto-granted MCP servers.
+
+    Shape matches what the sandbox's ``tools/mcp_tool.py`` expects when
+    it reads ``~/.hermes/config.yaml``: each entry has a ``url`` (the
+    gateway's proxy path for that server), a ``transport`` hint so the
+    MCP client uses streamable-HTTP, and an ``X-Session-Id`` header so
+    the gateway's mcp_handlers proxy can tie the request back to a
+    grant.
+
+    The ``session_id`` is the sandbox's worker_id — a stable per-
+    sandbox identifier. The caller is expected to register a grant
+    via :func:`_grant_auto_mcp_access` before the sandbox's MCP
+    client connects; otherwise the proxy rejects with 403.
+
+    The URL target is the gateway's MCP proxy at
+    ``http://host.openshell.internal:8091/mcp/<name>``, not the
+    container's 127.0.0.1 port directly. The container binds to
+    127.0.0.1 on the host (so it's off the LAN) but the sandbox can't
+    reach the host's loopback. Going through the gateway's proxy
+    means the sandbox only needs to know one host (the gateway), and
+    the gateway does the 127.0.0.1:<host_port> translation.
+    """
+    base = f"http://{_SANDBOX_GATEWAY_HOST}:{_SANDBOX_GATEWAY_PORT}"
+    headers = {"X-Session-Id": session_id} if session_id else {}
+    return {
+        row["name"]: {
+            "url": f"{base}/mcp/{row['name']}",
+            "transport": "streamable-http",
+            "headers": headers,
+        }
+        for row in _auto_granted_mcp_rows()
+    }
+
+
+def _grant_auto_mcp_access(session_id: str) -> int:
+    """Grant the given session access to every auto-granted MCP server.
+
+    Pairs with :func:`_auto_granted_mcp_configs` — the sandbox's MCP
+    client sends X-Session-Id: <session_id>, and the gateway's proxy
+    checks the in-memory grant registry before forwarding. Without
+    this call the sandbox's first request hits HTTP 403 and the
+    mcp_tool registers zero tools.
+
+    Called at spawn, refresh_instance_config, and startup rewire so
+    every live sandbox has fresh grants against the current set of
+    auto-granted servers. Returns the count granted (for logging).
+    """
+    if not session_id:
+        return 0
+    try:
+        from gateway.mcp_access import grant_access
+    except Exception:
+        return 0
+    n = 0
+    for row in _auto_granted_mcp_rows():
+        try:
+            grant_access(session_id, row["name"])
+            n += 1
+        except Exception:
+            pass
+    return n
+
+
 # ── Route resolution ───────────────────────────────────────────────────────
 
 def _resolve_route(config: "InstanceConfig") -> tuple[str, str]:
@@ -854,15 +969,38 @@ class OpenShellExecutor:
         except Exception as _hosts_exc:
             logger.debug("instance-config: allowed-hosts lookup failed: %s", _hosts_exc)
 
+        # Merge auto-granted docker MCP server toolsets into the agent's
+        # explicit toolset list. Preserves ordering and de-dupes so a
+        # toolset the user manually enabled and an auto-grant both land
+        # once. See _auto_granted_mcp_toolsets() for the selection rules.
+        _effective_toolsets: List[str] = list(config.toolsets or [])
+        for _ts in _auto_granted_mcp_toolsets():
+            if _ts not in _effective_toolsets:
+                _effective_toolsets.append(_ts)
+
+        # Full MCP server configs — the sandbox writes these to
+        # ``~/.hermes/config.yaml`` so ``discover_mcp_tools`` can
+        # connect to each server and register the ``mcp_<name>_<tool>``
+        # handlers. Without this, the toolset name is in the list but
+        # has no tools behind it, and the agent hallucinates results.
+        _mcp_servers_cfg = _auto_granted_mcp_configs(worker_id)
+        _n_granted = _grant_auto_mcp_access(worker_id)
+        if _n_granted:
+            logger.info(
+                "spawn(%s): granted MCP access to %d auto-granted server(s) for session=%s",
+                config.name, _n_granted, worker_id,
+            )
+
         instance_config = {
             "worker_id": worker_id,
             "instance_name": config.name,
             "soul": config.soul_name or "general",
-            "toolsets": config.toolsets or [],
+            "toolsets": _effective_toolsets,
             "model": resolved_model,
             "env": _service_env,
             "website_blocklist": _website_blocklist,
             "allowed_hosts": _allowed_hosts,
+            "mcp_servers": _mcp_servers_cfg,
         }
 
         record = {
@@ -1296,6 +1434,18 @@ class OpenShellExecutor:
         except json.JSONDecodeError:
             toolsets = []
 
+        # Same MCP auto-grant merge as spawn(): refreshing without this
+        # would strip docker MCP toolsets from an already-spawned agent
+        # the next time anything touched its config (toggle in Tools UI,
+        # credential change, etc.), silently disabling the MCP tools
+        # until the next full respawn.
+        for _ts in _auto_granted_mcp_toolsets():
+            if _ts not in toolsets:
+                toolsets.append(_ts)
+
+        _mcp_servers_cfg = _auto_granted_mcp_configs(sandbox_name)
+        _grant_auto_mcp_access(sandbox_name)
+
         # Same env-bridge as spawn(): credentials for tool code that
         # needs to dial out to user-configured services. Re-pulled here
         # so a refresh after saving a new credential picks it up.
@@ -1332,6 +1482,7 @@ class OpenShellExecutor:
             "env": _service_env,
             "website_blocklist": _website_blocklist,
             "allowed_hosts": _allowed_hosts,
+            "mcp_servers": _mcp_servers_cfg,
         }
 
         config_tmpfile = tempfile.NamedTemporaryFile(

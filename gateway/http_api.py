@@ -4278,6 +4278,85 @@ async def start_http_api(runner: Any, port: int = 8091) -> None:
         asyncio.ensure_future(_mcp_svc.start())
         logger.info("MCP gateway service initialised (%d server(s) configured)",
                     len(_mcp_cfg.get("mcp_servers") or {}))
+
+        # Rewire docker-deployed MCP servers on startup. Their config
+        # lives in the mcp_servers DB table (not config.yaml) so the
+        # startup load above doesn't see them, which means after a
+        # gateway restart the DB row shows status=running but the
+        # gateway's proxy has no idea the server exists. Re-register
+        # each one into mcp_service._servers_cfg so /mcp/<name> works
+        # and auto-granted toolsets resolve to real tools.
+        async def _rewire_docker_mcp_servers():
+            try:
+                from gateway.auth import db as _mcp_db
+                from gateway.mcp_management import _auto_wire_server
+            except Exception as _imp_err:
+                logger.warning("MCP rewire: import failed: %s", _imp_err)
+                return
+            try:
+                _rows = _mcp_db.list_mcp_servers() or []
+            except Exception as _list_err:
+                logger.warning("MCP rewire: list_mcp_servers failed: %s", _list_err)
+                return
+            _rewired = 0
+            for _row in _rows:
+                if _row.get("deploy_mode") != "docker":
+                    continue
+                if _row.get("status") != "running" or not _row.get("url"):
+                    continue
+                try:
+                    await _auto_wire_server(
+                        app, _row["name"], _row["url"], _row.get("token") or "",
+                    )
+                    _rewired += 1
+                except Exception as _wire_err:
+                    logger.warning(
+                        "MCP rewire: auto_wire_server(%s) failed: %s",
+                        _row.get("name"), _wire_err,
+                    )
+            if _rewired:
+                logger.info("MCP rewire: re-registered %d docker server(s)", _rewired)
+
+                # Grants are in-memory, so a gateway restart wipes them
+                # and every sandbox's first MCP call 403s. Re-grant for
+                # every running sandbox before the config refresh so
+                # the sandbox's freshly-uploaded MCP client has a
+                # valid session when it connects through the proxy.
+                try:
+                    from gateway.executors.openshell import (
+                        _load_state as _load_sb_state,
+                        _grant_auto_mcp_access,
+                    )
+                    _granted_total = 0
+                    for _inst in _load_sb_state() or []:
+                        _wid = _inst.get("worker_id") or _inst.get("sandbox_name")
+                        if _wid:
+                            _granted_total += _grant_auto_mcp_access(_wid)
+                    if _granted_total:
+                        logger.info(
+                            "MCP rewire: granted %d session/server pair(s)",
+                            _granted_total,
+                        )
+                except Exception as _grant_err:
+                    logger.warning("MCP rewire: grant loop failed: %s", _grant_err)
+
+                # Broadcast config refresh so existing sandboxes pick up
+                # the ``mcp-<name>`` entries that _auto_granted_mcp_toolsets
+                # now yields for these rows.
+                _executor = app.get("executor")
+                if _executor and hasattr(_executor, "refresh_all_instance_configs"):
+                    try:
+                        pushed = await asyncio.to_thread(
+                            _executor.refresh_all_instance_configs
+                        )
+                        logger.info(
+                            "MCP rewire: refreshed %d sandbox instance-config(s)",
+                            pushed,
+                        )
+                    except Exception as _ref_err:
+                        logger.warning("MCP rewire: refresh failed: %s", _ref_err)
+
+        asyncio.ensure_future(_rewire_docker_mcp_servers())
     except Exception as _mcp_err:
         logger.warning("MCP gateway service failed to initialise: %s", _mcp_err)
         app["mcp_service"] = None

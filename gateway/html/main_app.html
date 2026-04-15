@@ -3103,6 +3103,23 @@
                 </div>
               </template>
 
+              <!-- Auto-grant toggle — controls whether this server's
+                   tools are injected into every agent's toolset list
+                   automatically at spawn. When off, the agent has to
+                   call request_mcp_access to get a per-session grant. -->
+              <div class="flex items-center justify-between pt-1">
+                <div>
+                  <div class="text-[11px] text-gray-300">Auto-grant to every agent</div>
+                  <div class="text-[10px] text-gray-500">On: every agent sees the tools. Off: agent must request access.</div>
+                </div>
+                <button @click="toggleMcpAutoGrant(srv)"
+                  :class="srv.auto_grant ? 'bg-indigo-600' : 'bg-gray-700'"
+                  class="relative inline-flex h-5 w-9 items-center rounded-full transition-colors">
+                  <span :class="srv.auto_grant ? 'translate-x-5' : 'translate-x-1'"
+                    class="inline-block h-3 w-3 transform rounded-full bg-white transition-transform"></span>
+                </button>
+              </div>
+
               <!-- Logs peek — only for deploy_mode=docker -->
               <template x-if="srv.deploy_mode === 'docker'">
                 <div>
@@ -8755,6 +8772,21 @@ function app() {
         });
         await this.loadToolsTab();
       } catch(e) { console.warn('delete failed:', e.message); }
+    },
+    async toggleMcpAutoGrant(srv) {
+      const next = srv.auto_grant ? 0 : 1;
+      srv.auto_grant = next;
+      try {
+        await fetch(`/api/tools/servers/${srv.id}`, {
+          method: 'PATCH', credentials: 'include',
+          headers: {'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken()},
+          body: JSON.stringify({auto_grant: next}),
+        });
+        await this.loadToolsTab();
+      } catch(e) {
+        srv.auto_grant = next ? 0 : 1;
+        console.warn('auto_grant toggle failed:', e.message);
+      }
     },
 
     async loadServices() {

@@ -19,7 +19,9 @@ JSON-RPC-in-POST-body responses for tools this simple. Listens on
 container healthchecks.
 """
 
+import itertools
 import os
+import socket
 from aiohttp import web
 
 
@@ -27,6 +29,15 @@ PORT = int(os.environ.get("PORT", "8000"))
 PROTOCOL_VERSION = "2025-06-18"
 SERVER_NAME = "echo-test"
 SERVER_VERSION = "0.1"
+
+# Per-container marker the model can't guess without actually calling the
+# tool. Combines the container's hostname (docker sets this to a fresh
+# short id per run) and the process's PID so "did the LLM really call
+# the container or is it hallucinating" becomes verifiable by just
+# looking at the response.
+_CONTAINER_ID = socket.gethostname()
+_PID = os.getpid()
+_call_counter = itertools.count(1)
 
 
 def _ok(req_id, result):
@@ -67,17 +78,20 @@ async def handle_mcp(request):
                 {
                     "name": "echo",
                     "description": (
-                        "Return the input text verbatim. Useful for smoke-testing "
-                        "the Logos MCP deploy pipeline — if an agent can call this "
-                        "and see the string come back, the whole gateway → container "
-                        "→ gateway round-trip is working."
+                        "Smoke-test the Logos MCP deploy pipeline. Returns the input "
+                        "text wrapped in a per-container marker the model cannot "
+                        "invent without actually calling the tool. Response format: "
+                        "\"echo-test[<container-id> pid=<pid> call=<n>]: <text>\". "
+                        "If the agent's reply contains that bracketed prefix with a "
+                        "real docker short-id, the full gateway → container → "
+                        "gateway round-trip is working."
                     ),
                     "inputSchema": {
                         "type": "object",
                         "properties": {
                             "text": {
                                 "type": "string",
-                                "description": "Any string. The tool returns it unchanged.",
+                                "description": "Any string. The tool returns it with a verifiable marker.",
                             },
                         },
                         "required": ["text"],
@@ -92,8 +106,12 @@ async def handle_mcp(request):
         args = params.get("arguments", {}) or {}
         if tool == "echo":
             text = str(args.get("text", ""))
+            call_n = next(_call_counter)
+            marker = (
+                f"echo-test[{_CONTAINER_ID} pid={_PID} call={call_n}]: {text}"
+            )
             return _ok(req_id, {
-                "content": [{"type": "text", "text": text}],
+                "content": [{"type": "text", "text": marker}],
                 "isError": False,
             })
         return _err(req_id, -32601, f"Unknown tool: {tool}")
