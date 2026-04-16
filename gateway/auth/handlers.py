@@ -37,7 +37,6 @@ def _user_public(user: dict) -> dict:
         "created_at":   user["created_at"],
         "last_login":   user.get("last_login"),
         "policy_id":        user.get("policy_id"),
-        "action_policy_id": user.get("action_policy_id"),
     }
 
 
