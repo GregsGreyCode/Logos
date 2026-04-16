@@ -7495,6 +7495,12 @@ function app() {
         if (!r.ok) return;
         const messages = await r.json();
         const name = (ps.display_name || ps.session_key || ps.session_id).slice(0, 40);
+        // Carry the active agent binding into the platform chat so
+        // the header shows the agent's name + STAMP pills, and the
+        // user can continue the conversation in the chat box. Without
+        // agent_id the panel falls back to "General" / "none" and the
+        // send path has no target worker.
+        const currentAgent = this.activeChat;
         const tempChat = {
           id: ps.session_id,
           name: name,
@@ -7502,6 +7508,8 @@ function app() {
           created_at: new Date(ps.created_at).getTime(),
           updated_at: new Date(ps.updated_at).getTime(),
           _platform: ps.platform,
+          agent_id: currentAgent?.agent_id || ps.agent_id || '',
+          agent_name: currentAgent?.agent_name || ps.agent_name || '',
         };
         const idx = this.chats.findIndex(c => c.id === ps.session_id);
         if (idx >= 0) { this.chats[idx] = tempChat; } else { this.chats = [tempChat, ...this.chats]; }
