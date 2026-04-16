@@ -47,6 +47,12 @@ class SessionSource:
     chat_topic: Optional[str] = None  # Channel topic/description (Discord, Slack)
     user_id_alt: Optional[str] = None  # Signal UUID (alternative to phone number)
     chat_id_alt: Optional[str] = None  # Signal group internal ID
+    # When set, identifies the target agent directly: the adapter that
+    # received the update is owned by that agent (per-agent credentials).
+    # dispatch_platform_message prefers this over the platform_routing
+    # table lookup. None = legacy path (global env token, routing table
+    # decides which agent handles the message).
+    agent_id: Optional[str] = None
     
     @property
     def description(self) -> str:
