@@ -1762,18 +1762,24 @@ async def handle_internal_session_search(request: web.Request) -> web.Response:
         limit = 3
 
     try:
-        from gateway.session import SessionStore
-        store = SessionStore()
-        if not store._db:
+        # Get the session_store from the running gateway runner — it's
+        # already initialised with the right sessions_dir + config.
+        # Avoids constructing a new SessionStore which needs constructor
+        # args we don't have in a standalone handler.
+        runner = request.app.get("runner") if request.app else None
+        db = None
+        if runner and hasattr(runner, "session_store") and runner.session_store:
+            db = getattr(runner.session_store, "_db", None)
+        if not db:
             return web.json_response(
-                {"success": False, "error": "session DB not initialised"},
+                {"success": False, "error": "session DB not available on this gateway"},
                 status=503,
             )
         from tools.session_search_tool import session_search as _ss
         result_json = _ss(
             query=query,
             limit=min(limit, 5),
-            db=store._db,
+            db=db,
             current_session_id=current_session_id or None,
         )
         import json as _json
