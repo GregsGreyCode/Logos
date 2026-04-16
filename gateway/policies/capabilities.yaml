@@ -81,13 +81,20 @@ always_on:
 capabilities:
 
   # ── Local-first capabilities (data stays on your machine) ──
-  - id: web
-    name: Use the web
+  # "Browse the web" is the Chromium path: a browser runs inside the
+  # sandbox and reaches sites directly via OpenShell's egress proxy.
+  # No third-party SaaS sits between the agent and the site. Paired
+  # with the (third-party) "Search & scrape the web" capability below
+  # for users who want Firecrawl-backed search/scrape in addition to
+  # raw browsing — keeping them separate so a privacy-conscious user
+  # can enable browsing without opting into Firecrawl.
+  - id: web_browser
+    name: Browse the web
     icon: 🌐
     trust: local
-    trust_note: Chromium runs inside your sandbox. The browser reaches external sites directly, but no data flows through a third-party provider.
-    description: Browse, search, and read web pages.
-    toolsets: [browser, web]
+    trust_note: Chromium runs inside your sandbox and reaches external sites directly. No third-party provider sits between the agent and the site.
+    description: Open, read, and interact with web pages (browser automation).
+    toolsets: [browser]
     # web-browse grants the in-sandbox Chromium outbound HTTPS/HTTP
     # (wildcard host, 443+80, scoped to the chrome binary only). Browser
     # itself is bundled in the image — no cred.
@@ -104,6 +111,17 @@ capabilities:
         # *.wikipedia.org
         # github.com
         # !facebook.com   # leading ! = blocklist entry
+
+  # ── Third-party: Firecrawl-backed search & extraction ──
+  - id: web_search
+    name: Search & scrape the web
+    icon: 🔎
+    trust: third_party
+    trust_note: Search queries and target URLs are sent to Firecrawl (api.firecrawl.dev). Firecrawl fetches pages on your behalf and returns cleaned content — your agent never contacts the target site directly.
+    description: Keyword search + clean-content extraction via the Firecrawl API.
+    toolsets: [web]
+    presets: [firecrawl]
+    creds: [FIRECRAWL_API_KEY]
 
   - id: smart_home
     name: Control smart home
@@ -248,8 +266,8 @@ power_tools:
   - id: pypi
     name: Install Python packages
     icon: 📦
-    trust: local
-    trust_note: Downloads packages from pypi.org. Untrusted packages can run arbitrary code inside the sandbox.
+    trust: third_party
+    trust_note: Package names, versions, and your sandbox IP are sent to pypi.org on install. Untrusted packages can then run arbitrary code inside the sandbox.
     description: pip install at runtime — usually paired with "Run Python code".
     toolsets: []
     presets: [pypi]
