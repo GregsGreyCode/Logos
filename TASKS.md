@@ -209,31 +209,40 @@ unless someone asks for it.
 
 ## Pending — infra / cleanup
 
-### #23 Publish hermes-sandbox image to ghcr.io so new installs can pull
+### #23 Publish hermes-sandbox image to ghcr.io — workflow shipped, installer wiring pending
 
-Currently every fresh install builds `hermes-sandbox:m12` locally via
-`scripts/fresh-install.sh` — takes 5-10 min because of the agent-
-browser install-with-deps step (Chromium + chrome-headless-shell).
-First-install time would drop to 30-60 s if the image was published
-at e.g. `ghcr.io/gregsgreycode/hermes-sandbox:m12` and the installer
-pulled it by default.
+Workflow landed: `.github/workflows/publish-sandbox-image.yml`.
+Builds both layers (hermes-upstream from NousResearch/hermes-agent,
+then hermes-sandbox from `docker/Dockerfile.hermes-upstream`) and
+pushes to `ghcr.io/gregsgreycode/hermes-upstream:<tag>` +
+`ghcr.io/gregsgreycode/hermes-sandbox:<tag>` on every `v*` git tag,
+plus `:latest` on every run. Manual `workflow_dispatch` available
+for rebuilding after an upstream bump without tagging a Logos
+release.
 
-Steps:
+Remaining:
 
-- Workflow in `.github/workflows/` that rebuilds the image on each
-  version tag, pushes to ghcr.io.
-- Installer picks pre-built image when a matching tag exists,
-  falls back to local build only if `LOGOS_FORCE_SANDBOX_BUILD=1`
-  or the registry is unreachable.
-- Signing: cosign sign-blob the manifest so the installer can
-  verify the image's provenance before pulling.
+1. First run — push any `v*` tag (or trigger manually from Actions
+   tab). Check the published images are `public` in the repo's
+   Packages settings so `docker pull` works anonymously.
+2. Installer wiring: `scripts/fresh-install.sh` currently always
+   runs `docker build`. Change it to `docker pull
+   ghcr.io/gregsgreycode/hermes-sandbox:<pinned-tag>` first, with
+   fallback to local build if the pull fails or
+   `LOGOS_FORCE_SANDBOX_BUILD=1` is set. Drops first-install time
+   from 5-10 min to 30-60 s on broadband.
+3. Runtime image reference: `gateway/executors/openshell.py`
+   `_DEFAULT_IMAGE = os.getenv("LOGOS_OPENSHELL_IMAGE",
+   "hermes-sandbox:m12")` should default to the GHCR tag once the
+   first push lands, so installs don't need a local tag mapping.
+4. Signing: cosign sign-blob the manifests so the installer can
+   verify provenance before pulling. Not critical for early users
+   but worth adding before a v1 release.
 
 NOTE: `docker/sandbox_worker.py` is NOT in the image — it's
 uploaded per-spawn via `openshell sandbox upload` (see openshell.py
 line 1228). Changes to that file propagate via re-upload, not image
-rebuild. The image only contains hermes-agent runtime + agent-browser
-+ Chromium. When a Dockerfile/base-image change lands, ALSO bump the
-ghcr tag so pulled images stay current.
+rebuild.
 
 ### #XX Strip workflow + action-policy dead code once schema migration is safe — DONE
 
