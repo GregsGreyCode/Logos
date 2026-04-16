@@ -39,7 +39,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # reads source from /opt/hermes — but OpenShell's sandbox policy blocks
 # /opt/ at runtime. A non-editable install copies the code into
 # site-packages where the sandbox user can read it.
-RUN pip install --no-cache-dir --break-system-packages /opt/hermes
+RUN python3 -m pip install --no-cache-dir --break-system-packages /opt/hermes
 
 # Local browser: install Chromium via agent-browser so browser_navigate
 # works inside the sandbox with zero external dependencies. Pure
