@@ -788,6 +788,79 @@ def _run_migrations() -> None:
             )
             logger.info("drop_workflow_action_policy_tables_v1: removed workflow_* + action_policies tables")
 
+        # v23: collapse dead per-channel `hermes-<platform>` toolset aliases
+        # on existing agents.toolsets JSON columns into `hermes-cli`. The
+        # aliases were identical clones with no differentiated behavior;
+        # the catalogue now only exposes `hermes-cli` + `hermes-acp`, so
+        # stored agent configs referencing the old names would resolve to
+        # empty tool lists at runtime. Idempotent via schema_flags.
+        _migrate_collapse_hermes_channel_toolsets_v1(conn)
+
+
+def _migrate_collapse_hermes_channel_toolsets_v1(conn) -> None:
+    """Rewrite agents.toolsets to drop dead hermes-<channel> aliases.
+
+    The `hermes-telegram` / `-discord` / `-slack` / `-whatsapp` / `-signal`
+    / `-homeassistant` / `-email` / `-gateway` entries used to live in
+    core.toolsets.TOOLSETS as clones of hermes-cli. They're gone now;
+    any agent whose toolsets JSON still references one would get an
+    empty tool list when resolved. Replace them in place with
+    hermes-cli and dedupe.
+    """
+    already = conn.execute(
+        "SELECT value FROM schema_flags WHERE key = 'collapse_hermes_channel_toolsets_v1'"
+    ).fetchone()
+    if already:
+        return
+
+    import json as _json
+    DEAD_ALIASES = {
+        "hermes-telegram", "hermes-discord", "hermes-slack",
+        "hermes-whatsapp", "hermes-signal", "hermes-homeassistant",
+        "hermes-email", "hermes-gateway",
+    }
+    rewritten = 0
+    for row in conn.execute("SELECT id, toolsets FROM agents").fetchall():
+        raw = row["toolsets"]
+        if not raw:
+            continue
+        try:
+            parsed = _json.loads(raw)
+        except Exception:
+            continue
+        if not isinstance(parsed, list):
+            continue
+        new_list: list[str] = []
+        seen: set[str] = set()
+        changed = False
+        for name in parsed:
+            if not isinstance(name, str):
+                new_list.append(name)
+                continue
+            repl = "hermes-cli" if name in DEAD_ALIASES else name
+            if repl != name:
+                changed = True
+            if repl not in seen:
+                seen.add(repl)
+                new_list.append(repl)
+            else:
+                changed = True  # dedup also counts as a change worth writing
+        if changed:
+            conn.execute(
+                "UPDATE agents SET toolsets=? WHERE id=?",
+                (_json.dumps(new_list), row["id"]),
+            )
+            rewritten += 1
+
+    conn.execute(
+        "INSERT INTO schema_flags (key, value, applied_at) VALUES (?, ?, ?)",
+        ("collapse_hermes_channel_toolsets_v1", "1", int(time.time() * 1000)),
+    )
+    if rewritten:
+        logger.info(
+            "collapse_hermes_channel_toolsets_v1: rewrote %d agent row(s)", rewritten,
+        )
+
 
 def _migrate_dispatches_stamp_v1(conn) -> None:
     """Add STAMP columns to the dispatches table if missing.

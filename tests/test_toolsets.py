@@ -134,10 +134,21 @@ class TestToolsetConsistency:
             for inc in ts["includes"]:
                 assert inc in TOOLSETS, f"{name} includes unknown toolset '{inc}'"
 
-    def test_hermes_platforms_share_core_tools(self):
-        """All hermes-* platform toolsets should have the same tools."""
-        platforms = ["hermes-cli", "hermes-telegram", "hermes-discord", "hermes-whatsapp", "hermes-slack", "hermes-signal", "hermes-homeassistant"]
-        tool_sets = [set(TOOLSETS[p]["tools"]) for p in platforms]
-        # All platform toolsets should be identical
-        for ts in tool_sets[1:]:
-            assert ts == tool_sets[0]
+    def test_hermes_cli_present(self):
+        """hermes-cli is the shared default used across CLI and every channel."""
+        assert "hermes-cli" in TOOLSETS
+        assert TOOLSETS["hermes-cli"]["tools"], "hermes-cli must have tools"
+
+    def test_dead_channel_aliases_are_gone(self):
+        """The per-channel hermes-<platform> aliases were identical clones
+        and have been removed in favor of hermes-cli. Guarding against
+        accidental re-introduction."""
+        dead = {
+            "hermes-telegram", "hermes-discord", "hermes-slack",
+            "hermes-whatsapp", "hermes-signal", "hermes-homeassistant",
+            "hermes-email", "hermes-gateway",
+        }
+        assert not (dead & set(TOOLSETS.keys())), (
+            "Dead channel toolsets resurfaced: "
+            f"{sorted(dead & set(TOOLSETS.keys()))}"
+        )
