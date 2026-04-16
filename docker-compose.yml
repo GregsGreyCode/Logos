@@ -53,9 +53,12 @@ services:
       TELEGRAM_ALLOWED_USERS: "${TELEGRAM_ALLOWED_USERS:-}"
 
       # ── Self-hosted local services ──────────────────────────────────────────
-      # Default points at the compose-hosted SearxNG container below; override
-      # in .env if you run SearxNG elsewhere on your network.
-      SEARXNG_URL: "${SEARXNG_URL:-http://searxng:8080}"
+      # The gateway ships SEARXNG_URL down to agent sandboxes via the
+      # per-agent instance-config bundle, so this value is what the
+      # SANDBOX resolves — host.openshell.internal routes sandbox traffic
+      # to the host's published port where docker-compose binds SearxNG.
+      # Change SEARXNG_PORT below to move the host binding off 8888.
+      SEARXNG_URL: "${SEARXNG_URL:-http://host.openshell.internal:${SEARXNG_PORT:-8888}}"
 
     volumes:
       # Persists: auth DB, memory, sessions, logs, skills, config.yaml
@@ -81,7 +84,10 @@ services:
     profiles: [searxng, selfhost-tools]
     restart: unless-stopped
     ports:
-      - "${SEARXNG_PORT:-8080}:8080"
+      # Default 8888 (not 8080) — 8080 collides with OpenShell and a
+      # dozen other common services on a homelab host. Override
+      # SEARXNG_PORT in .env if 8888 is also taken.
+      - "${SEARXNG_PORT:-8888}:8080"
     environment:
       BASE_URL: "http://searxng:8080/"
       INSTANCE_NAME: "logos"
