@@ -5279,6 +5279,15 @@
                 <span class="font-bold">M</span>
                 <span class="truncate" x-text="(selectedDispatch?.model || 'auto').split('/').pop()"></span>
               </span>
+              <!-- P: Policy — per-user action policy UI was removed, so
+                   no live binding. Shown as "none" for now to keep the
+                   STAMP acronym complete; will wire up once a policy
+                   snapshot lands on the dispatch row. -->
+              <span class="text-[10px] px-1.5 py-0.5 rounded font-mono bg-gray-800 text-gray-500 border border-gray-700 flex items-center gap-1"
+                    title="Policy: none (per-user action policies removed — S/T/A/M fields are the live STAMP)">
+                <span class="font-bold text-gray-600">P</span>
+                <span>none</span>
+              </span>
             </div>
             <!-- Supporting stats — kept out of the STAMP row to keep the
                  pills themselves scannable at a glance. -->
