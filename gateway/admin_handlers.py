@@ -1449,6 +1449,173 @@ async def handle_agent_presets_toggle(request: web.Request) -> web.Response:
     return web.json_response({"applied": applied})
 
 
+# ── Per-agent channel credentials ────────────────────────────────────────────
+# Backend for the Agent editor → Channels subtab. Each agent owns its own
+# Telegram/Discord/Slack/WhatsApp bot tokens; the adapter-per-credential
+# lifecycle in gateway/run.py spawns one adapter instance per enabled row.
+
+
+def _scrub_credential_row(row: dict) -> dict:
+    """Return the row with the raw token replaced by a masked preview.
+
+    The token is a secret; the UI shows a short fingerprint so the user
+    can tell rows apart ("is this the prod one?") without the full
+    value being exposed in HTTP responses or browser devtools.
+    """
+    tok = row.get("token") or ""
+    masked = (tok[:6] + "…" + tok[-4:]) if len(tok) > 12 else "••••"
+    return {**{k: v for k, v in row.items() if k != "token"}, "token_preview": masked}
+
+
+async def handle_agent_channels_list(request: web.Request) -> web.Response:
+    """GET /admin/agents/{id}/channels
+
+    Returns the agent's credential rows with tokens masked — the UI
+    never needs the raw value after a token is saved, only the
+    preview for visual identification.
+    """
+    aid = request.match_info["id"]
+    agent = auth_db.get_agent(aid)
+    if not agent:
+        return web.json_response({"error": "not_found"}, status=404)
+    try:
+        rows = auth_db.list_agent_channel_credentials(agent_id=aid)
+    except Exception as exc:
+        logger.exception("channels list failed for agent=%s", aid)
+        return web.json_response({"error": str(exc)}, status=500)
+    return web.json_response({"credentials": [_scrub_credential_row(r) for r in rows]})
+
+
+async def handle_agent_channels_post(request: web.Request) -> web.Response:
+    """POST /admin/agents/{id}/channels
+
+    Body: ``{"platform": "telegram", "token": "xxx", "label": "prod", "enabled": true}``
+
+    Upserts a credential row on the (agent_id, platform, label) key. When
+    label is omitted, "default" is used — matching the single-bot-per-agent
+    shape produced by the env→DB migration in gateway/run.py. Optionally
+    validates the token with the platform API before storing, so the UI
+    can show the caller a "Connected as @hermesbot" confirmation in the
+    same round-trip.
+
+    Side effect: once stored, the adapter lifecycle picks it up on the
+    next gateway restart. Hot-reconnect is a follow-up (it'd need to
+    disconnect the old adapter and spawn one for the new row).
+    """
+    aid = request.match_info["id"]
+    agent = auth_db.get_agent(aid)
+    if not agent:
+        return web.json_response({"error": "not_found"}, status=404)
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "invalid_json"}, status=400)
+
+    platform = (body.get("platform") or "").strip().lower()
+    token = (body.get("token") or "").strip()
+    label = (body.get("label") or "default").strip() or "default"
+    enabled = bool(body.get("enabled", True))
+    validate = bool(body.get("validate", False))
+
+    if not platform:
+        return web.json_response({"error": "platform is required"}, status=400)
+    if not token:
+        return web.json_response({"error": "token is required"}, status=400)
+
+    # Optional validation before persisting — reuses the existing
+    # messaging catalogue definitions (auth.test / getMe / etc).
+    validation_result = None
+    if validate:
+        try:
+            from gateway.services import validate_messaging_credential, MESSAGING_INTEGRATIONS
+            env_var_by_platform = {
+                "telegram": "TELEGRAM_BOT_TOKEN",
+                "discord":  "DISCORD_BOT_TOKEN",
+                "slack":    "SLACK_BOT_TOKEN",
+                "whatsapp": "WHATSAPP_TOKEN",
+            }
+            env_var = env_var_by_platform.get(platform)
+            if env_var and env_var in MESSAGING_INTEGRATIONS:
+                validation_result = await validate_messaging_credential(env_var, token)
+                if not validation_result.get("ok"):
+                    return web.json_response(
+                        {"error": "validation_failed", "detail": validation_result},
+                        status=400,
+                    )
+        except Exception as exc:
+            logger.exception("channels validate failed")
+            return web.json_response({"error": str(exc)}, status=500)
+
+    metadata = (validation_result or {}).get("details") or None
+
+    try:
+        row = auth_db.upsert_agent_channel_credential(
+            agent_id=aid,
+            platform=platform,
+            token=token,
+            label=label,
+            enabled=enabled,
+            metadata=metadata,
+        )
+    except Exception as exc:
+        logger.exception("channels upsert failed")
+        return web.json_response({"error": str(exc)}, status=500)
+
+    logger.info(
+        "channels_post(agent=%s, platform=%s, label=%s): stored row %s",
+        aid, platform, label, row.get("id"),
+    )
+    return web.json_response({
+        "credential": _scrub_credential_row(row),
+        "validated": validation_result,
+    })
+
+
+async def handle_agent_channels_delete(request: web.Request) -> web.Response:
+    """DELETE /admin/agents/{id}/channels/{cred_id}"""
+    aid = request.match_info["id"]
+    cred_id = request.match_info["cred_id"]
+    agent = auth_db.get_agent(aid)
+    if not agent:
+        return web.json_response({"error": "not_found"}, status=404)
+    row = auth_db.get_agent_channel_credential(cred_id)
+    if not row or row.get("agent_id") != aid:
+        return web.json_response({"error": "not_found"}, status=404)
+    try:
+        auth_db.delete_agent_channel_credential(cred_id)
+    except Exception as exc:
+        logger.exception("channels delete failed")
+        return web.json_response({"error": str(exc)}, status=500)
+    return web.json_response({"ok": True})
+
+
+async def handle_agent_channels_toggle(request: web.Request) -> web.Response:
+    """POST /admin/agents/{id}/channels/{cred_id}/toggle
+
+    Body: ``{"enabled": true|false}``
+    """
+    aid = request.match_info["id"]
+    cred_id = request.match_info["cred_id"]
+    agent = auth_db.get_agent(aid)
+    if not agent:
+        return web.json_response({"error": "not_found"}, status=404)
+    row = auth_db.get_agent_channel_credential(cred_id)
+    if not row or row.get("agent_id") != aid:
+        return web.json_response({"error": "not_found"}, status=404)
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "invalid_json"}, status=400)
+    enabled = bool(body.get("enabled"))
+    try:
+        auth_db.set_agent_channel_credential_enabled(cred_id, enabled)
+    except Exception as exc:
+        logger.exception("channels toggle failed")
+        return web.json_response({"error": str(exc)}, status=500)
+    refreshed = auth_db.get_agent_channel_credential(cred_id)
+    return web.json_response({"credential": _scrub_credential_row(refreshed or row)})
+
+
 # ── Capabilities (user-facing collapse of toolsets+presets) ──────────────────
 
 async def handle_agent_capabilities_get(request: web.Request) -> web.Response:
