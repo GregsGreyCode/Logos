@@ -8,16 +8,6 @@ description: "How to update Logos to the latest version or uninstall it"
 
 ## Updating
 
-### Windows desktop app
-
-Logos checks for updates automatically in the background. When a new version is available:
-
-1. A notification appears in the system tray
-2. Open the tray menu or the **account menu** (top-right of the dashboard) — both show the available version
-3. Click **Download update…** to fetch the installer, then **Install & restart now** once it is ready
-
-Logos stops itself, releases all file locks, and launches the installer silently. It restarts automatically once the install completes.
-
 ### Source install (Linux / macOS / WSL2)
 
 ```bash
@@ -48,10 +38,6 @@ docker compose up -d
 ---
 
 ## Uninstalling
-
-### Windows desktop app
-
-Use **Add or Remove Programs** → **Logos** → Uninstall. Your configuration files in `%USERPROFILE%\.logos\` are kept by default — delete that folder manually to remove all data.
 
 ### Source install
 
