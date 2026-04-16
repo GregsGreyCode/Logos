@@ -1817,7 +1817,7 @@
       <template x-if="can('manage_machines') || can('manage_users')">
         <button class="pb-2 text-sm font-medium border-b-2 border-transparent"
           :class="infraTab==='messaging' ? 'tab-active' : 'text-gray-500 hover:text-white'"
-          @click="infraTab='messaging'; localStorage.setItem('logos_infra_tab','messaging'); loadMessagingChannels(); loadPlatforms()">Messaging</button>
+          @click="infraTab='messaging'; localStorage.setItem('logos_infra_tab','messaging'); loadMessagingChannels(); loadPlatforms(); if(!namedAgents?.length) loadNamedAgents(); loadAllAgentChannels()">Messaging</button>
       </template>
     </div>
 
@@ -3713,104 +3713,117 @@
     </template>
   </div>
 
-  <!-- ── Messaging → Credentials section (formerly: Channels) ───────── -->
+  <!-- ── Messaging → per-agent credentials ───────────────────────────
+       Each agent owns its own Telegram/Discord/Slack/WhatsApp bot
+       tokens. One adapter instance spawns per enabled row (see the
+       per-credential adapter lifecycle in gateway/run.py), so
+       different agents can be reached on different bots
+       simultaneously without one polling the other's token. -->
   <div x-show="tab==='infra' && infraTab==='messaging'" x-cloak class="space-y-6">
     <div class="text-[10px] font-semibold text-gray-500 uppercase tracking-[0.15em] border-b border-gray-800 pb-2 mb-3">Credentials</div>
     <div class="flex items-center justify-between mb-2">
       <h2 class="text-sm font-semibold text-white">Messaging Channels</h2>
-      <button @click="loadMessagingChannels()" class="text-xs text-gray-500 hover:text-gray-300">Refresh</button>
+      <button @click="loadAllAgentChannels()" class="text-xs text-gray-500 hover:text-gray-300">Refresh</button>
     </div>
-    <p class="text-xs text-gray-500">Connect messaging platforms so your agent can be reached outside the web UI. Tokens are validated before saving.</p>
+    <p class="text-xs text-gray-500">Connect messaging bots per agent. Each agent can own multiple tokens (prod + staging) and different agents can own different bots on the same platform — the token chooses which agent receives the message.</p>
 
-    <div class="space-y-3">
-      <template x-for="ch in messagingChannels" :key="ch.env_var">
-        <div class="px-4 py-4 rounded-lg bg-gray-800 border border-gray-700 text-xs" x-data="{editing: false, keyInput: '', validating: false, saving: false, result: null, showKey: false}">
-          <!-- Header row -->
-          <div class="flex items-center gap-3">
-            <!-- Platform icon -->
-            <span class="text-lg" x-text="ch.icon === 'telegram' ? '\u2708' : ch.icon === 'discord' ? '\uD83C\uDFAE' : ch.icon === 'slack' ? '\u2B23' : '\uD83D\uDCAC'"></span>
-            <div class="flex-1">
-              <span class="text-white font-medium text-sm" x-text="ch.label"></span>
-              <span class="text-gray-500 ml-2 text-xs" x-text="ch.description"></span>
-            </div>
-            <!-- Status -->
-            <template x-if="ch.has_key">
-              <div class="flex items-center gap-2">
-                <span class="flex items-center gap-1.5">
-                  <span class="w-2 h-2 rounded-full bg-green-400"></span>
-                  <span class="text-green-400 text-[10px] font-medium">Connected</span>
-                </span>
-                <span x-show="ch.source === 'env'" class="text-[9px] text-gray-600">(from env)</span>
-                <span x-show="ch.source === 'db'" class="text-[9px] text-gray-600">(saved)</span>
-                <button @click="editing = !editing; result = null" class="text-gray-600 hover:text-gray-400">change</button>
-                <button x-show="ch.source === 'db'"
-                  @click="if(confirm('Disconnect ' + ch.label + '?')) { fetch('/api/services/messaging/keys', {method:'DELETE', credentials:'include', headers:{'Content-Type':'application/json','X-CSRF-Token':getCsrfToken()}, body:JSON.stringify({env_var:ch.env_var})}).then(r=>r.json()).then(d=>{if(d.ok){messagingChannels=d.messaging; result=null}}) }"
-                  class="text-red-700 hover:text-red-400">disconnect</button>
-              </div>
-            </template>
-            <template x-if="!ch.has_key">
-              <div class="flex items-center gap-2">
-                <span class="flex items-center gap-1.5">
-                  <span class="w-2 h-2 rounded-full bg-gray-600"></span>
-                  <span class="text-gray-500 text-[10px]">Not connected</span>
-                </span>
-                <button @click="editing = true; result = null" class="text-[var(--accent)] hover:opacity-80 font-medium">Connect</button>
-              </div>
-            </template>
+    <!-- Per-agent grouped view. One card per agent, listing their
+         rows. Empty-state encourages adding at least one. -->
+    <div class="space-y-4" x-show="(namedAgents || []).length">
+      <template x-for="a in (namedAgents || [])" :key="'ch-agent-' + a.id">
+        <div class="px-4 py-3 rounded-lg bg-gray-800/50 border border-gray-700 text-xs">
+          <div class="flex items-center gap-2 mb-2">
+            <span class="text-white font-medium" x-text="a.name"></span>
+            <span class="text-[10px] text-gray-500"
+                  x-text="((allAgentChannels[a.id] || []).filter(c => c.enabled).length) + ' active'"></span>
           </div>
-
-          <!-- Token input row -->
-          <div x-show="editing" x-cloak class="mt-3 space-y-2">
-            <div class="flex items-center gap-2">
-              <div class="relative flex-1">
-                <input :type="showKey ? 'text' : 'password'" x-model="keyInput"
-                  :placeholder="'Paste ' + ch.label + ' token'"
-                  class="w-full bg-gray-900 border border-gray-600 rounded px-2 py-2 text-xs text-white placeholder-gray-600 focus:outline-none focus:border-[var(--accent)] font-mono pr-8">
-                <button @click="showKey = !showKey" class="absolute right-2 top-1/2 -translate-y-1/2 text-gray-600 hover:text-gray-400 text-[10px]"
-                  x-text="showKey ? 'hide' : 'show'"></button>
-              </div>
-              <button @click="if(keyInput.trim()) { validating=true; result=null; fetch('/api/services/messaging/validate',{method:'POST',credentials:'include',headers:{'Content-Type':'application/json','X-CSRF-Token':getCsrfToken()},body:JSON.stringify({env_var:ch.env_var,value:keyInput.trim()})}).then(r=>r.json()).then(d=>{result=d;validating=false}).catch(e=>{result={ok:false,message:String(e)};validating=false}) }"
-                :disabled="validating || !keyInput.trim()"
-                class="px-3 py-2 rounded border border-gray-600 text-xs font-medium transition-colors disabled:opacity-40 text-gray-300 hover:border-gray-400 shrink-0">
-                <span x-show="!validating">Test</span>
-                <span x-show="validating" class="flex items-center gap-1">
-                  <span class="w-3 h-3 border border-gray-600 border-t-[var(--accent)] rounded-full animate-spin inline-block"></span>
-                </span>
-              </button>
-              <button @click="if(keyInput.trim()) { saving=true; result=null; fetch('/api/services/messaging/keys',{method:'POST',credentials:'include',headers:{'Content-Type':'application/json','X-CSRF-Token':getCsrfToken()},body:JSON.stringify({env_var:ch.env_var,value:keyInput.trim()})}).then(r=>r.json()).then(d=>{saving=false; if(d.ok){messagingChannels=d.messaging; editing=false; keyInput=''; result={ok:true,message:'Connected',details:d.details}} else {result={ok:false,message:d.error||'Failed'}}}).catch(e=>{result={ok:false,message:String(e)};saving=false}) }"
-                :disabled="saving || !keyInput.trim()"
-                class="px-3 py-2 rounded border text-xs font-medium transition-colors disabled:opacity-40 shrink-0 border-[var(--accent)] text-[var(--accent)] hover:bg-[var(--accent)] hover:text-black">
-                <span x-show="!saving">Save</span>
-                <span x-show="saving" class="flex items-center gap-1">
-                  <span class="w-3 h-3 border border-gray-600 border-t-[var(--accent)] rounded-full animate-spin inline-block"></span>
-                </span>
-              </button>
-              <button @click="editing=false; keyInput=''; result=null; showKey=false" class="text-gray-600 hover:text-gray-400 text-xs">Cancel</button>
-            </div>
-            <!-- Validation result -->
-            <div x-show="result" x-cloak class="text-[11px] px-1"
-              :class="result?.ok ? 'text-green-400' : 'text-red-400'">
-              <span x-text="result?.ok ? '\u2713 ' + result.message : '\u2717 ' + result.message"></span>
-              <template x-if="result?.ok && result?.details">
-                <span class="text-gray-400 ml-1">
-                  <template x-if="result.details.username">
-                    <span>@<span x-text="result.details.username"></span></span>
+          <template x-if="(allAgentChannels[a.id] || []).length">
+            <div class="space-y-1">
+              <template x-for="c in allAgentChannels[a.id]" :key="c.id">
+                <div class="flex items-center gap-2 py-1 border-b border-gray-800/50 last:border-0">
+                  <span class="text-[11px] font-mono w-20"
+                        :class="c.enabled ? 'text-cyan-400' : 'text-gray-600 line-through'"
+                        x-text="c.platform"></span>
+                  <span class="text-[10px] text-gray-500 font-mono w-24 truncate" x-text="c.label"></span>
+                  <span class="text-[10px] text-gray-600 font-mono flex-1 truncate" x-text="c.token_preview"></span>
+                  <template x-if="c.metadata">
+                    <span class="text-[10px] text-gray-500"
+                          x-text="(() => { try { const m = typeof c.metadata === 'string' ? JSON.parse(c.metadata) : c.metadata; return m?.username ? '@' + m.username : (m?.team || ''); } catch(e) { return ''; } })()"></span>
                   </template>
-                  <template x-if="result.details.team">
-                    <span x-text="result.details.team"></span>
-                  </template>
-                </span>
+                  <button @click="toggleAgentChannel(a.id, c.id, !c.enabled); allAgentChannels[a.id] = allAgentChannels[a.id].map(x => x.id === c.id ? {...x, enabled: !x.enabled} : x)"
+                          :disabled="agentChannelsBusy[c.id]"
+                          class="text-[10px] text-gray-500 hover:text-cyan-400 disabled:opacity-40"
+                          x-text="c.enabled ? 'disable' : 'enable'"></button>
+                  <button @click="deleteAgentChannel(a.id, c.id).then(() => loadAgentChannels(a.id))"
+                          :disabled="agentChannelsBusy[c.id]"
+                          class="text-[10px] text-red-700 hover:text-red-400 disabled:opacity-40">delete</button>
+                </div>
               </template>
             </div>
-          </div>
-
-          <!-- Help text (shown when not connected and not editing) -->
-          <div x-show="!ch.has_key && !editing" class="mt-2 text-[10px] text-gray-600" x-text="ch.help_text"></div>
+          </template>
+          <template x-if="!(allAgentChannels[a.id] || []).length">
+            <div class="text-[10px] text-gray-600 italic">No credentials yet for this agent.</div>
+          </template>
         </div>
       </template>
     </div>
 
-    <p class="text-[10px] text-gray-700">Tokens from environment variables take priority over saved tokens. Platform adapters restart automatically when tokens change.</p>
+    <div x-show="!(namedAgents || []).length" class="text-xs text-gray-600 italic">
+      No agents yet. Go to the <a @click.prevent="tab='agents'; loadSouls(); loadNamedAgents()" class="underline cursor-pointer">Agents</a> tab to create one first.
+    </div>
+
+    <!-- Add credential form — spans full width under the per-agent
+         list. agent_id is the first selector because that's the
+         primary routing axis in this design. -->
+    <div class="px-4 py-4 rounded-lg bg-gray-900 border border-gray-700 text-xs space-y-3">
+      <div class="text-[11px] font-semibold text-white uppercase tracking-wider">Add credential</div>
+      <div class="grid grid-cols-3 gap-2">
+        <select x-model="agentChannelsForm.agent_id"
+                class="bg-gray-800 border border-gray-700 rounded px-2 py-2 text-xs text-white">
+          <option value="">— Pick agent —</option>
+          <template x-for="a in (namedAgents || [])" :key="'pick-' + a.id">
+            <option :value="a.id" x-text="a.name"></option>
+          </template>
+        </select>
+        <select x-model="agentChannelsForm.platform"
+                class="bg-gray-800 border border-gray-700 rounded px-2 py-2 text-xs text-white">
+          <option value="telegram">Telegram</option>
+          <option value="discord">Discord</option>
+          <option value="slack">Slack</option>
+          <option value="whatsapp">WhatsApp</option>
+        </select>
+        <input x-model="agentChannelsForm.label" type="text" placeholder="label (e.g. prod)"
+               class="bg-gray-800 border border-gray-700 rounded px-2 py-2 text-xs text-white">
+      </div>
+      <input x-model="agentChannelsForm.token" type="password" placeholder="paste bot token"
+             class="w-full bg-gray-800 border border-gray-700 rounded px-2 py-2 text-xs text-white font-mono">
+      <div class="flex items-center gap-3">
+        <label class="text-[11px] text-gray-500 flex items-center gap-2 cursor-pointer">
+          <input type="checkbox" x-model="agentChannelsForm.validate" class="w-3 h-3">
+          validate with platform API before saving
+        </label>
+        <div class="flex-1"></div>
+        <button @click="addAgentChannel()"
+                :disabled="agentChannelsForm.saving || !agentChannelsForm.token.trim() || !agentChannelsForm.agent_id"
+                class="px-4 py-2 rounded border text-xs font-medium border-[var(--accent)] text-[var(--accent)] hover:bg-[var(--accent)] hover:text-black disabled:opacity-40">
+          <span x-show="!agentChannelsForm.saving">Save credential</span>
+          <span x-show="agentChannelsForm.saving">Saving…</span>
+        </button>
+      </div>
+      <div x-show="agentChannelsForm.result" x-cloak class="text-[11px]"
+           :class="agentChannelsForm.result?.ok ? 'text-green-400' : 'text-red-400'">
+        <span x-text="(agentChannelsForm.result?.ok ? '\u2713 ' : '\u2717 ') + (agentChannelsForm.result?.message || '')"></span>
+        <template x-if="agentChannelsForm.result?.ok && agentChannelsForm.result?.details?.username">
+          <span class="text-gray-400"> @<span x-text="agentChannelsForm.result.details.username"></span></span>
+        </template>
+      </div>
+    </div>
+
+    <div x-show="agentChannelsError" x-cloak
+         class="px-3 py-2 text-[11px] text-red-400 border border-red-900/50 bg-red-950/30 rounded"
+         x-text="agentChannelsError"></div>
+
+    <p class="text-[10px] text-gray-700">Credentials take effect on the next gateway restart. Hot-reload on token rotation is planned.</p>
   </div>
 
   <!-- ── Admin / Activity wrapper ──────────────────────────────────────
@@ -6307,6 +6320,29 @@ function app() {
       { key: 'inference',   label: 'Inference providers' },
     ],
     messagingChannels: [],
+    // ── Per-agent channel credentials (C pill) ──────────────────────────
+    // agentChannelsState shape:
+    //   { credentials: [{id, platform, label, token_preview, enabled, metadata, ...}],
+    //     _agentId: string }
+    // Populated on first C pill open via loadAgentChannels(). _agentId
+    // stamp is checked before render so stale fetches don't pollute
+    // another agent's UI when the user switches chats mid-fetch.
+    agentChannelsState: null,
+    agentChannelsLoading: false,
+    agentChannelsError: null,
+    // Form for the "Add credential" row in Config → Messaging.
+    // `agent_id` is required — this is the whole point of per-agent
+    // credentials. The form pre-picks the first named agent on load
+    // so the UI isn't empty the first time someone opens it.
+    agentChannelsForm: { agent_id: '', platform: 'telegram', label: 'default', token: '', validate: true, saving: false, result: null },
+    // Aggregate map {agent_id: credentials[]} used by Config → Messaging
+    // to render a grouped view of every agent's credentials in one
+    // round-trip. Keyed off the agents list so we fan out one request
+    // per named agent when the tab opens.
+    allAgentChannels: {},
+    allAgentChannelsLoading: false,
+    // In-flight toggle/delete tracker — keyed by credential id.
+    agentChannelsBusy: {},
     adminUsers: [],
     adminUsersTotal: 0,
     adminUsersPage: 1,
@@ -11016,6 +11052,148 @@ toolsets:
         this.agentToolsError = 'Failed to load tools: ' + (e.message || e);
       }
       this.agentToolsLoading = false;
+    },
+
+    async loadAgentChannels(agentId) {
+      // Fetch credentials for ONE agent; mirrors into allAgentChannels
+      // so the Config → Messaging grouped view stays consistent with
+      // any single-agent round-trip.
+      if (!agentId) return [];
+      try {
+        const r = await fetch(
+          '/admin/agents/' + encodeURIComponent(agentId) + '/channels',
+          {credentials: 'include'},
+        );
+        if (!r.ok) throw new Error(await r.text() || r.statusText);
+        const d = await r.json();
+        const creds = d.credentials || [];
+        this.allAgentChannels[agentId] = creds;
+        return creds;
+      } catch(e) {
+        this.agentChannelsError = 'Failed to load channels: ' + (e.message || e);
+        return [];
+      }
+    },
+
+    async loadAllAgentChannels() {
+      // Fan out one round-trip per named agent so Config → Messaging
+      // can render a grouped view of every agent's credentials in one
+      // pass. Cheap — one SELECT per agent — and avoids a backend
+      // "list everything" endpoint that would need a separate auth
+      // check for cross-agent read.
+      this.allAgentChannelsLoading = true;
+      this.agentChannelsError = null;
+      const agents = this.namedAgents || [];
+      const next = {};
+      try {
+        await Promise.all(agents.map(async (a) => {
+          try {
+            const r = await fetch(
+              '/admin/agents/' + encodeURIComponent(a.id) + '/channels',
+              {credentials: 'include'},
+            );
+            if (r.ok) {
+              const d = await r.json();
+              next[a.id] = d.credentials || [];
+            } else {
+              next[a.id] = [];
+            }
+          } catch(_e) {
+            next[a.id] = [];
+          }
+        }));
+        this.allAgentChannels = next;
+        // Pre-select the first agent in the form so the "Add credential"
+        // block isn't empty on first render.
+        if (!this.agentChannelsForm.agent_id && agents.length) {
+          this.agentChannelsForm.agent_id = agents[0].id;
+        }
+      } catch(e) {
+        this.agentChannelsError = 'Failed to load channels: ' + (e.message || e);
+      }
+      this.allAgentChannelsLoading = false;
+    },
+
+    async addAgentChannel() {
+      const f = this.agentChannelsForm;
+      if (!f.agent_id) { f.result = {ok: false, message: 'Pick an agent'}; return; }
+      if (!f.token.trim()) { f.result = {ok: false, message: 'Token required'}; return; }
+      f.saving = true; f.result = null;
+      try {
+        const r = await fetch(
+          '/admin/agents/' + encodeURIComponent(f.agent_id) + '/channels',
+          {
+            method: 'POST',
+            credentials: 'include',
+            headers: {'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken()},
+            body: JSON.stringify({
+              platform: f.platform,
+              label: (f.label || 'default').trim(),
+              token: f.token.trim(),
+              validate: !!f.validate,
+              enabled: true,
+            }),
+          },
+        );
+        const d = await r.json();
+        if (!r.ok) {
+          f.result = {ok: false, message: d.detail?.message || d.error || r.statusText};
+        } else {
+          f.result = {ok: true, message: 'Saved', details: d.validated?.details};
+          f.token = '';
+          await this.loadAgentChannels(f.agent_id);
+        }
+      } catch(e) {
+        f.result = {ok: false, message: String(e)};
+      }
+      f.saving = false;
+    },
+
+    async deleteAgentChannel(agentId, credId) {
+      if (!agentId || !credId) return;
+      if (!confirm('Delete this credential? The adapter will stop on next gateway restart.')) return;
+      this.agentChannelsBusy[credId] = true;
+      try {
+        const r = await fetch(
+          '/admin/agents/' + encodeURIComponent(agentId) + '/channels/' + encodeURIComponent(credId),
+          {method: 'DELETE', credentials: 'include', headers: {'X-CSRF-Token': getCsrfToken()}},
+        );
+        if (r.ok) await this.loadAgentChannels(agentId);
+        else this.agentChannelsError = 'Delete failed: ' + (await r.text() || r.statusText);
+      } catch(e) {
+        this.agentChannelsError = 'Delete failed: ' + (e.message || e);
+      }
+      delete this.agentChannelsBusy[credId];
+    },
+
+    async toggleAgentChannel(agentId, credId, enabled) {
+      if (!agentId || !credId) return;
+      this.agentChannelsBusy[credId] = true;
+      try {
+        const r = await fetch(
+          '/admin/agents/' + encodeURIComponent(agentId) + '/channels/' + encodeURIComponent(credId) + '/toggle',
+          {
+            method: 'POST',
+            credentials: 'include',
+            headers: {'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken()},
+            body: JSON.stringify({enabled}),
+          },
+        );
+        if (r.ok) {
+          const d = await r.json();
+          // Update locally without a full reload
+          if (this.agentChannelsState && this.agentChannelsState._agentId === agentId) {
+            const i = (this.agentChannelsState.credentials || []).findIndex(c => c.id === credId);
+            if (i >= 0) this.agentChannelsState.credentials[i] = d.credential;
+          }
+        } else {
+          this.agentChannelsError = 'Toggle failed: ' + (await r.text() || r.statusText);
+          await this.loadAgentChannels(agentId);
+        }
+      } catch(e) {
+        this.agentChannelsError = 'Toggle failed: ' + (e.message || e);
+      }
+      delete this.agentChannelsBusy[credId];
     },
 
     async toggleToolset(agentId, toolset, enabled) {
