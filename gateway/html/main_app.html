@@ -3586,16 +3586,16 @@
 
     <!-- Groups rendered in a fixed order so layout is stable across
          reloads. Groups with no integrations for this install are
-         hidden. _INTEGRATION_GROUPS lives in the Alpine data block. -->
+         hidden. _INTEGRATION_GROUPS lives in the Alpine data block.
+         The detail panel (editor) is rendered INSIDE each group's
+         iteration, conditional on the selected pill's toolset, so
+         clicking a pill opens the form directly under its own row
+         rather than at the bottom of all groups. -->
     <template x-for="group in _INTEGRATION_GROUPS" :key="group.key">
       <div x-show="servicesTools.some(t => t.toolset === group.key)" class="mb-3">
         <div class="text-[10px] font-semibold text-gray-600 uppercase tracking-[0.15em] mb-1.5" x-text="group.label"></div>
         <div class="flex flex-wrap gap-1.5">
           <template x-for="ti in servicesTools.filter(t => t.toolset === group.key)" :key="ti.env_var">
-            <!-- Integration pill. Colour-coded by state:
-                   • selected   → indigo border, white text
-                   • has key    → emerald border + soft fill
-                   • no key     → grey outline, slightly dimmed -->
             <button @click="selectPill(ti)"
               class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-xs transition-colors"
               :class="selectedIntegration && selectedIntegration.env_var === ti.env_var
@@ -3605,13 +3605,80 @@
                   : 'border-gray-800 bg-gray-900 text-gray-400 hover:border-gray-600 hover:text-gray-200'">
               <span class="w-1.5 h-1.5 rounded-full"
                 :class="ti.has_key ? 'bg-emerald-400' : 'bg-gray-600'"></span>
-              <!-- ti.label already contains "(self-hosted)" for the
-                   self-hosted variants (see gateway/services.py
-                   TOOL_INTEGRATIONS) — don't add a second parenthetical. -->
               <span x-text="ti.label"></span>
             </button>
           </template>
         </div>
+        <!-- Inline detail panel bound to this group's key. Only one
+             group's panel renders at a time (selectPill sets a single
+             selectedIntegration), but the markup appears here and in
+             the catch-all so Alpine's reactivity stays intact — x-html
+             would break the nested x-model / @click bindings. -->
+        <template x-if="selectedIntegration && selectedIntegration.toolset === group.key">
+          <div class="p-4 rounded-xl border border-indigo-700/60 bg-indigo-950/10 text-xs space-y-3 mt-2">
+            <div class="flex items-start justify-between gap-3">
+              <div class="flex-1 min-w-0">
+                <div class="flex items-center gap-2 flex-wrap">
+                  <span class="text-white font-semibold text-sm" x-text="selectedIntegration.label"></span>
+                  <template x-if="selectedIntegration.has_key">
+                    <span class="text-[10px] text-green-400 font-medium">● key set<span x-show="selectedIntegration.source === 'env'" class="text-gray-600 ml-1">(from env)</span></span>
+                  </template>
+                </div>
+                <p class="text-gray-400 mt-1" x-text="selectedIntegration.description"></p>
+                <div x-show="selectedIntegration.tools && selectedIntegration.tools.length > 0" class="text-[10px] text-gray-600 mt-1">
+                  Tools: <span x-text="(selectedIntegration.tools || []).join(', ')"></span>
+                </div>
+              </div>
+              <button @click="selectedIntegration = null; editing = false; result = null; keyInput = ''"
+                class="text-gray-600 hover:text-gray-300 text-base leading-none flex-shrink-0">&times;</button>
+            </div>
+            <template x-if="!editing">
+              <div class="flex items-center gap-3">
+                <template x-if="selectedIntegration.has_key">
+                  <button @click="editing = true; result = null; keyInput = ''"
+                    class="px-3 py-1 rounded border border-gray-600 text-[11px] text-gray-300 hover:border-gray-400">Change key</button>
+                </template>
+                <template x-if="!selectedIntegration.has_key">
+                  <button @click="editing = true; result = null; keyInput = (selectedIntegration.selfhosted && selectedIntegration.compose_default) || ''"
+                    class="px-3 py-1 rounded bg-indigo-600 hover:bg-indigo-500 text-white text-[11px] font-medium">Add key</button>
+                </template>
+                <template x-if="selectedIntegration.has_key && selectedIntegration.source === 'db'">
+                  <button @click="removeKey()" class="text-red-500 hover:text-red-400 text-[11px]">Remove</button>
+                </template>
+                <a :href="selectedIntegration.help_url" target="_blank"
+                  class="text-[10px] text-indigo-500 hover:text-indigo-400 ml-auto">Get an API key &rarr;</a>
+              </div>
+            </template>
+            <template x-if="editing">
+              <div class="flex flex-col gap-2">
+                <div class="flex items-center gap-2">
+                  <input :type="selectedIntegration.value_kind === 'url' ? 'text' : 'password'"
+                    x-model="keyInput"
+                    :placeholder="selectedIntegration.value_kind === 'url' ? (selectedIntegration.compose_default || 'http://host:port') : ('Enter ' + selectedIntegration.env_var)"
+                    class="flex-1 min-w-0 bg-gray-900 border border-gray-600 rounded px-2 py-1.5 text-xs text-white placeholder-gray-600 focus:outline-none focus:border-indigo-500 font-mono"
+                    @keydown.enter="saveKey()">
+                  <button @click="saveKey()"
+                    :disabled="validating || !keyInput.trim()"
+                    class="px-3 py-1.5 rounded border border-gray-600 text-[11px] font-medium transition-colors disabled:opacity-40"
+                    :class="validating ? 'text-gray-400' : 'text-indigo-400 hover:border-indigo-500'">
+                    <span x-show="!validating">Save</span>
+                    <span x-show="validating" class="flex items-center gap-1">
+                      <div class="w-3 h-3 border border-gray-600 border-t-indigo-400 rounded-full animate-spin"></div>
+                      Testing
+                    </span>
+                  </button>
+                  <button @click="editing = false; keyInput = ''; result = null"
+                    class="text-gray-500 hover:text-gray-300 text-[11px] flex-shrink-0">Cancel</button>
+                </div>
+                <template x-if="result">
+                  <div class="text-[10px]"
+                    :class="result.ok ? 'text-green-400' : 'text-red-400'"
+                    x-text="(result.ok ? '\u2713 ' : '\u2717 ') + (result.message || '')"></div>
+                </template>
+              </div>
+            </template>
+          </div>
+        </template>
       </div>
     </template>
 
@@ -3632,80 +3699,68 @@
             </button>
           </template>
         </div>
-      </div>
-    </template>
-
-    <!-- Detail panel — rendered when a pill is selected. Uses x-if
-         (not x-show) so x-text expressions on the inner template
-         don't evaluate with a null selectedIntegration. -->
-    <template x-if="selectedIntegration">
-      <div class="p-4 rounded-xl border border-indigo-700/60 bg-indigo-950/10 text-xs space-y-3 mt-2">
-        <div class="flex items-start justify-between gap-3">
-          <div class="flex-1 min-w-0">
-            <div class="flex items-center gap-2 flex-wrap">
-              <!-- label already includes "(self-hosted)" when applicable
-                   (gateway/services.py TOOL_INTEGRATIONS), so no separate
-                   badge — it would just say the same thing twice. -->
-              <span class="text-white font-semibold text-sm" x-text="selectedIntegration.label"></span>
-              <template x-if="selectedIntegration.has_key">
-                <span class="text-[10px] text-green-400 font-medium">● key set<span x-show="selectedIntegration.source === 'env'" class="text-gray-600 ml-1">(from env)</span></span>
-              </template>
+        <template x-if="selectedIntegration && !_INTEGRATION_GROUPS.some(g => g.key === selectedIntegration.toolset)">
+          <div class="p-4 rounded-xl border border-indigo-700/60 bg-indigo-950/10 text-xs space-y-3 mt-2">
+            <div class="flex items-start justify-between gap-3">
+              <div class="flex-1 min-w-0">
+                <div class="flex items-center gap-2 flex-wrap">
+                  <span class="text-white font-semibold text-sm" x-text="selectedIntegration.label"></span>
+                  <template x-if="selectedIntegration.has_key">
+                    <span class="text-[10px] text-green-400 font-medium">● key set<span x-show="selectedIntegration.source === 'env'" class="text-gray-600 ml-1">(from env)</span></span>
+                  </template>
+                </div>
+                <p class="text-gray-400 mt-1" x-text="selectedIntegration.description"></p>
+                <div x-show="selectedIntegration.tools && selectedIntegration.tools.length > 0" class="text-[10px] text-gray-600 mt-1">
+                  Tools: <span x-text="(selectedIntegration.tools || []).join(', ')"></span>
+                </div>
+              </div>
+              <button @click="selectedIntegration = null; editing = false; result = null; keyInput = ''"
+                class="text-gray-600 hover:text-gray-300 text-base leading-none flex-shrink-0">&times;</button>
             </div>
-            <p class="text-gray-400 mt-1" x-text="selectedIntegration.description"></p>
-            <div x-show="selectedIntegration.tools && selectedIntegration.tools.length > 0" class="text-[10px] text-gray-600 mt-1">
-              Tools: <span x-text="(selectedIntegration.tools || []).join(', ')"></span>
-            </div>
-          </div>
-          <button @click="selectedIntegration = null; editing = false; result = null; keyInput = ''"
-            class="text-gray-600 hover:text-gray-300 text-base leading-none flex-shrink-0">&times;</button>
-        </div>
-
-        <!-- Action row — either show edit form, or show buttons -->
-        <template x-if="!editing">
-          <div class="flex items-center gap-3">
-            <template x-if="selectedIntegration.has_key">
-              <button @click="editing = true; result = null; keyInput = ''"
-                class="px-3 py-1 rounded border border-gray-600 text-[11px] text-gray-300 hover:border-gray-400">Change key</button>
+            <template x-if="!editing">
+              <div class="flex items-center gap-3">
+                <template x-if="selectedIntegration.has_key">
+                  <button @click="editing = true; result = null; keyInput = ''"
+                    class="px-3 py-1 rounded border border-gray-600 text-[11px] text-gray-300 hover:border-gray-400">Change key</button>
+                </template>
+                <template x-if="!selectedIntegration.has_key">
+                  <button @click="editing = true; result = null; keyInput = (selectedIntegration.selfhosted && selectedIntegration.compose_default) || ''"
+                    class="px-3 py-1 rounded bg-indigo-600 hover:bg-indigo-500 text-white text-[11px] font-medium">Add key</button>
+                </template>
+                <template x-if="selectedIntegration.has_key && selectedIntegration.source === 'db'">
+                  <button @click="removeKey()" class="text-red-500 hover:text-red-400 text-[11px]">Remove</button>
+                </template>
+                <a :href="selectedIntegration.help_url" target="_blank"
+                  class="text-[10px] text-indigo-500 hover:text-indigo-400 ml-auto">Get an API key &rarr;</a>
+              </div>
             </template>
-            <template x-if="!selectedIntegration.has_key">
-              <button @click="editing = true; result = null; keyInput = (selectedIntegration.selfhosted && selectedIntegration.compose_default) || ''"
-                class="px-3 py-1 rounded bg-indigo-600 hover:bg-indigo-500 text-white text-[11px] font-medium">Add key</button>
-            </template>
-            <template x-if="selectedIntegration.has_key && selectedIntegration.source === 'db'">
-              <button @click="removeKey()" class="text-red-500 hover:text-red-400 text-[11px]">Remove</button>
-            </template>
-            <a :href="selectedIntegration.help_url" target="_blank"
-              class="text-[10px] text-indigo-500 hover:text-indigo-400 ml-auto">Get an API key &rarr;</a>
-          </div>
-        </template>
-
-        <!-- Edit form — appears when "Add key" / "Change key" clicked -->
-        <template x-if="editing">
-          <div class="flex flex-col gap-2">
-            <div class="flex items-center gap-2">
-              <input :type="selectedIntegration.value_kind === 'url' ? 'text' : 'password'"
-                x-model="keyInput"
-                :placeholder="selectedIntegration.value_kind === 'url' ? (selectedIntegration.compose_default || 'http://host:port') : ('Enter ' + selectedIntegration.env_var)"
-                class="flex-1 min-w-0 bg-gray-900 border border-gray-600 rounded px-2 py-1.5 text-xs text-white placeholder-gray-600 focus:outline-none focus:border-indigo-500 font-mono"
-                @keydown.enter="saveKey()">
-              <button @click="saveKey()"
-                :disabled="validating || !keyInput.trim()"
-                class="px-3 py-1.5 rounded border border-gray-600 text-[11px] font-medium transition-colors disabled:opacity-40"
-                :class="validating ? 'text-gray-400' : 'text-indigo-400 hover:border-indigo-500'">
-                <span x-show="!validating">Save</span>
-                <span x-show="validating" class="flex items-center gap-1">
-                  <div class="w-3 h-3 border border-gray-600 border-t-indigo-400 rounded-full animate-spin"></div>
-                  Testing
-                </span>
-              </button>
-              <button @click="editing = false; keyInput = ''; result = null"
-                class="text-gray-500 hover:text-gray-300 text-[11px] flex-shrink-0">Cancel</button>
-            </div>
-            <!-- Validation result — x-if so x-text doesn't evaluate on null -->
-            <template x-if="result">
-              <div class="text-[10px]"
-                :class="result.ok ? 'text-green-400' : 'text-red-400'"
-                x-text="(result.ok ? '\u2713 ' : '\u2717 ') + (result.message || '')"></div>
+            <template x-if="editing">
+              <div class="flex flex-col gap-2">
+                <div class="flex items-center gap-2">
+                  <input :type="selectedIntegration.value_kind === 'url' ? 'text' : 'password'"
+                    x-model="keyInput"
+                    :placeholder="selectedIntegration.value_kind === 'url' ? (selectedIntegration.compose_default || 'http://host:port') : ('Enter ' + selectedIntegration.env_var)"
+                    class="flex-1 min-w-0 bg-gray-900 border border-gray-600 rounded px-2 py-1.5 text-xs text-white placeholder-gray-600 focus:outline-none focus:border-indigo-500 font-mono"
+                    @keydown.enter="saveKey()">
+                  <button @click="saveKey()"
+                    :disabled="validating || !keyInput.trim()"
+                    class="px-3 py-1.5 rounded border border-gray-600 text-[11px] font-medium transition-colors disabled:opacity-40"
+                    :class="validating ? 'text-gray-400' : 'text-indigo-400 hover:border-indigo-500'">
+                    <span x-show="!validating">Save</span>
+                    <span x-show="validating" class="flex items-center gap-1">
+                      <div class="w-3 h-3 border border-gray-600 border-t-indigo-400 rounded-full animate-spin"></div>
+                      Testing
+                    </span>
+                  </button>
+                  <button @click="editing = false; keyInput = ''; result = null"
+                    class="text-gray-500 hover:text-gray-300 text-[11px] flex-shrink-0">Cancel</button>
+                </div>
+                <template x-if="result">
+                  <div class="text-[10px]"
+                    :class="result.ok ? 'text-green-400' : 'text-red-400'"
+                    x-text="(result.ok ? '\u2713 ' : '\u2717 ') + (result.message || '')"></div>
+                </template>
+              </div>
             </template>
           </div>
         </template>
