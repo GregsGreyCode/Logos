@@ -295,7 +295,7 @@ Then open <http://localhost:8091/setup> — the **setup wizard launches automati
 
 > **OpenShell:** to use the default `openshell` runtime mode, install the [OpenShell CLI](https://github.com/NVIDIA/OpenShell) first (the one-shot installer does this for you with `INSTALL_OPENSHELL=1`). The setup wizard will detect it. If OpenShell is missing, you'll be steered to the `docker` fallback.
 
-
+> **Windows:** there is no native Windows build at this time. Run Logos under WSL2 using the Linux installer path above.
 
 ---
 
@@ -310,7 +310,7 @@ On first run, the setup wizard at `/setup` walks you through:
 5. **Soul + first agent** — pick a starting persona; you can edit it later
 6. **Telegram (optional)** — connect a bot token if you want to chat from your phone
 
-Your configuration lives in `~/.logos/config.yaml` (Linux/macOS/WSL2) or `%USERPROFILE%\.logos\config.yaml` (Windows). Per-user state and auth live in `~/.logos/auth.db`. Sessions and per-agent memory are under `~/.logos/sessions/` and `~/.logos/memories/`.
+Your configuration lives in `~/.logos/config.yaml` (Linux/macOS/WSL2). Per-user state and auth live in `~/.logos/auth.db`. Sessions and per-agent memory are under `~/.logos/sessions/` and `~/.logos/memories/`.
 
 To re-run the setup wizard, an admin user can hit `POST /api/setup/reset` (or just delete `auth.db` to start completely fresh).
 
@@ -322,7 +322,7 @@ To re-run the setup wizard, an admin user can hit `POST /api/setup/reset` (or ju
 
 **0:00 — Install and start**
 
-Run the installer (or `python -m gateway.run` from source) and open `http://localhost:8091`. You should see the setup wizard.
+Run `logos gateway start` (or `python -m gateway.run` from source) and open `http://localhost:8091`. You should see the setup wizard.
 
 <!-- screenshot: wizard-step1-providers — provider picker at the start of /setup -->
 
@@ -556,7 +556,7 @@ uv pip install -e ".[all,dev]"
 
 **Why these choices:**
 - `uv` — significantly faster than pip for dependency resolution; the project uses it throughout
-- Python 3.12 — the canonical dev + installer version. 3.11 is the minimum (`requires-python = ">=3.11"`) and what CI runs against, so either works
+- Python 3.12 — the canonical dev version. 3.11 is the minimum (`requires-python = ">=3.11"`) and what CI runs against, so either works
 
 **Test script options:**
 
