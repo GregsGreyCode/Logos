@@ -9170,9 +9170,17 @@ function app() {
         );
         const body = await r.json().catch(() => null);
         if (!r.ok || !body?.ok) {
+          // Surface the most-actionable piece of info — the hint when
+          // there is one (port conflict, docker missing), else detail
+          // (lsof/ss output identifying the blocking process), else
+          // the raw error + tail of the compose log.
+          const parts = [body?.error || r.statusText];
+          if (body?.detail) parts.push(body.detail);
+          if (body?.hint) parts.push(body.hint);
+          else if (body?.log) parts.push(body.log.trim().slice(-200));
           this.localServicesErrors = {
             ...(this.localServicesErrors || {}),
-            [id]: (body?.error || r.statusText) + (body?.log ? ': ' + body.log.trim().slice(-200) : ''),
+            [id]: parts.filter(Boolean).join(' — '),
           };
         }
       } catch(e) {
