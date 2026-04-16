@@ -1,4 +1,4 @@
-"""Tests for Telegram MarkdownV2 formatting in gateway/platforms/telegram.py.
+"""Tests for Telegram MarkdownV2 formatting in gateway/channels/telegram.py.
 
 Covers: _escape_mdv2 (pure function), format_message (markdown-to-MarkdownV2
 conversion pipeline), and edge cases that could produce invalid MarkdownV2
@@ -34,7 +34,7 @@ def _ensure_telegram_mock():
 
 _ensure_telegram_mock()
 
-from gateway.platforms.telegram import TelegramAdapter, _escape_mdv2, _strip_mdv2  # noqa: E402
+from gateway.channels.telegram import TelegramAdapter, _escape_mdv2, _strip_mdv2  # noqa: E402
 
 
 # ---------------------------------------------------------------------------

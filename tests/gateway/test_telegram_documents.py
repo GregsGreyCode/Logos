@@ -1,5 +1,5 @@
 """
-Tests for Telegram document handling in gateway/platforms/telegram.py.
+Tests for Telegram document handling in gateway/channels/telegram.py.
 
 Covers: document type detection, download/cache flow, size limits,
         text injection, error handling.
@@ -17,7 +17,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from gateway.config import Platform, PlatformConfig
-from gateway.platforms.base import (
+from gateway.channels.base import (
     MessageEvent,
     MessageType,
     SendResult,
@@ -51,7 +51,7 @@ def _ensure_telegram_mock():
 _ensure_telegram_mock()
 
 # Now we can safely import
-from gateway.platforms.telegram import TelegramAdapter  # noqa: E402
+from gateway.channels.telegram import TelegramAdapter  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -132,7 +132,7 @@ def adapter():
 def _redirect_cache(tmp_path, monkeypatch):
     """Point document cache to tmp_path so tests don't touch ~/.hermes."""
     monkeypatch.setattr(
-        "gateway.platforms.base.DOCUMENT_CACHE_DIR", tmp_path / "doc_cache"
+        "gateway.channels.base.DOCUMENT_CACHE_DIR", tmp_path / "doc_cache"
     )
 
 

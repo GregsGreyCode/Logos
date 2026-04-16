@@ -28,7 +28,7 @@ Runs are recorded incrementally (`runs.py:80-94`) with exceptions suppressed (`r
 Messages arrive from platform adapters, are queued in memory, and then processed. If the gateway crashes after acknowledging receipt from Telegram but before the agent finishes, the message is gone. The platform user sees no error. The correct pattern is: persist the message as `pending` to the DB first, process it, mark it `done`. Without this, any crash during processing silently drops work.
 
 **Signal uses unauthenticated HTTP to a local daemon.**
-`gateway/platforms/signal.py:27-28` — the gateway talks to `signal-cli` over `127.0.0.1:8080` with no token, no mTLS. Any process on the host can read or inject Signal messages by hitting the same endpoint. The threat model assumes a trusted host, but that assumption is never documented and the channel is not encrypted.
+`gateway/channels/signal.py:27-28` — the gateway talks to `signal-cli` over `127.0.0.1:8080` with no token, no mTLS. Any process on the host can read or inject Signal messages by hitting the same endpoint. The threat model assumes a trusted host, but that assumption is never documented and the channel is not encrypted.
 
 **No circuit breaker on model backends.**
 The AI router routes based on availability checks, but there's no circuit breaker. If a backend starts returning 500s slowly (not timing out), the router keeps sending traffic to it. Every request fails with a slow failure before the next health check. Retry amplification is a real risk here.
@@ -262,7 +262,7 @@ If the filesystem MCP server is configured with a path that includes `~/.logos/`
 ### Reliability
 
 **Telegram silently drops queued messages on restart.**
-`gateway/platforms/telegram.py:155` — `drop_pending_updates=True` is passed to `start_polling()`. Any messages that arrived while the gateway was down are discarded without notification to the user. This is a deliberate choice that trades correctness for avoiding a backlog storm on restart, but it should be a known, documented trade-off, not a silent behaviour.
+`gateway/channels/telegram.py:155` — `drop_pending_updates=True` is passed to `start_polling()`. Any messages that arrived while the gateway was down are discarded without notification to the user. This is a deliberate choice that trades correctness for avoiding a backlog storm on restart, but it should be a known, documented trade-off, not a silent behaviour.
 
 **K8s PVC uses node-local storage.**
 `k8s/05-pvc.yaml` uses `local-path` as the storage class, which binds to a single node's local disk. If that node is replaced, drained, or fails, the PVC is lost — taking with it skills, memory, session history, and the entire Hermes home directory. For a homelab this may be acceptable, but it needs to be explicit. There is no snapshot schedule, no backup job, and no documentation of the data loss risk. Anyone running this on a managed K8s cluster expecting persistent storage will be surprised.

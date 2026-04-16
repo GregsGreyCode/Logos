@@ -1,9 +1,9 @@
-"""Tests for gateway/platforms/base.py — MessageEvent, media extraction, message truncation."""
+"""Tests for gateway/channels/base.py — MessageEvent, media extraction, message truncation."""
 
 import os
 from unittest.mock import patch
 
-from gateway.platforms.base import (
+from gateway.channels.base import (
     BasePlatformAdapter,
     GATEWAY_SECRET_CAPTURE_UNSUPPORTED_MESSAGE,
     MessageEvent,

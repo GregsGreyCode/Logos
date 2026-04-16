@@ -9,7 +9,7 @@ applies to the new code path.
 import pytest
 from unittest.mock import AsyncMock, MagicMock
 from gateway.run import GatewayRunner
-from gateway.platforms.base import MessageEvent, MessageType
+from gateway.channels.base import MessageEvent, MessageType
 
 
 @pytest.fixture

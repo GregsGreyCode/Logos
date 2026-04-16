@@ -27,7 +27,7 @@ from urllib.parse import unquote
 import httpx
 
 from gateway.config import Platform, PlatformConfig
-from gateway.platforms.base import (
+from gateway.channels.base import (
     BasePlatformAdapter,
     MessageEvent,
     MessageType,

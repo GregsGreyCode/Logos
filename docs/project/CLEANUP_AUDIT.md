@@ -212,7 +212,7 @@ These sections had minimal or no issues:
 | **workflows/** | Well-engineered async engine with approval gates |
 | **cron/** | Functional scheduler with cross-platform locking |
 | **acp_adapter/** | Complete, matches agent.json spec |
-| **gateway/platforms/** | All 7 platforms functional (telegram/discord/slack/whatsapp/signal/email/homeassistant) |
+| **gateway/channels/** | All 7 platforms functional (telegram/discord/slack/whatsapp/signal/email/homeassistant) |
 | **gateway/executors/** | All current executors verified (local/docker/openshell). The legacy KubernetesExecutor was deleted in `f6f0972`. |
 | **souls/** | All 10 soul manifests valid YAML, reference existing toolsets |
 | **CI/CD workflows** | All functional, proper gating |

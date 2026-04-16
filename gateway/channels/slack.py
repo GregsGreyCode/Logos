@@ -30,7 +30,7 @@ from pathlib import Path as _Path
 sys.path.insert(0, str(_Path(__file__).resolve().parents[2]))
 
 from gateway.config import Platform, PlatformConfig
-from gateway.platforms.base import (
+from gateway.channels.base import (
     BasePlatformAdapter,
     MessageEvent,
     MessageType,
@@ -844,10 +844,10 @@ class SlackAdapter(BasePlatformAdapter):
             response.raise_for_status()
 
         if audio:
-            from gateway.platforms.base import cache_audio_from_bytes
+            from gateway.channels.base import cache_audio_from_bytes
             return cache_audio_from_bytes(response.content, ext)
         else:
-            from gateway.platforms.base import cache_image_from_bytes
+            from gateway.channels.base import cache_image_from_bytes
             return cache_image_from_bytes(response.content, ext)
 
     async def _download_slack_file_bytes(self, url: str) -> bytes:

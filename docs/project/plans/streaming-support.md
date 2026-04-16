@@ -484,7 +484,7 @@ prompt_toolkit compatibility.
 
 ### Phase 4: API Server real streaming
 
-**File: gateway/platforms/api_server.py**
+**File: gateway/channels/api_server.py**
 
 Replace the pseudo-streaming `_write_sse_chat_completion()` with real
 token-by-token SSE when the agent supports it.
@@ -652,9 +652,9 @@ The 1.5s edit interval is conservative enough for all platforms. If we get
 |------|-------|---------|
 | `run_agent.py` | 1 | +stream_callback param, +_run_streaming_chat_completion(), modify _run_codex_stream(), modify _interruptible_api_call() |
 | `gateway/run.py` | 2 | +streaming config reader, +queue/callback setup, +stream_preview task, +skip-final-send logic |
-| `gateway/platforms/base.py` | 2 | +check for _streamed_msg_id in response handler |
+| `gateway/channels/base.py` | 2 | +check for _streamed_msg_id in response handler |
 | `cli.py` | 3 | +streaming setup, +token display, +response box integration |
-| `gateway/platforms/api_server.py` | 4 | +real SSE writer, +streaming callback wiring |
+| `gateway/channels/api_server.py` | 4 | +real SSE writer, +streaming callback wiring |
 | `logos_cli/config.py` | 1 | +streaming config defaults |
 | `cli-config.yaml.example` | 1 | +streaming section |
 | `tests/test_streaming.py` | 1-4 | NEW — ~380 lines of tests |

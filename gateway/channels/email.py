@@ -33,7 +33,7 @@ from email import encoders
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from gateway.platforms.base import (
+from gateway.channels.base import (
     BasePlatformAdapter,
     MessageEvent,
     MessageType,
