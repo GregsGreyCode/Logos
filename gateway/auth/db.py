@@ -3071,15 +3071,18 @@ def list_dispatches(
         params.append(session_id)
     if q:
         # LIKE-based free-text filter across the columns most users want
-        # to search on: agent id, sandbox name, model, session id, and
-        # the free-form origin_detail. Kept as a single OR-over-columns
-        # clause so the index on started_at still drives ordering.
+        # to search on: agent id, sandbox name, model, session id,
+        # origin, origin_detail, status, soul, user_message. Kept as a
+        # single OR-over-columns clause so the index on started_at still
+        # drives ordering.
         like = f"%{q}%"
         where_parts.append(
             "(agent_id LIKE ? OR sandbox_name LIKE ? OR model LIKE ? "
-            "OR session_id LIKE ? OR COALESCE(origin_detail,'') LIKE ?)"
+            "OR session_id LIKE ? OR COALESCE(origin,'') LIKE ? "
+            "OR COALESCE(origin_detail,'') LIKE ? OR COALESCE(status,'') LIKE ? "
+            "OR COALESCE(soul,'') LIKE ? OR COALESCE(user_message,'') LIKE ?)"
         )
-        params.extend([like, like, like, like, like])
+        params.extend([like, like, like, like, like, like, like, like, like])
     where_clause = (" WHERE " + " AND ".join(where_parts)) if where_parts else ""
     with _conn() as conn:
         total = conn.execute(

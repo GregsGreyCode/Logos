@@ -3729,7 +3729,7 @@ async def _handle_chat(request: web.Request) -> web.StreamResponse:
                     user_message=message or "",
                 )
             except Exception as _dsp_exc:
-                logger.debug("dispatch ledger create skipped: %s", _dsp_exc)
+                logger.warning("dispatch ledger create skipped: %s", _dsp_exc)
 
             # ── Budget gate ─────────────────────────────────────────────
             # Refuse this dispatch if the agent's daily_budget_usd has
