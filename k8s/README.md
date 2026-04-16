@@ -176,6 +176,8 @@ Five secrets required — none committed to the repo. Use `scripts/create-k8s-se
 | `hermes-telegram` | `TELEGRAM_BOT_TOKEN` | Main Hermes bot — from @BotFather |
 | `hermes-canary-telegram` | `TELEGRAM_BOT_TOKEN` | Canary/test bot — separate @BotFather bot |
 | `hermes-notifications-telegram` | `TELEGRAM_BOT_TOKEN` | Homelab_Home_Notifications bot |
+
+> **Per-agent credentials (newer path):** Logos also supports storing Telegram / Discord / Slack / WhatsApp bot tokens per-agent in the auth DB (see `agent_channel_credentials`), which lets different agents own different bots on the same platform. The k8s env-token secrets above still work as the global fallback for single-bot deployments; for multi-agent channel routing, add rows via **Config → Messaging** in the dashboard instead of creating additional k8s secrets. The env token auto-migrates to a `default` row on the first named agent at startup, so the secret-backed path keeps working until you explicitly opt in.
 | `ghcr-creds` | docker registry auth | GitHub PAT with `read:packages` scope |
 | `hermes-canary-admin` | `HERMES_ADMIN_EMAIL`, `HERMES_ADMIN_PASSWORD`, `HERMES_ADMIN_NAME` | Canary-only admin login — see below |
 
