@@ -942,6 +942,20 @@ class OpenShellExecutor:
             logger.debug("instance-config: services credential lookup failed: %s", _exc)
             _service_env = {}
 
+        # Per-agent messaging tokens override any global TELEGRAM_BOT_TOKEN /
+        # DISCORD_BOT_TOKEN / SLACK_BOT_TOKEN / WHATSAPP_TOKEN. This means
+        # send_message_tool (running inside the sandbox) uses THIS agent's
+        # bot, not whatever the gateway has globally. If the agent has no
+        # credential rows, the global value passes through unchanged —
+        # keeps single-bot deployments working.
+        try:
+            _agent_for_env = auth_db.get_agent_by_name(config.name)
+            if _agent_for_env:
+                from gateway.services import get_agent_channel_env as _gace
+                _service_env.update(_gace(_agent_for_env["id"]))
+        except Exception as _env_exc:
+            logger.debug("instance-config: per-agent channel env failed: %s", _env_exc)
+
         # Website blocklist (Layer 1 URL consent) — pull from agent record
         # and pass through. sandbox_worker writes it to ~/.hermes/config.yaml
         # where hermes's website_policy.py looks for it.
@@ -1470,6 +1484,15 @@ class OpenShellExecutor:
             _service_env = _services._get_credentials() or {}
         except Exception:
             _service_env = {}
+
+        # Per-agent messaging token overrides — matches spawn() behavior
+        # so a credential row rotation takes effect on refresh without a
+        # full respawn.
+        try:
+            from gateway.services import get_agent_channel_env as _gace
+            _service_env.update(_gace(agent["id"]))
+        except Exception as _env_exc:
+            logger.debug("refresh_instance_config: per-agent channel env failed: %s", _env_exc)
 
         # Website blocklist (Layer 1 URL consent). Same shape as spawn().
         _website_blocklist = None
