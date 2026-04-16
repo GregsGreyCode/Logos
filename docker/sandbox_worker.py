@@ -1338,6 +1338,19 @@ def _handle_task(task: Dict[str, Any], config: Dict[str, Any]) -> None:
         else:
             context_prompt = _injection
 
+    # Permission-awareness injection — a compact summary of which
+    # capabilities this agent has on/off + what the user needs to do to
+    # unlock the disabled ones. Built gateway-side in
+    # capabilities.format_agent_prompt_block() and shipped via
+    # instance-config so toggling a permission in the UI lands in the
+    # next dispatch's system prompt without restarting the sandbox.
+    _caps_prompt = (config.get("capabilities_prompt") or "").strip()
+    if _caps_prompt:
+        if context_prompt:
+            context_prompt = _caps_prompt + "\n\n" + context_prompt
+        else:
+            context_prompt = _caps_prompt
+
     try:
         _TASK_STATE["phase"] = "run_conversation"
         result = agent.run_conversation(
