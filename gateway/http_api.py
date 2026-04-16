@@ -2962,6 +2962,37 @@ async def _handle_api_session_messages(request: web.Request) -> web.Response:
     return web.json_response(filtered)
 
 
+async def _handle_api_session_delete(request: web.Request) -> web.Response:
+    """DELETE /api/platform-sessions/{session_id} — delete a platform session + its messages."""
+    current_user = request.get("current_user") or {}
+    if current_user.get("role", "viewer") not in ("admin", "operator"):
+        raise web.HTTPForbidden()
+    session_id = request.match_info["session_id"]
+    runner: Any = request.app["runner"]
+    db = getattr(runner.session_store, "_db", None)
+    if not db:
+        return web.json_response({"error": "session DB not available"}, status=503)
+    try:
+        db._conn.execute("DELETE FROM message_embeddings WHERE message_id IN (SELECT id FROM messages WHERE session_id=?)", (session_id,))
+        db._conn.execute("DELETE FROM messages WHERE session_id=?", (session_id,))
+        db._conn.execute("DELETE FROM sessions WHERE id=?", (session_id,))
+        db._conn.commit()
+        # Also clean dispatches in auth DB
+        try:
+            import sqlite3 as _sql3
+            from pathlib import Path as _P
+            _auth = _P(os.getenv("LOGOS_HOME") or os.getenv("HERMES_HOME") or str(_P.home() / ".logos")) / "auth.db"
+            if _auth.exists():
+                with _sql3.connect(str(_auth), timeout=2) as _ac:
+                    _ac.execute("DELETE FROM dispatches WHERE session_id=?", (session_id,))
+                    _ac.commit()
+        except Exception:
+            pass
+    except Exception as exc:
+        return web.json_response({"error": str(exc)}, status=500)
+    return web.json_response({"ok": True})
+
+
 async def _handle_chat_cancel(request: web.Request) -> web.Response:
     """POST /chat/{task_id}/cancel — abort an in-flight chat turn.
 
@@ -4985,6 +5016,7 @@ async def start_http_api(runner: Any, port: int = 8091) -> None:
     app.router.add_get("/sessions",      _handle_sessions)
     app.router.add_get("/api/platform-sessions", _handle_api_platform_sessions)
     app.router.add_get("/api/platform-sessions/{session_id}/messages", _handle_api_session_messages)
+    app.router.add_delete("/api/platform-sessions/{session_id}", require_csrf(_handle_api_session_delete))
     app.router.add_post("/chat",               _handle_chat)
     app.router.add_post("/chat/{task_id}/cancel", require_csrf(_handle_chat_cancel))
     app.router.add_post("/chat/transcribe",    require_csrf(_handle_transcribe))
