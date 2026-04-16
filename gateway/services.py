@@ -220,6 +220,70 @@ def delete_credential(env_var: str) -> None:
     logger.info("services: credential removed for %s", env_var)
 
 
+# ---------------------------------------------------------------------------
+# Per-agent messaging credentials — overrides for sandbox env injection
+# ---------------------------------------------------------------------------
+
+# Bot-token-shaped platforms only: these have a single token env var that
+# send_message_tool + the Telegram/Discord/Slack/WhatsApp libraries both read.
+# Signal / Email / HomeAssistant use multi-var configs and need separate
+# handling when we broaden per-agent credentials beyond bot tokens.
+_AGENT_CHANNEL_ENV_BY_PLATFORM = {
+    "telegram": "TELEGRAM_BOT_TOKEN",
+    "discord":  "DISCORD_BOT_TOKEN",
+    "slack":    "SLACK_BOT_TOKEN",
+    "whatsapp": "WHATSAPP_TOKEN",
+}
+
+
+def get_agent_channel_env(agent_id: str) -> dict:
+    """Return `{env_var: token}` for an agent's enabled credential rows.
+
+    Used by the sandbox executor to inject agent-scoped messaging
+    tokens into the sandbox env — so send_message_tool (running inside
+    the sandbox, which reads from os.getenv) uses THIS agent's bot,
+    not whatever global value happens to be set on the gateway
+    process. Rows on platforms outside the bot-token shape
+    (signal/email/homeassistant) are ignored for now; they'll need
+    per-platform multi-var plumbing when we generalise.
+
+    Multi-label selection: when the agent has several rows for the
+    same platform (e.g. prod + staging), the ``default`` label wins.
+    If no row is labelled ``default``, the first row by label sort
+    order is used. The tool itself can't yet pick between labels at
+    call time; that's a future enhancement.
+    """
+    try:
+        from gateway.auth.db import list_agent_channel_credentials
+    except Exception as exc:
+        logger.debug("get_agent_channel_env: db import failed: %s", exc)
+        return {}
+    try:
+        rows = list_agent_channel_credentials(agent_id=agent_id, enabled_only=True)
+    except Exception:
+        logger.exception("get_agent_channel_env: list failed for agent_id=%s", agent_id)
+        return {}
+
+    # Group rows by platform and pick the preferred row per platform.
+    by_platform: dict[str, list[dict]] = {}
+    for row in rows:
+        by_platform.setdefault(row["platform"], []).append(row)
+
+    env: dict[str, str] = {}
+    for platform, platform_rows in by_platform.items():
+        env_var = _AGENT_CHANNEL_ENV_BY_PLATFORM.get(platform)
+        if not env_var:
+            continue
+        # Prefer label='default'; fall back to alphabetical first.
+        chosen = next(
+            (r for r in platform_rows if r["label"] == "default"),
+            sorted(platform_rows, key=lambda r: r["label"])[0],
+        )
+        if chosen.get("token"):
+            env[env_var] = chosen["token"]
+    return env
+
+
 def inject_credentials() -> int:
     """Load all DB credentials into os.environ (called at startup + before each agent run).
 
