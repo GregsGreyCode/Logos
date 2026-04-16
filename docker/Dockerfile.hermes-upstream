@@ -32,6 +32,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     iproute2 \
     libnss3-tools \
     procps \
+    python3-pip \
     && rm -rf /var/lib/apt/lists/*
 
 # Re-install hermes-agent as a non-editable package. The upstream image
