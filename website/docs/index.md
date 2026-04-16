@@ -17,7 +17,7 @@ A self-hosted agent platform. Route inference across local and cloud hardware, b
 
 ## What is Logos?
 
-It's not a chatbot wrapper or a single-model assistant. It's a **platform** — a control plane that sits in front of your inference hardware, routes requests to the right model for the job, enforces policies per user, and records every agent run as a reproducible STAMP (Soul + Tools + Agent + Model + Policy). Run it on a homelab node, a VPS, or a Kubernetes cluster. Talk to agents through Telegram, Discord, Slack, or the built-in web UI.
+It's not a chatbot wrapper or a single-model assistant. It's a **platform** — a control plane that sits in front of your inference hardware, routes requests to the right model for the job, enforces policies per user, and records every agent run as a reproducible STAMP (Soul + Tools + Agent + Model + Permissions). Run it on a homelab node, a VPS, or a Kubernetes cluster. Talk to agents through Telegram, Discord, Slack, or the built-in web UI.
 
 ## Quick Links
 

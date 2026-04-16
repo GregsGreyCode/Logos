@@ -839,7 +839,7 @@
                     : (activeAgent
                         ? 'bg-emerald-950 text-emerald-400 border-emerald-900 hover:border-emerald-600'
                         : 'bg-gray-800/50 text-gray-600 border-gray-800')"
-                  :title="activeAgent ? 'Permissions — capabilities + action policy' : 'No agent bound'">
+                  :title="activeAgent ? 'Permissions — what the sandbox can reach' : 'No agent bound'">
                   <span class="font-bold text-emerald-600">P</span>
                   <!-- Count immediately from activeAgent.applied_presets so
                        the badge isn't blank/'default' before the dropdown
@@ -958,7 +958,7 @@
                       <button @click="capsAdvancedOpen = !capsAdvancedOpen"
                         class="w-full px-3 py-2 text-[10px] text-gray-500 hover:text-gray-300 flex items-center gap-1.5">
                         <span :class="capsAdvancedOpen ? 'rotate-90' : ''" class="inline-block transition-transform">▶</span>
-                        <span>Advanced — raw toolsets &amp; presets</span>
+                        <span>Advanced — raw toolsets &amp; permissions</span>
                       </button>
                       <div x-show="capsAdvancedOpen" x-cloak class="border-t border-gray-800/40">
                         <!-- Power tools (rare; shown only when Advanced expanded) -->
@@ -984,7 +984,7 @@
                           <div class="text-[9px] uppercase tracking-wider text-gray-700 mb-1">Raw toolsets enabled</div>
                           <div class="font-mono text-gray-500 leading-snug"
                                x-text="(agentToolsState?.toolsets?.enabled || []).join(', ') || '(none)'"></div>
-                          <div class="text-[9px] uppercase tracking-wider text-gray-700 mt-2 mb-1">Raw presets applied</div>
+                          <div class="text-[9px] uppercase tracking-wider text-gray-700 mt-2 mb-1">Raw permissions granted</div>
                           <div class="font-mono text-gray-500 leading-snug"
                                x-text="(agentToolsState?.presets?.applied || []).join(', ') || '(none)'"></div>
                         </div>
@@ -1028,7 +1028,7 @@
                   to configure API keys for web search, vision, and other tools.
                 </div>
                 <div class="text-[11px] text-gray-500 leading-relaxed">
-                  Click the <span class="font-mono text-gray-300">T</span> pill above to pick which toolsets and network presets this agent can use.
+                  Click the <span class="font-mono text-gray-300">T</span> pill above to pick this agent's tools, or the <span class="font-mono text-gray-300">P</span> pill to grant network permissions.
                 </div>
                 <div class="text-[11px] text-gray-600 leading-relaxed">
                   Or just send a message below to start chatting.
@@ -5251,9 +5251,9 @@
                         <span class="truncate" x-text="(d.model || 'auto').split('/').pop()"></span>
                       </span>
                       <span class="text-[10px] px-1.5 py-0.5 rounded font-mono bg-emerald-950 text-emerald-400 border border-emerald-900 flex items-center gap-1"
-                            :title="'Sandbox policy presets: ' + ((d.policy_snapshot || []).join(', ') || 'none')">
+                            :title="'Permissions granted at dispatch: ' + ((d.policy_snapshot || []).join(', ') || 'none')">
                         <span class="font-bold text-emerald-600">P</span>
-                        <span x-text="(() => { const ps = d.policy_snapshot || []; if (!ps.length) return 'none'; if (ps.length === 1) return ps[0]; return ps.length + ' presets'; })()"></span>
+                        <span x-text="(() => { const ps = d.policy_snapshot || []; if (!ps.length) return 'none'; if (ps.length === 1) return ps[0]; return ps.length + ' granted'; })()"></span>
                       </span>
                     </div>
                     <!-- Supporting stats -->
