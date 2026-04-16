@@ -1740,6 +1740,49 @@ async def handle_platform_links_delete(request: web.Request) -> web.Response:
     return web.json_response({"ok": True})
 
 
+# ── Internal sandbox-facing endpoints ──────────────────────────────────────
+# Called by agent code running inside OpenShell sandboxes, NOT by the
+# dashboard or CLI. Reached via host.openshell.internal:8091/api/internal/*.
+# No auth — the L7 proxy + network policy is the trust boundary.
+
+
+async def handle_internal_session_search(request: web.Request) -> web.Response:
+    """GET /api/internal/session-search?query=...&session_id=...&limit=3
+
+    Thin HTTP proxy so the sandbox's session_search tool can query
+    the host-side session DB without mounting it into the container.
+    """
+    query = request.query.get("query", "").strip()
+    if not query:
+        return web.json_response({"success": False, "error": "query required"}, status=400)
+    current_session_id = request.query.get("session_id", "")
+    try:
+        limit = int(request.query.get("limit", "3"))
+    except ValueError:
+        limit = 3
+
+    try:
+        from gateway.session import SessionStore
+        store = SessionStore()
+        if not store._db:
+            return web.json_response(
+                {"success": False, "error": "session DB not initialised"},
+                status=503,
+            )
+        from tools.session_search_tool import session_search as _ss
+        result_json = _ss(
+            query=query,
+            limit=min(limit, 5),
+            db=store._db,
+            current_session_id=current_session_id or None,
+        )
+        import json as _json
+        return web.json_response(_json.loads(result_json))
+    except Exception as exc:
+        logger.exception("internal session-search failed")
+        return web.json_response({"success": False, "error": str(exc)}, status=500)
+
+
 # ── Gateway self-update (shared backend for CLI + UI button) ────────────────
 
 

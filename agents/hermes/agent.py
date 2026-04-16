@@ -3264,16 +3264,33 @@ class AIAgent:
                 store=self._todo_store,
             )
         elif function_name == "session_search":
-            if not self._session_db:
-                return json.dumps({"success": False, "error": "Session database not available."})
-            from tools.session_search_tool import session_search as _session_search
-            return _session_search(
-                query=function_args.get("query", ""),
-                role_filter=function_args.get("role_filter"),
-                limit=function_args.get("limit", 3),
-                db=self._session_db,
-                current_session_id=self.session_id,
-            )
+            _ss_query = function_args.get("query", "")
+            _ss_limit = function_args.get("limit", 3)
+            if self._session_db:
+                from tools.session_search_tool import session_search as _session_search
+                return _session_search(
+                    query=_ss_query,
+                    role_filter=function_args.get("role_filter"),
+                    limit=_ss_limit,
+                    db=self._session_db,
+                    current_session_id=self.session_id,
+                )
+            # Sandbox path: no local session DB, proxy through the
+            # gateway's internal endpoint. The sandbox has network
+            # access to host.openshell.internal:8091/api/internal/*.
+            try:
+                import urllib.request, urllib.parse
+                _gw = os.environ.get("GATEWAY_URL", "http://host.openshell.internal:8091")
+                _qs = urllib.parse.urlencode({
+                    "query": _ss_query,
+                    "session_id": self.session_id or "",
+                    "limit": str(min(int(_ss_limit), 5)),
+                })
+                _url = f"{_gw}/api/internal/session-search?{_qs}"
+                with urllib.request.urlopen(_url, timeout=15) as _resp:
+                    return _resp.read().decode("utf-8")
+            except Exception as _ss_err:
+                return json.dumps({"success": False, "error": f"Session search proxy failed: {_ss_err}"})
         elif function_name == "memory":
             target = function_args.get("target", "memory")
             from tools.memory_tool import memory_tool as _memory_tool
@@ -3605,17 +3622,31 @@ class AIAgent:
                 if self.quiet_mode:
                     self._vprint(f"  {_get_cute_tool_message_impl('todo', function_args, tool_duration, result=function_result)}")
             elif function_name == "session_search":
-                if not self._session_db:
-                    function_result = json.dumps({"success": False, "error": "Session database not available."})
-                else:
+                _ss_query = function_args.get("query", "")
+                _ss_limit = function_args.get("limit", 3)
+                if self._session_db:
                     from tools.session_search_tool import session_search as _session_search
                     function_result = _session_search(
-                        query=function_args.get("query", ""),
+                        query=_ss_query,
                         role_filter=function_args.get("role_filter"),
-                        limit=function_args.get("limit", 3),
+                        limit=_ss_limit,
                         db=self._session_db,
                         current_session_id=self.session_id,
                     )
+                else:
+                    try:
+                        import urllib.request, urllib.parse
+                        _gw = os.environ.get("GATEWAY_URL", "http://host.openshell.internal:8091")
+                        _qs = urllib.parse.urlencode({
+                            "query": _ss_query,
+                            "session_id": self.session_id or "",
+                            "limit": str(min(int(_ss_limit), 5)),
+                        })
+                        _url = f"{_gw}/api/internal/session-search?{_qs}"
+                        with urllib.request.urlopen(_url, timeout=15) as _resp:
+                            function_result = _resp.read().decode("utf-8")
+                    except Exception as _ss_err:
+                        function_result = json.dumps({"success": False, "error": f"Session search proxy failed: {_ss_err}"})
                 tool_duration = time.time() - tool_start_time
                 if self.quiet_mode:
                     self._vprint(f"  {_get_cute_tool_message_impl('session_search', function_args, tool_duration, result=function_result)}")

@@ -5057,6 +5057,10 @@ async def start_http_api(runner: Any, port: int = 8091) -> None:
                           _mm(require_csrf(admin_handlers.handle_agent_channels_delete)))
     app.router.add_post("/admin/agents/{id}/channels/{cred_id}/toggle",
                         _mm(require_csrf(admin_handlers.handle_agent_channels_toggle)))
+    # Internal sandbox-facing endpoints — called by agent code inside
+    # OpenShell via host.openshell.internal:8091/api/internal/*. No auth.
+    app.router.add_get("/api/internal/session-search",
+                       admin_handlers.handle_internal_session_search)
     # User ↔ platform identity links (Admin → Users or Config → Messaging)
     app.router.add_get("/api/admin/platform-links",
                        _mm(admin_handlers.handle_platform_links_list))
