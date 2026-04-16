@@ -3738,7 +3738,7 @@
       <button x-show="can('view_sandbox_policies')"
         class="pb-2 text-sm font-medium border-b-2 border-transparent"
         :class="adminTab==='sandbox-policies'?'tab-active':'text-gray-500 hover:text-white'"
-        @click="adminTab='sandbox-policies'; loadSandboxPresets()">Sandbox Policies</button>
+        @click="adminTab='sandbox-policies'; loadSandboxPresets(); if(!namedAgents?.length) loadNamedAgents()">Sandbox Policies</button>
       <button x-show="can('view_audit_logs')"
         class="pb-2 text-sm font-medium border-b-2 border-transparent"
         :class="adminTab==='audit'?'tab-active':'text-gray-500 hover:text-white'"
@@ -4142,6 +4142,53 @@
               </div>
             </div>
           </template>
+        </div>
+      </div>
+
+      <!-- Per-agent effective permissions — debug panel. Lives here
+           (not in the P-pill dropdown) because it's a sandbox-wide
+           diagnostic: "which agents have which raw toolsets + which
+           granted preset names?". Collapsed by default. Reads straight
+           from the already-loaded namedAgents array; the toolsets +
+           applied_presets columns arrive as JSON strings from
+           /admin/agents so we parse on render. -->
+      <div class="mt-6 rounded-xl border border-gray-800 bg-gray-900/60"
+           x-data="{ effectiveOpen: false }">
+        <button @click="effectiveOpen = !effectiveOpen"
+          class="w-full flex items-center justify-between px-4 py-2.5 text-xs text-gray-400 hover:text-white">
+          <span class="flex items-center gap-2">
+            <span :class="effectiveOpen ? 'rotate-90' : ''"
+                  class="inline-block transition-transform text-[10px]">▶</span>
+            <span class="font-semibold uppercase tracking-wider text-[10px]">Per-agent effective permissions</span>
+            <span class="text-gray-600 normal-case"
+                  x-text="'(' + (namedAgents?.length || 0) + ' agent' + ((namedAgents?.length || 0) === 1 ? '' : 's') + ')'"></span>
+          </span>
+          <span x-show="!effectiveOpen" class="text-gray-600 text-[10px] normal-case">debug view — raw toolsets &amp; granted preset names</span>
+        </button>
+        <div x-show="effectiveOpen" x-cloak class="border-t border-gray-800 overflow-x-auto">
+          <table class="w-full text-xs">
+            <thead>
+              <tr class="text-gray-500 text-left border-b border-gray-800/60">
+                <th class="px-4 py-2 font-medium">Agent</th>
+                <th class="px-4 py-2 font-medium">Toolsets</th>
+                <th class="px-4 py-2 font-medium">Granted permissions</th>
+              </tr>
+            </thead>
+            <tbody>
+              <template x-for="a in (namedAgents || [])" :key="a.id">
+                <tr class="border-b border-gray-800/30 hover:bg-gray-800/20 align-top">
+                  <td class="px-4 py-2 text-white font-medium" x-text="a.name"></td>
+                  <td class="px-4 py-2 font-mono text-gray-400 text-[10.5px] leading-snug"
+                      x-text="(() => { try { const t = JSON.parse(a.toolsets || '[]'); return t.length ? t.join(', ') : '(none)'; } catch { return '(parse error)'; } })()"></td>
+                  <td class="px-4 py-2 font-mono text-gray-400 text-[10.5px] leading-snug"
+                      x-text="(() => { try { const p = JSON.parse(a.applied_presets || '[]'); return p.length ? p.join(', ') : '(none)'; } catch { return '(parse error)'; } })()"></td>
+                </tr>
+              </template>
+              <template x-if="!(namedAgents || []).length">
+                <tr><td colspan="3" class="px-4 py-4 text-center text-gray-600">No agents loaded. <button @click="loadNamedAgents()" class="underline hover:text-white">Refresh</button></td></tr>
+              </template>
+            </tbody>
+          </table>
         </div>
       </div>
     </div>
@@ -5837,7 +5884,6 @@ function app() {
     agentCapsLoading: false,
     agentCapsError: null,
     agentCapsToggling: {},
-    capsAdvancedOpen: false,
     // Tracks when each agent first showed up as `worker_connected=false`
     // so the chat banner can display elapsed-time + progressive messaging
     // ("Usually ~30s" → "Still going" → "Taking longer than expected").
