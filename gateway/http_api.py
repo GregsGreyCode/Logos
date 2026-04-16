@@ -3702,6 +3702,12 @@ async def _handle_chat(request: web.Request) -> web.StreamResponse:
             _dispatch_id = None
             _tool_sequence: list[str] = []
             try:
+                # _real_user_id was previously set in the action-policy
+                # resolution block at the top of _handle_chat; that block
+                # was removed with the action-policy UI, so we resolve
+                # it here (local to this try so a missing user doesn't
+                # kill the whole insert).
+                _real_user_id = auth_user.get("sub", "") if auth_user else ""
                 _soul = (_agent_config.get("soul_slug") or "").strip()
                 _toolsets_raw = _agent_config.get("toolsets") or ""
                 try:
