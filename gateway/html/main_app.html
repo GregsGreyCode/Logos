@@ -4578,12 +4578,12 @@
         </table>
       </div>
       <!-- Audit log pagination -->
-      <div class="flex items-center gap-3 mt-3 text-xs text-gray-500" x-show="auditLogsTotal > auditLogsLimit">
+      <div class="flex items-center justify-end gap-3 mt-3 text-xs text-gray-500" x-show="auditLogsTotal > auditLogsLimit">
         <button @click="auditLogsPage=Math.max(1,auditLogsPage-1); loadAdminAudit()" :disabled="auditLogsPage===1"
-          class="px-2 py-1 rounded border border-gray-700 disabled:opacity-40">← Prev</button>
-        <span x-text="'Page ' + auditLogsPage + ' of ' + Math.ceil(auditLogsTotal/auditLogsLimit)"></span>
+          class="px-2 py-1 rounded border border-gray-700 text-gray-400 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed transition-colors">‹ Prev</button>
+        <span class="px-2 text-gray-600 font-mono" x-text="auditLogsPage + ' / ' + Math.max(1, Math.ceil(auditLogsTotal/auditLogsLimit))"></span>
         <button @click="auditLogsPage++; loadAdminAudit()" :disabled="auditLogsPage*auditLogsLimit>=auditLogsTotal"
-          class="px-2 py-1 rounded border border-gray-700 disabled:opacity-40">Next →</button>
+          class="px-2 py-1 rounded border border-gray-700 text-gray-400 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed transition-colors">Next ›</button>
       </div>
     </div>
 
@@ -5405,7 +5405,7 @@
                   <td class="px-4 py-2">
                     <span class="px-1.5 py-0.5 rounded text-[10px] font-medium border"
                           :class="r.scope === 'global' ? 'bg-blue-950 text-blue-400 border-blue-900'
-                                : r.scope === 'chat'   ? 'bg-purple-950 text-purple-400 border-purple-900'
+                                : r.scope === 'chat'   ? 'bg-purple-900 text-purple-400 border-purple-800'
                                                        : 'bg-amber-950 text-amber-400 border-amber-900'"
                           x-text="r.scope"></span>
                   </td>
@@ -5554,9 +5554,9 @@
                   <span class="px-1.5 py-0.5 rounded text-xs font-medium"
                     :class="{
                       'bg-blue-950 text-blue-400': d.origin==='user_chat',
-                      'bg-purple-950 text-purple-400': d.origin?.startsWith('platform'),
+                      'bg-purple-900 text-purple-400': d.origin?.startsWith('platform'),
                       'bg-yellow-950 text-yellow-400': d.origin==='cron',
-                      'bg-pink-950 text-pink-400': d.origin==='delegate',
+                      'bg-violet-950 text-violet-400': d.origin==='delegate',
                       'bg-gray-800 text-gray-400': !['user_chat','cron','delegate'].includes(d.origin) && !d.origin?.startsWith('platform'),
                     }" x-text="d.origin"></span>
                 </td>
