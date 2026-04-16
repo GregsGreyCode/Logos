@@ -171,10 +171,10 @@ Every agent run in Logos is defined by five dimensions — the **STAMP** model:
 | Dimension | What it controls |
 |-----------|-----------------|
 | **S** — Soul | Agent persona and communication style (hot-reloadable) |
-| **T** — Tools | Capabilities available to the agent (scoped per session and policy) |
+| **T** — Tools | Capabilities available to the agent (scoped per session and permissions) |
 | **A** — Agent | The runtime adapter (Hermes is the built-in one) |
 | **M** — Model | Which LLM handles inference (Claude, GPT, OpenRouter, local, etc.) |
-| **P** — Policy | Rules and approval gates (workspace scoping, command restrictions) |
+| **P** — Permissions | Granted network access + approval gates for dangerous tools |
 
 Every run records its complete STAMP to a local SQLite database — fully auditable, reproducible, and queryable.
 

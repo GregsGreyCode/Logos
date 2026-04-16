@@ -148,7 +148,7 @@ Run Hermes as an ACP server for VS Code, Zed, or JetBrains.
 |---|---|---|
 | **Gateway & Dashboard** | Always-on server that spawns agents, serves web UI, manages instances | [Quickstart](/docs/getting-started/quickstart) |
 | **Execution Backends** | Local process, Docker, Kubernetes — agent isolation at your chosen level | [Deployment](/docs/user-guide/deployment) |
-| **STAMP Model** | Every run defined by Soul/Tools/Agent/Model/Policy — auditable and reproducible | [Architecture](/docs/developer-guide/architecture) |
+| **STAMP Model** | Every run defined by Soul/Tools/Agent/Model/Permissions — auditable and reproducible | [Architecture](/docs/developer-guide/architecture) |
 | **Policies** | Workspace scoping, command approval gates, per-user rules | [Security](/docs/user-guide/security) |
 | **Messaging Platforms** | Telegram, Discord, Slack, WhatsApp, Signal, Email, Home Assistant | [Messaging](/docs/user-guide/messaging) |
 | **Tools** | 47 built-in tools (file I/O, search, shell, browser, image gen, TTS, etc.) | [Tools](/docs/user-guide/features/tools) |

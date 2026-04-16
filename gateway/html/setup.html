@@ -288,7 +288,7 @@
               <span class="text-[9px] px-1.5 py-0.5 rounded-full border border-amber-800 text-amber-400 font-medium uppercase tracking-wider flex-shrink-0 mt-0.5">concept</span>
               <p class="text-sm text-gray-400 leading-relaxed" x-show="!tldr">
                 Each agent run is recorded as a <span class="text-gray-200 font-medium">STAMP</span> &mdash;
-                Soul + Tools + Agent + Model + Policy &mdash; making sessions reproducible, comparable, and auditable.
+                Soul + Tools + Agent + Model + Permissions &mdash; making sessions reproducible, comparable, and auditable.
                 Setup defines the defaults every STAMP inherits.
               </p>
               <p class="text-sm text-gray-400 leading-relaxed" x-show="tldr" x-cloak>
@@ -324,7 +324,7 @@
             <ul class="text-xs text-gray-500 leading-relaxed space-y-1">
               <li>&middot; <span class="text-gray-300">Tool integrations</span> &mdash; <span x-text="tldr ? 'Browserbase, Firecrawl.' : 'Connect Browserbase or Firecrawl to unlock browser automation and web search tools.'"></span></li>
               <li>&middot; <span class="text-gray-300">Agent creation</span> &mdash; <span x-text="tldr ? 'Spawn more agents.' : 'Spawn additional named agents with their own souls, models, and tool sets.'"></span></li>
-              <li>&middot; <span class="text-gray-300">Network policies</span> &mdash; <span x-text="tldr ? 'Pick what each agent can reach.' : 'Apply per-agent network presets to control which external services each sandbox can reach.'"></span></li>
+              <li>&middot; <span class="text-gray-300">Permissions</span> &mdash; <span x-text="tldr ? 'Pick what each agent can reach.' : 'Grant per-agent permissions to control which external services each sandbox can reach.'"></span></li>
             </ul>
           </div>
 
