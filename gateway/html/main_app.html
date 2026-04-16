@@ -3819,10 +3819,16 @@
 
     <!-- ── Users sub-tab ── -->
     <div x-show="tab==='admin' && adminTab==='users' && can('manage_users')">
-      <div class="flex items-center justify-between mb-4">
+      <div class="flex items-center justify-between mb-4 gap-3 flex-wrap">
         <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Users</div>
-        <button @click="adminUserForm={email:'',username:'',password:'',role:'user',display_name:''}; adminUserFormOpen=true"
-          class="text-xs px-3 py-1.5 rounded-lg bg-[var(--accent)] text-white hover:opacity-90 transition-opacity">+ New User</button>
+        <div class="flex items-center gap-2 flex-wrap">
+          <input type="text" x-model="adminUsersQuery"
+            @input="clearTimeout(_adminUsersSearchTimer); _adminUsersSearchTimer = setTimeout(() => { adminUsersPage = 1; loadAdminUsers(); }, 250)"
+            placeholder="Search username, display name, email…"
+            class="bg-gray-800 border border-gray-700 rounded-lg text-xs px-3 py-1.5 text-gray-300 placeholder-gray-600 focus:outline-none focus:border-indigo-500 w-64">
+          <button @click="adminUserForm={email:'',username:'',password:'',role:'user',display_name:''}; adminUserFormOpen=true"
+            class="text-xs px-3 py-1.5 rounded-lg border border-gray-700 text-gray-400 hover:text-white transition-colors">+ New User</button>
+        </div>
       </div>
 
       <!-- New user form -->
@@ -3988,10 +3994,26 @@
               </tr>
             </template>
             <template x-if="adminUsers.length===0">
-              <tr><td colspan="6" class="px-4 py-8 text-center text-xs text-gray-600">No users found</td></tr>
+              <tr><td colspan="5" class="px-4 py-8 text-center text-xs text-gray-600" x-text="(adminUsersQuery || '').trim() ? 'No users match your search.' : 'No users found'"></td></tr>
             </template>
           </tbody>
         </table>
+      </div>
+
+      <!-- Pagination — same pattern as the Runs tab so both lists behave
+           identically. Page resets to 1 on search/filter change. -->
+      <div class="flex items-center justify-between mt-3 text-xs text-gray-500">
+        <span x-text="adminUsersTotal === 0 ? 'No users' : ('Showing ' + ((adminUsersPage - 1) * adminUsersLimit + 1) + '–' + Math.min((adminUsersPage - 1) * adminUsersLimit + adminUsers.length, adminUsersTotal) + ' of ' + adminUsersTotal)"></span>
+        <div class="flex items-center gap-1" x-show="adminUsersTotal > adminUsersLimit">
+          <button @click="adminUsersPage = Math.max(1, adminUsersPage - 1); loadAdminUsers()"
+            :disabled="adminUsersPage === 1"
+            class="px-2 py-1 rounded border border-gray-700 text-gray-400 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed transition-colors">‹ Prev</button>
+          <span class="px-2 text-gray-600 font-mono"
+            x-text="adminUsersPage + ' / ' + Math.max(1, Math.ceil(adminUsersTotal / adminUsersLimit))"></span>
+          <button @click="adminUsersPage = adminUsersPage + 1; loadAdminUsers()"
+            :disabled="adminUsersPage * adminUsersLimit >= adminUsersTotal"
+            class="px-2 py-1 rounded border border-gray-700 text-gray-400 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed transition-colors">Next ›</button>
+        </div>
       </div>
     </div>
 
@@ -4169,10 +4191,16 @@
 
     <!-- ── Audit Log sub-tab ── -->
     <div x-show="tab==='admin' && adminTab==='audit' && can('view_audit_logs')">
-      <div class="flex items-center justify-between mb-4">
+      <div class="flex items-center justify-between mb-4 gap-3 flex-wrap">
         <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Audit Log</div>
-        <button @click="loadAdminAudit()"
-          class="text-xs text-[var(--accent)] hover:opacity-80 flex items-center gap-1"><span>&#8635;</span> Refresh</button>
+        <div class="flex items-center gap-2 flex-wrap">
+          <input type="text" x-model="adminAuditQuery"
+            @input="clearTimeout(_adminAuditSearchTimer); _adminAuditSearchTimer = setTimeout(() => { auditLogsPage = 1; loadAdminAudit(); }, 250)"
+            placeholder="Search action, target, IP…"
+            class="bg-gray-800 border border-gray-700 rounded-lg text-xs px-3 py-1.5 text-gray-300 placeholder-gray-600 focus:outline-none focus:border-indigo-500 w-56">
+          <button @click="loadAdminAudit()"
+            class="text-xs px-3 py-1.5 rounded-lg border border-gray-700 text-gray-400 hover:text-white transition-colors">Refresh</button>
+        </div>
       </div>
       <div class="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
         <table class="w-full text-xs">
@@ -4407,52 +4435,6 @@
         </div>
       </template>
 
-      <!-- Applied Policy -->
-      <details class="mb-5">
-        <summary class="text-xs font-semibold text-gray-400 uppercase tracking-wider cursor-pointer hover:text-gray-300 select-none">
-          Applied Policy (openshell_default.yaml)
-        </summary>
-        <div class="mt-3 bg-gray-900 border border-gray-800 rounded-xl p-4 space-y-3 text-xs">
-          <!-- Network -->
-          <div x-show="sandboxPolicy.network && sandboxPolicy.network.length">
-            <div class="text-[10px] text-gray-600 uppercase tracking-wider mb-1.5">Network Policies</div>
-            <template x-for="pol in (sandboxPolicy.network || [])" :key="pol.key">
-              <div class="flex items-start gap-2 mb-1.5 pl-2">
-                <span class="text-gray-600 shrink-0">&#9500;&#9472;</span>
-                <div>
-                  <span class="text-gray-300 font-medium" x-text="pol.name"></span>
-                  <template x-for="ep in pol.endpoints" :key="ep.host">
-                    <span class="text-gray-500 ml-1" x-text="ep.host + ':' + ep.port + ' (' + (ep.protocol || 'tcp') + (ep.tls ? ', TLS ' + ep.tls : '') + ')'"></span>
-                  </template>
-                  <template x-for="ep in pol.endpoints.filter(e => e.allowed_ips?.length)" :key="ep.host + '_ips'">
-                    <span class="text-gray-600 ml-2 text-[10px]">allowed: <span x-text="ep.allowed_ips.join(', ')"></span></span>
-                  </template>
-                </div>
-              </div>
-            </template>
-          </div>
-          <!-- Filesystem -->
-          <div x-show="sandboxPolicy.filesystem">
-            <div class="text-[10px] text-gray-600 uppercase tracking-wider mb-1.5">Filesystem</div>
-            <div class="pl-2 space-y-0.5">
-              <div><span class="text-gray-600">read-only:</span> <span class="text-gray-400 font-mono" x-text="(sandboxPolicy.filesystem?.read_only || []).join(', ')"></span></div>
-              <div><span class="text-gray-600">read-write:</span> <span class="text-gray-400 font-mono" x-text="(sandboxPolicy.filesystem?.read_write || []).join(', ')"></span></div>
-            </div>
-          </div>
-          <!-- Process -->
-          <div x-show="sandboxPolicy.process?.user">
-            <div class="text-[10px] text-gray-600 uppercase tracking-wider mb-1">Process</div>
-            <div class="pl-2 text-gray-400">
-              run as <span class="font-mono text-gray-300" x-text="sandboxPolicy.process?.user + ':' + sandboxPolicy.process?.group"></span>
-            </div>
-          </div>
-          <!-- Binaries -->
-          <div x-show="sandboxPolicy.binaries?.length">
-            <div class="text-[10px] text-gray-600 uppercase tracking-wider mb-1">Allowed Binaries</div>
-            <div class="pl-2 text-gray-400 font-mono text-[10px]" x-text="(sandboxPolicy.binaries || []).join(', ')"></div>
-          </div>
-        </div>
-      </details>
 
     </div>
 
@@ -5147,262 +5129,6 @@
             </button>
           </div>
         </div>
-      </div>
-    </div>
-
-    <!-- ── Sandbox Policies sub-tab ──
-         Edits OpenShell network_policies presets on disk. Anyone with
-         view_sandbox_policies sees the list + read-only YAML; only
-         manage_sandbox_policies can Save/Delete. Changes hot-reload
-         every agent currently applying the preset. -->
-    <div x-show="tab==='admin' && adminTab==='sandbox-policies' && can('view_sandbox_policies')" x-cloak
-         x-effect="if (tab==='admin' && adminTab==='sandbox-policies' && can('view_sandbox_policies')) { loadSandboxPresets() }">
-      <div class="flex items-center justify-between mb-3">
-        <div>
-          <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Sandbox Policies</div>
-          <div class="text-[10px] text-gray-500 mt-0.5">
-            OpenShell network egress rules. Applied per-agent; saving hot-reloads every live sandbox using the preset.
-          </div>
-        </div>
-        <div class="flex items-center gap-2">
-          <button @click="sandboxPresetHelp = !sandboxPresetHelp" class="px-2 py-1 rounded border border-gray-700 text-gray-500 hover:text-white hover:border-gray-500 text-[10px]">
-            <span x-text="sandboxPresetHelp ? 'Hide help' : 'What is this?'"></span>
-          </button>
-          <button @click="loadSandboxPresets()" class="text-xs text-[var(--accent)] hover:opacity-80 flex items-center gap-1">
-            <span>&#8635;</span> Refresh
-          </button>
-        </div>
-      </div>
-
-      <!-- Help panel — on by default for first-time visitors, toggleable. -->
-      <div x-show="sandboxPresetHelp" x-cloak class="mb-4 p-3 rounded-xl border border-indigo-900/50 bg-indigo-950/10 text-[11px] text-gray-300 leading-relaxed">
-        <div class="font-semibold text-indigo-300 mb-2">What are sandbox policies?</div>
-        <p class="mb-2">
-          Every Logos agent runs in an isolated OpenShell sandbox that blocks outbound network traffic by default. A <span class="font-mono text-white">preset</span> is a YAML file that grants access to specific hostnames and ports — e.g. the <span class="font-mono text-white">github</span> preset lets agents reach <span class="font-mono">api.github.com</span>, nothing else.
-        </p>
-        <p class="mb-2">
-          When you apply a preset to an agent (from the agent's Tools tab), the sandbox merges it into the baseline policy and starts allowing those endpoints. Removing a preset revokes access.
-        </p>
-        <div class="font-semibold text-indigo-300 mt-3 mb-1">When to add / edit a preset</div>
-        <ul class="list-disc list-inside space-y-0.5 text-gray-400">
-          <li>A new third-party API your agents need to call (add a preset, apply it to the agent).</li>
-          <li>An existing preset is too permissive or too restrictive (edit its endpoints).</li>
-          <li>A service changed hostnames (update host glob).</li>
-        </ul>
-        <div class="font-semibold text-indigo-300 mt-3 mb-1">Key fields in a preset</div>
-        <ul class="list-disc list-inside space-y-0.5 text-gray-400">
-          <li><span class="font-mono text-gray-300">host</span> — hostname or glob, e.g. <span class="font-mono">api.github.com</span> or <span class="font-mono">*.amazonaws.com</span>.</li>
-          <li><span class="font-mono text-gray-300">port</span> / <span class="font-mono">ports</span> — TCP port(s). 443 for HTTPS.</li>
-          <li><span class="font-mono text-gray-300">protocol</span> — <span class="font-mono">rest</span> for HTTP APIs, <span class="font-mono">sql</span> for databases, omit for L4 only.</li>
-          <li><span class="font-mono text-gray-300">tls</span> — usually <span class="font-mono">terminate</span> (gateway decrypts so L7 rules can match paths).</li>
-          <li><span class="font-mono text-gray-300">enforcement</span> — <span class="font-mono">enforce</span> blocks violations, <span class="font-mono">audit</span> logs only.</li>
-          <li><span class="font-mono text-gray-300">access</span> — shortcut: <span class="font-mono">full</span> / <span class="font-mono">read-only</span> / <span class="font-mono">read-write</span>. Or use <span class="font-mono">rules:</span> for method+path control.</li>
-        </ul>
-        <div class="font-semibold text-indigo-300 mt-3 mb-1">Safe to edit / don't edit</div>
-        <ul class="list-disc list-inside space-y-0.5 text-gray-400">
-          <li>Change endpoints, hosts, ports, L7 rules — hot-reloads without restarting sandboxes.</li>
-          <li>Don't rename the preset (<span class="font-mono">preset.name</span>) — the filename and applied-list won't match and agents will silently lose the policy.</li>
-          <li>Syntax errors are rejected at save time; your changes are never partially written.</li>
-        </ul>
-      </div>
-
-      <div class="grid grid-cols-3 gap-4 items-start">
-        <!-- Preset list (left column) -->
-        <div class="col-span-1 bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
-          <div class="px-3 py-2 border-b border-gray-800 text-[10px] uppercase tracking-wider text-gray-500">
-            Presets (<span x-text="sandboxPresets.length"></span>)
-          </div>
-          <div class="divide-y divide-gray-800">
-            <template x-for="p in sandboxPresets" :key="p.name">
-              <button @click="selectSandboxPreset(p.name)"
-                class="w-full text-left px-3 py-2 hover:bg-gray-800/60 transition-colors"
-                :class="sandboxPresetSelected && sandboxPresetSelected.name === p.name ? 'bg-gray-800/40' : ''">
-                <div class="flex items-center justify-between gap-2">
-                  <div class="text-xs font-mono text-white truncate" x-text="p.name"></div>
-                  <span x-show="p.agent_count > 0"
-                    class="text-[9px] px-1.5 py-0.5 rounded-full bg-indigo-950 text-indigo-400 border border-indigo-800 flex-shrink-0"
-                    x-text="p.agent_count + ' agent' + (p.agent_count === 1 ? '' : 's')"></span>
-                </div>
-                <div x-show="p.description" class="text-[10px] text-gray-500 mt-0.5 truncate" x-text="p.description"></div>
-              </button>
-            </template>
-          </div>
-          <template x-if="can('manage_sandbox_policies')">
-            <div class="p-3 border-t border-gray-800">
-              <button @click="newSandboxPreset()"
-                class="w-full px-2 py-1 rounded border border-gray-700 text-gray-500 hover:text-white hover:border-gray-500 text-[10px]">+ New preset</button>
-            </div>
-          </template>
-        </div>
-
-        <!-- Editor (right) -->
-        <div class="col-span-2">
-          <template x-if="!sandboxPresetSelected">
-            <div class="p-8 rounded-xl border border-gray-800 bg-gray-900/60 text-center text-xs text-gray-500">
-              Select a preset on the left to view or edit its rules.
-            </div>
-          </template>
-
-          <template x-if="sandboxPresetSelected">
-            <div class="rounded-xl border border-gray-800 bg-gray-900 overflow-hidden">
-              <div class="p-3 border-b border-gray-800 flex items-center justify-between gap-2">
-                <div>
-                  <div class="text-xs font-mono text-white" x-text="sandboxPresetSelected.name"></div>
-                  <div class="text-[10px] text-gray-500 mt-0.5">
-                    <span x-show="sandboxPresetSelected.agents.length === 0">No agents currently use this preset.</span>
-                    <span x-show="sandboxPresetSelected.agents.length > 0"
-                      x-text="'Hot-reloads ' + sandboxPresetSelected.agents.length + ' live agent' + (sandboxPresetSelected.agents.length === 1 ? '' : 's') + ' on save.'"></span>
-                  </div>
-                </div>
-                <template x-if="can('manage_sandbox_policies')">
-                  <button @click="deleteSandboxPreset()" :disabled="sandboxPresetSelected.agents.length > 0"
-                    :title="sandboxPresetSelected.agents.length > 0 ? 'Remove from all agents before deleting' : 'Delete preset file'"
-                    class="px-2 py-1 rounded border border-red-900 text-red-700 hover:text-red-400 text-[10px] disabled:opacity-40 disabled:cursor-not-allowed">Delete</button>
-                </template>
-              </div>
-
-              <!-- YAML textarea / read-only view. Sized to fill the
-                   viewport height (minus room for the sub-tab bar,
-                   header, and action row) so admins don't scroll-bog
-                   on long presets. -->
-              <div class="p-3">
-                <template x-if="can('manage_sandbox_policies')">
-                  <textarea x-model="sandboxPresetYaml" spellcheck="false"
-                    style="height: calc(100vh - 320px); min-height: 400px;"
-                    class="w-full px-3 py-2 rounded-lg bg-gray-950 border border-gray-800 text-[11px] text-gray-200 font-mono focus:outline-none focus:border-indigo-500 resize-none"></textarea>
-                </template>
-                <template x-if="!can('manage_sandbox_policies')">
-                  <pre style="height: calc(100vh - 320px); min-height: 400px;"
-                    class="w-full px-3 py-2 rounded-lg bg-gray-950 border border-gray-800 text-[11px] text-gray-400 font-mono whitespace-pre-wrap break-all overflow-auto" x-text="sandboxPresetYaml"></pre>
-                </template>
-
-                <template x-if="can('manage_sandbox_policies')">
-                  <div class="flex items-center gap-2 mt-3">
-                    <button @click="saveSandboxPreset()" :disabled="sandboxPresetSaving"
-                      class="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-medium disabled:opacity-40">
-                      <span x-show="!sandboxPresetSaving">Save &amp; hot-reload</span>
-                      <span x-show="sandboxPresetSaving">Saving&hellip;</span>
-                    </button>
-                    <button @click="selectSandboxPreset(sandboxPresetSelected.name)"
-                      class="px-3 py-1.5 rounded-lg border border-gray-700 text-gray-400 hover:text-white hover:border-gray-500 text-xs">Revert</button>
-                    <span x-show="sandboxPresetError" class="text-xs text-red-400" x-text="sandboxPresetError"></span>
-                    <span x-show="sandboxPresetSaved" class="text-xs text-green-400" x-text="sandboxPresetSaved"></span>
-                  </div>
-                </template>
-              </div>
-            </div>
-          </template>
-        </div>
-      </div>
-    </div>
-
-    <!-- ── Audit Log sub-tab ── -->
-    <div x-show="tab==='admin' && adminTab==='audit' && can('view_audit_logs')">
-      <div class="flex items-center justify-between mb-4">
-        <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Audit Log</div>
-        <button @click="loadAdminAudit()"
-          class="text-xs text-[var(--accent)] hover:opacity-80 flex items-center gap-1"><span>&#8635;</span> Refresh</button>
-      </div>
-      <div class="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
-        <table class="w-full text-xs">
-          <thead>
-            <tr class="border-b border-gray-800 text-gray-500">
-              <th class="text-left px-4 py-3 font-medium">Time</th>
-              <th class="text-left px-4 py-3 font-medium">Action</th>
-              <th class="text-left px-4 py-3 font-medium">Target</th>
-              <th class="text-left px-4 py-3 font-medium">IP</th>
-            </tr>
-          </thead>
-          <tbody>
-            <template x-for="log in adminAuditLogs" :key="log.id">
-              <tr class="border-b border-gray-800/50">
-                <td class="px-4 py-2 text-gray-500" x-text="new Date(log.created_at*1000).toLocaleString()"></td>
-                <td class="px-4 py-2 text-gray-300 font-mono" x-text="log.action"></td>
-                <td class="px-4 py-2 text-gray-500" x-text="(log.target_type||'') + (log.target_id ? ' '+log.target_id.slice(0,8) : '')"></td>
-                <td class="px-4 py-2 text-gray-600" x-text="log.ip_address||''"></td>
-              </tr>
-            </template>
-            <template x-if="adminAuditLogs.length===0">
-              <tr><td colspan="4" class="px-4 py-6 text-center text-gray-600">No audit logs</td></tr>
-            </template>
-          </tbody>
-        </table>
-      </div>
-      <!-- Audit log pagination -->
-      <div class="flex items-center gap-3 mt-3 text-xs text-gray-500" x-show="auditLogsTotal > auditLogsLimit">
-        <button @click="auditLogsPage=Math.max(1,auditLogsPage-1); loadAdminAudit()" :disabled="auditLogsPage===1"
-          class="px-2 py-1 rounded border border-gray-700 disabled:opacity-40">← Prev</button>
-        <span x-text="'Page ' + auditLogsPage + ' of ' + Math.ceil(auditLogsTotal/auditLogsLimit)"></span>
-        <button @click="auditLogsPage++; loadAdminAudit()" :disabled="auditLogsPage*auditLogsLimit>=auditLogsTotal"
-          class="px-2 py-1 rounded border border-gray-700 disabled:opacity-40">Next →</button>
-      </div>
-    </div>
-
-    <!-- ── Approvals (Activity) ── -->
-    <div x-show="tab==='activity' && activityTab==='approvals' && can('view_approvals')">
-      <div class="flex items-center justify-between mb-4">
-        <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Approval Requests</div>
-        <div class="flex items-center gap-3">
-          <select x-model="approvalsStatusFilter" @change="loadApprovals()"
-            class="bg-gray-800 border border-gray-700 rounded-lg text-xs px-2 py-1 text-gray-300">
-            <option value="pending">Pending</option>
-            <option value="approved">Approved</option>
-            <option value="rejected">Rejected</option>
-            <option value="expired">Expired</option>
-            <option value="">All</option>
-          </select>
-          <button @click="loadApprovals()"
-            class="text-xs text-[var(--accent)] hover:opacity-80 flex items-center gap-1"><span>&#8635;</span> Refresh</button>
-        </div>
-      </div>
-      <div class="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
-        <table class="w-full text-xs">
-          <thead>
-            <tr class="border-b border-gray-800 text-gray-500">
-              <th class="text-left px-4 py-3 font-medium">Time</th>
-              <th class="text-left px-4 py-3 font-medium">Tool</th>
-              <th class="text-left px-4 py-3 font-medium">Action</th>
-              <th class="text-left px-4 py-3 font-medium">Status</th>
-              <th class="text-left px-4 py-3 font-medium" x-show="can('decide_approvals')">Decision</th>
-            </tr>
-          </thead>
-          <tbody>
-            <template x-for="req in approvalRequests" :key="req.id">
-              <tr class="border-b border-gray-800/50 hover:bg-gray-800/30">
-                <td class="px-4 py-2 text-gray-600 whitespace-nowrap"
-                  x-text="new Date(req.requested_at*1000).toLocaleString(undefined,{dateStyle:'short',timeStyle:'short'})"></td>
-                <td class="px-4 py-2 text-gray-300 font-mono" x-text="req.tool_name"></td>
-                <td class="px-4 py-2 text-gray-500" x-text="req.action_type || '—'"></td>
-                <td class="px-4 py-2">
-                  <span class="px-1.5 py-0.5 rounded text-[10px] font-medium border"
-                    :class="{
-                      'bg-yellow-950 text-yellow-400 border-yellow-900': req.status==='pending',
-                      'bg-green-950 text-green-400 border-green-900':  req.status==='approved',
-                      'bg-red-950 text-red-400 border-red-900':        req.status==='rejected',
-                      'bg-gray-800 text-gray-500 border-gray-700':     req.status==='expired',
-                    }"
-                    x-text="req.status"></span>
-                </td>
-                <td class="px-4 py-2" x-show="can('decide_approvals')">
-                  <template x-if="req.status==='pending'">
-                    <div class="flex gap-2">
-                      <button @click="decideApproval(req.id,'approve')"
-                        class="px-2 py-1 rounded text-[10px] bg-green-900 text-green-300 hover:bg-green-800 border border-green-800">Approve</button>
-                      <button @click="decideApproval(req.id,'reject')"
-                        class="px-2 py-1 rounded text-[10px] bg-red-950 text-red-400 hover:bg-red-900 border border-red-900">Reject</button>
-                    </div>
-                  </template>
-                  <template x-if="req.status!=='pending'">
-                    <span class="text-gray-600" x-text="req.decided_by ? 'by '+req.decided_by.slice(0,8) : '—'"></span>
-                  </template>
-                </td>
-              </tr>
-            </template>
-            <template x-if="approvalRequests.length===0">
-              <tr><td :colspan="can('decide_approvals') ? 5 : 4" class="px-4 py-8 text-center text-gray-600">No approval requests</td></tr>
-            </template>
-          </tbody>
-        </table>
       </div>
     </div>
 
@@ -6227,6 +5953,11 @@ function app() {
     ],
     messagingChannels: [],
     adminUsers: [],
+    adminUsersTotal: 0,
+    adminUsersPage: 1,
+    adminUsersLimit: 20,
+    adminUsersQuery: '',
+    _adminUsersSearchTimer: null,
     adminMachines: [],
     adminScanRunning: false,
     adminScanResults: [],
@@ -6250,6 +5981,8 @@ function app() {
     sandboxPresetSaved: '',
     sandboxPresetHelp: false,
     adminAuditLogs: [],
+    adminAuditQuery: '',
+    _adminAuditSearchTimer: null,
     auditLogsPage: 1,
     auditLogsLimit: 25,
     auditLogsTotal: 0,
@@ -9130,10 +8863,16 @@ function app() {
 
     async loadAdminUsers() {
       try {
-        const r = await fetch('/users', {credentials:'include'});
+        const params = new URLSearchParams({
+          page:  String(this.adminUsersPage || 1),
+          limit: String(this.adminUsersLimit || 20),
+        });
+        if ((this.adminUsersQuery || '').trim()) params.set('q', this.adminUsersQuery.trim());
+        const r = await fetch('/users?' + params, {credentials:'include'});
         const d = await r.json();
         this.adminUsers = d.users || [];
-      } catch(e) { this.adminUsers = []; }
+        this.adminUsersTotal = d.total || 0;
+      } catch(e) { this.adminUsers = []; this.adminUsersTotal = 0; }
     },
 
     // ── Sandbox policy presets (OpenShell network_policies) ─────────────
@@ -10344,11 +10083,16 @@ network_policies:
 
     async loadAdminAudit() {
       try {
-        const r = await fetch(`/audit-logs?page=${this.auditLogsPage}&limit=${this.auditLogsLimit}`, {credentials:'include'});
+        const params = new URLSearchParams({
+          page:  String(this.auditLogsPage || 1),
+          limit: String(this.auditLogsLimit || 25),
+        });
+        if ((this.adminAuditQuery || '').trim()) params.set('q', this.adminAuditQuery.trim());
+        const r = await fetch('/audit-logs?' + params, {credentials:'include'});
         const d = await r.json();
         this.adminAuditLogs = d.logs || [];
         this.auditLogsTotal = d.total || 0;
-      } catch(e) { this.adminAuditLogs = []; }
+      } catch(e) { this.adminAuditLogs = []; this.auditLogsTotal = 0; }
     },
 
     async _pollPendingApprovals() {

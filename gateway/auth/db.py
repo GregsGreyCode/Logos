@@ -1056,6 +1056,7 @@ def list_users(
     limit: int = 20,
     role: Optional[str] = None,
     status: Optional[str] = None,
+    q: Optional[str] = None,
 ) -> tuple[list[dict], int]:
     conditions, params = [], []
     if role:
@@ -1064,6 +1065,16 @@ def list_users(
     if status:
         conditions.append("status = ?")
         params.append(status)
+    if q:
+        # Match against the three fields an admin would scan: username,
+        # display_name, and email.
+        like = f"%{q}%"
+        conditions.append(
+            "(COALESCE(username,'') LIKE ? "
+            "OR COALESCE(display_name,'') LIKE ? "
+            "OR COALESCE(email,'') LIKE ?)"
+        )
+        params.extend([like, like, like])
     where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
     offset = (page - 1) * limit
     with _conn() as conn:
@@ -1181,6 +1192,7 @@ def list_audit_logs(
     limit: int = 50,
     user_id: Optional[str] = None,
     action: Optional[str] = None,
+    q: Optional[str] = None,
 ) -> tuple[list[dict], int]:
     conditions, params = [], []
     if user_id:
@@ -1189,6 +1201,15 @@ def list_audit_logs(
     if action:
         conditions.append("action = ?")
         params.append(action)
+    if q:
+        like = f"%{q}%"
+        conditions.append(
+            "(COALESCE(action,'') LIKE ? "
+            "OR COALESCE(target_type,'') LIKE ? "
+            "OR COALESCE(target_id,'') LIKE ? "
+            "OR COALESCE(ip_address,'') LIKE ?)"
+        )
+        params.extend([like, like, like, like])
     where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
     offset = (page - 1) * limit
     with _conn() as conn:
