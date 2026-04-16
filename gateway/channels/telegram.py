@@ -106,8 +106,8 @@ class TelegramAdapter(BasePlatformAdapter):
     # Telegram message limits
     MAX_MESSAGE_LENGTH = 4096
     
-    def __init__(self, config: PlatformConfig):
-        super().__init__(config, Platform.TELEGRAM)
+    def __init__(self, config: PlatformConfig, *, agent_id=None, credential_label=None):
+        super().__init__(config, Platform.TELEGRAM, agent_id=agent_id, credential_label=credential_label)
         self._app: Optional[Application] = None
         self._bot: Optional[Bot] = None
     
