@@ -143,6 +143,79 @@ def compute_state(agent_id: str) -> dict:
     }
 
 
+def format_agent_prompt_block(agent_id: str) -> str:
+    """Compact, markdown-ish summary of the agent's permissions for the
+    system prompt.
+
+    Each dispatch ships this in instance_config so the sandbox worker can
+    prepend it to the agent's context. Without it, agents don't know
+    which capabilities are disabled — so when a user asks for something
+    gated behind a disabled permission (e.g. Firecrawl search or fal
+    image-gen), the agent either fails opaquely or hallucinates. With
+    this block, the agent can tell the user exactly which toggle they
+    need to flip in the P dropdown to unlock the request.
+
+    Kept deliberately small (~200-300 tokens) and positive-voiced for
+    smaller models that pattern-match "restricted" to "give up".
+
+    Returns an empty string on any error so a capability-system outage
+    never blocks dispatches.
+    """
+    try:
+        state = compute_state(agent_id)
+    except Exception as exc:
+        logger.debug("format_agent_prompt_block: compute_state failed: %s", exc)
+        return ""
+
+    lines: list[str] = ["## Your permissions", ""]
+
+    # Enabled first — positive framing, shows what the agent CAN do.
+    enabled = [c for c in state.get("capabilities", []) if c.get("enabled")]
+    enabled += [c for c in state.get("power_tools", []) if c.get("enabled")]
+    if enabled:
+        lines.append("Enabled now:")
+        for c in enabled:
+            trust = c.get("trust", "local")
+            pill = "local" if trust == "local" else "cloud"
+            lines.append(f"- {c.get('icon', '·')} **{c.get('name', c['id'])}** ({pill}) — {c.get('description', '').strip()}")
+        lines.append("")
+
+    # Disabled — each with the concrete reason (missing cred vs just off)
+    # so the agent can tell the user exactly what to do.
+    disabled = [c for c in state.get("capabilities", []) if not c.get("enabled")]
+    disabled += [c for c in state.get("power_tools", []) if not c.get("enabled")]
+    if disabled:
+        lines.append("Not enabled (ask the user to flip the matching toggle in the P pill):")
+        for c in disabled:
+            trust = c.get("trust", "local")
+            pill = "local" if trust == "local" else "cloud"
+            missing = c.get("missing_creds") or []
+            if missing:
+                hint = f"needs {', '.join(missing)} set in Config → Tools, then enable in Permissions"
+            else:
+                hint = "enable in Permissions"
+            lines.append(
+                f"- {c.get('icon', '·')} **{c.get('name', c['id'])}** ({pill}) — {c.get('description', '').strip()} ({hint})"
+            )
+        lines.append("")
+
+    # Always-on block — short reminder these don't need a toggle, so the
+    # agent doesn't redundantly ask the user to "enable Memory".
+    always = state.get("always_on") or []
+    if always:
+        names = ", ".join(f"{c.get('icon', '')} {c.get('name', c['id'])}" for c in always)
+        lines.append(f"Always on (no toggle needed): {names}")
+        lines.append("")
+
+    lines.append(
+        "If the user asks you to do something that needs a disabled permission, "
+        "tell them exactly which toggle in the Permissions (P) dropdown to enable — "
+        "don't claim the capability is broken or unavailable."
+    )
+
+    return "\n".join(lines).strip()
+
+
 def apply(agent_id: str, cap_id: str, enabled: bool) -> dict:
     """Atomically apply or remove all toolsets + presets for one capability.
 
