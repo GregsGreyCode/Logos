@@ -441,13 +441,22 @@ async def _handle_services_set_key(request: web.Request) -> web.Response:
         return web.json_response({"ok": False, "error": "env_var and value required"}, status=400)
     from gateway.services import set_credential, get_tool_integrations
     set_credential(env_var, value)
+    # Auto-apply the matching network preset(s) to every agent that has
+    # the corresponding toolset enabled. Without this, saving e.g.
+    # FIRECRAWL_API_KEY puts the key in the env but api.firecrawl.dev
+    # is still blocked by the sandbox egress policy, so web_search
+    # fails even though the tool looks configured.
+    presets_applied: list[str] = []
+    try:
+        from gateway import policies as gp
+        presets_applied = gp.auto_apply_presets_for_env(env_var)
+    except Exception as exc:
+        logger.warning("services_set_key: auto_apply_presets failed for %s: %s", env_var, exc)
     # Push the new credential to every running sandbox via instance-config
     # so the next chat already has it (sandbox_worker.py applies env from
-    # config at startup). Without this, saving e.g. BROWSERLESS_URL only
-    # affects the gateway's env — sandboxes wouldn't see the URL until a
-    # full destroy+respawn. Best-effort: failures log but don't tank the
-    # save, since the credential is already in the DB and the next sandbox
-    # spawn (or per-agent toolset toggle) will pick it up too.
+    # config at startup). Without this, saving a credential only affects
+    # the gateway's env — sandboxes wouldn't see it until a full
+    # destroy+respawn. Best-effort: failures log but don't tank the save.
     executor = request.app.get("executor")
     pushed = 0
     if executor and hasattr(executor, "refresh_all_instance_configs"):
@@ -459,6 +468,7 @@ async def _handle_services_set_key(request: web.Request) -> web.Response:
         "ok": True,
         "integrations": get_tool_integrations(),
         "sandboxes_refreshed": pushed,
+        "presets_applied": presets_applied,
     })
 
 
@@ -3006,10 +3016,14 @@ async def _handle_tools_configure(request: web.Request) -> web.Response:
     Body: {"credentials": {"FIRECRAWL_API_KEY": "fc-..."}}
 
     For each credential key:
-    1. Saves to ~/.hermes/.env via save_env_value()
-    2. Sets in os.environ for the running gateway process
-    3. Auto-applies the corresponding network preset to agents that
-       have the matching toolset enabled
+      1. Saves to ~/.hermes/.env via save_env_value() (legacy compat)
+      2. Saves to the services DB via set_credential() and injects into
+         the gateway's os.environ
+      3. Auto-applies the corresponding network preset to agents that
+         have the matching toolset enabled
+    After the loop: pushes the refreshed credentials to every running
+    sandbox via refresh_all_instance_configs so the next dispatch sees
+    them without requiring a sandbox rebuild.
     """
     try:
         body = await request.json()
@@ -3023,6 +3037,7 @@ async def _handle_tools_configure(request: web.Request) -> web.Response:
     saved = []
     errors = []
 
+    from gateway.services import set_credential
     for env_key, env_value in credentials.items():
         if not env_key or not isinstance(env_key, str) or not isinstance(env_value, str):
             errors.append({"key": env_key, "error": "invalid key or value"})
@@ -3032,7 +3047,8 @@ async def _handle_tools_configure(request: web.Request) -> web.Response:
             errors.append({"key": env_key, "error": "value cannot be empty"})
             continue
 
-        # 1. Save to ~/.hermes/.env
+        # 1. Save to ~/.hermes/.env (legacy compat for tools that still read
+        #    the dotenv file directly).
         try:
             from logos_cli.config import save_env_value
             save_env_value(env_key, env_value)
@@ -3040,10 +3056,16 @@ async def _handle_tools_configure(request: web.Request) -> web.Response:
             errors.append({"key": env_key, "error": f"failed to save: {exc}"})
             continue
 
-        # 2. Set in os.environ for the running process
-        os.environ[env_key] = env_value
+        # 2. Save to the services DB (platform_settings.credentials) and
+        #    inject into the gateway's os.environ. set_credential handles
+        #    both sides — this is what /api/services/keys uses.
+        try:
+            set_credential(env_key, env_value)
+        except Exception as exc:
+            logger.warning("tools/configure: set_credential failed for %s: %s", env_key, exc)
 
-        # 3. Auto-apply matching presets
+        # 3. Auto-apply matching presets so sandbox egress policy permits
+        #    the tool's upstream host.
         applied_presets = []
         try:
             from gateway import policies as gp
@@ -3056,9 +3078,22 @@ async def _handle_tools_configure(request: web.Request) -> web.Response:
             "presets_applied": applied_presets,
         })
 
+    # 4. Push updated credentials to every running sandbox so the next
+    #    chat turn already has them. Matches /api/services/keys behaviour.
+    #    Best-effort — failures log but don't tank the save, since the
+    #    credential is already in the DB.
+    executor = request.app.get("executor")
+    sandboxes_refreshed = 0
+    if saved and executor and hasattr(executor, "refresh_all_instance_configs"):
+        try:
+            sandboxes_refreshed = executor.refresh_all_instance_configs()
+        except Exception as exc:
+            logger.warning("tools/configure: refresh broadcast failed: %s", exc)
+
     return web.json_response({
         "saved": saved,
         "errors": errors,
+        "sandboxes_refreshed": sandboxes_refreshed,
     })
 
 
