@@ -69,7 +69,8 @@ Run it on your laptop, a homelab box, or a $5 VPS. During the first-run setup wi
 
 **Key boundaries:**
 
-- `gateway/` — the always-on process: HTTP server, Telegram adapter, auth, routing, web dashboard, MCP gateway, worker registry
+- `gateway/` — the always-on process: HTTP server, auth, routing, web dashboard, MCP gateway, worker registry
+- `gateway/channels/` — messaging adapters (Telegram, Discord, Slack, WhatsApp, Signal, Email, Home Assistant); one adapter instance spawns per agent credential row so inbound messages route directly to their owning agent
 - `agents/hermes/` — the Hermes runtime that runs *inside* sandbox workers
 - `tools/` — capabilities the agent can call; scoped per session and per policy level
 - `gateway/executors/` — the OpenShell executor (`openshell.py`), the only supported sandbox runtime
@@ -108,7 +109,7 @@ Test agentic combinations, then modify, extend, and break the platform and its a
 - **Runs agents** — Hermes is the current runtime. The runtime layer is pluggable; additional runtimes can register as alternative sandbox worker images.
 - **Records every run** — agent, model, soul, tool sequence, approvals, api call count, and outcome land in the `agent_runs` table; token and USD-cost totals are joined in from `cost_log`/`dispatches` at read time (`GET /api/runs/{id}` returns the unified "STAMP" view).
 - **Enforces policy** — workspace scoping (realpath-resolved), OpenShell egress policy, Landlock filesystem isolation, dangerous-command gate with regex + Tirith scan. (Dispatch-time ActionPolicy dimensions for write/exec/network/secret are not currently wired; see `gateway/auth/policy.py` for the live set.)
-- **Reaches you anywhere** — Telegram and a built-in web dashboard, all from a single gateway process
+- **Reaches you anywhere** — Telegram, Discord, Slack, WhatsApp, Signal, Email, plus a built-in web dashboard, all from a single gateway process. Each agent owns its own bot tokens (per-agent credentials) so multiple agents can run on the same platform simultaneously without fighting over one token.
 - **Web dashboard** — full chat UI at `http://localhost:8091`; real-time streaming, per-message stats, voice input, metrics, multiple named agents, world view with live agent sprites, live execution panel
 - **Persistent history** — searchable conversation history in SQLite with full-text search across all past conversations
 - **Voice input** — speak via Telegram or the dashboard; faster-whisper transcribes locally when the package is installed (falls back to Groq / OpenAI).
@@ -241,6 +242,11 @@ logos status          # confirm Process + Port 8091 are green
 # Optional — keep the gateway running after logout / reboot:
 logos gateway install                   # installs a systemd user unit
 sudo loginctl enable-linger $USER        # service survives logout
+
+# Keeping Logos current:
+logos gateway update --check            # is origin ahead of local HEAD?
+logos gateway update                    # ff-only git pull + restart
+# …or click the "⬆ update" pill in the dashboard when new commits land.
 ```
 
 <!-- screenshot: setup-wizard-landing — the /setup page as a new user first sees it -->
@@ -308,7 +314,7 @@ On first run, the setup wizard at `/setup` walks you through:
 3. **Benchmarking** — TTFT + tok/s + 6 capability evals (instruction following, 2-part reasoning, strict JSON, tool selection, nested JSON, multi-step reasoning), plus a 7-test hard tier (4 advanced static tests + 3 agent-loop tests) if a model passes ≥5/6 standard evals
 4. **Sandbox runtime** — OpenShell is the only supported runtime. The CLI setup also asks about a `terminal` backend (local / SSH / Daytona / Singularity) — that's where shell commands *executed by the agent's terminal tool* run, not where the agent itself is sandboxed.
 5. **Soul + first agent** — pick a starting persona; you can edit it later
-6. **Telegram (optional)** — connect a bot token if you want to chat from your phone
+6. **Messaging (optional)** — connect a Telegram / Discord / Slack / WhatsApp bot token to a specific agent so you can chat from your phone. Tokens live per-agent (different agents can own different bots) and can be added or rotated later from **Config → Messaging** without a gateway restart.
 
 Your configuration lives in `~/.logos/config.yaml` (Linux/macOS/WSL2). Per-user state and auth live in `~/.logos/auth.db`. Sessions and per-agent memory are under `~/.logos/sessions/` and `~/.logos/memories/`.
 
