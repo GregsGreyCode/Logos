@@ -343,7 +343,7 @@
               class="text-xs text-gray-400 hover:text-white transition-colors w-full text-left">Change password</button>
           </div>
           <div class="px-4 py-4 border-b border-gray-800" x-show="changePwOpen" x-cloak>
-            <div class="text-sm font-semibold text-gray-300 mb-3">Change password</div>
+            <div class="text-sm font-semibold text-white mb-3">Change password</div>
             <input x-model="changePwCurrent" type="password" placeholder="Current password"
               class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-600 mb-2 focus:outline-none focus:border-[var(--accent)]"/>
             <input x-model="changePwNew" type="password" placeholder="New password (min 8)"
@@ -365,7 +365,7 @@
           </div>
           <!-- Theme picker -->
           <div class="px-4 py-3 border-t border-gray-800">
-            <div class="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Theme</div>
+            <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Theme</div>
             <div class="grid grid-cols-2 gap-2">
               <template x-for="t in themes" :key="t.id">
                 <button class="th-card" :class="theme===t.id ? 'th-active' : ''"
@@ -1380,7 +1380,7 @@
       <!-- Right panel: Live Executions -->
       <div class="shrink-0 flex flex-col h-full transition-[width] duration-500 overflow-hidden" :class="liveExecCollapsed ? 'w-8 items-center' : 'w-60 items-center'">
         <div class="shrink-0 w-full flex items-center justify-between mb-3" :class="liveExecCollapsed ? 'flex-col gap-2' : ''">
-          <div x-show="!liveExecCollapsed" class="text-xs font-semibold text-gray-500 uppercase tracking-wider">Live Executions</div>
+          <div x-show="!liveExecCollapsed" class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Live Executions</div>
           <button @click="liveExecCollapsed=!liveExecCollapsed"
             class="text-gray-600 hover:text-gray-400 transition-colors"
             :title="liveExecCollapsed ? 'Expand Live Executions' : 'Collapse Live Executions'">
@@ -1461,7 +1461,7 @@
         <template x-if="(status.recent_sessions||[]).length > 0">
           <div class="mt-4 shrink-0" style="max-height:14rem;display:flex;flex-direction:column">
             <div class="flex items-center justify-between mb-2 shrink-0">
-              <div class="text-xs font-semibold text-gray-500 uppercase tracking-wider">Recent Activity</div>
+              <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Recent Activity</div>
               <button @click="activityModalOpen=true"
                 class="text-xs text-gray-600 hover:text-[var(--accent)] transition-colors">View all</button>
             </div>
@@ -4061,9 +4061,7 @@
           <button @click="sandboxPresetHelp = !sandboxPresetHelp" class="px-2 py-1 rounded border border-gray-700 text-gray-500 hover:text-white hover:border-gray-500 text-[10px]">
             <span x-text="sandboxPresetHelp ? 'Hide help' : 'What is this?'"></span>
           </button>
-          <button @click="loadSandboxPresets()" class="text-xs text-[var(--accent)] hover:opacity-80 flex items-center gap-1">
-            <span>&#8635;</span> Refresh
-          </button>
+          <button @click="loadSandboxPresets()" class="text-xs px-3 py-1.5 rounded-lg border border-gray-700 text-gray-400 hover:text-white transition-colors">Refresh</button>
         </div>
       </div>
 
@@ -4251,7 +4249,7 @@
             <option value="">All</option>
           </select>
           <button @click="loadApprovals()"
-            class="text-xs text-[var(--accent)] hover:opacity-80 flex items-center gap-1"><span>&#8635;</span> Refresh</button>
+            class="text-xs px-3 py-1.5 rounded-lg border border-gray-700 text-gray-400 hover:text-white transition-colors">Refresh</button>
         </div>
       </div>
       <div class="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
@@ -4350,9 +4348,7 @@
       <!-- Sandbox table -->
       <div class="flex items-center justify-between mb-3">
         <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Live Sandboxes</div>
-        <button @click="loadSandboxes()" class="text-xs text-[var(--accent)] hover:opacity-80 flex items-center gap-1">
-          <span>&#8635;</span> Refresh
-        </button>
+        <button @click="loadSandboxes()" class="text-xs px-3 py-1.5 rounded-lg border border-gray-700 text-gray-400 hover:text-white transition-colors">Refresh</button>
       </div>
 
       <div class="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden mb-5">
@@ -4480,9 +4476,7 @@
       <div class="flex items-center justify-between mb-3">
         <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Provisioned Routes</div>
         <div class="flex items-center gap-2">
-          <button @click="loadModelRoutes()" class="text-xs text-[var(--accent)] hover:opacity-80 flex items-center gap-1">
-            <span>&#8635;</span> Refresh
-          </button>
+          <button @click="loadModelRoutes()" class="text-xs px-3 py-1.5 rounded-lg border border-gray-700 text-gray-400 hover:text-white transition-colors">Refresh</button>
           <button @click="provisionModalOpen=true; provisionForm={provider:'lmstudio',model:'',set_as_default:false}; provisionError=null; loadAllMachineModels()"
             class="text-xs px-3 py-1.5 rounded bg-[var(--accent)] text-black font-medium hover:opacity-90">
             + Provision Model
@@ -4813,7 +4807,7 @@
           <!-- Still show trace if present -->
           <template x-if="routeDebugResult.trace && routeDebugResult.trace.length">
             <div class="bg-gray-900 border border-gray-800 rounded-xl p-4">
-              <div class="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">Trace</div>
+              <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">Trace</div>
               <div class="space-y-1.5">
                 <template x-for="(t, i) in routeDebugResult.trace" :key="i">
                   <div class="flex items-start gap-3 text-xs">
@@ -4856,7 +4850,7 @@
 
           <!-- Layer timeline -->
           <div class="bg-gray-900 border border-gray-800 rounded-xl p-4">
-            <div class="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">Decision Layers</div>
+            <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">Decision Layers</div>
             <div class="space-y-0">
               <template x-for="(t, i) in routeDebugResult.trace" :key="i">
                 <div class="flex items-start gap-3 py-2"
@@ -4897,7 +4891,7 @@
           <!-- Candidate machine checks (profile evaluation) -->
           <template x-if="routeDebugResult.fallback_chain && routeDebugResult.fallback_chain.length > 0">
             <div class="bg-gray-900 border border-gray-800 rounded-xl p-4">
-              <div class="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">Candidate Machines</div>
+              <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">Candidate Machines</div>
               <div class="space-y-2">
                 <template x-for="(c, i) in routeDebugResult.fallback_chain" :key="i">
                   <div class="flex items-center gap-3 text-xs rounded-lg px-3 py-2"
@@ -4958,9 +4952,7 @@
       <div class="text-[10px] font-semibold text-gray-500 uppercase tracking-[0.15em] border-b border-gray-800 pb-2 mb-3">Routing</div>
       <div class="flex items-center justify-between mb-4">
         <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Platforms &amp; Routing</div>
-        <button @click="loadPlatforms()" class="text-xs text-[var(--accent)] hover:opacity-80 flex items-center gap-1">
-          <span>&#8635;</span> Refresh
-        </button>
+        <button @click="loadPlatforms()" class="text-xs px-3 py-1.5 rounded-lg border border-gray-700 text-gray-400 hover:text-white transition-colors">Refresh</button>
       </div>
 
       <div class="text-xs text-gray-500 mb-4 max-w-2xl">
@@ -5322,7 +5314,7 @@
             <option value="merged">Merged</option>
             <option value="cancelled">Cancelled</option>
           </select>
-          <button @click="loadEvolutionProposals()" class="text-xs text-[var(--accent)] hover:opacity-80 flex items-center gap-1"><span>&#8635;</span> Refresh</button>
+          <button @click="loadEvolutionProposals()" class="text-xs px-3 py-1.5 rounded-lg border border-gray-700 text-gray-400 hover:text-white transition-colors">Refresh</button>
         </div>
       </div>
 
@@ -5509,7 +5501,7 @@
 
         <!-- Schedule section -->
         <div class="bg-gray-900 border border-gray-800 rounded-xl p-5 space-y-4">
-          <div class="text-xs font-semibold text-gray-300 uppercase tracking-wider">Schedule</div>
+          <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Schedule</div>
           <div class="flex items-center gap-3">
             <label class="text-xs text-gray-400 w-28 shrink-0">Enabled</label>
             <button @click="evoSettingsForm.enabled = !evoSettingsForm.enabled"
@@ -5542,7 +5534,7 @@
 
         <!-- Git section -->
         <div class="bg-gray-900 border border-gray-800 rounded-xl p-5 space-y-4">
-          <div class="text-xs font-semibold text-gray-300 uppercase tracking-wider">Git Integration</div>
+          <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Git Integration</div>
           <div class="text-xs text-gray-500">Fork the canonical Logos repo into your own GitHub account, then configure it here. The agent uses your fork as its source of truth — reading the latest code and opening PRs there when proposals are accepted.</div>
           <div class="flex items-center gap-3">
             <label class="text-xs text-gray-400 w-28 shrink-0">Fork remote URL</label>
@@ -5568,7 +5560,7 @@
 
         <!-- Frontier section -->
         <div class="bg-gray-900 border border-gray-800 rounded-xl p-5 space-y-4">
-          <div class="text-xs font-semibold text-gray-300 uppercase tracking-wider">Frontier Model</div>
+          <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Frontier Model</div>
           <div class="text-xs text-gray-500">Used when you request a frontier AI review of a proposal.</div>
           <div class="flex items-center gap-3">
             <label class="text-xs text-gray-400 w-28 shrink-0">Model</label>
