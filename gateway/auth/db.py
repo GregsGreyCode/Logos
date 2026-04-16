@@ -524,24 +524,32 @@ def _run_migrations() -> None:
         # v11: dispatch activity ledger (M8 Phase B). Durable record of
         # every task dispatch — who, what agent, which model, origin,
         # timing, token counts, and outcome. Feeds the Admin Activity tab.
+        # STAMP columns (soul, toolsets_snapshot, user_message,
+        # tool_sequence) turn each row into a full run record so the
+        # Runs tab can answer "what did this agent actually do" without
+        # a second lookup.
         conn.executescript("""
             CREATE TABLE IF NOT EXISTS dispatches (
-                id                TEXT PRIMARY KEY,
-                task_id           TEXT NOT NULL,
-                agent_id          TEXT,
-                sandbox_name      TEXT,
-                model             TEXT,
-                origin            TEXT NOT NULL DEFAULT 'user_chat',
-                origin_detail     TEXT,
-                session_id        TEXT,
-                user_id           TEXT,
-                prompt_tokens     INTEGER,
-                completion_tokens INTEGER,
-                elapsed_s         REAL,
-                status            TEXT NOT NULL DEFAULT 'running',
-                error             TEXT,
-                started_at        INTEGER NOT NULL,
-                ended_at          INTEGER
+                id                 TEXT PRIMARY KEY,
+                task_id            TEXT NOT NULL,
+                agent_id           TEXT,
+                sandbox_name       TEXT,
+                model              TEXT,
+                origin             TEXT NOT NULL DEFAULT 'user_chat',
+                origin_detail      TEXT,
+                session_id         TEXT,
+                user_id            TEXT,
+                prompt_tokens      INTEGER,
+                completion_tokens  INTEGER,
+                elapsed_s          REAL,
+                status             TEXT NOT NULL DEFAULT 'running',
+                error              TEXT,
+                started_at         INTEGER NOT NULL,
+                ended_at           INTEGER,
+                soul               TEXT,
+                toolsets_snapshot  TEXT,
+                user_message       TEXT,
+                tool_sequence      TEXT
             );
             CREATE INDEX IF NOT EXISTS idx_disp_agent   ON dispatches(agent_id);
             CREATE INDEX IF NOT EXISTS idx_disp_origin  ON dispatches(origin);
@@ -823,6 +831,33 @@ def _run_migrations() -> None:
         # SQLite can't alter a CHECK constraint in-place so we table-swap.
         _migrate_mcp_deploy_mode_v1(conn)
 
+        # v21: add STAMP columns to dispatches so each row is a full
+        # run record (soul, toolsets_snapshot, user_message,
+        # tool_sequence). Additive ALTERs, idempotent-by-checking.
+        _migrate_dispatches_stamp_v1(conn)
+
+
+def _migrate_dispatches_stamp_v1(conn) -> None:
+    """Add STAMP columns to the dispatches table if missing.
+
+    Each is a single ALTER TABLE ADD COLUMN — reversible by dropping
+    the columns if we ever roll back. Safe to run repeatedly: we probe
+    the current column set first and only ALTER the missing ones.
+    """
+    cols = {
+        row["name"] for row in conn.execute("PRAGMA table_info(dispatches)").fetchall()
+    }
+    adds = [
+        ("soul", "TEXT"),
+        ("toolsets_snapshot", "TEXT"),
+        ("user_message", "TEXT"),
+        ("tool_sequence", "TEXT"),
+    ]
+    for name, sqltype in adds:
+        if name in cols:
+            continue
+        conn.execute(f"ALTER TABLE dispatches ADD COLUMN {name} {sqltype}")
+
 
 def _migrate_mcp_deploy_mode_v1(conn) -> None:
     """Re-create mcp_servers with the new deploy_mode CHECK constraint.
@@ -1056,6 +1091,7 @@ def list_users(
     limit: int = 20,
     role: Optional[str] = None,
     status: Optional[str] = None,
+    q: Optional[str] = None,
 ) -> tuple[list[dict], int]:
     conditions, params = [], []
     if role:
@@ -1064,6 +1100,16 @@ def list_users(
     if status:
         conditions.append("status = ?")
         params.append(status)
+    if q:
+        # Match against the three fields an admin would scan: username,
+        # display_name, and email.
+        like = f"%{q}%"
+        conditions.append(
+            "(COALESCE(username,'') LIKE ? "
+            "OR COALESCE(display_name,'') LIKE ? "
+            "OR COALESCE(email,'') LIKE ?)"
+        )
+        params.extend([like, like, like])
     where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
     offset = (page - 1) * limit
     with _conn() as conn:
@@ -1181,6 +1227,7 @@ def list_audit_logs(
     limit: int = 50,
     user_id: Optional[str] = None,
     action: Optional[str] = None,
+    q: Optional[str] = None,
 ) -> tuple[list[dict], int]:
     conditions, params = [], []
     if user_id:
@@ -1189,6 +1236,15 @@ def list_audit_logs(
     if action:
         conditions.append("action = ?")
         params.append(action)
+    if q:
+        like = f"%{q}%"
+        conditions.append(
+            "(COALESCE(action,'') LIKE ? "
+            "OR COALESCE(target_type,'') LIKE ? "
+            "OR COALESCE(target_id,'') LIKE ? "
+            "OR COALESCE(ip_address,'') LIKE ?)"
+        )
+        params.extend([like, like, like, like])
     where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
     offset = (page - 1) * limit
     with _conn() as conn:
@@ -2575,6 +2631,7 @@ def list_agent_runs(
     session_id: Optional[str] = None,
     limit: int = 50,
     offset: int = 0,
+    q: Optional[str] = None,
 ) -> tuple[list[dict], int]:
     conditions: list[str] = []
     params: list = []
@@ -2587,6 +2644,19 @@ def list_agent_runs(
     if session_id:
         conditions.append("session_id=?")
         params.append(session_id)
+    if q:
+        # Free-text search across the fields a user is most likely to
+        # scan for: instance name, model, soul, session id, and the
+        # truncated user_message that's already stored on the row.
+        like = f"%{q}%"
+        conditions.append(
+            "(COALESCE(instance_name,'') LIKE ? "
+            "OR COALESCE(model,'') LIKE ? "
+            "OR COALESCE(soul,'') LIKE ? "
+            "OR COALESCE(session_id,'') LIKE ? "
+            "OR COALESCE(user_message,'') LIKE ?)"
+        )
+        params.extend([like, like, like, like, like])
     where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
     with _conn() as conn:
         total = conn.execute(
@@ -2877,19 +2947,33 @@ def create_dispatch(
     origin_detail: str = "",
     session_id: str = "",
     user_id: str = "",
+    soul: str = "",
+    toolsets_snapshot: str = "",
+    user_message: str = "",
 ) -> str:
-    """Insert a new dispatch record at the start of a task. Returns the id."""
+    """Insert a new dispatch record at the start of a task. Returns the id.
+
+    STAMP context (soul, toolsets_snapshot, user_message) is captured
+    at dispatch start so the Runs tab can show what the agent was
+    configured with and what it was asked — without a second lookup.
+    user_message is truncated to 2000 chars to keep the row bounded
+    for agents that receive large pasted prompts.
+    """
     import uuid
     dispatch_id = f"dsp_{uuid.uuid4().hex[:12]}"
     now_ms = int(time.time() * 1000)
+    if user_message and len(user_message) > 2000:
+        user_message = user_message[:2000]
     with _conn() as conn:
         conn.execute(
             """INSERT INTO dispatches
                (id, task_id, agent_id, sandbox_name, model, origin,
-                origin_detail, session_id, user_id, status, started_at)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+                origin_detail, session_id, user_id, status, started_at,
+                soul, toolsets_snapshot, user_message)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (dispatch_id, task_id, agent_id, sandbox_name, model, origin,
-             origin_detail, session_id, user_id, "running", now_ms),
+             origin_detail, session_id, user_id, "running", now_ms,
+             soul or None, toolsets_snapshot or None, user_message or None),
         )
     return dispatch_id
 
@@ -2901,17 +2985,23 @@ def complete_dispatch(
     prompt_tokens: int = None,
     completion_tokens: int = None,
     error: str = None,
+    tool_sequence: str = None,
 ) -> None:
-    """Update a dispatch record when the task finishes."""
+    """Update a dispatch record when the task finishes.
+
+    tool_sequence is a JSON-encoded list of tool names in call order,
+    accumulated by the stream-callback while the worker ran.
+    """
     now_ms = int(time.time() * 1000)
     with _conn() as conn:
         conn.execute(
             """UPDATE dispatches
                SET status=?, elapsed_s=?, prompt_tokens=?,
-                   completion_tokens=?, error=?, ended_at=?
+                   completion_tokens=?, error=?, ended_at=?,
+                   tool_sequence=COALESCE(?, tool_sequence)
                WHERE id=?""",
             (status, elapsed_s, prompt_tokens, completion_tokens, error,
-             now_ms, dispatch_id),
+             now_ms, tool_sequence, dispatch_id),
         )
 
 
@@ -2956,6 +3046,7 @@ def list_dispatches(
     session_id: str = None,
     limit: int = 50,
     offset: int = 0,
+    q: str = None,
 ) -> tuple:
     """Query the dispatch ledger. Returns (rows, total_count).
 
@@ -2978,6 +3069,17 @@ def list_dispatches(
     if session_id:
         where_parts.append("session_id = ?")
         params.append(session_id)
+    if q:
+        # LIKE-based free-text filter across the columns most users want
+        # to search on: agent id, sandbox name, model, session id, and
+        # the free-form origin_detail. Kept as a single OR-over-columns
+        # clause so the index on started_at still drives ordering.
+        like = f"%{q}%"
+        where_parts.append(
+            "(agent_id LIKE ? OR sandbox_name LIKE ? OR model LIKE ? "
+            "OR session_id LIKE ? OR COALESCE(origin_detail,'') LIKE ?)"
+        )
+        params.extend([like, like, like, like, like])
     where_clause = (" WHERE " + " AND ".join(where_parts)) if where_parts else ""
     with _conn() as conn:
         total = conn.execute(

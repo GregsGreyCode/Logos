@@ -645,18 +645,42 @@ async def handle_cloud_provider_models(request: web.Request) -> web.Response:
 async def handle_dispatches_list(request: web.Request) -> web.Response:
     """GET /admin/dispatches — query the dispatch activity ledger.
 
-    Query params: agent_id, origin, status, limit (max 200), offset.
+    Query params: agent_id, origin, status, q, limit (max 200), offset.
     """
     agent_id = request.rel_url.query.get("agent_id")
     origin = request.rel_url.query.get("origin")
     status = request.rel_url.query.get("status")
-    limit = min(int(request.rel_url.query.get("limit", 50)), 200)
-    offset = int(request.rel_url.query.get("offset", 0))
+    q = (request.rel_url.query.get("q") or "").strip() or None
+    try:
+        limit = min(int(request.rel_url.query.get("limit", 20)), 200)
+    except (TypeError, ValueError):
+        limit = 20
+    try:
+        offset = max(0, int(request.rel_url.query.get("offset", 0)))
+    except (TypeError, ValueError):
+        offset = 0
     rows, total = auth_db.list_dispatches(
-        agent_id=agent_id, origin=origin, status=status,
+        agent_id=agent_id, origin=origin, status=status, q=q,
         limit=limit, offset=offset,
     )
-    return web.json_response({"dispatches": rows, "total": total})
+    # Expand STAMP JSON columns so the UI doesn't have to parse twice.
+    # toolsets_snapshot is stored as a JSON list string; tool_sequence
+    # ditto. We hand back arrays (empty when missing or malformed).
+    import json as _json
+    for r in rows:
+        for field in ("toolsets_snapshot", "tool_sequence"):
+            raw = r.get(field)
+            if raw:
+                try:
+                    r[field] = _json.loads(raw)
+                except Exception:
+                    r[field] = []
+            else:
+                r[field] = []
+    return web.json_response({
+        "dispatches": rows, "total": total,
+        "limit": limit, "offset": offset,
+    })
 
 
 # ── Named agents ─────────────────────────────────────────────────────────────
@@ -846,6 +870,52 @@ async def handle_agents_post(request: web.Request) -> web.Response:
             agent["id"], _exc,
         )
 
+    # Duplicate-from: when the caller came through the "Duplicate" action
+    # on an existing agent, copy the source agent's persisted state
+    # (memories + sessions) into the new agent's dir. Logs are
+    # intentionally NOT copied — they're execution history of the source
+    # and would mislead future observability on the clone. The sandbox
+    # itself is always spawned fresh on first dispatch; copying the
+    # memories dir is what makes the duplicate start with the source's
+    # accumulated knowledge rather than a blank slate. Best-effort:
+    # failures here don't undo the agent creation (user can always
+    # delete + retry), but we surface them in the response.
+    duplicate_from_id = body.get("duplicate_from")
+    duplicate_result = None
+    if duplicate_from_id:
+        try:
+            import pathlib as _pathlib
+            import shutil as _shutil
+            src_agent = auth_db.get_agent(str(duplicate_from_id))
+            if not src_agent:
+                duplicate_result = {"ok": False, "error": "source_not_found"}
+            else:
+                src_name = src_agent.get("name") or ""
+                logos_home = _pathlib.Path(
+                    os.environ.get("LOGOS_HOME") or os.environ.get("HERMES_HOME")
+                    or str(_pathlib.Path.home() / ".logos")
+                )
+                src_dir = logos_home / "agents" / src_name
+                dst_dir = logos_home / "agents" / name
+                copied = []
+                for sub in ("memories", "sessions"):
+                    src_sub = src_dir / sub
+                    if src_sub.is_dir():
+                        dst_sub = dst_dir / sub
+                        dst_sub.mkdir(parents=True, exist_ok=True)
+                        for p in src_sub.iterdir():
+                            if p.is_file():
+                                _shutil.copy2(p, dst_sub / p.name)
+                        copied.append(sub)
+                duplicate_result = {"ok": True, "from": src_name, "copied": copied}
+                logger.info(
+                    "create_agent(%s): duplicated %s from %s",
+                    name, copied, src_name,
+                )
+        except Exception as _dexc:
+            logger.exception("create_agent(%s): duplicate copy failed", name)
+            duplicate_result = {"ok": False, "error": str(_dexc)[:200]}
+
     # If OpenShell runtime is active, spawn a sandbox for this agent.
     # `executor.spawn()` runs `openshell sandbox create` synchronously,
     # which can take >60s while the underlying k8s Sandbox CR provisions.
@@ -886,6 +956,8 @@ async def handle_agents_post(request: web.Request) -> web.Response:
     resp = dict(agent)
     if spawn_result:
         resp["spawn"] = spawn_result
+    if duplicate_result is not None:
+        resp["duplicate"] = duplicate_result
     return web.json_response(resp, status=201)
 
 
@@ -2192,3 +2264,331 @@ async def handle_agent_logs_get(request: web.Request) -> web.Response:
     except Exception as exc:
         logger.exception("handle_agent_logs_get failed for %s", name)
         return web.json_response({"error": "read_failed", "detail": str(exc)[:200]}, status=500)
+
+
+# ── Per-agent lifetime state ─────────────────────────────────────────────
+#
+# Three read-only endpoints that back the "🧠 Mind" modal on each agent
+# card. They expose what persists across sessions and makes a named agent
+# feel like a continuing entity: curated memories, past session
+# metadata, and rolled-up activity counters. Session transcripts are
+# intentionally NOT exposed here — listing is enough for v1, and a full
+# transcript viewer can be added later once we decide how to clamp big
+# ones (some agents have 2k-message histories).
+#
+# All three require admin/operator for the same reason logs do: memory
+# entries can contain user-private context, and the session metadata
+# reveals which chats the agent has had.
+
+
+def _resolve_agent_dir(agent_id: str):
+    """Look up an agent by id, return (name, host_dir, None) on success
+    or (None, None, err_response) on failure.
+
+    Shared preamble for the state handlers below — agents live under
+    ``~/.logos/agents/<name>/`` where ``<name>`` is the DB name (not
+    the id). Rejects ids that don't resolve to a real agent.
+    """
+    import pathlib as _pathlib
+    agent = auth_db.get_agent(agent_id)
+    if not agent:
+        return None, None, web.json_response({"error": "agent_not_found"}, status=404)
+    name = agent.get("name") or ""
+    if not name:
+        return None, None, web.json_response({"error": "agent_has_no_name"}, status=400)
+    logos_home = _pathlib.Path(
+        os.environ.get("LOGOS_HOME") or os.environ.get("HERMES_HOME")
+        or str(_pathlib.Path.home() / ".logos")
+    )
+    return name, logos_home / "agents" / name, None
+
+
+async def handle_agent_memories_get(request: web.Request) -> web.Response:
+    """GET /admin/agents/{id}/memories — curated memory entries.
+
+    Reads ``MEMORY.md`` and ``USER.md`` from
+    ``~/.logos/agents/<name>/memories/`` — the same directory the
+    executor uploads into each sandbox on spawn. Entries are separated
+    by the ``\\n§\\n`` delimiter the memory tool uses (see
+    ``tools/memory_tool.py``).
+
+    Response shape::
+
+        {
+          "agent": "Hermes",
+          "memory": {
+            "path": "/home/.../Hermes/memories/MEMORY.md",
+            "entries": ["fact one", "fact two", ...],
+            "size_bytes": 1234,
+            "mtime_iso": "2026-04-15T22:30:10",
+            "exists": true
+          },
+          "user": { ...same shape... }
+        }
+
+    ``exists: false`` with ``entries: []`` when a file hasn't been
+    written yet — expected for fresh agents and rendered by the UI as
+    "no memories yet" rather than an error.
+    """
+    user = request.get("current_user") or {}
+    if user.get("role", "") not in ("admin", "operator"):
+        return web.json_response({"error": "forbidden"}, status=403)
+
+    name, agent_dir, err = _resolve_agent_dir(request.match_info["id"])
+    if err is not None:
+        return err
+
+    import datetime as _dt
+    mem_dir = agent_dir / "memories"
+
+    def _read(path):
+        if not path.exists():
+            return {"path": str(path), "entries": [], "size_bytes": 0,
+                    "mtime_iso": None, "exists": False}
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+            # Entry delimiter matches tools/memory_tool.py ENTRY_DELIMITER.
+            entries = [e.strip() for e in text.split("\n§\n") if e.strip()]
+            st = path.stat()
+            return {
+                "path": str(path),
+                "entries": entries,
+                "size_bytes": st.st_size,
+                "mtime_iso": _dt.datetime.fromtimestamp(st.st_mtime).isoformat(timespec="seconds"),
+                "exists": True,
+            }
+        except Exception as exc:
+            return {"path": str(path), "entries": [], "size_bytes": 0,
+                    "mtime_iso": None, "exists": True, "error": str(exc)[:200]}
+
+    return web.json_response({
+        "agent": name,
+        "memory": _read(mem_dir / "MEMORY.md"),
+        "user":   _read(mem_dir / "USER.md"),
+    })
+
+
+async def handle_agent_sessions_get(request: web.Request) -> web.Response:
+    """GET /admin/agents/{id}/sessions?limit=N&offset=K — session list.
+
+    Returns metadata (not transcripts) for every
+    ``session_*.json`` under ``~/.logos/agents/<name>/sessions/``,
+    sorted newest-first by ``last_updated``. Paginated because an
+    active agent can accumulate hundreds of sessions over time.
+
+    Per-session shape::
+
+        {
+          "id": "20260414_222925_3e0d43",
+          "started": "2026-04-14T22:29:25.xxx",
+          "last_updated": "2026-04-14T22:30:01.xxx",
+          "model": "qwen3.5-9b",
+          "msg_count": 8,
+          "preview": "Hi!"   // first user message, truncated to 120 chars
+        }
+
+    Top-level wrapper carries ``total`` so the UI can render "showing
+    50 of 217" without a second call.
+    """
+    user = request.get("current_user") or {}
+    if user.get("role", "") not in ("admin", "operator"):
+        return web.json_response({"error": "forbidden"}, status=403)
+
+    name, agent_dir, err = _resolve_agent_dir(request.match_info["id"])
+    if err is not None:
+        return err
+
+    try:
+        limit = max(1, min(int(request.query.get("limit", "50")), 500))
+    except (TypeError, ValueError):
+        limit = 50
+    try:
+        offset = max(0, int(request.query.get("offset", "0")))
+    except (TypeError, ValueError):
+        offset = 0
+
+    sess_dir = agent_dir / "sessions"
+    if not sess_dir.is_dir():
+        return web.json_response({
+            "agent": name, "sessions": [], "total": 0,
+            "offset": offset, "limit": limit, "exists": False,
+        })
+
+    # Sort by mtime desc for newest-first without opening each file.
+    # A follow-up pass reads the JSON for the slice we're returning to
+    # pull out model + msg_count + preview. Opening the whole directory
+    # would be wasteful for agents with thousands of sessions.
+    import json as _json
+    try:
+        files = sorted(
+            sess_dir.glob("session_*.json"),
+            key=lambda p: p.stat().st_mtime,
+            reverse=True,
+        )
+    except OSError as exc:
+        return web.json_response({"error": "list_failed", "detail": str(exc)[:200]}, status=500)
+
+    total = len(files)
+    page = files[offset:offset + limit]
+    sessions = []
+    for p in page:
+        item = {"id": p.stem.replace("session_", ""), "file": p.name}
+        try:
+            data = _json.loads(p.read_text(encoding="utf-8", errors="replace"))
+            item["started"] = data.get("session_start")
+            item["last_updated"] = data.get("last_updated")
+            item["model"] = data.get("model")
+            msgs = data.get("messages") or []
+            item["msg_count"] = len(msgs)
+            # Preview = first non-system message content, truncated.
+            # System prompts are noise in a list view; the model identity
+            # is already its own field.
+            first_user = next(
+                (m for m in msgs if (m.get("role") or m.get("from")) not in (None, "system")),
+                None,
+            )
+            if first_user:
+                c = first_user.get("content") or ""
+                if isinstance(c, list):
+                    c = " ".join(str(x.get("text", x)) for x in c if x)
+                c = str(c).strip().replace("\n", " ")
+                item["preview"] = c[:120] + ("…" if len(c) > 120 else "")
+            else:
+                item["preview"] = ""
+        except Exception as exc:
+            item["error"] = str(exc)[:160]
+        sessions.append(item)
+
+    return web.json_response({
+        "agent": name,
+        "sessions": sessions,
+        "total": total,
+        "offset": offset,
+        "limit": limit,
+        "exists": True,
+    })
+
+
+async def handle_agent_activity_get(request: web.Request) -> web.Response:
+    """GET /admin/agents/{id}/activity — roll-up stats for the Mind-modal Overview tab.
+
+    Aggregates ``dispatches`` + ``cost_log`` into a single per-agent
+    summary: total dispatches, dispatches in the last 24h, cumulative
+    tokens, estimated cost, last-seen timestamp, and the most-used
+    model over the agent's lifetime. Single SQL round-trip — cheap
+    enough for the modal to call every time it opens.
+    """
+    user = request.get("current_user") or {}
+    if user.get("role", "") not in ("admin", "operator"):
+        return web.json_response({"error": "forbidden"}, status=403)
+
+    name, agent_dir, err = _resolve_agent_dir(request.match_info["id"])
+    if err is not None:
+        return err
+    aid = request.match_info["id"]
+
+    import datetime as _dt
+    cutoff_24h = (_dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(hours=24)).timestamp()
+
+    try:
+        iso24 = _dt.datetime.fromtimestamp(cutoff_24h, _dt.timezone.utc).isoformat()
+        with auth_db._conn() as conn:
+            cur = conn.cursor()
+            total = cur.execute(
+                "SELECT COUNT(*) FROM dispatches WHERE agent_id = ?", (aid,)
+            ).fetchone()[0]
+            last24 = cur.execute(
+                "SELECT COUNT(*) FROM dispatches WHERE agent_id = ? AND started_at >= ?",
+                (aid, iso24),
+            ).fetchone()[0]
+            last_seen = cur.execute(
+                "SELECT MAX(started_at) FROM dispatches WHERE agent_id = ?", (aid,)
+            ).fetchone()[0]
+            top_row = cur.execute(
+                "SELECT model, COUNT(*) AS n FROM dispatches WHERE agent_id = ? "
+                "GROUP BY model ORDER BY n DESC LIMIT 1",
+                (aid,),
+            ).fetchone()
+            top_model = top_row["model"] if top_row else None
+            cost_row = cur.execute(
+                "SELECT COALESCE(SUM(input_tokens),0) AS in_tok, "
+                "       COALESCE(SUM(output_tokens),0) AS out_tok, "
+                "       COUNT(*) AS n "
+                "FROM cost_log WHERE agent_id = ?",
+                (aid,),
+            ).fetchone()
+            in_tok, out_tok, cost_n = cost_row["in_tok"], cost_row["out_tok"], cost_row["n"]
+    except Exception as exc:
+        logger.exception("handle_agent_activity_get failed for %s", name)
+        return web.json_response({"error": "query_failed", "detail": str(exc)[:200]}, status=500)
+
+    return web.json_response({
+        "agent": name,
+        "dispatches_total": total,
+        "dispatches_last_24h": last24,
+        "last_seen": last_seen,
+        "top_model": top_model,
+        "input_tokens_total": in_tok,
+        "output_tokens_total": out_tok,
+        "cost_log_rows": cost_n,
+    })
+
+
+async def handle_agent_files_get(request: web.Request) -> web.Response:
+    """GET /admin/agents/{id}/files — flat listing of the agent's on-disk directory.
+
+    Walks ``~/.logos/agents/<name>/`` and returns every file with a
+    relative path, size, and mtime. No content — that would turn into
+    a DoS vector on a multi-gig log file. The UI renders this as a
+    sortable table so the user can eyeball "what's backed up for this
+    agent" at a glance.
+
+    Skips anything larger than 100MB from the listing (lets us cap the
+    response size even if the agent hoards huge files).
+    """
+    user = request.get("current_user") or {}
+    if user.get("role", "") not in ("admin", "operator"):
+        return web.json_response({"error": "forbidden"}, status=403)
+
+    name, agent_dir, err = _resolve_agent_dir(request.match_info["id"])
+    if err is not None:
+        return err
+
+    if not agent_dir.is_dir():
+        return web.json_response({
+            "agent": name, "root": str(agent_dir), "files": [], "exists": False,
+        })
+
+    import datetime as _dt
+    MAX_ENTRIES = 5000
+    files = []
+    try:
+        for p in agent_dir.rglob("*"):
+            if len(files) >= MAX_ENTRIES:
+                break
+            if not p.is_file():
+                continue
+            try:
+                st = p.stat()
+            except OSError:
+                continue
+            files.append({
+                "rel_path": str(p.relative_to(agent_dir)),
+                "size_bytes": st.st_size,
+                "mtime_iso": _dt.datetime.fromtimestamp(st.st_mtime).isoformat(timespec="seconds"),
+            })
+    except Exception as exc:
+        logger.exception("handle_agent_files_get failed for %s", name)
+        return web.json_response({"error": "walk_failed", "detail": str(exc)[:200]}, status=500)
+
+    # Newest first — the surfaced files should match what the agent
+    # has recently touched, not the alphabetical top of the tree.
+    files.sort(key=lambda f: f["mtime_iso"] or "", reverse=True)
+
+    return web.json_response({
+        "agent": name,
+        "root": str(agent_dir),
+        "files": files,
+        "truncated": len(files) >= MAX_ENTRIES,
+        "exists": True,
+    })

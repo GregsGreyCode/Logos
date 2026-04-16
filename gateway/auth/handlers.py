@@ -228,11 +228,20 @@ async def handle_users_me_patch(request: web.Request) -> web.Response:
 
 
 async def handle_users_list(request: web.Request) -> web.Response:
-    page   = int(request.rel_url.query.get("page", 1))
-    limit  = min(int(request.rel_url.query.get("limit", 20)), 100)
+    try:
+        page = max(1, int(request.rel_url.query.get("page", 1)))
+    except (TypeError, ValueError):
+        page = 1
+    try:
+        limit = min(max(1, int(request.rel_url.query.get("limit", 20))), 100)
+    except (TypeError, ValueError):
+        limit = 20
     role   = request.rel_url.query.get("role") or None
     status = request.rel_url.query.get("status") or None
-    users, total = auth_db.list_users(page=page, limit=limit, role=role, status=status)
+    q      = (request.rel_url.query.get("q") or "").strip() or None
+    users, total = auth_db.list_users(
+        page=page, limit=limit, role=role, status=status, q=q,
+    )
     return web.json_response({
         "users": [_user_public(u) for u in users],
         "total": total,
@@ -309,9 +318,18 @@ async def handle_users_patch(request: web.Request) -> web.Response:
 
 
 async def handle_audit_logs(request: web.Request) -> web.Response:
-    page    = int(request.rel_url.query.get("page", 1))
-    limit   = min(int(request.rel_url.query.get("limit", 50)), 200)
+    try:
+        page = max(1, int(request.rel_url.query.get("page", 1)))
+    except (TypeError, ValueError):
+        page = 1
+    try:
+        limit = min(max(1, int(request.rel_url.query.get("limit", 25))), 200)
+    except (TypeError, ValueError):
+        limit = 25
     user_id = request.rel_url.query.get("user_id") or None
     action  = request.rel_url.query.get("action") or None
-    logs, total = auth_db.list_audit_logs(page=page, limit=limit, user_id=user_id, action=action)
+    q       = (request.rel_url.query.get("q") or "").strip() or None
+    logs, total = auth_db.list_audit_logs(
+        page=page, limit=limit, user_id=user_id, action=action, q=q,
+    )
     return web.json_response({"logs": logs, "total": total, "page": page, "limit": limit})

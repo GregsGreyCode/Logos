@@ -278,7 +278,7 @@
       :class="tab==='compare'?'tab-active':'text-gray-400 hover:text-white'"
       data-testid="nav-compare"
       @click="tab='compare'; if(!namedAgents.length) loadNamedAgents()">Compare</button>
-    <template x-if="can('manage_machines') || can('view_evolution') || can('manage_workflows') || can('view_workflows')">
+    <template x-if="can('manage_machines') || can('view_evolution')">
       <button class="pb-2 text-sm font-medium border-b-2 border-transparent"
         :class="tab==='infra'?'tab-active':'text-gray-400 hover:text-white'"
         data-testid="nav-settings"
@@ -295,7 +295,7 @@
         </template>
       </button>
     </template>
-    <template x-if="can('manage_users') || can('view_audit_logs') || can('manage_action_policies')">
+    <template x-if="can('manage_users') || can('view_audit_logs')">
       <button class="pb-2 text-sm font-medium border-b-2 border-transparent"
         :class="tab==='admin'?'tab-active':'text-gray-400 hover:text-white'"
         data-testid="nav-admin"
@@ -343,7 +343,7 @@
               class="text-xs text-gray-400 hover:text-white transition-colors w-full text-left">Change password</button>
           </div>
           <div class="px-4 py-4 border-b border-gray-800" x-show="changePwOpen" x-cloak>
-            <div class="text-sm font-semibold text-gray-300 mb-3">Change password</div>
+            <div class="text-sm font-semibold text-white mb-3">Change password</div>
             <input x-model="changePwCurrent" type="password" placeholder="Current password"
               class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-600 mb-2 focus:outline-none focus:border-[var(--accent)]"/>
             <input x-model="changePwNew" type="password" placeholder="New password (min 8)"
@@ -365,7 +365,7 @@
           </div>
           <!-- Theme picker -->
           <div class="px-4 py-3 border-t border-gray-800">
-            <div class="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Theme</div>
+            <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Theme</div>
             <div class="grid grid-cols-2 gap-2">
               <template x-for="t in themes" :key="t.id">
                 <button class="th-card" :class="theme===t.id ? 'th-active' : ''"
@@ -566,6 +566,10 @@
                 :class="activeTaskId ? '' : 'ml-auto'"
                 x-show="activeChatId && chats.find(c => c.id === activeChatId)?.agent_id"
                 title="View this agent's runtime log tail — tool calls, thinking, errors">📋 Logs</button>
+              <button class="text-[10px] px-2 py-0.5 rounded border border-gray-700 text-gray-400 hover:text-indigo-300 hover:border-indigo-500 transition-colors"
+                @click="(() => { const chat = chats.find(c => c.id === activeChatId); if (chat && chat.agent_id) { openAgentMind({id: chat.agent_id, name: chat.agent_name}); } })()"
+                x-show="activeChatId && chats.find(c => c.id === activeChatId)?.agent_id"
+                title="What this agent knows — memories, past sessions, files on disk">🧠 Mind</button>
               <span class="text-[10px] text-gray-700 font-mono"
                 x-text="activeChatId ? '#' + activeChatId.slice(-6) : ''"></span>
             </div>
@@ -869,15 +873,6 @@
                   <!-- No agent -->
                   <div x-show="!activeAgent" class="px-3 py-3 text-[11px] text-gray-600">
                     No agent bound to this chat. Select or create one to edit its permissions.
-                  </div>
-
-                  <!-- Action policy summary (read-only header) -->
-                  <div x-show="activeAgent" class="px-3 pt-2 pb-2 border-b border-gray-800">
-                    <div class="flex items-center gap-2 text-[11px]">
-                      <span class="text-[9px] text-gray-600 uppercase tracking-wider">Action policy</span>
-                      <span class="font-mono text-gray-300" x-text="activeInstance.action_policy || 'default'"></span>
-                      <span class="text-gray-600 text-[10px] ml-auto">change in Admin → Security</span>
-                    </div>
                   </div>
 
                   <!-- Capabilities — primary toggle list. Lazy-loaded on
@@ -1259,18 +1254,12 @@
             </div>
           </template>
 
-          <!-- Active tool bar -->
-          <template x-if="chatLoading && webSession">
-            <div class="mx-4 mb-2 px-3 py-1.5 rounded-lg bg-gray-800 border border-gray-700 flex items-center gap-2 text-xs shrink-0">
-              <span class="animate-spin text-indigo-400">&#9881;</span>
-              <span class="font-mono text-gray-300" x-text="webSession.current_tool"></span>
-              <span class="text-gray-600" x-text="'(' + elapsed(webSession.tool_started_at) + 's)'"></span>
-              <span class="ml-auto px-1.5 py-0.5 rounded text-xs font-medium"
-                :class="webSession.stuck ? 's-stuck' : elapsed(webSession.tool_started_at) > 180 ? 's-slow' : 's-run'"
-                x-text="webSession.stuck ? '\\uD83D\\uDD34 stuck' : elapsed(webSession.tool_started_at) > 180 ? '\\u26A0\\uFE0F slow' : '\\u2705 running'">
-              </span>
-            </div>
-          </template>
+          <!-- Active tool bar removed from the chat input area — it was
+               covering the Message <Agent>… placeholder text while the
+               agent thought. Tool progress is still visible in the Live
+               Executions panel on the right, and the kawaii ASCII
+               indicator above shows that the agent is working. -->
+
 
           <!-- Stats row -->
           <div class="px-4 py-2 border-t border-gray-800/60 flex items-center gap-3 text-xs text-gray-600 shrink-0 flex-wrap">
@@ -1337,26 +1326,8 @@
                   :class="chatRenderMode==='mono'?'active':''">01 — Mono</button>
               </div>
             </div>
-            <!-- Attach button -->
-            <input type="file" multiple x-ref="fileInput" class="hidden"
-              accept="image/*,text/*,application/pdf,application/json,.py,.js,.ts,.tsx,.jsx,.rs,.go,.java,.c,.cpp,.h,.rb,.sh,.yaml,.yml,.toml,.xml,.html,.css,.csv,.log,.md,.docx,.xlsx,.pptx"
-              @change="handleFileSelect($event)">
-            <button @click="$refs.fileInput.click()"
-              class="self-end flex items-center px-2.5 rounded-lg border text-sm transition-colors"
-              style="height:38px;"
-              :class="chatAttachments.length
-                ? 'border-indigo-600 bg-indigo-950 text-indigo-300'
-                : 'border-gray-700 bg-gray-800 text-gray-500 hover:text-gray-300 hover:border-gray-600'"
-              title="Attach files (images, code, documents)">
-              <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"/>
-              </svg>
-            </button>
-            <!-- Text input + drag-drop -->
-            <div class="relative flex-1 self-end"
-              @dragover.prevent="chatDragOver=true"
-              @dragleave.prevent="chatDragOver=false"
-              @drop.prevent="handleChatDrop($event)">
+            <!-- Text input -->
+            <div class="relative flex-1 self-end">
               <textarea x-model="chatInput"
                 @keydown.enter="if(!$event.shiftKey){ $event.preventDefault(); sendChat(); }"
                 @input="autoResizeChat($el)"
@@ -1364,32 +1335,10 @@
                 autocomplete="off"
                 data-testid="chat-input" rows="1"
                 class="block w-full bg-gray-800 border border-gray-700 rounded-lg px-4 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-indigo-500 transition-colors resize-none disabled:opacity-50 disabled:cursor-not-allowed"
-                :class="chatDragOver ? 'border-indigo-400 bg-indigo-950/30' : ''"
                 style="height:38px;min-height:38px;max-height:7rem;line-height:20px;overflow-y:hidden;padding-top:8px;padding-bottom:8px;vertical-align:bottom;"
                 :placeholder="!canSendChat ? 'Create an agent to start chatting\u2026' : (micRecording ? ('Recording… ' + micCountdown + 's') : micTranscribing ? 'Transcribing…' : (activeInstance.source === 'named' && !(activeInstance.worker_connected && activeInstance.worker_healthy) ? 'Message ' + (activeChat?.agent_name || activeInstance.name || 'agent') + ' (sandbox will spawn on send)\u2026' : 'Message ' + (activeChat?.agent_name || activeInstance.name || 'agent') + '\u2026 (Enter · Shift+Enter for newline)'))"
                 :disabled="micTranscribing || !canSendChat"
                 :readonly="!chatInputReady"></textarea>
-              <!-- Drag-drop overlay hint -->
-              <template x-if="chatDragOver">
-                <div class="absolute inset-0 flex items-center justify-center rounded-lg pointer-events-none text-xs text-indigo-300 font-medium">Drop files to attach</div>
-              </template>
-              <!-- Attached files preview strip -->
-              <template x-if="chatAttachments.length > 0">
-                <div class="absolute bottom-1.5 left-2 right-2 flex items-center gap-1.5 overflow-x-auto">
-                  <template x-for="(att, idx) in chatAttachments" :key="idx">
-                    <div class="flex items-center gap-1 bg-gray-900 border border-gray-700 rounded px-2 py-0.5 text-xs text-gray-300 shrink-0">
-                      <template x-if="att.type.startsWith('image/')">
-                        <img :src="att.data" class="h-5 w-5 rounded object-cover">
-                      </template>
-                      <template x-if="!att.type.startsWith('image/')">
-                        <svg class="w-3.5 h-3.5 text-gray-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
-                      </template>
-                      <span x-text="att.name.length > 18 ? att.name.slice(0,15) + '\u2026' : att.name"></span>
-                      <button @click.stop="chatAttachments.splice(idx, 1)" class="ml-0.5 text-gray-500 hover:text-red-400">&times;</button>
-                    </div>
-                  </template>
-                </div>
-              </template>
               <!-- Success flash inside input -->
               <template x-if="micSuccess">
                 <span class="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-green-400 pointer-events-none">✓ captured</span>
@@ -1430,7 +1379,7 @@
       <!-- Right panel: Live Executions -->
       <div class="shrink-0 flex flex-col h-full transition-[width] duration-500 overflow-hidden" :class="liveExecCollapsed ? 'w-8 items-center' : 'w-60 items-center'">
         <div class="shrink-0 w-full flex items-center justify-between mb-3" :class="liveExecCollapsed ? 'flex-col gap-2' : ''">
-          <div x-show="!liveExecCollapsed" class="text-xs font-semibold text-gray-500 uppercase tracking-wider">Live Executions</div>
+          <div x-show="!liveExecCollapsed" class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Live Executions</div>
           <button @click="liveExecCollapsed=!liveExecCollapsed"
             class="text-gray-600 hover:text-gray-400 transition-colors"
             :title="liveExecCollapsed ? 'Expand Live Executions' : 'Collapse Live Executions'">
@@ -1511,7 +1460,7 @@
         <template x-if="(status.recent_sessions||[]).length > 0">
           <div class="mt-4 shrink-0" style="max-height:14rem;display:flex;flex-direction:column">
             <div class="flex items-center justify-between mb-2 shrink-0">
-              <div class="text-xs font-semibold text-gray-500 uppercase tracking-wider">Recent Activity</div>
+              <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Recent Activity</div>
               <button @click="activityModalOpen=true"
                 class="text-xs text-gray-600 hover:text-[var(--accent)] transition-colors">View all</button>
             </div>
@@ -1700,12 +1649,6 @@
                           :title="'Model: ' + (pane.model || 'auto')">
                       <span class="font-bold">M</span>
                       <span class="truncate" x-text="pane.model || 'auto'"></span>
-                    </span>
-                    <!-- P: Policy -->
-                    <span class="text-[10px] px-1.5 py-0.5 rounded font-mono bg-emerald-950 text-emerald-400 border border-emerald-900 flex items-center gap-1"
-                          :title="'Action policy: ' + (pane.action_policy || 'default')">
-                      <span class="font-bold text-emerald-600">P</span>
-                      <span x-text="pane.action_policy || 'default'"></span>
                     </span>
                   </div>
                 </div>
@@ -1905,11 +1848,6 @@
           :class="infraTab==='messaging' ? 'tab-active' : 'text-gray-500 hover:text-white'"
           @click="infraTab='messaging'; localStorage.setItem('logos_infra_tab','messaging'); loadMessagingChannels(); loadPlatforms()">Messaging</button>
       </template>
-      <template x-if="can('manage_workflows') || can('view_workflows')">
-        <button class="pb-2 text-sm font-medium border-b-2 border-transparent"
-          :class="infraTab==='workflows' ? 'tab-active' : 'text-gray-500 hover:text-white'"
-          @click="infraTab='workflows'; localStorage.setItem('logos_infra_tab','workflows'); loadWorkflows()">Workflows</button>
-      </template>
     </div>
 
     <!-- ── Inference sub-tab ── -->
@@ -1917,10 +1855,10 @@
 
     <!-- ── Cloud Providers section ── -->
     <div x-show="can('manage_machines')" class="mb-8">
-      <div class="flex items-center justify-between mb-3">
-        <h3 class="text-sm font-semibold text-gray-300">Cloud Providers</h3>
+      <div class="flex items-center justify-between mb-4">
+        <div class="text-sm font-semibold text-white">Cloud Providers</div>
         <button @click="cloudProviderFormOpen = !cloudProviderFormOpen; cloudProviderMsg = null"
-          class="text-[10px] px-2 py-1 rounded border border-gray-700 text-gray-400 hover:text-white hover:border-gray-500 transition-colors">
+          class="text-xs px-3 py-1.5 rounded-lg border border-gray-700 text-gray-400 hover:text-white transition-colors">
           <span x-text="cloudProviderFormOpen ? 'Cancel' : '+ Add Provider'"></span>
         </button>
       </div>
@@ -1968,58 +1906,78 @@
         </button>
       </div>
 
-      <!-- Provider list -->
-      <div class="space-y-2">
+      <!-- Provider list — card shape + button sizing mirrors Local Servers below -->
+      <div class="grid grid-cols-1 gap-3">
         <template x-for="p in cloudProviders" :key="p.id">
-          <div class="p-3 rounded-xl border transition-colors"
-            :class="p.is_active ? 'border-indigo-500/50 bg-indigo-950/10' : 'border-gray-800 bg-gray-900'">
-            <!-- Header row -->
-            <div class="flex items-center justify-between mb-1">
-              <div class="flex items-center gap-2">
-                <span class="text-xs font-semibold" :class="p.is_active ? 'text-white' : 'text-gray-300'" x-text="p.name"></span>
-                <span class="text-[9px] px-1.5 py-0.5 rounded-full font-medium"
-                  :class="p.is_active ? 'bg-green-900 text-green-400 border border-green-700' : 'bg-gray-800 text-gray-500 border border-gray-700'"
-                  x-text="p.is_active ? 'Active' : 'Inactive'"></span>
-                <span class="text-[10px] text-gray-600 font-mono" x-text="p.provider"></span>
+          <div class="bg-gray-900 border rounded-xl overflow-hidden transition-colors"
+            :class="p.is_active ? 'border-indigo-500/50' : 'border-gray-800'">
+            <!-- Card header row -->
+            <div class="flex items-center gap-3 px-4 py-3">
+              <!-- Status dot: green when active, grey otherwise -->
+              <div class="w-2 h-2 rounded-full shrink-0 transition-colors"
+                   :class="p.is_active ? 'bg-green-500' : 'bg-gray-600'"></div>
+
+              <!-- Name + meta -->
+              <div class="flex-1 min-w-0">
+                <div class="flex items-center gap-2 flex-wrap">
+                  <span class="font-medium text-white text-sm" x-text="p.name"></span>
+                  <span class="text-xs px-1.5 py-0.5 rounded"
+                    :class="p.is_active ? 'bg-green-950 text-green-500' : 'bg-gray-800 text-gray-500'"
+                    x-text="p.is_active ? 'active' : 'inactive'"></span>
+                  <span class="text-xs text-gray-600 font-mono" x-text="p.provider"></span>
+                </div>
+                <!-- Info row: key state + default model + last test result -->
+                <div class="flex items-center gap-3 mt-0.5 text-xs text-gray-600">
+                  <span x-text="p.has_api_key ? '\uD83D\uDD11 Key set' : '\u26a0 No key'"></span>
+                  <span x-show="p.active_model" class="font-mono text-gray-500" x-text="p.active_model"></span>
+                  <span x-show="p._testResult?.ok" class="text-green-500">\u2713 Connected (<span x-text="p._testResult?.models"></span> models)</span>
+                  <span x-show="p._testResult && !p._testResult?.ok" class="text-red-400" x-text="p._testResult?.error"></span>
+                </div>
               </div>
-              <div class="flex items-center gap-1.5">
+
+              <!-- Action buttons — matches Local Servers: text-xs px-2 py-1 rounded border -->
+              <div class="flex gap-1.5 items-center shrink-0">
                 <button @click="testCloudProvider(p.id)" :disabled="p._testing"
-                  class="text-[10px] px-2 py-0.5 rounded border border-gray-700 text-gray-500 hover:text-white hover:border-gray-500 disabled:opacity-40 transition-colors"
-                  x-text="p._testing ? 'Testing...' : 'Test'"></button>
+                  class="text-xs px-2 py-1 rounded border border-gray-700 text-gray-500 hover:text-white transition-colors disabled:opacity-40"
+                  x-text="p._testing ? 'Testing…' : 'Test'"></button>
                 <button x-show="!p.is_active" @click="activateCloudProvider(p.id)"
-                  class="text-[10px] px-2 py-0.5 rounded border border-indigo-700 text-indigo-400 hover:text-white hover:border-indigo-500 transition-colors">Activate</button>
+                  class="text-xs px-2 py-1 rounded border border-indigo-700 text-indigo-400 hover:text-white hover:border-indigo-500 transition-colors">Activate</button>
                 <button x-show="!p._editing" @click="p._editing = true; p._edit = { name: p.name, api_key: '', base_url: p.base_url || '', active_model: p.active_model || '' }; loadCloudProviderModels(p.provider)"
-                  class="text-[10px] px-2 py-0.5 rounded border border-gray-700 text-gray-500 hover:text-white hover:border-gray-500 transition-colors">Edit</button>
+                  class="text-xs px-2 py-1 rounded border border-gray-700 text-gray-500 hover:text-white transition-colors">Edit</button>
                 <button @click="deleteCloudProvider(p.id, p.is_active, p.name)"
                   :title="p.is_active ? 'Delete this provider (it is currently active; any bound routes will also be destroyed)' : 'Delete this provider'"
-                  class="text-[10px] px-2 py-0.5 rounded border border-red-900 text-red-500 hover:text-red-400 hover:border-red-700 transition-colors">Delete</button>
+                  class="text-xs px-2 py-1 rounded border border-red-900 text-red-600 hover:text-red-400 transition-colors">Delete</button>
               </div>
             </div>
-            <!-- Info row -->
-            <div class="flex items-center gap-3 text-[10px] text-gray-500">
-              <span x-text="p.has_api_key ? '\uD83D\uDD11 Key set' : '\u26a0 No key'"></span>
-              <span x-show="p.active_model" class="font-mono" x-text="p.active_model"></span>
-              <span x-show="p._testResult?.ok" class="text-green-500">\u2713 Connected (<span x-text="p._testResult?.models"></span> models)</span>
-              <span x-show="p._testResult && !p._testResult?.ok" class="text-red-400" x-text="p._testResult?.error"></span>
-            </div>
-            <!-- Inline edit form -->
-            <div x-show="p._editing" x-cloak class="mt-3 space-y-2 pt-3 border-t border-gray-800">
-              <input x-model="p._edit.name" type="text" placeholder="Display name"
-                class="w-full px-2 py-1.5 rounded-lg bg-gray-800 border border-gray-700 text-xs text-white focus:outline-none focus:border-indigo-500">
-              <input x-model="p._edit.api_key" type="password" placeholder="New API key (leave blank to keep current)"
-                class="w-full px-2 py-1.5 rounded-lg bg-gray-800 border border-gray-700 text-xs text-white placeholder-gray-600 focus:outline-none focus:border-indigo-500">
-              <input x-show="p.provider === 'custom'" x-model="p._edit.base_url" type="text" placeholder="Base URL"
-                class="w-full px-2 py-1.5 rounded-lg bg-gray-800 border border-gray-700 text-xs text-white placeholder-gray-600 focus:outline-none focus:border-indigo-500">
-
+            <!-- Inline edit form — matches the Local Servers edit panel:
+                 same border-t separator, bg-gray-950 body, and input sizing
+                 so both kinds of card feel like the same component. -->
+            <div x-show="p._editing" x-cloak class="border-t border-gray-800 px-4 py-3 bg-gray-950 space-y-2">
+              <div>
+                <label class="text-xs text-gray-500 block mb-1">Display name</label>
+                <input x-model="p._edit.name" type="text"
+                  class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm text-white focus:border-indigo-500 focus:outline-none">
+              </div>
+              <div>
+                <label class="text-xs text-gray-500 block mb-1">API key
+                  <span class="ml-1 text-gray-600 text-[10px]">(leave blank to keep current)</span>
+                </label>
+                <input x-model="p._edit.api_key" type="password"
+                  class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm text-white placeholder-gray-600 focus:border-indigo-500 focus:outline-none font-mono">
+              </div>
+              <div x-show="p.provider === 'custom'">
+                <label class="text-xs text-gray-500 block mb-1">Base URL</label>
+                <input x-model="p._edit.base_url" type="text"
+                  class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm text-white placeholder-gray-600 focus:border-indigo-500 focus:outline-none font-mono">
+              </div>
               <!-- Model selection: live catalog dropdown when available,
                    free-text fallback when the provider isn't in the
-                   live-catalog set (e.g. custom). Users can still type
-                   a custom model by toggling the "Type a model ID"
-                   link below the select. -->
+                   live-catalog set (e.g. custom). -->
               <div x-data="{ manual: false }">
+                <label class="text-xs text-gray-500 block mb-1">Default model</label>
                 <template x-if="!manual && (cloudProviderModelsList[p.provider] || cloudProviderModelsFallback[p.provider])">
                   <select x-model="p._edit.active_model"
-                    class="w-full px-2 py-1.5 rounded-lg bg-gray-800 border border-gray-700 text-xs text-white focus:outline-none focus:border-indigo-500">
+                    class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm text-white focus:border-indigo-500 focus:outline-none font-mono">
                     <option value="">— no default —</option>
                     <template x-for="m in (cloudProviderModelsList[p.provider] || cloudProviderModelsFallback[p.provider] || [])" :key="m">
                       <option :value="m" x-text="m"></option>
@@ -2027,21 +1985,20 @@
                   </select>
                 </template>
                 <template x-if="manual || !(cloudProviderModelsList[p.provider] || cloudProviderModelsFallback[p.provider])">
-                  <input x-model="p._edit.active_model" type="text" placeholder="Default model (e.g. gpt-4o-mini)"
-                    class="w-full px-2 py-1.5 rounded-lg bg-gray-800 border border-gray-700 text-xs text-white placeholder-gray-600 focus:outline-none focus:border-indigo-500">
+                  <input x-model="p._edit.active_model" type="text" placeholder="e.g. gpt-4o-mini"
+                    class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm text-white placeholder-gray-600 focus:border-indigo-500 focus:outline-none font-mono">
                 </template>
                 <div class="flex items-center gap-2 mt-1">
-                  <button @click="manual = !manual" class="text-[10px] text-gray-500 hover:text-gray-300"
+                  <button @click="manual = !manual" class="text-xs text-gray-500 hover:text-gray-300"
                     x-text="manual ? 'Pick from list' : 'Type a model ID'"></button>
-                  <span x-show="cloudProviderModelsError[p.provider]" class="text-[10px] text-amber-500" x-text="'Live catalog unavailable — showing fallback list'"></span>
+                  <span x-show="cloudProviderModelsError[p.provider]" class="text-xs text-amber-500">Live catalog unavailable — showing fallback list</span>
                 </div>
               </div>
-
-              <div class="flex gap-2">
+              <div class="flex gap-2 pt-1">
                 <button @click="updateCloudProvider(p.id)"
-                  class="text-xs px-3 py-1.5 rounded-lg bg-indigo-600 text-white hover:bg-indigo-500 transition-colors">Save</button>
+                  class="text-xs px-3 py-1.5 rounded-lg bg-[var(--accent)] text-white hover:opacity-90">Save</button>
                 <button @click="p._editing = false; p._edit = null"
-                  class="text-xs px-3 py-1.5 rounded-lg border border-gray-700 text-gray-400 hover:text-white transition-colors">Cancel</button>
+                  class="text-xs px-3 py-1.5 rounded-lg border border-gray-700 text-gray-400 hover:text-white">Cancel</button>
               </div>
             </div>
           </div>
@@ -2126,7 +2083,8 @@
         </div>
       </template>
 
-      <!-- Header -->
+      <!-- Header — same visual weight as Cloud Providers: bordered "+ Register"
+           (the accent-filled button is reserved for commit actions inside forms). -->
       <div class="flex items-center justify-between mb-4">
         <div class="text-sm font-semibold text-white">Local Servers</div>
         <div class="flex items-center gap-2">
@@ -2137,7 +2095,9 @@
             <span x-show="adminScanRunning" class="animate-pulse">Scanning…</span>
           </button>
           <button @click="adminMachineForm={name:'',endpoint_url:'',description:''}; adminMachineFormOpen=!adminMachineFormOpen"
-            class="text-xs px-3 py-1.5 rounded-lg bg-[var(--accent)] text-white hover:opacity-90 transition-opacity">+ Register</button>
+            class="text-xs px-3 py-1.5 rounded-lg border border-gray-700 text-gray-400 hover:text-white transition-colors">
+            <span x-text="adminMachineFormOpen ? 'Cancel' : '+ Register'"></span>
+          </button>
         </div>
       </div>
 
@@ -2664,7 +2624,7 @@
            :style="(namedAgentFormOpen || (namedAgents||[]).some(a => a._editing)) ? 'width:24rem;max-width:24rem;' : 'width:16rem;max-width:16rem;'">
 
         <!-- Create Agent toggle -->
-        <button @click="namedAgentFormOpen = !namedAgentFormOpen; namedAgentMsg = null; if (namedAgentFormOpen && !souls.length) { soulsLoaded = false; loadSouls(); }"
+        <button @click="namedAgentFormOpen = !namedAgentFormOpen; namedAgentMsg = null; if (namedAgentFormOpen) { namedAgentForm.duplicate_from = null; namedAgentForm.duplicate_from_name = null; if (!souls.length) { soulsLoaded = false; loadSouls(); } }"
           class="w-full px-3 py-2 rounded-lg text-xs font-medium transition-colors"
           :class="namedAgentFormOpen ? 'bg-gray-800 text-gray-400 border border-gray-700' : 'bg-indigo-600 text-white hover:bg-indigo-500'">
           <span x-text="namedAgentFormOpen ? 'Cancel' : '+ Create Agent'"></span>
@@ -2677,6 +2637,27 @@
 
         <!-- Create agent form -->
         <div x-show="namedAgentFormOpen" x-cloak class="p-3 rounded-xl border border-indigo-800/50 bg-indigo-950/10 space-y-2">
+          <!-- Duplicate banner — only shown when the form was opened via
+               the "Duplicate" action on an existing agent's card. Explains
+               exactly what's about to be copied so there's no ambiguity
+               between "copy config" and "copy the agent's state". -->
+          <div x-show="namedAgentForm.duplicate_from" x-cloak
+               class="px-3 py-2 rounded-lg bg-indigo-950/40 border border-indigo-800 text-[11px] text-indigo-200 flex items-start gap-2">
+            <span class="text-base leading-none">⎘</span>
+            <div class="flex-1">
+              <div>
+                Duplicating
+                <span class="font-semibold text-white" x-text="namedAgentForm.duplicate_from_name || ''"></span>
+                as it stands right now.
+              </div>
+              <div class="text-[10px] text-indigo-300/70 mt-0.5">
+                On save, the new agent inherits this one's memories and past sessions. Logs and the live sandbox stay with the original.
+                <button type="button"
+                        @click="namedAgentForm.duplicate_from = null; namedAgentForm.duplicate_from_name = null"
+                        class="underline hover:text-white ml-1">Clear</button>
+              </div>
+            </div>
+          </div>
           <input x-model="namedAgentForm.name" type="text" placeholder="Agent name (e.g. Atlas, DevOps-Bot)"
             class="w-full px-3 py-2 rounded-lg bg-gray-800 border border-gray-700 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-indigo-500">
           <!-- Three-axis character picker: body (8) × skin (4) × Logos theme (5) = 160 combinations.
@@ -2915,11 +2896,14 @@
                   <button @click.stop="a._editing = true; a._edit = { name: a.name, soul_slug: a.soul_slug, model: a.model || '', description: a.description || '', toolsets: JSON.parse(a.toolsets || '[]'), daily_budget_usd: a.daily_budget_usd || '', fallback_route_id: a.fallback_route_id || '' }"
                     class="text-[9px] px-1.5 py-0.5 rounded border border-gray-700 text-gray-500 hover:text-white hover:border-gray-500 transition-colors">Edit</button>
                   <button @click.stop="duplicateNamedAgent(a)"
-                    title="Clone this agent — opens the create form pre-filled so you can tweak STAMP fields before saving"
-                    class="text-[9px] px-1.5 py-0.5 rounded border border-gray-700 text-gray-500 hover:text-indigo-300 hover:border-indigo-500 transition-colors">Dup</button>
+                    title="Duplicate this agent — opens the create form pre-filled and, on save, copies memories + past sessions from this agent as they are right now"
+                    class="text-[9px] px-1.5 py-0.5 rounded border border-gray-700 text-gray-500 hover:text-indigo-300 hover:border-indigo-500 transition-colors">Duplicate</button>
                   <button @click.stop="openAgentLogs(a)"
                     title="View this agent's runtime log tail — what it's been doing, tool calls, errors, etc."
                     class="text-[9px] px-1.5 py-0.5 rounded border border-gray-700 text-gray-500 hover:text-white hover:border-gray-500 transition-colors">📋 Logs</button>
+                  <button @click.stop="openAgentMind(a)"
+                    title="What this agent knows — memories, past sessions, files on disk"
+                    class="text-[9px] px-1.5 py-0.5 rounded border border-gray-700 text-gray-500 hover:text-indigo-300 hover:border-indigo-500 transition-colors">🧠 Mind</button>
                   <button @click.stop="chatWithAgent(a)"
                     class="text-[9px] px-2 py-0.5 rounded-lg bg-indigo-600 text-white hover:bg-indigo-500 transition-colors font-medium">Chat</button>
                 </div>
@@ -3791,10 +3775,6 @@
         class="pb-2 text-sm font-medium border-b-2 border-transparent"
         :class="adminTab==='users'?'tab-active':'text-gray-500 hover:text-white'"
         @click="adminTab='users'; loadAdminUsers()">Users</button>
-      <button x-show="can('manage_action_policies')"
-        class="pb-2 text-sm font-medium border-b-2 border-transparent"
-        :class="adminTab==='action-policies'?'tab-active':'text-gray-500 hover:text-white'"
-        @click="adminTab='action-policies'; loadAdminActionPolicies()">Security</button>
       <button x-show="can('view_sandbox_policies')"
         class="pb-2 text-sm font-medium border-b-2 border-transparent"
         :class="adminTab==='sandbox-policies'?'tab-active':'text-gray-500 hover:text-white'"
@@ -3816,11 +3796,7 @@
         @click="activityTab='dashboards'; loadModelRoutes(); loadSandboxes(); loadNamedAgents()">Dashboards</button>
       <button class="pb-2 text-sm font-medium border-b-2 border-transparent"
         :class="activityTab==='events'?'tab-active':'text-gray-500 hover:text-white'"
-        @click="activityTab='events'; loadDispatches()">Events</button>
-      <button x-show="can('view_runs')"
-        class="pb-2 text-sm font-medium border-b-2 border-transparent"
-        :class="activityTab==='runs'?'tab-active':'text-gray-500 hover:text-white'"
-        @click="activityTab='runs'; loadAgentRuns()">Runs</button>
+        @click="activityTab='events'; loadDispatches()">Runs</button>
       <button x-show="can('view_approvals')"
         class="pb-2 text-sm font-medium border-b-2 border-transparent relative"
         :class="activityTab==='approvals'?'tab-active':'text-gray-500 hover:text-white'"
@@ -3842,10 +3818,16 @@
 
     <!-- ── Users sub-tab ── -->
     <div x-show="tab==='admin' && adminTab==='users' && can('manage_users')">
-      <div class="flex items-center justify-between mb-4">
+      <div class="flex items-center justify-between mb-4 gap-3 flex-wrap">
         <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Users</div>
-        <button @click="adminUserForm={email:'',username:'',password:'',role:'user',display_name:''}; adminUserFormOpen=true"
-          class="text-xs px-3 py-1.5 rounded-lg bg-[var(--accent)] text-white hover:opacity-90 transition-opacity">+ New User</button>
+        <div class="flex items-center gap-2 flex-wrap">
+          <input type="text" x-model="adminUsersQuery"
+            @input="clearTimeout(_adminUsersSearchTimer); _adminUsersSearchTimer = setTimeout(() => { adminUsersPage = 1; loadAdminUsers(); }, 250)"
+            placeholder="Search username, display name, email…"
+            class="bg-gray-800 border border-gray-700 rounded-lg text-xs px-3 py-1.5 text-gray-300 placeholder-gray-600 focus:outline-none focus:border-indigo-500 w-64">
+          <button @click="adminUserForm={email:'',username:'',password:'',role:'user',display_name:''}; adminUserFormOpen=true"
+            class="text-xs px-3 py-1.5 rounded-lg border border-gray-700 text-gray-400 hover:text-white transition-colors">+ New User</button>
+        </div>
       </div>
 
       <!-- New user form -->
@@ -3906,8 +3888,6 @@
               <th class="text-left px-4 py-3 font-medium">User</th>
               <th class="text-left px-4 py-3 font-medium">Role</th>
               <th class="text-left px-4 py-3 font-medium">Status</th>
-              <th class="text-left px-4 py-3 font-medium">Routing Profile</th>
-              <th class="text-left px-4 py-3 font-medium">Action Policy</th>
               <th class="text-left px-4 py-3 font-medium">Last Login</th>
               <th class="px-4 py-3"></th>
             </tr>
@@ -3957,30 +3937,6 @@
                       : 'border-red-800 bg-red-950 text-red-400 hover:border-green-800 hover:bg-green-950/60 hover:text-green-400'"
                     x-text="u.status==='active' ? '● Active' : '● Suspended'">
                   </button>
-                </td>
-
-                <!-- Routing profile inline select -->
-                <td class="px-4 py-3">
-                  <select :value="u.policy_id || ''"
-                    @change="assignUserPolicy(u.id, $event.target.value || null)"
-                    class="bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs text-white focus:border-[var(--accent)] focus:outline-none max-w-[160px]">
-                    <option value="">— system default —</option>
-                    <template x-for="p in adminPolicies" :key="p.id">
-                      <option :value="p.id" x-text="p.name"></option>
-                    </template>
-                  </select>
-                </td>
-
-                <!-- Action policy inline select -->
-                <td class="px-4 py-3">
-                  <select :value="u.action_policy_id || ''"
-                    @change="assignUserActionPolicy(u.id, $event.target.value || null)"
-                    class="bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs text-white focus:border-[var(--accent)] focus:outline-none max-w-[160px]">
-                    <option value="">— none —</option>
-                    <template x-for="ap in adminActionPolicies" :key="ap.id">
-                      <option :value="ap.id" x-text="ap.name"></option>
-                    </template>
-                  </select>
                 </td>
 
                 <!-- Last login -->
@@ -4037,10 +3993,26 @@
               </tr>
             </template>
             <template x-if="adminUsers.length===0">
-              <tr><td colspan="6" class="px-4 py-8 text-center text-xs text-gray-600">No users found</td></tr>
+              <tr><td colspan="5" class="px-4 py-8 text-center text-xs text-gray-600" x-text="(adminUsersQuery || '').trim() ? 'No users match your search.' : 'No users found'"></td></tr>
             </template>
           </tbody>
         </table>
+      </div>
+
+      <!-- Pagination — same pattern as the Runs tab so both lists behave
+           identically. Page resets to 1 on search/filter change. -->
+      <div class="flex items-center justify-between mt-3 text-xs text-gray-500">
+        <span x-text="adminUsersTotal === 0 ? 'No users' : ('Showing ' + ((adminUsersPage - 1) * adminUsersLimit + 1) + '–' + Math.min((adminUsersPage - 1) * adminUsersLimit + adminUsers.length, adminUsersTotal) + ' of ' + adminUsersTotal)"></span>
+        <div class="flex items-center gap-1" x-show="adminUsersTotal > adminUsersLimit">
+          <button @click="adminUsersPage = Math.max(1, adminUsersPage - 1); loadAdminUsers()"
+            :disabled="adminUsersPage === 1"
+            class="px-2 py-1 rounded border border-gray-700 text-gray-400 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed transition-colors">‹ Prev</button>
+          <span class="px-2 text-gray-600 font-mono"
+            x-text="adminUsersPage + ' / ' + Math.max(1, Math.ceil(adminUsersTotal / adminUsersLimit))"></span>
+          <button @click="adminUsersPage = adminUsersPage + 1; loadAdminUsers()"
+            :disabled="adminUsersPage * adminUsersLimit >= adminUsersTotal"
+            class="px-2 py-1 rounded border border-gray-700 text-gray-400 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed transition-colors">Next ›</button>
+        </div>
       </div>
     </div>
 
@@ -4070,122 +4042,260 @@
       </template>
     </div>
 
-    <!-- ── Action Policies sub-tab ──
-         Only the dimensions that are actually enforced at runtime are
-         exposed in the UI. write_policy, exec_policy, network_policy,
-         network_allowlist, and secret_policy remain in the schema for
-         back-compat but are not surfaced because nothing reads them
-         yet. Sandbox egress is enforced via Sandbox Policies; approval
-         gating fires from hard-coded dangerous-command patterns. -->
-    <div x-show="tab==='admin' && adminTab==='action-policies' && can('manage_action_policies')">
+    <!-- ── Sandbox Policies sub-tab ──
+         Edits OpenShell network_policies presets on disk. Anyone with
+         view_sandbox_policies sees the list + read-only YAML; only
+         manage_sandbox_policies can Save/Delete. Changes hot-reload
+         every agent currently applying the preset. -->
+    <div x-show="tab==='admin' && adminTab==='sandbox-policies' && can('view_sandbox_policies')" x-cloak
+         x-effect="if (tab==='admin' && adminTab==='sandbox-policies' && can('view_sandbox_policies')) { loadSandboxPresets() }">
       <div class="flex items-center justify-between mb-3">
         <div>
-          <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Action Policies</div>
-          <div class="text-xs text-gray-600 mt-0.5">Per-user runtime policies. Assigned to a user, merged with the agent's soul policy at session start.</div>
+          <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Sandbox Policies</div>
+          <div class="text-[10px] text-gray-500 mt-0.5">
+            OpenShell network egress rules. Applied per-agent; saving hot-reloads every live sandbox using the preset.
+          </div>
         </div>
-        <button @click="actionPolicyForm={name:'',description:'',filesystem_policy:'workspace_only',provider_policy:'any',write_policy:'auto_apply',exec_policy:'restricted',network_policy:'internet_enabled',secret_policy:'tool_only'}; actionPolicyFormOpen=true"
-          class="text-xs px-3 py-1.5 rounded-lg bg-[var(--accent)] text-white hover:opacity-90 transition-opacity">+ New Policy</button>
+        <div class="flex items-center gap-2">
+          <button @click="sandboxPresetHelp = !sandboxPresetHelp" class="px-2 py-1 rounded border border-gray-700 text-gray-500 hover:text-white hover:border-gray-500 text-[10px]">
+            <span x-text="sandboxPresetHelp ? 'Hide help' : 'What is this?'"></span>
+          </button>
+          <button @click="loadSandboxPresets()" class="text-xs px-3 py-1.5 rounded-lg border border-gray-700 text-gray-400 hover:text-white transition-colors">Refresh</button>
+        </div>
       </div>
 
-      <!-- What is this / what actually fires -->
-      <div class="mb-4 p-3 rounded-xl border border-indigo-900/50 bg-indigo-950/10 text-[11px] text-gray-300 leading-relaxed">
-        <div class="font-semibold text-indigo-300 mb-1">What each dimension does today</div>
+      <!-- Help panel — on by default for first-time visitors, toggleable. -->
+      <div x-show="sandboxPresetHelp" x-cloak class="mb-4 p-3 rounded-xl border border-indigo-900/50 bg-indigo-950/10 text-[11px] text-gray-300 leading-relaxed">
+        <div class="font-semibold text-indigo-300 mb-2">What are sandbox policies?</div>
+        <p class="mb-2">
+          Every Logos agent runs in an isolated OpenShell sandbox that blocks outbound network traffic by default. A <span class="font-mono text-white">preset</span> is a YAML file that grants access to specific hostnames and ports — e.g. the <span class="font-mono text-white">github</span> preset lets agents reach <span class="font-mono">api.github.com</span>, nothing else.
+        </p>
+        <p class="mb-2">
+          When you apply a preset to an agent (from the agent's Tools tab), the sandbox merges it into the baseline policy and starts allowing those endpoints. Removing a preset revokes access.
+        </p>
+        <div class="font-semibold text-indigo-300 mt-3 mb-1">When to add / edit a preset</div>
         <ul class="list-disc list-inside space-y-0.5 text-gray-400">
-          <li><span class="font-mono text-gray-300">filesystem_policy</span> — <span class="text-white">Enforced.</span> <span class="font-mono">workspace_only</span> / <span class="font-mono">repo_scoped</span> clamp the <span class="font-mono">workdir</span> of exec tools to the agent's workspace (or workspace + configured repos).</li>
-          <li><span class="font-mono text-gray-300">provider_policy</span> — <span class="text-white">Enforced.</span> Sent as <span class="font-mono">X-Provider-Policy</span> header to the ai-router; controls which inference providers the agent can reach.</li>
-          <li>Sandbox egress rules live in <button class="text-indigo-400 hover:text-indigo-300 underline" @click="adminTab='sandbox-policies'">Sandbox Policies</button> — the infra-layer OpenShell presets. That's what actually blocks/allows outbound traffic from agent sandboxes.</li>
-          <li>Approval gating fires from hard-coded dangerous-command patterns (<span class="font-mono">rm -rf</span>, <span class="font-mono">chmod 777</span>, etc.), not from anything you configure here.</li>
+          <li>A new third-party API your agents need to call (add a preset, apply it to the agent).</li>
+          <li>An existing preset is too permissive or too restrictive (edit its endpoints).</li>
+          <li>A service changed hostnames (update host glob).</li>
+        </ul>
+        <div class="font-semibold text-indigo-300 mt-3 mb-1">Key fields in a preset</div>
+        <ul class="list-disc list-inside space-y-0.5 text-gray-400">
+          <li><span class="font-mono text-gray-300">host</span> — hostname or glob, e.g. <span class="font-mono">api.github.com</span> or <span class="font-mono">*.amazonaws.com</span>.</li>
+          <li><span class="font-mono text-gray-300">port</span> / <span class="font-mono">ports</span> — TCP port(s). 443 for HTTPS.</li>
+          <li><span class="font-mono text-gray-300">protocol</span> — <span class="font-mono">rest</span> for HTTP APIs, <span class="font-mono">sql</span> for databases, omit for L4 only.</li>
+          <li><span class="font-mono text-gray-300">tls</span> — usually <span class="font-mono">terminate</span> (gateway decrypts so L7 rules can match paths).</li>
+          <li><span class="font-mono text-gray-300">enforcement</span> — <span class="font-mono">enforce</span> blocks violations, <span class="font-mono">audit</span> logs only.</li>
+          <li><span class="font-mono text-gray-300">access</span> — shortcut: <span class="font-mono">full</span> / <span class="font-mono">read-only</span> / <span class="font-mono">read-write</span>. Or use <span class="font-mono">rules:</span> for method+path control.</li>
+        </ul>
+        <div class="font-semibold text-indigo-300 mt-3 mb-1">Safe to edit / don't edit</div>
+        <ul class="list-disc list-inside space-y-0.5 text-gray-400">
+          <li>Change endpoints, hosts, ports, L7 rules — hot-reloads without restarting sandboxes.</li>
+          <li>Don't rename the preset (<span class="font-mono">preset.name</span>) — the filename and applied-list won't match and agents will silently lose the policy.</li>
+          <li>Syntax errors are rejected at save time; your changes are never partially written.</li>
         </ul>
       </div>
 
-      <!-- New / edit policy form -->
-      <template x-if="actionPolicyFormOpen">
-        <div class="bg-gray-900 border border-gray-700 rounded-xl p-4 mb-4">
-          <div class="text-xs font-semibold text-gray-400 mb-3" x-text="actionPolicyForm.id ? 'Edit Policy' : 'Create Policy'"></div>
-          <div class="grid grid-cols-2 gap-3 mb-3">
-            <div>
-              <label class="text-xs text-gray-500 block mb-1">Name</label>
-              <input x-model="actionPolicyForm.name" type="text" placeholder="e.g. strict, developer"
-                class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm text-white focus:border-[var(--accent)] focus:outline-none">
-            </div>
-            <div>
-              <label class="text-xs text-gray-500 block mb-1">Description</label>
-              <input x-model="actionPolicyForm.description" type="text" placeholder="Optional description"
-                class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm text-white focus:border-[var(--accent)] focus:outline-none">
-            </div>
-            <div>
-              <label class="text-xs text-gray-500 block mb-1">
-                Filesystem Policy
-                <span class="text-[10px] text-green-500 font-normal">(enforced)</span>
-              </label>
-              <select x-model="actionPolicyForm.filesystem_policy"
-                class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm text-white focus:border-[var(--accent)] focus:outline-none">
-                <option value="read_only">read_only — no writes</option>
-                <option value="workspace_only">workspace_only — clamp exec workdir to workspace</option>
-                <option value="repo_scoped">repo_scoped — workspace + configured repos</option>
-                <option value="full">full — any path</option>
-              </select>
-            </div>
-            <div>
-              <label class="text-xs text-gray-500 block mb-1">
-                Provider Policy
-                <span class="text-[10px] text-green-500 font-normal">(enforced)</span>
-              </label>
-              <select x-model="actionPolicyForm.provider_policy"
-                class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm text-white focus:border-[var(--accent)] focus:outline-none">
-                <option value="local_only">local_only — local inference only</option>
-                <option value="trusted_external">trusted_external — local + trusted cloud</option>
-                <option value="any">any — all providers</option>
-              </select>
-            </div>
+      <div class="grid grid-cols-3 gap-4 items-start">
+        <!-- Preset list (left column) -->
+        <div class="col-span-1 bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
+          <div class="px-3 py-2 border-b border-gray-800 text-[10px] uppercase tracking-wider text-gray-500">
+            Presets (<span x-text="sandboxPresets.length"></span>)
           </div>
-          <div class="flex gap-2">
-            <button @click="saveActionPolicy()"
-              class="text-xs px-3 py-1.5 rounded-lg bg-[var(--accent)] text-white hover:opacity-90"
-              x-text="actionPolicyForm.id ? 'Save Changes' : 'Create Policy'"></button>
-            <button @click="actionPolicyFormOpen=false; actionPolicyForm={}"
-              class="text-xs px-3 py-1.5 rounded-lg border border-gray-700 text-gray-400 hover:text-white">Cancel</button>
+          <div class="divide-y divide-gray-800">
+            <template x-for="p in sandboxPresets" :key="p.name">
+              <button @click="selectSandboxPreset(p.name)"
+                class="w-full text-left px-3 py-2 hover:bg-gray-800/60 transition-colors"
+                :class="sandboxPresetSelected && sandboxPresetSelected.name === p.name ? 'bg-gray-800/40' : ''">
+                <div class="flex items-center justify-between gap-2">
+                  <div class="text-xs font-mono text-white truncate" x-text="p.name"></div>
+                  <span x-show="p.agent_count > 0"
+                    class="text-[9px] px-1.5 py-0.5 rounded-full bg-indigo-950 text-indigo-400 border border-indigo-800 flex-shrink-0"
+                    x-text="p.agent_count + ' agent' + (p.agent_count === 1 ? '' : 's')"></span>
+                </div>
+                <div x-show="p.description" class="text-[10px] text-gray-500 mt-0.5 truncate" x-text="p.description"></div>
+              </button>
+            </template>
           </div>
-          <template x-if="actionPolicyMsg">
-            <div class="mt-2 text-xs px-3 py-2 rounded-lg"
-              :class="actionPolicyMsg.ok ? 'bg-green-950 text-green-300 border border-green-800' : 'bg-red-950 text-red-300 border border-red-800'"
-              x-text="actionPolicyMsg.text"></div>
+          <template x-if="can('manage_sandbox_policies')">
+            <div class="p-3 border-t border-gray-800">
+              <button @click="newSandboxPreset()"
+                class="w-full px-2 py-1 rounded border border-gray-700 text-gray-500 hover:text-white hover:border-gray-500 text-[10px]">+ New preset</button>
+            </div>
           </template>
         </div>
-      </template>
 
-      <!-- Policy list -->
-      <div class="bg-gray-900 border border-gray-800 rounded-xl overflow-x-auto">
-        <table class="w-full text-sm">
+        <!-- Editor (right) -->
+        <div class="col-span-2">
+          <template x-if="!sandboxPresetSelected">
+            <div class="p-8 rounded-xl border border-gray-800 bg-gray-900/60 text-center text-xs text-gray-500">
+              Select a preset on the left to view or edit its rules.
+            </div>
+          </template>
+
+          <template x-if="sandboxPresetSelected">
+            <div class="rounded-xl border border-gray-800 bg-gray-900 overflow-hidden">
+              <div class="p-3 border-b border-gray-800 flex items-center justify-between gap-2">
+                <div>
+                  <div class="text-xs font-mono text-white" x-text="sandboxPresetSelected.name"></div>
+                  <div class="text-[10px] text-gray-500 mt-0.5">
+                    <span x-show="sandboxPresetSelected.agents.length === 0">No agents currently use this preset.</span>
+                    <span x-show="sandboxPresetSelected.agents.length > 0"
+                      x-text="'Hot-reloads ' + sandboxPresetSelected.agents.length + ' live agent' + (sandboxPresetSelected.agents.length === 1 ? '' : 's') + ' on save.'"></span>
+                  </div>
+                </div>
+                <template x-if="can('manage_sandbox_policies')">
+                  <button @click="deleteSandboxPreset()" :disabled="sandboxPresetSelected.agents.length > 0"
+                    :title="sandboxPresetSelected.agents.length > 0 ? 'Remove from all agents before deleting' : 'Delete preset file'"
+                    class="px-2 py-1 rounded border border-red-900 text-red-700 hover:text-red-400 text-[10px] disabled:opacity-40 disabled:cursor-not-allowed">Delete</button>
+                </template>
+              </div>
+
+              <!-- YAML textarea / read-only view. Sized to fill the
+                   viewport height (minus room for the sub-tab bar,
+                   header, and action row) so admins don't scroll-bog
+                   on long presets. -->
+              <div class="p-3">
+                <template x-if="can('manage_sandbox_policies')">
+                  <textarea x-model="sandboxPresetYaml" spellcheck="false"
+                    style="height: calc(100vh - 320px); min-height: 400px;"
+                    class="w-full px-3 py-2 rounded-lg bg-gray-950 border border-gray-800 text-[11px] text-gray-200 font-mono focus:outline-none focus:border-indigo-500 resize-none"></textarea>
+                </template>
+                <template x-if="!can('manage_sandbox_policies')">
+                  <pre style="height: calc(100vh - 320px); min-height: 400px;"
+                    class="w-full px-3 py-2 rounded-lg bg-gray-950 border border-gray-800 text-[11px] text-gray-400 font-mono whitespace-pre-wrap break-all overflow-auto" x-text="sandboxPresetYaml"></pre>
+                </template>
+
+                <template x-if="can('manage_sandbox_policies')">
+                  <div class="flex items-center gap-2 mt-3">
+                    <button @click="saveSandboxPreset()" :disabled="sandboxPresetSaving"
+                      class="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-medium disabled:opacity-40">
+                      <span x-show="!sandboxPresetSaving">Save &amp; hot-reload</span>
+                      <span x-show="sandboxPresetSaving">Saving&hellip;</span>
+                    </button>
+                    <button @click="selectSandboxPreset(sandboxPresetSelected.name)"
+                      class="px-3 py-1.5 rounded-lg border border-gray-700 text-gray-400 hover:text-white hover:border-gray-500 text-xs">Revert</button>
+                    <span x-show="sandboxPresetError" class="text-xs text-red-400" x-text="sandboxPresetError"></span>
+                    <span x-show="sandboxPresetSaved" class="text-xs text-green-400" x-text="sandboxPresetSaved"></span>
+                  </div>
+                </template>
+              </div>
+            </div>
+          </template>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Audit Log sub-tab ── -->
+    <div x-show="tab==='admin' && adminTab==='audit' && can('view_audit_logs')">
+      <div class="flex items-center justify-between mb-4 gap-3 flex-wrap">
+        <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Audit Log</div>
+        <div class="flex items-center gap-2 flex-wrap">
+          <input type="text" x-model="adminAuditQuery"
+            @input="clearTimeout(_adminAuditSearchTimer); _adminAuditSearchTimer = setTimeout(() => { auditLogsPage = 1; loadAdminAudit(); }, 250)"
+            placeholder="Search action, target, IP…"
+            class="bg-gray-800 border border-gray-700 rounded-lg text-xs px-3 py-1.5 text-gray-300 placeholder-gray-600 focus:outline-none focus:border-indigo-500 w-56">
+          <button @click="loadAdminAudit()"
+            class="text-xs px-3 py-1.5 rounded-lg border border-gray-700 text-gray-400 hover:text-white transition-colors">Refresh</button>
+        </div>
+      </div>
+      <div class="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
+        <table class="w-full text-xs">
           <thead>
-            <tr class="border-b border-gray-800 text-xs text-gray-500">
-              <th class="text-left px-4 py-3 font-medium">Name</th>
-              <th class="text-left px-4 py-3 font-medium">Filesystem</th>
-              <th class="text-left px-4 py-3 font-medium">Provider</th>
-              <th class="px-4 py-3"></th>
+            <tr class="border-b border-gray-800 text-gray-500">
+              <th class="text-left px-4 py-3 font-medium">Time</th>
+              <th class="text-left px-4 py-3 font-medium">Action</th>
+              <th class="text-left px-4 py-3 font-medium">Target</th>
+              <th class="text-left px-4 py-3 font-medium">IP</th>
             </tr>
           </thead>
           <tbody>
-            <template x-for="ap in adminActionPolicies" :key="ap.id">
-              <tr class="border-b border-gray-800/50 hover:bg-gray-800/30 transition-colors">
-                <td class="px-4 py-3">
-                  <div class="text-white text-xs font-medium" x-text="ap.name"></div>
-                  <div class="text-gray-600 text-xs mt-0.5" x-text="ap.description"></div>
+            <template x-for="log in adminAuditLogs" :key="log.id">
+              <tr class="border-b border-gray-800/50">
+                <td class="px-4 py-2 text-gray-500" x-text="new Date(log.created_at*1000).toLocaleString()"></td>
+                <td class="px-4 py-2 text-gray-300 font-mono" x-text="log.action"></td>
+                <td class="px-4 py-2 text-gray-500" x-text="(log.target_type||'') + (log.target_id ? ' '+log.target_id.slice(0,8) : '')"></td>
+                <td class="px-4 py-2 text-gray-600" x-text="log.ip_address||''"></td>
+              </tr>
+            </template>
+            <template x-if="adminAuditLogs.length===0">
+              <tr><td colspan="4" class="px-4 py-6 text-center text-gray-600">No audit logs</td></tr>
+            </template>
+          </tbody>
+        </table>
+      </div>
+      <!-- Audit log pagination -->
+      <div class="flex items-center gap-3 mt-3 text-xs text-gray-500" x-show="auditLogsTotal > auditLogsLimit">
+        <button @click="auditLogsPage=Math.max(1,auditLogsPage-1); loadAdminAudit()" :disabled="auditLogsPage===1"
+          class="px-2 py-1 rounded border border-gray-700 disabled:opacity-40">← Prev</button>
+        <span x-text="'Page ' + auditLogsPage + ' of ' + Math.ceil(auditLogsTotal/auditLogsLimit)"></span>
+        <button @click="auditLogsPage++; loadAdminAudit()" :disabled="auditLogsPage*auditLogsLimit>=auditLogsTotal"
+          class="px-2 py-1 rounded border border-gray-700 disabled:opacity-40">Next →</button>
+      </div>
+    </div>
+
+    <!-- ── Approvals (Activity) ── -->
+    <div x-show="tab==='activity' && activityTab==='approvals' && can('view_approvals')">
+      <div class="flex items-center justify-between mb-4">
+        <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Approval Requests</div>
+        <div class="flex items-center gap-3">
+          <select x-model="approvalsStatusFilter" @change="loadApprovals()"
+            class="bg-gray-800 border border-gray-700 rounded-lg text-xs px-2 py-1 text-gray-300">
+            <option value="pending">Pending</option>
+            <option value="approved">Approved</option>
+            <option value="rejected">Rejected</option>
+            <option value="expired">Expired</option>
+            <option value="">All</option>
+          </select>
+          <button @click="loadApprovals()"
+            class="text-xs px-3 py-1.5 rounded-lg border border-gray-700 text-gray-400 hover:text-white transition-colors">Refresh</button>
+        </div>
+      </div>
+      <div class="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
+        <table class="w-full text-xs">
+          <thead>
+            <tr class="border-b border-gray-800 text-gray-500">
+              <th class="text-left px-4 py-3 font-medium">Time</th>
+              <th class="text-left px-4 py-3 font-medium">Tool</th>
+              <th class="text-left px-4 py-3 font-medium">Action</th>
+              <th class="text-left px-4 py-3 font-medium">Status</th>
+              <th class="text-left px-4 py-3 font-medium" x-show="can('decide_approvals')">Decision</th>
+            </tr>
+          </thead>
+          <tbody>
+            <template x-for="req in approvalRequests" :key="req.id">
+              <tr class="border-b border-gray-800/50 hover:bg-gray-800/30">
+                <td class="px-4 py-2 text-gray-600 whitespace-nowrap"
+                  x-text="new Date(req.requested_at*1000).toLocaleString(undefined,{dateStyle:'short',timeStyle:'short'})"></td>
+                <td class="px-4 py-2 text-gray-300 font-mono" x-text="req.tool_name"></td>
+                <td class="px-4 py-2 text-gray-500" x-text="req.action_type || '—'"></td>
+                <td class="px-4 py-2">
+                  <span class="px-1.5 py-0.5 rounded text-[10px] font-medium border"
+                    :class="{
+                      'bg-yellow-950 text-yellow-400 border-yellow-900': req.status==='pending',
+                      'bg-green-950 text-green-400 border-green-900':  req.status==='approved',
+                      'bg-red-950 text-red-400 border-red-900':        req.status==='rejected',
+                      'bg-gray-800 text-gray-500 border-gray-700':     req.status==='expired',
+                    }"
+                    x-text="req.status"></span>
                 </td>
-                <td class="px-4 py-3 text-xs text-gray-400" x-text="ap.filesystem_policy"></td>
-                <td class="px-4 py-3 text-xs text-gray-400" x-text="ap.provider_policy"></td>
-                <td class="px-4 py-3 text-right">
-                  <div class="flex gap-2 justify-end">
-                    <button @click="actionPolicyForm={...ap}; actionPolicyFormOpen=true"
-                      class="text-xs text-gray-600 hover:text-white transition-colors">Edit</button>
-                    <button @click="deleteActionPolicy(ap.id)"
-                      class="text-xs text-red-800 hover:text-red-400 transition-colors">Delete</button>
-                  </div>
+                <td class="px-4 py-2" x-show="can('decide_approvals')">
+                  <template x-if="req.status==='pending'">
+                    <div class="flex gap-2">
+                      <button @click="decideApproval(req.id,'approve')"
+                        class="px-2 py-1 rounded text-[10px] bg-green-900 text-green-300 hover:bg-green-800 border border-green-800">Approve</button>
+                      <button @click="decideApproval(req.id,'reject')"
+                        class="px-2 py-1 rounded text-[10px] bg-red-950 text-red-400 hover:bg-red-900 border border-red-900">Reject</button>
+                    </div>
+                  </template>
+                  <template x-if="req.status!=='pending'">
+                    <span class="text-gray-600" x-text="req.decided_by ? 'by '+req.decided_by.slice(0,8) : '—'"></span>
+                  </template>
                 </td>
               </tr>
             </template>
-            <template x-if="adminActionPolicies.length===0">
-              <tr><td colspan="4" class="px-4 py-8 text-center text-xs text-gray-600">No action policies defined. Create one to restrict what agents can do for a user.</td></tr>
+            <template x-if="approvalRequests.length===0">
+              <tr><td :colspan="can('decide_approvals') ? 5 : 4" class="px-4 py-8 text-center text-gray-600">No approval requests</td></tr>
             </template>
           </tbody>
         </table>
@@ -4237,9 +4347,7 @@
       <!-- Sandbox table -->
       <div class="flex items-center justify-between mb-3">
         <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Live Sandboxes</div>
-        <button @click="loadSandboxes()" class="text-xs text-[var(--accent)] hover:opacity-80 flex items-center gap-1">
-          <span>&#8635;</span> Refresh
-        </button>
+        <button @click="loadSandboxes()" class="text-xs px-3 py-1.5 rounded-lg border border-gray-700 text-gray-400 hover:text-white transition-colors">Refresh</button>
       </div>
 
       <div class="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden mb-5">
@@ -4379,9 +4487,7 @@
       <div class="flex items-center justify-between mb-3">
         <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Provisioned Routes</div>
         <div class="flex items-center gap-2">
-          <button @click="loadModelRoutes()" class="text-xs text-[var(--accent)] hover:opacity-80 flex items-center gap-1">
-            <span>&#8635;</span> Refresh
-          </button>
+          <button @click="loadModelRoutes()" class="text-xs px-3 py-1.5 rounded-lg border border-gray-700 text-gray-400 hover:text-white transition-colors">Refresh</button>
           <button @click="provisionModalOpen=true; provisionForm={provider:'lmstudio',model:'',set_as_default:false}; provisionError=null; loadAllMachineModels()"
             class="text-xs px-3 py-1.5 rounded bg-[var(--accent)] text-black font-medium hover:opacity-90">
             + Provision Model
@@ -4712,7 +4818,7 @@
           <!-- Still show trace if present -->
           <template x-if="routeDebugResult.trace && routeDebugResult.trace.length">
             <div class="bg-gray-900 border border-gray-800 rounded-xl p-4">
-              <div class="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">Trace</div>
+              <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">Trace</div>
               <div class="space-y-1.5">
                 <template x-for="(t, i) in routeDebugResult.trace" :key="i">
                   <div class="flex items-start gap-3 text-xs">
@@ -4755,7 +4861,7 @@
 
           <!-- Layer timeline -->
           <div class="bg-gray-900 border border-gray-800 rounded-xl p-4">
-            <div class="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">Decision Layers</div>
+            <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">Decision Layers</div>
             <div class="space-y-0">
               <template x-for="(t, i) in routeDebugResult.trace" :key="i">
                 <div class="flex items-start gap-3 py-2"
@@ -4796,7 +4902,7 @@
           <!-- Candidate machine checks (profile evaluation) -->
           <template x-if="routeDebugResult.fallback_chain && routeDebugResult.fallback_chain.length > 0">
             <div class="bg-gray-900 border border-gray-800 rounded-xl p-4">
-              <div class="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">Candidate Machines</div>
+              <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">Candidate Machines</div>
               <div class="space-y-2">
                 <template x-for="(c, i) in routeDebugResult.fallback_chain" :key="i">
                   <div class="flex items-center gap-3 text-xs rounded-lg px-3 py-2"
@@ -4857,9 +4963,7 @@
       <div class="text-[10px] font-semibold text-gray-500 uppercase tracking-[0.15em] border-b border-gray-800 pb-2 mb-3">Routing</div>
       <div class="flex items-center justify-between mb-4">
         <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Platforms &amp; Routing</div>
-        <button @click="loadPlatforms()" class="text-xs text-[var(--accent)] hover:opacity-80 flex items-center gap-1">
-          <span>&#8635;</span> Refresh
-        </button>
+        <button @click="loadPlatforms()" class="text-xs px-3 py-1.5 rounded-lg border border-gray-700 text-gray-400 hover:text-white transition-colors">Refresh</button>
       </div>
 
       <div class="text-xs text-gray-500 mb-4 max-w-2xl">
@@ -5031,280 +5135,35 @@
       </div>
     </div>
 
-    <!-- ── Sandbox Policies sub-tab ──
-         Edits OpenShell network_policies presets on disk. Anyone with
-         view_sandbox_policies sees the list + read-only YAML; only
-         manage_sandbox_policies can Save/Delete. Changes hot-reload
-         every agent currently applying the preset. -->
-    <div x-show="tab==='admin' && adminTab==='sandbox-policies' && can('view_sandbox_policies')" x-cloak
-         x-effect="if (tab==='admin' && adminTab==='sandbox-policies' && can('view_sandbox_policies')) { loadSandboxPresets() }">
-      <div class="flex items-center justify-between mb-3">
-        <div>
-          <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Sandbox Policies</div>
-          <div class="text-[10px] text-gray-500 mt-0.5">
-            OpenShell network egress rules. Applied per-agent; saving hot-reloads every live sandbox using the preset.
-          </div>
-        </div>
-        <div class="flex items-center gap-2">
-          <button @click="sandboxPresetHelp = !sandboxPresetHelp" class="px-2 py-1 rounded border border-gray-700 text-gray-500 hover:text-white hover:border-gray-500 text-[10px]">
-            <span x-text="sandboxPresetHelp ? 'Hide help' : 'What is this?'"></span>
-          </button>
-          <button @click="loadSandboxPresets()" class="text-xs text-[var(--accent)] hover:opacity-80 flex items-center gap-1">
-            <span>&#8635;</span> Refresh
-          </button>
-        </div>
-      </div>
 
-      <!-- Help panel — on by default for first-time visitors, toggleable. -->
-      <div x-show="sandboxPresetHelp" x-cloak class="mb-4 p-3 rounded-xl border border-indigo-900/50 bg-indigo-950/10 text-[11px] text-gray-300 leading-relaxed">
-        <div class="font-semibold text-indigo-300 mb-2">What are sandbox policies?</div>
-        <p class="mb-2">
-          Every Logos agent runs in an isolated OpenShell sandbox that blocks outbound network traffic by default. A <span class="font-mono text-white">preset</span> is a YAML file that grants access to specific hostnames and ports — e.g. the <span class="font-mono text-white">github</span> preset lets agents reach <span class="font-mono">api.github.com</span>, nothing else.
-        </p>
-        <p class="mb-2">
-          When you apply a preset to an agent (from the agent's Tools tab), the sandbox merges it into the baseline policy and starts allowing those endpoints. Removing a preset revokes access.
-        </p>
-        <div class="font-semibold text-indigo-300 mt-3 mb-1">When to add / edit a preset</div>
-        <ul class="list-disc list-inside space-y-0.5 text-gray-400">
-          <li>A new third-party API your agents need to call (add a preset, apply it to the agent).</li>
-          <li>An existing preset is too permissive or too restrictive (edit its endpoints).</li>
-          <li>A service changed hostnames (update host glob).</li>
-        </ul>
-        <div class="font-semibold text-indigo-300 mt-3 mb-1">Key fields in a preset</div>
-        <ul class="list-disc list-inside space-y-0.5 text-gray-400">
-          <li><span class="font-mono text-gray-300">host</span> — hostname or glob, e.g. <span class="font-mono">api.github.com</span> or <span class="font-mono">*.amazonaws.com</span>.</li>
-          <li><span class="font-mono text-gray-300">port</span> / <span class="font-mono">ports</span> — TCP port(s). 443 for HTTPS.</li>
-          <li><span class="font-mono text-gray-300">protocol</span> — <span class="font-mono">rest</span> for HTTP APIs, <span class="font-mono">sql</span> for databases, omit for L4 only.</li>
-          <li><span class="font-mono text-gray-300">tls</span> — usually <span class="font-mono">terminate</span> (gateway decrypts so L7 rules can match paths).</li>
-          <li><span class="font-mono text-gray-300">enforcement</span> — <span class="font-mono">enforce</span> blocks violations, <span class="font-mono">audit</span> logs only.</li>
-          <li><span class="font-mono text-gray-300">access</span> — shortcut: <span class="font-mono">full</span> / <span class="font-mono">read-only</span> / <span class="font-mono">read-write</span>. Or use <span class="font-mono">rules:</span> for method+path control.</li>
-        </ul>
-        <div class="font-semibold text-indigo-300 mt-3 mb-1">Safe to edit / don't edit</div>
-        <ul class="list-disc list-inside space-y-0.5 text-gray-400">
-          <li>Change endpoints, hosts, ports, L7 rules — hot-reloads without restarting sandboxes.</li>
-          <li>Don't rename the preset (<span class="font-mono">preset.name</span>) — the filename and applied-list won't match and agents will silently lose the policy.</li>
-          <li>Syntax errors are rejected at save time; your changes are never partially written.</li>
-        </ul>
-      </div>
-
-      <div class="grid grid-cols-3 gap-4 items-start">
-        <!-- Preset list (left column) -->
-        <div class="col-span-1 bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
-          <div class="px-3 py-2 border-b border-gray-800 text-[10px] uppercase tracking-wider text-gray-500">
-            Presets (<span x-text="sandboxPresets.length"></span>)
-          </div>
-          <div class="divide-y divide-gray-800">
-            <template x-for="p in sandboxPresets" :key="p.name">
-              <button @click="selectSandboxPreset(p.name)"
-                class="w-full text-left px-3 py-2 hover:bg-gray-800/60 transition-colors"
-                :class="sandboxPresetSelected && sandboxPresetSelected.name === p.name ? 'bg-gray-800/40' : ''">
-                <div class="flex items-center justify-between gap-2">
-                  <div class="text-xs font-mono text-white truncate" x-text="p.name"></div>
-                  <span x-show="p.agent_count > 0"
-                    class="text-[9px] px-1.5 py-0.5 rounded-full bg-indigo-950 text-indigo-400 border border-indigo-800 flex-shrink-0"
-                    x-text="p.agent_count + ' agent' + (p.agent_count === 1 ? '' : 's')"></span>
-                </div>
-                <div x-show="p.description" class="text-[10px] text-gray-500 mt-0.5 truncate" x-text="p.description"></div>
-              </button>
-            </template>
-          </div>
-          <template x-if="can('manage_sandbox_policies')">
-            <div class="p-3 border-t border-gray-800">
-              <button @click="newSandboxPreset()"
-                class="w-full px-2 py-1 rounded border border-gray-700 text-gray-500 hover:text-white hover:border-gray-500 text-[10px]">+ New preset</button>
-            </div>
-          </template>
-        </div>
-
-        <!-- Editor (right) -->
-        <div class="col-span-2">
-          <template x-if="!sandboxPresetSelected">
-            <div class="p-8 rounded-xl border border-gray-800 bg-gray-900/60 text-center text-xs text-gray-500">
-              Select a preset on the left to view or edit its rules.
-            </div>
-          </template>
-
-          <template x-if="sandboxPresetSelected">
-            <div class="rounded-xl border border-gray-800 bg-gray-900 overflow-hidden">
-              <div class="p-3 border-b border-gray-800 flex items-center justify-between gap-2">
-                <div>
-                  <div class="text-xs font-mono text-white" x-text="sandboxPresetSelected.name"></div>
-                  <div class="text-[10px] text-gray-500 mt-0.5">
-                    <span x-show="sandboxPresetSelected.agents.length === 0">No agents currently use this preset.</span>
-                    <span x-show="sandboxPresetSelected.agents.length > 0"
-                      x-text="'Hot-reloads ' + sandboxPresetSelected.agents.length + ' live agent' + (sandboxPresetSelected.agents.length === 1 ? '' : 's') + ' on save.'"></span>
-                  </div>
-                </div>
-                <template x-if="can('manage_sandbox_policies')">
-                  <button @click="deleteSandboxPreset()" :disabled="sandboxPresetSelected.agents.length > 0"
-                    :title="sandboxPresetSelected.agents.length > 0 ? 'Remove from all agents before deleting' : 'Delete preset file'"
-                    class="px-2 py-1 rounded border border-red-900 text-red-700 hover:text-red-400 text-[10px] disabled:opacity-40 disabled:cursor-not-allowed">Delete</button>
-                </template>
-              </div>
-
-              <!-- YAML textarea / read-only view. Sized to fill the
-                   viewport height (minus room for the sub-tab bar,
-                   header, and action row) so admins don't scroll-bog
-                   on long presets. -->
-              <div class="p-3">
-                <template x-if="can('manage_sandbox_policies')">
-                  <textarea x-model="sandboxPresetYaml" spellcheck="false"
-                    style="height: calc(100vh - 320px); min-height: 400px;"
-                    class="w-full px-3 py-2 rounded-lg bg-gray-950 border border-gray-800 text-[11px] text-gray-200 font-mono focus:outline-none focus:border-indigo-500 resize-none"></textarea>
-                </template>
-                <template x-if="!can('manage_sandbox_policies')">
-                  <pre style="height: calc(100vh - 320px); min-height: 400px;"
-                    class="w-full px-3 py-2 rounded-lg bg-gray-950 border border-gray-800 text-[11px] text-gray-400 font-mono whitespace-pre-wrap break-all overflow-auto" x-text="sandboxPresetYaml"></pre>
-                </template>
-
-                <template x-if="can('manage_sandbox_policies')">
-                  <div class="flex items-center gap-2 mt-3">
-                    <button @click="saveSandboxPreset()" :disabled="sandboxPresetSaving"
-                      class="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-medium disabled:opacity-40">
-                      <span x-show="!sandboxPresetSaving">Save &amp; hot-reload</span>
-                      <span x-show="sandboxPresetSaving">Saving&hellip;</span>
-                    </button>
-                    <button @click="selectSandboxPreset(sandboxPresetSelected.name)"
-                      class="px-3 py-1.5 rounded-lg border border-gray-700 text-gray-400 hover:text-white hover:border-gray-500 text-xs">Revert</button>
-                    <span x-show="sandboxPresetError" class="text-xs text-red-400" x-text="sandboxPresetError"></span>
-                    <span x-show="sandboxPresetSaved" class="text-xs text-green-400" x-text="sandboxPresetSaved"></span>
-                  </div>
-                </template>
-              </div>
-            </div>
-          </template>
-        </div>
-      </div>
-    </div>
-
-    <!-- ── Audit Log sub-tab ── -->
-    <div x-show="tab==='admin' && adminTab==='audit' && can('view_audit_logs')">
-      <div class="flex items-center justify-between mb-4">
-        <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Audit Log</div>
-        <button @click="loadAdminAudit()"
-          class="text-xs text-[var(--accent)] hover:opacity-80 flex items-center gap-1"><span>&#8635;</span> Refresh</button>
-      </div>
-      <div class="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
-        <table class="w-full text-xs">
-          <thead>
-            <tr class="border-b border-gray-800 text-gray-500">
-              <th class="text-left px-4 py-3 font-medium">Time</th>
-              <th class="text-left px-4 py-3 font-medium">Action</th>
-              <th class="text-left px-4 py-3 font-medium">Target</th>
-              <th class="text-left px-4 py-3 font-medium">IP</th>
-            </tr>
-          </thead>
-          <tbody>
-            <template x-for="log in adminAuditLogs" :key="log.id">
-              <tr class="border-b border-gray-800/50">
-                <td class="px-4 py-2 text-gray-500" x-text="new Date(log.created_at*1000).toLocaleString()"></td>
-                <td class="px-4 py-2 text-gray-300 font-mono" x-text="log.action"></td>
-                <td class="px-4 py-2 text-gray-500" x-text="(log.target_type||'') + (log.target_id ? ' '+log.target_id.slice(0,8) : '')"></td>
-                <td class="px-4 py-2 text-gray-600" x-text="log.ip_address||''"></td>
-              </tr>
-            </template>
-            <template x-if="adminAuditLogs.length===0">
-              <tr><td colspan="4" class="px-4 py-6 text-center text-gray-600">No audit logs</td></tr>
-            </template>
-          </tbody>
-        </table>
-      </div>
-      <!-- Audit log pagination -->
-      <div class="flex items-center gap-3 mt-3 text-xs text-gray-500" x-show="auditLogsTotal > auditLogsLimit">
-        <button @click="auditLogsPage=Math.max(1,auditLogsPage-1); loadAdminAudit()" :disabled="auditLogsPage===1"
-          class="px-2 py-1 rounded border border-gray-700 disabled:opacity-40">← Prev</button>
-        <span x-text="'Page ' + auditLogsPage + ' of ' + Math.ceil(auditLogsTotal/auditLogsLimit)"></span>
-        <button @click="auditLogsPage++; loadAdminAudit()" :disabled="auditLogsPage*auditLogsLimit>=auditLogsTotal"
-          class="px-2 py-1 rounded border border-gray-700 disabled:opacity-40">Next →</button>
-      </div>
-    </div>
-
-    <!-- ── Approvals (Activity) ── -->
-    <div x-show="tab==='activity' && activityTab==='approvals' && can('view_approvals')">
-      <div class="flex items-center justify-between mb-4">
-        <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Approval Requests</div>
-        <div class="flex items-center gap-3">
-          <select x-model="approvalsStatusFilter" @change="loadApprovals()"
-            class="bg-gray-800 border border-gray-700 rounded-lg text-xs px-2 py-1 text-gray-300">
-            <option value="pending">Pending</option>
-            <option value="approved">Approved</option>
-            <option value="rejected">Rejected</option>
-            <option value="expired">Expired</option>
-            <option value="">All</option>
-          </select>
-          <button @click="loadApprovals()"
-            class="text-xs text-[var(--accent)] hover:opacity-80 flex items-center gap-1"><span>&#8635;</span> Refresh</button>
-        </div>
-      </div>
-      <div class="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
-        <table class="w-full text-xs">
-          <thead>
-            <tr class="border-b border-gray-800 text-gray-500">
-              <th class="text-left px-4 py-3 font-medium">Time</th>
-              <th class="text-left px-4 py-3 font-medium">Tool</th>
-              <th class="text-left px-4 py-3 font-medium">Action</th>
-              <th class="text-left px-4 py-3 font-medium">Status</th>
-              <th class="text-left px-4 py-3 font-medium" x-show="can('decide_approvals')">Decision</th>
-            </tr>
-          </thead>
-          <tbody>
-            <template x-for="req in approvalRequests" :key="req.id">
-              <tr class="border-b border-gray-800/50 hover:bg-gray-800/30">
-                <td class="px-4 py-2 text-gray-600 whitespace-nowrap"
-                  x-text="new Date(req.requested_at*1000).toLocaleString(undefined,{dateStyle:'short',timeStyle:'short'})"></td>
-                <td class="px-4 py-2 text-gray-300 font-mono" x-text="req.tool_name"></td>
-                <td class="px-4 py-2 text-gray-500" x-text="req.action_type || '—'"></td>
-                <td class="px-4 py-2">
-                  <span class="px-1.5 py-0.5 rounded text-[10px] font-medium border"
-                    :class="{
-                      'bg-yellow-950 text-yellow-400 border-yellow-900': req.status==='pending',
-                      'bg-green-950 text-green-400 border-green-900':  req.status==='approved',
-                      'bg-red-950 text-red-400 border-red-900':        req.status==='rejected',
-                      'bg-gray-800 text-gray-500 border-gray-700':     req.status==='expired',
-                    }"
-                    x-text="req.status"></span>
-                </td>
-                <td class="px-4 py-2" x-show="can('decide_approvals')">
-                  <template x-if="req.status==='pending'">
-                    <div class="flex gap-2">
-                      <button @click="decideApproval(req.id,'approve')"
-                        class="px-2 py-1 rounded text-[10px] bg-green-900 text-green-300 hover:bg-green-800 border border-green-800">Approve</button>
-                      <button @click="decideApproval(req.id,'reject')"
-                        class="px-2 py-1 rounded text-[10px] bg-red-950 text-red-400 hover:bg-red-900 border border-red-900">Reject</button>
-                    </div>
-                  </template>
-                  <template x-if="req.status!=='pending'">
-                    <span class="text-gray-600" x-text="req.decided_by ? 'by '+req.decided_by.slice(0,8) : '—'"></span>
-                  </template>
-                </td>
-              </tr>
-            </template>
-            <template x-if="approvalRequests.length===0">
-              <tr><td :colspan="can('decide_approvals') ? 5 : 4" class="px-4 py-8 text-center text-gray-600">No approval requests</td></tr>
-            </template>
-          </tbody>
-        </table>
-      </div>
-    </div>
-
-    <!-- ── Events / dispatch ledger (Activity → Events) ── -->
+    <!-- ── Runs (Activity → Runs) — unified dispatch ledger ──
+         Previously two tabs (Events + Runs) backed by two tables
+         (dispatches + agent_runs) with heavy overlap. Merged: this
+         tab reads dispatches (every chat turn writes a row) and
+         shows it as the single "run" concept. -->
     <div x-show="tab==='activity' && activityTab==='events'">
-      <div class="flex items-center justify-between mb-4">
-        <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Dispatch Activity</div>
-        <div class="flex items-center gap-3">
-          <select x-model="dispatchOriginFilter" @change="loadDispatches()"
-            class="bg-gray-800 border border-gray-700 rounded-lg text-xs px-2 py-1 text-gray-300">
+      <div class="flex items-center justify-between mb-4 gap-3 flex-wrap">
+        <div>
+          <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Runs</div>
+          <div class="text-[10px] text-gray-500 mt-0.5">Every agent event — one row per chat turn. Backed by the <span class="font-mono">dispatches</span> table.</div>
+        </div>
+        <div class="flex items-center gap-2 flex-wrap">
+          <input type="text" x-model="dispatchesQuery"
+            @input="clearTimeout(_dispatchesSearchTimer); _dispatchesSearchTimer = setTimeout(() => { dispatchesOffset = 0; loadDispatches(); }, 250)"
+            placeholder="Search agent, model, session…"
+            class="bg-gray-800 border border-gray-700 rounded-lg text-xs px-3 py-1.5 text-gray-300 placeholder-gray-600 focus:outline-none focus:border-indigo-500 w-56">
+          <select x-model="dispatchOriginFilter" @change="dispatchesOffset = 0; loadDispatches()"
+            class="bg-gray-800 border border-gray-700 rounded-lg text-xs px-2 py-1.5 text-gray-300">
             <option value="">All origins</option>
             <option value="user_chat">User chat</option>
             <option value="compare">Compare (transient)</option>
             <option value="platform">Platform</option>
             <option value="cron">Cron</option>
-            <option value="workflow">Workflow</option>
             <option value="delegate">Delegated subagent</option>
             <option value="session_flush">Session flush</option>
           </select>
           <button @click="loadDispatches()"
-            class="text-xs text-gray-500 hover:text-white">Refresh</button>
+            class="text-xs px-3 py-1.5 rounded-lg border border-gray-700 text-gray-400 hover:text-white transition-colors">Refresh</button>
         </div>
       </div>
       <div x-show="dispatchesLoading" class="text-xs text-gray-500 py-4 text-center">Loading...</div>
@@ -5314,508 +5173,155 @@
             <tr class="text-gray-500 text-left border-b border-gray-800">
               <th class="px-3 py-2">Agent</th>
               <th class="px-3 py-2">Origin</th>
+              <th class="px-3 py-2">Soul</th>
               <th class="px-3 py-2">Model</th>
               <th class="px-3 py-2">Status</th>
               <th class="px-3 py-2">Elapsed</th>
               <th class="px-3 py-2">Tokens</th>
+              <th class="px-3 py-2">Tools</th>
               <th class="px-3 py-2">Time</th>
             </tr>
           </thead>
           <tbody>
             <template x-for="d in dispatches" :key="d.id">
-              <tr class="border-b border-gray-800/50 hover:bg-gray-800/30">
+              <tr class="border-b border-gray-800/50 hover:bg-gray-800/30 cursor-pointer" @click="selectedDispatch = d">
                 <td class="px-3 py-2 font-mono text-gray-300" x-text="d.sandbox_name || d.agent_id || '—'"></td>
                 <td class="px-3 py-2">
-                  <span class="px-1.5 py-0.5 rounded text-[9px] font-medium"
+                  <span class="px-1.5 py-0.5 rounded text-xs font-medium"
                     :class="{
                       'bg-blue-950 text-blue-400': d.origin==='user_chat',
                       'bg-purple-950 text-purple-400': d.origin?.startsWith('platform'),
                       'bg-yellow-950 text-yellow-400': d.origin==='cron',
-                      'bg-indigo-950 text-indigo-400': d.origin==='workflow',
                       'bg-pink-950 text-pink-400': d.origin==='delegate',
-                      'bg-gray-800 text-gray-400': !['user_chat','cron','workflow','delegate'].includes(d.origin) && !d.origin?.startsWith('platform'),
+                      'bg-gray-800 text-gray-400': !['user_chat','cron','delegate'].includes(d.origin) && !d.origin?.startsWith('platform'),
                     }" x-text="d.origin"></span>
                 </td>
+                <td class="px-3 py-2 text-gray-500 font-mono" x-text="d.soul || '—'"></td>
                 <td class="px-3 py-2 text-gray-500 font-mono" x-text="(d.model || '—').split('/').pop()"></td>
                 <td class="px-3 py-2">
-                  <span class="text-[10px] font-medium"
+                  <span class="text-xs font-medium px-1.5 py-0.5 rounded"
                     :class="{
-                      'text-green-400': d.status==='ok',
-                      'text-red-400': d.status==='error',
-                      'text-yellow-400': d.status==='running',
-                      'text-gray-500': d.status==='timeout' || d.status==='cancelled',
+                      'bg-green-950 text-green-400': d.status==='ok',
+                      'bg-red-950 text-red-400': d.status==='error',
+                      'bg-yellow-950 text-yellow-400': d.status==='running',
+                      'bg-gray-800 text-gray-400': ['timeout','cancelled','interrupted'].includes(d.status),
                     }" x-text="d.status"></span>
                 </td>
                 <td class="px-3 py-2 text-gray-500" x-text="d.elapsed_s ? d.elapsed_s.toFixed(1) + 's' : '—'"></td>
                 <td class="px-3 py-2 text-gray-500" x-text="(d.prompt_tokens || 0) + (d.completion_tokens || 0) || '—'"></td>
+                <td class="px-3 py-2 text-gray-500 font-mono truncate max-w-[180px]"
+                    x-text="(d.tool_sequence && d.tool_sequence.length) ? d.tool_sequence.slice(0,4).join(', ') + (d.tool_sequence.length > 4 ? ' +' + (d.tool_sequence.length - 4) : '') : '—'"></td>
                 <td class="px-3 py-2 text-gray-600" x-text="d.started_at ? new Date(d.started_at).toLocaleTimeString() : '—'"></td>
               </tr>
             </template>
             <template x-if="dispatches.length === 0">
-              <tr><td colspan="7" class="px-4 py-8 text-center text-gray-600">No dispatches recorded yet</td></tr>
+              <tr><td colspan="9" class="px-4 py-8 text-center text-gray-600" x-text="(dispatchesQuery || '').trim() ? 'No runs match your search.' : 'No runs recorded yet'"></td></tr>
             </template>
           </tbody>
         </table>
         <div class="flex items-center justify-between mt-3 text-xs text-gray-500">
-          <span x-text="'Showing ' + dispatches.length + ' of ' + dispatchesTotal + ' dispatches'"></span>
-        </div>
-      </div>
-    </div>
-
-    <!-- ── Runs sub-tab (Activity → Runs) ──
-         Per-run STAMP records from the agent_runs table: agent, model,
-         soul, tool sequence, status, elapsed, api calls. Each row is
-         clickable for a detail drawer (below). -->
-    <div x-show="tab==='activity' && activityTab==='runs' && can('view_runs')" x-cloak>
-      <div class="flex items-center justify-between mb-4">
-        <div>
-          <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Agent Runs</div>
-          <div class="text-[10px] text-gray-500 mt-0.5">Per-turn STAMP records — model, soul, tool trace, outcome. Backed by the <span class="font-mono">agent_runs</span> table.</div>
-        </div>
-        <div class="flex items-center gap-2">
-          <select x-model="agentRunsStatusFilter" @change="loadAgentRuns()"
-            class="bg-gray-800 border border-gray-700 rounded-lg text-xs px-2 py-1 text-gray-300">
-            <option value="">All status</option>
-            <option value="success">success</option>
-            <option value="error">error</option>
-            <option value="running">running</option>
-            <option value="cancelled">cancelled</option>
-          </select>
-          <button @click="loadAgentRuns()" class="text-xs text-[var(--accent)] hover:opacity-80 flex items-center gap-1"><span>&#8635;</span> Refresh</button>
+          <span x-text="dispatchesTotal === 0 ? 'No runs' : ('Showing ' + (dispatchesOffset + 1) + '-' + Math.min(dispatchesOffset + dispatches.length, dispatchesTotal) + ' of ' + dispatchesTotal)"></span>
+          <div class="flex items-center gap-1" x-show="dispatchesTotal > dispatchesLimit">
+            <button @click="dispatchesOffset = Math.max(0, dispatchesOffset - dispatchesLimit); loadDispatches()"
+              :disabled="dispatchesOffset === 0"
+              class="px-2 py-1 rounded border border-gray-700 text-gray-400 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed transition-colors">‹ Prev</button>
+            <span class="px-2 text-gray-600 font-mono"
+              x-text="(Math.floor(dispatchesOffset / dispatchesLimit) + 1) + ' / ' + Math.max(1, Math.ceil(dispatchesTotal / dispatchesLimit))"></span>
+            <button @click="dispatchesOffset = dispatchesOffset + dispatchesLimit; loadDispatches()"
+              :disabled="dispatchesOffset + dispatchesLimit >= dispatchesTotal"
+              class="px-2 py-1 rounded border border-gray-700 text-gray-400 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed transition-colors">Next ›</button>
+          </div>
         </div>
       </div>
 
-      <div x-show="agentRunsLoading" class="text-xs text-gray-500 py-4 text-center">Loading...</div>
-      <div class="overflow-x-auto" x-show="!agentRunsLoading">
-        <table class="w-full text-xs">
-          <thead>
-            <tr class="text-gray-500 text-left border-b border-gray-800">
-              <th class="px-3 py-2">Agent</th>
-              <th class="px-3 py-2">Model</th>
-              <th class="px-3 py-2">Soul</th>
-              <th class="px-3 py-2">Status</th>
-              <th class="px-3 py-2">API calls</th>
-              <th class="px-3 py-2">Tools</th>
-              <th class="px-3 py-2">User</th>
-              <th class="px-3 py-2">When</th>
-            </tr>
-          </thead>
-          <tbody>
-            <template x-for="r in agentRuns" :key="r.id">
-              <tr class="border-b border-gray-800/50 hover:bg-gray-800/30 cursor-pointer"
-                  @click="openAgentRunDetail(r)">
-                <td class="px-3 py-2 text-white font-medium" x-text="r.agent_name || r.agent_id || '—'"></td>
-                <td class="px-3 py-2 text-gray-500 font-mono" x-text="(r.model || '').split('/').pop() || '—'"></td>
-                <td class="px-3 py-2 text-gray-500 font-mono" x-text="r.soul || '—'"></td>
-                <td class="px-3 py-2">
-                  <span class="text-[10px] font-medium px-1.5 py-0.5 rounded"
-                    :class="{
-                      'bg-green-950 text-green-400': r.status==='success',
-                      'bg-red-950 text-red-400': r.status==='error',
-                      'bg-yellow-950 text-yellow-400': r.status==='running',
-                      'bg-gray-800 text-gray-400': ['cancelled','timeout'].includes(r.status) || !['success','error','running'].includes(r.status||''),
-                    }" x-text="r.status || '—'"></span>
-                </td>
-                <td class="px-3 py-2 text-gray-400" x-text="r.api_calls ?? 0"></td>
-                <td class="px-3 py-2 text-gray-500 font-mono truncate max-w-[200px]" x-text="(r.tool_sequence || []).slice(0, 4).join(', ')"></td>
-                <td class="px-3 py-2 text-gray-500" x-text="r.username || r.user_id || '—'"></td>
-                <td class="px-3 py-2 text-gray-500" x-text="r.created_at ? new Date((typeof r.created_at === 'number' ? r.created_at * 1000 : Date.parse(r.created_at))).toLocaleString() : '—'"></td>
-              </tr>
-            </template>
-            <template x-if="!agentRunsLoading && agentRuns.length === 0">
-              <tr><td colspan="8" class="px-3 py-8 text-center text-gray-600">No runs recorded yet.</td></tr>
-            </template>
-          </tbody>
-        </table>
-      </div>
-      <div x-show="!agentRunsLoading && agentRuns.length > 0" class="flex items-center justify-between mt-3 text-xs text-gray-500">
-        <span x-text="'Showing ' + agentRuns.length + ' of ' + agentRunsTotal + ' runs'"></span>
-      </div>
-
-      <!-- Detail drawer -->
-      <div x-show="selectedAgentRun" x-cloak
+      <!-- Run detail drawer — shows the full STAMP for one row.
+           Right-docked, same skeleton as the Logs / Mind modals. -->
+      <div x-show="selectedDispatch" x-cloak
            class="fixed inset-0 bg-black/60 z-50 flex justify-end"
-           @click="selectedAgentRun = null" @keydown.escape.window="selectedAgentRun = null">
-        <div class="bg-gray-950 border-l border-gray-800 w-full max-w-2xl h-full overflow-auto" @click.stop>
-          <div class="px-5 py-3 border-b border-gray-800 flex items-center justify-between">
-            <div class="text-sm font-semibold text-white">Run <span class="font-mono text-gray-500 text-xs" x-text="selectedAgentRun?.id"></span></div>
-            <button @click="selectedAgentRun = null" class="text-gray-500 hover:text-white text-xl px-2">&times;</button>
+           @click="selectedDispatch = null" @keydown.escape.window="selectedDispatch = null">
+        <div class="bg-gray-950 border-l border-gray-800 w-full max-w-2xl h-full overflow-y-auto" @click.stop>
+          <div class="px-5 py-3 border-b border-gray-800 flex items-center justify-between sticky top-0 bg-gray-950 z-10">
+            <div>
+              <div class="text-sm font-semibold text-white" x-text="'Run · ' + (selectedDispatch?.sandbox_name || selectedDispatch?.agent_id || '—')"></div>
+              <div class="text-[10px] text-gray-600 font-mono truncate" x-text="selectedDispatch?.id || ''"></div>
+            </div>
+            <button @click="selectedDispatch = null" class="text-gray-500 hover:text-white text-lg px-2">&times;</button>
           </div>
-          <div class="p-5 space-y-3 text-xs" x-show="selectedAgentRun">
+          <div class="p-5 space-y-4 text-xs">
+            <!-- STAMP pills — same visual language as the agent-card and
+                 compare-pane STAMP rows so a run reads as "an event
+                 stamped with this agent's configuration". S / T / A / M
+                 only; P (policy) is intentionally omitted because we
+                 removed the per-user action-policy UI. -->
+            <div class="flex items-center gap-1.5 flex-wrap">
+              <!-- S: Soul -->
+              <span class="text-[10px] px-1.5 py-0.5 rounded font-mono bg-indigo-950 text-indigo-300 border border-indigo-900 flex items-center gap-1"
+                    :title="'Soul: ' + (selectedDispatch?.soul || 'general')">
+                <span class="font-bold text-indigo-500">S</span>
+                <span x-text="selectedDispatch?.soul || 'general'"></span>
+              </span>
+              <!-- T: Toolsets count -->
+              <span class="text-[10px] px-1.5 py-0.5 rounded font-mono bg-gray-800 text-gray-400 border border-gray-700 flex items-center gap-1"
+                    :title="'Toolsets at dispatch: ' + ((selectedDispatch?.toolsets_snapshot || []).join(', ') || 'none')">
+                <span class="font-bold text-gray-500">T</span>
+                <span x-text="(selectedDispatch?.toolsets_snapshot || []).length + ' tools'"></span>
+              </span>
+              <!-- A: Agent runtime — hermes is the only runtime today; the
+                   executor (openshell) spawns the hermes-agent sandbox. -->
+              <span class="text-[10px] px-1.5 py-0.5 rounded font-mono bg-gray-800 text-gray-400 border border-gray-700 flex items-center gap-1"
+                    :title="'Runtime: hermes · sandbox: ' + (selectedDispatch?.sandbox_name || '—')">
+                <span class="font-bold text-gray-500">A</span>
+                <span x-text="'hermes · ' + (selectedDispatch?.sandbox_name || selectedDispatch?.agent_id || '—')"></span>
+              </span>
+              <!-- M: Model -->
+              <span class="text-[10px] px-1.5 py-0.5 rounded font-mono bg-[var(--accent-subtle)] text-[var(--accent)] border border-[var(--accent)]/40 flex items-center gap-1 truncate max-w-[260px]"
+                    :title="'Model: ' + (selectedDispatch?.model || 'auto')">
+                <span class="font-bold">M</span>
+                <span class="truncate" x-text="(selectedDispatch?.model || 'auto').split('/').pop()"></span>
+              </span>
+            </div>
+            <!-- Supporting stats — kept out of the STAMP row to keep the
+                 pills themselves scannable at a glance. -->
             <div class="grid grid-cols-2 gap-3">
-              <div><div class="text-gray-500 uppercase tracking-wider text-[10px] mb-0.5">Agent</div><div class="text-white" x-text="selectedAgentRun?.agent_name || selectedAgentRun?.agent_id || '—'"></div></div>
-              <div><div class="text-gray-500 uppercase tracking-wider text-[10px] mb-0.5">Status</div><div class="text-white" x-text="selectedAgentRun?.status || '—'"></div></div>
-              <div><div class="text-gray-500 uppercase tracking-wider text-[10px] mb-0.5">Model</div><div class="font-mono text-white" x-text="selectedAgentRun?.model || '—'"></div></div>
-              <div><div class="text-gray-500 uppercase tracking-wider text-[10px] mb-0.5">Soul</div><div class="font-mono text-white" x-text="selectedAgentRun?.soul || '—'"></div></div>
-              <div><div class="text-gray-500 uppercase tracking-wider text-[10px] mb-0.5">Provider</div><div class="text-white" x-text="selectedAgentRun?.provider || '—'"></div></div>
-              <div><div class="text-gray-500 uppercase tracking-wider text-[10px] mb-0.5">API calls</div><div class="text-white" x-text="selectedAgentRun?.api_calls ?? 0"></div></div>
+              <div><div class="text-[10px] text-gray-600 uppercase tracking-wider mb-0.5">Origin</div><div class="text-white" x-text="selectedDispatch?.origin || '—'"></div></div>
+              <div><div class="text-[10px] text-gray-600 uppercase tracking-wider mb-0.5">Status</div><div class="text-white" x-text="selectedDispatch?.status || '—'"></div></div>
+              <div><div class="text-[10px] text-gray-600 uppercase tracking-wider mb-0.5">Elapsed</div><div class="text-white" x-text="selectedDispatch?.elapsed_s ? selectedDispatch.elapsed_s.toFixed(2) + 's' : '—'"></div></div>
+              <div><div class="text-[10px] text-gray-600 uppercase tracking-wider mb-0.5">Tokens (in/out)</div><div class="text-white font-mono" x-text="(selectedDispatch?.prompt_tokens ?? 0) + ' / ' + (selectedDispatch?.completion_tokens ?? 0)"></div></div>
+              <div><div class="text-[10px] text-gray-600 uppercase tracking-wider mb-0.5">Session</div><div class="font-mono text-gray-300 truncate" x-text="selectedDispatch?.session_id || '—'"></div></div>
+              <div><div class="text-[10px] text-gray-600 uppercase tracking-wider mb-0.5">Started</div><div class="text-gray-300" x-text="selectedDispatch?.started_at ? new Date(selectedDispatch.started_at).toLocaleString() : '—'"></div></div>
             </div>
-            <div>
-              <div class="text-gray-500 uppercase tracking-wider text-[10px] mb-1">User message</div>
-              <div class="text-gray-200 bg-gray-900 border border-gray-800 rounded p-2 whitespace-pre-wrap break-all max-h-40 overflow-auto" x-text="selectedAgentRun?.user_message || '—'"></div>
+            <!-- User message -->
+            <div x-show="selectedDispatch?.user_message">
+              <div class="text-[10px] text-gray-600 uppercase tracking-wider mb-1">User message</div>
+              <div class="text-gray-200 bg-gray-900 border border-gray-800 rounded-lg p-2 whitespace-pre-wrap break-words max-h-40 overflow-y-auto" x-text="selectedDispatch?.user_message || ''"></div>
             </div>
-            <div>
-              <div class="text-gray-500 uppercase tracking-wider text-[10px] mb-1">Tool sequence</div>
-              <div class="font-mono text-gray-300 bg-gray-900 border border-gray-800 rounded p-2">
-                <template x-for="(t, i) in (selectedAgentRun?.tool_sequence || [])" :key="i"><span class="inline-block px-1.5 py-0.5 mr-1 mb-1 bg-gray-800 rounded" x-text="t"></span></template>
-                <span x-show="!(selectedAgentRun?.tool_sequence?.length)" class="text-gray-600 italic">(no tools called)</span>
+            <!-- Toolsets snapshot -->
+            <div x-show="(selectedDispatch?.toolsets_snapshot || []).length">
+              <div class="text-[10px] text-gray-600 uppercase tracking-wider mb-1">Toolsets (at dispatch)</div>
+              <div class="flex flex-wrap gap-1">
+                <template x-for="ts in (selectedDispatch?.toolsets_snapshot || [])" :key="ts">
+                  <span class="text-xs px-1.5 py-0.5 rounded font-mono bg-emerald-950 text-emerald-400 border border-emerald-900" x-text="ts"></span>
+                </template>
               </div>
             </div>
-            <div x-show="selectedAgentRun?.error">
-              <div class="text-red-400 uppercase tracking-wider text-[10px] mb-1">Error</div>
-              <div class="text-red-300 bg-red-950/30 border border-red-900 rounded p-2 whitespace-pre-wrap break-all" x-text="selectedAgentRun?.error"></div>
-            </div>
-            <div x-show="(selectedAgentRun?.approval_ids || []).length">
-              <div class="text-gray-500 uppercase tracking-wider text-[10px] mb-1">Approvals</div>
-              <div class="font-mono text-gray-400" x-text="(selectedAgentRun?.approval_ids || []).join(', ')"></div>
-            </div>
-
-            <!-- STAMP enrichment: tokens, cost, dispatches. Populated
-                 by openAgentRunDetail() from the /api/runs/{id}
-                 response's stamp{} block. -->
-            <template x-if="agentRunStamp">
-              <div class="space-y-3 pt-3 border-t border-gray-800">
-                <div class="grid grid-cols-3 gap-3">
-                  <div>
-                    <div class="text-gray-500 uppercase tracking-wider text-[10px] mb-0.5">Prompt tokens</div>
-                    <div class="text-white" x-text="(agentRunStamp.token_totals?.prompt || 0).toLocaleString()"></div>
-                  </div>
-                  <div>
-                    <div class="text-gray-500 uppercase tracking-wider text-[10px] mb-0.5">Completion tokens</div>
-                    <div class="text-white" x-text="(agentRunStamp.token_totals?.completion || 0).toLocaleString()"></div>
-                  </div>
-                  <div>
-                    <div class="text-gray-500 uppercase tracking-wider text-[10px] mb-0.5">Cost (USD)</div>
-                    <div class="text-white" x-text="'$' + (agentRunStamp.cost?.total_usd || 0).toFixed(4)"></div>
-                  </div>
-                </div>
-                <div x-show="(agentRunStamp.dispatches || []).length">
-                  <div class="text-gray-500 uppercase tracking-wider text-[10px] mb-1" x-text="'Dispatches (' + (agentRunStamp.dispatches || []).length + ')'"></div>
-                  <div class="space-y-1">
-                    <template x-for="d in (agentRunStamp.dispatches || [])" :key="d.id">
-                      <div class="flex items-center gap-2 text-[11px] bg-gray-900 border border-gray-800 rounded px-2 py-1">
-                        <span class="font-mono text-gray-500 w-16 truncate" x-text="d.origin"></span>
-                        <span class="font-mono text-gray-600 w-20 truncate" x-text="(d.model || '').split('/').pop()"></span>
-                        <span class="flex-1 text-gray-400" x-text="(d.status || '—') + (d.elapsed_s ? ' · ' + d.elapsed_s + 's' : '')"></span>
-                        <span x-show="d.error" class="text-red-400 truncate max-w-[200px]" x-text="d.error"></span>
-                      </div>
-                    </template>
-                  </div>
-                </div>
+            <!-- Tool sequence -->
+            <div x-show="(selectedDispatch?.tool_sequence || []).length">
+              <div class="text-[10px] text-gray-600 uppercase tracking-wider mb-1">Tool sequence</div>
+              <div class="font-mono text-gray-300 bg-gray-900 border border-gray-800 rounded-lg p-2">
+                <template x-for="(t, i) in (selectedDispatch?.tool_sequence || [])" :key="i">
+                  <span class="inline-block px-1.5 py-0.5 mr-1 mb-1 bg-gray-800 rounded" x-text="(i+1) + '. ' + t"></span>
+                </template>
               </div>
-            </template>
+            </div>
+            <!-- Error -->
+            <div x-show="selectedDispatch?.error">
+              <div class="text-[10px] text-red-400 uppercase tracking-wider mb-1">Error</div>
+              <div class="text-red-300 bg-red-950/30 border border-red-900 rounded-lg p-2 whitespace-pre-wrap break-words" x-text="selectedDispatch?.error || ''"></div>
+            </div>
           </div>
         </div>
       </div>
     </div>
-
-    <!-- Shared admin message bar -->
-    <template x-if="adminMsg && !adminUserFormOpen && !adminMachineFormOpen && !adminPolicyFormOpen">
-      <div class="mt-4 text-xs px-3 py-2 rounded-lg"
-        :class="adminMsg.ok ? 'bg-green-950 text-green-300 border border-green-800' : 'bg-red-950 text-red-300 border border-red-800'"
-        x-text="adminMsg.text"></div>
-    </template>
-
-  </div>
-
-  <!-- ── Workflows Tab (Config → Workflows) ─────────────────────────── -->
-  <div x-show="tab==='infra' && infraTab==='workflows'" x-cloak class="p-6 max-w-5xl mx-auto space-y-6">
-
-    <!-- Header row -->
-    <div class="flex items-center justify-between">
-      <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Workflow Definitions</div>
-      <div class="flex items-center gap-3">
-        <button @click="loadWorkflows()" class="text-xs text-[var(--accent)] hover:opacity-80 flex items-center gap-1"><span>&#8635;</span> Refresh</button>
-        <template x-if="can('manage_workflows')">
-          <div class="flex items-center gap-2">
-            <button @click="wfBuilderOpen=true; wfNewFormOpen=false"
-              class="text-xs px-3 py-1.5 rounded-lg bg-[var(--accent)] text-white hover:opacity-90">+ Build</button>
-            <button @click="wfNewFormOpen=true; wfBuilderOpen=false"
-              class="text-xs px-3 py-1.5 rounded-lg border border-gray-700 text-gray-300 hover:text-white hover:border-gray-500">Import JSON</button>
-          </div>
-        </template>
-      </div>
-    </div>
-
-    <!-- Status message (shared) -->
-    <template x-if="wfMsg">
-      <div class="text-xs px-3 py-2 rounded-lg"
-        :class="wfMsg.ok ? 'bg-green-950 text-green-300 border border-green-800' : 'bg-red-950 text-red-300 border border-red-800'"
-        x-text="wfMsg.text"></div>
-    </template>
-
-    <!-- Visual builder -->
-    <template x-if="wfBuilderOpen">
-      <div class="bg-gray-900 border border-gray-700 rounded-xl p-5 space-y-4">
-        <div class="flex items-center justify-between">
-          <div class="text-xs font-semibold text-gray-300 uppercase tracking-wider">Build Workflow</div>
-          <button @click="wfBuilderOpen=false; wfBuilderSteps=[]" class="text-xs text-gray-500 hover:text-white">✕ Close</button>
-        </div>
-        <!-- Name & description -->
-        <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          <div>
-            <label class="text-[10px] text-gray-500 uppercase tracking-wider block mb-1">Name *</label>
-            <input type="text" x-model="wfBuilderName" placeholder="My Workflow"
-              class="w-full text-xs bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-gray-200 focus:outline-none focus:border-[var(--accent)]" />
-          </div>
-          <div>
-            <label class="text-[10px] text-gray-500 uppercase tracking-wider block mb-1">Description</label>
-            <input type="text" x-model="wfBuilderDesc" placeholder="What this workflow does"
-              class="w-full text-xs bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-gray-200 focus:outline-none focus:border-[var(--accent)]" />
-          </div>
-        </div>
-        <!-- Steps -->
-        <div class="space-y-3">
-          <div class="flex items-center justify-between">
-            <div class="text-[10px] text-gray-500 uppercase tracking-wider">Steps</div>
-            <button @click="_wfBuilderNewStep()"
-              class="text-[10px] px-2 py-1 rounded border border-gray-700 text-gray-400 hover:border-[var(--accent)] hover:text-[var(--accent)]">+ Add Step</button>
-          </div>
-          <template x-if="wfBuilderSteps.length === 0">
-            <div class="text-xs text-gray-600 text-center py-4 border border-dashed border-gray-800 rounded-lg">No steps yet — click "+ Add Step" to begin</div>
-          </template>
-          <template x-for="(step, idx) in wfBuilderSteps" :key="idx">
-            <div class="bg-gray-800 border border-gray-700 rounded-xl p-3 space-y-2">
-              <div class="flex items-center justify-between mb-1">
-                <span class="text-[10px] font-semibold text-gray-400 uppercase tracking-wider" x-text="'Step ' + (idx+1)"></span>
-                <button @click="_wfBuilderRemoveStep(idx)" class="text-[10px] text-red-500 hover:text-red-400">Remove</button>
-              </div>
-              <div class="grid grid-cols-2 gap-2 sm:grid-cols-4">
-                <div>
-                  <label class="text-[9px] text-gray-600 uppercase block mb-0.5">ID</label>
-                  <input type="text" x-model="step.step_id" placeholder="step_1"
-                    class="w-full text-[11px] bg-gray-900 border border-gray-700 rounded px-2 py-1 text-gray-200 focus:outline-none focus:border-[var(--accent)]" />
-                </div>
-                <div>
-                  <label class="text-[9px] text-gray-600 uppercase block mb-0.5">Type</label>
-                  <select x-model="step.step_type"
-                    class="w-full text-[11px] bg-gray-900 border border-gray-700 rounded px-2 py-1 text-gray-200 focus:outline-none focus:border-[var(--accent)]">
-                    <option value="inspect">inspect</option>
-                    <option value="reason">reason</option>
-                    <option value="propose">propose</option>
-                    <option value="apply">apply</option>
-                    <option value="validate">validate</option>
-                    <option value="approval">approval</option>
-                  </select>
-                </div>
-                <div>
-                  <label class="text-[9px] text-gray-600 uppercase block mb-0.5">Name</label>
-                  <input type="text" x-model="step.step_name" placeholder="Descriptive name"
-                    class="w-full text-[11px] bg-gray-900 border border-gray-700 rounded px-2 py-1 text-gray-200 focus:outline-none focus:border-[var(--accent)]" />
-                </div>
-                <div>
-                  <label class="text-[9px] text-gray-600 uppercase block mb-0.5">Timeout (s)</label>
-                  <input type="number" x-model.number="step.timeout_seconds" min="10" max="3600"
-                    class="w-full text-[11px] bg-gray-900 border border-gray-700 rounded px-2 py-1 text-gray-200 focus:outline-none focus:border-[var(--accent)]" />
-                </div>
-              </div>
-              <div>
-                <label class="text-[9px] text-gray-600 uppercase block mb-0.5">Prompt</label>
-                <textarea x-model="step.prompt" rows="2" placeholder="Instructions for the agent at this step…"
-                  class="w-full text-[11px] bg-gray-900 border border-gray-700 rounded px-2 py-1.5 text-gray-200 resize-none focus:outline-none focus:border-[var(--accent)]"></textarea>
-              </div>
-              <div class="grid grid-cols-1 gap-2 sm:grid-cols-3">
-                <div>
-                  <label class="text-[9px] text-gray-600 uppercase block mb-0.5">Tools (comma-separated)</label>
-                  <input type="text" x-model="step.tools" placeholder="web_search, terminal"
-                    class="w-full text-[11px] bg-gray-900 border border-gray-700 rounded px-2 py-1 text-gray-200 focus:outline-none focus:border-[var(--accent)]" />
-                </div>
-                <div>
-                  <label class="text-[9px] text-gray-600 uppercase block mb-0.5">Depends on (step IDs)</label>
-                  <input type="text" x-model="step.depends_on" placeholder="step_1, step_2"
-                    class="w-full text-[11px] bg-gray-900 border border-gray-700 rounded px-2 py-1 text-gray-200 focus:outline-none focus:border-[var(--accent)]" />
-                </div>
-                <div>
-                  <label class="text-[9px] text-gray-600 uppercase block mb-0.5">Parallel group</label>
-                  <input type="text" x-model="step.parallel_group" placeholder="group_a"
-                    class="w-full text-[11px] bg-gray-900 border border-gray-700 rounded px-2 py-1 text-gray-200 focus:outline-none focus:border-[var(--accent)]" />
-                </div>
-              </div>
-            </div>
-          </template>
-        </div>
-        <div class="flex justify-end gap-2 pt-2">
-          <button @click="wfBuilderOpen=false; wfBuilderSteps=[]"
-            class="text-xs px-3 py-1.5 rounded-lg border border-gray-700 text-gray-400 hover:text-white">Cancel</button>
-          <button @click="buildWorkflow()"
-            class="text-xs px-3 py-1.5 rounded-lg bg-[var(--accent)] text-white hover:opacity-90">Create Workflow</button>
-        </div>
-      </div>
-    </template>
-
-    <!-- Import JSON form -->
-    <template x-if="wfNewFormOpen">
-      <div class="bg-gray-900 border border-gray-700 rounded-xl p-4">
-        <div class="text-xs font-semibold text-gray-400 mb-3">Import Workflow (JSON)</div>
-        <textarea x-model="wfImportJson" rows="8"
-          placeholder='{"name":"My Workflow","description":"...","steps":[...]}'
-          class="w-full bg-gray-800 border border-gray-700 rounded-lg text-xs font-mono text-gray-200 p-3 focus:outline-none focus:border-[var(--accent)] resize-y"></textarea>
-        <div class="flex justify-end gap-2 mt-3">
-          <button @click="wfNewFormOpen=false; wfImportJson=''"
-            class="text-xs px-3 py-1.5 rounded-lg border border-gray-700 text-gray-400 hover:text-white">Cancel</button>
-          <button @click="importWorkflow()"
-            class="text-xs px-3 py-1.5 rounded-lg bg-[var(--accent)] text-white hover:opacity-90">Import</button>
-        </div>
-      </div>
-    </template>
-
-    <!-- Definitions list -->
-    <div class="space-y-3">
-      <template x-for="wf in workflows" :key="wf.id">
-        <div class="bg-gray-900 border border-gray-800 rounded-xl p-4">
-          <div class="flex items-start justify-between gap-3">
-            <div class="min-w-0 flex-1">
-              <div class="flex items-center gap-2 mb-1">
-                <span class="font-medium text-sm text-white" x-text="wf.name"></span>
-                <span class="text-[10px] px-1.5 py-0.5 rounded border border-gray-700 text-gray-500" x-text="'v'+wf.version"></span>
-                <template x-for="tag in (wf.tags||[])" :key="tag">
-                  <span class="text-[10px] px-1.5 py-0.5 rounded bg-[var(--accent-muted)] text-[var(--accent-light)]" x-text="tag"></span>
-                </template>
-              </div>
-              <p class="text-xs text-gray-500" x-text="wf.description || '—'"></p>
-              <p class="text-[10px] text-gray-700 mt-1" x-text="(wf.step_count||0)+' steps'"></p>
-            </div>
-            <div class="flex items-center gap-2 shrink-0">
-              <button @click="selectedWorkflow=wf; loadWorkflowRuns(wf.id)"
-                class="text-xs px-3 py-1.5 rounded-lg border border-gray-700 text-gray-300 hover:border-[var(--accent)] hover:text-[var(--accent)]">History</button>
-              <button x-show="can('trigger_workflow')" @click="triggerWorkflow(wf.id)"
-                class="text-xs px-3 py-1.5 rounded-lg bg-[var(--accent)] text-white hover:opacity-90">▶ Run</button>
-              <button x-show="can('manage_workflows')" @click="deleteWorkflow(wf.id)"
-                class="text-xs px-2 py-1.5 rounded-lg border border-red-900 text-red-500 hover:bg-red-950">✕</button>
-            </div>
-          </div>
-        </div>
-      </template>
-      <template x-if="workflows.length===0">
-        <div class="bg-gray-900 border border-gray-800 rounded-xl p-8 text-center text-xs text-gray-600">
-          No workflow definitions yet. Import a JSON definition to get started.
-        </div>
-      </template>
-    </div>
-
-    <!-- Run list for selected workflow -->
-    <template x-if="selectedWorkflow">
-      <div>
-        <div class="flex items-center justify-between mb-3">
-          <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider"
-            x-text="'History — ' + selectedWorkflow.name"></div>
-          <button @click="selectedWorkflow=null; wfRuns=[]" class="text-xs text-gray-500 hover:text-white">✕ Close</button>
-        </div>
-        <div class="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
-          <table class="w-full text-xs">
-            <thead>
-              <tr class="border-b border-gray-800 text-gray-500">
-                <th class="text-left px-4 py-3 font-medium">Started</th>
-                <th class="text-left px-4 py-3 font-medium">Status</th>
-                <th class="text-left px-4 py-3 font-medium">Triggered By</th>
-                <th class="text-left px-4 py-3 font-medium">Duration</th>
-                <th class="text-left px-4 py-3 font-medium">Detail</th>
-              </tr>
-            </thead>
-            <tbody>
-              <template x-for="run in wfRuns" :key="run.id">
-                <tr class="border-b border-gray-800/50 hover:bg-gray-800/30">
-                  <td class="px-4 py-2 text-gray-600 whitespace-nowrap"
-                    x-text="run.created_at ? new Date(run.created_at).toLocaleString(undefined,{dateStyle:'short',timeStyle:'short'}) : '—'"></td>
-                  <td class="px-4 py-2">
-                    <span class="px-1.5 py-0.5 rounded text-[10px] font-medium border"
-                      :class="{
-                        'bg-yellow-950 text-yellow-400 border-yellow-900': run.status==='pending'||run.status==='running',
-                        'bg-blue-950 text-blue-400 border-blue-900':   run.status==='paused',
-                        'bg-green-950 text-green-400 border-green-900': run.status==='success',
-                        'bg-red-950 text-red-400 border-red-900':      run.status==='failed',
-                        'bg-gray-800 text-gray-500 border-gray-700':   run.status==='cancelled',
-                      }" x-text="run.status"></span>
-                  </td>
-                  <td class="px-4 py-2 text-gray-500 font-mono" x-text="(run.triggered_by||'system').slice(0,12)"></td>
-                  <td class="px-4 py-2 text-gray-600"
-                    x-text="(run.started_at && run.finished_at) ? Math.round((run.finished_at-run.started_at)/1000)+'s' : (run.started_at ? 'running…' : '—')"></td>
-                  <td class="px-4 py-2">
-                    <button @click="loadRunDetail(run.id)"
-                      class="text-xs text-[var(--accent)] hover:opacity-80">Steps ›</button>
-                  </td>
-                </tr>
-              </template>
-              <template x-if="wfRuns.length===0">
-                <tr><td colspan="5" class="px-4 py-6 text-center text-gray-600">No runs yet</td></tr>
-              </template>
-            </tbody>
-          </table>
-        </div>
-      </div>
-    </template>
-
-    <!-- Step detail for a selected run -->
-    <template x-if="selectedRun">
-      <div>
-        <div class="flex items-center justify-between mb-3">
-          <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider"
-            x-text="'Steps — run ' + selectedRun.run.id.slice(-8)"></div>
-          <button @click="selectedRun=null" class="text-xs text-gray-500 hover:text-white">✕ Close</button>
-        </div>
-        <div class="space-y-2">
-          <template x-for="step in selectedRun.steps" :key="step.id">
-            <div class="bg-gray-900 border border-gray-800 rounded-xl p-3">
-              <div class="flex items-center justify-between gap-2 mb-1">
-                <div class="flex items-center gap-2">
-                  <span class="px-1.5 py-0.5 rounded text-[10px] font-mono border border-gray-700 text-gray-400" x-text="step.step_type"></span>
-                  <span class="text-sm text-white font-medium" x-text="step.step_name"></span>
-                  <span class="text-[10px] text-gray-600 font-mono" x-text="step.step_id"></span>
-                </div>
-                <span class="px-1.5 py-0.5 rounded text-[10px] font-medium border"
-                  :class="{
-                    'bg-gray-800 text-gray-500 border-gray-700':         step.status==='pending',
-                    'bg-yellow-950 text-yellow-400 border-yellow-900':   step.status==='running',
-                    'bg-green-950 text-green-400 border-green-900':      step.status==='success',
-                    'bg-red-950 text-red-400 border-red-900':            step.status==='failed',
-                    'bg-gray-700 text-gray-400 border-gray-600':         step.status==='skipped',
-                    'bg-blue-950 text-blue-400 border-blue-900':         step.status==='waiting_approval',
-                    'bg-gray-800 text-gray-600 border-gray-700':         step.status==='cancelled',
-                  }" x-text="step.status"></span>
-              </div>
-              <template x-if="step.output_summary">
-                <p class="text-[11px] text-gray-500 mt-1 whitespace-pre-wrap" x-text="step.output_summary.slice(0,400)+(step.output_summary.length>400?'…':'')"></p>
-              </template>
-              <template x-if="step.error">
-                <p class="text-[11px] text-red-400 mt-1" x-text="step.error"></p>
-              </template>
-              <template x-if="step.status==='waiting_approval' && can('decide_workflow_approvals')">
-                <div class="flex gap-2 mt-2">
-                  <button @click="decideWorkflowApproval(step.approval_id,'approve')"
-                    class="px-2 py-1 rounded text-[10px] bg-green-900 text-green-300 hover:bg-green-800 border border-green-800">Approve</button>
-                  <button @click="decideWorkflowApproval(step.approval_id,'reject')"
-                    class="px-2 py-1 rounded text-[10px] bg-red-950 text-red-400 hover:bg-red-900 border border-red-900">Reject</button>
-                </div>
-              </template>
-              <div class="flex items-center gap-4 mt-1.5 text-[10px] text-gray-700">
-                <template x-if="step.started_at">
-                  <span x-text="new Date(step.started_at).toLocaleTimeString()"></span>
-                </template>
-                <template x-if="step.started_at && step.finished_at">
-                  <span x-text="Math.round((step.finished_at-step.started_at)/1000)+'s'"></span>
-                </template>
-                <template x-if="step.parallel_group">
-                  <span class="text-gray-600">⫶ <span x-text="step.parallel_group"></span></span>
-                </template>
-              </div>
-            </div>
-          </template>
-        </div>
-        <template x-if="selectedRun.run.status==='running'||selectedRun.run.status==='paused'">
-          <div class="mt-3 flex justify-end">
-            <button @click="cancelRun(selectedRun.run.id)"
-              class="text-xs px-3 py-1.5 rounded-lg border border-red-900 text-red-400 hover:bg-red-950">Cancel Run</button>
-          </div>
-        </template>
-      </div>
-    </template>
-
-  </div>
-
-  <!-- Runs sub-tab removed: agent_runs writes are bypassed in the current
-       OpenShell runtime (Plan A-prime in sandbox_worker.py). M10 is the
-       restoration ticket — when it lands, re-add the Runs sub-tab + block
-       (history at git rev pre-removal). -->
 
   <!-- ── Proposals (Activity → Proposals; was: Evolution) ───────────── -->
   <div x-show="tab==='activity' && activityTab==='proposals'" x-cloak class="p-6 max-w-5xl mx-auto space-y-6">
@@ -5850,7 +5356,7 @@
             <option value="merged">Merged</option>
             <option value="cancelled">Cancelled</option>
           </select>
-          <button @click="loadEvolutionProposals()" class="text-xs text-[var(--accent)] hover:opacity-80 flex items-center gap-1"><span>&#8635;</span> Refresh</button>
+          <button @click="loadEvolutionProposals()" class="text-xs px-3 py-1.5 rounded-lg border border-gray-700 text-gray-400 hover:text-white transition-colors">Refresh</button>
         </div>
       </div>
 
@@ -6037,7 +5543,7 @@
 
         <!-- Schedule section -->
         <div class="bg-gray-900 border border-gray-800 rounded-xl p-5 space-y-4">
-          <div class="text-xs font-semibold text-gray-300 uppercase tracking-wider">Schedule</div>
+          <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Schedule</div>
           <div class="flex items-center gap-3">
             <label class="text-xs text-gray-400 w-28 shrink-0">Enabled</label>
             <button @click="evoSettingsForm.enabled = !evoSettingsForm.enabled"
@@ -6070,7 +5576,7 @@
 
         <!-- Git section -->
         <div class="bg-gray-900 border border-gray-800 rounded-xl p-5 space-y-4">
-          <div class="text-xs font-semibold text-gray-300 uppercase tracking-wider">Git Integration</div>
+          <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Git Integration</div>
           <div class="text-xs text-gray-500">Fork the canonical Logos repo into your own GitHub account, then configure it here. The agent uses your fork as its source of truth — reading the latest code and opening PRs there when proposals are accepted.</div>
           <div class="flex items-center gap-3">
             <label class="text-xs text-gray-400 w-28 shrink-0">Fork remote URL</label>
@@ -6096,7 +5602,7 @@
 
         <!-- Frontier section -->
         <div class="bg-gray-900 border border-gray-800 rounded-xl p-5 space-y-4">
-          <div class="text-xs font-semibold text-gray-300 uppercase tracking-wider">Frontier Model</div>
+          <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Frontier Model</div>
           <div class="text-xs text-gray-500">Used when you request a frontier AI review of a proposal.</div>
           <div class="flex items-center gap-3">
             <label class="text-xs text-gray-400 w-28 shrink-0">Model</label>
@@ -6321,8 +5827,6 @@ function app() {
     chatInput: '',
     chatInputReady: false,
     chatRenderMode: 'markdown',
-    chatDragOver: false,
-    chatAttachments: [],
     liveExecCollapsed: false,
     _lastChatStats: {},
     micRecording: false,
@@ -6358,10 +5862,21 @@ function app() {
     logsModalLines: [],           // array of log lines
     logsModalLoading: false,
     logsModalAutoTail: true,      // auto-poll every 2s while open
-    logsModalErrors: false,       // toggle errors.log vs agent.log
     logsModalTail: 200,
     logsModalMeta: null,          // {path, size_bytes, mtime_iso, truncated}
     _logsModalTimer: null,
+    // ── Mind modal (per-agent lifetime state) ──
+    // Same right-docked pattern as the logs modal; shows what the
+    // agent has accumulated across sessions — memories, session
+    // metadata, activity roll-up, and the on-disk tree under
+    // ~/.logos/agents/<name>/. View-only for v1.
+    mindModalAgent: null,         // {id, name}
+    mindModalTab: 'overview',     // overview | memories | sessions | files
+    mindModalLoading: {overview: false, memories: false, sessions: false, files: false},
+    mindModalActivity: null,      // /activity response
+    mindModalMemories: null,      // /memories response
+    mindModalSessions: null,      // /sessions response
+    mindModalFiles: null,         // /files response
     agentCapsLoading: false,
     agentCapsError: null,
     agentCapsToggling: {},
@@ -6534,6 +6049,11 @@ function app() {
     ],
     messagingChannels: [],
     adminUsers: [],
+    adminUsersTotal: 0,
+    adminUsersPage: 1,
+    adminUsersLimit: 20,
+    adminUsersQuery: '',
+    _adminUsersSearchTimer: null,
     adminMachines: [],
     adminScanRunning: false,
     adminScanResults: [],
@@ -6548,8 +6068,6 @@ function app() {
     cloudProviderModels: [],
     cloudProviderValidating: false,
     cloudProviderMsg: null,
-    adminPolicies: [],
-    adminActionPolicies: [],
     // Sandbox policy editor (OpenShell network_policies presets)
     sandboxPresets: [],
     sandboxPresetSelected: null,
@@ -6558,10 +6076,9 @@ function app() {
     sandboxPresetError: '',
     sandboxPresetSaved: '',
     sandboxPresetHelp: false,
-    actionPolicyForm: {},
-    actionPolicyFormOpen: false,
-    actionPolicyMsg: null,
     adminAuditLogs: [],
+    adminAuditQuery: '',
+    _adminAuditSearchTimer: null,
     auditLogsPage: 1,
     auditLogsLimit: 25,
     auditLogsTotal: 0,
@@ -6571,6 +6088,11 @@ function app() {
     dispatches: [],
     dispatchesTotal: 0,
     dispatchesLoading: false,
+    dispatchesLimit: 20,
+    dispatchesOffset: 0,
+    dispatchesQuery: '',
+    _dispatchesSearchTimer: null,
+    selectedDispatch: null,       // row clicked in Runs tab → drawer
     // Agent Runs tab — runs detail enrichment (STAMP join). Core
     // agentRuns*/selectedAgentRun state is declared below (line ~6598);
     // this entry only adds the stamp-satellite payload.
@@ -6583,29 +6105,18 @@ function app() {
     // but auth_required" vs "unreachable" vs "machine returned 0 models".
     machineProbeStatuses: [],
     adminMsg: null,
-    // workflows
-    workflows: [],
-    wfRuns: [],
-    selectedWorkflow: null,
-    selectedRun: null,
-    wfNewFormOpen: false,
-    wfImportJson: '',
-    wfBuilderOpen: false,
-    wfBuilderName: '',
-    wfBuilderDesc: '',
-    wfBuilderSteps: [],
-    wfBuilderMsg: null,
-    wfMsg: null,
     // agent runs
     agentRuns: [],
     agentRunsTotal: 0,
     agentRunsOffset: 0,
-    agentRunsLimit: 50,
+    agentRunsLimit: 20,
     agentRunsStatusFilter: '',
+    agentRunsQuery: '',
     agentRunsLoading: false,
     selectedAgentRun: null,
     agentRunsMsg: null,
     clonePayload: null,
+    _agentRunsSearchTimer: null,
     // sandboxes (Admin → Sandboxes)
     sandboxes: [],
     sandboxesLoading: false,
@@ -6727,10 +6238,6 @@ function app() {
     adminMachineEditForm: {},
     adminMachineModels: [],
     adminMachineModelsLoading: false,
-    adminPolicyFormOpen: false,
-    adminPolicyForm: {},
-    adminPolicyEditId: null,
-    adminPolicyEditForm: {},
     // setup wizard
     setupWizardDismissed: !!localStorage.getItem('hermes_wizard_dismissed'),
     setupWizardStep: null,
@@ -6898,11 +6405,15 @@ function app() {
       // Delay enabling the chat input to prevent browser autofill from populating
       // it with saved login credentials immediately after a login redirect.
       setTimeout(() => { this.chatInputReady = true; }, 800);
-      // Auto-collapse live executions panel on narrow screens after a brief look.
-      // On wide screens (≥1400px) it stays open so there's room for both.
-      if (window.innerWidth < 1400) {
-        setTimeout(() => { this.liveExecCollapsed = true; }, 3000);
-      }
+      // Auto-collapse live executions panel ~3s after load unless the user
+      // already expanded it or there's an active session worth watching.
+      // Previously gated on viewport width < 1400px, which left wide
+      // screens with the panel permanently flopped open on refresh.
+      setTimeout(() => {
+        if (this.liveExecCollapsed) return;
+        const hasActive = (this.status?.active_sessions || []).length > 0;
+        if (!hasActive) this.liveExecCollapsed = true;
+      }, 3000);
       // Poll for launcher update status every 60s (only meaningful on Windows tray build)
       const _pollUpdate = async () => {
         try {
@@ -7143,7 +6654,6 @@ function app() {
     //   /config/inference       → tab = infra, infraTab = servers
     //   /config/tools           → tab = infra, infraTab = tools
     //   /config/messaging       → tab = infra, infraTab = messaging
-    //   /config/workflows       → tab = infra, infraTab = workflows
     //   /activity               → tab = activity, activityTab = (restored)
     //   /activity/events        → tab = activity, activityTab = events
     //   /activity/runs          → tab = activity, activityTab = runs
@@ -7159,9 +6669,9 @@ function app() {
       inference: 'servers',
       tools:     'tools',
       messaging: 'messaging',
-      workflows: 'workflows',
       // Legacy URL aliases (pre-reorg bookmarks):
       channels:  'messaging',
+      workflows: 'servers',  // removed; soft-redirect to inference
       proposals: 'servers',  // proposals moved to /activity/proposals; soft-redirect to inference
     },
     // Run the appropriate loader for an infraTab value. Mirrors the
@@ -7172,7 +6682,6 @@ function app() {
       if (name === 'servers')   { this.loadAdminMachines(); this.loadCloudProviders?.(); this.probeAllMachines?.(); return; }
       if (name === 'tools')     { this.loadToolsTab?.(); this.loadServices?.(); return; }
       if (name === 'messaging') { this.loadMessagingChannels?.(); this.loadPlatforms?.(); return; }
-      if (name === 'workflows') { this.loadWorkflows?.(); return; }
     },
     _loadAdminTabData(name) {
       // Slimmed Admin: users + policies are fetched by loadAdminData(),
@@ -7192,6 +6701,7 @@ function app() {
     },
     _ACTIVITY_URL_MAP: {
       events:     'events',
+      runs:       'events',  // merged — legacy /activity/runs bookmarks land on Runs (was Events)
       dashboards: 'dashboards',
       approvals:  'approvals',
       proposals:  'proposals',
@@ -7222,9 +6732,9 @@ function app() {
           this.tab = 'admin';
           const mapped = this._ADMIN_URL_MAP[sub];
           if (mapped) this.adminTab = mapped;
-          // Legacy /admin/<moved> URLs (workflows/runs/sandboxes/model-routes/platforms/approvals/activity)
+          // Legacy /admin/<moved> URLs (runs/sandboxes/model-routes/platforms/approvals/activity)
           // — soft-redirect to the new home so old bookmarks land on something useful.
-          else if (sub === 'workflows')                          { this.tab = 'infra';    this.infraTab    = 'workflows'; }
+          else if (sub === 'workflows')                          { this.tab = 'infra';    this.infraTab    = 'servers'; }
           else if (sub === 'platforms')                          { this.tab = 'infra';    this.infraTab    = 'messaging'; }
           else if (sub === 'runs')                               { this.tab = 'activity'; this.activityTab = 'events'; }
           else if (sub === 'sandboxes' || sub === 'model-routes'){ this.tab = 'activity'; this.activityTab = 'dashboards'; }
@@ -7244,7 +6754,7 @@ function app() {
       if (this.tab === 'compare')  return '/compare';
       if (this.tab === 'infra') {
         // Forward map only — exclude legacy aliases (channels/proposals)
-        const fwd = ['inference','tools','messaging','workflows'];
+        const fwd = ['inference','tools','messaging'];
         const rev = fwd.find(k => this._INFRA_URL_MAP[k] === this.infraTab);
         return rev ? `/config/${rev}` : '/config';
       }
@@ -8811,54 +8321,6 @@ function app() {
       el.style.overflowY = el.scrollHeight > 112 ? 'auto' : 'hidden';
     },
 
-    _ATTACH_ALLOWED_EXT: new Set([
-      'py','js','ts','tsx','jsx','rs','go','java','c','cpp','h','rb','sh',
-      'yaml','yml','toml','xml','html','css','csv','log','md','json',
-      'docx','xlsx','pptx','txt',
-    ]),
-    _ATTACH_MAX_SIZE: 10 * 1024 * 1024,  // 10 MB per file
-    _ATTACH_MAX_FILES: 5,
-
-    _isAllowedFile(file) {
-      if (file.type && (file.type.startsWith('image/') || file.type.startsWith('text/')
-          || file.type === 'application/pdf' || file.type === 'application/json')) return true;
-      const ext = (file.name || '').split('.').pop().toLowerCase();
-      return this._ATTACH_ALLOWED_EXT.has(ext);
-    },
-
-    _addAttachments(files) {
-      for (const file of files) {
-        if (this.chatAttachments.length >= this._ATTACH_MAX_FILES) break;
-        if (file.size > this._ATTACH_MAX_SIZE) continue;
-        if (!this._isAllowedFile(file)) continue;
-        const reader = new FileReader();
-        reader.onload = (e) => {
-          if (this.chatAttachments.length >= this._ATTACH_MAX_FILES) return;
-          this.chatAttachments = [...this.chatAttachments, {
-            data: e.target.result,
-            name: file.name,
-            type: file.type || 'application/octet-stream',
-            size: file.size,
-          }];
-        };
-        reader.readAsDataURL(file);
-      }
-    },
-
-    handleChatDrop(event) {
-      this.chatDragOver = false;
-      const files = Array.from(event.dataTransfer.files || []);
-      if (!files.length) return;
-      this._addAttachments(files);
-    },
-
-    handleFileSelect(event) {
-      const files = Array.from(event.target.files || []);
-      if (!files.length) return;
-      this._addAttachments(files);
-      event.target.value = '';  // reset so re-selecting same file works
-    },
-
     retryLastMessage() {
       // Find the last user message and resend it
       const chat = this.chats.find(c => c.id === this.activeChatId);
@@ -8957,13 +8419,10 @@ function app() {
       this.chatInput = '';
       this._liveTools = {};
       this._liveToolOrder = [];
-      const pendingAttachments = this.chatAttachments.length ? this.chatAttachments.map(a => ({data: a.data, name: a.name, type: a.type})) : undefined;
-      this.chatAttachments = [];
       this.$nextTick(() => { const el = this.$refs.chatTextarea; if (el) { el.style.height = 'auto'; } });
 
       // Persist user message immediately
       const userMsg = { role: 'user', content: msg };
-      if (pendingAttachments) userMsg.attachments = pendingAttachments.map(a => ({name: a.name, type: a.type}));
       chat.messages = [...chat.messages, userMsg];
       if (chat.name === 'New conversation') {
         chat.name = msg.length > 35 ? msg.slice(0, 32) + '\\u2026' : msg;
@@ -8986,7 +8445,6 @@ function app() {
           body: JSON.stringify({
             message: msg,
             session_id: chat.id,
-            attachments: pendingAttachments,
             // OpenShell-only routing: every chat is owned by a named agent
             // and dispatches to that agent's sandbox worker. The backend
             // rejects requests without agent_id.
@@ -9273,16 +8731,25 @@ function app() {
     },
 
     _scrollChat() {
+      // Alpine's $nextTick fires after data mutation but before the
+      // browser has reflowed the newly-rendered messages, so
+      // scrollHeight still equals clientHeight and scrollTop clamps
+      // to 0 — which is why opening a chat landed at the top. Wrap
+      // in requestAnimationFrame to wait one paint so the scroll
+      // assignment actually pins us to the latest message. Matches
+      // the fix used on the logs-modal auto-tail.
       this.$nextTick(() => {
-        const el = document.getElementById('chat-messages');
-        if (el && el.scrollHeight > el.clientHeight) el.scrollTop = el.scrollHeight;
+        requestAnimationFrame(() => {
+          const el = document.getElementById('chat-messages');
+          if (el && el.scrollHeight > el.clientHeight) el.scrollTop = el.scrollHeight;
+        });
       });
     },
 
     // ── Admin ──────────────────────────────────────────────────────────
 
     async loadAdminData() {
-      await Promise.all([this.loadAdminUsers(), this.loadAdminPolicies(), this.loadAdminActionPolicies()]);
+      await Promise.all([this.loadAdminUsers()]);
     },
 
     // ── Tools tab methods ──────────────────────────────────────────────
@@ -9461,7 +8928,7 @@ function app() {
     },
 
     async loadRoutingData() {
-      await Promise.all([this.loadAdminMachines(), this.loadAdminPolicies(), this.loadRouterState()]);
+      await Promise.all([this.loadAdminMachines(), this.loadRouterState()]);
       this.probeAllMachines();  // fire-and-forget; updates health badges as results arrive
     },
 
@@ -9500,18 +8967,16 @@ function app() {
 
     async loadAdminUsers() {
       try {
-        const r = await fetch('/users', {credentials:'include'});
+        const params = new URLSearchParams({
+          page:  String(this.adminUsersPage || 1),
+          limit: String(this.adminUsersLimit || 20),
+        });
+        if ((this.adminUsersQuery || '').trim()) params.set('q', this.adminUsersQuery.trim());
+        const r = await fetch('/users?' + params, {credentials:'include'});
         const d = await r.json();
         this.adminUsers = d.users || [];
-      } catch(e) { this.adminUsers = []; }
-    },
-
-    async loadAdminActionPolicies() {
-      try {
-        const r = await fetch('/action-policies', {credentials:'include'});
-        const d = await r.json();
-        this.adminActionPolicies = d.action_policies || [];
-      } catch(e) { this.adminActionPolicies = []; }
+        this.adminUsersTotal = d.total || 0;
+      } catch(e) { this.adminUsers = []; this.adminUsersTotal = 0; }
     },
 
     // ── Sandbox policy presets (OpenShell network_policies) ─────────────
@@ -9606,64 +9071,6 @@ network_policies:
         this.sandboxPresetYaml = '';
         await this.loadSandboxPresets();
       } catch(e) { this.sandboxPresetError = e.message; }
-    },
-
-    async saveActionPolicy() {
-      this.actionPolicyMsg = null;
-      const f = this.actionPolicyForm;
-      if (!f.name || !f.name.trim()) { this.actionPolicyMsg={ok:false,text:"Name is required"}; return; }
-      try {
-        const isEdit = !!f.id;
-        const url = isEdit ? `/action-policies/${f.id}` : "/action-policies";
-        const method = isEdit ? "PATCH" : "POST";
-        const r = await fetch(url, {
-          method, credentials:"include",
-          headers:{"Content-Type":"application/json","X-CSRF-Token":getCsrfToken()},
-          body: JSON.stringify({
-            name: f.name.trim(), description: f.description||"",
-            network_policy: f.network_policy, filesystem_policy: f.filesystem_policy,
-            exec_policy: f.exec_policy, write_policy: f.write_policy,
-            provider_policy: f.provider_policy, secret_policy: f.secret_policy,
-          }),
-        });
-        const d = await r.json();
-        if (!r.ok) { this.actionPolicyMsg={ok:false,text:d.error||"Failed"}; return; }
-        const ap = d.action_policy;
-        if (isEdit) {
-          this.adminActionPolicies = this.adminActionPolicies.map(p => p.id===ap.id ? ap : p);
-        } else {
-          this.adminActionPolicies = [...this.adminActionPolicies, ap];
-        }
-        this.actionPolicyMsg = {ok:true, text: isEdit ? "Policy updated." : "Policy created."};
-        this.actionPolicyForm = {};
-        this.actionPolicyFormOpen = false;
-      } catch(e) { this.actionPolicyMsg={ok:false,text:String(e)}; }
-    },
-
-    async deleteActionPolicy(pid) {
-      if (!confirm("Delete this action policy? Users assigned to it will revert to no policy.")) return;
-      try {
-        const r = await fetch(`/action-policies/${pid}`, {
-          method:"DELETE", credentials:"include",
-          headers:{"X-CSRF-Token":getCsrfToken()},
-        });
-        if (!r.ok) { const d=await r.json(); alert(d.error||"Delete failed"); return; }
-        this.adminActionPolicies = this.adminActionPolicies.filter(p => p.id!==pid);
-        this.adminUsers = this.adminUsers.map(u => u.action_policy_id===pid ? {...u,action_policy_id:null} : u);
-      } catch(e) { alert(String(e)); }
-    },
-
-    async assignUserActionPolicy(uid, policyId) {
-      try {
-        const r = await fetch(`/users/${uid}/action-policy`, {
-          method:"PATCH", credentials:"include",
-          headers:{"Content-Type":"application/json","X-CSRF-Token":getCsrfToken()},
-          body: JSON.stringify({action_policy_id: policyId || null}),
-        });
-        if (!r.ok) { const d=await r.json(); this._adminMsg(false, d.error||"Failed"); return; }
-        this.adminUsers = this.adminUsers.map(u => u.id===uid ? {...u, action_policy_id: policyId||null} : u);
-        this._adminMsg(true, policyId ? "Action policy assigned." : "Action policy cleared.");
-      } catch(e) { this._adminMsg(false, String(e)); }
     },
 
     async adminScanMachines() {
@@ -10132,7 +9539,7 @@ network_policies:
         });
         if (r.ok) {
           this.namedAgentFormOpen = false;
-          this.namedAgentForm = { name: '', soul_slug: 'general', model: '', model_route_id: null, description: '', toolsets: [], char_index: null };
+          this.namedAgentForm = { name: '', soul_slug: 'general', model: '', model_route_id: null, description: '', toolsets: [], char_index: null, duplicate_from: null, duplicate_from_name: null };
           await this.loadNamedAgents();
           // Force the world to resync after the form closes. Closing
           // the form collapses the agent column from 24rem back to
@@ -10186,12 +9593,36 @@ network_policies:
       const existing = new Set(
         (this.namedAgents || []).map(a => (a.name || '').toLowerCase())
       );
-      const base = `${agent.name} copy`;
-      let candidate = base;
-      let n = 2;
-      while (existing.has(candidate.toLowerCase())) {
-        candidate = `${base} ${n}`;
-        n++;
+      // Default duplicate name: "<Source> II", then III, IV, …, XX.
+      // If the source already ends in a Roman numeral, promote it
+      // (Hermes II → Hermes III rather than Hermes II II). Case-insensitive
+      // collision check matches the auth.db UNIQUE index on agents.name.
+      // Falls back to " copy N" if we somehow blow past XX without finding
+      // a free slot — shouldn't happen in practice but keeps the flow
+      // unblocked instead of handing the user an undefined candidate.
+      const ROMAN = ['I','II','III','IV','V','VI','VII','VIII','IX','X',
+                     'XI','XII','XIII','XIV','XV','XVI','XVII','XVIII','XIX','XX'];
+      const toInt = (s) => { const i = ROMAN.indexOf(s); return i < 0 ? 0 : i + 1; };
+      // Split off trailing roman numeral, if any.
+      let base = agent.name;
+      let startAt = 2;
+      const m = agent.name.match(/^(.*?)\s+(I{1,3}|IV|V|VI{0,3}|IX|X|XI{0,3}|XIV|XV|XVI{0,3}|XIX|XX)$/);
+      if (m) {
+        base = m[1];
+        startAt = toInt(m[2]) + 1;  // promote next numeral
+      }
+      let candidate = null;
+      for (let i = startAt; i <= ROMAN.length; i++) {
+        const tryName = `${base} ${ROMAN[i - 1]}`;
+        if (!existing.has(tryName.toLowerCase())) { candidate = tryName; break; }
+      }
+      if (!candidate) {
+        let n = 2;
+        candidate = `${agent.name} copy`;
+        while (existing.has(candidate.toLowerCase())) {
+          candidate = `${agent.name} copy ${n}`;
+          n++;
+        }
       }
       // Parse toolsets from the JSON-string column. Tolerate malformed
       // values defensively — an unparseable toolsets field shouldn't
@@ -10211,6 +9642,12 @@ network_policies:
         char_index: (agent.char_index !== undefined && agent.char_index !== null)
           ? Number(agent.char_index)
           : null,
+        // Flag for the backend: on save, copy memories + sessions from
+        // the source agent's dir. The backend reads `duplicate_from`
+        // in handle_agents_post; the form banner below surfaces what's
+        // about to happen to the user.
+        duplicate_from: agent.id,
+        duplicate_from_name: agent.name,
       };
       this.namedAgentMsg = null;
       this.namedAgentFormOpen = true;
@@ -10285,7 +9722,6 @@ network_policies:
       this.logsModalLines = [];
       this.logsModalMeta = null;
       this.logsModalLoading = true;
-      this.logsModalErrors = false;
       this.logsModalTail = 200;
       this.logsModalAutoTail = true;
       await this._fetchAgentLogs();
@@ -10302,7 +9738,6 @@ network_policies:
       try {
         const params = new URLSearchParams();
         params.set('tail', String(this.logsModalTail || 200));
-        if (this.logsModalErrors) params.set('errors', '1');
         const r = await fetch(
           `/admin/agents/${this.logsModalAgent.id}/logs?${params}`,
           { credentials: 'include' },
@@ -10326,9 +9761,15 @@ network_policies:
           path: d.path, size: d.size_bytes, mtime: d.mtime_iso,
           truncated: d.truncated, exists: d.exists, logName: d.log_name,
         };
+        // Wait one more animation frame after Alpine's nextTick so layout
+        // has actually reflowed the new x-for divs — otherwise scrollHeight
+        // is still the pre-render value (≈ clientHeight) and scrollTop
+        // clamps to 0, leaving the viewport parked at the top.
         this.$nextTick(() => {
-          const el = this.$refs.logsScroll;
-          if (el && this.logsModalAutoTail) el.scrollTop = el.scrollHeight;
+          requestAnimationFrame(() => {
+            const el = this.$refs.logsScroll;
+            if (el && this.logsModalAutoTail) el.scrollTop = el.scrollHeight;
+          });
         });
       } catch (e) {
         this.logsModalLines = [`[fetch error: ${String(e).slice(0, 160)}]`];
@@ -10352,6 +9793,84 @@ network_policies:
       if (navigator.clipboard && navigator.clipboard.writeText) {
         navigator.clipboard.writeText(text).catch(() => {});
       }
+    },
+
+    // ── Mind modal (per-agent lifetime state) ───────────────────────
+    // Four tabs — Overview / Memories / Sessions / Files — each
+    // backed by a dedicated admin endpoint. Tabs are lazy-loaded so
+    // opening the modal only pays for the Overview fetch until the
+    // user clicks around.
+    async openAgentMind(agent) {
+      if (!agent || !agent.id) return;
+      this.mindModalAgent = { id: agent.id, name: agent.name };
+      this.mindModalTab = 'overview';
+      this.mindModalActivity = null;
+      this.mindModalMemories = null;
+      this.mindModalSessions = null;
+      this.mindModalFiles = null;
+      await this._mindLoadTab('overview');
+    },
+
+    closeAgentMind() {
+      this.mindModalAgent = null;
+    },
+
+    async _mindSwitchTab(tab) {
+      this.mindModalTab = tab;
+      const already = {
+        overview: this.mindModalActivity,
+        memories: this.mindModalMemories,
+        sessions: this.mindModalSessions,
+        files:    this.mindModalFiles,
+      }[tab];
+      if (already) return;
+      await this._mindLoadTab(tab);
+    },
+
+    async _mindLoadTab(tab) {
+      if (!this.mindModalAgent) return;
+      const aid = this.mindModalAgent.id;
+      const endpoint = {
+        overview: 'activity',
+        memories: 'memories',
+        sessions: 'sessions',
+        files:    'files',
+      }[tab];
+      if (!endpoint) return;
+      this.mindModalLoading[tab] = true;
+      try {
+        const r = await fetch(`/admin/agents/${aid}/${endpoint}`, { credentials: 'include' });
+        const d = await r.json();
+        if (tab === 'overview') this.mindModalActivity = d;
+        if (tab === 'memories') this.mindModalMemories = d;
+        if (tab === 'sessions') this.mindModalSessions = d;
+        if (tab === 'files')    this.mindModalFiles    = d;
+      } catch (e) {
+        console.warn(`mind modal ${tab} fetch failed`, e);
+      } finally {
+        this.mindModalLoading[tab] = false;
+      }
+    },
+
+    async _mindRefresh() {
+      // Blow away cached data for every tab and re-fetch the active one.
+      this.mindModalActivity = null;
+      this.mindModalMemories = null;
+      this.mindModalSessions = null;
+      this.mindModalFiles = null;
+      await this._mindLoadTab(this.mindModalTab);
+    },
+
+    _mindFmtBytes(n) {
+      if (n == null) return '—';
+      if (n < 1024) return n + ' B';
+      if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB';
+      return (n / (1024 * 1024)).toFixed(1) + ' MB';
+    },
+
+    _mindFmtDate(iso) {
+      if (!iso) return '—';
+      try { return new Date(iso).toLocaleString(); } catch { return iso; }
     },
 
     async loadCloudProviders() {
@@ -10666,21 +10185,18 @@ network_policies:
       this.benchmarkRunning = false;
     },
 
-    async loadAdminPolicies() {
-      try {
-        const r = await fetch('/admin/policies', {credentials:'include'});
-        const d = await r.json();
-        this.adminPolicies = d.policies || [];
-      } catch(e) { this.adminPolicies = []; }
-    },
-
     async loadAdminAudit() {
       try {
-        const r = await fetch(`/audit-logs?page=${this.auditLogsPage}&limit=${this.auditLogsLimit}`, {credentials:'include'});
+        const params = new URLSearchParams({
+          page:  String(this.auditLogsPage || 1),
+          limit: String(this.auditLogsLimit || 25),
+        });
+        if ((this.adminAuditQuery || '').trim()) params.set('q', this.adminAuditQuery.trim());
+        const r = await fetch('/audit-logs?' + params, {credentials:'include'});
         const d = await r.json();
         this.adminAuditLogs = d.logs || [];
         this.auditLogsTotal = d.total || 0;
-      } catch(e) { this.adminAuditLogs = []; }
+      } catch(e) { this.adminAuditLogs = []; this.auditLogsTotal = 0; }
     },
 
     async _pollPendingApprovals() {
@@ -10695,8 +10211,12 @@ network_policies:
     async loadDispatches() {
       this.dispatchesLoading = true;
       try {
-        const params = new URLSearchParams({ limit: '50' });
+        const params = new URLSearchParams({
+          limit: String(this.dispatchesLimit || 20),
+          offset: String(this.dispatchesOffset || 0),
+        });
         if (this.dispatchOriginFilter) params.set('origin', this.dispatchOriginFilter);
+        if ((this.dispatchesQuery || '').trim()) params.set('q', this.dispatchesQuery.trim());
         const r = await fetch('/admin/dispatches?' + params, {credentials:'include'});
         if (!r.ok) { this.dispatches = []; this.dispatchesTotal = 0; return; }
         const d = await r.json();
@@ -10748,175 +10268,6 @@ network_policies:
           this._adminMsg(false, d.error || 'Failed');
         }
       } catch(e) { this._adminMsg(false, String(e)); }
-    },
-
-    async loadWorkflows() {
-      try {
-        const r = await fetch('/workflows', {credentials:'include'});
-        const d = await r.json();
-        this.workflows = d.workflows || [];
-      } catch(e) { this.workflows = []; }
-    },
-
-    _wfBuilderNewStep() {
-      this.wfBuilderSteps.push({
-        step_id: 'step_' + (this.wfBuilderSteps.length + 1),
-        step_type: 'reason',
-        step_name: '',
-        prompt: '',
-        tools: '',
-        timeout_seconds: 120,
-        depends_on: '',
-        parallel_group: '',
-        condition: '',
-      });
-    },
-    _wfBuilderRemoveStep(idx) {
-      this.wfBuilderSteps.splice(idx, 1);
-    },
-    async buildWorkflow() {
-      if (!this.wfBuilderName.trim()) { this._wfMsg(false, 'Name is required'); return; }
-      if (this.wfBuilderSteps.length === 0) { this._wfMsg(false, 'Add at least one step'); return; }
-      const steps = this.wfBuilderSteps.map(s => {
-        const step = {
-          step_id: s.step_id.trim() || ('step_' + (this.wfBuilderSteps.indexOf(s)+1)),
-          step_type: s.step_type,
-          step_name: s.step_name.trim() || s.step_id,
-          prompt: s.prompt.trim(),
-        };
-        if (s.tools.trim()) step.tools = s.tools.split(',').map(t => t.trim()).filter(Boolean);
-        if (s.timeout_seconds) step.timeout_seconds = parseInt(s.timeout_seconds) || 120;
-        if (s.depends_on.trim()) step.depends_on = s.depends_on.split(',').map(t => t.trim()).filter(Boolean);
-        if (s.parallel_group.trim()) step.parallel_group = s.parallel_group.trim();
-        if (s.condition.trim()) step.condition = s.condition.trim();
-        return step;
-      });
-      const payload = {name: this.wfBuilderName.trim(), description: this.wfBuilderDesc.trim(), steps};
-      try {
-        const r = await fetch('/workflows', {
-          method: 'POST',
-          headers: {'X-CSRF-Token': getCsrfToken(), 'Content-Type': 'application/json'},
-          credentials: 'include',
-          body: JSON.stringify(payload),
-        });
-        const d = await r.json();
-        if (r.ok) {
-          this._wfMsg(true, 'Workflow created: ' + d.workflow.name);
-          this.wfBuilderOpen = false;
-          this.wfBuilderName = '';
-          this.wfBuilderDesc = '';
-          this.wfBuilderSteps = [];
-          await this.loadWorkflows();
-        } else {
-          this._wfMsg(false, d.error || 'Create failed');
-        }
-      } catch(e) { this._wfMsg(false, String(e)); }
-    },
-
-    async importWorkflow() {
-      try {
-        const parsed = JSON.parse(this.wfImportJson);
-        const r = await fetch('/workflows', {
-          method: 'POST',
-          headers: {'X-CSRF-Token': getCsrfToken(), 'Content-Type':'application/json'},
-          credentials: 'include',
-          body: JSON.stringify(parsed),
-        });
-        const d = await r.json();
-        if (r.ok) {
-          this._wfMsg(true, 'Workflow imported: ' + d.workflow.name);
-          this.wfNewFormOpen = false;
-          this.wfImportJson = '';
-          await this.loadWorkflows();
-        } else {
-          this._wfMsg(false, d.error || 'Import failed');
-        }
-      } catch(e) { this._wfMsg(false, String(e)); }
-    },
-
-    async deleteWorkflow(id) {
-      if (!confirm('Delete this workflow definition?')) return;
-      try {
-        const r = await fetch('/workflows/' + id, {
-          method: 'DELETE',
-          headers: {'X-CSRF-Token': getCsrfToken()},
-          credentials: 'include',
-        });
-        if (r.ok) { await this.loadWorkflows(); }
-        else { const d = await r.json(); this._wfMsg(false, d.error || 'Delete failed'); }
-      } catch(e) { this._wfMsg(false, String(e)); }
-    },
-
-    async triggerWorkflow(id) {
-      try {
-        const r = await fetch('/workflows/' + id + '/trigger', {
-          method: 'POST',
-          headers: {'X-CSRF-Token': getCsrfToken(), 'Content-Type':'application/json'},
-          credentials: 'include',
-          body: JSON.stringify({inputs: {}}),
-        });
-        const d = await r.json();
-        if (r.status === 202) {
-          this._wfMsg(true, 'Run started: ' + d.run_id);
-          if (this.selectedWorkflow && this.selectedWorkflow.id === id) {
-            await this.loadWorkflowRuns(id);
-          }
-        } else {
-          this._wfMsg(false, d.error || 'Trigger failed');
-        }
-      } catch(e) { this._wfMsg(false, String(e)); }
-    },
-
-    async loadWorkflowRuns(wfId) {
-      try {
-        const r = await fetch('/workflow-runs?workflow_id=' + wfId + '&limit=20', {credentials:'include'});
-        const d = await r.json();
-        this.wfRuns = d.runs || [];
-      } catch(e) { this.wfRuns = []; }
-    },
-
-    async loadRunDetail(runId) {
-      try {
-        const r = await fetch('/workflow-runs/' + runId, {credentials:'include'});
-        const d = await r.json();
-        this.selectedRun = d;
-      } catch(e) {}
-    },
-
-    async cancelRun(runId) {
-      if (!confirm('Cancel this workflow run?')) return;
-      try {
-        const r = await fetch('/workflow-runs/' + runId + '/cancel', {
-          method: 'POST',
-          headers: {'X-CSRF-Token': getCsrfToken()},
-          credentials: 'include',
-        });
-        if (r.ok) { await this.loadRunDetail(runId); }
-      } catch(e) {}
-    },
-
-    async decideWorkflowApproval(approvalId, decision) {
-      try {
-        const r = await fetch('/workflow-runs/approvals/' + approvalId + '/' + decision, {
-          method: 'POST',
-          headers: {'X-CSRF-Token': getCsrfToken(), 'Content-Type':'application/json'},
-          credentials: 'include',
-          body: JSON.stringify({}),
-        });
-        if (r.ok) {
-          this._wfMsg(true, 'Step ' + decision + 'd');
-          // Reload the run detail after a short delay to let the engine update.
-          setTimeout(() => this.selectedRun && this.loadRunDetail(this.selectedRun.run.id), 1500);
-        } else {
-          const d = await r.json();
-          this._wfMsg(false, d.error || 'Failed');
-        }
-      } catch(e) { this._wfMsg(false, String(e)); }
-    },
-
-    _wfMsg(ok, text) {
-      this.wfMsg = {ok, text};
-      setTimeout(() => { this.wfMsg = null; }, 5000);
     },
 
     async loadAgentRuns() {
@@ -11808,19 +11159,6 @@ network_policies:
       } catch(e) { this.adminSetPwMsg = {ok:false, text:String(e)}; }
     },
 
-    async assignUserPolicy(uid, policyId) {
-      try {
-        const r = await fetch('/admin/users/'+uid+'/policy', {
-          method:'PATCH', credentials:'include',
-          headers:{'Content-Type':'application/json','X-CSRF-Token':getCsrfToken()},
-          body: JSON.stringify({policy_id: policyId}),
-        });
-        if (!r.ok) { const d=await r.json(); this._adminMsg(false, d.error||'Failed'); return; }
-        this.adminUsers = this.adminUsers.map(u => u.id===uid ? {...u, policy_id: policyId} : u);
-        this._adminMsg(true, 'Profile assigned');
-      } catch(e) { this._adminMsg(false, String(e)); }
-    },
-
     async createMachine() {
       try {
         const r = await fetch('/admin/machines', {
@@ -11954,86 +11292,6 @@ network_policies:
       } catch(e) { this._adminMsg(false, String(e)); }
     },
 
-    async createPolicy() {
-      try {
-        const r = await fetch('/admin/policies', {
-          method:'POST', credentials:'include',
-          headers:{'Content-Type':'application/json','X-CSRF-Token':getCsrfToken()},
-          body: JSON.stringify(this.adminPolicyForm),
-        });
-        const d = await r.json();
-        if (!r.ok) { this._adminMsg(false, d.error || 'Failed'); return; }
-        this.adminPolicies = [...this.adminPolicies, d.policy];
-        this.adminPolicyFormOpen = false;
-        this._adminMsg(true, 'Profile created');
-      } catch(e) { this._adminMsg(false, String(e)); }
-    },
-
-    async deletePolicy(pid) {
-      const p = this.adminPolicies.find(x => x.id===pid);
-      const msg = p && p.user_count > 0
-        ? `Delete profile "${p.name}"? ${p.user_count} user(s) will lose their routing override and fall back to system default.`
-        : `Delete profile "${p?.name || ''}"?`;
-      if (!confirm(msg)) return;
-      try {
-        const r = await fetch('/admin/policies/'+pid, {
-          method:'DELETE', credentials:'include',
-          headers:{'X-CSRF-Token':getCsrfToken()},
-        });
-        if (r.status===204) {
-          this.adminPolicies = this.adminPolicies.filter(p => p.id!==pid);
-          this._adminMsg(true, 'Deleted');
-        }
-      } catch(e) { this._adminMsg(false, String(e)); }
-    },
-
-    async savePolicyRules(policy) {
-      try {
-        const r = await fetch('/admin/policies/'+policy.id+'/rules', {
-          method:'PUT', credentials:'include',
-          headers:{'Content-Type':'application/json','X-CSRF-Token':getCsrfToken()},
-          body: JSON.stringify(policy.rules),
-        });
-        const d = await r.json();
-        if (!r.ok) { this._adminMsg(false, d.error || 'Failed'); return; }
-        this.adminPolicies = this.adminPolicies.map(p => p.id===policy.id ? {...p, rules:d.rules} : p);
-        this._adminMsg(true, 'Rules saved');
-      } catch(e) { this._adminMsg(false, String(e)); }
-    },
-
-    startEditPolicy(p) {
-      this.adminPolicyEditId = p.id;
-      this.adminPolicyEditForm = { name: p.name, description: p.description || '', fallback: p.fallback };
-    },
-
-    cancelEditPolicy() {
-      this.adminPolicyEditId = null;
-      this.adminPolicyEditForm = {};
-    },
-
-    async saveEditPolicy() {
-      const pid = this.adminPolicyEditId;
-      try {
-        const r = await fetch('/admin/policies/'+pid, {
-          method:'PATCH', credentials:'include',
-          headers:{'Content-Type':'application/json','X-CSRF-Token':getCsrfToken()},
-          body: JSON.stringify(this.adminPolicyEditForm),
-        });
-        const d = await r.json();
-        if (!r.ok) { this._adminMsg(false, d.error || 'Failed'); return; }
-        this.adminPolicies = this.adminPolicies.map(p => p.id===pid ? {...d.policy, rules:p.rules, user_count:p.user_count} : p);
-        this.adminPolicyEditId = null;
-        this._adminMsg(true, 'Profile updated');
-      } catch(e) { this._adminMsg(false, String(e)); }
-    },
-
-    movePolicyRule(policy, idx, dir) {
-      const newIdx = idx + dir;
-      if (newIdx < 0 || newIdx >= policy.rules.length) return;
-      const rules = [...policy.rules];
-      [rules[idx], rules[newIdx]] = [rules[newIdx], rules[idx]];
-      this.adminPolicies = this.adminPolicies.map(p => p.id===policy.id ? {...p, rules} : p);
-    },
   };
 }
 </script>
@@ -12071,12 +11329,6 @@ network_policies:
           <option value="1000">1000 lines</option>
           <option value="2000">2000 lines</option>
         </select>
-        <!-- agent.log vs errors.log toggle -->
-        <button @click="logsModalErrors = !logsModalErrors; _fetchAgentLogs()"
-                :class="logsModalErrors ? 'bg-red-950 text-red-300 border-red-900' : 'bg-gray-900 text-gray-500 border-gray-800'"
-                class="text-[10px] px-2 py-1 rounded border transition-colors"
-                :title="logsModalErrors ? 'Showing errors.log — click to show agent.log' : 'Showing agent.log — click to show errors.log only'"
-                x-text="logsModalErrors ? 'errors.log' : 'agent.log'"></button>
         <!-- Auto-tail toggle -->
         <button @click="logsModalAutoTail = !logsModalAutoTail"
                 :class="logsModalAutoTail ? 'bg-emerald-950 text-emerald-300 border-emerald-900' : 'bg-gray-900 text-gray-500 border-gray-800'"
@@ -12110,8 +11362,7 @@ network_policies:
          bottom resumes it. -->
     <div x-ref="logsScroll"
          @scroll="(() => { const el = $refs.logsScroll; if (!el) return; const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 8; if (!atBottom && logsModalAutoTail) { logsModalAutoTail = false; } else if (atBottom && !logsModalAutoTail) { logsModalAutoTail = true; } })()"
-         class="flex-1 overflow-auto px-5 py-3 font-mono text-[11px] leading-relaxed whitespace-pre-wrap break-all"
-         :class="logsModalErrors ? 'bg-red-950/10 text-red-200' : 'bg-black/40 text-gray-300'">
+         class="flex-1 min-h-0 overflow-y-auto px-5 py-3 font-mono text-[11px] leading-relaxed bg-black/40 text-gray-300">
       <template x-if="logsModalLoading && logsModalLines.length === 0">
         <div class="text-gray-600 italic">Loading…</div>
       </template>
@@ -12119,10 +11370,197 @@ network_policies:
         <div class="text-gray-600 italic">(log is empty — agent hasn't run any tasks yet, or sandbox hasn't synced)</div>
       </template>
       <template x-for="(line, i) in logsModalLines" :key="i">
-        <div class="hover:bg-gray-800/30"
+        <div class="hover:bg-gray-800/30 whitespace-pre-wrap break-all"
              :class="line.includes('ERROR') || line.includes('WARNING') ? 'text-amber-300' : ''"
              x-text="line"></div>
       </template>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════
+     🧠 Mind modal — per-agent lifetime state (Overview / Memories /
+     Sessions / Files). Right-docked, same visual language as the logs
+     modal above. View-only for v1: no edit/delete of memories, no
+     transcript viewer for sessions — the list-only presentation keeps
+     the DOM bounded even for agents with hundreds of sessions.
+     ═══════════════════════════════════════════════════════════════════ -->
+<div x-show="mindModalAgent" x-cloak
+     class="fixed inset-0 bg-black/60 z-50 flex justify-end"
+     @click="closeAgentMind()"
+     @keydown.escape.window="closeAgentMind()">
+  <div class="bg-gray-950 border-l border-gray-800 w-full max-w-3xl h-full flex flex-col shadow-2xl"
+       @click.stop>
+    <!-- Header -->
+    <div class="flex items-center justify-between px-5 py-3 border-b border-gray-800 shrink-0">
+      <div class="flex items-center gap-3 min-w-0">
+        <span class="text-base font-semibold text-white truncate"
+              x-text="mindModalAgent ? ('🧠 ' + mindModalAgent.name) : ''"></span>
+        <span class="text-[10px] text-gray-600 font-mono truncate"
+              x-text="mindModalAgent ? mindModalAgent.id : ''"></span>
+      </div>
+      <div class="flex items-center gap-2 shrink-0">
+        <button @click="_mindRefresh()"
+                class="text-[10px] px-2 py-1 rounded border border-gray-800 text-gray-500 hover:text-white hover:border-gray-600">↻</button>
+        <button @click="closeAgentMind()"
+                class="text-gray-500 hover:text-white text-lg px-2">&times;</button>
+      </div>
+    </div>
+    <!-- Tab bar -->
+    <div class="flex items-center gap-0 px-5 border-b border-gray-800 shrink-0 bg-gray-900/30">
+      <template x-for="t in ['overview','memories','sessions','files']" :key="t">
+        <button @click="_mindSwitchTab(t)"
+                class="text-xs px-3 py-2 border-b-2 transition-colors"
+                :class="mindModalTab === t
+                  ? 'border-indigo-500 text-white'
+                  : 'border-transparent text-gray-500 hover:text-gray-300'"
+                x-text="t.charAt(0).toUpperCase() + t.slice(1)"></button>
+      </template>
+    </div>
+
+    <!-- Body — one scrollable region per tab. min-h-0 is the classic
+         flex-overflow fix (without it flex-1 grows to content and the
+         scrollbar never engages). overflow-y-auto (not overflow-auto)
+         because the compiled tailwind.css only ships the y-axis utility. -->
+    <div class="flex-1 min-h-0 overflow-y-auto">
+
+      <!-- Overview tab -->
+      <div x-show="mindModalTab === 'overview'" class="px-5 py-4">
+        <template x-if="mindModalLoading.overview && !mindModalActivity">
+          <div class="text-xs text-gray-600 italic">Loading…</div>
+        </template>
+        <template x-if="mindModalActivity">
+          <div class="space-y-4">
+            <div class="grid grid-cols-2 gap-3">
+              <div class="bg-gray-900 border border-gray-800 rounded-lg p-3">
+                <div class="text-[10px] text-gray-600 uppercase tracking-wider">Total dispatches</div>
+                <div class="text-2xl font-semibold text-white mt-1" x-text="mindModalActivity.dispatches_total ?? 0"></div>
+              </div>
+              <div class="bg-gray-900 border border-gray-800 rounded-lg p-3">
+                <div class="text-[10px] text-gray-600 uppercase tracking-wider">Last 24 hours</div>
+                <div class="text-2xl font-semibold text-white mt-1" x-text="mindModalActivity.dispatches_last_24h ?? 0"></div>
+              </div>
+              <div class="bg-gray-900 border border-gray-800 rounded-lg p-3">
+                <div class="text-[10px] text-gray-600 uppercase tracking-wider">Input tokens</div>
+                <div class="text-2xl font-semibold text-white mt-1" x-text="(mindModalActivity.input_tokens_total ?? 0).toLocaleString()"></div>
+              </div>
+              <div class="bg-gray-900 border border-gray-800 rounded-lg p-3">
+                <div class="text-[10px] text-gray-600 uppercase tracking-wider">Output tokens</div>
+                <div class="text-2xl font-semibold text-white mt-1" x-text="(mindModalActivity.output_tokens_total ?? 0).toLocaleString()"></div>
+              </div>
+            </div>
+            <div class="bg-gray-900 border border-gray-800 rounded-lg p-3 text-xs text-gray-400 space-y-1.5">
+              <div class="flex justify-between">
+                <span class="text-gray-600">Most-used model</span>
+                <span class="font-mono text-gray-300" x-text="mindModalActivity.top_model || '—'"></span>
+              </div>
+              <div class="flex justify-between">
+                <span class="text-gray-600">Last seen</span>
+                <span class="font-mono text-gray-300" x-text="_mindFmtDate(mindModalActivity.last_seen)"></span>
+              </div>
+            </div>
+          </div>
+        </template>
+      </div>
+
+      <!-- Memories tab -->
+      <div x-show="mindModalTab === 'memories'" class="px-5 py-4">
+        <template x-if="mindModalLoading.memories && !mindModalMemories">
+          <div class="text-xs text-gray-600 italic">Loading…</div>
+        </template>
+        <template x-if="mindModalMemories">
+          <div class="space-y-5">
+            <template x-for="group in ['memory','user']" :key="group">
+              <div>
+                <div class="flex items-baseline justify-between mb-2">
+                  <h3 class="text-xs font-semibold uppercase tracking-wider text-gray-400"
+                      x-text="group === 'memory' ? 'Memory (agent-curated)' : 'User profile'"></h3>
+                  <span class="text-[10px] text-gray-600 font-mono"
+                        x-text="(mindModalMemories[group]?.entries?.length || 0) + ' entries · ' + _mindFmtBytes(mindModalMemories[group]?.size_bytes || 0)"></span>
+                </div>
+                <template x-if="!mindModalMemories[group]?.exists">
+                  <div class="text-[11px] text-gray-600 italic">No file yet — the agent hasn't written anything to this bucket.</div>
+                </template>
+                <template x-if="mindModalMemories[group]?.exists && mindModalMemories[group].entries.length === 0">
+                  <div class="text-[11px] text-gray-600 italic">File exists but contains no entries.</div>
+                </template>
+                <div class="space-y-2">
+                  <template x-for="(entry, i) in (mindModalMemories[group]?.entries || [])" :key="group + '-' + i">
+                    <div class="bg-gray-900 border border-gray-800 rounded-lg px-3 py-2 text-[11px] text-gray-300 whitespace-pre-wrap break-words">
+                      <span class="text-gray-600 font-mono text-[9px] mr-2" x-text="'#' + (i+1)"></span>
+                      <span x-text="entry"></span>
+                    </div>
+                  </template>
+                </div>
+              </div>
+            </template>
+          </div>
+        </template>
+      </div>
+
+      <!-- Sessions tab -->
+      <div x-show="mindModalTab === 'sessions'" class="px-5 py-4">
+        <template x-if="mindModalLoading.sessions && !mindModalSessions">
+          <div class="text-xs text-gray-600 italic">Loading…</div>
+        </template>
+        <template x-if="mindModalSessions">
+          <div>
+            <div class="flex items-baseline justify-between mb-3">
+              <h3 class="text-xs font-semibold uppercase tracking-wider text-gray-400">Past sessions</h3>
+              <span class="text-[10px] text-gray-600 font-mono"
+                    x-text="(mindModalSessions.sessions?.length || 0) + ' of ' + (mindModalSessions.total || 0)"></span>
+            </div>
+            <template x-if="(mindModalSessions.sessions || []).length === 0">
+              <div class="text-[11px] text-gray-600 italic">No sessions yet.</div>
+            </template>
+            <div class="space-y-1.5">
+              <template x-for="s in (mindModalSessions.sessions || [])" :key="s.id">
+                <div class="bg-gray-900 border border-gray-800 rounded-lg px-3 py-2">
+                  <div class="flex items-baseline gap-2 flex-wrap">
+                    <span class="text-[11px] font-mono text-gray-400" x-text="s.id"></span>
+                    <span class="text-[10px] text-gray-600" x-text="'· ' + (s.model || 'unknown')"></span>
+                    <span class="text-[10px] text-gray-600" x-text="'· ' + (s.msg_count ?? 0) + ' msg'"></span>
+                    <span class="ml-auto text-[10px] text-gray-600 font-mono" x-text="_mindFmtDate(s.last_updated || s.started)"></span>
+                  </div>
+                  <div x-show="s.preview" class="text-[11px] text-gray-500 mt-1 truncate" x-text="s.preview"></div>
+                </div>
+              </template>
+            </div>
+          </div>
+        </template>
+      </div>
+
+      <!-- Files tab -->
+      <div x-show="mindModalTab === 'files'" class="px-5 py-4">
+        <template x-if="mindModalLoading.files && !mindModalFiles">
+          <div class="text-xs text-gray-600 italic">Loading…</div>
+        </template>
+        <template x-if="mindModalFiles">
+          <div>
+            <div class="flex items-baseline justify-between mb-3">
+              <h3 class="text-xs font-semibold uppercase tracking-wider text-gray-400">On-disk files</h3>
+              <span class="text-[10px] text-gray-600 font-mono truncate"
+                    x-text="mindModalFiles.root || ''"></span>
+            </div>
+            <template x-if="(mindModalFiles.files || []).length === 0">
+              <div class="text-[11px] text-gray-600 italic">Nothing on disk yet.</div>
+            </template>
+            <div class="space-y-0.5 font-mono text-[10px]">
+              <template x-for="f in (mindModalFiles.files || [])" :key="f.rel_path">
+                <div class="flex items-baseline gap-3 px-2 py-1 rounded hover:bg-gray-900">
+                  <span class="text-gray-400 truncate flex-1" x-text="f.rel_path"></span>
+                  <span class="text-gray-600 shrink-0" x-text="_mindFmtBytes(f.size_bytes)"></span>
+                  <span class="text-gray-700 shrink-0" x-text="_mindFmtDate(f.mtime_iso)"></span>
+                </div>
+              </template>
+            </div>
+            <div x-show="mindModalFiles.truncated" class="text-[10px] text-yellow-500 italic mt-3">
+              Listing truncated at 5000 entries.
+            </div>
+          </div>
+        </template>
+      </div>
+
     </div>
   </div>
 </div>
