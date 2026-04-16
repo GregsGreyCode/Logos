@@ -1372,8 +1372,26 @@ async def handle_agent_capabilities_toggle(request: web.Request) -> web.Response
     enabled = bool(body.get("enabled"))
     if not cap_id:
         return web.json_response({"error": "capability is required"}, status=400)
+    from gateway import capabilities as _caps
+    # Reachability probe — only when enabling a capability that declares
+    # a service_probe (local_service tier with a bundled backing
+    # service). If the service isn't up, bail with an install hint
+    # instead of flipping the toggle into a broken state. Disable flow
+    # skips the probe because you shouldn't need the service to turn
+    # it off.
+    if enabled:
+        cap = _caps.find(cap_id)
+        if cap:
+            probe = _caps.probe_service(cap)
+            if probe and not probe.get("ok"):
+                return web.json_response({
+                    "error": "service_unreachable",
+                    "capability": cap_id,
+                    "probe_url": probe.get("url"),
+                    "hint": probe.get("hint"),
+                    "detail": probe.get("detail"),
+                }, status=409)
     try:
-        from gateway import capabilities as _caps
         new_state = _caps.apply(aid, cap_id, enabled)
     except ValueError as exc:
         return web.json_response({"error": str(exc)}, status=400)
