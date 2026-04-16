@@ -392,17 +392,18 @@ agent:
 # If a platform isn't listed here, its built-in default is used.
 #
 # You can use EITHER:
-#   - A preset like "hermes-cli" or "hermes-telegram" (curated tool set)
+#   - The "hermes-cli" preset (curated bundle of everything)
 #   - A list of individual toolsets to compose your own (see list below)
 #
-# Supported platform keys: cli, telegram, discord, whatsapp, slack
+# Supported platform keys: cli, telegram, discord, whatsapp, slack, signal,
+# homeassistant, email.
 #
 # Examples:
 #
-#   # Use presets (same as defaults):
+#   # Use the shared default across every channel:
 #   platform_toolsets:
 #     cli: [hermes-cli]
-#     telegram: [hermes-telegram]
+#     telegram: [hermes-cli]
 #
 #   # Custom: give Telegram only web + terminal + file + planning:
 #   platform_toolsets:
@@ -416,23 +417,18 @@ agent:
 #   platform_toolsets:
 #     discord: [web, vision, skills, todo]
 #
-# If not set, defaults are:
-#   cli:           hermes-cli            (everything + cronjob management)
-#   telegram:      hermes-telegram       (terminal, file, web, vision, image, tts, browser, skills, todo, cronjob, messaging)
-#   discord:       hermes-discord        (same as telegram)
-#   whatsapp:      hermes-whatsapp       (same as telegram)
-#   slack:         hermes-slack          (same as telegram)
-#   signal:        hermes-signal         (same as telegram)
-#   homeassistant: hermes-homeassistant  (same as telegram)
+# If not set, every platform uses `hermes-cli`. Per-platform variants
+# (hermes-telegram, hermes-discord, etc.) used to exist but were
+# identical clones — dropped in favor of a single shared preset.
 #
 platform_toolsets:
   cli: [hermes-cli]
-  telegram: [hermes-telegram]
-  discord: [hermes-discord]
-  whatsapp: [hermes-whatsapp]
-  slack: [hermes-slack]
-  signal: [hermes-signal]
-  homeassistant: [hermes-homeassistant]
+  telegram: [hermes-cli]
+  discord: [hermes-cli]
+  whatsapp: [hermes-cli]
+  slack: [hermes-cli]
+  signal: [hermes-cli]
+  homeassistant: [hermes-cli]
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Available toolsets (use these names in platform_toolsets or the toolsets list)
