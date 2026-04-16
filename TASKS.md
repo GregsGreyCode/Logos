@@ -209,37 +209,22 @@ unless someone asks for it.
 
 ## Pending — infra / cleanup
 
-### #XX Strip workflow + action-policy dead code once schema migration is safe
-Commit `6e05331` removed the user-facing Workflows tab + per-user
-Routing Profile / Action Policy UI surface. Three residues stayed
-on disk because pulling them out requires a DB migration or a
-broader tuple edit across every role:
+### #XX Strip workflow + action-policy dead code once schema migration is safe — DONE
 
-- `gateway/auth/db.py`: `list_workflow_definitions`,
-  `create_workflow_definition`, `update_workflow_definition`,
-  `delete_workflow_definition`, `list_workflow_runs`,
-  `get_workflow_run`, `list_workflow_step_runs`, `create_workflow_run`,
-  `update_workflow_step_run`, `create_workflow_step_run`, plus the
-  action-policy helpers: `list_action_policies`, `create_action_policy`,
-  `get_action_policy`, `update_action_policy`,
-  `delete_action_policy`, `get_user_action_policy_row`,
-  `assign_user_action_policy`. No callers after commit `6e05331`.
-- DB tables that back those helpers: `workflow_definitions`,
-  `workflow_runs`, `workflow_step_runs`, `action_policies`. Need a
-  forward migration that drops them; keep a down-migration that
-  recreates the schema in case we want workflows back.
-- `gateway/auth/rbac.py` permission strings referenced by the
-  removed routes: `manage_workflows`, `view_workflows`,
-  `trigger_workflow`, `decide_workflow_approvals`,
-  `manage_action_policies`, `assign_action_policy`. Removing these
-  touches every role tuple in the `ROLE_PERMISSIONS` map — low risk
-  per role but noisy diff, so skipped during the UI-only removal.
-- `workflows/` module directory (`engine.py`, step runners). No
-  longer imported; can be deleted once the helpers + tables above
-  are gone.
-
-Do this as a single cleanup pass once we're confident the removal
-sticks (≥ 2 weeks of dogfooding).
+Completed: cleanup pass landed as part of the preset→permission rename
+work. Removed the 17 dead helpers in `gateway/auth/db.py`, the 4 dead
+`CREATE TABLE` blocks (`action_policies`, `workflow_definitions`,
+`workflow_runs`, `workflow_step_runs`) + their indexes, the 6 RBAC
+strings in `rbac.py`, `workflows/` module directory, and
+`tools/workflow_tool.py`. Added migration
+`drop_workflow_action_policy_tables_v1` so existing DBs drop the dead
+tables on next boot. Column residues kept (dropping columns requires
+a SQLite table rebuild + leaving them NULL-only is harmless):
+`users.action_policy_id`, `agents.action_policy_id/snapshot`,
+`agent_runs.action_policy_id/snapshot`, `agent_runs.workflow_run_id`.
+`gateway/auth/policy.py` kept — still used for `ProviderPolicy`,
+`ACTION_MCP_ACCESS`, `categorise_tool`, `_get_repo_roots` (those are
+orthogonal to action-policy rows).
 
 ### #17 Cache sandbox details to prevent blank flash on tab click
 When the user clicks on a sandbox in `/admin/sandboxes` the detail

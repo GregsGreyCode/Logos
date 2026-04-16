@@ -20,19 +20,11 @@ ROLE_PERMISSIONS: dict[str, set[str]] = {
         "promote_canary",
         "manage_platform",
         "claim_machine",            # stake ownership/priority on a compute machine
-        # Policy & Trust (v1)
-        "manage_action_policies",   # create/edit/delete action policies
-        "assign_action_policy",     # assign action policy to a user
         "view_approvals",           # view all pending approval requests
         "decide_approvals",         # approve or reject any pending request
-        # OpenShell sandbox policies (network_policies presets)
-        "view_sandbox_policies",    # read preset YAMLs + which agents use them
-        "manage_sandbox_policies",  # create/edit/delete preset YAMLs
-        # Workflow execution layer (v1)
-        "manage_workflows",         # create/edit/delete workflow definitions
-        "trigger_workflow",         # start a workflow run
-        "view_workflows",           # view definitions, runs, and step state
-        "decide_workflow_approvals", # approve/reject workflow approval steps
+        # OpenShell sandbox permissions (network_policies bundles)
+        "view_sandbox_policies",    # read permission YAMLs + which agents use them
+        "manage_sandbox_policies",  # create/edit/delete permission YAMLs
         # Agent run records
         "view_runs",                # view agent run audit records
         # Evolution
@@ -51,18 +43,10 @@ ROLE_PERMISSIONS: dict[str, set[str]] = {
         "view_audit_logs",
         "view_settings",
         "claim_machine",            # operators can stake machine claims
-        # Policy & Trust (v1)
-        "manage_action_policies",
-        "assign_action_policy",
         "view_approvals",
         "decide_approvals",
-        # OpenShell sandbox policies
+        # OpenShell sandbox permissions
         "view_sandbox_policies",
-        # Workflow execution layer (v1)
-        "manage_workflows",
-        "trigger_workflow",
-        "view_workflows",
-        "decide_workflow_approvals",
         # Agent run records
         "view_runs",
         # Evolution
@@ -77,7 +61,6 @@ ROLE_PERMISSIONS: dict[str, set[str]] = {
         "claim_machine",            # users can claim machines assigned to them
         # Users can view their own pending approvals (filtered by session in handler)
         "view_approvals",
-        "view_workflows",           # users can view workflow runs (read-only)
         "view_runs",                # users can view their own agent run records
         # Evolution
         "view_evolution",

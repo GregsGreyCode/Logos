@@ -3802,7 +3802,6 @@ class GatewayRunner:
         source: SessionSource,
         session_id: str,
         session_key: str = None,
-        action_policy=None,
         auth_user_id: str = None,
         http_sse_queue: "asyncio.Queue | None" = None,
         agent_config: dict = None,
@@ -4459,7 +4458,6 @@ class GatewayRunner:
             user_id=auth_user_id,
             user_message=message,
             model=_run_model_early,
-            action_policy=action_policy,
         )
         _tool_calls_log: list = []
 
