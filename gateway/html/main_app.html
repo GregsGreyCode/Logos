@@ -949,9 +949,23 @@
                   <!-- Loading + error states -->
                   <div x-show="agentCapsLoading && !(agentCapsState && agentCapsState._agentId === activeAgent?.id)"
                     class="px-3 py-3 text-[10px] text-gray-600">Loading permissions…</div>
-                  <div x-show="agentCapsError"
-                    class="px-3 py-2 text-[10px] text-red-400 border-t border-red-900/50 bg-red-950/30"
-                    x-text="agentCapsError"></div>
+                  <div x-show="agentCapsError" x-cloak
+                    class="px-3 py-2 text-[10px] border-t border-red-900/50 bg-red-950/30">
+                    <div class="text-red-400" x-text="agentCapsError"></div>
+                    <!-- When a reachability probe failed AND the capability
+                         ships install metadata, offer a one-click install.
+                         Shells `docker compose up` for the capability's
+                         service, waits for the probe to clear, then flips
+                         the toggle — no hand-editing docker-compose args. -->
+                    <template x-if="agentCapsInstallFor">
+                      <button @click="installCapability(activeAgent.id, agentCapsInstallFor)"
+                        :disabled="agentCapsInstalling"
+                        class="mt-1.5 px-2 py-1 rounded border border-indigo-700 text-indigo-300 hover:text-white hover:border-indigo-500 text-[10px] disabled:opacity-40">
+                        <span x-show="!agentCapsInstalling">Install &amp; enable</span>
+                        <span x-show="agentCapsInstalling">Installing… (up to ~60s)</span>
+                      </button>
+                    </template>
+                  </div>
                   <div x-show="agentToolsError"
                     class="px-3 py-2 text-[10px] text-red-400 border-t border-red-900/50 bg-red-950/30"
                     x-text="agentToolsError"></div>
@@ -6049,6 +6063,11 @@ function app() {
     mindModalFiles: null,         // /files response
     agentCapsLoading: false,
     agentCapsError: null,
+    // Capability id whose reachability probe failed on the last toggle —
+    // used to show an "Install & enable" button inline in the error
+    // banner. Cleared when the error clears or the install succeeds.
+    agentCapsInstallFor: null,
+    agentCapsInstalling: false,
     agentCapsToggling: {},
     // Tracks when each agent first showed up as `worker_connected=false`
     // so the chat banner can display elapsed-time + progressive messaging
@@ -8313,6 +8332,7 @@ function app() {
       if (!this.agentCapsToggling) this.agentCapsToggling = {};
       this.agentCapsToggling[key] = true;
       this.agentCapsError = null;
+      this.agentCapsInstallFor = null;
       try {
         const r = await fetch(
           '/admin/agents/' + encodeURIComponent(agentId) + '/capabilities/toggle',
@@ -8331,6 +8351,15 @@ function app() {
           if (r.status === 409 && body?.error === 'service_unreachable') {
             this.agentCapsError = (body.hint || 'Backing service unreachable.')
               + (body.probe_url ? ' (probed ' + body.probe_url + ')' : '');
+            // If the capability ships install metadata, expose the
+            // "Install & enable" button. Look it up from the in-memory
+            // catalogue since the 409 response doesn't echo the schema.
+            const cap = (this.agentCapsState?.capabilities || [])
+              .concat(this.agentCapsState?.power_tools || [])
+              .find(c => c.id === capId);
+            if (cap?.service_install?.docker_compose_service) {
+              this.agentCapsInstallFor = capId;
+            }
             this.loadAgentCaps(agentId);
             return;
           }
@@ -8347,6 +8376,38 @@ function app() {
         this.loadAgentCaps(agentId);  // re-fetch canonical state
       }
       delete this.agentCapsToggling[key];
+    },
+
+    async installCapability(agentId, capId) {
+      if (!agentId || !capId) return;
+      this.agentCapsInstalling = true;
+      try {
+        const r = await fetch(
+          '/admin/agents/' + encodeURIComponent(agentId) + '/capabilities/install',
+          {
+            method: 'POST',
+            credentials: 'include',
+            headers: {'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken()},
+            body: JSON.stringify({capability: capId}),
+          },
+        );
+        const body = await r.json().catch(() => null);
+        if (!r.ok) {
+          const detail = (body && (body.detail || body.error)) || r.statusText;
+          this.agentCapsError = 'Install failed: ' + detail;
+          return;
+        }
+        // Install succeeded — server returned the post-install caps state.
+        body._agentId = agentId;
+        this.agentCapsState = body;
+        this.agentCapsError = null;
+        this.agentCapsInstallFor = null;
+        this.loadAgentTools(agentId);
+      } catch(e) {
+        this.agentCapsError = 'Install failed: ' + (e.message || e);
+      } finally {
+        this.agentCapsInstalling = false;
+      }
     },
 
     // Compose a maturity tier from age + activity. The score uses log
