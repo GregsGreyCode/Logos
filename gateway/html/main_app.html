@@ -818,19 +818,6 @@
                           if (open && activeAgent) {
                             if (!agentCapsState || agentCapsState._agentId !== activeAgent.id) loadAgentCaps(activeAgent.id);
                             if (!agentToolsState || agentToolsState._agentId !== activeAgent.id) loadAgentTools(activeAgent.id);
-                          }
-                          if (open) {
-                            $nextTick(() => {
-                              const panel = $el.closest('[data-chat-panel]');
-                              const dd = $refs.pdd;
-                              if (!panel || !dd) return;
-                              const btnRect = $el.getBoundingClientRect();
-                              const panelRect = panel.getBoundingClientRect();
-                              const width = Math.max(360, panelRect.right - btnRect.left - 12);
-                              const height = Math.max(320, panelRect.bottom - btnRect.bottom - 80);
-                              dd.style.width = width + 'px';
-                              dd.style.maxHeight = height + 'px';
-                            });
                           }"
                   data-testid="stamp-p"
                   class="text-[10px] px-1.5 py-0.5 rounded font-mono border transition-colors cursor-pointer flex items-center gap-1"
@@ -841,150 +828,123 @@
                         : 'bg-gray-800/50 text-gray-600 border-gray-800')"
                   :title="activeAgent ? 'Permissions — what the sandbox can reach' : 'No agent bound'">
                   <span class="font-bold text-emerald-600">P</span>
-                  <!-- Count immediately from activeAgent.applied_presets so
-                       the badge isn't blank/'default' before the dropdown
-                       is opened. Exclude always-on / legacy presets
-                       (worldscene = always-on, browserless = vestigial v16
-                       migration) to roughly match the user-toggleable
-                       capabilities the dropdown surfaces. agentCapsState's
-                       precise count wins once it's been fetched. -->
-                  <!-- Display logic: once the cap catalogue is fetched for
-                       THIS agent, show the authoritative enabled count.
-                       While it's loading, show a neutral "…" rather than a
-                       preset-based guess that was one off from the real
-                       number — the old heuristic produced a visible 12 → 13
-                       flicker because presets and capabilities don't map 1:1. -->
+                  <!-- Authoritative count once the cap catalogue has loaded
+                       for the active agent; "…" while loading (an earlier
+                       preset-based guess produced a visible 12 → 13 flicker
+                       because presets and capabilities aren't 1:1). -->
                   <span x-text="(agentCapsState && activeAgent && agentCapsState._agentId === activeAgent.id)
                     ? ((agentCapsState.capabilities || []).filter(c => c.enabled).length + ' on')
                     : '…'">
                   </span>
                 </button>
+                <!-- Fixed-width, top-to-bottom list. One scrollable column of
+                     permissions with an inline trust pill per row, a tucked
+                     "always-on" line at the bottom, and raw data hidden
+                     behind a single disclosure for power users who want to
+                     confirm what's actually granted. Earlier layout was
+                     two side-by-side trust tiers in a ~56rem panel which
+                     forced sideways reading and buried the information
+                     people actually come here for. -->
                 <div x-show="open" x-cloak
-                  x-ref="pdd"
-                  class="absolute top-full left-0 mt-1 overflow-y-auto bg-gray-900 border border-gray-700 rounded-lg shadow-xl z-50"
-                  style="width: 56rem; max-height: 22rem;">
+                  class="absolute top-full left-0 mt-1 w-[28rem] max-h-[26rem] overflow-y-auto bg-gray-900 border border-gray-700 rounded-lg shadow-xl z-50">
 
                   <!-- Header -->
-                  <div class="px-3 py-2 text-[9px] text-gray-600 uppercase tracking-wider border-b border-gray-800 flex items-center justify-between sticky top-0 bg-gray-900 z-10">
-                    <span x-text="'Permissions · ' + (activeAgent?.name || '(no agent)')"></span>
-                    <span x-show="agentToolsLoading" class="text-yellow-400 normal-case">loading…</span>
+                  <div class="px-3 py-2 border-b border-gray-800 flex items-baseline justify-between sticky top-0 bg-gray-900 z-10">
+                    <div>
+                      <div class="text-[11px] font-semibold text-white">Permissions</div>
+                      <div class="text-[10px] text-gray-500" x-text="activeAgent?.name || '(no agent)'"></div>
+                    </div>
+                    <div class="flex items-center gap-2 text-[10px]">
+                      <span x-show="agentToolsLoading" class="text-yellow-400">loading…</span>
+                      <span x-show="agentCapsState && activeAgent && agentCapsState._agentId === activeAgent.id"
+                            class="text-gray-500 font-mono"
+                            x-text="(agentCapsState.capabilities||[]).filter(c=>c.enabled).length + ' / ' + (agentCapsState.capabilities||[]).length"></span>
+                    </div>
                   </div>
 
                   <!-- No agent -->
-                  <div x-show="!activeAgent" class="px-3 py-3 text-[11px] text-gray-600">
+                  <div x-show="!activeAgent" class="px-3 py-4 text-[11px] text-gray-600">
                     No agent bound to this chat. Select or create one to edit its permissions.
                   </div>
 
-                  <!-- Capabilities — primary toggle list. Lazy-loaded on
-                       first dropdown open (see button @click). Grouped by
-                       trust tier (local-first first, third-party second)
-                       so the consent surface reads "your machine" before
-                       "external service". Each row = one capability,
-                       which atomically toggles a bundle of toolsets +
-                       presets on the backend. -->
-                  <div x-show="activeAgent && agentCapsState && agentCapsState._agentId === activeAgent.id">
-                    <div class="px-3 pt-2 pb-1 text-[9px] text-gray-500 uppercase tracking-wider flex items-center justify-between">
-                      <span>Capabilities</span>
-                      <span class="text-gray-700 normal-case"
-                        x-text="(agentCapsState.capabilities||[]).filter(c=>c.enabled).length + ' / ' + (agentCapsState.capabilities||[]).length + ' on'"></span>
-                    </div>
-                    <!-- Local-first capabilities first -->
-                    <template x-for="c in (agentCapsState.capabilities||[]).filter(x => x.trust === 'local')" :key="'cap-'+c.id">
-                      <label class="flex items-start gap-2 px-3 py-2 text-[11px] hover:bg-gray-800/40 cursor-pointer border-l-2 border-emerald-700/30"
+                  <!-- Single unified capability list — local and third-party
+                       mixed, trust tier rendered as an inline pill. Rows
+                       that need a credential show a muted "needs X" line. -->
+                  <div x-show="activeAgent && agentCapsState && agentCapsState._agentId === activeAgent.id" class="py-1">
+                    <template x-for="c in (agentCapsState.capabilities||[])" :key="'cap-'+c.id">
+                      <label class="flex items-center gap-2.5 px-3 py-1.5 text-[11px] hover:bg-gray-800/40 cursor-pointer"
                              :class="!c.ready ? 'opacity-60' : ''"
                              :title="c.trust_note || ''">
                         <input type="checkbox"
                           :checked="c.enabled"
                           :disabled="!c.ready || !!(agentCapsToggling && agentCapsToggling['cap:'+c.id])"
                           @change="toggleCapability(activeAgent.id, c.id, $event.target.checked)"
-                          class="mt-0.5 h-3.5 w-3.5 rounded border-gray-700 bg-gray-900 text-emerald-500 focus:ring-0 focus:ring-offset-0 flex-shrink-0">
+                          class="h-3.5 w-3.5 rounded border-gray-700 bg-gray-900 focus:ring-0 focus:ring-offset-0 flex-shrink-0"
+                          :class="c.trust === 'local' ? 'text-emerald-500' : 'text-amber-500'">
+                        <span x-text="c.icon" class="flex-shrink-0"></span>
                         <div class="flex-1 min-w-0">
                           <div class="flex items-center gap-1.5">
-                            <span x-text="c.icon"></span>
-                            <span class="text-gray-100 font-medium" x-text="c.name"></span>
-                            <span class="text-[9px] px-1 py-0.5 rounded bg-emerald-950 text-emerald-400 border border-emerald-900">local</span>
+                            <span class="text-gray-100 font-medium truncate" x-text="c.name"></span>
+                            <span class="text-[9px] px-1 py-0.5 rounded flex-shrink-0"
+                                  :class="c.trust === 'local'
+                                    ? 'bg-emerald-950 text-emerald-400 border border-emerald-900'
+                                    : 'bg-amber-950 text-amber-400 border border-amber-900'"
+                                  x-text="c.trust === 'local' ? 'local' : 'cloud'"></span>
                           </div>
-                          <div class="text-gray-500 text-[10px] mt-0.5" x-text="c.description"></div>
-                          <div x-show="!c.ready" class="text-amber-500 text-[10px] mt-0.5"
-                               x-text="'⚠ needs ' + (c.missing_creds || []).join(', ')"></div>
+                          <div x-show="!c.ready" class="text-amber-500 text-[10px] mt-0.5 truncate"
+                               x-text="'needs ' + (c.missing_creds || []).join(', ')"></div>
                         </div>
-                        <span x-show="agentCapsToggling && agentCapsToggling['cap:'+c.id]" class="text-yellow-500 text-[9px]">…</span>
-                      </label>
-                    </template>
-                    <!-- Third-party capabilities -->
-                    <div x-show="(agentCapsState.capabilities||[]).some(c=>c.trust==='third_party')"
-                         class="px-3 pt-2 pb-1 text-[9px] text-gray-600 uppercase tracking-wider">External services</div>
-                    <template x-for="c in (agentCapsState.capabilities||[]).filter(x => x.trust === 'third_party')" :key="'cap-'+c.id">
-                      <label class="flex items-start gap-2 px-3 py-2 text-[11px] hover:bg-gray-800/40 cursor-pointer border-l-2 border-amber-700/30"
-                             :class="!c.ready ? 'opacity-60' : ''"
-                             :title="c.trust_note || ''">
-                        <input type="checkbox"
-                          :checked="c.enabled"
-                          :disabled="!c.ready || !!(agentCapsToggling && agentCapsToggling['cap:'+c.id])"
-                          @change="toggleCapability(activeAgent.id, c.id, $event.target.checked)"
-                          class="mt-0.5 h-3.5 w-3.5 rounded border-gray-700 bg-gray-900 text-amber-500 focus:ring-0 focus:ring-offset-0 flex-shrink-0">
-                        <div class="flex-1 min-w-0">
-                          <div class="flex items-center gap-1.5">
-                            <span x-text="c.icon"></span>
-                            <span class="text-gray-100 font-medium" x-text="c.name"></span>
-                            <span class="text-[9px] px-1 py-0.5 rounded bg-amber-950 text-amber-400 border border-amber-900">cloud</span>
-                          </div>
-                          <div class="text-gray-500 text-[10px] mt-0.5" x-text="c.description"></div>
-                          <div class="text-gray-600 text-[10px] mt-0.5 italic" x-text="c.trust_note"></div>
-                          <div x-show="!c.ready" class="text-amber-500 text-[10px] mt-0.5"
-                               x-text="'⚠ needs ' + (c.missing_creds || []).join(', ') + ' (set in Config → Tools)'"></div>
-                        </div>
-                        <span x-show="agentCapsToggling && agentCapsToggling['cap:'+c.id]" class="text-yellow-500 text-[9px]">…</span>
+                        <span x-show="agentCapsToggling && agentCapsToggling['cap:'+c.id]"
+                              class="text-yellow-500 text-[9px] flex-shrink-0">…</span>
                       </label>
                     </template>
 
-                    <!-- Always-on footer — small informational note that
-                         these capabilities are local-only and granted by
-                         default. Not togglable; purely consent transparency. -->
-                    <div class="px-3 pt-3 pb-2 border-t border-gray-800/60 text-[10px] text-gray-600">
-                      <div class="text-[9px] uppercase tracking-wider text-gray-700 mb-1">Always on (local-only, no consent needed)</div>
-                      <div class="flex flex-wrap gap-x-2 gap-y-0.5">
-                        <template x-for="a in (agentCapsState.always_on || [])" :key="'ao-'+a.id">
-                          <span :title="a.description"><span x-text="a.icon"></span> <span x-text="a.name"></span></span>
-                        </template>
-                      </div>
+                    <!-- Always-on: single muted line. Icons + names only —
+                         these are local-only and granted by default, shown
+                         here for consent transparency. -->
+                    <div class="px-3 py-2 mt-1 border-t border-gray-800/60 text-[10px] text-gray-600">
+                      <span class="text-gray-700 uppercase tracking-wider text-[9px] mr-1">Always on:</span>
+                      <template x-for="(a, i) in (agentCapsState.always_on || [])" :key="'ao-'+a.id">
+                        <span :title="a.description">
+                          <span x-show="i > 0" class="text-gray-800">·</span>
+                          <span x-text="a.icon"></span>
+                          <span x-text="a.name"></span>
+                        </span>
+                      </template>
                     </div>
 
-                    <!-- Advanced disclosure — raw toolset + preset checkbox grid
-                         for power users who want fine-grained control. Reuses
-                         the same agentToolsState fetch the toolset toggles in
-                         T already populate. -->
+                    <!-- Raw data disclosure — single-line toggle; mostly
+                         useful for verifying exactly which YAML presets are
+                         applied when debugging egress. Power-tool
+                         capabilities live here too since they're rare. -->
                     <div class="border-t border-gray-800">
                       <button @click="capsAdvancedOpen = !capsAdvancedOpen"
-                        class="w-full px-3 py-2 text-[10px] text-gray-500 hover:text-gray-300 flex items-center gap-1.5">
-                        <span :class="capsAdvancedOpen ? 'rotate-90' : ''" class="inline-block transition-transform">▶</span>
-                        <span>Advanced — raw toolsets &amp; permissions</span>
+                        class="w-full px-3 py-1.5 text-[10px] text-gray-600 hover:text-gray-300 flex items-center gap-1.5">
+                        <span :class="capsAdvancedOpen ? 'rotate-90' : ''" class="inline-block transition-transform text-[9px]">▶</span>
+                        <span>Raw view</span>
                       </button>
-                      <div x-show="capsAdvancedOpen" x-cloak class="border-t border-gray-800/40">
-                        <!-- Power tools (rare; shown only when Advanced expanded) -->
-                        <div class="px-3 pt-2 pb-1 text-[9px] text-gray-600 uppercase tracking-wider">Power tools</div>
-                        <template x-for="c in (agentCapsState.power_tools || [])" :key="'pt-'+c.id">
-                          <label class="flex items-start gap-2 px-3 py-1.5 text-[11px] hover:bg-gray-800/40 cursor-pointer">
-                            <input type="checkbox"
-                              :checked="c.enabled"
-                              :disabled="!!(agentCapsToggling && agentCapsToggling['cap:'+c.id])"
-                              @change="toggleCapability(activeAgent.id, c.id, $event.target.checked)"
-                              class="mt-0.5 h-3 w-3 rounded border-gray-700 bg-gray-900 text-orange-500 focus:ring-0 focus:ring-offset-0 flex-shrink-0">
-                            <div class="flex-1 min-w-0">
-                              <div class="flex items-center gap-1.5">
+                      <div x-show="capsAdvancedOpen" x-cloak class="border-t border-gray-800/40 px-3 py-2 space-y-2 text-[10px]">
+                        <template x-if="(agentCapsState.power_tools || []).length">
+                          <div>
+                            <div class="text-[9px] uppercase tracking-wider text-gray-700 mb-1">Power tools</div>
+                            <template x-for="c in (agentCapsState.power_tools || [])" :key="'pt-'+c.id">
+                              <label class="flex items-center gap-2 py-0.5 cursor-pointer hover:text-gray-300">
+                                <input type="checkbox"
+                                  :checked="c.enabled"
+                                  :disabled="!!(agentCapsToggling && agentCapsToggling['cap:'+c.id])"
+                                  @change="toggleCapability(activeAgent.id, c.id, $event.target.checked)"
+                                  class="h-3 w-3 rounded border-gray-700 bg-gray-900 text-orange-500 focus:ring-0 focus:ring-offset-0 flex-shrink-0">
                                 <span x-text="c.icon"></span>
-                                <span class="text-gray-200" x-text="c.name"></span>
-                              </div>
-                              <div class="text-gray-600 text-[10px] mt-0.5 italic" x-text="c.trust_note"></div>
-                            </div>
-                          </label>
+                                <span x-text="c.name" class="text-gray-400"></span>
+                              </label>
+                            </template>
+                          </div>
                         </template>
-                        <!-- Raw toolsets (read-only summary in Advanced mode) -->
-                        <div x-show="agentToolsState && agentToolsState._agentId === activeAgent.id" class="px-3 pt-3 pb-2 text-[10px] text-gray-600">
-                          <div class="text-[9px] uppercase tracking-wider text-gray-700 mb-1">Raw toolsets enabled</div>
-                          <div class="font-mono text-gray-500 leading-snug"
+                        <div x-show="agentToolsState && agentToolsState._agentId === activeAgent.id" class="text-gray-600">
+                          <div class="text-[9px] uppercase tracking-wider text-gray-700 mb-0.5">Toolsets</div>
+                          <div class="font-mono text-gray-500 leading-snug mb-1.5"
                                x-text="(agentToolsState?.toolsets?.enabled || []).join(', ') || '(none)'"></div>
-                          <div class="text-[9px] uppercase tracking-wider text-gray-700 mt-2 mb-1">Raw permissions granted</div>
+                          <div class="text-[9px] uppercase tracking-wider text-gray-700 mb-0.5">Granted permissions (raw preset names)</div>
                           <div class="font-mono text-gray-500 leading-snug"
                                x-text="(agentToolsState?.presets?.applied || []).join(', ') || '(none)'"></div>
                         </div>
@@ -994,7 +954,7 @@
 
                   <!-- Loading + error states -->
                   <div x-show="agentCapsLoading && !(agentCapsState && agentCapsState._agentId === activeAgent?.id)"
-                    class="px-3 py-3 text-[10px] text-gray-600">Loading capabilities…</div>
+                    class="px-3 py-3 text-[10px] text-gray-600">Loading permissions…</div>
                   <div x-show="agentCapsError"
                     class="px-3 py-2 text-[10px] text-red-400 border-t border-red-900/50 bg-red-950/30"
                     x-text="agentCapsError"></div>
