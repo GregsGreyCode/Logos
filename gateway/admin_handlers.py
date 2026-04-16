@@ -677,6 +677,18 @@ async def handle_dispatches_list(request: web.Request) -> web.Response:
                     r[field] = []
             else:
                 r[field] = []
+    # Resolve user_id → username so the Runs table can show who initiated
+    # each dispatch. Platform/cron/workflow-origin dispatches have no
+    # user_id and render as '—' client-side.
+    user_ids = {r["user_id"] for r in rows if r.get("user_id")}
+    user_map: dict[str, str] = {}
+    for uid in user_ids:
+        u = auth_db.get_user_by_id(uid)
+        if u:
+            user_map[uid] = u.get("username") or u.get("email") or uid
+    for r in rows:
+        if r.get("user_id"):
+            r["username"] = user_map.get(r["user_id"], r["user_id"])
     return web.json_response({
         "dispatches": rows, "total": total,
         "limit": limit, "offset": offset,
