@@ -5057,6 +5057,14 @@ async def start_http_api(runner: Any, port: int = 8091) -> None:
                           _mm(require_csrf(admin_handlers.handle_agent_channels_delete)))
     app.router.add_post("/admin/agents/{id}/channels/{cred_id}/toggle",
                         _mm(require_csrf(admin_handlers.handle_agent_channels_toggle)))
+    # Gateway self-update — shared with the `logos gateway update` CLI.
+    # GET reports whether origin has newer commits; POST pulls + re-execs
+    # the running gateway process. Same auth guard as the other admin
+    # mutations.
+    app.router.add_get("/api/admin/gateway/update",
+                       _mm(admin_handlers.handle_gateway_update_status))
+    app.router.add_post("/api/admin/gateway/update",
+                        _mm(require_csrf(admin_handlers.handle_gateway_update_apply)))
     # Capabilities — user-facing collapse of toolsets + presets + creds.
     # GET returns the catalogue annotated with per-agent state; POST
     # toggles a capability (atomic apply/remove of all bundled toolsets

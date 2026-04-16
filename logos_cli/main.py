@@ -2098,6 +2098,19 @@ For more help on a command:
     # gateway setup
     gateway_setup = gateway_subparsers.add_parser("setup", help="Configure messaging platforms")
 
+    # gateway update
+    gateway_update = gateway_subparsers.add_parser(
+        "update", help="Pull the latest code from origin and redeploy",
+    )
+    gateway_update.add_argument(
+        "--check", action="store_true",
+        help="Only check for updates; do not pull or restart",
+    )
+    gateway_update.add_argument(
+        "--no-restart", action="store_true",
+        help="Pull the latest code but skip the restart (manual restart needed)",
+    )
+
     gateway_parser.set_defaults(func=cmd_gateway)
 
     # =========================================================================

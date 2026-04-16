@@ -310,6 +310,27 @@
         <span>canary live</span>
       </div>
     </template>
+    <!-- Update available — only rendered when the gateway's upstream
+         has new commits. Clicking pulls origin/HEAD and re-execs the
+         gateway; the spinner holds until the new process comes back
+         on the port. Mirrors `logos gateway update` on the CLI. -->
+    <template x-if="gatewayUpdate && gatewayUpdate.has_update">
+      <div class="pb-2 self-center">
+        <button @click="applyGatewayUpdate()"
+                :disabled="gatewayUpdate.applying"
+                :title="'New: ' + (gatewayUpdate.latest_message || '') + ' (' + (gatewayUpdate.behind_by || 0) + ' commits behind)'"
+                class="flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-xs font-medium transition-colors disabled:opacity-40"
+                :class="gatewayUpdate.applying
+                  ? 'border-amber-700 bg-amber-950 text-amber-300 cursor-wait'
+                  : 'border-emerald-600 bg-emerald-950 text-emerald-300 hover:bg-emerald-900'">
+          <span x-show="!gatewayUpdate.applying">⬆</span>
+          <span x-show="gatewayUpdate.applying" class="w-3 h-3 border border-amber-600 border-t-amber-300 rounded-full animate-spin inline-block"></span>
+          <span x-text="gatewayUpdate.applying
+            ? 'updating…'
+            : ('update · ' + (gatewayUpdate.behind_by || 0))"></span>
+        </button>
+      </div>
+    </template>
     <!-- Account menu -->
     <template x-if="authUser">
       <div class="pb-2 relative ml-auto shrink-0" @click.away="accountMenuOpen=false">
@@ -6398,6 +6419,15 @@ function app() {
     allAgentChannelsLoading: false,
     // In-flight toggle/delete tracker — keyed by credential id.
     agentChannelsBusy: {},
+
+    // ── Gateway self-update (banner near top nav) ────────────────────
+    // Populated by loadGatewayUpdate() from GET /api/admin/gateway/update.
+    // Polled every 30 minutes; also refreshed when the user lands on
+    // the Admin tab (so admins see the badge sooner).
+    // Shape: { ok, has_update, behind_by, current_sha, latest_sha,
+    //          latest_message, branch, applying, error }
+    gatewayUpdate: null,
+    _gatewayUpdateTimer: null,
     adminUsers: [],
     adminUsersTotal: 0,
     adminUsersPage: 1,
@@ -7148,6 +7178,10 @@ function app() {
             this.theme = d.settings.ui_theme;
             document.documentElement.setAttribute('data-theme', this.theme);
           }
+          // Kick the gateway-update poller off now that we know the
+          // user is authenticated. The endpoint requires auth, so
+          // starting earlier would just 401.
+          this.startGatewayUpdatePolling();
         }
       } catch(e) { console.warn('loadAuth failed', e); }
     },
@@ -11249,6 +11283,80 @@ toolsets:
         this.agentChannelsError = 'Toggle failed: ' + (e.message || e);
       }
       delete this.agentChannelsBusy[credId];
+    },
+
+    async loadGatewayUpdate() {
+      // Quick polled fetch — safe to call repeatedly. The backend
+      // does `git fetch` which is rate-limited by the remote but
+      // cheap for us.
+      try {
+        const r = await fetch('/api/admin/gateway/update', {credentials: 'include'});
+        if (r.ok) {
+          const d = await r.json();
+          // Preserve `applying` flag across refreshes so the banner
+          // spinner survives a mid-applying poll.
+          const applying = this.gatewayUpdate?.applying;
+          this.gatewayUpdate = {...d, applying: !!applying};
+        }
+      } catch(e) {
+        // Silent — banner just stays hidden if check fails. The CLI
+        // surface (logos gateway update --check) is the authoritative
+        // path; UI failures shouldn't block the user.
+      }
+    },
+
+    startGatewayUpdatePolling() {
+      // Kick off once immediately, then re-poll every 30 min. Not
+      // more frequent to avoid github.com rate limits on heavy-use
+      // installs. Idempotent — clears any prior timer first.
+      if (this._gatewayUpdateTimer) clearInterval(this._gatewayUpdateTimer);
+      this.loadGatewayUpdate();
+      this._gatewayUpdateTimer = setInterval(() => this.loadGatewayUpdate(), 30 * 60 * 1000);
+    },
+
+    async applyGatewayUpdate() {
+      // Posts to the apply endpoint. The server returns quickly and
+      // then os.execvs itself ~500ms later, so we poll the /status
+      // endpoint to detect when the new process is back up.
+      if (!this.gatewayUpdate || this.gatewayUpdate.applying) return;
+      if (!confirm('Pull the latest code and restart the gateway? Any in-flight chats will drop briefly.')) return;
+      this.gatewayUpdate.applying = true;
+      try {
+        const r = await fetch('/api/admin/gateway/update', {
+          method: 'POST',
+          credentials: 'include',
+          headers: {'X-CSRF-Token': getCsrfToken()},
+        });
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok || !d.ok) {
+          alert('Update failed: ' + (d.error || r.statusText));
+          this.gatewayUpdate.applying = false;
+          return;
+        }
+      } catch(e) {
+        // Expected: the gateway will cut the response mid-flight when
+        // it re-execs. Treat any network error as "restart in
+        // progress" and start polling back.
+      }
+      // Poll every 2s for up to 60s for the new process to come back.
+      const deadline = Date.now() + 60_000;
+      const poll = async () => {
+        try {
+          const r = await fetch('/api/admin/gateway/update', {credentials: 'include'});
+          if (r.ok) {
+            // Back online — reload to pick up any UI/JS changes too.
+            window.location.reload();
+            return;
+          }
+        } catch(_) { /* still down */ }
+        if (Date.now() < deadline) {
+          setTimeout(poll, 2000);
+        } else {
+          alert('Gateway did not come back within 60s. Reload manually when ready.');
+          this.gatewayUpdate.applying = false;
+        }
+      };
+      setTimeout(poll, 3000);
     },
 
     async toggleToolset(agentId, toolset, enabled) {
