@@ -880,16 +880,26 @@
                           :disabled="!c.ready || !!(agentCapsToggling && agentCapsToggling['cap:'+c.id])"
                           @change="toggleCapability(activeAgent.id, c.id, $event.target.checked)"
                           class="h-3.5 w-3.5 rounded border-gray-700 bg-gray-900 focus:ring-0 focus:ring-offset-0 flex-shrink-0"
-                          :class="c.trust === 'local' ? 'text-emerald-500' : 'text-amber-500'">
+                          :class="c.trust === 'sandbox' ? 'text-emerald-500'
+                                : c.trust === 'local_service' ? 'text-sky-500'
+                                : 'text-amber-500'">
                         <span x-text="c.icon" class="flex-shrink-0"></span>
                         <div class="flex-1 min-w-0">
                           <div class="flex items-center gap-1.5">
                             <span class="text-gray-100 font-medium truncate" x-text="c.name"></span>
+                            <!-- Three-tier trust pill:
+                                 sandbox       → green (nothing leaves the container)
+                                 local_service → blue  (your LAN, your machine)
+                                 third_party   → amber (someone else's server) -->
                             <span class="text-[9px] px-1 py-0.5 rounded flex-shrink-0"
-                                  :class="c.trust === 'local'
+                                  :class="c.trust === 'sandbox'
                                     ? 'bg-emerald-950 text-emerald-400 border border-emerald-900'
-                                    : 'bg-amber-950 text-amber-400 border border-amber-900'"
-                                  x-text="c.trust === 'local' ? 'local' : 'cloud'"></span>
+                                    : c.trust === 'local_service'
+                                      ? 'bg-sky-950 text-sky-400 border border-sky-900'
+                                      : 'bg-amber-950 text-amber-400 border border-amber-900'"
+                                  x-text="c.trust === 'sandbox' ? 'sandbox'
+                                        : c.trust === 'local_service' ? 'local'
+                                        : 'cloud'"></span>
                           </div>
                           <div x-show="!c.ready" class="text-amber-500 text-[10px] mt-0.5 truncate"
                                x-text="'needs ' + (c.missing_creds || []).join(', ')"></div>
