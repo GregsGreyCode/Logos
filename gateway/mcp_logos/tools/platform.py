@@ -115,7 +115,7 @@ def _make_platform_send_handler(server):
             reply_to=parsed.reply_to,
         )
 
-        # SendResult is a dataclass from gateway.platforms.base.
+        # SendResult is a dataclass from gateway.channels.base.
         # Serialise to a plain dict for the envelope.
         if not getattr(result, "success", False):
             return {

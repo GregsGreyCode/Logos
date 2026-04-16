@@ -24,7 +24,7 @@ from pydantic import BaseModel, Field
 # ---------------------------------------------------------------------------
 
 # The platform literal is intentionally restrictive. Adding a new platform
-# needs a corresponding adapter in gateway/platforms/, so we fail fast at
+# needs a corresponding adapter in gateway/channels/, so we fail fast at
 # arg-validation time rather than letting the tool discover "unknown
 # platform" at runtime.
 PlatformLiteral = Literal[

@@ -9,7 +9,7 @@ from unittest.mock import MagicMock, AsyncMock
 import pytest
 
 from gateway.config import Platform
-from gateway.platforms.base import MessageEvent
+from gateway.channels.base import MessageEvent
 from gateway.session import SessionSource, build_session_key
 
 

@@ -265,7 +265,7 @@ from gateway.session import (
 )
 from gateway.delivery import DeliveryRouter
 from gateway.runs import start_run, finish_run
-from gateway.platforms.base import BasePlatformAdapter, MessageEvent, MessageType
+from gateway.channels.base import BasePlatformAdapter, MessageEvent, MessageType
 
 # ── Correlation ID contextvars ──────────────────────────────────────────────
 # These propagate through the async request path so every log record in a
@@ -1239,49 +1239,49 @@ class GatewayRunner:
     ) -> Optional[BasePlatformAdapter]:
         """Create the appropriate adapter for a platform."""
         if platform == Platform.TELEGRAM:
-            from gateway.platforms.telegram import TelegramAdapter, check_telegram_requirements
+            from gateway.channels.telegram import TelegramAdapter, check_telegram_requirements
             if not check_telegram_requirements():
                 logger.warning("Telegram: python-telegram-bot not installed")
                 return None
             return TelegramAdapter(config)
         
         elif platform == Platform.DISCORD:
-            from gateway.platforms.discord import DiscordAdapter, check_discord_requirements
+            from gateway.channels.discord import DiscordAdapter, check_discord_requirements
             if not check_discord_requirements():
                 logger.warning("Discord: discord.py not installed")
                 return None
             return DiscordAdapter(config)
         
         elif platform == Platform.WHATSAPP:
-            from gateway.platforms.whatsapp import WhatsAppAdapter, check_whatsapp_requirements
+            from gateway.channels.whatsapp import WhatsAppAdapter, check_whatsapp_requirements
             if not check_whatsapp_requirements():
                 logger.warning("WhatsApp: Node.js not installed or bridge not configured")
                 return None
             return WhatsAppAdapter(config)
         
         elif platform == Platform.SLACK:
-            from gateway.platforms.slack import SlackAdapter, check_slack_requirements
+            from gateway.channels.slack import SlackAdapter, check_slack_requirements
             if not check_slack_requirements():
                 logger.warning("Slack: slack-bolt not installed. Run: pip install 'hermes-agent[slack]'")
                 return None
             return SlackAdapter(config)
 
         elif platform == Platform.SIGNAL:
-            from gateway.platforms.signal import SignalAdapter, check_signal_requirements
+            from gateway.channels.signal import SignalAdapter, check_signal_requirements
             if not check_signal_requirements():
                 logger.warning("Signal: SIGNAL_HTTP_URL or SIGNAL_ACCOUNT not configured")
                 return None
             return SignalAdapter(config)
 
         elif platform == Platform.HOMEASSISTANT:
-            from gateway.platforms.homeassistant import HomeAssistantAdapter, check_ha_requirements
+            from gateway.channels.homeassistant import HomeAssistantAdapter, check_ha_requirements
             if not check_ha_requirements():
                 logger.warning("HomeAssistant: aiohttp not installed or HASS_TOKEN not set")
                 return None
             return HomeAssistantAdapter(config)
 
         elif platform == Platform.EMAIL:
-            from gateway.platforms.email import EmailAdapter, check_email_requirements
+            from gateway.channels.email import EmailAdapter, check_email_requirements
             if not check_email_requirements():
                 logger.warning("Email: EMAIL_ADDRESS, EMAIL_PASSWORD, EMAIL_IMAP_HOST, or EMAIL_SMTP_HOST not set")
                 return None
@@ -5092,7 +5092,7 @@ def _start_cron_ticker(stop_event: threading.Event, adapters=None, interval: int
     image/audio/document cache once per hour.
     """
     from cron.scheduler import tick as cron_tick
-    from gateway.platforms.base import cleanup_image_cache, cleanup_document_cache
+    from gateway.channels.base import cleanup_image_cache, cleanup_document_cache
 
     IMAGE_CACHE_EVERY = 60   # ticks — once per hour at default 60s interval
     CHANNEL_DIR_EVERY = 5    # ticks — every 5 minutes

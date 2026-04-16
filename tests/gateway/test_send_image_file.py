@@ -14,7 +14,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from gateway.config import PlatformConfig
-from gateway.platforms.base import BasePlatformAdapter, SendResult
+from gateway.channels.base import BasePlatformAdapter, SendResult
 
 
 def _run(coro):
@@ -82,7 +82,7 @@ def _ensure_telegram_mock():
 
 _ensure_telegram_mock()
 
-from gateway.platforms.telegram import TelegramAdapter  # noqa: E402
+from gateway.channels.telegram import TelegramAdapter  # noqa: E402
 
 
 class TestTelegramSendImageFile:
@@ -170,7 +170,7 @@ def _ensure_discord_mock():
 _ensure_discord_mock()
 
 import discord as discord_mod_ref  # noqa: E402
-from gateway.platforms.discord import DiscordAdapter  # noqa: E402
+from gateway.channels.discord import DiscordAdapter  # noqa: E402
 
 
 class TestDiscordSendImageFile:
@@ -242,7 +242,7 @@ def _ensure_slack_mock():
 
 _ensure_slack_mock()
 
-from gateway.platforms.slack import SlackAdapter  # noqa: E402
+from gateway.channels.slack import SlackAdapter  # noqa: E402
 
 
 class TestSlackSendImageFile:

@@ -39,7 +39,7 @@ A user would:
 
 ### Option A: Gateway Platform Adapter (recommended)
 
-Create `gateway/platforms/api_server.py` as a new platform adapter that
+Create `gateway/channels/api_server.py` as a new platform adapter that
 extends `BasePlatformAdapter`. This is the cleanest approach because:
 
 - Reuses all gateway infrastructure (session management, auth, context building)
@@ -220,7 +220,7 @@ API_SERVER_KEY=your-secret-key
 
 ### Phase 1: MVP (non-streaming) — PR
 
-1. `gateway/platforms/api_server.py` — new adapter
+1. `gateway/channels/api_server.py` — new adapter
    - aiohttp.web server with endpoints:
      - `POST /v1/chat/completions` — Chat Completions API (universal compat)
      - `POST /v1/responses` — Responses API (server-side state, tool preservation)
@@ -264,7 +264,7 @@ API_SERVER_KEY=your-secret-key
 
 | File | Change |
 |------|--------|
-| `gateway/platforms/api_server.py` | NEW — main adapter (~300 lines) |
+| `gateway/channels/api_server.py` | NEW — main adapter (~300 lines) |
 | `gateway/config.py` | Add Platform.API_SERVER + config (~20 lines) |
 | `gateway/run.py` | Register adapter in _create_adapter() (~10 lines) |
 | `tests/gateway/test_api_server.py` | NEW — tests (~200 lines) |

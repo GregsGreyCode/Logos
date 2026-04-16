@@ -74,7 +74,7 @@ class TestSignalAdapterInit:
     def test_init_parses_config(self, monkeypatch):
         monkeypatch.setenv("SIGNAL_GROUP_ALLOWED_USERS", "group123,group456")
 
-        from gateway.platforms.signal import SignalAdapter
+        from gateway.channels.signal import SignalAdapter
         adapter = SignalAdapter(self._make_config())
 
         assert adapter.http_url == "http://localhost:8080"
@@ -84,7 +84,7 @@ class TestSignalAdapterInit:
     def test_init_empty_allowlist(self, monkeypatch):
         monkeypatch.setenv("SIGNAL_GROUP_ALLOWED_USERS", "")
 
-        from gateway.platforms.signal import SignalAdapter
+        from gateway.channels.signal import SignalAdapter
         adapter = SignalAdapter(self._make_config())
 
         assert len(adapter.group_allow_from) == 0
@@ -92,7 +92,7 @@ class TestSignalAdapterInit:
     def test_init_strips_trailing_slash(self, monkeypatch):
         monkeypatch.setenv("SIGNAL_GROUP_ALLOWED_USERS", "")
 
-        from gateway.platforms.signal import SignalAdapter
+        from gateway.channels.signal import SignalAdapter
         adapter = SignalAdapter(self._make_config(http_url="http://localhost:8080/"))
 
         assert adapter.http_url == "http://localhost:8080"
@@ -100,7 +100,7 @@ class TestSignalAdapterInit:
     def test_self_message_filtering(self, monkeypatch):
         monkeypatch.setenv("SIGNAL_GROUP_ALLOWED_USERS", "")
 
-        from gateway.platforms.signal import SignalAdapter
+        from gateway.channels.signal import SignalAdapter
         adapter = SignalAdapter(self._make_config())
 
         assert adapter._account_normalized == "+15551234567"
@@ -108,68 +108,68 @@ class TestSignalAdapterInit:
 
 class TestSignalHelpers:
     def test_redact_phone_long(self):
-        from gateway.platforms.signal import _redact_phone
+        from gateway.channels.signal import _redact_phone
         assert _redact_phone("+15551234567") == "+155****4567"
 
     def test_redact_phone_short(self):
-        from gateway.platforms.signal import _redact_phone
+        from gateway.channels.signal import _redact_phone
         assert _redact_phone("+12345") == "+1****45"
 
     def test_redact_phone_empty(self):
-        from gateway.platforms.signal import _redact_phone
+        from gateway.channels.signal import _redact_phone
         assert _redact_phone("") == "<none>"
 
     def test_parse_comma_list(self):
-        from gateway.platforms.signal import _parse_comma_list
+        from gateway.channels.signal import _parse_comma_list
         assert _parse_comma_list("+1234, +5678 , +9012") == ["+1234", "+5678", "+9012"]
         assert _parse_comma_list("") == []
         assert _parse_comma_list("  ,  ,  ") == []
 
     def test_guess_extension_png(self):
-        from gateway.platforms.signal import _guess_extension
+        from gateway.channels.signal import _guess_extension
         assert _guess_extension(b"\x89PNG\r\n\x1a\n" + b"\x00" * 100) == ".png"
 
     def test_guess_extension_jpeg(self):
-        from gateway.platforms.signal import _guess_extension
+        from gateway.channels.signal import _guess_extension
         assert _guess_extension(b"\xff\xd8\xff\xe0" + b"\x00" * 100) == ".jpg"
 
     def test_guess_extension_pdf(self):
-        from gateway.platforms.signal import _guess_extension
+        from gateway.channels.signal import _guess_extension
         assert _guess_extension(b"%PDF-1.4" + b"\x00" * 100) == ".pdf"
 
     def test_guess_extension_zip(self):
-        from gateway.platforms.signal import _guess_extension
+        from gateway.channels.signal import _guess_extension
         assert _guess_extension(b"PK\x03\x04" + b"\x00" * 100) == ".zip"
 
     def test_guess_extension_mp4(self):
-        from gateway.platforms.signal import _guess_extension
+        from gateway.channels.signal import _guess_extension
         assert _guess_extension(b"\x00\x00\x00\x18ftypisom" + b"\x00" * 100) == ".mp4"
 
     def test_guess_extension_unknown(self):
-        from gateway.platforms.signal import _guess_extension
+        from gateway.channels.signal import _guess_extension
         assert _guess_extension(b"\x00\x01\x02\x03" * 10) == ".bin"
 
     def test_is_image_ext(self):
-        from gateway.platforms.signal import _is_image_ext
+        from gateway.channels.signal import _is_image_ext
         assert _is_image_ext(".png") is True
         assert _is_image_ext(".jpg") is True
         assert _is_image_ext(".gif") is True
         assert _is_image_ext(".pdf") is False
 
     def test_is_audio_ext(self):
-        from gateway.platforms.signal import _is_audio_ext
+        from gateway.channels.signal import _is_audio_ext
         assert _is_audio_ext(".mp3") is True
         assert _is_audio_ext(".ogg") is True
         assert _is_audio_ext(".png") is False
 
     def test_check_requirements(self, monkeypatch):
-        from gateway.platforms.signal import check_signal_requirements
+        from gateway.channels.signal import check_signal_requirements
         monkeypatch.setenv("SIGNAL_HTTP_URL", "http://localhost:8080")
         monkeypatch.setenv("SIGNAL_ACCOUNT", "+15551234567")
         assert check_signal_requirements() is True
 
     def test_render_mentions(self):
-        from gateway.platforms.signal import _render_mentions
+        from gateway.channels.signal import _render_mentions
         text = "Hello \uFFFC, how are you?"
         mentions = [{"start": 6, "length": 1, "number": "+15559999999"}]
         result = _render_mentions(text, mentions)
@@ -177,13 +177,13 @@ class TestSignalHelpers:
         assert "\uFFFC" not in result
 
     def test_render_mentions_no_mentions(self):
-        from gateway.platforms.signal import _render_mentions
+        from gateway.channels.signal import _render_mentions
         text = "Hello world"
         result = _render_mentions(text, [])
         assert result == "Hello world"
 
     def test_check_requirements_missing(self, monkeypatch):
-        from gateway.platforms.signal import check_signal_requirements
+        from gateway.channels.signal import check_signal_requirements
         monkeypatch.delenv("SIGNAL_HTTP_URL", raising=False)
         monkeypatch.delenv("SIGNAL_ACCOUNT", raising=False)
         assert check_signal_requirements() is False

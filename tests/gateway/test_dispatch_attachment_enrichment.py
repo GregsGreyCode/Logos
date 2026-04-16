@@ -21,7 +21,7 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from gateway.run import GatewayRunner
-from gateway.platforms.base import MessageEvent, MessageType
+from gateway.channels.base import MessageEvent, MessageType
 from gateway.session import SessionSource
 from gateway.config import Platform
 

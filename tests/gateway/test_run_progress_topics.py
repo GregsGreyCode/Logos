@@ -9,7 +9,7 @@ from types import SimpleNamespace
 import pytest
 
 from gateway.config import Platform, PlatformConfig
-from gateway.platforms.base import BasePlatformAdapter, SendResult
+from gateway.channels.base import BasePlatformAdapter, SendResult
 from gateway.session import SessionSource
 
 

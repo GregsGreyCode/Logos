@@ -16,7 +16,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from gateway.config import Platform, PlatformConfig
-from gateway.platforms.base import (
+from gateway.channels.base import (
     MessageEvent,
     MessageType,
     SendResult,
@@ -56,10 +56,10 @@ def _ensure_slack_mock():
 _ensure_slack_mock()
 
 # Patch SLACK_AVAILABLE before importing the adapter
-import gateway.platforms.slack as _slack_mod
+import gateway.channels.slack as _slack_mod
 _slack_mod.SLACK_AVAILABLE = True
 
-from gateway.platforms.slack import SlackAdapter  # noqa: E402
+from gateway.channels.slack import SlackAdapter  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -84,7 +84,7 @@ def adapter():
 def _redirect_cache(tmp_path, monkeypatch):
     """Point document cache to tmp_path so tests don't touch ~/.hermes."""
     monkeypatch.setattr(
-        "gateway.platforms.base.DOCUMENT_CACHE_DIR", tmp_path / "doc_cache"
+        "gateway.channels.base.DOCUMENT_CACHE_DIR", tmp_path / "doc_cache"
     )
 
 

@@ -14,7 +14,7 @@ from gateway.config import (
     Platform,
     PlatformConfig,
 )
-from gateway.platforms.homeassistant import (
+from gateway.channels.homeassistant import (
     HomeAssistantAdapter,
     check_ha_requirements,
 )
@@ -34,7 +34,7 @@ class TestCheckRequirements:
         monkeypatch.setenv("HASS_TOKEN", "test-token")
         assert check_ha_requirements() is True
 
-    @patch("gateway.platforms.homeassistant.AIOHTTP_AVAILABLE", False)
+    @patch("gateway.channels.homeassistant.AIOHTTP_AVAILABLE", False)
     def test_returns_false_without_aiohttp(self, monkeypatch):
         monkeypatch.setenv("HASS_TOKEN", "test-token")
         assert check_ha_requirements() is False
@@ -516,7 +516,7 @@ class TestSendViaRestApi:
         adapter = _make_adapter()
         mock_session = self._mock_aiohttp_session(200)
 
-        with patch("gateway.platforms.homeassistant.aiohttp") as mock_aiohttp:
+        with patch("gateway.channels.homeassistant.aiohttp") as mock_aiohttp:
             mock_aiohttp.ClientSession = MagicMock(return_value=mock_session)
             mock_aiohttp.ClientTimeout = lambda total: total
 
@@ -535,7 +535,7 @@ class TestSendViaRestApi:
         adapter = _make_adapter()
         mock_session = self._mock_aiohttp_session(401, "Unauthorized")
 
-        with patch("gateway.platforms.homeassistant.aiohttp") as mock_aiohttp:
+        with patch("gateway.channels.homeassistant.aiohttp") as mock_aiohttp:
             mock_aiohttp.ClientSession = MagicMock(return_value=mock_session)
             mock_aiohttp.ClientTimeout = lambda total: total
 
@@ -550,7 +550,7 @@ class TestSendViaRestApi:
         mock_session = self._mock_aiohttp_session(200)
         long_message = "x" * 10000
 
-        with patch("gateway.platforms.homeassistant.aiohttp") as mock_aiohttp:
+        with patch("gateway.channels.homeassistant.aiohttp") as mock_aiohttp:
             mock_aiohttp.ClientSession = MagicMock(return_value=mock_session)
             mock_aiohttp.ClientTimeout = lambda total: total
 
@@ -566,7 +566,7 @@ class TestSendViaRestApi:
         adapter._ws = AsyncMock()  # Simulate an active WS
         mock_session = self._mock_aiohttp_session(200)
 
-        with patch("gateway.platforms.homeassistant.aiohttp") as mock_aiohttp:
+        with patch("gateway.channels.homeassistant.aiohttp") as mock_aiohttp:
             mock_aiohttp.ClientSession = MagicMock(return_value=mock_session)
             mock_aiohttp.ClientTimeout = lambda total: total
 

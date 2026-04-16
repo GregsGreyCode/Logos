@@ -45,8 +45,8 @@ def _ensure_discord_mock():
 
 _ensure_discord_mock()
 
-import gateway.platforms.discord as discord_platform  # noqa: E402
-from gateway.platforms.discord import DiscordAdapter  # noqa: E402
+import gateway.channels.discord as discord_platform  # noqa: E402
+from gateway.channels.discord import DiscordAdapter  # noqa: E402
 
 
 class FakeDMChannel:

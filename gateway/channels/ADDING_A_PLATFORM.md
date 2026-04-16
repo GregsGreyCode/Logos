@@ -7,9 +7,9 @@ cause broken functionality, missing features, or inconsistent behavior.
 
 ---
 
-## 1. Core Adapter (`gateway/platforms/<platform>.py`)
+## 1. Core Adapter (`gateway/channels/<platform>.py`)
 
-The adapter is a subclass of `BasePlatformAdapter` from `gateway/platforms/base.py`.
+The adapter is a subclass of `BasePlatformAdapter` from `gateway/channels/base.py`.
 
 ### Required methods
 
@@ -87,7 +87,7 @@ Add to `_create_adapter()`:
 
 ```python
 elif platform == Platform.YOUR_PLATFORM:
-    from gateway.platforms.your_platform import YourAdapter, check_your_requirements
+    from gateway.channels.your_platform import YourAdapter, check_your_requirements
     if not check_your_requirements():
         logger.warning("Your Platform: dependencies not met")
         return None

@@ -18,7 +18,7 @@ Key files:
 - `gateway/channel_directory.py`
 - `gateway/hooks.py`
 - `gateway/mirror.py`
-- `gateway/platforms/*`
+- `gateway/channels/*`
 
 ## Core responsibilities
 

@@ -13,7 +13,7 @@ GUARDED_FILES = [
     "tools/environments/local.py",
     "tools/process_registry.py",
     "tools/code_execution_tool.py",
-    "gateway/platforms/whatsapp.py",
+    "gateway/channels/whatsapp.py",
 ]
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent

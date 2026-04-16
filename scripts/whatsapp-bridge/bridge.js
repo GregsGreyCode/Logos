@@ -5,7 +5,7 @@
  * Standalone Node.js process that connects to WhatsApp via Baileys
  * and exposes HTTP endpoints for the Python gateway adapter.
  *
- * Endpoints (matches gateway/platforms/whatsapp.py expectations):
+ * Endpoints (matches gateway/channels/whatsapp.py expectations):
  *   GET  /messages       - Long-poll for new incoming messages
  *   POST /send           - Send a message { chatId, message, replyTo? }
  *   POST /edit           - Edit a sent message { chatId, messageId, message }
