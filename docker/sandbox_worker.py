@@ -190,6 +190,31 @@ def _ensure_browser_env() -> None:
         os.makedirs(os.environ["AGENT_BROWSER_SOCKET_DIR"], mode=0o700, exist_ok=True)
     except OSError as exc:
         logger.debug("could not create AGENT_BROWSER_SOCKET_DIR: %s", exc)
+    # Bridge the Playwright browsers cache into $HOME/.cache/ms-playwright.
+    # The Dockerfile installs Chromium + chrome-headless-shell into
+    # /usr/local/share/ms-playwright and sets PLAYWRIGHT_BROWSERS_PATH to
+    # match, but agent-browser's native Rust binary ignores that env var
+    # and defaults to $HOME/.cache/ms-playwright (HOME=/tmp/hermes inside
+    # the sandbox). Without this symlink, every browser_* tool call fails
+    # with "Executable doesn't exist at /tmp/hermes/.cache/ms-playwright/
+    # chromium_headless_shell-.../chrome-headless-shell" — which manifests
+    # to users as "Chromium isn't available, fall back to Firecrawl".
+    try:
+        cache_dir = "/tmp/hermes/.cache"
+        os.makedirs(cache_dir, exist_ok=True)
+        link_path = os.path.join(cache_dir, "ms-playwright")
+        target = "/usr/local/share/ms-playwright"
+        if os.path.lexists(link_path):
+            if not (os.path.islink(link_path) and os.readlink(link_path) == target):
+                # Stale link (wrong target) or a real directory blocking us —
+                # remove only if it's a link so we don't nuke user data.
+                if os.path.islink(link_path):
+                    os.unlink(link_path)
+                    os.symlink(target, link_path)
+        elif os.path.exists(target):
+            os.symlink(target, link_path)
+    except OSError as exc:
+        logger.warning("could not symlink ms-playwright cache: %s", exc)
 
 
 def _trust_openshell_ca() -> bool:
