@@ -2009,12 +2009,45 @@ class GatewayRunner:
             session_key = f"{platform_name}:{user_id or 'unknown'}"
             session_id = session_key
 
-        # History is passed empty for 5.3 — the sandbox worker already
-        # maintains its own per-session context via session_id, and the
-        # web /chat path also passes an empty history on every turn. Rich
-        # history-injection for cross-session agent memory is a later
-        # phase concern.
+        # Load recent conversation history from the session store so the
+        # agent has context of prior turns. Without this, every Telegram
+        # (or other platform) message arrives as a completely fresh
+        # exchange — the sandbox is a new `openshell sandbox exec` process
+        # each time and carries no memory of what the user just said.
+        #
+        # The earlier comment here claimed the sandbox maintained context
+        # via session_id; it doesn't. Each task is stateless, and the web
+        # /chat path works only because its client (the dashboard) sends
+        # recent history in the POST body. Platform adapters have no
+        # such client, so the gateway has to repopulate from the DB.
+        #
+        # Cap via LOGOS_PLATFORM_HISTORY_LIMIT (default 50 turns worth).
+        # Filter to user/assistant roles only — system messages are
+        # rebuilt fresh each turn from the capabilities_prompt + soul,
+        # and tool messages reference tool_call_ids from prior runs
+        # that won't match this turn's calls.
         history: list[dict] = []
+        try:
+            _history_limit = int(os.environ.get("LOGOS_PLATFORM_HISTORY_LIMIT", "50"))
+        except ValueError:
+            _history_limit = 50
+        if session_id and _history_limit > 0:
+            try:
+                _full = self.session_store.load_transcript(session_id) or []
+                _filtered = [
+                    {"role": m.get("role"), "content": m.get("content") or ""}
+                    for m in _full
+                    if m.get("role") in ("user", "assistant")
+                    and isinstance(m.get("content"), str)
+                    and m.get("content").strip()
+                ]
+                history = _filtered[-_history_limit:]
+            except Exception:
+                logger.exception(
+                    "dispatch_platform_message: history load failed for session=%s",
+                    session_id,
+                )
+                history = []
 
         # ── 4. Enrich message with attachments ────────────────────────
         # Voice messages, images, and documents arrive on the MessageEvent
