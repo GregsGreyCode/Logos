@@ -148,22 +148,15 @@ TOOL_CATEGORIES = {
     },
     "web": {
         "name": "Web Search & Extract",
-        "setup_title": "Select Search Provider",
+        "setup_title": "Firecrawl Cloud",
         "setup_note": "A free DuckDuckGo search skill is also included — skip this if you don't need Firecrawl.",
         "icon": "🔍",
         "providers": [
             {
                 "name": "Firecrawl Cloud",
-                "tag": "Recommended - hosted service",
+                "tag": "Hosted service",
                 "env_vars": [
                     {"key": "FIRECRAWL_API_KEY", "prompt": "Firecrawl API key", "url": "https://firecrawl.dev"},
-                ],
-            },
-            {
-                "name": "Firecrawl Self-Hosted",
-                "tag": "Free - run your own instance",
-                "env_vars": [
-                    {"key": "FIRECRAWL_API_URL", "prompt": "Your Firecrawl instance URL (e.g., http://localhost:3002)"},
                 ],
             },
         ],

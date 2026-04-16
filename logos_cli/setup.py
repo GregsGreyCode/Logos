@@ -469,7 +469,7 @@ def _print_setup_summary(config: dict, hermes_home):
         tool_status.append(("Mixture of Agents", False, "OPENROUTER_API_KEY"))
 
     # Firecrawl (web tools)
-    if get_env_value("FIRECRAWL_API_KEY") or get_env_value("FIRECRAWL_API_URL"):
+    if get_env_value("FIRECRAWL_API_KEY"):
         tool_status.append(("Web Search & Extract", True, None))
     else:
         tool_status.append(("Web Search & Extract", False, "FIRECRAWL_API_KEY"))

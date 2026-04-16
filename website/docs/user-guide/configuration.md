@@ -370,31 +370,6 @@ You can switch between providers at any time with `logos model` — no restart r
 | Premium TTS voices | [ElevenLabs](https://elevenlabs.io/) | `ELEVENLABS_API_KEY` |
 | OpenAI TTS + voice transcription | [OpenAI](https://platform.openai.com/api-keys) | `VOICE_TOOLS_OPENAI_KEY` |
 
-### Self-Hosting Firecrawl
-
-By default, Logos uses the [Firecrawl cloud API](https://firecrawl.dev/) for web search and scraping. If you prefer to run Firecrawl locally, you can point Logos at a self-hosted instance instead.
-
-**What you get:** No API key required, no rate limits, no per-page costs, full data sovereignty.
-
-**What you lose:** The cloud version uses Firecrawl's proprietary "Fire-engine" for advanced anti-bot bypassing (Cloudflare, CAPTCHAs, IP rotation). Self-hosted uses basic fetch + Playwright, so some protected sites may fail. Search uses DuckDuckGo instead of Google.
-
-**Setup:**
-
-1. Clone and start the Firecrawl Docker stack (5 containers: API, Playwright, Redis, RabbitMQ, PostgreSQL — requires ~4-8 GB RAM):
-   ```bash
-   git clone https://github.com/mendableai/firecrawl
-   cd firecrawl
-   # In .env, set: USE_DB_AUTHENTICATION=false
-   docker compose up -d
-   ```
-
-2. Point Logos at your instance (no API key needed):
-   ```bash
-   logos config set FIRECRAWL_API_URL http://localhost:3002
-   ```
-
-You can also set both `FIRECRAWL_API_KEY` and `FIRECRAWL_API_URL` if your self-hosted instance has authentication enabled.
-
 ## OpenRouter Provider Routing
 
 When using OpenRouter, you can control how requests are routed across providers. Add a `provider_routing` section to `~/.logos/config.yaml`:

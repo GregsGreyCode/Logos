@@ -8,14 +8,6 @@
 #   cp .env.example .env   # fill in HERMES_JWT_SECRET (required)
 #   docker compose up -d
 #   open http://localhost:8080
-#
-# Optional self-hosted tool stack (Browserless + Firecrawl) — disabled by
-# default. Bring them up alongside Logos with one of:
-#   docker compose --profile selfhost-tools up -d   # both
-#   docker compose --profile browserless up -d      # browser only
-#   docker compose --profile firecrawl up -d        # search/scrape only
-# Logos auto-detects the services on the compose network and the gateway's
-# /tools/configure UI can flip them on without manual env-var fiddling.
 
 services:
   logos:
@@ -60,13 +52,6 @@ services:
       TELEGRAM_BOT_TOKEN: "${TELEGRAM_BOT_TOKEN:-}"
       TELEGRAM_ALLOWED_USERS: "${TELEGRAM_ALLOWED_USERS:-}"
 
-      # ── Self-hosted tool defaults ──────────────────────────────────────────
-      # When the matching compose profile is active, Logos picks these up
-      # automatically. Override in .env if you point at a different host.
-      BROWSERLESS_URL: "${BROWSERLESS_URL:-}"
-      BROWSERLESS_TOKEN: "${BROWSERLESS_TOKEN:-}"
-      FIRECRAWL_API_URL: "${FIRECRAWL_API_URL:-}"
-
     volumes:
       # Persists: auth DB, memory, sessions, logs, skills, config.yaml
       - logos-data:/home/logos/.logos
@@ -78,71 +63,6 @@ services:
       timeout: 10s
       retries: 3
       start_period: 20s
-
-  # ── Self-hosted Browserless (CDP browser-as-a-service) ──────────────────
-  # Profiles: browserless, selfhost-tools
-  browserless:
-    image: ghcr.io/browserless/chromium:latest
-    container_name: logos-browserless
-    profiles: [browserless, selfhost-tools]
-    restart: unless-stopped
-    ports:
-      - "${BROWSERLESS_PORT:-3000}:3000"
-    environment:
-      TOKEN: "${BROWSERLESS_TOKEN:-}"
-      CONCURRENT: "${BROWSERLESS_CONCURRENT:-5}"
-      TIMEOUT: "${BROWSERLESS_TIMEOUT:-300000}"
-    shm_size: "2gb"
-    networks: [logos-net]
-
-  # ── Self-hosted Firecrawl (web search + scrape) ─────────────────────────
-  # Profiles: firecrawl, selfhost-tools
-  firecrawl-redis:
-    image: redis:7-alpine
-    container_name: logos-firecrawl-redis
-    profiles: [firecrawl, selfhost-tools]
-    restart: unless-stopped
-    networks: [logos-net]
-
-  firecrawl-playwright:
-    image: ghcr.io/mendableai/playwright-service:latest
-    container_name: logos-firecrawl-playwright
-    profiles: [firecrawl, selfhost-tools]
-    restart: unless-stopped
-    environment:
-      PORT: "3000"
-    networks: [logos-net]
-
-  firecrawl-api:
-    image: ghcr.io/mendableai/firecrawl:latest
-    container_name: logos-firecrawl-api
-    profiles: [firecrawl, selfhost-tools]
-    restart: unless-stopped
-    depends_on: [firecrawl-redis, firecrawl-playwright]
-    ports:
-      - "${FIRECRAWL_PORT:-3002}:3002"
-    environment:
-      REDIS_URL: redis://firecrawl-redis:6379
-      REDIS_RATE_LIMIT_URL: redis://firecrawl-redis:6379
-      PLAYWRIGHT_MICROSERVICE_URL: http://firecrawl-playwright:3000/scrape
-      USE_DB_AUTHENTICATION: "false"
-      PORT: "3002"
-      HOST: "0.0.0.0"
-    networks: [logos-net]
-
-  firecrawl-worker:
-    image: ghcr.io/mendableai/firecrawl:latest
-    container_name: logos-firecrawl-worker
-    profiles: [firecrawl, selfhost-tools]
-    restart: unless-stopped
-    depends_on: [firecrawl-redis, firecrawl-api]
-    command: ["pnpm", "run", "workers"]
-    environment:
-      REDIS_URL: redis://firecrawl-redis:6379
-      REDIS_RATE_LIMIT_URL: redis://firecrawl-redis:6379
-      PLAYWRIGHT_MICROSERVICE_URL: http://firecrawl-playwright:3000/scrape
-      USE_DB_AUTHENTICATION: "false"
-    networks: [logos-net]
 
 networks:
   logos-net:
