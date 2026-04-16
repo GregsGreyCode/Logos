@@ -5171,20 +5171,31 @@
         <table class="w-full text-xs">
           <thead>
             <tr class="text-gray-500 text-left border-b border-gray-800">
+              <th class="px-3 py-2 w-6"></th>
               <th class="px-3 py-2">Agent</th>
               <th class="px-3 py-2">Origin</th>
               <th class="px-3 py-2">Soul</th>
               <th class="px-3 py-2">Model</th>
               <th class="px-3 py-2">Status</th>
               <th class="px-3 py-2">Elapsed</th>
-              <th class="px-3 py-2">Tokens</th>
+              <th class="px-3 py-2 text-right">In</th>
+              <th class="px-3 py-2 text-right">Out</th>
               <th class="px-3 py-2">Tools</th>
+              <th class="px-3 py-2">User</th>
               <th class="px-3 py-2">Time</th>
             </tr>
           </thead>
-          <tbody>
-            <template x-for="d in dispatches" :key="d.id">
-              <tr class="border-b border-gray-800/50 hover:bg-gray-800/30 cursor-pointer" @click="selectedDispatch = d">
+          <!-- Each dispatch gets its own <tbody> so the inline detail row
+               can sit directly under its summary row. Clicking a row
+               toggles expansion; the drawer skeleton that used to sit at
+               /events > selectedDispatch is rendered inline here so users
+               don't lose table context to a full-screen backdrop. -->
+          <template x-for="d in dispatches" :key="d.id">
+            <tbody>
+              <tr class="border-b border-gray-800/50 hover:bg-gray-800/30 cursor-pointer"
+                  :class="{ 'bg-gray-800/40': selectedDispatch?.id === d.id }"
+                  @click="selectedDispatch = (selectedDispatch?.id === d.id ? null : d)">
+                <td class="px-3 py-2 text-gray-500 select-none" x-text="selectedDispatch?.id === d.id ? '▾' : '▸'"></td>
                 <td class="px-3 py-2 font-mono text-gray-300" x-text="d.sandbox_name || d.agent_id || '—'"></td>
                 <td class="px-3 py-2">
                   <span class="px-1.5 py-0.5 rounded text-xs font-medium"
@@ -5208,14 +5219,87 @@
                     }" x-text="d.status"></span>
                 </td>
                 <td class="px-3 py-2 text-gray-500" x-text="d.elapsed_s ? d.elapsed_s.toFixed(1) + 's' : '—'"></td>
-                <td class="px-3 py-2 text-gray-500" x-text="(d.prompt_tokens || 0) + (d.completion_tokens || 0) || '—'"></td>
+                <td class="px-3 py-2 text-right text-gray-400 font-mono" x-text="(d.prompt_tokens || 0).toLocaleString()"></td>
+                <td class="px-3 py-2 text-right text-gray-400 font-mono" x-text="(d.completion_tokens || 0).toLocaleString()"></td>
                 <td class="px-3 py-2 text-gray-500 font-mono truncate max-w-[180px]"
                     x-text="(d.tool_sequence && d.tool_sequence.length) ? d.tool_sequence.slice(0,4).join(', ') + (d.tool_sequence.length > 4 ? ' +' + (d.tool_sequence.length - 4) : '') : '—'"></td>
+                <td class="px-3 py-2 text-gray-500" x-text="d.username || d.user_id || '—'"></td>
                 <td class="px-3 py-2 text-gray-600" x-text="d.started_at ? new Date(d.started_at).toLocaleTimeString() : '—'"></td>
               </tr>
-            </template>
+              <tr x-show="selectedDispatch?.id === d.id" x-cloak class="border-b border-gray-800">
+                <td colspan="12" class="bg-gray-900/40 px-5 py-4">
+                  <div class="space-y-4 text-xs">
+                    <!-- STAMP pills — same visual language as the agent-card
+                         and compare-pane STAMP rows. -->
+                    <div class="flex items-center gap-1.5 flex-wrap">
+                      <span class="text-[10px] px-1.5 py-0.5 rounded font-mono bg-indigo-950 text-indigo-300 border border-indigo-900 flex items-center gap-1"
+                            :title="'Soul: ' + (d.soul || 'general')">
+                        <span class="font-bold text-indigo-500">S</span>
+                        <span x-text="d.soul || 'general'"></span>
+                      </span>
+                      <span class="text-[10px] px-1.5 py-0.5 rounded font-mono bg-gray-800 text-gray-400 border border-gray-700 flex items-center gap-1"
+                            :title="'Toolsets at dispatch: ' + ((d.toolsets_snapshot || []).join(', ') || 'none')">
+                        <span class="font-bold text-gray-500">T</span>
+                        <span x-text="(d.toolsets_snapshot || []).length + ' tools'"></span>
+                      </span>
+                      <span class="text-[10px] px-1.5 py-0.5 rounded font-mono bg-gray-800 text-gray-400 border border-gray-700 flex items-center gap-1"
+                            :title="'Runtime: hermes · sandbox: ' + (d.sandbox_name || '—')">
+                        <span class="font-bold text-gray-500">A</span>
+                        <span x-text="'hermes · ' + (d.sandbox_name || d.agent_id || '—')"></span>
+                      </span>
+                      <span class="text-[10px] px-1.5 py-0.5 rounded font-mono bg-[var(--accent-subtle)] text-[var(--accent)] border border-[var(--accent)]/40 flex items-center gap-1 truncate max-w-[260px]"
+                            :title="'Model: ' + (d.model || 'auto')">
+                        <span class="font-bold">M</span>
+                        <span class="truncate" x-text="(d.model || 'auto').split('/').pop()"></span>
+                      </span>
+                      <span class="text-[10px] px-1.5 py-0.5 rounded font-mono bg-emerald-950 text-emerald-400 border border-emerald-900 flex items-center gap-1"
+                            :title="'Sandbox policy presets: ' + ((d.policy_snapshot || []).join(', ') || 'none')">
+                        <span class="font-bold text-emerald-600">P</span>
+                        <span x-text="(() => { const ps = d.policy_snapshot || []; if (!ps.length) return 'none'; if (ps.length === 1) return ps[0]; return ps.length + ' presets'; })()"></span>
+                      </span>
+                    </div>
+                    <!-- Supporting stats -->
+                    <div class="grid grid-cols-3 gap-3">
+                      <div><div class="text-[10px] text-gray-600 uppercase tracking-wider mb-0.5">Run ID</div><div class="font-mono text-gray-300 truncate" x-text="d.id || '—'"></div></div>
+                      <div><div class="text-[10px] text-gray-600 uppercase tracking-wider mb-0.5">Session</div><div class="font-mono text-gray-300 truncate" x-text="d.session_id || '—'"></div></div>
+                      <div><div class="text-[10px] text-gray-600 uppercase tracking-wider mb-0.5">Started</div><div class="text-gray-300" x-text="d.started_at ? new Date(d.started_at).toLocaleString() : '—'"></div></div>
+                    </div>
+                    <!-- User message -->
+                    <div x-show="d.user_message">
+                      <div class="text-[10px] text-gray-600 uppercase tracking-wider mb-1">User message</div>
+                      <div class="text-gray-200 bg-gray-900 border border-gray-800 rounded-lg p-2 whitespace-pre-wrap break-words max-h-40 overflow-y-auto" x-text="d.user_message || ''"></div>
+                    </div>
+                    <!-- Toolsets snapshot -->
+                    <div x-show="(d.toolsets_snapshot || []).length">
+                      <div class="text-[10px] text-gray-600 uppercase tracking-wider mb-1">Toolsets (at dispatch)</div>
+                      <div class="flex flex-wrap gap-1">
+                        <template x-for="ts in (d.toolsets_snapshot || [])" :key="ts">
+                          <span class="text-xs px-1.5 py-0.5 rounded font-mono bg-emerald-950 text-emerald-400 border border-emerald-900" x-text="ts"></span>
+                        </template>
+                      </div>
+                    </div>
+                    <!-- Tool sequence -->
+                    <div x-show="(d.tool_sequence || []).length">
+                      <div class="text-[10px] text-gray-600 uppercase tracking-wider mb-1">Tool sequence</div>
+                      <div class="font-mono text-gray-300 bg-gray-900 border border-gray-800 rounded-lg p-2">
+                        <template x-for="(t, i) in (d.tool_sequence || [])" :key="i">
+                          <span class="inline-block px-1.5 py-0.5 mr-1 mb-1 bg-gray-800 rounded" x-text="(i+1) + '. ' + t"></span>
+                        </template>
+                      </div>
+                    </div>
+                    <!-- Error -->
+                    <div x-show="d.error">
+                      <div class="text-[10px] text-red-400 uppercase tracking-wider mb-1">Error</div>
+                      <div class="text-red-300 bg-red-950/30 border border-red-900 rounded-lg p-2 whitespace-pre-wrap break-words" x-text="d.error || ''"></div>
+                    </div>
+                  </div>
+                </td>
+              </tr>
+            </tbody>
+          </template>
+          <tbody>
             <template x-if="dispatches.length === 0">
-              <tr><td colspan="9" class="px-4 py-8 text-center text-gray-600" x-text="(dispatchesQuery || '').trim() ? 'No runs match your search.' : 'No runs recorded yet'"></td></tr>
+              <tr><td colspan="12" class="px-4 py-8 text-center text-gray-600" x-text="(dispatchesQuery || '').trim() ? 'No runs match your search.' : 'No runs recorded yet'"></td></tr>
             </template>
           </tbody>
         </table>
@@ -5234,103 +5318,6 @@
         </div>
       </div>
 
-      <!-- Run detail drawer — shows the full STAMP for one row.
-           Right-docked, same skeleton as the Logs / Mind modals. -->
-      <div x-show="selectedDispatch" x-cloak
-           class="fixed inset-0 bg-black/60 z-50 flex justify-end"
-           @click="selectedDispatch = null" @keydown.escape.window="selectedDispatch = null">
-        <div class="bg-gray-950 border-l border-gray-800 w-full max-w-2xl h-full overflow-y-auto" @click.stop>
-          <div class="px-5 py-3 border-b border-gray-800 flex items-center justify-between sticky top-0 bg-gray-950 z-10">
-            <div>
-              <div class="text-sm font-semibold text-white" x-text="'Run · ' + (selectedDispatch?.sandbox_name || selectedDispatch?.agent_id || '—')"></div>
-              <div class="text-[10px] text-gray-600 font-mono truncate" x-text="selectedDispatch?.id || ''"></div>
-            </div>
-            <button @click="selectedDispatch = null" class="text-gray-500 hover:text-white text-lg px-2">&times;</button>
-          </div>
-          <div class="p-5 space-y-4 text-xs">
-            <!-- STAMP pills — same visual language as the agent-card and
-                 compare-pane STAMP rows so a run reads as "an event
-                 stamped with this agent's configuration". S / T / A / M
-                 only; P (policy) is intentionally omitted because we
-                 removed the per-user action-policy UI. -->
-            <div class="flex items-center gap-1.5 flex-wrap">
-              <!-- S: Soul -->
-              <span class="text-[10px] px-1.5 py-0.5 rounded font-mono bg-indigo-950 text-indigo-300 border border-indigo-900 flex items-center gap-1"
-                    :title="'Soul: ' + (selectedDispatch?.soul || 'general')">
-                <span class="font-bold text-indigo-500">S</span>
-                <span x-text="selectedDispatch?.soul || 'general'"></span>
-              </span>
-              <!-- T: Toolsets count -->
-              <span class="text-[10px] px-1.5 py-0.5 rounded font-mono bg-gray-800 text-gray-400 border border-gray-700 flex items-center gap-1"
-                    :title="'Toolsets at dispatch: ' + ((selectedDispatch?.toolsets_snapshot || []).join(', ') || 'none')">
-                <span class="font-bold text-gray-500">T</span>
-                <span x-text="(selectedDispatch?.toolsets_snapshot || []).length + ' tools'"></span>
-              </span>
-              <!-- A: Agent runtime — hermes is the only runtime today; the
-                   executor (openshell) spawns the hermes-agent sandbox. -->
-              <span class="text-[10px] px-1.5 py-0.5 rounded font-mono bg-gray-800 text-gray-400 border border-gray-700 flex items-center gap-1"
-                    :title="'Runtime: hermes · sandbox: ' + (selectedDispatch?.sandbox_name || '—')">
-                <span class="font-bold text-gray-500">A</span>
-                <span x-text="'hermes · ' + (selectedDispatch?.sandbox_name || selectedDispatch?.agent_id || '—')"></span>
-              </span>
-              <!-- M: Model -->
-              <span class="text-[10px] px-1.5 py-0.5 rounded font-mono bg-[var(--accent-subtle)] text-[var(--accent)] border border-[var(--accent)]/40 flex items-center gap-1 truncate max-w-[260px]"
-                    :title="'Model: ' + (selectedDispatch?.model || 'auto')">
-                <span class="font-bold">M</span>
-                <span class="truncate" x-text="(selectedDispatch?.model || 'auto').split('/').pop()"></span>
-              </span>
-              <!-- P: Policy — OpenShell network-policy presets active
-                   on the agent at dispatch time (applied_presets
-                   snapshot). Renders preset name when there's a single
-                   one, a count otherwise; "none" when the agent had
-                   nothing applied. -->
-              <span class="text-[10px] px-1.5 py-0.5 rounded font-mono bg-emerald-950 text-emerald-400 border border-emerald-900 flex items-center gap-1"
-                    :title="'Sandbox policy presets: ' + ((selectedDispatch?.policy_snapshot || []).join(', ') || 'none')">
-                <span class="font-bold text-emerald-600">P</span>
-                <span x-text="(() => { const ps = selectedDispatch?.policy_snapshot || []; if (!ps.length) return 'none'; if (ps.length === 1) return ps[0]; return ps.length + ' presets'; })()"></span>
-              </span>
-            </div>
-            <!-- Supporting stats — kept out of the STAMP row to keep the
-                 pills themselves scannable at a glance. -->
-            <div class="grid grid-cols-2 gap-3">
-              <div><div class="text-[10px] text-gray-600 uppercase tracking-wider mb-0.5">Origin</div><div class="text-white" x-text="selectedDispatch?.origin || '—'"></div></div>
-              <div><div class="text-[10px] text-gray-600 uppercase tracking-wider mb-0.5">Status</div><div class="text-white" x-text="selectedDispatch?.status || '—'"></div></div>
-              <div><div class="text-[10px] text-gray-600 uppercase tracking-wider mb-0.5">Elapsed</div><div class="text-white" x-text="selectedDispatch?.elapsed_s ? selectedDispatch.elapsed_s.toFixed(2) + 's' : '—'"></div></div>
-              <div><div class="text-[10px] text-gray-600 uppercase tracking-wider mb-0.5">Tokens (in/out)</div><div class="text-white font-mono" x-text="(selectedDispatch?.prompt_tokens ?? 0) + ' / ' + (selectedDispatch?.completion_tokens ?? 0)"></div></div>
-              <div><div class="text-[10px] text-gray-600 uppercase tracking-wider mb-0.5">Session</div><div class="font-mono text-gray-300 truncate" x-text="selectedDispatch?.session_id || '—'"></div></div>
-              <div><div class="text-[10px] text-gray-600 uppercase tracking-wider mb-0.5">Started</div><div class="text-gray-300" x-text="selectedDispatch?.started_at ? new Date(selectedDispatch.started_at).toLocaleString() : '—'"></div></div>
-            </div>
-            <!-- User message -->
-            <div x-show="selectedDispatch?.user_message">
-              <div class="text-[10px] text-gray-600 uppercase tracking-wider mb-1">User message</div>
-              <div class="text-gray-200 bg-gray-900 border border-gray-800 rounded-lg p-2 whitespace-pre-wrap break-words max-h-40 overflow-y-auto" x-text="selectedDispatch?.user_message || ''"></div>
-            </div>
-            <!-- Toolsets snapshot -->
-            <div x-show="(selectedDispatch?.toolsets_snapshot || []).length">
-              <div class="text-[10px] text-gray-600 uppercase tracking-wider mb-1">Toolsets (at dispatch)</div>
-              <div class="flex flex-wrap gap-1">
-                <template x-for="ts in (selectedDispatch?.toolsets_snapshot || [])" :key="ts">
-                  <span class="text-xs px-1.5 py-0.5 rounded font-mono bg-emerald-950 text-emerald-400 border border-emerald-900" x-text="ts"></span>
-                </template>
-              </div>
-            </div>
-            <!-- Tool sequence -->
-            <div x-show="(selectedDispatch?.tool_sequence || []).length">
-              <div class="text-[10px] text-gray-600 uppercase tracking-wider mb-1">Tool sequence</div>
-              <div class="font-mono text-gray-300 bg-gray-900 border border-gray-800 rounded-lg p-2">
-                <template x-for="(t, i) in (selectedDispatch?.tool_sequence || [])" :key="i">
-                  <span class="inline-block px-1.5 py-0.5 mr-1 mb-1 bg-gray-800 rounded" x-text="(i+1) + '. ' + t"></span>
-                </template>
-              </div>
-            </div>
-            <!-- Error -->
-            <div x-show="selectedDispatch?.error">
-              <div class="text-[10px] text-red-400 uppercase tracking-wider mb-1">Error</div>
-              <div class="text-red-300 bg-red-950/30 border border-red-900 rounded-lg p-2 whitespace-pre-wrap break-words" x-text="selectedDispatch?.error || ''"></div>
-            </div>
-          </div>
-        </div>
-      </div>
     </div>
 
   <!-- ── Proposals (Activity → Proposals; was: Evolution) ───────────── -->
