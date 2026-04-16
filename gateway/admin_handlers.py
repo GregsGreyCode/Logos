@@ -1579,10 +1579,26 @@ async def handle_agent_channels_post(request: web.Request) -> web.Response:
         except Exception:
             logger.exception("channels_post: hot-connect failed (DB row persisted)")
 
+    # Grant outbound capability: adds the `messaging` toolset + the
+    # platform network preset if they aren't already active. Without
+    # this the agent has a bot token in its env but no `send_message`
+    # tool to call AND (even if it did) the sandbox proxy blocks
+    # api.telegram.org. Called only on enable-creates; disable/toggle
+    # doesn't revoke because the user might still want the toolset
+    # for another channel.
+    access_result = None
+    if enabled:
+        try:
+            from gateway import policies as _gp
+            access_result = _gp.ensure_channel_access(aid, platform)
+        except Exception:
+            logger.exception("channels_post: ensure_channel_access failed")
+
     return web.json_response({
         "credential": _scrub_credential_row(row),
         "validated": validation_result,
         "connected": connect_result,
+        "access": access_result,
     })
 
 
