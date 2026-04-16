@@ -522,9 +522,15 @@
                        : 'bg-gray-900 border-gray-800 hover:border-gray-700'"
                      @click="switchChat(chat.id)">
                   <div class="pr-4">
-                    <div class="text-xs font-medium truncate"
-                         :class="activeChatId===chat.id ? 'text-indigo-200' : 'text-gray-300'"
-                         x-text="chat.name"></div>
+                    <div class="text-xs font-medium truncate flex items-center gap-1.5"
+                         :class="activeChatId===chat.id ? 'text-indigo-200' : 'text-gray-300'">
+                      <!-- Platform badge for cross-platform continued chats -->
+                      <template x-if="chat._platform">
+                        <span class="text-[9px] px-1 py-0 rounded bg-cyan-950 text-cyan-400 border border-cyan-900 shrink-0 uppercase tracking-wider"
+                              x-text="({telegram:'TG',discord:'DC',slack:'SL',whatsapp:'WA'})[chat._platform] || chat._platform"></span>
+                      </template>
+                      <span class="truncate" x-text="chat.name"></span>
+                    </div>
                   </div>
                   <div class="flex items-center justify-between mt-0.5 pr-4">
                     <span class="text-xs text-gray-600" x-text="fmtChatTime(chat.updated_at)"></span>
@@ -7476,10 +7482,12 @@ function app() {
       if (filter !== 'web') {
         this.loadPlatformSessions(filter);
       } else {
-        // Switching back to Local: remove any injected platform
-        // sessions from the chats array so TG/Discord sessions
-        // don't pollute the Local list.
-        this.chats = this.chats.filter(c => !c._platform);
+        // Switching back to Local: remove injected platform sessions
+        // UNLESS the user continued them from the web (typed a reply
+        // in the dashboard). Those stay visible in Local with a
+        // platform badge so the conversation is accessible from both
+        // surfaces.
+        this.chats = this.chats.filter(c => !c._platform || c._webContinued);
       }
     },
 
@@ -8895,6 +8903,12 @@ function app() {
       chat.messages = [...chat.messages, userMsg];
       if (chat.name === 'New conversation') {
         chat.name = msg.length > 35 ? msg.slice(0, 32) + '\\u2026' : msg;
+      }
+      // Cross-platform continuation: if this is a platform session
+      // (injected by viewPlatformSession) and the user is sending
+      // from the web, mark it so the Local filter keeps it visible.
+      if (chat._platform && !chat._webContinued) {
+        chat._webContinued = true;
       }
       chat.updated_at = Date.now();
       this.chats = [chat, ...this.chats.filter(c => c.id !== chat.id)];

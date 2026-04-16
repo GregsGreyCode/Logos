@@ -2914,7 +2914,7 @@ async def _handle_api_platform_sessions(request: web.Request) -> web.Response:
             rows = db._conn.execute(
                 """SELECT id, source, title, started_at, ended_at, message_count,
                           user_id, model
-                   FROM sessions WHERE source = ?
+                   FROM sessions WHERE source = ? AND COALESCE(hidden, 0) = 0
                    ORDER BY started_at DESC LIMIT 50""",
                 (platform_filter,),
             ).fetchall()
@@ -2923,6 +2923,7 @@ async def _handle_api_platform_sessions(request: web.Request) -> web.Response:
                 """SELECT id, source, title, started_at, ended_at, message_count,
                           user_id, model
                    FROM sessions WHERE source NOT IN ('local', 'cron')
+                   AND COALESCE(hidden, 0) = 0
                    ORDER BY started_at DESC LIMIT 50""",
             ).fetchall()
     except Exception:
@@ -2963,7 +2964,12 @@ async def _handle_api_session_messages(request: web.Request) -> web.Response:
 
 
 async def _handle_api_session_delete(request: web.Request) -> web.Response:
-    """DELETE /api/platform-sessions/{session_id} — delete a platform session + its messages."""
+    """DELETE /api/platform-sessions/{session_id} — soft-delete (hide) a session.
+
+    Sets ``hidden=1`` on the session row so it disappears from the
+    sidebar without destroying messages, embeddings, or dispatches.
+    The data stays searchable via session_search and the Runs tab.
+    """
     current_user = request.get("current_user") or {}
     if current_user.get("role", "viewer") not in ("admin", "operator"):
         raise web.HTTPForbidden()
@@ -2973,21 +2979,8 @@ async def _handle_api_session_delete(request: web.Request) -> web.Response:
     if not db:
         return web.json_response({"error": "session DB not available"}, status=503)
     try:
-        db._conn.execute("DELETE FROM message_embeddings WHERE message_id IN (SELECT id FROM messages WHERE session_id=?)", (session_id,))
-        db._conn.execute("DELETE FROM messages WHERE session_id=?", (session_id,))
-        db._conn.execute("DELETE FROM sessions WHERE id=?", (session_id,))
+        db._conn.execute("UPDATE sessions SET hidden=1 WHERE id=?", (session_id,))
         db._conn.commit()
-        # Also clean dispatches in auth DB
-        try:
-            import sqlite3 as _sql3
-            from pathlib import Path as _P
-            _auth = _P(os.getenv("LOGOS_HOME") or os.getenv("HERMES_HOME") or str(_P.home() / ".logos")) / "auth.db"
-            if _auth.exists():
-                with _sql3.connect(str(_auth), timeout=2) as _ac:
-                    _ac.execute("DELETE FROM dispatches WHERE session_id=?", (session_id,))
-                    _ac.commit()
-        except Exception:
-            pass
     except Exception as exc:
         return web.json_response({"error": str(exc)}, status=500)
     return web.json_response({"ok": True})
