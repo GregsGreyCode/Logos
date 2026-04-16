@@ -7476,11 +7476,16 @@ function app() {
       return Array.from(seen).sort();
     },
 
-    setSidebarFilter(filter) {
+    async setSidebarFilter(filter) {
       this.sidebarFilter = filter;
       this.activePlatformSessionId = null;
       if (filter !== 'web') {
-        this.loadPlatformSessions(filter);
+        await this.loadPlatformSessions(filter);
+        // Auto-select the most recent session so the user sees
+        // content immediately instead of a blank chat panel.
+        if (this.platformSessions.length > 0) {
+          this.viewPlatformSession(this.platformSessions[0]);
+        }
       } else {
         // Switching back to Local: remove injected platform sessions
         // UNLESS the user continued them from the web (typed a reply
