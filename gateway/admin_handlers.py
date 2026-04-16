@@ -1565,9 +1565,24 @@ async def handle_agent_channels_post(request: web.Request) -> web.Response:
         "channels_post(agent=%s, platform=%s, label=%s): stored row %s",
         aid, platform, label, row.get("id"),
     )
+
+    # Hot-connect the adapter so inbound polling starts immediately
+    # (no gateway restart needed). Best-effort: if the runner isn't
+    # wired (e.g. unit tests, headless script) the DB row still
+    # persists and the next startup picks it up.
+    connect_result = None
+    if enabled:
+        try:
+            runner = request.app.get("runner") if request.app else None
+            if runner:
+                connect_result = await runner.connect_agent_channel(row["id"])
+        except Exception:
+            logger.exception("channels_post: hot-connect failed (DB row persisted)")
+
     return web.json_response({
         "credential": _scrub_credential_row(row),
         "validated": validation_result,
+        "connected": connect_result,
     })
 
 
@@ -1581,6 +1596,16 @@ async def handle_agent_channels_delete(request: web.Request) -> web.Response:
     row = auth_db.get_agent_channel_credential(cred_id)
     if not row or row.get("agent_id") != aid:
         return web.json_response({"error": "not_found"}, status=404)
+    # Disconnect the live adapter BEFORE deleting the row so the
+    # disconnect can still resolve (agent, platform, label) from the
+    # DB. If we deleted first, connect_agent_channel's lookup would
+    # return nothing and we'd orphan the live poller.
+    try:
+        runner = request.app.get("runner") if request.app else None
+        if runner:
+            await runner.disconnect_agent_channel(cred_id)
+    except Exception:
+        logger.exception("channels_delete: hot-disconnect failed (continuing to row delete)")
     try:
         auth_db.delete_agent_channel_credential(cred_id)
     except Exception as exc:
@@ -1612,6 +1637,20 @@ async def handle_agent_channels_toggle(request: web.Request) -> web.Response:
     except Exception as exc:
         logger.exception("channels toggle failed")
         return web.json_response({"error": str(exc)}, status=500)
+
+    # Enable flips the adapter on (hot-connect); disable flips it off
+    # (hot-disconnect). Without this, toggle is a silent DB change
+    # that only takes effect on the next gateway restart.
+    try:
+        runner = request.app.get("runner") if request.app else None
+        if runner:
+            if enabled:
+                await runner.connect_agent_channel(cred_id)
+            else:
+                await runner.disconnect_agent_channel(cred_id)
+    except Exception:
+        logger.exception("channels_toggle: hot-reconcile failed (DB flag updated)")
+
     refreshed = auth_db.get_agent_channel_credential(cred_id)
     return web.json_response({"credential": _scrub_credential_row(refreshed or row)})
 
