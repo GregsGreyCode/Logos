@@ -485,6 +485,14 @@ OPTIONAL_ENV_VARS = {
         "password": True,
         "category": "tool",
     },
+    "SEARXNG_URL": {
+        "description": "Self-hosted SearxNG URL — local metasearch, keeps queries off the cloud",
+        "prompt": "SearxNG URL (e.g. http://searxng.internal:8080)",
+        "url": "https://github.com/searxng/searxng",
+        "tools": ["web_search"],
+        "password": False,
+        "category": "tool",
+    },
     "BROWSERBASE_API_KEY": {
         "description": "Browserbase API key for cloud browser (optional — local browser works without this)",
         "prompt": "Browserbase API key",

@@ -1,0 +1,56 @@
+# Self-hosted SearxNG metasearch access preset — local-only search
+# that lets an agent run open-ended web search without sending queries
+# to a third-party (Firecrawl etc).
+#
+# SearxNG is a metasearch engine you run yourself. It proxies queries
+# to Google / Bing / DuckDuckGo / etc. from ITS host, aggregates the
+# results, and returns them via a plain HTTP JSON endpoint. The agent
+# sandbox talks only to your local SearxNG — never to the upstream
+# search engines directly, so CAPTCHAs never hit the sandbox and no
+# query text leaves your network.
+#
+# Apply via:
+#   gateway.policies.apply_preset(agent_id, "searxng")
+#
+# Paired with the "Search the web locally" capability row in
+# capabilities.yaml (trust: local_service).
+#
+# Set SEARXNG_URL in Config → Tools to point at your instance
+# (default: http://searxng.internal:8080). The agent calls:
+#   {SEARXNG_URL}/search?q=<query>&format=json
+# via browser_navigate + browser_console(document.body.innerText) to
+# pull the JSON response text.
+#
+# Applying this preset without running SearxNG is harmless — it just
+# widens the sandbox egress rules; the agent only knows to use the URL
+# when the env var is set (see sandbox_worker browser-recipe injection).
+
+preset:
+  name: searxng
+  description: "Self-hosted SearxNG metasearch access (local-only web search)"
+
+network_policies:
+  searxng:
+    name: searxng
+    endpoints:
+      - host: searxng.internal
+        port: 8080
+        protocol: rest
+        enforcement: enforce
+        tls: skip
+        access: full
+      - host: searxng.internal
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        tls: terminate
+        access: full
+    binaries:
+      - { path: /app/venv/bin/python }
+      - { path: /app/venv/bin/python3 }
+      - { path: /app/venv/bin/python3.11 }
+      - { path: /app/venv/bin/python3.12 }
+      - { path: /usr/bin/python3 }
+      - { path: /usr/bin/python3.13 }
+      - { path: /usr/local/share/ms-playwright/chromium-1217/chrome-linux64/chrome }
+      - { path: /usr/local/share/ms-playwright/chromium_headless_shell-1217/chrome-headless-shell-linux64/chrome-headless-shell }
