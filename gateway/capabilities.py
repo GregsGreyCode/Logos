@@ -242,14 +242,21 @@ def probe_service(cap: dict) -> Optional[dict]:
 
     Returns ``None`` when the capability either has no ``service_probe``
     field or the probe succeeds. Returns ``{"ok": False, "hint": ...,
-    "url": ..., "detail": ...}`` when the service isn't reachable —
-    caller (the capability-toggle handler) returns that to the UI so
-    the user gets "start SearxNG first" instead of a silently-enabled
-    capability that fails at first-search.
+    "url": ..., "detail": ...}`` when the service isn't reachable or
+    isn't returning the expected response shape.
 
-    The probe URL can be overridden per-deployment via the env var named
-    in ``service_probe.env_override`` (so a user running SearxNG at
-    searx.home.arpa gets probed at THEIR URL, not the compose default).
+    By default probes the URL in ``service_probe.url`` and treats any
+    2xx as healthy. When ``service_probe.expect_contains`` is set, the
+    probe additionally requires the response BODY to contain that
+    substring — catches "service is up but misconfigured" cases (e.g.
+    SearxNG with JSON format disabled, Ollama with no models loaded).
+
+    Without expect_contains the probe is shallow: a service that binds
+    a port but returns 403 on the feature URL passes, which is how a
+    silently-broken install escapes detection until first use. Setting
+    expect_contains = a string unique to a successful response
+    (e.g. '"results"' for SearxNG JSON) turns the probe into a true
+    functional check.
     """
     probe = cap.get("service_probe") or {}
     if not probe:
@@ -260,45 +267,60 @@ def probe_service(cap: dict) -> Optional[dict]:
     if not probe_url:
         return None
     # Allow users to set SEARXNG_URL=http://host:port without the
-    # /healthz suffix — append the path from the capability's probe
-    # URL so the override still works.
+    # probe path — append the path from the capability's probe URL
+    # so the override still works.
     if env_override and os.environ.get(env_override) and default_url:
         from urllib.parse import urlsplit
-        default_path = urlsplit(default_url).path or "/"
+        default_parts = urlsplit(default_url)
+        default_path_and_query = default_parts.path or "/"
+        if default_parts.query:
+            default_path_and_query += "?" + default_parts.query
         override_parts = urlsplit(probe_url)
         if not override_parts.path or override_parts.path == "/":
-            probe_url = probe_url.rstrip("/") + default_path
+            probe_url = probe_url.rstrip("/") + default_path_and_query
+    expect_contains = probe.get("expect_contains")
+    hint = probe.get("install_hint") or "Service isn't reachable."
     import urllib.request
     import urllib.error
+
+    def fail(detail: str) -> dict:
+        return {"ok": False, "url": probe_url, "hint": hint, "detail": detail}
+
+    def _read(resp) -> bytes:
+        try:
+            return resp.read(65536)
+        except Exception:
+            return b""
+
     try:
         req = urllib.request.Request(probe_url, method="GET")
-        with urllib.request.urlopen(req, timeout=2.5) as resp:
-            if 200 <= resp.status < 500:
-                return None  # reachable is good enough; 4xx still means alive
-            return {
-                "ok": False,
-                "url": probe_url,
-                "hint": probe.get("install_hint") or "Service responded with an unexpected status.",
-                "detail": f"HTTP {resp.status}",
-            }
+        with urllib.request.urlopen(req, timeout=3.5) as resp:
+            body = _read(resp)
+            if resp.status >= 500:
+                return fail(f"HTTP {resp.status}")
+            if expect_contains and expect_contains not in body.decode(errors="replace"):
+                # HTTP-wise the service answered, but the response
+                # doesn't look like a working install. Most common
+                # cause: a feature the capability relies on (e.g.
+                # JSON output) isn't enabled in the service's config.
+                return fail(
+                    f"HTTP {resp.status} but response missing {expect_contains!r} — "
+                    f"service is up but the feature isn't working."
+                )
+            return None
     except urllib.error.HTTPError as exc:
-        # Some services return 404 on /healthz but are alive; treat any
-        # HTTP-level response (i.e. we reached the service) as reachable.
+        # 4xx means the service answered but rejected the probe. When
+        # there's no expect_contains we accept 4xx as "alive" (some
+        # services 404 on /healthz but are fine). When we DO expect
+        # specific content, 4xx is a failure — we want a functional
+        # endpoint, not just any HTTP response.
+        if expect_contains:
+            return fail(f"HTTP {exc.code} {exc.reason}")
         if 200 <= exc.code < 500:
             return None
-        return {
-            "ok": False,
-            "url": probe_url,
-            "hint": probe.get("install_hint") or "Service responded with an error.",
-            "detail": f"HTTP {exc.code}",
-        }
+        return fail(f"HTTP {exc.code} {exc.reason}")
     except (urllib.error.URLError, OSError, TimeoutError) as exc:
-        return {
-            "ok": False,
-            "url": probe_url,
-            "hint": probe.get("install_hint") or "Service isn't reachable.",
-            "detail": str(exc),
-        }
+        return fail(str(exc))
 
 
 def _host_port_in_use(port: int) -> Optional[str]:
