@@ -3711,6 +3711,19 @@ async def _handle_chat(request: web.Request) -> web.StreamResponse:
                 except Exception:
                     _toolsets_list = []
                 _toolsets_json = json.dumps(_toolsets_list) if _toolsets_list else ""
+                # Policy snapshot — OpenShell network-policy presets
+                # active on the agent at dispatch time. Stored on the
+                # agent row as a JSON list in applied_presets; we pass
+                # through as-is so the Runs tab P pill shows exactly
+                # what gated this run's egress.
+                _presets_raw = _agent_config.get("applied_presets") or ""
+                try:
+                    _presets_list = json.loads(_presets_raw) if _presets_raw else []
+                    if not isinstance(_presets_list, list):
+                        _presets_list = []
+                except Exception:
+                    _presets_list = []
+                _policy_json = json.dumps(_presets_list) if _presets_list else ""
                 _dispatch_id = auth_db.create_dispatch(
                     task_id=task_payload["task_id"],
                     agent_id=agent_id or "",
@@ -3727,6 +3740,7 @@ async def _handle_chat(request: web.Request) -> web.StreamResponse:
                     soul=_soul,
                     toolsets_snapshot=_toolsets_json,
                     user_message=message or "",
+                    policy_snapshot=_policy_json,
                 )
             except Exception as _dsp_exc:
                 logger.warning("dispatch ledger create skipped: %s", _dsp_exc)
