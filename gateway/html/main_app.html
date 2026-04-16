@@ -551,13 +551,21 @@
                        ? 'bg-indigo-950 border-indigo-700'
                        : 'bg-gray-900 border-gray-800 hover:border-gray-700'"
                      @click="viewPlatformSession(ps)">
-                  <div class="text-xs font-medium truncate"
-                       :class="activePlatformSessionId===ps.session_id ? 'text-indigo-200' : 'text-gray-300'"
-                       x-text="ps.display_name || ps.session_key"></div>
-                  <div class="flex items-center justify-between mt-0.5">
-                    <span class="text-xs text-gray-600" x-text="fmtChatTime(new Date(ps.updated_at).getTime())"></span>
-                    <span class="text-xs text-gray-600" x-text="platformIcon(ps.platform)"></span>
+                  <div class="pr-4">
+                    <div class="text-xs font-medium truncate"
+                         :class="activePlatformSessionId===ps.session_id ? 'text-indigo-200' : 'text-gray-300'"
+                         x-text="ps.display_name || ps.session_key"></div>
                   </div>
+                  <div class="flex items-center justify-between mt-0.5 pr-4">
+                    <span class="text-xs text-gray-600" x-text="fmtChatTime(new Date(ps.updated_at).getTime())"></span>
+                    <template x-if="ps.message_count > 0">
+                      <span class="shrink-0 text-xs font-mono rounded px-1 py-0 leading-tight"
+                        :class="activePlatformSessionId===ps.session_id ? 'bg-indigo-800 text-indigo-300' : 'bg-gray-800 text-gray-500'"
+                        x-text="ps.message_count"></span>
+                    </template>
+                  </div>
+                  <button class="absolute top-2 right-2 opacity-0 group-hover:opacity-100 text-gray-600 hover:text-red-400 text-xs transition-opacity leading-none w-4 h-4 flex items-center justify-center"
+                          @click.stop="deletePlatformSession(ps.session_id)">✕</button>
                 </div>
               </template>
             </div>
@@ -7484,6 +7492,25 @@ function app() {
         if (r.ok) this.platformSessions = await r.json();
       } catch(e) { /* ignore */ }
       finally { this.platformSessionsLoading = false; }
+    },
+
+    async deletePlatformSession(sessionId) {
+      if (!confirm('Delete this conversation? Messages will be permanently removed.')) return;
+      try {
+        const r = await fetch('/api/platform-sessions/' + encodeURIComponent(sessionId), {
+          method: 'DELETE',
+          credentials: 'same-origin',
+          headers: {'X-CSRF-Token': getCsrfToken()},
+        });
+        if (r.ok) {
+          this.platformSessions = this.platformSessions.filter(s => s.session_id !== sessionId);
+          if (this.activePlatformSessionId === sessionId) {
+            this.activePlatformSessionId = null;
+            const idx = this.chats.findIndex(c => c.id === sessionId);
+            if (idx >= 0) this.chats.splice(idx, 1);
+          }
+        }
+      } catch(e) { console.error('deletePlatformSession:', e); }
     },
 
     async viewPlatformSession(ps) {
