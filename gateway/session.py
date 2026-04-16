@@ -520,9 +520,15 @@ def build_session_key(source: SessionSource) -> str:
       - Without thread_id, all messages in a channel share one session.
     """
     platform = source.platform.value
+    # Include agent_id in the key when set (per-agent credential
+    # adapters stamp it on SessionSource). Without this, all agents
+    # sharing the same Telegram chat_id get the same session —
+    # Hermes and Henry's conversations merge and both agents see
+    # each other's history.
+    _agent_prefix = f"agent:{source.agent_id}" if getattr(source, "agent_id", None) else "agent:main"
     if source.chat_type == "dm":
         if source.thread_id:
-            return f"agent:main:{platform}:dm:{source.thread_id}"
+            return f"{_agent_prefix}:{platform}:dm:{source.thread_id}"
         # Whenever the source has a chat_id, key the session by it.
         # Earlier this was guarded by `platform == "whatsapp"` and
         # everything else (including local DMs from /chat) fell through
@@ -535,11 +541,11 @@ def build_session_key(source: SessionSource) -> str:
         # earlier turns. Fix is to include chat_id whenever it exists,
         # not just for WhatsApp.
         if source.chat_id:
-            return f"agent:main:{platform}:dm:{source.chat_id}"
-        return f"agent:main:{platform}:dm"
+            return f"{_agent_prefix}:{platform}:dm:{source.chat_id}"
+        return f"{_agent_prefix}:{platform}:dm"
     if source.thread_id:
-        return f"agent:main:{platform}:{source.chat_type}:{source.chat_id}:{source.thread_id}"
-    return f"agent:main:{platform}:{source.chat_type}:{source.chat_id}"
+        return f"{_agent_prefix}:{platform}:{source.chat_type}:{source.chat_id}:{source.thread_id}"
+    return f"{_agent_prefix}:{platform}:{source.chat_type}:{source.chat_id}"
 
 
 class SessionStore:
