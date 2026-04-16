@@ -190,18 +190,36 @@ TOOL_PRESET_MAP: Dict[str, Dict[str, Any]] = {
         "description": "Multi-model reasoning via OpenRouter",
         "setup_url": "https://openrouter.ai",
     },
-    # Messaging — Telegram / Slack / Discord. Each needs its own
-    # preset because egress rules differ (api.telegram.org vs
-    # slack.com vs discord.com + gateway.discord.gg). Without these
-    # entries, saving a bot token via Config → Tools would never
-    # trigger auto_apply_presets_for_env, and the sandbox would 403
-    # any send_message call even though the token is on disk.
+    # Messaging — the actual tool the agent calls is `send_message`
+    # (unified, takes a `target` param like "telegram:123" or
+    # "slack:#eng"). This row drives the T pill's readiness badge:
+    # ready when any supported platform has both a token and the
+    # matching preset applied.
+    "send_message": {
+        # any one of these presets being applied is enough — the
+        # readiness helper short-circuits on the first match.
+        "presets": ["telegram", "slack", "discord", "whatsapp"],
+        "env": ["TELEGRAM_BOT_TOKEN", "SLACK_BOT_TOKEN", "DISCORD_BOT_TOKEN", "WHATSAPP_TOKEN"],
+        "toolset": "messaging",
+        "description": "Post messages on connected platforms (Telegram, Slack, Discord, WhatsApp)",
+        "setup_url": "https://core.telegram.org/bots",
+        "any_preset": True,   # reads as "at least one preset satisfies"
+        "any_env": True,      # reads as "at least one env var satisfies"
+    },
+    # Per-platform auto-apply stubs. NOT real tools — the agent never
+    # calls a function literally named send_telegram/send_slack/etc.
+    # These live here solely so `auto_apply_presets_for_env` can map
+    # "TELEGRAM_BOT_TOKEN was saved" → "apply the telegram preset to
+    # every agent with the messaging toolset". Filtered out of
+    # get_tool_readiness via auto_apply_only so they don't surface as
+    # ghost tools in the T pill UI.
     "send_telegram": {
         "presets": ["telegram"],
         "env": ["TELEGRAM_BOT_TOKEN"],
         "toolset": "messaging",
         "description": "Post messages to Telegram chats",
         "setup_url": "https://core.telegram.org/bots",
+        "auto_apply_only": True,
     },
     "send_slack": {
         "presets": ["slack"],
@@ -209,6 +227,7 @@ TOOL_PRESET_MAP: Dict[str, Dict[str, Any]] = {
         "toolset": "messaging",
         "description": "Post messages to Slack channels",
         "setup_url": "https://api.slack.com/apps",
+        "auto_apply_only": True,
     },
     "send_discord": {
         "presets": ["discord"],
@@ -216,16 +235,25 @@ TOOL_PRESET_MAP: Dict[str, Dict[str, Any]] = {
         "toolset": "messaging",
         "description": "Post messages to Discord channels",
         "setup_url": "https://discord.com/developers/applications",
+        "auto_apply_only": True,
     },
-    # GitHub — repo management tools (issues, PRs, commits).
+    # GitHub — the repo-management surface is MCP-server-driven rather
+    # than a first-class tool (an agent mounts the github MCP server
+    # and gets mcp_github_* functions at runtime). Kept here so saving
+    # GITHUB_TOKEN still triggers the github preset auto-apply. Marked
+    # auto_apply_only so the T pill doesn't advertise a non-existent
+    # `manage_github` function name.
     "manage_github": {
         "presets": ["github"],
         "env": ["GITHUB_TOKEN"],
         "toolset": "github",
         "description": "Open issues, comment on PRs, push commits",
         "setup_url": "https://github.com/settings/tokens",
+        "auto_apply_only": True,
     },
-    # HuggingFace — model hub + inference endpoints.
+    # HuggingFace — same story as github: no first-class `huggingface`
+    # tool, but saving HUGGINGFACE_API_KEY should auto-apply the hf
+    # preset to agents configured to use it.
     "huggingface": {
         "presets": ["huggingface"],
         "env": ["HUGGINGFACE_API_KEY"],
@@ -233,6 +261,7 @@ TOOL_PRESET_MAP: Dict[str, Dict[str, Any]] = {
         "description": "Pull models, run hosted inference",
         "setup_url": "https://huggingface.co/settings/tokens",
         "optional": True,
+        "auto_apply_only": True,
     },
 }
 
@@ -273,17 +302,36 @@ def get_tool_readiness(agent_id: str) -> List[Dict[str, Any]]:
 
     # First: tools that need external config
     for tool_name, info in TOOL_PRESET_MAP.items():
+        # Skip per-platform stubs like send_telegram / send_slack that
+        # exist solely so auto_apply_presets_for_env can map an env
+        # var to a preset. They don't correspond to functions the
+        # agent can actually call (the real tool is `send_message`)
+        # and listing them in the readiness UI produced phantom rows
+        # the user couldn't act on.
+        if info.get("auto_apply_only"):
+            continue
         toolset = info["toolset"]
         if toolset not in enabled_toolsets:
             continue  # toolset not enabled, skip
 
-        # Check env vars
+        # Check env vars. "any_env" / "any_preset" mean "satisfied when
+        # at least one is set" (used by send_message where any one of
+        # TELEGRAM/SLACK/DISCORD/WHATSAPP tokens + the matching preset
+        # is enough to be ready).
         env_keys = info.get("env", [])
-        has_env = bool(env_keys) and all(os.environ.get(k) for k in env_keys)
+        any_env = info.get("any_env", False)
+        if any_env:
+            has_env = bool(env_keys) and any(os.environ.get(k) for k in env_keys)
+        else:
+            has_env = bool(env_keys) and all(os.environ.get(k) for k in env_keys)
 
         # Check presets
         needed_presets = info.get("presets", [])
-        has_presets = all(p in applied for p in needed_presets)
+        any_preset = info.get("any_preset", False)
+        if any_preset:
+            has_presets = bool(needed_presets) and any(p in applied for p in needed_presets)
+        else:
+            has_presets = all(p in applied for p in needed_presets)
 
         if has_env and has_presets:
             status = "ready"
