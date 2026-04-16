@@ -341,18 +341,52 @@ class BasePlatformAdapter(ABC):
     - Handling media
     """
     
-    def __init__(self, config: PlatformConfig, platform: Platform):
+    def __init__(
+        self,
+        config: PlatformConfig,
+        platform: Platform,
+        *,
+        agent_id: Optional[str] = None,
+        credential_label: Optional[str] = None,
+    ):
+        """Create the adapter.
+
+        ``agent_id`` and ``credential_label`` are set by the
+        per-credential-row lifecycle (task #3): when an adapter is
+        spawned from an ``agent_channel_credentials`` row, it knows
+        which agent owns the bot and which label distinguishes this
+        row from the agent's other bots on the same platform. The
+        adapter stamps ``source.agent_id`` on every MessageEvent it
+        emits so dispatch skips the routing-table lookup.
+
+        Legacy callers that construct the adapter from env-var tokens
+        (the pre-credentials path) leave these as None — downstream
+        dispatch falls back to ``platform_routing``.
+        """
         self.config = config
         self.platform = platform
+        self.agent_id = agent_id
+        self.credential_label = credential_label
         self._message_handler: Optional[MessageHandler] = None
         self._running = False
-        
+
         # Track active message handlers per session for interrupt support
         # Key: session_key (e.g., chat_id), Value: (event, asyncio.Event for interrupt)
         self._active_sessions: Dict[str, asyncio.Event] = {}
         self._pending_messages: Dict[str, MessageEvent] = {}
         # Chats where auto-TTS on voice input is disabled (set by /voice off)
         self._auto_tts_disabled_chats: set = set()
+
+    def _stamp_agent_id(self, source: "SessionSource") -> "SessionSource":
+        """Return ``source`` with ``agent_id`` set to this adapter's owning
+        agent, leaving other fields untouched. No-op when the adapter is
+        legacy (no agent_id) or the source already carries one."""
+        if not self.agent_id:
+            return source
+        if getattr(source, "agent_id", None):
+            return source
+        source.agent_id = self.agent_id
+        return source
     
     @property
     def name(self) -> str:
@@ -367,11 +401,28 @@ class BasePlatformAdapter(ABC):
     def set_message_handler(self, handler: MessageHandler) -> None:
         """
         Set the handler for incoming messages.
-        
+
         The handler receives a MessageEvent and should return
         an optional response string.
+
+        When this adapter is agent-owned (``self.agent_id`` is set by
+        the per-credential lifecycle), the handler is wrapped so every
+        MessageEvent gets ``source.agent_id`` stamped before reaching
+        dispatch. Adapter subclasses don't need to know about this —
+        they emit events as usual and the stamping is transparent.
         """
-        self._message_handler = handler
+        if self.agent_id:
+            owning_agent = self.agent_id
+
+            async def _stamped_handler(event: MessageEvent) -> Optional[str]:
+                src = getattr(event, "source", None)
+                if src is not None and not getattr(src, "agent_id", None):
+                    src.agent_id = owning_agent
+                return await handler(event)
+
+            self._message_handler = _stamped_handler
+        else:
+            self._message_handler = handler
     
     @abstractmethod
     async def connect(self) -> bool:

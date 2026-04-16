@@ -1511,25 +1511,43 @@ class GatewayRunner:
                 "Open the web dashboard and create an agent to get started."
             )
 
-        # 1a. Most-specific routing rule wins (chat → user → global).
+        # 1a. If the adapter stamped an agent_id on the event, it's a
+        # per-agent-credential adapter and already knows exactly whose
+        # bot received the update. Skip the routing table entirely —
+        # the token IS the routing.
         agent = None
-        try:
-            rule = _auth_db.resolve_platform_routing(
-                platform=platform_name,
-                chat_id=chat_id or "",
-                user_id=user_id or "",
-            )
-        except Exception:
-            logger.exception("dispatch_platform_message: routing lookup failed")
-            rule = None
-        if rule and rule.get("agent_id"):
+        stamped_agent_id = getattr(source, "agent_id", None) if source else None
+        if stamped_agent_id:
             try:
-                agent = _auth_db.get_agent(rule["agent_id"])
+                agent = _auth_db.get_agent(stamped_agent_id)
             except Exception:
-                logger.exception("dispatch_platform_message: get_agent failed")
+                logger.exception(
+                    "dispatch_platform_message: get_agent(%s) failed", stamped_agent_id,
+                )
                 agent = None
 
-        # 1b. Fallback: first named agent.
+        # 1b. Legacy routing: most-specific routing rule wins (chat →
+        # user → global). Used only when no agent was stamped on the
+        # event (i.e. the adapter was created from a global env token,
+        # not a per-agent credential row).
+        if agent is None:
+            try:
+                rule = _auth_db.resolve_platform_routing(
+                    platform=platform_name,
+                    chat_id=chat_id or "",
+                    user_id=user_id or "",
+                )
+            except Exception:
+                logger.exception("dispatch_platform_message: routing lookup failed")
+                rule = None
+            if rule and rule.get("agent_id"):
+                try:
+                    agent = _auth_db.get_agent(rule["agent_id"])
+                except Exception:
+                    logger.exception("dispatch_platform_message: get_agent failed")
+                    agent = None
+
+        # 1c. Final fallback: first named agent.
         if agent is None:
             agent = agents[0]
         agent_name = agent.get("name", "")
