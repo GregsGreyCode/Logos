@@ -1385,6 +1385,99 @@ def gateway_command(args):
                       f"(PID {pid} still running). Tail its log to diagnose:"
                       f"\n  tail -f {get_logos_home() / 'logs' / 'gateway.bg.log'}")
     
+    elif subcmd == "update":
+        # Pull latest origin/HEAD into the running checkout, then cycle
+        # the gateway so the new code is what's actually serving. Same
+        # underlying functions the UI "Update" button calls, so CLI and
+        # UI stay in sync. --check prints the status without mutating;
+        # --no-restart pulls but leaves the running process stale so
+        # the user can restart on their own schedule.
+        from logos_cli.updater import check_for_update, apply_update, resolve_repo_dir
+
+        repo = resolve_repo_dir()
+        print_info(f"Repo: {repo}")
+
+        status = check_for_update(repo)
+        if not status.get("ok"):
+            print_error(f"Check failed: {status.get('error') or 'unknown'}")
+            sys.exit(1)
+
+        cur = (status.get("current_sha") or "")[:8]
+        lat = (status.get("latest_sha") or "")[:8]
+        behind = status.get("behind_by", 0)
+        branch = status.get("branch") or "?"
+        print_info(f"Branch: {branch} · local {cur} · origin {lat} · behind by {behind}")
+
+        if not status.get("has_update"):
+            print_success("Already up to date.")
+            return
+
+        print_info(f"Latest on origin: {status.get('latest_message') or '(no message)'}")
+
+        if getattr(args, "check", False):
+            print_info("--check specified; not applying.")
+            return
+
+        # Apply. The restart flag tells apply_update whether to
+        # self-exec. Because the CLI runs OUT-OF-PROCESS from the
+        # gateway (different Python process), we don't want to
+        # os.execv the CLI itself; instead pull with restart=False
+        # and then cycle the gateway via the existing restart path.
+        print_info("Pulling…")
+        applied = apply_update(repo, restart=False)
+        if not applied.get("ok"):
+            print_error(f"Update failed: {applied.get('error') or 'unknown'}")
+            sys.exit(1)
+        print_success(f"Pulled to {applied.get('new_sha','')[:8]}")
+
+        if getattr(args, "no_restart", False):
+            print_info("--no-restart specified; leaving running gateway on old code.")
+            return
+
+        # Cycle the gateway using the exact restart path users already
+        # have installed (systemd / launchd / detached). Reuse the
+        # subcmd=="restart" branch below by fallthrough? No — that
+        # branch reads args.gateway_command, so emulate it inline.
+        print_info("Cycling gateway…")
+        _service_handled = False
+        if is_linux() and get_systemd_unit_path().exists():
+            try:
+                systemd_restart()
+                _service_handled = True
+            except subprocess.CalledProcessError:
+                pass
+        elif is_macos() and get_launchd_plist_path().exists():
+            try:
+                launchd_restart()
+                _service_handled = True
+            except subprocess.CalledProcessError:
+                pass
+
+        if not _service_handled:
+            killed = stop_and_wait_for_gateway(grace_seconds=10.0)
+            if killed:
+                print(f"✓ Stopped {killed} gateway process(es)")
+            pid = run_gateway_detached(verbose=False)
+            print(f"  spawned PID {pid}")
+            import time as _time
+            deadline = _time.monotonic() + 30
+            while _time.monotonic() < deadline:
+                if _port_listening(8091):
+                    print("✓ Gateway is listening on port 8091")
+                    break
+                if not _pid_alive(pid):
+                    log_path = get_logos_home() / "logs" / "gateway.bg.log"
+                    print_error(
+                        f"Gateway PID {pid} exited before binding. See {log_path}.",
+                    )
+                    sys.exit(1)
+                _time.sleep(0.5)
+            else:
+                print_warning(
+                    f"Gateway didn't bind to 8091 within 30s (PID {pid} still running)."
+                )
+        print_success("Update complete.")
+
     elif subcmd == "status":
         deep = getattr(args, 'deep', False)
         

@@ -1655,6 +1655,72 @@ async def handle_agent_channels_toggle(request: web.Request) -> web.Response:
     return web.json_response({"credential": _scrub_credential_row(refreshed or row)})
 
 
+# ── Gateway self-update (shared backend for CLI + UI button) ────────────────
+
+
+async def handle_gateway_update_status(request: web.Request) -> web.Response:
+    """GET /api/admin/gateway/update
+
+    Returns whether origin has a newer commit than the running code.
+    The UI polls this every few minutes to render an "Update available"
+    banner. Safe to call concurrently — check_for_update does a
+    read-only `git fetch` + `git log` without mutating the working
+    tree.
+    """
+    import asyncio as _asyncio
+    try:
+        from logos_cli.updater import check_for_update
+        # check_for_update shells out to git (~1-3s typical); run in the
+        # default executor so the event loop isn't blocked during
+        # network-bound fetch.
+        loop = _asyncio.get_event_loop()
+        status = await loop.run_in_executor(None, check_for_update)
+    except Exception as exc:
+        logger.exception("gateway_update_status failed")
+        return web.json_response({"ok": False, "error": str(exc)}, status=500)
+    return web.json_response(status)
+
+
+async def handle_gateway_update_apply(request: web.Request) -> web.Response:
+    """POST /api/admin/gateway/update
+
+    Pulls origin/HEAD and re-execs the gateway. The re-exec replaces
+    the current process image via os.execv, so the HTTP response for
+    THIS request has to be flushed BEFORE the exec — otherwise the
+    client hangs. We do that by scheduling the exec on the next event
+    loop tick, after the response is sent.
+    """
+    import asyncio as _asyncio
+    try:
+        from logos_cli.updater import apply_update
+        loop = _asyncio.get_event_loop()
+        # Pull with restart=False so apply_update doesn't exec from
+        # inside the handler (which would kill the response mid-write
+        # and the UI would see a dropped connection with no status).
+        result = await loop.run_in_executor(None, lambda: apply_update(restart=False))
+    except Exception as exc:
+        logger.exception("gateway_update_apply: pull failed")
+        return web.json_response({"ok": False, "error": str(exc)}, status=500)
+
+    if not result.get("ok") or not result.get("applied"):
+        return web.json_response(result, status=400)
+
+    # Schedule the self-exec to happen AFTER this response flushes.
+    # asyncio.get_event_loop().call_later(0.5, …) gives aiohttp enough
+    # time to finish writing the response body before os.execv replaces
+    # the process. The delay is conservative; a busy system with
+    # back-pressure might need more.
+    def _deferred_exec() -> None:
+        try:
+            from logos_cli.updater import _self_exec
+            _self_exec()
+        except Exception:
+            logger.exception("deferred self-exec failed")
+
+    loop.call_later(0.5, _deferred_exec)
+    return web.json_response({**result, "restart_scheduled": True})
+
+
 # ── Capabilities (user-facing collapse of toolsets+presets) ──────────────────
 
 async def handle_agent_capabilities_get(request: web.Request) -> web.Response:
