@@ -8691,9 +8691,18 @@ function app() {
     },
 
     _scrollChat() {
+      // Alpine's $nextTick fires after data mutation but before the
+      // browser has reflowed the newly-rendered messages, so
+      // scrollHeight still equals clientHeight and scrollTop clamps
+      // to 0 — which is why opening a chat landed at the top. Wrap
+      // in requestAnimationFrame to wait one paint so the scroll
+      // assignment actually pins us to the latest message. Matches
+      // the fix used on the logs-modal auto-tail.
       this.$nextTick(() => {
-        const el = document.getElementById('chat-messages');
-        if (el && el.scrollHeight > el.clientHeight) el.scrollTop = el.scrollHeight;
+        requestAnimationFrame(() => {
+          const el = document.getElementById('chat-messages');
+          if (el && el.scrollHeight > el.clientHeight) el.scrollTop = el.scrollHeight;
+        });
       });
     },
 
