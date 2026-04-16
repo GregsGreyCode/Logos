@@ -3658,7 +3658,14 @@ async def _handle_chat(request: web.Request) -> web.StreamResponse:
             async def _on_worker_stream(event):
                 etype = event.get("type")
                 if etype == "tool_start":
-                    _status_on_tool_start(event.get("tool", ""))
+                    _tname = event.get("tool", "")
+                    _status_on_tool_start(_tname)
+                    # Accumulate the tool-call sequence onto the outer
+                    # list so complete_dispatch can persist it. Capped
+                    # at 50 entries so a runaway agent can't blow the
+                    # row size; the UI truncates the display anyway.
+                    if _tname and len(_tool_sequence) < 50:
+                        _tool_sequence.append(_tname)
                     await send_event(event)
                 elif etype == "tool_end":
                     _status_on_tool_end(bool(event.get("success", True)))
@@ -3685,9 +3692,25 @@ async def _handle_chat(request: web.Request) -> web.StreamResponse:
                         "preview": event.get("preview", ""),
                     })
 
-            # ── Dispatch ledger: record start ──
+            # ── Dispatch ledger: record start (STAMP-enriched) ──
+            # soul + toolsets come straight off the agent record. We
+            # keep toolsets as a JSON list (already stored that way on
+            # the row). user_message is truncated inside create_dispatch.
+            # tool_sequence starts empty and grows as tool_start events
+            # fire in the stream callback below; complete_dispatch
+            # persists the final list.
             _dispatch_id = None
+            _tool_sequence: list[str] = []
             try:
+                _soul = (_agent_config.get("soul_slug") or "").strip()
+                _toolsets_raw = _agent_config.get("toolsets") or ""
+                try:
+                    _toolsets_list = json.loads(_toolsets_raw) if _toolsets_raw else []
+                    if not isinstance(_toolsets_list, list):
+                        _toolsets_list = []
+                except Exception:
+                    _toolsets_list = []
+                _toolsets_json = json.dumps(_toolsets_list) if _toolsets_list else ""
                 _dispatch_id = auth_db.create_dispatch(
                     task_id=task_payload["task_id"],
                     agent_id=agent_id or "",
@@ -3701,6 +3724,9 @@ async def _handle_chat(request: web.Request) -> web.StreamResponse:
                     }),
                     session_id=session_entry.session_id if session_entry else "",
                     user_id=_real_user_id or "",
+                    soul=_soul,
+                    toolsets_snapshot=_toolsets_json,
+                    user_message=message or "",
                 )
             except Exception as _dsp_exc:
                 logger.debug("dispatch ledger create skipped: %s", _dsp_exc)
@@ -3825,6 +3851,12 @@ async def _handle_chat(request: web.Request) -> web.StreamResponse:
                 try:
                     _dsp_status = worker_result.get("status", "ok")
                     _dsp_elapsed = round(time.time() - t_agent_start, 2)
+                    # Prefer the sequence we accumulated from tool_start
+                    # events during the stream; fall back to the worker
+                    # result's ``tools_used`` summary if the stream was
+                    # short-circuited (sandbox crash before first event).
+                    _tseq_final = _tool_sequence or worker_result.get("tools_used") or []
+                    _tseq_json = json.dumps(_tseq_final) if _tseq_final else None
                     auth_db.complete_dispatch(
                         _dispatch_id,
                         status=_dsp_status,
@@ -3832,6 +3864,7 @@ async def _handle_chat(request: web.Request) -> web.StreamResponse:
                         prompt_tokens=worker_result.get("prompt_tokens"),
                         completion_tokens=worker_result.get("completion_tokens"),
                         error=worker_result.get("error"),
+                        tool_sequence=_tseq_json,
                     )
                 except Exception as _dsp_exc:
                     logger.debug("dispatch ledger complete skipped: %s", _dsp_exc)
