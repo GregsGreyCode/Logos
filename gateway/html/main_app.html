@@ -7493,6 +7493,15 @@ function app() {
         // platform badge so the conversation is accessible from both
         // surfaces.
         this.chats = this.chats.filter(c => !c._platform || c._webContinued);
+        // Restore the most recent Local chat for the active agent so
+        // the panel doesn't go blank and deselect the agent pill.
+        const agentId = this.activeChat?.agent_id;
+        const localChat = this.chats.find(c =>
+          agentId ? c.agent_id === agentId : true
+        );
+        if (localChat) {
+          this.activeChatId = localChat.id;
+        }
       }
     },
 
