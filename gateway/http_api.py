@@ -2868,13 +2868,49 @@ async def _handle_api_platform_sessions(request: web.Request) -> web.Response:
     if current_user.get("role", "viewer") not in ("admin", "operator"):
         raise web.HTTPForbidden()
     platform_filter = request.rel_url.query.get("platform")
+    agent_id_filter = request.rel_url.query.get("agent_id")
     runner: Any = request.app["runner"]
     db = getattr(runner.session_store, "_db", None)
     if not db:
         return web.json_response([])
 
+    # When an agent_id filter is given, JOIN through the auth DB's
+    # dispatches table to find sessions that belong to that agent.
+    # This lets the UI show only Hermes's Telegram conversations
+    # when Hermes is selected, not Henry's.
     try:
-        if platform_filter:
+        import sqlite3 as _sql3
+        from pathlib import Path as _Path
+        _auth_path = _Path(
+            os.getenv("LOGOS_HOME") or os.getenv("HERMES_HOME")
+            or str(_Path.home() / ".logos")
+        ) / "auth.db"
+
+        if agent_id_filter and platform_filter and _auth_path.exists():
+            # Cross-DB query: find session_ids from dispatches where
+            # agent_id matches, then look them up in the state DB.
+            with _sql3.connect(str(_auth_path), timeout=2) as _ac:
+                _ac.row_factory = _sql3.Row
+                _origin = f"platform_{platform_filter}"
+                _dispatch_rows = _ac.execute(
+                    """SELECT DISTINCT session_id FROM dispatches
+                       WHERE agent_id = ? AND origin = ?
+                       ORDER BY started_at DESC LIMIT 50""",
+                    (agent_id_filter, _origin),
+                ).fetchall()
+            _session_ids = [r["session_id"] for r in _dispatch_rows if r["session_id"]]
+            if not _session_ids:
+                rows = []
+            else:
+                placeholders = ",".join("?" for _ in _session_ids)
+                rows = db._conn.execute(
+                    f"""SELECT id, source, title, started_at, ended_at, message_count,
+                              user_id, model
+                       FROM sessions WHERE id IN ({placeholders})
+                       ORDER BY started_at DESC""",
+                    _session_ids,
+                ).fetchall()
+        elif platform_filter:
             rows = db._conn.execute(
                 """SELECT id, source, title, started_at, ended_at, message_count,
                           user_id, model
@@ -2890,7 +2926,7 @@ async def _handle_api_platform_sessions(request: web.Request) -> web.Response:
                    ORDER BY started_at DESC LIMIT 50""",
             ).fetchall()
     except Exception:
-        return web.json_response([])
+        rows = []
 
     from datetime import datetime as _dt
     result = []
