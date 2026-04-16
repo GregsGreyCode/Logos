@@ -524,24 +524,32 @@ def _run_migrations() -> None:
         # v11: dispatch activity ledger (M8 Phase B). Durable record of
         # every task dispatch — who, what agent, which model, origin,
         # timing, token counts, and outcome. Feeds the Admin Activity tab.
+        # STAMP columns (soul, toolsets_snapshot, user_message,
+        # tool_sequence) turn each row into a full run record so the
+        # Runs tab can answer "what did this agent actually do" without
+        # a second lookup.
         conn.executescript("""
             CREATE TABLE IF NOT EXISTS dispatches (
-                id                TEXT PRIMARY KEY,
-                task_id           TEXT NOT NULL,
-                agent_id          TEXT,
-                sandbox_name      TEXT,
-                model             TEXT,
-                origin            TEXT NOT NULL DEFAULT 'user_chat',
-                origin_detail     TEXT,
-                session_id        TEXT,
-                user_id           TEXT,
-                prompt_tokens     INTEGER,
-                completion_tokens INTEGER,
-                elapsed_s         REAL,
-                status            TEXT NOT NULL DEFAULT 'running',
-                error             TEXT,
-                started_at        INTEGER NOT NULL,
-                ended_at          INTEGER
+                id                 TEXT PRIMARY KEY,
+                task_id            TEXT NOT NULL,
+                agent_id           TEXT,
+                sandbox_name       TEXT,
+                model              TEXT,
+                origin             TEXT NOT NULL DEFAULT 'user_chat',
+                origin_detail      TEXT,
+                session_id         TEXT,
+                user_id            TEXT,
+                prompt_tokens      INTEGER,
+                completion_tokens  INTEGER,
+                elapsed_s          REAL,
+                status             TEXT NOT NULL DEFAULT 'running',
+                error              TEXT,
+                started_at         INTEGER NOT NULL,
+                ended_at           INTEGER,
+                soul               TEXT,
+                toolsets_snapshot  TEXT,
+                user_message       TEXT,
+                tool_sequence      TEXT
             );
             CREATE INDEX IF NOT EXISTS idx_disp_agent   ON dispatches(agent_id);
             CREATE INDEX IF NOT EXISTS idx_disp_origin  ON dispatches(origin);
@@ -822,6 +830,33 @@ def _run_migrations() -> None:
         # but the user knows the deploy is broken until they re-wire it.
         # SQLite can't alter a CHECK constraint in-place so we table-swap.
         _migrate_mcp_deploy_mode_v1(conn)
+
+        # v21: add STAMP columns to dispatches so each row is a full
+        # run record (soul, toolsets_snapshot, user_message,
+        # tool_sequence). Additive ALTERs, idempotent-by-checking.
+        _migrate_dispatches_stamp_v1(conn)
+
+
+def _migrate_dispatches_stamp_v1(conn) -> None:
+    """Add STAMP columns to the dispatches table if missing.
+
+    Each is a single ALTER TABLE ADD COLUMN — reversible by dropping
+    the columns if we ever roll back. Safe to run repeatedly: we probe
+    the current column set first and only ALTER the missing ones.
+    """
+    cols = {
+        row["name"] for row in conn.execute("PRAGMA table_info(dispatches)").fetchall()
+    }
+    adds = [
+        ("soul", "TEXT"),
+        ("toolsets_snapshot", "TEXT"),
+        ("user_message", "TEXT"),
+        ("tool_sequence", "TEXT"),
+    ]
+    for name, sqltype in adds:
+        if name in cols:
+            continue
+        conn.execute(f"ALTER TABLE dispatches ADD COLUMN {name} {sqltype}")
 
 
 def _migrate_mcp_deploy_mode_v1(conn) -> None:
@@ -2912,19 +2947,33 @@ def create_dispatch(
     origin_detail: str = "",
     session_id: str = "",
     user_id: str = "",
+    soul: str = "",
+    toolsets_snapshot: str = "",
+    user_message: str = "",
 ) -> str:
-    """Insert a new dispatch record at the start of a task. Returns the id."""
+    """Insert a new dispatch record at the start of a task. Returns the id.
+
+    STAMP context (soul, toolsets_snapshot, user_message) is captured
+    at dispatch start so the Runs tab can show what the agent was
+    configured with and what it was asked — without a second lookup.
+    user_message is truncated to 2000 chars to keep the row bounded
+    for agents that receive large pasted prompts.
+    """
     import uuid
     dispatch_id = f"dsp_{uuid.uuid4().hex[:12]}"
     now_ms = int(time.time() * 1000)
+    if user_message and len(user_message) > 2000:
+        user_message = user_message[:2000]
     with _conn() as conn:
         conn.execute(
             """INSERT INTO dispatches
                (id, task_id, agent_id, sandbox_name, model, origin,
-                origin_detail, session_id, user_id, status, started_at)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+                origin_detail, session_id, user_id, status, started_at,
+                soul, toolsets_snapshot, user_message)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (dispatch_id, task_id, agent_id, sandbox_name, model, origin,
-             origin_detail, session_id, user_id, "running", now_ms),
+             origin_detail, session_id, user_id, "running", now_ms,
+             soul or None, toolsets_snapshot or None, user_message or None),
         )
     return dispatch_id
 
@@ -2936,17 +2985,23 @@ def complete_dispatch(
     prompt_tokens: int = None,
     completion_tokens: int = None,
     error: str = None,
+    tool_sequence: str = None,
 ) -> None:
-    """Update a dispatch record when the task finishes."""
+    """Update a dispatch record when the task finishes.
+
+    tool_sequence is a JSON-encoded list of tool names in call order,
+    accumulated by the stream-callback while the worker ran.
+    """
     now_ms = int(time.time() * 1000)
     with _conn() as conn:
         conn.execute(
             """UPDATE dispatches
                SET status=?, elapsed_s=?, prompt_tokens=?,
-                   completion_tokens=?, error=?, ended_at=?
+                   completion_tokens=?, error=?, ended_at=?,
+                   tool_sequence=COALESCE(?, tool_sequence)
                WHERE id=?""",
             (status, elapsed_s, prompt_tokens, completion_tokens, error,
-             now_ms, dispatch_id),
+             now_ms, tool_sequence, dispatch_id),
         )
 
 
