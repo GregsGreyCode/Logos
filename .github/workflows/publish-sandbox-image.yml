@@ -1,0 +1,141 @@
+name: Publish hermes-sandbox image
+
+# Builds and publishes the two-layer sandbox image to GHCR so fresh
+# installs can `docker pull` instead of running the ~5-10 min local
+# build (agent-browser install --with-deps dominates that time).
+#
+# Two images get pushed per run:
+#
+#   ghcr.io/gregsgreycode/hermes-upstream:<tag>
+#     Built from NousResearch/hermes-agent — the base runtime with
+#     the Hermes agent, Python, Node, Playwright, etc. Upstream's own
+#     Dockerfile is the source of truth; we just rebuild it in our
+#     registry so we have a versioned, deterministic base.
+#
+#   ghcr.io/gregsgreycode/hermes-sandbox:<tag>
+#     Our Dockerfile.hermes-upstream layered on top, which adds the
+#     sandbox user, iproute2/libnss3-tools, re-installs hermes-agent
+#     into a non-/opt path, and stages agent-browser + Chromium for
+#     sandbox-user access.
+#
+# Trigger: any git tag starting with v (v0.13.0, v0.13.1-rc.1, etc).
+# Manual runs via workflow_dispatch also work — handy for rebuilding
+# after an upstream bump without tagging a Logos release.
+#
+# Fresh-install flow: scripts/fresh-install.sh prefers the GHCR image
+# and only falls back to a local build if LOGOS_FORCE_SANDBOX_BUILD=1
+# is set or the pull fails. (TODO in TASKS.md #23.)
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      hermes_agent_ref:
+        description: 'NousResearch/hermes-agent git ref to build from (branch, tag, or commit SHA)'
+        required: false
+        default: 'main'
+      image_tag:
+        description: 'Tag to publish (defaults to the triggering git tag or "latest")'
+        required: false
+        default: ''
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_OWNER: gregsgreycode
+  UPSTREAM_REPO: nousresearch/hermes-agent
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout Logos
+        uses: actions/checkout@v4
+
+      - name: Resolve image tag
+        id: tag
+        run: |
+          if [ -n "${{ github.event.inputs.image_tag }}" ]; then
+            echo "value=${{ github.event.inputs.image_tag }}" >> "$GITHUB_OUTPUT"
+          elif [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            echo "value=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          else
+            echo "value=latest" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Resolve hermes-agent ref
+        id: agent-ref
+        run: |
+          ref="${{ github.event.inputs.hermes_agent_ref }}"
+          if [ -z "$ref" ]; then ref="main"; fi
+          echo "value=$ref" >> "$GITHUB_OUTPUT"
+
+      - name: Clone NousResearch/hermes-agent
+        run: |
+          git clone --depth 1 --branch "${{ steps.agent-ref.outputs.value }}" \
+            "https://github.com/${{ env.UPSTREAM_REPO }}.git" /tmp/hermes-agent \
+            || git clone "https://github.com/${{ env.UPSTREAM_REPO }}.git" /tmp/hermes-agent \
+               && git -C /tmp/hermes-agent checkout "${{ steps.agent-ref.outputs.value }}"
+          echo "Upstream commit: $(git -C /tmp/hermes-agent rev-parse HEAD)"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # ── Layer 1: hermes-upstream ─────────────────────────────────
+      # Built from NousResearch's Dockerfile, pushed to GHCR, then
+      # loaded into the local docker daemon so the sandbox build
+      # below can FROM it by the hermes-upstream:latest tag our
+      # Dockerfile.hermes-upstream already references. Avoids
+      # touching the Dockerfile's FROM line.
+      - name: Build + push hermes-upstream
+        uses: docker/build-push-action@v5
+        with:
+          context: /tmp/hermes-agent
+          file: /tmp/hermes-agent/Dockerfile
+          push: true
+          load: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_OWNER }}/hermes-upstream:${{ steps.tag.outputs.value }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE_OWNER }}/hermes-upstream:latest
+            hermes-upstream:latest
+          cache-from: type=gha,scope=hermes-upstream
+          cache-to: type=gha,mode=max,scope=hermes-upstream
+
+      # ── Layer 2: hermes-sandbox ──────────────────────────────────
+      # Uses our Dockerfile (Dockerfile.hermes-upstream confusingly
+      # named — it IS the sandbox Dockerfile; the file-name "upstream"
+      # refers to what it builds FROM, not what it produces).
+      - name: Build + push hermes-sandbox
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: docker/Dockerfile.hermes-upstream
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_OWNER }}/hermes-sandbox:${{ steps.tag.outputs.value }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE_OWNER }}/hermes-sandbox:latest
+          cache-from: type=gha,scope=hermes-sandbox
+          cache-to: type=gha,mode=max,scope=hermes-sandbox
+
+      - name: Summary
+        run: |
+          echo "### Published images" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "- \`${{ env.REGISTRY }}/${{ env.IMAGE_OWNER }}/hermes-upstream:${{ steps.tag.outputs.value }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- \`${{ env.REGISTRY }}/${{ env.IMAGE_OWNER }}/hermes-sandbox:${{ steps.tag.outputs.value }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "Upstream ref: ${{ steps.agent-ref.outputs.value }}" >> "$GITHUB_STEP_SUMMARY"
