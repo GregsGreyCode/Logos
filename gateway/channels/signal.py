@@ -153,8 +153,8 @@ class SignalAdapter(BasePlatformAdapter):
 
     platform = Platform.SIGNAL
 
-    def __init__(self, config: PlatformConfig):
-        super().__init__(config, Platform.SIGNAL)
+    def __init__(self, config: PlatformConfig, *, agent_id=None, credential_label=None):
+        super().__init__(config, Platform.SIGNAL, agent_id=agent_id, credential_label=credential_label)
 
         extra = config.extra or {}
         self.http_url = extra.get("http_url", "http://127.0.0.1:8080").rstrip("/")
