@@ -1,7 +1,6 @@
 """SQLite persistence for auth: users, refresh_tokens, user_settings, audit_logs,
 machines, machine_capabilities, routing_policies, policy_rules,
-action_policies, approval_requests, workflow_definitions, workflow_runs,
-workflow_step_runs."""
+approval_requests."""
 
 import json
 import logging
@@ -182,24 +181,6 @@ CREATE TABLE IF NOT EXISTS agents (
 );
 
 -- ── Action policies ────────────────────────────────────────────────────────
--- What a user/session/agent is permitted to do (write, exec, provider, etc.)
--- Separate from routing_policies which govern machine/provider *selection*.
-
-CREATE TABLE IF NOT EXISTS action_policies (
-    id                TEXT PRIMARY KEY,
-    name              TEXT UNIQUE NOT NULL,
-    description       TEXT,
-    network_policy    TEXT NOT NULL DEFAULT 'internet_enabled',
-    network_allowlist TEXT NOT NULL DEFAULT '[]',
-    filesystem_policy TEXT NOT NULL DEFAULT 'workspace_only',
-    exec_policy       TEXT NOT NULL DEFAULT 'restricted',
-    write_policy      TEXT NOT NULL DEFAULT 'auto_apply',
-    provider_policy   TEXT NOT NULL DEFAULT 'any',
-    secret_policy     TEXT NOT NULL DEFAULT 'tool_only',
-    created_at        INTEGER NOT NULL,
-    updated_at        INTEGER NOT NULL
-);
-
 -- ── Approval requests ──────────────────────────────────────────────────────
 -- Pending / resolved approval gates for policy-controlled tool calls.
 
@@ -225,62 +206,6 @@ CREATE INDEX IF NOT EXISTS idx_appr_session ON approval_requests(session_id);
 CREATE INDEX IF NOT EXISTS idx_appr_status  ON approval_requests(status);
 CREATE INDEX IF NOT EXISTS idx_appr_ts      ON approval_requests(requested_at);
 CREATE INDEX IF NOT EXISTS idx_appr_lookup  ON approval_requests(session_id, tool_name, tool_args_hash, status);
-
--- ── Workflow system ─────────────────────────────────────────────────────────
--- workflow_definitions: reusable templates; steps stored as JSON.
--- workflow_runs:        execution instances (one per trigger).
--- workflow_step_runs:   per-step state for one run.
-
-CREATE TABLE IF NOT EXISTS workflow_definitions (
-    id           TEXT PRIMARY KEY,
-    name         TEXT UNIQUE NOT NULL,
-    description  TEXT,
-    version      TEXT NOT NULL DEFAULT '1.0',
-    steps_json   TEXT NOT NULL DEFAULT '[]',
-    tags         TEXT NOT NULL DEFAULT '[]',
-    created_by   TEXT REFERENCES users(id) ON DELETE SET NULL,
-    created_at   INTEGER NOT NULL,
-    updated_at   INTEGER NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS workflow_runs (
-    id           TEXT PRIMARY KEY,
-    workflow_id  TEXT NOT NULL REFERENCES workflow_definitions(id),
-    status       TEXT NOT NULL DEFAULT 'pending'
-                     CHECK (status IN ('pending','running','paused','success','failed','cancelled')),
-    triggered_by TEXT,
-    input_json   TEXT NOT NULL DEFAULT '{}',
-    output_json  TEXT,
-    error        TEXT,
-    started_at   INTEGER,
-    finished_at  INTEGER,
-    created_at   INTEGER NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS workflow_step_runs (
-    id             TEXT PRIMARY KEY,
-    run_id         TEXT NOT NULL REFERENCES workflow_runs(id) ON DELETE CASCADE,
-    step_id        TEXT NOT NULL,
-    step_type      TEXT NOT NULL,
-    step_name      TEXT NOT NULL,
-    status         TEXT NOT NULL DEFAULT 'pending'
-                       CHECK (status IN ('pending','running','success','failed','skipped','waiting_approval','cancelled')),
-    parallel_group TEXT,
-    depends_on     TEXT NOT NULL DEFAULT '[]',
-    input_summary  TEXT,
-    output_summary TEXT,
-    approval_id    TEXT REFERENCES approval_requests(id),
-    error          TEXT,
-    started_at     INTEGER,
-    finished_at    INTEGER,
-    created_at     INTEGER NOT NULL
-);
-
-CREATE INDEX IF NOT EXISTS idx_wfrun_workflow ON workflow_runs(workflow_id);
-CREATE INDEX IF NOT EXISTS idx_wfrun_status   ON workflow_runs(status);
-CREATE INDEX IF NOT EXISTS idx_wfrun_ts       ON workflow_runs(created_at);
-CREATE INDEX IF NOT EXISTS idx_wfstep_run     ON workflow_step_runs(run_id);
-CREATE INDEX IF NOT EXISTS idx_wfstep_status  ON workflow_step_runs(status);
 
 -- ── Agent run records ────────────────────────────────────────────────────────
 -- One record per _run_agent invocation: tracks model, tools used, status, etc.
@@ -836,6 +761,32 @@ def _run_migrations() -> None:
         # run record (soul, toolsets_snapshot, user_message,
         # tool_sequence). Additive ALTERs, idempotent-by-checking.
         _migrate_dispatches_stamp_v1(conn)
+
+        # v22: drop the dead workflow + action_policy tables now that the
+        # UI and Python API have been removed (TASKS.md #XX). Idempotent
+        # via schema_flags. Columns on live tables (users.action_policy_id,
+        # agents.action_policy_id, agent_runs.action_policy_id/snapshot +
+        # workflow_run_id) are left in place — dropping columns on SQLite
+        # requires a table rebuild, and leaving them NULL-only is harmless.
+        already_v22 = conn.execute(
+            "SELECT value FROM schema_flags WHERE key = 'drop_workflow_action_policy_tables_v1'"
+        ).fetchone()
+        if not already_v22:
+            for table in (
+                "workflow_step_runs",
+                "workflow_runs",
+                "workflow_definitions",
+                "action_policies",
+            ):
+                try:
+                    conn.execute(f"DROP TABLE IF EXISTS {table}")
+                except sqlite3.OperationalError as exc:
+                    logger.warning("drop_workflow_action_policy_tables_v1: DROP %s: %s", table, exc)
+            conn.execute(
+                "INSERT INTO schema_flags (key, value, applied_at) VALUES (?, ?, ?)",
+                ("drop_workflow_action_policy_tables_v1", "1", int(time.time() * 1000)),
+            )
+            logger.info("drop_workflow_action_policy_tables_v1: removed workflow_* + action_policies tables")
 
 
 def _migrate_dispatches_stamp_v1(conn) -> None:
@@ -2116,100 +2067,6 @@ def list_routing_log(
     return [dict(r) for r in rows], total
 
 
-# ── Action policies ─────────────────────────────────────────────────────────
-
-def create_action_policy(
-    name: str,
-    description: str = "",
-    network_policy: str = "internet_enabled",
-    network_allowlist: str = "[]",
-    filesystem_policy: str = "workspace_only",
-    exec_policy: str = "restricted",
-    write_policy: str = "auto_apply",
-    provider_policy: str = "any",
-    secret_policy: str = "tool_only",
-) -> dict:
-    now = int(time.time() * 1000)
-    pid = _new_id("ap")
-    with _conn() as conn:
-        conn.execute(
-            """INSERT INTO action_policies
-               (id, name, description, network_policy, network_allowlist,
-                filesystem_policy, exec_policy, write_policy, provider_policy,
-                secret_policy, created_at, updated_at)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
-            (pid, name, description, network_policy, network_allowlist,
-             filesystem_policy, exec_policy, write_policy, provider_policy,
-             secret_policy, now, now),
-        )
-        row = conn.execute("SELECT * FROM action_policies WHERE id=?", (pid,)).fetchone()
-    return dict(row)
-
-
-def get_action_policy(policy_id: str) -> Optional[dict]:
-    with _conn() as conn:
-        row = conn.execute(
-            "SELECT * FROM action_policies WHERE id=?", (policy_id,)
-        ).fetchone()
-    return dict(row) if row else None
-
-
-def list_action_policies() -> list[dict]:
-    with _conn() as conn:
-        rows = conn.execute(
-            "SELECT * FROM action_policies ORDER BY name"
-        ).fetchall()
-    return [dict(r) for r in rows]
-
-
-def update_action_policy(policy_id: str, **fields) -> Optional[dict]:
-    allowed = {
-        "name", "description", "network_policy", "network_allowlist",
-        "filesystem_policy", "exec_policy", "write_policy",
-        "provider_policy", "secret_policy",
-    }
-    updates = {k: v for k, v in fields.items() if k in allowed}
-    if not updates:
-        return get_action_policy(policy_id)
-    updates["updated_at"] = int(time.time() * 1000)
-    set_clause = ", ".join(f"{k}=?" for k in updates)
-    values = list(updates.values()) + [policy_id]
-    with _conn() as conn:
-        conn.execute(
-            f"UPDATE action_policies SET {set_clause} WHERE id=?", values
-        )
-        row = conn.execute("SELECT * FROM action_policies WHERE id=?", (policy_id,)).fetchone()
-    return dict(row) if row else None
-
-
-def delete_action_policy(policy_id: str) -> bool:
-    with _conn() as conn:
-        affected = conn.execute(
-            "DELETE FROM action_policies WHERE id=?", (policy_id,)
-        ).rowcount
-    return affected > 0
-
-
-def assign_user_action_policy(user_id: str, policy_id: Optional[str]) -> None:
-    """Assign (or clear) an action policy on a user."""
-    with _conn() as conn:
-        conn.execute(
-            "UPDATE users SET action_policy_id=? WHERE id=?", (policy_id, user_id)
-        )
-
-
-def get_user_action_policy_row(user_id: str) -> Optional[dict]:
-    """Return the action_policies row for a user, or None if not assigned."""
-    with _conn() as conn:
-        row = conn.execute(
-            """SELECT ap.* FROM action_policies ap
-               JOIN users u ON u.action_policy_id = ap.id
-               WHERE u.id=?""",
-            (user_id,),
-        ).fetchone()
-    return dict(row) if row else None
-
-
 # ── Approval requests ────────────────────────────────────────────────────────
 
 _APPROVAL_TTL_SECONDS = 300  # default 5 min
@@ -2322,225 +2179,6 @@ def expire_stale_approvals() -> int:
     return affected
 
 
-# ── Workflow system ─────────────────────────────────────────────────────────
-
-def create_workflow_definition(
-    name: str,
-    steps_json: str,
-    description: str = "",
-    version: str = "1.0",
-    tags: str = "[]",
-    created_by: Optional[str] = None,
-) -> dict:
-    wf_id = _new_id("wf")
-    now = int(time.time() * 1000)
-    with _conn() as conn:
-        conn.execute(
-            """INSERT INTO workflow_definitions
-               (id,name,description,version,steps_json,tags,created_by,created_at,updated_at)
-               VALUES (?,?,?,?,?,?,?,?,?)""",
-            (wf_id, name, description, version, steps_json, tags, created_by, now, now),
-        )
-    return get_workflow_definition(wf_id)
-
-
-def get_workflow_definition(wf_id: str) -> Optional[dict]:
-    with _conn() as conn:
-        row = conn.execute(
-            "SELECT * FROM workflow_definitions WHERE id=?", (wf_id,)
-        ).fetchone()
-    return dict(row) if row else None
-
-
-def list_workflow_definitions() -> list[dict]:
-    with _conn() as conn:
-        rows = conn.execute(
-            "SELECT * FROM workflow_definitions ORDER BY name"
-        ).fetchall()
-    return [dict(r) for r in rows]
-
-
-def update_workflow_definition(wf_id: str, **kwargs) -> Optional[dict]:
-    allowed = {"name", "description", "version", "steps_json", "tags"}
-    fields = {k: v for k, v in kwargs.items() if k in allowed}
-    if not fields:
-        return get_workflow_definition(wf_id)
-    fields["updated_at"] = int(time.time() * 1000)
-    set_clause = ", ".join(f"{k}=?" for k in fields)
-    with _conn() as conn:
-        conn.execute(
-            f"UPDATE workflow_definitions SET {set_clause} WHERE id=?",
-            list(fields.values()) + [wf_id],
-        )
-    return get_workflow_definition(wf_id)
-
-
-def delete_workflow_definition(wf_id: str) -> bool:
-    with _conn() as conn:
-        affected = conn.execute(
-            "DELETE FROM workflow_definitions WHERE id=?", (wf_id,)
-        ).rowcount
-    return affected > 0
-
-
-def create_workflow_run(
-    workflow_id: str,
-    triggered_by: Optional[str] = None,
-    inputs: Optional[dict] = None,
-) -> str:
-    run_id = _new_id("wfrun")
-    now = int(time.time() * 1000)
-    with _conn() as conn:
-        conn.execute(
-            """INSERT INTO workflow_runs
-               (id,workflow_id,status,triggered_by,input_json,created_at)
-               VALUES (?,?,?,?,?,?)""",
-            (run_id, workflow_id, "pending", triggered_by,
-             json.dumps(inputs or {}), now),
-        )
-    return run_id
-
-
-def get_workflow_run(run_id: str) -> Optional[dict]:
-    with _conn() as conn:
-        row = conn.execute(
-            "SELECT * FROM workflow_runs WHERE id=?", (run_id,)
-        ).fetchone()
-    return dict(row) if row else None
-
-
-def list_workflow_runs(
-    workflow_id: Optional[str] = None,
-    status: Optional[str] = None,
-    limit: int = 50,
-    offset: int = 0,
-) -> tuple[list[dict], int]:
-    conditions: list[str] = []
-    params: list = []
-    if workflow_id:
-        conditions.append("workflow_id=?")
-        params.append(workflow_id)
-    if status:
-        conditions.append("status=?")
-        params.append(status)
-    where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
-    with _conn() as conn:
-        total = conn.execute(
-            f"SELECT COUNT(*) FROM workflow_runs {where}", params
-        ).fetchone()[0]
-        rows = conn.execute(
-            f"SELECT * FROM workflow_runs {where} ORDER BY created_at DESC LIMIT ? OFFSET ?",
-            params + [limit, offset],
-        ).fetchall()
-    return [dict(r) for r in rows], total
-
-
-def update_workflow_run(run_id: str, **kwargs) -> None:
-    allowed = {"status", "started_at", "finished_at", "output_json", "error"}
-    fields = {k: v for k, v in kwargs.items() if k in allowed and v is not None}
-    if not fields:
-        return
-    set_clause = ", ".join(f"{k}=?" for k in fields)
-    with _conn() as conn:
-        conn.execute(
-            f"UPDATE workflow_runs SET {set_clause} WHERE id=?",
-            list(fields.values()) + [run_id],
-        )
-
-
-def create_workflow_step_run(run_id: str, step_def: Any) -> str:
-    """Accepts a StepDefinition instance or dict."""
-    step_id_val = step_def.id if hasattr(step_def, "id") else step_def["id"]
-    step_type   = step_def.type.value if hasattr(step_def, "type") and hasattr(step_def.type, "value") else str(step_def.type if hasattr(step_def, "type") else step_def.get("type", ""))
-    step_name   = step_def.name if hasattr(step_def, "name") else step_def.get("name", step_id_val)
-    pg          = step_def.parallel_group if hasattr(step_def, "parallel_group") else step_def.get("parallel_group")
-    deps        = json.dumps(step_def.depends_on if hasattr(step_def, "depends_on") else step_def.get("depends_on", []))
-    row_id      = _new_id("wfstep")
-    now         = int(time.time() * 1000)
-    with _conn() as conn:
-        conn.execute(
-            """INSERT INTO workflow_step_runs
-               (id,run_id,step_id,step_type,step_name,status,parallel_group,depends_on,created_at)
-               VALUES (?,?,?,?,?,?,?,?,?)""",
-            (row_id, run_id, step_id_val, step_type, step_name,
-             "pending", pg, deps, now),
-        )
-    return row_id
-
-
-def get_workflow_step_runs(run_id: str) -> list[dict]:
-    with _conn() as conn:
-        rows = conn.execute(
-            "SELECT * FROM workflow_step_runs WHERE run_id=? ORDER BY created_at",
-            (run_id,),
-        ).fetchall()
-    return [dict(r) for r in rows]
-
-
-def update_step_run(
-    run_id: str,
-    step_id: str,
-    status: Optional[Any] = None,
-    output_summary: Optional[str] = None,
-    error: Optional[str] = None,
-    started_at: Optional[int] = None,
-    finished_at: Optional[int] = None,
-    approval_id: Optional[str] = None,
-) -> None:
-    fields: dict = {}
-    if status is not None:
-        fields["status"] = status.value if hasattr(status, "value") else status
-    if output_summary is not None:
-        fields["output_summary"] = output_summary
-    if error is not None:
-        fields["error"] = error
-    if started_at is not None:
-        fields["started_at"] = started_at
-    if finished_at is not None:
-        fields["finished_at"] = finished_at
-    if approval_id is not None:
-        fields["approval_id"] = approval_id
-    if not fields:
-        return
-    set_clause = ", ".join(f"{k}=?" for k in fields)
-    with _conn() as conn:
-        conn.execute(
-            f"UPDATE workflow_step_runs SET {set_clause} WHERE run_id=? AND step_id=?",
-            list(fields.values()) + [run_id, step_id],
-        )
-
-
-def create_workflow_approval(run_id: str, step_id: str, note: str) -> str:
-    """Create an approval_requests record for a workflow approval step.
-
-    Uses a synthetic tool_name so it surfaces alongside regular approvals.
-    Expires in 72 hours.
-    """
-    approval_id = _new_id("appr")
-    now = int(time.time() * 1000)
-    expires = now + 72 * 3600 * 1000
-    with _conn() as conn:
-        conn.execute(
-            """INSERT INTO approval_requests
-               (id,session_id,tool_name,tool_args,tool_args_hash,action_type,
-                status,requested_at,expires_at,decision_note)
-               VALUES (?,?,?,?,?,?,?,?,?,?)""",
-            (
-                approval_id,
-                f"wf_{run_id}",          # session_id — identifies the run
-                f"workflow_approval",    # tool_name
-                json.dumps({"run_id": run_id, "step_id": step_id}),
-                f"{run_id}_{step_id}",   # args hash
-                "workflow_approval",     # action_type
-                "pending",
-                now,
-                expires,
-                note,
-            ),
-        )
-    return approval_id
-
-
 # ── Agent Runs ───────────────────────────────────────────────────────────────
 
 def create_agent_run(
@@ -2550,9 +2188,6 @@ def create_agent_run(
     soul: Optional[str] = None,
     model: Optional[str] = None,
     provider: Optional[str] = None,
-    action_policy_id: Optional[str] = None,
-    action_policy_snapshot: Optional[str] = None,
-    workflow_run_id: Optional[str] = None,
     user_message: Optional[str] = None,
     workspace_path: Optional[str] = None,
     agent_id: Optional[str] = None,
@@ -2563,11 +2198,9 @@ def create_agent_run(
         conn.execute(
             """INSERT INTO agent_runs
                (id,session_id,user_id,instance_name,soul,model,provider,
-                action_policy_id,action_policy_snapshot,workflow_run_id,
                 status,user_message,workspace_path,agent_id,started_at,created_at)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (run_id, session_id, user_id, instance_name, soul, model, provider,
-             action_policy_id, action_policy_snapshot, workflow_run_id,
              "running", user_message, workspace_path, agent_id or "hermes", now, now),
         )
     return run_id
