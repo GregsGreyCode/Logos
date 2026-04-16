@@ -91,12 +91,14 @@ services:
     environment:
       BASE_URL: "http://searxng:8080/"
       INSTANCE_NAME: "logos"
-      # Enable the JSON output format the agent actually consumes. The
-      # default SearxNG image only enables html/csv/rss — without this
-      # the /search?format=json path returns 400.
-      SEARXNG_SEARCH_FORMATS: "html,json"
     volumes:
-      - searxng-data:/etc/searxng
+      # JSON output isn't enabled by SearxNG's default settings.yml —
+      # agents need it, so mount a small override that layers on top
+      # of the defaults (use_default_settings: true) and enables both
+      # html + json. Also disables the limiter for local-only use
+      # and pins secret_key so restarts don't invalidate sessions.
+      - ./docker/searxng/settings.yml:/etc/searxng/settings.yml:ro
+      - searxng-data:/var/cache/searxng
     networks: [logos-net]
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "-", "http://localhost:8080/healthz"]

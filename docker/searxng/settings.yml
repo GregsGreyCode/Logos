@@ -1,0 +1,19 @@
+# Logos-bundled SearxNG overrides.
+# Inherits defaults, then enables the JSON output format agents consume
+# and sets a stable secret_key so containers don't regenerate one each
+# restart (which invalidates rate-limit counters).
+
+use_default_settings: true
+
+search:
+  formats:
+    - html
+    - json
+
+server:
+  # Stable secret, safe to be a fixed string because the instance is
+  # local-only and not exposed on the public internet. Users who want a
+  # hardened setup can override this volume with their own settings.yml.
+  secret_key: "logos-local-searxng-dev-secret"
+  limiter: false
+  public_instance: false
