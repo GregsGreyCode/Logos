@@ -80,18 +80,24 @@ always_on:
 # the data-flow consequence explicit so users can decide informed.
 capabilities:
 
-  # ── Local-first capabilities (data stays on your machine) ──
-  # "Browse the web" is the Chromium path: a browser runs inside the
-  # sandbox and reaches sites directly via OpenShell's egress proxy.
-  # No third-party SaaS sits between the agent and the site. Paired
-  # with the (third-party) "Search & scrape the web" capability below
-  # for users who want Firecrawl-backed search/scrape in addition to
-  # raw browsing — keeping them separate so a privacy-conscious user
-  # can enable browsing without opting into Firecrawl.
+  # Three-tier trust taxonomy for the "where does the data go" question:
+  #
+  #   sandbox       — lives inside the agent's sandbox, nothing leaves
+  #                   the container except via OpenShell's egress proxy.
+  #   local_service — runs on the user's own infrastructure (LAN,
+  #                   homelab, same machine) but outside the sandbox.
+  #                   Examples: SearxNG, Ollama, Home Assistant.
+  #   third_party   — runs on someone else's servers.
+  #                   Examples: Firecrawl, Slack, OpenAI, fal.
+  #
+  # Each tier gets its own pill color + label in the Permissions UI so
+  # users can read a row and instantly see the privacy posture.
+
+  # ── In-sandbox capabilities (data doesn't leave the container) ──
   - id: web_browser
     name: Browse the web
     icon: 🌐
-    trust: local
+    trust: sandbox
     trust_note: Chromium runs inside your sandbox and reaches external sites directly. No third-party provider sits between the agent and the site.
     description: Open, read, and interact with web pages (browser automation).
     toolsets: [browser]
@@ -123,11 +129,12 @@ capabilities:
     presets: [firecrawl]
     creds: [FIRECRAWL_API_KEY]
 
+  # ── On-LAN local services (your network, outside the sandbox) ──
   - id: smart_home
     name: Control smart home
     icon: 🏠
-    trust: local
-    trust_note: Talks only to your Home Assistant — never leaves your network.
+    trust: local_service
+    trust_note: Talks only to your Home Assistant — stays on your LAN and never reaches a third-party provider.
     description: Read sensors, toggle devices, run automations.
     toolsets: [homeassistant]
     presets: []
@@ -225,7 +232,7 @@ capabilities:
   - id: code_execution
     name: Run Python code
     icon: 🐍
-    trust: local
+    trust: sandbox
     trust_note: Runs in a sandboxed Python interpreter — code can read/write files in the agent's workspace.
     description: Execute Python for data wrangling, calculations, scripted tool chains.
     toolsets: [code_execution]
@@ -276,7 +283,7 @@ power_tools:
   - id: terminal
     name: Run shell commands
     icon: 💻
-    trust: local
+    trust: sandbox
     trust_note: Executes shell inside the sandbox — broader blast radius than "Run Python code". Prefer Python where possible.
     description: Run arbitrary shell commands (sh, bash, etc.).
     toolsets: [terminal]
