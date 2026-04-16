@@ -1099,6 +1099,17 @@ async def handle_agents_patch(request: web.Request) -> web.Response:
     existing = auth_db.get_agent(aid)
     if not existing:
         return web.json_response({"error": "not_found"}, status=404)
+    # Ownership check: only the creator or an admin can modify an agent.
+    # Other users can chat with shared agents but shouldn't be able to
+    # rename, retool, or repurpose them.
+    req_user = getattr(request, "_user", None) or {}
+    req_user_id = req_user.get("id") or ""
+    req_role = req_user.get("role") or ""
+    if req_role != "admin" and existing.get("creator_id") and existing["creator_id"] != req_user_id:
+        return web.json_response(
+            {"error": "Only the agent's creator or an admin can modify this agent"},
+            status=403,
+        )
     body = await request.json()
     import json as _json
     updates = {}
@@ -1139,6 +1150,14 @@ async def handle_agents_delete(request: web.Request) -> web.Response:
     agent = auth_db.get_agent(aid)
     if not agent:
         return web.json_response({"error": "not_found"}, status=404)
+    req_user = getattr(request, "_user", None) or {}
+    req_user_id = req_user.get("id") or ""
+    req_role = req_user.get("role") or ""
+    if req_role != "admin" and agent.get("creator_id") and agent["creator_id"] != req_user_id:
+        return web.json_response(
+            {"error": "Only the agent's creator or an admin can delete this agent"},
+            status=403,
+        )
 
     # If OpenShell runtime is active, destroy the agent's sandbox AND
     # purge per-agent host data (memories, logs, sessions synced from
@@ -1669,6 +1688,56 @@ async def handle_agent_channels_toggle(request: web.Request) -> web.Response:
 
     refreshed = auth_db.get_agent_channel_credential(cred_id)
     return web.json_response({"credential": _scrub_credential_row(refreshed or row)})
+
+
+# ── User ↔ platform identity links ────────────────────────────────────────
+# Maps a Logos user to their identity on each messaging platform so
+# dispatch rows show real names and agent-edit permissions are scoped.
+
+
+async def handle_platform_links_list(request: web.Request) -> web.Response:
+    """GET /api/admin/platform-links[?user_id=...]"""
+    user_id = request.query.get("user_id")
+    try:
+        rows = auth_db.list_user_platform_links(user_id=user_id or None)
+    except Exception as exc:
+        logger.exception("platform-links list failed")
+        return web.json_response({"error": str(exc)}, status=500)
+    return web.json_response({"links": rows})
+
+
+async def handle_platform_links_post(request: web.Request) -> web.Response:
+    """POST /api/admin/platform-links
+
+    Body: ``{"user_id": "...", "platform": "telegram", "platform_uid": "8754717106", "display_name": "Greg"}``
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "invalid_json"}, status=400)
+    user_id = (body.get("user_id") or "").strip()
+    platform = (body.get("platform") or "").strip().lower()
+    platform_uid = str(body.get("platform_uid") or "").strip()
+    display_name = (body.get("display_name") or "").strip() or None
+    if not user_id or not platform or not platform_uid:
+        return web.json_response({"error": "user_id, platform, and platform_uid required"}, status=400)
+    try:
+        row = auth_db.upsert_user_platform_link(user_id, platform, platform_uid, display_name)
+    except Exception as exc:
+        logger.exception("platform-links upsert failed")
+        return web.json_response({"error": str(exc)}, status=500)
+    return web.json_response({"link": row})
+
+
+async def handle_platform_links_delete(request: web.Request) -> web.Response:
+    """DELETE /api/admin/platform-links/{id}"""
+    lid = request.match_info["id"]
+    try:
+        auth_db.delete_user_platform_link(lid)
+    except Exception as exc:
+        logger.exception("platform-links delete failed")
+        return web.json_response({"error": str(exc)}, status=500)
+    return web.json_response({"ok": True})
 
 
 # ── Gateway self-update (shared backend for CLI + UI button) ────────────────

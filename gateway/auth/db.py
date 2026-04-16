@@ -46,6 +46,28 @@ CREATE TABLE IF NOT EXISTS refresh_tokens (
     user_agent  TEXT
 );
 
+-- ── User ↔ platform identity links ────────────────────────────────────
+-- Maps a Logos user to their identity on each messaging platform
+-- (Telegram user_id, Discord user_id, Slack member_id, etc.) so
+-- dispatch_platform_message can resolve an inbound chat user to
+-- a Logos user, and the Runs tab shows "Greg" instead of "8754717106".
+--
+-- Also tracks ownership attribution: agents created by a user
+-- show that user as the owner for any inbound messages on the
+-- platform, which drives per-user agent-edit permissions.
+
+CREATE TABLE IF NOT EXISTS user_platform_links (
+    id              TEXT PRIMARY KEY,
+    user_id         TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    platform        TEXT NOT NULL,
+    platform_uid    TEXT NOT NULL,
+    display_name    TEXT,
+    created_at      INTEGER NOT NULL,
+    UNIQUE(platform, platform_uid)
+);
+CREATE INDEX IF NOT EXISTS idx_upl_user     ON user_platform_links(user_id);
+CREATE INDEX IF NOT EXISTS idx_upl_platform ON user_platform_links(platform, platform_uid);
+
 CREATE TABLE IF NOT EXISTS user_settings (
     user_id               TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
     default_soul          TEXT,
@@ -1954,6 +1976,73 @@ def resolve_platform_routing(
             (platform,),
         ).fetchone()
         return dict(row) if row else None
+
+
+# ── User ↔ platform identity links ────────────────────────────────────────
+# Resolves a platform chat user_id (Telegram number, Discord snowflake, …)
+# to a Logos user so dispatch rows show real names and agent-edit
+# permissions are scoped correctly.
+
+
+def upsert_user_platform_link(
+    user_id: str,
+    platform: str,
+    platform_uid: str,
+    display_name: Optional[str] = None,
+) -> dict:
+    """Create or update a user ↔ platform identity mapping."""
+    lid = _new_id("upl")
+    now = int(time.time() * 1000)
+    with _conn() as conn:
+        conn.execute(
+            """INSERT INTO user_platform_links
+                   (id, user_id, platform, platform_uid, display_name, created_at)
+               VALUES (?, ?, ?, ?, ?, ?)
+               ON CONFLICT(platform, platform_uid) DO UPDATE SET
+                   user_id = excluded.user_id,
+                   display_name = excluded.display_name""",
+            (lid, user_id, platform, platform_uid, display_name, now),
+        )
+        row = conn.execute(
+            "SELECT * FROM user_platform_links WHERE platform = ? AND platform_uid = ?",
+            (platform, platform_uid),
+        ).fetchone()
+        return dict(row) if row else {}
+
+
+def resolve_platform_user(platform: str, platform_uid: str) -> Optional[str]:
+    """Look up the Logos user_id for a platform identity.
+
+    Returns None when the identity isn't linked yet — the caller
+    should fall back to ``agent.creator_id`` or display the raw
+    platform uid.
+    """
+    with _conn() as conn:
+        row = conn.execute(
+            "SELECT user_id FROM user_platform_links WHERE platform = ? AND platform_uid = ?",
+            (platform, platform_uid),
+        ).fetchone()
+        return row["user_id"] if row else None
+
+
+def list_user_platform_links(user_id: Optional[str] = None) -> list[dict]:
+    """List all platform links, optionally filtered by Logos user."""
+    with _conn() as conn:
+        if user_id:
+            rows = conn.execute(
+                "SELECT * FROM user_platform_links WHERE user_id = ? ORDER BY platform",
+                (user_id,),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT * FROM user_platform_links ORDER BY platform, platform_uid"
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def delete_user_platform_link(link_id: str) -> None:
+    with _conn() as conn:
+        conn.execute("DELETE FROM user_platform_links WHERE id = ?", (link_id,))
 
 
 # ── Per-agent channel credentials ────────────────────────────────────────────

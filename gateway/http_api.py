@@ -5057,6 +5057,13 @@ async def start_http_api(runner: Any, port: int = 8091) -> None:
                           _mm(require_csrf(admin_handlers.handle_agent_channels_delete)))
     app.router.add_post("/admin/agents/{id}/channels/{cred_id}/toggle",
                         _mm(require_csrf(admin_handlers.handle_agent_channels_toggle)))
+    # User ↔ platform identity links (Admin → Users or Config → Messaging)
+    app.router.add_get("/api/admin/platform-links",
+                       _mm(admin_handlers.handle_platform_links_list))
+    app.router.add_post("/api/admin/platform-links",
+                        _mm(require_csrf(admin_handlers.handle_platform_links_post)))
+    app.router.add_delete("/api/admin/platform-links/{id}",
+                          _mm(require_csrf(admin_handlers.handle_platform_links_delete)))
     # Gateway self-update — shared with the `logos gateway update` CLI.
     # GET reports whether origin has newer commits; POST pulls + re-execs
     # the running gateway process. Same auth guard as the other admin
