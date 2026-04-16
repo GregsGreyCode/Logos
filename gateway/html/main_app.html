@@ -273,7 +273,7 @@
     <button class="pb-2 text-sm font-medium border-b-2 border-transparent"
       :class="tab==='sessions'?'tab-active':'text-gray-400 hover:text-white'"
       data-testid="nav-chats"
-      @click="tab='sessions'; if(!namedAgents.length) loadNamedAgents()">Chats</button>
+      @click="tab='sessions'; if(!namedAgents.length) loadNamedAgents(); loadAllAgentChannels()">Chats</button>
     <button class="pb-2 text-sm font-medium border-b-2 border-transparent"
       :class="tab==='compare'?'tab-active':'text-gray-400 hover:text-white'"
       data-testid="nav-compare"
@@ -490,17 +490,23 @@
           class="w-full mb-2 px-3 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-sm rounded-lg font-medium transition-colors flex items-center justify-center gap-2">
           <span>＋</span><span>New Topic</span>
         </button>
-        <!-- Platform filter pills -->
+        <!-- Platform filter pills. Local is always present (web chat
+             sessions in localStorage). Other platforms render a pill
+             ONLY when an enabled agent_channel_credentials row exists
+             for that platform — so a fresh install shows just "Local"
+             and new pills materialise as the user adds credentials in
+             Config → Messaging. The derivation runs off
+             allAgentChannels which is loaded when this tab opens. -->
         <div class="flex gap-1 mb-2 flex-wrap">
           <button @click="setSidebarFilter('web')"
             class="px-2 py-0.5 rounded-full text-xs font-medium transition-colors"
-            :class="sidebarFilter==='web' ? 'bg-indigo-700 text-white' : 'bg-gray-800 text-gray-400 hover:text-gray-200'">Web</button>
-          <button @click="setSidebarFilter('telegram')"
-            class="px-2 py-0.5 rounded-full text-xs font-medium transition-colors"
-            :class="sidebarFilter==='telegram' ? 'bg-indigo-700 text-white' : 'bg-gray-800 text-gray-400 hover:text-gray-200'">📱 TG</button>
-          <button @click="setSidebarFilter('discord')"
-            class="px-2 py-0.5 rounded-full text-xs font-medium transition-colors"
-            :class="sidebarFilter==='discord' ? 'bg-indigo-700 text-white' : 'bg-gray-800 text-gray-400 hover:text-gray-200'">💬 DC</button>
+            :class="sidebarFilter==='web' ? 'bg-indigo-700 text-white' : 'bg-gray-800 text-gray-400 hover:text-gray-200'">Local</button>
+          <template x-for="p in configuredChannelPlatforms()" :key="'ch-pill-'+p">
+            <button @click="setSidebarFilter(p)"
+              class="px-2 py-0.5 rounded-full text-xs font-medium transition-colors"
+              :class="sidebarFilter===p ? 'bg-indigo-700 text-white' : 'bg-gray-800 text-gray-400 hover:text-gray-200'"
+              x-text="({telegram:'📱 TG',discord:'💬 DC',slack:'⚡ SL',whatsapp:'🟢 WA',signal:'📡 SG',email:'✉️ EM'})[p] || p"></button>
+          </template>
         </div>
         <div class="sidebar-scroll space-y-1 pr-1">
           <!-- Web chats (localStorage) -->
@@ -7182,6 +7188,15 @@ function app() {
           // user is authenticated. The endpoint requires auth, so
           // starting earlier would just 401.
           this.startGatewayUpdatePolling();
+          // Pre-load per-agent channel credentials so the Chats
+          // sidebar's platform pill row renders correctly on first
+          // paint (before the user clicks into Config → Messaging).
+          if (this.namedAgents?.length) {
+            this.loadAllAgentChannels();
+          } else {
+            // Named agents might still be loading — wait a tick.
+            setTimeout(() => this.loadAllAgentChannels(), 500);
+          }
         }
       } catch(e) { console.warn('loadAuth failed', e); }
     },
@@ -7429,6 +7444,20 @@ function app() {
     },
 
     // ── Sidebar platform filter ────────────────────────────────────
+
+    configuredChannelPlatforms() {
+      // Flatten allAgentChannels (map of agent_id → rows[]) to a
+      // distinct, sorted list of platforms with at least one enabled
+      // row. Drives the Chats sidebar pill row so the user only sees
+      // filters for platforms they've actually configured.
+      const seen = new Set();
+      for (const rows of Object.values(this.allAgentChannels || {})) {
+        for (const r of (rows || [])) {
+          if (r && r.enabled && r.platform) seen.add(r.platform);
+        }
+      }
+      return Array.from(seen).sort();
+    },
 
     setSidebarFilter(filter) {
       this.sidebarFilter = filter;
