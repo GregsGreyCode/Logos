@@ -28,10 +28,14 @@ TOOL_INTEGRATIONS = {
         "tools": ["web_search", "web_extract"],
         "toolset": "web",
         "help_url": "https://firecrawl.dev/",
-        "validate_url": "https://api.firecrawl.dev/v1/scrape",
+        # Hit the v2 scrape endpoint; v2 strict-rejects unknown keys so the
+        # body carries only the two required fields. (Previously included
+        # `limit: 1`, which is a /search or /crawl parameter and was
+        # silently tolerated by v1 but now returns BAD_REQUEST on v2.)
+        "validate_url": "https://api.firecrawl.dev/v2/scrape",
         "validate_method": "POST",
         "validate_headers": lambda key: {"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
-        "validate_body": {"url": "https://example.com", "formats": ["markdown"], "limit": 1},
+        "validate_body": {"url": "https://example.com", "formats": ["markdown"]},
         "selfhosted_alt": "FIRECRAWL_API_URL",
     },
     "FAL_KEY": {
