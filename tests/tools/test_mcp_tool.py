@@ -482,8 +482,7 @@ class TestToolsetInjection:
 
         fake_toolsets = {
             "hermes-cli": {"tools": ["terminal"], "description": "CLI", "includes": []},
-            "hermes-telegram": {"tools": ["terminal"], "description": "TG", "includes": []},
-            "hermes-gateway": {"tools": [], "description": "GW", "includes": []},
+            "hermes-acp": {"tools": ["terminal"], "description": "ACP", "includes": []},
             "non-hermes": {"tools": [], "description": "other", "includes": []},
         }
         fake_config = {"fs": {"command": "npx", "args": []}}
@@ -499,8 +498,7 @@ class TestToolsetInjection:
         assert "mcp_fs_list_files" in result
         # All hermes-* toolsets get injection
         assert "mcp_fs_list_files" in fake_toolsets["hermes-cli"]["tools"]
-        assert "mcp_fs_list_files" in fake_toolsets["hermes-telegram"]["tools"]
-        assert "mcp_fs_list_files" in fake_toolsets["hermes-gateway"]["tools"]
+        assert "mcp_fs_list_files" in fake_toolsets["hermes-acp"]["tools"]
         # Non-hermes toolset should NOT get injection
         assert "mcp_fs_list_files" not in fake_toolsets["non-hermes"]["tools"]
         # Original tools preserved

@@ -100,15 +100,16 @@ CONFIGURABLE_TOOLSETS = [
 # but the setup checklist won't pre-select them for first-time users.
 _DEFAULT_OFF_TOOLSETS = {"moa", "homeassistant"}
 
-# Platform display config
+# Platform display config. All channels share the same default toolset
+# (hermes-cli); per-channel variants used to exist but were identical clones.
 PLATFORMS = {
     "cli":      {"label": "🖥️  CLI",       "default_toolset": "hermes-cli"},
-    "telegram": {"label": "📱 Telegram",   "default_toolset": "hermes-telegram"},
-    "discord":  {"label": "💬 Discord",    "default_toolset": "hermes-discord"},
-    "slack":    {"label": "💼 Slack",      "default_toolset": "hermes-slack"},
-    "whatsapp": {"label": "📱 WhatsApp",   "default_toolset": "hermes-whatsapp"},
-    "signal":   {"label": "📡 Signal",     "default_toolset": "hermes-signal"},
-    "email":    {"label": "📧 Email",      "default_toolset": "hermes-email"},
+    "telegram": {"label": "📱 Telegram",   "default_toolset": "hermes-cli"},
+    "discord":  {"label": "💬 Discord",    "default_toolset": "hermes-cli"},
+    "slack":    {"label": "💼 Slack",      "default_toolset": "hermes-cli"},
+    "whatsapp": {"label": "📱 WhatsApp",   "default_toolset": "hermes-cli"},
+    "signal":   {"label": "📡 Signal",     "default_toolset": "hermes-cli"},
+    "email":    {"label": "📧 Email",      "default_toolset": "hermes-cli"},
 }
 
 

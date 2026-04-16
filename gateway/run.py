@@ -2743,17 +2743,9 @@ class GatewayRunner:
             # Read model from config via shared helper
             model = _resolve_gateway_model()
 
-            # Determine toolset (same logic as _run_agent)
-            default_toolset_map = {
-                Platform.LOCAL: "hermes-cli",
-                Platform.TELEGRAM: "hermes-telegram",
-                Platform.DISCORD: "hermes-discord",
-                Platform.WHATSAPP: "hermes-whatsapp",
-                Platform.SLACK: "hermes-slack",
-                Platform.SIGNAL: "hermes-signal",
-                Platform.HOMEASSISTANT: "hermes-homeassistant",
-                Platform.EMAIL: "hermes-email",
-            }
+            # Toolset: config.yaml override if present, else hermes-cli.
+            # Per-channel toolsets used to be distinct entries but collapsed
+            # into hermes-cli since they were identical.
             platform_toolsets_config = {}
             try:
                 config_path = _hermes_home / 'config.yaml'
@@ -2774,14 +2766,13 @@ class GatewayRunner:
                 Platform.SIGNAL: "signal",
                 Platform.HOMEASSISTANT: "homeassistant",
                 Platform.EMAIL: "email",
-            }.get(source.platform, "telegram")
+            }.get(source.platform, "cli")
 
             config_toolsets = platform_toolsets_config.get(platform_config_key)
             if config_toolsets and isinstance(config_toolsets, list):
                 enabled_toolsets = config_toolsets
             else:
-                default_toolset = default_toolset_map.get(source.platform, "hermes-telegram")
-                enabled_toolsets = [default_toolset]
+                enabled_toolsets = ["hermes-cli"]
 
             platform_key = "cli" if source.platform == Platform.LOCAL else source.platform.value
 
@@ -4148,20 +4139,9 @@ class GatewayRunner:
                 except Exception as _preload_exc:
                     logger.warning("LM Studio: pre-load failed: %s", _preload_exc)
 
-        # Determine toolset based on platform.
-        # Check config.yaml for per-platform overrides, fallback to hardcoded defaults.
-        default_toolset_map = {
-            Platform.LOCAL: "hermes-cli",
-            Platform.TELEGRAM: "hermes-telegram",
-            Platform.DISCORD: "hermes-discord",
-            Platform.WHATSAPP: "hermes-whatsapp",
-            Platform.SLACK: "hermes-slack",
-            Platform.SIGNAL: "hermes-signal",
-            Platform.HOMEASSISTANT: "hermes-homeassistant",
-            Platform.EMAIL: "hermes-email",
-        }
-
-        # Try to load platform_toolsets from config
+        # Toolset: config.yaml per-channel override if present, else hermes-cli.
+        # Per-channel toolset variants used to exist but collapsed into
+        # hermes-cli since they were identical clones.
         platform_toolsets_config = {}
         try:
             config_path = _hermes_home / 'config.yaml'
@@ -4173,7 +4153,6 @@ class GatewayRunner:
         except Exception as e:
             logger.debug("Could not load platform_toolsets config: %s", e)
 
-        # Map platform enum to config key
         platform_config_key = {
             Platform.LOCAL: "cli",
             Platform.TELEGRAM: "telegram",
@@ -4183,15 +4162,13 @@ class GatewayRunner:
             Platform.SIGNAL: "signal",
             Platform.HOMEASSISTANT: "homeassistant",
             Platform.EMAIL: "email",
-        }.get(source.platform, "telegram")
-        
-        # Use config override if present (list of toolsets), otherwise hardcoded default
+        }.get(source.platform, "cli")
+
         config_toolsets = platform_toolsets_config.get(platform_config_key)
         if config_toolsets and isinstance(config_toolsets, list):
             enabled_toolsets = config_toolsets
         else:
-            default_toolset = default_toolset_map.get(source.platform, "hermes-telegram")
-            enabled_toolsets = [default_toolset]
+            enabled_toolsets = ["hermes-cli"]
 
         # Named agent override: use agent-specific toolsets if configured
         if agent_config:
