@@ -899,6 +899,28 @@
                       </label>
                     </template>
 
+                    <!-- Power tools — rare, kept inline under the main
+                         list rather than behind an Advanced toggle so the
+                         user can still find them without the dropdown
+                         growing a disclosure. -->
+                    <template x-if="(agentCapsState.power_tools || []).length">
+                      <div class="border-t border-gray-800/60 mt-1">
+                        <div class="px-3 pt-2 pb-1 text-[9px] text-gray-600 uppercase tracking-wider">Power tools</div>
+                        <template x-for="c in (agentCapsState.power_tools || [])" :key="'pt-'+c.id">
+                          <label class="flex items-center gap-2.5 px-3 py-1.5 text-[11px] hover:bg-gray-800/40 cursor-pointer"
+                                 :title="c.trust_note || ''">
+                            <input type="checkbox"
+                              :checked="c.enabled"
+                              :disabled="!!(agentCapsToggling && agentCapsToggling['cap:'+c.id])"
+                              @change="toggleCapability(activeAgent.id, c.id, $event.target.checked)"
+                              class="h-3.5 w-3.5 rounded border-gray-700 bg-gray-900 text-orange-500 focus:ring-0 focus:ring-offset-0 flex-shrink-0">
+                            <span x-text="c.icon" class="flex-shrink-0"></span>
+                            <span class="text-gray-200 font-medium truncate" x-text="c.name"></span>
+                          </label>
+                        </template>
+                      </div>
+                    </template>
+
                     <!-- Always-on: single muted line. Icons + names only —
                          these are local-only and granted by default, shown
                          here for consent transparency. -->
@@ -911,44 +933,6 @@
                           <span x-text="a.name"></span>
                         </span>
                       </template>
-                    </div>
-
-                    <!-- Raw data disclosure — single-line toggle; mostly
-                         useful for verifying exactly which YAML presets are
-                         applied when debugging egress. Power-tool
-                         capabilities live here too since they're rare. -->
-                    <div class="border-t border-gray-800">
-                      <button @click="capsAdvancedOpen = !capsAdvancedOpen"
-                        class="w-full px-3 py-1.5 text-[10px] text-gray-600 hover:text-gray-300 flex items-center gap-1.5">
-                        <span :class="capsAdvancedOpen ? 'rotate-90' : ''" class="inline-block transition-transform text-[9px]">▶</span>
-                        <span>Raw view</span>
-                      </button>
-                      <div x-show="capsAdvancedOpen" x-cloak class="border-t border-gray-800/40 px-3 py-2 space-y-2 text-[10px]">
-                        <template x-if="(agentCapsState.power_tools || []).length">
-                          <div>
-                            <div class="text-[9px] uppercase tracking-wider text-gray-700 mb-1">Power tools</div>
-                            <template x-for="c in (agentCapsState.power_tools || [])" :key="'pt-'+c.id">
-                              <label class="flex items-center gap-2 py-0.5 cursor-pointer hover:text-gray-300">
-                                <input type="checkbox"
-                                  :checked="c.enabled"
-                                  :disabled="!!(agentCapsToggling && agentCapsToggling['cap:'+c.id])"
-                                  @change="toggleCapability(activeAgent.id, c.id, $event.target.checked)"
-                                  class="h-3 w-3 rounded border-gray-700 bg-gray-900 text-orange-500 focus:ring-0 focus:ring-offset-0 flex-shrink-0">
-                                <span x-text="c.icon"></span>
-                                <span x-text="c.name" class="text-gray-400"></span>
-                              </label>
-                            </template>
-                          </div>
-                        </template>
-                        <div x-show="agentToolsState && agentToolsState._agentId === activeAgent.id" class="text-gray-600">
-                          <div class="text-[9px] uppercase tracking-wider text-gray-700 mb-0.5">Toolsets</div>
-                          <div class="font-mono text-gray-500 leading-snug mb-1.5"
-                               x-text="(agentToolsState?.toolsets?.enabled || []).join(', ') || '(none)'"></div>
-                          <div class="text-[9px] uppercase tracking-wider text-gray-700 mb-0.5">Granted permissions (raw preset names)</div>
-                          <div class="font-mono text-gray-500 leading-snug"
-                               x-text="(agentToolsState?.presets?.applied || []).join(', ') || '(none)'"></div>
-                        </div>
-                      </div>
                     </div>
                   </div>
 
@@ -3445,11 +3429,29 @@
              }).then(r => r.json());
              this.result = vres;
              if (vres.ok) {
-               await fetch('/api/services/keys', {
+               const saveRes = await fetch('/api/services/keys', {
                  method: 'POST', credentials: 'include',
                  headers: {'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken()},
                  body: JSON.stringify({env_var: ti.env_var, value: val}),
-               });
+               }).then(r => r.json()).catch(() => ({}));
+               // Extend the validation-success message with what the save
+               // actually did — the sandbox refresh count and which
+               // network permissions were auto-granted. Without this
+               // feedback users don't know whether agents actually got
+               // the key pushed or whether they need to restart a
+               // sandbox by hand.
+               const bits = [vres.message || 'Key saved.'];
+               const presets = saveRes.presets_applied || [];
+               if (presets.length) {
+                 bits.push('Granted ' + presets.join(', ') + ' permission' + (presets.length === 1 ? '' : 's') + '.');
+               }
+               const n = saveRes.sandboxes_refreshed || 0;
+               if (n > 0) {
+                 bits.push('Pushed to ' + n + ' running sandbox' + (n === 1 ? '' : 'es') + '.');
+               } else if (saveRes.ok) {
+                 bits.push('No running sandboxes to refresh.');
+               }
+               this.result = { ok: true, message: bits.join(' ') };
                await this.loadServices();
                // Re-pick the now-refreshed integration entry so the
                // detail panel shows the updated has_key state.
