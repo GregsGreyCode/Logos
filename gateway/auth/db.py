@@ -333,6 +333,43 @@ CREATE TABLE IF NOT EXISTS platform_routing (
     UNIQUE(platform, scope, scope_id)
 );
 
+-- ── Per-agent channel credentials ─────────────────────────────────────────
+-- One row per (agent, platform, label) — lets a single agent own multiple
+-- bot tokens on the same platform (e.g. a prod + staging Telegram bot),
+-- and lets different agents own different tokens on the same platform
+-- (the original motivation: "Hermes gets this Telegram bot, Henry gets
+-- that one, route by token not by chat_id").
+--
+-- The token column is stored in cleartext, same as the legacy global
+-- credentials dict in platform_settings.feature_flags. Logos is
+-- single-host self-hosted; filesystem perms are the trust boundary.
+-- Row-level encryption (Fernet) can layer in later without changing
+-- the schema if the threat model tightens.
+--
+-- label: human-friendly distinguisher for the agent's channels tab
+-- ("prod", "staging", "family"). Free text; UNIQUE constraint is
+-- (agent_id, platform, label), so the same label is fine across agents.
+--
+-- metadata: JSON blob for platform-specific extras captured at validate
+-- time (e.g. Telegram bot username, Discord application id, Slack team).
+-- Lets the UI render "Connected as @hermesbot (Hermes)" without hitting
+-- the platform API on every page load.
+
+CREATE TABLE IF NOT EXISTS agent_channel_credentials (
+    id          TEXT PRIMARY KEY,
+    agent_id    TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+    platform    TEXT NOT NULL,
+    label       TEXT NOT NULL DEFAULT 'default',
+    token       TEXT NOT NULL,
+    enabled     INTEGER NOT NULL DEFAULT 1,
+    metadata    TEXT,
+    created_at  INTEGER NOT NULL,
+    updated_at  INTEGER NOT NULL,
+    UNIQUE(agent_id, platform, label)
+);
+CREATE INDEX IF NOT EXISTS idx_acc_agent    ON agent_channel_credentials(agent_id);
+CREATE INDEX IF NOT EXISTS idx_acc_platform ON agent_channel_credentials(platform);
+
 -- ── Model routes ───────────────────────────────────────────────────────────
 -- One row per (provider, model) pair the user has provisioned. Each route is
 -- backed by a dedicated OpenShell gateway pinned to that single model via
@@ -1915,6 +1952,95 @@ def resolve_platform_routing(
         row = conn.execute(
             "SELECT * FROM platform_routing WHERE platform = ? AND scope = 'global'",
             (platform,),
+        ).fetchone()
+        return dict(row) if row else None
+
+
+# ── Per-agent channel credentials ────────────────────────────────────────────
+# One token row per (agent, platform, label). The adapter lifecycle in
+# platform_manager reads these rows and spawns one adapter instance per
+# enabled row; inbound messages carry the owning agent_id so no
+# platform_routing lookup is needed on the receive path.
+
+def upsert_agent_channel_credential(
+    agent_id: str,
+    platform: str,
+    token: str,
+    label: str = "default",
+    enabled: bool = True,
+    metadata: Optional[dict] = None,
+) -> dict:
+    """Create or update a credential row. Returns the stored row as a dict.
+
+    Idempotent on (agent_id, platform, label) — re-calling with the same
+    key rotates the token / flips enabled / replaces metadata.
+    """
+    import json as _json
+    cid = _new_id("acc")
+    now = int(time.time() * 1000)
+    meta_json = _json.dumps(metadata) if metadata else None
+    with _conn() as conn:
+        conn.execute(
+            """INSERT INTO agent_channel_credentials
+                   (id, agent_id, platform, label, token, enabled, metadata, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT(agent_id, platform, label) DO UPDATE SET
+                   token      = excluded.token,
+                   enabled    = excluded.enabled,
+                   metadata   = excluded.metadata,
+                   updated_at = excluded.updated_at""",
+            (cid, agent_id, platform, label, token, 1 if enabled else 0, meta_json, now, now),
+        )
+        row = conn.execute(
+            """SELECT * FROM agent_channel_credentials
+               WHERE agent_id = ? AND platform = ? AND label = ?""",
+            (agent_id, platform, label),
+        ).fetchone()
+        return dict(row) if row else {}
+
+
+def delete_agent_channel_credential(cred_id: str) -> None:
+    with _conn() as conn:
+        conn.execute("DELETE FROM agent_channel_credentials WHERE id = ?", (cred_id,))
+
+
+def set_agent_channel_credential_enabled(cred_id: str, enabled: bool) -> None:
+    now = int(time.time() * 1000)
+    with _conn() as conn:
+        conn.execute(
+            "UPDATE agent_channel_credentials SET enabled = ?, updated_at = ? WHERE id = ?",
+            (1 if enabled else 0, now, cred_id),
+        )
+
+
+def list_agent_channel_credentials(
+    agent_id: Optional[str] = None,
+    platform: Optional[str] = None,
+    enabled_only: bool = False,
+) -> list[dict]:
+    """Fetch credential rows with optional filters. Token values are
+    included verbatim — callers must not log these rows."""
+    clauses: list[str] = []
+    args: list = []
+    if agent_id:
+        clauses.append("agent_id = ?")
+        args.append(agent_id)
+    if platform:
+        clauses.append("platform = ?")
+        args.append(platform)
+    if enabled_only:
+        clauses.append("enabled = 1")
+    where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+    sql = f"SELECT * FROM agent_channel_credentials {where} ORDER BY agent_id, platform, label"
+    with _conn() as conn:
+        return [dict(r) for r in conn.execute(sql, args).fetchall()]
+
+
+def get_agent_channel_credential(cred_id: str) -> Optional[dict]:
+    with _conn() as conn:
+        row = conn.execute(
+            "SELECT * FROM agent_channel_credentials WHERE id = ?",
+            (cred_id,),
         ).fetchone()
         return dict(row) if row else None
 
