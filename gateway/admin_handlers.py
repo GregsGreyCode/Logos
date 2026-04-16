@@ -663,6 +663,20 @@ async def handle_dispatches_list(request: web.Request) -> web.Response:
         agent_id=agent_id, origin=origin, status=status, q=q,
         limit=limit, offset=offset,
     )
+    # Expand STAMP JSON columns so the UI doesn't have to parse twice.
+    # toolsets_snapshot is stored as a JSON list string; tool_sequence
+    # ditto. We hand back arrays (empty when missing or malformed).
+    import json as _json
+    for r in rows:
+        for field in ("toolsets_snapshot", "tool_sequence"):
+            raw = r.get(field)
+            if raw:
+                try:
+                    r[field] = _json.loads(raw)
+                except Exception:
+                    r[field] = []
+            else:
+                r[field] = []
     return web.json_response({
         "dispatches": rows, "total": total,
         "limit": limit, "offset": offset,
