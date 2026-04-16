@@ -140,6 +140,16 @@ CREATE INDEX IF NOT EXISTS idx_eval_results_suite_run ON eval_results(suite_run_
 CREATE INDEX IF NOT EXISTS idx_eval_results_case ON eval_results(case_id);
 """
 
+EMBEDDINGS_SQL = """
+CREATE TABLE IF NOT EXISTS message_embeddings (
+    message_id  INTEGER PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,
+    embedding   BLOB NOT NULL,
+    model       TEXT NOT NULL DEFAULT 'nomic-embed-text',
+    dimensions  INTEGER NOT NULL,
+    created_at  REAL NOT NULL
+);
+"""
+
 FTS_SQL = """
 CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
     content,
@@ -340,6 +350,16 @@ CREATE INDEX IF NOT EXISTS idx_eval_results_case ON eval_results(case_id);
             cursor.execute("SELECT * FROM messages_fts LIMIT 0")
         except sqlite3.OperationalError:
             cursor.executescript(FTS_SQL)
+
+        # Embeddings table — stores per-message vector embeddings for
+        # semantic search. Created alongside FTS5 so both search modes
+        # are available. The table is populated lazily (background task
+        # after each message write) and may be empty if no embedding
+        # endpoint is reachable.
+        try:
+            cursor.execute("SELECT * FROM message_embeddings LIMIT 0")
+        except sqlite3.OperationalError:
+            cursor.executescript(EMBEDDINGS_SQL)
 
         # Limit WAL growth: checkpoint every 100 pages and prevent unbounded file growth.
         self._conn.execute("PRAGMA wal_autocheckpoint=100")
@@ -858,6 +878,171 @@ CREATE INDEX IF NOT EXISTS idx_eval_results_case ON eval_results(case_id);
             match.pop("content", None)
 
         return matches
+
+    # =========================================================================
+    # Semantic (vector) search — embedding-based recall
+    # =========================================================================
+
+    @staticmethod
+    def _get_embedding(text: str, model: str = "nomic-embed-text",
+                       base_url: str = None) -> Optional[List[float]]:
+        """Call an OpenAI-compatible /v1/embeddings endpoint.
+
+        Tries Ollama (11434) then LM Studio (1234) then falls back to
+        None (caller skips embedding). No external deps — uses urllib.
+        """
+        import json as _json
+        import urllib.request
+
+        urls = [base_url] if base_url else [
+            "http://localhost:11434/v1/embeddings",
+            "http://localhost:1234/v1/embeddings",
+        ]
+        payload = _json.dumps({"model": model, "input": text}).encode()
+
+        for url in urls:
+            try:
+                req = urllib.request.Request(
+                    url,
+                    data=payload,
+                    headers={"Content-Type": "application/json"},
+                )
+                with urllib.request.urlopen(req, timeout=10) as resp:
+                    data = _json.loads(resp.read().decode())
+                    emb = data.get("data", [{}])[0].get("embedding")
+                    if emb:
+                        return emb
+            except Exception:
+                continue
+        return None
+
+    def store_embedding(self, message_id: int, embedding: List[float],
+                        model: str = "nomic-embed-text") -> None:
+        """Persist a pre-computed embedding for a message."""
+        import struct, time as _time
+        blob = struct.pack(f'{len(embedding)}f', *embedding)
+        with self._write_lock:
+            self._conn.execute(
+                """INSERT OR REPLACE INTO message_embeddings
+                   (message_id, embedding, model, dimensions, created_at)
+                   VALUES (?, ?, ?, ?, ?)""",
+                (message_id, blob, model, len(embedding), _time.time()),
+            )
+            self._conn.commit()
+
+    def embed_message(self, message_id: int, content: str,
+                      model: str = "nomic-embed-text") -> bool:
+        """Compute + store an embedding for a single message. Returns
+        True if successful, False if no embedding endpoint was reachable."""
+        if not content or not content.strip():
+            return False
+        emb = self._get_embedding(content.strip()[:2000], model=model)
+        if emb is None:
+            return False
+        self.store_embedding(message_id, emb, model)
+        return True
+
+    def backfill_embeddings(self, model: str = "nomic-embed-text",
+                            batch_size: int = 50) -> int:
+        """Embed all messages that don't have an embedding yet.
+
+        Intended for one-off backfill or periodic catchup. Stops early
+        if the embedding endpoint becomes unreachable (so a missing
+        Ollama doesn't spin forever). Returns count of newly embedded.
+        """
+        cursor = self._conn.execute(
+            """SELECT m.id, m.content FROM messages m
+               LEFT JOIN message_embeddings e ON m.id = e.message_id
+               WHERE e.message_id IS NULL
+               AND m.content IS NOT NULL AND m.content != ''
+               AND m.role IN ('user', 'assistant')
+               ORDER BY m.id
+               LIMIT ?""",
+            (batch_size,),
+        )
+        rows = cursor.fetchall()
+        embedded = 0
+        for row in rows:
+            ok = self.embed_message(row["id"], row["content"], model)
+            if not ok:
+                break  # endpoint unreachable — stop early
+            embedded += 1
+        return embedded
+
+    def semantic_search(self, query: str, limit: int = 5,
+                        model: str = "nomic-embed-text",
+                        current_session_id: str = None) -> List[Dict[str, Any]]:
+        """Find the most semantically similar messages to a query.
+
+        Returns the same shape as search_messages (id, session_id,
+        role, content, snippet, source, model, session_started) so the
+        session_search tool can merge results from both search modes.
+        """
+        import struct, math
+
+        query_emb = self._get_embedding(query, model=model)
+        if query_emb is None:
+            return []  # no endpoint — caller falls back to FTS5
+
+        # Load all stored embeddings. For <10k messages this is fast
+        # (~5ms). At scale, move to an HNSW index (hnswlib).
+        cursor = self._conn.execute(
+            """SELECT e.message_id, e.embedding, e.dimensions,
+                      m.session_id, m.role, m.content, m.timestamp,
+                      s.source, s.model AS session_model, s.started_at
+               FROM message_embeddings e
+               JOIN messages m ON m.id = e.message_id
+               JOIN sessions s ON s.id = m.session_id
+               WHERE m.role IN ('user', 'assistant')""",
+        )
+
+        def _cosine(a: List[float], b_blob: bytes, dims: int) -> float:
+            b = struct.unpack(f'{dims}f', b_blob)
+            dot = sum(x * y for x, y in zip(a, b))
+            na = math.sqrt(sum(x * x for x in a))
+            nb = math.sqrt(sum(x * x for x in b))
+            return dot / (na * nb) if na and nb else 0.0
+
+        scored = []
+        for row in cursor:
+            if current_session_id and row["session_id"] == current_session_id:
+                continue
+            sim = _cosine(query_emb, row["embedding"], row["dimensions"])
+            scored.append((sim, dict(row)))
+
+        scored.sort(key=lambda x: x[0], reverse=True)
+
+        results = []
+        seen_sessions = set()
+        for sim, row in scored[:limit * 3]:
+            sid = row["session_id"]
+            if sid in seen_sessions:
+                continue
+            seen_sessions.add(sid)
+            content = row.get("content") or ""
+            snippet = content[:200] + "..." if len(content) > 200 else content
+            results.append({
+                "id": row["message_id"],
+                "session_id": sid,
+                "role": row["role"],
+                "snippet": snippet,
+                "content": content,
+                "timestamp": row["timestamp"],
+                "source": row["source"],
+                "model": row["session_model"],
+                "session_started": row["started_at"],
+                "similarity": round(sim, 4),
+            })
+            if len(results) >= limit:
+                break
+
+        return results
+
+    def embedding_stats(self) -> Dict[str, Any]:
+        """Quick stats for diagnostics."""
+        total_msgs = self._conn.execute("SELECT COUNT(*) FROM messages WHERE role IN ('user','assistant')").fetchone()[0]
+        embedded = self._conn.execute("SELECT COUNT(*) FROM message_embeddings").fetchone()[0]
+        return {"total_messages": total_msgs, "embedded": embedded, "coverage_pct": round(embedded / max(total_msgs, 1) * 100, 1)}
 
     def search_sessions(
         self,
