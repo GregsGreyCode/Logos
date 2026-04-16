@@ -726,6 +726,86 @@ def apply_preset(agent_id: str, preset_name: str) -> Dict[str, Any]:
     return effective
 
 
+def ensure_channel_access(agent_id: str, platform: str) -> Dict[str, Any]:
+    """Give an agent the tools + network policy to send on a platform.
+
+    Called when a per-agent channel credential is added so the agent
+    doesn't sit on a bot token it can't actually use. Two pieces:
+
+      1. Toolset: the ``messaging`` toolset (contains ``send_message``)
+         is added to ``agents.toolsets`` if missing. Without this the
+         agent has the token in its env but no tool to call.
+      2. Network preset: the matching platform YAML
+         (``telegram`` / ``discord`` / ``slack`` / ``whatsapp``) is
+         applied so the sandbox's L7 proxy permits egress to the
+         platform's API host. Without this the tool would fire and
+         get a 403 from the proxy.
+
+    Both operations are idempotent. Returns the effective applied
+    preset list + updated toolset list so the caller can surface the
+    change in UI ("enabled messaging toolset + telegram preset").
+    """
+    import json as _json
+    from gateway.auth import db as _auth_db
+
+    added_toolset = False
+    agent = _auth_db.get_agent(agent_id)
+    if agent:
+        try:
+            toolsets = _json.loads(agent.get("toolsets") or "[]")
+            if not isinstance(toolsets, list):
+                toolsets = []
+        except Exception:
+            toolsets = []
+        if "messaging" not in toolsets:
+            toolsets.append("messaging")
+            try:
+                from gateway.auth.db import _conn
+                import time as _time
+                with _conn() as conn:
+                    conn.execute(
+                        "UPDATE agents SET toolsets=?, updated_at=? WHERE id=?",
+                        (_json.dumps(toolsets), int(_time.time() * 1000), agent_id),
+                    )
+                added_toolset = True
+                logger.info(
+                    "ensure_channel_access(%s, %s): added 'messaging' toolset",
+                    agent_id, platform,
+                )
+            except Exception:
+                logger.exception("ensure_channel_access: toolset write failed")
+
+    # Apply the platform network preset if one exists. Not all
+    # platforms have a preset in gateway/policies/presets/ — treat a
+    # missing preset as "no network override needed" rather than a
+    # hard error (e.g. HomeAssistant reaches a local URL, no preset).
+    preset_applied = False
+    try:
+        load_preset(platform)
+        apply_preset(agent_id, platform)
+        preset_applied = True
+    except PresetNotFound:
+        logger.debug("ensure_channel_access: no preset named %s (skipping)", platform)
+    except Exception:
+        logger.exception("ensure_channel_access: apply_preset(%s) failed", platform)
+
+    # Refresh the sandbox's instance-config so the new toolset + policy
+    # take effect immediately without waiting for a respawn.
+    try:
+        from gateway.executors.openshell import OpenShellExecutor
+        agent_name = (agent or {}).get("name") or ""
+        if agent_name:
+            OpenShellExecutor().refresh_instance_config(agent_name)
+    except Exception:
+        logger.exception("ensure_channel_access: sandbox refresh failed (non-fatal)")
+
+    return {
+        "toolset_added": added_toolset,
+        "preset_applied": preset_applied,
+        "applied_presets": get_applied_presets(agent_id),
+    }
+
+
 def remove_preset(agent_id: str, preset_name: str) -> Dict[str, Any]:
     """Remove ``preset_name`` from an agent's applied set and push
     the updated effective policy to the running sandbox.

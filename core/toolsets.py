@@ -192,6 +192,12 @@ TOOLSETS = {
         "includes": []
     },
 
+    "messaging": {
+        "description": "Send messages on connected platforms (Telegram, Discord, Slack, WhatsApp, Signal, Email) via the per-agent channel credentials. Agents need this toolset to reach out proactively; inbound messages arrive regardless.",
+        "tools": ["send_message"],
+        "includes": []
+    },
+
 
     # Scenario-specific toolsets
     

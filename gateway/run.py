@@ -1617,6 +1617,19 @@ class GatewayRunner:
                     "env→credentials: seeded %s default row for agent %s",
                     platform.value, default_agent.get("name") or default_agent["id"],
                 )
+                # Give the agent the tool + network policy it needs to
+                # actually USE the token it just got. Without this step
+                # the migration leaves the agent in the "has a bot but
+                # can't send on it" state that the first round of this
+                # feature shipped with. Best-effort.
+                try:
+                    from gateway import policies as _gp
+                    _gp.ensure_channel_access(default_agent["id"], platform.value)
+                except Exception:
+                    logger.exception(
+                        "env→credentials: ensure_channel_access(%s, %s) failed",
+                        default_agent["id"], platform.value,
+                    )
             except Exception:
                 logger.exception("env→credentials: upsert %s failed", platform.value)
         if seeded:
