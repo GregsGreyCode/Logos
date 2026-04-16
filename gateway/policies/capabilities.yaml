@@ -129,6 +129,22 @@ capabilities:
     presets: [firecrawl]
     creds: [FIRECRAWL_API_KEY]
 
+  # ── Local service: self-hosted SearxNG metasearch ──
+  # Grants the sandbox egress to a SearxNG instance on the user's
+  # network. The agent queries it via browser_navigate
+  # (http://<SEARXNG_URL>/search?q=<query>&format=json) and parses
+  # the JSON response — no Firecrawl, no cloud search provider,
+  # queries stay on the user's infrastructure.
+  - id: web_search_local
+    name: Search the web locally (SearxNG)
+    icon: 🔎
+    trust: local_service
+    trust_note: Queries go to your self-hosted SearxNG. SearxNG proxies the search to upstream engines (Google/Bing/DDG) on ITS host — upstream engines never see the agent sandbox, and nothing leaves your network as far as the agent is concerned.
+    description: Open-ended web search via a self-hosted SearxNG metasearch engine.
+    toolsets: [browser]
+    presets: [searxng, web-browse]
+    creds: [SEARXNG_URL]
+
   # ── On-LAN local services (your network, outside the sandbox) ──
   - id: smart_home
     name: Control smart home

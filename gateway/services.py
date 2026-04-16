@@ -67,6 +67,14 @@ TOOL_INTEGRATIONS = {
         "validate_method": "GET",
         "validate_headers": lambda key: {"x-bb-api-key": key},
     },
+    "SEARXNG_URL": {
+        "label": "SearxNG (self-hosted search)",
+        "description": "Local metasearch engine — web search stays on your network",
+        "tools": ["web_search"],  # advisory; the agent actually uses browser_navigate
+        "toolset": "browser",
+        "help_url": "https://github.com/searxng/searxng",
+        "value_kind": "url",  # URL, not an API key
+    },
     "ELEVENLABS_API_KEY": {
         "label": "ElevenLabs",
         "description": "Premium text-to-speech voices",

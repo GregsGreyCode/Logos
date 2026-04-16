@@ -1299,6 +1299,24 @@ def _handle_task(task: Dict[str, Any], config: Dict[str, Any]) -> None:
         _hosts_summary = ", ".join(_allowed_hosts[:20]) + (
             " (and others)" if len(_allowed_hosts) > 20 else ""
         )
+        # SearxNG recipe — prefer the self-hosted metasearch endpoint over
+        # html.duckduckgo.com when the user has wired one up. Queries stay
+        # on the local network; upstream search engines only see SearxNG's
+        # host, not the agent sandbox. Falls through to DDG-HTML when
+        # SEARXNG_URL is unset.
+        _searxng_url = (os.environ.get("SEARXNG_URL") or "").rstrip("/")
+        if _searxng_url:
+            _search_recipe = (
+                f"  - Free-text web search (PREFERRED) → {_searxng_url}/search?q=<query>&format=json\n"
+                "    This is your self-hosted SearxNG metasearch — queries stay local,\n"
+                "    no CAPTCHAs. The response is JSON; use\n"
+                "    browser_console(expression='document.body.innerText') to read it.\n"
+            )
+        else:
+            _search_recipe = (
+                "  - Free-text search (last resort) → https://html.duckduckgo.com/html/?q=<query>\n"
+            )
+
         _injection = (
             "Browser tool: you HAVE working internet access via browser_navigate. "
             "For ANY factual query, ALWAYS call the tool — never claim "
@@ -1312,7 +1330,7 @@ def _handle_task(task: Dict[str, Any], config: Dict[str, Any]) -> None:
             "  - Weather → https://wttr.in/<city>?format=j1 (JSON) or ?format=3 (one-line text)\n"
             "  - Quick fact / definition → https://api.duckduckgo.com/?q=<query>&format=json\n"
             "  - Encyclopedia / history → https://en.wikipedia.org/wiki/<Article_Name>\n"
-            "  - Free-text search (last resort) → https://html.duckduckgo.com/html/?q=<query>\n"
+            + _search_recipe +
             "\n"
             "TIP for raw-JSON API endpoints (api.coingecko.com etc.): chrome shows "
             "the JSON as plain text — if browser_navigate's snapshot looks empty, "

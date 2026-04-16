@@ -52,6 +52,11 @@ services:
       TELEGRAM_BOT_TOKEN: "${TELEGRAM_BOT_TOKEN:-}"
       TELEGRAM_ALLOWED_USERS: "${TELEGRAM_ALLOWED_USERS:-}"
 
+      # ── Self-hosted local services ──────────────────────────────────────────
+      # Default points at the compose-hosted SearxNG container below; override
+      # in .env if you run SearxNG elsewhere on your network.
+      SEARXNG_URL: "${SEARXNG_URL:-http://searxng:8080}"
+
     volumes:
       # Persists: auth DB, memory, sessions, logs, skills, config.yaml
       - logos-data:/home/logos/.logos
@@ -64,10 +69,41 @@ services:
       retries: 3
       start_period: 20s
 
+  # ── Self-hosted SearxNG metasearch ──────────────────────────────────────
+  # Profile: searxng (disabled by default; enable with
+  # `docker compose --profile searxng up -d`). Once running, the sandbox
+  # can query http://searxng:8080/search?q=<query>&format=json via the
+  # browser tool — no Firecrawl, no cloud search provider, queries stay
+  # on this docker network.
+  searxng:
+    image: searxng/searxng:latest
+    container_name: logos-searxng
+    profiles: [searxng, selfhost-tools]
+    restart: unless-stopped
+    ports:
+      - "${SEARXNG_PORT:-8080}:8080"
+    environment:
+      BASE_URL: "http://searxng:8080/"
+      INSTANCE_NAME: "logos"
+      # Enable the JSON output format the agent actually consumes. The
+      # default SearxNG image only enables html/csv/rss — without this
+      # the /search?format=json path returns 400.
+      SEARXNG_SEARCH_FORMATS: "html,json"
+    volumes:
+      - searxng-data:/etc/searxng
+    networks: [logos-net]
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://localhost:8080/healthz"]
+      interval: 60s
+      timeout: 5s
+      retries: 3
+
 networks:
   logos-net:
     name: logos-net
 
 volumes:
   logos-data:
+    driver: local
+  searxng-data:
     driver: local
