@@ -812,7 +812,14 @@
                    Reuses the same agentToolsState fetched by T so opening
                    either dropdown after the other is instant. Dropdown
                    sizing mirrors T's so it doesn't blow past the chat panel. -->
-              <div class="relative" x-data="{ open: false }" @click.away="open = false">
+              <!-- @click.away only closes the dropdown when no toggle
+                   is mid-save. A toggle in flight blocks dismissal so
+                   the user doesn't walk away before the DB write +
+                   openshell policy-set finish. Paired with a sticky
+                   "Saving…" banner inside the panel so users know why
+                   the panel is hanging around. -->
+              <div class="relative" x-data="{ open: false }"
+                   @click.away="if (!Object.keys(agentCapsToggling || {}).length) open = false">
                 <button
                   @click="open = !open;
                           if (open && activeAgent) {
@@ -860,6 +867,16 @@
                             class="text-gray-500 font-mono"
                             x-text="(agentCapsState.capabilities||[]).filter(c=>c.enabled).length + ' / ' + (agentCapsState.capabilities||[]).length"></span>
                     </div>
+                  </div>
+
+                  <!-- Saving banner — shown while ANY toggle is in
+                       flight. The dropdown click-away is blocked in
+                       this state too, so users don't wander off before
+                       the DB write + openshell policy push finish. -->
+                  <div x-show="agentCapsToggling && Object.keys(agentCapsToggling).length" x-cloak
+                       class="px-3 py-2 text-[11px] text-yellow-300 bg-yellow-950/40 border-b border-yellow-900/60 flex items-center gap-2 sticky top-[3.15rem] z-10">
+                    <span class="inline-block h-2 w-2 rounded-full bg-yellow-400 animate-pulse"></span>
+                    <span>Saving permission… please don't close or switch agents.</span>
                   </div>
 
                   <!-- No agent -->

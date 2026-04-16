@@ -1494,8 +1494,17 @@ async def handle_agent_capabilities_toggle(request: web.Request) -> web.Response
     if not cap_id:
         return web.json_response({"error": "capability is required"}, status=400)
     from gateway import capabilities as _caps
+    # Shield the apply from client-disconnect cancellation. aiohttp's
+    # default behaviour is to cancel the request task when the client
+    # goes away, which can abort a toggle mid-flight (DB written but
+    # openshell policy-set still pending) — users reported "I flipped
+    # the toggle and left the page and it didn't complete". Shield
+    # ensures the work finishes even if the browser gives up on the
+    # response.
     try:
-        new_state = _caps.apply(aid, cap_id, enabled)
+        new_state = await asyncio.shield(
+            asyncio.to_thread(_caps.apply, aid, cap_id, enabled)
+        )
     except ValueError as exc:
         return web.json_response({"error": str(exc)}, status=400)
     except Exception as exc:

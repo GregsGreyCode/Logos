@@ -190,6 +190,50 @@ TOOL_PRESET_MAP: Dict[str, Dict[str, Any]] = {
         "description": "Multi-model reasoning via OpenRouter",
         "setup_url": "https://openrouter.ai",
     },
+    # Messaging — Telegram / Slack / Discord. Each needs its own
+    # preset because egress rules differ (api.telegram.org vs
+    # slack.com vs discord.com + gateway.discord.gg). Without these
+    # entries, saving a bot token via Config → Tools would never
+    # trigger auto_apply_presets_for_env, and the sandbox would 403
+    # any send_message call even though the token is on disk.
+    "send_telegram": {
+        "presets": ["telegram"],
+        "env": ["TELEGRAM_BOT_TOKEN"],
+        "toolset": "messaging",
+        "description": "Post messages to Telegram chats",
+        "setup_url": "https://core.telegram.org/bots",
+    },
+    "send_slack": {
+        "presets": ["slack"],
+        "env": ["SLACK_BOT_TOKEN"],
+        "toolset": "messaging",
+        "description": "Post messages to Slack channels",
+        "setup_url": "https://api.slack.com/apps",
+    },
+    "send_discord": {
+        "presets": ["discord"],
+        "env": ["DISCORD_BOT_TOKEN"],
+        "toolset": "messaging",
+        "description": "Post messages to Discord channels",
+        "setup_url": "https://discord.com/developers/applications",
+    },
+    # GitHub — repo management tools (issues, PRs, commits).
+    "manage_github": {
+        "presets": ["github"],
+        "env": ["GITHUB_TOKEN"],
+        "toolset": "github",
+        "description": "Open issues, comment on PRs, push commits",
+        "setup_url": "https://github.com/settings/tokens",
+    },
+    # HuggingFace — model hub + inference endpoints.
+    "huggingface": {
+        "presets": ["huggingface"],
+        "env": ["HUGGINGFACE_API_KEY"],
+        "toolset": "vision",
+        "description": "Pull models, run hosted inference",
+        "setup_url": "https://huggingface.co/settings/tokens",
+        "optional": True,
+    },
 }
 
 
