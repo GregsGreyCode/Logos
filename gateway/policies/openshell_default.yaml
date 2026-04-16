@@ -179,6 +179,12 @@ network_policies:
           - allow:
               method: GET
               path: /mcp/*
+          # Internal sandbox-facing endpoints — session search, future
+          # tool proxies. Separated from /admin/* so the sandbox can't
+          # reach admin CRUD. Only GET is needed today.
+          - allow:
+              method: GET
+              path: /api/internal/*
     binaries:
       - path: /app/venv/bin/python
       - path: /app/venv/bin/python3
