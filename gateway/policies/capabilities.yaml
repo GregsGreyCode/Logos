@@ -155,6 +155,16 @@ capabilities:
       url: http://searxng:8080/healthz
       env_override: SEARXNG_URL
       install_hint: "Start the bundled SearxNG with `docker compose --profile searxng up -d searxng`, then try again."
+    # One-click install — when the probe fails, the UI offers an
+    # "Install & enable" button that shells out to docker compose to
+    # bring the service up. Requires Docker to be accessible from the
+    # gateway (works out of the box for the default docker-compose
+    # deployment; needs socket access if the gateway itself is
+    # containerised).
+    service_install:
+      docker_compose_profile: searxng
+      docker_compose_service: searxng
+      timeout_seconds: 60
 
   # ── On-LAN local services (your network, outside the sandbox) ──
   - id: smart_home

@@ -287,6 +287,63 @@ def probe_service(cap: dict) -> Optional[dict]:
         }
 
 
+def install_service(cap: dict, compose_dir: Optional[str] = None) -> dict:
+    """Bring a capability's backing compose service up and wait for probe.
+
+    Returns a dict shape:
+        {"ok": True, "log": "..."}             on success
+        {"ok": False, "error": "...", "log": ...}  on failure
+
+    Only runs when the capability declares ``service_install``. The
+    gateway's working directory (or the passed ``compose_dir``) must
+    contain the docker-compose.yml that defines the target service —
+    same file that ships with Logos.
+
+    Fails gracefully when Docker isn't reachable (rootless deployments,
+    missing socket, wrong cwd) — the UI shows the error so users can
+    fall back to a manual ``docker compose up`` command.
+    """
+    install = cap.get("service_install") or {}
+    profile = install.get("docker_compose_profile")
+    service = install.get("docker_compose_service")
+    timeout_s = int(install.get("timeout_seconds") or 60)
+    if not profile or not service:
+        return {"ok": False, "error": "capability has no service_install metadata"}
+    # Resolve compose dir — caller-provided > cwd. Cwd is what the
+    # gateway already runs from for a standard repo-root launch.
+    cwd = compose_dir or os.getcwd()
+    import subprocess
+    cmd = ["docker", "compose", "--profile", profile, "up", "-d", service]
+    try:
+        proc = subprocess.run(
+            cmd, cwd=cwd, capture_output=True, text=True, timeout=timeout_s,
+        )
+    except FileNotFoundError:
+        return {"ok": False, "error": "docker CLI not found on PATH"}
+    except subprocess.TimeoutExpired:
+        return {"ok": False, "error": f"`docker compose up` timed out after {timeout_s}s"}
+    except Exception as exc:
+        return {"ok": False, "error": f"`docker compose up` failed: {exc}"}
+    log = (proc.stdout or "") + (proc.stderr or "")
+    if proc.returncode != 0:
+        return {"ok": False, "error": f"docker compose exited {proc.returncode}", "log": log}
+    # Poll the reachability probe for up to timeout_s so the caller can
+    # apply the capability straight after — the service usually needs a
+    # few seconds to come up even after `up -d` returns.
+    import time as _time
+    deadline = _time.monotonic() + timeout_s
+    while _time.monotonic() < deadline:
+        probe = probe_service(cap)
+        if probe is None:
+            return {"ok": True, "log": log}
+        _time.sleep(1.0)
+    return {
+        "ok": False,
+        "error": "service started but probe still failing after install",
+        "log": log,
+    }
+
+
 def apply(agent_id: str, cap_id: str, enabled: bool) -> dict:
     """Atomically apply or remove all toolsets + presets for one capability.
 

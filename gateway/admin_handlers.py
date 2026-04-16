@@ -1413,6 +1413,68 @@ async def handle_agent_capabilities_toggle(request: web.Request) -> web.Response
     return web.json_response(new_state)
 
 
+async def handle_agent_capabilities_install(request: web.Request) -> web.Response:
+    """POST /admin/agents/{id}/capabilities/install
+
+    Body: ``{"capability": "<id>"}``
+
+    Two-step flow paired with the probe that gates
+    /capabilities/toggle:
+      1. Shell out ``docker compose --profile <p> up -d <service>``
+         for the capability's service_install block.
+      2. Wait for the reachability probe to clear.
+      3. Apply the capability (same as toggle enabled=true).
+
+    Returns the post-install capability state on success, or a 4xx
+    with error details if docker compose or the probe fail.
+    """
+    aid = request.match_info["id"]
+    agent = auth_db.get_agent(aid)
+    if not agent:
+        return web.json_response({"error": "not_found"}, status=404)
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "invalid_json"}, status=400)
+    cap_id = (body.get("capability") or "").strip()
+    if not cap_id:
+        return web.json_response({"error": "capability is required"}, status=400)
+    from gateway import capabilities as _caps
+    cap = _caps.find(cap_id)
+    if not cap:
+        return web.json_response({"error": f"unknown_capability:{cap_id}"}, status=400)
+    if not cap.get("service_install"):
+        return web.json_response(
+            {"error": "capability has no install metadata; enable manually"},
+            status=400,
+        )
+    install_result = _caps.install_service(cap)
+    if not install_result.get("ok"):
+        return web.json_response({
+            "error": "install_failed",
+            "detail": install_result.get("error") or "unknown",
+            "log": install_result.get("log") or "",
+        }, status=500)
+    try:
+        new_state = _caps.apply(aid, cap_id, True)
+    except ValueError as exc:
+        return web.json_response({"error": str(exc)}, status=400)
+    except Exception as exc:
+        logger.exception("capability install+apply failed for %s/%s", aid, cap_id)
+        return web.json_response({"error": str(exc)}, status=500)
+    # Refresh sandbox config same as the regular toggle path.
+    executor = request.app.get("executor")
+    if executor and hasattr(executor, "refresh_instance_config"):
+        try:
+            executor.refresh_instance_config(agent["name"])
+        except Exception as exc:
+            logger.warning(
+                "capability install: refresh_instance_config(%s) failed: %s",
+                agent["name"], exc,
+            )
+    return web.json_response(new_state)
+
+
 async def handle_agent_website_blocklist_put(request: web.Request) -> web.Response:
     """PUT /admin/agents/{id}/website-blocklist
 

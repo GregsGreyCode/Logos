@@ -5054,6 +5054,8 @@ async def start_http_api(runner: Any, port: int = 8091) -> None:
                        _mm(admin_handlers.handle_agent_capabilities_get))
     app.router.add_post("/admin/agents/{id}/capabilities/toggle",
                         _mm(require_csrf(admin_handlers.handle_agent_capabilities_toggle)))
+    app.router.add_post("/admin/agents/{id}/capabilities/install",
+                        _mm(require_csrf(admin_handlers.handle_agent_capabilities_install)))
     # Layer 1 URL consent — per-agent website blocklist that the local
     # browser tool checks before every navigation.
     app.router.add_put("/admin/agents/{id}/website-blocklist",
