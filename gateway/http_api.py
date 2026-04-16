@@ -5046,6 +5046,17 @@ async def start_http_api(runner: Any, port: int = 8091) -> None:
                         _mm(require_csrf(admin_handlers.handle_agent_toolsets_toggle)))
     app.router.add_post("/admin/agents/{id}/tools/presets/toggle",
                         _mm(require_csrf(admin_handlers.handle_agent_presets_toggle)))
+    # Per-agent channel credentials — Agent editor → Channels subtab.
+    # Each agent owns its own messaging platform tokens; the adapter
+    # lifecycle spawns one adapter instance per enabled row.
+    app.router.add_get("/admin/agents/{id}/channels",
+                       _mm(admin_handlers.handle_agent_channels_list))
+    app.router.add_post("/admin/agents/{id}/channels",
+                        _mm(require_csrf(admin_handlers.handle_agent_channels_post)))
+    app.router.add_delete("/admin/agents/{id}/channels/{cred_id}",
+                          _mm(require_csrf(admin_handlers.handle_agent_channels_delete)))
+    app.router.add_post("/admin/agents/{id}/channels/{cred_id}/toggle",
+                        _mm(require_csrf(admin_handlers.handle_agent_channels_toggle)))
     # Capabilities — user-facing collapse of toolsets + presets + creds.
     # GET returns the catalogue annotated with per-agent state; POST
     # toggles a capability (atomic apply/remove of all bundled toolsets
