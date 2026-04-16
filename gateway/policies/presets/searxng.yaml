@@ -36,12 +36,27 @@ network_policies:
       # host.openshell.internal routes sandbox traffic to the Logos
       # host's published port. docker-compose publishes SearxNG on
       # 8888 by default (change via SEARXNG_PORT in .env).
+      #
+      # Policy shape mirrors the mcp_gateway entry in
+      # openshell_default.yaml — `allowed_ips: 172.0.0.0/8` is
+      # required because host.openshell.internal resolves to
+      # the docker-compose bridge IP (172.x.x.x), and without
+      # that IP range in the allowlist the proxy 403s the
+      # connection even when the hostname is matched. `rules:`
+      # whitelists the two methods SearxNG's JSON API uses.
       - host: host.openshell.internal
         port: 8888
         protocol: rest
         enforcement: enforce
-        tls: skip
-        access: full
+        allowed_ips:
+          - "172.0.0.0/8"
+        rules:
+          - allow:
+              method: GET
+              path: /*
+          - allow:
+              method: POST
+              path: /*
     binaries:
       - { path: /app/venv/bin/python }
       - { path: /app/venv/bin/python3 }
