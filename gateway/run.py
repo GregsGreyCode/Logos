@@ -2142,12 +2142,22 @@ class GatewayRunner:
                 _policy_json = _json.dumps(_pl) if isinstance(_pl, list) and _pl else ""
             except Exception:
                 _policy_json = ""
-            # user_id: the Telegram chat user isn't a Logos user — the
-            # number is their platform ID. Resolve to the agent's
-            # creator so the Runs "User" column shows a real name
-            # (e.g. Greg) instead of a raw Telegram ID. The platform
-            # user_id is still captured in origin_detail for audit.
-            _dispatch_user_id = agent.get("creator_id") or ""
+            # user_id: resolve the platform chat user to a Logos user
+            # via user_platform_links. Falls back to the agent's
+            # creator_id when no link exists (single-user installs
+            # where nobody has bothered to link their Telegram account
+            # to their Logos login). The raw platform uid is always
+            # captured in origin_detail for audit.
+            _dispatch_user_id = ""
+            if user_id:
+                try:
+                    _dispatch_user_id = _auth_db.resolve_platform_user(
+                        platform_name, user_id,
+                    ) or ""
+                except Exception:
+                    pass
+            if not _dispatch_user_id:
+                _dispatch_user_id = agent.get("creator_id") or ""
             _dispatch_id = _auth_db.create_dispatch(
                 task_id=task_payload["task_id"],
                 agent_id=_agent_id,

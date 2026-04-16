@@ -399,6 +399,26 @@ def build_agent_system_prompt(agent_record: dict, session_context_prompt: str) -
         parts.append(description)
         parts.append("")
 
+    # Tool-use guidance nudges — tell the agent about memory + session
+    # recall so it actually USES the tools it has rather than saying
+    # "I don't remember" or "could you repeat that?". These constants
+    # live in agent/prompt_builder.py and are already used in the CLI
+    # path; the gateway path was missing them.
+    try:
+        from agent.prompt_builder import (
+            MEMORY_GUIDANCE,
+            SESSION_SEARCH_GUIDANCE,
+            SKILLS_GUIDANCE,
+        )
+        parts.append("## Tool guidance")
+        parts.append("")
+        parts.append(f"- {MEMORY_GUIDANCE}")
+        parts.append(f"- {SESSION_SEARCH_GUIDANCE}")
+        parts.append(f"- {SKILLS_GUIDANCE}")
+        parts.append("")
+    except ImportError:
+        pass
+
     if session_context_prompt:
         parts.append(session_context_prompt)
 
