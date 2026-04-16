@@ -167,6 +167,15 @@ def format_agent_prompt_block(agent_id: str) -> str:
         logger.debug("format_agent_prompt_block: compute_state failed: %s", exc)
         return ""
 
+    # Map the three-tier trust taxonomy to short user-facing labels.
+    # Keep the labels terse so the prompt block stays compact even with
+    # a dozen capabilities.
+    trust_label = {
+        "sandbox":       "sandbox",
+        "local_service": "local",
+        "third_party":   "cloud",
+    }
+
     lines: list[str] = ["## Your permissions", ""]
 
     # Enabled first — positive framing, shows what the agent CAN do.
@@ -175,8 +184,7 @@ def format_agent_prompt_block(agent_id: str) -> str:
     if enabled:
         lines.append("Enabled now:")
         for c in enabled:
-            trust = c.get("trust", "local")
-            pill = "local" if trust == "local" else "cloud"
+            pill = trust_label.get(c.get("trust", "sandbox"), "sandbox")
             lines.append(f"- {c.get('icon', '·')} **{c.get('name', c['id'])}** ({pill}) — {c.get('description', '').strip()}")
         lines.append("")
 
@@ -187,8 +195,7 @@ def format_agent_prompt_block(agent_id: str) -> str:
     if disabled:
         lines.append("Not enabled (ask the user to flip the matching toggle in the P pill):")
         for c in disabled:
-            trust = c.get("trust", "local")
-            pill = "local" if trust == "local" else "cloud"
+            pill = trust_label.get(c.get("trust", "sandbox"), "sandbox")
             missing = c.get("missing_creds") or []
             if missing:
                 hint = f"needs {', '.join(missing)} set in Config → Tools, then enable in Permissions"
