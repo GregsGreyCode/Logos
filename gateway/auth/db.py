@@ -796,6 +796,13 @@ def _run_migrations() -> None:
         # empty tool lists at runtime. Idempotent via schema_flags.
         _migrate_collapse_hermes_channel_toolsets_v1(conn)
 
+        # v24: drop orphan toolset references on agents.toolsets — entries
+        # that are neither in the static catalogue nor a dynamic MCP
+        # toolset (mcp-<name>). Accumulated from historical cleanup
+        # passes that removed catalogue entries without sweeping stored
+        # agent rows (e.g. `messaging` lived on earlier).
+        _migrate_prune_orphan_agent_toolsets_v1(conn)
+
 
 def _migrate_collapse_hermes_channel_toolsets_v1(conn) -> None:
     """Rewrite agents.toolsets to drop dead hermes-<channel> aliases.
@@ -859,6 +866,82 @@ def _migrate_collapse_hermes_channel_toolsets_v1(conn) -> None:
     if rewritten:
         logger.info(
             "collapse_hermes_channel_toolsets_v1: rewrote %d agent row(s)", rewritten,
+        )
+
+
+def _migrate_prune_orphan_agent_toolsets_v1(conn) -> None:
+    """Drop agents.toolsets entries that no longer resolve to anything.
+
+    Preserved:
+      - anything in the static core.toolsets.TOOLSETS catalogue
+      - anything matching the dynamic MCP-server prefix ``mcp-<name>``
+        (registered at runtime by tools.mcp_tool, not stored in the
+        static catalogue, so we must not strip them)
+
+    Everything else was historically a catalogue entry that has since
+    been removed (e.g. ``messaging``) and would resolve to an empty
+    tool list. Dropping the reference is a no-op at runtime but keeps
+    the stored config honest and makes future toolset-pill counts
+    accurate in the UI. Idempotent via schema_flags.
+    """
+    already = conn.execute(
+        "SELECT value FROM schema_flags WHERE key = 'prune_orphan_agent_toolsets_v1'"
+    ).fetchone()
+    if already:
+        return
+
+    import json as _json
+    try:
+        from core.toolsets import TOOLSETS as _TOOLSETS
+        valid_static = set(_TOOLSETS.keys())
+    except Exception as exc:
+        logger.warning(
+            "prune_orphan_agent_toolsets_v1: could not load core.toolsets (%s); skipping", exc,
+        )
+        return
+
+    pruned_total = 0
+    rewritten = 0
+    for row in conn.execute("SELECT id, name, toolsets FROM agents").fetchall():
+        raw = row["toolsets"]
+        if not raw:
+            continue
+        try:
+            parsed = _json.loads(raw)
+        except Exception:
+            continue
+        if not isinstance(parsed, list):
+            continue
+        kept: list[str] = []
+        dropped: list[str] = []
+        for name in parsed:
+            if not isinstance(name, str):
+                kept.append(name)
+                continue
+            if name in valid_static or name.startswith("mcp-"):
+                kept.append(name)
+            else:
+                dropped.append(name)
+        if dropped:
+            conn.execute(
+                "UPDATE agents SET toolsets=? WHERE id=?",
+                (_json.dumps(kept), row["id"]),
+            )
+            rewritten += 1
+            pruned_total += len(dropped)
+            logger.info(
+                "prune_orphan_agent_toolsets_v1: agent=%s pruned=%s",
+                row["name"] or row["id"], dropped,
+            )
+
+    conn.execute(
+        "INSERT INTO schema_flags (key, value, applied_at) VALUES (?, ?, ?)",
+        ("prune_orphan_agent_toolsets_v1", "1", int(time.time() * 1000)),
+    )
+    if rewritten:
+        logger.info(
+            "prune_orphan_agent_toolsets_v1: rewrote %d agent row(s), dropped %d orphan ref(s)",
+            rewritten, pruned_total,
         )
 
 
