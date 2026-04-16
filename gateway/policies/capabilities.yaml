@@ -130,20 +130,23 @@ capabilities:
     creds: [FIRECRAWL_API_KEY]
 
   # ── Local service: self-hosted SearxNG metasearch ──
-  # Grants the sandbox egress to a SearxNG instance on the user's
-  # network. The agent queries it via browser_navigate
-  # (http://<SEARXNG_URL>/search?q=<query>&format=json) and parses
-  # the JSON response — no Firecrawl, no cloud search provider,
-  # queries stay on the user's infrastructure.
+  # Ships with Logos — the docker-compose file includes a SearxNG
+  # service under the `searxng` profile, and SEARXNG_URL defaults to
+  # the compose-network hostname (http://searxng:8080). No credential
+  # input required: users toggle this on and either it works (SearxNG
+  # is running on the compose network) or the agent gets a connection
+  # error at search time and reports it back. Users with a SearxNG
+  # instance elsewhere on their LAN can override via
+  # Config → Tools → SEARXNG_URL.
   - id: web_search_local
     name: Search the web locally (SearxNG)
     icon: 🔎
     trust: local_service
-    trust_note: Queries go to your self-hosted SearxNG. SearxNG proxies the search to upstream engines (Google/Bing/DDG) on ITS host — upstream engines never see the agent sandbox, and nothing leaves your network as far as the agent is concerned.
-    description: Open-ended web search via a self-hosted SearxNG metasearch engine.
+    trust_note: Queries go to the SearxNG shipped with Logos (or your own LAN instance if you override SEARXNG_URL). SearxNG proxies the search to upstream engines (Google/Bing/DDG) on ITS host — upstream engines never see the agent sandbox, and nothing leaves your network as far as the agent is concerned.
+    description: Open-ended web search via the bundled SearxNG metasearch engine (start with `docker compose --profile searxng up -d searxng`).
     toolsets: [browser]
     presets: [searxng, web-browse]
-    creds: [SEARXNG_URL]
+    creds: []
 
   # ── On-LAN local services (your network, outside the sandbox) ──
   - id: smart_home
