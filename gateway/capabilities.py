@@ -287,6 +287,41 @@ def probe_service(cap: dict) -> Optional[dict]:
         }
 
 
+def _host_port_in_use(port: int) -> Optional[str]:
+    """Return a short description of who owns ``port`` on the host, or None
+    if the port is free. Used by install_service to fail fast with an
+    actionable error before shelling docker compose — the raw docker
+    "port is already allocated" output doesn't tell the user what's
+    holding it.
+
+    Best-effort — we only report the process name / PID when lsof or
+    /proc works; otherwise we just say "port is in use" and let the
+    admin investigate.
+    """
+    import socket
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.settimeout(0.25)
+        try:
+            s.bind(("0.0.0.0", port))
+        except OSError:
+            pass
+        else:
+            return None  # bind succeeded → port free
+    # Port is bound — try to identify the process holding it.
+    import subprocess
+    for cmd in (
+        ["lsof", "-iTCP", f":{port}", "-sTCP:LISTEN", "-nP"],
+        ["ss", "-tlnp", f"sport = :{port}"],
+    ):
+        try:
+            out = subprocess.run(cmd, capture_output=True, text=True, timeout=2.0)
+            if out.returncode == 0 and out.stdout.strip():
+                return out.stdout.strip().splitlines()[-1][:200]
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            continue
+    return f"port {port} is already in use"
+
+
 def install_service(cap: dict, compose_dir: Optional[str] = None) -> dict:
     """Bring a capability's backing compose service up and wait for probe.
 
@@ -299,6 +334,16 @@ def install_service(cap: dict, compose_dir: Optional[str] = None) -> dict:
     contain the docker-compose.yml that defines the target service —
     same file that ships with Logos.
 
+    Pre-flight: if ``service_install.host_port`` is set, checks the
+    port is free on the host before shelling docker compose. Raw
+    docker conflicts ("Bind for 0.0.0.0:8080 failed") don't tell the
+    user what's holding the port; we do.
+
+    Post-success: if ``service_install.sandbox_env`` declares env vars,
+    they're persisted to the services credential store so agent
+    sandboxes see them on their next spawn — same mechanism other
+    tool integrations use.
+
     Fails gracefully when Docker isn't reachable (rootless deployments,
     missing socket, wrong cwd) — the UI shows the error so users can
     fall back to a manual ``docker compose up`` command.
@@ -307,8 +352,23 @@ def install_service(cap: dict, compose_dir: Optional[str] = None) -> dict:
     profile = install.get("docker_compose_profile")
     service = install.get("docker_compose_service")
     timeout_s = int(install.get("timeout_seconds") or 60)
+    host_port = install.get("host_port")
+    sandbox_env = install.get("sandbox_env") or {}
     if not profile or not service:
         return {"ok": False, "error": "capability has no service_install metadata"}
+    # Pre-flight port check — fail fast with a useful message if
+    # something else is already bound to the host port. Docker's
+    # "port is already allocated" doesn't tell the user which
+    # process to kill or which port to pick instead.
+    if host_port:
+        holder = _host_port_in_use(int(host_port))
+        if holder is not None:
+            return {
+                "ok": False,
+                "error": f"host port {host_port} is already in use",
+                "detail": holder,
+                "hint": f"Free port {host_port}, or set SEARXNG_PORT=<other port> in .env and retry.",
+            }
     # Resolve compose dir — caller-provided > cwd. Cwd is what the
     # gateway already runs from for a standard repo-root launch.
     cwd = compose_dir or os.getcwd()
@@ -335,6 +395,16 @@ def install_service(cap: dict, compose_dir: Optional[str] = None) -> dict:
     while _time.monotonic() < deadline:
         probe = probe_service(cap)
         if probe is None:
+            # Persist any declared sandbox-env so agent sandboxes pick
+            # it up on next dispatch. Best-effort; log + continue on
+            # failure so a DB hiccup doesn't undo a successful start.
+            if sandbox_env:
+                try:
+                    from gateway import services as _services
+                    for k, v in sandbox_env.items():
+                        _services.set_credential(k, str(v))
+                except Exception as exc:
+                    logger.warning("install_service: persisting sandbox_env failed: %s", exc)
             return {"ok": True, "log": log}
         _time.sleep(1.0)
     return {

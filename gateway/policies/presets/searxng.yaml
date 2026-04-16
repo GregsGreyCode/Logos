@@ -33,17 +33,14 @@ network_policies:
   searxng:
     name: searxng
     endpoints:
-      - host: searxng.internal
-        port: 8080
+      # host.openshell.internal routes sandbox traffic to the Logos
+      # host's published port. docker-compose publishes SearxNG on
+      # 8888 by default (change via SEARXNG_PORT in .env).
+      - host: host.openshell.internal
+        port: 8888
         protocol: rest
         enforcement: enforce
         tls: skip
-        access: full
-      - host: searxng.internal
-        port: 443
-        protocol: rest
-        enforcement: enforce
-        tls: terminate
         access: full
     binaries:
       - { path: /app/venv/bin/python }

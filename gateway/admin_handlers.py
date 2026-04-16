@@ -718,6 +718,8 @@ async def handle_local_service_start(request: web.Request) -> web.Response:
     return web.json_response({
         "ok": result.get("ok", False),
         "error": result.get("error"),
+        "detail": result.get("detail"),  # holder process when port taken
+        "hint": result.get("hint"),      # actionable suggestion
         "log": result.get("log") or "",
     }, status=status)
 
