@@ -223,6 +223,70 @@ def format_agent_prompt_block(agent_id: str) -> str:
     return "\n".join(lines).strip()
 
 
+def probe_service(cap: dict) -> Optional[dict]:
+    """Probe a local_service capability's health endpoint before enabling.
+
+    Returns ``None`` when the capability either has no ``service_probe``
+    field or the probe succeeds. Returns ``{"ok": False, "hint": ...,
+    "url": ..., "detail": ...}`` when the service isn't reachable —
+    caller (the capability-toggle handler) returns that to the UI so
+    the user gets "start SearxNG first" instead of a silently-enabled
+    capability that fails at first-search.
+
+    The probe URL can be overridden per-deployment via the env var named
+    in ``service_probe.env_override`` (so a user running SearxNG at
+    searx.home.arpa gets probed at THEIR URL, not the compose default).
+    """
+    probe = cap.get("service_probe") or {}
+    if not probe:
+        return None
+    default_url = probe.get("url")
+    env_override = probe.get("env_override")
+    probe_url = (env_override and os.environ.get(env_override)) or default_url
+    if not probe_url:
+        return None
+    # Allow users to set SEARXNG_URL=http://host:port without the
+    # /healthz suffix — append the path from the capability's probe
+    # URL so the override still works.
+    if env_override and os.environ.get(env_override) and default_url:
+        from urllib.parse import urlsplit
+        default_path = urlsplit(default_url).path or "/"
+        override_parts = urlsplit(probe_url)
+        if not override_parts.path or override_parts.path == "/":
+            probe_url = probe_url.rstrip("/") + default_path
+    import urllib.request
+    import urllib.error
+    try:
+        req = urllib.request.Request(probe_url, method="GET")
+        with urllib.request.urlopen(req, timeout=2.5) as resp:
+            if 200 <= resp.status < 500:
+                return None  # reachable is good enough; 4xx still means alive
+            return {
+                "ok": False,
+                "url": probe_url,
+                "hint": probe.get("install_hint") or "Service responded with an unexpected status.",
+                "detail": f"HTTP {resp.status}",
+            }
+    except urllib.error.HTTPError as exc:
+        # Some services return 404 on /healthz but are alive; treat any
+        # HTTP-level response (i.e. we reached the service) as reachable.
+        if 200 <= exc.code < 500:
+            return None
+        return {
+            "ok": False,
+            "url": probe_url,
+            "hint": probe.get("install_hint") or "Service responded with an error.",
+            "detail": f"HTTP {exc.code}",
+        }
+    except (urllib.error.URLError, OSError, TimeoutError) as exc:
+        return {
+            "ok": False,
+            "url": probe_url,
+            "hint": probe.get("install_hint") or "Service isn't reachable.",
+            "detail": str(exc),
+        }
+
+
 def apply(agent_id: str, cap_id: str, enabled: bool) -> dict:
     """Atomically apply or remove all toolsets + presets for one capability.
 
