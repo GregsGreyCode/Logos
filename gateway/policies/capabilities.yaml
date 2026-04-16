@@ -147,14 +147,15 @@ capabilities:
     toolsets: [browser]
     presets: [searxng, web-browse]
     creds: []
-    # Reachability probe — the gateway (running on the host) hits
-    # localhost at the port docker-compose binds SearxNG to. The
-    # sandbox URL (host.openshell.internal:8888) is what AGENTS use;
-    # the probe URL is what the GATEWAY itself uses to check health
-    # from its own process. Two different network paths, two
-    # different URLs.
+    # Functional probe — hits the same URL agents will actually use
+    # (the JSON search endpoint) and requires the response to look
+    # like a working search result. A shallow /healthz probe passes
+    # when the container binds a port but the JSON format isn't
+    # enabled in settings.yml; requiring '"results"' in the body
+    # catches that misconfiguration at install time instead of first-use.
     service_probe:
-      url: http://localhost:8888/healthz
+      url: http://localhost:8888/search?q=probe&format=json
+      expect_contains: '"results"'
       install_hint: "Start SearxNG from Config → Tools → Local services, or run `docker compose --profile searxng up -d searxng` from the Logos repo root."
     # docker-compose integration for the "Local services" card in
     # Config → Tools. Port conflict check runs before `up` — if the
