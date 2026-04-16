@@ -549,7 +549,8 @@ def _run_migrations() -> None:
                 soul               TEXT,
                 toolsets_snapshot  TEXT,
                 user_message       TEXT,
-                tool_sequence      TEXT
+                tool_sequence      TEXT,
+                policy_snapshot    TEXT
             );
             CREATE INDEX IF NOT EXISTS idx_disp_agent   ON dispatches(agent_id);
             CREATE INDEX IF NOT EXISTS idx_disp_origin  ON dispatches(origin);
@@ -852,6 +853,7 @@ def _migrate_dispatches_stamp_v1(conn) -> None:
         ("toolsets_snapshot", "TEXT"),
         ("user_message", "TEXT"),
         ("tool_sequence", "TEXT"),
+        ("policy_snapshot", "TEXT"),
     ]
     for name, sqltype in adds:
         if name in cols:
@@ -2950,14 +2952,18 @@ def create_dispatch(
     soul: str = "",
     toolsets_snapshot: str = "",
     user_message: str = "",
+    policy_snapshot: str = "",
 ) -> str:
     """Insert a new dispatch record at the start of a task. Returns the id.
 
-    STAMP context (soul, toolsets_snapshot, user_message) is captured
-    at dispatch start so the Runs tab can show what the agent was
-    configured with and what it was asked — without a second lookup.
-    user_message is truncated to 2000 chars to keep the row bounded
-    for agents that receive large pasted prompts.
+    STAMP context is captured at dispatch start so the Runs tab can
+    show what the agent was configured with and what it was asked —
+    without a second lookup. ``policy_snapshot`` is the JSON-encoded
+    OpenShell network-policy preset list that was active on the agent
+    at dispatch time (``agents.applied_presets``); it's what the P
+    pill on the drawer renders. user_message is truncated to 2000
+    chars to keep the row bounded for agents that receive large
+    pasted prompts.
     """
     import uuid
     dispatch_id = f"dsp_{uuid.uuid4().hex[:12]}"
@@ -2969,11 +2975,12 @@ def create_dispatch(
             """INSERT INTO dispatches
                (id, task_id, agent_id, sandbox_name, model, origin,
                 origin_detail, session_id, user_id, status, started_at,
-                soul, toolsets_snapshot, user_message)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                soul, toolsets_snapshot, user_message, policy_snapshot)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (dispatch_id, task_id, agent_id, sandbox_name, model, origin,
              origin_detail, session_id, user_id, "running", now_ms,
-             soul or None, toolsets_snapshot or None, user_message or None),
+             soul or None, toolsets_snapshot or None, user_message or None,
+             policy_snapshot or None),
         )
     return dispatch_id
 
@@ -3080,9 +3087,10 @@ def list_dispatches(
             "(agent_id LIKE ? OR sandbox_name LIKE ? OR model LIKE ? "
             "OR session_id LIKE ? OR COALESCE(origin,'') LIKE ? "
             "OR COALESCE(origin_detail,'') LIKE ? OR COALESCE(status,'') LIKE ? "
-            "OR COALESCE(soul,'') LIKE ? OR COALESCE(user_message,'') LIKE ?)"
+            "OR COALESCE(soul,'') LIKE ? OR COALESCE(user_message,'') LIKE ? "
+            "OR COALESCE(policy_snapshot,'') LIKE ?)"
         )
-        params.extend([like, like, like, like, like, like, like, like, like])
+        params.extend([like, like, like, like, like, like, like, like, like, like])
     where_clause = (" WHERE " + " AND ".join(where_parts)) if where_parts else ""
     with _conn() as conn:
         total = conn.execute(

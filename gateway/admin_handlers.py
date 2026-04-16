@@ -668,7 +668,7 @@ async def handle_dispatches_list(request: web.Request) -> web.Response:
     # ditto. We hand back arrays (empty when missing or malformed).
     import json as _json
     for r in rows:
-        for field in ("toolsets_snapshot", "tool_sequence"):
+        for field in ("toolsets_snapshot", "tool_sequence", "policy_snapshot"):
             raw = r.get(field)
             if raw:
                 try:
