@@ -209,35 +209,31 @@ unless someone asks for it.
 
 ## Pending — infra / cleanup
 
-### #23 Rebuild hermes-sandbox image — pick up sandbox_worker.py changes
+### #23 Publish hermes-sandbox image to ghcr.io so new installs can pull
 
-Two changes to `docker/sandbox_worker.py` are waiting on an image
-rebuild to actually take effect in running sandboxes:
+Currently every fresh install builds `hermes-sandbox:m12` locally via
+`scripts/fresh-install.sh` — takes 5-10 min because of the agent-
+browser install-with-deps step (Chromium + chrome-headless-shell).
+First-install time would drop to 30-60 s if the image was published
+at e.g. `ghcr.io/gregsgreycode/hermes-sandbox:m12` and the installer
+pulled it by default.
 
-1. **ms-playwright cache bridge** (commit `1ec07917`) — `_ensure_browser_env()`
-   now symlinks `/tmp/hermes/.cache/ms-playwright` → `/usr/local/share/ms-playwright`
-   so agent-browser's native binary finds the chrome-headless-shell
-   binary. Applied manually to the four running sandboxes (Hattie,
-   Hermes, Eliza, Henry) as a band-aid; will be permanent after
-   rebuild + respawn.
-2. **capabilities_prompt injection** (commit `a89500dc`) — the worker
-   now reads `config.get("capabilities_prompt")` and prepends it to
-   the system prompt on every dispatch so agents know which P-pill
-   toggles are on/off and can tell the user which to enable. The
-   gateway already ships the field in instance_config.json;
-   sandboxes won't consume it until they run the new sandbox_worker.
+Steps:
 
-Rebuild pipeline (per `project_sandbox_image_m12.md` memory):
+- Workflow in `.github/workflows/` that rebuilds the image on each
+  version tag, pushes to ghcr.io.
+- Installer picks pre-built image when a matching tag exists,
+  falls back to local build only if `LOGOS_FORCE_SANDBOX_BUILD=1`
+  or the registry is unreachable.
+- Signing: cosign sign-blob the manifest so the installer can
+  verify the image's provenance before pulling.
 
-```bash
-docker build -f docker/Dockerfile.hermes-upstream -t hermes-sandbox:m12 .
-# then purge each cluster's containerd image cache + force re-pull
-# so running sandboxes pick up the new image on respawn
-for gw in claude-opus-4-6 qwen3-5-9b openai-gpt-oss-20b qwen2-5-0-5b-instruct qwen3-vl-4b-instruct; do
-  docker exec openshell-cluster-$gw crictl rmi hermes-sandbox:m12 2>/dev/null || true
-done
-# then trigger a sandbox restart via the admin UI or `openshell sandbox delete`
-```
+NOTE: `docker/sandbox_worker.py` is NOT in the image — it's
+uploaded per-spawn via `openshell sandbox upload` (see openshell.py
+line 1228). Changes to that file propagate via re-upload, not image
+rebuild. The image only contains hermes-agent runtime + agent-browser
++ Chromium. When a Dockerfile/base-image change lands, ALSO bump the
+ghcr tag so pulled images stay current.
 
 ### #XX Strip workflow + action-policy dead code once schema migration is safe — DONE
 
