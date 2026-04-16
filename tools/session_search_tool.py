@@ -202,13 +202,41 @@ def session_search(
         if role_filter and role_filter.strip():
             role_list = [r.strip() for r in role_filter.split(",") if r.strip()]
 
-        # FTS5 search -- get matches ranked by relevance
-        raw_results = db.search_messages(
+        # Hybrid search: try semantic (vector) first, then FTS5 keyword.
+        # Semantic search finds conversations that MEAN something similar
+        # even when the exact words don't overlap. FTS5 catches exact
+        # keyword matches that might score low on cosine similarity.
+        # Merge both result sets, deduplicate by session_id, prefer
+        # semantic matches (they tend to be more relevant).
+        raw_results = []
+
+        # 1. Semantic search (if embeddings are available)
+        if hasattr(db, "semantic_search"):
+            try:
+                semantic_hits = db.semantic_search(
+                    query=query,
+                    limit=limit * 2,
+                    current_session_id=current_session_id,
+                )
+                if semantic_hits:
+                    raw_results.extend(semantic_hits)
+            except Exception as _sem_err:
+                logging.debug("semantic search failed (falling through to FTS5): %s", _sem_err)
+
+        # 2. FTS5 keyword search — always runs to catch exact matches
+        fts_results = db.search_messages(
             query=query,
             role_filter=role_list,
-            limit=50,  # Get more matches to find unique sessions
+            limit=50,
             offset=0,
         )
+
+        # Merge: deduplicate by session_id, semantic results first
+        seen_sessions = {r.get("session_id") for r in raw_results}
+        for r in fts_results:
+            if r.get("session_id") not in seen_sessions:
+                raw_results.append(r)
+                seen_sessions.add(r.get("session_id"))
 
         if not raw_results:
             return json.dumps({
