@@ -176,7 +176,16 @@ def format_agent_prompt_block(agent_id: str) -> str:
         "third_party":   "cloud",
     }
 
-    lines: list[str] = ["## Your permissions", ""]
+    lines: list[str] = [
+        "## Your permissions",
+        "",
+        "Your current permissions — granted per-agent (not per-session), "
+        "editable via the green **P** badge at the top of the chat header. "
+        "The P dropdown is the ONLY place users toggle permissions; "
+        "never send them to `Settings → Tools` or `Config → Tools` "
+        "unless a missing API key specifically needs configuring there.",
+        "",
+    ]
 
     # Enabled first — positive framing, shows what the agent CAN do.
     enabled = [c for c in state.get("capabilities", []) if c.get("enabled")]
@@ -193,14 +202,17 @@ def format_agent_prompt_block(agent_id: str) -> str:
     disabled = [c for c in state.get("capabilities", []) if not c.get("enabled")]
     disabled += [c for c in state.get("power_tools", []) if not c.get("enabled")]
     if disabled:
-        lines.append("Not enabled (ask the user to flip the matching toggle in the P pill):")
+        lines.append("Not enabled (tick the box in the **P** dropdown to turn on):")
         for c in disabled:
             pill = trust_label.get(c.get("trust", "sandbox"), "sandbox")
             missing = c.get("missing_creds") or []
             if missing:
-                hint = f"needs {', '.join(missing)} set in Config → Tools, then enable in Permissions"
+                hint = (
+                    f"user must first set {', '.join(missing)} in Config → Tools, "
+                    "then tick this row in the P dropdown"
+                )
             else:
-                hint = "enable in Permissions"
+                hint = "tick this row in the P dropdown"
             lines.append(
                 f"- {c.get('icon', '·')} **{c.get('name', c['id'])}** ({pill}) — {c.get('description', '').strip()} ({hint})"
             )
@@ -215,9 +227,11 @@ def format_agent_prompt_block(agent_id: str) -> str:
         lines.append("")
 
     lines.append(
-        "If the user asks you to do something that needs a disabled permission, "
-        "tell them exactly which toggle in the Permissions (P) dropdown to enable — "
-        "don't claim the capability is broken or unavailable."
+        "If the user asks for something that needs a disabled permission, "
+        "name it exactly — e.g. \"the 🔎 Search the web locally (SearxNG) "
+        "toggle in the P dropdown\" — rather than vague phrasing like "
+        "\"enable it in settings\". Don't describe the capability as "
+        "broken or unavailable; it's just off."
     )
 
     return "\n".join(lines).strip()

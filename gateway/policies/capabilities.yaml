@@ -143,7 +143,7 @@ capabilities:
     icon: 🔎
     trust: local_service
     trust_note: Queries go to the SearxNG shipped with Logos (or your own LAN instance if you override SEARXNG_URL). SearxNG proxies the search to upstream engines (Google/Bing/DDG) on ITS host — upstream engines never see the agent sandbox, and nothing leaves your network as far as the agent is concerned.
-    description: Open-ended web search via the bundled SearxNG metasearch engine (start with `docker compose --profile searxng up -d searxng`).
+    description: Open-ended web search via a self-hosted SearxNG metasearch engine on your network — no CAPTCHAs, no cloud search provider.
     toolsets: [browser]
     presets: [searxng, web-browse]
     creds: []
