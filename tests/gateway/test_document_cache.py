@@ -1,5 +1,5 @@
 """
-Tests for document cache utilities in gateway/platforms/base.py.
+Tests for document cache utilities in gateway/channels/base.py.
 
 Covers: get_document_cache_dir, cache_document_from_bytes,
         cleanup_document_cache, SUPPORTED_DOCUMENT_TYPES.
@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from gateway.platforms.base import (
+from gateway.channels.base import (
     SUPPORTED_DOCUMENT_TYPES,
     cache_document_from_bytes,
     cleanup_document_cache,
@@ -26,7 +26,7 @@ from gateway.platforms.base import (
 def _redirect_cache(tmp_path, monkeypatch):
     """Point the module-level DOCUMENT_CACHE_DIR to a fresh tmp_path."""
     monkeypatch.setattr(
-        "gateway.platforms.base.DOCUMENT_CACHE_DIR", tmp_path / "doc_cache"
+        "gateway.channels.base.DOCUMENT_CACHE_DIR", tmp_path / "doc_cache"
     )
 
 

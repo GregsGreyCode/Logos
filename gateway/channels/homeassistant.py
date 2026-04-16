@@ -29,7 +29,7 @@ except ImportError:
     aiohttp = None  # type: ignore[assignment]
 
 from gateway.config import Platform, PlatformConfig
-from gateway.platforms.base import (
+from gateway.channels.base import (
     BasePlatformAdapter,
     MessageEvent,
     MessageType,

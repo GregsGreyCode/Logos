@@ -17,7 +17,7 @@
 
 The OpenShell-only pivot (shipped in `e01457a`) made web chat strict: `/chat` now requires a named agent and dispatches to its sandbox worker via WebSocket. No in-process fallback.
 
-**Platform adapters were not migrated in that pivot.** `gateway/platforms/base.py` still calls `self._message_handler(event)`, which is bound to `runner._handle_message`, which internally calls `runner._run_agent(...)` — the exact in-process path we just deleted from `/chat`. Every inbound Telegram/Discord/Slack message still runs the agent loop *inside the gateway process*, with the gateway's full privileges, bypassing every sandbox policy.
+**Platform adapters were not migrated in that pivot.** `gateway/channels/base.py` still calls `self._message_handler(event)`, which is bound to `runner._handle_message`, which internally calls `runner._run_agent(...)` — the exact in-process path we just deleted from `/chat`. Every inbound Telegram/Discord/Slack message still runs the agent loop *inside the gateway process*, with the gateway's full privileges, bypassing every sandbox policy.
 
 The same security argument applies: **in-process agents are dangerous** because they read the gateway's env vars (API keys), query the auth DB directly, touch any file the gateway can, and bypass every network policy. The platform path is the last remaining in-process execution site and needs to close.
 
@@ -63,14 +63,14 @@ The sandbox must ask the gateway to send on its behalf. The cleanest way to do t
      │ DM / group message
      ▼
 ┌───────────────────────┐
-│ TelegramAdapter       │  gateway/platforms/telegram.py
+│ TelegramAdapter       │  gateway/channels/telegram.py
 │ - receives update     │
 │ - builds MessageEvent │
 └────────────┬──────────┘
              │ .handle_message(event)
              ▼
 ┌───────────────────────────┐
-│ BaseAdapter               │  gateway/platforms/base.py
+│ BaseAdapter               │  gateway/channels/base.py
 │ ._process_message_bg()    │
 │ - typing indicator        │
 │ - await _message_handler  │
