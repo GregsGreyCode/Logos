@@ -5237,10 +5237,41 @@
             <button @click="selectedDispatch = null" class="text-gray-500 hover:text-white text-lg px-2">&times;</button>
           </div>
           <div class="p-5 space-y-4 text-xs">
-            <!-- STAMP summary grid -->
+            <!-- STAMP pills — same visual language as the agent-card and
+                 compare-pane STAMP rows so a run reads as "an event
+                 stamped with this agent's configuration". S / T / A / M
+                 only; P (policy) is intentionally omitted because we
+                 removed the per-user action-policy UI. -->
+            <div class="flex items-center gap-1.5 flex-wrap">
+              <!-- S: Soul -->
+              <span class="text-[10px] px-1.5 py-0.5 rounded font-mono bg-indigo-950 text-indigo-300 border border-indigo-900 flex items-center gap-1"
+                    :title="'Soul: ' + (selectedDispatch?.soul || 'general')">
+                <span class="font-bold text-indigo-500">S</span>
+                <span x-text="selectedDispatch?.soul || 'general'"></span>
+              </span>
+              <!-- T: Toolsets count -->
+              <span class="text-[10px] px-1.5 py-0.5 rounded font-mono bg-gray-800 text-gray-400 border border-gray-700 flex items-center gap-1"
+                    :title="'Toolsets at dispatch: ' + ((selectedDispatch?.toolsets_snapshot || []).join(', ') || 'none')">
+                <span class="font-bold text-gray-500">T</span>
+                <span x-text="(selectedDispatch?.toolsets_snapshot || []).length + ' tools'"></span>
+              </span>
+              <!-- A: Agent runtime — hermes is the only runtime today; the
+                   executor (openshell) spawns the hermes-agent sandbox. -->
+              <span class="text-[10px] px-1.5 py-0.5 rounded font-mono bg-gray-800 text-gray-400 border border-gray-700 flex items-center gap-1"
+                    :title="'Runtime: hermes · sandbox: ' + (selectedDispatch?.sandbox_name || '—')">
+                <span class="font-bold text-gray-500">A</span>
+                <span x-text="'hermes · ' + (selectedDispatch?.sandbox_name || selectedDispatch?.agent_id || '—')"></span>
+              </span>
+              <!-- M: Model -->
+              <span class="text-[10px] px-1.5 py-0.5 rounded font-mono bg-[var(--accent-subtle)] text-[var(--accent)] border border-[var(--accent)]/40 flex items-center gap-1 truncate max-w-[260px]"
+                    :title="'Model: ' + (selectedDispatch?.model || 'auto')">
+                <span class="font-bold">M</span>
+                <span class="truncate" x-text="(selectedDispatch?.model || 'auto').split('/').pop()"></span>
+              </span>
+            </div>
+            <!-- Supporting stats — kept out of the STAMP row to keep the
+                 pills themselves scannable at a glance. -->
             <div class="grid grid-cols-2 gap-3">
-              <div><div class="text-[10px] text-gray-600 uppercase tracking-wider mb-0.5">Soul</div><div class="font-mono text-white" x-text="selectedDispatch?.soul || '—'"></div></div>
-              <div><div class="text-[10px] text-gray-600 uppercase tracking-wider mb-0.5">Model</div><div class="font-mono text-white" x-text="selectedDispatch?.model || '—'"></div></div>
               <div><div class="text-[10px] text-gray-600 uppercase tracking-wider mb-0.5">Origin</div><div class="text-white" x-text="selectedDispatch?.origin || '—'"></div></div>
               <div><div class="text-[10px] text-gray-600 uppercase tracking-wider mb-0.5">Status</div><div class="text-white" x-text="selectedDispatch?.status || '—'"></div></div>
               <div><div class="text-[10px] text-gray-600 uppercase tracking-wider mb-0.5">Elapsed</div><div class="text-white" x-text="selectedDispatch?.elapsed_s ? selectedDispatch.elapsed_s.toFixed(2) + 's' : '—'"></div></div>
