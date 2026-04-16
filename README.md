@@ -18,7 +18,7 @@
 
 Logos is a control plane for AI agents — not a single agent, but a platform you run on your own hardware under your own rules. You assemble what you need from five dimensions:
 
-> **Soul · Tools · Agent · Model · Policy**
+> **Soul · Tools · Agent · Model · Permissions**
 
 That combination is a **STAMP** — it defines every run Logos records, making every agent interaction observable, reproducible, and auditable. No black-box behaviour you can't inspect.
 
@@ -135,11 +135,11 @@ Every run in Logos is defined by five dimensions:
 | **T** — Tools | The capabilities available: what the agent can reach and act on |
 | **A** — Agent | The runtime: which adapter processes the conversation |
 | **M** — Model | The brain: which LLMs are called to execute functions |
-| **P** — Policy | The rules: what the agent is allowed to do, approve, or refuse |
+| **P** — Permissions | The granted access: which hosts the sandbox is allowed to reach, plus approval gates for dangerous tools |
 
 Compose these five and you have an AI agent. Change any one dimension and you have a different seeded agent. Every STAMP is recorded in full — compare runs across configurations, replay them exactly, or clone them into new sessions.
 
-The soul lives in `SOUL.md` and is re-read from disk on every message (no cache, no restart required). Tools are scoped per agent and per session. The agent adapter is switchable. The model switches without code changes. Policy enforcement today happens at three layers: workspace scoping in the agent loop, OpenShell kernel-level sandbox isolation + egress allowlist, and a dangerous-command regex + Tirith gate with approval prompts. Per-user `ActionPolicy` dimensions that tighten `filesystem_policy` and `provider_policy` compose with those layers; the remaining dimensions in the schema are reserved for a future unified dispatch-time gate.
+The soul lives in `SOUL.md` and is re-read from disk on every message (no cache, no restart required). Tools are scoped per agent and per session. The agent adapter is switchable. The model switches without code changes. Permissions are enforced at three layers: workspace scoping in the agent loop, OpenShell kernel-level sandbox isolation + egress allowlist (granted permissions turn into per-host network rules), and a dangerous-command regex + Tirith gate with approval prompts.
 
 ---
 
