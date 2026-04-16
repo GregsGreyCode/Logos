@@ -37,8 +37,18 @@ network_policies:
           - allow: { method: GET, path: "/bot*/**" }
           - allow: { method: POST, path: "/bot*/**" }
           - allow: { method: GET, path: "/file/bot*/**" }
+    # Binaries that may talk to api.telegram.org. The /app/venv paths
+    # are the hermes-upstream venv; /usr/bin/python3* are the system
+    # interpreters the current sandbox image actually ships with
+    # (python3.13 on debian trixie). Both need to be listed because
+    # send_message_tool runs under whichever Python the sandbox_worker
+    # invokes, and that's /usr/bin/python3 by default today.
     binaries:
       - { path: /app/venv/bin/python }
       - { path: /app/venv/bin/python3 }
       - { path: /app/venv/bin/python3.11 }
       - { path: /app/venv/bin/python3.12 }
+      - { path: /usr/bin/python3 }
+      - { path: /usr/bin/python3.11 }
+      - { path: /usr/bin/python3.12 }
+      - { path: /usr/bin/python3.13 }
