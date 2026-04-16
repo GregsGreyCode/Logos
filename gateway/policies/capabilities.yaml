@@ -147,6 +147,14 @@ capabilities:
     toolsets: [browser]
     presets: [searxng, web-browse]
     creds: []
+    # Reachability probe — the gateway hits `url` (with SEARXNG_URL env
+    # override applied) when the user flips the toggle ON. If the
+    # service isn't reachable, the toggle returns a 409 with install
+    # hints instead of silently enabling into a broken state.
+    service_probe:
+      url: http://searxng:8080/healthz
+      env_override: SEARXNG_URL
+      install_hint: "Start the bundled SearxNG with `docker compose --profile searxng up -d searxng`, then try again."
 
   # ── On-LAN local services (your network, outside the sandbox) ──
   - id: smart_home
