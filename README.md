@@ -8,8 +8,7 @@
   <a href="https://github.com/GregsGreyCode/Logos/issues">Open an issue</a> if you hit a bug.
 </p>
 
-<!-- screenshot: hero — main dashboard with 2–3 agents and live sandboxes panel visible.
-     Shown below the tagline; this is the first thing most visitors see. -->
+<img width="1278" height="1091" alt="Hero-Main Dashboard" src="https://github.com/user-attachments/assets/4cd12560-e990-4fb9-9ea0-3d0bfb5dd848" />
 
 > **Release history note:** v0.4 shipped 57 tagged patch releases (v0.4.26–v0.4.105) before graduating to v0.5. Pre-v0.5 tags have been removed from GitHub to keep the releases page clean; the commit history is fully intact.
 
@@ -55,8 +54,8 @@ Run it on your laptop, a homelab box, or a $5 VPS. During the first-run setup wi
                         └───────────────────────────────────────────┘     OpenRouter
 ```
 
-<!-- screenshot: architecture-in-ui — a dashboard view that makes the ASCII boxes
-     tangible: gateway process panel, worker registry table, a live sandbox. -->
+<img width="1271" height="1207" alt="Sandbox Dashboard" src="https://github.com/user-attachments/assets/f7f7ea73-fc3e-4093-be76-e15e6b7e00d6" />
+
 
 **Request lifecycle:**
 
@@ -168,14 +167,12 @@ Agent security is defense-in-depth — multiple independent layers, not a single
 | **Toolset enforcement** | Agents can only call tools in their enabled toolset. Validated at agent init and registry dispatch. | All modes |
 | **API key filtering** | Sandbox workers never receive provider API keys. They call `inference.local`, and the OpenShell Privacy Router (running outside the sandbox) injects the real credentials. | OpenShell only |
 | **Command review** | Regex patterns catch common destructive shell commands (`rm -rf /`, `DROP TABLE`, `chmod 777`, etc.). Prompts for approval before execution. | All modes |
-| **Tirith scanning** | Pre-execution semantic analysis of shell commands for content-level threats (homograph URLs, pipe-to-interpreter, terminal injection). Auto-installed from [GitHub releases](https://github.com/sheeki03/tirith). | Linux, macOS |
 | **Filesystem isolation** | Landlock LSM declarative read-only / read-write policy enforced by the kernel. | OpenShell only |
 | **Egress policy** | Per-binary YAML allowlist (`network_policies` in OpenShell policy). | OpenShell only |
 | **Container isolation** | Docker container with `--cap-drop=ALL`, `--security-opt=no-new-privileges`, no host filesystem mounts. | OpenShell |
 
 **Command review** catches obvious destructive patterns but is bypassable with interpreter one-liners (e.g. `python -c "import shutil; ..."`). It is a convenience layer, not a security boundary. The real protection comes from workspace scoping, kernel-level filesystem and egress policy, and container isolation — all provided by OpenShell.
 
-**Tirith** is not available on Windows. When absent, the command review regex patterns are the only pre-execution check. On Linux/macOS, Tirith is auto-downloaded at startup and provides deeper analysis.
 
 ### Secrets and auth
 
@@ -298,26 +295,7 @@ Then open <http://localhost:8091/setup> — the **setup wizard launches automati
 
 > **OpenShell:** to use the default `openshell` runtime mode, install the [OpenShell CLI](https://github.com/NVIDIA/OpenShell) first (the one-shot installer does this for you with `INSTALL_OPENSHELL=1`). The setup wizard will detect it. If OpenShell is missing, you'll be steered to the `docker` fallback.
 
-### Windows installer
 
-A native Windows installer (`.exe`) is published on the [GitHub Releases](https://github.com/GregsGreyCode/Logos/releases) page. No WSL2 required.
-
-**What the installer does:**
-1. Installs a self-contained Python + Node.js environment under `%LOCALAPPDATA%\Logos`
-2. Creates a start menu entry and system tray icon
-3. Starts the Logos gateway automatically
-
-**After installation:**
-1. Logos opens in the system tray — right-click the icon to open the dashboard
-2. Navigate to `http://localhost:8091` in your browser
-3. The setup wizard launches automatically — it will prompt you for any API keys it needs
-4. Your configuration is saved to `%USERPROFILE%\.logos\config.yaml`
-
-**Sandbox on Windows:** OpenShell does not yet ship Windows binaries. The setup wizard offers **`docker` mode** when Docker Desktop is installed. Without Docker Desktop there is no supported runtime on Windows — install Docker Desktop (or run Logos inside WSL2 where OpenShell works) before proceeding.
-
-#### ⚠️ Why Windows shows a warning
-
-Logos is currently unsigned. Windows SmartScreen may show **"Windows protected your PC"** on first run. Click **"More info" → "Run anyway"** to proceed. See the build-transparency / SHA256 verification section under [Releases](https://github.com/GregsGreyCode/Logos/releases) for how to verify what you downloaded.
 
 ---
 
@@ -432,8 +410,7 @@ score = 0.40 × (eval_tests_passed / 6)
 
 Eval quality and advanced-tier performance dominate. Speed is capped at 40 tok/s — diminishing returns for interactive use above that. Weights rebalanced 2026-04-13 so agent-loop failures can actually move a model's ranking.
 
-<!-- screenshot: benchmark-scoreboard — full benchmark UI with multiple models scored,
-     showing tok/s, ttft, ctx, and eval pass/fail columns. Illustrates this section. -->
+<img width="1209" height="195" alt="STAMP" src="https://github.com/user-attachments/assets/9bece643-869c-4df0-9310-971a41014eff" />
 
 ---
 
@@ -449,8 +426,7 @@ Eval quality and advanced-tier performance dominate. Speed is capped at 40 tok/s
 
 **Policy** — set the action policy for an agent via the dashboard's Admin tab, or assign a policy ID per session at chat-start time.
 
-<!-- screenshot: stamp-editor — agent-edit view showing the five STAMP dimensions
-     (Soul picker, Tools toggles, Agent runtime, Model picker, Policy selector). -->
+
 
 ---
 
@@ -543,7 +519,7 @@ Source in `gateway/`, `tools/`, and `agents/hermes/`. See [`AGENTS.md`](AGENTS.m
 | OpenShell sandbox (Linux / macOS) | ✅ Only supported runtime | Strongest isolation; required for inference credential separation |
 | Local model serving (Ollama / LM Studio) | ✅ Tested | Auto-discovered by setup wizard scan |
 | Cloud providers (Anthropic, OpenAI, OpenRouter) | ✅ Tested | Configured in setup wizard |
-| Docker / Kubernetes pod-per-agent | ❌ Removed | Legacy sandbox runtimes deleted. The `k8s/` manifests still deploy the gateway itself; agent runtime uses OpenShell. |
+
 
 ---
 
@@ -563,14 +539,8 @@ docker buildx build \
 
 ## 🖼️ Gallery
 
-<!-- screenshot-grid: a 2×2 of views not already shown above:
-       • messaging-telegram — a Telegram DM conversation with an agent
-       • cost-tracker — per-model / per-session spend breakdown
-       • mcp-gateway — MCP server config + readiness checks
-       • pairing-users — admin view approving / revoking pairing codes
-     Render as four small thumbnails side-by-side. -->
+<img width="1631" height="1252" alt="memories" src="https://github.com/user-attachments/assets/59951d60-a0b6-49b1-b0e2-11164cf41cda" />
 
----
 
 ## 🤝 Contributing
 
@@ -600,12 +570,6 @@ uv pip install -e ".[all,dev]"
 ```
 
 Integration tests require live API keys (`OPENROUTER_API_KEY`, `OPENAI_API_KEY`, etc.) and hit real external services. Unit tests blank all keys automatically and never make network calls.
-
-> **RL Training (optional):** To work on the RL/Tinker-Atropos integration:
-> ```bash
-> git submodule update --init tinker-atropos
-> uv pip install -e "./tinker-atropos"
-> ```
 
 ---
 
