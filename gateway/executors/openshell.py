@@ -969,6 +969,21 @@ class OpenShellExecutor:
         except Exception as _hosts_exc:
             logger.debug("instance-config: allowed-hosts lookup failed: %s", _hosts_exc)
 
+        # Per-agent permission summary — a small markdown block the
+        # sandbox worker prepends to the system prompt so the agent
+        # knows which capabilities are on/off and can tell the user
+        # which Permissions toggle to flip when a request hits a
+        # disabled capability. Built from capabilities.compute_state
+        # so it mirrors what the UI shows.
+        _capabilities_prompt = ""
+        try:
+            from gateway import capabilities as _gcap
+            _agent_for_caps = auth_db.get_agent_by_name(config.name)
+            if _agent_for_caps:
+                _capabilities_prompt = _gcap.format_agent_prompt_block(_agent_for_caps["id"])
+        except Exception as _caps_exc:
+            logger.debug("instance-config: capabilities summary failed: %s", _caps_exc)
+
         # Merge auto-granted docker MCP server toolsets into the agent's
         # explicit toolset list. Preserves ordering and de-dupes so a
         # toolset the user manually enabled and an auto-grant both land
@@ -1000,6 +1015,7 @@ class OpenShellExecutor:
             "env": _service_env,
             "website_blocklist": _website_blocklist,
             "allowed_hosts": _allowed_hosts,
+            "capabilities_prompt": _capabilities_prompt,
             "mcp_servers": _mcp_servers_cfg,
         }
 
@@ -1473,6 +1489,16 @@ class OpenShellExecutor:
         except Exception:
             pass
 
+        # Per-agent permission summary — see spawn() for rationale.
+        # Refresh needs this too so a capability toggle gets reflected
+        # in the agent's next turn without requiring a respawn.
+        _capabilities_prompt = ""
+        try:
+            from gateway import capabilities as _gcap2
+            _capabilities_prompt = _gcap2.format_agent_prompt_block(agent["id"])
+        except Exception:
+            pass
+
         instance_config = {
             "worker_id": sandbox_name,
             "instance_name": name,
@@ -1482,6 +1508,7 @@ class OpenShellExecutor:
             "env": _service_env,
             "website_blocklist": _website_blocklist,
             "allowed_hosts": _allowed_hosts,
+            "capabilities_prompt": _capabilities_prompt,
             "mcp_servers": _mcp_servers_cfg,
         }
 
