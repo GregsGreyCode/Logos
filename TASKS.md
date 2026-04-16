@@ -610,6 +610,118 @@ load-bearing for the disconnect scenarios I tested.
 | `b486c74` | #13 side-by-side AB compare panel (drag pills → dual chat panes, seq/parallel toggle) + #16 orphan openshell ssh-proxy reaper on gateway startup |
 | `06f71de` | #23 openshell-router 60s→600s timeout patch saved to fork `GregsGreyCode/OpenShell` on branch `local/router-streaming-timeout`, tag `streaming-timeout-fix-v1` |
 
+---
+
+## Pending — 2026-04-16 session (per-agent channels + memory + multi-user)
+
+### Completed this session
+
+| Commit | What |
+|--------|------|
+| `e368df89` | Rename `gateway/platforms/` → `gateway/channels/` |
+| `60368ea1` | Drop dead `hermes-<channel>` toolset aliases + v23 migration |
+| `462b7714` | v24 orphan toolset pruning (`messaging`, `github` on Hermes) |
+| `d3862905` | `agent_channel_credentials` schema + CRUD helpers |
+| `9cbf9e51` | `SessionSource.agent_id` + adapter stamping (inbound plumbing) |
+| `1f51c6f5` | Per-credential adapter lifecycle + env→DB auto-migration |
+| `042f9c70` | Per-agent token injection into sandbox env (outbound) |
+| `1610f051` | CRUD HTTP endpoints for per-agent channel credentials |
+| `3581b08a` | Config → Messaging UI, per-agent grouped view |
+| `8b12d7b5` | Hot-reload adapters on credential CRUD — no gateway restart |
+| `b7a0cda6` | Cloud-tools detail panel opens under clicked pill's group |
+| `52eef747` | Fix init_db ordering so per-agent channel migration runs |
+| `34e1aaef` | Fix dispatch rows: populate soul/model/toolsets + resolve user |
+| `8ae29c5c` | `logos gateway update` CLI + UI banner + HTTP endpoint |
+| `aa000cb9` | Align READMEs with per-agent channels + update CLI |
+| `9be9d904` | Auto-grant `send_message` + platform preset on credential save |
+| `89dc0f1d` | Dynamic platform pills in /chats sidebar |
+| `82e026cc` | Session search prompt nudge + user_platform_links + agent ownership |
+| `20182d9b` | Real `send_message` entry + drop ghost tools from readiness UI |
+| `b74c0638` | Session search HTTP proxy for sandboxed agents |
+| `183d6e6c` | Exempt `/api/internal/*` from auth middleware |
+| `c2312e4e` | Include `local` source in default FTS5 search filter |
+| `9ef846c4` | Use runner.session_store for session search endpoint |
+| `99748746` | Semantic embedding layer for session search |
+| `45b2d8ce` | Auto-discover LM Studio endpoint + backfill 466 messages |
+| `9bc7b6b3` | Persist Telegram/Discord messages to session DB |
+| `b0cf9086` | TG sessions from DB + hide agent bar on platform view |
+| `bdbec8ad` | Keep agent pills visible on platform filter |
+| `58a874f7` | Platform sessions preserve agent binding |
+| `8c4829b7` | Delete button for platform sessions + message count badge |
+| `5a891d3e` | Remove injected platform sessions when switching to Local |
+| `601472da` | Split platform sessions per agent + filter in sidebar |
+| `1f8286e0` | Soft-delete + cross-platform chat continuation |
+| `99f9ddd3` | Auto-select most recent session when switching to TG |
+| `1aa15edf` | Restore active Local chat when switching back from TG |
+
+### Follow-up — cross-platform chat continuation polish
+
+- [ ] When viewing a TG chat and typing a reply from the web, the conversation should also get pushed to Telegram (bidirectional)
+- [ ] Platform badge in chat header showing "via Telegram" when the conversation originated there
+- [ ] "Show hidden" toggle in sidebar to un-soft-delete sessions
+
+### Follow-up — session search + semantic memory
+
+- [ ] Background embed-on-write: embed new messages automatically at `append_to_transcript` time (not just on search or manual backfill)
+- [ ] Periodic backfill cron: embed any un-embedded messages every N minutes
+- [ ] Auto-inject top-3 semantically similar past conversations into the system prompt at dispatch time (passive recall without the agent needing to call session_search)
+- [ ] Consider lightweight Python embedding (sentence-transformers) as fallback when no LM Studio/Ollama is running — currently returns empty if no endpoint is reachable
+
+### Follow-up — Telegram slash commands
+
+- [ ] Wire `/new`, `/reset`, `/model`, `/reasoning`, `/stop` as `CommandHandler`s in `gateway/channels/telegram.py` — currently registered as menu hints only, fall through as plain text
+- [ ] Consider trimming the command menu to only commands that make sense for Logos (drop `/update`, `/reload_mcp`, `/provider`)
+
+### Follow-up — agent rename
+
+- [ ] When agent name changes via PATCH, auto-destroy the old sandbox (`openshell sandbox destroy hermes-{old_name}`)
+- [ ] Next dispatch spawns `hermes-{new_name}` automatically
+
+### #25 Thin desktop client + multi-user hardening
+
+**Thin client (Tauri, ~1-2 hours):**
+
+A WebView wrapper around `https://<host>:8091/login`. Tauri produces a ~3MB `.exe` (Rust + system WebView); Electron would be ~80MB. Settings page for server URL. No app logic — everything server-side. Alternative: Chrome PWA shortcut (zero build, works today).
+
+**Multi-user separation (2-3 days):**
+
+Already done:
+- Auth + RBAC (`admin` / `operator` / `user` / `viewer` roles)
+- Agent ownership (`creator_id` + `shared` flag on agents table)
+- Agent edit protection (403 for non-owner non-admin — `handle_agents_patch` / `handle_agents_delete`)
+- Per-user sessions (session_id unique per user + platform)
+- User platform identity links (`user_platform_links` table)
+
+Needs building:
+- [ ] **Per-user agent limits** — `max_agents` column on `users` table, enforced in `handle_agents_post`
+- [ ] **Per-user chat isolation** — today all admins/operators see all chats; `user` role should only see their own sessions
+- [ ] **Settings scoping** — which settings a `user` role can change vs `admin` only:
+  - Admin only: model routes, tool credentials (Config → Tools), sandbox policies, user management
+  - User accessible: soul selection, chat preferences, their own agent config
+- [ ] **Per-user budget caps** — `daily_budget_usd` exists on agents but not per-USER daily caps
+- [ ] **Onboarding / registration flow** — `allow_registration` flag exists in `platform_settings` but the UI is admin-only invite today. Need a `/register` page with optional approval gate (`require_approval` flag)
+- [ ] **Agent sharing model rules**:
+  - Shared agents: visible to all, chattable by all, editable only by creator + admin
+  - Private agents (`shared=0`): visible only to creator
+  - Non-owners cannot see another user's Runs/sessions for that agent
+- [ ] **UI role gating** — hide Admin tab, Config → Tools, Sandbox Policies from `user`/`viewer` roles (backend enforces via `require_permission` but the UI still renders the tabs)
+
+**Recommended defaults for non-admin users:**
+- 1-2 agents max (configurable per user by admin)
+- Can chat with shared agents but not modify them
+- Can create their own agents with their own souls
+- Cannot see other users' chat history
+- Cannot change model routes or tool credentials
+- Can see their own Runs only
+- No sandbox policy access
+
+### Follow-up — UI consistency fixes
+
+- [ ] Audit log pagination: right-align (like Runs tab)
+- [ ] Runs origin badges: `platform_telegram` should get same styled pill as `user_chat`
+- [ ] Sub-agent live execution: each sub-agent should get its own execution box on the right panel, not merge into one
+- [ ] Rebuild `assets/tailwind.css` to pick up dynamic classes added since April 6
+
 ## What's currently a "dead end" we're aware of
 
 - Reasoning toggle on LM Studio (see above)
