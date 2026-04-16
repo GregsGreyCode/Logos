@@ -300,11 +300,16 @@ fi
 # containerd. If the image isn't on the host, the setup wizard's
 # Finish step fails at sandbox-spawn with "no such image".
 #
-# Until we publish the image to a public registry, we build it
-# locally here. First build takes ~5-10 minutes (apt install + pip
-# wheels inside the image); re-runs are <30s thanks to Docker's
-# layer cache. Pass LOGOS_SKIP_SANDBOX_BUILD=1 to bypass (e.g., when
-# you already have the image from a registry pull or a prior build).
+# Three paths, tried in order:
+#   1. Image already on host → skip (unless LOGOS_FORCE_SANDBOX_BUILD=1).
+#   2. Pull from GHCR → fast (30-60s on broadband). Default path for
+#      most users once the image is public at ghcr.io/gregsgreycode/.
+#   3. Local build → fallback when GHCR is unreachable, the user is
+#      offline, or they pass LOGOS_FORCE_SANDBOX_BUILD=1 to rebuild
+#      from source (e.g. after editing Dockerfile.hermes-upstream).
+#
+# Pass LOGOS_SKIP_SANDBOX_BUILD=1 to bypass entirely (for packagers
+# or users who manage the image themselves).
 if [[ "$INSTALL_OPENSHELL" == "1" ]] \
    && command -v docker >/dev/null 2>&1 \
    && [[ "${LOGOS_SKIP_SANDBOX_BUILD:-0}" != "1" ]]; then
@@ -317,26 +322,47 @@ if [[ "$INSTALL_OPENSHELL" == "1" ]] \
         | head -1 | tr -d '"')
     SANDBOX_TAG="${SANDBOX_TAG:-hermes-sandbox:m12}"
 
+    # GHCR image is tagged with the Logos version (v0.*) plus :latest.
+    # Pulling :latest gets whatever the publish-sandbox-image.yml
+    # workflow most-recently published. Users who want a pinned
+    # version can override with LOGOS_SANDBOX_IMAGE=ghcr.io/…/hermes-sandbox:v0.13.2
+    GHCR_IMAGE="${LOGOS_SANDBOX_IMAGE:-ghcr.io/gregsgreycode/hermes-sandbox:latest}"
+
     hdr "Sandbox image ($SANDBOX_TAG)"
-    if docker image inspect "$SANDBOX_TAG" >/dev/null 2>&1; then
-        ok "$SANDBOX_TAG already present — skipping build (set LOGOS_FORCE_SANDBOX_BUILD=1 to rebuild)"
-        if [[ "${LOGOS_FORCE_SANDBOX_BUILD:-0}" == "1" ]]; then
-            log "LOGOS_FORCE_SANDBOX_BUILD=1 — rebuilding anyway …"
-            docker build -f "$REPO_DIR/docker/Dockerfile.hermes-sandbox" \
-                         -t "$SANDBOX_TAG" "$REPO_DIR/docker/" \
-                && ok "$SANDBOX_TAG rebuilt" \
-                || warn "rebuild failed — previous image is still usable"
-        fi
-    else
-        log "building $SANDBOX_TAG from docker/Dockerfile.hermes-sandbox (first build: 5-10 min) …"
-        if docker build -f "$REPO_DIR/docker/Dockerfile.hermes-sandbox" \
-                        -t "$SANDBOX_TAG" "$REPO_DIR/docker/"; then
+
+    _rebuild_from_source() {
+        log "building $SANDBOX_TAG from docker/Dockerfile.hermes-upstream (first build: 5-10 min) …"
+        if docker build -f "$REPO_DIR/docker/Dockerfile.hermes-upstream" \
+                        -t "$SANDBOX_TAG" "$REPO_DIR"; then
             ok "$SANDBOX_TAG built"
         else
             warn "sandbox image build failed — the setup wizard will fail at"
             warn "sandbox-spawn until this image exists on the host. Retry:"
-            warn "  docker build -f $REPO_DIR/docker/Dockerfile.hermes-sandbox -t $SANDBOX_TAG $REPO_DIR/docker/"
+            warn "  docker build -f $REPO_DIR/docker/Dockerfile.hermes-upstream -t $SANDBOX_TAG $REPO_DIR"
         fi
+    }
+
+    _pull_from_ghcr() {
+        log "pulling $GHCR_IMAGE (30-60 s on broadband) …"
+        if docker pull "$GHCR_IMAGE" >/dev/null 2>&1; then
+            docker tag "$GHCR_IMAGE" "$SANDBOX_TAG"
+            ok "pulled $GHCR_IMAGE → tagged as $SANDBOX_TAG"
+            return 0
+        fi
+        return 1
+    }
+
+    if docker image inspect "$SANDBOX_TAG" >/dev/null 2>&1 \
+       && [[ "${LOGOS_FORCE_SANDBOX_BUILD:-0}" != "1" ]]; then
+        ok "$SANDBOX_TAG already present — skipping (set LOGOS_FORCE_SANDBOX_BUILD=1 to rebuild)"
+    elif [[ "${LOGOS_FORCE_SANDBOX_BUILD:-0}" == "1" ]]; then
+        log "LOGOS_FORCE_SANDBOX_BUILD=1 — building from source (skipping GHCR pull)"
+        _rebuild_from_source
+    elif _pull_from_ghcr; then
+        :  # success logged in _pull_from_ghcr
+    else
+        warn "GHCR pull failed (offline or image not published yet) — falling back to local build"
+        _rebuild_from_source
     fi
 fi
 
