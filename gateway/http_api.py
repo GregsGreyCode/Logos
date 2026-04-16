@@ -2857,18 +2857,57 @@ async def _handle_sessions(request: web.Request) -> web.Response:
 
 
 async def _handle_api_platform_sessions(request: web.Request) -> web.Response:
-    """GET /api/platform-sessions?platform=telegram — list server-side sessions by platform."""
+    """GET /api/platform-sessions?platform=telegram — list server-side sessions by platform.
+
+    Queries the session SQLite DB directly rather than the in-memory
+    session store. The in-memory store only has sessions from this
+    gateway's lifetime; the DB has the full history — which is what
+    the user expects when they click the 📱 TG pill in /chats.
+    """
     current_user = request.get("current_user") or {}
     if current_user.get("role", "viewer") not in ("admin", "operator"):
         raise web.HTTPForbidden()
     platform_filter = request.rel_url.query.get("platform")
     runner: Any = request.app["runner"]
-    sessions = runner.session_store.list_sessions()
-    if platform_filter:
-        sessions = [s for s in sessions if s.platform and s.platform.value == platform_filter]
-    else:
-        sessions = [s for s in sessions if s.platform and s.platform.value not in ("local",)]
-    return web.json_response([s.to_dict() for s in sessions])
+    db = getattr(runner.session_store, "_db", None)
+    if not db:
+        return web.json_response([])
+
+    try:
+        if platform_filter:
+            rows = db._conn.execute(
+                """SELECT id, source, title, started_at, ended_at, message_count,
+                          user_id, model
+                   FROM sessions WHERE source = ?
+                   ORDER BY started_at DESC LIMIT 50""",
+                (platform_filter,),
+            ).fetchall()
+        else:
+            rows = db._conn.execute(
+                """SELECT id, source, title, started_at, ended_at, message_count,
+                          user_id, model
+                   FROM sessions WHERE source NOT IN ('local', 'cron')
+                   ORDER BY started_at DESC LIMIT 50""",
+            ).fetchall()
+    except Exception:
+        return web.json_response([])
+
+    from datetime import datetime as _dt
+    result = []
+    for r in rows:
+        started = _dt.fromtimestamp(r["started_at"]) if r["started_at"] else None
+        updated = _dt.fromtimestamp(r["ended_at"]) if r["ended_at"] else started
+        result.append({
+            "session_id": r["id"],
+            "session_key": r["id"],
+            "display_name": r["title"] or r["user_id"] or r["id"][:20],
+            "platform": r["source"],
+            "chat_type": "dm",
+            "created_at": started.isoformat() if started else "",
+            "updated_at": (updated or started).isoformat() if started else "",
+            "message_count": r["message_count"] or 0,
+        })
+    return web.json_response(result)
 
 
 async def _handle_api_session_messages(request: web.Request) -> web.Response:
