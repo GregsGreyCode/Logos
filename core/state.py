@@ -792,7 +792,7 @@ CREATE INDEX IF NOT EXISTS idx_eval_results_case ON eval_results(case_id);
             return []
 
         if source_filter is None:
-            source_filter = ["cli", "telegram", "discord", "whatsapp", "slack"]
+            source_filter = ["cli", "local", "telegram", "discord", "whatsapp", "slack", "signal", "email", "homeassistant"]
 
         # Build WHERE clauses dynamically
         where_clauses = ["messages_fts MATCH ?"]
