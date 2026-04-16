@@ -7475,6 +7475,11 @@ function app() {
       this.activePlatformSessionId = null;
       if (filter !== 'web') {
         this.loadPlatformSessions(filter);
+      } else {
+        // Switching back to Local: remove any injected platform
+        // sessions from the chats array so TG/Discord sessions
+        // don't pollute the Local list.
+        this.chats = this.chats.filter(c => !c._platform);
       }
     },
 
