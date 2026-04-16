@@ -7474,9 +7474,13 @@ function app() {
       this.platformSessionsLoading = true;
       this.platformSessions = [];
       try {
-        const r = await fetch('/api/platform-sessions?platform=' + encodeURIComponent(platform), {
-          credentials: 'same-origin',
-        });
+        // Pass the active agent's ID so the endpoint only returns
+        // sessions for THIS agent on this platform — clicking Hermes
+        // + 📱 TG shows Hermes's Telegram chats, not Henry's.
+        let url = '/api/platform-sessions?platform=' + encodeURIComponent(platform);
+        const agentId = this.activeChat?.agent_id;
+        if (agentId) url += '&agent_id=' + encodeURIComponent(agentId);
+        const r = await fetch(url, { credentials: 'same-origin' });
         if (r.ok) this.platformSessions = await r.json();
       } catch(e) { /* ignore */ }
       finally { this.platformSessionsLoading = false; }
