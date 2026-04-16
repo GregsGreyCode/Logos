@@ -141,12 +141,43 @@ MESSAGING_INTEGRATIONS = {
 # ---------------------------------------------------------------------------
 
 def _get_credentials() -> dict:
-    """Read stored credentials from the auth DB."""
+    """Read stored credentials from the auth DB.
+
+    Resilient to the DB not being initialised yet — ``load_gateway_config``
+    runs before ``auth_db.init_db`` in the normal startup path, so the
+    happy-path import would raise "Auth DB not initialised". In that
+    case we open SQLite directly at the well-known ``~/.logos/auth.db``
+    path so inject_credentials can still populate os.environ before
+    ``_apply_env_overrides`` decides which platforms to enable.
+    """
+    import json
     try:
         from gateway.auth.db import get_platform_feature_flags
         flags = get_platform_feature_flags()
         return flags.get("credentials") or {}
     except Exception:
+        pass
+    # Fallback: direct SQLite read bypassing the init_db requirement.
+    # Matches the path auth_db would resolve via HERMES_HOME/LOGOS_HOME.
+    try:
+        import sqlite3
+        from pathlib import Path
+        home = os.environ.get("LOGOS_HOME") or os.environ.get("HERMES_HOME") \
+            or str(Path.home() / ".logos")
+        db_path = Path(home) / "auth.db"
+        if not db_path.exists():
+            return {}
+        with sqlite3.connect(str(db_path)) as conn:
+            conn.row_factory = sqlite3.Row
+            row = conn.execute(
+                "SELECT feature_flags FROM platform_settings WHERE id=1"
+            ).fetchone()
+        if not row or not row["feature_flags"]:
+            return {}
+        flags = json.loads(row["feature_flags"]) or {}
+        return flags.get("credentials") or {}
+    except Exception as exc:
+        logger.debug("services: fallback credential read failed: %s", exc)
         return {}
 
 
