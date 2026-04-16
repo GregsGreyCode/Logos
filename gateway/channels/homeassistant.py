@@ -62,8 +62,8 @@ class HomeAssistantAdapter(BasePlatformAdapter):
     # Reconnection backoff schedule (seconds)
     _BACKOFF_STEPS = [5, 10, 30, 60]
 
-    def __init__(self, config: PlatformConfig):
-        super().__init__(config, Platform.HOMEASSISTANT)
+    def __init__(self, config: PlatformConfig, *, agent_id=None, credential_label=None):
+        super().__init__(config, Platform.HOMEASSISTANT, agent_id=agent_id, credential_label=credential_label)
 
         # Connection state
         self._session: Optional["aiohttp.ClientSession"] = None

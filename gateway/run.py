@@ -28,7 +28,7 @@ import time
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from datetime import datetime
-from typing import Dict, Optional, Any, List
+from typing import Dict, Optional, Any, List, Tuple
 
 # Add parent directory to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -549,7 +549,17 @@ class GatewayRunner:
     
     def __init__(self, config: Optional[GatewayConfig] = None):
         self.config = config or load_gateway_config()
+        # Legacy env-token adapters: one per Platform. Populated for any
+        # platform that has NO agent_channel_credentials rows (back-compat
+        # for single-bot installs).
         self.adapters: Dict[Platform, BasePlatformAdapter] = {}
+        # Per-agent credential-row adapters: keyed by
+        # (agent_id, platform, label). A platform may have several rows
+        # (Hermes's prod + staging Telegram bots, say) or rows across
+        # different agents (Hermes's bot + Henry's bot). The startup
+        # loop in start() populates this from
+        # agent_channel_credentials.
+        self.agent_adapters: Dict[Tuple[str, Platform, str], BasePlatformAdapter] = {}
 
         # WorkerRegistry tracks connected OpenShell sandbox workers over
         # WebSocket (/ws/worker). It lives on the runner, not on the HTTP
@@ -1068,15 +1078,53 @@ class GatewayRunner:
         
         connected_count = 0
 
-        # ── Platform adapters: gateway-mediated (Phase 5.4) ─────────────
+        # ── Migration: seed per-agent credential rows from legacy env ───
+        # First boot after the per-agent-credentials feature: if the
+        # agent_channel_credentials table is empty but legacy env tokens
+        # (TELEGRAM_BOT_TOKEN, DISCORD_BOT_TOKEN, …) are set, convert
+        # each to a 'default' row on the first-listed named agent. This
+        # means existing single-bot deployments flip onto the new
+        # lifecycle with zero user action and a reversible shape in the
+        # DB. Idempotent: only runs when the table is empty.
+        try:
+            self._migrate_env_tokens_to_channel_credentials()
+        except Exception as _mig_err:
+            logger.warning("env → channel credentials migration: %s", _mig_err)
+
+        # ── Per-agent channel adapters (new path, one per credential row) ──
+        # Each enabled row in agent_channel_credentials spawns its own
+        # adapter instance, tagged with the owning agent_id. The
+        # adapter stamps source.agent_id on every inbound event so
+        # dispatch_platform_message skips the platform_routing lookup.
+        # Tracks which platforms have at least one credential-driven
+        # adapter so we know to SKIP the legacy env-token path below
+        # for that platform (avoids two adapters polling the same bot).
+        platforms_with_credentials: set = set()
+        try:
+            credential_count = await self._spawn_agent_channel_adapters(platforms_with_credentials)
+            if credential_count:
+                logger.info("✓ %d agent-scoped channel adapter(s) connected", credential_count)
+                connected_count += credential_count
+        except Exception as _ch_err:
+            logger.exception("agent-scoped adapter spawn: %s", _ch_err)
+
+        # ── Legacy platform adapters (env-token path, gateway-mediated) ──
         # Inbound messages no longer run the in-process AIAgent loop.
         # set_message_handler is bound to dispatch_platform_message, which
         # routes the event into a sandbox worker via WorkerRegistry. The
         # gateway holds platform credentials but never executes agent
         # code; the sandbox holds no credentials but executes the agent.
+        # Skipped per-platform when a credential-driven adapter is already
+        # running for that platform (mutex to prevent double polling).
         # See docs/migration/platforms-as-gateway-mediated.md.
         for platform, platform_config in self.config.platforms.items():
             if not platform_config.enabled:
+                continue
+            if platform in platforms_with_credentials:
+                logger.debug(
+                    "skipping legacy env-token adapter for %s (per-agent credentials active)",
+                    platform.value,
+                )
                 continue
             adapter = self._create_adapter(platform, platform_config)
             if not adapter:
@@ -1211,13 +1259,32 @@ class GatewayRunner:
         logger.info("Stopping gateway...")
         self._running = False
         
+        # Disconnect per-agent credential adapters (may include entries
+        # also present in self.adapters as the shim-promoted default —
+        # track which instances we've already closed to avoid double
+        # disconnect).
+        closed_instances: set = set()
+        for key, adapter in list(self.agent_adapters.items()):
+            try:
+                await adapter.disconnect()
+                closed_instances.add(id(adapter))
+                logger.info("✓ %s/%s/%s disconnected", key[0], key[1].value, key[2])
+            except Exception as e:
+                logger.error(
+                    "✗ %s/%s/%s disconnect error: %s",
+                    key[0], key[1].value, key[2], e,
+                )
+
         for platform, adapter in list(self.adapters.items()):
+            if id(adapter) in closed_instances:
+                continue  # already closed via agent_adapters
             try:
                 await adapter.disconnect()
                 logger.info("✓ %s disconnected", platform.value)
             except Exception as e:
                 logger.error("✗ %s disconnect error: %s", platform.value, e)
 
+        self.agent_adapters.clear()
         self.adapters.clear()
         self._shutdown_event.set()
         _set_current_runner(None)
@@ -1233,59 +1300,69 @@ class GatewayRunner:
         await self._shutdown_event.wait()
     
     def _create_adapter(
-        self, 
-        platform: Platform, 
-        config: Any
+        self,
+        platform: Platform,
+        config: Any,
+        *,
+        agent_id: Optional[str] = None,
+        credential_label: Optional[str] = None,
     ) -> Optional[BasePlatformAdapter]:
-        """Create the appropriate adapter for a platform."""
+        """Create the appropriate adapter for a platform.
+
+        ``agent_id`` / ``credential_label`` are forwarded to the adapter
+        so events it emits can be stamped with the owning agent (see
+        BasePlatformAdapter.set_message_handler). Legacy callers that
+        go through the env-token path leave them as None.
+        """
+        kw = {"agent_id": agent_id, "credential_label": credential_label}
         if platform == Platform.TELEGRAM:
             from gateway.channels.telegram import TelegramAdapter, check_telegram_requirements
             if not check_telegram_requirements():
                 logger.warning("Telegram: python-telegram-bot not installed")
                 return None
-            return TelegramAdapter(config)
-        
+            return TelegramAdapter(config, **kw)
+
         elif platform == Platform.DISCORD:
             from gateway.channels.discord import DiscordAdapter, check_discord_requirements
             if not check_discord_requirements():
                 logger.warning("Discord: discord.py not installed")
                 return None
-            return DiscordAdapter(config)
-        
+            return DiscordAdapter(config, **kw)
+
         elif platform == Platform.WHATSAPP:
             from gateway.channels.whatsapp import WhatsAppAdapter, check_whatsapp_requirements
             if not check_whatsapp_requirements():
                 logger.warning("WhatsApp: Node.js not installed or bridge not configured")
                 return None
-            return WhatsAppAdapter(config)
-        
+            return WhatsAppAdapter(config, **kw)
+
         elif platform == Platform.SLACK:
             from gateway.channels.slack import SlackAdapter, check_slack_requirements
             if not check_slack_requirements():
                 logger.warning("Slack: slack-bolt not installed. Run: pip install 'hermes-agent[slack]'")
                 return None
-            return SlackAdapter(config)
+            return SlackAdapter(config, **kw)
 
         elif platform == Platform.SIGNAL:
             from gateway.channels.signal import SignalAdapter, check_signal_requirements
             if not check_signal_requirements():
                 logger.warning("Signal: SIGNAL_HTTP_URL or SIGNAL_ACCOUNT not configured")
                 return None
-            return SignalAdapter(config)
+            return SignalAdapter(config, **kw)
 
         elif platform == Platform.HOMEASSISTANT:
             from gateway.channels.homeassistant import HomeAssistantAdapter, check_ha_requirements
             if not check_ha_requirements():
                 logger.warning("HomeAssistant: aiohttp not installed or HASS_TOKEN not set")
                 return None
-            return HomeAssistantAdapter(config)
+            return HomeAssistantAdapter(config, **kw)
 
         elif platform == Platform.EMAIL:
             from gateway.channels.email import EmailAdapter, check_email_requirements
             if not check_email_requirements():
                 logger.warning("Email: EMAIL_ADDRESS, EMAIL_PASSWORD, EMAIL_IMAP_HOST, or EMAIL_SMTP_HOST not set")
                 return None
-            return EmailAdapter(config)
+            return EmailAdapter(config, **kw)
 
         return None
 
@@ -1455,6 +1532,173 @@ class GatewayRunner:
                 )
             except Exception:
                 logger.exception("bootstrap routing: %s failed", platform.value)
+
+    # ──────────────────────────────────────────────────────────────────
+    # Per-agent channel credentials
+    # ──────────────────────────────────────────────────────────────────
+
+    _ENV_TOKEN_BY_PLATFORM: Dict[Platform, str] = {
+        Platform.TELEGRAM: "TELEGRAM_BOT_TOKEN",
+        Platform.DISCORD: "DISCORD_BOT_TOKEN",
+        Platform.SLACK: "SLACK_BOT_TOKEN",
+        Platform.WHATSAPP: "WHATSAPP_TOKEN",
+        Platform.SIGNAL: "SIGNAL_HTTP_URL",
+        Platform.HOMEASSISTANT: "HASS_TOKEN",
+        Platform.EMAIL: "EMAIL_PASSWORD",
+    }
+
+    def _migrate_env_tokens_to_channel_credentials(self) -> None:
+        """First-boot seed: env-token → default credential row.
+
+        Runs only when ``agent_channel_credentials`` is totally empty
+        (treated as a proxy for "never run on this gateway"). For
+        every Platform whose env token is set and whose
+        ``PlatformConfig.enabled`` is true, inserts a row on the
+        first-listed named agent with ``label='default'``. The env
+        token keeps working for this boot (the adapter reads from it)
+        but subsequent boots will use the DB row, so rotating the
+        token means updating the credentials table, not touching env.
+
+        Explicitly scoped to populate exactly one row per platform —
+        if the user already ran the UI add-credential flow, the table
+        won't be empty and this migration is a no-op.
+        """
+        if not self.config.platforms:
+            return
+        from gateway.auth import db as _auth_db
+        try:
+            existing = _auth_db.list_agent_channel_credentials()
+        except Exception:
+            logger.exception("env→credentials migration: list failed")
+            return
+        if existing:
+            return  # already populated — user or previous boot did it
+        try:
+            agents = _auth_db.list_agents()
+        except Exception:
+            logger.exception("env→credentials migration: list_agents failed")
+            return
+        if not agents:
+            logger.debug("env→credentials migration: no agents, skipping")
+            return
+        default_agent = agents[0]
+        seeded = 0
+        for platform, pconfig in self.config.platforms.items():
+            if not pconfig.enabled:
+                continue
+            env_key = self._ENV_TOKEN_BY_PLATFORM.get(platform)
+            if not env_key:
+                continue
+            token = (os.environ.get(env_key) or pconfig.token or "").strip()
+            if not token:
+                continue
+            try:
+                _auth_db.upsert_agent_channel_credential(
+                    agent_id=default_agent["id"],
+                    platform=platform.value,
+                    token=token,
+                    label="default",
+                    enabled=True,
+                )
+                seeded += 1
+                logger.info(
+                    "env→credentials: seeded %s default row for agent %s",
+                    platform.value, default_agent.get("name") or default_agent["id"],
+                )
+            except Exception:
+                logger.exception("env→credentials: upsert %s failed", platform.value)
+        if seeded:
+            logger.info("env→credentials: migrated %d platform token(s)", seeded)
+
+    async def _spawn_agent_channel_adapters(
+        self, platforms_with_credentials: set,
+    ) -> int:
+        """Spawn one adapter per enabled ``agent_channel_credentials`` row.
+
+        Each adapter is tagged with its owning ``agent_id`` /
+        ``credential_label`` so incoming events get
+        ``source.agent_id`` stamped automatically (see
+        BasePlatformAdapter.set_message_handler). That stamping is
+        what lets dispatch_platform_message skip the platform_routing
+        lookup — the token IS the routing.
+
+        Populates ``self.agent_adapters`` by (agent_id, platform, label).
+        Also sets the FIRST adapter per platform into
+        ``self.adapters[platform]`` so the existing delivery_router /
+        channel_directory code (which keys by Platform) still finds an
+        outbound path. That promotion is a shim until task #4 teaches
+        the router to pick the right per-agent adapter for outbound.
+
+        Adds each platform it spawns for to
+        ``platforms_with_credentials`` so the legacy env-token startup
+        loop can skip them — prevents double-polling the same bot.
+
+        Returns the number of adapters successfully connected.
+        """
+        from gateway.auth import db as _auth_db
+        from gateway.config import Platform as _Platform, PlatformConfig
+        try:
+            rows = _auth_db.list_agent_channel_credentials(enabled_only=True)
+        except Exception:
+            logger.exception("_spawn_agent_channel_adapters: list failed")
+            return 0
+        if not rows:
+            return 0
+
+        connected = 0
+        for row in rows:
+            try:
+                platform = _Platform(row["platform"])
+            except ValueError:
+                logger.warning(
+                    "_spawn_agent_channel_adapters: unknown platform %s on row %s",
+                    row["platform"], row["id"],
+                )
+                continue
+            # Build a PlatformConfig that carries only this row's token,
+            # so the adapter talks to THIS bot and no other.
+            pconfig = PlatformConfig(enabled=True, token=row["token"])
+            adapter = self._create_adapter(
+                platform,
+                pconfig,
+                agent_id=row["agent_id"],
+                credential_label=row["label"],
+            )
+            if not adapter:
+                logger.warning(
+                    "_spawn_agent_channel_adapters: no adapter class for %s (row %s)",
+                    platform.value, row["id"],
+                )
+                continue
+            adapter.set_message_handler(self.dispatch_platform_message)
+            try:
+                success = await adapter.connect()
+            except Exception:
+                logger.exception(
+                    "_spawn_agent_channel_adapters: connect failed for %s/%s/%s",
+                    row["agent_id"], platform.value, row["label"],
+                )
+                continue
+            if not success:
+                logger.warning(
+                    "_spawn_agent_channel_adapters: adapter.connect returned False for %s/%s/%s",
+                    row["agent_id"], platform.value, row["label"],
+                )
+                continue
+            key = (row["agent_id"], platform, row["label"])
+            self.agent_adapters[key] = adapter
+            # Shim for outbound: first adapter per platform also lives
+            # in self.adapters[platform] so delivery_router finds one.
+            # Multi-agent outbound gets proper routing in task #4.
+            self.adapters.setdefault(platform, adapter)
+            self._sync_voice_mode_state_to_adapter(adapter)
+            platforms_with_credentials.add(platform)
+            connected += 1
+            logger.info(
+                "✓ %s/%s/%s connected (agent-scoped)",
+                row["agent_id"], platform.value, row["label"],
+            )
+        return connected
 
     # ──────────────────────────────────────────────────────────────────
     # Phase 5.3 — dispatch_platform_message

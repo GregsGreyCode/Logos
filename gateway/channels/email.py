@@ -185,8 +185,8 @@ def _extract_attachments(msg: email_lib.message.Message) -> List[Dict[str, Any]]
 class EmailAdapter(BasePlatformAdapter):
     """Email gateway adapter using IMAP (receive) and SMTP (send)."""
 
-    def __init__(self, config: PlatformConfig):
-        super().__init__(config, Platform.EMAIL)
+    def __init__(self, config: PlatformConfig, *, agent_id=None, credential_label=None):
+        super().__init__(config, Platform.EMAIL, agent_id=agent_id, credential_label=credential_label)
 
         self._address = os.getenv("EMAIL_ADDRESS", "")
         self._password = os.getenv("EMAIL_PASSWORD", "")

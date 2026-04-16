@@ -124,8 +124,8 @@ class WhatsAppAdapter(BasePlatformAdapter):
     # Default bridge location relative to the hermes-agent install
     _DEFAULT_BRIDGE_DIR = Path(__file__).resolve().parents[2] / "scripts" / "whatsapp-bridge"
 
-    def __init__(self, config: PlatformConfig):
-        super().__init__(config, Platform.WHATSAPP)
+    def __init__(self, config: PlatformConfig, *, agent_id=None, credential_label=None):
+        super().__init__(config, Platform.WHATSAPP, agent_id=agent_id, credential_label=credential_label)
         self._bridge_process: Optional[subprocess.Popen] = None
         self._bridge_port: int = config.extra.get("bridge_port", 3000)
         self._bridge_script: Optional[str] = config.extra.get(
