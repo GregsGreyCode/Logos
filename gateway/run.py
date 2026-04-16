@@ -2055,31 +2055,73 @@ class GatewayRunner:
         }
 
         # Emit a dispatch row so platform messages (Discord/Telegram/
-        # WhatsApp/etc.) show up in the Events tab. The /chat path does
+        # WhatsApp/etc.) show up in the Runs tab. The /chat path does
         # this inline at http_api.py:3930; this mirrors it for the
-        # platform-driven code path. Best-effort — never blocks dispatch.
+        # platform-driven code path, with the same STAMP snapshot
+        # fields (soul, toolsets_snapshot, policy_snapshot) so the
+        # Runs UI can render pills for platform runs the same way it
+        # does for web-chat runs. Best-effort — never blocks dispatch.
         import json as _json
         import time as _time
         _dispatch_id = None
         _dispatch_started = _time.time()
         try:
             from gateway.auth import db as _auth_db
+            # agent is a dict (from _auth_db.get_agent / list_agents),
+            # NOT an object — earlier getattr() calls were silently
+            # returning "" because dicts don't expose keys as attrs.
+            _agent_id = agent.get("id") or ""
+            _agent_soul = agent.get("soul_slug") or ""
+            # Model resolution mirrors the /chat path: per-agent setting
+            # wins, fall back to gateway-wide env. worker_entry doesn't
+            # carry a .model attribute on the health-entry shim.
+            _agent_model = (
+                agent.get("model")
+                or os.environ.get("LOGOS_MODEL")
+                or os.environ.get("HERMES_MODEL")
+                or ""
+            )
+            # Toolsets + policy snapshots at dispatch time — captured
+            # verbatim from the agent row so the Runs tab's T and P
+            # pills survive later config edits.
+            _toolsets_raw = agent.get("toolsets") or ""
+            try:
+                _tl = _json.loads(_toolsets_raw) if _toolsets_raw else []
+                _toolsets_json = _json.dumps(_tl) if isinstance(_tl, list) and _tl else ""
+            except Exception:
+                _toolsets_json = ""
+            _presets_raw = agent.get("applied_presets") or ""
+            try:
+                _pl = _json.loads(_presets_raw) if _presets_raw else []
+                _policy_json = _json.dumps(_pl) if isinstance(_pl, list) and _pl else ""
+            except Exception:
+                _policy_json = ""
+            # user_id: the Telegram chat user isn't a Logos user — the
+            # number is their platform ID. Resolve to the agent's
+            # creator so the Runs "User" column shows a real name
+            # (e.g. Greg) instead of a raw Telegram ID. The platform
+            # user_id is still captured in origin_detail for audit.
+            _dispatch_user_id = agent.get("creator_id") or ""
             _dispatch_id = _auth_db.create_dispatch(
                 task_id=task_payload["task_id"],
-                agent_id=getattr(agent, "id", "") or getattr(agent, "name", "") or "",
+                agent_id=_agent_id,
                 sandbox_name=worker_id or "",
-                model=getattr(worker_entry, "model", "") or "",
+                model=_agent_model,
                 origin=f"platform_{platform_name}" if platform_name else "platform",
                 origin_detail=_json.dumps({
                     "platform": platform_name,
-                    "user_id": user_id or "",
+                    "platform_user_id": user_id or "",
                     "chat_id": getattr(source, "chat_id", "") or "",
                 }),
                 session_id=session_id or "",
-                user_id=user_id or "",
+                user_id=_dispatch_user_id,
+                soul=_agent_soul,
+                toolsets_snapshot=_toolsets_json,
+                user_message=message_text or "",
+                policy_snapshot=_policy_json,
             )
         except Exception:
-            pass
+            logger.exception("dispatch_platform_message: create_dispatch failed")
 
         def _finish_dispatch(status, err=None, usage=None):
             if not _dispatch_id:
