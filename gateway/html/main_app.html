@@ -462,14 +462,13 @@
   <!-- ── Chats Tab ────────────────────────────────────────────────── -->
   <div x-show="tab==='sessions'" x-cloak style="height:calc(100vh - 84px)">
 
-    <!-- Agent instance bar — one pill per named agent. Hidden when
-         viewing platform sessions (TG/Discord/etc.) because those
-         sessions are already bound to specific agents; clicking an
-         agent pill would start a new web chat instead of filtering
-         the platform list, which is confusing. -->
-    <div x-show="sidebarFilter === 'web'" class="flex items-center gap-2 mb-3 flex-wrap" data-fl="1">
+    <!-- Agent instance bar — always visible. Selecting an agent
+         filters both Local chats AND platform sessions to that agent.
+         When viewing TG/Discord, the sidebar shows only that agent's
+         conversations on the selected platform. -->
+    <div class="flex items-center gap-2 mb-3 flex-wrap" data-fl="1">
       <template x-for="a in namedAgents" :key="a.id">
-        <button @click="chatWithAgent(a)"
+        <button @click="chatWithAgent(a); if (sidebarFilter !== 'web') loadPlatformSessions(sidebarFilter)"
           class="flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium transition-colors"
           :class="activeChat?.agent_id === a.id ? 'inst-active' : 'bg-gray-800 text-gray-400 hover:bg-gray-700 hover:text-white'">
           <span class="text-[10px] font-bold tracking-wider uppercase px-1 py-0.5 rounded bg-emerald-900 text-emerald-300 mr-0.5">Agent</span>
@@ -484,12 +483,6 @@
           <span>＋</span><span>Create your first agent</span>
         </button>
       </template>
-    </div>
-    <!-- Platform session header — shown when viewing TG/Discord/etc -->
-    <div x-show="sidebarFilter !== 'web'" class="flex items-center gap-2 mb-3 text-xs text-gray-400">
-      <span x-text="({telegram:'📱 Telegram',discord:'💬 Discord',slack:'⚡ Slack',whatsapp:'🟢 WhatsApp',signal:'📡 Signal',email:'✉️ Email'})[sidebarFilter] || sidebarFilter"></span>
-      <span class="text-gray-600">conversations</span>
-      <span class="ml-auto text-[10px] text-gray-600" x-text="platformSessions.length + ' session' + (platformSessions.length === 1 ? '' : 's')"></span>
     </div>
 
     <div class="flex gap-4 h-full" style="height:calc(100% - 36px)" data-fl="2">
