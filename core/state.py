@@ -884,20 +884,55 @@ CREATE INDEX IF NOT EXISTS idx_eval_results_case ON eval_results(case_id);
     # =========================================================================
 
     @staticmethod
-    def _get_embedding(text: str, model: str = "nomic-embed-text",
+    def _get_embedding(text: str, model: str = "nomic-embed-text-v1.5",
                        base_url: str = None) -> Optional[List[float]]:
         """Call an OpenAI-compatible /v1/embeddings endpoint.
 
-        Tries Ollama (11434) then LM Studio (1234) then falls back to
-        None (caller skips embedding). No external deps — uses urllib.
+        Resolution order for the endpoint:
+          1. Explicit ``base_url`` if passed
+          2. Registered machines in auth.db (same endpoints the setup
+             wizard scanned — works for remote LM Studio instances on
+             the LAN, not just localhost)
+          3. Localhost fallbacks: Ollama (11434), LM Studio (1234)
+
+        No external deps — uses urllib.
         """
         import json as _json
         import urllib.request
 
-        urls = [base_url] if base_url else [
-            "http://localhost:11434/v1/embeddings",
-            "http://localhost:1234/v1/embeddings",
-        ]
+        urls: list[str] = []
+        if base_url:
+            urls.append(base_url)
+        else:
+            # Pull registered machine endpoints from the auth DB so
+            # remote LM Studio instances (e.g. 192.168.1.117:1234)
+            # are discovered automatically — same endpoints the setup
+            # wizard found.
+            try:
+                import sqlite3 as _sql3
+                _auth_path = Path(
+                    os.getenv("LOGOS_HOME") or os.getenv("HERMES_HOME")
+                    or str(Path.home() / ".logos")
+                ) / "auth.db"
+                if _auth_path.exists():
+                    with _sql3.connect(str(_auth_path), timeout=2) as _c:
+                        _c.row_factory = _sql3.Row
+                        for _r in _c.execute("SELECT endpoint_url FROM machines WHERE enabled=1"):
+                            _eu = (_r["endpoint_url"] or "").rstrip("/")
+                            if _eu:
+                                # endpoint_url is like http://host:1234/v1
+                                # embeddings lives at /v1/embeddings
+                                if _eu.endswith("/v1"):
+                                    urls.append(_eu + "/embeddings")
+                                else:
+                                    urls.append(_eu.rstrip("/") + "/v1/embeddings")
+            except Exception:
+                pass
+            # Localhost fallbacks
+            urls.extend([
+                "http://localhost:11434/v1/embeddings",
+                "http://localhost:1234/v1/embeddings",
+            ])
         payload = _json.dumps({"model": model, "input": text}).encode()
 
         for url in urls:
