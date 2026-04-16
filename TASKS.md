@@ -209,6 +209,36 @@ unless someone asks for it.
 
 ## Pending — infra / cleanup
 
+### #23 Rebuild hermes-sandbox image — pick up sandbox_worker.py changes
+
+Two changes to `docker/sandbox_worker.py` are waiting on an image
+rebuild to actually take effect in running sandboxes:
+
+1. **ms-playwright cache bridge** (commit `1ec07917`) — `_ensure_browser_env()`
+   now symlinks `/tmp/hermes/.cache/ms-playwright` → `/usr/local/share/ms-playwright`
+   so agent-browser's native binary finds the chrome-headless-shell
+   binary. Applied manually to the four running sandboxes (Hattie,
+   Hermes, Eliza, Henry) as a band-aid; will be permanent after
+   rebuild + respawn.
+2. **capabilities_prompt injection** (commit `a89500dc`) — the worker
+   now reads `config.get("capabilities_prompt")` and prepends it to
+   the system prompt on every dispatch so agents know which P-pill
+   toggles are on/off and can tell the user which to enable. The
+   gateway already ships the field in instance_config.json;
+   sandboxes won't consume it until they run the new sandbox_worker.
+
+Rebuild pipeline (per `project_sandbox_image_m12.md` memory):
+
+```bash
+docker build -f docker/Dockerfile.hermes-upstream -t hermes-sandbox:m12 .
+# then purge each cluster's containerd image cache + force re-pull
+# so running sandboxes pick up the new image on respawn
+for gw in claude-opus-4-6 qwen3-5-9b openai-gpt-oss-20b qwen2-5-0-5b-instruct qwen3-vl-4b-instruct; do
+  docker exec openshell-cluster-$gw crictl rmi hermes-sandbox:m12 2>/dev/null || true
+done
+# then trigger a sandbox restart via the admin UI or `openshell sandbox delete`
+```
+
 ### #XX Strip workflow + action-policy dead code once schema migration is safe — DONE
 
 Completed: cleanup pass landed as part of the preset→permission rename
