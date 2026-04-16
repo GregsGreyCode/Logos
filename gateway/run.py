@@ -1078,6 +1078,18 @@ class GatewayRunner:
         
         connected_count = 0
 
+        # Auth DB initialisation — the HTTP layer calls this too during
+        # start_http_api, but we need the tables up NOW so the per-agent
+        # credential migration + adapter spawn below can read from them.
+        # init_db is idempotent (CREATE TABLE IF NOT EXISTS + version
+        # flags guard re-runs), so calling it from both places is fine.
+        try:
+            from gateway.auth import db as _auth_db_init
+            from logos_cli.config import get_hermes_home as _get_hh
+            _auth_db_init.init_db(_get_hh())
+        except Exception as _init_exc:
+            logger.warning("auth DB init from start(): %s", _init_exc)
+
         # ── Migration: seed per-agent credential rows from legacy env ───
         # First boot after the per-agent-credentials feature: if the
         # agent_channel_credentials table is empty but legacy env tokens
