@@ -1910,7 +1910,7 @@
       <div class="grid grid-cols-1 gap-3">
         <template x-for="p in cloudProviders" :key="p.id">
           <div class="bg-gray-900 border rounded-xl overflow-hidden transition-colors"
-            :class="p.is_active ? 'border-indigo-500/50' : 'border-gray-800'">
+            :class="p._editing ? 'border-[var(--accent)]' : 'border-gray-800'">
             <!-- Card header row -->
             <div class="flex items-center gap-3 px-4 py-3">
               <!-- Status dot: green when active, grey otherwise -->
@@ -2174,7 +2174,7 @@
       </template>
 
       <!-- Machine cards -->
-      <div class="grid grid-cols-1 gap-3" x-ref="machineList">
+      <div class="grid grid-cols-1 gap-3">
         <template x-for="m in adminMachines" :key="m.id">
           <div class="bg-gray-900 border rounded-xl overflow-hidden transition-colors"
             :data-machine-id="m.id"
@@ -2182,8 +2182,6 @@
 
             <!-- Card header row -->
             <div class="flex items-center gap-3 px-4 py-3">
-              <!-- Drag handle -->
-              <div class="machine-drag-handle cursor-grab active:cursor-grabbing text-gray-700 hover:text-gray-400 shrink-0 select-none" title="Drag to reorder">⠿</div>
               <!-- Status dot: reflects enabled + cached health -->
               <div class="w-2 h-2 rounded-full shrink-0 transition-colors"
                 :class="!m.enabled                                              ? 'bg-gray-700'
@@ -10006,35 +10004,7 @@ network_policies:
           _health_at: prev[m.id]?._health_at ?? null,
           _probing:   false,
         }));
-        this.$nextTick(() => this._initMachineSortable());
       } catch(e) { this.adminMachines = []; }
-    },
-
-    _initMachineSortable() {
-      const el = this.$refs.machineList;
-      if (!el || !window.Sortable) return;
-      if (el._sortable) { el._sortable.destroy(); }
-      el._sortable = Sortable.create(el, {
-        handle: '.machine-drag-handle',
-        animation: 150,
-        ghostClass: 'opacity-30',
-        onEnd: (evt) => {
-          // Reorder the Alpine data array to match the new DOM order
-          const moved = this.adminMachines.splice(evt.oldIndex, 1)[0];
-          this.adminMachines.splice(evt.newIndex, 0, moved);
-          this.saveMachineOrder(this.adminMachines.map(m => m.id));
-        },
-      });
-    },
-
-    async saveMachineOrder(ids) {
-      try {
-        await fetch('/admin/machines/reorder', {
-          method: 'POST', credentials: 'include',
-          headers: {'Content-Type':'application/json','X-CSRF-Token':getCsrfToken()},
-          body: JSON.stringify({ids}),
-        });
-      } catch(e) { console.error('reorder failed', e); }
     },
 
     stopCapabilityBenchmark() {
