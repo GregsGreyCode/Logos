@@ -2030,6 +2030,188 @@ async def _handle_soul_detail(request: web.Request) -> web.Response:
     return web.json_response(soul.to_dict(include_soul_md=True))
 
 
+# ── Souls admin CRUD ────────────────────────────────────────────────────────
+# Same shape as the Sandbox Policies editor: list + manifest/md files
+# + Save/hot-reload/Delete. Mutations re-read the souls directory via
+# souls.load_souls() so agents see edits on their next dispatch without
+# a gateway restart.
+
+import re as _souls_re
+_SOULS_SLUG_RE = _souls_re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
+
+
+def _souls_count_agents_using(slug: str) -> int:
+    """Count agents currently tied to this soul slug."""
+    try:
+        agents = auth_db.list_agents()
+    except Exception:
+        return 0
+    return sum(1 for a in (agents or []) if (a.get("soul_slug") or "") == slug)
+
+
+async def _handle_admin_souls_list(request: web.Request) -> web.Response:
+    """GET /api/admin/souls — list souls with per-soul agent usage counts."""
+    from gateway import souls as _souls
+    registry = _souls.get_soul_registry()
+    out = []
+    for slug, soul in registry.items():
+        out.append({
+            **soul.to_dict(include_soul_md=False),
+            "agent_count": _souls_count_agents_using(slug),
+        })
+    # In-use first (so admins see what's affecting live agents), then
+    # alphabetical.
+    out.sort(key=lambda s: (-s.get("agent_count", 0), s.get("slug", "")))
+    return web.json_response({"souls": out})
+
+
+async def _handle_admin_soul_get(request: web.Request) -> web.Response:
+    """GET /api/admin/souls/{slug} — raw manifest YAML + soul.md text.
+
+    The editor writes both files, so the response carries both so the
+    UI can round-trip without surprise overrides.
+    """
+    from gateway import souls as _souls
+    slug = request.match_info["slug"]
+    soul_dir = _souls._SOULS_DIR / slug
+    manifest_path = soul_dir / "soul.manifest.yaml"
+    soul_md_path = soul_dir / "soul.md"
+    if not manifest_path.exists():
+        raise web.HTTPNotFound(reason=f"soul not found: {slug}")
+    try:
+        manifest_text = manifest_path.read_text(encoding="utf-8")
+    except OSError:
+        manifest_text = ""
+    soul_md_text = ""
+    if soul_md_path.exists():
+        try:
+            soul_md_text = soul_md_path.read_text(encoding="utf-8")
+        except OSError:
+            soul_md_text = ""
+    return web.json_response({
+        "slug": slug,
+        "manifest_yaml": manifest_text,
+        "soul_md": soul_md_text,
+        "agent_count": _souls_count_agents_using(slug),
+    })
+
+
+async def _handle_admin_soul_put(request: web.Request) -> web.Response:
+    """PUT /api/admin/souls/{slug} — create or update a soul.
+
+    Body: ``{"manifest_yaml": "...", "soul_md": "..."}``. Validates the
+    manifest YAML parses to a dict with a matching slug, writes both
+    files atomically (tmpfile + rename), then hot-reloads the soul
+    registry so the next agent dispatch picks up the edit.
+    """
+    from gateway import souls as _souls
+    import yaml as _yaml
+    import tempfile as _tempfile
+    slug = request.match_info["slug"]
+    if not _SOULS_SLUG_RE.match(slug):
+        raise web.HTTPBadRequest(reason="invalid slug (lowercase, alphanumeric, _-)")
+    try:
+        body = await request.json()
+    except Exception:
+        raise web.HTTPBadRequest(reason="Invalid JSON")
+    manifest_yaml = body.get("manifest_yaml")
+    soul_md = body.get("soul_md", "")
+    if not isinstance(manifest_yaml, str) or not manifest_yaml.strip():
+        raise web.HTTPBadRequest(reason="body.manifest_yaml is required")
+    if not isinstance(soul_md, str):
+        raise web.HTTPBadRequest(reason="body.soul_md must be a string")
+    # Validate YAML parses and the slug inside matches the URL. Guards
+    # against typos that would otherwise leave the filesystem and the
+    # manifest out of sync (registry keys by data.slug, not dirname).
+    try:
+        parsed = _yaml.safe_load(manifest_yaml) or {}
+    except _yaml.YAMLError as exc:
+        return web.json_response({"error": "yaml_parse_error", "detail": str(exc)}, status=400)
+    if not isinstance(parsed, dict):
+        return web.json_response({"error": "manifest_not_a_mapping"}, status=400)
+    manifest_slug = parsed.get("slug") or parsed.get("id")
+    if manifest_slug and manifest_slug != slug:
+        return web.json_response(
+            {"error": "slug_mismatch", "detail": f"manifest slug={manifest_slug!r} must match URL slug={slug!r}"},
+            status=400,
+        )
+    # Write atomically — write to a tmp file in the same dir then
+    # rename. Both files together so a failure partway doesn't leave
+    # the dir in a half-updated state the registry would then pick up.
+    soul_dir = _souls._SOULS_DIR / slug
+    soul_dir.mkdir(parents=True, exist_ok=True)
+    for filename, content in (("soul.manifest.yaml", manifest_yaml), ("soul.md", soul_md)):
+        target = soul_dir / filename
+        tmp = _tempfile.NamedTemporaryFile(
+            mode="w", encoding="utf-8", dir=str(soul_dir),
+            prefix=f".{filename}.", suffix=".tmp", delete=False,
+        )
+        try:
+            tmp.write(content)
+            tmp.flush()
+            tmp.close()
+            os.replace(tmp.name, target)
+        except Exception:
+            try:
+                os.unlink(tmp.name)
+            except OSError:
+                pass
+            raise
+    # Hot-reload the in-process soul registry so the next dispatch
+    # reads the new manifest. Sandboxes themselves don't cache souls
+    # (they re-run sandbox_worker per dispatch and pull config fresh),
+    # so no sandbox-side work needed.
+    try:
+        _souls.load_souls()
+    except Exception as exc:
+        logger.warning("load_souls reload failed after PUT %s: %s", slug, exc)
+    auth_db.write_audit_log(
+        request.get("current_user", {}).get("sub"),
+        "update_soul",
+        target_type="soul", target_id=slug,
+    )
+    return web.json_response({
+        "ok": True,
+        "slug": slug,
+        "agent_count": _souls_count_agents_using(slug),
+    })
+
+
+async def _handle_admin_soul_delete(request: web.Request) -> web.Response:
+    """DELETE /api/admin/souls/{slug} — remove a soul directory.
+
+    Refuses if any agent still picks the soul — the admin needs to
+    migrate those agents first, mirroring sandbox_preset behaviour.
+    """
+    from gateway import souls as _souls
+    import shutil as _shutil
+    slug = request.match_info["slug"]
+    soul_dir = _souls._SOULS_DIR / slug
+    if not soul_dir.is_dir():
+        raise web.HTTPNotFound(reason="soul not found")
+    n = _souls_count_agents_using(slug)
+    if n > 0:
+        return web.json_response({
+            "error": "in_use",
+            "detail": f"{n} agent(s) still use this soul",
+            "agent_count": n,
+        }, status=409)
+    try:
+        _shutil.rmtree(soul_dir)
+    except OSError as exc:
+        return web.json_response({"error": "delete_failed", "detail": str(exc)}, status=500)
+    try:
+        _souls.load_souls()
+    except Exception:
+        pass
+    auth_db.write_audit_log(
+        request.get("current_user", {}).get("sub"),
+        "delete_soul",
+        target_type="soul", target_id=slug,
+    )
+    return web.json_response({"ok": True})
+
+
 async def _handle_instances_get(request: web.Request) -> web.Response:
     executor = request.app["executor"]
     loop = asyncio.get_event_loop()
@@ -4894,6 +5076,14 @@ async def start_http_api(runner: Any, port: int = 8091) -> None:
     app.router.add_get("/api/openshell/presets/{name}",   _vsp(_handle_sandbox_presets_get))
     app.router.add_put("/api/openshell/presets/{name}",   _msp(require_csrf(_handle_sandbox_presets_put)))
     app.router.add_delete("/api/openshell/presets/{name}", _msp(require_csrf(_handle_sandbox_presets_delete)))
+
+    # ── Souls admin CRUD ──────────────────────────────────────────────────
+    _vsl = require_permission("view_souls")
+    _msl = require_permission("manage_souls")
+    app.router.add_get("/api/admin/souls",               _vsl(_handle_admin_souls_list))
+    app.router.add_get("/api/admin/souls/{slug}",        _vsl(_handle_admin_soul_get))
+    app.router.add_put("/api/admin/souls/{slug}",        _msl(require_csrf(_handle_admin_soul_put)))
+    app.router.add_delete("/api/admin/souls/{slug}",     _msl(require_csrf(_handle_admin_soul_delete)))
 
     # ── Approval requests ──────────────────────────────────────────────────
     app.router.add_get("/approvals",              _vap(_handle_approvals_list))

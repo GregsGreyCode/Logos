@@ -25,6 +25,9 @@ ROLE_PERMISSIONS: dict[str, set[str]] = {
         # OpenShell sandbox permissions (network_policies bundles)
         "view_sandbox_policies",    # read permission YAMLs + which agents use them
         "manage_sandbox_policies",  # create/edit/delete permission YAMLs
+        # Soul authoring
+        "view_souls",               # list + view soul manifests and soul.md content
+        "manage_souls",             # create/edit/delete soul directories
         # Agent run records
         "view_runs",                # view agent run audit records
         # Evolution
@@ -47,6 +50,8 @@ ROLE_PERMISSIONS: dict[str, set[str]] = {
         "decide_approvals",
         # OpenShell sandbox permissions
         "view_sandbox_policies",
+        # Soul authoring — operators can read, not edit
+        "view_souls",
         # Agent run records
         "view_runs",
         # Evolution
