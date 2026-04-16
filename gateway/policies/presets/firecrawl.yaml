@@ -7,10 +7,10 @@
 # Apply via:
 #   gateway.policies.apply_preset(agent_id, "firecrawl")
 #
-# Requires FIRECRAWL_API_KEY (cloud) or FIRECRAWL_API_URL (self-hosted).
-# The tool's check_fn hides itself if neither is set, so applying
-# this preset without the key is harmless (just widens the network
-# policy without the tool being visible to the agent).
+# Requires FIRECRAWL_API_KEY (managed Firecrawl cloud). The tool's
+# check_fn hides itself if no key is set, so applying this preset
+# without the key is harmless (just widens the network policy without
+# the tool being visible to the agent).
 
 preset:
   name: firecrawl

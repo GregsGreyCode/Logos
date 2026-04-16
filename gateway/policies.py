@@ -132,49 +132,28 @@ class PolicyMergeError(Exception):
 # network preset (terminal, memory, file ops, todo, delegate, etc.).
 
 TOOL_PRESET_MAP: Dict[str, Dict[str, Any]] = {
-    # Web search & extraction — Firecrawl API
+    # Web search & extraction — Firecrawl cloud API
     "web_search": {
-        # The right preset is chosen by which env var was just saved:
-        # FIRECRAWL_API_KEY → "firecrawl" (cloud), FIRECRAWL_API_URL →
-        # "firecrawl-selfhosted" (homelab). auto_apply_presets_for_env
-        # selects only the preset(s) keyed to the saved env var.
         "presets": ["firecrawl"],
-        "presets_by_env": {
-            "FIRECRAWL_API_KEY": ["firecrawl"],
-            "FIRECRAWL_API_URL": ["firecrawl-selfhosted"],
-        },
         "env": ["FIRECRAWL_API_KEY"],
-        "env_alt": ["FIRECRAWL_API_URL"],
         "toolset": "web",
         "description": "Web search and content extraction",
         "setup_url": "https://firecrawl.dev",
     },
     "web_extract": {
         "presets": ["firecrawl"],
-        "presets_by_env": {
-            "FIRECRAWL_API_KEY": ["firecrawl"],
-            "FIRECRAWL_API_URL": ["firecrawl-selfhosted"],
-        },
         "env": ["FIRECRAWL_API_KEY"],
-        "env_alt": ["FIRECRAWL_API_URL"],
         "toolset": "web",
         "description": "Web page content extraction",
         "setup_url": "https://firecrawl.dev",
     },
-    # Browser automation — Browserbase (cloud), self-hosted Browserless,
-    # or local agent-browser Chromium (no preset needed for local).
+    # Browser automation — Browserbase (cloud) or local agent-browser
+    # Chromium (no preset needed for local).
     "browser_navigate": {
         "presets": ["browserbase"],
-        "presets_by_env": {
-            "BROWSERBASE_API_KEY": ["browserbase"],
-            "BROWSERBASE_PROJECT_ID": ["browserbase"],
-            "BROWSERLESS_URL": ["browserless"],
-            "BROWSERLESS_TOKEN": ["browserless"],
-        },
         "env": ["BROWSERBASE_API_KEY", "BROWSERBASE_PROJECT_ID"],
-        "env_alt": ["BROWSERLESS_URL", "BROWSERLESS_TOKEN"],
         "toolset": "browser",
-        "description": "Cloud or self-hosted browser automation",
+        "description": "Cloud browser automation",
         "setup_url": "https://browserbase.com",
         "optional": True,  # local browser works without this
     },
@@ -256,30 +235,10 @@ def get_tool_readiness(agent_id: str) -> List[Dict[str, Any]]:
 
         # Check env vars
         env_keys = info.get("env", [])
-        env_alt = info.get("env_alt", [])
-        primary_ok = bool(env_keys) and all(os.environ.get(k) for k in env_keys)
-        alt_satisfied = next((k for k in env_alt if os.environ.get(k)), None)
-        has_env = primary_ok or alt_satisfied is not None
+        has_env = bool(env_keys) and all(os.environ.get(k) for k in env_keys)
 
-        # Check presets — but pick the right preset set based on which
-        # env var is actually satisfied. The default ``presets`` field
-        # corresponds to the primary env, while ``presets_by_env`` maps
-        # each env-key to its matching preset (e.g. BROWSERLESS_URL →
-        # ``browserless`` instead of the default ``browserbase``).
-        # Without this dispatch, an agent on Browserless with
-        # ``BROWSERLESS_URL`` set + ``browserless`` preset applied still
-        # showed "needs P-browserbase" because the readiness check
-        # ignored ``presets_by_env`` entirely.
-        presets_by_env = info.get("presets_by_env", {}) or {}
-        if primary_ok:
-            # Primary env is satisfied — prefer presets_by_env mapping
-            # for the first satisfied primary key, fall back to default.
-            _key = next((k for k in env_keys if os.environ.get(k)), None)
-            needed_presets = presets_by_env.get(_key) or info.get("presets", [])
-        elif alt_satisfied:
-            needed_presets = presets_by_env.get(alt_satisfied) or info.get("presets", [])
-        else:
-            needed_presets = info.get("presets", [])
+        # Check presets
+        needed_presets = info.get("presets", [])
         has_presets = all(p in applied for p in needed_presets)
 
         if has_env and has_presets:
@@ -293,10 +252,6 @@ def get_tool_readiness(agent_id: str) -> List[Dict[str, Any]]:
             status = "needs_preset"
             reason = f"preset '{needed_presets[0]}' not applied"
 
-        # Surface which preset is actually missing (the first one in
-        # the env-resolved ``needed_presets`` list, not the default
-        # field) — keeps the UI's "needs P-X" hint truthful when the
-        # user has chosen a non-default backend like browserless.
         missing_preset = next(
             (p for p in needed_presets if p not in applied),
             needed_presets[0] if needed_presets else None,
@@ -355,18 +310,12 @@ def auto_apply_presets_for_env(env_key: str) -> List[str]:
     """
     from gateway.auth import db as auth_db
 
-    # Find which presets this env key unlocks. Tools may declare a per-env
-    # routing table (`presets_by_env`) so cloud and self-hosted variants of
-    # the same tool can target different presets — saving FIRECRAWL_API_URL
-    # applies the homelab preset rather than the cloud one, etc.
+    # Find which presets this env key unlocks.
     presets_to_apply: Dict[str, str] = {}  # preset_name -> toolset
     for tool_name, info in TOOL_PRESET_MAP.items():
-        all_env = info.get("env", []) + info.get("env_alt", [])
-        if env_key not in all_env:
+        if env_key not in info.get("env", []):
             continue
-        per_env = info.get("presets_by_env") or {}
-        chosen = per_env.get(env_key) or info.get("presets", [])
-        for preset in chosen:
+        for preset in info.get("presets", []):
             presets_to_apply[preset] = info["toolset"]
 
     if not presets_to_apply:

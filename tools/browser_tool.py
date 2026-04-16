@@ -102,17 +102,6 @@ def _is_browserbase_mode() -> bool:
     return bool(os.environ.get("BROWSERBASE_API_KEY") and os.environ.get("BROWSERBASE_PROJECT_ID"))
 
 
-def _is_browserless_mode() -> bool:
-    """True when a self-hosted Browserless CDP endpoint is configured.
-
-    Browserless (https://github.com/browserless/browserless) exposes a CDP
-    WebSocket endpoint we can attach agent-browser to. Set ``BROWSERLESS_URL``
-    to e.g. ``ws://browserless.internal:3000`` (with optional ``BROWSERLESS_TOKEN``).
-    Browserbase takes precedence if both are configured.
-    """
-    return bool(os.environ.get("BROWSERLESS_URL")) and not _is_browserbase_mode()
-
-
 def _is_local_mode() -> bool:
     """Return True when no remote browser backend is configured.
 
@@ -120,15 +109,13 @@ def _is_local_mode() -> bool:
     ``agent-browser --session`` instead of connecting to a remote browser
     via ``--cdp``.
     """
-    return not (_is_browserbase_mode() or _is_browserless_mode())
+    return not _is_browserbase_mode()
 
 
 def _current_mode() -> str:
     """Human-readable backend name for logs/UI."""
     if _is_browserbase_mode():
         return "browserbase"
-    if _is_browserless_mode():
-        return "browserless"
     return "local"
 
 
@@ -666,39 +653,6 @@ def _create_browserbase_session(task_id: str) -> Dict[str, str]:
     }
 
 
-def _create_browserless_session(task_id: str) -> Dict[str, str]:
-    """Build a CDP URL for a self-hosted Browserless instance.
-
-    Browserless creates a fresh browser context on each WebSocket connection,
-    so unlike Browserbase there's no separate session-creation API call. We
-    just return the CDP URL the agent-browser CLI will connect to.
-
-    The URL is built from ``BROWSERLESS_URL`` (e.g. ``ws://host:3000``) plus
-    ``BROWSERLESS_TOKEN`` if set. Trailing slashes and inadvertent ``http://``
-    schemes are normalised.
-    """
-    import uuid
-    base = os.environ.get("BROWSERLESS_URL", "").strip().rstrip("/")
-    if not base:
-        raise ValueError("BROWSERLESS_URL is not set")
-    if base.startswith("http://"):
-        base = "ws://" + base[len("http://"):]
-    elif base.startswith("https://"):
-        base = "wss://" + base[len("https://"):]
-    elif not (base.startswith("ws://") or base.startswith("wss://")):
-        base = "ws://" + base
-    token = os.environ.get("BROWSERLESS_TOKEN", "").strip()
-    cdp_url = f"{base}?token={token}" if token else base
-    session_name = f"hermes_{task_id}_{uuid.uuid4().hex[:8]}"
-    logger.info("Created browserless session %s via %s", session_name, base)
-    return {
-        "session_name": session_name,
-        "bb_session_id": None,
-        "cdp_url": cdp_url,
-        "features": {"browserless": True},
-    }
-
-
 def _create_local_session(task_id: str) -> Dict[str, str]:
     """Create a lightweight local browser session (no cloud API call).
 
@@ -748,8 +702,6 @@ def _get_session_info(task_id: Optional[str] = None) -> Dict[str, str]:
     # Create session outside the lock (network call in Browserbase mode)
     if _is_browserbase_mode():
         session_info = _create_browserbase_session(task_id)
-    elif _is_browserless_mode():
-        session_info = _create_browserless_session(task_id)
     else:
         session_info = _create_local_session(task_id)
     
@@ -1847,8 +1799,7 @@ def check_browser_requirements() -> bool:
     except FileNotFoundError:
         return False
 
-    # Browserbase mode also needs cloud credentials. Browserless mode
-    # only needs BROWSERLESS_URL, which is what _is_browserless_mode() tests.
+    # Browserbase mode also needs cloud credentials.
     if _is_browserbase_mode():
         api_key = os.environ.get("BROWSERBASE_API_KEY")
         project_id = os.environ.get("BROWSERBASE_PROJECT_ID")

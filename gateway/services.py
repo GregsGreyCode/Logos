@@ -36,7 +36,6 @@ TOOL_INTEGRATIONS = {
         "validate_method": "POST",
         "validate_headers": lambda key: {"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
         "validate_body": {"url": "https://example.com", "formats": ["markdown"]},
-        "selfhosted_alt": "FIRECRAWL_API_URL",
     },
     "FAL_KEY": {
         "label": "fal.ai",
@@ -67,31 +66,6 @@ TOOL_INTEGRATIONS = {
         "validate_url": "https://www.browserbase.com/v1/sessions",
         "validate_method": "GET",
         "validate_headers": lambda key: {"x-bb-api-key": key},
-        "selfhosted_alt": "BROWSERLESS_URL",
-    },
-    "BROWSERLESS_URL": {
-        "label": "Browserless (self-hosted)",
-        "description": "Self-hosted browser automation — no traffic leaves your network",
-        "tools": ["browser_navigate", "browser_click", "browser_type", "browser_snapshot"],
-        "toolset": "browser",
-        "help_url": "https://github.com/browserless/browserless",
-        "selfhosted": True,
-        "value_kind": "url",  # not an API key — accept ws://host:port form
-        "compose_profile": "browserless",
-        "compose_default": "ws://browserless:3000",
-        "alt_of": "BROWSERBASE_API_KEY",
-    },
-    "FIRECRAWL_API_URL": {
-        "label": "Firecrawl (self-hosted)",
-        "description": "Self-hosted web search and scraping — no traffic leaves your network",
-        "tools": ["web_search", "web_extract"],
-        "toolset": "web",
-        "help_url": "https://github.com/mendableai/firecrawl",
-        "selfhosted": True,
-        "value_kind": "url",
-        "compose_profile": "firecrawl",
-        "compose_default": "http://firecrawl-api:3002",
-        "alt_of": "FIRECRAWL_API_KEY",
     },
     "ELEVENLABS_API_KEY": {
         "label": "ElevenLabs",
@@ -230,85 +204,6 @@ def inject_credentials() -> int:
     if injected:
         logger.debug("services: injected %d credential(s) from DB", injected)
     return injected
-
-
-def _probe_url(url: str, timeout: float = 1.0) -> bool:
-    """Quick TCP probe to see if a service is reachable. Best-effort only.
-
-    Used by ``autodetect_local_services`` to decide whether to auto-fill
-    a self-hosted credential. Skips DNS-fail / refused / timeout silently
-    so a missing local service is just "not present" rather than a noisy
-    error log on every startup.
-    """
-    import socket
-    from urllib.parse import urlparse
-    try:
-        # Some compose defaults are bare hostnames / ws:// URLs — urlparse
-        # handles all the common cases we care about (http, https, ws, wss).
-        u = urlparse(url if "://" in url else f"http://{url}")
-        host = u.hostname
-        port = u.port or (443 if u.scheme in ("https", "wss") else 80)
-        if not host:
-            return False
-        with socket.create_connection((host, port), timeout=timeout):
-            return True
-    except (OSError, ValueError):
-        return False
-
-
-def autodetect_local_services() -> list[str]:
-    """Probe self-hosted entries in TOOL_INTEGRATIONS and auto-fill missing ones.
-
-    Local-first ideology: if browserless / firecrawl / etc. are running on
-    the user's homelab, the agent should reach them with zero setup. For
-    each ``selfhosted: True`` entry with no value in env or DB, we probe a
-    list of candidate hostnames (compose service name, ``localhost``, and
-    ``service.internal``) from the gateway's network context. If ANY of
-    them responds, we save the canonical ``service.internal`` form as the
-    credential since that's what the SANDBOX's DNS resolves — the probe
-    is just a "this service exists somewhere on this host" signal, not
-    a commitment to use the gateway-visible URL.
-
-    Returns the list of env_vars that got auto-filled. Idempotent + safe
-    to call repeatedly (skips anything already configured).
-    """
-    from urllib.parse import urlparse, urlunparse
-    detected: list[str] = []
-    creds = _get_credentials()
-    for env_var, info in TOOL_INTEGRATIONS.items():
-        if not info.get("selfhosted"):
-            continue
-        if os.environ.get(env_var) or creds.get(env_var):
-            continue
-        compose = info.get("compose_default")
-        if not compose:
-            continue
-        try:
-            u = urlparse(compose if "://" in compose else f"http://{compose}")
-        except ValueError:
-            continue
-        host = u.hostname
-        port = u.port
-        if not host or not port:
-            continue
-        # Probe candidates: compose service name, localhost, *.internal.
-        # Whichever responds proves the service exists; we still SAVE the
-        # .internal form because that's the name the sandbox can resolve.
-        scheme = u.scheme or "http"
-        canonical_host = host if "." in host else f"{host}.internal"
-        canonical_url = urlunparse(u._replace(netloc=f"{canonical_host}:{port}"))
-        probe_hosts = [host, "localhost", canonical_host]
-        for probe_host in probe_hosts:
-            probe_url = urlunparse(u._replace(netloc=f"{probe_host}:{port}"))
-            if _probe_url(probe_url, timeout=1.0):
-                set_credential(env_var, canonical_url)
-                detected.append(env_var)
-                logger.info(
-                    "services: autodetected %s — reachable at %s, saved canonical %s",
-                    env_var, probe_url, canonical_url,
-                )
-                break
-    return detected
 
 
 # ---------------------------------------------------------------------------

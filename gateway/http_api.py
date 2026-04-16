@@ -4514,18 +4514,10 @@ async def start_http_api(runner: Any, port: int = 8091) -> None:
 
     # ── Inject tool credentials from DB into os.environ ────────────────
     try:
-        from gateway.services import inject_credentials, autodetect_local_services
+        from gateway.services import inject_credentials
         _n_creds = inject_credentials()
         if _n_creds:
             logger.info("Injected %d tool credential(s) from DB", _n_creds)
-        # Local-first auto-detect: if browserless / firecrawl / other
-        # selfhosted services are running and unconfigured, save them.
-        # Probes the gateway's network context for any reachable form
-        # but persists the canonical *.internal URL the sandbox uses.
-        _n_auto = autodetect_local_services()
-        if _n_auto:
-            logger.info("Autodetected %d local self-hosted service(s): %s",
-                        len(_n_auto), _n_auto)
     except Exception as _cred_err:
         logger.debug("Could not inject credentials: %s", _cred_err)
 
