@@ -2277,11 +2277,43 @@ class GatewayRunner:
             usage=(result or {}).get("usage") or {},
         )
 
-        # ── 5. Return the adapter-friendly final response ────────────
+        # ── 5. Persist both turns to the session transcript ─────────
+        # The /chat web path writes messages inline as SSE events
+        # arrive (http_api.py:4171). The platform path has no SSE
+        # stream — it gets a single final_response dict back — so
+        # we write both the user turn and the assistant reply here.
+        # Without this, Telegram conversations never land in the
+        # session DB and the TG pill in /chats shows empty.
         final = (result or {}).get("final_response") or ""
+        if session_id:
+            try:
+                self.session_store.append_to_transcript(
+                    session_id, {"role": "user", "content": message_text},
+                )
+                if final:
+                    self.session_store.append_to_transcript(
+                        session_id, {"role": "assistant", "content": final},
+                    )
+                # Best-effort: embed the new messages for semantic search.
+                try:
+                    _db = getattr(self.session_store, "_db", None)
+                    if _db and hasattr(_db, "embed_message"):
+                        _last = _db._conn.execute("SELECT MAX(id) FROM messages").fetchone()[0]
+                        if final and _last:
+                            _db.embed_message(_last, final)
+                        if _last and _last > 1:
+                            _db.embed_message(_last - 1, message_text)
+                except Exception:
+                    pass
+            except Exception:
+                logger.exception(
+                    "dispatch_platform_message: transcript write failed for session=%s",
+                    session_id,
+                )
+
         if not final:
             logger.warning("dispatch_platform_message: worker returned empty final_response")
-            return "⚠️ The agent returned an empty response."
+            return "The agent returned an empty response."
         return final
 
     async def _handle_reset_command(self, event: MessageEvent) -> str:
