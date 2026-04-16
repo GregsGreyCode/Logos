@@ -3396,10 +3396,16 @@
 
   </div>
 
-  <!-- ── Tool Integrations ──────────────────────────────────────────
-       Third-party API credentials the gateway injects when an agent
-       calls a tool that needs them (Firecrawl, Browserbase, Anthropic,
-       etc.). Rendered as dense PILLS grouped by toolset so the whole
+  <!-- ── Cloud tool integrations ─────────────────────────────────────
+       Third-party SaaS API credentials the gateway injects when an
+       agent calls a tool that needs them (Firecrawl, Browserbase,
+       Anthropic, etc.). Paired with the "Local tool integrations"
+       section above which handles self-hosted alternatives
+       (SearxNG for search, future Ollama for inference, etc.) —
+       three-tier trust taxonomy surfaces in both headings so the
+       cloud / local distinction is explicit.
+
+       Rendered as dense PILLS grouped by toolset so the whole
        catalogue fits in a small vertical slice of the page. Clicking
        a pill opens a single shared detail panel below — only one
        pill is expanded at a time, so card-grid layouts and per-card
@@ -3497,11 +3503,11 @@
          the compose file. Lives ABOVE Tool Integrations so users see
          "start SearxNG" before they think to configure an API key. -->
     <div class="flex items-center justify-between mb-1">
-      <h2 class="text-sm font-semibold text-white">Local services</h2>
+      <h2 class="text-sm font-semibold text-white">Local tool integrations</h2>
       <button @click="loadLocalServices()" class="text-xs text-gray-500 hover:text-gray-300">Refresh</button>
     </div>
     <p class="text-xs text-gray-500 -mt-1 mb-3">
-      Self-hosted services bundled with Logos — start or stop them here,
+      Self-hosted services bundled with Logos — queries stay on your network. Start or stop them here,
       then grant agents access via the <span class="font-mono">P</span> pill in Permissions.
     </p>
     <div class="grid grid-cols-1 md:grid-cols-2 gap-3 mb-6">
@@ -3553,12 +3559,12 @@
     </div>
 
     <div class="flex items-center justify-between mb-1">
-      <h2 class="text-sm font-semibold text-white">Tool Integrations</h2>
+      <h2 class="text-sm font-semibold text-white">Cloud tool integrations</h2>
       <button @click="loadServices()" class="text-xs text-gray-500 hover:text-gray-300">Refresh</button>
     </div>
     <p class="text-xs text-gray-500 -mt-1 mb-3">
-      API keys for external tool providers, grouped by capability. Click any pill to configure.
-      Environment variables (<code class="text-gray-400">.env</code>, shell) take precedence over keys saved here.
+      API keys for third-party SaaS providers — Firecrawl, OpenAI, Slack, etc. Data flows to the provider's servers when these tools are used.
+      Click any pill to configure. Environment variables (<code class="text-gray-400">.env</code>, shell) take precedence over keys saved here.
     </p>
 
     <!-- Groups rendered in a fixed order so layout is stable across
@@ -6268,7 +6274,7 @@ function app() {
     localServices: [],
     localServicesBusy: {},
     localServicesErrors: {},
-    // Category groups for the Tool Integrations card grid on the Tools
+    // Category groups for the Cloud tool integrations card grid on the Tools
     // page. Each entry maps a backend ``toolset`` value (set in
     // gateway/services.py TOOL_INTEGRATIONS) to a human-facing heading.
     // Groups with zero integrations on this install auto-hide; any
