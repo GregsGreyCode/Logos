@@ -1789,6 +1789,46 @@ async def handle_internal_session_search(request: web.Request) -> web.Response:
         return web.json_response({"success": False, "error": str(exc)}, status=500)
 
 
+# ── Embedding stats + backfill ────────────────────────────────────────────
+
+
+async def handle_internal_embedding_stats(request: web.Request) -> web.Response:
+    """GET /api/internal/embedding-stats — coverage report."""
+    try:
+        runner = request.app.get("runner") if request.app else None
+        db = getattr(runner.session_store, "_db", None) if runner else None
+        if not db:
+            return web.json_response({"error": "session DB not available"}, status=503)
+        return web.json_response(db.embedding_stats())
+    except Exception as exc:
+        return web.json_response({"error": str(exc)}, status=500)
+
+
+async def handle_internal_embedding_backfill(request: web.Request) -> web.Response:
+    """POST /api/internal/embedding-backfill — embed unembedded messages.
+
+    Runs synchronously (blocking) for up to `batch_size` messages.
+    Call repeatedly until coverage reaches 100%.
+    """
+    import asyncio as _asyncio
+    try:
+        batch = int(request.query.get("batch", "50"))
+    except ValueError:
+        batch = 50
+    try:
+        runner = request.app.get("runner") if request.app else None
+        db = getattr(runner.session_store, "_db", None) if runner else None
+        if not db:
+            return web.json_response({"error": "session DB not available"}, status=503)
+        loop = _asyncio.get_event_loop()
+        count = await loop.run_in_executor(None, lambda: db.backfill_embeddings(batch_size=batch))
+        stats = db.embedding_stats()
+        return web.json_response({"embedded_this_batch": count, **stats})
+    except Exception as exc:
+        logger.exception("embedding backfill failed")
+        return web.json_response({"error": str(exc)}, status=500)
+
+
 # ── Gateway self-update (shared backend for CLI + UI button) ────────────────
 
 

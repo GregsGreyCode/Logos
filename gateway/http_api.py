@@ -5061,6 +5061,10 @@ async def start_http_api(runner: Any, port: int = 8091) -> None:
     # OpenShell via host.openshell.internal:8091/api/internal/*. No auth.
     app.router.add_get("/api/internal/session-search",
                        admin_handlers.handle_internal_session_search)
+    app.router.add_get("/api/internal/embedding-stats",
+                       admin_handlers.handle_internal_embedding_stats)
+    app.router.add_post("/api/internal/embedding-backfill",
+                        admin_handlers.handle_internal_embedding_backfill)
     # User ↔ platform identity links (Admin → Users or Config → Messaging)
     app.router.add_get("/api/admin/platform-links",
                        _mm(admin_handlers.handle_platform_links_list))
