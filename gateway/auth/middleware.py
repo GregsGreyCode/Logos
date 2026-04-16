@@ -94,6 +94,13 @@ async def auth_middleware(request: web.Request, handler):
     if path.startswith("/mcp/"):
         return await handler(request)
 
+    # Internal sandbox-facing endpoints (session-search, future tool
+    # proxies). Reachable only from inside OpenShell sandboxes via
+    # host.openshell.internal — the L7 proxy + network policy is the
+    # trust boundary, not cookies.
+    if path.startswith("/api/internal/"):
+        return await handler(request)
+
     user = get_user_from_request(request)
     if user is TOKEN_EXPIRED:
         # Token present but expired — client should refresh, not re-authenticate
