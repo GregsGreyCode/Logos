@@ -81,8 +81,10 @@ class TestChildSystemPrompt(unittest.TestCase):
 
 class TestStripBlockedTools(unittest.TestCase):
     def test_removes_blocked_toolsets(self):
+        # code_execution is intentionally allowed for subagents
+        # (see tools/delegate_tool.py:_strip_blocked_tools docstring).
         result = _strip_blocked_tools(["terminal", "file", "delegation", "clarify", "memory", "code_execution"])
-        self.assertEqual(sorted(result), ["file", "terminal"])
+        self.assertEqual(sorted(result), ["code_execution", "file", "terminal"])
 
     def test_preserves_allowed_toolsets(self):
         result = _strip_blocked_tools(["terminal", "file", "web", "browser"])

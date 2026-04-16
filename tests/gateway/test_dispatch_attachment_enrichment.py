@@ -33,6 +33,9 @@ def gateway(tmp_path):
     config.sessions_dir = tmp_path
     gw = GatewayRunner.__new__(GatewayRunner)
     gw.config = config
+    # Seeded by __init__; dispatch_platform_message writes to it to populate
+    # the Live Executions panel, so the bypassed-__init__ fixture needs it too.
+    gw._session_status = {}
 
     # session_store: returns a session entry with the right shape
     session_entry = MagicMock()
