@@ -96,35 +96,36 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       # ── Layer 1: hermes-upstream ─────────────────────────────────
-      # Built from NousResearch's Dockerfile, pushed to GHCR, then
-      # loaded into the local docker daemon so the sandbox build
-      # below can FROM it by the hermes-upstream:latest tag our
-      # Dockerfile.hermes-upstream already references. Avoids
-      # touching the Dockerfile's FROM line.
+      # Built from NousResearch's Dockerfile, pushed to GHCR only.
+      # The sandbox step below passes the exact GHCR tag as a build
+      # arg (BASE_IMAGE=ghcr.io/…/hermes-upstream:<tag>) so its
+      # Dockerfile pulls from GHCR — no local retag juggling needed.
       - name: Build + push hermes-upstream
         uses: docker/build-push-action@v5
         with:
           context: /tmp/hermes-agent
           file: /tmp/hermes-agent/Dockerfile
           push: true
-          load: true
           tags: |
             ${{ env.REGISTRY }}/${{ env.IMAGE_OWNER }}/hermes-upstream:${{ steps.tag.outputs.value }}
             ${{ env.REGISTRY }}/${{ env.IMAGE_OWNER }}/hermes-upstream:latest
-            hermes-upstream:latest
           cache-from: type=gha,scope=hermes-upstream
           cache-to: type=gha,mode=max,scope=hermes-upstream
 
       # ── Layer 2: hermes-sandbox ──────────────────────────────────
-      # Uses our Dockerfile (Dockerfile.hermes-upstream confusingly
-      # named — it IS the sandbox Dockerfile; the file-name "upstream"
-      # refers to what it builds FROM, not what it produces).
+      # Built with BASE_IMAGE pointed at the GHCR upstream we just
+      # pushed. Dockerfile.hermes-upstream exposes that as a build
+      # ARG so the same Dockerfile works for local dev (default
+      # FROM hermes-upstream:latest — what local builders have
+      # cached) and CI (override to pull from GHCR).
       - name: Build + push hermes-sandbox
         uses: docker/build-push-action@v5
         with:
           context: .
           file: docker/Dockerfile.hermes-upstream
           push: true
+          build-args: |
+            BASE_IMAGE=${{ env.REGISTRY }}/${{ env.IMAGE_OWNER }}/hermes-upstream:${{ steps.tag.outputs.value }}
           tags: |
             ${{ env.REGISTRY }}/${{ env.IMAGE_OWNER }}/hermes-sandbox:${{ steps.tag.outputs.value }}
             ${{ env.REGISTRY }}/${{ env.IMAGE_OWNER }}/hermes-sandbox:latest

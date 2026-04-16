@@ -7,12 +7,18 @@
 # editable install at /opt/hermes is inaccessible from inside the sandbox.
 #
 # Build:
-#   docker build -f docker/Dockerfile.hermes-upstream -t hermes-sandbox:m11 docker/
+#   docker build -f docker/Dockerfile.hermes-upstream -t hermes-sandbox:m12 .
 #
-# The upstream image (hermes-upstream:latest) is built from:
-#   projects/knowledge-repos/hermes-agent/Dockerfile
+# The upstream image is NousResearch/hermes-agent built via its own
+# Dockerfile. CI publishes it to GHCR so we don't carry its source
+# in this repo; override BASE_IMAGE via build-arg when you want to
+# build against a pinned tag:
+#
+#   docker build --build-arg BASE_IMAGE=ghcr.io/gregsgreycode/hermes-upstream:v0.13.0 \
+#     -f docker/Dockerfile.hermes-upstream -t hermes-sandbox:v0.13.0 .
 
-FROM hermes-upstream:latest
+ARG BASE_IMAGE=hermes-upstream:latest
+FROM ${BASE_IMAGE}
 
 # OpenShell sandbox agent needs iproute2 for network namespace setup.
 # The upstream hermes image is debian-based but doesn't include it.
