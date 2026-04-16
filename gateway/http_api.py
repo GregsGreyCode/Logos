@@ -5054,8 +5054,16 @@ async def start_http_api(runner: Any, port: int = 8091) -> None:
                        _mm(admin_handlers.handle_agent_capabilities_get))
     app.router.add_post("/admin/agents/{id}/capabilities/toggle",
                         _mm(require_csrf(admin_handlers.handle_agent_capabilities_toggle)))
-    app.router.add_post("/admin/agents/{id}/capabilities/install",
-                        _mm(require_csrf(admin_handlers.handle_agent_capabilities_install)))
+    # Local bundled services (docker compose up/down for things like
+    # SearxNG). Config → Tools → Local services. Separate from the
+    # capability-toggle surface because starting a service isn't the
+    # same as granting an agent permission to use it.
+    app.router.add_get("/api/admin/services/local",
+                       _mm(admin_handlers.handle_local_services_list))
+    app.router.add_post("/api/admin/services/local/{id}/start",
+                        _mm(require_csrf(admin_handlers.handle_local_service_start)))
+    app.router.add_post("/api/admin/services/local/{id}/stop",
+                        _mm(require_csrf(admin_handlers.handle_local_service_stop)))
     # Layer 1 URL consent — per-agent website blocklist that the local
     # browser tool checks before every navigation.
     app.router.add_put("/admin/agents/{id}/website-blocklist",

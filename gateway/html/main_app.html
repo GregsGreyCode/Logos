@@ -949,23 +949,9 @@
                   <!-- Loading + error states -->
                   <div x-show="agentCapsLoading && !(agentCapsState && agentCapsState._agentId === activeAgent?.id)"
                     class="px-3 py-3 text-[10px] text-gray-600">Loading permissions…</div>
-                  <div x-show="agentCapsError" x-cloak
-                    class="px-3 py-2 text-[10px] border-t border-red-900/50 bg-red-950/30">
-                    <div class="text-red-400" x-text="agentCapsError"></div>
-                    <!-- When a reachability probe failed AND the capability
-                         ships install metadata, offer a one-click install.
-                         Shells `docker compose up` for the capability's
-                         service, waits for the probe to clear, then flips
-                         the toggle — no hand-editing docker-compose args. -->
-                    <template x-if="agentCapsInstallFor">
-                      <button @click="installCapability(activeAgent.id, agentCapsInstallFor)"
-                        :disabled="agentCapsInstalling"
-                        class="mt-1.5 px-2 py-1 rounded border border-indigo-700 text-indigo-300 hover:text-white hover:border-indigo-500 text-[10px] disabled:opacity-40">
-                        <span x-show="!agentCapsInstalling">Install &amp; enable</span>
-                        <span x-show="agentCapsInstalling">Installing… (up to ~60s)</span>
-                      </button>
-                    </template>
-                  </div>
+                  <div x-show="agentCapsError"
+                    class="px-3 py-2 text-[10px] text-red-400 border-t border-red-900/50 bg-red-950/30"
+                    x-text="agentCapsError"></div>
                   <div x-show="agentToolsError"
                     class="px-3 py-2 text-[10px] text-red-400 border-t border-red-900/50 bg-red-950/30"
                     x-text="agentToolsError"></div>
@@ -1809,7 +1795,7 @@
       <template x-if="can('manage_machines')">
         <button class="pb-2 text-sm font-medium border-b-2 border-transparent"
           :class="infraTab==='tools' ? 'tab-active' : 'text-gray-500 hover:text-white'"
-          @click="infraTab='tools'; localStorage.setItem('logos_infra_tab','tools'); loadToolsTab(); loadServices()">Tools</button>
+          @click="infraTab='tools'; localStorage.setItem('logos_infra_tab','tools'); loadToolsTab(); loadServices(); loadLocalServices()">Tools</button>
       </template>
       <template x-if="can('manage_machines') || can('manage_users')">
         <button class="pb-2 text-sm font-medium border-b-2 border-transparent"
@@ -3504,6 +3490,68 @@
            this.editing = false;
          },
        }">
+    <!-- ── Local services (bundled via docker-compose) ───────────────────
+         Each capability that declares a service_install block in
+         capabilities.yaml renders a card here. Status badge + Start /
+         Stop buttons. No URL inputs — connection info is baked in via
+         the compose file. Lives ABOVE Tool Integrations so users see
+         "start SearxNG" before they think to configure an API key. -->
+    <div class="flex items-center justify-between mb-1">
+      <h2 class="text-sm font-semibold text-white">Local services</h2>
+      <button @click="loadLocalServices()" class="text-xs text-gray-500 hover:text-gray-300">Refresh</button>
+    </div>
+    <p class="text-xs text-gray-500 -mt-1 mb-3">
+      Self-hosted services bundled with Logos — start or stop them here,
+      then grant agents access via the <span class="font-mono">P</span> pill in Permissions.
+    </p>
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-3 mb-6">
+      <template x-for="s in localServices" :key="s.id">
+        <div class="bg-gray-900 border rounded-xl overflow-hidden transition-colors"
+             :class="s.running ? 'border-emerald-900/60' : 'border-gray-800'">
+          <div class="flex items-center gap-3 px-4 py-3">
+            <span class="text-xl flex-shrink-0" x-text="s.icon"></span>
+            <div class="flex-1 min-w-0">
+              <div class="flex items-center gap-2">
+                <span class="text-sm font-medium text-white truncate" x-text="s.name"></span>
+                <span class="text-[10px] px-1.5 py-0.5 rounded font-mono"
+                      :class="s.running
+                        ? 'bg-emerald-950 text-emerald-400 border border-emerald-900'
+                        : 'bg-gray-800 text-gray-500 border border-gray-700'"
+                      x-text="s.running ? 'running' : 'stopped'"></span>
+              </div>
+              <div class="text-[10px] text-gray-500 mt-0.5" x-text="s.description"></div>
+              <div x-show="!s.running && s.probe_detail"
+                   class="text-[10px] text-gray-600 mt-0.5 truncate"
+                   :title="s.probe_detail"
+                   x-text="'Probe failed: ' + s.probe_detail"></div>
+            </div>
+            <div class="flex items-center gap-1.5 flex-shrink-0">
+              <button x-show="!s.running" @click="startLocalService(s.id)"
+                :disabled="!!(localServicesBusy && localServicesBusy[s.id])"
+                class="text-xs px-2 py-1 rounded border border-indigo-700 text-indigo-400 hover:text-white hover:border-indigo-500 disabled:opacity-40 transition-colors">
+                <span x-show="!(localServicesBusy && localServicesBusy[s.id])">Start</span>
+                <span x-show="localServicesBusy && localServicesBusy[s.id]">Starting…</span>
+              </button>
+              <button x-show="s.running" @click="stopLocalService(s.id)"
+                :disabled="!!(localServicesBusy && localServicesBusy[s.id])"
+                class="text-xs px-2 py-1 rounded border border-gray-700 text-gray-400 hover:text-white transition-colors disabled:opacity-40">
+                <span x-show="!(localServicesBusy && localServicesBusy[s.id])">Stop</span>
+                <span x-show="localServicesBusy && localServicesBusy[s.id]">Stopping…</span>
+              </button>
+            </div>
+          </div>
+          <div x-show="localServicesErrors && localServicesErrors[s.id]" x-cloak
+               class="px-4 py-2 text-[10px] text-red-400 border-t border-red-900/50 bg-red-950/30"
+               x-text="localServicesErrors[s.id]"></div>
+        </div>
+      </template>
+      <template x-if="localServices.length === 0">
+        <div class="col-span-full text-xs text-gray-600 p-4 text-center bg-gray-900/40 border border-gray-800 rounded-xl">
+          No local services bundled yet.
+        </div>
+      </template>
+    </div>
+
     <div class="flex items-center justify-between mb-1">
       <h2 class="text-sm font-semibold text-white">Tool Integrations</h2>
       <button @click="loadServices()" class="text-xs text-gray-500 hover:text-gray-300">Refresh</button>
@@ -6063,11 +6111,6 @@ function app() {
     mindModalFiles: null,         // /files response
     agentCapsLoading: false,
     agentCapsError: null,
-    // Capability id whose reachability probe failed on the last toggle —
-    // used to show an "Install & enable" button inline in the error
-    // banner. Cleared when the error clears or the install succeeds.
-    agentCapsInstallFor: null,
-    agentCapsInstalling: false,
     agentCapsToggling: {},
     // Tracks when each agent first showed up as `worker_connected=false`
     // so the chat banner can display elapsed-time + progressive messaging
@@ -6220,6 +6263,11 @@ function app() {
     // Services tab
     servicesMcp: [],
     servicesTools: [],
+    // Local bundled services (SearxNG etc). Separate from servicesTools
+    // which is the API-key integration catalogue.
+    localServices: [],
+    localServicesBusy: {},
+    localServicesErrors: {},
     // Category groups for the Tool Integrations card grid on the Tools
     // page. Each entry maps a backend ``toolset`` value (set in
     // gateway/services.py TOOL_INTEGRATIONS) to a human-facing heading.
@@ -6877,7 +6925,7 @@ function app() {
     // a manual click would have.
     _loadInfraTabData(name) {
       if (name === 'servers')   { this.loadAdminMachines(); this.loadCloudProviders?.(); this.probeAllMachines?.(); return; }
-      if (name === 'tools')     { this.loadToolsTab?.(); this.loadServices?.(); return; }
+      if (name === 'tools')     { this.loadToolsTab?.(); this.loadServices?.(); this.loadLocalServices?.(); return; }
       if (name === 'messaging') { this.loadMessagingChannels?.(); this.loadPlatforms?.(); return; }
     },
     _loadAdminTabData(name) {
@@ -8332,7 +8380,6 @@ function app() {
       if (!this.agentCapsToggling) this.agentCapsToggling = {};
       this.agentCapsToggling[key] = true;
       this.agentCapsError = null;
-      this.agentCapsInstallFor = null;
       try {
         const r = await fetch(
           '/admin/agents/' + encodeURIComponent(agentId) + '/capabilities/toggle',
@@ -8343,28 +8390,7 @@ function app() {
             body: JSON.stringify({capability: capId, enabled}),
           },
         );
-        if (!r.ok) {
-          // 409 with a service_unreachable body → reachability probe
-          // caught a dead backing service (e.g. SearxNG not running).
-          // Surface the install hint rather than a raw stack trace.
-          const body = await r.json().catch(() => null);
-          if (r.status === 409 && body?.error === 'service_unreachable') {
-            this.agentCapsError = (body.hint || 'Backing service unreachable.')
-              + (body.probe_url ? ' (probed ' + body.probe_url + ')' : '');
-            // If the capability ships install metadata, expose the
-            // "Install & enable" button. Look it up from the in-memory
-            // catalogue since the 409 response doesn't echo the schema.
-            const cap = (this.agentCapsState?.capabilities || [])
-              .concat(this.agentCapsState?.power_tools || [])
-              .find(c => c.id === capId);
-            if (cap?.service_install?.docker_compose_service) {
-              this.agentCapsInstallFor = capId;
-            }
-            this.loadAgentCaps(agentId);
-            return;
-          }
-          throw new Error((body && (body.error || body.detail)) || r.statusText);
-        }
+        if (!r.ok) throw new Error(await r.text() || r.statusText);
         const d = await r.json();
         d._agentId = agentId;
         this.agentCapsState = d;
@@ -8376,38 +8402,6 @@ function app() {
         this.loadAgentCaps(agentId);  // re-fetch canonical state
       }
       delete this.agentCapsToggling[key];
-    },
-
-    async installCapability(agentId, capId) {
-      if (!agentId || !capId) return;
-      this.agentCapsInstalling = true;
-      try {
-        const r = await fetch(
-          '/admin/agents/' + encodeURIComponent(agentId) + '/capabilities/install',
-          {
-            method: 'POST',
-            credentials: 'include',
-            headers: {'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken()},
-            body: JSON.stringify({capability: capId}),
-          },
-        );
-        const body = await r.json().catch(() => null);
-        if (!r.ok) {
-          const detail = (body && (body.detail || body.error)) || r.statusText;
-          this.agentCapsError = 'Install failed: ' + detail;
-          return;
-        }
-        // Install succeeded — server returned the post-install caps state.
-        body._agentId = agentId;
-        this.agentCapsState = body;
-        this.agentCapsError = null;
-        this.agentCapsInstallFor = null;
-        this.loadAgentTools(agentId);
-      } catch(e) {
-        this.agentCapsError = 'Install failed: ' + (e.message || e);
-      } finally {
-        this.agentCapsInstalling = false;
-      }
     },
 
     // Compose a maturity tier from age + activity. The score uses log
@@ -9154,6 +9148,63 @@ function app() {
       } catch(e) {
         srv.auto_grant = next ? 0 : 1;
         console.warn('auto_grant toggle failed:', e.message);
+      }
+    },
+
+    async loadLocalServices() {
+      try {
+        const r = await fetch('/api/admin/services/local', {credentials:'include'});
+        if (!r.ok) { this.localServices = []; return; }
+        const d = await r.json();
+        this.localServices = d.services || [];
+      } catch(e) { this.localServices = []; }
+    },
+    async startLocalService(id) {
+      if (!id) return;
+      this.localServicesBusy = { ...(this.localServicesBusy || {}), [id]: true };
+      this.localServicesErrors = { ...(this.localServicesErrors || {}), [id]: null };
+      try {
+        const r = await fetch(
+          '/api/admin/services/local/' + encodeURIComponent(id) + '/start',
+          {method: 'POST', credentials: 'include', headers: {'X-CSRF-Token': getCsrfToken()}},
+        );
+        const body = await r.json().catch(() => null);
+        if (!r.ok || !body?.ok) {
+          this.localServicesErrors = {
+            ...(this.localServicesErrors || {}),
+            [id]: (body?.error || r.statusText) + (body?.log ? ': ' + body.log.trim().slice(-200) : ''),
+          };
+        }
+      } catch(e) {
+        this.localServicesErrors = { ...(this.localServicesErrors || {}), [id]: e.message || String(e) };
+      } finally {
+        delete this.localServicesBusy[id];
+        this.localServicesBusy = { ...this.localServicesBusy };
+        await this.loadLocalServices();
+      }
+    },
+    async stopLocalService(id) {
+      if (!id) return;
+      this.localServicesBusy = { ...(this.localServicesBusy || {}), [id]: true };
+      this.localServicesErrors = { ...(this.localServicesErrors || {}), [id]: null };
+      try {
+        const r = await fetch(
+          '/api/admin/services/local/' + encodeURIComponent(id) + '/stop',
+          {method: 'POST', credentials: 'include', headers: {'X-CSRF-Token': getCsrfToken()}},
+        );
+        const body = await r.json().catch(() => null);
+        if (!r.ok || !body?.ok) {
+          this.localServicesErrors = {
+            ...(this.localServicesErrors || {}),
+            [id]: (body?.error || r.statusText) + (body?.log ? ': ' + body.log.trim().slice(-200) : ''),
+          };
+        }
+      } catch(e) {
+        this.localServicesErrors = { ...(this.localServicesErrors || {}), [id]: e.message || String(e) };
+      } finally {
+        delete this.localServicesBusy[id];
+        this.localServicesBusy = { ...this.localServicesBusy };
+        await this.loadLocalServices();
       }
     },
 

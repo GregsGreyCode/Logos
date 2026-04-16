@@ -640,6 +640,125 @@ async def handle_cloud_provider_models(request: web.Request) -> web.Response:
     return web.json_response({"models": sorted(models), "provider": provider})
 
 
+# ── Local bundled services (Config → Tools → Local services) ────────────────
+#
+# Each entry in capabilities.yaml with a ``service_install`` block is a
+# "local bundled service" — something Logos ships via docker-compose and
+# can bring up/down on behalf of the user without them editing compose
+# args. The handlers below render + control that surface. This is
+# separate from capability *permissions* (P dropdown, which only grants
+# agents the right to USE a capability); these endpoints are about
+# whether the backing infrastructure is running.
+
+
+def _local_services() -> list[dict]:
+    """Collect bundled-service metadata from the capability catalogue.
+
+    Returns entries of shape:
+        {id, name, description, trust_note, probe, install}
+    one per capability that declares a service_install block. Independent
+    of agent state — the same list renders regardless of per-agent
+    permissions.
+    """
+    from gateway import capabilities as _caps
+    cat = _caps.load_catalogue()
+    out: list[dict] = []
+    for cap in (cat.get("capabilities") or []) + (cat.get("power_tools") or []):
+        if not cap.get("service_install"):
+            continue
+        out.append({
+            "id": cap.get("id"),
+            "name": cap.get("name") or cap.get("id"),
+            "icon": cap.get("icon") or "🔧",
+            "description": cap.get("description") or "",
+            "trust_note": cap.get("trust_note") or "",
+            "probe": cap.get("service_probe") or {},
+            "install": cap.get("service_install") or {},
+        })
+    return out
+
+
+async def handle_local_services_list(request: web.Request) -> web.Response:
+    """GET /api/admin/services/local — status of each bundled service.
+
+    Probes each service's health endpoint so the UI can render
+    running / stopped / unreachable badges. Probes run sequentially
+    (there are 1-3 of these, not a concern for latency).
+    """
+    from gateway import capabilities as _caps
+    services = _local_services()
+    out = []
+    for s in services:
+        cap = _caps.find(s["id"])
+        probe = _caps.probe_service(cap) if cap else None
+        out.append({
+            **s,
+            "running": probe is None,  # probe returns None on success
+            "probe_detail": probe.get("detail") if probe else None,
+            "probe_url": probe.get("url") if probe else (s.get("probe", {}).get("url")),
+        })
+    return web.json_response({"services": out})
+
+
+async def handle_local_service_start(request: web.Request) -> web.Response:
+    """POST /api/admin/services/local/{id}/start — docker compose up -d.
+
+    Shells out the capability's service_install.docker_compose_service
+    and waits for the reachability probe to clear. Returns the
+    post-start status so the UI can re-render without a follow-up
+    poll.
+    """
+    from gateway import capabilities as _caps
+    sid = request.match_info["id"]
+    cap = _caps.find(sid)
+    if not cap or not cap.get("service_install"):
+        return web.json_response({"error": "unknown_service"}, status=404)
+    result = _caps.install_service(cap)
+    status = 200 if result.get("ok") else 500
+    return web.json_response({
+        "ok": result.get("ok", False),
+        "error": result.get("error"),
+        "log": result.get("log") or "",
+    }, status=status)
+
+
+async def handle_local_service_stop(request: web.Request) -> web.Response:
+    """POST /api/admin/services/local/{id}/stop — docker compose stop <service>.
+
+    Uses `stop` rather than `down` so the service name survives in
+    the compose state and the restart flow (start again) is fast.
+    """
+    from gateway import capabilities as _caps
+    import subprocess
+    sid = request.match_info["id"]
+    cap = _caps.find(sid)
+    if not cap or not cap.get("service_install"):
+        return web.json_response({"error": "unknown_service"}, status=404)
+    install = cap.get("service_install") or {}
+    service = install.get("docker_compose_service")
+    if not service:
+        return web.json_response({"error": "no_service_install_metadata"}, status=400)
+    import os
+    cwd = os.getcwd()
+    try:
+        proc = subprocess.run(
+            ["docker", "compose", "stop", service],
+            cwd=cwd, capture_output=True, text=True, timeout=30,
+        )
+    except FileNotFoundError:
+        return web.json_response({"error": "docker_cli_not_found"}, status=500)
+    except subprocess.TimeoutExpired:
+        return web.json_response({"error": "stop_timed_out"}, status=500)
+    log = (proc.stdout or "") + (proc.stderr or "")
+    if proc.returncode != 0:
+        return web.json_response({
+            "ok": False,
+            "error": f"docker compose exited {proc.returncode}",
+            "log": log,
+        }, status=500)
+    return web.json_response({"ok": True, "log": log})
+
+
 # ── Dispatch ledger (M8 Phase B) ─────────────────────────────────────────────
 
 async def handle_dispatches_list(request: web.Request) -> web.Response:
@@ -1373,24 +1492,6 @@ async def handle_agent_capabilities_toggle(request: web.Request) -> web.Response
     if not cap_id:
         return web.json_response({"error": "capability is required"}, status=400)
     from gateway import capabilities as _caps
-    # Reachability probe — only when enabling a capability that declares
-    # a service_probe (local_service tier with a bundled backing
-    # service). If the service isn't up, bail with an install hint
-    # instead of flipping the toggle into a broken state. Disable flow
-    # skips the probe because you shouldn't need the service to turn
-    # it off.
-    if enabled:
-        cap = _caps.find(cap_id)
-        if cap:
-            probe = _caps.probe_service(cap)
-            if probe and not probe.get("ok"):
-                return web.json_response({
-                    "error": "service_unreachable",
-                    "capability": cap_id,
-                    "probe_url": probe.get("url"),
-                    "hint": probe.get("hint"),
-                    "detail": probe.get("detail"),
-                }, status=409)
     try:
         new_state = _caps.apply(aid, cap_id, enabled)
     except ValueError as exc:
@@ -1408,68 +1509,6 @@ async def handle_agent_capabilities_toggle(request: web.Request) -> web.Response
         except Exception as exc:
             logger.warning(
                 "capability toggle: refresh_instance_config(%s) failed: %s",
-                agent["name"], exc,
-            )
-    return web.json_response(new_state)
-
-
-async def handle_agent_capabilities_install(request: web.Request) -> web.Response:
-    """POST /admin/agents/{id}/capabilities/install
-
-    Body: ``{"capability": "<id>"}``
-
-    Two-step flow paired with the probe that gates
-    /capabilities/toggle:
-      1. Shell out ``docker compose --profile <p> up -d <service>``
-         for the capability's service_install block.
-      2. Wait for the reachability probe to clear.
-      3. Apply the capability (same as toggle enabled=true).
-
-    Returns the post-install capability state on success, or a 4xx
-    with error details if docker compose or the probe fail.
-    """
-    aid = request.match_info["id"]
-    agent = auth_db.get_agent(aid)
-    if not agent:
-        return web.json_response({"error": "not_found"}, status=404)
-    try:
-        body = await request.json()
-    except Exception:
-        return web.json_response({"error": "invalid_json"}, status=400)
-    cap_id = (body.get("capability") or "").strip()
-    if not cap_id:
-        return web.json_response({"error": "capability is required"}, status=400)
-    from gateway import capabilities as _caps
-    cap = _caps.find(cap_id)
-    if not cap:
-        return web.json_response({"error": f"unknown_capability:{cap_id}"}, status=400)
-    if not cap.get("service_install"):
-        return web.json_response(
-            {"error": "capability has no install metadata; enable manually"},
-            status=400,
-        )
-    install_result = _caps.install_service(cap)
-    if not install_result.get("ok"):
-        return web.json_response({
-            "error": "install_failed",
-            "detail": install_result.get("error") or "unknown",
-            "log": install_result.get("log") or "",
-        }, status=500)
-    try:
-        new_state = _caps.apply(aid, cap_id, True)
-    except ValueError as exc:
-        return web.json_response({"error": str(exc)}, status=400)
-    except Exception as exc:
-        logger.exception("capability install+apply failed for %s/%s", aid, cap_id)
-        return web.json_response({"error": str(exc)}, status=500)
-    # Refresh sandbox config same as the regular toggle path.
-    executor = request.app.get("executor")
-    if executor and hasattr(executor, "refresh_instance_config"):
-        try:
-            executor.refresh_instance_config(agent["name"])
-        except Exception as exc:
-            logger.warning(
-                "capability install: refresh_instance_config(%s) failed: %s",
                 agent["name"], exc,
             )
     return web.json_response(new_state)
