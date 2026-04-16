@@ -1,210 +1,218 @@
-name: Build Windows Installer
-
-on:
-  push:
-    tags:
-      - 'v*'          # e.g. v0.4.0 (stable) or v0.4.0-rc.1 (canary pre-release)
-  workflow_dispatch:   # manual trigger from Actions tab (for testing)
-
-env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-
-permissions:
-  contents: write   # required to create/update GitHub Releases
-
-concurrency:
-  group: build-windows-${{ github.ref }}
-  cancel-in-progress: true
-
-jobs:
-  test:
-    uses: ./.github/workflows/tests.yml
-
-  build:
-    needs: test
-    runs-on: windows-latest
-    timeout-minutes: 30
-    defaults:
-      run:
-        shell: pwsh   # use PowerShell for all steps
-
-    steps:
-      # ── 1. Source ────────────────────────────────────────────────────────
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      # ── 2. Detect release channel ─────────────────────────────────────────
-      # Pre-release tags (vX.Y.Z-rc.N) build the canary installer.
-      # Stable tags (vX.Y.Z) build the main installer.
-      - name: Detect release channel
-        id: channel
-        run: |
-          $tag = "${{ github.ref_name }}"
-          if ($tag -match '-rc') {
-            "is_prerelease=true"  | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
-          } else {
-            "is_prerelease=false" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
-          }
-
-      # ── 3. Python ────────────────────────────────────────────────────────
-      - name: Install uv
-        uses: astral-sh/setup-uv@v5
-
-      - name: Create venv
-        run: uv venv .venv --python 3.11
-
-      # Add venv to PATH for ALL subsequent steps — this is the correct
-      # way to "activate" a venv in GitHub Actions (activation doesn't
-      # persist across run: blocks).
-      - name: Add venv to PATH
-        run: |
-          "${{ github.workspace }}\.venv\Scripts" |
-            Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-
-      # ── 4. App dependencies ──────────────────────────────────────────────
-      - name: Install app dependencies
-        run: pip install -e ".[messaging,cron,pty,mcp,acp]"
-
-      # ── 5. Desktop build tools ───────────────────────────────────────────
-      # logos.ico is pre-built and committed — no SVG/cairo dependency at CI time.
-      - name: Install desktop build tools
-        run: pip install pyinstaller pystray Pillow
-
-      # ── 6. PyInstaller ───────────────────────────────────────────────────
-      - name: Build executable with PyInstaller
-        run: pyinstaller launcher\hermes_launcher.spec --noconfirm
-
-      # ── 7. Inno Setup ────────────────────────────────────────────────────
-      - name: Build installer with Inno Setup
-        id: inno
-        run: |
-          $version = (Get-Content pyproject.toml | Select-String '^version\s*=\s*"(.+)"').Matches.Groups[1].Value
-          $iscc    = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
-          $isPrerelease = "${{ steps.channel.outputs.is_prerelease }}" -eq "true"
-
-          if ($isPrerelease) {
-            Write-Host "Building canary installer for version $version"
-            & $iscc `
-              /DMyAppVersion=$version `
-              "/DMyInstallName=Logos Canary" `
-              /DMyAppId=C1A2E3B4-5F6D-7E8C-9A0B-1D2E3F4A5B6C `
-              installer\logos.iss
-          } else {
-            Write-Host "Building stable installer for version $version"
-            & $iscc /DMyAppVersion=$version installer\logos.iss
-          }
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-
-      # ── 8. Compute SHA256 hashes ─────────────────────────────────────────
-      # Sidecar .sha256 files give users a machine-readable hash to verify.
-      # The combined SHA256SUMS.txt is also uploaded to the Release.
-      - name: Compute SHA256 hashes
-        id: hashes
-        run: |
-          $exeFile       = "dist\Logos\Logos.exe"
-          $installerFile = (Get-Item "installer\output\LogosSetup-*.exe").FullName
-          $installerName = (Get-Item "installer\output\LogosSetup-*.exe").Name
-
-          $exeHash       = (Get-FileHash $exeFile       -Algorithm SHA256).Hash.ToLower()
-          $installerHash = (Get-FileHash $installerFile -Algorithm SHA256).Hash.ToLower()
-
-          # Sidecar file next to the installer (conventional format)
-          "$installerHash  $installerName" |
-            Out-File -FilePath "$installerFile.sha256" -Encoding utf8 -NoNewline
-
-          # Combined checksums file
-          "$installerHash  $installerName`n$exeHash  Logos.exe" |
-            Out-File -FilePath "installer\output\SHA256SUMS.txt" -Encoding utf8
-
-          # Expose to later steps
-          "exe_hash=$exeHash"             >> $env:GITHUB_OUTPUT
-          "installer_hash=$installerHash" >> $env:GITHUB_OUTPUT
-          "installer_name=$installerName" >> $env:GITHUB_OUTPUT
-
-      # ── 9. Upload artifact ───────────────────────────────────────────────
-      - name: Upload installer artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: LogosSetup-windows
-          path: |
-            installer\output\LogosSetup-*.exe
-            installer\output\LogosSetup-*.exe.sha256
-            installer\output\SHA256SUMS.txt
-          retention-days: 30
-
-      # ── 10. Attach to GitHub Release (tags only) ──────────────────────────
-      # Pre-release tags → GitHub pre-release (prerelease: true).
-      # Stable tags → full release.
-      # Both upload installer + sidecar hash + SHA256SUMS.txt.
-      - name: Upload to GitHub Release
-        if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ github.ref_name }}
-          prerelease: ${{ steps.channel.outputs.is_prerelease == 'true' }}
-          files: |
-            installer\output\LogosSetup-*.exe
-            installer\output\LogosSetup-*.exe.sha256
-            installer\output\SHA256SUMS.txt
-          fail_on_unmatched_files: true
-          body: |
-            ## Logos ${{ github.ref_name }} — Windows Installer${{ steps.channel.outputs.is_prerelease == 'true' && ' (Canary)' || '' }}
-
-            Download **`${{ steps.hashes.outputs.installer_name }}`** from the assets below.
-
-            ${{ steps.channel.outputs.is_prerelease == 'true' && '> **Canary build** — pre-release for testing. Installs alongside stable as "Logos Canary" in a separate directory.' || '' }}
-
-            ---
-
-            ### ⚠️ Why Windows shows a warning
-
-            Logos is currently unsigned. Code signing certificates is either quite expensive at this time or seems to require an identity validation process that is not yet available to us in the UK.
-
-            We publish full build transparency instead.
-
-            Windows SmartScreen may show **"Windows protected your PC"** on first run — click **"More info" → "Run anyway"**. This is safe once you have verified the SHA256 hash below.
-
-            ---
-
-            ### 🔐 Build transparency
-
-            - Built exclusively by GitHub Actions — no local machines, no manual steps
-            - [View this exact workflow run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
-            - [View source at this tag](${{ github.server_url }}/${{ github.repository }}/tree/${{ github.ref_name }})
-
-            ---
-
-            ### 🔑 SHA256 verification
-
-            | File | SHA256 |
-            |------|--------|
-            | `${{ steps.hashes.outputs.installer_name }}` | `${{ steps.hashes.outputs.installer_hash }}` |
-            | `Logos.exe` (inner binary) | `${{ steps.hashes.outputs.exe_hash }}` |
-
-            **Windows (PowerShell / certutil):**
-            ```powershell
-            certutil -hashfile ${{ steps.hashes.outputs.installer_name }} SHA256
-            ```
-
-            **macOS / Linux:**
-            ```bash
-            sha256sum ${{ steps.hashes.outputs.installer_name }}
-            ```
-
-            `SHA256SUMS.txt` and a `.sha256` sidecar are also attached to this release.
-
-            ---
-
-            ### 📦 Prerequisites
-
-            Logos is self-contained — no Python or runtime install required.
-
-            **MCP servers (optional):** if you want to connect stdio-based MCP servers (anything using `npx` or `node` in its config), you must install [Node.js](https://nodejs.org) (LTS) separately. HTTP/StreamableHTTP MCP servers work without it.
-
-            ---
-
-            ### 🧪 VirusTotal scan
-
-            [Scan `${{ steps.hashes.outputs.installer_name }}` on VirusTotal](https://www.virustotal.com/gui/file/${{ steps.hashes.outputs.installer_hash }})
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+# ─────────────────────────────────────────────────────────────────────────────
+# Windows installer build — TEMPORARILY DISABLED.
+#
+# The entire workflow below is commented out so GitHub Actions will not pick
+# it up. To re-enable, strip the leading "# " from every line below this
+# block (ignoring this header).
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# name: Build Windows Installer
+#
+# on:
+#   push:
+#     tags:
+#       - 'v*'          # e.g. v0.4.0 (stable) or v0.4.0-rc.1 (canary pre-release)
+#   workflow_dispatch:   # manual trigger from Actions tab (for testing)
+#
+# env:
+#   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+#
+# permissions:
+#   contents: write   # required to create/update GitHub Releases
+#
+# concurrency:
+#   group: build-windows-${{ github.ref }}
+#   cancel-in-progress: true
+#
+# jobs:
+#   test:
+#     uses: ./.github/workflows/tests.yml
+#
+#   build:
+#     needs: test
+#     runs-on: windows-latest
+#     timeout-minutes: 30
+#     defaults:
+#       run:
+#         shell: pwsh   # use PowerShell for all steps
+#
+#     steps:
+#       # ── 1. Source ────────────────────────────────────────────────────────
+#       - name: Checkout
+#         uses: actions/checkout@v4
+#
+#       # ── 2. Detect release channel ─────────────────────────────────────────
+#       # Pre-release tags (vX.Y.Z-rc.N) build the canary installer.
+#       # Stable tags (vX.Y.Z) build the main installer.
+#       - name: Detect release channel
+#         id: channel
+#         run: |
+#           $tag = "${{ github.ref_name }}"
+#           if ($tag -match '-rc') {
+#             "is_prerelease=true"  | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+#           } else {
+#             "is_prerelease=false" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+#           }
+#
+#       # ── 3. Python ────────────────────────────────────────────────────────
+#       - name: Install uv
+#         uses: astral-sh/setup-uv@v5
+#
+#       - name: Create venv
+#         run: uv venv .venv --python 3.11
+#
+#       # Add venv to PATH for ALL subsequent steps — this is the correct
+#       # way to "activate" a venv in GitHub Actions (activation doesn't
+#       # persist across run: blocks).
+#       - name: Add venv to PATH
+#         run: |
+#           "${{ github.workspace }}\.venv\Scripts" |
+#             Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+#
+#       # ── 4. App dependencies ──────────────────────────────────────────────
+#       - name: Install app dependencies
+#         run: pip install -e ".[messaging,cron,pty,mcp,acp]"
+#
+#       # ── 5. Desktop build tools ───────────────────────────────────────────
+#       # logos.ico is pre-built and committed — no SVG/cairo dependency at CI time.
+#       - name: Install desktop build tools
+#         run: pip install pyinstaller pystray Pillow
+#
+#       # ── 6. PyInstaller ───────────────────────────────────────────────────
+#       - name: Build executable with PyInstaller
+#         run: pyinstaller launcher\hermes_launcher.spec --noconfirm
+#
+#       # ── 7. Inno Setup ────────────────────────────────────────────────────
+#       - name: Build installer with Inno Setup
+#         id: inno
+#         run: |
+#           $version = (Get-Content pyproject.toml | Select-String '^version\s*=\s*"(.+)"').Matches.Groups[1].Value
+#           $iscc    = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+#           $isPrerelease = "${{ steps.channel.outputs.is_prerelease }}" -eq "true"
+#
+#           if ($isPrerelease) {
+#             Write-Host "Building canary installer for version $version"
+#             & $iscc `
+#               /DMyAppVersion=$version `
+#               "/DMyInstallName=Logos Canary" `
+#               /DMyAppId=C1A2E3B4-5F6D-7E8C-9A0B-1D2E3F4A5B6C `
+#               installer\logos.iss
+#           } else {
+#             Write-Host "Building stable installer for version $version"
+#             & $iscc /DMyAppVersion=$version installer\logos.iss
+#           }
+#           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+#
+#       # ── 8. Compute SHA256 hashes ─────────────────────────────────────────
+#       # Sidecar .sha256 files give users a machine-readable hash to verify.
+#       # The combined SHA256SUMS.txt is also uploaded to the Release.
+#       - name: Compute SHA256 hashes
+#         id: hashes
+#         run: |
+#           $exeFile       = "dist\Logos\Logos.exe"
+#           $installerFile = (Get-Item "installer\output\LogosSetup-*.exe").FullName
+#           $installerName = (Get-Item "installer\output\LogosSetup-*.exe").Name
+#
+#           $exeHash       = (Get-FileHash $exeFile       -Algorithm SHA256).Hash.ToLower()
+#           $installerHash = (Get-FileHash $installerFile -Algorithm SHA256).Hash.ToLower()
+#
+#           # Sidecar file next to the installer (conventional format)
+#           "$installerHash  $installerName" |
+#             Out-File -FilePath "$installerFile.sha256" -Encoding utf8 -NoNewline
+#
+#           # Combined checksums file
+#           "$installerHash  $installerName`n$exeHash  Logos.exe" |
+#             Out-File -FilePath "installer\output\SHA256SUMS.txt" -Encoding utf8
+#
+#           # Expose to later steps
+#           "exe_hash=$exeHash"             >> $env:GITHUB_OUTPUT
+#           "installer_hash=$installerHash" >> $env:GITHUB_OUTPUT
+#           "installer_name=$installerName" >> $env:GITHUB_OUTPUT
+#
+#       # ── 9. Upload artifact ───────────────────────────────────────────────
+#       - name: Upload installer artifact
+#         uses: actions/upload-artifact@v4
+#         with:
+#           name: LogosSetup-windows
+#           path: |
+#             installer\output\LogosSetup-*.exe
+#             installer\output\LogosSetup-*.exe.sha256
+#             installer\output\SHA256SUMS.txt
+#           retention-days: 30
+#
+#       # ── 10. Attach to GitHub Release (tags only) ──────────────────────────
+#       # Pre-release tags → GitHub pre-release (prerelease: true).
+#       # Stable tags → full release.
+#       # Both upload installer + sidecar hash + SHA256SUMS.txt.
+#       - name: Upload to GitHub Release
+#         if: startsWith(github.ref, 'refs/tags/')
+#         uses: softprops/action-gh-release@v2
+#         with:
+#           tag_name: ${{ github.ref_name }}
+#           prerelease: ${{ steps.channel.outputs.is_prerelease == 'true' }}
+#           files: |
+#             installer\output\LogosSetup-*.exe
+#             installer\output\LogosSetup-*.exe.sha256
+#             installer\output\SHA256SUMS.txt
+#           fail_on_unmatched_files: true
+#           body: |
+#             ## Logos ${{ github.ref_name }} — Windows Installer${{ steps.channel.outputs.is_prerelease == 'true' && ' (Canary)' || '' }}
+#
+#             Download **`${{ steps.hashes.outputs.installer_name }}`** from the assets below.
+#
+#             ${{ steps.channel.outputs.is_prerelease == 'true' && '> **Canary build** — pre-release for testing. Installs alongside stable as "Logos Canary" in a separate directory.' || '' }}
+#
+#             ---
+#
+#             ### ⚠️ Why Windows shows a warning
+#
+#             Logos is currently unsigned. Code signing certificates is either quite expensive at this time or seems to require an identity validation process that is not yet available to us in the UK.
+#
+#             We publish full build transparency instead.
+#
+#             Windows SmartScreen may show **"Windows protected your PC"** on first run — click **"More info" → "Run anyway"**. This is safe once you have verified the SHA256 hash below.
+#
+#             ---
+#
+#             ### 🔐 Build transparency
+#
+#             - Built exclusively by GitHub Actions — no local machines, no manual steps
+#             - [View this exact workflow run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
+#             - [View source at this tag](${{ github.server_url }}/${{ github.repository }}/tree/${{ github.ref_name }})
+#
+#             ---
+#
+#             ### 🔑 SHA256 verification
+#
+#             | File | SHA256 |
+#             |------|--------|
+#             | `${{ steps.hashes.outputs.installer_name }}` | `${{ steps.hashes.outputs.installer_hash }}` |
+#             | `Logos.exe` (inner binary) | `${{ steps.hashes.outputs.exe_hash }}` |
+#
+#             **Windows (PowerShell / certutil):**
+#             ```powershell
+#             certutil -hashfile ${{ steps.hashes.outputs.installer_name }} SHA256
+#             ```
+#
+#             **macOS / Linux:**
+#             ```bash
+#             sha256sum ${{ steps.hashes.outputs.installer_name }}
+#             ```
+#
+#             `SHA256SUMS.txt` and a `.sha256` sidecar are also attached to this release.
+#
+#             ---
+#
+#             ### 📦 Prerequisites
+#
+#             Logos is self-contained — no Python or runtime install required.
+#
+#             **MCP servers (optional):** if you want to connect stdio-based MCP servers (anything using `npx` or `node` in its config), you must install [Node.js](https://nodejs.org) (LTS) separately. HTTP/StreamableHTTP MCP servers work without it.
+#
+#             ---
+#
+#             ### 🧪 VirusTotal scan
+#
+#             [Scan `${{ steps.hashes.outputs.installer_name }}` on VirusTotal](https://www.virustotal.com/gui/file/${{ steps.hashes.outputs.installer_hash }})
+#         env:
+#           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

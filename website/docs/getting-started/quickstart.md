@@ -20,7 +20,7 @@ curl -fsSL https://raw.githubusercontent.com/GregsGreyCode/logos/main/scripts/in
 ```
 
 :::tip Windows Users
-A Windows desktop app (`.exe` installer) is available on the [releases page](https://github.com/GregsGreyCode/logos/releases). For the source install, use [WSL2](https://learn.microsoft.com/en-us/windows/wsl/install) and run the command above inside your WSL2 terminal.
+There is no native Windows build at this time. Install [WSL2](https://learn.microsoft.com/en-us/windows/wsl/install) and run the command above inside your WSL2 terminal.
 :::
 
 After it finishes, reload your shell:

@@ -1,12 +1,12 @@
 ---
 sidebar_position: 2
 title: "Installation"
-description: "Install Logos on Linux, macOS, WSL2, or Windows"
+description: "Install Logos on Linux, macOS, or WSL2"
 ---
 
 # Installation
 
-Get Logos up and running with the one-line installer, the Windows desktop app, or a fully manual install.
+Get Logos up and running with the one-line installer or a fully manual install.
 
 ## Quick Install
 
@@ -18,16 +18,8 @@ curl -fsSL https://raw.githubusercontent.com/GregsGreyCode/logos/main/scripts/in
 
 The installer handles everything automatically — all dependencies (Python, Node.js, ripgrep, ffmpeg), the repo clone, virtual environment, global `logos` and `hermes` command setup, and LLM provider configuration.
 
-### Windows Desktop App
-
-Download the `.exe` installer from the [releases page](https://github.com/GregsGreyCode/logos/releases). The desktop app:
-
-- Runs the gateway with a LocalProcessExecutor (no Docker or WSL required)
-- Includes a system tray icon with auto-update notifications
-- Stores configuration in `%USERPROFILE%\.logos\`
-
-:::tip WSL2 Alternative
-If you prefer the full Linux experience on Windows, install [WSL2](https://learn.microsoft.com/en-us/windows/wsl/install) and use the Linux installer above. This gives you access to all execution backends including Docker and Kubernetes.
+:::tip Windows Users
+There is no native Windows build at this time. Install [WSL2](https://learn.microsoft.com/en-us/windows/wsl/install) and run the Linux installer above inside your WSL2 terminal.
 :::
 
 ### After Installation
