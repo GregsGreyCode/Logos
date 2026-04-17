@@ -280,10 +280,10 @@ Audit `/opt/hermes` to carve a 1–2 GB image. Migrate browser tools to `@playwr
 
 `sentence-transformers` not in pyproject. Currently embeddings silently return empty when no LM Studio/Ollama endpoint is reachable.
 
-### LOG-39 · "Show hidden" toggle for soft-deleted sessions
-**Effort:** S · **Type:** Feature · **Status:** OPEN
+### LOG-39 · "Show hidden" toggle for soft-deleted sessions — **DONE (2026-04-17)**
+**Effort:** S · **Type:** Feature · **Status:** DONE
 
-Soft-delete (`hidden=1`) ships. Toggle to show/restore doesn't.
+`/api/platform-sessions?include_hidden=1` returns soft-deleted rows (with `hidden: true` stamped), and `POST /api/platform-sessions/{id}/restore` flips `hidden=0`. Sidebar has a "Show hidden" checkbox that re-queries with the flag; hidden rows render dim with an `hidden` pill + a Restore (↺) button on hover.
 
 ### LOG-40 · Platform badge in chat header ("via Telegram") — **DONE (2026-04-17)**
 **Effort:** XS · **Type:** Polish · **Status:** DONE

@@ -2873,6 +2873,11 @@ async def _handle_api_platform_sessions(request: web.Request) -> web.Response:
         raise web.HTTPForbidden()
     platform_filter = request.rel_url.query.get("platform")
     agent_id_filter = request.rel_url.query.get("agent_id")
+    # LOG-39: "Show hidden" toggle. When include_hidden=1, return
+    # soft-deleted (hidden=1) sessions alongside visible ones so users
+    # can restore or permanently delete them. Default 0 keeps the
+    # existing "clean list" UX.
+    include_hidden = request.rel_url.query.get("include_hidden") in ("1", "true", "yes")
     runner: Any = request.app["runner"]
     db = getattr(runner.session_store, "_db", None)
     if not db:
@@ -2915,20 +2920,21 @@ async def _handle_api_platform_sessions(request: web.Request) -> web.Response:
                     _session_ids,
                 ).fetchall()
         elif platform_filter:
+            _hidden_clause = "" if include_hidden else " AND COALESCE(hidden, 0) = 0"
             rows = db._conn.execute(
-                """SELECT id, source, title, started_at, ended_at, message_count,
-                          user_id, model
-                   FROM sessions WHERE source = ? AND COALESCE(hidden, 0) = 0
-                   ORDER BY started_at DESC LIMIT 50""",
+                f"""SELECT id, source, title, started_at, ended_at, message_count,
+                           user_id, model, COALESCE(hidden, 0) as hidden
+                    FROM sessions WHERE source = ?{_hidden_clause}
+                    ORDER BY started_at DESC LIMIT 50""",
                 (platform_filter,),
             ).fetchall()
         else:
+            _hidden_clause = "" if include_hidden else " AND COALESCE(hidden, 0) = 0"
             rows = db._conn.execute(
-                """SELECT id, source, title, started_at, ended_at, message_count,
-                          user_id, model
-                   FROM sessions WHERE source NOT IN ('local', 'cron')
-                   AND COALESCE(hidden, 0) = 0
-                   ORDER BY started_at DESC LIMIT 50""",
+                f"""SELECT id, source, title, started_at, ended_at, message_count,
+                           user_id, model, COALESCE(hidden, 0) as hidden
+                    FROM sessions WHERE source NOT IN ('local', 'cron'){_hidden_clause}
+                    ORDER BY started_at DESC LIMIT 50""",
             ).fetchall()
     except Exception:
         rows = []
@@ -2938,6 +2944,12 @@ async def _handle_api_platform_sessions(request: web.Request) -> web.Response:
     for r in rows:
         started = _dt.fromtimestamp(r["started_at"]) if r["started_at"] else None
         updated = _dt.fromtimestamp(r["ended_at"]) if r["ended_at"] else started
+        # LOG-39: include `hidden` so the UI can dim / add a restore
+        # affordance on soft-deleted rows when include_hidden=1 is set.
+        try:
+            _hidden_flag = bool(r["hidden"]) if "hidden" in r.keys() else False
+        except Exception:
+            _hidden_flag = False
         result.append({
             "session_id": r["id"],
             "session_key": r["id"],
@@ -2947,6 +2959,7 @@ async def _handle_api_platform_sessions(request: web.Request) -> web.Response:
             "created_at": started.isoformat() if started else "",
             "updated_at": (updated or started).isoformat() if started else "",
             "message_count": r["message_count"] or 0,
+            "hidden": _hidden_flag,
         })
     return web.json_response(result)
 
@@ -2984,6 +2997,29 @@ async def _handle_api_session_delete(request: web.Request) -> web.Response:
         return web.json_response({"error": "session DB not available"}, status=503)
     try:
         db._conn.execute("UPDATE sessions SET hidden=1 WHERE id=?", (session_id,))
+        db._conn.commit()
+    except Exception as exc:
+        return web.json_response({"error": str(exc)}, status=500)
+    return web.json_response({"ok": True})
+
+
+async def _handle_api_session_restore(request: web.Request) -> web.Response:
+    """POST /api/platform-sessions/{session_id}/restore — un-soft-delete a session (LOG-39).
+
+    Inverse of _handle_api_session_delete. Flips ``hidden=0`` so the row
+    reappears in the sidebar. Messages/embeddings/dispatches never moved
+    (soft-delete preserves everything), so restore is a one-column UPDATE.
+    """
+    current_user = request.get("current_user") or {}
+    if current_user.get("role", "viewer") not in ("admin", "operator"):
+        raise web.HTTPForbidden()
+    session_id = request.match_info["session_id"]
+    runner: Any = request.app["runner"]
+    db = getattr(runner.session_store, "_db", None)
+    if not db:
+        return web.json_response({"error": "session DB not available"}, status=503)
+    try:
+        db._conn.execute("UPDATE sessions SET hidden=0 WHERE id=?", (session_id,))
         db._conn.commit()
     except Exception as exc:
         return web.json_response({"error": str(exc)}, status=500)
@@ -5071,6 +5107,8 @@ async def start_http_api(runner: Any, port: int = 8091) -> None:
     app.router.add_get("/api/platform-sessions", _handle_api_platform_sessions)
     app.router.add_get("/api/platform-sessions/{session_id}/messages", _handle_api_session_messages)
     app.router.add_delete("/api/platform-sessions/{session_id}", require_csrf(_handle_api_session_delete))
+    app.router.add_post("/api/platform-sessions/{session_id}/restore",
+                        require_csrf(_handle_api_session_restore))
     app.router.add_post("/chat",               _handle_chat)
     app.router.add_post("/chat/{task_id}/cancel", require_csrf(_handle_chat_cancel))
     app.router.add_post("/chat/transcribe",    require_csrf(_handle_transcribe))
