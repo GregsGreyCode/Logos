@@ -768,6 +768,11 @@ async def handle_dispatches_list(request: web.Request) -> web.Response:
     """GET /admin/dispatches — query the dispatch activity ledger.
 
     Query params: agent_id, origin, status, q, limit (max 200), offset.
+
+    LOG-25.1: non-admin/operator callers are force-scoped to their own
+    dispatches via ``user_id``. Users have ``view_runs`` in RBAC so the
+    Runs tab shows up for them, but they should only see their own
+    runs — not every other user's history.
     """
     agent_id = request.rel_url.query.get("agent_id")
     origin = request.rel_url.query.get("origin")
@@ -781,8 +786,23 @@ async def handle_dispatches_list(request: web.Request) -> web.Response:
         offset = max(0, int(request.rel_url.query.get("offset", 0)))
     except (TypeError, ValueError):
         offset = 0
+    # Per-user isolation: admins/operators see everyone; user/viewer
+    # only their own. Key off role rather than permissions so a future
+    # role with view_runs still inherits this guard unless explicitly
+    # granted operator-tier visibility.
+    current = request.get("current_user") or {}
+    user_id_filter: Optional[str] = None
+    if current.get("role") not in ("admin", "operator"):
+        user_id_filter = current.get("id") or current.get("sub") or ""
+        if not user_id_filter:
+            # No identified caller — be restrictive, return empty.
+            return web.json_response({
+                "dispatches": [], "total": 0,
+                "limit": limit, "offset": offset,
+            })
     rows, total = auth_db.list_dispatches(
         agent_id=agent_id, origin=origin, status=status, q=q,
+        user_id=user_id_filter,
         limit=limit, offset=offset,
     )
     # Expand STAMP JSON columns so the UI doesn't have to parse twice.
