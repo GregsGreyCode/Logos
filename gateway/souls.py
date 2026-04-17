@@ -69,6 +69,29 @@ class SoulManifest:
         return d
 
 
+def _load_shared_fragments() -> str:
+    """Return the concatenated contents of every ``*.md`` in
+    ``souls/_shared/`` so they can be appended to every soul's
+    ``soul_md`` at load time.
+
+    The shared directory is for guidance that applies regardless of
+    voice: filesystem layout, tool-use conventions, etc. Keeping it
+    separate from per-soul soul.md files avoids the maintenance
+    burden of copying the same paragraphs into 10 souls and makes
+    the shared guidance discoverable.
+    """
+    shared_dir = _SOULS_DIR / "_shared"
+    if not shared_dir.is_dir():
+        return ""
+    parts: list[str] = []
+    for p in sorted(shared_dir.glob("*.md")):
+        try:
+            parts.append(p.read_text().strip())
+        except Exception as exc:
+            logger.warning("Failed to read shared soul fragment %s: %s", p, exc)
+    return "\n\n".join(parts).strip()
+
+
 def load_souls() -> dict[str, SoulManifest]:
     """Load souls from the souls/ directory alongside the hermes-agent package."""
     global _SOUL_REGISTRY
@@ -77,8 +100,12 @@ def load_souls() -> dict[str, SoulManifest]:
         logger.warning("Souls directory not found: %s", _SOULS_DIR)
         _SOUL_REGISTRY = registry
         return registry
+    shared_suffix = _load_shared_fragments()
     for soul_dir in sorted(_SOULS_DIR.iterdir()):
         if not soul_dir.is_dir():
+            continue
+        # Skip the _shared dir — it's fragment storage, not a soul.
+        if soul_dir.name.startswith("_"):
             continue
         manifest_path = soul_dir / "soul.manifest.yaml"
         soul_md_path = soul_dir / "soul.md"
@@ -127,7 +154,13 @@ def load_souls() -> dict[str, SoulManifest]:
                 optional_toolsets=toolsets.get("optional", []),
                 forbidden_toolsets=toolsets.get("forbidden", []),
                 user_accessible=data.get("user_accessible", True),
-                soul_md=soul_md_path.read_text() if soul_md_path.exists() else "",
+                # Per-soul voice + the shared fragments joined by a
+                # blank line. Shared last so soul-specific guidance
+                # still leads the prompt.
+                soul_md=(
+                    (soul_md_path.read_text() if soul_md_path.exists() else "")
+                    + (("\n\n" + shared_suffix) if shared_suffix else "")
+                ).strip(),
             )
             registry[soul.slug] = soul
         except Exception as e:
