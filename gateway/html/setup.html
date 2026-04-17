@@ -1845,6 +1845,28 @@
             class="text-xs text-red-400 px-1">Password must be at least 8 characters.</div>
           <div x-show="setupPassword && setupPassword.length >= 8 && setupPasswordConfirm && setupPassword !== setupPasswordConfirm"
             class="text-xs text-red-400 px-1">Passwords do not match.</div>
+
+          <!-- LOG-42: timezone override — defaults to the browser's
+               detected IANA zone. Only really matters if you want the
+               world view in a different tz from your browser (e.g.
+               viewing a shared dashboard as another location). Stored
+               in localStorage 'logos_tz'; world scene reads it on
+               mount and falls back to browser default. -->
+          <div>
+            <label class="block text-xs text-gray-500 mb-1.5">Time zone <span class="text-gray-700 normal-case font-normal">(optional)</span></label>
+            <select x-model="setupTimezone"
+                    @change="try{localStorage.setItem('logos_tz', setupTimezone)}catch(_){}"
+                    class="w-full bg-gray-900 border border-gray-700 rounded-xl px-3 py-2.5 text-sm focus:border-indigo-500 focus:outline-none transition-colors"
+                    style="color:#f3f4f6">
+              <option value="">Auto (use browser time zone)</option>
+              <template x-for="tz in _availableTimezones" :key="tz">
+                <option :value="tz" x-text="tz"></option>
+              </template>
+            </select>
+            <p class="text-[11px] text-gray-600 mt-1">
+              Changes the world view's day/night cycle baseline. Leave on Auto unless you need the world shown in a different zone than your browser.
+            </p>
+          </div>
         </div>
 
         <!-- Additional users -->
@@ -2220,6 +2242,11 @@ function setup() {
     setupPassword: '',
     setupPasswordConfirm: '',
     setupAdditionalUsers: [],  // [{username, email, password, role}]
+    // LOG-42: IANA tz override. "" = auto (use browser detected tz
+    // via Intl.DateTimeFormat().resolvedOptions().timeZone). Stored
+    // to localStorage on change so world scene picks it up.
+    setupTimezone: '',
+    _availableTimezones: [],
 
     // Step 7 — pre-launch endpoint health
     step7ProbeStatus: null,   // null=unchecked, 'checking', 'ok', 'warn', 'error'
@@ -2401,6 +2428,31 @@ function setup() {
       if (ua.includes('Win')) this.osPlatform = 'windows';
       else if (ua.includes('Linux')) this.osPlatform = 'linux';
       else this.osPlatform = 'mac';
+
+      // LOG-42: populate the timezone dropdown. Intl.supportedValuesOf
+      // is modern-Chrome+ (>= 99). On older browsers we fall back to a
+      // curated shortlist — the wizard still works, just a smaller
+      // dropdown. Restore any prior choice from localStorage.
+      try {
+        if (typeof Intl.supportedValuesOf === 'function') {
+          this._availableTimezones = Intl.supportedValuesOf('timeZone');
+        }
+      } catch(_) {}
+      if (!this._availableTimezones || this._availableTimezones.length === 0) {
+        this._availableTimezones = [
+          'UTC', 'Europe/London', 'Europe/Berlin', 'Europe/Paris',
+          'America/New_York', 'America/Chicago', 'America/Denver',
+          'America/Los_Angeles', 'America/Toronto', 'America/Sao_Paulo',
+          'Asia/Tokyo', 'Asia/Shanghai', 'Asia/Singapore', 'Asia/Dubai',
+          'Australia/Sydney', 'Pacific/Auckland',
+        ];
+      }
+      try {
+        const saved = localStorage.getItem('logos_tz');
+        if (saved && this._availableTimezones.includes(saved)) {
+          this.setupTimezone = saved;
+        }
+      } catch(_) {}
 
       // Restore full wizard progress so a refresh resumes from where the user left off
       // But only if the session belongs to this server instance — a pod restart (e.g.
