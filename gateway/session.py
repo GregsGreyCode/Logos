@@ -938,21 +938,63 @@ class SessionStore:
             skip_db: When True, skip the SQLite write.  Used when the agent
                      already persisted messages via _flush_messages_to_session_db(),
                      preventing duplicate writes (bug #860).
+
+        LOG-26: after a successful insert we enqueue a best-effort
+        embedding job on a background thread so the row becomes
+        searchable via the semantic session_search without waiting
+        for the periodic backfill. Synchronous embed would add
+        100-1000ms of latency to every chat turn (Ollama HTTP
+        round-trip) — offloading keeps the caller fast.
         """
         if skip_db:
             return
-        if self._db:
-            try:
-                self._db.append_message(
-                    session_id=session_id,
-                    role=message.get("role", "unknown"),
-                    content=message.get("content"),
-                    tool_name=message.get("tool_name"),
-                    tool_calls=message.get("tool_calls"),
-                    tool_call_id=message.get("tool_call_id"),
-                )
-            except Exception as e:
-                logger.debug("Session DB operation failed: %s", e)
+        if not self._db:
+            return
+        try:
+            self._db.append_message(
+                session_id=session_id,
+                role=message.get("role", "unknown"),
+                content=message.get("content"),
+                tool_name=message.get("tool_name"),
+                tool_calls=message.get("tool_calls"),
+                tool_call_id=message.get("tool_call_id"),
+            )
+        except Exception as e:
+            logger.debug("Session DB operation failed: %s", e)
+            return
+
+        # Only user + assistant messages with real content are worth
+        # embedding — tool calls / tool results tend to be noisy for
+        # semantic search ("{"path": "/tmp/foo"}") and are better
+        # excluded. Matches the filter in backfill_embeddings().
+        role = message.get("role")
+        content = (message.get("content") or "")
+        if role not in ("user", "assistant") or not content.strip():
+            return
+        if not hasattr(self._db, "embed_message"):
+            return
+        try:
+            import threading
+            db_ref = self._db
+            def _embed_latest():
+                try:
+                    row = db_ref._conn.execute(
+                        "SELECT id FROM messages WHERE session_id = ? "
+                        "ORDER BY id DESC LIMIT 1",
+                        (session_id,),
+                    ).fetchone()
+                    if row is None:
+                        return
+                    db_ref.embed_message(int(row["id"]), content)
+                except Exception as exc:
+                    # Embedding backend may be offline (LM Studio not
+                    # loaded, Ollama not started, etc.) — that's fine,
+                    # the row stays un-embedded and LOG-37's periodic
+                    # backfill cron picks it up later.
+                    logger.debug("background embed skipped: %s", exc)
+            threading.Thread(target=_embed_latest, daemon=True).start()
+        except Exception as _th_exc:
+            logger.debug("background embed: thread spawn failed: %s", _th_exc)
     
     def rewrite_transcript(self, session_id: str, messages: List[Dict[str, Any]]) -> None:
         """Replace the entire transcript for a session with new messages.

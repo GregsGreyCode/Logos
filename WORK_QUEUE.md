@@ -123,10 +123,10 @@ Demoted from P0/L to P0/S — was the right ticket all along, but the heavy lift
 | 25.6 | Per-user daily budget caps (`daily_budget_usd` per user) | M | DONE — v26/v26b migrations + user_cost_rollup_24h + `_handle_chat` user-scoped gate before the per-agent gate; cost_log.user_id attribution via dispatch task_id lookup |
 | 25.7 | `/register` endpoint with optional approval gate | M | DONE — `POST /auth/register` backend + inline login-page form (mode toggle) + Admin → Users registration-settings card (allow_registration + require_approval checkboxes). Approval flow reuses existing Admin → Users table (update_user already accepts status) |
 
-### LOG-26 · Background embed-on-write for session search
-**Effort:** M · **Type:** Feature · **Status:** OPEN · **Cross-ref:** Re-evaluate after LOG-44.4 — if Hermes owns per-agent sessions, embed-on-write moves into the per-sandbox layer; Logos's job becomes aggregating embeddings across sandboxes for cross-agent search.
+### LOG-26 · Background embed-on-write for session search — **DONE (2026-04-17)**
+**Effort:** M · **Type:** Feature · **Status:** DONE · **Cross-ref:** Re-evaluate after LOG-44.4 — if Hermes owns per-agent sessions, embed-on-write moves into the per-sandbox layer; Logos's job becomes aggregating embeddings across sandboxes for cross-agent search.
 
-`append_to_transcript()` in `core/state.py` writes to SQLite only — no embedding hook. Direct continuation of the `99748746` semantic search work from yesterday. Still worth doing pre-LOG-44 if you want passive recall in the next month — the work is small and the storage layer becomes a translation problem post-44.4, not a discard.
+`gateway/session.py::append_to_transcript` now fires a background thread after each SQLite insert that looks up the inserted row's id and calls `embed_message()` — so new user/assistant messages are searchable via semantic session_search without waiting for the backfill cron. Best-effort: when the embedding backend is offline (LM Studio not loaded, Ollama not started), the row stays unembedded and the periodic backfill picks it up later. Tool calls / tool results excluded (same filter as backfill). Also stripped the now-redundant synchronous embed block from `run.py::dispatch_platform_message` — centralised in append_to_transcript means every call site (web, platform, cron, tests) gets embeds for free.
 
 ### LOG-27 · Auto-inject top-3 semantically similar past chats into prompt
 **Effort:** M · **Type:** Feature · **Status:** OPEN · **Best-after:** LOG-26 · **Cross-ref:** Hermes upstream may already do this (its `agent/insights.py` etc.) — investigate during LOG-44.1 before duplicating.
@@ -292,6 +292,16 @@ Audit `/opt/hermes` to carve a 1–2 GB image. Migrate browser tools to `@playwr
 
 ### LOG-36 · Sub-agent live execution: per-sub-agent boxes
 **Effort:** M · **Type:** Polish · **Status:** OPEN
+
+Ticket deepened 2026-04-17 after attempted start — the per-sub-agent UI requires backend event-threading that doesn't exist today. `tools/delegate_tool.py` runs children in-process inside the sandbox and the children's tool-call events (tool_start/tool_end) never flow back through the parent's stdout protocol to the gateway's SSE stream. So the UI has nothing to group.
+
+| # | Sub-task | Effort | Notes |
+|---|---|---|---|
+| 36.1 | `delegate_tool.py` accepts a `tool_event_cb(subagent_id, event_dict)` param that the child AIAgent calls from its own tool-event hooks | S | Child agents must be run with their own event sinks — today they run silent. |
+| 36.2 | `docker/sandbox_worker.py` wraps the parent's stdout-JSON framing to emit child events with a `subagent_id` field tagging the origin | XS | Single extra key on each event; keep existing tool_start/tool_end shape. |
+| 36.3 | `gateway/worker_registry.py::dispatch_task` forwards `subagent_id` into the SSE event dict on its way to `_handle_chat` | XS | Already passes arbitrary dict keys through; just don't strip. |
+| 36.4 | `main_app.html`: new `_liveSubagents` Alpine structure keyed by `subagent_id` (parent = null); render a small header per sub-agent + its own tool-call list | S | Also update `_liveTools` access paths to include `subagent_id`. |
+| 36.5 | Delegation summary row in the parent's live-tools panel stays; clicking it expands to show the sub-agent details if we want to hide by default | XS | UX polish; optional. |
 
 ### LOG-37 · Periodic backfill cron for embeddings
 **Effort:** S · **Type:** Feature · **Status:** OPEN · **Best-after:** LOG-26

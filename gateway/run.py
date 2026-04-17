@@ -2287,6 +2287,11 @@ class GatewayRunner:
         final = (result or {}).get("final_response") or ""
         if session_id:
             try:
+                # LOG-26: append_to_transcript now handles embedding on
+                # a background thread, so the older explicit embed
+                # calls that used to live here are redundant (and were
+                # synchronous — adding 100-1000ms of latency per
+                # platform reply).
                 self.session_store.append_to_transcript(
                     session_id, {"role": "user", "content": message_text},
                 )
@@ -2294,17 +2299,6 @@ class GatewayRunner:
                     self.session_store.append_to_transcript(
                         session_id, {"role": "assistant", "content": final},
                     )
-                # Best-effort: embed the new messages for semantic search.
-                try:
-                    _db = getattr(self.session_store, "_db", None)
-                    if _db and hasattr(_db, "embed_message"):
-                        _last = _db._conn.execute("SELECT MAX(id) FROM messages").fetchone()[0]
-                        if final and _last:
-                            _db.embed_message(_last, final)
-                        if _last and _last > 1:
-                            _db.embed_message(_last - 1, message_text)
-                except Exception:
-                    pass
             except Exception:
                 logger.exception(
                     "dispatch_platform_message: transcript write failed for session=%s",
