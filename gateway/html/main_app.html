@@ -6326,7 +6326,7 @@ function app() {
     // ~/.logos/agents/<name>/. View-only for v1.
     mindModalAgent: null,         // {id, name}
     mindModalTab: 'overview',     // overview | memories | sessions | files
-    mindModalLoading: {overview: false, memories: false, sessions: false, files: false},
+    mindModalLoading: {overview: false, memories: false, sessions: false, files: false, sandbox: false},
     mindModalActivity: null,      // /activity response
     mindModalMemories: null,      // /memories response
     mindModalSessions: null,      // /sessions response
@@ -10660,18 +10660,21 @@ toolsets:
 
     async _mindSwitchTab(tab) {
       this.mindModalTab = tab;
+      // "files" is now the live sandbox browser (the host-side sync
+      // listing was folded in — see the Files panel comment). Still
+      // uses the same cache-check pattern so switching away + back
+      // doesn't re-exec.
+      if (tab === 'files') {
+        if (this.mindModalSandbox) return;
+        await this.loadSandboxFiles(this.mindModalSandboxPath || '/root');
+        return;
+      }
       const already = {
         overview: this.mindModalActivity,
         memories: this.mindModalMemories,
         sessions: this.mindModalSessions,
-        files:    this.mindModalFiles,
-        sandbox:  this.mindModalSandbox,
       }[tab];
       if (already) return;
-      if (tab === 'sandbox') {
-        await this.loadSandboxFiles(this.mindModalSandboxPath || '/root');
-        return;
-      }
       await this._mindLoadTab(tab);
     },
 
@@ -12465,7 +12468,7 @@ toolsets:
     </div>
     <!-- Tab bar -->
     <div class="flex items-center gap-0 px-5 border-b border-gray-800 shrink-0 bg-gray-900/30">
-      <template x-for="t in ['overview','memories','sessions','files','sandbox']" :key="t">
+      <template x-for="t in ['overview','memories','sessions','files']" :key="t">
         <button @click="_mindSwitchTab(t)"
                 class="text-xs px-3 py-2 border-b-2 transition-colors"
                 :class="mindModalTab === t
@@ -12587,118 +12590,117 @@ toolsets:
         </template>
       </div>
 
-      <!-- Files tab -->
+      <!-- Files tab — live browse of the agent's sandbox filesystem.
+           Previously split into two tabs ("Files" = host-side sync'd
+           files, "Sandbox" = live exec browse) which confused users
+           about which view was authoritative. Collapsed: this is
+           *the* view, showing the real sandbox filesystem via
+           `openshell sandbox exec find` per page load. -->
       <div x-show="mindModalTab === 'files'" class="px-5 py-4">
-        <template x-if="mindModalLoading.files && !mindModalFiles">
-          <div class="text-xs text-gray-600 italic">Loading…</div>
-        </template>
-        <template x-if="mindModalFiles">
-          <div>
-            <div class="flex items-baseline justify-between mb-3">
-              <h3 class="text-xs font-semibold uppercase tracking-wider text-gray-400">On-disk files</h3>
-              <span class="text-[10px] text-gray-600 font-mono truncate"
-                    x-text="mindModalFiles.root || ''"></span>
-            </div>
-            <template x-if="(mindModalFiles.files || []).length === 0">
-              <div class="text-[11px] text-gray-600 italic">Nothing on disk yet.</div>
-            </template>
-            <div class="space-y-0.5 font-mono text-[10px]">
-              <template x-for="f in (mindModalFiles.files || [])" :key="f.rel_path">
-                <div class="group flex items-baseline gap-3 px-2 py-1 rounded hover:bg-gray-900">
-                  <span class="text-gray-400 truncate flex-1" x-text="f.rel_path"></span>
-                  <span class="text-gray-600 shrink-0" x-text="_mindFmtBytes(f.size_bytes)"></span>
-                  <span class="text-gray-700 shrink-0" x-text="_mindFmtDate(f.mtime_iso)"></span>
-                  <!-- LOG-49: per-file download. Uses a direct link on
-                       the admin download endpoint; browser saves with
-                       the filename from Content-Disposition. Opacity
-                       fade keeps the list visually calm by default. -->
-                  <a :href="'/admin/agents/' + encodeURIComponent(mindModalAgent?.id || '') + '/files/download?rel_path=' + encodeURIComponent(f.rel_path)"
-                     class="shrink-0 text-gray-600 hover:text-indigo-400 opacity-0 group-hover:opacity-100 transition-opacity"
-                     title="Download this file"
-                     download>↓</a>
-                </div>
-              </template>
-            </div>
-            <div x-show="mindModalFiles.truncated" class="text-[10px] text-yellow-500 italic mt-3">
-              Listing truncated at 5000 entries.
-            </div>
-          </div>
-        </template>
-      </div>
-
-      <!-- LOG-49.3: Sandbox filesystem browser. Lives in a separate
-           tab from "Files" because the semantic is very different:
-           the Files tab shows what's SYNCED onto the host (memories,
-           logs, sessions), while this tab pokes directly into the
-           live sandbox via openshell sandbox exec. -->
-      <div x-show="mindModalTab === 'sandbox'" class="px-5 py-4">
         <template x-if="mindModalLoading.sandbox && !mindModalSandbox">
-          <div class="text-xs text-gray-600 italic">Loading sandbox…</div>
+          <div class="text-xs text-gray-600 italic">Loading sandbox filesystem…</div>
         </template>
+
         <template x-if="mindModalSandbox">
           <div>
-            <!-- Quick-jump roots -->
-            <div class="flex flex-wrap gap-1 mb-3">
-              <template x-for="root in (mindModalSandbox.roots || [])" :key="root">
-                <button @click="openSandboxDir(root)"
-                        class="text-[10px] px-2 py-0.5 rounded border transition-colors"
-                        :class="mindModalSandbox.path === root
-                          ? 'bg-indigo-950 border-indigo-700 text-indigo-300'
-                          : 'bg-gray-900 border-gray-800 text-gray-400 hover:text-white hover:border-gray-700'"
-                        x-text="root"></button>
-              </template>
-            </div>
-
-            <!-- Breadcrumb + parent nav -->
-            <div class="flex items-center gap-2 mb-3 text-[11px] font-mono">
+            <!-- Header: Home button + breadcrumb + refresh. Breadcrumb
+                 is clickable — each segment jumps to that directory. -->
+            <div class="flex items-center gap-2 mb-3 pb-2 border-b border-gray-800">
+              <button @click="openSandboxDir('/root')"
+                      class="text-xs px-2 py-1 rounded border border-gray-700 text-gray-400 hover:text-white hover:border-gray-500 transition-colors"
+                      title="Jump to the agent's home directory">🏠 Home</button>
               <button x-show="mindModalSandbox.parent !== null"
                       @click="openSandboxDir(mindModalSandbox.parent)"
-                      class="text-gray-500 hover:text-white" title="Go up">..</button>
-              <span class="text-gray-300" x-text="mindModalSandbox.path"></span>
-              <span class="ml-auto text-[10px] text-gray-600">
-                <template x-if="mindModalLoading.sandbox">
-                  <span class="animate-pulse">refreshing…</span>
+                      class="text-xs px-2 py-1 rounded border border-gray-700 text-gray-400 hover:text-white hover:border-gray-500 transition-colors"
+                      title="Parent directory">↑ Up</button>
+
+              <!-- Segmented breadcrumb: each segment a button that jumps
+                   to that depth. Makes clear where you are + lets you
+                   climb multiple levels at once. -->
+              <div class="flex-1 flex items-center gap-1 text-[11px] font-mono overflow-x-auto whitespace-nowrap">
+                <button @click="openSandboxDir('/')"
+                        class="text-gray-500 hover:text-white">/</button>
+                <template x-for="(seg, i) in ((mindModalSandbox.path || '').split('/').filter(Boolean))" :key="i + ':' + seg">
+                  <span class="flex items-center gap-1">
+                    <span class="text-gray-700">/</span>
+                    <button @click="openSandboxDir('/' + ((mindModalSandbox.path || '').split('/').filter(Boolean).slice(0, i+1).join('/')))"
+                            class="text-gray-300 hover:text-white"
+                            x-text="seg"></button>
+                  </span>
                 </template>
-                <template x-if="!mindModalLoading.sandbox">
-                  <button @click="loadSandboxFiles(mindModalSandbox.path)"
-                          class="hover:text-gray-300">↻ refresh</button>
-                </template>
-              </span>
+              </div>
+
+              <button @click="loadSandboxFiles(mindModalSandbox.path)"
+                      class="text-xs text-gray-500 hover:text-white px-2 py-1"
+                      title="Reload this directory">
+                <span x-show="!mindModalLoading.sandbox">↻</span>
+                <span x-show="mindModalLoading.sandbox" class="animate-spin inline-block">↻</span>
+              </button>
             </div>
 
-            <!-- Entry list -->
+            <!-- Help copy on first open so users understand what they're
+                 looking at. Dimmed, small, only when the listing isn't
+                 empty (so it doesn't compete with the "Empty" message). -->
+            <p x-show="(mindModalSandbox.entries || []).length > 0 && mindModalSandbox.path === '/root'"
+               class="text-[10px] text-gray-600 mb-3">
+              Files the agent has created inside its sandbox. Click folders to enter; download any file with the button on the right.
+            </p>
+
+            <!-- Error / empty states -->
             <template x-if="!mindModalSandbox.exec_ok">
-              <div class="text-[11px] text-yellow-500 italic">
-                Couldn't read this path — sandbox may be stopped or the
-                path doesn't exist.
+              <div class="text-[11px] text-yellow-500 italic px-2 py-4">
+                Couldn't read <span class="font-mono" x-text="mindModalSandbox.path"></span> — the sandbox may be stopped, or this path doesn't exist.
               </div>
             </template>
             <template x-if="mindModalSandbox.exec_ok && (mindModalSandbox.entries || []).length === 0">
-              <div class="text-[11px] text-gray-600 italic">Empty directory.</div>
+              <div class="text-[11px] text-gray-600 italic px-2 py-4">
+                Empty directory.
+              </div>
             </template>
-            <div class="space-y-0.5 font-mono text-[10px]">
+
+            <!-- Entry list — dirs first (folder icon + arrow), then
+                 files with an always-visible Download button. Previously
+                 the download was hover-only which wasn't discoverable. -->
+            <div class="divide-y divide-gray-900/60 rounded-md border border-gray-900/60 overflow-hidden">
               <template x-for="e in (mindModalSandbox.entries || [])" :key="e.name">
-                <div class="group flex items-baseline gap-3 px-2 py-1 rounded hover:bg-gray-900">
+                <div class="flex items-center gap-3 px-3 py-2 text-xs hover:bg-gray-900/50 transition-colors">
+                  <!-- Icon -->
+                  <span class="shrink-0 w-4 text-center"
+                        :class="e.type === 'dir' ? 'text-indigo-400' : (e.type === 'link' ? 'text-purple-400' : 'text-gray-500')">
+                    <template x-if="e.type === 'dir'">📁</template>
+                    <template x-if="e.type === 'file'">📄</template>
+                    <template x-if="e.type === 'link'">🔗</template>
+                    <template x-if="!['dir','file','link'].includes(e.type)">•</template>
+                  </span>
+
+                  <!-- Name — dirs are buttons that navigate; files are static labels. -->
                   <template x-if="e.type === 'dir'">
                     <button @click="openSandboxDir((mindModalSandbox.path === '/' ? '' : mindModalSandbox.path) + '/' + e.name)"
-                            class="text-indigo-400 hover:text-indigo-200 text-left truncate flex-1">
-                      <span class="text-indigo-500">▸</span> <span x-text="e.name + '/'"></span>
-                    </button>
+                            class="flex-1 min-w-0 text-left truncate text-indigo-300 hover:text-indigo-100 font-medium"
+                            x-text="e.name"></button>
                   </template>
                   <template x-if="e.type !== 'dir'">
-                    <span class="text-gray-400 truncate flex-1">
-                      <span class="text-gray-700" x-text="e.type === 'link' ? '↪' : '·'"></span>
-                      <span x-text="e.name"></span>
-                    </span>
+                    <span class="flex-1 min-w-0 truncate font-mono text-gray-300" x-text="e.name"></span>
                   </template>
-                  <span class="text-gray-600 shrink-0"
+
+                  <!-- Size + mtime, small + dim. -->
+                  <span class="shrink-0 text-[10px] text-gray-600 w-16 text-right font-mono"
                         x-text="e.type === 'file' ? _mindFmtBytes(e.size) : ''"></span>
-                  <span class="text-gray-700 shrink-0"
+                  <span class="shrink-0 text-[10px] text-gray-700 w-28 text-right font-mono"
                         x-text="e.mtime ? new Date(e.mtime * 1000).toISOString().slice(0,16).replace('T',' ') : ''"></span>
+
+                  <!-- Download — always visible for files, plain button with
+                       an explicit label so users know what to click. -->
                   <template x-if="e.type === 'file'">
                     <a :href="sandboxDownloadUrl((mindModalSandbox.path === '/' ? '' : mindModalSandbox.path) + '/' + e.name)"
-                       class="shrink-0 text-gray-600 hover:text-indigo-400 opacity-0 group-hover:opacity-100 transition-opacity"
-                       title="Download this file" download>↓</a>
+                       class="shrink-0 text-[10px] px-2 py-1 rounded border border-gray-700 text-gray-400 hover:text-indigo-300 hover:border-indigo-700 transition-colors inline-flex items-center gap-1"
+                       title="Download this file"
+                       download>
+                      ↓ <span>Download</span>
+                    </a>
+                  </template>
+                  <template x-if="e.type !== 'file'">
+                    <span class="shrink-0 w-[6.5rem]"></span>
                   </template>
                 </div>
               </template>
