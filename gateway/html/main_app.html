@@ -12662,9 +12662,12 @@ toolsets:
 
         <template x-if="mindModalSandbox">
           <div>
-            <!-- Header: Home button + breadcrumb + refresh. Breadcrumb
-                 is clickable — each segment jumps to that directory. -->
-            <div class="flex items-center gap-2 mb-3 pb-2 border-b border-gray-800">
+            <!-- Header: Home button + quick-jump roots + breadcrumb +
+                 refresh. Roots come from the server's response and
+                 match the policy YAML's writable paths, so users can
+                 jump between the places the agent can actually save
+                 without having to remember which is which. -->
+            <div class="flex items-center gap-2 mb-2 pb-2 border-b border-gray-800 flex-wrap">
               <button @click="openSandboxDir('/tmp/hermes')"
                       class="text-xs px-2 py-1 rounded border border-gray-700 text-gray-400 hover:text-white hover:border-gray-500 transition-colors"
                       title="Jump to the agent's home directory (/tmp/hermes)">🏠 Home</button>
@@ -12672,6 +12675,19 @@ toolsets:
                       @click="openSandboxDir(mindModalSandbox.parent)"
                       class="text-xs px-2 py-1 rounded border border-gray-700 text-gray-400 hover:text-white hover:border-gray-500 transition-colors"
                       title="Parent directory">↑ Up</button>
+              <!-- Writable-root pills (shown only when NOT already
+                   at home — avoids visual repetition of the Home
+                   button when already on /tmp/hermes). -->
+              <template x-for="root in (mindModalSandbox.roots || [])" :key="root">
+                <button x-show="root !== '/tmp/hermes'"
+                        @click="openSandboxDir(root)"
+                        class="text-[10px] px-1.5 py-0.5 rounded border transition-colors"
+                        :class="mindModalSandbox.path === root
+                          ? 'bg-indigo-950 border-indigo-700 text-indigo-300'
+                          : 'bg-gray-900 border-gray-800 text-gray-500 hover:text-gray-200 hover:border-gray-700'"
+                        :title="'Writable path: ' + root"
+                        x-text="root"></button>
+              </template>
 
               <!-- Segmented breadcrumb: each segment a button that jumps
                    to that depth. Makes clear where you are + lets you

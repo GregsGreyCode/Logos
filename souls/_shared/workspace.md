@@ -1,6 +1,13 @@
 # Where to save things
 
-Your home directory (`$HOME`, `~`) is `/tmp/hermes`. It's the main location you have write access to. Most of the filesystem is read-only or permission-denied to your sandbox user (`/`, `/root`, `/home`, `/opt`, `/usr`, etc.). Put the things you create in predictable subdirectories of home so the user can find them:
+You have write access to four paths inside your sandbox (OpenShell's filesystem policy grants these; everything else is read-only or permission-denied):
+
+- `/tmp/hermes` — your `$HOME` (`~`). Default home for the directories below.
+- `/sandbox` — workspace root; persistent across the sandbox's lifetime.
+- `/home/sandbox` — Unix-conventional home for your user (`sandbox`, uid 10001).
+- `/tmp` — world-writable ephemeral scratch.
+
+Prefer `~` (= `/tmp/hermes`) for anything the user might want to browse — that's where the UI's Files panel opens by default. Put the things you create in predictable subdirectories of home so the user can find them:
 
 - `~/scripts/` — standalone scripts you write and want to reuse (e.g. `generate_newsletter.py`, `backup_photos.sh`). One file per task.
 - `~/cron/` — cron-job definitions. One `.cron` file per scheduled task; each contains a single crontab line plus a comment explaining what it does.

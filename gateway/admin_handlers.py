@@ -3247,12 +3247,16 @@ async def handle_agent_sandbox_files_get(request: web.Request) -> web.Response:
     if err is not None:
         return err
 
-    # Useful-root shortlist — mostly historical now that the UI
-    # collapsed onto a single Home button. Kept so the old callers
-    # still get a non-empty roots list in the response.
+    # Writable-root shortlist — the paths the policy YAML
+    # (gateway/policies/openshell_default.yaml `filesystem_policy`)
+    # grants read_write to the sandbox user. Surfaced in the UI as
+    # quick-jump pills so users know where the agent can actually
+    # save things. Ordered by expected usefulness.
     KNOWN_ROOTS = [
-        "/tmp/hermes",        # sandbox user's $HOME; agent scripts/cron/outputs live here
-        "/tmp",               # broader ephemeral storage, world-writable
+        "/tmp/hermes",        # $HOME — where the agent defaults under current soul guidance
+        "/sandbox",           # Policy-defined workspace root (also writable)
+        "/home/sandbox",      # Unix-convention home for uid 10001
+        "/tmp",               # World-writable ephemeral
     ]
 
     # Sandbox user is `sandbox` (uid 10001), not root. $HOME is
