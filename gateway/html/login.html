@@ -244,15 +244,26 @@
       <div class="login-card px-7 py-7">
         <form @submit.prevent="submit()" @click.stop class="space-y-5">
 
-          <div class="float-wrap">
-            <input id="identifier" x-model="identifier" type="text" required autocomplete="username"
+          <!-- LOG-25.7: optional email field — shown only when mode === 'register'.
+               Login uses the single "identifier" slot for either email or username;
+               registration asks for both (+ a password). -->
+          <div x-show="mode === 'register'" x-cloak class="float-wrap">
+            <input id="regEmail" x-model="regEmail" type="email"
+                   :required="mode === 'register'" autocomplete="email"
                    class="float-input" placeholder=" "/>
-            <label class="float-label" for="identifier">Email or Username</label>
+            <label class="float-label" for="regEmail">Email</label>
+          </div>
+
+          <div class="float-wrap">
+            <input id="identifier" x-model="identifier" type="text" required
+                   :autocomplete="mode === 'register' ? 'username' : 'username'"
+                   class="float-input" placeholder=" "/>
+            <label class="float-label" for="identifier" x-text="mode === 'register' ? 'Username' : 'Email or Username'"></label>
           </div>
 
           <div x-data="{ show: false }" class="float-wrap">
             <input id="password" x-model="password" :type="show ? 'text' : 'password'"
-                   required autocomplete="current-password"
+                   required :autocomplete="mode === 'register' ? 'new-password' : 'current-password'"
                    @keydown.enter.prevent="$el.closest('form').dispatchEvent(new Event('submit'))"
                    class="float-input" style="padding-right:2.75rem;" placeholder=" "/>
             <label class="float-label" for="password">Password</label>
@@ -277,15 +288,47 @@
           </div>
 
           <button type="submit" :disabled="loading" class="btn-signin mt-1">
-            <span x-show="!loading" x-text="needsSetup ? 'Get started' : 'Sign in'"></span>
+            <span x-show="!loading" x-text="needsSetup ? 'Get started' : (mode === 'register' ? 'Create account' : 'Sign in')"></span>
             <span x-show="loading" x-cloak class="flex items-center justify-center gap-2">
               <svg class="animate-spin w-4 h-4 opacity-80" fill="none" viewBox="0 0 24 24">
                 <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
                 <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"/>
               </svg>
-              Signing in
+              <span x-text="mode === 'register' ? 'Creating account' : 'Signing in'"></span>
             </span>
           </button>
+
+          <!-- LOG-25.7: inline mode toggle — only rendered when the admin has
+               flipped platform_settings.allow_registration=1. `/auth/registration-status`
+               is a public probe so un-authed visitors can see it. -->
+          <div x-show="allowRegistration" x-cloak class="text-center text-xs"
+               style="color:rgba(148,163,184,0.55);">
+            <template x-if="mode === 'login'">
+              <div>
+                New here?
+                <button type="button" class="underline hover:text-white transition-colors"
+                        style="color:rgba(165,180,252,0.85);"
+                        @click.stop="mode='register'; error=''">Create an account</button>
+              </div>
+            </template>
+            <template x-if="mode === 'register'">
+              <div>
+                Already have an account?
+                <button type="button" class="underline hover:text-white transition-colors"
+                        style="color:rgba(165,180,252,0.85);"
+                        @click.stop="mode='login'; error=''">Sign in</button>
+              </div>
+            </template>
+          </div>
+
+          <!-- Pending-approval success message — lingers instead of redirecting
+               so the user knows they need to wait for an admin. -->
+          <div x-show="registeredPending" x-cloak
+               style="background:rgba(99,102,241,0.08);border:1px solid rgba(99,102,241,0.25);border-radius:10px;padding:12px 14px;">
+            <p class="text-sm" style="color:rgba(199,210,254,0.95);">
+              Account created. An admin needs to approve it before you can sign in.
+            </p>
+          </div>
 
         </form>
       </div>
@@ -319,6 +362,14 @@
       phase: 'splash',   // 'splash' | 'login' | 'setup' | 'loggedin'
       showHint: false,
       identifier: '', password: '', error: '', loading: false, needsSetup: false,
+      // LOG-25.7: registration mode + probe result. allowRegistration
+      // is filled from /auth/registration-status on init; mode defaults
+      // to 'login' and flips via the inline toggle. regEmail is the
+      // extra field that only appears in register mode.
+      mode: 'login',          // 'login' | 'register'
+      allowRegistration: false,
+      regEmail: '',
+      registeredPending: false,
       navigating: false, navBarDur: 2600,
       _hintTimer: null,
 
@@ -340,6 +391,12 @@
                 .catch(() => {});
             }
           })
+          .catch(() => {});
+        // LOG-25.7: check whether self-service registration is enabled
+        // so the card can render the "Create an account" toggle.
+        fetch('/auth/registration-status', { credentials: 'same-origin' })
+          .then(r => r.ok ? r.json() : null)
+          .then(d => { if (d) this.allowRegistration = !!d.allow_registration; })
           .catch(() => {});
         this._hintTimer = setTimeout(() => { if (this.phase === 'splash') this.showHint = true; }, 1000);
         // Drive hue for logo + button via rAF so they're always in sync
@@ -413,8 +470,53 @@
       },
 
       async submit() {
-        this.loading = true; this.error = '';
+        this.loading = true; this.error = ''; this.registeredPending = false;
         try {
+          if (this.mode === 'register') {
+            // LOG-25.7: register path. Single-card flow: on success with
+            // status='active' the cookie is already set, so just redirect;
+            // on status='pending' show the wait message and flip back to
+            // login mode so the user can sign in once approved.
+            const res = await fetch('/auth/register', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                email:    this.regEmail,
+                username: this.identifier,
+                password: this.password,
+              }),
+              credentials: 'same-origin',
+            });
+            if (res.ok) {
+              const d = await res.json().catch(() => ({}));
+              if (d.status === 'pending') {
+                this.registeredPending = true;
+                this.mode = 'login';
+                this.password = '';
+                this.regEmail = '';
+              } else {
+                // active — session cookie set, go straight to /
+                this.phase = 'loggedin';
+                document.body.classList.add('fade-out');
+                try { sessionStorage.setItem('logos_fl', '1'); } catch {}
+                this.navigating = true; this.navBarDur = 600;
+                await new Promise(r => setTimeout(r, 600));
+                window.location.href = '/';
+              }
+            } else {
+              const d = await res.json().catch(() => ({}));
+              this.error = ({
+                registration_disabled: 'Registration is currently closed.',
+                invalid_email:         'Please enter a valid email.',
+                invalid_username:      'Usernames: letters, digits, _ or - only.',
+                password_too_short:    'Password must be at least 8 characters.',
+                account_unavailable:   'That email or username is already taken.',
+                rate_limited:          'Too many attempts \u2014 slow down.',
+              })[d.error] ?? 'Registration failed. Please try again.';
+            }
+            return;
+          }
+          // ── Login path ──
           const res = await fetch('/auth/login', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
