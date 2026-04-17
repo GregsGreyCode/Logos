@@ -1,0 +1,39 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(openshell sandbox list)",
+      "Bash(openshell sandbox list *)",
+      "Bash(openshell gateway list)",
+      "Bash(openshell gateway list *)",
+      "Bash(openshell gateway status)",
+      "Bash(openshell gateway status *)",
+      "Bash(openshell cluster list)",
+      "Bash(openshell cluster list *)",
+      "Bash(openshell forward list)",
+      "Bash(openshell forward list *)",
+      "Bash(openshell policy list)",
+      "Bash(openshell policy list *)",
+      "Bash(openshell policy get *)",
+      "Bash(openshell provider list)",
+      "Bash(openshell provider list *)",
+      "Bash(openshell provider get *)",
+      "Bash(openshell inference list)",
+      "Bash(openshell inference list *)",
+      "Bash(openshell inference get *)",
+      "Bash(openshell doctor logs *)",
+      "Bash(openshell --help)",
+      "Bash(openshell --version)",
+      "Bash(logos debug *)",
+      "Bash(logos gateway status)",
+      "Bash(logos gateway status *)",
+      "Bash(logos gateway --help)",
+      "Bash(logos --help)",
+      "Bash(logos --version)",
+      "Bash(hermes --version)",
+      "Bash(hermes --help)",
+      "Bash(hermes gateway --help)",
+      "Bash(hermes gateway status)",
+      "Bash(hermes gateway status *)"
+    ]
+  }
+}

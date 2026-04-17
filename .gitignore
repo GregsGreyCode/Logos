@@ -82,3 +82,7 @@ knowledge-repos/
 
 # AI assistant working docs (local only)
 PROJECT_STATE.md
+
+# Claude Code — per-machine state (keep settings.json shared)
+.claude/settings.local.json
+.claude/worktrees/
