@@ -147,6 +147,7 @@ capabilities:
     toolsets: [browser]
     presets: [searxng, web-browse]
     creds: []
+    default_on_create: true   # shipped-with-Logos local service, safe by default
     # Functional probe — hits the same URL agents will actually use
     # (the JSON search endpoint) and requires the response to look
     # like a working search result. A shallow /healthz probe passes
@@ -319,6 +320,7 @@ power_tools:
     toolsets: []
     presets: [pypi]
     creds: []
+    default_on_create: true   # paired with Run Python code; needed for most agent scripts
 
   - id: terminal
     name: Run shell commands
