@@ -3247,19 +3247,20 @@ async def handle_agent_sandbox_files_get(request: web.Request) -> web.Response:
     if err is not None:
         return err
 
-    # Useful-root shortlist — surfaces in the UI as quick-jump buttons
-    # so users don't have to remember where the sandbox keeps things.
+    # Useful-root shortlist — mostly historical now that the UI
+    # collapsed onto a single Home button. Kept so the old callers
+    # still get a non-empty roots list in the response.
     KNOWN_ROOTS = [
-        "/root",              # home dir for root-user sandboxes
-        "/home/agent",        # home dir for non-root sandboxes
-        "/tmp/hermes",        # Logos's per-instance config/memories
-        "/tmp",               # everything else ephemeral
-        "/sandbox",           # NemoClaw-style immutable agent dir
-        "/workspace",         # conventional scratch location
-        "/app",               # hermes-sandbox image code
+        "/tmp/hermes",        # sandbox user's $HOME; agent scripts/cron/outputs live here
+        "/tmp",               # broader ephemeral storage, world-writable
     ]
 
-    path = (request.rel_url.query.get("path") or "/root").strip() or "/root"
+    # Sandbox user is `sandbox` (uid 10001), not root. $HOME is
+    # /tmp/hermes — which is the directory the agent actually has
+    # write access to. Earlier default of /root was wrong: that path
+    # is root-owned and permission-denied to the sandbox user, so
+    # every file listing 403'd.
+    path = (request.rel_url.query.get("path") or "/tmp/hermes").strip() or "/tmp/hermes"
     # Allow absolute paths only — reject relative + traversal tricks.
     if not path.startswith("/") or ".." in path.split("/"):
         return web.json_response({"error": "invalid_path"}, status=400)

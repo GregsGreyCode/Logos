@@ -10628,7 +10628,9 @@ toolsets:
       this.mindModalSessions = null;
       this.mindModalFiles = null;
       this.mindModalSandbox = null;     // LOG-49 sandbox-files view
-      this.mindModalSandboxPath = '/root';
+      // Sandbox user's $HOME — /tmp/hermes is where the agent has
+      // write access; /root is root-owned + locked down.
+      this.mindModalSandboxPath = '/tmp/hermes';
       await this._mindLoadTab('overview');
     },
 
@@ -10639,7 +10641,7 @@ toolsets:
       this.mindModalLoading.sandbox = true;
       try {
         const url = '/admin/agents/' + encodeURIComponent(aid)
-                  + '/sandbox-files?path=' + encodeURIComponent(path || '/root');
+                  + '/sandbox-files?path=' + encodeURIComponent(path || '/tmp/hermes');
         const r = await fetch(url, { credentials: 'include' });
         this.mindModalSandbox = r.ok ? await r.json() : null;
         if (this.mindModalSandbox?.path) {
@@ -12613,9 +12615,9 @@ toolsets:
             <!-- Header: Home button + breadcrumb + refresh. Breadcrumb
                  is clickable — each segment jumps to that directory. -->
             <div class="flex items-center gap-2 mb-3 pb-2 border-b border-gray-800">
-              <button @click="openSandboxDir('/root')"
+              <button @click="openSandboxDir('/tmp/hermes')"
                       class="text-xs px-2 py-1 rounded border border-gray-700 text-gray-400 hover:text-white hover:border-gray-500 transition-colors"
-                      title="Jump to the agent's home directory">🏠 Home</button>
+                      title="Jump to the agent's home directory (/tmp/hermes)">🏠 Home</button>
               <button x-show="mindModalSandbox.parent !== null"
                       @click="openSandboxDir(mindModalSandbox.parent)"
                       class="text-xs px-2 py-1 rounded border border-gray-700 text-gray-400 hover:text-white hover:border-gray-500 transition-colors"
@@ -12648,7 +12650,7 @@ toolsets:
             <!-- Help copy on first open so users understand what they're
                  looking at. Dimmed, small, only when the listing isn't
                  empty (so it doesn't compete with the "Empty" message). -->
-            <p x-show="(mindModalSandbox.entries || []).length > 0 && mindModalSandbox.path === '/root'"
+            <p x-show="(mindModalSandbox.entries || []).length > 0 && mindModalSandbox.path === '/tmp/hermes'"
                class="text-[10px] text-gray-600 mb-3">
               Files the agent has created inside its sandbox. Click folders to enter; download any file with the button on the right.
             </p>
