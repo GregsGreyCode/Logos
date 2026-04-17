@@ -35,7 +35,10 @@ from gateway.auth.handlers import (
     handle_logout,
     handle_me,
     handle_refresh,
+    handle_platform_settings_get,
+    handle_platform_settings_patch,
     handle_register,
+    handle_registration_status,
     handle_users_list,
     handle_users_me_patch,
     handle_users_patch,
@@ -4908,6 +4911,7 @@ async def start_http_api(runner: Any, port: int = 8091) -> None:
     # platform_settings.allow_registration at handler time; endpoint is
     # public so un-authed visitors can reach it when admins enable it.
     app.router.add_post("/auth/register", handle_register)
+    app.router.add_get("/auth/registration-status", handle_registration_status)
     app.router.add_post("/auth/logout",  handle_logout)
     app.router.add_post("/auth/refresh", handle_refresh)
 
@@ -5088,6 +5092,14 @@ async def start_http_api(runner: Any, port: int = 8091) -> None:
     _mu  = require_permission("manage_users")
     _ap  = require_permission("assign_profile")
     _vrd = require_permission("view_routing_debug")
+
+    # LOG-25.7: admin-only platform-settings read/write. Backs the
+    # registration toggles in Admin → Users. Gated on manage_users so
+    # the permission tracks other admin-user operations in the same tab.
+    app.router.add_get("/admin/platform-settings",
+                       _mu(handle_platform_settings_get))
+    app.router.add_patch("/admin/platform-settings",
+                         _mu(require_csrf(handle_platform_settings_patch)))
 
     app.router.add_get("/admin/spawn-stats",   _mm(admin_handlers.handle_spawn_stats))
     app.router.add_get("/admin/costs",         _mm(admin_handlers.handle_costs))

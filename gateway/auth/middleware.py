@@ -25,6 +25,9 @@ _PUBLIC_PATHS = frozenset({
                        # platform_settings.allow_registration at handler
                        # time (default off). Public so un-authed visitors
                        # can create accounts when admins flip it on.
+    "/auth/registration-status",  # public read-only probe used by
+                                  # login.html to decide whether to
+                                  # render a "Create an account" link.
     "/auth/logout",
     "/auth/refresh",
     "/chat_logo.png",
