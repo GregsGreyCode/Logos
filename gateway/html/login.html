@@ -330,6 +330,21 @@
             </p>
           </div>
 
+          <!-- Update-available nudge — only visible when gateway is
+               behind origin. Non-interactive; the actual update
+               button lives in the authenticated header. Shown here
+               so admins know to sign in and update before using the
+               possibly-stale version. -->
+          <div x-show="updateAvailable" x-cloak
+               class="flex items-center gap-2 text-xs"
+               style="background:linear-gradient(135deg,hsla(calc(var(--accent-hue,239)),84%,64%,0.12) 0%,hsla(calc(var(--accent-hue,239) + 30),65%,60%,0.12) 100%);border:1px solid hsla(calc(var(--accent-hue,239)),84%,54%,0.35);border-radius:10px;padding:10px 12px;">
+            <span>&#10024;</span>
+            <span style="color:rgba(226,232,240,0.9);">
+              New update available<span x-show="updateTag"> \u2014 <span class="font-mono" x-text="updateTag"></span></span><span x-show="!updateTag && updateBehindBy"> \u2014 <span x-text="updateBehindBy + ' commit' + (updateBehindBy === 1 ? '' : 's') + ' behind'"></span></span>.
+              <span style="color:rgba(148,163,184,0.75);">Sign in as admin to install.</span>
+            </span>
+          </div>
+
         </form>
       </div>
 
@@ -370,6 +385,10 @@
       allowRegistration: false,
       regEmail: '',
       registeredPending: false,
+      // Update-available hint (populated from /auth/update-status).
+      updateAvailable: false,
+      updateTag: '',
+      updateBehindBy: 0,
       navigating: false, navBarDur: 2600,
       _hintTimer: null,
 
@@ -397,6 +416,18 @@
         fetch('/auth/registration-status', { credentials: 'same-origin' })
           .then(r => r.ok ? r.json() : null)
           .then(d => { if (d) this.allowRegistration = !!d.allow_registration; })
+          .catch(() => {});
+        // LOG-33 follow-on: pre-sign-in update hint. Public
+        // /auth/update-status returns { has_update, latest_tag,
+        // behind_by } without exposing any git commit messages.
+        fetch('/auth/update-status', { credentials: 'same-origin' })
+          .then(r => r.ok ? r.json() : null)
+          .then(d => {
+            if (!d) return;
+            this.updateAvailable = !!d.has_update;
+            this.updateTag = d.latest_tag || '';
+            this.updateBehindBy = d.behind_by || 0;
+          })
           .catch(() => {});
         this._hintTimer = setTimeout(() => { if (this.phase === 'splash') this.showHint = true; }, 1000);
         // Drive hue for logo + button via rAF so they're always in sync
