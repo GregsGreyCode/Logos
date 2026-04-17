@@ -168,8 +168,10 @@ Specific `CommandHandler`s for /help /status /stop /new /reset /model registered
 
 `loadSandboxes()` now mutates `selectedSandbox` in place using `Object.assign` so the 3s poll no longer leaves the detail panel holding a stale reference from the previous list. Also stopped wiping the list to `[]` on transient fetch errors — the last successful snapshot stays rendered until the next successful poll.
 
-### LOG-46 · Wire sandbox auxiliary client to `inference.local`
-**Effort:** S (30m–1h) · **Type:** Bug · **Status:** OPEN · **May be obsoleted by:** LOG-44.1
+### LOG-46 · Wire sandbox auxiliary client to `inference.local` — **DONE (2026-04-17)**
+**Effort:** S (30m–1h) · **Type:** Bug · **Status:** DONE · **May be obsoleted by:** LOG-44.1
+
+`OpenShellExecutor.spawn` now seeds `OPENAI_BASE_URL=https://inference.local/v1` + `OPENAI_API_KEY=lm-studio` into `_service_env` (both spawn paths). The sandbox_worker reads `instance-config.env` on startup and sets those vars, which triggers the upstream auxiliary_client's `_try_custom_endpoint` branch — so compression / summarization / memory flush now route through the same privacy-routed inference channel as primary dispatch. `setdefault` so any user-configured override still wins.
 
 Warning observed inside sandbox 2026-04-17:
 ```
