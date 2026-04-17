@@ -1,0 +1,88 @@
+name: Build desktop app
+
+# Build + bundle the Logos Tauri desktop client across Linux / Windows / macOS.
+#
+# Runs on:
+#   - any push to a `v*` tag — attaches the bundles to the matching GitHub Release.
+#   - manual `workflow_dispatch` — useful for smoke-testing the pipeline without a tag.
+#
+# Outputs per runner (committed by tauri-action):
+#   ubuntu-latest  → AppImage, .deb
+#   windows-latest → .exe (NSIS), .msi
+#   macos-latest   → .dmg, .app
+#
+# Rust caching keeps the cold build (~5 min) fast on re-runs (~1-2 min).
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Release tag to attach artefacts to (optional)"
+        required: false
+        default: ""
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            target: ""
+          - runner: windows-latest
+            target: ""
+          - runner: macos-latest
+            target: "aarch64-apple-darwin"
+          - runner: macos-latest
+            target: "x86_64-apple-darwin"
+
+    runs-on: ${{ matrix.runner }}
+    name: Build (${{ matrix.runner }}${{ matrix.target && format(' / {0}', matrix.target) || '' }})
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Linux WebView2 equivalent — webkit2gtk + related system deps.
+      - name: Install Linux dependencies
+        if: matrix.runner == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev libjavascriptcoregtk-4.1-dev libsoup-3.0-dev \
+            build-essential curl wget file libxdo-dev libssl-dev \
+            libayatana-appindicator3-dev librsvg2-dev
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache Cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            desktop/src-tauri/target
+          key: ${{ runner.os }}-${{ matrix.target }}-cargo-${{ hashFiles('desktop/src-tauri/Cargo.lock', 'desktop/src-tauri/Cargo.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ matrix.target }}-cargo-
+
+      - name: Build + bundle
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: desktop
+          # tauri-action auto-creates a release when `tagName` is set
+          # and the tag exists. On a manual dispatch we build but don't
+          # attach (no release-tag input).
+          tagName: ${{ github.event_name == 'push' && github.ref_name || inputs.release_tag || '' }}
+          releaseName: "Logos desktop ${{ github.ref_name }}"
+          releaseBody: "Tauri desktop client for Logos. Thin WebView wrapper around the gateway."
+          releaseDraft: true
+          prerelease: false
+          args: ${{ matrix.target && format('--target {0}', matrix.target) || '' }}

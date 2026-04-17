@@ -1,0 +1,6 @@
+# Rust build artefacts
+src-tauri/target/
+src-tauri/Cargo.lock
+
+# Bundled output
+src-tauri/gen/
