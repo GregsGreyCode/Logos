@@ -146,6 +146,94 @@ async def _paced_progress_update(
         _paced_stage_start_ts = time.monotonic()
 
 
+_SEARXNG_HOST_PORT = int(os.getenv("SEARXNG_PORT", "8888"))
+_SEARXNG_PROBE_URL = f"http://localhost:{_SEARXNG_HOST_PORT}/search?q=probe&format=json"
+
+
+async def _start_searxng_service(progress_cb=None) -> bool:
+    """Ensure the local SearxNG metasearch docker-compose service is up.
+
+    /setup flags ``web_search_local`` as default_on_create so every fresh
+    agent gets the preset — but the preset is useless if the service
+    isn't actually running. This helper makes sure the ``searxng``
+    compose profile is running before spawn_sandbox returns, so the
+    agent's very first search works without the user having to bounce
+    out to Config → Tools → Local services.
+
+    Non-fatal on failure: logs + continues. The agent will still spawn
+    and the user sees a clear error the first time they search, rather
+    than /setup blowing up on a docker compose edge case.
+
+    ``progress_cb(label)`` is invoked with human-readable sub-labels so
+    the new ``start_searxng`` stepper row shows what's happening.
+    """
+    def _emit(label: str) -> None:
+        if progress_cb:
+            try: progress_cb(label)
+            except Exception: pass
+
+    repo_root = pathlib.Path(__file__).resolve().parent.parent
+    compose_file = repo_root / "docker-compose.yml"
+    if not compose_file.exists():
+        logger.warning("_start_searxng_service: %s missing — skipping", compose_file)
+        return False
+
+    # Fast path: if the container is already running, just probe and return.
+    _emit("Checking SearxNG\u2026")
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "docker", "ps", "--filter", "name=logos-searxng",
+            "--format", "{{.Status}}",
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+        )
+        out, _ = await asyncio.wait_for(proc.communicate(), timeout=10)
+        already_up = bool((out or b"").strip())
+    except Exception as exc:
+        logger.warning("_start_searxng_service: docker ps failed: %s", exc)
+        already_up = False
+
+    if not already_up:
+        _emit("Starting SearxNG (local metasearch)\u2026")
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "docker", "compose", "-f", str(compose_file),
+                "--profile", "searxng", "up", "-d", "searxng",
+                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+                cwd=str(repo_root),
+            )
+            out, err = await asyncio.wait_for(proc.communicate(), timeout=60)
+            if proc.returncode != 0:
+                logger.warning(
+                    "_start_searxng_service: docker compose up returned %d: %s",
+                    proc.returncode, (err or b"").decode(errors="replace").strip(),
+                )
+                return False
+        except asyncio.TimeoutError:
+            logger.warning("_start_searxng_service: docker compose up timed out")
+            return False
+        except Exception as exc:
+            logger.warning("_start_searxng_service: docker compose up failed: %s", exc)
+            return False
+
+    # Probe the JSON search endpoint — matches what agents will hit. Up
+    # to 30s for the container to finish booting + loading settings.
+    _emit("Waiting for SearxNG to come online\u2026")
+    deadline = time.monotonic() + 30.0
+    async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=3)) as sess:
+        while time.monotonic() < deadline:
+            try:
+                async with sess.get(_SEARXNG_PROBE_URL) as r:
+                    body = await r.text()
+                    if r.status == 200 and '"results"' in body:
+                        logger.info("_start_searxng_service: ready at %s", _SEARXNG_PROBE_URL)
+                        return True
+            except Exception:
+                pass
+            await asyncio.sleep(1.0)
+    logger.warning("_start_searxng_service: readiness probe timed out")
+    return False
+
+
 _PROBE_TIMEOUT = aiohttp.ClientTimeout(total=4)
 _SCAN_TIMEOUT  = aiohttp.ClientTimeout(total=1)   # aggressive — we're sweeping 254 hosts
 _SCAN_PORTS    = [11434, 1234, 8080]   # Ollama, LM Studio, llama.cpp/vLLM default
@@ -3505,6 +3593,24 @@ async def handle_setup_complete(request: web.Request) -> web.Response:
                 default_agent = auth_db.get_agent(default_agent["id"]) or default_agent
             except Exception as _cap_err:
                 logger.warning("setup: apply_initial_defaults failed: %s", _cap_err)
+
+            # Start SearxNG (local metasearch) — paired with the
+            # web_search_local capability that apply_initial_defaults
+            # just enabled. Non-fatal: logs + continues if docker
+            # compose can't bring it up, so /setup still succeeds and
+            # the agent spawns; the user just gets a clear error when
+            # the agent first tries to search. Labels surface as the
+            # active row's sub-label on the stepper.
+            def _searxng_progress(sub_label: str) -> None:
+                _setup_progress_update("start_searxng", sub_label)
+            await _paced_progress_update(
+                "start_searxng",
+                "Starting local search (SearxNG)\u2026",
+            )
+            try:
+                await _start_searxng_service(progress_cb=_searxng_progress)
+            except Exception as _sx_err:
+                logger.warning("setup: _start_searxng_service raised: %s", _sx_err)
 
             # Spawn the sandbox and BLOCK the /setup/complete response on
             # it. The previous version fired spawn in a background task
