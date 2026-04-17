@@ -192,6 +192,25 @@ Fix direction: confirm the exact env names the upstream client reads, then set t
 
 WebView wrapper. ~3MB exe. Or Chrome PWA shortcut for zero build.
 
+### LOG-48 · Budget-cap tightness: unpriced-model fallback + pre-call estimation
+**Effort:** M · **Type:** Feature/Security · **Status:** OPEN
+
+Today's budget gate (agents.daily_budget_usd, users.daily_budget_usd) has two known gaps, surfaced while landing LOG-25.6:
+
+1. **Unpriced-model silent under-count.** When `pricing.cost_for_usage(model, …)` returns `None` (model not in our cached OpenRouter pricing table — brand-new Anthropic/OpenAI release, custom local model, etc.), `insert_cost_entry` writes the row with `cost_usd=0, pricing_known=0`. The budget gate sums cost_usd, so these rows don't contribute, and an over-cap user can keep dispatching indefinitely as long as the model stays unpriced. The pricing cache refreshes every 24h so a fix lands eventually, but the gap is real.
+
+2. **Post-hoc enforcement only.** Current flow is `dispatch → API call → insert_cost_entry → NEXT dispatch checks rollup`. So one call can push the user over by its own cost — the cap only stops the *subsequent* dispatch. For tighter control we'd need a **pre-call estimator** that takes the prompt (+ context) through the same token counter the API uses, multiplies by our cached rate, and refuses if the new-call's projected cost would push the 24h rollup past the cap.
+
+**Fix directions:**
+
+- **For (1):** change `pricing_known=0` rows to a hard refuse option when a model's price is unknown AND the caller is over a minimum-usage threshold (e.g. >$0.01/day already). Alternative: maintain a manual price-fallback table for the top Anthropic/OpenAI SKUs so new releases aren't silently free. `pyproject.toml` could pin a curated fallback JSON updated per-release.
+
+- **For (2):** wire `tiktoken` (for OpenAI/Anthropic) and `transformers.AutoTokenizer` (for open models) into a `pricing.estimate_cost(prompt, history, max_output_tokens, model)` helper. Call BEFORE the dispatch lands in `_handle_chat`. Reject with the same `budget_exceeded` error shape users already see. Trade-off: tokenizer load adds ~50-200 ms per call on first hit (cached afterwards).
+
+**Scope note:** a `pricing_known=0` refuse-by-default toggle + a pre-call estimator together give "provable-cap" behaviour — cannot be over by more than one API response length. Worth shipping both or neither; one without the other still leaks.
+
+**Ideally gated off-by-default** via `users.strict_budget_enforcement` flag (new column) or a global `LOGOS_STRICT_BUDGET_ENFORCEMENT=1` env var so existing installs don't suddenly start refusing traffic when the cache lags.
+
 ### LOG-47 · Per-agent sandbox snapshot + restore
 **Effort:** M · **Type:** Feature · **Status:** OPEN · **Expands-with:** LOG-44.1
 
