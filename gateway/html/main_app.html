@@ -323,16 +323,20 @@
       <div class="pb-2 self-center">
         <button @click="applyGatewayUpdate()"
                 :disabled="gatewayUpdate.applying"
-                :title="'New: ' + (gatewayUpdate.latest_message || '') + ' (' + (gatewayUpdate.behind_by || 0) + ' commits behind)'"
-                class="flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-xs font-medium transition-colors disabled:opacity-40"
-                :class="gatewayUpdate.applying
-                  ? 'border-amber-700 bg-amber-950 text-amber-300 cursor-wait'
-                  : 'border-emerald-600 bg-emerald-950 text-emerald-300 hover:bg-emerald-900'">
-          <span x-show="!gatewayUpdate.applying">⬆</span>
-          <span x-show="gatewayUpdate.applying" class="w-3 h-3 border border-amber-600 border-t-amber-300 rounded-full animate-spin inline-block"></span>
-          <span x-text="gatewayUpdate.applying
-            ? 'updating…'
-            : ('update · ' + (gatewayUpdate.behind_by || 0))"></span>
+                :title="(gatewayUpdate.latest_message || '') + (gatewayUpdate.behind_by ? ' (' + gatewayUpdate.behind_by + ' commits behind)' : '')"
+                class="group flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-semibold transition-all disabled:opacity-50 shadow-sm hover:shadow-md"
+                :style="gatewayUpdate.applying
+                  ? 'background: #1c1917; color: #fbbf24; cursor: wait; border: 1px solid #78350f;'
+                  : 'background: linear-gradient(135deg, hsl(calc(var(--accent-hue,239) + 0),84%,64%) 0%, hsl(calc(var(--accent-hue,239) + 30),65%,60%) 100%); color: white; border: 1px solid hsla(calc(var(--accent-hue,239)),84%,54%,0.7);'">
+          <span x-show="!gatewayUpdate.applying" class="inline-block group-hover:rotate-12 transition-transform">✨</span>
+          <span x-show="gatewayUpdate.applying" class="w-3.5 h-3.5 border-[1.5px] border-amber-600 border-t-amber-300 rounded-full animate-spin inline-block"></span>
+          <span x-show="!gatewayUpdate.applying">
+            New update — Click to install
+            <span x-text="gatewayUpdate.latest_tag
+              ? gatewayUpdate.latest_tag
+              : (gatewayUpdate.behind_by + ' commit' + (gatewayUpdate.behind_by === 1 ? '' : 's'))"></span>
+          </span>
+          <span x-show="gatewayUpdate.applying">Updating, please wait…</span>
         </button>
       </div>
     </template>
