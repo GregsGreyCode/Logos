@@ -64,7 +64,7 @@ import threading
 import time
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Dict, Iterator, List, Optional, Set, Tuple
+from typing import Callable, Dict, Iterator, List, Optional, Set, Tuple
 
 from .base import InstanceConfig, ResourceHeadroom, SpawnedInstance
 
@@ -159,7 +159,11 @@ def _state_lock() -> Iterator[None]:
 
 # ── Image management helpers ──────────────────────────────────────────────
 
-def _ensure_image_in_cluster(image: str, gateway: str) -> bool:
+def _ensure_image_in_cluster(
+    image: str,
+    gateway: str,
+    progress_cb: Optional[Callable[..., None]] = None,
+) -> bool:
     """Ensure a Docker image is available in the target OpenShell cluster's containerd.
 
     OpenShell runs k3s inside a Docker container. Each cluster has its own
@@ -178,7 +182,28 @@ def _ensure_image_in_cluster(image: str, gateway: str) -> bool:
 
     The image must already exist in the host Docker daemon (pulled from the
     Logos registry or built locally).
+
+    ``progress_cb`` (optional) is invoked with a human-readable status string
+    at the two slow phases (check + import). During the import it's
+    called once per ~500 ms with a ``sub_percent`` kwarg so the caller
+    can drive a progress bar instead of just a text label — the import
+    typically takes 60-300 s on a cold first install and feels frozen
+    without intra-step feedback.
+
+    Callback signature: ``progress_cb(label, *, substage='', sub_percent=0)``.
+    Callers written against the older ``progress_cb(label)`` shape keep
+    working because the extra kwargs only surface on the import path.
     """
+    def _emit(label: str, *, substage: str = "", sub_percent: int = 0) -> None:
+        if progress_cb:
+            try: progress_cb(label, substage=substage, sub_percent=sub_percent)
+            except TypeError:
+                # Legacy callback (label-only). Fall back so older callers
+                # don't break when this helper gains kwargs.
+                try: progress_cb(label)
+                except Exception: pass
+            except Exception: pass
+
     cluster_container = f"openshell-cluster-{gateway}"
 
     # Check if image already exists in containerd
@@ -186,6 +211,7 @@ def _ensure_image_in_cluster(image: str, gateway: str) -> bool:
     check_ref = image
     if "/" not in image:
         check_ref = f"docker.io/library/{image}"
+    _emit("Checking sandbox image in cluster\u2026", substage="check_image")
     try:
         result = subprocess.run(
             ["docker", "exec", cluster_container, "ctr", "-n", "k8s.io",
@@ -198,30 +224,106 @@ def _ensure_image_in_cluster(image: str, gateway: str) -> bool:
     except Exception:
         pass  # check failed, proceed with import
 
+    # Resolve the image size up-front so we can report percent during
+    # the streaming import below. ``docker image inspect`` returns the
+    # virtual size in bytes; the tar emitted by ``docker save`` is in
+    # the same ballpark (slightly larger due to manifest/config overhead
+    # and layer duplication), so using it as the denominator gives a
+    # reasonable percent we cap at 99% until the import process exits.
+    total_bytes = 0
+    try:
+        size_proc = subprocess.run(
+            ["docker", "image", "inspect", image, "--format", "{{.Size}}"],
+            capture_output=True, text=True, timeout=5, check=True,
+        )
+        total_bytes = int((size_proc.stdout or "0").strip() or "0")
+    except Exception:
+        total_bytes = 0  # fall back to label-only (no percent)
+
+    _emit(
+        "Importing sandbox image into cluster (first install: 3\u20135 min)\u2026",
+        substage="import_image", sub_percent=0,
+    )
     logger.info(
-        "_ensure_image_in_cluster: importing %s into %s (this takes ~60-120s for large images)",
-        image, cluster_container,
+        "_ensure_image_in_cluster: importing %s (%.1f GB) into %s",
+        image, (total_bytes / (1024 ** 3)) if total_bytes else 0.0, cluster_container,
     )
     try:
         save = subprocess.Popen(
             ["docker", "save", image],
-            stdout=subprocess.PIPE,
+            stdout=subprocess.PIPE, bufsize=4 * 1024 * 1024,
         )
-        load = subprocess.run(
+        load = subprocess.Popen(
             ["docker", "exec", "-i", cluster_container,
              "ctr", "-n", "k8s.io", "images", "import", "-"],
-            stdin=save.stdout,
-            capture_output=True, text=True, timeout=600,
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            bufsize=4 * 1024 * 1024,
         )
-        save.stdout.close()
-        save.wait()
+        # Hand-rolled progress-counting pipe: read from docker save,
+        # write to ctr import, emit sub_percent every ~500 ms. 4 MB
+        # chunks keep CPU overhead negligible vs raw pipe throughput.
+        bytes_read = 0
+        last_emit_ts = 0.0
+        try:
+            while True:
+                chunk = save.stdout.read(4 * 1024 * 1024)
+                if not chunk:
+                    break
+                try:
+                    load.stdin.write(chunk)
+                except BrokenPipeError:
+                    break
+                bytes_read += len(chunk)
+                now = time.time()
+                if total_bytes and (now - last_emit_ts) > 0.5:
+                    pct = min(99, int(bytes_read * 100 / total_bytes))
+                    _emit(
+                        f"Importing sandbox image\u2026 {pct}% "
+                        f"({bytes_read // (1024 ** 2)} / {total_bytes // (1024 ** 2)} MB)",
+                        substage="import_image", sub_percent=pct,
+                    )
+                    last_emit_ts = now
+        finally:
+            try: save.stdout.close()
+            except Exception: pass
+            try: load.stdin.close()
+            except Exception: pass
+        # Wait for both sides to finish. We can't use ``load.communicate()``
+        # here because it calls ``self.stdin.flush()`` internally — and we
+        # already closed stdin above (required to signal EOF so ctr import
+        # starts processing). Instead wait() and read stdout/stderr directly
+        # post-exit; their buffered output on a successful import is tiny
+        # (one "unpacking..." + "Loaded image" line) so the OS pipe buffer
+        # can't fill up and deadlock.
+        save.wait(timeout=30)
+        try:
+            load.wait(timeout=600)
+        except subprocess.TimeoutExpired:
+            load.kill()
+            raise
+        load_stderr = b""
+        if load.stderr is not None:
+            try: load_stderr = load.stderr.read() or b""
+            except Exception: pass
+            try: load.stderr.close()
+            except Exception: pass
+        if load.stdout is not None:
+            try: load.stdout.close()
+            except Exception: pass
         if load.returncode != 0:
             logger.warning(
                 "_ensure_image_in_cluster: ctr import returned %d: %s",
-                load.returncode, (load.stderr or "").strip(),
+                load.returncode, load_stderr.decode(errors="replace").strip(),
             )
         else:
-            logger.info("_ensure_image_in_cluster: imported %s into %s", image, cluster_container)
+            logger.info(
+                "_ensure_image_in_cluster: imported %s into %s (%d MB streamed)",
+                image, cluster_container, bytes_read // (1024 ** 2),
+            )
+            _emit(
+                "Importing sandbox image\u2026 100%",
+                substage="import_image", sub_percent=100,
+            )
     except subprocess.TimeoutExpired:
         logger.error("_ensure_image_in_cluster: timed out importing %s", image)
         raise
@@ -873,8 +975,43 @@ class OpenShellExecutor:
         self.sandbox_image = sandbox_image
         self.policy_file = policy_file or (str(_DEFAULT_POLICY) if _DEFAULT_POLICY.exists() else None)
 
-    def spawn(self, config: InstanceConfig) -> SpawnedInstance:
+    def spawn(
+        self,
+        config: InstanceConfig,
+        *,
+        progress_cb: Optional[Callable[..., None]] = None,
+    ) -> SpawnedInstance:
+        """Spawn a fresh sandbox for ``config``.
+
+        ``progress_cb`` (optional) is invoked with a human-readable status
+        string as the spawn moves through its phases (image check, image
+        import, pod create, config upload, finalize). Signature:
+
+            progress_cb(label, *, substage='', sub_percent=0)
+
+        - ``label``    — user-facing sentence (live sub-label on the stepper)
+        - ``substage`` — slug the frontend maps to a nested sub-stepper
+                         row (check_image / import_image / create_pod /
+                         upload_config / finalize)
+        - ``sub_percent`` — 0-100 for intra-phase progress. Only the
+                            image-import phase populates this today
+                            (byte-level, sampled ~2 Hz).
+
+        The /setup wizard uses this to surface a live heartbeat during
+        the multi-minute first-install image import that otherwise looks
+        frozen. Defaults to a no-op so non-setup callers (agent edit,
+        admin re-spawn) are unaffected.
+        """
         from gateway.openshell_routes import get_default_gateway_name
+
+        def _emit(label: str, *, substage: str = "", sub_percent: int = 0) -> None:
+            if progress_cb:
+                try: progress_cb(label, substage=substage, sub_percent=sub_percent)
+                except TypeError:
+                    # Legacy label-only callbacks still work.
+                    try: progress_cb(label)
+                    except Exception: pass
+                except Exception: pass
 
         # OpenShell sandboxes are backed by Kubernetes Sandbox CRs, so the
         # sandbox name must be a valid RFC 1123 subdomain: lowercase
@@ -1133,7 +1270,9 @@ class OpenShellExecutor:
             # them. This step imports the image if it's missing,
             # taking ~60-120s for a fresh import (layers are cached
             # after the first import, making subsequent spawns fast).
-            _image_was_imported = _ensure_image_in_cluster(self.sandbox_image, openshell_gw)
+            _image_was_imported = _ensure_image_in_cluster(
+                self.sandbox_image, openshell_gw, progress_cb=progress_cb,
+            )
 
             # ── Step 1: create the sandbox CR ──────────────────────
             #
@@ -1163,6 +1302,7 @@ class OpenShellExecutor:
                 pass  # list failed, proceed with create
 
             if not _sandbox_already_exists:
+                _emit("Creating sandbox pod\u2026", substage="create_pod")
                 create_args = [
                     "sandbox", "create",
                     "--name", sandbox_name,
@@ -1221,6 +1361,7 @@ class OpenShellExecutor:
                 logger.debug("openshell sandbox create stdout: %s", result.stdout.strip())
 
             # ── Step 2: upload the instance config (and soul) ──────
+            _emit("Uploading agent configuration\u2026", substage="upload_config")
             config_tmpfile = tempfile.NamedTemporaryFile(
                 mode="w", suffix=".json", prefix="hermes-config-", delete=False,
             )
@@ -1309,6 +1450,7 @@ class OpenShellExecutor:
             # so subsequent list_instances() prunes apply normal rules.
             # Re-load the state file because something else may have
             # mutated it while we were running the openshell CLI calls.
+            _emit("Finalizing sandbox\u2026", substage="finalize")
             with _state_lock():
                 cur = _load_state()
                 for i in cur:

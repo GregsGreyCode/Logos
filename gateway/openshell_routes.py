@@ -461,6 +461,49 @@ def gateway_is_alive(openshell_name: str) -> bool:
         return False
 
 
+def wait_for_gateway_ready(
+    openshell_name: str,
+    timeout: float = 60.0,
+    poll_interval: float = 0.5,
+) -> bool:
+    """Block until a sub-gateway accepts sandbox-create RPCs, or ``timeout`` s pass.
+
+    Why this exists: ``provision_or_reuse_route`` kicks off the sub-gateway
+    container asynchronously and returns as soon as the container is *up*,
+    but the gateway's sandbox service can take several seconds more to
+    start accepting gRPC. Callers that immediately issue
+    ``openshell sandbox create -g <name>`` in that window hit the openshell
+    CLI's "No gateway found — auto-start primordial" fallback and the
+    sandbox lands in the wrong cluster (observed 2026-04-17 during a
+    fresh /setup run).
+
+    The readiness probe is ``openshell sandbox list -g <name>``, which is
+    what ``sandbox create`` ultimately RPCs against — a successful list
+    means create is safe. ``gateway_is_alive`` above only tests metadata
+    reachability (``gateway info``) which returns OK earlier and is
+    therefore too lenient.
+
+    Returns True on success, False on timeout. Callers decide whether to
+    abort or push through (the setup wizard logs + continues, since the
+    user's second-click retry already demonstrates the gateway does come
+    up eventually).
+    """
+    import time
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            result = _run_openshell(
+                "sandbox", "list", gateway=openshell_name,
+                check=False, timeout=5,
+            )
+            if result.returncode == 0:
+                return True
+        except Exception:
+            pass  # timeout or other transient — keep polling
+        time.sleep(poll_interval)
+    return False
+
+
 def refresh_status(route_id: str) -> Optional[dict]:
     """Re-check OpenShell for the route's gateway status and update the row.
 
