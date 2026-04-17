@@ -3244,6 +3244,41 @@ def insert_cost_entry(
     return row_id
 
 
+def get_platform_settings() -> dict:
+    """Fetch the single platform_settings row (always id=1). Returns a
+    dict with allow_registration, require_approval, allowed_souls,
+    default_tool_policy, feature_flags, updated_at. Used by the
+    /auth/register handler (LOG-25.7) to decide whether self-service
+    registration is enabled and whether new users start `pending`."""
+    with _conn() as conn:
+        row = conn.execute(
+            "SELECT * FROM platform_settings WHERE id = 1"
+        ).fetchone()
+        return dict(row) if row else {
+            "allow_registration": 0,
+            "require_approval": 1,
+        }
+
+
+def set_platform_settings(**fields) -> dict:
+    """Update platform_settings (id=1). Restricted to known columns."""
+    allowed = {
+        "allow_registration", "require_approval",
+        "allowed_souls", "default_tool_policy", "feature_flags",
+    }
+    updates = {k: v for k, v in fields.items() if k in allowed}
+    if not updates:
+        return get_platform_settings()
+    cols = ", ".join(f"{k} = ?" for k in updates)
+    params = list(updates.values()) + [int(time.time() * 1000)]
+    with _conn() as conn:
+        conn.execute(
+            f"UPDATE platform_settings SET {cols}, updated_at = ? WHERE id = 1",
+            params,
+        )
+    return get_platform_settings()
+
+
 def get_dispatch_by_task_id(task_id: str) -> Optional[dict]:
     """Fetch the most-recent dispatch row for a task_id. Used by the
     cost-logger in worker_registry to attribute cost rows to the user
