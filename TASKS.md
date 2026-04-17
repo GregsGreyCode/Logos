@@ -7,6 +7,8 @@ crashes again.
 ## Pending — sandbox image hygiene
 
 ### Real slim sandbox image (replace the orphan `Dockerfile.hermes-sandbox`)
+> **STATUS 2026-04-17:** Still pending. Independent of #24's resolution — Plan A-prime kept the same image baseline (`Dockerfile.hermes-upstream`-derived `hermes-sandbox:m12`), so this image-hygiene work stands as written below. Reference to "MCP browser tools" still applies.
+
 Background: on 2026-04-15 we discovered `hermes-sandbox:m12` was being built from `docker/Dockerfile.hermes-sandbox` (a 50-line Ubuntu+aiohttp image leftover from pre-M11 "Plan A"). That image has **no `run_agent` module**, so every sandbox provisioned from it after commit `5a393bac` died with `ModuleNotFoundError: No module named 'run_agent'` the moment the M11 worker tried `from run_agent import AIAgent`. Fixed by rebuilding `hermes-sandbox:m12` from `Dockerfile.hermes-upstream` (inherits the 7.5 GB upstream hermes image).
 
 The real follow-up — genuinely slim sandbox image:
@@ -17,7 +19,10 @@ The real follow-up — genuinely slim sandbox image:
 
 ## Pending — infra regression
 
-### #24 Sandbox worker registration silently fails over CONNECT tunnel — REGRESSION
+### #24 Sandbox worker registration silently fails over CONNECT tunnel — RESOLVED via Plan A-prime
+
+> **STATUS 2026-04-17:** **Resolved.** Fixed by adopting **Plan A-prime: per-task `openshell sandbox exec` dispatch** — i.e. option (B) "invert the control flow" from the analysis below, NOT the NemoClaw port-forward refactor (option C) that the rest of this section walks through in detail. The NemoClaw write-up is preserved as historical reference. See the **Resolution** block at the end of this section for what actually shipped and the residual cleanup. Verification on a fresh `/setup` still pending — log if the symptom re-appears.
+
 Observed 2026-04-11. Confirmed a regression — "we had this working before". Spent a long debugging session on it and hit a wall without observability tooling (see MISSING.md M6 for why that was the real blocker).
 
 **Symptom**: In `/admin/sandboxes`, workers show **disconnected / unhealthy / uptime 0s**. Chat is blocked on the UI with "sandbox is provisioning, chat will unlock when ready." Both `hermes-hemette` and `hermes-kai` reproduce.
@@ -191,6 +196,30 @@ openshell sandbox exec --no-tty --name hermes-hemette -- sh -c "echo $B64 | base
 
 ---
 
+**Resolution — what actually shipped (Plan A-prime, per-task exec)**
+
+Approach taken: option (B) from the analysis above — *invert the control flow*. Sandboxes no longer initiate any connection to the gateway. Instead the gateway shells out to `openshell sandbox exec --no-tty --name <sandbox> -- python3 /app/sandbox_worker.py` per task, pipes the task JSON onto stdin, closes stdin (the EOF gates exec startup — proven), and streams JSON-line frames back from stdout until the worker exits.
+
+**What landed:**
+- `docker/sandbox_worker.py` rewritten as a one-shot stdin/stdout dispatcher (no `TunnelWebSocket`, no persistent loop, no register handshake). File header documents the design.
+- `gateway/executors/openshell.py::OpenShellExecutor.spawn` no longer launches a worker — sandbox runs `sleep infinity` as a passive execution environment. Header documents Plan A-prime.
+- `gateway/worker_registry.py::dispatch_task` rewritten to spawn the per-task `openshell sandbox exec` subprocess, with cold-start tax of ~0.2s (negligible vs 2–30s inference).
+- `/ws/worker` route deleted from `gateway/http_api.py`. Auth middleware exemption removed (`gateway/auth/middleware.py:29` comment documents the deletion).
+- NemoClaw refactor (the port-forward + long-lived in-sandbox Hermes binary approach — not literally option C, which was "host-side worker") was NOT pursued. Port-forward would have worked, but the per-task `sandbox exec` primitive was already battle-tested for sandbox state management, kept the architecture simpler (no socat / decode-proxy / capability-drop scaffolding), and avoided new transport surface area. Trade-off: no warm in-sandbox state across calls — acceptable since inference state lives in LM Studio.
+
+**Stale code / docs to clean up (cosmetic, no functional impact):**
+- `gateway/worker.py` — standalone `logos worker run` CLI for headless WS agents. Separate feature from the in-sandbox worker; review whether any deployment still uses it before deleting.
+- `logos_cli/main.py:2128` — `--connect ws://.../ws/worker` flag for the same standalone CLI.
+- `docs/project/AGENT_WORKER.md`, `docs/project/historical/agent-runtime-protocol.md`, `docs/audit/pass1_ui_inventory.md`, `docs/migration/platforms-as-gateway-mediated.md` — historical refs to the deleted route.
+- `gateway/html/main_app.html:7041` — JS comment about `/ws/worker`.
+- `docker/entrypoint-hermes.sh:12` — comment about WebSocket/CONNECT-tunnel.
+- `README.draft.md` (per `docs/project/historical/ROOT_AUDIT.md:170`) — its updated diagram still depicts the `/ws/worker` flow.
+
+**Verification still owed:**
+- Confirm chat completes end-to-end on a fresh `/setup` — the regression is fixed architecturally, but the original UI symptom (workers `disconnected/uptime 0s`) needs to be re-tested. If `worker_connected`/`worker_healthy` are stuck on either green or grey post-rewrite, redefine the fields per the "UI semantics — Approach A" section above.
+
+---
+
 ## Pending — feature work
 
 ### `get_current_time` MCP tool (later)
@@ -210,6 +239,8 @@ unless someone asks for it.
 ## Pending — infra / cleanup
 
 ### #23 Publish hermes-sandbox image to ghcr.io — workflow shipped, installer wiring pending
+
+> **STATUS 2026-04-17:** Workflow file confirmed present. Items 2/3/4 below (installer pull, `_DEFAULT_IMAGE` change, cosign signing) all still pending — `_DEFAULT_IMAGE` in `gateway/executors/openshell.py` is still `hermes-sandbox:m12` (local tag), and `scripts/fresh-install.sh` still prefers a local build over a GHCR pull.
 
 Workflow landed: `.github/workflows/publish-sandbox-image.yml`.
 Builds both layers (hermes-upstream from NousResearch/hermes-agent,
