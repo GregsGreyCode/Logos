@@ -6331,6 +6331,9 @@ function app() {
     mindModalMemories: null,      // /memories response
     mindModalSessions: null,      // /sessions response
     mindModalFiles: null,         // /files response
+    // LOG-49: sandbox-filesystem browse state.
+    mindModalSandbox: null,       // current /sandbox-files response { path, entries, roots, parent }
+    mindModalSandboxPath: '/root',
     agentCapsLoading: false,
     agentCapsError: null,
     agentCapsToggling: {},
@@ -10617,7 +10620,38 @@ toolsets:
       this.mindModalMemories = null;
       this.mindModalSessions = null;
       this.mindModalFiles = null;
+      this.mindModalSandbox = null;     // LOG-49 sandbox-files view
+      this.mindModalSandboxPath = '/root';
       await this._mindLoadTab('overview');
+    },
+
+    // LOG-49: live sandbox filesystem browse.
+    async loadSandboxFiles(path) {
+      if (!this.mindModalAgent) return;
+      const aid = this.mindModalAgent.id;
+      this.mindModalLoading.sandbox = true;
+      try {
+        const url = '/admin/agents/' + encodeURIComponent(aid)
+                  + '/sandbox-files?path=' + encodeURIComponent(path || '/root');
+        const r = await fetch(url, { credentials: 'include' });
+        this.mindModalSandbox = r.ok ? await r.json() : null;
+        if (this.mindModalSandbox?.path) {
+          this.mindModalSandboxPath = this.mindModalSandbox.path;
+        }
+      } catch (e) {
+        this.mindModalSandbox = null;
+      } finally {
+        this.mindModalLoading.sandbox = false;
+      }
+    },
+    async openSandboxDir(path) {
+      if (!path) return;
+      await this.loadSandboxFiles(path);
+    },
+    sandboxDownloadUrl(path) {
+      if (!this.mindModalAgent || !path) return '#';
+      return '/admin/agents/' + encodeURIComponent(this.mindModalAgent.id)
+           + '/sandbox-files/download?path=' + encodeURIComponent(path);
     },
 
     closeAgentMind() {
@@ -10631,8 +10665,13 @@ toolsets:
         memories: this.mindModalMemories,
         sessions: this.mindModalSessions,
         files:    this.mindModalFiles,
+        sandbox:  this.mindModalSandbox,
       }[tab];
       if (already) return;
+      if (tab === 'sandbox') {
+        await this.loadSandboxFiles(this.mindModalSandboxPath || '/root');
+        return;
+      }
       await this._mindLoadTab(tab);
     },
 
@@ -12426,7 +12465,7 @@ toolsets:
     </div>
     <!-- Tab bar -->
     <div class="flex items-center gap-0 px-5 border-b border-gray-800 shrink-0 bg-gray-900/30">
-      <template x-for="t in ['overview','memories','sessions','files']" :key="t">
+      <template x-for="t in ['overview','memories','sessions','files','sandbox']" :key="t">
         <button @click="_mindSwitchTab(t)"
                 class="text-xs px-3 py-2 border-b-2 transition-colors"
                 :class="mindModalTab === t
@@ -12565,15 +12604,104 @@ toolsets:
             </template>
             <div class="space-y-0.5 font-mono text-[10px]">
               <template x-for="f in (mindModalFiles.files || [])" :key="f.rel_path">
-                <div class="flex items-baseline gap-3 px-2 py-1 rounded hover:bg-gray-900">
+                <div class="group flex items-baseline gap-3 px-2 py-1 rounded hover:bg-gray-900">
                   <span class="text-gray-400 truncate flex-1" x-text="f.rel_path"></span>
                   <span class="text-gray-600 shrink-0" x-text="_mindFmtBytes(f.size_bytes)"></span>
                   <span class="text-gray-700 shrink-0" x-text="_mindFmtDate(f.mtime_iso)"></span>
+                  <!-- LOG-49: per-file download. Uses a direct link on
+                       the admin download endpoint; browser saves with
+                       the filename from Content-Disposition. Opacity
+                       fade keeps the list visually calm by default. -->
+                  <a :href="'/admin/agents/' + encodeURIComponent(mindModalAgent?.id || '') + '/files/download?rel_path=' + encodeURIComponent(f.rel_path)"
+                     class="shrink-0 text-gray-600 hover:text-indigo-400 opacity-0 group-hover:opacity-100 transition-opacity"
+                     title="Download this file"
+                     download>↓</a>
                 </div>
               </template>
             </div>
             <div x-show="mindModalFiles.truncated" class="text-[10px] text-yellow-500 italic mt-3">
               Listing truncated at 5000 entries.
+            </div>
+          </div>
+        </template>
+      </div>
+
+      <!-- LOG-49.3: Sandbox filesystem browser. Lives in a separate
+           tab from "Files" because the semantic is very different:
+           the Files tab shows what's SYNCED onto the host (memories,
+           logs, sessions), while this tab pokes directly into the
+           live sandbox via openshell sandbox exec. -->
+      <div x-show="mindModalTab === 'sandbox'" class="px-5 py-4">
+        <template x-if="mindModalLoading.sandbox && !mindModalSandbox">
+          <div class="text-xs text-gray-600 italic">Loading sandbox…</div>
+        </template>
+        <template x-if="mindModalSandbox">
+          <div>
+            <!-- Quick-jump roots -->
+            <div class="flex flex-wrap gap-1 mb-3">
+              <template x-for="root in (mindModalSandbox.roots || [])" :key="root">
+                <button @click="openSandboxDir(root)"
+                        class="text-[10px] px-2 py-0.5 rounded border transition-colors"
+                        :class="mindModalSandbox.path === root
+                          ? 'bg-indigo-950 border-indigo-700 text-indigo-300'
+                          : 'bg-gray-900 border-gray-800 text-gray-400 hover:text-white hover:border-gray-700'"
+                        x-text="root"></button>
+              </template>
+            </div>
+
+            <!-- Breadcrumb + parent nav -->
+            <div class="flex items-center gap-2 mb-3 text-[11px] font-mono">
+              <button x-show="mindModalSandbox.parent !== null"
+                      @click="openSandboxDir(mindModalSandbox.parent)"
+                      class="text-gray-500 hover:text-white" title="Go up">..</button>
+              <span class="text-gray-300" x-text="mindModalSandbox.path"></span>
+              <span class="ml-auto text-[10px] text-gray-600">
+                <template x-if="mindModalLoading.sandbox">
+                  <span class="animate-pulse">refreshing…</span>
+                </template>
+                <template x-if="!mindModalLoading.sandbox">
+                  <button @click="loadSandboxFiles(mindModalSandbox.path)"
+                          class="hover:text-gray-300">↻ refresh</button>
+                </template>
+              </span>
+            </div>
+
+            <!-- Entry list -->
+            <template x-if="!mindModalSandbox.exec_ok">
+              <div class="text-[11px] text-yellow-500 italic">
+                Couldn't read this path — sandbox may be stopped or the
+                path doesn't exist.
+              </div>
+            </template>
+            <template x-if="mindModalSandbox.exec_ok && (mindModalSandbox.entries || []).length === 0">
+              <div class="text-[11px] text-gray-600 italic">Empty directory.</div>
+            </template>
+            <div class="space-y-0.5 font-mono text-[10px]">
+              <template x-for="e in (mindModalSandbox.entries || [])" :key="e.name">
+                <div class="group flex items-baseline gap-3 px-2 py-1 rounded hover:bg-gray-900">
+                  <template x-if="e.type === 'dir'">
+                    <button @click="openSandboxDir((mindModalSandbox.path === '/' ? '' : mindModalSandbox.path) + '/' + e.name)"
+                            class="text-indigo-400 hover:text-indigo-200 text-left truncate flex-1">
+                      <span class="text-indigo-500">▸</span> <span x-text="e.name + '/'"></span>
+                    </button>
+                  </template>
+                  <template x-if="e.type !== 'dir'">
+                    <span class="text-gray-400 truncate flex-1">
+                      <span class="text-gray-700" x-text="e.type === 'link' ? '↪' : '·'"></span>
+                      <span x-text="e.name"></span>
+                    </span>
+                  </template>
+                  <span class="text-gray-600 shrink-0"
+                        x-text="e.type === 'file' ? _mindFmtBytes(e.size) : ''"></span>
+                  <span class="text-gray-700 shrink-0"
+                        x-text="e.mtime ? new Date(e.mtime * 1000).toISOString().slice(0,16).replace('T',' ') : ''"></span>
+                  <template x-if="e.type === 'file'">
+                    <a :href="sandboxDownloadUrl((mindModalSandbox.path === '/' ? '' : mindModalSandbox.path) + '/' + e.name)"
+                       class="shrink-0 text-gray-600 hover:text-indigo-400 opacity-0 group-hover:opacity-100 transition-opacity"
+                       title="Download this file" download>↓</a>
+                  </template>
+                </div>
+              </template>
             </div>
           </div>
         </template>
