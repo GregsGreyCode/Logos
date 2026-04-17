@@ -278,7 +278,12 @@
       :class="tab==='compare'?'tab-active':'text-gray-400 hover:text-white'"
       data-testid="nav-compare"
       @click="tab='compare'; if(!namedAgents.length) loadNamedAgents()">Compare</button>
-    <template x-if="can('manage_machines') || can('view_evolution')">
+    <!-- LOG-25.2: Config tab gated on `manage_machines` only. Previous
+         `|| can('view_evolution')` leaked the tab to the `user` role
+         (which gets view_evolution by default) even though all Config
+         sub-tabs require manage_machines. Evolution lives in the
+         Activity tab, not under Config, so the OR was always wrong. -->
+    <template x-if="can('manage_machines')">
       <button class="pb-2 text-sm font-medium border-b-2 border-transparent"
         :class="tab==='infra'?'tab-active':'text-gray-400 hover:text-white'"
         data-testid="nav-settings"
@@ -6966,10 +6971,15 @@ function app() {
       await this.loadAuth();
 
       // Validate restored tabs against actual permissions — fall back if needed.
+      // LOG-25.2: infra (Config) gets the same treatment as admin/activity so
+      // a `user` whose restored tab is `infra` doesn't land on a tab they no
+      // longer see in the nav.
       const adminAllowed    = this.can('manage_users') || this.can('view_audit_logs');
       const activityAllowed = this.can('view_runs') || this.can('view_approvals') || this.can('view_evolution');
+      const infraAllowed    = this.can('manage_machines');
       if (this.tab === 'admin'    && !adminAllowed)    this.tab = 'sessions';
       if (this.tab === 'activity' && !activityAllowed) this.tab = 'sessions';
+      if (this.tab === 'infra'    && !infraAllowed)    this.tab = 'sessions';
       if (this.adminTab === 'users' && !this.can('manage_users'))
         this.adminTab = 'audit';
       // Trigger initial data load for whichever tab is active on restore.
