@@ -129,7 +129,18 @@ class TelegramAdapter(BasePlatformAdapter):
             self._app = Application.builder().token(self.config.token).build()
             self._bot = self._app.bot
             
-            # Register handlers
+            # Register handlers. LOG-29: specific CommandHandlers come
+            # FIRST so Telegram routes /help, /status, /stop, /new,
+            # /reset, /model to them instead of falling through to the
+            # catch-all filters.COMMAND handler (which dispatches the raw
+            # text to the LLM — fine as a fallback, bad as the default
+            # for commands the user expects to have local semantics).
+            self._app.add_handler(CommandHandler("help",   self._cmd_help))
+            self._app.add_handler(CommandHandler("status", self._cmd_status))
+            self._app.add_handler(CommandHandler("stop",   self._cmd_stop))
+            self._app.add_handler(CommandHandler("new",    self._cmd_new))
+            self._app.add_handler(CommandHandler("reset",  self._cmd_reset))
+            self._app.add_handler(CommandHandler("model",  self._cmd_model))
             self._app.add_handler(TelegramMessageHandler(
                 filters.TEXT & ~filters.COMMAND,
                 self._handle_text_message
@@ -160,30 +171,31 @@ class TelegramAdapter(BasePlatformAdapter):
                 drop_pending_updates=True,
             )
             
-            # Register bot commands so Telegram shows a hint menu when users type /
+            # Register bot commands so Telegram shows a hint menu when users type /.
+            # LOG-43: trimmed menu — dropped the hermes-specific /update and
+            # /reload_mcp (Logos manages these server-side, not via chat) and
+            # /provider (cloud routing is admin-only in Logos, not exposed
+            # per-session). /personality also dropped — Logos uses souls,
+            # configured on the agent record rather than swapped mid-chat.
             try:
                 from telegram import BotCommand
                 await self._bot.set_my_commands([
-                    BotCommand("new", "Start a new conversation"),
-                    BotCommand("reset", "Reset conversation history"),
-                    BotCommand("model", "Show or change the model"),
-                    BotCommand("reasoning", "Show or change reasoning effort"),
-                    BotCommand("personality", "Set a personality"),
-                    BotCommand("retry", "Retry your last message"),
-                    BotCommand("undo", "Remove the last exchange"),
-                    BotCommand("status", "Show session info"),
-                    BotCommand("stop", "Stop the running agent"),
-                    BotCommand("sethome", "Set this chat as the home channel"),
+                    BotCommand("help",     "Show available commands"),
+                    BotCommand("new",      "Start a new conversation"),
+                    BotCommand("reset",    "Reset conversation history"),
+                    BotCommand("status",   "Show session info"),
+                    BotCommand("stop",     "Stop the running agent"),
+                    BotCommand("model",    "Show the current model"),
+                    BotCommand("reasoning","Show or change reasoning effort"),
+                    BotCommand("retry",    "Retry your last message"),
+                    BotCommand("undo",     "Remove the last exchange"),
+                    BotCommand("sethome",  "Set this chat as the home channel"),
                     BotCommand("compress", "Compress conversation context"),
-                    BotCommand("title", "Set or show the session title"),
-                    BotCommand("resume", "Resume a previously-named session"),
-                    BotCommand("usage", "Show token usage for this session"),
-                    BotCommand("provider", "Show available providers"),
+                    BotCommand("title",    "Set or show the session title"),
+                    BotCommand("resume",   "Resume a previously-named session"),
+                    BotCommand("usage",    "Show token usage for this session"),
                     BotCommand("insights", "Show usage insights and analytics"),
-                    BotCommand("update", "Update Hermes to the latest version"),
-                    BotCommand("reload_mcp", "Reload MCP servers from config"),
-                    BotCommand("voice", "Toggle voice reply mode"),
-                    BotCommand("help", "Show available commands"),
+                    BotCommand("voice",    "Toggle voice reply mode"),
                 ])
             except Exception as e:
                 logger.warning(
@@ -685,12 +697,168 @@ class TelegramAdapter(BasePlatformAdapter):
         await self.handle_message(event)
     
     async def _handle_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Handle incoming command messages."""
+        """Catch-all for commands NOT handled by a specific CommandHandler
+        above. Falls through to the LLM so the agent can respond
+        conversationally (or surface "I don't know that command")."""
         if not update.message or not update.message.text:
             return
-        
+
         event = self._build_message_event(update.message, MessageType.COMMAND)
         await self.handle_message(event)
+
+    # ── LOG-29: specific slash-command handlers ────────────────────────
+    # Each reaches into gateway state directly so the user gets a local,
+    # deterministic response instead of bouncing through the LLM for
+    # every command. Helpers keep error paths quiet — a command failing
+    # should not kill the poll loop.
+
+    async def _cmd_help(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """`/help` — list what the bot actually responds to locally."""
+        if not update.message: return
+        text = (
+            "*Available commands*\n\n"
+            "/new — start a fresh conversation\n"
+            "/reset — reset the current session's history\n"
+            "/status — show session info (model, messages, tokens)\n"
+            "/stop — cancel the in-flight reply\n"
+            "/model — show the model this agent is using\n"
+            "/help — this list\n\n"
+            "Anything else you send goes to the agent. No command? "
+            "Just type your message."
+        )
+        try:
+            await update.message.reply_text(text, parse_mode=ParseMode.MARKDOWN)
+        except Exception as e:
+            logger.debug("[%s] /help reply failed: %s", self.name, e)
+
+    async def _cmd_status(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """`/status` — snapshot of the bound agent + session."""
+        if not update.message: return
+        agent = self.config.extra.get("agent_name") or self.name
+        lines = [f"*Status*", f"Agent: `{agent}`"]
+        try:
+            from gateway.auth import db as _auth_db
+            row = _auth_db.get_agent_by_name(agent) if agent else None
+            if row:
+                lines.append(f"Model: `{row.get('model') or 'default'}`")
+                if row.get("soul_slug"):
+                    lines.append(f"Soul:  `{row['soul_slug']}`")
+        except Exception as e:
+            logger.debug("[%s] /status agent lookup failed: %s", self.name, e)
+        try:
+            await update.message.reply_text("\n".join(lines), parse_mode=ParseMode.MARKDOWN)
+        except Exception as e:
+            logger.debug("[%s] /status reply failed: %s", self.name, e)
+
+    async def _cmd_stop(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """`/stop` — interrupt the running dispatch for this chat by
+        setting the per-session interrupt event. Same mechanism a new
+        incoming message uses, minus re-dispatch."""
+        if not update.message: return
+        event = self._build_message_event(update.message, MessageType.COMMAND)
+        session_key = ""
+        try:
+            from gateway.channels.base import build_session_key
+            session_key = build_session_key(event.source)
+        except Exception:
+            pass
+        interrupted = False
+        try:
+            if session_key and session_key in self._active_sessions:
+                self._active_sessions[session_key].set()
+                interrupted = True
+        except Exception as e:
+            logger.debug("[%s] /stop signal failed: %s", self.name, e)
+        msg = "\u23f9\ufe0f Stopped." if interrupted else "Nothing running."
+        try:
+            await update.message.reply_text(msg)
+        except Exception as e:
+            logger.debug("[%s] /stop reply failed: %s", self.name, e)
+
+    async def _cmd_new(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """`/new` — start a fresh session by rotating the session key.
+        Delegates to the base adapter's session_store if wired; otherwise
+        falls through so the next message naturally creates a new session
+        once the existing one expires."""
+        if not update.message: return
+        event = self._build_message_event(update.message, MessageType.COMMAND)
+        ok = await self._reset_session(event, hard=True)
+        txt = "\u2728 New conversation." if ok else (
+            "I'll start fresh on your next message."
+        )
+        try:
+            await update.message.reply_text(txt)
+        except Exception as e:
+            logger.debug("[%s] /new reply failed: %s", self.name, e)
+
+    async def _cmd_reset(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """`/reset` — clear the current session's transcript without
+        rotating the session key. Keeps the chat bound to the same
+        agent incarnation; just drops context."""
+        if not update.message: return
+        event = self._build_message_event(update.message, MessageType.COMMAND)
+        ok = await self._reset_session(event, hard=False)
+        txt = "\u21bb Context cleared." if ok else (
+            "Couldn't find an active session to reset."
+        )
+        try:
+            await update.message.reply_text(txt)
+        except Exception as e:
+            logger.debug("[%s] /reset reply failed: %s", self.name, e)
+
+    async def _cmd_model(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """`/model` — show the agent's currently bound model. Read-only:
+        changing a model is an admin operation and lives in the web UI."""
+        if not update.message: return
+        agent = self.config.extra.get("agent_name") or self.name
+        model = "unknown"
+        try:
+            from gateway.auth import db as _auth_db
+            row = _auth_db.get_agent_by_name(agent) if agent else None
+            if row and row.get("model"):
+                model = row["model"]
+        except Exception:
+            pass
+        try:
+            await update.message.reply_text(
+                f"*Model:* `{model}`\n\nChange this from the Logos admin UI.",
+                parse_mode=ParseMode.MARKDOWN,
+            )
+        except Exception as e:
+            logger.debug("[%s] /model reply failed: %s", self.name, e)
+
+    async def _reset_session(self, event, *, hard: bool) -> bool:
+        """Session reset helper. `hard=True` rotates the session key (so
+        the next message lands in a brand-new session); `hard=False`
+        clears the transcript but keeps the key. Returns True if we
+        actually found a session to reset."""
+        try:
+            from gateway.channels.base import build_session_key
+            session_key = build_session_key(event.source)
+        except Exception:
+            return False
+        # Signal interrupt if anything's in flight.
+        try:
+            if session_key in self._active_sessions:
+                self._active_sessions[session_key].set()
+        except Exception:
+            pass
+        # Runtime-optional: if set_message_handler was called from the
+        # runner, it may have exposed a session_store on the adapter. If
+        # not wired, fall through with False so the UI text reflects that.
+        session_store = getattr(self, "_session_store", None) or getattr(
+            getattr(self, "_runner", None), "session_store", None,
+        )
+        if not session_store:
+            return False
+        try:
+            if hard and hasattr(session_store, "reset_session"):
+                return bool(session_store.reset_session(session_key))
+            if not hard and hasattr(session_store, "clear_transcript"):
+                return bool(session_store.clear_transcript(session_key))
+        except Exception as e:
+            logger.debug("[%s] _reset_session failed: %s", self.name, e)
+        return False
     
     async def _handle_location_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle incoming location/venue pin messages."""
