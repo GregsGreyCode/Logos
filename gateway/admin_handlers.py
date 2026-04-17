@@ -3276,12 +3276,18 @@ async def handle_agent_sandbox_files_get(request: web.Request) -> web.Response:
             break
 
     import subprocess, shlex
-    # `stat -c` gives us parseable fields: name\ttype\tsize\tmtime.
-    # Run inside the sandbox via `openshell sandbox exec`, capturing
-    # stdout. Uses `find -maxdepth 1` so we only list the target dir
-    # (not recurse). ls -la was considered but is messier to parse.
-    listing_cmd = (
-        f"cd {shlex.quote(path)} 2>/dev/null && "
+    # Probe for existence + readability BEFORE the listing so we can
+    # tell "dir missing" apart from "dir exists but denied to the
+    # sandbox user". Three-line script:
+    #   - test -e → 1 if missing
+    #   - test -r → 1 if no read perm (most common for system dirs)
+    #   - find …  → directory listing in parseable form
+    # All three run under the sandbox user (uid 10001, `sandbox`).
+    probe_cmd = (
+        f"if [ ! -e {shlex.quote(path)} ]; then echo __MISSING__; exit 0; fi; "
+        f"if [ ! -d {shlex.quote(path)} ]; then echo __NOTDIR__; exit 0; fi; "
+        f"if [ ! -r {shlex.quote(path)} ]; then echo __DENIED__; exit 0; fi; "
+        f'cd {shlex.quote(path)} && '
         f'find . -maxdepth 1 -mindepth 1 '
         f'-printf "%f\\t%y\\t%s\\t%T@\\n" '
         f'2>/dev/null | sort'
@@ -3290,7 +3296,7 @@ async def handle_agent_sandbox_files_get(request: web.Request) -> web.Response:
     if gateway:
         exec_args += ["-g", gateway]
     exec_args += ["sandbox", "exec", "--no-tty", "--name", sandbox_name,
-                  "--", "sh", "-c", listing_cmd]
+                  "--", "sh", "-c", probe_cmd]
     try:
         result = subprocess.run(
             exec_args, capture_output=True, text=True, timeout=15,
@@ -3301,9 +3307,21 @@ async def handle_agent_sandbox_files_get(request: web.Request) -> web.Response:
     except Exception as exc:
         return web.json_response({"error": "exec_failed", "detail": str(exc)[:200]}, status=500)
 
+    stdout = result.stdout or ""
+    # Translate sentinel lines into a specific error code the UI can
+    # render with helpful copy. These are first-line sentinels because
+    # the probe script exits early on them.
+    error_kind: Optional[str] = None
+    if stdout.startswith("__MISSING__"):
+        error_kind = "missing"
+    elif stdout.startswith("__NOTDIR__"):
+        error_kind = "not_dir"
+    elif stdout.startswith("__DENIED__"):
+        error_kind = "denied"
+
     entries: list[dict] = []
-    if result.returncode == 0:
-        for line in (result.stdout or "").splitlines():
+    if error_kind is None and result.returncode == 0:
+        for line in stdout.splitlines():
             parts = line.split("\t")
             if len(parts) != 4:
                 continue
@@ -3327,7 +3345,11 @@ async def handle_agent_sandbox_files_get(request: web.Request) -> web.Response:
         "entries": entries,
         "roots": KNOWN_ROOTS,
         "sandbox": sandbox_name,
-        "exec_ok": result.returncode == 0,
+        # Legacy `exec_ok` kept for older UI code paths; prefer
+        # `error_kind` (null = ok, else one of "missing"/"not_dir"/
+        # "denied") which tells the UI exactly which copy to render.
+        "exec_ok": error_kind is None and result.returncode == 0,
+        "error_kind": error_kind,
     })
 
 

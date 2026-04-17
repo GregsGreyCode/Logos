@@ -12705,10 +12705,36 @@ toolsets:
               Files the agent has created inside its sandbox. Click folders to enter; download any file with the button on the right.
             </p>
 
-            <!-- Error / empty states -->
-            <template x-if="!mindModalSandbox.exec_ok">
+            <!-- Error / empty states. error_kind is server-generated —
+                 "missing", "not_dir", "denied", or null for ok. Each
+                 gets different copy so users understand why a dir
+                 isn't viewable (the common case is `denied`: the
+                 sandbox user uid 10001 can't read system paths like
+                 /root, /home, /opt, /etc — by design). -->
+            <template x-if="mindModalSandbox.error_kind === 'denied'">
+              <div class="text-[11px] px-3 py-4 rounded-md bg-gray-900/50 border border-gray-800">
+                <div class="text-amber-400 mb-1">🔒 Not accessible to the agent</div>
+                <div class="text-gray-500 leading-relaxed">
+                  The sandbox runs as an unprivileged user (<span class="font-mono">sandbox</span>, uid 10001). It can't read <span class="font-mono" x-text="mindModalSandbox.path"></span>. This is by design — the agent's workspace is scoped to <span class="font-mono">/tmp/hermes</span> and <span class="font-mono">/tmp</span>; system paths like <span class="font-mono">/root</span>, <span class="font-mono">/home</span>, <span class="font-mono">/opt</span>, <span class="font-mono">/etc</span> are locked down.
+                </div>
+              </div>
+            </template>
+            <template x-if="mindModalSandbox.error_kind === 'missing'">
+              <div class="text-[11px] px-3 py-4 rounded-md bg-gray-900/50 border border-gray-800">
+                <div class="text-gray-400 mb-1">Path not found</div>
+                <div class="text-gray-600">
+                  <span class="font-mono" x-text="mindModalSandbox.path"></span> doesn't exist in the sandbox.
+                </div>
+              </div>
+            </template>
+            <template x-if="mindModalSandbox.error_kind === 'not_dir'">
+              <div class="text-[11px] text-gray-500 italic px-2 py-4">
+                <span class="font-mono" x-text="mindModalSandbox.path"></span> is a file, not a directory.
+              </div>
+            </template>
+            <template x-if="!mindModalSandbox.error_kind && !mindModalSandbox.exec_ok">
               <div class="text-[11px] text-yellow-500 italic px-2 py-4">
-                Couldn't read <span class="font-mono" x-text="mindModalSandbox.path"></span> — the sandbox may be stopped, or this path doesn't exist.
+                Couldn't read <span class="font-mono" x-text="mindModalSandbox.path"></span> — the sandbox may be stopped. Try starting a chat with the agent first.
               </div>
             </template>
             <template x-if="mindModalSandbox.exec_ok && (mindModalSandbox.entries || []).length === 0">
