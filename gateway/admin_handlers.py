@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import time as _time
+from typing import Optional
 
 import aiohttp
 from aiohttp import web
@@ -1137,11 +1138,57 @@ async def handle_agents_patch(request: web.Request) -> web.Response:
             updates["model"] = _route.get("model") or updates.get("model", existing.get("model", ""))
         else:
             updates["model_route_id"] = None
+    renamed_from: Optional[str] = None
     if "name" in updates and updates["name"] != existing["name"]:
         dup = auth_db.get_agent_by_name(updates["name"])
         if dup and dup["id"] != aid:
             return web.json_response({"error": "An agent with that name already exists"}, status=409)
+        renamed_from = existing["name"]
     agent = auth_db.update_agent(aid, **updates)
+
+    # On rename: reap the old `hermes-<old_name>` sandbox and move the
+    # per-agent host data dir to the new name so memories / logs follow
+    # the agent. Next dispatch spawns `hermes-<new_name>` fresh from the
+    # (now-renamed) memories. Runs in the background so the PATCH
+    # response returns immediately — sandbox teardown can take 5-10s
+    # and the UI doesn't need to block on it. Guarded against failure:
+    # if either step errors, the agent row is still renamed in the DB
+    # and the worst case is an orphan sandbox the user can clean up
+    # from Admin → Sandboxes. (LOG-30.)
+    if renamed_from:
+        executor = request.app.get("executor")
+        if executor and type(executor).__name__ == "OpenShellExecutor":
+            import asyncio as _asyncio
+            import shutil as _shutil
+            from gateway.executors.openshell import _HERMES_HOME as _HH
+            new_name = agent["name"]
+            async def _rename_bg():
+                try:
+                    await _asyncio.to_thread(executor.delete_instance, renamed_from)
+                    logger.info(
+                        "Rename: destroyed old sandbox 'hermes-%s' (agent renamed to '%s')",
+                        renamed_from, new_name,
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "Rename: failed to destroy old sandbox 'hermes-%s': %s",
+                        renamed_from, exc,
+                    )
+                try:
+                    old_dir = _HH / "agents" / renamed_from
+                    new_dir = _HH / "agents" / new_name
+                    if old_dir.exists() and not new_dir.exists():
+                        await _asyncio.to_thread(_shutil.move, str(old_dir), str(new_dir))
+                        logger.info(
+                            "Rename: moved host data dir %s → %s", old_dir, new_dir,
+                        )
+                except Exception as exc:
+                    logger.warning(
+                        "Rename: failed to move host data for '%s' → '%s': %s",
+                        renamed_from, new_name, exc,
+                    )
+            _asyncio.create_task(_rename_bg())
+
     return web.json_response(agent)
 
 
