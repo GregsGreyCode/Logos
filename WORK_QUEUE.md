@@ -185,10 +185,16 @@ Fix direction: confirm the exact env names the upstream client reads, then set t
 
 **Deprio note:** LOG-44 Phase 1 switches each sandbox to run the full `hermes gateway run` binary, at which point the auxiliary client is configured from Hermes's own config loader and this gap may disappear. Worth revisiting after LOG-44.1 lands rather than patching twice.
 
-### LOG-33 · Thin desktop client (Tauri)
-**Effort:** S (1–2h) · **Type:** Feature · **Status:** OPEN
+### LOG-33 · Thin desktop client (Tauri) — **SCAFFOLDED (2026-04-17)**
+**Effort:** S (1–2h) · **Type:** Feature · **Status:** SCAFFOLDED (builds locally, cross-platform CI ready; mobile/Android left for follow-up)
 
-WebView wrapper. ~3MB exe. Or Chrome PWA shortcut for zero build.
+Tauri v2 project under `desktop/` with:
+- `src-tauri/tauri.conf.json` — window points at `http://localhost:8091/login` by default
+- `src-tauri/src/lib.rs` — persists the gateway URL to app-data so users can override without rebuilding; `get_gateway_url` / `set_gateway_url` commands for a future Settings UI
+- Icons generated from `assets/logo.png` via `cargo tauri icon`
+- `.github/workflows/desktop-build.yml` matrix-builds AppImage/.deb (Linux), .exe/.msi (Windows), .dmg (macOS arm+x64) via `tauri-apps/tauri-action@v0` on tag push. Artefacts attach to draft releases.
+
+To build locally: `cd desktop && cargo tauri build`. Android build flow is a future ticket.
 
 ### LOG-48 · Budget-cap tightness: unpriced-model fallback + pre-call estimation
 **Effort:** M · **Type:** Feature/Security · **Status:** OPEN
