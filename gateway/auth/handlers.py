@@ -55,6 +55,95 @@ def _settings_public(settings: dict | None) -> dict:
 
 # ── Auth endpoints ─────────────────────────────────────────────────────────
 
+async def handle_register(request: web.Request) -> web.Response:
+    """Self-service registration (LOG-25.7).
+
+    Gated by two platform_settings flags:
+      * allow_registration — if 0, endpoint returns 403 regardless.
+        Admin turns it on via Admin → Users → Settings. Default 0.
+      * require_approval   — if 1, new users land in status='pending'
+        and stay locked out until an admin flips them to 'active'.
+        If 0, new users are 'active' immediately and receive a
+        session cookie as if they'd just logged in.
+
+    Rate-limited and under an email-enumeration-safe response shape.
+    """
+    ip = request.remote or "unknown"
+    if not check_rate_limit(ip, max_requests=8, window=60):
+        return web.json_response({"error": "rate_limited"}, status=429)
+
+    settings = auth_db.get_platform_settings()
+    if not settings.get("allow_registration"):
+        return web.json_response(
+            {"error": "registration_disabled"}, status=403,
+        )
+
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "invalid_json"}, status=400)
+
+    email        = (body.get("email") or "").strip().lower()
+    username     = (body.get("username") or "").strip()
+    password     = body.get("password") or ""
+    display_name = (body.get("display_name") or username).strip() or None
+
+    # Basic validation — aligns with the /setup wizard's admin creation.
+    if not email or "@" not in email or len(email) > 254:
+        return web.json_response({"error": "invalid_email"}, status=400)
+    if not username or not username.replace("_", "").replace("-", "").isalnum() or len(username) > 64:
+        return web.json_response({"error": "invalid_username"}, status=400)
+    if len(password) < 8:
+        return web.json_response({"error": "password_too_short"}, status=400)
+
+    # Conflicts return a generic error to avoid email enumeration.
+    if auth_db.get_user_by_email(email) or auth_db.get_user_by_username(username):
+        return web.json_response({"error": "account_unavailable"}, status=409)
+
+    require_approval = bool(settings.get("require_approval", 1))
+    status = "pending" if require_approval else "active"
+    user = auth_db.create_user(
+        email=email,
+        username=username,
+        password_hash=hash_password(password),
+        role="user",
+        display_name=display_name,
+        status=status,
+    )
+    auth_db.write_audit_log(user["id"], "register", ip_address=ip)
+
+    # Pending users don't get tokens — admin has to approve first. The
+    # response shape still mirrors a login so the client can branch on
+    # `status === "pending"` vs `setup_required` cleanly.
+    if status == "pending":
+        return web.json_response({
+            "user": _user_public(user),
+            "status": "pending",
+            "message": (
+                "Account created and awaiting admin approval. "
+                "You'll be able to sign in once it's reviewed."
+            ),
+        })
+
+    # Active — issue tokens + set cookies so the new user is logged in.
+    access_token          = issue_access_token(user["id"], user["email"], user["role"])
+    raw_refresh, rtk_hash = issue_refresh_token()
+    auth_db.store_refresh_token(
+        user["id"], rtk_hash,
+        expires_at=int(time.time()) + REFRESH_TOKEN_TTL,
+        ip=ip, ua=request.headers.get("User-Agent"),
+    )
+    auth_db.update_last_login(user["id"])
+    auth_db.write_audit_log(user["id"], "login", ip_address=ip)
+
+    resp = web.json_response({
+        "user": _user_public(user),
+        "status": "active",
+    })
+    set_auth_cookies(resp, access_token, raw_refresh)
+    return resp
+
+
 async def handle_login(request: web.Request) -> web.Response:
     ip = request.remote or "unknown"
     if not check_rate_limit(ip, max_requests=30, window=60):

@@ -110,20 +110,18 @@ Demoted from P0/L to P0/S — was the right ticket all along, but the heavy lift
 
 ## P1 — High priority
 
-### LOG-25 · Multi-user hardening
-**Effort:** L (2–3d) · **Type:** Feature/Security · **Status:** OPEN (foundation done, all sub-items pending) · **Cross-ref:** Sub-items 25.1/25.3 will need re-thinking after LOG-44.4 (sessions move into per-agent Hermes — "user can see own sessions" becomes "user can see sessions across the agents they own/share")
+### LOG-25 · Multi-user hardening — **MOSTLY DONE (2026-04-17)**
+**Effort:** L (2–3d) · **Type:** Feature/Security · **Status:** backend complete; UI-approval page still pending · **Cross-ref:** Sub-items 25.1/25.3 will need re-thinking after LOG-44.4 (sessions move into per-agent Hermes — "user can see own sessions" becomes "user can see sessions across the agents they own/share")
 
-Audit confirmed every sub-item below is unstarted in code. RBAC scaffolding is there (`require_permission` decorator), but UI tabs render unconditionally and session listings don't filter by user.
-
-| # | Sub-task | Effort | Notes |
+| # | Sub-task | Effort | Status |
 |---|---|---|---|
-| 25.1 | Per-user chat isolation (`user` role only sees own sessions) | M | No `user_id` filter on session list endpoints today |
-| 25.2 | UI role gating (hide Admin/Config tabs from `user`/`viewer`) | S | `main_app.html` has `can('manage_*')` for actions but tabs are always rendered |
-| 25.3 | Agent sharing rules (private vs shared visibility + edit perms) | M | `shared` column exists on agents table; not enforced on list endpoints |
-| 25.4 | Settings scoping (admin-only: model routes, tools, policies) | S | UI side only — backend enforces |
-| 25.5 | Per-user agent limits (`max_agents` column on users) | S | Column doesn't exist |
-| 25.6 | Per-user daily budget caps (`daily_budget_usd` per user) | M | Column exists per-agent only |
-| 25.7 | `/register` endpoint with optional approval gate | M | `allow_registration`/`require_approval` flags exist in `platform_settings`; route not wired |
+| 25.1 | Per-user chat isolation (`user` role only sees own sessions) | M | DONE — `/admin/dispatches` route gate relaxed to `view_runs` + handler applies `user_id` filter for non-admin/operator |
+| 25.2 | UI role gating (hide Admin/Config tabs from `user`/`viewer`) | S | DONE — Config leak (`\|\| can('view_evolution')`) removed; admin sub-tabs were already guarded |
+| 25.3 | Agent sharing rules (private vs shared visibility + edit perms) | M | DONE — list_agents + patch/delete guards already enforced shared/creator; added `_handle_chat` check that returns 404 for non-creator on unshared agents |
+| 25.4 | Settings scoping (admin-only: model routes, tools, policies) | S | DONE — existing `can('manage_*')` pattern covers it; backend already enforced via `require_permission` decorators |
+| 25.5 | Per-user agent limits (`max_agents` column on users) | S | DONE — v25 migration + count_agents_by_creator + 429 `agent_limit_reached` in `handle_agents_post`; admins bypass |
+| 25.6 | Per-user daily budget caps (`daily_budget_usd` per user) | M | DONE — v26/v26b migrations + user_cost_rollup_24h + `_handle_chat` user-scoped gate before the per-agent gate; cost_log.user_id attribution via dispatch task_id lookup |
+| 25.7 | `/register` endpoint with optional approval gate | M | BACKEND DONE — `POST /auth/register`, gated by `platform_settings.allow_registration`, honors `require_approval` → new users land `pending`. **UI page not yet built** — needs a public registration form + admin UI to approve pending users |
 
 ### LOG-26 · Background embed-on-write for session search
 **Effort:** M · **Type:** Feature · **Status:** OPEN · **Cross-ref:** Re-evaluate after LOG-44.4 — if Hermes owns per-agent sessions, embed-on-write moves into the per-sandbox layer; Logos's job becomes aggregating embeddings across sandboxes for cross-agent search.
