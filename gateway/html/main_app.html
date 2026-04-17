@@ -4666,13 +4666,19 @@
           </tbody>
         </table>
       </div>
-      <!-- Audit log pagination -->
-      <div class="flex items-center justify-end gap-3 mt-3 text-xs text-gray-500" x-show="auditLogsTotal > auditLogsLimit">
-        <button @click="auditLogsPage=Math.max(1,auditLogsPage-1); loadAdminAudit()" :disabled="auditLogsPage===1"
-          class="px-2 py-1 rounded border border-gray-700 text-gray-400 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed transition-colors">‹ Prev</button>
-        <span class="px-2 text-gray-600 font-mono" x-text="auditLogsPage + ' / ' + Math.max(1, Math.ceil(auditLogsTotal/auditLogsLimit))"></span>
-        <button @click="auditLogsPage++; loadAdminAudit()" :disabled="auditLogsPage*auditLogsLimit>=auditLogsTotal"
-          class="px-2 py-1 rounded border border-gray-700 text-gray-400 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed transition-colors">Next ›</button>
+      <!-- LOG-35a: Audit log pagination layout matches Runs tab —
+           counter on the left, pager on the right via justify-between.
+           Previously only the pager rendered (justify-end) which left
+           a visual asymmetry with Runs. -->
+      <div class="flex items-center justify-between mt-3 text-xs text-gray-500">
+        <span x-text="auditLogsTotal === 0 ? 'No audit entries' : ('Showing ' + ((auditLogsPage-1)*auditLogsLimit + 1) + '-' + Math.min(auditLogsPage*auditLogsLimit, auditLogsTotal) + ' of ' + auditLogsTotal)"></span>
+        <div class="flex items-center gap-3" x-show="auditLogsTotal > auditLogsLimit">
+          <button @click="auditLogsPage=Math.max(1,auditLogsPage-1); loadAdminAudit()" :disabled="auditLogsPage===1"
+            class="px-2 py-1 rounded border border-gray-700 text-gray-400 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed transition-colors">‹ Prev</button>
+          <span class="px-2 text-gray-600 font-mono" x-text="auditLogsPage + ' / ' + Math.max(1, Math.ceil(auditLogsTotal/auditLogsLimit))"></span>
+          <button @click="auditLogsPage++; loadAdminAudit()" :disabled="auditLogsPage*auditLogsLimit>=auditLogsTotal"
+            class="px-2 py-1 rounded border border-gray-700 text-gray-400 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed transition-colors">Next ›</button>
+        </div>
       </div>
     </div>
 
@@ -5640,14 +5646,19 @@
                 <td class="px-3 py-2 text-gray-500 select-none" x-text="selectedDispatch?.id === d.id ? '▾' : '▸'"></td>
                 <td class="px-3 py-2 font-mono text-gray-300" x-text="d.sandbox_name || d.agent_id || '—'"></td>
                 <td class="px-3 py-2">
+                  <!-- LOG-35b: unify user_chat + platform_* styling —
+                       both are user-initiated chats, differing only by
+                       transport. cron + delegate keep their distinct
+                       colour as automated/system-initiated. Text
+                       humanized: "platform_telegram" → "Telegram". -->
                   <span class="px-1.5 py-0.5 rounded text-xs font-medium"
                     :class="{
-                      'bg-blue-950 text-blue-400': d.origin==='user_chat',
-                      'bg-purple-900 text-purple-400': d.origin?.startsWith('platform'),
+                      'bg-blue-950 text-blue-400': d.origin==='user_chat' || d.origin?.startsWith('platform'),
                       'bg-yellow-950 text-yellow-400': d.origin==='cron',
                       'bg-violet-950 text-violet-400': d.origin==='delegate',
                       'bg-gray-800 text-gray-400': !['user_chat','cron','delegate'].includes(d.origin) && !d.origin?.startsWith('platform'),
-                    }" x-text="d.origin"></span>
+                    }"
+                    x-text="d.origin === 'user_chat' ? 'Web chat' : (d.origin?.startsWith('platform_') ? d.origin.slice(9).charAt(0).toUpperCase() + d.origin.slice(10) : d.origin)"></span>
                 </td>
                 <td class="px-3 py-2 text-gray-500 font-mono" x-text="d.soul || '—'"></td>
                 <td class="px-3 py-2 text-gray-500 font-mono" x-text="(d.model || '—').split('/').pop()"></td>
