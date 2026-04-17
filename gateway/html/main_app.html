@@ -8878,13 +8878,59 @@ function app() {
       // Returns safe HTML string for x-html binding.
       // mode 'markdown': parsed + sanitized; 'mono': escaped pre-wrap; 'plain': escaped.
       const text = content || '';
+      let html;
       if (this.chatRenderMode === 'markdown' && typeof marked !== 'undefined' && typeof DOMPurify !== 'undefined') {
-        return DOMPurify.sanitize(marked.parse(text), {USE_PROFILES: {html: true}});
+        html = DOMPurify.sanitize(marked.parse(text), {USE_PROFILES: {html: true}});
+      } else {
+        // For plain/mono: escape HTML entities so x-html is safe
+        const el = document.createElement('div');
+        el.textContent = text;
+        html = el.innerHTML;
       }
-      // For plain/mono: escape HTML entities so x-html is safe
-      const el = document.createElement('div');
-      el.textContent = text;
-      return el.innerHTML;
+      return this._linkifySandboxPaths(html);
+    },
+
+    // LOG-49 follow-on: turn sandbox file paths mentioned in agent
+    // replies into clickable download links. Souls are now taught to
+    // cite the path of any file they create (see souls/_shared/
+    // workspace.md), so wiring this makes the path → download
+    // round-trip one click instead of copy/paste-into-Files-panel.
+    //
+    // Matches (in rendered HTML, after markdown + escaping):
+    //   - Absolute paths under /tmp/hermes or /tmp
+    //   - Tilde-prefixed paths like ~/outputs/report.md (expanded to
+    //     /tmp/hermes/...)
+    // Skips paths already inside an anchor tag so we don't nest links.
+    _linkifySandboxPaths(html) {
+      if (!this.activeChatId) return html;
+      const chat = this.chats.find(c => c.id === this.activeChatId);
+      const aid = chat?.agent_id;
+      if (!aid) return html;  // no agent binding = no sandbox to fetch from
+
+      // Regex: absolute /tmp/hermes/... or /tmp/... or ~/... . Path
+      // chars are conservative — letters, digits, _, -, ., /, and the
+      // leading ~/ form. Anchor trailing punctuation isn't part of
+      // the match so "see /tmp/hermes/foo.py." doesn't eat the dot.
+      // Wrapped in a negative lookahead/lookbehind so we don't
+      // re-linkify an already-anchored path.
+      const PATH_RE = /(?:^|[\s>("'`])(~(?=\/)|\/tmp(?:\/hermes)?)((?:\/[\w.\-]+)+)/g;
+
+      return html.replace(PATH_RE, (match, prefix, rest) => {
+        // The leading char in `match` is either the char that preceded
+        // the path (a space, quote, opening paren, etc.) or empty if
+        // the path starts the string. Preserve it so spacing stays
+        // intact; just wrap the path itself.
+        const lead = match[0] === prefix[0] ? '' : match[0];
+        const visible = (prefix === '~' ? '~' : prefix) + rest;
+        const absolute = (prefix === '~' ? '/tmp/hermes' : prefix) + rest;
+        const href = '/admin/agents/' + encodeURIComponent(aid)
+                   + '/sandbox-files/download?path=' + encodeURIComponent(absolute);
+        const title = 'Download ' + absolute;
+        return lead + '<a href="' + href + '" download title="'
+             + title.replace(/"/g, '&quot;') + '"'
+             + ' class="underline decoration-dotted hover:text-indigo-300"'
+             + '>' + visible + '</a>';
+      });
     },
 
     fmtAgo(ts) {
