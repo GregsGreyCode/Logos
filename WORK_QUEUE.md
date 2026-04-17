@@ -265,8 +265,8 @@ Audit `/opt/hermes` to carve a 1–2 GB image. Migrate browser tools to `@playwr
 
 | # | Item | Status |
 |---|---|---|
-| 35a | Audit log pagination right-aligned (match Runs tab) | OPEN |
-| 35b | Runs origin badges: `platform_telegram` styled pill (match `user_chat`) | OPEN |
+| 35a | Audit log pagination right-aligned (match Runs tab) | DONE (2026-04-17) — justify-between layout with "Showing X-Y of Z" counter on left, pager on right |
+| 35b | Runs origin badges: `platform_telegram` styled pill (match `user_chat`) | DONE (2026-04-17) — unified blue pill for user_chat + platform_\*; text humanized ("platform_telegram" → "Telegram", "user_chat" → "Web chat") |
 | 35c | Rebuild `assets/tailwind.css` (10-day stale per audit) | DONE (2026-04-17) — rebuilt via `npx tailwindcss@3`; 46.9KB → 52KB |
 
 ### LOG-36 · Sub-agent live execution: per-sub-agent boxes
