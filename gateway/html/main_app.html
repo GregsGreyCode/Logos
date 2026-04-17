@@ -600,6 +600,20 @@
               <!-- Agent name -->
               <span data-testid="chat-agent-name" class="text-base font-semibold text-white"
                 x-text="(() => { const chat = chats.find(c => c.id === activeChatId); return chat?.agent_name || 'Agent'; })()"></span>
+              <!-- LOG-40: platform-of-origin badge. When the active chat
+                   was pulled from a messaging platform (TG/Discord/Slack/WA)
+                   the user shouldn't have to guess which side of the bridge
+                   it came from. Sidebar already shows a short pill; this
+                   one is the explicit "via X" so the chat header tells
+                   the whole story at a glance. -->
+              <template x-if="(() => { const c = chats.find(c => c.id === activeChatId); return c && c._platform; })()">
+                <span class="text-[10px] px-1.5 py-0.5 rounded bg-cyan-950 text-cyan-300 border border-cyan-900 font-medium"
+                      x-text="(() => {
+                        const c = chats.find(c => c.id === activeChatId);
+                        const name = ({telegram:'Telegram', discord:'Discord', slack:'Slack', whatsapp:'WhatsApp'})[c?._platform] || c?._platform;
+                        return 'via ' + name;
+                      })()"></span>
+              </template>
               <!-- Canary badge -->
               <template x-if="canary.active">
                 <span class="text-[10px] px-1.5 py-0.5 rounded bg-yellow-900 text-yellow-400 font-semibold animate-pulse">canary</span>
