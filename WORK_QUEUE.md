@@ -137,10 +137,10 @@ Passive recall — agent gets relevant history without needing to call `session_
 
 ## P2 — Medium
 
-### LOG-28 · Bidirectional reply push: web → Telegram
-**Effort:** M · **Type:** Feature · **Status:** OPEN
+### LOG-28 · Bidirectional reply push: web → Telegram — **DONE (2026-04-17)**
+**Effort:** M · **Type:** Feature · **Status:** DONE
 
-`gateway/channels/telegram.py` is inbound-only today. Web replies on a TG-originated chat stay web-only.
+When a web user replies in a chat originated from a platform adapter (Telegram today; Discord/Slack/WhatsApp when those adapters are wired), the agent's final reply is now mirrored back through the in-process adapter via `adapter.send(chat_id, content)`. Client passes `platform` + `platform_chat_id` hints on the `/chat` POST; server mirrors after the final message SSE event. Best-effort: failures log + swallow, the web UI already has the reply.
 
 ### LOG-29 · Wire Telegram slash commands as `CommandHandler`s — **DONE (2026-04-17)**
 **Effort:** S · **Type:** Bug · **Status:** DONE

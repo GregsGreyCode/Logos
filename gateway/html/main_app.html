@@ -9062,6 +9062,13 @@ function app() {
             // rejects requests without agent_id.
             agent_id: chat.agent_id || this.activeInstance?.id || undefined,
             worker_id: this.activeInstance?.worker_id || undefined,
+            // LOG-28: when this chat is viewing a platform-originated
+            // session (e.g. a Telegram conversation), pass the platform
+            // + original chat_id so the backend mirrors the agent's
+            // reply back to that platform. Without this hint the reply
+            // lives only in the web UI and the TG user sees nothing.
+            platform: chat._platform || undefined,
+            platform_chat_id: chat._platform ? chat.id : undefined,
             // Client-side history fallback — only used by the backend when
             // its session_store has no transcript for this session_id.
             // Covers the "promoted from Compare" flow (compare sends
