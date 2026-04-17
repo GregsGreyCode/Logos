@@ -489,6 +489,10 @@ def _run_migrations() -> None:
             # Mirrors agents.daily_budget_usd but applies at the user
             # level, summed across every agent the user has dispatched.
             "ALTER TABLE users ADD COLUMN daily_budget_usd REAL",
+            # v26b: add user_id to cost_log so per-user rollups don't
+            # need a JOIN to dispatches/agents. NULL on historical rows
+            # (pre-migration) — they just don't contribute to new caps.
+            "ALTER TABLE cost_log ADD COLUMN user_id TEXT",
         ):
             try:
                 conn.execute(stmt)
@@ -3207,6 +3211,7 @@ def insert_cost_entry(
     cost_usd: float = 0.0,
     pricing_known: bool = False,
     ts: int = None,
+    user_id: str = None,
 ) -> str:
     """Record one request's token usage + cost.
 
@@ -3214,6 +3219,10 @@ def insert_cost_entry(
     unknown — the row goes in with cost_usd=0 and pricing_known=0 so
     the dashboard can surface "N requests with unknown pricing" without
     silently dropping data.
+
+    ``user_id`` attributes the cost to the caller who initiated the
+    dispatch so the per-user budget cap (LOG-25.6) can roll up cheaply.
+    NULL is acceptable for legacy / system-initiated rows.
     """
     import uuid as _uuid
     if ts is None:
@@ -3224,14 +3233,52 @@ def insert_cost_entry(
             "INSERT INTO cost_log ("
             "id, ts, agent_id, agent_name, session_id, task_id, provider, model, "
             "input_tokens, output_tokens, cache_read_tok, cache_write_tok, "
-            "cost_usd, pricing_known) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "cost_usd, pricing_known, user_id) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (row_id, ts, agent_id, agent_name, session_id, task_id, provider, model,
              int(input_tokens or 0), int(output_tokens or 0),
              int(cache_read_tokens or 0), int(cache_write_tokens or 0),
-             float(cost_usd or 0), 1 if pricing_known else 0),
+             float(cost_usd or 0), 1 if pricing_known else 0,
+             user_id or None),
         )
     return row_id
+
+
+def get_dispatch_by_task_id(task_id: str) -> Optional[dict]:
+    """Fetch the most-recent dispatch row for a task_id. Used by the
+    cost-logger in worker_registry to attribute cost rows to the user
+    who initiated the dispatch (LOG-25.6). Returns None when the task
+    isn't in the ledger (e.g. cron/system-initiated dispatches)."""
+    if not task_id:
+        return None
+    with _conn() as conn:
+        row = conn.execute(
+            "SELECT * FROM dispatches WHERE task_id = ? "
+            "ORDER BY started_at DESC LIMIT 1",
+            (task_id,),
+        ).fetchone()
+        return dict(row) if row else None
+
+
+def user_cost_rollup_24h(user_id: str) -> float:
+    """Return the total cost_usd billed to ``user_id`` over the last 24h.
+
+    Used by the per-user daily budget gate in _handle_chat (LOG-25.6).
+    Counts only rows stamped with this user_id — legacy rows with NULL
+    user_id are excluded (they pre-date the column and can't be
+    attributed cleanly). Admins can still inspect global rollups via
+    cost_rollup(); this helper is specifically for enforcement.
+    """
+    if not user_id:
+        return 0.0
+    since = int(time.time() * 1000) - 86_400_000
+    with _conn() as conn:
+        row = conn.execute(
+            "SELECT COALESCE(SUM(cost_usd), 0) FROM cost_log "
+            "WHERE user_id = ? AND ts >= ?",
+            (user_id, since),
+        ).fetchone()
+        return float(row[0] or 0) if row else 0.0
 
 
 def cost_rollup(

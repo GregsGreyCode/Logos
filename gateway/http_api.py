@@ -4084,6 +4084,41 @@ async def _handle_chat(request: web.Request) -> web.StreamResponse:
             except Exception as _dsp_exc:
                 logger.warning("dispatch ledger create skipped: %s", _dsp_exc)
 
+            # ── Per-user budget gate (LOG-25.6) ─────────────────────────
+            # Applied BEFORE the per-agent gate because the user-level
+            # cap is the cross-agent aggregate — if a user has burned
+            # their daily cap across multiple shared agents, we stop
+            # here regardless of any single agent's budget. Admins
+            # bypass by convention (they're the budget setters).
+            _caller_uid = (_auth_user.get("id") or "") if _auth_user else ""
+            if _caller_uid and _auth_user.get("role") != "admin":
+                try:
+                    _user_row = auth_db.get_user_by_id(_caller_uid) or {}
+                    _user_cap = _user_row.get("daily_budget_usd")
+                    if _user_cap is not None and float(_user_cap) > 0:
+                        _user_spent = auth_db.user_cost_rollup_24h(_caller_uid)
+                        if _user_spent >= float(_user_cap):
+                            await send_event({
+                                "type": "error",
+                                "error_title": "Daily user budget exceeded",
+                                "error_type": "budget",
+                                "error_action": (
+                                    f"You've spent ${_user_spent:.2f} of "
+                                    f"${float(_user_cap):.2f} across all your "
+                                    f"agents today. Ask an admin to raise "
+                                    f"your cap, or wait for the 24h window "
+                                    f"to roll over."
+                                ),
+                                "content": (
+                                    f"user_budget_exceeded spent=${_user_spent:.2f} "
+                                    f"cap=${float(_user_cap):.2f}"
+                                ),
+                            })
+                            await send_event({"type": "message", "content": ""})
+                            return resp
+                except Exception as _ubg_exc:
+                    logger.warning("user-budget gate skipped: %s", _ubg_exc)
+
             # ── Budget gate ─────────────────────────────────────────────
             # Refuse this dispatch if the agent's daily_budget_usd has
             # already been exceeded by today's cost_log rows. For agents

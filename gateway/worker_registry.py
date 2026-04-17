@@ -688,6 +688,17 @@ class WorkerRegistry:
             cache_write_tokens=cache_write,
             cost_usd=cost or 0.0,
             pricing_known=pricing_known,
+            # LOG-25.6: attribute cost to the dispatch's initiator so
+            # the per-user daily budget rollup in _handle_chat doesn't
+            # need to JOIN through dispatches. user_id is looked up from
+            # the dispatches row by task_id since the dispatch record is
+            # the authoritative who-did-what ledger. NULL is acceptable
+            # for legacy / system-initiated calls.
+            user_id=(
+                _adb.get_dispatch_by_task_id(task_id).get("user_id")
+                if task_id and hasattr(_adb, "get_dispatch_by_task_id")
+                else None
+            ),
         )
 
     # ─── Sandbox state sync ──────────────────────────────────────────────
