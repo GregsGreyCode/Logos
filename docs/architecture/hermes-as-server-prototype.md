@@ -316,6 +316,54 @@ Estimated Phase 1 effort revised **down** from M–L to **S–M** based on empir
 
 ---
 
+## Phase 1 integration patch (to apply whenever ready)
+
+Drop-in helper module landed at `gateway/executors/hermes_server_mode.py`. It exports `enable_hermes_server_mode(sandbox_name, config)` which does deploy→launch→health-probe in one call, plus `is_enabled()` for the env var check. Validated end-to-end by `prototypes/log44-phase1/test_hermes_server_mode.py` against `hermes-henry` — 0.18s cold-start to `/health`=200.
+
+**The one remaining change**: insert this block into `OpenShellExecutor.spawn` (in `gateway/executors/openshell.py`) right before the "Phase 3 (under lock): flip the record's phase to ready" block (around line 1308):
+
+```python
+# ── LOG-44 Phase 1: optional Hermes-as-server mode ─────
+#
+# Gated by env var LOGOS_HERMES_SERVER_MODE=1. When enabled, the
+# upstream `hermes gateway run` HTTP server starts inside the sandbox
+# here, so subsequent dispatches can use HTTP into /v1/runs instead of
+# the per-task sandbox_worker.py subprocess. No-op when the env var
+# is unset — Plan A-prime remains in force.
+_hermes_srv_setup = None
+try:
+    from .hermes_server_mode import (
+        is_enabled as _log44_enabled,
+        enable_hermes_server_mode as _log44_enable,
+    )
+    if _log44_enabled():
+        logger.info(
+            "spawn(%s): LOGOS_HERMES_SERVER_MODE=1 — enabling "
+            "hermes-as-server mode", sandbox_name,
+        )
+        _hermes_srv_setup = _log44_enable(sandbox_name, config)
+except ImportError:
+    logger.debug("spawn(%s): hermes_server_mode not importable — skipping", sandbox_name)
+```
+
+Then extend the existing `with _state_lock():` block to stash the setup on the record (so `dispatch_task_v2` can retrieve it without re-deriving):
+
+```python
+if i.get("sandbox_name") == sandbox_name:
+    i["phase"] = "ready"
+    if _hermes_srv_setup is not None:
+        i["hermes_server_setup"] = {
+            "api_key": _hermes_srv_setup.api_key,
+            "base_url": _hermes_srv_setup.base_url,
+            "hermes_home": _hermes_srv_setup.hermes_home,
+        }
+    break
+```
+
+Rollback is free: any failure inside `_log44_enable` raises `RuntimeError`/`TimeoutError`, which falls into the existing `except subprocess.CalledProcessError as exc:` handler at ~line 1328 — that already removes the state record and deletes the sandbox CR. Add `(RuntimeError, TimeoutError)` to the except clause if stricter cleanup is wanted; otherwise the outer try/finally around spawn will propagate the error and the caller retries.
+
+**Persistence concern**: the `api_key` is random-per-sandbox (`secrets.token_urlsafe(32)`) and would land in `~/.logos/openshell_instances.json`. For a shared dev box this is fine; for production, consider keyring or gateway-memory storage. Note separately in the LOG-44.4 sessions/memory reconciliation phase.
+
 ## Files referenced (for whoever picks this up)
 
 - `knowledge-repos/hermes-agent/gateway/platforms/api_server.py` — the API surface
