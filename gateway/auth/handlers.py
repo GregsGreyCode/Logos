@@ -55,6 +55,57 @@ def _settings_public(settings: dict | None) -> dict:
 
 # ── Auth endpoints ─────────────────────────────────────────────────────────
 
+async def handle_platform_settings_get(request: web.Request) -> web.Response:
+    """GET /admin/platform-settings — admin-only full read of
+    platform_settings. The public /auth/registration-status subset is
+    fine for un-authed pages; admins need to see require_approval and
+    any future flags too (LOG-25.7)."""
+    settings = auth_db.get_platform_settings()
+    return web.json_response({
+        "allow_registration": bool(settings.get("allow_registration")),
+        "require_approval":   bool(settings.get("require_approval", 1)),
+    })
+
+
+async def handle_platform_settings_patch(request: web.Request) -> web.Response:
+    """PATCH /admin/platform-settings — admin-only toggle of
+    platform_settings flags. Audit-logged (LOG-25.7)."""
+    caller = request.get("current_user") or {}
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "invalid_json"}, status=400)
+    updates: dict = {}
+    if "allow_registration" in body:
+        updates["allow_registration"] = 1 if body["allow_registration"] else 0
+    if "require_approval" in body:
+        updates["require_approval"]   = 1 if body["require_approval"]   else 0
+    if not updates:
+        return await handle_platform_settings_get(request)
+    auth_db.set_platform_settings(**updates)
+    auth_db.write_audit_log(
+        caller.get("sub") or caller.get("id") or "",
+        "update_platform_settings",
+        target_type="platform_settings", target_id="1",
+        metadata=updates, ip_address=request.remote,
+    )
+    return await handle_platform_settings_get(request)
+
+
+async def handle_registration_status(request: web.Request) -> web.Response:
+    """Public — returns whether self-service registration is enabled.
+
+    The login page hits this on init to decide whether to show a
+    "Create an account" inline toggle. Doesn't leak anything sensitive
+    (the gate is a boolean known to anyone who can view the page).
+    """
+    settings = auth_db.get_platform_settings()
+    return web.json_response({
+        "allow_registration": bool(settings.get("allow_registration")),
+        "require_approval":   bool(settings.get("require_approval", 1)),
+    })
+
+
 async def handle_register(request: web.Request) -> web.Response:
     """Self-service registration (LOG-25.7).
 

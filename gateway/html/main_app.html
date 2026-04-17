@@ -3993,7 +3993,39 @@
     </div>
 
     <!-- ── Users sub-tab ── -->
-    <div x-show="tab==='admin' && adminTab==='users' && can('manage_users')">
+    <div x-show="tab==='admin' && adminTab==='users' && can('manage_users')"
+         x-init="loadPlatformSettings?.()">
+
+      <!-- LOG-25.7: Registration settings — controls whether un-authed
+           visitors can create accounts via /auth/register, and whether
+           those accounts land in 'pending' (admin approves) or 'active'
+           (instant). Visible to admins only via the outer x-show guard. -->
+      <div class="bg-gray-900 border border-gray-800 rounded-xl p-4 mb-4">
+        <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">Registration</div>
+        <div class="space-y-3">
+          <label class="flex items-start gap-3 cursor-pointer">
+            <input type="checkbox" class="mt-1"
+                   :checked="platformSettings.allow_registration"
+                   @change="savePlatformSettings({ allow_registration: $event.target.checked })">
+            <span>
+              <span class="text-sm text-gray-200 block">Allow self-service registration</span>
+              <span class="text-xs text-gray-500 block">When on, the login page shows a "Create an account" option that anyone on your network can use.</span>
+            </span>
+          </label>
+          <label class="flex items-start gap-3 cursor-pointer"
+                 :class="platformSettings.allow_registration ? '' : 'opacity-50 pointer-events-none'">
+            <input type="checkbox" class="mt-1"
+                   :checked="platformSettings.require_approval"
+                   :disabled="!platformSettings.allow_registration"
+                   @change="savePlatformSettings({ require_approval: $event.target.checked })">
+            <span>
+              <span class="text-sm text-gray-200 block">Require admin approval for new accounts</span>
+              <span class="text-xs text-gray-500 block">New users land in <span class="font-mono text-gray-400">pending</span> and can't sign in until you flip their status to <span class="font-mono text-gray-400">active</span> below.</span>
+            </span>
+          </label>
+        </div>
+      </div>
+
       <div class="flex items-center justify-between mb-4 gap-3 flex-wrap">
         <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Users</div>
         <div class="flex items-center gap-2 flex-wrap">
@@ -6459,6 +6491,9 @@ function app() {
     adminUsers: [],
     adminUsersTotal: 0,
     adminUsersPage: 1,
+    // LOG-25.7: platform-settings toggles (registration + approval).
+    // Hydrated from /admin/platform-settings when the Users tab opens.
+    platformSettings: { allow_registration: false, require_approval: true },
     adminUsersLimit: 20,
     adminUsersQuery: '',
     _adminUsersSearchTimer: null,
@@ -9549,6 +9584,41 @@ function app() {
         this.adminUsers = d.users || [];
         this.adminUsersTotal = d.total || 0;
       } catch(e) { this.adminUsers = []; this.adminUsersTotal = 0; }
+    },
+
+    // LOG-25.7: Admin → Users → Registration panel backing store.
+    async loadPlatformSettings() {
+      try {
+        const r = await fetch('/admin/platform-settings', {credentials:'include'});
+        if (!r.ok) return;
+        const d = await r.json();
+        this.platformSettings = {
+          allow_registration: !!d.allow_registration,
+          require_approval:   !!d.require_approval,
+        };
+      } catch(e) { /* keep defaults */ }
+    },
+    async savePlatformSettings(patch) {
+      // Optimistic update so the checkbox doesn't bounce back while the
+      // request is in flight. Reverts on non-OK response.
+      const prev = { ...this.platformSettings };
+      this.platformSettings = { ...this.platformSettings, ...patch };
+      try {
+        const r = await fetch('/admin/platform-settings', {
+          method: 'PATCH',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken() },
+          body: JSON.stringify(patch),
+        });
+        if (!r.ok) throw new Error(await r.text());
+        const d = await r.json();
+        this.platformSettings = {
+          allow_registration: !!d.allow_registration,
+          require_approval:   !!d.require_approval,
+        };
+      } catch(e) {
+        this.platformSettings = prev;
+      }
     },
 
     // ── Sandbox policy presets (OpenShell network_policies) ─────────────
