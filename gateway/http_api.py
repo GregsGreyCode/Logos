@@ -5253,6 +5253,15 @@ async def start_http_api(runner: Any, port: int = 8091) -> None:
                        _mm(admin_handlers.handle_agent_activity_get))
     app.router.add_get("/admin/agents/{id}/files",
                        _mm(admin_handlers.handle_agent_files_get))
+    # LOG-49: per-file download of agent-produced files (host-side).
+    app.router.add_get("/admin/agents/{id}/files/download",
+                       _mm(admin_handlers.handle_agent_file_download))
+    # LOG-49.1/49.2/49.3: live sandbox filesystem browse + download.
+    # Read-only introspection via `openshell sandbox exec` + `download`.
+    app.router.add_get("/admin/agents/{id}/sandbox-files",
+                       _mm(admin_handlers.handle_agent_sandbox_files_get))
+    app.router.add_get("/admin/agents/{id}/sandbox-files/download",
+                       _mm(admin_handlers.handle_agent_sandbox_file_download))
     app.router.add_post("/admin/agents/{id}/tools/toolsets/toggle",
                         _mm(require_csrf(admin_handlers.handle_agent_toolsets_toggle)))
     app.router.add_post("/admin/agents/{id}/tools/presets/toggle",

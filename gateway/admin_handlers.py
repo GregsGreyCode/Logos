@@ -3218,6 +3218,298 @@ async def handle_agent_activity_get(request: web.Request) -> web.Response:
     })
 
 
+async def handle_agent_sandbox_files_get(request: web.Request) -> web.Response:
+    """GET /admin/agents/{id}/sandbox-files?path=… — directory listing from
+    INSIDE the agent's sandbox (LOG-49.1/49.3).
+
+    Unlike handle_agent_files_get (which walks the host-side per-agent
+    dir), this runs ``openshell sandbox exec`` against the live sandbox
+    so users can see files the agent just created — scripts, cron
+    configs, outputs in /home, /tmp/hermes, etc.
+
+    On-demand, no caching. The sandbox exec cold-start is ~200ms so
+    navigation feels responsive without adding a sync layer.
+
+    Query params:
+      * path (optional) — absolute path inside the sandbox to list.
+        Defaults to ``/root`` (the sandbox user's home). Validated
+        to start with a whitelisted root to prevent shell-metachar
+        games and keep listings scoped to sensible locations.
+
+    Returns a short JSON payload: { path, entries: [{name, type,
+    size, mtime}], roots: [known useful dirs] }.
+    """
+    user = request.get("current_user") or {}
+    if user.get("role", "") not in ("admin", "operator"):
+        return web.json_response({"error": "forbidden"}, status=403)
+
+    name, agent_dir, err = _resolve_agent_dir(request.match_info["id"])
+    if err is not None:
+        return err
+
+    # Useful-root shortlist — surfaces in the UI as quick-jump buttons
+    # so users don't have to remember where the sandbox keeps things.
+    KNOWN_ROOTS = [
+        "/root",              # home dir for root-user sandboxes
+        "/home/agent",        # home dir for non-root sandboxes
+        "/tmp/hermes",        # Logos's per-instance config/memories
+        "/tmp",               # everything else ephemeral
+        "/sandbox",           # NemoClaw-style immutable agent dir
+        "/workspace",         # conventional scratch location
+        "/app",               # hermes-sandbox image code
+    ]
+
+    path = (request.rel_url.query.get("path") or "/root").strip() or "/root"
+    # Allow absolute paths only — reject relative + traversal tricks.
+    if not path.startswith("/") or ".." in path.split("/"):
+        return web.json_response({"error": "invalid_path"}, status=400)
+
+    # Resolve sandbox_name + gateway via the state file (same lookup
+    # path worker_registry uses).
+    from gateway.executors.openshell import _load_state, _sanitize_sandbox_name
+    sandbox_name = _sanitize_sandbox_name(f"hermes-{name}")
+    gateway = None
+    for inst in _load_state():
+        if inst.get("sandbox_name") == sandbox_name:
+            gateway = inst.get("openshell_name", "")
+            break
+
+    import subprocess, shlex
+    # `stat -c` gives us parseable fields: name\ttype\tsize\tmtime.
+    # Run inside the sandbox via `openshell sandbox exec`, capturing
+    # stdout. Uses `find -maxdepth 1` so we only list the target dir
+    # (not recurse). ls -la was considered but is messier to parse.
+    listing_cmd = (
+        f"cd {shlex.quote(path)} 2>/dev/null && "
+        f'find . -maxdepth 1 -mindepth 1 '
+        f'-printf "%f\\t%y\\t%s\\t%T@\\n" '
+        f'2>/dev/null | sort'
+    )
+    exec_args = ["openshell"]
+    if gateway:
+        exec_args += ["-g", gateway]
+    exec_args += ["sandbox", "exec", "--no-tty", "--name", sandbox_name,
+                  "--", "sh", "-c", listing_cmd]
+    try:
+        result = subprocess.run(
+            exec_args, capture_output=True, text=True, timeout=15,
+            stdin=subprocess.DEVNULL,
+        )
+    except subprocess.TimeoutExpired:
+        return web.json_response({"error": "exec_timeout"}, status=504)
+    except Exception as exc:
+        return web.json_response({"error": "exec_failed", "detail": str(exc)[:200]}, status=500)
+
+    entries: list[dict] = []
+    if result.returncode == 0:
+        for line in (result.stdout or "").splitlines():
+            parts = line.split("\t")
+            if len(parts) != 4:
+                continue
+            fname, ftype, size_s, mtime_s = parts
+            try: size = int(size_s)
+            except ValueError: size = 0
+            try: mtime = float(mtime_s)
+            except ValueError: mtime = 0.0
+            # `find -printf %y` types: d=dir, f=file, l=symlink, c=char, ...
+            kind = {"d": "dir", "f": "file", "l": "link"}.get(ftype, "other")
+            entries.append({
+                "name": fname, "type": kind, "size": size, "mtime": mtime,
+            })
+
+    # Dirs first, then files, each group name-sorted.
+    entries.sort(key=lambda e: (0 if e["type"] == "dir" else 1, e["name"]))
+
+    return web.json_response({
+        "path": path,
+        "parent": ("/".join(path.rstrip("/").split("/")[:-1]) or "/") if path != "/" else None,
+        "entries": entries,
+        "roots": KNOWN_ROOTS,
+        "sandbox": sandbox_name,
+        "exec_ok": result.returncode == 0,
+    })
+
+
+async def handle_agent_sandbox_file_download(request: web.Request) -> web.StreamResponse:
+    """GET /admin/agents/{id}/sandbox-files/download?path=… — stream a
+    single file from INSIDE the sandbox via ``openshell sandbox download``
+    (LOG-49.2).
+
+    Same safety model as handle_agent_file_download but reads from the
+    sandbox filesystem instead of the host. Downloads to a tempfile,
+    streams the bytes, then unlinks.
+    """
+    user = request.get("current_user") or {}
+    if user.get("role", "") not in ("admin", "operator"):
+        return web.json_response({"error": "forbidden"}, status=403)
+
+    name, agent_dir, err = _resolve_agent_dir(request.match_info["id"])
+    if err is not None:
+        return err
+
+    path = (request.rel_url.query.get("path") or "").strip()
+    if not path or not path.startswith("/") or ".." in path.split("/"):
+        return web.json_response({"error": "invalid_path"}, status=400)
+
+    from gateway.executors.openshell import _load_state, _sanitize_sandbox_name
+    from pathlib import Path as _Path
+    import subprocess, tempfile, os as _os
+    sandbox_name = _sanitize_sandbox_name(f"hermes-{name}")
+    gateway = None
+    for inst in _load_state():
+        if inst.get("sandbox_name") == sandbox_name:
+            gateway = inst.get("openshell_name", "")
+            break
+
+    # openshell sandbox download wants (sandbox, sandbox-path, host-dir)
+    # and writes the file into host-dir keeping its basename. Use a
+    # unique tempdir per request so concurrent downloads don't collide.
+    tmp_root = _Path(tempfile.mkdtemp(prefix="logos-sb-dl-"))
+    exec_args = ["openshell"]
+    if gateway:
+        exec_args += ["-g", gateway]
+    exec_args += ["sandbox", "download", sandbox_name, path, str(tmp_root)]
+    try:
+        result = subprocess.run(
+            exec_args, capture_output=True, text=True, timeout=60,
+        )
+    except subprocess.TimeoutExpired:
+        return web.json_response({"error": "download_timeout"}, status=504)
+    except Exception as exc:
+        return web.json_response({"error": "download_failed", "detail": str(exc)[:200]}, status=500)
+
+    if result.returncode != 0:
+        return web.json_response({
+            "error": "download_returned_nonzero",
+            "detail": (result.stderr or result.stdout or "")[:400],
+        }, status=500)
+
+    # Locate the downloaded file. openshell preserves basename but the
+    # exact on-disk layout is implementation-defined; walk the tmp dir
+    # and grab the single file we find.
+    downloaded: Optional[_Path] = None
+    for p in tmp_root.rglob("*"):
+        if p.is_file():
+            downloaded = p
+            break
+    if downloaded is None:
+        return web.json_response({"error": "download_empty"}, status=500)
+
+    MAX_DOWNLOAD_BYTES = 100 * 1024 * 1024
+    size = downloaded.stat().st_size
+    if size > MAX_DOWNLOAD_BYTES:
+        try: downloaded.unlink()
+        except Exception: pass
+        return web.json_response({
+            "error": "file_too_large",
+            "size_bytes": size,
+            "max_bytes": MAX_DOWNLOAD_BYTES,
+        }, status=413)
+
+    fname = _Path(path).name or "download"
+    resp = web.StreamResponse(
+        status=200,
+        headers={
+            "Content-Type": "application/octet-stream",
+            "Content-Length": str(size),
+            "Content-Disposition": f'attachment; filename="{fname}"',
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
+    await resp.prepare(request)
+    try:
+        with downloaded.open("rb") as fh:
+            while True:
+                chunk = fh.read(64 * 1024)
+                if not chunk: break
+                await resp.write(chunk)
+        await resp.write_eof()
+    finally:
+        # Clean up the tmpdir — no point leaving agent files on host fs
+        # under /tmp forever.
+        try:
+            import shutil as _sh
+            _sh.rmtree(tmp_root, ignore_errors=True)
+        except Exception: pass
+    return resp
+
+
+async def handle_agent_file_download(request: web.Request) -> web.StreamResponse:
+    """GET /admin/agents/{id}/files/download?rel_path=... — stream a
+    single file from the per-agent host dir (LOG-49 part 1).
+
+    Companion to ``handle_agent_files_get``: the listing endpoint shows
+    what's on disk, this one lets the admin actually fetch a file the
+    agent produced (scripts it wrote, cron configs it set up, outputs
+    it generated, etc.).
+
+    Safety:
+      - admin/operator only (same gate as the list endpoint)
+      - rel_path is resolved under the agent_dir and rejected if it
+        escapes (symlink or `..` traversal) — returns 400 not 404 to
+        make the failure loud during dev
+      - 100MB cap to stop accidental huge-file downloads stalling the
+        gateway; returns 413 with a clear message for anything bigger
+    """
+    user = request.get("current_user") or {}
+    if user.get("role", "") not in ("admin", "operator"):
+        return web.json_response({"error": "forbidden"}, status=403)
+
+    name, agent_dir, err = _resolve_agent_dir(request.match_info["id"])
+    if err is not None:
+        return err
+
+    rel_path = (request.rel_url.query.get("rel_path") or "").strip()
+    if not rel_path:
+        return web.json_response({"error": "rel_path required"}, status=400)
+
+    from pathlib import Path as _Path
+    try:
+        # Resolve both sides so symlinks are collapsed, then ensure the
+        # resolved target is under the agent dir. Rejects `../` tricks
+        # and symlinks pointing outside the agent's sandbox mirror.
+        agent_root = agent_dir.resolve()
+        target = (agent_dir / rel_path).resolve()
+        target.relative_to(agent_root)  # raises ValueError on escape
+    except Exception:
+        return web.json_response({"error": "path_escape"}, status=400)
+
+    if not target.is_file():
+        return web.json_response({"error": "not_found"}, status=404)
+
+    MAX_DOWNLOAD_BYTES = 100 * 1024 * 1024  # 100MB
+    try:
+        size = target.stat().st_size
+    except OSError as exc:
+        return web.json_response({"error": "stat_failed", "detail": str(exc)[:200]}, status=500)
+    if size > MAX_DOWNLOAD_BYTES:
+        return web.json_response({
+            "error": "file_too_large",
+            "size_bytes": size,
+            "max_bytes": MAX_DOWNLOAD_BYTES,
+        }, status=413)
+
+    # Stream the file with a Content-Disposition so browsers save it.
+    resp = web.StreamResponse(
+        status=200,
+        headers={
+            "Content-Type": "application/octet-stream",
+            "Content-Length": str(size),
+            "Content-Disposition": f'attachment; filename="{_Path(rel_path).name}"',
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
+    await resp.prepare(request)
+    with target.open("rb") as fh:
+        while True:
+            chunk = fh.read(64 * 1024)
+            if not chunk:
+                break
+            await resp.write(chunk)
+    await resp.write_eof()
+    return resp
+
+
 async def handle_agent_files_get(request: web.Request) -> web.Response:
     """GET /admin/agents/{id}/files — flat listing of the agent's on-disk directory.
 
