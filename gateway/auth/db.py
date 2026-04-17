@@ -3110,6 +3110,7 @@ def list_dispatches(
     origin: str = None,
     status: str = None,
     session_id: str = None,
+    user_id: str = None,
     limit: int = 50,
     offset: int = 0,
     q: str = None,
@@ -3119,7 +3120,9 @@ def list_dispatches(
     ``session_id`` filter is used by the STAMP-run enrichment path
     (``/runs/{id}``) to pull every dispatch that belongs to a given
     session so token totals + origin chain can be assembled without
-    a second query from the caller.
+    a second query from the caller. ``user_id`` is the per-user
+    isolation filter applied by ``handle_dispatches_list`` when the
+    caller's role is not admin/operator (LOG-25.1).
     """
     where_parts = []
     params = []
@@ -3135,6 +3138,9 @@ def list_dispatches(
     if session_id:
         where_parts.append("session_id = ?")
         params.append(session_id)
+    if user_id:
+        where_parts.append("user_id = ?")
+        params.append(user_id)
     if q:
         # LIKE-based free-text filter across the columns most users want
         # to search on: agent id, sandbox name, model, session id,

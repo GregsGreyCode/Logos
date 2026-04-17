@@ -5111,7 +5111,11 @@ async def start_http_api(runner: Any, port: int = 8091) -> None:
     app.router.add_delete("/api/admin/platforms/home-channel",            _mm(require_csrf(_handle_platforms_home_channel_delete)))
     app.router.add_post("/api/admin/platforms/home-channel/test",         _mm(require_csrf(_handle_platforms_home_channel_test)))
 
-    app.router.add_get("/admin/dispatches",           _mm(admin_handlers.handle_dispatches_list))
+    # LOG-25.1: view_runs (not manage_machines). Users have view_runs in
+    # RBAC and need the Runs tab to actually load; handle_dispatches_list
+    # filters rows to the caller's own user_id for non-admin/operator so
+    # they see their own runs but not other users' histories.
+    app.router.add_get("/admin/dispatches",           require_permission("view_runs")(admin_handlers.handle_dispatches_list))
     app.router.add_get("/admin/agents",              _mm(admin_handlers.handle_agents_list))
     app.router.add_post("/admin/agents",             _mm(require_csrf(admin_handlers.handle_agents_post)))
     app.router.add_patch("/admin/agents/{id}",       _mm(require_csrf(admin_handlers.handle_agents_patch)))
