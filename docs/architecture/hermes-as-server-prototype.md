@@ -286,7 +286,20 @@ SSE events are `data: <json>` lines. Event shapes confirmed:
 6. **Config schema has `model:` as a nested block, not flat.** My first pass with flat `provider: custom, model: gpt-oss-20b` got "Active profile: custom" (profile name lookup, not model config). Must be `model: {default, provider, base_url}`.
 7. **`API_SERVER_KEY` auth works correctly** (correcting earlier misread — I was sending the header in my first test). Matrix confirmed empirically: `/health` is public (for probes); `/v1/models`, `/v1/chat/completions`, `/api/jobs`, `/v1/runs` all return 401 without the Bearer header or with a wrong key. Env var in `.env` is sufficient.
 
-### What this changes about the Monday plan
+### End-to-end cycle validated (2026-04-17 second pass)
+
+`prototypes/log44-phase1/spawn_and_dispatch.py` exercises the full path:
+
+1. Deploy config (`config.yaml` + `.env`) into sandbox via `openshell sandbox exec`
+2. Launch `hermes gateway run -v` as a background process via `nohup`
+3. Poll `/health` until 200 (readiness gate)
+4. Dispatch a task via `dispatch_task_v2`, stream response
+
+**Cold-start measurement:** from `hermes gateway run &` to `/health` = 200 OK took **~0.2 seconds**. That's far better than the 2–3s I'd assumed. Per-sandbox spawn overhead for LOG-44 is essentially free.
+
+Idempotent re-launch: if gateway already running, `launch_gateway()` no-ops (checks `pgrep -f 'hermes gateway run'`).
+
+### What this changes about the implementation plan
 
 The doc's original "build derived base image" step is **not needed** — `hermes-sandbox:m12` already has everything required. Phase 1 implementation can go straight to:
 
