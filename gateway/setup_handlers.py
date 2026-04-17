@@ -59,12 +59,37 @@ _SETUP_PROGRESS: dict[str, object] = {
     "done": False,
     "ok": False,
     "error": "",
+    # Optional sub-stage drill-down. Today only the `spawn_sandbox` stage
+    # populates these because it's the only multi-minute stage in the
+    # pipeline. ``substage`` is a slug the frontend can map to a nested
+    # sub-stepper (check_image / import_image / create_pod / upload_config
+    # / finalize); ``sub_percent`` is 0-100 for the current sub-stage
+    # (currently only meaningful during import_image, where we stream
+    # bytes through the pipe). Empty substage = stage has no sub-stepper
+    # to display.
+    "substage": "",
+    "sub_percent": 0,
 }
 
 
-def _setup_progress_update(stage: str, label: str, *, done: bool = False, ok: bool = False, error: str = "") -> None:
+def _setup_progress_update(
+    stage: str,
+    label: str,
+    *,
+    done: bool = False,
+    ok: bool = False,
+    error: str = "",
+    substage: str = "",
+    sub_percent: int = 0,
+) -> None:
     """Record a setup-flow stage transition. Cheap; called inline from the
-    /api/setup/complete handler. See ``_SETUP_PROGRESS`` for shape."""
+    /api/setup/complete handler. See ``_SETUP_PROGRESS`` for shape.
+
+    ``substage`` and ``sub_percent`` are optional drill-down fields the
+    spawn_sandbox stage uses to report its internal phases (image check /
+    import / pod create / config upload / finalize) plus byte-level
+    progress during the long image import.
+    """
     now = int(time.time() * 1000)
     if _SETUP_PROGRESS.get("stage") == "idle":
         _SETUP_PROGRESS["started_at"] = now
@@ -74,6 +99,8 @@ def _setup_progress_update(stage: str, label: str, *, done: bool = False, ok: bo
     _SETUP_PROGRESS["done"] = done
     _SETUP_PROGRESS["ok"] = ok
     _SETUP_PROGRESS["error"] = error
+    _SETUP_PROGRESS["substage"] = substage
+    _SETUP_PROGRESS["sub_percent"] = int(sub_percent) if sub_percent else 0
     logger.info("setup_progress: %s — %s%s", stage, label, " (done)" if done else "")
 
 
@@ -3299,7 +3326,7 @@ async def handle_setup_complete(request: web.Request) -> web.Response:
         # route. The user can fix the route later from
         # /admin/model-routes instead of having setup block on a
         # recoverable failure.
-        _setup_progress_update("provision_route", "Provisioning model route (this can take 5\u201315 seconds)\u2026")
+        _setup_progress_update("provision_route", "Provisioning model route\u2026")
         provisioned_route = None  # populated below if provision succeeds
         try:
             from gateway import openshell_routes as _osr
@@ -3318,6 +3345,27 @@ async def handle_setup_complete(request: web.Request) -> web.Response:
                     provisioned_route["openshell_name"],
                     provisioned_route["status"],
                 )
+                # Wait for the sub-gateway's sandbox RPC to actually
+                # come online before the spawn step below. Without
+                # this block, fresh installs that just provisioned a
+                # new sub-gateway hit a race where `openshell sandbox
+                # create -g <new-gateway>` falls back to auto-starting
+                # the primordial (misleading error:
+                # "No gateway found — starting one automatically").
+                # Clicking Launch a second time used to mask this
+                # because the gateway had finished booting by then.
+                _osh_name = provisioned_route.get("openshell_name")
+                if _osh_name:
+                    _setup_progress_update(
+                        "provision_route",
+                        "Waiting for model route to come online\u2026",
+                    )
+                    if not _osr.wait_for_gateway_ready(_osh_name, timeout=90):
+                        logger.warning(
+                            "setup: sub-gateway '%s' did not reach Ready within 90s — "
+                            "proceeding anyway; spawn may fall back to default gateway",
+                            _osh_name,
+                        )
         except Exception as _route_err:
             logger.warning(
                 "setup: provision_or_reuse_route failed for %s/%s — agent will "
@@ -3460,11 +3508,27 @@ async def handle_setup_complete(request: web.Request) -> web.Response:
 
             _setup_progress_update(
                 "spawn_sandbox",
-                "Spawning the agent's sandbox (the slow part \u2014 1\u20134 minutes "
-                "on first install while the sandbox image imports into the k3s cluster)\u2026",
+                "Spawning the agent's sandbox\u2026",
             )
+            # Sub-stage callback — pins `stage` at "spawn_sandbox" so the
+            # frontend stepper stays on that row, and forwards the sub-
+            # stage slug + byte-level percent so the nested sub-stepper
+            # and the outer progress bar both advance meaningfully during
+            # the 3-5 min image import on a cold install.
+            def _spawn_progress(
+                sub_label: str,
+                *,
+                substage: str = "",
+                sub_percent: int = 0,
+            ) -> None:
+                _setup_progress_update(
+                    "spawn_sandbox", sub_label,
+                    substage=substage, sub_percent=sub_percent,
+                )
             try:
-                await _asyncio.to_thread(_executor.spawn, _cfg)
+                await _asyncio.to_thread(
+                    _executor.spawn, _cfg, progress_cb=_spawn_progress,
+                )
                 logger.info("setup: spawned default sandbox for agent '%s'", agent_name)
             except Exception as _spawn_err:
                 logger.exception(
