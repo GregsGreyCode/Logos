@@ -149,10 +149,10 @@ Passive recall — agent gets relevant history without needing to call `session_
 
 `/new`, `/reset`, `/model`, `/reasoning`, `/stop` are menu-hint stubs only — `CommandHandler = Any` per the audit, fall through as plain text.
 
-### LOG-30 · Agent rename → auto-destroy old sandbox
-**Effort:** S · **Type:** Bug · **Status:** OPEN
+### LOG-30 · Agent rename → auto-destroy old sandbox — **DONE (2026-04-17)**
+**Effort:** S · **Type:** Bug · **Status:** DONE
 
-`handle_agents_patch` in `gateway/admin_handlers.py` doesn't call `openshell sandbox destroy hermes-{old_name}` on rename.
+`handle_agents_patch` now destroys the old `hermes-<old_name>` sandbox AND moves `~/.logos/agents/<old_name>/` → `<new_name>/` so memories follow the agent. Background task, PATCH response returns immediately.
 
 ### LOG-31 · GHCR installer wiring (continuation of #23)
 **Effort:** M · **Type:** Infra · **Status:** PARTIAL
@@ -160,7 +160,7 @@ Passive recall — agent gets relevant history without needing to call `session_
 | # | Sub-task | Status |
 |---|---|---|
 | 31.1 | GHCR workflow file exists | DONE |
-| 31.2 | `scripts/fresh-install.sh` pulls from GHCR (build = fallback) | OPEN — currently builds first |
+| 31.2 | `scripts/fresh-install.sh` pulls from GHCR (build = fallback) | DONE (2026-04-17) — ungated from `INSTALL_OPENSHELL=1`, tries GHCR first then falls back to local build |
 | 31.3 | `gateway/executors/openshell.py::_DEFAULT_IMAGE` → GHCR tag | OPEN — still `hermes-sandbox:m12` |
 | 31.4 | cosign signing | OPEN (defer to v1) |
 | 31.5 | Trigger first publish run + confirm `:public` package | OPEN |
@@ -250,7 +250,7 @@ Audit `/opt/hermes` to carve a 1–2 GB image. Migrate browser tools to `@playwr
 |---|---|---|
 | 35a | Audit log pagination right-aligned (match Runs tab) | OPEN |
 | 35b | Runs origin badges: `platform_telegram` styled pill (match `user_chat`) | OPEN |
-| 35c | Rebuild `assets/tailwind.css` (10-day stale per audit) | OPEN — mtime confirmed `2026-04-06` vs `main_app.html` `2026-04-16` |
+| 35c | Rebuild `assets/tailwind.css` (10-day stale per audit) | DONE (2026-04-17) — rebuilt via `npx tailwindcss@3`; 46.9KB → 52KB |
 
 ### LOG-36 · Sub-agent live execution: per-sub-agent boxes
 **Effort:** M · **Type:** Polish · **Status:** OPEN
