@@ -941,6 +941,35 @@ async def handle_agents_post(request: web.Request) -> web.Response:
     if auth_db.get_agent_by_name(name):
         return web.json_response({"error": "An agent with that name already exists"}, status=409)
     user = request.get("current_user") or {}
+
+    # LOG-25.5: per-user agent limit. Admins bypass; everyone else is
+    # capped at their users.max_agents row value (NULL = unlimited, the
+    # default). Deny before we create the DB row so the UI gets a clean
+    # 429 + reason to surface to the user.
+    if user.get("role") != "admin":
+        uid = user.get("id") or ""
+        user_row = auth_db.get_user_by_id(uid) if uid else None
+        cap = (user_row or {}).get("max_agents")
+        if cap is not None:
+            try: cap_int = int(cap)
+            except (TypeError, ValueError): cap_int = 0
+            if cap_int >= 0:
+                existing = auth_db.count_agents_by_creator(uid)
+                if existing >= cap_int:
+                    return web.json_response(
+                        {
+                            "error": "agent_limit_reached",
+                            "detail": (
+                                f"You've reached your agent limit "
+                                f"({existing}/{cap_int}). Delete one of your "
+                                f"existing agents or ask an admin to raise "
+                                f"your cap."
+                            ),
+                            "existing": existing,
+                            "limit": cap_int,
+                        },
+                        status=429,
+                    )
     import json as _json
     toolsets_raw = body.get("toolsets")
     toolsets_str = _json.dumps(toolsets_raw) if isinstance(toolsets_raw, list) else ""
