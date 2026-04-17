@@ -37,6 +37,7 @@ from gateway.auth.handlers import (
     handle_refresh,
     handle_platform_settings_get,
     handle_platform_settings_patch,
+    handle_public_update_status,
     handle_register,
     handle_registration_status,
     handle_users_list,
@@ -4996,6 +4997,9 @@ async def start_http_api(runner: Any, port: int = 8091) -> None:
     # public so un-authed visitors can reach it when admins enable it.
     app.router.add_post("/auth/register", handle_register)
     app.router.add_get("/auth/registration-status", handle_registration_status)
+    # Public subset of /api/admin/gateway/update so the login page can
+    # render an "update available" badge before the user signs in.
+    app.router.add_get("/auth/update-status", handle_public_update_status)
     app.router.add_post("/auth/logout",  handle_logout)
     app.router.add_post("/auth/refresh", handle_refresh)
 

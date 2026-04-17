@@ -92,6 +92,30 @@ async def handle_platform_settings_patch(request: web.Request) -> web.Response:
     return await handle_platform_settings_get(request)
 
 
+async def handle_public_update_status(request: web.Request) -> web.Response:
+    """Public — returns whether there's a gateway update available.
+
+    Minimal projection of the admin `/api/admin/gateway/update`
+    endpoint with only the fields the login page needs
+    (has_update, latest_tag, behind_by). Admins see the full dict
+    via the gated route; un-authed visitors get just enough to know
+    "a new release is out" so they can upgrade before signing in.
+    """
+    import asyncio as _asyncio
+    try:
+        from logos_cli.updater import check_for_update
+        loop = _asyncio.get_event_loop()
+        status = await loop.run_in_executor(None, check_for_update)
+    except Exception as exc:
+        logger.debug("handle_public_update_status: check_for_update failed: %s", exc)
+        return web.json_response({"has_update": False})
+    return web.json_response({
+        "has_update": bool(status.get("has_update")),
+        "latest_tag": status.get("latest_tag") or "",
+        "behind_by":  int(status.get("behind_by") or 0),
+    })
+
+
 async def handle_registration_status(request: web.Request) -> web.Response:
     """Public — returns whether self-service registration is enabled.
 
