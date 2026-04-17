@@ -122,6 +122,22 @@ def check_for_update(repo_dir: Optional[Path] = None) -> Dict[str, Any]:
         out["has_update"] = (
             out["current_sha"] != out["latest_sha"] and out["behind_by"] > 0
         )
+
+        # Most recent tag reachable from origin/{branch}, used by the UI
+        # to render "v0.12.3" instead of "34 commits behind". Quiet on
+        # failure — repos with no tags (early dev, bare mirrors) just
+        # omit the field and the UI falls back to the behind_by form.
+        try:
+            tag_res = _run_git(
+                ["describe", "--tags", "--abbrev=0", f"origin/{branch}"], repo,
+            )
+            if tag_res.returncode == 0:
+                tag = tag_res.stdout.strip()
+                if tag:
+                    out["latest_tag"] = tag
+        except Exception:
+            pass  # non-critical
+
         out["ok"] = True
     except subprocess.TimeoutExpired:
         out["error"] = "git command timed out"
