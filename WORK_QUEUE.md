@@ -328,8 +328,10 @@ Cyan "via Telegram" / "via Discord" / "via Slack" / "via WhatsApp" pill in the c
 
 New `gateway/mcp_logos/tools/time.py` exposing `get_current_time(timezone=None)` on the in-process logos MCP server. Returns iso / epoch_s / timezone / display / fallback. Registered as auto_approve (read-only). Useful for scheduling, relative dates, deadline checks.
 
-### LOG-42 · `/setup` IANA timezone dropdown
-**Effort:** S · **Type:** Feature · **Status:** OPEN (low priority — punt unless asked)
+### LOG-42 · `/setup` IANA timezone dropdown — **DONE (2026-04-17)**
+**Effort:** S · **Type:** Feature · **Status:** DONE
+
+Optional tz selector on the Account step, populated from `Intl.supportedValuesOf('timeZone')` with a 16-zone curated fallback for older browsers. Value stored in `localStorage.logos_tz`; default "" means auto-detect from the browser. Server-side persistence deferred — world-view use case is browser-local.
 
 ### LOG-43 · Trim Telegram command menu (drop `/update`, `/reload_mcp`, `/provider`) — **DONE (2026-04-17)**
 **Effort:** XS · **Type:** Polish · **Status:** DONE
