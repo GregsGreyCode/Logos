@@ -165,10 +165,10 @@ Passive recall — agent gets relevant history without needing to call `session_
 | 31.4 | cosign signing | OPEN (defer to v1) |
 | 31.5 | Trigger first publish run + confirm `:public` package | OPEN |
 
-### LOG-32 · #17 Cache sandbox details (prevent blank-flash)
-**Effort:** S · **Type:** Polish · **Status:** OPEN
+### LOG-32 · #17 Cache sandbox details (prevent blank-flash) — **DONE (2026-04-17)**
+**Effort:** XS · **Type:** Polish · **Status:** DONE
 
-Cache last-known sandbox values per-name in Alpine state; refresh-in-place on poll.
+`loadSandboxes()` now mutates `selectedSandbox` in place using `Object.assign` so the 3s poll no longer leaves the detail panel holding a stale reference from the previous list. Also stopped wiping the list to `[]` on transient fetch errors — the last successful snapshot stays rendered until the next successful poll.
 
 ### LOG-46 · Wire sandbox auxiliary client to `inference.local`
 **Effort:** S (30m–1h) · **Type:** Bug · **Status:** OPEN · **May be obsoleted by:** LOG-44.1

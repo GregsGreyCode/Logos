@@ -10927,10 +10927,31 @@ toolsets:
         this.sandboxes = d.sandboxes || [];
         this.sandboxResources = d.resources || {};
         this.sandboxCliAvailable = !!d.cli_available;
+        // LOG-32: refresh the currently-selected sandbox's fields in
+        // place so the detail panel doesn't flash blank when the 3s
+        // poll replaces this.sandboxes. selectedSandbox is a reference
+        // to an element of the OLD list; without this merge it becomes
+        // stale and toggling close/re-open on the same row (or a
+        // transient failed fetch that zeroes the list) causes a visible
+        // blank frame before the next poll repopulates.
+        if (this.selectedSandbox?.sandbox_name) {
+          const fresh = this.sandboxes.find(s => s.sandbox_name === this.selectedSandbox.sandbox_name);
+          if (fresh) {
+            Object.assign(this.selectedSandbox, fresh);
+          }
+          // If fresh is undefined (sandbox was destroyed out from under
+          // the admin tab), leave the stale snapshot in place rather
+          // than clearing — the user can close it manually and they
+          // still see the last-known state instead of a blank panel.
+        }
       } catch(e) {
-        this.sandboxes = [];
-        this.sandboxResources = {};
-        this.sandboxCliAvailable = false;
+        // Transient fetch error — don't clobber the list. Previous
+        // code reset sandboxes=[] here which also produced a blank-
+        // flash on the selected panel. Leaving the last successful
+        // snapshot in place until the next poll succeeds is both
+        // stable-rendering AND a better signal for the user ("list
+        // didn't update" vs "everything vanished"). sandboxCliAvailable
+        // is intentionally not cleared for the same reason.
       }
       this.sandboxesLoading = false;
     },
