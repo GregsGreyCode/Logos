@@ -300,6 +300,12 @@ fi
 # containerd. If the image isn't on the host, the setup wizard's
 # Finish step fails at sandbox-spawn with "no such image".
 #
+# This block runs whenever docker is available on the host, regardless
+# of INSTALL_OPENSHELL — the openshell CLI binary and the sandbox
+# runtime image are separate concerns, and users running OpenShell in
+# default sandbox mode need the image whether or not we just installed
+# the binary this session.
+#
 # Three paths, tried in order:
 #   1. Image already on host → skip (unless LOGOS_FORCE_SANDBOX_BUILD=1).
 #   2. Pull from GHCR → fast (30-60s on broadband). Default path for
@@ -310,8 +316,7 @@ fi
 #
 # Pass LOGOS_SKIP_SANDBOX_BUILD=1 to bypass entirely (for packagers
 # or users who manage the image themselves).
-if [[ "$INSTALL_OPENSHELL" == "1" ]] \
-   && command -v docker >/dev/null 2>&1 \
+if command -v docker >/dev/null 2>&1 \
    && [[ "${LOGOS_SKIP_SANDBOX_BUILD:-0}" != "1" ]]; then
     # Pull the current default image tag out of the Python source so
     # the local build always matches whatever ``_DEFAULT_IMAGE`` in
