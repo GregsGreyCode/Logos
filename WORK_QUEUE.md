@@ -175,6 +175,27 @@ Cache last-known sandbox values per-name in Alpine state; refresh-in-place on po
 
 WebView wrapper. ~3MB exe. Or Chrome PWA shortcut for zero build.
 
+### LOG-45 · Pluggable runtime images per agent
+**Effort:** M · **Type:** Feature · **Status:** OPEN · **Best-after:** LOG-44.1 (HTTP-in-sandbox contract makes this near-trivial)
+
+Today `gateway/executors/openshell.py::_DEFAULT_IMAGE` is one hardcoded tag (`hermes-sandbox:m12`) used by every agent. Any sandbox image that honors Logos's dispatch contract could slot in instead (NemoClaw's Hermes binary, a Claude Code Agent SDK container, `mini-swe-agent`, Codex-style images, etc.), but there's no per-agent selection.
+
+The pre-LOG-44 dispatch contract is opinionated (stdin/stdout JSON framing via `python3 /app/sandbox_worker.py`). Post-LOG-44.1 it becomes just "expose OpenAI-compat `/v1/chat/completions` on port 8642", which is a standard that off-the-shelf agent images already speak. That's why this ticket is best-scoped after LOG-44.1.
+
+| # | Sub-task | Effort | Notes |
+|---|----------|--------|-------|
+| 45.1 | `agents.image` nullable column (migration) | XS | Falls back to `_DEFAULT_IMAGE` when null. |
+| 45.2 | Thread through `InstanceConfig.image` → `OpenShellExecutor.spawn` | S | Replace `self.sandbox_image` with `config.image or self.sandbox_image`. |
+| 45.3 | Blessed-image registry (YAML or DB) with runtime metadata | S | Name, tag, runtime kind (hermes / claude-sdk / custom), contract version, default soul compat. Used by the UI picker + a future `logos image sync` command. |
+| 45.4 | `/admin/agents` image picker in the agent-edit form | S | Dropdown of registered images + manual tag entry. |
+| 45.5 | Pre-spawn image availability check + auto-pull fallback | S | At spawn time, if the resolved image isn't on host, try `docker pull` before `_ensure_image_in_cluster`; surface as a `pre_spawn` sub-stage label. |
+| 45.6 | Per-image network policy presets | M | Different runtimes need different policies (e.g. a Claude-SDK image needs `api.anthropic.com`, not `inference.local`). Gate behind the existing policy preset system. |
+| 45.7 | Docs: "Adding a new runtime" walkthrough | S | Point at NemoClaw `Dockerfile` as the canonical reference post-LOG-44. |
+
+**Open questions:**
+- One image = one runtime kind, or can images advertise multiple modes? (YAGNI — start with 1:1.)
+- Image registry source of truth: ship with Logos, or pull from a ghcr manifest? (Start shipped; migrate if community images emerge.)
+
 ---
 
 ## P3 — Low / polish
