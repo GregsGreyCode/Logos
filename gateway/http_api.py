@@ -35,6 +35,7 @@ from gateway.auth.handlers import (
     handle_logout,
     handle_me,
     handle_refresh,
+    handle_register,
     handle_users_list,
     handle_users_me_patch,
     handle_users_patch,
@@ -4903,6 +4904,10 @@ async def start_http_api(runner: Any, port: int = 8091) -> None:
 
     # ── Auth routes (no cookie required) ───────────────────────────────────
     app.router.add_post("/auth/login",   handle_login)
+    # LOG-25.7: self-service registration. Gated by
+    # platform_settings.allow_registration at handler time; endpoint is
+    # public so un-authed visitors can reach it when admins enable it.
+    app.router.add_post("/auth/register", handle_register)
     app.router.add_post("/auth/logout",  handle_logout)
     app.router.add_post("/auth/refresh", handle_refresh)
 

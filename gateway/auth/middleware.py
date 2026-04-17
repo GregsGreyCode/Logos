@@ -21,6 +21,10 @@ _PUBLIC_PATHS = frozenset({
     "/api/hue",
     "/login",
     "/auth/login",
+    "/auth/register",  # LOG-25.7: self-service registration, gated by
+                       # platform_settings.allow_registration at handler
+                       # time (default off). Public so un-authed visitors
+                       # can create accounts when admins flip it on.
     "/auth/logout",
     "/auth/refresh",
     "/chat_logo.png",
