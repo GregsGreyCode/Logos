@@ -110,8 +110,8 @@ Demoted from P0/L to P0/S — was the right ticket all along, but the heavy lift
 
 ## P1 — High priority
 
-### LOG-25 · Multi-user hardening — **MOSTLY DONE (2026-04-17)**
-**Effort:** L (2–3d) · **Type:** Feature/Security · **Status:** backend complete; UI-approval page still pending · **Cross-ref:** Sub-items 25.1/25.3 will need re-thinking after LOG-44.4 (sessions move into per-agent Hermes — "user can see own sessions" becomes "user can see sessions across the agents they own/share")
+### LOG-25 · Multi-user hardening — **DONE (2026-04-17)**
+**Effort:** L (2–3d) · **Type:** Feature/Security · **Status:** DONE · **Cross-ref:** Sub-items 25.1/25.3 will need re-thinking after LOG-44.4 (sessions move into per-agent Hermes — "user can see own sessions" becomes "user can see sessions across the agents they own/share")
 
 | # | Sub-task | Effort | Status |
 |---|---|---|---|
@@ -121,7 +121,7 @@ Demoted from P0/L to P0/S — was the right ticket all along, but the heavy lift
 | 25.4 | Settings scoping (admin-only: model routes, tools, policies) | S | DONE — existing `can('manage_*')` pattern covers it; backend already enforced via `require_permission` decorators |
 | 25.5 | Per-user agent limits (`max_agents` column on users) | S | DONE — v25 migration + count_agents_by_creator + 429 `agent_limit_reached` in `handle_agents_post`; admins bypass |
 | 25.6 | Per-user daily budget caps (`daily_budget_usd` per user) | M | DONE — v26/v26b migrations + user_cost_rollup_24h + `_handle_chat` user-scoped gate before the per-agent gate; cost_log.user_id attribution via dispatch task_id lookup |
-| 25.7 | `/register` endpoint with optional approval gate | M | BACKEND DONE — `POST /auth/register`, gated by `platform_settings.allow_registration`, honors `require_approval` → new users land `pending`. **UI page not yet built** — needs a public registration form + admin UI to approve pending users |
+| 25.7 | `/register` endpoint with optional approval gate | M | DONE — `POST /auth/register` backend + inline login-page form (mode toggle) + Admin → Users registration-settings card (allow_registration + require_approval checkboxes). Approval flow reuses existing Admin → Users table (update_user already accepts status) |
 
 ### LOG-26 · Background embed-on-write for session search
 **Effort:** M · **Type:** Feature · **Status:** OPEN · **Cross-ref:** Re-evaluate after LOG-44.4 — if Hermes owns per-agent sessions, embed-on-write moves into the per-sandbox layer; Logos's job becomes aggregating embeddings across sandboxes for cross-agent search.
