@@ -209,6 +209,21 @@ Today's budget gate (agents.daily_budget_usd, users.daily_budget_usd) has two kn
 
 **Ideally gated off-by-default** via `users.strict_budget_enforcement` flag (new column) or a global `LOGOS_STRICT_BUDGET_ENFORCEMENT=1` env var so existing installs don't suddenly start refusing traffic when the cache lags.
 
+### LOG-49 · Agent-created files visible + downloadable (beyond host-side dir) — **DONE (2026-04-17)**
+**Effort:** M · **Type:** Feature · **Status:** DONE · **Related:** LOG-47 (snapshot)
+
+Users want to see + download files the agent creates inside its sandbox at arbitrary paths — e.g. `~/generate_agentic_newsletter.py`, `~/cron/agentic_newsletter.cron`, `~/hermes/newsletter_output/*`. Today only files under `~/.logos/agents/<name>/` on the HOST show in the Mind → Files tab, and those come from opinionated syncs (memories, logs, sessions). Raw agent-created scratch files live INSIDE the sandbox and don't surface.
+
+**DONE this session:**
+- `GET /admin/agents/{id}/files/download?rel_path=…` streams individual files from the host-side per-agent dir with path-traversal safety + 100MB cap. UI adds a download (↓) button per file in the Mind modal's Files tab.
+
+**Also done (LOG-49.1/49.2/49.3):**
+- `GET /admin/agents/{id}/sandbox-files?path=…` lists entries inside the live sandbox via `openshell sandbox exec find`; returns `{path, parent, entries: [{name,type,size,mtime}], roots: [known useful dirs]}` for a quick-jump UI.
+- `GET /admin/agents/{id}/sandbox-files/download?path=…` streams a single file out of the sandbox via `openshell sandbox download` → tempdir → streamed → cleaned up. Same 100MB cap + path-traversal checks as the host-side endpoint.
+- New "Sandbox" tab in the Mind modal with quick-jump buttons for `/root`, `/home/agent`, `/tmp/hermes`, `/tmp`, `/sandbox`, `/workspace`, `/app`; breadcrumb with `..` to go up; dirs click-through; files hover-download (↓).
+
+**49.4 explicitly skipped** — periodic sync would only be worth doing if on-demand exec proved slow. Cold-start is ~200ms, felt responsive in testing. Revisit if sandbox exec latency becomes a problem on large dirs.
+
 ### LOG-47 · Per-agent sandbox snapshot + restore
 **Effort:** M · **Type:** Feature · **Status:** OPEN · **Expands-with:** LOG-44.1
 
