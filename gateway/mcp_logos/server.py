@@ -410,4 +410,12 @@ def _register_current_phase_tools(server: "InProcessMCPServer") -> None:
     except Exception as exc:
         logger.warning("mcp_logos: failed to register platform tools: %s", exc)
 
+    # LOG-41: current-time tool. Lives outside the phase taxonomy
+    # because it's a trivial read-only utility — no phase gating.
+    try:
+        from gateway.mcp_logos.tools import time as _time_tools
+        _time_tools.register(server)
+    except Exception as exc:
+        logger.warning("mcp_logos: failed to register time tools: %s", exc)
+
     # L.3, L.4, L.5 tool modules get imported here as they land.

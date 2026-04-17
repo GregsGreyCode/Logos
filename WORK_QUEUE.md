@@ -290,8 +290,10 @@ Soft-delete (`hidden=1`) ships. Toggle to show/restore doesn't.
 
 Cyan "via Telegram" / "via Discord" / "via Slack" / "via WhatsApp" pill in the chat header next to the agent name, shown only when `chat._platform` is set.
 
-### LOG-41 · `get_current_time` MCP tool
-**Effort:** S · **Type:** Feature · **Status:** OPEN
+### LOG-41 · `get_current_time` MCP tool — **DONE (2026-04-17)**
+**Effort:** S · **Type:** Feature · **Status:** DONE
+
+New `gateway/mcp_logos/tools/time.py` exposing `get_current_time(timezone=None)` on the in-process logos MCP server. Returns iso / epoch_s / timezone / display / fallback. Registered as auto_approve (read-only). Useful for scheduling, relative dates, deadline checks.
 
 ### LOG-42 · `/setup` IANA timezone dropdown
 **Effort:** S · **Type:** Feature · **Status:** OPEN (low priority — punt unless asked)
