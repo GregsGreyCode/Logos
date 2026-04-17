@@ -436,8 +436,6 @@ def _run_migrations() -> None:
         for stmt in (
             "ALTER TABLE users ADD COLUMN policy_id TEXT REFERENCES routing_policies(id)",
             "ALTER TABLE machines ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0",
-            # v2: action policies (behaviour enforcement, separate from routing policies)
-            "ALTER TABLE users ADD COLUMN action_policy_id TEXT REFERENCES action_policies(id)",
             # v3: sandboxed execution workspace tracking
             "ALTER TABLE agent_runs ADD COLUMN workspace_path TEXT",
             # v4: multi-agent — which adapter produced this run
@@ -822,11 +820,11 @@ def _run_migrations() -> None:
         _migrate_dispatches_stamp_v1(conn)
 
         # v22: drop the dead workflow + action_policy tables now that the
-        # UI and Python API have been removed (TASKS.md #XX). Idempotent
-        # via schema_flags. Columns on live tables (users.action_policy_id,
-        # agents.action_policy_id, agent_runs.action_policy_id/snapshot +
-        # workflow_run_id) are left in place — dropping columns on SQLite
-        # requires a table rebuild, and leaving them NULL-only is harmless.
+        # UI and Python API have been removed. Idempotent via schema_flags.
+        # Other column residues (agents.action_policy_id,
+        # agent_runs.action_policy_id/snapshot + workflow_run_id) stay —
+        # they have no FK constraint pointing at a dropped table, so
+        # rebuilding those tables buys us nothing.
         already_v22 = conn.execute(
             "SELECT value FROM schema_flags WHERE key = 'drop_workflow_action_policy_tables_v1'"
         ).fetchone()
@@ -846,6 +844,63 @@ def _run_migrations() -> None:
                 ("drop_workflow_action_policy_tables_v1", "1", int(time.time() * 1000)),
             )
             logger.info("drop_workflow_action_policy_tables_v1: removed workflow_* + action_policies tables")
+
+        # v22b: rebuild `users` to drop the `action_policy_id` column, whose
+        # FK pointed at the `action_policies` table just dropped above.
+        # Why: with PRAGMA foreign_keys=ON, any INSERT into users fails with
+        # "no such table: main.action_policies" on a fresh install because
+        # the column's FK target is gone. The old migration note claimed
+        # "leaving [column residues] NULL-only is harmless" — it isn't for
+        # columns whose FK target was dropped. Separate schema_flag so this
+        # runs even on DBs that already had v22 applied.
+        already_v22b = conn.execute(
+            "SELECT value FROM schema_flags WHERE key = 'drop_users_action_policy_id_column_v1'"
+        ).fetchone()
+        if not already_v22b:
+            has_col = any(
+                row[1] == "action_policy_id"
+                for row in conn.execute("PRAGMA table_info(users)").fetchall()
+            )
+            if has_col:
+                conn.execute("PRAGMA foreign_keys=OFF")
+                try:
+                    conn.executescript(
+                        """
+                        CREATE TABLE users__new (
+                            id                 TEXT PRIMARY KEY,
+                            email              TEXT UNIQUE NOT NULL,
+                            username           TEXT UNIQUE NOT NULL,
+                            password_hash      TEXT NOT NULL,
+                            role               TEXT NOT NULL DEFAULT 'user'
+                                                   CHECK (role IN ('admin','operator','user','viewer')),
+                            status             TEXT NOT NULL DEFAULT 'active'
+                                                   CHECK (status IN ('active','suspended','pending')),
+                            display_name       TEXT,
+                            created_at         INTEGER NOT NULL,
+                            last_login         INTEGER,
+                            failed_login_count INTEGER NOT NULL DEFAULT 0,
+                            locked_until       INTEGER,
+                            policy_id          TEXT REFERENCES routing_policies(id)
+                        );
+                        INSERT INTO users__new
+                            (id, email, username, password_hash, role, status,
+                             display_name, created_at, last_login,
+                             failed_login_count, locked_until, policy_id)
+                        SELECT id, email, username, password_hash, role, status,
+                               display_name, created_at, last_login,
+                               failed_login_count, locked_until, policy_id
+                          FROM users;
+                        DROP TABLE users;
+                        ALTER TABLE users__new RENAME TO users;
+                        """
+                    )
+                finally:
+                    conn.execute("PRAGMA foreign_keys=ON")
+                logger.info("drop_users_action_policy_id_column_v1: rebuilt users table")
+            conn.execute(
+                "INSERT INTO schema_flags (key, value, applied_at) VALUES (?, ?, ?)",
+                ("drop_users_action_policy_id_column_v1", "1", int(time.time() * 1000)),
+            )
 
         # v23: collapse dead per-channel `hermes-<platform>` toolset aliases
         # on existing agents.toolsets JSON columns into `hermes-cli`. The
