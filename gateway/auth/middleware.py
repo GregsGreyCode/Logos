@@ -28,6 +28,10 @@ _PUBLIC_PATHS = frozenset({
     "/auth/registration-status",  # public read-only probe used by
                                   # login.html to decide whether to
                                   # render a "Create an account" link.
+    "/auth/update-status",        # public subset of the gateway
+                                  # update-check so the login page
+                                  # shows a "New update available"
+                                  # hint before sign-in.
     "/auth/logout",
     "/auth/refresh",
     "/chat_logo.png",
