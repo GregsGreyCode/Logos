@@ -3546,6 +3546,13 @@ async def _handle_chat(request: web.Request) -> web.StreamResponse:
     message = body.get("message", "")
     session_id = body.get("session_id", "http-default")
     agent_id = body.get("agent_id")
+    # LOG-28: when the web client is viewing a platform-originated
+    # session (e.g. a Telegram chat pulled into the web UI), it passes
+    # `platform` + `platform_chat_id` so we can mirror the agent's
+    # final reply back to that platform after the stream ends. Empty
+    # strings mean web-only, no mirror.
+    _mirror_platform = (body.get("platform") or "").strip().lower() or None
+    _mirror_chat_id  = (body.get("platform_chat_id") or "").strip() or None
     # Transient mode: Compare tab uses this so probe traffic doesn't
     # pollute the agent's identity. Affects two visible behaviours:
     #   1. dispatch ledger origin = 'compare' (so Activity → Events
@@ -4350,6 +4357,47 @@ async def _handle_chat(request: web.Request) -> web.StreamResponse:
                     )
                     final = "⚠️ The agent finished without producing a reply. (Likely a reasoning-model formatting issue — try rephrasing or starting a new chat.)"
                 await send_event({"type": "message", "content": final})
+
+            # LOG-28: mirror the final reply back to the originating
+            # platform when the web client is viewing a platform session
+            # (e.g. user is browsing a Telegram chat in the web UI and
+            # types a reply — the TG user on the other side should see
+            # it too). Best-effort: failures log + swallow, the web UI
+            # already has the reply so the user isn't blocked.
+            if _mirror_platform and _mirror_chat_id and final:
+                try:
+                    from gateway.config import Platform as _Platform
+                    try:
+                        _p_enum = _Platform(_mirror_platform)
+                    except ValueError:
+                        _p_enum = None
+                    _adapter = (
+                        runner.adapters.get(_p_enum)
+                        if _p_enum and hasattr(runner, "adapters") else None
+                    )
+                    if _adapter is not None:
+                        _send_result = await _adapter.send(
+                            chat_id=_mirror_chat_id, content=final,
+                        )
+                        if not getattr(_send_result, "success", False):
+                            logger.warning(
+                                "LOG-28 mirror: %s/%s send failed: %s",
+                                _mirror_platform, _mirror_chat_id,
+                                getattr(_send_result, "error", None) or "unknown",
+                            )
+                        else:
+                            logger.info(
+                                "LOG-28 mirror: delivered reply to %s/%s (message_id=%s)",
+                                _mirror_platform, _mirror_chat_id,
+                                getattr(_send_result, "message_id", None),
+                            )
+                    else:
+                        logger.warning(
+                            "LOG-28 mirror: no %s adapter connected; reply stays web-only",
+                            _mirror_platform,
+                        )
+                except Exception as _mir_exc:
+                    logger.warning("LOG-28 mirror raised: %s", _mir_exc)
 
             # ── Persist this turn so the next message in the same sandbox
             # incarnation sees the full transcript. Without this the agent
