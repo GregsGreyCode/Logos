@@ -142,10 +142,10 @@ Passive recall — agent gets relevant history without needing to call `session_
 
 `gateway/channels/telegram.py` is inbound-only today. Web replies on a TG-originated chat stay web-only.
 
-### LOG-29 · Wire Telegram slash commands as `CommandHandler`s
-**Effort:** S · **Type:** Bug · **Status:** OPEN
+### LOG-29 · Wire Telegram slash commands as `CommandHandler`s — **DONE (2026-04-17)**
+**Effort:** S · **Type:** Bug · **Status:** DONE
 
-`/new`, `/reset`, `/model`, `/reasoning`, `/stop` are menu-hint stubs only — `CommandHandler = Any` per the audit, fall through as plain text.
+Specific `CommandHandler`s for /help /status /stop /new /reset /model registered before the catch-all in `gateway/channels/telegram.py`; each reaches into gateway state (session_store, auth.db) for real local semantics instead of falling through to the LLM. Other commands still fall through.
 
 ### LOG-30 · Agent rename → auto-destroy old sandbox — **DONE (2026-04-17)**
 **Effort:** S · **Type:** Bug · **Status:** DONE
@@ -294,8 +294,10 @@ Soft-delete (`hidden=1`) ships. Toggle to show/restore doesn't.
 ### LOG-42 · `/setup` IANA timezone dropdown
 **Effort:** S · **Type:** Feature · **Status:** OPEN (low priority — punt unless asked)
 
-### LOG-43 · Trim Telegram command menu (drop `/update`, `/reload_mcp`, `/provider`)
-**Effort:** XS · **Type:** Polish · **Status:** OPEN
+### LOG-43 · Trim Telegram command menu (drop `/update`, `/reload_mcp`, `/provider`) — **DONE (2026-04-17)**
+**Effort:** XS · **Type:** Polish · **Status:** DONE
+
+Dropped `/update`, `/reload_mcp`, `/provider`, and `/personality` from the `set_my_commands` registration in `gateway/channels/telegram.py`. Landed alongside LOG-29 since both touched the same block.
 
 ---
 
