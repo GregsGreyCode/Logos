@@ -3586,6 +3586,23 @@ async def _handle_chat(request: web.Request) -> web.StreamResponse:
     if not _agent_config:
         raise web.HTTPNotFound(reason=f"agent {agent_id} not found")
 
+    # LOG-25.3: private-agent visibility. Non-admin/operator callers
+    # can chat with (a) shared agents, or (b) their own private ones.
+    # A private agent owned by someone else is effectively not-theirs —
+    # return 404 (not 403) so the endpoint doesn't leak agent existence
+    # to users who shouldn't know about it.
+    _auth_user = request.get("current_user") or {}
+    if _auth_user.get("role") not in ("admin", "operator"):
+        _is_shared = bool(_agent_config.get("shared"))
+        _creator = _agent_config.get("creator_id") or ""
+        _caller = _auth_user.get("id") or ""
+        if not _is_shared and _creator and _creator != _caller:
+            logger.info(
+                "chat: denying %s access to private agent %s (owner=%s)",
+                _caller or "anon", agent_id, _creator,
+            )
+            raise web.HTTPNotFound(reason=f"agent {agent_id} not found")
+
     # On-demand LM Studio model load — only for agents whose model
     # actually runs on LM Studio (or another local OpenAI-compat server).
     # Cloud-routed models (anthropic/openai/openrouter) live on their

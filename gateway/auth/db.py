@@ -481,6 +481,14 @@ def _run_migrations() -> None:
             # create path can distinguish "never set" (apply deploy-
             # mode default) from an explicit user choice.
             "ALTER TABLE mcp_servers ADD COLUMN auto_grant INTEGER",
+            # v25: per-user agent limit (LOG-25.5). NULL = unlimited;
+            # integer N caps how many agents a non-admin user can create
+            # via handle_agents_post. Admins always bypass the check.
+            "ALTER TABLE users ADD COLUMN max_agents INTEGER",
+            # v26: per-user daily budget cap (LOG-25.6). NULL = no cap.
+            # Mirrors agents.daily_budget_usd but applies at the user
+            # level, summed across every agent the user has dispatched.
+            "ALTER TABLE users ADD COLUMN daily_budget_usd REAL",
         ):
             try:
                 conn.execute(stmt)
@@ -1656,6 +1664,19 @@ def list_agents(user_id: str = "") -> list[dict]:
         else:
             rows = conn.execute("SELECT * FROM agents ORDER BY created_at").fetchall()
         return [dict(r) for r in rows]
+
+
+def count_agents_by_creator(user_id: str) -> int:
+    """Return the number of agents ``user_id`` has created. Used by the
+    per-user agent-limit check in handle_agents_post (LOG-25.5)."""
+    if not user_id:
+        return 0
+    with _conn() as conn:
+        row = conn.execute(
+            "SELECT COUNT(*) FROM agents WHERE creator_id = ?",
+            (user_id,),
+        ).fetchone()
+        return int(row[0]) if row else 0
 
 
 def update_agent(agent_id: str, **fields) -> Optional[dict]:
