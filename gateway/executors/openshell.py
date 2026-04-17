@@ -1079,6 +1079,18 @@ class OpenShellExecutor:
             logger.debug("instance-config: services credential lookup failed: %s", _exc)
             _service_env = {}
 
+        # LOG-46: point the sandbox's OpenAI-compat auxiliary client
+        # (compression / summarization / memory flush) at the gateway's
+        # privacy-routed inference.local endpoint. Without this the
+        # upstream auxiliary_client auto-detect hits every provider
+        # chain (openrouter / nous / codex / custom) and silently gives
+        # up — producing the "Auxiliary auto-detect: no provider
+        # available" warning every dispatch. A placeholder key is fine
+        # because OpenShell's router replaces it with the
+        # gateway-configured credential before forwarding upstream.
+        _service_env.setdefault("OPENAI_BASE_URL", "https://inference.local/v1")
+        _service_env.setdefault("OPENAI_API_KEY", "lm-studio")
+
         # Per-agent messaging tokens override any global TELEGRAM_BOT_TOKEN /
         # DISCORD_BOT_TOKEN / SLACK_BOT_TOKEN / WHATSAPP_TOKEN. This means
         # send_message_tool (running inside the sandbox) uses THIS agent's
