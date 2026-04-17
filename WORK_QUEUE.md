@@ -170,6 +170,23 @@ Passive recall — agent gets relevant history without needing to call `session_
 
 Cache last-known sandbox values per-name in Alpine state; refresh-in-place on poll.
 
+### LOG-46 · Wire sandbox auxiliary client to `inference.local`
+**Effort:** S (30m–1h) · **Type:** Bug · **Status:** OPEN · **May be obsoleted by:** LOG-44.1
+
+Warning observed inside sandbox 2026-04-17:
+```
+WARNING agent.auxiliary_client: Auxiliary auto-detect: no provider
+available (tried: openrouter, nous, local/custom, openai-codex, api-key).
+Compression, summarization, and memory flush will not work. Set
+OPENROUTER_API_KEY or configure a local model in config.yaml
+```
+
+Main chat works fine — this is the upstream hermes auxiliary client that powers context compression, summarization, and memory flush. It looks at its own env-var chain (`OPENROUTER_API_KEY` / `AUXILIARY_PROVIDER` / `AUXILIARY_BASE_URL` / `AUXILIARY_MODEL` — exact names live in the sandbox image's `agent/auxiliary_client.py`, not this repo) and finds nothing because the sandbox only has the privacy-routed `https://inference.local/v1` channel wired for primary inference.
+
+Fix direction: confirm the exact env names the upstream client reads, then set them in either the generated `instance-config.json` (uploaded by `OpenShellExecutor.spawn`) or the sandbox pod env so the auxiliary client reuses the `inference.local` path. Likely a ~10-line addition.
+
+**Deprio note:** LOG-44 Phase 1 switches each sandbox to run the full `hermes gateway run` binary, at which point the auxiliary client is configured from Hermes's own config loader and this gap may disappear. Worth revisiting after LOG-44.1 lands rather than patching twice.
+
 ### LOG-33 · Thin desktop client (Tauri)
 **Effort:** S (1–2h) · **Type:** Feature · **Status:** OPEN
 
