@@ -285,8 +285,10 @@ Audit `/opt/hermes` to carve a 1–2 GB image. Migrate browser tools to `@playwr
 
 Soft-delete (`hidden=1`) ships. Toggle to show/restore doesn't.
 
-### LOG-40 · Platform badge in chat header ("via Telegram")
-**Effort:** XS · **Type:** Polish · **Status:** OPEN
+### LOG-40 · Platform badge in chat header ("via Telegram") — **DONE (2026-04-17)**
+**Effort:** XS · **Type:** Polish · **Status:** DONE
+
+Cyan "via Telegram" / "via Discord" / "via Slack" / "via WhatsApp" pill in the chat header next to the agent name, shown only when `chat._platform` is set.
 
 ### LOG-41 · `get_current_time` MCP tool
 **Effort:** S · **Type:** Feature · **Status:** OPEN
