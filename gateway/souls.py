@@ -87,6 +87,30 @@ def load_souls() -> dict[str, SoulManifest]:
         try:
             data = yaml.safe_load(manifest_path.read_text()) or {}
             toolsets = data.get("toolsets", {})
+            # Expand "*" sentinel in default_enabled to the full TOOLSETS
+            # catalog so souls like `general` stay in sync as new toolsets
+            # are added without manual manifest edits. Channel-specific
+            # aliases (hermes-cli / hermes-acp) are excluded — they're
+            # meant for per-channel configuration, not blanket enable.
+            _default_enabled = list(toolsets.get("default_enabled", []) or [])
+            if "*" in _default_enabled:
+                try:
+                    from core.toolsets import TOOLSETS as _ALL_TOOLSETS
+                    expanded = [
+                        k for k in sorted(_ALL_TOOLSETS.keys())
+                        if not k.startswith("hermes-")
+                    ]
+                except Exception as _exp_exc:
+                    logger.warning(
+                        "soul %s: default_enabled '*' expansion failed (%s); "
+                        "keeping literal list", soul_dir.name, _exp_exc,
+                    )
+                    expanded = []
+                # Preserve any literals listed alongside "*" (users may want
+                # e.g. ["*", "custom_extra_tool"]) and drop the sentinel.
+                _default_enabled = sorted(
+                    set(expanded) | {ts for ts in _default_enabled if ts != "*"}
+                )
             soul = SoulManifest(
                 id=data.get("id", soul_dir.name),
                 slug=data.get("slug", soul_dir.name),
@@ -99,7 +123,7 @@ def load_souls() -> dict[str, SoulManifest]:
                 created_by=data.get("created_by", ""),
                 tags=data.get("tags", []),
                 enforced_toolsets=toolsets.get("enforced", []),
-                default_enabled_toolsets=toolsets.get("default_enabled", []),
+                default_enabled_toolsets=_default_enabled,
                 optional_toolsets=toolsets.get("optional", []),
                 forbidden_toolsets=toolsets.get("forbidden", []),
                 user_accessible=data.get("user_accessible", True),

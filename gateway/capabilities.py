@@ -531,7 +531,9 @@ def apply_initial_defaults(agent_id: str) -> list[str]:
       - every capability in ``always_on`` (local-only internals: memory,
         files, skills, schedule, plan, clarify, delegate, world)
       - every capability flagged ``default_on_create: true`` in the YAML
-        (today: web + code_execution — both local-only, broadly useful)
+        — today spans both the ``capabilities`` section (web_browser,
+        web_search_local / SearxNG, smart_home, …) and ``power_tools``
+        (pypi — Install Python packages, paired with Run Python code).
 
     Called once from ``handle_agents_post`` so every new agent spawns
     with a useful toolbox instead of an empty one. Third-party
@@ -552,16 +554,20 @@ def apply_initial_defaults(agent_id: str) -> list[str]:
                 "apply_initial_defaults: always_on %s failed: %s",
                 cap.get("id"), exc,
             )
-    for cap in (cat.get("capabilities") or []):
-        if cap.get("default_on_create"):
-            try:
-                apply(agent_id, cap["id"], True)
-                applied.append(cap["id"])
-            except Exception as exc:
-                logger.warning(
-                    "apply_initial_defaults: default_on_create %s failed: %s",
-                    cap.get("id"), exc,
-                )
+    # Both user-facing `capabilities` and `power_tools` sections can
+    # carry `default_on_create: true`; iterate both so a power-tool
+    # default (e.g. pypi) gets applied alongside capability defaults.
+    for section in ("capabilities", "power_tools"):
+        for cap in (cat.get(section) or []):
+            if cap.get("default_on_create"):
+                try:
+                    apply(agent_id, cap["id"], True)
+                    applied.append(cap["id"])
+                except Exception as exc:
+                    logger.warning(
+                        "apply_initial_defaults: %s.%s default_on_create failed: %s",
+                        section, cap.get("id"), exc,
+                    )
     return applied
 
 
