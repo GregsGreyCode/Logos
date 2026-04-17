@@ -104,6 +104,48 @@ def _setup_progress_update(
     logger.info("setup_progress: %s — %s%s", stage, label, " (done)" if done else "")
 
 
+# Minimum on-screen dwell per *top-level* stage transition. The fast
+# stages (init / register_machines / provision_route / create_agent /
+# issue_session / done) fire back-to-back in well under a second on a
+# warm install, which made the stepper flash by without the user seeing
+# which step was active. 500ms gives the eye time to track the
+# transition without being noticeable as a deliberate delay. Only
+# applied when ``stage`` actually changes — sub-stage / label updates
+# during a long-running stage (e.g. the 3-5 min image import inside
+# spawn_sandbox) come through the sync path below and aren't paced.
+_STAGE_MIN_DWELL_SECS = 0.5
+_paced_stage_start_ts: float = 0.0
+
+
+async def _paced_progress_update(
+    stage: str,
+    label: str,
+    *,
+    done: bool = False,
+    ok: bool = False,
+    error: str = "",
+) -> None:
+    """Async wrapper for ``_setup_progress_update`` that enforces a
+    minimum dwell per distinct top-level stage. If the previous stage
+    was displayed for less than ``_STAGE_MIN_DWELL_SECS``, we sleep the
+    remainder before advancing. First-ever call (``stage == "idle"`` →
+    first real stage) and same-stage relabels are not delayed.
+    """
+    global _paced_stage_start_ts
+    prev_stage = _SETUP_PROGRESS.get("stage")
+    if (
+        stage != prev_stage
+        and prev_stage not in ("idle", None)
+        and _paced_stage_start_ts > 0
+    ):
+        elapsed = time.monotonic() - _paced_stage_start_ts
+        if elapsed < _STAGE_MIN_DWELL_SECS:
+            await asyncio.sleep(_STAGE_MIN_DWELL_SECS - elapsed)
+    _setup_progress_update(stage, label, done=done, ok=ok, error=error)
+    if stage != prev_stage:
+        _paced_stage_start_ts = time.monotonic()
+
+
 _PROBE_TIMEOUT = aiohttp.ClientTimeout(total=4)
 _SCAN_TIMEOUT  = aiohttp.ClientTimeout(total=1)   # aggressive — we're sweeping 254 hosts
 _SCAN_PORTS    = [11434, 1234, 8080]   # Ollama, LM Studio, llama.cpp/vLLM default
@@ -2961,7 +3003,7 @@ async def handle_setup_complete(request: web.Request) -> web.Response:
     # retries get a fresh state instead of stale "done" from the last run.
     _SETUP_PROGRESS.update({"stage": "idle", "label": "", "started_at": 0,
                             "updated_at": 0, "done": False, "ok": False, "error": ""})
-    _setup_progress_update("init", "Saving setup configuration\u2026")
+    await _paced_progress_update("init", "Saving setup configuration\u2026")
 
     try:
         # Clear stale config from previous installations (PVC may persist across deploys)
@@ -2998,7 +3040,7 @@ async def handle_setup_complete(request: web.Request) -> web.Response:
 
         # Register inference machines — one per selected server.
         # Fall back to single-server path if no servers list provided.
-        _setup_progress_update("register_machines", "Registering inference servers\u2026")
+        await _paced_progress_update("register_machines", "Registering inference servers\u2026")
         servers = body.get("servers") or []
         if not auth_db.list_machines():
             if servers and len(servers) > 1:
@@ -3326,7 +3368,7 @@ async def handle_setup_complete(request: web.Request) -> web.Response:
         # route. The user can fix the route later from
         # /admin/model-routes instead of having setup block on a
         # recoverable failure.
-        _setup_progress_update("provision_route", "Provisioning model route\u2026")
+        await _paced_progress_update("provision_route", "Provisioning model route\u2026")
         provisioned_route = None  # populated below if provision succeeds
         try:
             from gateway import openshell_routes as _osr
@@ -3380,7 +3422,7 @@ async def handle_setup_complete(request: web.Request) -> web.Response:
         # This gives the user a chat-ready agent the moment they land on
         # the main app after setup. The sandbox provisions in the background;
         # the frontend greys out the chat UI until the worker registers.
-        _setup_progress_update("create_agent", f"Creating your first agent ({agent_name})\u2026")
+        await _paced_progress_update("create_agent", f"Creating your first agent ({agent_name})\u2026")
         try:
             # Resolve the soul's default toolset list so the agent ships with
             # the full toolbox (web, memory, browser, file, terminal, …)
@@ -3506,7 +3548,7 @@ async def handle_setup_complete(request: web.Request) -> web.Response:
                 model_route_id=default_agent.get("model_route_id"),
             )
 
-            _setup_progress_update(
+            await _paced_progress_update(
                 "spawn_sandbox",
                 "Spawning the agent's sandbox\u2026",
             )
@@ -3557,7 +3599,7 @@ async def handle_setup_complete(request: web.Request) -> web.Response:
         # main app.  This is best-effort: if token issuance fails for any reason
         # (missing secret, DB write error, etc.) we still return a successful
         # setup response and tell the frontend to fall back to the login page.
-        _setup_progress_update("issue_session", "Logging you in\u2026")
+        await _paced_progress_update("issue_session", "Logging you in\u2026")
         autologin_ok = False
         access_token = raw_refresh = rtk_hash = None
         try:
@@ -3587,14 +3629,14 @@ async def handle_setup_complete(request: web.Request) -> web.Response:
         if warning:
             payload["warning"] = warning
 
-        _setup_progress_update("done", "Ready!", done=True, ok=True)
+        await _paced_progress_update("done", "Ready!", done=True, ok=True)
         resp = web.json_response(payload)
         if autologin_ok:
             set_auth_cookies(resp, access_token, raw_refresh)
         return resp
     except Exception as exc:
         logger.exception("setup/complete failed: %s", exc)
-        _setup_progress_update("done", f"Setup failed: {exc}", done=True, ok=False, error=str(exc)[:300])
+        await _paced_progress_update("done", f"Setup failed: {exc}", done=True, ok=False, error=str(exc)[:300])
         return web.json_response({"error": "internal_error", "detail": str(exc)[:300]}, status=500)
 
 
