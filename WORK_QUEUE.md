@@ -192,6 +192,27 @@ Fix direction: confirm the exact env names the upstream client reads, then set t
 
 WebView wrapper. ~3MB exe. Or Chrome PWA shortcut for zero build.
 
+### LOG-47 · Per-agent sandbox snapshot + restore
+**Effort:** M · **Type:** Feature · **Status:** OPEN · **Expands-with:** LOG-44.1
+
+Today the sandbox is a passive exec environment (Plan A-prime) and most durable agent state lives on the host in `~/.logos/`. But the sandbox still has state worth preserving across destroy/recreate: the uploaded memories in `/tmp/hermes/memories/`, any workspace scratch files the agent wrote, browser cookies/session state, terminal history. Today there is no way to snapshot a running sandbox, export it, or restore it onto a fresh sandbox later.
+
+After LOG-44.1 lands, Hermes-in-sandbox owns sessions / memories / plans / hermes-local DB — the sandbox becomes the source of truth, not a scratch space. Snapshot coverage needs to widen to those paths too, but the primitive is the same.
+
+| # | Sub-task | Effort | Notes |
+|---|----------|--------|-------|
+| 47.1 | `openshell sandbox download <name>:<src> <dst>` wrapper | XS | Already exists as a CLI subcommand — wrap in Python as `executors/openshell.py::download_from_sandbox(...)`. |
+| 47.2 | `SandboxSnapshotter.snapshot(agent_name, dest_dir)` helper | S | Tars `/tmp/hermes/`, any workspace dirs, selected hermes paths into `~/.logos/backups/<agent>/<timestamp>.tar.gz`. One source of truth for "what gets backed up" in a declarative list. |
+| 47.3 | `/admin/agents/<id>/backup` HTTP POST + "Backup now" button | S | Manual trigger from Admin → Agents detail pane. Returns path + size. |
+| 47.4 | Retention: keep last N per-agent | XS | Config `LOGOS_SANDBOX_BACKUP_RETENTION=10`; prune on write. |
+| 47.5 | Restore flow: upload tarball → new sandbox | S | Destroy sandbox → spawn fresh → `openshell sandbox upload` contents back into the original paths → `openshell sandbox exec -- tar xf ...` if compression used. |
+| 47.6 | Scheduled snapshots (cron integration) | S | Re-use existing `~/.logos/cron/` plumbing. Default: daily 03:00 local, per-agent. Toggle per agent in Admin UI. |
+| 47.7 | LOG-44 widening: include `/sandbox/.hermes/`, hermes SessionDB, plan state | S | Update the declarative snapshot-paths list when LOG-44.1 merges. Same primitive; bigger scope. |
+
+**Restore testing:** verify `snapshot → destroy → spawn → restore` round-trips cleanly on a warm agent (chat state should survive). Fail-safe: if restore fails, agent still spawns cleanly from its host-side `~/.logos/agents/<name>/memories/` — the snapshot is additive, never load-bearing.
+
+**Not in scope:** off-host backup destinations (S3, rsync, borg, etc.) — start with local tarballs, let the user plug in their own rsync cron if they want offsite. Adding cloud backends is a future follow-up, not blocking this.
+
 ### LOG-45 · Pluggable runtime images per agent
 **Effort:** M · **Type:** Feature · **Status:** OPEN · **Best-after:** LOG-44.1 (HTTP-in-sandbox contract makes this near-trivial)
 
