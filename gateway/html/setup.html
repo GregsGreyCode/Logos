@@ -318,16 +318,6 @@
             </template>
           </div>
 
-          <!-- After launch: dashboard surfaces -->
-          <div class="px-7 py-5 border-t border-gray-800/60 bg-gray-900/40">
-            <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2" x-text="tldr ? 'After launch' : 'Next, from the dashboard'"></div>
-            <ul class="text-xs text-gray-500 leading-relaxed space-y-1">
-              <li>&middot; <span class="text-gray-300">Tool integrations</span> &mdash; <span x-text="tldr ? 'Browserbase, Firecrawl.' : 'Connect Browserbase or Firecrawl to unlock browser automation and web search tools.'"></span></li>
-              <li>&middot; <span class="text-gray-300">Agent creation</span> &mdash; <span x-text="tldr ? 'Spawn more agents.' : 'Spawn additional named agents with their own souls, models, and tool sets.'"></span></li>
-              <li>&middot; <span class="text-gray-300">Permissions</span> &mdash; <span x-text="tldr ? 'Pick what each agent can reach.' : 'Grant per-agent permissions to control which external services each sandbox can reach.'"></span></li>
-            </ul>
-          </div>
-
           <!-- When complete -->
           <div class="px-7 py-6 border-t border-gray-800/60">
             <div class="text-base font-semibold text-white mb-2" x-text="tldr ? 'When done' : 'When complete'"></div>
@@ -1938,8 +1928,12 @@
           </div>
         </div>
 
-        <!-- Live endpoint health probe result -->
-        <template x-if="step7ProbeStatus">
+        <!-- Live endpoint health probe result — pre-launch gate only.
+             Hidden once the user clicks Launch; the per-stage label under
+             the button takes over from there. Also hidden if a completion
+             error is showing, since a stale "reachable" probe would
+             contradict a fresh "unreachable" warning. -->
+        <template x-if="step7ProbeStatus && !completing && !completeError">
           <div class="mb-4 p-3 rounded-xl text-sm flex items-start gap-2"
             :class="step7ProbeStatus === 'ok' ? 'bg-green-950/40 border border-green-800 text-green-300'
                   : step7ProbeStatus === 'checking' ? 'bg-gray-900 border border-gray-700 text-gray-400'
@@ -1970,26 +1964,100 @@
         </div>
 
         <button @click="complete()" :disabled="completing"
-          class="btn-primary w-full py-3 rounded-xl font-semibold">
+          class="btn-primary w-full py-3 rounded-xl font-semibold overflow-hidden">
           <span x-show="!completing" x-text="completeError?.warning ? 'Go to Dashboard \u2192' : 'Launch Logos \u2192'"></span>
-          <span x-show="completing" class="flex items-center justify-center gap-2">
-            <div class="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin"></div>
-            <span x-text="completeStageLabel || 'Finishing up\u2026'"></span>
+          <span x-show="completing" class="flex items-center justify-center gap-2 min-w-0">
+            <div class="w-4 h-4 shrink-0 border-2 border-white/40 border-t-white rounded-full animate-spin"></div>
+            <span class="truncate" x-text="completeStageLabel || 'Finishing up\u2026'"></span>
           </span>
         </button>
         <!-- Live progress under the button — fed by polling /api/setup/progress
-             every ~700ms while the request is in flight. Without this the
-             user sees a static spinner for 10\u201330s and assumes the page is
-             wedged. The 120s client-side AbortController fallback below
-             surfaces a "taking longer than expected" error rather than
-             spinning indefinitely. -->
-        <div x-show="completing" x-cloak class="mt-3 text-center text-xs text-gray-500 leading-relaxed">
-          <div x-show="completeElapsedSec > 0" class="text-[11px] text-gray-600">
-            <span x-text="completeElapsedSec + 's elapsed'"></span><span x-show="completeStage" class="text-gray-700"> &middot; </span><span x-show="completeStage" class="text-gray-500" x-text="completeStage"></span>
+             every ~700ms while the request is in flight. A stepper shows
+             the full 7-stage pipeline so the user always knows where we
+             are and how much is left; the active row's dim sub-label is
+             the server's live completeStageLabel, which surfaces the
+             sub-stages emitted from inside OpenShellExecutor.spawn() during
+             the multi-minute first-install image import. -->
+        <div x-show="completing" x-cloak class="mt-4 space-y-3">
+          <!-- Progress bar + percent + elapsed. Inline hue gradient here
+               (not a Tailwind bg-* class) because (a) assets/tailwind.css
+               is built from a fixed content list and doesn't include
+               one-off classes like bg-blue-500, and (b) the accent hue
+               cycles in sync with the rest of the UI (btn-primary,
+               spinner-hue, icon-hue) — a static Tailwind color would
+               look out of place. -->
+          <div class="flex items-center gap-3 text-xs text-gray-500">
+            <div class="flex-1 h-1.5 bg-gray-800 rounded-full overflow-hidden">
+              <div class="h-full rounded-full transition-all duration-500 ease-out"
+                   :style="`width: ${completePercent()}%; background: linear-gradient(90deg, hsl(calc(var(--accent-hue,239) + 0),84%,64%) 0%, hsl(calc(var(--accent-hue,239) + 30),65%,60%) 100%);`"></div>
+            </div>
+            <span class="tabular-nums text-gray-400" x-text="completePercent() + '%'"></span>
+            <span x-show="completeElapsedSec > 0" class="tabular-nums text-gray-600" x-text="completeElapsedSec + 's'"></span>
           </div>
-          <div x-show="!completeStageLabel">This usually takes <span class="text-gray-300 font-medium">1&ndash;3 minutes</span>.</div>
-          <div class="text-[11px] text-gray-600 mt-1">
-            Provisioning the model route, spawning the OpenShell sandbox (k3s cluster + sandbox image), and loading your first agent. First-ever install can take several minutes while the sandbox image is pulled.
+
+          <!-- Stepper: one row per stage -->
+          <ol class="text-xs space-y-1.5 text-left">
+            <template x-for="(step, i) in completeStages" :key="step.slug">
+              <li class="flex items-start gap-2">
+                <span class="shrink-0 mt-0.5 w-4 flex justify-center leading-none"
+                      :class="i < completeStageIndex() || (completeStage === 'done' && i === completeStageIndex())
+                              ? 'text-green-400'
+                              : (i === completeStageIndex() ? 'spinner-hue' : 'text-gray-600')">
+                  <!-- Done (all prior rows, plus the final row when stage=='done') -->
+                  <span x-show="i < completeStageIndex() || (completeStage === 'done' && i === completeStageIndex())">&check;</span>
+                  <!-- Active (current row while not yet 'done') -->
+                  <span x-show="i === completeStageIndex() && completeStage !== 'done'"
+                        class="animate-spin inline-block">&#9881;</span>
+                  <!-- Pending -->
+                  <span x-show="i > completeStageIndex()">&bull;</span>
+                </span>
+                <div class="min-w-0 flex-1">
+                  <div :class="i === completeStageIndex() && completeStage !== 'done'
+                               ? 'text-gray-200 font-medium'
+                               : (i < completeStageIndex() || completeStage === 'done' ? 'text-gray-400' : 'text-gray-600')"
+                       x-text="step.label"></div>
+                  <!-- Active row's live sub-label (from server) — hidden when
+                       a nested sub-stepper is rendered below to avoid echo. -->
+                  <div x-show="i === completeStageIndex() && completeStage !== 'done' && completeStageLabel && !(completeStage === 'spawn_sandbox' && completeSubstage)"
+                       class="text-[11px] text-gray-600 truncate" x-text="completeStageLabel"></div>
+
+                  <!-- Nested sub-stepper for the active spawn_sandbox row.
+                       Rendered only when we're on spawn_sandbox AND the
+                       server has emitted a substage slug (otherwise the
+                       plain sub-label above is enough). -->
+                  <ol x-show="step.slug === 'spawn_sandbox'
+                              && i === completeStageIndex()
+                              && completeStage !== 'done'
+                              && completeSubstage"
+                      class="mt-1.5 ml-1 space-y-1 border-l border-gray-800 pl-2">
+                    <template x-for="(sub, j) in spawnSubStages" :key="sub.slug">
+                      <li class="flex items-start gap-1.5 text-[11px]">
+                        <span class="shrink-0 w-3 flex justify-center leading-none"
+                              :class="j < completeSubstageIndex()
+                                      ? 'text-green-400'
+                                      : (j === completeSubstageIndex() ? 'spinner-hue' : 'text-gray-700')">
+                          <span x-show="j < completeSubstageIndex()">&check;</span>
+                          <span x-show="j === completeSubstageIndex()" class="animate-spin inline-block">&#9881;</span>
+                          <span x-show="j > completeSubstageIndex()">&bull;</span>
+                        </span>
+                        <span :class="j === completeSubstageIndex() ? 'text-gray-300' : (j < completeSubstageIndex() ? 'text-gray-500' : 'text-gray-700')">
+                          <span x-text="sub.label"></span>
+                          <!-- Percent appended for the active substage when we have one
+                               (only import_image populates sub_percent today) -->
+                          <span x-show="j === completeSubstageIndex() && completeSubPercent > 0"
+                                class="text-gray-500 tabular-nums"
+                                x-text="' — ' + completeSubPercent + '%'"></span>
+                        </span>
+                      </li>
+                    </template>
+                  </ol>
+                </div>
+              </li>
+            </template>
+          </ol>
+
+          <div class="text-[11px] text-gray-600 text-center pt-1">
+            First-ever install can take several minutes while the sandbox image is pulled.
           </div>
         </div>
       </div>
@@ -2242,8 +2310,61 @@ function setup() {
     completeStageLabel: '',
     completeStageStarted: 0,
     completeElapsedSec: 0,
+    // Sub-stage drill-down. Only `spawn_sandbox` populates these today
+    // (it's the only multi-minute stage). `completeSubstage` is a slug
+    // the frontend maps into `spawnSubStages` below; `completeSubPercent`
+    // is byte-level progress during the image import (0 otherwise).
+    completeSubstage: '',
+    completeSubPercent: 0,
     _completePollTimer: null,
     _completeElapsedTimer: null,
+    // Ordered pipeline shown as the stepper on the final screen. Slugs
+    // MUST match the stage strings emitted by _setup_progress_update in
+    // gateway/setup_handlers.py (plus `done`).
+    completeStages: [
+      { slug: 'init',              label: 'Saving configuration' },
+      { slug: 'register_machines', label: 'Registering inference servers' },
+      { slug: 'provision_route',   label: 'Provisioning model route' },
+      { slug: 'create_agent',      label: 'Creating your first agent' },
+      { slug: 'spawn_sandbox',     label: "Provisioning the agent's sandbox" },
+      { slug: 'issue_session',     label: 'Logging you in' },
+      { slug: 'done',              label: 'Ready' },
+    ],
+    // Sub-stepper rendered inside the active `spawn_sandbox` row. Slugs
+    // MUST match the `substage=` kwargs emitted by
+    // OpenShellExecutor.spawn() in gateway/executors/openshell.py.
+    // Ordered as the executor walks through them.
+    spawnSubStages: [
+      { slug: 'check_image',   label: 'Checking sandbox image' },
+      { slug: 'import_image',  label: 'Importing sandbox image' },
+      { slug: 'create_pod',    label: 'Creating sandbox pod' },
+      { slug: 'upload_config', label: 'Uploading agent configuration' },
+      { slug: 'finalize',      label: 'Finalizing sandbox' },
+    ],
+    completeStageIndex() {
+      if (!this.completeStage) return 0;
+      const i = this.completeStages.findIndex(s => s.slug === this.completeStage);
+      return i >= 0 ? i : 0;
+    },
+    completeSubstageIndex() {
+      if (!this.completeSubstage) return -1;
+      return this.spawnSubStages.findIndex(s => s.slug === this.completeSubstage);
+    },
+    // Overall bar percent. When we're on `spawn_sandbox` and have a
+    // substage, we weight the sub-stage's position (plus its intra-sub
+    // percent for the streaming image import) inside that stage's slice
+    // of the outer bar so the bar visibly advances during the long wait.
+    completePercent() {
+      if (this.completeStage === 'done') return 100;
+      const si = this.completeStageIndex();
+      const slice = 100 / this.completeStages.length;
+      const base = si * slice;
+      if (this.completeStage !== 'spawn_sandbox') return Math.round(base);
+      const subI = this.completeSubstageIndex();
+      if (subI < 0) return Math.round(base);
+      const subFrac = (subI + (this.completeSubPercent / 100)) / this.spawnSubStages.length;
+      return Math.min(99, Math.round(base + slice * subFrac));
+    },
 
     // Server-instance timestamp — read once from <meta name="setup-ts"> so all
     // methods can use it without scope issues (set in init, used in _saveProgress)
@@ -3586,10 +3707,12 @@ function setup() {
 
     _startCompletePolling() {
       // Poll /api/setup/progress every 700ms while complete() is in flight.
-      // Updates completeStage + completeStageLabel so the UI shows live
-      // progress instead of a static "Finishing up..." spinner.
+      // Updates completeStage/Label + sub-stage drill-down fields so the
+      // UI shows live progress instead of a static "Finishing up..." spinner.
       this.completeStage = '';
       this.completeStageLabel = '';
+      this.completeSubstage = '';
+      this.completeSubPercent = 0;
       this.completeStageStarted = Date.now();
       this.completeElapsedSec = 0;
       this._completeElapsedTimer = setInterval(() => {
@@ -3603,6 +3726,10 @@ function setup() {
           if (d && d.label) {
             this.completeStage = d.stage || '';
             this.completeStageLabel = d.label;
+            // substage + sub_percent default to '' / 0 when the current
+            // stage has no sub-stepper (everything except spawn_sandbox).
+            this.completeSubstage = d.substage || '';
+            this.completeSubPercent = d.sub_percent || 0;
           }
           if (d && d.done) this._stopCompletePolling();
         } catch (e) { /* swallow — polling is best-effort */ }
