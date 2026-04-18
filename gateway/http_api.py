@@ -3030,21 +3030,43 @@ async def _handle_api_session_restore(request: web.Request) -> web.Response:
 async def _handle_chat_cancel(request: web.Request) -> web.Response:
     """POST /chat/{task_id}/cancel — abort an in-flight chat turn.
 
-    SIGTERMs the ``openshell sandbox exec`` subprocess for ``task_id``;
-    the dispatch loop unwinds via its existing cleanup paths (stdout
-    EOF, 5s wait_for, in_flight pop). Returns:
+    Tries v1 (``WorkerRegistry.cancel_task``) first, then v2
+    (``worker_registry_v2.cancel_task``). Either one terminates the
+    subprocess backing the dispatch; the relevant dispatch loop
+    unwinds through its existing cleanup path.
 
+    Returns:
     - 204 — task found and signalled (cancellation in progress)
-    - 404 — no in-flight task with this id (already finished, or never
-            existed for this gateway)
+    - 404 — no in-flight task with this id anywhere
+    - 501 — neither dispatcher is reachable at all (config error)
     """
     task_id = request.match_info["task_id"]
     app = request.app
     wr = app.get("worker_registry")
-    if wr is None or not hasattr(wr, "cancel_task"):
+
+    # v1 first — most historical dispatches go here, and the check is
+    # a single dict lookup so the v2 fallback is only taken when needed.
+    if wr is not None and hasattr(wr, "cancel_task"):
+        try:
+            if wr.cancel_task(task_id):
+                return web.Response(status=204)
+        except Exception as exc:
+            logger.warning("chat cancel v1 raised for %s: %s", task_id, exc)
+
+    # v2 fallback — LOG-44 hermes-as-server dispatches live here.
+    try:
+        from gateway.worker_registry_v2 import cancel_task as _v2_cancel
+    except ImportError:
+        _v2_cancel = None
+    if _v2_cancel is not None:
+        try:
+            if _v2_cancel(task_id):
+                return web.Response(status=204)
+        except Exception as exc:
+            logger.warning("chat cancel v2 raised for %s: %s", task_id, exc)
+
+    if wr is None and _v2_cancel is None:
         return web.json_response({"error": "cancel_unsupported"}, status=501)
-    if wr.cancel_task(task_id):
-        return web.Response(status=204)
     return web.json_response({"error": "not_found"}, status=404)
 
 
