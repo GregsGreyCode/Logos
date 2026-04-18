@@ -53,7 +53,38 @@ from typing import Any, Callable, Dict, Optional
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_TASK_TIMEOUT = 600.0   # generous; gateway owns its own per-run timeouts
+
+def _default_task_timeout() -> float:
+    """Per-dispatch wall-clock timeout for v2 runs.
+
+    Env-overridable via ``LOGOS_V2_DISPATCH_TIMEOUT_S`` so operators can
+    raise it without editing code when agents routinely do long
+    tool-using loops. Default bumped from the original 600s (10 min)
+    to 1800s (30 min) after a live 207-message essay run timed out at
+    10 min while still producing meaningful work — tool-using agents
+    on smaller models easily exceed 10 min once context compression
+    and multi-step reasoning stack up.
+
+    Clamped to [60, 7200] — shorter than a minute isn't useful for
+    anything real, longer than 2 hours means the dispatch is
+    effectively never timing out and the user is better served by
+    Stop or a gateway restart than waiting on us to give up.
+    """
+    raw = os.environ.get("LOGOS_V2_DISPATCH_TIMEOUT_S")
+    if not raw:
+        return 1800.0
+    try:
+        v = float(raw)
+    except ValueError:
+        logger.warning(
+            "LOGOS_V2_DISPATCH_TIMEOUT_S=%r is not a number — falling back to 1800s",
+            raw,
+        )
+        return 1800.0
+    return max(60.0, min(7200.0, v))
+
+
+DEFAULT_TASK_TIMEOUT = _default_task_timeout()
 
 # LOG-51.3: in-flight task registry so /chat/{task_id}/cancel can reach
 # the v2 dispatch subprocess. Keyed by the logos task_id (not hermes's
