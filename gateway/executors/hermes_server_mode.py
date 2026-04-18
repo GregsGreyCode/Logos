@@ -223,6 +223,96 @@ def _build_env_file(
     return "\n".join(lines) + "\n"
 
 
+# Canonical mapping from Logos platform identifier → hermes env-var
+# name. Matches hermes's own ``_token_env_names`` in its gateway/config.py
+# — any mismatch here means the credential lands in ``.env`` but hermes
+# doesn't recognise it and the adapter stays disabled.
+_PLATFORM_ENV_MAP = {
+    "telegram": "TELEGRAM_BOT_TOKEN",
+    "discord": "DISCORD_BOT_TOKEN",
+    "slack": "SLACK_BOT_TOKEN",
+    "mattermost": "MATTERMOST_TOKEN",
+    "matrix": "MATRIX_ACCESS_TOKEN",
+    "weixin": "WEIXIN_TOKEN",
+}
+
+
+def build_channel_extra_env(
+    agent_id: str,
+    *,
+    apply_presets: bool = True,
+    sandbox_name_for_log: Optional[str] = None,
+) -> dict:
+    """Return the per-agent channel env dict for the LOG-44.3 path.
+
+    Reads ``agent_channel_credentials`` via auth.db, builds a
+    ``{ENV_VAR: token}`` dict for every enabled row whose platform has
+    a known env-var mapping. Platforms not in ``_PLATFORM_ENV_MAP``
+    (or credentials with an empty token) are silently skipped.
+
+    When ``apply_presets=True`` (default), also calls
+    ``gateway.policies.apply_preset(agent_id, platform)`` for each
+    credential's platform — idempotent per policies, fails best-effort
+    with a WARNING so a missing preset file doesn't block the whole
+    build. Set False from paths that shouldn't trigger policy writes
+    (dry runs, introspection).
+
+    ``sandbox_name_for_log`` is used purely for log formatting so
+    spawn/refresh messages name the sandbox they relate to. Falls
+    back to the agent_id when unset.
+    """
+    try:
+        from gateway.auth import db as _auth_db
+    except ImportError:
+        logger.warning(
+            "build_channel_extra_env: auth.db not importable — "
+            "returning empty env (agent=%s)", agent_id,
+        )
+        return {}
+
+    extra_env: dict = {}
+    label_tag = sandbox_name_for_log or agent_id
+    try:
+        rows = _auth_db.list_agent_channel_credentials(
+            agent_id=agent_id, enabled_only=True,
+        )
+    except Exception as exc:
+        logger.warning(
+            "build_channel_extra_env(%s): list_agent_channel_credentials "
+            "raised %s — proceeding without channel env", label_tag, exc,
+        )
+        return {}
+
+    for row in rows:
+        plat = (row.get("platform") or "").lower()
+        env_name = _PLATFORM_ENV_MAP.get(plat)
+        token = row.get("token") or ""
+        if not env_name or not token:
+            continue
+        extra_env[env_name] = token
+        if apply_presets:
+            try:
+                from gateway import policies as _policies
+                _policies.apply_preset(agent_id, plat)
+                logger.info(
+                    "build_channel_extra_env(%s): applied '%s' preset "
+                    "(channel cred %s)",
+                    label_tag, plat, row.get("label") or "default",
+                )
+            except Exception as preset_exc:
+                logger.warning(
+                    "build_channel_extra_env(%s): could not apply '%s' "
+                    "preset: %s (agent may be unable to reach %s API)",
+                    label_tag, plat, preset_exc, plat,
+                )
+    if extra_env:
+        logger.info(
+            "build_channel_extra_env(%s): env keys %s",
+            label_tag, sorted(extra_env.keys()),
+        )
+    return extra_env
+
+
 def deploy_hermes_config(
     sandbox_name: str,
     config: Any,
@@ -359,6 +449,89 @@ echo "[hermes-server] BOOT.md cleared (soul={soul_name} has no boot.md)"
             f"{r.stderr.strip()[-500:]}"
         )
     logger.info("hermes_server_mode: BOOT.md %s for %s", action, sandbox_name)
+
+
+def redeploy_hermes_env(
+    sandbox_name: str,
+    api_key: str,
+    extra_env: Optional[dict] = None,
+) -> None:
+    """Rewrite just the ``.env`` file inside the sandbox (LOG-44.3.4).
+
+    Used by ``OpenShellExecutor.refresh_channel_credentials`` to apply
+    a credential change without a full respawn. The baseline
+    ``API_SERVER_KEY`` MUST be the value originally minted at spawn —
+    reuse it from ``hermes_server_setup`` on the state record or
+    dispatch_v2 will start 401ing. ``config.yaml`` is intentionally
+    left alone (model + system_prompt don't depend on credentials).
+    """
+    env_file = _build_env_file(api_key, extra_env=extra_env)
+    script = f"""
+set -e
+mkdir -p {shlex.quote(HERMES_HOME_IN_SANDBOX)}
+cat > {shlex.quote(HERMES_HOME_IN_SANDBOX)}/.env <<'___ENV___'
+{env_file}___ENV___
+chmod 600 {shlex.quote(HERMES_HOME_IN_SANDBOX)}/.env
+echo "[hermes-server] .env redeployed ({len(env_file)}b, {len(extra_env or {})} extra keys)"
+"""
+    r = _run_sb_exec(sandbox_name, script)
+    if r.returncode != 0:
+        raise RuntimeError(
+            f"redeploy_hermes_env({sandbox_name}) failed rc={r.returncode}: "
+            f"{r.stderr.strip()[-500:]}"
+        )
+    logger.info(
+        "hermes_server_mode: .env refreshed on %s (%d extra keys)",
+        sandbox_name, len(extra_env or {}),
+    )
+
+
+def restart_hermes_in_sandbox(sandbox_name: str) -> None:
+    """pkill + relaunch hermes inside the sandbox (LOG-44.3.4).
+
+    Used for credential hot-refresh: keeps the sandbox pod + workspace
+    intact but bounces the hermes process so it re-reads ``.env``.
+    Matches the launch command in ``launch_hermes_gateway`` so the
+    monkeypatch + logging stay consistent.
+    """
+    home = shlex.quote(HERMES_HOME_IN_SANDBOX)
+    patch = shlex.quote(CANCEL_PATCH_PATH_IN_SANDBOX)
+    script = f"""
+pkill -f 'hermes_cancel_monkeypatch\\.py gateway run|hermes gateway run' || true
+# Brief wait so the socket is released before we relaunch.
+sleep 1
+rm -f /tmp/hermes-gw.log
+HERMES_HOME={home}
+export HERMES_HOME
+if [ -f "$HERMES_HOME/.env" ]; then
+  set -a
+  . "$HERMES_HOME/.env"
+  set +a
+fi
+if [ ! -f {patch} ]; then
+  echo '[hermes-server] ERROR: cancel monkeypatch missing at {CANCEL_PATCH_PATH_IN_SANDBOX}' >&2
+  exit 2
+fi
+nohup python3 {patch} gateway run -v > /tmp/hermes-gw.log 2>&1 &
+sleep 1
+pid=$(pgrep -f 'hermes_cancel_monkeypatch\\.py gateway run' | head -1)
+if [ -z "$pid" ]; then
+  echo '[hermes-server] restart failed — no process after 1s'
+  tail -20 /tmp/hermes-gw.log
+  exit 1
+fi
+echo "[hermes-server] restarted pid=$pid (credential refresh)"
+"""
+    r = _run_sb_exec(sandbox_name, script, timeout=30)
+    if r.returncode != 0:
+        raise RuntimeError(
+            f"restart_hermes_in_sandbox({sandbox_name}) failed rc={r.returncode}: "
+            f"{r.stderr.strip()[-500:]} / stdout: {r.stdout.strip()[-500:]}"
+        )
+    logger.info(
+        "hermes_server_mode: restarted hermes on %s — %s",
+        sandbox_name, r.stdout.strip(),
+    )
 
 
 def launch_hermes_gateway(sandbox_name: str) -> None:
@@ -522,9 +695,12 @@ def is_enabled() -> bool:
 
 __all__ = [
     "HermesServerSetup",
+    "build_channel_extra_env",
     "deploy_hermes_config",
     "deploy_cancel_monkeypatch",
     "deploy_boot_md",
+    "redeploy_hermes_env",
+    "restart_hermes_in_sandbox",
     "launch_hermes_gateway",
     "wait_for_hermes_health",
     "enable_hermes_server_mode",
