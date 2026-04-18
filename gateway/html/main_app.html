@@ -1461,6 +1461,15 @@
               <div class="flex items-center gap-2 mb-2">
                 <span x-text="platformIcon(s.platform)"></span>
                 <span class="text-xs font-medium text-gray-300 capitalize truncate flex-1" x-text="s.platform"></span>
+                <!-- LOG-51.5: per-row Stop button. Shown only when the
+                     backend surfaced a task_id on this session (today:
+                     v2 dispatch path). POSTs /chat/{task_id}/cancel;
+                     the dispatcher routes to v1 or v2 cancel based on
+                     which one owns the task. -->
+                <button x-show="s.task_id" x-cloak
+                  @click.stop="cancelLiveTask(s.task_id)"
+                  :title="'Stop ' + (s.agent_name || 'this agent')"
+                  class="shrink-0 text-[10px] px-1.5 py-0.5 rounded border border-red-900 text-red-500/70 hover:text-red-300 hover:border-red-700 transition-colors">&#9632;</button>
                 <span class="shrink-0 text-xs px-1.5 py-0.5 rounded font-medium"
                   :class="s.stuck ? 's-stuck' : elapsed(s.tool_started_at) > 180 ? 's-slow' : 's-run'"
                   x-text="s.stuck ? '\\uD83D\\uDD34' : elapsed(s.tool_started_at) > 180 ? '\\u26A0\\uFE0F' : '\\u2705'">
@@ -9041,6 +9050,27 @@ function app() {
         });
       } catch (e) {
         console.warn('cancel failed:', e && e.message);
+      }
+    },
+
+    // LOG-51.5: Stop button on each Live Executions row. Same endpoint
+    // as cancelActiveTask but takes an explicit task_id (the row isn't
+    // necessarily the chat the user has focused — could be a cron-
+    // triggered run, a platform message, another agent running in a
+    // second pane, etc.). The gateway's _handle_chat_cancel routes to
+    // whichever registry (v1 or v2) owns the task.
+    async cancelLiveTask(taskId) {
+      if (!taskId) return;
+      try {
+        const r = await fetch(`/chat/${encodeURIComponent(taskId)}/cancel`, {
+          method: 'POST', credentials: 'include',
+          headers: { 'X-CSRF-Token': getCsrfToken() },
+        });
+        if (!r.ok && r.status !== 404) {
+          console.warn('live cancel HTTP', r.status, 'for', taskId);
+        }
+      } catch (e) {
+        console.warn('live cancel failed:', e && e.message);
       }
     },
 

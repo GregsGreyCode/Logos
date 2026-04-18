@@ -1659,6 +1659,7 @@ async def _handle_status(request: web.Request) -> web.Response:
         active.append({
             "session_key": session_key,
             "platform": s.get("platform", "unknown"),
+            "agent_name": s.get("agent_name", ""),
             "current_tool": s.get("current_tool", "unknown"),
             "elapsed_s": int(now - tool_started),
             "tool_started_at": tool_started,
@@ -1671,6 +1672,12 @@ async def _handle_status(request: web.Request) -> web.Response:
             "prompt_tokens": prompt_tokens,
             "completion_tokens": completion_tokens,
             "api_calls": api_calls,
+            # LOG-51.4: forward task_id so the Live Executions UI can
+            # render a per-row Stop button that POSTs
+            # /chat/{task_id}/cancel. Only the v2 dispatch path seeds
+            # task_id today; older/legacy rows omit the key and the
+            # UI hides the button accordingly.
+            "task_id": s.get("task_id"),
         })
 
     # Recent completed sessions (ring buffer, newest last)
@@ -4024,6 +4031,11 @@ async def _handle_chat(request: web.Request) -> web.StreamResponse:
                 runner._session_status[session_key] = {
                     "platform": _platform_val,
                     "agent_name": _agent_config.get("name", ""),
+                    # LOG-51.4: expose task_id so the Live Executions UI
+                    # can render a per-row Stop button that POSTs to
+                    # /chat/{task_id}/cancel. Cleared when the dispatch
+                    # finally unwinds along with the rest of the entry.
+                    "task_id": _task_uuid,
                     "current_tool": "thinking…",
                     "tool_started_at": _now_fn(),
                     "session_started_at": _now_fn(),
