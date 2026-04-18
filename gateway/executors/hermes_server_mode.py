@@ -72,6 +72,27 @@ BOOT_MD_PATH_IN_SANDBOX = f"{HERMES_HOME_IN_SANDBOX}/BOOT.md"
 # the passthrough list.
 _FORWARDED_HOST_ENV = ("SEARXNG_URL",)
 
+# Env vars that the openshell sandbox image sets natively (HTTP_PROXY,
+# CA bundles, etc — see the openshell-sandbox image's entrypoint) and
+# that MUST pass through to execute_code's subprocess for any outbound
+# HTTP to work. Sandbox egress is routed through the cluster L7 proxy
+# at 10.200.0.1:3128; without the proxy vars urllib connects direct and
+# the network policy drops it (read: ``urllib.error.URLError: <urlopen
+# error timed out>`` after 30s). The cert vars are needed for HTTPS
+# verification against the proxy's re-signed certificates.
+#
+# Not forwarded via .env — these vars are in the sandbox's *default*
+# environment already; we only need to unblock the passthrough filter
+# inside execute_code so they survive subprocess spawn.
+_SANDBOX_PASSTHROUGH_ENV = (
+    "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY",
+    "http_proxy", "https_proxy", "grpc_proxy",
+    "NO_PROXY", "no_proxy",
+    "CURL_CA_BUNDLE", "SSL_CERT_FILE", "REQUESTS_CA_BUNDLE",
+    "NODE_EXTRA_CA_CERTS", "NODE_USE_ENV_PROXY",
+    "OPENSHELL_SANDBOX",
+)
+
 
 @dataclass(frozen=True)
 class HermesServerSetup:
@@ -182,13 +203,19 @@ def _build_config_yaml(model: str, system_prompt: Optional[str]) -> str:
         f"  port: {HERMES_BIND_PORT}",
     ]
     # `execute_code` and the terminal sandbox strip env vars by default
-    # (safe-prefix allowlist + secret-substring blocklist). SEARXNG_URL
-    # has neither a safe prefix nor a secret-like name, so without an
-    # explicit passthrough the agent's run_agent process sees it but
-    # the subprocess execute_code spawns does NOT. List everything
-    # _build_env_file forwards, so reachability is uniform across
-    # run_agent and its children.
-    _passthrough = [k for k in _FORWARDED_HOST_ENV if os.environ.get(k)]
+    # (safe-prefix allowlist + secret-substring blocklist). Two groups
+    # of vars need explicit passthrough or outbound HTTP breaks:
+    #   1. `_FORWARDED_HOST_ENV` (SEARXNG_URL, …) — neither prefix-
+    #      matched nor secret-named, so without passthrough only the
+    #      parent run_agent sees them, subprocesses don't.
+    #   2. `_SANDBOX_PASSTHROUGH_ENV` (HTTP_PROXY, CA bundles, …) — the
+    #      openshell sandbox routes egress through a cluster L7 proxy;
+    #      strip these and urllib connects direct, firewall drops it,
+    #      timeout after 30s. Was invisible until SEARXNG_URL started
+    #      actually reaching the agent and its first outbound call
+    #      hung — prior agents only hit LM Studio via hermes's internal
+    #      client, which uses a different code path.
+    _passthrough = list(_FORWARDED_HOST_ENV) + list(_SANDBOX_PASSTHROUGH_ENV)
     if _passthrough:
         lines.append("terminal:")
         lines.append("  env_passthrough:")
