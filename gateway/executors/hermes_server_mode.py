@@ -53,6 +53,16 @@ DEFAULT_EXEC_TIMEOUT_S = 30
 _CANCEL_PATCH_SRC = Path(__file__).parent / "hermes_cancel_monkeypatch.py"
 CANCEL_PATCH_PATH_IN_SANDBOX = f"{HERMES_HOME_IN_SANDBOX}/hermes_cancel_monkeypatch.py"
 
+# LOG-44.2: per-soul boot hooks. If a soul ships a ``boot.md`` next to
+# its ``soul.md`` in ``souls/<name>/``, it gets uploaded to
+# ``/tmp/hermes-srv-home/BOOT.md`` on spawn and hermes's built-in
+# boot_md hook (gateway/builtin_hooks/boot_md.py in the sandbox image)
+# runs the agent with those instructions on every gateway startup. A
+# soul without boot.md produces no BOOT.md file, so its agents don't
+# auto-run anything on boot.
+_SOULS_DIR = Path(__file__).parent.parent.parent / "souls"
+BOOT_MD_PATH_IN_SANDBOX = f"{HERMES_HOME_IN_SANDBOX}/BOOT.md"
+
 
 @dataclass(frozen=True)
 class HermesServerSetup:
@@ -257,6 +267,59 @@ echo "[hermes-server] cancel monkeypatch deployed ({len(patch_src)}b) to {CANCEL
     )
 
 
+def deploy_boot_md(sandbox_name: str, soul_name: str) -> None:
+    """Upload the soul's ``boot.md`` as ``BOOT.md`` in the sandbox.
+
+    Hermes's built-in ``boot_md`` hook (in the sandbox image at
+    ``gateway/builtin_hooks/boot_md.py``) is always registered and
+    runs the agent with ``BOOT.md`` contents on every ``gateway:startup``
+    event. Per-soul boot behavior is therefore just a matter of
+    putting the right file at the right path before hermes launches.
+
+    Looks for ``souls/<soul_name>/boot.md`` on the host. If present,
+    uploads it verbatim as ``/tmp/hermes-srv-home/BOOT.md``. If absent
+    (most souls), *explicitly removes* any prior ``BOOT.md`` so an
+    earlier spawn's stale boot hook can't fire for a soul that has
+    since been edited to drop its boot behavior. Idempotent on respawn.
+    """
+    source = _SOULS_DIR / soul_name / "boot.md"
+    target = shlex.quote(BOOT_MD_PATH_IN_SANDBOX)
+
+    if source.is_file():
+        try:
+            boot_content = source.read_text(encoding="utf-8")
+        except OSError as exc:
+            raise RuntimeError(
+                f"deploy_boot_md({sandbox_name}): cannot read "
+                f"{source}: {exc}"
+            ) from exc
+        b64_boot = base64.b64encode(boot_content.encode("utf-8")).decode()
+        script = f"""
+set -e
+mkdir -p {shlex.quote(HERMES_HOME_IN_SANDBOX)}
+echo {b64_boot} | base64 -d > {target}
+chmod 644 {target}
+echo "[hermes-server] BOOT.md deployed ({len(boot_content)}b, soul={soul_name})"
+"""
+        action = f"deployed from souls/{soul_name}/boot.md ({len(boot_content)} bytes)"
+    else:
+        # No boot.md — nuke any previous one so a changed-my-mind soul
+        # edit actually takes effect on next respawn.
+        script = f"""
+rm -f {target}
+echo "[hermes-server] BOOT.md cleared (soul={soul_name} has no boot.md)"
+"""
+        action = f"cleared (soul {soul_name} has no boot.md)"
+
+    r = _run_sb_exec(sandbox_name, script)
+    if r.returncode != 0:
+        raise RuntimeError(
+            f"deploy_boot_md({sandbox_name}) failed rc={r.returncode}: "
+            f"{r.stderr.strip()[-500:]}"
+        )
+    logger.info("hermes_server_mode: BOOT.md %s for %s", action, sandbox_name)
+
+
 def launch_hermes_gateway(sandbox_name: str) -> None:
     """Start `hermes gateway run` in the background inside the sandbox.
 
@@ -380,6 +443,10 @@ def enable_hermes_server_mode(
     logger.info("hermes_server_mode: enabling on %s", sandbox_name)
     deploy_hermes_config(sandbox_name, config, api_key)
     deploy_cancel_monkeypatch(sandbox_name)
+    # LOG-44.2: per-soul boot hook. No-op (explicit clear) for souls
+    # without a boot.md; otherwise uploads the file for the built-in
+    # boot_md hook inside hermes to pick up on next gateway:startup.
+    deploy_boot_md(sandbox_name, getattr(config, "soul_name", "default"))
     launch_hermes_gateway(sandbox_name)
     wait_for_hermes_health(sandbox_name)
 
@@ -402,6 +469,7 @@ __all__ = [
     "HermesServerSetup",
     "deploy_hermes_config",
     "deploy_cancel_monkeypatch",
+    "deploy_boot_md",
     "launch_hermes_gateway",
     "wait_for_hermes_health",
     "enable_hermes_server_mode",
@@ -410,4 +478,5 @@ __all__ = [
     "HERMES_BIND_HOST",
     "HERMES_BIND_PORT",
     "CANCEL_PATCH_PATH_IN_SANDBOX",
+    "BOOT_MD_PATH_IN_SANDBOX",
 ]
