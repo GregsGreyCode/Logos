@@ -149,6 +149,31 @@ Put it on each Live-Executions row, not just the chat header. Three reasons: (a)
 
 ---
 
+### LOG-52 · Cross-agent session aggregator + retire Logos local transcripts
+**Effort:** M (2h–1d) · **Type:** Architecture · **Status:** OPEN · **Surfaced:** 2026-04-18 during LOG-44.4 A.1 research · **Blocks:** clean closure of LOG-44.4
+
+Followup to LOG-44.4 A.1 (hermes `/v1/runs` auto-loads history from SessionDB — shipped in commit `3eb6d5f`). A.1 gave us within-chat continuity for v2 dispatches; this ticket does the rest of Option A ("Hermes owns sessions, Logos aggregates"):
+
+| # | Sub-task | Effort | Notes |
+|---|---|---|---|
+| 52.1 | Monkeypatch hermes: `GET /v1/sessions` (list) + `GET /v1/sessions/{id}` (full transcript) + `GET /v1/sessions/search?q=…` (FTS via `messages_fts`) | S | Thin wrappers over SessionDB + messages_fts. Deliver via the same spawn-time upload pipe as LOG-51.2 (extend `hermes_cancel_monkeypatch.py`, rename to `hermes_logos_monkeypatch.py` at that point). Schema already has full metadata: id/source/model/system_prompt/message_count/tokens/cost/title. |
+| 52.2 | Logos session_search fans out via HTTP to every running sandbox's GET /v1/sessions/search and merges | S | Current session_search reads `~/.logos/sessions/*` + its SQLite. Swap the backend for a fan-out aggregator keyed on the agent registry (`openshell_instances.json` gives sandbox names + hermes_server_setup/base_url + api_key). Cache per-sandbox responses for ~30s so rapid UI refreshes don't DoS each agent. |
+| 52.3 | Logos UI session list pulls from aggregator instead of local storage | S | Sidebar "Recent chats" currently reads from Logos sessions. Repoint at `/admin/sessions` backed by aggregator. List shape largely the same — add an `agent_id` field so cross-agent display can group/filter. |
+| 52.4 | Retire Logos's local transcript writes (`append_to_transcript`) + LOG-26 embed-on-write for v2 chats | XS | Under Option A, Logos no longer writes its own transcript copy for v2 dispatches — hermes owns it. Append becomes a no-op guarded by `hermes_server_setup present on worker`. Embedding moves into hermes (next follow-up, not this ticket). |
+| 52.5 | Logos's `~/.logos/sessions/*` + `sessions.json` become append-only legacy state | XS | New chats don't write here; existing entries are read-only for chat_id → session_id lookups. Eventually prune (follow-up ticket). |
+
+**Open questions:**
+- **Cross-agent search UX:** does the search box show "Hermes said X about minoxidil" (agent-scoped result) or "minoxidil was mentioned in session Y" (session-scoped with agent as metadata)? Lean toward agent-scoped.
+- **Auth on the new sandbox query endpoints:** same API_SERVER_KEY Bearer that /v1/runs uses, reachable only via openshell exec from the Logos host. Don't need per-user scoping yet (multi-user hermes-in-sandbox is LOG-44.x territory).
+- **What happens when a sandbox is down:** aggregator degrades — returns results from available sandboxes + a "stale for agent X" marker. Don't block the search on a single unreachable agent.
+
+**Acceptance:**
+- User sends "find our past minoxidil conversation" in search — results come from hermes SessionDB via fan-out, not Logos's local store.
+- Deleting a chat in the UI deletes from hermes SessionDB, not from Logos local (LOG-44.4 A.5).
+- Logos's local `~/.logos/sessions/` stops growing for new chats.
+
+---
+
 ### LOG-24 · Verify Plan A-prime end-to-end + clean up stale WS references
 **Effort:** S (30m–2h) · **Type:** Verification + cleanup · **Status:** PARTIAL · **Prereq for:** LOG-44
 
