@@ -233,6 +233,40 @@ def _apply_cancel_patches() -> bool:
         session_id = body.get("session_id") or stored_session_id or run_id
         ephemeral_system_prompt = instructions
 
+        # ── LOGOS-PATCH (d) — LOG-44.4 A.1 ─────────────────────────
+        # Auto-load conversation history from hermes's SessionDB when
+        # the caller provided an explicit session_id but no
+        # conversation_history. Mirrors the /v1/chat/completions
+        # behavior at api_server.py:672-700 which already does this
+        # for the sibling endpoint. Without this, every Logos turn
+        # on /v1/runs starts with an empty conversation and the agent
+        # has amnesia across turns in the same chat.
+        #
+        # Security note: upstream gates this behind API key auth on
+        # /v1/chat/completions. /v1/runs already enforced auth above
+        # (_check_auth → 401), so we're already authenticated and
+        # can reuse the session_id → history lookup freely.
+        if body.get("session_id") and not conversation_history:
+            try:
+                if hasattr(self, "_ensure_session_db"):
+                    db = self._ensure_session_db()
+                    if db is not None:
+                        loaded = db.get_messages_as_conversation(session_id)
+                        if loaded:
+                            conversation_history = list(loaded)
+                            _upstream_logger.info(
+                                "logos.cancel_patch: loaded %d messages "
+                                "from SessionDB for session %s",
+                                len(conversation_history), session_id,
+                            )
+            except Exception as exc:
+                _upstream_logger.warning(
+                    "logos.cancel_patch: SessionDB auto-load failed "
+                    "for session %s: %s (continuing with empty history)",
+                    session_id, exc,
+                )
+        # ───────────────────────────────────────────────────────────
+
         async def _run_and_close():
             try:
                 agent = self._create_agent(
