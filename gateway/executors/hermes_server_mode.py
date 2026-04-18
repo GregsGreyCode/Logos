@@ -166,7 +166,10 @@ def _build_config_yaml(model: str, system_prompt: Optional[str]) -> str:
     return "\n".join(lines) + "\n"
 
 
-def _build_env_file(api_key: str) -> str:
+def _build_env_file(
+    api_key: str,
+    extra_env: Optional[dict] = None,
+) -> str:
     """Generate .env for hermes.
 
     OPENAI_API_KEY is a placeholder (the real auth is handled by the
@@ -179,25 +182,63 @@ def _build_env_file(api_key: str) -> str:
     the sandbox because the only network ingress to port 8642 is the
     gateway's own `openshell sandbox exec` transport; there's no
     external attacker to guard against here.
+
+    ``extra_env`` (LOG-44.3) — per-agent env vars appended after the
+    baseline. Typically channel-adapter credentials
+    (``TELEGRAM_BOT_TOKEN``, ``DISCORD_BOT_TOKEN``, etc) read from
+    ``agent_channel_credentials`` by the caller. Hermes's built-in
+    ``_apply_env_overrides`` in ``gateway/config.py`` inside the
+    sandbox turns these into enabled platform adapters on boot.
+    Baseline keys take precedence — extra_env can't clobber
+    ``API_SERVER_KEY`` or the ``OPENAI_*`` ones by accident.
     """
-    return (
-        f"API_SERVER_KEY={api_key}\n"
-        f"GATEWAY_ALLOW_ALL_USERS=true\n"
-        f"OPENAI_API_KEY=lm-studio\n"
-        f"OPENAI_BASE_URL=https://inference.local/v1\n"
-    )
+    lines = [
+        f"API_SERVER_KEY={api_key}",
+        "GATEWAY_ALLOW_ALL_USERS=true",
+        "OPENAI_API_KEY=lm-studio",
+        "OPENAI_BASE_URL=https://inference.local/v1",
+    ]
+    _baseline_keys = {"API_SERVER_KEY", "GATEWAY_ALLOW_ALL_USERS",
+                      "OPENAI_API_KEY", "OPENAI_BASE_URL"}
+    if extra_env:
+        for k, v in extra_env.items():
+            if not k or not isinstance(k, str):
+                continue
+            if k in _baseline_keys:
+                logger.warning(
+                    "hermes_server_mode: extra_env tried to clobber "
+                    "baseline key %s — ignoring", k,
+                )
+                continue
+            # Newlines in values would split into subsequent env entries
+            # and leak secrets or shift semantics; reject defensively.
+            sv = str(v)
+            if "\n" in sv or "\r" in sv:
+                logger.warning(
+                    "hermes_server_mode: extra_env value for %s "
+                    "contains newline — ignoring", k,
+                )
+                continue
+            lines.append(f"{k}={sv}")
+    return "\n".join(lines) + "\n"
 
 
 def deploy_hermes_config(
     sandbox_name: str,
     config: Any,
     api_key: str,
+    extra_env: Optional[dict] = None,
 ) -> None:
-    """Write hermes config.yaml + .env into the sandbox's HERMES_HOME."""
+    """Write hermes config.yaml + .env into the sandbox's HERMES_HOME.
+
+    ``extra_env`` (LOG-44.3) — per-agent env vars appended to .env,
+    typically platform credentials like ``TELEGRAM_BOT_TOKEN``. Built
+    by the caller from ``agent_channel_credentials``.
+    """
     model = _resolve_model(config)
     system_prompt = _resolve_system_prompt(config)
     config_yaml = _build_config_yaml(model, system_prompt)
-    env_file = _build_env_file(api_key)
+    env_file = _build_env_file(api_key, extra_env=extra_env)
 
     # Use shlex.quote to keep any special chars in the model name safe
     # when they land on the sh -c command line inside the sandbox.
@@ -425,6 +466,7 @@ def enable_hermes_server_mode(
     sandbox_name: str,
     config: Any,
     api_key: Optional[str] = None,
+    extra_env: Optional[dict] = None,
 ) -> HermesServerSetup:
     """One-shot: deploy config, launch gateway, wait for health.
 
@@ -433,6 +475,15 @@ def enable_hermes_server_mode(
     ``api_key`` is not supplied, a fresh random 32-byte token is minted
     (recommended — never reuse keys across sandboxes).
 
+    ``extra_env`` (LOG-44.3) — per-agent env vars passed into the
+    sandbox's ``.env``. Typically channel-adapter credentials
+    (``TELEGRAM_BOT_TOKEN``, ``DISCORD_BOT_TOKEN``, etc). Hermes's
+    ``_apply_env_overrides`` inside the sandbox picks them up on
+    startup and enables the matching platform adapters. Caller
+    (``OpenShellExecutor.spawn``) builds the dict from
+    ``agent_channel_credentials`` so ``hermes_server_mode`` stays
+    decoupled from auth.db.
+
     Raises:
         RuntimeError: if config deploy or gateway launch fails.
         TimeoutError: if /health doesn't come up in HEALTH_TIMEOUT_S.
@@ -440,8 +491,12 @@ def enable_hermes_server_mode(
     if api_key is None:
         api_key = secrets.token_urlsafe(32)
 
-    logger.info("hermes_server_mode: enabling on %s", sandbox_name)
-    deploy_hermes_config(sandbox_name, config, api_key)
+    logger.info(
+        "hermes_server_mode: enabling on %s (extra_env keys=%s)",
+        sandbox_name,
+        sorted((extra_env or {}).keys()),
+    )
+    deploy_hermes_config(sandbox_name, config, api_key, extra_env=extra_env)
     deploy_cancel_monkeypatch(sandbox_name)
     # LOG-44.2: per-soul boot hook. No-op (explicit clear) for souls
     # without a boot.md; otherwise uploads the file for the built-in
