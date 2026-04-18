@@ -94,6 +94,7 @@ def _run_sb_exec(
     sandbox_name: str,
     script: str,
     timeout: float = DEFAULT_EXEC_TIMEOUT_S,
+    gateway: Optional[str] = None,
 ) -> subprocess.CompletedProcess:
     """Run a multi-line shell script inside the sandbox via `openshell sandbox exec`.
 
@@ -101,14 +102,27 @@ def _run_sb_exec(
     - Args containing literal newlines are rejected (gRPC-level validation)
       → script is base64-encoded on the host and decoded on the other side.
     - Exec gates on stdin EOF → we connect stdin to /dev/null.
+
+    ``gateway`` — when set, prepend ``-g <gateway>`` so the CLI scopes to
+    the openshell sub-gateway that owns the sandbox. Required for multi-
+    route setups: a sandbox is created inside a specific gateway (the
+    one bound to its model route), and without ``-g`` the CLI falls back
+    to the user's active gateway, which will be a different one in any
+    multi-route deployment → ``sandbox not found``.
     """
     b64 = base64.b64encode(script.encode()).decode()
-    cmd = [
-        "openshell", "sandbox", "exec", "--no-tty",
+    cmd = ["openshell"]
+    if gateway:
+        cmd += ["-g", gateway]
+    cmd += [
+        "sandbox", "exec", "--no-tty",
         "--name", sandbox_name,
         "--", "sh", "-c", f"echo {b64} | base64 -d | sh",
     ]
-    logger.debug("hermes_server_mode: sb-exec on %s: script_len=%d", sandbox_name, len(script))
+    logger.debug(
+        "hermes_server_mode: sb-exec on %s (gw=%s): script_len=%d",
+        sandbox_name, gateway or "<active>", len(script),
+    )
     return subprocess.run(
         cmd,
         stdin=subprocess.DEVNULL,
@@ -355,12 +369,17 @@ def deploy_hermes_config(
     config: Any,
     api_key: str,
     extra_env: Optional[dict] = None,
+    gateway: Optional[str] = None,
 ) -> None:
     """Write hermes config.yaml + .env into the sandbox's HERMES_HOME.
 
     ``extra_env`` (LOG-44.3) — per-agent env vars appended to .env,
     typically platform credentials like ``TELEGRAM_BOT_TOKEN``. Built
     by the caller from ``agent_channel_credentials``.
+
+    ``gateway`` — openshell sub-gateway that owns the sandbox. Threaded
+    through ``_run_sb_exec`` so the CLI actually targets the right
+    gateway in multi-route setups.
     """
     model = _resolve_model(config)
     system_prompt = _resolve_system_prompt(config)
@@ -381,7 +400,7 @@ cat > {shlex.quote(HERMES_HOME_IN_SANDBOX)}/.env <<'___ENV___'
 chmod 600 {shlex.quote(HERMES_HOME_IN_SANDBOX)}/.env
 echo "[hermes-server] config deployed ({len(config_yaml)}b yaml, {len(env_file)}b env)"
 """
-    r = _run_sb_exec(sandbox_name, script)
+    r = _run_sb_exec(sandbox_name, script, gateway=gateway)
     if r.returncode != 0:
         raise RuntimeError(
             f"deploy_hermes_config({sandbox_name}) failed rc={r.returncode}: "
@@ -390,7 +409,12 @@ echo "[hermes-server] config deployed ({len(config_yaml)}b yaml, {len(env_file)}
     logger.info("hermes_server_mode: config deployed to %s (model=%s)", sandbox_name, model)
 
 
-def _upload_file_via_openshell(sandbox_name: str, local_path: Path, remote_dir: str) -> None:
+def _upload_file_via_openshell(
+    sandbox_name: str,
+    local_path: Path,
+    remote_dir: str,
+    gateway: Optional[str] = None,
+) -> None:
     """Upload a single file into the sandbox via ``openshell sandbox upload``.
 
     Use this instead of base64-in-exec for files larger than ~20 KB —
@@ -403,9 +427,16 @@ def _upload_file_via_openshell(sandbox_name: str, local_path: Path, remote_dir: 
     ``remote_dir`` is a directory path inside the sandbox; the uploaded
     file keeps its local basename. Ending the path with ``/`` is not
     required here (the CLI helper handles both).
+
+    ``gateway`` — same role as in ``_run_sb_exec``: scopes the CLI to
+    a specific openshell sub-gateway so multi-route spawns find the
+    sandbox they just created.
     """
-    cmd = ["openshell", "sandbox", "upload", sandbox_name,
-           str(local_path), remote_dir.rstrip("/") + "/"]
+    cmd = ["openshell"]
+    if gateway:
+        cmd += ["-g", gateway]
+    cmd += ["sandbox", "upload", sandbox_name,
+            str(local_path), remote_dir.rstrip("/") + "/"]
     r = subprocess.run(
         cmd,
         stdin=subprocess.DEVNULL,
@@ -421,7 +452,7 @@ def _upload_file_via_openshell(sandbox_name: str, local_path: Path, remote_dir: 
         )
 
 
-def deploy_cancel_monkeypatch(sandbox_name: str) -> None:
+def deploy_cancel_monkeypatch(sandbox_name: str, gateway: Optional[str] = None) -> None:
     """Upload the LOG-51.2 cancel monkeypatch into the sandbox.
 
     The launcher is a standalone Python script (shipped in this repo
@@ -453,7 +484,7 @@ def deploy_cancel_monkeypatch(sandbox_name: str) -> None:
     # already exists as a regular file, which can error). Cheap to
     # pre-clear; exec arg is tiny.
     prep = f"mkdir -p {shlex.quote(HERMES_HOME_IN_SANDBOX)}; rm -f {target_path}"
-    r = _run_sb_exec(sandbox_name, prep)
+    r = _run_sb_exec(sandbox_name, prep, gateway=gateway)
     if r.returncode != 0:
         raise RuntimeError(
             f"deploy_cancel_monkeypatch({sandbox_name}) prep failed "
@@ -462,6 +493,7 @@ def deploy_cancel_monkeypatch(sandbox_name: str) -> None:
 
     _upload_file_via_openshell(
         sandbox_name, _CANCEL_PATCH_SRC, HERMES_HOME_IN_SANDBOX,
+        gateway=gateway,
     )
 
     # chmod + confirm presence. `test -f` ensures the upload actually
@@ -474,7 +506,7 @@ def deploy_cancel_monkeypatch(sandbox_name: str) -> None:
         f"($(wc -c < {target_path}) bytes) to "
         f"{CANCEL_PATCH_PATH_IN_SANDBOX}\""
     )
-    r = _run_sb_exec(sandbox_name, verify)
+    r = _run_sb_exec(sandbox_name, verify, gateway=gateway)
     if r.returncode != 0:
         raise RuntimeError(
             f"deploy_cancel_monkeypatch({sandbox_name}) verify failed "
@@ -486,7 +518,7 @@ def deploy_cancel_monkeypatch(sandbox_name: str) -> None:
     )
 
 
-def deploy_boot_md(sandbox_name: str, soul_name: str) -> None:
+def deploy_boot_md(sandbox_name: str, soul_name: str, gateway: Optional[str] = None) -> None:
     """Upload the soul's ``boot.md`` as ``BOOT.md`` in the sandbox.
 
     Hermes's built-in ``boot_md`` hook (in the sandbox image at
@@ -530,7 +562,7 @@ echo "[hermes-server] BOOT.md cleared (soul={soul_name} has no boot.md)"
 """
         action = f"cleared (soul {soul_name} has no boot.md)"
 
-    r = _run_sb_exec(sandbox_name, script)
+    r = _run_sb_exec(sandbox_name, script, gateway=gateway)
     if r.returncode != 0:
         raise RuntimeError(
             f"deploy_boot_md({sandbox_name}) failed rc={r.returncode}: "
@@ -543,6 +575,7 @@ def redeploy_hermes_env(
     sandbox_name: str,
     api_key: str,
     extra_env: Optional[dict] = None,
+    gateway: Optional[str] = None,
 ) -> None:
     """Rewrite just the ``.env`` file inside the sandbox (LOG-44.3.4).
 
@@ -562,7 +595,7 @@ cat > {shlex.quote(HERMES_HOME_IN_SANDBOX)}/.env <<'___ENV___'
 chmod 600 {shlex.quote(HERMES_HOME_IN_SANDBOX)}/.env
 echo "[hermes-server] .env redeployed ({len(env_file)}b, {len(extra_env or {})} extra keys)"
 """
-    r = _run_sb_exec(sandbox_name, script)
+    r = _run_sb_exec(sandbox_name, script, gateway=gateway)
     if r.returncode != 0:
         raise RuntimeError(
             f"redeploy_hermes_env({sandbox_name}) failed rc={r.returncode}: "
@@ -574,7 +607,7 @@ echo "[hermes-server] .env redeployed ({len(env_file)}b, {len(extra_env or {})} 
     )
 
 
-def restart_hermes_in_sandbox(sandbox_name: str) -> None:
+def restart_hermes_in_sandbox(sandbox_name: str, gateway: Optional[str] = None) -> None:
     """pkill + relaunch hermes inside the sandbox (LOG-44.3.4).
 
     Used for credential hot-refresh: keeps the sandbox pod + workspace
@@ -610,7 +643,7 @@ if [ -z "$pid" ]; then
 fi
 echo "[hermes-server] restarted pid=$pid (credential refresh)"
 """
-    r = _run_sb_exec(sandbox_name, script, timeout=30)
+    r = _run_sb_exec(sandbox_name, script, timeout=30, gateway=gateway)
     if r.returncode != 0:
         raise RuntimeError(
             f"restart_hermes_in_sandbox({sandbox_name}) failed rc={r.returncode}: "
@@ -622,7 +655,7 @@ echo "[hermes-server] restarted pid=$pid (credential refresh)"
     )
 
 
-def launch_hermes_gateway(sandbox_name: str) -> None:
+def launch_hermes_gateway(sandbox_name: str, gateway: Optional[str] = None) -> None:
     """Start `hermes gateway run` in the background inside the sandbox.
 
     Idempotent: if a process is already running, this is a no-op. The
@@ -670,7 +703,7 @@ if [ -z "$pid" ]; then
 fi
 echo "[hermes-server] launched pid=$pid (cancel monkeypatch applied)"
 """
-    r = _run_sb_exec(sandbox_name, script)
+    r = _run_sb_exec(sandbox_name, script, gateway=gateway)
     if r.returncode != 0:
         raise RuntimeError(
             f"launch_hermes_gateway({sandbox_name}) failed rc={r.returncode}: "
@@ -682,6 +715,7 @@ echo "[hermes-server] launched pid=$pid (cancel monkeypatch applied)"
 def wait_for_hermes_health(
     sandbox_name: str,
     timeout_s: int = HEALTH_TIMEOUT_S,
+    gateway: Optional[str] = None,
 ) -> float:
     """Poll /health inside the sandbox until 200 or timeout.
 
@@ -705,7 +739,7 @@ ___PROBE___
     while time.monotonic() < deadline:
         attempt += 1
         try:
-            r = _run_sb_exec(sandbox_name, probe_script, timeout=10)
+            r = _run_sb_exec(sandbox_name, probe_script, timeout=10, gateway=gateway)
             if r.returncode == 0:
                 elapsed = time.monotonic() - start
                 logger.info(
@@ -728,6 +762,7 @@ def enable_hermes_server_mode(
     config: Any,
     api_key: Optional[str] = None,
     extra_env: Optional[dict] = None,
+    gateway: Optional[str] = None,
 ) -> HermesServerSetup:
     """One-shot: deploy config, launch gateway, wait for health.
 
@@ -757,14 +792,14 @@ def enable_hermes_server_mode(
         sandbox_name,
         sorted((extra_env or {}).keys()),
     )
-    deploy_hermes_config(sandbox_name, config, api_key, extra_env=extra_env)
-    deploy_cancel_monkeypatch(sandbox_name)
+    deploy_hermes_config(sandbox_name, config, api_key, extra_env=extra_env, gateway=gateway)
+    deploy_cancel_monkeypatch(sandbox_name, gateway=gateway)
     # LOG-44.2: per-soul boot hook. No-op (explicit clear) for souls
     # without a boot.md; otherwise uploads the file for the built-in
     # boot_md hook inside hermes to pick up on next gateway:startup.
-    deploy_boot_md(sandbox_name, getattr(config, "soul_name", "default"))
-    launch_hermes_gateway(sandbox_name)
-    wait_for_hermes_health(sandbox_name)
+    deploy_boot_md(sandbox_name, getattr(config, "soul_name", "default"), gateway=gateway)
+    launch_hermes_gateway(sandbox_name, gateway=gateway)
+    wait_for_hermes_health(sandbox_name, gateway=gateway)
 
     setup = HermesServerSetup(
         sandbox_name=sandbox_name,
