@@ -12985,8 +12985,10 @@ toolsets:
               <div class="mb-3 pb-2 border-b border-gray-800">
                 <div class="flex items-center gap-2 mb-1 flex-wrap">
                   <button @click="mindFilesAdvanced = false; loadSandboxCategory(mindFilesCategory || 'outputs')"
-                          class="text-[10px] px-1.5 py-0.5 rounded border border-gray-700 text-gray-400 hover:text-white"
+                          class="text-xs px-2 py-1 rounded border border-gray-700 text-gray-400 hover:text-white hover:border-gray-500 transition-colors"
                           title="Back to category view">← Categories</button>
+                  <!-- Divider — separates "leave this mode" from "navigate in this mode" -->
+                  <span class="h-4 w-px bg-gray-800 mx-0.5" aria-hidden="true"></span>
                   <button @click="openSandboxDir('/tmp/hermes')"
                           class="text-xs px-2 py-1 rounded border border-gray-700 text-gray-400 hover:text-white hover:border-gray-500 transition-colors"
                           title="Jump to the agent's home directory (/tmp/hermes)">🏠 Home</button>
