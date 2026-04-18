@@ -152,9 +152,18 @@ def _build_env_file(api_key: str) -> str:
 
     OPENAI_API_KEY is a placeholder (the real auth is handled by the
     OpenShell L7 proxy when requests go through inference.local).
+
+    GATEWAY_ALLOW_ALL_USERS=true is required because hermes's API
+    server has a *second* auth layer (user allowlist) on top of the
+    bearer token — without it every POST /v1/runs returns 401
+    "Invalid API key" even when API_SERVER_KEY matches. Safe inside
+    the sandbox because the only network ingress to port 8642 is the
+    gateway's own `openshell sandbox exec` transport; there's no
+    external attacker to guard against here.
     """
     return (
         f"API_SERVER_KEY={api_key}\n"
+        f"GATEWAY_ALLOW_ALL_USERS=true\n"
         f"OPENAI_API_KEY=lm-studio\n"
         f"OPENAI_BASE_URL=https://inference.local/v1\n"
     )
@@ -202,13 +211,24 @@ def launch_hermes_gateway(sandbox_name: str) -> None:
     post-mortem debugging (reachable via `openshell sandbox exec cat`).
     """
     home = shlex.quote(HERMES_HOME_IN_SANDBOX)
+    # Source the deployed .env so API_SERVER_KEY (and OPENAI_* pointers)
+    # actually reach the hermes process env. Without `set -a; . .env;
+    # set +a` hermes starts with a minimal environment, generates its
+    # own random API key, and every dispatch_task_v2 call gets a 401.
     script = f"""
 if pgrep -f 'hermes gateway run' > /dev/null 2>&1; then
   echo '[hermes-server] already running (pid='$(pgrep -f 'hermes gateway run' | head -1)')'
   exit 0
 fi
 rm -f /tmp/hermes-gw.log
-HERMES_HOME={home} nohup hermes gateway run -v > /tmp/hermes-gw.log 2>&1 &
+HERMES_HOME={home}
+export HERMES_HOME
+if [ -f "$HERMES_HOME/.env" ]; then
+  set -a
+  . "$HERMES_HOME/.env"
+  set +a
+fi
+nohup hermes gateway run -v > /tmp/hermes-gw.log 2>&1 &
 sleep 1
 pid=$(pgrep -f 'hermes gateway run' | head -1)
 if [ -z "$pid" ]; then
