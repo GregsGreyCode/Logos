@@ -1582,6 +1582,30 @@ def _scrub_credential_row(row: dict) -> dict:
     return {**{k: v for k, v in row.items() if k != "token"}, "token_preview": masked}
 
 
+def _refresh_sandbox_channel_env(request: web.Request, agent_name: str) -> bool:
+    """LOG-44.3.4 — best-effort hot-refresh of a hermes-mode sandbox's
+    channel credentials after the UI edits a row. Silent no-op when the
+    agent isn't running hermes-server mode (Logos's central adapter
+    handles it instead) or when the executor isn't wired.
+
+    Never raises — caller should be able to ignore the return. The DB
+    row is the source of truth; a failed refresh just means the
+    sandbox picks up the change on its next respawn.
+    """
+    executor = request.app.get("executor") if request.app else None
+    if executor is None or not hasattr(executor, "refresh_channel_credentials"):
+        return False
+    try:
+        return bool(executor.refresh_channel_credentials(agent_name))
+    except Exception:
+        logger.exception(
+            "channel refresh: refresh_channel_credentials(%s) raised "
+            "(DB row still authoritative, sandbox will pick up on "
+            "next respawn)", agent_name,
+        )
+        return False
+
+
 async def handle_agent_channels_list(request: web.Request) -> web.Response:
     """GET /admin/agents/{id}/channels
 
@@ -1709,11 +1733,17 @@ async def handle_agent_channels_post(request: web.Request) -> web.Response:
         except Exception:
             logger.exception("channels_post: ensure_channel_access failed")
 
+    # LOG-44.3.4: push the new token into the agent's sandbox if it's
+    # running hermes-server mode so the in-sandbox bot picks it up now
+    # (rather than waiting for next respawn). No-op for legacy agents.
+    sandbox_refresh = _refresh_sandbox_channel_env(request, agent["name"])
+
     return web.json_response({
         "credential": _scrub_credential_row(row),
         "validated": validation_result,
         "connected": connect_result,
         "access": access_result,
+        "sandbox_refreshed": sandbox_refresh,
     })
 
 
@@ -1742,7 +1772,14 @@ async def handle_agent_channels_delete(request: web.Request) -> web.Response:
     except Exception as exc:
         logger.exception("channels delete failed")
         return web.json_response({"error": str(exc)}, status=500)
-    return web.json_response({"ok": True})
+
+    # LOG-44.3.4: refresh the sandbox's .env so the deleted token
+    # stops leaking into hermes's process env. Without this the
+    # adapter keeps running in-sandbox until next respawn — surprising
+    # for a user who just clicked Delete.
+    sandbox_refresh = _refresh_sandbox_channel_env(request, agent["name"])
+
+    return web.json_response({"ok": True, "sandbox_refreshed": sandbox_refresh})
 
 
 async def handle_agent_channels_toggle(request: web.Request) -> web.Response:
@@ -1782,8 +1819,17 @@ async def handle_agent_channels_toggle(request: web.Request) -> web.Response:
     except Exception:
         logger.exception("channels_toggle: hot-reconcile failed (DB flag updated)")
 
+    # LOG-44.3.4: enable/disable should also update the sandbox's
+    # .env — disabling should drop the token from env (so the adapter
+    # actually stops polling inside the sandbox), enabling should
+    # re-introduce it.
+    sandbox_refresh = _refresh_sandbox_channel_env(request, agent["name"])
+
     refreshed = auth_db.get_agent_channel_credential(cred_id)
-    return web.json_response({"credential": _scrub_credential_row(refreshed or row)})
+    return web.json_response({
+        "credential": _scrub_credential_row(refreshed or row),
+        "sandbox_refreshed": sandbox_refresh,
+    })
 
 
 # ── User ↔ platform identity links ────────────────────────────────────────
