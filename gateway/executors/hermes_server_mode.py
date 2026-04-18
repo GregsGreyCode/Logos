@@ -200,6 +200,22 @@ def _build_env_file(
     ]
     _baseline_keys = {"API_SERVER_KEY", "GATEWAY_ALLOW_ALL_USERS",
                       "OPENAI_API_KEY", "OPENAI_BASE_URL"}
+
+    # Forward host-side service URLs the gateway already knows about
+    # into the sandbox. docker-compose wires these on the gateway
+    # container (SEARXNG_URL='http://host.openshell.internal:8888' when
+    # the searxng profile is up); without this passthrough agents have
+    # no way to discover the URL and the soul-fragment urllib pattern
+    # fails DNS on the fallback default. If a key isn't set on the
+    # gateway, don't emit it — the absence is meaningful (agent can
+    # tell the user "SearxNG isn't configured, ask for the toggle"
+    # instead of burning iterations on a non-existent URL).
+    _forwarded_host_env = ("SEARXNG_URL",)
+    for _k in _forwarded_host_env:
+        _v = os.environ.get(_k)
+        if _v:
+            lines.append(f"{_k}={_v}")
+            _baseline_keys.add(_k)  # extra_env can't override this either
     if extra_env:
         for k, v in extra_env.items():
             if not k or not isinstance(k, str):

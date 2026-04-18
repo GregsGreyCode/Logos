@@ -15,8 +15,12 @@
 # Paired with the "Search the web locally" capability row in
 # capabilities.yaml (trust: local_service).
 #
-# Set SEARXNG_URL in Config → Tools to point at your instance
-# (default: http://searxng.internal:8080). Two ways to hit it:
+# SEARXNG_URL is forwarded from the gateway container into every
+# sandbox's .env automatically when the `searxng` compose profile is
+# up (see docker-compose.yml → SEARXNG_URL, and hermes_server_mode.
+# _build_env_file's _forwarded_host_env). Default value is
+# http://host.openshell.internal:${SEARXNG_PORT:-8888}, matching the
+# published port of the logos-searxng container. Two ways to hit it:
 #
 # Cheap path (no Chromium needed) — use ``execute_code`` with stdlib
 # urllib, which every agent has:
