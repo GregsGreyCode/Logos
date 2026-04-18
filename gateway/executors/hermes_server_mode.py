@@ -174,15 +174,36 @@ def _resolve_model(config: Any) -> str:
 
 
 def _resolve_system_prompt(config: Any) -> Optional[str]:
-    """Extract an optional system prompt / soul text to seed Hermes with.
+    """Extract the system prompt (soul_md) to seed Hermes with.
 
-    Phase 1: best-effort; if no soul text, return None and Hermes uses
-    its stock system prompt. Phase 2 wires in per-agent souls properly.
+    Precedence:
+      1. Explicit strings on the config: ``system_prompt`` / ``soul_text``
+         / ``soul``. Lets callers inject custom text without touching the
+         soul registry (e.g. A/B tests, temporary patches).
+      2. Registry lookup by ``config.soul_name``: loads the merged
+         ``soul.md + _shared/*.md`` content. This is the real path for
+         normal spawn — without it, hermes boots with its stock system
+         prompt and the agent has no SEARXNG / workspace / fs-layout
+         guidance → falls back to hallucinating capability failures.
     """
     for attr in ("system_prompt", "soul_text", "soul"):
         v = getattr(config, attr, None)
         if isinstance(v, str) and v.strip():
             return v
+
+    slug = getattr(config, "soul_name", None)
+    if not slug or slug == "default":
+        return None
+    try:
+        from gateway.souls import get_soul_registry
+        soul = get_soul_registry().get(slug)
+        if soul and soul.soul_md.strip():
+            return soul.soul_md
+    except Exception as exc:
+        logger.warning(
+            "_resolve_system_prompt: soul registry lookup for %r failed: %s",
+            slug, exc,
+        )
     return None
 
 
