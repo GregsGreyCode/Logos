@@ -3315,6 +3315,15 @@ async def handle_agent_sandbox_files_get(request: web.Request) -> web.Response:
     if not path.startswith("/") or ".." in path.split("/"):
         return web.json_response({"error": "invalid_path"}, status=400)
 
+    # Optional recursive listing (UX: category view). Default stays at
+    # depth=1 so existing callers are unchanged. Capped at 4 to avoid
+    # DoS on deeply nested workspaces — most soul-directed layouts
+    # (~/outputs/<task>/<date>.md etc.) live within 3 levels.
+    try:
+        depth = max(1, min(4, int(request.rel_url.query.get("depth") or "1")))
+    except ValueError:
+        depth = 1
+
     # Resolve sandbox_name + gateway via the state file (same lookup
     # path worker_registry uses).
     from gateway.executors.openshell import _load_state, _sanitize_sandbox_name
@@ -3333,13 +3342,17 @@ async def handle_agent_sandbox_files_get(request: web.Request) -> web.Response:
     #   - test -r → 1 if no read perm (most common for system dirs)
     #   - find …  → directory listing in parseable form
     # All three run under the sandbox user (uid 10001, `sandbox`).
+    # `%P` emits the path relative to the search root — for depth=1
+    # that's the basename (same as %f), for depth>1 it's e.g.
+    # ``essay/minoxidil.md``. Either way the UI receives entries it
+    # can render without having to reconstruct paths.
     probe_cmd = (
         f"if [ ! -e {shlex.quote(path)} ]; then echo __MISSING__; exit 0; fi; "
         f"if [ ! -d {shlex.quote(path)} ]; then echo __NOTDIR__; exit 0; fi; "
         f"if [ ! -r {shlex.quote(path)} ]; then echo __DENIED__; exit 0; fi; "
         f'cd {shlex.quote(path)} && '
-        f'find . -maxdepth 1 -mindepth 1 '
-        f'-printf "%f\\t%y\\t%s\\t%T@\\n" '
+        f'find . -maxdepth {depth} -mindepth 1 '
+        f'-printf "%P\\t%y\\t%s\\t%T@\\n" '
         f'2>/dev/null | sort'
     )
     exec_args = ["openshell"]
@@ -3395,6 +3408,7 @@ async def handle_agent_sandbox_files_get(request: web.Request) -> web.Response:
         "entries": entries,
         "roots": KNOWN_ROOTS,
         "sandbox": sandbox_name,
+        "depth": depth,
         # Legacy `exec_ok` kept for older UI code paths; prefer
         # `error_kind` (null = ok, else one of "missing"/"not_dir"/
         # "denied") which tells the UI exactly which copy to render.

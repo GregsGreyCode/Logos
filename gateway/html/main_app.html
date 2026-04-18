@@ -6358,6 +6358,32 @@ function app() {
     // LOG-49: sandbox-filesystem browse state.
     mindModalSandbox: null,       // current /sandbox-files response { path, entries, roots, parent }
     mindModalSandboxPath: '/root',
+    // Files-tab UX state (see _mindFilesFiltered / _mindFilesSummary /
+    // openFilePreview below). Persists across directory changes so the
+    // user's sort/filter doesn't reset every navigation.
+    mindFilesFilter: '',
+    mindFilesSort: 'mtime',        // 'name' | 'size' | 'mtime'
+    mindFilesSortDir: -1,          // 1 asc, -1 desc; default newest-first
+    mindFilesPreview: null,        // {path, name, content, size, loading, error, truncated, binary}
+    mindFilesPreviewMaxBytes: 200 * 1024,  // 200 KB inline cap
+    // Category view — the default "what did my agent make?" surface.
+    // Hides raw filesystem (/tmp, /sandbox, /root) behind an Advanced
+    // toggle. Each category maps to a dir under the agent's home and
+    // shows a flat recursive listing so users aren't forced to drill
+    // through /tmp/hermes/outputs/ to find things.
+    mindFilesAdvanced: false,
+    mindFilesCategory: 'outputs',    // 'outputs' | 'scripts' | 'cron' | 'data' | 'home' | null
+    mindFilesCategories: [
+      // Order matters — left-to-right in the UI. Icons are small for
+      // visual anchoring; paths use the sandbox-absolute form since
+      // that's what the backend takes but are displayed to users with
+      // ``~/`` prefix.
+      { id: 'outputs',  label: 'Outputs',   icon: '📦', path: '/tmp/hermes/outputs',  empty_hint: 'Nothing saved yet. Ask the agent to save a document with write_file.' },
+      { id: 'scripts',  label: 'Scripts',   icon: '🔧', path: '/tmp/hermes/scripts',  empty_hint: 'No scripts yet. The agent saves reusable code here (e.g. generate_newsletter.py).' },
+      { id: 'cron',     label: 'Schedules', icon: '⏰', path: '/tmp/hermes/cron',     empty_hint: 'No scheduled jobs yet. The agent creates these when you ask for recurring tasks.' },
+      { id: 'data',     label: 'Data',      icon: '💾', path: '/tmp/hermes/data',     empty_hint: 'No persistent data files yet. Small JSON/SQLite state the agent wants to keep lives here.' },
+      { id: 'home',     label: 'All',       icon: '🏠', path: '/tmp/hermes',          empty_hint: 'Home directory is empty. Start a chat and ask the agent to save something.' },
+    ],
     agentCapsLoading: false,
     agentCapsError: null,
     agentCapsToggling: {},
@@ -10736,13 +10762,23 @@ toolsets:
     },
 
     // LOG-49: live sandbox filesystem browse.
-    async loadSandboxFiles(path) {
+    async loadSandboxFiles(path, opts) {
       if (!this.mindModalAgent) return;
+      opts = opts || {};
       const aid = this.mindModalAgent.id;
       this.mindModalLoading.sandbox = true;
+      // Close any active preview when the directory changes so the
+      // user doesn't see stale content from the previous folder.
+      this.mindFilesPreview = null;
+      // Clear filter on directory change — a filter that matched in
+      // one dir rarely makes sense in the next, and a stale filter
+      // showing "no results" would be confusing.
+      this.mindFilesFilter = '';
       try {
+        const depth = opts.depth || 1;
         const url = '/admin/agents/' + encodeURIComponent(aid)
-                  + '/sandbox-files?path=' + encodeURIComponent(path || '/tmp/hermes');
+                  + '/sandbox-files?path=' + encodeURIComponent(path || '/tmp/hermes')
+                  + '&depth=' + encodeURIComponent(depth);
         const r = await fetch(url, { credentials: 'include' });
         this.mindModalSandbox = r.ok ? await r.json() : null;
         if (this.mindModalSandbox?.path) {
@@ -10753,6 +10789,44 @@ toolsets:
       } finally {
         this.mindModalLoading.sandbox = false;
       }
+    },
+    // Category-mode loader — fetches a flat recursive listing of one
+    // of the soul-defined home subdirectories (outputs/scripts/cron/
+    // data/home) so the user doesn't have to navigate /tmp/hermes.
+    async loadSandboxCategory(categoryId) {
+      const cat = this.mindFilesCategories.find(c => c.id === categoryId);
+      if (!cat) return;
+      this.mindFilesCategory = categoryId;
+      this.mindFilesAdvanced = false;
+      // depth=3 covers the documented layout
+      // (~/outputs/<task>/<date>.ext, ~/scripts/<name>.py, etc). Depth
+      // is capped at 4 server-side so we could bump if needed.
+      await this.loadSandboxFiles(cat.path, { depth: 3 });
+    },
+    _mindFilesCurrentCategory() {
+      if (this.mindFilesAdvanced) return null;
+      return this.mindFilesCategories.find(c => c.id === this.mindFilesCategory) || null;
+    },
+    // Display the path with ``~/`` prefix when it's under the agent's
+    // home. Users know "~" from any soul's workspace docs; /tmp/hermes
+    // is an implementation detail.
+    _mindFilesPrettyPath(path) {
+      if (!path) return '';
+      if (path === '/tmp/hermes') return '~';
+      if (path.startsWith('/tmp/hermes/')) return '~/' + path.slice('/tmp/hermes/'.length);
+      return path;
+    },
+    // In category mode the backend returns entries with paths relative
+    // to the category root (via find -printf %P). We display that
+    // relative path as-is so the user sees "essay/minoxidil.md" rather
+    // than forced drill-down.
+    _mindFilesEntryLabel(entry) {
+      return entry && entry.name ? entry.name : '';
+    },
+    async enableAdvancedFiles() {
+      this.mindFilesAdvanced = true;
+      this.mindFilesCategory = null;
+      await this.loadSandboxFiles('/tmp/hermes', { depth: 1 });
     },
     async openSandboxDir(path) {
       if (!path) return;
@@ -10776,7 +10850,15 @@ toolsets:
       // doesn't re-exec.
       if (tab === 'files') {
         if (this.mindModalSandbox) return;
-        await this.loadSandboxFiles(this.mindModalSandboxPath || '/root');
+        // Default to the category-mode Outputs view so users land on
+        // "what did my agent make?" — not a raw /tmp browser.
+        // Advanced mode + drill-down are still available via the
+        // Advanced toggle, but have to be opted into.
+        if (this.mindFilesAdvanced) {
+          await this.loadSandboxFiles(this.mindModalSandboxPath || '/tmp/hermes', { depth: 1 });
+        } else {
+          await this.loadSandboxCategory(this.mindFilesCategory || 'outputs');
+        }
         return;
       }
       const already = {
@@ -10832,6 +10914,166 @@ toolsets:
     _mindFmtDate(iso) {
       if (!iso) return '—';
       try { return new Date(iso).toLocaleString(); } catch { return iso; }
+    },
+
+    // ── Files tab helpers ────────────────────────────────────────
+    // Human-scale mtime so glancing at the list answers "what did the
+    // agent just do?" without parsing timestamps. Falls back to an
+    // absolute date for anything >7 days old. The full ISO is available
+    // in the tooltip for when precision matters.
+    _mindFilesFmtMtime(epochSec) {
+      if (!epochSec) return '';
+      const now = Date.now() / 1000;
+      const diff = now - epochSec;
+      if (diff < 0) return 'future';
+      if (diff < 60) return Math.floor(diff) + 's ago';
+      if (diff < 3600) return Math.floor(diff / 60) + 'm ago';
+      if (diff < 86400) return Math.floor(diff / 3600) + 'h ago';
+      const d = new Date(epochSec * 1000);
+      const today = new Date();
+      const ydate = new Date(today);
+      ydate.setDate(today.getDate() - 1);
+      const sameDay = (a, b) => a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+      const hhmm = d.toTimeString().slice(0, 5);
+      if (sameDay(d, today)) return 'today ' + hhmm;
+      if (sameDay(d, ydate)) return 'yesterday ' + hhmm;
+      if (diff < 7 * 86400) return Math.floor(diff / 86400) + 'd ago';
+      return d.toISOString().slice(0, 10);
+    },
+    _mindFilesFmtMtimeFull(epochSec) {
+      if (!epochSec) return '';
+      return new Date(epochSec * 1000).toISOString().replace('T', ' ').slice(0, 19) + ' UTC';
+    },
+    // Client-side filter + sort. Keeps the server response small by
+    // not demanding pagination / server-sort, at the cost of handling
+    // "ls on a dir with 5000 files" naively — if that ever matters
+    // we revisit.
+    _mindFilesFiltered() {
+      let entries = (this.mindModalSandbox && this.mindModalSandbox.entries) || [];
+      // In category (recursive) mode the listing includes every dir
+      // AND every file under it — showing both is redundant because a
+      // file entry ``essay/minoxidil.md`` already implies ``essay/``.
+      // Hide bare dir entries so the list stays tight. Advanced mode
+      // keeps dirs (they're navigation targets there).
+      if (!this.mindFilesAdvanced && ((this.mindModalSandbox && this.mindModalSandbox.depth) || 1) > 1) {
+        entries = entries.filter(e => e.type !== 'dir');
+      }
+      const q = (this.mindFilesFilter || '').toLowerCase().trim();
+      const filtered = q ? entries.filter(e => (e.name || '').toLowerCase().includes(q)) : entries.slice();
+      // Always float dirs above files — navigation dominates the use
+      // case, so intermixed sort would just create extra scrolling.
+      // Within each group, apply the selected sort.
+      const sort = this.mindFilesSort || 'mtime';
+      const dir = this.mindFilesSortDir || -1;
+      const cmp = (a, b) => {
+        const akind = a.type === 'dir' ? 0 : 1;
+        const bkind = b.type === 'dir' ? 0 : 1;
+        if (akind !== bkind) return akind - bkind;
+        let av, bv;
+        if (sort === 'size')       { av = a.size || 0;  bv = b.size || 0; }
+        else if (sort === 'mtime') { av = a.mtime || 0; bv = b.mtime || 0; }
+        else                       { av = (a.name || '').toLowerCase(); bv = (b.name || '').toLowerCase(); }
+        if (av < bv) return -1 * dir;
+        if (av > bv) return  1 * dir;
+        return 0;
+      };
+      return filtered.sort(cmp);
+    },
+    _mindFilesToggleSort(col) {
+      if (this.mindFilesSort === col) {
+        this.mindFilesSortDir = -this.mindFilesSortDir;
+      } else {
+        this.mindFilesSort = col;
+        // Name → asc by default (A→Z), size/mtime → desc (biggest/newest first)
+        this.mindFilesSortDir = col === 'name' ? 1 : -1;
+      }
+    },
+    _mindFilesSortIndicator(col) {
+      if (this.mindFilesSort !== col) return '';
+      return this.mindFilesSortDir > 0 ? '▲' : '▼';
+    },
+    // Header line showing "N files · M KB · K folders" for the current
+    // directory. Uses the *unfiltered* list so the summary always
+    // reflects what's actually there, regardless of the active filter.
+    _mindFilesSummary() {
+      const entries = (this.mindModalSandbox && this.mindModalSandbox.entries) || [];
+      let files = 0, dirs = 0, bytes = 0;
+      for (const e of entries) {
+        if (e.type === 'dir') dirs++;
+        else if (e.type === 'file') { files++; bytes += (e.size || 0); }
+      }
+      const parts = [];
+      if (files) parts.push(files + ' file' + (files === 1 ? '' : 's') + ' · ' + this._mindFmtBytes(bytes));
+      if (dirs)  parts.push(dirs  + ' folder' + (dirs  === 1 ? '' : 's'));
+      if (!parts.length) return '';
+      return parts.join(' · ');
+    },
+    // File-preview support. Text-like extensions get rendered in-place;
+    // anything else falls back to the existing Download button.
+    _mindFilesIsPreviewable(name) {
+      if (!name) return false;
+      const n = name.toLowerCase();
+      // Extension-based allow-list. Stayed narrow to avoid guessing at
+      // binary formats (no .db, .pdf, .png etc here — those download).
+      const exts = ['.md', '.txt', '.json', '.yaml', '.yml', '.log', '.py',
+                    '.js', '.ts', '.html', '.css', '.sh', '.bash', '.env',
+                    '.cron', '.cfg', '.conf', '.toml', '.ini', '.xml',
+                    '.csv', '.tsv', '.srt', '.vtt', '.svg'];
+      if (exts.some(e => n.endsWith(e))) return true;
+      // Also allow extensionless files under known-text directories
+      // like ~/cron/, ~/scripts/ (shebang files). The server response
+      // doesn't include mime so we're approximating.
+      if (!/\./.test(name)) return true;
+      return false;
+    },
+    async openFilePreview(entry) {
+      if (!this.mindModalAgent || !entry) return;
+      if ((entry.size || 0) > this.mindFilesPreviewMaxBytes) {
+        // Too big to load inline — direct to download.
+        this.mindFilesPreview = {
+          path: this._mindFilesJoin(this.mindModalSandbox.path, entry.name),
+          name: entry.name, size: entry.size, loading: false,
+          error: 'too_large', content: '',
+        };
+        return;
+      }
+      const path = this._mindFilesJoin(this.mindModalSandbox.path, entry.name);
+      this.mindFilesPreview = {
+        path, name: entry.name, size: entry.size || 0,
+        loading: true, error: null, content: '', truncated: false, binary: false,
+      };
+      try {
+        const url = this.sandboxDownloadUrl(path);
+        const r = await fetch(url, { credentials: 'include' });
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        const text = await r.text();
+        // crude binary detection — if >1% of first 4KB is control chars
+        // we likely guessed wrong about the extension. Bail to download.
+        const probe = text.slice(0, 4096);
+        let ctrlCount = 0;
+        for (let i = 0; i < probe.length; i++) {
+          const c = probe.charCodeAt(i);
+          if (c < 9 || (c > 13 && c < 32)) ctrlCount++;
+        }
+        if (probe.length > 0 && ctrlCount / probe.length > 0.01) {
+          this.mindFilesPreview = { ...this.mindFilesPreview, loading: false, binary: true };
+          return;
+        }
+        this.mindFilesPreview = {
+          ...this.mindFilesPreview,
+          loading: false, content: text,
+          truncated: text.length >= this.mindFilesPreviewMaxBytes,
+        };
+      } catch (e) {
+        this.mindFilesPreview = {
+          ...this.mindFilesPreview, loading: false, error: String(e && e.message || e),
+        };
+      }
+    },
+    closeFilePreview() { this.mindFilesPreview = null; },
+    _mindFilesJoin(dir, name) {
+      if (!dir || dir === '/') return '/' + name;
+      return dir.replace(/\/+$/, '') + '/' + name;
     },
 
     async loadCloudProviders() {
@@ -12713,64 +12955,131 @@ toolsets:
 
         <template x-if="mindModalSandbox">
           <div>
-            <!-- Header: Home button + quick-jump roots + breadcrumb +
-                 refresh. Roots come from the server's response and
-                 match the policy YAML's writable paths, so users can
-                 jump between the places the agent can actually save
-                 without having to remember which is which. -->
-            <div class="flex items-center gap-2 mb-2 pb-2 border-b border-gray-800 flex-wrap">
-              <button @click="openSandboxDir('/tmp/hermes')"
-                      class="text-xs px-2 py-1 rounded border border-gray-700 text-gray-400 hover:text-white hover:border-gray-500 transition-colors"
-                      title="Jump to the agent's home directory (/tmp/hermes)">🏠 Home</button>
-              <button x-show="mindModalSandbox.parent !== null"
-                      @click="openSandboxDir(mindModalSandbox.parent)"
-                      class="text-xs px-2 py-1 rounded border border-gray-700 text-gray-400 hover:text-white hover:border-gray-500 transition-colors"
-                      title="Parent directory">↑ Up</button>
-              <!-- Writable-root pills (shown only when NOT already
-                   at home — avoids visual repetition of the Home
-                   button when already on /tmp/hermes). -->
-              <template x-for="root in (mindModalSandbox.roots || [])" :key="root">
-                <button x-show="root !== '/tmp/hermes'"
-                        @click="openSandboxDir(root)"
-                        class="text-[10px] px-1.5 py-0.5 rounded border transition-colors"
-                        :class="mindModalSandbox.path === root
-                          ? 'bg-indigo-950 border-indigo-700 text-indigo-300'
-                          : 'bg-gray-900 border-gray-800 text-gray-500 hover:text-gray-200 hover:border-gray-700'"
-                        :title="'Writable path: ' + root"
-                        x-text="root"></button>
-              </template>
-
-              <!-- Segmented breadcrumb: each segment a button that jumps
-                   to that depth. Makes clear where you are + lets you
-                   climb multiple levels at once. -->
-              <div class="flex-1 flex items-center gap-1 text-[11px] font-mono overflow-x-auto whitespace-nowrap">
-                <button @click="openSandboxDir('/')"
-                        class="text-gray-500 hover:text-white">/</button>
-                <template x-for="(seg, i) in ((mindModalSandbox.path || '').split('/').filter(Boolean))" :key="i + ':' + seg">
-                  <span class="flex items-center gap-1">
-                    <span class="text-gray-700">/</span>
-                    <button @click="openSandboxDir('/' + ((mindModalSandbox.path || '').split('/').filter(Boolean).slice(0, i+1).join('/')))"
-                            class="text-gray-300 hover:text-white"
-                            x-text="seg"></button>
+            <!-- Category header — "what did my agent make?" surface.
+                 Replaces the old path-browser chrome (/tmp, /sandbox
+                 writable-root pills + breadcrumbs + Home/Up buttons).
+                 Shown only when NOT in Advanced mode — that toggle
+                 restores the raw browser for power users. -->
+            <template x-if="!mindFilesAdvanced">
+              <div class="mb-3 pb-2 border-b border-gray-800">
+                <div class="flex items-center gap-1.5 flex-wrap mb-1">
+                  <template x-for="cat in mindFilesCategories" :key="cat.id">
+                    <button @click="loadSandboxCategory(cat.id)"
+                            class="text-xs px-2 py-1 rounded border transition-colors inline-flex items-center gap-1.5"
+                            :class="mindFilesCategory === cat.id
+                              ? 'bg-indigo-950/60 border-indigo-700 text-indigo-200'
+                              : 'bg-gray-900 border-gray-800 text-gray-400 hover:text-white hover:border-gray-600'"
+                            :title="'Browse ' + cat.label.toLowerCase() + ' (' + cat.path + ')'">
+                      <span x-text="cat.icon"></span>
+                      <span x-text="cat.label"></span>
+                    </button>
+                  </template>
+                  <span class="ml-auto flex items-center gap-2">
+                    <button @click="mindFilesCategory && loadSandboxCategory(mindFilesCategory)"
+                            class="text-xs text-gray-500 hover:text-white px-1.5 py-1"
+                            title="Reload">
+                      <span x-show="!mindModalLoading.sandbox">↻</span>
+                      <span x-show="mindModalLoading.sandbox" class="animate-spin inline-block">↻</span>
+                    </button>
+                    <button @click="enableAdvancedFiles()"
+                            class="text-[10px] px-1.5 py-0.5 rounded border border-gray-800 text-gray-600 hover:text-gray-300 hover:border-gray-600"
+                            title="Show the raw sandbox filesystem (for debugging)">
+                      Advanced
+                    </button>
                   </span>
-                </template>
+                </div>
+                <!-- Context line: show the category's pretty path
+                     (~/outputs, ~, etc) so the user knows where these
+                     files actually live without exposing /tmp. -->
+                <div class="text-[10px] text-gray-600 font-mono"
+                     x-text="_mindFilesCurrentCategory() ? _mindFilesPrettyPath(_mindFilesCurrentCategory().path) : ''"></div>
               </div>
+            </template>
 
-              <button @click="loadSandboxFiles(mindModalSandbox.path)"
-                      class="text-xs text-gray-500 hover:text-white px-2 py-1"
-                      title="Reload this directory">
-                <span x-show="!mindModalLoading.sandbox">↻</span>
-                <span x-show="mindModalLoading.sandbox" class="animate-spin inline-block">↻</span>
-              </button>
-            </div>
+            <!-- Raw-filesystem browser — restored ONLY when Advanced
+                 is on. Full path visibility, up/home/root pills,
+                 segmented breadcrumb. Click → drill as before. -->
+            <template x-if="mindFilesAdvanced">
+              <div class="mb-3 pb-2 border-b border-gray-800">
+                <div class="flex items-center gap-2 mb-1 flex-wrap">
+                  <button @click="mindFilesAdvanced = false; loadSandboxCategory(mindFilesCategory || 'outputs')"
+                          class="text-xs px-2 py-1 rounded border border-gray-700 text-gray-400 hover:text-white hover:border-gray-500 transition-colors"
+                          title="Back to category view">← Categories</button>
+                  <!-- Divider — separates "leave this mode" from "navigate in this mode" -->
+                  <span class="h-4 w-px bg-gray-800 mx-0.5" aria-hidden="true"></span>
+                  <button @click="openSandboxDir('/tmp/hermes')"
+                          class="text-xs px-2 py-1 rounded border border-gray-700 text-gray-400 hover:text-white hover:border-gray-500 transition-colors"
+                          title="Jump to the agent's home directory (/tmp/hermes)">🏠 Home</button>
+                  <button x-show="mindModalSandbox.parent !== null"
+                          @click="openSandboxDir(mindModalSandbox.parent)"
+                          class="text-xs px-2 py-1 rounded border border-gray-700 text-gray-400 hover:text-white hover:border-gray-500 transition-colors"
+                          title="Parent directory">↑ Up</button>
+                  <template x-for="root in (mindModalSandbox.roots || [])" :key="root">
+                    <button x-show="root !== '/tmp/hermes'"
+                            @click="openSandboxDir(root)"
+                            class="text-[10px] px-1.5 py-0.5 rounded border transition-colors"
+                            :class="mindModalSandbox.path === root
+                              ? 'bg-indigo-950 border-indigo-700 text-indigo-300'
+                              : 'bg-gray-900 border-gray-800 text-gray-500 hover:text-gray-200 hover:border-gray-700'"
+                            :title="'Writable path: ' + root"
+                            x-text="root"></button>
+                  </template>
+                  <button @click="loadSandboxFiles(mindModalSandbox.path)"
+                          class="text-xs text-gray-500 hover:text-white px-2 py-1 ml-auto"
+                          title="Reload this directory">
+                    <span x-show="!mindModalLoading.sandbox">↻</span>
+                    <span x-show="mindModalLoading.sandbox" class="animate-spin inline-block">↻</span>
+                  </button>
+                </div>
+                <div class="flex items-center gap-1 text-[11px] font-mono overflow-x-auto whitespace-nowrap">
+                  <button @click="openSandboxDir('/')"
+                          class="text-gray-500 hover:text-white">/</button>
+                  <template x-for="(seg, i) in ((mindModalSandbox.path || '').split('/').filter(Boolean))" :key="i + ':' + seg">
+                    <span class="flex items-center gap-1">
+                      <span class="text-gray-700">/</span>
+                      <button @click="openSandboxDir('/' + ((mindModalSandbox.path || '').split('/').filter(Boolean).slice(0, i+1).join('/')))"
+                              class="text-gray-300 hover:text-white"
+                              x-text="seg"></button>
+                    </span>
+                  </template>
+                </div>
+              </div>
+            </template>
 
             <!-- Help copy on first open so users understand what they're
                  looking at. Dimmed, small, only when the listing isn't
-                 empty (so it doesn't compete with the "Empty" message). -->
-            <p x-show="(mindModalSandbox.entries || []).length > 0 && mindModalSandbox.path === '/tmp/hermes'"
+                 empty. Only shown in Advanced mode — in category mode
+                 the category pill + pretty path are self-explanatory. -->
+            <p x-show="mindFilesAdvanced && (mindModalSandbox.entries || []).length > 0 && mindModalSandbox.path === '/tmp/hermes'"
                class="text-[10px] text-gray-600 mb-3">
-              Files the agent has created inside its sandbox. Click folders to enter; download any file with the button on the right.
+              Raw sandbox filesystem view. Click folders to enter, click a text file to preview inline, or download any file with the button on the right.
             </p>
+
+            <!-- Filter + sort + summary bar. Only shown when there's
+                 a non-empty listing — otherwise the controls would
+                 hover over empty/error states without purpose. -->
+            <template x-if="mindModalSandbox.exec_ok && (mindModalSandbox.entries || []).length > 0">
+              <div class="flex items-center gap-2 mb-2 flex-wrap">
+                <input type="text" x-model.debounce.150ms="mindFilesFilter"
+                       placeholder="Filter by name…"
+                       class="text-[11px] px-2 py-1 rounded border border-gray-800 bg-gray-950/50 text-gray-200 placeholder-gray-600 focus:outline-none focus:border-indigo-700 w-40">
+                <div class="flex items-center gap-1 text-[10px]">
+                  <span class="text-gray-600">sort:</span>
+                  <template x-for="col in ['name','size','mtime']" :key="col">
+                    <button @click="_mindFilesToggleSort(col)"
+                            class="px-1.5 py-0.5 rounded border transition-colors"
+                            :class="mindFilesSort === col
+                              ? 'bg-indigo-950/60 border-indigo-800 text-indigo-300'
+                              : 'bg-gray-900 border-gray-800 text-gray-500 hover:text-gray-200 hover:border-gray-700'">
+                      <span x-text="col === 'mtime' ? 'modified' : col"></span>
+                      <span class="ml-0.5 text-[9px]" x-text="_mindFilesSortIndicator(col)"></span>
+                    </button>
+                  </template>
+                </div>
+                <span class="ml-auto text-[10px] text-gray-600"
+                      x-text="_mindFilesSummary()"></span>
+              </div>
+            </template>
 
             <!-- Error / empty states. error_kind is server-generated —
                  "missing", "not_dir", "denied", or null for ok. Each
@@ -12787,12 +13096,25 @@ toolsets:
               </div>
             </template>
             <template x-if="mindModalSandbox.error_kind === 'missing'">
-              <div class="text-[11px] px-3 py-4 rounded-md bg-gray-900/50 border border-gray-800">
-                <div class="text-gray-400 mb-1">Path not found</div>
-                <div class="text-gray-600">
-                  <span class="font-mono" x-text="mindModalSandbox.path"></span> doesn't exist in the sandbox.
+              <template x-if="!mindFilesAdvanced && _mindFilesCurrentCategory()">
+                <!-- In category mode, a missing dir means "agent hasn't
+                     put anything there yet" — not a technical failure.
+                     Copy is the category's configured empty_hint. -->
+                <div class="text-[11px] px-3 py-6 rounded-md bg-gray-900/40 border border-gray-800 text-center">
+                  <div class="text-3xl mb-2" x-text="_mindFilesCurrentCategory().icon"></div>
+                  <div class="text-gray-400 mb-1" x-text="'No ' + _mindFilesCurrentCategory().label.toLowerCase() + ' yet'"></div>
+                  <div class="text-gray-600 text-[10px] max-w-md mx-auto" x-text="_mindFilesCurrentCategory().empty_hint"></div>
                 </div>
-              </div>
+              </template>
+              <template x-if="mindFilesAdvanced || !_mindFilesCurrentCategory()">
+                <!-- Advanced mode — classic "path not found" error. -->
+                <div class="text-[11px] px-3 py-4 rounded-md bg-gray-900/50 border border-gray-800">
+                  <div class="text-gray-400 mb-1">Path not found</div>
+                  <div class="text-gray-600">
+                    <span class="font-mono" x-text="mindModalSandbox.path"></span> doesn't exist in the sandbox.
+                  </div>
+                </div>
+              </template>
             </template>
             <template x-if="mindModalSandbox.error_kind === 'not_dir'">
               <div class="text-[11px] text-gray-500 italic px-2 py-4">
@@ -12805,16 +13127,38 @@ toolsets:
               </div>
             </template>
             <template x-if="mindModalSandbox.exec_ok && (mindModalSandbox.entries || []).length === 0">
-              <div class="text-[11px] text-gray-600 italic px-2 py-4">
-                Empty directory.
-              </div>
+              <template x-if="!mindFilesAdvanced && _mindFilesCurrentCategory()">
+                <div class="text-[11px] px-3 py-6 rounded-md bg-gray-900/40 border border-gray-800 text-center">
+                  <div class="text-3xl mb-2" x-text="_mindFilesCurrentCategory().icon"></div>
+                  <div class="text-gray-400 mb-1" x-text="'No ' + _mindFilesCurrentCategory().label.toLowerCase() + ' yet'"></div>
+                  <div class="text-gray-600 text-[10px] max-w-md mx-auto" x-text="_mindFilesCurrentCategory().empty_hint"></div>
+                </div>
+              </template>
+              <template x-if="mindFilesAdvanced || !_mindFilesCurrentCategory()">
+                <div class="text-[11px] text-gray-600 italic px-2 py-4">
+                  Empty directory.
+                </div>
+              </template>
             </template>
 
             <!-- Entry list — dirs first (folder icon + arrow), then
-                 files with an always-visible Download button. Previously
-                 the download was hover-only which wasn't discoverable. -->
+                 files with an always-visible Download button. Filter
+                 / sort applied client-side via _mindFilesFiltered(). -->
             <div class="divide-y divide-gray-900/60 rounded-md border border-gray-900/60 overflow-hidden">
-              <template x-for="e in (mindModalSandbox.entries || [])" :key="e.name">
+              <!-- "Filter matches nothing" banner — clearly not an empty
+                   dir, just a filter issue. -->
+              <template x-if="mindModalSandbox.exec_ok
+                              && (mindModalSandbox.entries || []).length > 0
+                              && mindFilesFilter
+                              && _mindFilesFiltered().length === 0">
+                <div class="text-[11px] text-gray-600 italic px-3 py-3">
+                  No entries match <span class="font-mono text-gray-400" x-text="'“' + mindFilesFilter + '”'"></span>.
+                  <button class="ml-1 text-indigo-400 hover:text-indigo-200 underline decoration-dotted"
+                          @click="mindFilesFilter = ''">Clear filter</button>
+                </div>
+              </template>
+
+              <template x-for="e in _mindFilesFiltered()" :key="e.name">
                 <div class="flex items-center gap-3 px-3 py-2 text-xs hover:bg-gray-900/50 transition-colors">
                   <!-- Icon -->
                   <span class="shrink-0 w-4 text-center"
@@ -12825,24 +13169,34 @@ toolsets:
                     <template x-if="!['dir','file','link'].includes(e.type)">•</template>
                   </span>
 
-                  <!-- Name — dirs are buttons that navigate; files are static labels. -->
+                  <!-- Name — dirs navigate, previewable files open the
+                       inline viewer, other files stay as plain labels. -->
                   <template x-if="e.type === 'dir'">
                     <button @click="openSandboxDir((mindModalSandbox.path === '/' ? '' : mindModalSandbox.path) + '/' + e.name)"
                             class="flex-1 min-w-0 text-left truncate text-indigo-300 hover:text-indigo-100 font-medium"
                             x-text="e.name"></button>
                   </template>
-                  <template x-if="e.type !== 'dir'">
+                  <template x-if="e.type === 'file' && _mindFilesIsPreviewable(e.name)">
+                    <button @click="openFilePreview(e)"
+                            class="flex-1 min-w-0 text-left truncate font-mono text-gray-200 hover:text-indigo-300 hover:underline decoration-dotted"
+                            :title="'Preview ' + e.name + ' inline'"
+                            x-text="e.name"></button>
+                  </template>
+                  <template x-if="e.type !== 'dir' && !(e.type === 'file' && _mindFilesIsPreviewable(e.name))">
                     <span class="flex-1 min-w-0 truncate font-mono text-gray-300" x-text="e.name"></span>
                   </template>
 
-                  <!-- Size + mtime, small + dim. -->
+                  <!-- Size. -->
                   <span class="shrink-0 text-[10px] text-gray-600 w-16 text-right font-mono"
                         x-text="e.type === 'file' ? _mindFmtBytes(e.size) : ''"></span>
-                  <span class="shrink-0 text-[10px] text-gray-700 w-28 text-right font-mono"
-                        x-text="e.mtime ? new Date(e.mtime * 1000).toISOString().slice(0,16).replace('T',' ') : ''"></span>
 
-                  <!-- Download — always visible for files, plain button with
-                       an explicit label so users know what to click. -->
+                  <!-- Humanized mtime, with full ISO timestamp in tooltip
+                       for when the relative form is ambiguous. -->
+                  <span class="shrink-0 text-[10px] text-gray-700 w-24 text-right"
+                        :title="_mindFilesFmtMtimeFull(e.mtime)"
+                        x-text="_mindFilesFmtMtime(e.mtime)"></span>
+
+                  <!-- Download — always visible for files. -->
                   <template x-if="e.type === 'file'">
                     <a :href="sandboxDownloadUrl((mindModalSandbox.path === '/' ? '' : mindModalSandbox.path) + '/' + e.name)"
                        class="shrink-0 text-[10px] px-2 py-1 rounded border border-gray-700 text-gray-400 hover:text-indigo-300 hover:border-indigo-700 transition-colors inline-flex items-center gap-1"
@@ -12853,6 +13207,64 @@ toolsets:
                   </template>
                   <template x-if="e.type !== 'file'">
                     <span class="shrink-0 w-[6.5rem]"></span>
+                  </template>
+                </div>
+              </template>
+            </div>
+          </div>
+        </template>
+
+        <!-- Inline file preview overlay. Sits on top of the listing so
+             closing it returns to the exact directory state the user
+             was looking at. Non-text files and oversized files give a
+             clear "download instead" fallback. -->
+        <template x-if="mindFilesPreview">
+          <div class="mt-4 rounded-md border border-indigo-900/60 bg-gray-950/60 overflow-hidden">
+            <div class="flex items-center gap-2 px-3 py-2 border-b border-indigo-900/60 bg-gray-900/40">
+              <span class="text-indigo-400">📄</span>
+              <span class="font-mono text-xs text-gray-200 truncate flex-1" x-text="mindFilesPreview.name"></span>
+              <span class="text-[10px] text-gray-600" x-text="_mindFmtBytes(mindFilesPreview.size)"></span>
+              <a :href="sandboxDownloadUrl(mindFilesPreview.path)"
+                 class="text-[10px] px-2 py-0.5 rounded border border-gray-700 text-gray-400 hover:text-indigo-300 hover:border-indigo-700"
+                 title="Download original"
+                 download>↓ Download</a>
+              <button @click="closeFilePreview()"
+                      class="text-gray-500 hover:text-white text-base leading-none"
+                      title="Close preview">×</button>
+            </div>
+            <div class="p-3 max-h-96 overflow-auto text-[11px] leading-relaxed">
+              <template x-if="mindFilesPreview.loading">
+                <div class="text-gray-600 italic">Loading…</div>
+              </template>
+              <template x-if="!mindFilesPreview.loading && mindFilesPreview.error === 'too_large'">
+                <div class="text-amber-400">
+                  File is
+                  <span x-text="_mindFmtBytes(mindFilesPreview.size)"></span> —
+                  too large for inline preview (cap is
+                  <span x-text="_mindFmtBytes(mindFilesPreviewMaxBytes)"></span>).
+                  Use Download instead.
+                </div>
+              </template>
+              <template x-if="!mindFilesPreview.loading && mindFilesPreview.binary">
+                <div class="text-amber-400">
+                  This file doesn't look like text (contains binary content).
+                  Use Download to inspect it.
+                </div>
+              </template>
+              <template x-if="!mindFilesPreview.loading && mindFilesPreview.error && mindFilesPreview.error !== 'too_large'">
+                <div class="text-red-400">
+                  Couldn't read file: <span class="font-mono" x-text="mindFilesPreview.error"></span>
+                </div>
+              </template>
+              <template x-if="!mindFilesPreview.loading && !mindFilesPreview.error && !mindFilesPreview.binary">
+                <div>
+                  <pre class="font-mono text-gray-200 whitespace-pre-wrap break-all" x-text="mindFilesPreview.content"></pre>
+                  <template x-if="mindFilesPreview.truncated">
+                    <div class="mt-2 text-[10px] text-amber-500 italic">
+                      Preview truncated at
+                      <span x-text="_mindFmtBytes(mindFilesPreviewMaxBytes)"></span>.
+                      Download to see the full file.
+                    </div>
                   </template>
                 </div>
               </template>
