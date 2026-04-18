@@ -109,9 +109,9 @@ Logos = orchestrator + multi-user web UI + auth + MCP server lifecycle +
 
 Verified: shell env stripped of both flags, gateway spawned via `run_gateway_detached()` shows both `LOGOS_HERMES_SERVER_MODE=1` and `LOGOS_DISPATCH_V2=1` in `/proc/<pid>/environ`, sourced from the file.
 
-**Option (2) remains OPEN** — flipping the feature-gate defaults once Phase 1 merges to main is still LOG-44.6 cleanup work.
+**Option (2) remains OPEN** — flipping the feature-gate defaults so v2 is the only path is still LOG-44.6 cleanup work.
 
-**Trip-wire test:** passes mechanically on main; the dispatch-log assertion (`_use_v2=True`) can only be exercised once `log44-hermes-server-prototype` merges — that branch carries the v2 consumer code.
+**Trip-wire test:** restart gateway with no explicit env, confirm chat reaches hermes-in-sandbox (i.e. `_use_v2=True` in the dispatch log line).
 
 ---
 
