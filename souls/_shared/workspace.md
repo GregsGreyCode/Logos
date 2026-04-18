@@ -29,10 +29,16 @@ When you need to search the web or pull data from a JSON/plain endpoint, **reach
 A one-shot pattern for SearxNG:
 
 ```python
-import urllib.request, json, os
-url = os.environ.get("SEARXNG_URL", "http://searxng.internal:8080") + "/search"
+import urllib.request, urllib.parse, json, os
+base = os.environ.get("SEARXNG_URL")
+if not base:
+    # SEARXNG_URL isn't set in your sandbox — Logos didn't wire SearxNG
+    # for this agent. Tell the user "SearxNG isn't configured for me —
+    # enable the Search the web locally capability in Tools." Don't
+    # try hardcoded fallbacks; they'll fail DNS.
+    raise RuntimeError("SEARXNG_URL not set — ask user to enable the search capability")
 params = urllib.parse.urlencode({"q": "your query here", "format": "json"})
-req = urllib.request.Request(f"{url}?{params}",
+req = urllib.request.Request(f"{base.rstrip('/')}/search?{params}",
     headers={"User-Agent": "hermes-agent/1.0"})
 with urllib.request.urlopen(req, timeout=15) as r:
     results = json.loads(r.read())
