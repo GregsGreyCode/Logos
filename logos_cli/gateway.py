@@ -235,6 +235,28 @@ def run_gateway_detached(verbose: bool = False) -> int:
         if secret_path.exists():
             env["LOGOS_JWT_SECRET"] = secret_path.read_text().strip()
 
+    # Overlay KEY=VALUE lines from ~/.logos/env (openshell convention) so
+    # flags like LOGOS_HERMES_SERVER_MODE and LOGOS_DISPATCH_V2 survive
+    # `logos gateway restart` without needing to re-export them each time.
+    # Shell env wins — a value already in the caller's environment is not
+    # overwritten, matching python-dotenv's default (override=False).
+    env_file = get_logos_home() / "env"
+    if env_file.exists():
+        try:
+            for raw in env_file.read_text(encoding="utf-8").splitlines():
+                line = raw.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                if line.startswith("export "):
+                    line = line[len("export "):]
+                k, _, v = line.partition("=")
+                k = k.strip()
+                v = v.strip().strip('"').strip("'")
+                if k and k not in env:
+                    env[k] = v
+        except OSError:
+            pass  # unreadable file is best-effort — don't block the start
+
     with open(log_file, "ab") as _log:
         proc = subprocess.Popen(
             cmd,

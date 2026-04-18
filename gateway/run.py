@@ -65,6 +65,16 @@ if _env_path.exists():
 # Also try project .env as fallback
 load_dotenv()
 
+# Openshell-style shell-env file: KEY=VALUE lines loaded with override=False
+# so explicit shell exports still win. Covers the `python -m gateway.run`
+# direct-launch path (logos_cli also overlays this into its subprocess env).
+_shell_env_path = _hermes_home / 'env'
+if _shell_env_path.exists():
+    try:
+        load_dotenv(_shell_env_path, encoding="utf-8", override=False)
+    except UnicodeDecodeError:
+        load_dotenv(_shell_env_path, encoding="latin-1", override=False)
+
 
 def _warn_deprecated_hermes_env_vars() -> None:
     """One-time warning for HERMES_* env vars whose canonical name is LOGOS_*.
