@@ -99,6 +99,21 @@ Logos = orchestrator + multi-user web UI + auth + MCP server lifecycle +
 
 ---
 
+### LOG-50 · Persist LOG-44 env flags across `logos gateway restart`
+**Effort:** XS (15–30m) · **Type:** DX/bug · **Status:** OPEN · **Surfaced:** 2026-04-17 post-Phase-1 validation
+
+Today the LOG-44 path is gated by `LOGOS_HERMES_SERVER_MODE=1` and `LOGOS_DISPATCH_V2=1`. Any `logos gateway restart` loses those vars because the CLI respawns with a scrubbed environment — chat then falls through to v1, which for an already-hermes-mode sandbox fails with `Worker for <name> exited (returncode=2)` since the sandbox image no longer carries `sandbox_worker.py`.
+
+**Options:**
+1. **`~/.logos/env` auto-sourced by `logos gateway start/restart`** — mirror the convention the openshell CLI uses (`$HOME/.openshell/env`). Low risk, easy to document ("flags live here; edit and restart"). Works for non-LOG-44 users too (e.g. model overrides, debug toggles).
+2. **Flip defaults once Phase 1 is stable** — remove the `is_enabled()` / `is_dispatch_v2_enabled()` gates entirely. Cleanest end state, but commits to v2 for everyone; should wait until Phase 2 pins down per-agent config so users on v1-era sandboxes aren't stranded.
+
+Recommend doing (1) this week and (2) as part of LOG-44.6 cleanup.
+
+**Trip-wire test:** restart gateway with no explicit env, confirm chat still reaches hermes-in-sandbox (i.e. `_use_v2=True` in the dispatch log line).
+
+---
+
 ### LOG-24 · Verify Plan A-prime end-to-end + clean up stale WS references
 **Effort:** S (30m–2h) · **Type:** Verification + cleanup · **Status:** PARTIAL · **Prereq for:** LOG-44
 
