@@ -1465,59 +1465,26 @@ class OpenShellExecutor:
             # and docs/architecture/hermes-as-server-prototype.md.
             _hermes_srv_setup = None
             try:
-                from .hermes_server_mode import is_enabled as _log44_on, enable_hermes_server_mode as _log44_go
+                from .hermes_server_mode import (
+                    is_enabled as _log44_on,
+                    enable_hermes_server_mode as _log44_go,
+                    build_channel_extra_env as _log44_build_env,
+                )
                 if _log44_on():
-                    # LOG-44.3: read per-agent channel credentials + auto-
-                    # apply the matching network policy preset so the
-                    # sandbox's egress actually reaches the platform API.
-                    # Hermes's ``_apply_env_overrides`` (in its own config.py
-                    # inside the sandbox image) turns each of these env
-                    # vars into an enabled platform adapter on startup.
+                    # LOG-44.3: look up per-agent channel credentials +
+                    # auto-apply matching network policy presets. The
+                    # helper writes to both the returned dict (→ .env)
+                    # and the policies DB (→ sandbox egress rules).
                     from gateway.auth import db as _log44_auth_db
-                    _PLATFORM_ENV_MAP = {
-                        "telegram": "TELEGRAM_BOT_TOKEN",
-                        "discord": "DISCORD_BOT_TOKEN",
-                        "slack": "SLACK_BOT_TOKEN",
-                        "mattermost": "MATTERMOST_TOKEN",
-                        "matrix": "MATRIX_ACCESS_TOKEN",
-                        "weixin": "WEIXIN_TOKEN",
-                    }
-                    _log44_extra_env: dict = {}
                     _log44_agent_rec = _log44_auth_db.get_agent_by_name(config.name) or {}
                     _log44_agent_id = _log44_agent_rec.get("id")
-                    if _log44_agent_id:
-                        _log44_creds = _log44_auth_db.list_agent_channel_credentials(
-                            agent_id=_log44_agent_id, enabled_only=True,
+                    _log44_extra_env = (
+                        _log44_build_env(
+                            _log44_agent_id,
+                            sandbox_name_for_log=sandbox_name,
                         )
-                        for _c in _log44_creds:
-                            _plat = (_c.get("platform") or "").lower()
-                            _env_name = _PLATFORM_ENV_MAP.get(_plat)
-                            _token = _c.get("token") or ""
-                            if not _env_name or not _token:
-                                continue
-                            _log44_extra_env[_env_name] = _token
-                            # Auto-apply matching network preset if the
-                            # preset file exists. Idempotent per policies.
-                            try:
-                                from gateway import policies as _policies
-                                _policies.apply_preset(_log44_agent_id, _plat)
-                                logger.info(
-                                    "spawn(%s): applied '%s' network preset "
-                                    "(channel cred %s)",
-                                    sandbox_name, _plat,
-                                    _c.get("label") or "default",
-                                )
-                            except Exception as _preset_exc:
-                                logger.warning(
-                                    "spawn(%s): could not apply '%s' preset: %s "
-                                    "(agent may be unable to reach %s API)",
-                                    sandbox_name, _plat, _preset_exc, _plat,
-                                )
-                    if _log44_extra_env:
-                        logger.info(
-                            "spawn(%s): LOG-44.3 channel creds → env keys %s",
-                            sandbox_name, sorted(_log44_extra_env.keys()),
-                        )
+                        if _log44_agent_id else {}
+                    )
                     logger.info("spawn(%s): LOGOS_HERMES_SERVER_MODE=1 — enabling", sandbox_name)
                     _hermes_srv_setup = _log44_go(
                         sandbox_name, config,
@@ -1810,6 +1777,110 @@ class OpenShellExecutor:
                     agent.get("name"), exc,
                 )
         return ok
+
+    def refresh_channel_credentials(self, name: str) -> bool:
+        """LOG-44.3.4 — hot-refresh a hermes-mode sandbox's channel creds.
+
+        Credential change → rewrite ``.env`` inside the sandbox with
+        the new token(s), then restart hermes-in-sandbox so it
+        re-reads ``.env`` via ``_apply_env_overrides`` and re-enables
+        its platform adapters. No pod destroy, so workspace files +
+        hermes's SessionDB survive. In-flight dispatches will fail
+        (hermes process bounces) but the sandbox stays.
+
+        Skipped (returns False) when the sandbox has no
+        ``hermes_server_setup`` on its state record — i.e. it's not
+        running hermes-server mode, so channel delegation is N/A and
+        the user's central Logos adapter handles it instead.
+
+        Called by the channel-credential admin handlers on save /
+        toggle / delete so the UI change takes effect immediately.
+        Best-effort: a failure here shouldn't poison the DB write —
+        callers should catch + log without bubbling.
+
+        Returns True if the refresh actually ran end-to-end.
+        """
+        from .hermes_server_mode import (
+            is_enabled as _log44_on,
+            build_channel_extra_env,
+            redeploy_hermes_env,
+            restart_hermes_in_sandbox,
+            wait_for_hermes_health,
+        )
+        if not _log44_on():
+            logger.debug(
+                "refresh_channel_credentials(%s): LOGOS_HERMES_SERVER_MODE "
+                "off — nothing to refresh", name,
+            )
+            return False
+
+        import gateway.auth.db as _adb
+        agent = _adb.get_agent_by_name(name)
+        if not agent:
+            logger.warning(
+                "refresh_channel_credentials: no agent named %r", name,
+            )
+            return False
+        agent_id = agent.get("id")
+        sandbox_name = _sanitize_sandbox_name(f"hermes-{name}")
+
+        # Pull hermes_server_setup from state so we reuse the same
+        # API_SERVER_KEY the sandbox was spawned with — a new key would
+        # invalidate dispatch_v2's Bearer and every chat would 401.
+        setup = None
+        for inst in _load_state():
+            if inst.get("sandbox_name") == sandbox_name:
+                setup = inst.get("hermes_server_setup")
+                break
+        if not setup or not setup.get("api_key"):
+            logger.info(
+                "refresh_channel_credentials(%s): sandbox has no "
+                "hermes_server_setup — not a hermes-mode agent, skipping",
+                sandbox_name,
+            )
+            return False
+
+        extra_env = build_channel_extra_env(
+            agent_id, sandbox_name_for_log=sandbox_name,
+        ) if agent_id else {}
+
+        try:
+            redeploy_hermes_env(
+                sandbox_name,
+                api_key=setup["api_key"],
+                extra_env=extra_env or None,
+            )
+        except Exception as exc:
+            logger.warning(
+                "refresh_channel_credentials(%s): .env redeploy failed: %s",
+                sandbox_name, exc,
+            )
+            return False
+
+        try:
+            restart_hermes_in_sandbox(sandbox_name)
+        except Exception as exc:
+            logger.warning(
+                "refresh_channel_credentials(%s): hermes restart failed: %s",
+                sandbox_name, exc,
+            )
+            return False
+
+        try:
+            wait_for_hermes_health(sandbox_name)
+        except TimeoutError as exc:
+            logger.warning(
+                "refresh_channel_credentials(%s): health did not return "
+                "after restart: %s", sandbox_name, exc,
+            )
+            return False
+
+        logger.info(
+            "refresh_channel_credentials(%s): complete — %d channel env "
+            "keys live, hermes re-ready",
+            sandbox_name, len(extra_env),
+        )
+        return True
 
     def delete_instance(self, name: str) -> None:
         # Resolve the sandbox name authoritatively from the agent name
