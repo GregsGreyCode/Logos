@@ -149,6 +149,44 @@ Put it on each Live-Executions row, not just the chat header. Three reasons: (a)
 
 ---
 
+### LOG-55 · Lightweight `http_get` tool (sidesteps Playwright for JSON-GET cases)
+**Effort:** XS (30m) · **Type:** Feature · **Status:** OPEN · **Surfaced:** 2026-04-18 when Hermes tried to search via SearxNG and got stuck installing Playwright browsers
+
+SearxNG's `/search?q=…&format=json` returns plain JSON over HTTP. The existing `browser_navigate + browser_console` recipe (see `gateway/policies/presets/searxng.yaml`) pulls the JSON via a headless-browser page load — which requires Chromium + Playwright inside the sandbox. When those aren't installed (current image state), the agent gets stuck trying to `pip install playwright` / `npm install` / `wget` — all blocked by the sandbox's network policy — and burns minutes before giving up.
+
+A one-call `http_get(url, *, headers=None, timeout=30)` tool that uses `urllib.request.urlopen` (already in the stdlib, no install needed) would let agents hit SearxNG, GitHub's API, OpenRouter's pricing endpoint, etc., without touching Chromium. Network policy enforcement is unchanged — it still gates host access at the L7 proxy.
+
+**Scope:**
+- New tool module `tools/http_tools.py` with a single `http_get` entry point.
+- JSON response auto-detected (content-type sniff + `.json` suffix) and returned as parsed dict; other types returned as text.
+- Hard response cap (~2 MB) so an accidentally-hit binary doesn't DoS the agent's context.
+- Register under a new `http` toolset (or fold into `web` if we want less fragmentation).
+- Update `souls/_shared/workspace.md` + the `searxng` preset docs to prefer `http_get` for JSON endpoints.
+
+**Non-goals:** full HTTP client (no POST, no cookies, no redirects-with-auth). The browser tool is still the right hammer for rendered pages / JavaScript-driven sites.
+
+**Acceptance:** agent instructed to "search SearxNG for X" invokes `http_get('http://searxng.internal:8080/search?q=X&format=json')` and returns the results — even when Chromium is missing.
+
+---
+
+### LOG-56 · Bake Playwright browsers into the sandbox image
+**Effort:** S (30m–2h) · **Type:** Infra · **Status:** OPEN · **Surfaced:** 2026-04-18 same session as LOG-55 · **Cross-ref:** LOG-34 (must-include deps list)
+
+The `browser` toolset (`browser_navigate`, `browser_click`, `browser_vision`, `browser_snapshot`, etc.) relies on Playwright driving Chromium. Neither the Python package nor the browser binaries are in `hermes-sandbox:m12`. `playwright install chromium` downloads ~150 MB from `playwright.azureedge.net` — blocked by the sandbox's network policy, so agents can't self-recover at runtime.
+
+**Fix:** add to the image build (LOG-34 scope):
+```
+RUN pip install playwright
+RUN playwright install --with-deps chromium
+```
+`--with-deps` pulls in the Debian `libs` Chromium needs (glibc ⋅ atk ⋅ libx11 ⋅ etc). Image size grows by ~400 MB — acceptable for a pre-packaged workstation image, worth trimming if we drop to a slimmer browser later (`@playwright/mcp` path in LOG-34).
+
+**Acceptance:** fresh-spawned sandbox, agent asks to navigate to a URL, first `browser_navigate` call succeeds with no install-time network activity.
+
+**Relationship to LOG-55:** LOG-55 sidesteps Chromium for simple JSON GETs (covers SearxNG, most APIs). LOG-56 enables the full browser tool for rendered-page use cases. Ship both — they're complementary.
+
+---
+
 ### LOG-54 · Fix hermes context compression in Logos-managed sandboxes
 **Effort:** S (30m–2h) · **Type:** Bug · **Status:** OPEN · **Surfaced:** 2026-04-18 testing LOG-44.4 A.1 on a 207-msg session
 
@@ -420,7 +458,8 @@ The pre-LOG-44 dispatch contract is opinionated (stdin/stdout JSON framing via `
 Audit `/opt/hermes` to carve a 1–2 GB image. Migrate browser tools to `@playwright/mcp`. Delete the orphan `Dockerfile.hermes-sandbox`.
 
 **Must-include deps surfaced by downstream tickets:**
-- `croniter` — without it, hermes's `cronjob` tool errors out at cron-expression parse, breaking agent-created schedules. Surfaced during LOG-44.2 proof-of-autonomy verification: a BOOT.md agent invocation called `cronjob(action="create", schedule="*/5 * * * *", …)` which hit `ModuleNotFoundError: No module named 'croniter'`. openshell's network policy blocks `pip install` from inside the sandbox, so this has to ship in the image, not be added at spawn.
+- `croniter` (nice-to-have, NOT blocking) — hermes's cron works fine without it for `every 30m`, `2h`, ISO-timestamp, one-shot-duration schedules (see `cron/jobs.py::parse_schedule`). croniter is only required to parse the five-field cron-expression syntax (`0 9 * * *`). Agents using the natural-language forms don't care. Ship it to widen the accepted syntax; don't ship it and `*/5 * * * *` raises a clean `ValueError` that the agent will retry with "every 5m".
+- `playwright install chromium` — MUST ship. Without the Chromium binary the `browser` toolset's `browser_navigate` / `browser_click` / `browser_vision` fail on first use, and the sandbox's network policy blocks both `npm` and Playwright's download CDN so agents cannot self-recover at runtime. Reported live: user asked Hermes to search via SearxNG, agent got stuck in a pip/npm/wget install-attempt loop that all 403'd. See LOG-55 for the tool-layer workaround (http_get) that avoids Chromium entirely for the common JSON-GET cases.
 
 ### LOG-35 · UI consistency micro-fixes
 **Effort:** XS each · **Type:** Polish · **Status:** OPEN
