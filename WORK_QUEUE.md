@@ -149,23 +149,20 @@ Put it on each Live-Executions row, not just the chat header. Three reasons: (a)
 
 ---
 
-### LOG-55 · Lightweight `http_get` tool (sidesteps Playwright for JSON-GET cases)
-**Effort:** XS (30m) · **Type:** Feature · **Status:** OPEN · **Surfaced:** 2026-04-18 when Hermes tried to search via SearxNG and got stuck installing Playwright browsers
+### LOG-55 · Sidestep Playwright for JSON-GET cases — **DONE (2026-04-18, pivoted)**
+**Effort:** XS · **Type:** Feature · **Status:** DONE · **Shipped as:** soul-fragment guidance
 
-SearxNG's `/search?q=…&format=json` returns plain JSON over HTTP. The existing `browser_navigate + browser_console` recipe (see `gateway/policies/presets/searxng.yaml`) pulls the JSON via a headless-browser page load — which requires Chromium + Playwright inside the sandbox. When those aren't installed (current image state), the agent gets stuck trying to `pip install playwright` / `npm install` / `wget` — all blocked by the sandbox's network policy — and burns minutes before giving up.
+Original plan was a dedicated `http_get` tool. Abandoned after implementation hit a toolset-registration wall: hermes's API-server platform picks its tool list from a static `hermes-cli` composite (see `hermes_cli/tools_config.py::_get_platform_tools`), and registering a new tool under an existing toolset (e.g. `browser`) breaks that toolset's subset-inference so it gets kicked out of `enabled_toolsets` entirely. Adding a properly-visible tool would require either rewriting `config.yaml` to explicitly enumerate every configurable toolset, or upstreaming the new tool into hermes's own composite — both bigger than the LOG-55 value.
 
-A one-call `http_get(url, *, headers=None, timeout=30)` tool that uses `urllib.request.urlopen` (already in the stdlib, no install needed) would let agents hit SearxNG, GitHub's API, OpenRouter's pricing endpoint, etc., without touching Chromium. Network policy enforcement is unchanged — it still gates host access at the L7 proxy.
+**What actually shipped:** soul-fragment + preset-doc guidance pointing agents at `execute_code` (already in every agent's toolset) for HTTP fetches via stdlib `urllib`. Zero plumbing, zero new toolsets, same user-facing outcome — agent can hit SearxNG/REST APIs without needing Chromium.
 
-**Scope:**
-- New tool module `tools/http_tools.py` with a single `http_get` entry point.
-- JSON response auto-detected (content-type sniff + `.json` suffix) and returned as parsed dict; other types returned as text.
-- Hard response cap (~2 MB) so an accidentally-hit binary doesn't DoS the agent's context.
-- Register under a new `http` toolset (or fold into `web` if we want less fragmentation).
-- Update `souls/_shared/workspace.md` + the `searxng` preset docs to prefer `http_get` for JSON endpoints.
+- `souls/_shared/workspace.md` grew a "Web search and HTTP fetches" section with a complete urllib-based SearxNG pattern and a clear "reach for `execute_code` first" rule.
+- `gateway/policies/presets/searxng.yaml` header rewritten to recommend the execute_code path (cheap, no Chromium) over the browser_navigate recipe (still documented for rendered-page cases).
 
-**Non-goals:** full HTTP client (no POST, no cookies, no redirects-with-auth). The browser tool is still the right hammer for rendered pages / JavaScript-driven sites.
-
-**Acceptance:** agent instructed to "search SearxNG for X" invokes `http_get('http://searxng.internal:8080/search?q=X&format=json')` and returns the results — even when Chromium is missing.
+**Caveats:**
+- Leans on prompt compliance. Agents that don't follow guidance will still try browser_navigate first.
+- Context-window cost of the extra guidance: ~300 tokens per prompt (we pay this regardless of whether the agent uses it). Acceptable.
+- If we ever want a real first-class `http_get` tool, it ships with LOG-44.5 (tool/skill reconciliation) when we redo the Logos→hermes toolset handoff properly.
 
 ---
 
