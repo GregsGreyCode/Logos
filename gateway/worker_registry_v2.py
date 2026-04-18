@@ -47,12 +47,29 @@ import base64
 import json
 import logging
 import os
+import subprocess
 import sys
 from typing import Any, Callable, Dict, Optional
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_TASK_TIMEOUT = 600.0   # generous; gateway owns its own per-run timeouts
+
+# LOG-51.3: in-flight task registry so /chat/{task_id}/cancel can reach
+# the v2 dispatch subprocess. Keyed by the logos task_id (not hermes's
+# run_id — the cancel endpoint only knows the former). Populated at the
+# top of dispatch_task_v2 and popped in its finally, so the map
+# reflects actively-running dispatches.
+#
+# Cancelling takes two steps (the signal doesn't propagate through
+# ``openshell sandbox exec`` so terminating the host-side subprocess
+# alone leaves the in-sandbox client running):
+#   1. Host-side: ``proc.terminate()`` on the asyncio subprocess.
+#   2. In-sandbox: ``openshell sandbox exec -- pkill -f`` matching
+#      the task-specific ``_disp_v2_client_<task_id>.py`` filename.
+# Step 2's disconnect is what actually triggers the LOG-51.2
+# monkeypatch's interrupt path inside hermes.
+_INFLIGHT: Dict[str, Dict[str, Any]] = {}
 
 
 def _load_server_setup(sandbox_name: str) -> Optional[Dict[str, str]]:
@@ -227,12 +244,16 @@ async def dispatch_task_v2(
 
     # Base64-encode the python client (avoids openshell exec's no-newlines-in-args
     # limitation) and invoke via sh stub that decodes + pipes into python3 -.
+    # LOG-51.3: use a task-specific filename so cancel_task can pkill
+    # exactly this run without affecting other concurrent dispatches
+    # on the same sandbox.
     client_b64 = base64.b64encode(_IN_SANDBOX_CLIENT.encode()).decode()
+    client_path = f"/tmp/_disp_v2_client_{task_id}.py"
     stub = (
-        f"echo {client_b64} | base64 -d > /tmp/_disp_v2_client.py && "
+        f"echo {client_b64} | base64 -d > {client_path} && "
         f"HERMES_BASE_URL={setup['base_url']} "
         f"HERMES_API_KEY={setup['api_key']} "
-        f"python3 /tmp/_disp_v2_client.py"
+        f"python3 {client_path}"
     )
 
     cmd = [
@@ -262,6 +283,14 @@ async def dispatch_task_v2(
         raise ConnectionError(
             f"Failed to spawn `openshell sandbox exec` for {sandbox_name}: {exc}"
         ) from exc
+
+    # LOG-51.3: record the in-flight subprocess keyed by task_id so
+    # /chat/{task_id}/cancel can reach us. Popped in the finally below.
+    _INFLIGHT[task_id] = {
+        "proc": proc,
+        "sandbox_name": sandbox_name,
+        "client_path": client_path,
+    }
 
     # Pipe task JSON + close stdin (EOF unblocks openshell's exec gate).
     assert proc.stdin is not None
@@ -336,12 +365,111 @@ async def dispatch_task_v2(
             f"timeout={timeout}s"
         ) from exc
     finally:
+        # LOG-51.3: drop the inflight entry before reaping so a late
+        # cancel_task_v2 doesn't terminate a process we're already
+        # about to reap.
+        _INFLIGHT.pop(task_id, None)
         if proc.returncode is None:
             proc.terminate()
             try:
                 await asyncio.wait_for(proc.wait(), timeout=5)
             except asyncio.TimeoutError:
                 proc.kill()
+
+
+def cancel_task(task_id: str) -> bool:
+    """Abort an in-flight v2 dispatch.
+
+    Two-step termination because ``openshell sandbox exec`` does not
+    propagate signals to the in-sandbox child:
+
+    1. **Host side**: terminate the asyncio subprocess so
+       ``dispatch_task_v2``'s read loop unwinds and returns an error.
+    2. **In-sandbox side**: ``pkill -f`` the task-specific
+       ``/tmp/_disp_v2_client_<task_id>.py`` process so the Python
+       client dies, closes its SSE connection to hermes, and triggers
+       the LOG-51.2 monkeypatch's disconnect branch — which calls
+       ``agent.interrupt()`` so the agent actually stops iterating.
+
+    Either step alone is insufficient: step 1 without step 2 leaves
+    the agent running in the sandbox; step 2 without step 1 leaves a
+    zombie host subprocess. Both are required.
+
+    Returns True if a matching in-flight task was found and signalled,
+    False if no such task exists (caller returns 404 / tries v1).
+    The in-sandbox pkill is best-effort — if openshell is
+    unreachable, cancel still returns True (host side was stopped);
+    hermes will eventually complete the run and the agent will time
+    out naturally at ``max_iterations``.
+    """
+    entry = _INFLIGHT.pop(task_id, None)
+    if entry is None:
+        return False
+
+    proc = entry.get("proc")
+    sandbox_name = entry.get("sandbox_name")
+    client_path = entry.get("client_path") or ""
+
+    # Step 1 — host side.
+    if proc is not None:
+        try:
+            proc.terminate()
+        except ProcessLookupError:
+            pass  # already exited between our lookup and terminate
+        except Exception as exc:
+            logger.warning(
+                "cancel_task(%s): host terminate raised: %s", task_id, exc,
+            )
+
+    # Step 2 — reach into the sandbox. pkill matches on the
+    # task-specific client filename so we don't touch other concurrent
+    # dispatches. Timeout is short: if the openshell CLI hangs, we'd
+    # rather return and let the host side finish unwinding than block
+    # the cancel endpoint.
+    if sandbox_name and client_path:
+        pattern = client_path.replace(".", "\\.")
+        kill_cmd = [
+            "openshell", "sandbox", "exec", "--no-tty",
+            "--name", sandbox_name,
+            "--", "sh", "-c", f"pkill -f {pattern} || true",
+        ]
+        try:
+            r = subprocess.run(
+                kill_cmd,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=5,
+            )
+            if r.returncode != 0:
+                logger.debug(
+                    "cancel_task(%s): in-sandbox pkill rc=%d stderr=%r",
+                    task_id, r.returncode,
+                    (r.stderr or b"")[:200].decode(errors="replace"),
+                )
+        except subprocess.TimeoutExpired:
+            logger.warning(
+                "cancel_task(%s): in-sandbox pkill timed out after 5s "
+                "(openshell CLI wedged?); agent may keep running to "
+                "completion inside %s",
+                task_id, sandbox_name,
+            )
+        except FileNotFoundError:
+            logger.warning(
+                "cancel_task(%s): openshell CLI not on PATH — "
+                "cannot reach into sandbox to interrupt agent",
+                task_id,
+            )
+        except Exception as exc:
+            logger.warning(
+                "cancel_task(%s): in-sandbox pkill raised: %s", task_id, exc,
+            )
+
+    logger.info(
+        "cancel_task(%s): terminated v2 dispatch (host + in-sandbox %s)",
+        task_id, sandbox_name or "?",
+    )
+    return True
 
 
 def sandbox_has_server_mode(sandbox_name: str) -> bool:
@@ -361,6 +489,7 @@ def is_dispatch_v2_enabled() -> bool:
 
 __all__ = [
     "dispatch_task_v2",
+    "cancel_task",
     "sandbox_has_server_mode",
     "is_dispatch_v2_enabled",
     "DEFAULT_TASK_TIMEOUT",
