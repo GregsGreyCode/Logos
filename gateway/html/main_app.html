@@ -1395,7 +1395,11 @@
                 data-testid="chat-input" rows="1"
                 class="block w-full bg-gray-800 border border-gray-700 rounded-lg px-4 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-indigo-500 transition-colors resize-none disabled:opacity-50 disabled:cursor-not-allowed"
                 style="height:38px;min-height:38px;max-height:7rem;line-height:20px;overflow-y:hidden;padding-top:8px;padding-bottom:8px;vertical-align:bottom;"
-                :placeholder="!canSendChat ? 'Create an agent to start chatting\u2026' : (micRecording ? ('Recording… ' + micCountdown + 's') : micTranscribing ? 'Transcribing…' : (activeInstance.source === 'named' && !(activeInstance.worker_connected && activeInstance.worker_healthy) ? 'Message ' + (activeChat?.agent_name || activeInstance.name || 'agent') + ' (sandbox will spawn on send)\u2026' : 'Message ' + (activeChat?.agent_name || activeInstance.name || 'agent') + '\u2026 (Enter · Shift+Enter for newline)'))"
+                :placeholder="!canSendChat ? 'Create an agent to start chatting\u2026'
+                  : (chatLoading || activeTaskId) ? 'Agent is responding — click \u25a0 Stop to interrupt'
+                  : (micRecording ? ('Recording… ' + micCountdown + 's')
+                  : micTranscribing ? 'Transcribing…'
+                  : (activeInstance.source === 'named' && !(activeInstance.worker_connected && activeInstance.worker_healthy) ? 'Message ' + (activeChat?.agent_name || activeInstance.name || 'agent') + ' (sandbox will spawn on send)\u2026' : 'Message ' + (activeChat?.agent_name || activeInstance.name || 'agent') + '\u2026 (Enter · Shift+Enter for newline)'))"
                 :disabled="micTranscribing || !canSendChat"
                 :readonly="!chatInputReady"></textarea>
               <!-- Success flash inside input -->
@@ -1425,9 +1429,13 @@
                 </svg>
               </template>
             </button>
-            <button @click="sendChat()" :disabled="!canSendChat" data-testid="chat-send"
+            <button @click="sendChat()"
+              :disabled="!canSendChat || chatLoading || activeTaskId"
+              data-testid="chat-send"
               class="self-end bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 disabled:cursor-not-allowed px-4 rounded-lg text-sm font-medium transition-colors"
-              :title="!canSendChat && activeInstance.source === 'named' ? 'Sandbox provisioning…' : ''"
+              :title="(chatLoading || activeTaskId)
+                        ? 'Agent is responding — click Stop to interrupt before sending a new message'
+                        : (!canSendChat && activeInstance.source === 'named' ? 'Sandbox provisioning…' : '')"
               style="height:38px;">
               Send
             </button>
@@ -9077,6 +9085,16 @@ function app() {
     async sendChat() {
       const msg = this.chatInput.trim();
       if (!msg) return;
+      // Reentrancy guard: if a dispatch is already in flight for THIS
+      // chat, swallow the send. Without this the user could fire a
+      // second POST /chat while the first is still streaming; hermes
+      // would accept both, run them concurrently on the same session,
+      // and the browser tab would interleave tokens from both streams
+      // into the same bubble. Reported as "chat glitches if I message
+      // while it's responding." Typing stays enabled (draft-ahead is
+      // fine); only the send action is blocked, with a hint pointing
+      // to the Stop button as the escape hatch.
+      if (this.chatLoading || this.activeTaskId) return;
       // Rate-limit: large messages (>200 words) capped at one per second
       const wordCount = msg.split(/\s+/).length;
       if (wordCount > 200) {
