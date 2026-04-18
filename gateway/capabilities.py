@@ -509,16 +509,36 @@ def apply(agent_id: str, cap_id: str, enabled: bool) -> dict:
                     cap_id, preset, exc,
                 )
     else:
-        keep_presets = _other_capabilities_still_using_toolsets(agent_id, cap_id, "presets")
-        for preset in target_presets:
-            if preset in keep_presets:
-                continue
-            try:
-                gp.remove_preset(agent_id, preset)
-            except Exception as exc:
-                logger.warning(
-                    "capability %s: remove_preset(%s) failed: %s",
-                    cap_id, preset, exc,
+        # Do NOT auto-remove presets when disabling a capability.
+        #
+        # Presets are infrastructure-layer egress rules (network policy).
+        # We can't distinguish a preset applied via this capability from
+        # one the user ticked directly in the Advanced preset panel — so
+        # auto-removing on disable was silently wiping user-pinned
+        # presets (reported symptom: "SearXNG permission unticks itself
+        # all the time").
+        #
+        # Toolsets are still removed because they're application-layer:
+        # the user toggled a capability off, so they expect its tools
+        # gone from the agent's dispatch manifest. But leaving the
+        # network grant in place is harmless (agent just has no tool
+        # to use it), whereas stripping it causes data loss for the
+        # user's explicit ticks.
+        #
+        # The raw preset panel (Advanced view in Agent → Tools) is the
+        # source of truth for preset state; users who want a preset off
+        # remove it there.
+        if target_presets:
+            # Log which presets we're NOT removing so audit trails make
+            # sense if someone wonders why a preset is still applied
+            # after disabling a capability that bundled it.
+            still_applied = set(target_presets) & set(gp.get_applied_presets(agent_id))
+            if still_applied:
+                logger.info(
+                    "capability %s disabled — preset(s) %s left applied "
+                    "(remove manually via Tools → Advanced if desired). "
+                    "Rationale: can't tell capability-added from user-pinned.",
+                    cap_id, sorted(still_applied),
                 )
 
     return compute_state(agent_id)
