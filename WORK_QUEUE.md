@@ -143,6 +143,10 @@ Put it on each Live-Executions row, not just the chat header. Three reasons: (a)
 
 **Risk:** if hermes upstream has no graceful cancel, 51.2's fallback is heavy-handed (kill+restart of the in-sandbox hermes, losing any unflushed memory/session state). Document + surface in the UI as a warning on the Stop confirm, rather than silently destroying state.
 
+**Upstream finding (2026-04-18):** hermes 0.7.0 exposes only `POST /v1/runs` + `GET /v1/runs/{id}/events` — no cancel endpoint, and the events handler does NOT interrupt the agent on client disconnect (only the sibling `/v1/responses` handler does that). Upstream already has the primitives (`agent.interrupt()` at `run_agent.py:3086` which the run loop honors at 20+ checkpoints including mid-LLM-stream HTTP-close at `run_agent.py:5139`), they just aren't wired on `/v1/runs`. So 51.2 ships as a **Logos-side monkeypatch** delivered at sandbox spawn — the sandbox image stays pristine (no hermes-agent fork), the patch rides in on upload, and it's `try/except AttributeError`-guarded so a hermes bump that renames internals makes cancel *stop working* rather than break boot.
+
+**Temporary by design:** file an upstream issue on hermes-agent asking for either `POST /v1/runs/{id}/cancel` or SSE-disconnect-interrupt parity with `/v1/responses`. When that ships, delete the monkeypatch entirely — cancel becomes part of the runtime-agnostic contract Logos expects of any sandbox image. See LOG-45's contract list.
+
 ---
 
 ### LOG-24 · Verify Plan A-prime end-to-end + clean up stale WS references
@@ -323,9 +327,15 @@ The pre-LOG-44 dispatch contract is opinionated (stdin/stdout JSON framing via `
 | 45.6 | Per-image network policy presets | M | Different runtimes need different policies (e.g. a Claude-SDK image needs `api.anthropic.com`, not `inference.local`). Gate behind the existing policy preset system. |
 | 45.7 | Docs: "Adding a new runtime" walkthrough | S | Point at NemoClaw `Dockerfile` as the canonical reference post-LOG-44. |
 
+**Runtime contract (what any logos-compatible sandbox image must expose):**
+- OpenAI-compatible `POST /v1/runs` → 202 with `{run_id}`, and `GET /v1/runs/{id}/events` SSE stream of lifecycle events (`tool.start`, `tool.end`, `message.delta`, `reasoning.available`, `run.completed`, `run.failed`). Non-negotiable — this is how Logos dispatches.
+- **Graceful cancel** — either `POST /v1/runs/{id}/cancel` *or* SSE-disconnect-interrupts-agent on the events stream. Without this, the Logos Stop button is cosmetic. Today hermes-agent 0.7.0 requires a Logos-side monkeypatch for this (see LOG-51); that workaround gets deleted when upstream ships the capability. Images built on other runtimes (Claude SDK container, mini-swe-agent, etc.) have to implement it too.
+- **Health probe** at `/health` returning 200 when ready to accept runs. Used by `wait_for_hermes_health` today; generalise to `wait_for_runtime_health` when 45.2 lands.
+
 **Open questions:**
 - One image = one runtime kind, or can images advertise multiple modes? (YAGNI — start with 1:1.)
 - Image registry source of truth: ship with Logos, or pull from a ghcr manifest? (Start shipped; migrate if community images emerge.)
+- How does the blessed-image registry record *contract version*? (Annotation on image metadata, version-range check in `wait_for_runtime_health`? Defer until second runtime lands.)
 
 ---
 
