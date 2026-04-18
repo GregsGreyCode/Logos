@@ -149,6 +149,34 @@ Put it on each Live-Executions row, not just the chat header. Three reasons: (a)
 
 ---
 
+### LOG-53 · UI pre-flight probe for hallucinated file paths
+**Effort:** S (30m–2h) · **Type:** Polish/defense · **Status:** OPEN · **Surfaced:** 2026-04-18 during live testing · **Relates:** `feat(chat): click agent-cited file paths to download them` (commit `0eb596f`), `fix(souls): forbid citing fake file paths` (commit `ec653c8`)
+
+**Symptom observed live.** User asked Hermes for a 1000-word essay on minoxidil. Agent produced the essay in its reply, did NOT call `write_file`, then said *"I've saved it to /tmp/hermes/minoxidil_infant_essay.md"*. The linkified path rendered as a clickable anchor via `_linkifySandboxPaths` (main_app.html:8920). User clicked, browser hit `/admin/agents/<id>/sandbox-files/download?path=…`, gateway correctly returned 404 (file didn't exist), user got a broken-link UX — "site not available" style error — rather than an inline indication that the agent had hallucinated.
+
+Fix at the soul layer already shipped (`souls/_shared/workspace.md` now forbids citing paths the agent didn't actually write). This ticket is the **belt-and-suspenders** defense: don't trust prompt compliance, verify the file exists before advertising the click.
+
+**Sub-tasks:**
+
+| # | Item | Effort | Notes |
+|---|---|---|---|
+| 53.1 | `_linkifySandboxPaths` schedules a HEAD (or small GET with a sentinel) per distinct path when the chat bubble mounts | XS | Alpine `x-init` on the bubble, or a post-render pass. De-duplicate — one probe per path even if cited twice in the same reply. |
+| 53.2 | Cache probe results in an Alpine Map keyed on `{agent_id}:{path}`, TTL ~30s | XS | Avoid re-probing on scroll or re-render. Invalidate when the user navigates or when a tool event for that path lands on the SSE stream (means the file was just written/modified — probe it fresh). |
+| 53.3 | When probe returns 404, swap the anchor's style class (dim text, strikethrough, ⚠ icon) and set tooltip to *"Agent cited this path but the file isn't there — it may have been hallucinated or deleted"* | XS | Keep the anchor clickable (user might still want to hit it and see the raw 404) but visually communicate missing. |
+| 53.4 | Apply the same probe on history replay (loading an old chat) so past hallucinations are visibly flagged, not just new ones | XS | `renderMsg` is called for both live and replayed messages; the probe path is the same. One flag to gate (skip probing on bulk history reload if it's slow; probe on viewport). |
+| 53.5 | Ignore-list for paths that are real but temporary (e.g. `/tmp/_disp_v2_client_*.py` from LOG-51.3, short-lived per-dispatch scratch) | XS | Not citable by agent replies in normal flow; only included for completeness. Regex-skip on known Logos-internal prefixes. |
+
+**Non-goals:**
+- Don't try to detect hallucination *before* the reply renders — waiting for `write_file` tool events to land before rendering the anchor would feel sluggish. Probe-after-render is fine; anchors are styled immediately, updated on probe resolve.
+- Don't auto-offer to regenerate or re-save — too surgery-y for a catch-hallucination UX. Surface the issue, let the user ask the agent to actually save.
+
+**Acceptance:**
+- Replay the minoxidil session: the `/tmp/hermes/minoxidil_infant_essay.md` anchor in Hermes's reply renders with strikethrough and a tooltip explaining the file is missing.
+- A fresh turn where the agent calls `write_file` then cites the path: anchor renders normally, probe returns 200, user can click and download.
+- Probing doesn't DoS the gateway (cache + de-dupe per chat bubble).
+
+---
+
 ### LOG-52 · Cross-agent session aggregator + retire Logos local transcripts
 **Effort:** M (2h–1d) · **Type:** Architecture · **Status:** OPEN · **Surfaced:** 2026-04-18 during LOG-44.4 A.1 research · **Blocks:** clean closure of LOG-44.4
 
