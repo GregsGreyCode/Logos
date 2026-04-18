@@ -115,6 +115,36 @@ Verified: shell env stripped of both flags, gateway spawned via `run_gateway_det
 
 ---
 
+### LOG-51 · v2 cancel parity + Live-Executions Stop button
+**Effort:** S (30m–2h) · **Type:** Feature/bug · **Status:** OPEN · **Surfaced:** 2026-04-18 immediately after LOG-44 Phase 1 landed on main · **Prereq for:** any meaningful long-running agent use on v2
+
+**Symptom.** The Stop button in the chat header still renders for v2 chats (v2 emits `task_started` with a `task_id`, so `activeTaskId` is set), but clicking it returns 404 because the v1 `WorkerRegistry.cancel_task` only knows its subprocess `_in_flight` dict. `worker_registry_v2.py` has no `cancel_task` at all. A user watching an agent iterate has no working way to stop it; the only ways out today are `openshell sandbox exec --name <sb> -- pkill -f "hermes gateway run"` (kills the whole hermes process, loses all in-flight work) or waiting for `max_iterations` to trip.
+
+Live-Executions observability also needs a pass: the seed row ("thinking…") does render for v2 because `_session_status[session_key]` is populated before dispatch regardless of path, but per-tool updates depend on hermes upstream actually emitting `tool.start`/`tool.end` SSE events in the shape `worker_registry_v2.py` maps. Worth confirming on a live run before trusting the translation.
+
+**Design — where the Stop control lives.**
+Put it on each Live-Executions row, not just the chat header. Three reasons: (a) you're already looking at Live Executions while watching an agent iterate, (b) multi-agent case — chat-header Stop only targets the focused chat, (c) cron/boot-hook/channel-origin runs have no chat for the header button to attach to.
+
+**Sub-tasks:**
+
+| # | Item | Effort | Notes |
+|---|---|---|---|
+| 51.1 | Probe upstream hermes for a run-cancel endpoint | XS | Does `/v1/runs/{run_id}` support DELETE, or is there a `POST /v1/runs/{id}/cancel`? Read `knowledge-repos/hermes-agent` (if present) or exec in and curl hermes's own routes. Outcome gates 51.2. |
+| 51.2 | `worker_registry_v2.cancel_task(task_id)` | S | Tracks run_id per task_id (already have both in scope at dispatch time). On cancel: POST/DELETE hermes's endpoint AND break the SSE read loop cleanly (set a cancel event the `while` loop polls each iteration). If upstream has no cancel endpoint, fall back to killing hermes-in-sandbox and document the heavier side-effect. |
+| 51.3 | Route `_handle_chat_cancel` to whichever registry handled the task | XS | Small registry that maps `task_id → which_dispatcher`. Seeded at dispatch time, popped in the finally. |
+| 51.4 | Thread `task_id` into `_session_status[session_key]` | XS | Already have it in scope at http_api.py:4002. One-key addition. |
+| 51.5 | Per-row Stop button in Live-Executions UI | XS | Alpine renders, posts to `/chat/{task_id}/cancel`. Red-outline micro-button matching the chat-header style. |
+| 51.6 | Confirm `tool.start`/`tool.end` events actually flow through v2 on a real run | XS | Open Live Executions on a hermes-hermes chat, count rows. If stuck on "thinking…", v2's SSE translation is missing mappings — file under 51.6. |
+
+**Acceptance:**
+- Stop button on a Live-Executions row for a v2 dispatch actually stops the agent (no more iteration after ~1s).
+- Chat-header Stop also works (same endpoint).
+- Each tool call the agent makes shows up in Live Executions as its own row, same UX as v1 used to have.
+
+**Risk:** if hermes upstream has no graceful cancel, 51.2's fallback is heavy-handed (kill+restart of the in-sandbox hermes, losing any unflushed memory/session state). Document + surface in the UI as a warning on the Stop confirm, rather than silently destroying state.
+
+---
+
 ### LOG-24 · Verify Plan A-prime end-to-end + clean up stale WS references
 **Effort:** S (30m–2h) · **Type:** Verification + cleanup · **Status:** PARTIAL · **Prereq for:** LOG-44
 
