@@ -1151,9 +1151,15 @@ async def handle_agents_patch(request: web.Request) -> web.Response:
         return web.json_response({"error": "not_found"}, status=404)
     # Ownership check: only the creator or an admin can modify an agent.
     # Other users can chat with shared agents but shouldn't be able to
-    # rename, retool, or repurpose them.
-    req_user = getattr(request, "_user", None) or {}
-    req_user_id = req_user.get("id") or ""
+    # rename, retool, or repurpose them. Auth middleware stores the
+    # user on ``request["current_user"]`` (dict) — NOT ``request._user``
+    # (attribute; that was a stale pattern that silently evaluated to
+    # ``{}`` and made the check fail for EVERYONE including the real
+    # creator and admins). Also note the user-id field is ``sub``,
+    # not ``id`` (matching JWT claim name used across the rest of
+    # the codebase).
+    req_user = request.get("current_user") or {}
+    req_user_id = req_user.get("sub") or ""
     req_role = req_user.get("role") or ""
     if req_role != "admin" and existing.get("creator_id") and existing["creator_id"] != req_user_id:
         return web.json_response(
@@ -1246,8 +1252,11 @@ async def handle_agents_delete(request: web.Request) -> web.Response:
     agent = auth_db.get_agent(aid)
     if not agent:
         return web.json_response({"error": "not_found"}, status=404)
-    req_user = getattr(request, "_user", None) or {}
-    req_user_id = req_user.get("id") or ""
+    # Same auth-source fix as the update handler above:
+    # request["current_user"] (dict) + "sub" field, NOT request._user
+    # + "id".
+    req_user = request.get("current_user") or {}
+    req_user_id = req_user.get("sub") or ""
     req_role = req_user.get("role") or ""
     if req_role != "admin" and agent.get("creator_id") and agent["creator_id"] != req_user_id:
         return web.json_response(
