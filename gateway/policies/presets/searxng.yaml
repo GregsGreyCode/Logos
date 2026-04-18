@@ -16,10 +16,20 @@
 # capabilities.yaml (trust: local_service).
 #
 # Set SEARXNG_URL in Config → Tools to point at your instance
-# (default: http://searxng.internal:8080). The agent calls:
-#   {SEARXNG_URL}/search?q=<query>&format=json
-# via browser_navigate + browser_console(document.body.innerText) to
-# pull the JSON response text.
+# (default: http://searxng.internal:8080). Two ways to hit it:
+#
+# Cheap path (no Chromium needed) — use ``execute_code`` with stdlib
+# urllib, which every agent has:
+#   import urllib.request, json
+#   r = urllib.request.urlopen(f"{SEARXNG_URL}/search?q={q}&format=json")
+#   print(json.dumps(json.loads(r.read()))[:4000])
+# Soul guidance in ``souls/_shared/workspace.md`` prefers this when the
+# task is a plain JSON fetch — avoids the Playwright install-loop
+# agents hit if Chromium binaries aren't baked in (see LOG-56).
+#
+# Rendered-page path — browser_navigate + browser_console(document.body.innerText)
+# is the original recipe and still works when the browser tool is
+# usable. Slower but handles JS-driven result pages.
 #
 # Applying this preset without running SearxNG is harmless — it just
 # widens the sandbox egress rules; the agent only knows to use the URL
