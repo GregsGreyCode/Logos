@@ -1467,8 +1467,62 @@ class OpenShellExecutor:
             try:
                 from .hermes_server_mode import is_enabled as _log44_on, enable_hermes_server_mode as _log44_go
                 if _log44_on():
+                    # LOG-44.3: read per-agent channel credentials + auto-
+                    # apply the matching network policy preset so the
+                    # sandbox's egress actually reaches the platform API.
+                    # Hermes's ``_apply_env_overrides`` (in its own config.py
+                    # inside the sandbox image) turns each of these env
+                    # vars into an enabled platform adapter on startup.
+                    from gateway.auth import db as _log44_auth_db
+                    _PLATFORM_ENV_MAP = {
+                        "telegram": "TELEGRAM_BOT_TOKEN",
+                        "discord": "DISCORD_BOT_TOKEN",
+                        "slack": "SLACK_BOT_TOKEN",
+                        "mattermost": "MATTERMOST_TOKEN",
+                        "matrix": "MATRIX_ACCESS_TOKEN",
+                        "weixin": "WEIXIN_TOKEN",
+                    }
+                    _log44_extra_env: dict = {}
+                    _log44_agent_rec = _log44_auth_db.get_agent_by_name(config.name) or {}
+                    _log44_agent_id = _log44_agent_rec.get("id")
+                    if _log44_agent_id:
+                        _log44_creds = _log44_auth_db.list_agent_channel_credentials(
+                            agent_id=_log44_agent_id, enabled_only=True,
+                        )
+                        for _c in _log44_creds:
+                            _plat = (_c.get("platform") or "").lower()
+                            _env_name = _PLATFORM_ENV_MAP.get(_plat)
+                            _token = _c.get("token") or ""
+                            if not _env_name or not _token:
+                                continue
+                            _log44_extra_env[_env_name] = _token
+                            # Auto-apply matching network preset if the
+                            # preset file exists. Idempotent per policies.
+                            try:
+                                from gateway import policies as _policies
+                                _policies.apply_preset(_log44_agent_id, _plat)
+                                logger.info(
+                                    "spawn(%s): applied '%s' network preset "
+                                    "(channel cred %s)",
+                                    sandbox_name, _plat,
+                                    _c.get("label") or "default",
+                                )
+                            except Exception as _preset_exc:
+                                logger.warning(
+                                    "spawn(%s): could not apply '%s' preset: %s "
+                                    "(agent may be unable to reach %s API)",
+                                    sandbox_name, _plat, _preset_exc, _plat,
+                                )
+                    if _log44_extra_env:
+                        logger.info(
+                            "spawn(%s): LOG-44.3 channel creds → env keys %s",
+                            sandbox_name, sorted(_log44_extra_env.keys()),
+                        )
                     logger.info("spawn(%s): LOGOS_HERMES_SERVER_MODE=1 — enabling", sandbox_name)
-                    _hermes_srv_setup = _log44_go(sandbox_name, config)
+                    _hermes_srv_setup = _log44_go(
+                        sandbox_name, config,
+                        extra_env=_log44_extra_env or None,
+                    )
             except ImportError:
                 pass
 
