@@ -1458,6 +1458,20 @@ class OpenShellExecutor:
             # model works WITH the transport's contract instead of
             # against it.
 
+            # LOG-44 Phase 1 (opt-in via LOGOS_HERMES_SERVER_MODE=1):
+            # start upstream `hermes gateway run` HTTP server inside the
+            # sandbox so dispatch_task_v2 can POST to it. No-op when the
+            # env var is unset. See gateway/executors/hermes_server_mode.py
+            # and docs/architecture/hermes-as-server-prototype.md.
+            _hermes_srv_setup = None
+            try:
+                from .hermes_server_mode import is_enabled as _log44_on, enable_hermes_server_mode as _log44_go
+                if _log44_on():
+                    logger.info("spawn(%s): LOGOS_HERMES_SERVER_MODE=1 — enabling", sandbox_name)
+                    _hermes_srv_setup = _log44_go(sandbox_name, config)
+            except ImportError:
+                pass
+
             # Phase 3 (under lock): flip the record's phase to "ready"
             # so subsequent list_instances() prunes apply normal rules.
             # Re-load the state file because something else may have
@@ -1468,6 +1482,12 @@ class OpenShellExecutor:
                 for i in cur:
                     if i.get("sandbox_name") == sandbox_name:
                         i["phase"] = "ready"
+                        if _hermes_srv_setup is not None:
+                            i["hermes_server_setup"] = {
+                                "api_key": _hermes_srv_setup.api_key,
+                                "base_url": _hermes_srv_setup.base_url,
+                                "hermes_home": _hermes_srv_setup.hermes_home,
+                            }
                         break
                 else:
                     # Our record vanished mid-spawn (e.g. user deleted
