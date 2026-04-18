@@ -1177,11 +1177,37 @@
                       </template>
                       <div x-html="renderMsg(msg.content)"></div>
                     </div>
-                    <!-- Bottom bar: stats toggle (left) + copy (right) — only when stats available -->
+                    <!-- Bottom bar: tool-receipts chip (left) + copy (right).
+                         The chip surfaces tool usage so "did the agent
+                         actually call a tool?" is answerable without
+                         expanding anything:
+                           🔧 N tools · Xs   — at least one tool ran (accent)
+                           ○ 0 tools · Xs    — no tools ran, training-only reply (muted amber)
+                         Clicking toggles the full stats panel, which
+                         leads with the per-tool trace when tools ran. -->
                     <template x-if="msg.stats">
                       <div class="msg-bar bg-gray-800 rounded-b-xl border-t border-gray-700/40">
-                        <span class="msg-hint" @click.stop="statsOpen=!statsOpen; if(statsOpen) $nextTick(()=>$root._scrollChat())">
-                          <span x-text="statsOpen ? '\u25B4 hide stats' : '\u22EF stats'"></span>
+                        <span class="msg-hint flex items-center gap-2"
+                              @click.stop="statsOpen=!statsOpen; if(statsOpen) $nextTick(()=>$root._scrollChat())"
+                              :title="(msg.stats.tools_used || 0) > 0
+                                ? 'Agent used ' + (msg.stats.tools_used) + ' tool call(s) this turn — click to see which'
+                                : 'Agent produced this response from its training knowledge — no tools were called'">
+                          <template x-if="(msg.stats.tools_used || 0) > 0">
+                            <span class="inline-flex items-center gap-1 font-medium"
+                                  style="color: var(--accent)">
+                              <span>\u{1F527}</span>
+                              <span x-text="msg.stats.tools_used + ' tool' + (msg.stats.tools_used === 1 ? '' : 's')"></span>
+                            </span>
+                          </template>
+                          <template x-if="(msg.stats.tools_used || 0) === 0">
+                            <span class="inline-flex items-center gap-1 text-amber-500/80">
+                              <span>\u25CB</span>
+                              <span>0 tools · training only</span>
+                            </span>
+                          </template>
+                          <span class="text-gray-600">·</span>
+                          <span class="text-gray-500" x-text="(msg.stats.elapsed_s || 0) + 's'"></span>
+                          <span class="text-gray-700 ml-1" x-text="statsOpen ? '\u25B4' : '\u25BE'"></span>
                         </span>
                         <button class="msg-copy" :class="copied ? 'copied' : ''"
                           @click.stop="navigator.clipboard.writeText(msg.content).then(()=>{copied=true;setTimeout(()=>copied=false,1500)})"
@@ -1191,9 +1217,41 @@
                         </button>
                       </div>
                     </template>
-                    <!-- Stats panel — expandable -->
+                    <!-- Stats panel — expandable. Tool trace leads the
+                         panel when tools ran, since "what did the agent
+                         do?" is the primary question; numeric stats
+                         (model / context / time / speed) follow. -->
                     <template x-if="msg.stats">
                       <div class="msg-stats" x-show="statsOpen">
+                        <!-- Tool trace — at the top when present so users
+                             see the grounding evidence first, not last.
+                             Zero-tool case gets an explicit "no tools
+                             called" line in amber so the absence of
+                             grounding is clear, not inferred. -->
+                        <template x-if="msg.stats.tool_detail && msg.stats.tool_detail.length > 0">
+                          <div class="mb-2 pb-2 border-b border-gray-700/50">
+                            <div class="text-[9px] text-gray-600 uppercase tracking-wider mb-1">Tool calls this turn</div>
+                            <template x-for="(t, ti) in msg.stats.tool_detail" :key="ti">
+                              <div class="flex items-center gap-1.5 text-[10px] leading-relaxed py-0.5">
+                                <span class="shrink-0" :class="t.ok === false ? 'text-red-400' : 'text-green-500/70'"
+                                  x-text="t.ok === false ? '\u2717' : '\u2713'"></span>
+                                <span class="text-[var(--accent)] font-mono" x-text="t.tool"></span>
+                                <span x-show="t.preview" class="text-gray-600 truncate max-w-[180px]" x-text="t.preview"></span>
+                                <span x-show="t.ms != null" class="text-gray-700 ml-auto font-mono"
+                                      x-text="(t.ms / 1000).toFixed(1) + 's'"></span>
+                              </div>
+                            </template>
+                          </div>
+                        </template>
+                        <template x-if="(!msg.stats.tool_detail || msg.stats.tool_detail.length === 0)">
+                          <div class="mb-2 pb-2 border-b border-gray-700/50 text-[10px] text-amber-500/80 leading-relaxed">
+                            <div class="flex items-start gap-1.5">
+                              <span>\u25CB</span>
+                              <span>No tool calls this turn — this reply is from the agent's training knowledge, not from a live search or tool lookup. Treat time-sensitive or factual claims accordingly.</span>
+                            </div>
+                          </div>
+                        </template>
+
                         <template x-if="msg.stats.model">
                           <div class="msg-stats-row">
                             <span class="msg-stats-label">model</span>
@@ -1224,21 +1282,6 @@
                           <div class="msg-stats-row">
                             <span class="msg-stats-label">calls</span>
                             <span class="msg-stats-val" x-text="msg.stats.api_calls"></span>
-                          </div>
-                        </template>
-                        <!-- Inline tool trace -->
-                        <template x-if="msg.stats.tool_detail && msg.stats.tool_detail.length > 0">
-                          <div class="mt-1.5 pt-1.5 border-t border-gray-700/50">
-                            <div class="text-[9px] text-gray-600 uppercase tracking-wider mb-1">Tool calls</div>
-                            <template x-for="(t, ti) in msg.stats.tool_detail" :key="ti">
-                              <div class="flex items-center gap-1.5 text-[10px] leading-relaxed">
-                                <span class="shrink-0" :class="t.ok === false ? 'text-red-400' : 'text-green-500/70'"
-                                  x-text="t.ok === false ? '\u2717' : '\u2713'"></span>
-                                <span class="text-[var(--accent)] font-mono" x-text="t.tool"></span>
-                                <span x-show="t.preview" class="text-gray-600 truncate max-w-[180px]" x-text="t.preview"></span>
-                                <span x-show="t.ms" class="text-gray-700 ml-auto" x-text="(t.ms / 1000).toFixed(1) + 's'"></span>
-                              </div>
-                            </template>
                           </div>
                         </template>
                       </div>
@@ -9390,6 +9433,28 @@ function app() {
                   model:           d.model            || '',
                   tool_detail:     d.tool_detail      || [],
                 };
+                // v2 dispatch (LOG-44) emits a minimal task_result that
+                // doesn't include tool_detail — the per-tool records
+                // arrive as tool_start/tool_end events we already
+                // captured into _liveTools. Fall back to those so the
+                // observability chip + expanded panel have data to
+                // render regardless of dispatcher.
+                if ((!msgStats.tool_detail || msgStats.tool_detail.length === 0)
+                    && (this._liveToolOrder || []).length > 0) {
+                  msgStats.tool_detail = this._liveToolOrder.map(cid => {
+                    const t = this._liveTools[cid] || {};
+                    return {
+                      tool:    t.tool,
+                      preview: t.preview || '',
+                      ms:      t.duration_ms,
+                      ok:      t.status !== 'error',
+                    };
+                  }).filter(t => t.tool);
+                  // Only override tools_used if our client-side count is
+                  // non-zero AND the server said 0 (i.e. server didn't
+                  // report it). Don't clobber a server-reported count.
+                  if (!msgStats.tools_used) msgStats.tools_used = msgStats.tool_detail.length;
+                }
                 // Cache for the bottom stats bar — persists after session ends
                 this._lastChatStats = {...this._lastChatStats, [chat.id]: {
                   elapsed_session_s: d.elapsed_s || 0,
