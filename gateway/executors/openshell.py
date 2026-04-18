@@ -1489,6 +1489,7 @@ class OpenShellExecutor:
                     _hermes_srv_setup = _log44_go(
                         sandbox_name, config,
                         extra_env=_log44_extra_env or None,
+                        gateway=openshell_gw,
                     )
             except ImportError:
                 pass
@@ -1844,11 +1845,23 @@ class OpenShellExecutor:
             agent_id, sandbox_name_for_log=sandbox_name,
         ) if agent_id else {}
 
+        # Look up the openshell sub-gateway that owns this sandbox so the
+        # CLI calls below target the right place. Multi-route deployments
+        # keep separate gateways per model route — without this, the CLI
+        # defaults to the user's active gateway and sees "sandbox not
+        # found" when the sandbox actually lives elsewhere.
+        target_gw: Optional[str] = None
+        for inst in _load_state():
+            if inst.get("sandbox_name") == sandbox_name:
+                target_gw = inst.get("openshell_name")
+                break
+
         try:
             redeploy_hermes_env(
                 sandbox_name,
                 api_key=setup["api_key"],
                 extra_env=extra_env or None,
+                gateway=target_gw,
             )
         except Exception as exc:
             logger.warning(
@@ -1858,7 +1871,7 @@ class OpenShellExecutor:
             return False
 
         try:
-            restart_hermes_in_sandbox(sandbox_name)
+            restart_hermes_in_sandbox(sandbox_name, gateway=target_gw)
         except Exception as exc:
             logger.warning(
                 "refresh_channel_credentials(%s): hermes restart failed: %s",
@@ -1867,7 +1880,7 @@ class OpenShellExecutor:
             return False
 
         try:
-            wait_for_hermes_health(sandbox_name)
+            wait_for_hermes_health(sandbox_name, gateway=target_gw)
         except TimeoutError as exc:
             logger.warning(
                 "refresh_channel_credentials(%s): health did not return "
