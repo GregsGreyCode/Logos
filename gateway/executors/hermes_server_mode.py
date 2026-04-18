@@ -63,6 +63,15 @@ CANCEL_PATCH_PATH_IN_SANDBOX = f"{HERMES_HOME_IN_SANDBOX}/hermes_cancel_monkeypa
 _SOULS_DIR = Path(__file__).parent.parent.parent / "souls"
 BOOT_MD_PATH_IN_SANDBOX = f"{HERMES_HOME_IN_SANDBOX}/BOOT.md"
 
+# Host-side env vars the gateway forwards into the sandbox's .env and
+# config.yaml. Any var listed here must be reachable BOTH by hermes's
+# run_agent process (via .env) AND by execute_code/terminal subprocesses
+# (via terminal.env_passthrough — hermes strips non-prefix-allowlisted
+# vars from child process env for security). Keep these two use-sites in
+# sync: _build_env_file reads .env baseline, _build_config_yaml writes
+# the passthrough list.
+_FORWARDED_HOST_ENV = ("SEARXNG_URL",)
+
 
 @dataclass(frozen=True)
 class HermesServerSetup:
@@ -158,6 +167,19 @@ def _build_config_yaml(model: str, system_prompt: Optional[str]) -> str:
         f"  host: {HERMES_BIND_HOST}",
         f"  port: {HERMES_BIND_PORT}",
     ]
+    # `execute_code` and the terminal sandbox strip env vars by default
+    # (safe-prefix allowlist + secret-substring blocklist). SEARXNG_URL
+    # has neither a safe prefix nor a secret-like name, so without an
+    # explicit passthrough the agent's run_agent process sees it but
+    # the subprocess execute_code spawns does NOT. List everything
+    # _build_env_file forwards, so reachability is uniform across
+    # run_agent and its children.
+    _passthrough = [k for k in _FORWARDED_HOST_ENV if os.environ.get(k)]
+    if _passthrough:
+        lines.append("terminal:")
+        lines.append("  env_passthrough:")
+        for _k in _passthrough:
+            lines.append(f"    - {_k}")
     if system_prompt:
         # Embed as a literal block scalar so multi-line souls survive
         lines.append("system_prompt: |")
@@ -210,8 +232,7 @@ def _build_env_file(
     # gateway, don't emit it — the absence is meaningful (agent can
     # tell the user "SearxNG isn't configured, ask for the toggle"
     # instead of burning iterations on a non-existent URL).
-    _forwarded_host_env = ("SEARXNG_URL",)
-    for _k in _forwarded_host_env:
+    for _k in _FORWARDED_HOST_ENV:
         _v = os.environ.get(_k)
         if _v:
             lines.append(f"{_k}={_v}")
