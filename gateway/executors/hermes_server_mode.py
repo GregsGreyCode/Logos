@@ -369,6 +369,37 @@ echo "[hermes-server] config deployed ({len(config_yaml)}b yaml, {len(env_file)}
     logger.info("hermes_server_mode: config deployed to %s (model=%s)", sandbox_name, model)
 
 
+def _upload_file_via_openshell(sandbox_name: str, local_path: Path, remote_dir: str) -> None:
+    """Upload a single file into the sandbox via ``openshell sandbox upload``.
+
+    Use this instead of base64-in-exec for files larger than ~20 KB —
+    ``openshell sandbox exec`` has a 32 KB arg-size limit, and
+    ``_run_sb_exec`` doubles the size by base64-wrapping the outer
+    script. A 23 KB source ends up ~41 KB on the wire and fails with
+    InvalidArgument. The upload subcommand uses a streaming transport
+    that doesn't share that limit.
+
+    ``remote_dir`` is a directory path inside the sandbox; the uploaded
+    file keeps its local basename. Ending the path with ``/`` is not
+    required here (the CLI helper handles both).
+    """
+    cmd = ["openshell", "sandbox", "upload", sandbox_name,
+           str(local_path), remote_dir.rstrip("/") + "/"]
+    r = subprocess.run(
+        cmd,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        timeout=DEFAULT_EXEC_TIMEOUT_S,
+        text=True,
+    )
+    if r.returncode != 0:
+        raise RuntimeError(
+            f"_upload_file_via_openshell({sandbox_name}, {local_path.name}) "
+            f"failed rc={r.returncode}: {r.stderr.strip()[-500:]}"
+        )
+
+
 def deploy_cancel_monkeypatch(sandbox_name: str) -> None:
     """Upload the LOG-51.2 cancel monkeypatch into the sandbox.
 
@@ -380,6 +411,11 @@ def deploy_cancel_monkeypatch(sandbox_name: str) -> None:
     the sandbox image stays swappable — see LOG-45's runtime-contract
     notes and LOG-51's temporary-patch framing.
 
+    Uses ``openshell sandbox upload`` (separate streaming channel)
+    rather than base64-in-exec because the patch file has grown past
+    the 32 KB exec arg limit. Followed by a small exec for chmod +
+    stale-file cleanup since upload alone doesn't overwrite destructively.
+
     Idempotent: overwrites any existing copy each spawn so patch updates
     ship with the next sandbox refresh without extra plumbing.
     """
@@ -389,28 +425,43 @@ def deploy_cancel_monkeypatch(sandbox_name: str) -> None:
             f"{_CANCEL_PATCH_SRC}. Logos deploy is broken — bail out "
             f"rather than launch hermes without the cancel patch."
         )
-    patch_src = _CANCEL_PATCH_SRC.read_text(encoding="utf-8")
-    # Base64-encode so shell doesn't need to care about the script body
-    # (newlines, quotes, heredoc delimiters, whatever). Same mechanism
-    # _run_sb_exec uses for its own script arg.
-    b64_patch = base64.b64encode(patch_src.encode()).decode()
-    patch_path = shlex.quote(CANCEL_PATCH_PATH_IN_SANDBOX)
-    script = f"""
-set -e
-mkdir -p {shlex.quote(HERMES_HOME_IN_SANDBOX)}
-echo {b64_patch} | base64 -d > {patch_path}
-chmod 644 {patch_path}
-echo "[hermes-server] cancel monkeypatch deployed ({len(patch_src)}b) to {CANCEL_PATCH_PATH_IN_SANDBOX}"
-"""
-    r = _run_sb_exec(sandbox_name, script)
+    target_path = shlex.quote(CANCEL_PATCH_PATH_IN_SANDBOX)
+    # Remove any stale file first — openshell sandbox upload refuses
+    # to overwrite a file with the same name as the source basename
+    # (it interprets the destination as the parent directory when it
+    # already exists as a regular file, which can error). Cheap to
+    # pre-clear; exec arg is tiny.
+    prep = f"mkdir -p {shlex.quote(HERMES_HOME_IN_SANDBOX)}; rm -f {target_path}"
+    r = _run_sb_exec(sandbox_name, prep)
     if r.returncode != 0:
         raise RuntimeError(
-            f"deploy_cancel_monkeypatch({sandbox_name}) failed rc={r.returncode}: "
-            f"{r.stderr.strip()[-500:]}"
+            f"deploy_cancel_monkeypatch({sandbox_name}) prep failed "
+            f"rc={r.returncode}: {r.stderr.strip()[-500:]}"
+        )
+
+    _upload_file_via_openshell(
+        sandbox_name, _CANCEL_PATCH_SRC, HERMES_HOME_IN_SANDBOX,
+    )
+
+    # chmod + confirm presence. `test -f` ensures the upload actually
+    # landed — catches edge cases where the CLI returns 0 but the file
+    # isn't readable (seen on permission-mismatched sandboxes).
+    verify = (
+        f"chmod 644 {target_path} && "
+        f"test -f {target_path} && "
+        f"echo \"[hermes-server] cancel monkeypatch deployed "
+        f"($(wc -c < {target_path}) bytes) to "
+        f"{CANCEL_PATCH_PATH_IN_SANDBOX}\""
+    )
+    r = _run_sb_exec(sandbox_name, verify)
+    if r.returncode != 0:
+        raise RuntimeError(
+            f"deploy_cancel_monkeypatch({sandbox_name}) verify failed "
+            f"rc={r.returncode}: {r.stderr.strip()[-500:]}"
         )
     logger.info(
-        "hermes_server_mode: cancel monkeypatch deployed to %s (%d bytes)",
-        sandbox_name, len(patch_src),
+        "hermes_server_mode: cancel monkeypatch deployed to %s (%d bytes source)",
+        sandbox_name, _CANCEL_PATCH_SRC.stat().st_size,
     )
 
 
