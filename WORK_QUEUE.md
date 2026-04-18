@@ -149,6 +149,26 @@ Put it on each Live-Executions row, not just the chat header. Three reasons: (a)
 
 ---
 
+### LOG-54 · Fix hermes context compression in Logos-managed sandboxes
+**Effort:** S (30m–2h) · **Type:** Bug · **Status:** OPEN · **Surfaced:** 2026-04-18 testing LOG-44.4 A.1 on a 207-msg session
+
+**Symptom.** A chat turn on the Hermes agent (207 messages loaded from SessionDB via the A.1 monkeypatch) ran for the full 10-min dispatch timeout. In-sandbox session log shows qwen3.5-9b emitted `write_file({})` with empty args six times in a row, got an error each time, then two empty-response turns, then gateway timed out. Classic "model capacity exceeded" failure mode.
+
+**What should have happened.** Hermes has a built-in `ContextCompressor` (`run_agent.py:1342-1494`) that automatically summarizes old turns when prompt size hits 50% of the model's context window (`protect_last_n=20` keeps recent messages verbatim). With that working, 207 messages → summary + last 20 → fits comfortably in any sane context window. Compression didn't happen (or happened too late), so the full 207 messages hit the model.
+
+**Three suspects:**
+1. **Our `config.yaml` has no `compression:` block.** Hermes defaults *should* apply without config, but worth confirming by explicitly writing the section in `_build_config_yaml`.
+2. **Auxiliary client failed silently.** Compression needs an LLM call (to the auxiliary summarizer model) to produce the condensed message. If that call errors against `inference.local` (wrong endpoint, timeout, provider-type rejection), compression silently skips. The in-sandbox log has `Auxiliary auto-detect: using main provider custom (qwen3.5-9b)` — using the same model as main, probably fine, but no success/fail line confirming the summarizer actually ran.
+3. **Model context-length detection defaults to 128K.** Log: `Could not detect context length for model 'qwen3.5-9b' at https://inference.local/v1 — defaulting to 128,000 tokens (probe-down).` Most qwen3.5-9b deploys ship 32K, not 128K. With the fake 128K ceiling, compression's 50% threshold fires at 64K tokens — way past the real 32K limit, so the prompt OOMs at the model before compression kicks in.
+
+**Fix direction:** pin context length in the generated `config.yaml` (e.g. `model.context_length: 32768`) so compression thresholds are computed against reality, not a probe-down default. Also emit the `compression:` block explicitly so future hermes defaults changes can't regress us. Possibly expose the context_length as a per-model override in Logos's model_routes table.
+
+**Acceptance:** 200+ message session produces a prompt the model can handle without looping on malformed tool calls. Gateway dispatch completes in <5 min for a 1200-word essay even on a deeply populated session.
+
+**Related:** LOG-34 (image rebuild can include context_length metadata per known model). LOG-44.4 A.1 (which loads the full history — correct behaviour, not a bug once compression works).
+
+---
+
 ### LOG-53 · UI pre-flight probe for hallucinated file paths
 **Effort:** S (30m–2h) · **Type:** Polish/defense · **Status:** OPEN · **Surfaced:** 2026-04-18 during live testing · **Relates:** `feat(chat): click agent-cited file paths to download them` (commit `0eb596f`), `fix(souls): forbid citing fake file paths` (commit `ec653c8`)
 
