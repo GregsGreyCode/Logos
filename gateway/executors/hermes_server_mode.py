@@ -32,6 +32,7 @@ import shlex
 import subprocess
 import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
@@ -43,6 +44,14 @@ HERMES_BIND_HOST = "127.0.0.1"
 HERMES_BIND_PORT = 8642
 HEALTH_TIMEOUT_S = 30
 DEFAULT_EXEC_TIMEOUT_S = 30
+
+# LOG-51.2: the cancel monkeypatch file lives next to this module and
+# gets uploaded to every hermes-mode sandbox so hermes's /v1/runs SSE
+# stream interrupts the agent on client disconnect. Path-in-sandbox is
+# fixed so the launch command can reference it without per-sandbox
+# state.
+_CANCEL_PATCH_SRC = Path(__file__).parent / "hermes_cancel_monkeypatch.py"
+CANCEL_PATCH_PATH_IN_SANDBOX = f"{HERMES_HOME_IN_SANDBOX}/hermes_cancel_monkeypatch.py"
 
 
 @dataclass(frozen=True)
@@ -203,21 +212,75 @@ echo "[hermes-server] config deployed ({len(config_yaml)}b yaml, {len(env_file)}
     logger.info("hermes_server_mode: config deployed to %s (model=%s)", sandbox_name, model)
 
 
+def deploy_cancel_monkeypatch(sandbox_name: str) -> None:
+    """Upload the LOG-51.2 cancel monkeypatch into the sandbox.
+
+    The launcher is a standalone Python script (shipped in this repo
+    alongside ``hermes_server_mode.py``) that rebinds
+    ``APIServerAdapter._handle_runs`` + ``_handle_run_events`` on the
+    upstream hermes module before delegating to ``/usr/local/bin/hermes``
+    via ``runpy``. Delivered by upload (not by forking hermes-agent) so
+    the sandbox image stays swappable — see LOG-45's runtime-contract
+    notes and LOG-51's temporary-patch framing.
+
+    Idempotent: overwrites any existing copy each spawn so patch updates
+    ship with the next sandbox refresh without extra plumbing.
+    """
+    if not _CANCEL_PATCH_SRC.exists():
+        raise RuntimeError(
+            f"deploy_cancel_monkeypatch: source file missing at "
+            f"{_CANCEL_PATCH_SRC}. Logos deploy is broken — bail out "
+            f"rather than launch hermes without the cancel patch."
+        )
+    patch_src = _CANCEL_PATCH_SRC.read_text(encoding="utf-8")
+    # Base64-encode so shell doesn't need to care about the script body
+    # (newlines, quotes, heredoc delimiters, whatever). Same mechanism
+    # _run_sb_exec uses for its own script arg.
+    b64_patch = base64.b64encode(patch_src.encode()).decode()
+    patch_path = shlex.quote(CANCEL_PATCH_PATH_IN_SANDBOX)
+    script = f"""
+set -e
+mkdir -p {shlex.quote(HERMES_HOME_IN_SANDBOX)}
+echo {b64_patch} | base64 -d > {patch_path}
+chmod 644 {patch_path}
+echo "[hermes-server] cancel monkeypatch deployed ({len(patch_src)}b) to {CANCEL_PATCH_PATH_IN_SANDBOX}"
+"""
+    r = _run_sb_exec(sandbox_name, script)
+    if r.returncode != 0:
+        raise RuntimeError(
+            f"deploy_cancel_monkeypatch({sandbox_name}) failed rc={r.returncode}: "
+            f"{r.stderr.strip()[-500:]}"
+        )
+    logger.info(
+        "hermes_server_mode: cancel monkeypatch deployed to %s (%d bytes)",
+        sandbox_name, len(patch_src),
+    )
+
+
 def launch_hermes_gateway(sandbox_name: str) -> None:
     """Start `hermes gateway run` in the background inside the sandbox.
 
     Idempotent: if a process is already running, this is a no-op. The
     gateway logs to /tmp/hermes-gw.log inside the sandbox for
     post-mortem debugging (reachable via `openshell sandbox exec cat`).
+
+    LOG-51.2: launches via ``python3 <monkeypatch.py> gateway run -v``
+    rather than ``hermes gateway run -v`` so the SSE-disconnect-
+    interrupt patch is applied before hermes starts serving.
+    ``deploy_cancel_monkeypatch`` must have run first (orchestrated by
+    ``enable_hermes_server_mode``).
     """
     home = shlex.quote(HERMES_HOME_IN_SANDBOX)
-    # Source the deployed .env so API_SERVER_KEY (and OPENAI_* pointers)
-    # actually reach the hermes process env. Without `set -a; . .env;
-    # set +a` hermes starts with a minimal environment, generates its
-    # own random API key, and every dispatch_task_v2 call gets a 401.
+    patch = shlex.quote(CANCEL_PATCH_PATH_IN_SANDBOX)
+    # Match on a pgrep pattern that covers BOTH launch styles — the
+    # direct ``hermes gateway run`` and our new
+    # ``python3 …monkeypatch.py gateway run`` — so the idempotency
+    # check survives a mid-spawn switch between them (e.g. during
+    # rollout, if a sandbox was launched on the old command and we
+    # re-spawn on the new one we don't want to double-launch).
     script = f"""
-if pgrep -f 'hermes gateway run' > /dev/null 2>&1; then
-  echo '[hermes-server] already running (pid='$(pgrep -f 'hermes gateway run' | head -1)')'
+if pgrep -f 'hermes_cancel_monkeypatch\\.py gateway run|hermes gateway run' > /dev/null 2>&1; then
+  echo '[hermes-server] already running (pid='$(pgrep -f 'hermes_cancel_monkeypatch\\.py gateway run|hermes gateway run' | head -1)')'
   exit 0
 fi
 rm -f /tmp/hermes-gw.log
@@ -228,15 +291,19 @@ if [ -f "$HERMES_HOME/.env" ]; then
   . "$HERMES_HOME/.env"
   set +a
 fi
-nohup hermes gateway run -v > /tmp/hermes-gw.log 2>&1 &
+if [ ! -f {patch} ]; then
+  echo '[hermes-server] ERROR: cancel monkeypatch missing at {CANCEL_PATCH_PATH_IN_SANDBOX}' >&2
+  exit 2
+fi
+nohup python3 {patch} gateway run -v > /tmp/hermes-gw.log 2>&1 &
 sleep 1
-pid=$(pgrep -f 'hermes gateway run' | head -1)
+pid=$(pgrep -f 'hermes_cancel_monkeypatch\\.py gateway run' | head -1)
 if [ -z "$pid" ]; then
   echo '[hermes-server] launch failed — no process after 1s'
   tail -20 /tmp/hermes-gw.log
   exit 1
 fi
-echo "[hermes-server] launched pid=$pid"
+echo "[hermes-server] launched pid=$pid (cancel monkeypatch applied)"
 """
     r = _run_sb_exec(sandbox_name, script)
     if r.returncode != 0:
@@ -312,6 +379,7 @@ def enable_hermes_server_mode(
 
     logger.info("hermes_server_mode: enabling on %s", sandbox_name)
     deploy_hermes_config(sandbox_name, config, api_key)
+    deploy_cancel_monkeypatch(sandbox_name)
     launch_hermes_gateway(sandbox_name)
     wait_for_hermes_health(sandbox_name)
 
@@ -333,6 +401,7 @@ def is_enabled() -> bool:
 __all__ = [
     "HermesServerSetup",
     "deploy_hermes_config",
+    "deploy_cancel_monkeypatch",
     "launch_hermes_gateway",
     "wait_for_hermes_health",
     "enable_hermes_server_mode",
@@ -340,4 +409,5 @@ __all__ = [
     "HERMES_HOME_IN_SANDBOX",
     "HERMES_BIND_HOST",
     "HERMES_BIND_PORT",
+    "CANCEL_PATCH_PATH_IN_SANDBOX",
 ]
