@@ -6350,6 +6350,14 @@ function app() {
     // LOG-49: sandbox-filesystem browse state.
     mindModalSandbox: null,       // current /sandbox-files response { path, entries, roots, parent }
     mindModalSandboxPath: '/root',
+    // Files-tab UX state (see _mindFilesFiltered / _mindFilesSummary /
+    // openFilePreview below). Persists across directory changes so the
+    // user's sort/filter doesn't reset every navigation.
+    mindFilesFilter: '',
+    mindFilesSort: 'mtime',        // 'name' | 'size' | 'mtime'
+    mindFilesSortDir: -1,          // 1 asc, -1 desc; default newest-first
+    mindFilesPreview: null,        // {path, name, content, size, loading, error, truncated, binary}
+    mindFilesPreviewMaxBytes: 200 * 1024,  // 200 KB inline cap
     agentCapsLoading: false,
     agentCapsError: null,
     agentCapsToggling: {},
@@ -10722,6 +10730,13 @@ toolsets:
       if (!this.mindModalAgent) return;
       const aid = this.mindModalAgent.id;
       this.mindModalLoading.sandbox = true;
+      // Close any active preview when the directory changes so the
+      // user doesn't see stale content from the previous folder.
+      this.mindFilesPreview = null;
+      // Clear filter on directory change — a filter that matched in
+      // one dir rarely makes sense in the next, and a stale filter
+      // showing "no results" would be confusing.
+      this.mindFilesFilter = '';
       try {
         const url = '/admin/agents/' + encodeURIComponent(aid)
                   + '/sandbox-files?path=' + encodeURIComponent(path || '/tmp/hermes');
@@ -10814,6 +10829,158 @@ toolsets:
     _mindFmtDate(iso) {
       if (!iso) return '—';
       try { return new Date(iso).toLocaleString(); } catch { return iso; }
+    },
+
+    // ── Files tab helpers ────────────────────────────────────────
+    // Human-scale mtime so glancing at the list answers "what did the
+    // agent just do?" without parsing timestamps. Falls back to an
+    // absolute date for anything >7 days old. The full ISO is available
+    // in the tooltip for when precision matters.
+    _mindFilesFmtMtime(epochSec) {
+      if (!epochSec) return '';
+      const now = Date.now() / 1000;
+      const diff = now - epochSec;
+      if (diff < 0) return 'future';
+      if (diff < 60) return Math.floor(diff) + 's ago';
+      if (diff < 3600) return Math.floor(diff / 60) + 'm ago';
+      if (diff < 86400) return Math.floor(diff / 3600) + 'h ago';
+      const d = new Date(epochSec * 1000);
+      const today = new Date();
+      const ydate = new Date(today);
+      ydate.setDate(today.getDate() - 1);
+      const sameDay = (a, b) => a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+      const hhmm = d.toTimeString().slice(0, 5);
+      if (sameDay(d, today)) return 'today ' + hhmm;
+      if (sameDay(d, ydate)) return 'yesterday ' + hhmm;
+      if (diff < 7 * 86400) return Math.floor(diff / 86400) + 'd ago';
+      return d.toISOString().slice(0, 10);
+    },
+    _mindFilesFmtMtimeFull(epochSec) {
+      if (!epochSec) return '';
+      return new Date(epochSec * 1000).toISOString().replace('T', ' ').slice(0, 19) + ' UTC';
+    },
+    // Client-side filter + sort. Keeps the server response small by
+    // not demanding pagination / server-sort, at the cost of handling
+    // "ls on a dir with 5000 files" naively — if that ever matters
+    // we revisit.
+    _mindFilesFiltered() {
+      const entries = (this.mindModalSandbox && this.mindModalSandbox.entries) || [];
+      const q = (this.mindFilesFilter || '').toLowerCase().trim();
+      const filtered = q ? entries.filter(e => (e.name || '').toLowerCase().includes(q)) : entries.slice();
+      // Always float dirs above files — navigation dominates the use
+      // case, so intermixed sort would just create extra scrolling.
+      // Within each group, apply the selected sort.
+      const sort = this.mindFilesSort || 'mtime';
+      const dir = this.mindFilesSortDir || -1;
+      const cmp = (a, b) => {
+        const akind = a.type === 'dir' ? 0 : 1;
+        const bkind = b.type === 'dir' ? 0 : 1;
+        if (akind !== bkind) return akind - bkind;
+        let av, bv;
+        if (sort === 'size')       { av = a.size || 0;  bv = b.size || 0; }
+        else if (sort === 'mtime') { av = a.mtime || 0; bv = b.mtime || 0; }
+        else                       { av = (a.name || '').toLowerCase(); bv = (b.name || '').toLowerCase(); }
+        if (av < bv) return -1 * dir;
+        if (av > bv) return  1 * dir;
+        return 0;
+      };
+      return filtered.sort(cmp);
+    },
+    _mindFilesToggleSort(col) {
+      if (this.mindFilesSort === col) {
+        this.mindFilesSortDir = -this.mindFilesSortDir;
+      } else {
+        this.mindFilesSort = col;
+        // Name → asc by default (A→Z), size/mtime → desc (biggest/newest first)
+        this.mindFilesSortDir = col === 'name' ? 1 : -1;
+      }
+    },
+    _mindFilesSortIndicator(col) {
+      if (this.mindFilesSort !== col) return '';
+      return this.mindFilesSortDir > 0 ? '▲' : '▼';
+    },
+    // Header line showing "N files · M KB · K folders" for the current
+    // directory. Uses the *unfiltered* list so the summary always
+    // reflects what's actually there, regardless of the active filter.
+    _mindFilesSummary() {
+      const entries = (this.mindModalSandbox && this.mindModalSandbox.entries) || [];
+      let files = 0, dirs = 0, bytes = 0;
+      for (const e of entries) {
+        if (e.type === 'dir') dirs++;
+        else if (e.type === 'file') { files++; bytes += (e.size || 0); }
+      }
+      const parts = [];
+      if (files) parts.push(files + ' file' + (files === 1 ? '' : 's') + ' · ' + this._mindFmtBytes(bytes));
+      if (dirs)  parts.push(dirs  + ' folder' + (dirs  === 1 ? '' : 's'));
+      if (!parts.length) return '';
+      return parts.join(' · ');
+    },
+    // File-preview support. Text-like extensions get rendered in-place;
+    // anything else falls back to the existing Download button.
+    _mindFilesIsPreviewable(name) {
+      if (!name) return false;
+      const n = name.toLowerCase();
+      // Extension-based allow-list. Stayed narrow to avoid guessing at
+      // binary formats (no .db, .pdf, .png etc here — those download).
+      const exts = ['.md', '.txt', '.json', '.yaml', '.yml', '.log', '.py',
+                    '.js', '.ts', '.html', '.css', '.sh', '.bash', '.env',
+                    '.cron', '.cfg', '.conf', '.toml', '.ini', '.xml',
+                    '.csv', '.tsv', '.srt', '.vtt', '.svg'];
+      if (exts.some(e => n.endsWith(e))) return true;
+      // Also allow extensionless files under known-text directories
+      // like ~/cron/, ~/scripts/ (shebang files). The server response
+      // doesn't include mime so we're approximating.
+      if (!/\./.test(name)) return true;
+      return false;
+    },
+    async openFilePreview(entry) {
+      if (!this.mindModalAgent || !entry) return;
+      if ((entry.size || 0) > this.mindFilesPreviewMaxBytes) {
+        // Too big to load inline — direct to download.
+        this.mindFilesPreview = {
+          path: this._mindFilesJoin(this.mindModalSandbox.path, entry.name),
+          name: entry.name, size: entry.size, loading: false,
+          error: 'too_large', content: '',
+        };
+        return;
+      }
+      const path = this._mindFilesJoin(this.mindModalSandbox.path, entry.name);
+      this.mindFilesPreview = {
+        path, name: entry.name, size: entry.size || 0,
+        loading: true, error: null, content: '', truncated: false, binary: false,
+      };
+      try {
+        const url = this.sandboxDownloadUrl(path);
+        const r = await fetch(url, { credentials: 'include' });
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        const text = await r.text();
+        // crude binary detection — if >1% of first 4KB is control chars
+        // we likely guessed wrong about the extension. Bail to download.
+        const probe = text.slice(0, 4096);
+        let ctrlCount = 0;
+        for (let i = 0; i < probe.length; i++) {
+          const c = probe.charCodeAt(i);
+          if (c < 9 || (c > 13 && c < 32)) ctrlCount++;
+        }
+        if (probe.length > 0 && ctrlCount / probe.length > 0.01) {
+          this.mindFilesPreview = { ...this.mindFilesPreview, loading: false, binary: true };
+          return;
+        }
+        this.mindFilesPreview = {
+          ...this.mindFilesPreview,
+          loading: false, content: text,
+          truncated: text.length >= this.mindFilesPreviewMaxBytes,
+        };
+      } catch (e) {
+        this.mindFilesPreview = {
+          ...this.mindFilesPreview, loading: false, error: String(e && e.message || e),
+        };
+      }
+    },
+    closeFilePreview() { this.mindFilesPreview = null; },
+    _mindFilesJoin(dir, name) {
+      if (!dir || dir === '/') return '/' + name;
+      return dir.replace(/\/+$/, '') + '/' + name;
     },
 
     async loadCloudProviders() {
@@ -12751,8 +12918,34 @@ toolsets:
                  empty (so it doesn't compete with the "Empty" message). -->
             <p x-show="(mindModalSandbox.entries || []).length > 0 && mindModalSandbox.path === '/tmp/hermes'"
                class="text-[10px] text-gray-600 mb-3">
-              Files the agent has created inside its sandbox. Click folders to enter; download any file with the button on the right.
+              Files the agent has created inside its sandbox. Click folders to enter, click a text file to preview inline, or download any file with the button on the right.
             </p>
+
+            <!-- Filter + sort + summary bar. Only shown when there's
+                 a non-empty listing — otherwise the controls would
+                 hover over empty/error states without purpose. -->
+            <template x-if="mindModalSandbox.exec_ok && (mindModalSandbox.entries || []).length > 0">
+              <div class="flex items-center gap-2 mb-2 flex-wrap">
+                <input type="text" x-model.debounce.150ms="mindFilesFilter"
+                       placeholder="Filter by name…"
+                       class="text-[11px] px-2 py-1 rounded border border-gray-800 bg-gray-950/50 text-gray-200 placeholder-gray-600 focus:outline-none focus:border-indigo-700 w-40">
+                <div class="flex items-center gap-1 text-[10px]">
+                  <span class="text-gray-600">sort:</span>
+                  <template x-for="col in ['name','size','mtime']" :key="col">
+                    <button @click="_mindFilesToggleSort(col)"
+                            class="px-1.5 py-0.5 rounded border transition-colors"
+                            :class="mindFilesSort === col
+                              ? 'bg-indigo-950/60 border-indigo-800 text-indigo-300'
+                              : 'bg-gray-900 border-gray-800 text-gray-500 hover:text-gray-200 hover:border-gray-700'">
+                      <span x-text="col === 'mtime' ? 'modified' : col"></span>
+                      <span class="ml-0.5 text-[9px]" x-text="_mindFilesSortIndicator(col)"></span>
+                    </button>
+                  </template>
+                </div>
+                <span class="ml-auto text-[10px] text-gray-600"
+                      x-text="_mindFilesSummary()"></span>
+              </div>
+            </template>
 
             <!-- Error / empty states. error_kind is server-generated —
                  "missing", "not_dir", "denied", or null for ok. Each
@@ -12793,10 +12986,23 @@ toolsets:
             </template>
 
             <!-- Entry list — dirs first (folder icon + arrow), then
-                 files with an always-visible Download button. Previously
-                 the download was hover-only which wasn't discoverable. -->
+                 files with an always-visible Download button. Filter
+                 / sort applied client-side via _mindFilesFiltered(). -->
             <div class="divide-y divide-gray-900/60 rounded-md border border-gray-900/60 overflow-hidden">
-              <template x-for="e in (mindModalSandbox.entries || [])" :key="e.name">
+              <!-- "Filter matches nothing" banner — clearly not an empty
+                   dir, just a filter issue. -->
+              <template x-if="mindModalSandbox.exec_ok
+                              && (mindModalSandbox.entries || []).length > 0
+                              && mindFilesFilter
+                              && _mindFilesFiltered().length === 0">
+                <div class="text-[11px] text-gray-600 italic px-3 py-3">
+                  No entries match <span class="font-mono text-gray-400" x-text="'“' + mindFilesFilter + '”'"></span>.
+                  <button class="ml-1 text-indigo-400 hover:text-indigo-200 underline decoration-dotted"
+                          @click="mindFilesFilter = ''">Clear filter</button>
+                </div>
+              </template>
+
+              <template x-for="e in _mindFilesFiltered()" :key="e.name">
                 <div class="flex items-center gap-3 px-3 py-2 text-xs hover:bg-gray-900/50 transition-colors">
                   <!-- Icon -->
                   <span class="shrink-0 w-4 text-center"
@@ -12807,24 +13013,34 @@ toolsets:
                     <template x-if="!['dir','file','link'].includes(e.type)">•</template>
                   </span>
 
-                  <!-- Name — dirs are buttons that navigate; files are static labels. -->
+                  <!-- Name — dirs navigate, previewable files open the
+                       inline viewer, other files stay as plain labels. -->
                   <template x-if="e.type === 'dir'">
                     <button @click="openSandboxDir((mindModalSandbox.path === '/' ? '' : mindModalSandbox.path) + '/' + e.name)"
                             class="flex-1 min-w-0 text-left truncate text-indigo-300 hover:text-indigo-100 font-medium"
                             x-text="e.name"></button>
                   </template>
-                  <template x-if="e.type !== 'dir'">
+                  <template x-if="e.type === 'file' && _mindFilesIsPreviewable(e.name)">
+                    <button @click="openFilePreview(e)"
+                            class="flex-1 min-w-0 text-left truncate font-mono text-gray-200 hover:text-indigo-300 hover:underline decoration-dotted"
+                            :title="'Preview ' + e.name + ' inline'"
+                            x-text="e.name"></button>
+                  </template>
+                  <template x-if="e.type !== 'dir' && !(e.type === 'file' && _mindFilesIsPreviewable(e.name))">
                     <span class="flex-1 min-w-0 truncate font-mono text-gray-300" x-text="e.name"></span>
                   </template>
 
-                  <!-- Size + mtime, small + dim. -->
+                  <!-- Size. -->
                   <span class="shrink-0 text-[10px] text-gray-600 w-16 text-right font-mono"
                         x-text="e.type === 'file' ? _mindFmtBytes(e.size) : ''"></span>
-                  <span class="shrink-0 text-[10px] text-gray-700 w-28 text-right font-mono"
-                        x-text="e.mtime ? new Date(e.mtime * 1000).toISOString().slice(0,16).replace('T',' ') : ''"></span>
 
-                  <!-- Download — always visible for files, plain button with
-                       an explicit label so users know what to click. -->
+                  <!-- Humanized mtime, with full ISO timestamp in tooltip
+                       for when the relative form is ambiguous. -->
+                  <span class="shrink-0 text-[10px] text-gray-700 w-24 text-right"
+                        :title="_mindFilesFmtMtimeFull(e.mtime)"
+                        x-text="_mindFilesFmtMtime(e.mtime)"></span>
+
+                  <!-- Download — always visible for files. -->
                   <template x-if="e.type === 'file'">
                     <a :href="sandboxDownloadUrl((mindModalSandbox.path === '/' ? '' : mindModalSandbox.path) + '/' + e.name)"
                        class="shrink-0 text-[10px] px-2 py-1 rounded border border-gray-700 text-gray-400 hover:text-indigo-300 hover:border-indigo-700 transition-colors inline-flex items-center gap-1"
@@ -12835,6 +13051,64 @@ toolsets:
                   </template>
                   <template x-if="e.type !== 'file'">
                     <span class="shrink-0 w-[6.5rem]"></span>
+                  </template>
+                </div>
+              </template>
+            </div>
+          </div>
+        </template>
+
+        <!-- Inline file preview overlay. Sits on top of the listing so
+             closing it returns to the exact directory state the user
+             was looking at. Non-text files and oversized files give a
+             clear "download instead" fallback. -->
+        <template x-if="mindFilesPreview">
+          <div class="mt-4 rounded-md border border-indigo-900/60 bg-gray-950/60 overflow-hidden">
+            <div class="flex items-center gap-2 px-3 py-2 border-b border-indigo-900/60 bg-gray-900/40">
+              <span class="text-indigo-400">📄</span>
+              <span class="font-mono text-xs text-gray-200 truncate flex-1" x-text="mindFilesPreview.name"></span>
+              <span class="text-[10px] text-gray-600" x-text="_mindFmtBytes(mindFilesPreview.size)"></span>
+              <a :href="sandboxDownloadUrl(mindFilesPreview.path)"
+                 class="text-[10px] px-2 py-0.5 rounded border border-gray-700 text-gray-400 hover:text-indigo-300 hover:border-indigo-700"
+                 title="Download original"
+                 download>↓ Download</a>
+              <button @click="closeFilePreview()"
+                      class="text-gray-500 hover:text-white text-base leading-none"
+                      title="Close preview">×</button>
+            </div>
+            <div class="p-3 max-h-96 overflow-auto text-[11px] leading-relaxed">
+              <template x-if="mindFilesPreview.loading">
+                <div class="text-gray-600 italic">Loading…</div>
+              </template>
+              <template x-if="!mindFilesPreview.loading && mindFilesPreview.error === 'too_large'">
+                <div class="text-amber-400">
+                  File is
+                  <span x-text="_mindFmtBytes(mindFilesPreview.size)"></span> —
+                  too large for inline preview (cap is
+                  <span x-text="_mindFmtBytes(mindFilesPreviewMaxBytes)"></span>).
+                  Use Download instead.
+                </div>
+              </template>
+              <template x-if="!mindFilesPreview.loading && mindFilesPreview.binary">
+                <div class="text-amber-400">
+                  This file doesn't look like text (contains binary content).
+                  Use Download to inspect it.
+                </div>
+              </template>
+              <template x-if="!mindFilesPreview.loading && mindFilesPreview.error && mindFilesPreview.error !== 'too_large'">
+                <div class="text-red-400">
+                  Couldn't read file: <span class="font-mono" x-text="mindFilesPreview.error"></span>
+                </div>
+              </template>
+              <template x-if="!mindFilesPreview.loading && !mindFilesPreview.error && !mindFilesPreview.binary">
+                <div>
+                  <pre class="font-mono text-gray-200 whitespace-pre-wrap break-all" x-text="mindFilesPreview.content"></pre>
+                  <template x-if="mindFilesPreview.truncated">
+                    <div class="mt-2 text-[10px] text-amber-500 italic">
+                      Preview truncated at
+                      <span x-text="_mindFmtBytes(mindFilesPreviewMaxBytes)"></span>.
+                      Download to see the full file.
+                    </div>
                   </template>
                 </div>
               </template>
