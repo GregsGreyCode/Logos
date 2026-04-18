@@ -336,13 +336,25 @@
                so admins know to sign in and update before using the
                possibly-stale version. -->
           <div x-show="updateAvailable" x-cloak
-               class="flex items-center gap-2 text-xs"
+               class="flex items-start gap-2.5 text-xs leading-relaxed"
                style="background:linear-gradient(135deg,hsla(calc(var(--accent-hue,239)),84%,64%,0.12) 0%,hsla(calc(var(--accent-hue,239) + 30),65%,60%,0.12) 100%);border:1px solid hsla(calc(var(--accent-hue,239)),84%,54%,0.35);border-radius:10px;padding:10px 12px;">
-            <span>&#10024;</span>
-            <span style="color:rgba(226,232,240,0.9);">
-              New update available<span x-show="updateTag"> \u2014 <span class="font-mono" x-text="updateTag"></span></span><span x-show="!updateTag && updateBehindBy"> \u2014 <span x-text="updateBehindBy + ' commit' + (updateBehindBy === 1 ? '' : 's') + ' behind'"></span></span>.
-              <span style="color:rgba(148,163,184,0.75);">Sign in as admin to install.</span>
-            </span>
+            <span class="shrink-0 text-sm" style="line-height:1.4;">&#10024;</span>
+            <div class="min-w-0">
+              <div class="font-semibold" style="color:rgba(226,232,240,0.95);">
+                <template x-if="updateTag">
+                  <span>A new version is ready &mdash; <span class="font-mono" x-text="updateTag" style="color:hsl(calc(var(--accent-hue,239)),84%,75%);"></span></span>
+                </template>
+                <template x-if="!updateTag">
+                  <span>New changes are ready to pull in</span>
+                </template>
+              </div>
+              <div class="mt-0.5" style="color:rgba(148,163,184,0.8);">
+                <template x-if="!updateTag && updateBehindBy">
+                  <span x-text="updateBehindBy + ' new commit' + (updateBehindBy === 1 ? '' : 's') + ' on origin. '"></span>
+                </template>
+                <span>Sign in as admin and tap the update pill in the header to install.</span>
+              </div>
+            </div>
           </div>
 
         </form>

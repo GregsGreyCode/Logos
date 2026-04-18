@@ -24,18 +24,25 @@ All other tickets in the original queue are confirmed **OPEN / NOT STARTED**.
 
 **Strategic addition (2026-04-17):** New ticket **LOG-44 · Migrate from Hermes-as-library to Hermes-as-server (autonomy unlock)**. After re-reading the upstream `hermes-agent` repo at `knowledge-repos/hermes-agent/`, we confirmed Hermes ships as a complete autonomous agent platform (HTTP gateway, 15 native channel adapters, built-in cron, boot hooks, pairing, sessions). Logos currently uses only `AIAgent.run_conversation()` per-task — wasting all the autonomy primitives. The decision is to swap each sandbox's entrypoint from `sleep infinity` to `hermes gateway run`, with Logos staying as the multi-tenant orchestrator above N autonomous Hermes sandboxes. NemoClaw is the per-sandbox packaging reference (single-agent), not a replacement for Logos. See LOG-44 below for the phased plan.
 
-**LOG-44 Phase 1 status update (2026-04-17 afternoon):** Code-complete in worktree `logos-log44-hermes-server` branch `log44-hermes-server-prototype` (5 commits: `9f60d7ab` → `ac04ff13`). Ready for live testing behind two env flags:
+**LOG-44 Phase 1 status update (2026-04-17 evening):** ✅ **Live-validated end-to-end** on branch `log44-hermes-server-prototype` (rebased onto latest main; 5 feature commits on top). Behind two env flags:
 - `LOGOS_HERMES_SERVER_MODE=1` — `spawn()` launches `hermes gateway run` in each new sandbox
 - `LOGOS_DISPATCH_V2=1` — `_handle_chat` routes to HTTP-in-sandbox dispatcher when both set
 
-All validated against live `hermes-henry` sandbox — 0.17s cold-start, real chat through `inference.local`. Remaining Phase 1 = user-driven live integration test (restart gateway with flags, destroy+recreate an agent, send a chat).
+Proven: dispatch_task_v2 → openshell exec (inner netns) → hermes @ 127.0.0.1:8642 → `https://inference.local/v1` (openshell cluster inference) → LAN LM Studio (qwen3.5-9b). Real chat response streamed back through SSE as task_result frame. **Phase 1 is done; moving to Phase 2.**
+
+Gotchas surfaced during validation (all fixed in-branch — see commit log + memory `log44_phase1_live_validation.md`):
+- Hermes listens in sandbox's inner netns — only `openshell sandbox exec` reaches it (kubectl exec can't).
+- `enable_hermes_server_mode()` must be invoked via the spawn path so the setup dict is persisted to executor state; manual invocation leaves dispatch_v2 unable to find the key. Resurrect path should be audited.
+- Hermes has a second auth layer (user allowlist) on top of the bearer token; `.env` must include `GATEWAY_ALLOW_ALL_USERS=true` or every /v1/runs returns 401.
+- `launch_hermes_gateway` must source `.env` before `nohup hermes` — background shell drops non-exported vars.
+- Openshell cluster inference only accepts provider types `openai/anthropic/nvidia`; `generic` is rejected. The config key for OpenAI-compatible upstream is `OPENAI_BASE_URL` (not `base_url`).
 
 ---
 
 ## P0 — Blockers / strategic
 
 ### LOG-44 · Migrate to Hermes-as-server per sandbox (autonomy unlock)
-**Effort:** XL (2–3 weeks across phases) · **Type:** Architecture · **Status:** OPEN · **Owner:** —
+**Effort:** XL (2–3 weeks across phases) · **Type:** Architecture · **Status:** PHASE 1 DONE — Phase 2+ OPEN · **Owner:** —
 
 **Goal:** Each agent's sandbox runs `hermes gateway run` long-lived, exposing an OpenAI-compatible HTTP API on localhost. Logos dispatches via HTTP-into-sandbox instead of stdin/stdout subprocess. Per-agent cron, boot hooks, native channel adapters all become available.
 
@@ -70,7 +77,7 @@ Logos = orchestrator + multi-user web UI + auth + MCP server lifecycle +
 
 | # | Phase | Effort | Goal | Decision points |
 |---|---|---|---|---|
-| 44.1 | **Bootstrap** — Hermes server in one sandbox | M–L | New `Dockerfile.hermes-sandbox` installs hermes binary; entrypoint = `hermes gateway run`; `WorkerRegistry.dispatch_task` switches to HTTP POST (via `sandbox exec curl` to localhost:8642 OR unix socket). Chat works end-to-end with current UX. | Unix socket (cleaner) vs TCP+socat (NemoClaw shows it works) |
+| 44.1 | **Bootstrap** — Hermes server in one sandbox ✅ **DONE 2026-04-17** | M–L | Shipped via `hermes_server_mode.py` + `worker_registry_v2.py`. Sandbox image already ships hermes binary (`knowledge-repos/hermes-agent` build), so no new Dockerfile — we write config.yaml + .env into `/tmp/hermes-srv-home/` and launch `nohup hermes gateway run` from spawn. Dispatch is via `openshell sandbox exec` (chosen over unix socket — transport's NAT'd into the inner netns anyway, and exec gives us stdin/stdout framing for the SSE parse). Live chat validated end-to-end. | Socket-vs-exec answered: exec. |
 | 44.2 | **Per-agent config + autonomy primitives** | M | Logos writes per-agent `/sandbox/.hermes/config.yaml` at spawn (model, soul, system prompt, tools). Boot hooks (boot.md) wired. One scheduled cron job fires inside the sandbox as proof. | How souls map onto Hermes profiles/skins |
 | 44.3 | **Channel adapters in-sandbox** | M–L | Yesterday's per-agent channel credentials (`agent_channel_credentials` table) push INTO each sandbox config. Each agent IS its own TG/Discord bot. OpenShell network policy permits per-agent egress. Logos's `gateway/channels/*` demotes to credential-storage + setup-UI. | Whether Logos retains a central "channel router" for agents that don't have their own bot vs full delegation |
 | 44.4 | **Sessions + memory reconciliation** | M | Hermes owns per-agent SessionDB; Logos's session_search aggregates across sandboxes via per-sandbox HTTP. Memory tool unification (Hermes `builtin_memory_provider` vs Logos memory tools). | Hermes-owns-with-aggregation (recommended) vs Logos-owns-with-mount |
