@@ -376,6 +376,105 @@ These are three small, obvious code gaps in the v2 dispatch path. All point at `
 
 ---
 
+### LOG-60 · Agent observability — per-event log + timeline UI
+**Effort:** L (1–3d across phases; Phase 1 = M ~2h–1d) · **Type:** Feature · **Status:** OPEN · **Surfaced:** 2026-04-19 while debugging Anna's stuck `write_file` loop · **Best-after:** none blocking; independent of LOG-44 phasing
+
+**Problem.** Today's observability is thin and splintered:
+- `dispatches` table has 1 row per conversation turn but `tool_sequence` is declared and never populated (verified 2026-04-19 — every row NULL, including Anna's 50+ tool-call run).
+- `agent_runs` table exists in the schema but has zero writers in the codebase → dead code.
+- Per-event richness (thinking text, tool args, tool results, tool errors, timings) lives only in the in-sandbox session JSON at `/tmp/hermes-srv-home/sessions/*.json` and the in-sandbox `/tmp/hermes-gw.log`. **Both die when the sandbox resets** — we lost Anna's full session this way today.
+- Tool failure modes are invisible to ops. Anna looped `write_file({})` ~20 times (qwen3.5-9b emitting empty args) and nothing surfaced to the dashboard; the UI just showed her final text reply as if everything was fine.
+- No cross-agent correlation — a delegation from Anna → Hermes leaves no trace_id linking the two runs.
+- The "logs" button per sandbox was only tailing v1 log paths (fixed in a separate branch 2026-04-19: `fix-sandbox-logs-endpoint-v2` adds `/tmp/hermes-gw.log` fallback) — a bandaid, not a real observability layer.
+
+**Target.** A structured, durable event stream unified across v1 and v2 dispatch paths, queryable from the UI without shelling into sandboxes.
+
+**Design sketch.**
+
+New table `agent_events`:
+```
+id                INTEGER PK
+ts                INTEGER (epoch ms)
+agent_id          TEXT FK agents(id)
+run_id            TEXT FK dispatches(id)        — groups one turn
+parent_run_id     TEXT NULL                     — links delegated sub-runs
+event_type        TEXT                          — dispatch_start | thinking | tool_start
+                                                  | tool_end | tool_error | token
+                                                  | task_result | dispatch_end
+tool_name         TEXT NULL
+status            TEXT                          — ok | error | timeout
+duration_ms       INTEGER NULL
+payload           TEXT (JSON, capped 16 KB)
+payload_blob_path TEXT NULL                     — sidecar for oversized payloads
+```
+
+Index on `(agent_id, ts DESC)` and `(run_id, ts ASC)`.
+
+Ingestion: v2's existing `on_stream_event` callback at `worker_registry_v2.py:336-367` gets a sibling sink that `INSERT`s every frame. v1's stdout read loop in `worker_registry.py` gets the same hook. Synthetic `dispatch_start` / `dispatch_end` events frame each run so the timeline always has bookends.
+
+Secrets: redact known-key env-var names + generic high-entropy strings before write. False positives (over-redacting) preferred over leaking keys into the event log.
+
+**Phasing (so it can land incrementally, not a 1-week big-bang):**
+
+| # | Scope | Effort |
+|---|---|---|
+| 60.1 | `agent_events` schema + migration. v2 `on_stream_event` sink writing every frame. v1 read-loop sink. Populate `dispatches.tool_sequence` (existing column, currently NULL) as side effect. **No UI**. | M (target: today, 2026-04-19) |
+| 60.2 | Per-run timeline UI: click a row in the existing Activity → Runs view, drill into a step-by-step timeline of that run (thinking → tool_start(args) → tool_end(result) → errors) with durations. *This view alone would have made Anna's failure visible in one glance.* | M |
+| 60.3 | Per-agent activity feed: reverse-chronological filterable stream for one agent (filter by event_type / tool_name / status). | S |
+| 60.4 | Tool-health dashboard: aggregate tool usage, p50/p99 duration, error rate, top error messages grouped by tool across all agents. Surfaces patterns like "write_file always fails on qwen3.5-9b". | M |
+| 60.5 | Cross-agent delegation traces via `parent_run_id`. Requires a small change to the `delegation` tool to propagate the parent run_id into the sub-dispatch. Flame-graph visualisation of the tree. | M |
+| 60.6 | OTLP export (opt-in) so homelab users with Grafana/Tempo/Honeycomb can ship events into their existing stack. Post-MVP. | S |
+
+**Design decisions to flag before 60.2+ starts:**
+- **Storage location:** start in `auth.db` for FK integrity and simple joins. If it grows past ~1 GB or starts blocking writes, move to a dedicated `events.db` or swap to JSONL+DuckDB for OLAP.
+- **Retention:** rolling 30-day default, configurable via `LOGOS_EVENT_RETENTION_DAYS`. Nightly cleanup job.
+- **Replay vs observe:** 60.1 optimises for observe (payload truncation, secrets redacted). If "replay a failed run for debugging" becomes a requirement, we'd need to also persist full tool args + inference inputs — multiplies payload size, decide later.
+- **Cost:** one INSERT per frame is cheap (~10 µs per statement, batched writes possible). The real cost is disk — ~100 events/turn × long-running agents = hundreds of MB/day. Truncation + rolling retention keeps it bounded.
+
+**Why P1 not P0:** no user-facing feature is broken without it; the platform works. But debugging *anything* non-trivial right now requires shelling into sandboxes and `jq`-ing session files, which is not an ops-grade experience as we approach public beta.
+
+**Related / cross-refs:**
+- LOG-52 (cross-agent session aggregator) overlaps with 60.5 — both want cross-agent visibility. Coordinate the `parent_run_id` schema choice with LOG-52's delegation-tool changes.
+- `fix-sandbox-logs-endpoint-v2` branch (the v2 log fallback fix shipped 2026-04-19) is a bandaid that 60.2's proper timeline view replaces.
+- LOG-61 + LOG-62 surfaced from the first real LOG-60.1 ingestion run (Anna, 2026-04-19). Both are about resurrected sandboxes losing config that would normally make v2 + tooling work — without them, agent_events ingestion is correct but the underlying agent has degraded behaviour on respawn.
+
+---
+
+### LOG-61 · Resurrect path persists `hermes_server_setup` so respawned agents reach v2 dispatch
+**Effort:** S (30m–2h) · **Type:** Bug · **Status:** OPEN · **Surfaced:** 2026-04-19 from LOG-60.1 first-run validation · **Cross-ref:** LOG-44 phase-1 memory note (`log44_phase1_live_validation.md`) flags this exact gap as theoretical — confirmed live now.
+
+**Problem.** When `_resurrect_missing_sandboxes` (`http_api.py:211`) re-spawns a missing sandbox (the post-restart pass that brings back any agent whose openshell sandbox is gone), the new spawn flow does call `enable_hermes_server_mode()` and the in-sandbox hermes server *does* come up correctly. But the resurrect path doesn't write the `hermes_server_setup` dict (api_key + base_url + hermes_home) into the executor state file the way `OpenShellExecutor.spawn()` does at `openshell.py:1485-1490`. Result: state-file entry for the resurrected agent is missing the `hermes_server_setup` field; `_load_server_setup()` in `worker_registry_v2.py:106` returns None; `dispatch_task_v2` raises RuntimeError; chat dispatch falls back to v1 forever (until the sandbox is destroyed and the agent re-created from scratch).
+
+Live observation (2026-04-19): after Anna's switch-to-opus-4-7 attempt forced a sandbox reset and recovery via resurrect, every chat to her went via v1 even though her sandbox's hermes server was running and reachable. Confirmed by checking `~/.logos/openshell_instances.json` (`hermes_server_setup` field missing for Anna, present for Hermes which was original-spawned not resurrected).
+
+**Fix.** Mirror the persistence step from `spawn()` into the resurrect path. Cleanest option: extract the "after enable_hermes_server_mode succeeds, write setup into state record" block into a small helper and call it from both `spawn()` and the resurrect spawner. The helper already exists conceptually (`openshell.py:1506-1520` writes setup + flips phase to ready) — just needs to be reachable from `_resurrect_missing_sandboxes`'s spawn call site.
+
+**Why P1.** Without this, every sandbox reset (manual restart, host crash, gateway-killed-during-spawn, OS reboot, openshell upgrade, anything) silently regresses a v2-capable agent to v1, losing all the hermes-server autonomy primitives LOG-44 unlocked. The user can't tell from the UI; it just looks like dispatch slowdown + missing observability for that agent.
+
+---
+
+### LOG-62 · Resurrect re-applies full agent config (env passthrough + network policy presets)
+**Effort:** M (2h–1d) · **Type:** Bug · **Status:** OPEN · **Surfaced:** 2026-04-19 from LOG-60.1 first-run validation (Anna's Ethereum essay attempt) · **Best-after:** LOG-61
+
+**Problem.** A resurrected sandbox boots with a *bare* OpenShell network policy and a *bare* `terminal.env_passthrough` — none of the agent-specific config that `spawn()` normally applies for fresh agents. Concretely seen on Anna 2026-04-19:
+
+- Browser tools: every `page.goto()` failed with `net::ERR_TUNNEL_CONNECTION_FAILED` because the openshell L7 proxy at `10.200.0.1:3128` rejected the destinations. The agent's `applied_presets` (network-policy preset list — `web-browse`, `firecrawl`, etc.) were not pushed into the resurrected sandbox's policy.
+- `execute_code` tools that need `SEARXNG_URL`: failed with `RuntimeError: SEARXNG_URL not set`. The LOG-44 fix that added `SEARXNG_URL` to `terminal.env_passthrough` in `config.yaml` only ran for sandboxes spawned through the original spawn path, not the resurrect path. Same applies to the openshell proxy vars (`HTTP_PROXY`, `SSL_CERT_FILE`, etc.) per LOG-44 memory notes — the resurrect path probably has a *second* class of variables silently missing too, just not as user-visible until something tries to reach an external host.
+
+The agent appears to come up healthy (`phase: ready`, hermes server responds to /health), but its tools are degraded in a way that's only visible at first tool use. Anna's response in the wild was to give up and write the essay from training data, citing plausible-but-unverified URLs — the worst possible failure mode for an agent that's supposed to be doing research.
+
+**Fix.** Resurrect must be a true respawn: same `InstanceConfig`-shape inputs as `spawn()`, same downstream policy upload, same env_passthrough population, same hermes config deployment. The current code calls `executor.spawn()` directly per `sandbox_heal.py:14-18` — but somewhere in the resurrect-specific entry point we're skipping the per-agent config snapshot. Audit:
+
+1. Compare what `spawn()` writes when called from `admin_handlers.create_agent` vs. from `_resurrect_missing_sandboxes`. The InstanceConfig should carry the agent's `applied_presets`, but it might be passed empty on resurrect because the resurrect builder reads from a different code path.
+2. Verify `terminal.env_passthrough` is built from the same source (a constant + per-agent additions) on both paths, not just the static list.
+3. Add a regression assertion: after resurrect, the in-sandbox `config.yaml`'s `terminal.env_passthrough` must contain SEARXNG_URL (and the openshell proxy CA bundle vars). If not, fail loudly rather than booting a degraded agent.
+
+**Why M not S.** The fix is straightforward in concept but the spawn flow has multiple branches (fresh, restart, resurrect, switch-route) and the regression-test scaffolding to lock down the "all branches produce identical config" invariant is real work. Cutting corners here is exactly how this bug class re-emerged; spending the M to add the assertion guard pays back the next time someone changes `spawn()` and forgets the resurrect side.
+
+**Cross-ref.** LOG-61 fixes the *v2 capability* on resurrect; LOG-62 fixes the *tooling capability* on resurrect. Together they make a respawned agent indistinguishable from a freshly-created one. Without both, "delete + recreate" remains the only reliable recovery for a sandbox-reset agent, which loses chat history.
+
+---
+
 ## P2 — Medium
 
 ### LOG-28 · Bidirectional reply push: web → Telegram — **DONE (2026-04-17)**
