@@ -4099,16 +4099,28 @@ async def _handle_chat(request: web.Request) -> web.StreamResponse:
                                payload={"args": event.get("args")} if event.get("args") else None)
                     await send_event(event)
                 elif etype == "tool_end":
-                    _success = bool(event.get("success", True))
+                    # v2 emits `error` as a boolean flag; a truthy value
+                    # means the tool call failed. v1 emits a `success`
+                    # boolean directly. Handle both shapes.
+                    _err_flag = event.get("error")
+                    _success = bool(event.get("success", not _err_flag))
                     _status_on_tool_end(_success)
+                    # v2 emits `duration` (seconds, float). v1 emits
+                    # `duration_ms` directly. Normalise to ms for storage.
+                    _dur = event.get("duration_ms")
+                    if _dur is None and event.get("duration") is not None:
+                        try:
+                            _dur = int(float(event["duration"]) * 1000)
+                        except (TypeError, ValueError):
+                            _dur = None
                     _log_event("tool_end",
                                tool_name=event.get("tool") or None,
                                status=("ok" if _success else "error"),
-                               duration_ms=event.get("duration_ms"),
+                               duration_ms=_dur,
                                payload={
                                    "result": event.get("result"),
-                                   "error": event.get("error"),
-                               } if (event.get("result") or event.get("error")) else None)
+                                   "error": event.get("error") if isinstance(event.get("error"), str) else None,
+                               } if (event.get("result") or isinstance(event.get("error"), str)) else None)
                     await send_event(event)
                 elif etype == "tool_progress":
                     await send_event({
