@@ -833,16 +833,22 @@ async def _handle_sandbox_logs(request: web.Request) -> web.Response:
             return web.json_response(
                 {"logs": "", "stderr": "no model routes configured — run /setup first"}
             )
-        # Try /tmp/worker.jsonl first (current Plan A-prime source).
-        # Fall back to /tmp/worker.log for any legacy/custom image that
-        # still uses the old layout. Final fallback is a clear message
-        # — better than the silent "(no worker log yet)" the old code
-        # produced for every healthy sandbox.
+        # Try /tmp/worker.jsonl first (v1 Plan A-prime source — written
+        # by sandbox_worker.py per dispatch). Fall back to /tmp/worker.log
+        # for any legacy/custom image that still uses the old layout.
+        # Third fallback is /tmp/hermes-gw.log — the v2 (LOG-44) dispatch
+        # path runs hermes as a long-lived in-sandbox server and never
+        # writes worker.jsonl, so v2 sandboxes would otherwise always
+        # show "(no dispatches yet)" regardless of activity. Final
+        # fallback is a clear message — better than the silent
+        # "(no worker log yet)" the old code produced for every healthy
+        # sandbox.
         result = _openshell(
             "sandbox", "exec", "-n", name, "--no-tty", "--",
             "sh", "-c",
             "if [ -s /tmp/worker.jsonl ]; then tail -n 200 /tmp/worker.jsonl; "
             "elif [ -s /tmp/worker.log ]; then tail -n 200 /tmp/worker.log; "
+            "elif [ -s /tmp/hermes-gw.log ]; then tail -n 200 /tmp/hermes-gw.log; "
             "else echo '(no dispatches yet — log file is created on first chat to this sandbox)'; fi",
             gateway=target_gw, check=False, timeout=15,
         )
