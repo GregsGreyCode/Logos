@@ -360,6 +360,42 @@ Secrets: redact known-key env-var names + generic high-entropy strings before wr
 **Related / cross-refs:**
 - LOG-52 (cross-agent session aggregator) overlaps with 57.5 — both want cross-agent visibility. Coordinate the `parent_run_id` schema choice with LOG-52's delegation-tool changes.
 - `fix-sandbox-logs-endpoint-v2` branch (the v2 log fallback fix shipped 2026-04-19) is a bandaid that 57.2's proper timeline view replaces.
+- LOG-58 + LOG-59 surfaced from the first real LOG-57.1 ingestion run (Anna, 2026-04-19). Both are about resurrected sandboxes losing config that would normally make v2 + tooling work — without them, agent_events ingestion is correct but the underlying agent has degraded behaviour on respawn.
+
+---
+
+### LOG-58 · Resurrect path persists `hermes_server_setup` so respawned agents reach v2 dispatch
+**Effort:** S (30m–2h) · **Type:** Bug · **Status:** OPEN · **Surfaced:** 2026-04-19 from LOG-57.1 first-run validation · **Cross-ref:** LOG-44 phase-1 memory note (`log44_phase1_live_validation.md`) flags this exact gap as theoretical — confirmed live now.
+
+**Problem.** When `_resurrect_missing_sandboxes` (`http_api.py:211`) re-spawns a missing sandbox (the post-restart pass that brings back any agent whose openshell sandbox is gone), the new spawn flow does call `enable_hermes_server_mode()` and the in-sandbox hermes server *does* come up correctly. But the resurrect path doesn't write the `hermes_server_setup` dict (api_key + base_url + hermes_home) into the executor state file the way `OpenShellExecutor.spawn()` does at `openshell.py:1485-1490`. Result: state-file entry for the resurrected agent is missing the `hermes_server_setup` field; `_load_server_setup()` in `worker_registry_v2.py:106` returns None; `dispatch_task_v2` raises RuntimeError; chat dispatch falls back to v1 forever (until the sandbox is destroyed and the agent re-created from scratch).
+
+Live observation (2026-04-19): after Anna's switch-to-opus-4-7 attempt forced a sandbox reset and recovery via resurrect, every chat to her went via v1 even though her sandbox's hermes server was running and reachable. Confirmed by checking `~/.logos/openshell_instances.json` (`hermes_server_setup` field missing for Anna, present for Hermes which was original-spawned not resurrected).
+
+**Fix.** Mirror the persistence step from `spawn()` into the resurrect path. Cleanest option: extract the "after enable_hermes_server_mode succeeds, write setup into state record" block into a small helper and call it from both `spawn()` and the resurrect spawner. The helper already exists conceptually (`openshell.py:1506-1520` writes setup + flips phase to ready) — just needs to be reachable from `_resurrect_missing_sandboxes`'s spawn call site.
+
+**Why P1.** Without this, every sandbox reset (manual restart, host crash, gateway-killed-during-spawn, OS reboot, openshell upgrade, anything) silently regresses a v2-capable agent to v1, losing all the hermes-server autonomy primitives LOG-44 unlocked. The user can't tell from the UI; it just looks like dispatch slowdown + missing observability for that agent.
+
+---
+
+### LOG-59 · Resurrect re-applies full agent config (env passthrough + network policy presets)
+**Effort:** M (2h–1d) · **Type:** Bug · **Status:** OPEN · **Surfaced:** 2026-04-19 from LOG-57.1 first-run validation (Anna's Ethereum essay attempt) · **Best-after:** LOG-58
+
+**Problem.** A resurrected sandbox boots with a *bare* OpenShell network policy and a *bare* `terminal.env_passthrough` — none of the agent-specific config that `spawn()` normally applies for fresh agents. Concretely seen on Anna 2026-04-19:
+
+- Browser tools: every `page.goto()` failed with `net::ERR_TUNNEL_CONNECTION_FAILED` because the openshell L7 proxy at `10.200.0.1:3128` rejected the destinations. The agent's `applied_presets` (network-policy preset list — `web-browse`, `firecrawl`, etc.) were not pushed into the resurrected sandbox's policy.
+- `execute_code` tools that need `SEARXNG_URL`: failed with `RuntimeError: SEARXNG_URL not set`. The LOG-44 fix that added `SEARXNG_URL` to `terminal.env_passthrough` in `config.yaml` only ran for sandboxes spawned through the original spawn path, not the resurrect path. Same applies to the openshell proxy vars (`HTTP_PROXY`, `SSL_CERT_FILE`, etc.) per LOG-44 memory notes — the resurrect path probably has a *second* class of variables silently missing too, just not as user-visible until something tries to reach an external host.
+
+The agent appears to come up healthy (`phase: ready`, hermes server responds to /health), but its tools are degraded in a way that's only visible at first tool use. Anna's response in the wild was to give up and write the essay from training data, citing plausible-but-unverified URLs — the worst possible failure mode for an agent that's supposed to be doing research.
+
+**Fix.** Resurrect must be a true respawn: same `InstanceConfig`-shape inputs as `spawn()`, same downstream policy upload, same env_passthrough population, same hermes config deployment. The current code calls `executor.spawn()` directly per `sandbox_heal.py:14-18` — but somewhere in the resurrect-specific entry point we're skipping the per-agent config snapshot. Audit:
+
+1. Compare what `spawn()` writes when called from `admin_handlers.create_agent` vs. from `_resurrect_missing_sandboxes`. The InstanceConfig should carry the agent's `applied_presets`, but it might be passed empty on resurrect because the resurrect builder reads from a different code path.
+2. Verify `terminal.env_passthrough` is built from the same source (a constant + per-agent additions) on both paths, not just the static list.
+3. Add a regression assertion: after resurrect, the in-sandbox `config.yaml`'s `terminal.env_passthrough` must contain SEARXNG_URL (and the openshell proxy CA bundle vars). If not, fail loudly rather than booting a degraded agent.
+
+**Why M not S.** The fix is straightforward in concept but the spawn flow has multiple branches (fresh, restart, resurrect, switch-route) and the regression-test scaffolding to lock down the "all branches produce identical config" invariant is real work. Cutting corners here is exactly how this bug class re-emerged; spending the M to add the assertion guard pays back the next time someone changes `spawn()` and forgets the resurrect side.
+
+**Cross-ref.** LOG-58 fixes the *v2 capability* on resurrect; LOG-59 fixes the *tooling capability* on resurrect. Together they make a respawned agent indistinguishable from a freshly-created one. Without both, "delete + recreate" remains the only reliable recovery for a sandbox-reset agent, which loses chat history.
 
 ---
 

@@ -3279,6 +3279,28 @@ def insert_agent_event(
     """
     try:
         now_ms = int(time.time() * 1000)
+        # Defensive coercion: v1 dispatch's sandbox_worker.py emits
+        # tool_end events with a non-integer ``duration_ms`` (a result
+        # dict in some shapes) and a non-string ``tool`` field
+        # (sometimes the call_id as int, sometimes the name). SQLite is
+        # typeless, so anything we hand it gets stored verbatim — which
+        # leaves the integer column polluted with JSON blobs and breaks
+        # downstream queries that ORDER BY duration_ms or aggregate it.
+        # Coerce to the right primitive (or NULL) so v1 noise doesn't
+        # corrupt the column type. Will fold away on its own when the
+        # underlying v1 emit shape gets normalised (LOG-58 territory).
+        if duration_ms is not None and not isinstance(duration_ms, (int, float)):
+            try:
+                duration_ms = int(float(duration_ms))
+            except (TypeError, ValueError):
+                duration_ms = None
+        elif isinstance(duration_ms, float):
+            duration_ms = int(duration_ms)
+        if tool_name is not None and not isinstance(tool_name, str):
+            try:
+                tool_name = str(tool_name)
+            except Exception:
+                tool_name = None
         payload_str = None
         if payload is not None:
             try:
