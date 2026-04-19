@@ -287,8 +287,24 @@ async def dispatch_task_v2(
         f"python3 {client_path}"
     )
 
+    # Resolve the sandbox's owning gateway and pass it via ``-g``.
+    # Without this the CLI falls back to ``~/.config/openshell/active_gateway``,
+    # which in any multi-route install is usually the wrong cluster →
+    # ``NotFound: sandbox not found``. v1 has always done this; v2
+    # was missing it until this fix (see worker_registry.py's
+    # ``resolve_sandbox_gateway`` for the full rationale).
+    from gateway.worker_registry import resolve_sandbox_gateway
+    target_gateway = resolve_sandbox_gateway(sandbox_name)
+    if target_gateway is None:
+        raise ConnectionError(
+            f"dispatch_task_v2({sandbox_name}): no gateway resolvable "
+            f"for this sandbox. Not in the state file, no default "
+            f"route configured, /setup may not have run yet."
+        )
+
     cmd = [
-        "openshell", "sandbox", "exec", "--no-tty",
+        "openshell", "-g", target_gateway,
+        "sandbox", "exec", "--no-tty",
         "--name", sandbox_name,
         "--", "sh", "-c", stub,
     ]
