@@ -300,6 +300,82 @@ Passive recall — agent gets relevant history without needing to call `session_
 
 ---
 
+### LOG-57 · Per-agent chat page UX redesign: one active conversation + history drawer
+**Effort:** M (phased) · **Type:** Feature/UX · **Status:** OPEN · **Surfaced:** 2026-04-18 · **Cross-ref:** LOG-44.4 (session storage moves to hermes), LOG-52 (cross-agent aggregator), LOG-33 (desktop client), LOG-39 (platform-session hidden toggle generalised here)
+
+**Motivation.** Current chat page (`gateway/html/main_app.html`) treats "topics" as parallel live threads — sidebar list with identical affordances for active vs. past. In reality, `+ New Topic` is just `session_store.reset_session()`; each agent runs exactly one hermes process and can only handle one live conversation at a time. Only `+ Agent` creates something genuinely parallel (new sandbox + new hermes). Multi-topic UI is a convention carried over from Claude/ChatGPT that doesn't match Hermes's actual shape.
+
+Investigation surfaced: web conversations are **localStorage-only**; platform sessions are **DB-backed**; both render in the same flat list. Naming drifts across chat / topic / session / conversation. No rename, pin, archive, or live-vs-past distinction. `✕` hard-deletes.
+
+**Phased plan — can stop after any phase:**
+
+| # | Effort | What lands | Risk |
+|---|---|---|---|
+| 57.1 Honest UX, no backend | S | User-facing copy unifies on "conversation". Sidebar splits into *Active* (single prominent live item) + *History* (collapsible drawer). "+ New Topic" → "Reset context". Platform sessions move to a separate **Channels** tab (no longer interleaved). | Low — HTML/Alpine only. |
+| 57.2 Server-backed conversations | M | New `conversations` table: `id (== session_id), agent_id, title, pinned, archived_at, created_at, updated_at`. Endpoints: `GET/PATCH/DELETE /admin/agents/{id}/conversations[/cid]`. Rename lands here (durable). Soft-archive default; separate **Purge** action for hard delete. Silent migration of localStorage chats + toast. Metadata only — transcripts stay in hermes SessionDB (layer over LOG-52's aggregator; do not duplicate). | Medium (migration). |
+| 57.3 Restore-as-active + title on backgrounding | S–M | Archived rows render as read-only transcripts; explicit **Restore as active** button calls `POST .../conversations/{cid}/activate`. Titles proposed on backgrounding (≥2 exchanges) via one extra hermes turn asking for a 2–5 word title. Optional fallback: propose if active >20min AND ≥4 exchanges AND no title yet. | Low-medium. |
+
+**Channels tab (separate surface, not mixed with conversations).**
+
+Heavy platform use expected; conversations are **per-human** not per-platform-thread; user wants to **pull a transcript into the desktop's active slot** and continue there.
+- Channels page per agent: rows grouped by platform (TG/DC/…), each row = one external human.
+- "Pull into active slot" on any row routes the transcript into the desktop's active conversation.
+- **Crux decision still open:** when a pulled-in channel thread receives a new external message, should it (A) append to the live desktop transcript — desktop becomes a real platform client; (B) buffer + show a "new message on TG" banner; (C) read-only fork — new messages continue on the server-side original. Must decide before 57.3 ships.
+
+**Confirmed decisions (2026-04-18 design session):**
+- Soft-archive by default; separate Purge action for hard delete.
+- Platform sessions live on a separate Channels surface.
+- Conversations are per-human on platform threads.
+- Title fires on backgrounding (avoids mid-flow retitles).
+- Migration of localStorage chats is silent + toast.
+
+**Still-open:**
+- Rename in 57.1 (localStorage, dies on browser reset) or wait for 57.2? Depends on how far apart phases ship.
+- TG-live-pull crux (A/B/C above).
+- Whether current localStorage holds meaningful data that justifies migration care, or Logos is still solo enough that loose migration is fine.
+
+**Acceptance (after all phases):**
+- Opening an agent shows one conspicuously-live conversation + collapsible history drawer with auto-titled/renamed past entries.
+- Channels is a distinct tab; external threads are per-human; can be pulled into the active desktop slot.
+- "Reset context" does exactly what it says; no mystery about where the old topic went.
+- Soft-delete is reversible; purge is the only destructive action.
+
+---
+
+### LOG-59 · Surface truncation + tool errors on the v2 dispatch path
+**Effort:** S (30m–2h) · **Type:** Bug/Reliability · **Status:** OPEN · **Surfaced:** 2026-04-18 · **Cross-ref:** LOG-58 (instruction-side sibling), LOG-54 (prompt-side compression), LOG-53 (UI path probe)
+
+**Motivation.** LOG-58 covers what the *agent* must do (finish the reply + dual output). This ticket covers what the *stack* must do when the agent can't — detect and surface failures instead of presenting a partial reply as complete. From the 2026-04-18 essay incident (see LOG-58 Observed block):
+- The streamed reply was cut mid-sentence by a token limit, but no UI signal told the user it was cut.
+- The agent said "Yes, I finished the essay" — whether hallucinated or simply unaware — and Logos had no ground truth to contradict it.
+- `write_file` failed silently in an earlier attempt; the error flag *was* present in the SSE stream but nothing surfaced it.
+
+These are three small, obvious code gaps in the v2 dispatch path. All point at `gateway/worker_registry_v2.py` + `gateway/executors/hermes_server_mode.py`.
+
+**Sub-items:**
+
+| # | Item | File:line | What | Effort |
+|---|---|---|---|---|
+| 59.1 | Pass `max_tokens` to hermes `/v1/runs` + expose in config.yaml | `gateway/worker_registry_v2.py:155-159`, `gateway/executors/hermes_server_mode.py:210-250` | Add `max_tokens` to the POST body; add `max_completion_tokens:` to generated `config.yaml`. Default ~8192. Expose as a per-agent override (feeds into LOG-48 pricing-aware caps eventually). | XS |
+| 59.2 | Detect `finish_reason: "length"` and emit `task_truncated` frame | `gateway/worker_registry_v2.py:218-220, 227-231` | On `run.completed`, read `finish_reason`; if `length`, emit a synthetic `task_truncated` SSE frame. UI renders a red "response was cut off" banner on the message. Kills the "Yes I finished" ambiguity — a truncated reply is visibly truncated. | XS |
+| 59.3 | Surface `tool.end` errors prominently | `gateway/worker_registry_v2.py:214-217` | Already captures `error: true` per event. Log at WARNING level; emit a `tool_error` SSE frame the UI can render as a red inline marker on the offending tool card. For `write_file`, this is also the ground-truth signal that LOG-53's path-probe can cross-check against. | XS |
+
+**Cross-ref detail:**
+- **LOG-54** — prompt-side (compression fires too late due to wrong context-length default). LOG-59.1 is response-side (no output cap passed through). Both contribute to "essay gets cut off"; both need fixing; not duplicates.
+- **LOG-53** — UI pre-flight probe for hallucinated paths. LOG-59.3 is the protocol-side signal that a `write_file` actually failed; LOG-53 is the UI-side defense when the agent hallucinates a write it never attempted. Complementary.
+- **LOG-58** — instruction-side rule that the agent must produce complete dual output. LOG-59 is the infrastructure that makes rule violations visible when they happen.
+
+**Acceptance:**
+- Default-settings essay-length responses complete without silent truncation.
+- When a response *is* truncated, the UI shows a visible "response cut off at N tokens" banner — no partial reply is ever presented as complete.
+- A failed `write_file` renders a red error indicator on its tool row in Live Executions, not a silent success; console/log shows WARNING with the error detail.
+
+**Non-goals:**
+- Don't auto-retry truncated runs (agent may be mid-thought; retry is the user's call).
+- Don't block tool errors from reaching the agent — the agent's own recovery logic is fine, the UI just can't be blind to what happened.
+
+---
+
 ## P2 — Medium
 
 ### LOG-28 · Bidirectional reply push: web → Telegram — **DONE (2026-04-17)**
@@ -444,6 +520,44 @@ The pre-LOG-44 dispatch contract is opinionated (stdin/stdout JSON framing via `
 - One image = one runtime kind, or can images advertise multiple modes? (YAGNI — start with 1:1.)
 - Image registry source of truth: ship with Logos, or pull from a ghcr manifest? (Start shipped; migrate if community images emerge.)
 - How does the blessed-image registry record *contract version*? (Annotation on image metadata, version-range check in `wait_for_runtime_health`? Defer until second runtime lands.)
+
+---
+
+### LOG-58 · Runtime-injected prompt must guarantee reply completion + file-and-screen dual output
+**Effort:** S (30m–2h) · **Type:** Feature/UX · **Status:** OPEN · **Surfaced:** 2026-04-18 · **Cross-ref:** LOG-53 (hallucinated-path pre-flight — addresses the other half of the same failure class), LOG-55 (workspace.md guidance pattern)
+
+**Motivation.** Two observed failure modes, same root cause:
+- Agent generates substantive output (essay, code, document), claims it was saved, never calls `write_file` → user clicks the linkified path and hits a 404. (Minoxidil incident; LOG-53 is the UI-side defense.)
+- Agent *does* call `write_file` but truncates or omits the content from its chat reply, forcing the user to dig in the Sandbox tab to read what they asked for.
+
+Default agent behavior isn't "finish the reply + emit through both channels." Runtime injection needs to make it so.
+
+**Observed 2026-04-18 (concrete incident).** User asked Hermes for a 1000-word essay on "the state of getting a job in 2026 in the AI space." Three failures fired in one exchange:
+- Agent streamed ~1000 words over ~1 minute and was **cut mid-sentence** at `"more people can"`. Retry *also* truncated mid-URL at `https://www.nucamp.co/blog/top-10-ai-skills-employers-are-hiring-for-in-2026-with`.
+- When asked "did you finish?", agent replied **"Yes, I finished the essay"** — but the stream had been cut by a token limit; the agent either didn't know or lied.
+- Agent volunteered: *"I apologize for the technical issues. Let me try a different approach and create the cited essay directly in my response instead of saving it to a file"* — `write_file` had failed earlier and the agent silently fell back to screen-only output with no error surfaced to the user.
+
+This incident motivated LOG-59 (the infrastructure-side counterpart of this ticket: the stack must *detect* truncation and tool errors, not just rely on the agent to behave correctly).
+
+**Requirement.** The runtime-injected prompt (shared soul fragment or per-agent hermes `system_prompt`) must enforce:
+- **(a) Finish the reply.** Artifact-class outputs (multi-paragraph text, lists, code, documents) are emitted *in full* in the chat reply before the turn ends. No "see the file" substitutions, no truncation.
+- **(b) Dual output.** The same content is also written via `write_file` to a stable, citeable path under the agent's workspace, and the cited path is returned in the reply.
+- Exemptions: single-paragraph conversational answers, short clarifications — the rule applies to artifact-class outputs only.
+
+**Where to inject:**
+1. **`souls/_shared/workspace.md`** — loaded by every soul at spawn; add a "Dual-output rule" section. Consistent with LOG-53 / LOG-55 delivery.
+2. **Per-agent hermes config `system_prompt`** written at spawn by `_build_config_yaml` — if soul-fragment compliance proves insufficient. Heavier.
+
+Lean (1) first; promote to (2) if non-compliance persists.
+
+**Acceptance:**
+- "Write a 1000-word essay on X" → reply contains the full essay **and** a real file path that the click-to-download anchor resolves against.
+- "Quick Python snippet" → snippet inline in reply; `write_file` not required (conversational class).
+- Minoxidil regression check: agent either doesn't claim to save, or saves correctly.
+
+**Non-goals:**
+- No tool-level enforcement (auto-mirror every reply to disk) — would clutter workspace and conflict with agents that have their own file conventions.
+- No requirement to save conversational replies — artifact-class only.
 
 ---
 
