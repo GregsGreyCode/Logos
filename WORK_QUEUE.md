@@ -300,7 +300,7 @@ Passive recall — agent gets relevant history without needing to call `session_
 
 ---
 
-### LOG-57 · Agent observability — per-event log + timeline UI
+### LOG-60 · Agent observability — per-event log + timeline UI
 **Effort:** L (1–3d across phases; Phase 1 = M ~2h–1d) · **Type:** Feature · **Status:** OPEN · **Surfaced:** 2026-04-19 while debugging Anna's stuck `write_file` loop · **Best-after:** none blocking; independent of LOG-44 phasing
 
 **Problem.** Today's observability is thin and splintered:
@@ -342,30 +342,30 @@ Secrets: redact known-key env-var names + generic high-entropy strings before wr
 
 | # | Scope | Effort |
 |---|---|---|
-| 57.1 | `agent_events` schema + migration. v2 `on_stream_event` sink writing every frame. v1 read-loop sink. Populate `dispatches.tool_sequence` (existing column, currently NULL) as side effect. **No UI**. | M (target: today, 2026-04-19) |
-| 57.2 | Per-run timeline UI: click a row in the existing Activity → Runs view, drill into a step-by-step timeline of that run (thinking → tool_start(args) → tool_end(result) → errors) with durations. *This view alone would have made Anna's failure visible in one glance.* | M |
-| 57.3 | Per-agent activity feed: reverse-chronological filterable stream for one agent (filter by event_type / tool_name / status). | S |
-| 57.4 | Tool-health dashboard: aggregate tool usage, p50/p99 duration, error rate, top error messages grouped by tool across all agents. Surfaces patterns like "write_file always fails on qwen3.5-9b". | M |
-| 57.5 | Cross-agent delegation traces via `parent_run_id`. Requires a small change to the `delegation` tool to propagate the parent run_id into the sub-dispatch. Flame-graph visualisation of the tree. | M |
-| 57.6 | OTLP export (opt-in) so homelab users with Grafana/Tempo/Honeycomb can ship events into their existing stack. Post-MVP. | S |
+| 60.1 | `agent_events` schema + migration. v2 `on_stream_event` sink writing every frame. v1 read-loop sink. Populate `dispatches.tool_sequence` (existing column, currently NULL) as side effect. **No UI**. | M (target: today, 2026-04-19) |
+| 60.2 | Per-run timeline UI: click a row in the existing Activity → Runs view, drill into a step-by-step timeline of that run (thinking → tool_start(args) → tool_end(result) → errors) with durations. *This view alone would have made Anna's failure visible in one glance.* | M |
+| 60.3 | Per-agent activity feed: reverse-chronological filterable stream for one agent (filter by event_type / tool_name / status). | S |
+| 60.4 | Tool-health dashboard: aggregate tool usage, p50/p99 duration, error rate, top error messages grouped by tool across all agents. Surfaces patterns like "write_file always fails on qwen3.5-9b". | M |
+| 60.5 | Cross-agent delegation traces via `parent_run_id`. Requires a small change to the `delegation` tool to propagate the parent run_id into the sub-dispatch. Flame-graph visualisation of the tree. | M |
+| 60.6 | OTLP export (opt-in) so homelab users with Grafana/Tempo/Honeycomb can ship events into their existing stack. Post-MVP. | S |
 
-**Design decisions to flag before 57.2+ starts:**
+**Design decisions to flag before 60.2+ starts:**
 - **Storage location:** start in `auth.db` for FK integrity and simple joins. If it grows past ~1 GB or starts blocking writes, move to a dedicated `events.db` or swap to JSONL+DuckDB for OLAP.
 - **Retention:** rolling 30-day default, configurable via `LOGOS_EVENT_RETENTION_DAYS`. Nightly cleanup job.
-- **Replay vs observe:** 57.1 optimises for observe (payload truncation, secrets redacted). If "replay a failed run for debugging" becomes a requirement, we'd need to also persist full tool args + inference inputs — multiplies payload size, decide later.
+- **Replay vs observe:** 60.1 optimises for observe (payload truncation, secrets redacted). If "replay a failed run for debugging" becomes a requirement, we'd need to also persist full tool args + inference inputs — multiplies payload size, decide later.
 - **Cost:** one INSERT per frame is cheap (~10 µs per statement, batched writes possible). The real cost is disk — ~100 events/turn × long-running agents = hundreds of MB/day. Truncation + rolling retention keeps it bounded.
 
 **Why P1 not P0:** no user-facing feature is broken without it; the platform works. But debugging *anything* non-trivial right now requires shelling into sandboxes and `jq`-ing session files, which is not an ops-grade experience as we approach public beta.
 
 **Related / cross-refs:**
-- LOG-52 (cross-agent session aggregator) overlaps with 57.5 — both want cross-agent visibility. Coordinate the `parent_run_id` schema choice with LOG-52's delegation-tool changes.
-- `fix-sandbox-logs-endpoint-v2` branch (the v2 log fallback fix shipped 2026-04-19) is a bandaid that 57.2's proper timeline view replaces.
-- LOG-58 + LOG-59 surfaced from the first real LOG-57.1 ingestion run (Anna, 2026-04-19). Both are about resurrected sandboxes losing config that would normally make v2 + tooling work — without them, agent_events ingestion is correct but the underlying agent has degraded behaviour on respawn.
+- LOG-52 (cross-agent session aggregator) overlaps with 60.5 — both want cross-agent visibility. Coordinate the `parent_run_id` schema choice with LOG-52's delegation-tool changes.
+- `fix-sandbox-logs-endpoint-v2` branch (the v2 log fallback fix shipped 2026-04-19) is a bandaid that 60.2's proper timeline view replaces.
+- LOG-61 + LOG-62 surfaced from the first real LOG-60.1 ingestion run (Anna, 2026-04-19). Both are about resurrected sandboxes losing config that would normally make v2 + tooling work — without them, agent_events ingestion is correct but the underlying agent has degraded behaviour on respawn.
 
 ---
 
-### LOG-58 · Resurrect path persists `hermes_server_setup` so respawned agents reach v2 dispatch
-**Effort:** S (30m–2h) · **Type:** Bug · **Status:** OPEN · **Surfaced:** 2026-04-19 from LOG-57.1 first-run validation · **Cross-ref:** LOG-44 phase-1 memory note (`log44_phase1_live_validation.md`) flags this exact gap as theoretical — confirmed live now.
+### LOG-61 · Resurrect path persists `hermes_server_setup` so respawned agents reach v2 dispatch
+**Effort:** S (30m–2h) · **Type:** Bug · **Status:** OPEN · **Surfaced:** 2026-04-19 from LOG-60.1 first-run validation · **Cross-ref:** LOG-44 phase-1 memory note (`log44_phase1_live_validation.md`) flags this exact gap as theoretical — confirmed live now.
 
 **Problem.** When `_resurrect_missing_sandboxes` (`http_api.py:211`) re-spawns a missing sandbox (the post-restart pass that brings back any agent whose openshell sandbox is gone), the new spawn flow does call `enable_hermes_server_mode()` and the in-sandbox hermes server *does* come up correctly. But the resurrect path doesn't write the `hermes_server_setup` dict (api_key + base_url + hermes_home) into the executor state file the way `OpenShellExecutor.spawn()` does at `openshell.py:1485-1490`. Result: state-file entry for the resurrected agent is missing the `hermes_server_setup` field; `_load_server_setup()` in `worker_registry_v2.py:106` returns None; `dispatch_task_v2` raises RuntimeError; chat dispatch falls back to v1 forever (until the sandbox is destroyed and the agent re-created from scratch).
 
@@ -377,8 +377,8 @@ Live observation (2026-04-19): after Anna's switch-to-opus-4-7 attempt forced a 
 
 ---
 
-### LOG-59 · Resurrect re-applies full agent config (env passthrough + network policy presets)
-**Effort:** M (2h–1d) · **Type:** Bug · **Status:** OPEN · **Surfaced:** 2026-04-19 from LOG-57.1 first-run validation (Anna's Ethereum essay attempt) · **Best-after:** LOG-58
+### LOG-62 · Resurrect re-applies full agent config (env passthrough + network policy presets)
+**Effort:** M (2h–1d) · **Type:** Bug · **Status:** OPEN · **Surfaced:** 2026-04-19 from LOG-60.1 first-run validation (Anna's Ethereum essay attempt) · **Best-after:** LOG-61
 
 **Problem.** A resurrected sandbox boots with a *bare* OpenShell network policy and a *bare* `terminal.env_passthrough` — none of the agent-specific config that `spawn()` normally applies for fresh agents. Concretely seen on Anna 2026-04-19:
 
@@ -395,7 +395,7 @@ The agent appears to come up healthy (`phase: ready`, hermes server responds to 
 
 **Why M not S.** The fix is straightforward in concept but the spawn flow has multiple branches (fresh, restart, resurrect, switch-route) and the regression-test scaffolding to lock down the "all branches produce identical config" invariant is real work. Cutting corners here is exactly how this bug class re-emerged; spending the M to add the assertion guard pays back the next time someone changes `spawn()` and forgets the resurrect side.
 
-**Cross-ref.** LOG-58 fixes the *v2 capability* on resurrect; LOG-59 fixes the *tooling capability* on resurrect. Together they make a respawned agent indistinguishable from a freshly-created one. Without both, "delete + recreate" remains the only reliable recovery for a sandbox-reset agent, which loses chat history.
+**Cross-ref.** LOG-61 fixes the *v2 capability* on resurrect; LOG-62 fixes the *tooling capability* on resurrect. Together they make a respawned agent indistinguishable from a freshly-created one. Without both, "delete + recreate" remains the only reliable recovery for a sandbox-reset agent, which loses chat history.
 
 ---
 

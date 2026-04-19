@@ -4070,7 +4070,7 @@ async def _handle_chat(request: web.Request) -> web.StreamResponse:
             # Stream callback — forward worker events to client SSE and
             # mirror tool_start/tool_end into _session_status so the
             # Live Executions panel reflects live sandbox activity.
-            # LOG-57.1: also mirror meaningful frames into agent_events
+            # LOG-60.1: also mirror meaningful frames into agent_events
             # for per-event observability. We skip noisy types (token,
             # tool_progress) and capture semantically-meaningful ones
             # (tool_start, tool_end, thinking, memory_write). Insert
@@ -4204,7 +4204,7 @@ async def _handle_chat(request: web.Request) -> web.StreamResponse:
                     user_message=message or "",
                     policy_snapshot=_policy_json,
                 )
-                # LOG-57.1: synthetic bookend so the timeline always
+                # LOG-60.1: synthetic bookend so the timeline always
                 # starts with a dispatch_start row even if the worker
                 # never emits any frame (hard crash, NotFound, etc.).
                 auth_db.insert_agent_event(
@@ -4415,7 +4415,7 @@ async def _handle_chat(request: web.Request) -> web.StreamResponse:
                         error=worker_result.get("error"),
                         tool_sequence=_tseq_json,
                     )
-                    # LOG-57.1: closing bookend on the per-event timeline.
+                    # LOG-60.1: closing bookend on the per-event timeline.
                     auth_db.insert_agent_event(
                         _dispatch_id, "dispatch_end",
                         agent_id=(agent_id or None),
