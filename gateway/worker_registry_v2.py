@@ -31,7 +31,7 @@ Earlier versions of this module mapped ``tool.start``/``tool.end``
 always emitted the -ed forms (see LOG-51.6 fix). The bug stayed
 hidden because the Live Executions UI could fall through to the
 task_result summary and the tool_sequence column stayed NULL
-everywhere. LOG-57.1 agent_events ingestion made the miss visible:
+everywhere. LOG-60.1 agent_events ingestion made the miss visible:
 first real run produced zero tool_start events and v1-fallback
 tool_end rows polluted with call_id strings. The names below are
 the shapes observed by direct SSE capture on 2026-04-19.

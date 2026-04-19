@@ -4,6 +4,7 @@ approval_requests."""
 
 import json
 import logging
+import re
 import sqlite3
 import time
 import uuid
@@ -578,6 +579,41 @@ def _run_migrations() -> None:
             CREATE INDEX IF NOT EXISTS idx_cost_agent ON cost_log(agent_id);
             CREATE INDEX IF NOT EXISTS idx_cost_ts    ON cost_log(ts);
             CREATE INDEX IF NOT EXISTS idx_cost_model ON cost_log(model);
+
+            -- LOG-60.1: per-event agent trace. One row per meaningful
+            -- stream frame emitted during a dispatch (tool_start,
+            -- tool_end, thinking, memory_write, task_result, plus
+            -- synthetic dispatch_start/dispatch_end bookends). The
+            -- dispatches table captures the coarse per-run summary;
+            -- this table captures the fine-grained timeline within
+            -- each run so the UI can render a step-by-step trace
+            -- without shelling into the sandbox to read session JSON.
+            -- run_id matches dispatches.id (the ``dsp_*`` prefix).
+            -- parent_run_id is reserved for LOG-60.5 delegation
+            -- traces; NULL for top-level runs. payload is JSON-
+            -- encoded event metadata (tool args, tool results,
+            -- thinking text, error messages) after secret redaction,
+            -- capped at 16 KB — oversized content is truncated with
+            -- a "...[truncated]" marker rather than stashed in a
+            -- sidecar file (the sidecar path is reserved in the
+            -- schema but unused until 57.4+ when we know we need it).
+            CREATE TABLE IF NOT EXISTS agent_events (
+                id                INTEGER PRIMARY KEY AUTOINCREMENT,
+                ts                INTEGER NOT NULL,
+                agent_id          TEXT,
+                run_id            TEXT NOT NULL,
+                parent_run_id     TEXT,
+                event_type        TEXT NOT NULL,
+                tool_name         TEXT,
+                status            TEXT,
+                duration_ms       INTEGER,
+                payload           TEXT,
+                payload_blob_path TEXT
+            );
+            CREATE INDEX IF NOT EXISTS idx_aevent_run    ON agent_events(run_id, ts);
+            CREATE INDEX IF NOT EXISTS idx_aevent_agent  ON agent_events(agent_id, ts DESC);
+            CREATE INDEX IF NOT EXISTS idx_aevent_type   ON agent_events(event_type);
+            CREATE INDEX IF NOT EXISTS idx_aevent_tool   ON agent_events(tool_name);
         """)
 
         # v12: migrate per-agent char_index from the legacy 0..23 encoding
@@ -3191,6 +3227,149 @@ def list_dispatches(
             [*params, limit, offset],
         ).fetchall()
     return [dict(r) for r in rows], total
+
+
+# ── Agent events (LOG-60.1) ─────────────────────────────────────────────
+
+_PAYLOAD_MAX_BYTES = 16 * 1024  # cap inline payload at 16 KB
+_SECRET_KEY_RE = re.compile(
+    r"(?i)\b(api[_-]?key|token|secret|password|credential|passwd|auth[_-]?header)\s*[:=]\s*[\"']?([A-Za-z0-9+/=_\-.]{8,})",
+)
+_BEARER_RE = re.compile(r"(?i)bearer\s+([A-Za-z0-9+/=_\-.]{8,})")
+
+
+def _redact_secrets(s: str) -> str:
+    """Best-effort scrub of obvious credentials before an event payload
+    is persisted. Redacts Bearer headers and common key=value secrets
+    (API_KEY, TOKEN, SECRET, PASSWORD, CREDENTIAL, PASSWD, AUTH_HEADER).
+    False positives are preferred over leaking credentials into the
+    event log — if this over-redacts a legitimate field, loosen the
+    regex rather than skipping the redaction. Does NOT attempt to
+    redact opaque high-entropy strings that don't appear next to a
+    named key; that would trip on UUIDs, hashes, and legitimate IDs
+    too often to be useful."""
+    if not s:
+        return s
+    s = _BEARER_RE.sub("Bearer ***", s)
+    s = _SECRET_KEY_RE.sub(lambda m: f"{m.group(1)}=***", s)
+    return s
+
+
+def insert_agent_event(
+    run_id: str,
+    event_type: str,
+    *,
+    agent_id: str = None,
+    parent_run_id: str = None,
+    tool_name: str = None,
+    status: str = None,
+    duration_ms: int = None,
+    payload: dict = None,
+) -> int:
+    """Insert one row into ``agent_events``. Returns the autoincrement id.
+
+    ``run_id`` should match ``dispatches.id`` (the ``dsp_*`` prefix)
+    so timeline queries can join. ``payload`` is dumped to JSON,
+    redacted for obvious secrets, and truncated to ~16 KB with a
+    sentinel ``"...[truncated]"`` marker appended.
+
+    Failures are swallowed with a warning — observability must never
+    block the dispatch path. If this table is missing on an older
+    schema, the catch keeps the caller running.
+    """
+    try:
+        now_ms = int(time.time() * 1000)
+        # Defensive coercion: v1 dispatch's sandbox_worker.py emits
+        # tool_end events with a non-integer ``duration_ms`` (a result
+        # dict in some shapes) and a non-string ``tool`` field
+        # (sometimes the call_id as int, sometimes the name). SQLite is
+        # typeless, so anything we hand it gets stored verbatim — which
+        # leaves the integer column polluted with JSON blobs and breaks
+        # downstream queries that ORDER BY duration_ms or aggregate it.
+        # Coerce to the right primitive (or NULL) so v1 noise doesn't
+        # corrupt the column type. Will fold away on its own when the
+        # underlying v1 emit shape gets normalised (LOG-61 territory).
+        if duration_ms is not None and not isinstance(duration_ms, (int, float)):
+            try:
+                duration_ms = int(float(duration_ms))
+            except (TypeError, ValueError):
+                duration_ms = None
+        elif isinstance(duration_ms, float):
+            duration_ms = int(duration_ms)
+        if tool_name is not None and not isinstance(tool_name, str):
+            try:
+                tool_name = str(tool_name)
+            except Exception:
+                tool_name = None
+        payload_str = None
+        if payload is not None:
+            try:
+                raw = json.dumps(payload, default=str, ensure_ascii=False)
+            except Exception:
+                raw = str(payload)
+            raw = _redact_secrets(raw)
+            if len(raw.encode("utf-8", errors="ignore")) > _PAYLOAD_MAX_BYTES:
+                # Byte-aware truncation; decoded length is an approximation.
+                raw = raw.encode("utf-8", errors="ignore")[: _PAYLOAD_MAX_BYTES - 64].decode(
+                    "utf-8", errors="ignore"
+                )
+                raw = raw + '..."[truncated]"'
+            payload_str = raw
+        with _conn() as conn:
+            cur = conn.execute(
+                """INSERT INTO agent_events
+                   (ts, agent_id, run_id, parent_run_id, event_type,
+                    tool_name, status, duration_ms, payload, payload_blob_path)
+                   VALUES (?,?,?,?,?,?,?,?,?,?)""",
+                (now_ms, agent_id, run_id, parent_run_id, event_type,
+                 tool_name, status, duration_ms, payload_str, None),
+            )
+            return cur.lastrowid or 0
+    except Exception as exc:
+        logger.debug("insert_agent_event(%s,%s) skipped: %s", run_id, event_type, exc)
+        return 0
+
+
+def list_agent_events(
+    run_id: str = None,
+    agent_id: str = None,
+    event_type: str = None,
+    tool_name: str = None,
+    limit: int = 200,
+    offset: int = 0,
+) -> list:
+    """Query the per-event trace. One of ``run_id`` or ``agent_id`` is
+    required — returns [] if neither is supplied (avoids unbounded
+    scans of the whole table).
+
+    Ordered ascending by ``ts`` when filtered by ``run_id`` (the
+    timeline within a single run), descending when filtered by
+    ``agent_id`` (recent-first feed).
+    """
+    if not run_id and not agent_id:
+        return []
+    where = []
+    params: list = []
+    if run_id:
+        where.append("run_id = ?")
+        params.append(run_id)
+    if agent_id:
+        where.append("agent_id = ?")
+        params.append(agent_id)
+    if event_type:
+        where.append("event_type = ?")
+        params.append(event_type)
+    if tool_name:
+        where.append("tool_name = ?")
+        params.append(tool_name)
+    where_clause = " WHERE " + " AND ".join(where) if where else ""
+    order = "ts ASC" if run_id else "ts DESC"
+    with _conn() as conn:
+        rows = conn.execute(
+            f"SELECT * FROM agent_events{where_clause} ORDER BY {order} LIMIT ? OFFSET ?",
+            [*params, limit, offset],
+        ).fetchall()
+    return [dict(r) for r in rows]
 
 
 # ── Cost log ─────────────────────────────────────────────────────────────
