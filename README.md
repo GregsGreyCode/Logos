@@ -543,6 +543,32 @@ docker buildx build \
 
 ---
 
+## 🧱 Architectural limitations
+
+### One k3s cluster per OpenShell model route
+
+In the default (sandboxed) deployment, each *model route* — i.e. each (provider, model) pair you provision — is backed by its own full OpenShell gateway, which internally runs a full k3s cluster in a Docker container. This is an OpenShell design choice, not a Logos one: OpenShell's privacy router pins a single forced model per gateway via `openshell inference set --provider <p> --model <m>` and overwrites the `model` field on every inbound request. Multiple Logos agents pinned to the **same** model share a gateway and add no extra overhead; agents on **different** models each require their own gateway. (See `gateway/openshell_routes.py` for the full rationale.)
+
+The practical consequences:
+
+- **RAM**: each gateway costs ~200–500 MB idle. Five routes ≈ 1–2.5 GB of overhead before any agent runs.
+- **inotify instances**: each k3s cluster consumes roughly 70 kernel `inotify` *instances* (kubelet + containerd + CoreDNS + CNI + API server, etc.). With the Linux default of `fs.inotify.max_user_instances=128`, the host can only reliably host **one** OpenShell route — the second or third will fail to provision, usually surfacing as *"Gateway failed to start"* or *"underlying gateway is unreachable"* with no useful container logs.
+- **Fix**: raise the ceiling once, on the host, to ~8192 instances. The installer does this automatically when run with `BUMP_INOTIFY=1`; otherwise run it manually:
+
+  ```bash
+  sudo sysctl -w fs.inotify.max_user_instances=8192
+  echo 'fs.inotify.max_user_instances=8192' | sudo tee -a /etc/sysctl.d/99-openshell.conf
+  echo 'fs.inotify.max_user_watches=1048576'  | sudo tee -a /etc/sysctl.d/99-openshell.conf
+  sudo sysctl --system
+  ```
+
+  The gateway preflight (`gateway/http_api.py`) logs a warning on startup when the ceiling is below safe thresholds, and the gateway-start error handler surfaces the same fix command in the UI toast when a route fails to come up for this reason.
+- **Can't be applied from the UI**: bumping a kernel tunable requires root, and the Logos gateway runs as your user. The UI can detect and surface the command, but you have to paste it into a terminal on the host.
+
+OpenShell is the only supported runtime mode (see [Runtime modes at a glance](#runtime-modes-at-a-glance)), so this limitation applies to every Logos deployment that provisions more than one model route.
+
+---
+
 ## 🖼️ Gallery
 
 <img width="1631" height="1252" alt="memories" src="https://github.com/user-attachments/assets/59951d60-a0b6-49b1-b0e2-11164cf41cda" />
