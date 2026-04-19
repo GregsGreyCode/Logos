@@ -300,6 +300,69 @@ Passive recall — agent gets relevant history without needing to call `session_
 
 ---
 
+### LOG-57 · Agent observability — per-event log + timeline UI
+**Effort:** L (1–3d across phases; Phase 1 = M ~2h–1d) · **Type:** Feature · **Status:** OPEN · **Surfaced:** 2026-04-19 while debugging Anna's stuck `write_file` loop · **Best-after:** none blocking; independent of LOG-44 phasing
+
+**Problem.** Today's observability is thin and splintered:
+- `dispatches` table has 1 row per conversation turn but `tool_sequence` is declared and never populated (verified 2026-04-19 — every row NULL, including Anna's 50+ tool-call run).
+- `agent_runs` table exists in the schema but has zero writers in the codebase → dead code.
+- Per-event richness (thinking text, tool args, tool results, tool errors, timings) lives only in the in-sandbox session JSON at `/tmp/hermes-srv-home/sessions/*.json` and the in-sandbox `/tmp/hermes-gw.log`. **Both die when the sandbox resets** — we lost Anna's full session this way today.
+- Tool failure modes are invisible to ops. Anna looped `write_file({})` ~20 times (qwen3.5-9b emitting empty args) and nothing surfaced to the dashboard; the UI just showed her final text reply as if everything was fine.
+- No cross-agent correlation — a delegation from Anna → Hermes leaves no trace_id linking the two runs.
+- The "logs" button per sandbox was only tailing v1 log paths (fixed in a separate branch 2026-04-19: `fix-sandbox-logs-endpoint-v2` adds `/tmp/hermes-gw.log` fallback) — a bandaid, not a real observability layer.
+
+**Target.** A structured, durable event stream unified across v1 and v2 dispatch paths, queryable from the UI without shelling into sandboxes.
+
+**Design sketch.**
+
+New table `agent_events`:
+```
+id                INTEGER PK
+ts                INTEGER (epoch ms)
+agent_id          TEXT FK agents(id)
+run_id            TEXT FK dispatches(id)        — groups one turn
+parent_run_id     TEXT NULL                     — links delegated sub-runs
+event_type        TEXT                          — dispatch_start | thinking | tool_start
+                                                  | tool_end | tool_error | token
+                                                  | task_result | dispatch_end
+tool_name         TEXT NULL
+status            TEXT                          — ok | error | timeout
+duration_ms       INTEGER NULL
+payload           TEXT (JSON, capped 16 KB)
+payload_blob_path TEXT NULL                     — sidecar for oversized payloads
+```
+
+Index on `(agent_id, ts DESC)` and `(run_id, ts ASC)`.
+
+Ingestion: v2's existing `on_stream_event` callback at `worker_registry_v2.py:336-367` gets a sibling sink that `INSERT`s every frame. v1's stdout read loop in `worker_registry.py` gets the same hook. Synthetic `dispatch_start` / `dispatch_end` events frame each run so the timeline always has bookends.
+
+Secrets: redact known-key env-var names + generic high-entropy strings before write. False positives (over-redacting) preferred over leaking keys into the event log.
+
+**Phasing (so it can land incrementally, not a 1-week big-bang):**
+
+| # | Scope | Effort |
+|---|---|---|
+| 57.1 | `agent_events` schema + migration. v2 `on_stream_event` sink writing every frame. v1 read-loop sink. Populate `dispatches.tool_sequence` (existing column, currently NULL) as side effect. **No UI**. | M (target: today, 2026-04-19) |
+| 57.2 | Per-run timeline UI: click a row in the existing Activity → Runs view, drill into a step-by-step timeline of that run (thinking → tool_start(args) → tool_end(result) → errors) with durations. *This view alone would have made Anna's failure visible in one glance.* | M |
+| 57.3 | Per-agent activity feed: reverse-chronological filterable stream for one agent (filter by event_type / tool_name / status). | S |
+| 57.4 | Tool-health dashboard: aggregate tool usage, p50/p99 duration, error rate, top error messages grouped by tool across all agents. Surfaces patterns like "write_file always fails on qwen3.5-9b". | M |
+| 57.5 | Cross-agent delegation traces via `parent_run_id`. Requires a small change to the `delegation` tool to propagate the parent run_id into the sub-dispatch. Flame-graph visualisation of the tree. | M |
+| 57.6 | OTLP export (opt-in) so homelab users with Grafana/Tempo/Honeycomb can ship events into their existing stack. Post-MVP. | S |
+
+**Design decisions to flag before 57.2+ starts:**
+- **Storage location:** start in `auth.db` for FK integrity and simple joins. If it grows past ~1 GB or starts blocking writes, move to a dedicated `events.db` or swap to JSONL+DuckDB for OLAP.
+- **Retention:** rolling 30-day default, configurable via `LOGOS_EVENT_RETENTION_DAYS`. Nightly cleanup job.
+- **Replay vs observe:** 57.1 optimises for observe (payload truncation, secrets redacted). If "replay a failed run for debugging" becomes a requirement, we'd need to also persist full tool args + inference inputs — multiplies payload size, decide later.
+- **Cost:** one INSERT per frame is cheap (~10 µs per statement, batched writes possible). The real cost is disk — ~100 events/turn × long-running agents = hundreds of MB/day. Truncation + rolling retention keeps it bounded.
+
+**Why P1 not P0:** no user-facing feature is broken without it; the platform works. But debugging *anything* non-trivial right now requires shelling into sandboxes and `jq`-ing session files, which is not an ops-grade experience as we approach public beta.
+
+**Related / cross-refs:**
+- LOG-52 (cross-agent session aggregator) overlaps with 57.5 — both want cross-agent visibility. Coordinate the `parent_run_id` schema choice with LOG-52's delegation-tool changes.
+- `fix-sandbox-logs-endpoint-v2` branch (the v2 log fallback fix shipped 2026-04-19) is a bandaid that 57.2's proper timeline view replaces.
+
+---
+
 ## P2 — Medium
 
 ### LOG-28 · Bidirectional reply push: web → Telegram — **DONE (2026-04-17)**
