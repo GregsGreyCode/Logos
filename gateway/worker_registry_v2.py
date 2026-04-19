@@ -19,12 +19,22 @@ dispatches over HTTP:
 
 Frame translation (Hermes SSE → Logos frame):
 
-    message.delta (delta: "…")   → {"type":"token","task_id":…,"content":"…"}
-    reasoning.available (text:)  → {"type":"thinking","task_id":…,"content":"…"}
-    tool.start  (tool: "…")      → {"type":"tool_start","task_id":…,"tool":"…"}
-    tool.end    (tool, duration) → {"type":"tool_end","task_id":…,"tool":"…","duration":…}
-    run.completed (output,usage) → {"type":"task_result","task_id":…,"status":"ok","final_response":"…","usage":{…}}
-    run.failed                   → {"type":"task_result","task_id":…,"status":"error","error":"…"}
+    message.delta  (delta: "…")                → {"type":"token","task_id":…,"content":"…"}
+    reasoning.available (text:)                → {"type":"thinking","task_id":…,"content":"…"}
+    tool.started   (tool: name, preview)       → {"type":"tool_start","task_id":…,"tool":name,"preview":…}
+    tool.completed (tool: name, duration, err) → {"type":"tool_end","task_id":…,"tool":name,"duration":…,"error":…}
+    run.completed  (output,usage)              → {"type":"task_result","task_id":…,"status":"ok","final_response":"…","usage":{…}}
+    run.failed                                 → {"type":"task_result","task_id":…,"status":"error","error":"…"}
+
+Earlier versions of this module mapped ``tool.start``/``tool.end``
+(no -ed/-ed suffix), which was never correct — hermes upstream has
+always emitted the -ed forms (see LOG-51.6 fix). The bug stayed
+hidden because the Live Executions UI could fall through to the
+task_result summary and the tool_sequence column stayed NULL
+everywhere. LOG-57.1 agent_events ingestion made the miss visible:
+first real run produced zero tool_start events and v1-fallback
+tool_end rows polluted with call_id strings. The names below are
+the shapes observed by direct SSE capture on 2026-04-19.
 
 Signature is intentionally the same shape as ``WorkerRegistry.dispatch_task``
 so `_handle_chat` can route between v1 and v2 with a single env-var check.
@@ -208,13 +218,15 @@ def main():
             t = ev.get("text", "")
             if t:
                 emit({"type": "thinking", "task_id": task_id, "content": t})
-        elif kind == "tool.start":
+        elif kind == "tool.started":
             emit({"type": "tool_start", "task_id": task_id,
-                  "tool": ev.get("tool"), "timestamp": ev.get("timestamp")})
-        elif kind == "tool.end":
+                  "tool": ev.get("tool"), "preview": ev.get("preview"),
+                  "timestamp": ev.get("timestamp")})
+        elif kind == "tool.completed":
             emit({"type": "tool_end", "task_id": task_id,
                   "tool": ev.get("tool"), "duration": ev.get("duration"),
-                  "error": ev.get("error", False)})
+                  "error": ev.get("error", False),
+                  "timestamp": ev.get("timestamp")})
         elif kind == "run.completed":
             final_output = ev.get("output")
             final_usage = ev.get("usage")
