@@ -4070,6 +4070,20 @@ async def _handle_chat(request: web.Request) -> web.StreamResponse:
             # Stream callback — forward worker events to client SSE and
             # mirror tool_start/tool_end into _session_status so the
             # Live Executions panel reflects live sandbox activity.
+            # LOG-57.1: also mirror meaningful frames into agent_events
+            # for per-event observability. We skip noisy types (token,
+            # tool_progress) and capture semantically-meaningful ones
+            # (tool_start, tool_end, thinking, memory_write). Insert
+            # failures are swallowed inside insert_agent_event so the
+            # dispatch path can't be broken by an observability write.
+            def _log_event(etype_name: str, **kw):
+                if _dispatch_id:
+                    auth_db.insert_agent_event(
+                        _dispatch_id, etype_name,
+                        agent_id=(agent_id or None),
+                        **kw,
+                    )
+
             async def _on_worker_stream(event):
                 etype = event.get("type")
                 if etype == "tool_start":
@@ -4081,9 +4095,20 @@ async def _handle_chat(request: web.Request) -> web.StreamResponse:
                     # row size; the UI truncates the display anyway.
                     if _tname and len(_tool_sequence) < 50:
                         _tool_sequence.append(_tname)
+                    _log_event("tool_start", tool_name=(_tname or None),
+                               payload={"args": event.get("args")} if event.get("args") else None)
                     await send_event(event)
                 elif etype == "tool_end":
-                    _status_on_tool_end(bool(event.get("success", True)))
+                    _success = bool(event.get("success", True))
+                    _status_on_tool_end(_success)
+                    _log_event("tool_end",
+                               tool_name=event.get("tool") or None,
+                               status=("ok" if _success else "error"),
+                               duration_ms=event.get("duration_ms"),
+                               payload={
+                                   "result": event.get("result"),
+                                   "error": event.get("error"),
+                               } if (event.get("result") or event.get("error")) else None)
                     await send_event(event)
                 elif etype == "tool_progress":
                     await send_event({
@@ -4097,11 +4122,15 @@ async def _handle_chat(request: web.Request) -> web.StreamResponse:
                         "content": event.get("content", ""),
                     })
                 elif etype == "thinking":
+                    _log_event("thinking",
+                               payload={"content": event.get("content", "")})
                     await send_event({
                         "type": "thinking",
                         "content": event.get("content", ""),
                     })
                 elif etype == "memory_write":
+                    _log_event("memory_write",
+                               payload={"preview": event.get("preview", "")})
                     await send_event({
                         "type": "memory_write",
                         "preview": event.get("preview", ""),
@@ -4162,6 +4191,18 @@ async def _handle_chat(request: web.Request) -> web.StreamResponse:
                     toolsets_snapshot=_toolsets_json,
                     user_message=message or "",
                     policy_snapshot=_policy_json,
+                )
+                # LOG-57.1: synthetic bookend so the timeline always
+                # starts with a dispatch_start row even if the worker
+                # never emits any frame (hard crash, NotFound, etc.).
+                auth_db.insert_agent_event(
+                    _dispatch_id, "dispatch_start",
+                    agent_id=(agent_id or None),
+                    payload={
+                        "model": _agent_model,
+                        "sandbox": target_worker,
+                        "user_message": (message or "")[:500],
+                    },
                 )
             except Exception as _dsp_exc:
                 logger.warning("dispatch ledger create skipped: %s", _dsp_exc)
@@ -4361,6 +4402,19 @@ async def _handle_chat(request: web.Request) -> web.StreamResponse:
                         completion_tokens=worker_result.get("completion_tokens"),
                         error=worker_result.get("error"),
                         tool_sequence=_tseq_json,
+                    )
+                    # LOG-57.1: closing bookend on the per-event timeline.
+                    auth_db.insert_agent_event(
+                        _dispatch_id, "dispatch_end",
+                        agent_id=(agent_id or None),
+                        status=_dsp_status,
+                        duration_ms=int((_dsp_elapsed or 0) * 1000),
+                        payload={
+                            "tool_sequence": _tseq_final,
+                            "prompt_tokens": worker_result.get("prompt_tokens"),
+                            "completion_tokens": worker_result.get("completion_tokens"),
+                            "error": worker_result.get("error"),
+                        },
                     )
                 except Exception as _dsp_exc:
                     logger.debug("dispatch ledger complete skipped: %s", _dsp_exc)
