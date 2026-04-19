@@ -580,7 +580,7 @@ def _run_migrations() -> None:
             CREATE INDEX IF NOT EXISTS idx_cost_ts    ON cost_log(ts);
             CREATE INDEX IF NOT EXISTS idx_cost_model ON cost_log(model);
 
-            -- LOG-57.1: per-event agent trace. One row per meaningful
+            -- LOG-60.1: per-event agent trace. One row per meaningful
             -- stream frame emitted during a dispatch (tool_start,
             -- tool_end, thinking, memory_write, task_result, plus
             -- synthetic dispatch_start/dispatch_end bookends). The
@@ -589,7 +589,7 @@ def _run_migrations() -> None:
             -- each run so the UI can render a step-by-step trace
             -- without shelling into the sandbox to read session JSON.
             -- run_id matches dispatches.id (the ``dsp_*`` prefix).
-            -- parent_run_id is reserved for LOG-57.5 delegation
+            -- parent_run_id is reserved for LOG-60.5 delegation
             -- traces; NULL for top-level runs. payload is JSON-
             -- encoded event metadata (tool args, tool results,
             -- thinking text, error messages) after secret redaction,
@@ -3229,7 +3229,7 @@ def list_dispatches(
     return [dict(r) for r in rows], total
 
 
-# ── Agent events (LOG-57.1) ─────────────────────────────────────────────
+# ── Agent events (LOG-60.1) ─────────────────────────────────────────────
 
 _PAYLOAD_MAX_BYTES = 16 * 1024  # cap inline payload at 16 KB
 _SECRET_KEY_RE = re.compile(
@@ -3288,7 +3288,7 @@ def insert_agent_event(
         # downstream queries that ORDER BY duration_ms or aggregate it.
         # Coerce to the right primitive (or NULL) so v1 noise doesn't
         # corrupt the column type. Will fold away on its own when the
-        # underlying v1 emit shape gets normalised (LOG-58 territory).
+        # underlying v1 emit shape gets normalised (LOG-61 territory).
         if duration_ms is not None and not isinstance(duration_ms, (int, float)):
             try:
                 duration_ms = int(float(duration_ms))
