@@ -702,88 +702,15 @@ class WorkerRegistry:
         task_id: str,
         session_id: Optional[str],
     ) -> None:
-        """Write a cost_log row from a completed task's usage stats.
+        """Thin delegator to the shared v2 helper.
 
-        Reads token counts from ``final_result.usage`` (populated by
-        sandbox_worker after ``agent.run_conversation`` returns), looks
-        up pricing via gateway.pricing (OpenRouter-sourced), and inserts
-        into auth.db's cost_log table. Local models (lmstudio/ollama)
-        still get a row with cost=0 so the dashboard can show activity
-        volume without implying $0 means "ran for free but not counted".
+        Kept as a method for backward compatibility with the single
+        caller at ``dispatch_task``; the full implementation lives in
+        ``worker_registry_v2.record_cost_entry`` so v1 and v2 share
+        bit-identical cost accounting. Deleted with v1 in Phase 2.
         """
-        if not isinstance(final_result, dict):
-            return
-        usage = final_result.get("usage") or {}
-        model = usage.get("model") or ""
-        if not model:
-            return
-
-        # Resolve agent identity for the row. sandbox_name is "hermes-<Name>";
-        # match to the agent record via name lookup (best-effort).
-        agent_id = None
-        agent_name = None
-        provider = None
-        try:
-            from gateway.auth import db as _adb
-            if sandbox_name.startswith("hermes-"):
-                agent_name = sandbox_name[len("hermes-"):]
-                agent_row = _adb.get_agent_by_name(agent_name)
-                if agent_row:
-                    agent_id = agent_row.get("id")
-                    route_id = agent_row.get("model_route_id")
-                    if route_id:
-                        route = _adb.get_model_route(route_id)
-                        provider = (route or {}).get("provider")
-        except Exception:
-            pass
-
-        input_tokens = int(usage.get("input_tokens", 0) or 0)
-        output_tokens = int(usage.get("output_tokens", 0) or 0)
-        cache_read = int(usage.get("cache_read_tokens", 0) or 0)
-        cache_write = int(usage.get("cache_write_tokens", 0) or 0)
-
-        cost = None
-        pricing_known = False
-        if input_tokens or output_tokens or cache_read or cache_write:
-            try:
-                from gateway import pricing as _pricing
-                cost = _pricing.cost_for_usage(
-                    model,
-                    input_tokens=input_tokens,
-                    output_tokens=output_tokens,
-                    cache_read_tokens=cache_read,
-                    cache_write_tokens=cache_write,
-                )
-                pricing_known = cost is not None
-            except Exception as exc:
-                logger.debug("cost lookup failed for %s: %s", model, exc)
-
-        from gateway.auth import db as _adb
-        _adb.insert_cost_entry(
-            agent_id=agent_id,
-            agent_name=agent_name,
-            session_id=session_id,
-            task_id=task_id,
-            provider=provider,
-            model=model,
-            input_tokens=input_tokens,
-            output_tokens=output_tokens,
-            cache_read_tokens=cache_read,
-            cache_write_tokens=cache_write,
-            cost_usd=cost or 0.0,
-            pricing_known=pricing_known,
-            # LOG-25.6: attribute cost to the dispatch's initiator so
-            # the per-user daily budget rollup in _handle_chat doesn't
-            # need to JOIN through dispatches. user_id is looked up from
-            # the dispatches row by task_id since the dispatch record is
-            # the authoritative who-did-what ledger. NULL is acceptable
-            # for legacy / system-initiated calls.
-            user_id=(
-                _adb.get_dispatch_by_task_id(task_id).get("user_id")
-                if task_id and hasattr(_adb, "get_dispatch_by_task_id")
-                else None
-            ),
-        )
+        from gateway.worker_registry_v2 import record_cost_entry
+        record_cost_entry(final_result, sandbox_name, task_id, session_id)
 
     # ─── Sandbox state sync ──────────────────────────────────────────────
     #
