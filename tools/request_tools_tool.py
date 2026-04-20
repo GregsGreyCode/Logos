@@ -40,10 +40,8 @@ TOOL_CATEGORIES = {
     "code":       {"tools": ["execute_code", "mixture_of_agents"], "description": "Programmatic tool calling"},
     "workflows":  {"tools": ["workflow"], "description": "Multi-step DAG task workflows"},
     "messaging":  {"tools": ["send_message"], "description": "Cross-platform message delivery"},
-    "logs":       {"tools": ["log_inspector"], "description": "Runtime log analysis"},
     "skills":     {"tools": ["skill_manage", "skill_view", "skills_list"], "description": "Skill management and browsing"},
     "process":    {"tools": ["process"], "description": "Background process management"},
-    "bugs":       {"tools": ["bug_notes"], "description": "Self-reported bug tracking"},
     "session":    {"tools": ["session_search"], "description": "Long-term conversation memory search"},
 }
 
