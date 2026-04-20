@@ -493,6 +493,103 @@ def _apply_cancel_patches() -> bool:
 
 
 # ---------------------------------------------------------------------------
+# Toolset introspection — GET /v1/toolsets (LOG-64)
+# ---------------------------------------------------------------------------
+#
+# Logos's admin UI used to enumerate toolset availability from its own
+# vendored tools.registry. Post-Phase-3 the agent runtime lives entirely
+# in the sandbox's upstream hermes (re-installed from /opt/hermes to
+# /usr/local/lib/python3.13/dist-packages/), so Logos's registry can
+# disagree silently with what any specific sandbox actually has.
+#
+# This patch registers a read-only GET /v1/toolsets endpoint on hermes's
+# aiohttp app that returns hermes's own tools.registry.registry view.
+# Gateway queries it via `openshell sandbox exec curl` and uses it as
+# the source of truth for /admin/toolsets.
+#
+# Delivery: we can't monkey-patch APIServerAdapter.connect cleanly
+# because connect() wires up routes mid-flight and can't be intercepted
+# between Application() and Runner.setup(). Instead we patch aiohttp's
+# web.Application.__init__ so every new aiohttp app auto-registers our
+# route. In a hermes sandbox there's exactly one Application, so the
+# global patch is the right scope.
+
+
+def _apply_toolset_introspection_patch() -> bool:
+    """Register GET /v1/toolsets on every aiohttp Application hermes creates.
+
+    Returns True if the patch applied; False if aiohttp or
+    tools.registry aren't importable (hermes boots, the endpoint just
+    isn't there, and Logos's /admin/toolsets falls back to its local
+    registry).
+    """
+    try:
+        from aiohttp import web
+    except ImportError as exc:
+        _logger.warning(
+            "logos.toolset_patch: aiohttp not importable (%s) — skipping",
+            exc,
+        )
+        return False
+
+    if getattr(web.Application, "_logos_toolset_patched", False):
+        return True
+
+    async def _handle_toolsets(request):  # noqa: ANN001
+        """Return hermes's registered toolsets + tool-availability view."""
+        try:
+            from tools.registry import registry  # hermes's tools.registry
+        except Exception as exc:
+            return web.json_response(
+                {"error": f"registry not importable: {exc}"}, status=500,
+            )
+        try:
+            ts_meta = registry.get_available_toolsets()
+        except Exception as exc:
+            return web.json_response(
+                {"error": f"get_available_toolsets raised: {exc}"},
+                status=500,
+            )
+        try:
+            all_tools = registry.get_all_tool_names()
+        except Exception:
+            all_tools = []
+        try:
+            toolset_availability = registry.check_toolset_requirements()
+        except Exception:
+            toolset_availability = {}
+        return web.json_response({
+            "toolsets": ts_meta,
+            "all_tool_names": sorted(all_tools),
+            "availability": toolset_availability,
+            "source": "hermes.tools.registry",
+        })
+
+    _original_init = web.Application.__init__
+
+    def _patched_init(self, *args, **kwargs):
+        _original_init(self, *args, **kwargs)
+        try:
+            self.router.add_get("/v1/toolsets", _handle_toolsets)
+        except Exception as exc:
+            # Duplicate-route registration is the only realistic failure
+            # here (if hermes itself later adds the same path). Log and
+            # move on — the app should still boot.
+            _logger.warning(
+                "logos.toolset_patch: add_get /v1/toolsets failed: %s",
+                exc,
+            )
+
+    web.Application.__init__ = _patched_init
+    web.Application._logos_toolset_patched = True
+    _logger.info(
+        "logos.toolset_patch: registered GET /v1/toolsets on aiohttp "
+        "Application for hermes tools.registry introspection"
+    )
+    return True
+
+
+# ---------------------------------------------------------------------------
 # Qwen OpenAI-SDK safety net
 # ---------------------------------------------------------------------------
 
@@ -693,8 +790,9 @@ def _main() -> int:
     Returns the hermes process exit code if reachable via runpy;
     otherwise a small nonzero sentinel.
     """
-    _apply_cancel_patches()            # non-fatal on failure — warning is logged
-    _apply_qwen_safety_net_patches()   # non-fatal on failure — warning is logged
+    _apply_cancel_patches()             # non-fatal on failure — warning is logged
+    _apply_qwen_safety_net_patches()    # non-fatal on failure — warning is logged
+    _apply_toolset_introspection_patch()  # non-fatal — serves /v1/toolsets
 
     # The hermes binary is a pip-installed console_scripts entry at
     # /usr/local/bin/hermes. runpy.run_path executes it in this

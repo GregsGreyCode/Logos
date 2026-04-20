@@ -1882,46 +1882,97 @@ async def _handle_model_patch(request: web.Request) -> web.Response:
 
 
 async def _handle_toolsets(request: web.Request) -> web.Response:
-    """Return available toolsets and per-tool availability for the current install."""
+    """Return available toolsets + per-tool availability.
+
+    LOG-64: source of truth is the sandbox's upstream hermes
+    (``tools.registry.registry`` inside the sandbox, exposed via the
+    ``/v1/toolsets`` monkeypatch). Logos's local ``tools.registry`` is
+    used only as a fallback when no healthy sandbox is reachable —
+    useful during first-boot when no agents are spawned yet, or when
+    OpenShell is unavailable.
+
+    Response shape stays back-compat with the pre-LOG-64 payload so the
+    admin UI doesn't need to change in lock-step: ``available`` (list),
+    ``toolsets`` (dict), ``unavailable`` (dict), ``enabled_toolsets``
+    (list, from ``config.yaml``), ``enabled_tools`` (list).
+    """
+    ts_meta: Dict[str, Any] = {}
+    available_ts: List[str] = []
+    unavailable_info: Dict[str, Any] = {}
+    source = "local"
+
+    # --- Try the sandbox view first ------------------------------------
     try:
-        from core.model_tools import check_tool_availability
-        from tools.registry import registry
-        available_ts, unavailable_info = check_tool_availability(quiet=True)
-        ts_meta = registry.get_available_toolsets()
-        # Enrich with description from core/toolsets.py TOOLSET_REGISTRY
+        from gateway.worker_registry_v2 import fetch_toolsets_from_sandbox
+        wr = request.app.get("worker_registry")
+        candidate_sandbox = None
+        if wr is not None:
+            try:
+                healthy = wr.list_healthy()  # list[_SandboxHealthEntry]
+                if healthy:
+                    candidate_sandbox = healthy[0].sandbox_name
+            except Exception:
+                candidate_sandbox = None
+        if candidate_sandbox:
+            payload = await fetch_toolsets_from_sandbox(candidate_sandbox)
+            if payload:
+                ts_meta = payload.get("toolsets") or {}
+                availability = payload.get("availability") or {}
+                available_ts = [
+                    name for name, ok in availability.items() if ok
+                ]
+                unavailable_info = {
+                    name: "requirement not satisfied"
+                    for name, ok in availability.items() if not ok
+                }
+                source = f"sandbox:{candidate_sandbox}"
+    except Exception as exc:
+        logger.debug("sandbox toolset fetch failed: %s", exc)
+
+    # --- Fallback: local registry --------------------------------------
+    if not ts_meta:
         try:
-            from core.toolsets import TOOLSET_REGISTRY
-            for name, meta in ts_meta.items():
-                reg_entry = TOOLSET_REGISTRY.get(name, {})
-                meta["description"] = reg_entry.get("description", "")
-                meta["tools"] = reg_entry.get("tools", meta.get("tools", []))
-        except Exception:
-            pass
-        # Include which toolsets are currently enabled in config
-        try:
-            from logos_cli.config import load_config
-            cfg = load_config()
-            enabled = cfg.get("toolsets", ["hermes-cli"])
-            # Resolve the enabled toolset(s) to individual toolset names
-            from core.toolsets import resolve_toolset
-            enabled_tools = set()
-            for ts_name in (enabled if isinstance(enabled, list) else [enabled]):
-                try:
-                    enabled_tools.update(resolve_toolset(ts_name))
-                except Exception:
-                    pass
-        except Exception:
-            enabled = ["hermes-cli"]
-            enabled_tools = set()
-        return web.json_response({
-            "available": sorted(available_ts),
-            "toolsets": ts_meta,
-            "unavailable": unavailable_info,
-            "enabled_toolsets": enabled if isinstance(enabled, list) else [enabled],
-            "enabled_tools": sorted(enabled_tools),
-        })
-    except Exception as e:
-        return web.json_response({"error": str(e)}, status=500)
+            from core.model_tools import check_tool_availability
+            from tools.registry import registry
+            avail, unavail = check_tool_availability(quiet=True)
+            available_ts = sorted(avail)
+            unavailable_info = unavail
+            ts_meta = registry.get_available_toolsets()
+            try:
+                from core.toolsets import TOOLSET_REGISTRY
+                for name, meta in ts_meta.items():
+                    reg_entry = TOOLSET_REGISTRY.get(name, {})
+                    meta["description"] = reg_entry.get("description", "")
+                    meta["tools"] = reg_entry.get("tools", meta.get("tools", []))
+            except Exception:
+                pass
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=500)
+
+    # --- Merge in the user's config-enabled set ------------------------
+    try:
+        from logos_cli.config import load_config
+        cfg = load_config()
+        enabled = cfg.get("toolsets", ["hermes-cli"])
+        from core.toolsets import resolve_toolset
+        enabled_tools: set = set()
+        for ts_name in (enabled if isinstance(enabled, list) else [enabled]):
+            try:
+                enabled_tools.update(resolve_toolset(ts_name))
+            except Exception:
+                pass
+    except Exception:
+        enabled = ["hermes-cli"]
+        enabled_tools = set()
+
+    return web.json_response({
+        "available": sorted(available_ts),
+        "toolsets": ts_meta,
+        "unavailable": unavailable_info,
+        "enabled_toolsets": enabled if isinstance(enabled, list) else [enabled],
+        "enabled_tools": sorted(enabled_tools),
+        "source": source,
+    })
 
 
 @require_csrf

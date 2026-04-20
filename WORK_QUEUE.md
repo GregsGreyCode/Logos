@@ -699,8 +699,17 @@ Ticket deepened 2026-04-17 after attempted start — the per-sub-agent UI requir
 ### LOG-38 · Lightweight Python embedding fallback
 **Effort:** M · **Type:** Feature · **Status:** OPEN
 
-### LOG-64 · Rewire admin UI toolset display to query sandboxes dynamically
-**Effort:** M (2h–1d) · **Type:** Refactor · **Status:** OPEN · **Surfaced:** 2026-04-20 during the Phase 3 post-audit sweep.
+### LOG-64 · Rewire admin UI toolset display to query sandboxes dynamically — **DONE (2026-04-20)**
+**Effort:** M · **Type:** Refactor · **Status:** DONE
+
+Shipped in three parts:
+1. `hermes_cancel_monkeypatch.py::_apply_toolset_introspection_patch` — wraps `aiohttp.web.Application.__init__` so every hermes app auto-registers `GET /v1/toolsets` (returns `tools.registry.registry.get_available_toolsets()` + `all_tool_names` + `availability`).
+2. `worker_registry_v2.fetch_toolsets_from_sandbox(sandbox_name)` — curls the endpoint via `openshell sandbox exec` using the stashed api_key + route gateway, returns parsed JSON or `None` on any failure. 8 unit tests.
+3. `gateway.http_api._handle_toolsets` — tries first healthy sandbox via the helper, falls back to Logos's local `tools.registry` if no sandbox is reachable. Response payload stays back-compat; a new `source` field reports `sandbox:<name>` vs `local` so the UI can indicate which view it's rendering.
+
+Tool-module deletion (the next phase of LOG-64: removing display-only `tools/browser_tool.py` etc.) is deferred to a follow-up — once we've soaked the sandbox-sourced data we can remove the local registry safely.
+
+*Original ticket body for reference:*
 
 **Problem.** After Phase 3 deleted Logos's in-process AIAgent, the `/admin/toolsets` endpoint in `gateway/http_api.py:_handle_toolsets` still reports toolset availability by enumerating Logos's local `tools/` directory via `core/model_tools.check_tool_availability` + `tools.registry`. That enumeration is **cosmetic only** — the actual tool runtime lives in the sandbox's upstream hermes at `/usr/local/lib/python3.13/dist-packages/` (per `docker/Dockerfile.hermes-upstream`). So the admin UI claims "these tools are available" based on Logos's registry, but a different hermes inside the sandbox is what actually decides whether any specific tool runs. The two can disagree silently.
 
