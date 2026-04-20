@@ -1287,7 +1287,9 @@ async def _handle_platforms_list(request: web.Request) -> web.Response:
 
     out = []
     for platform, pconfig in runner.config.platforms.items():
-        connected = platform in runner.adapters
+        # LOG-44.3: adapters live in per-agent sandboxes now, not the
+        # gateway. "Connected" is no longer meaningful at this layer.
+        connected = False
         rules = []
         try:
             for r in _auth_db.list_platform_routing(platform=platform.value):
@@ -1495,21 +1497,20 @@ async def _handle_platforms_home_channel_test(request: web.Request) -> web.Respo
     hc = getattr(pconfig, "home_channel", None) if pconfig else None
     if not hc:
         return web.json_response({"ok": False, "error": "no home channel configured"}, status=400)
-    adapter = runner.adapters.get(platform)
-    if adapter is None:
-        return web.json_response(
-            {"ok": False, "error": f"{platform_value} adapter not connected"}, status=400,
-        )
-    try:
-        result = await adapter.send(chat_id=hc.chat_id, content=text)
-    except Exception as exc:
-        return web.json_response({"ok": False, "error": f"send failed: {exc}"}, status=500)
-    success = getattr(result, "success", False)
-    return web.json_response({
-        "ok":         bool(success),
-        "error":      None if success else (getattr(result, "error", None) or "send failed"),
-        "message_id": getattr(result, "message_id", None),
-    })
+    # LOG-44.3: no Logos-side adapters. Sending via platform from the
+    # gateway is no longer supported — outbound messaging happens from
+    # inside each agent's sandbox via hermes's own adapter.
+    return web.json_response(
+        {
+            "ok": False,
+            "error": (
+                f"{platform_value} send from gateway is no longer supported "
+                "(LOG-44.3 — channels moved into per-agent sandboxes). "
+                "Ask the target agent to send instead."
+            ),
+        },
+        status=410,
+    )
 
 
 async def _handle_setup_page(request: web.Request) -> web.Response:
