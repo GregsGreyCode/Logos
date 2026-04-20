@@ -2106,7 +2106,7 @@ class GatewayRunner:
             "toolsets":       worker_entry.toolsets or ["hermes-cli"],
             "max_iterations": int(os.environ.get(
                 "LOGOS_MAX_ITERATIONS",
-                os.environ.get("HERMES_MAX_ITERATIONS", "90"),
+                os.environ.get("HERMES_MAX_ITERATIONS", "1000"),
             )),
         }
 
@@ -3323,7 +3323,7 @@ class GatewayRunner:
             platform_key = "cli" if source.platform == Platform.LOCAL else source.platform.value
 
             pr = self._provider_routing
-            max_iterations = int(os.getenv("HERMES_MAX_ITERATIONS", "90"))
+            max_iterations = int(os.getenv("HERMES_MAX_ITERATIONS", "1000"))
             reasoning_config = self._load_reasoning_config()
             self._reasoning_config = reasoning_config
 
@@ -5049,7 +5049,7 @@ class GatewayRunner:
             os.environ["HERMES_SESSION_KEY"] = session_key or ""
 
             # Read from env var or use default (same as CLI)
-            max_iterations = int(os.getenv("HERMES_MAX_ITERATIONS", "90"))
+            max_iterations = int(os.getenv("HERMES_MAX_ITERATIONS", "1000"))
             
             # Map platform enum to the platform hint key the agent understands.
             # Platform.LOCAL ("local") maps to "cli"; others pass through as-is.
