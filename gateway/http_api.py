@@ -641,21 +641,10 @@ async def _handle_messaging_set_key(request: web.Request) -> web.Response:
 
     set_credential(env_var, value)
 
-    # Trigger platform adapter connect/reconnect
-    _ENV_TO_PLATFORM = {
-        "TELEGRAM_BOT_TOKEN": Platform.TELEGRAM,
-        "DISCORD_BOT_TOKEN": Platform.DISCORD,
-        "SLACK_BOT_TOKEN": Platform.SLACK,
-        "WHATSAPP_TOKEN": Platform.WHATSAPP,
-    }
-    platform = _ENV_TO_PLATFORM.get(env_var)
-    if platform:
-        runner = request.app.get("runner")
-        if runner:
-            try:
-                await runner.connect_platform(platform)
-            except Exception as exc:
-                logger.warning("Adapter restart for %s failed: %s", env_var, exc)
+    # LOG-44.3: adapters live in the sandbox now; saving a global
+    # messaging token just updates Logos's DB + env so the sandbox
+    # spawner picks it up on the next respawn. There is no Logos-side
+    # adapter to reconnect here.
 
     return web.json_response({"ok": True, "details": result.get("details", {}), "messaging": get_messaging_integrations()})
 
@@ -676,21 +665,9 @@ async def _handle_messaging_delete_key(request: web.Request) -> web.Response:
 
     delete_credential(env_var)
 
-    # Disconnect platform adapter
-    _ENV_TO_PLATFORM = {
-        "TELEGRAM_BOT_TOKEN": Platform.TELEGRAM,
-        "DISCORD_BOT_TOKEN": Platform.DISCORD,
-        "SLACK_BOT_TOKEN": Platform.SLACK,
-        "WHATSAPP_TOKEN": Platform.WHATSAPP,
-    }
-    platform = _ENV_TO_PLATFORM.get(env_var)
-    if platform:
-        runner = request.app.get("runner")
-        if runner:
-            try:
-                await runner.disconnect_platform(platform)
-            except Exception as exc:
-                logger.warning("Adapter disconnect for %s failed: %s", env_var, exc)
+    # LOG-44.3: no Logos-side adapter to disconnect; sandbox hermes
+    # picks up the token removal on its next respawn or credential
+    # refresh.
 
     return web.json_response({"ok": True, "messaging": get_messaging_integrations()})
 
