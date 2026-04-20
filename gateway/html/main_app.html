@@ -12105,10 +12105,9 @@ toolsets:
 
     async restartAgentRuntime(agentId) {
       // Re-upload the hermes monkeypatch + bounce the hermes process
-      // inside the sandbox so the running hermes picks up the latest
-      // patch (e.g. /v1/toolsets introspection). Refreshes the tools
-      // view on success so the dropdown swaps from empty/local to the
-      // live sandbox list.
+      // inside the sandbox. The endpoint only returns after hermes's
+      // /health probe comes back 200, so by the time we re-fetch the
+      // tools view the /v1/toolsets route is already registered.
       if (!agentId || this.agentRuntimeRestarting) return;
       this.agentRuntimeRestarting = true;
       this.agentToolsError = null;
@@ -12121,12 +12120,11 @@ toolsets:
             headers: {'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken()},
           },
         );
-        if (!r.ok) throw new Error(await r.text() || r.statusText);
-        // Give hermes a beat to come back up before re-probing — the
-        // restart script sleeps 1s internally and then runs hermes in
-        // the background, so a short extra wait here avoids an empty
-        // first fetch that would show the error banner again.
-        await new Promise(resolve => setTimeout(resolve, 2500));
+        if (!r.ok) {
+          let body = '';
+          try { body = await r.text(); } catch(_) {}
+          throw new Error(body || r.statusText || ('HTTP ' + r.status));
+        }
         await this.loadAgentTools(agentId);
       } catch(e) {
         this.agentToolsError = 'Restart runtime failed: ' + (e.message || e);
