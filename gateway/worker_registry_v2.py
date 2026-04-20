@@ -59,9 +59,88 @@ import logging
 import os
 import subprocess
 import sys
-from typing import Any, Callable, Dict, Optional
+from collections import deque
+from dataclasses import dataclass, field
+from typing import Any, Callable, Deque, Dict, Optional, Tuple
 
 logger = logging.getLogger(__name__)
+
+
+# Host-side runaway guard. If the same (tool_name, preview) pair sees
+# this many consecutive failed tool.completed frames with no intervening
+# success and no different-tool failure, dispatch_task_v2 aborts the run
+# via cancel_task + a synthetic task_result. Agent-agnostic: watches the
+# translated SSE stream, so the guard works regardless of which agent
+# runtime is baked into the sandbox image.
+_CIRCUIT_BREAKER_FAILURE_THRESHOLD = 5
+
+
+@dataclass
+class _CircuitBreaker:
+    """Per-run tracker for consecutive identical tool failures.
+
+    Call :meth:`observe` with every parsed frame from the SSE-translated
+    stream. Returns True when the run should be aborted (``threshold``
+    identical ``(tool, preview)`` failures in a row).
+
+    Reset conditions:
+    - Any tool.completed with ``error=False``/missing (success).
+    - Any tool.completed whose ``(tool, preview)`` differs from the
+      most-recent failure — reset, then record the new failure as the
+      window's first entry.
+
+    The ``preview`` field on tool.started is a 40-char truncated string
+    (hermes side, ``agent/display.py``). That's coarse — long paths can
+    collide — but it's sufficient for catching a stuck loop where the
+    agent keeps calling the same tool with the same args. For exact
+    dedup the hermes event shape would need an args digest; noted as a
+    follow-up under LOG-45's runtime-contract work.
+    """
+
+    threshold: int = _CIRCUIT_BREAKER_FAILURE_THRESHOLD
+    _last_preview_by_tool: Dict[str, str] = field(default_factory=dict)
+    _recent_failures: Deque[Tuple[str, str]] = field(init=False)
+
+    def __post_init__(self) -> None:
+        self._recent_failures = deque(maxlen=self.threshold)
+
+    def observe(self, frame: Dict[str, Any]) -> bool:
+        """Update state from ``frame`` and return True iff the run should abort."""
+        ftype = frame.get("type")
+        if ftype == "tool_start":
+            tool = str(frame.get("tool") or "")
+            preview = str(frame.get("preview") or "")
+            self._last_preview_by_tool[tool] = preview
+            return False
+        if ftype != "tool_end":
+            return False
+
+        tool = str(frame.get("tool") or "")
+        # Hermes emits ``error=False`` for success, and a truthy
+        # string/bool for failure.
+        is_err = bool(frame.get("error"))
+        if not is_err:
+            self._recent_failures.clear()
+            return False
+
+        preview = self._last_preview_by_tool.get(tool, "")
+        key = (tool, preview)
+        if self._recent_failures and self._recent_failures[-1] != key:
+            self._recent_failures.clear()
+        self._recent_failures.append(key)
+        return len(self._recent_failures) >= self.threshold
+
+    @property
+    def tripped_tool(self) -> str:
+        return self._recent_failures[-1][0] if self._recent_failures else ""
+
+    @property
+    def tripped_preview(self) -> str:
+        return self._recent_failures[-1][1] if self._recent_failures else ""
+
+    @property
+    def count(self) -> int:
+        return len(self._recent_failures)
 
 
 def _default_task_timeout() -> float:
@@ -360,6 +439,7 @@ async def dispatch_task_v2(
 
     final_result: Optional[Dict[str, Any]] = None
     deadline = asyncio.get_running_loop().time() + timeout
+    breaker = _CircuitBreaker()
 
     try:
         assert proc.stdout is not None
@@ -382,6 +462,11 @@ async def dispatch_task_v2(
                 )
                 continue
 
+            # Observe before pumping — we want tool_end events that lead
+            # up to a trip to flow to the callback (agent_events
+            # captures them) before we synthesise the abort.
+            tripped = breaker.observe(frame)
+
             # Pump non-terminal frames to caller's callback
             if on_stream_event is not None and frame.get("type") != "task_result":
                 try:
@@ -396,6 +481,30 @@ async def dispatch_task_v2(
 
             if frame.get("type") == "task_result":
                 final_result = frame
+                break
+
+            if tripped:
+                logger.warning(
+                    "dispatch_task_v2(%s) circuit breaker tripped: "
+                    "tool=%r × %d identical failures, preview=%r — "
+                    "cancelling run",
+                    sandbox_name, breaker.tripped_tool, breaker.count,
+                    breaker.tripped_preview,
+                )
+                # Fire the in-sandbox cancel so the agent actually stops
+                # iterating (host proc terminate alone doesn't propagate
+                # into the sandbox — see cancel_task docstring).
+                cancel_task(task_id)
+                final_result = {
+                    "type": "task_result",
+                    "task_id": task_id,
+                    "status": "error",
+                    "error": (
+                        f"circuit_breaker: '{breaker.tripped_tool}' failed "
+                        f"{breaker.count} times in a row with identical "
+                        f"preview. Run aborted to prevent a runaway loop."
+                    ),
+                }
                 break
 
         if final_result is None:
