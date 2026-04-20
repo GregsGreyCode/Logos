@@ -283,6 +283,7 @@ async def _resurrect_missing_sandboxes(executor) -> None:
     # state entries, worker_registry.get() returns None and chat dispatch
     # reports "worker not connected" even though the sandbox is Ready.
     from gateway.executors.openshell import _load_state, _save_state, _state_lock
+    reconciled_agents: list[tuple[str, str, dict]] = []  # (sandbox_name, name, agent_row)
     with _state_lock():
         current_state = _load_state()
         _known_names = {s.get("sandbox_name") for s in current_state}
@@ -316,10 +317,55 @@ async def _resurrect_missing_sandboxes(executor) -> None:
                 "created_at": __import__("time").time(),
                 "phase": "ready",
             })
+            reconciled_agents.append((sandbox_name, name, a))
             _reconciled += 1
         if _reconciled:
             _save_state(current_state)
             logger.info("resurrect: reconciled %d existing sandbox(es) into state file", _reconciled)
+
+    # LOG-61 / LOG-62: reconciled sandboxes were left with no
+    # hermes_server_setup and a stale config.yaml from the previous
+    # gateway generation. Force-redeploy v2 setup so the sandbox boots
+    # back into full v2 parity (fresh SEARXNG_URL + proxy vars + new
+    # API_SERVER_KEY) instead of silently falling back to v1. Best
+    # effort per-agent — one failure shouldn't block the others. Runs
+    # in background threads because each call does a full deploy +
+    # hermes restart (5-15s apiece).
+    if reconciled_agents:
+        async def _resurrect_v2_one(sandbox_name: str, name: str, agent_row: dict) -> None:
+            try:
+                toolsets_raw = agent_row.get("toolsets") or ""
+                try:
+                    toolsets = _json.loads(toolsets_raw) if toolsets_raw else []
+                except Exception:
+                    toolsets = []
+                cfg = InstanceConfig(
+                    name=name,
+                    soul_name=agent_row.get("soul_slug") or "general",
+                    model=agent_row.get("model") or "",
+                    requester="(reconciled)",
+                    instance_label=name,
+                    toolsets=toolsets if isinstance(toolsets, list) else [],
+                    model_route_id=agent_row.get("model_route_id"),
+                )
+                ok = await _asyncio.to_thread(
+                    executor.resurrect_hermes_server_mode, sandbox_name, cfg,
+                )
+                if ok:
+                    logger.info(
+                        "resurrect: v2 setup restored for reconciled sandbox %s",
+                        sandbox_name,
+                    )
+            except Exception as exc:
+                logger.warning(
+                    "resurrect: v2 setup restore failed for %s: %s",
+                    sandbox_name, exc,
+                )
+
+        for sandbox_name, name, agent_row in reconciled_agents:
+            _asyncio.create_task(
+                _resurrect_v2_one(sandbox_name, name, agent_row)
+            )
 
     if not missing:
         logger.info("resurrect: all %d agents already have sandboxes", len(agents))
@@ -329,6 +375,7 @@ async def _resurrect_missing_sandboxes(executor) -> None:
                 len(missing))
 
     async def _spawn_one(agent: dict):
+        agent_name = agent.get("name") or ""
         try:
             toolsets_raw = agent.get("toolsets") or ""
             try:
@@ -336,11 +383,11 @@ async def _resurrect_missing_sandboxes(executor) -> None:
             except Exception:
                 toolsets = []
             cfg = InstanceConfig(
-                name=agent["name"],
+                name=agent_name,
                 soul_name=agent.get("soul_slug") or "general",
                 model=agent.get("model") or "",
                 requester="(resurrected)",
-                instance_label=agent["name"],
+                instance_label=agent_name,
                 toolsets=toolsets if isinstance(toolsets, list) else [],
                 # CRITICAL: pass the agent's model_route_id so the spawn
                 # ends up in the RIGHT openshell gateway. Without this,
@@ -353,9 +400,44 @@ async def _resurrect_missing_sandboxes(executor) -> None:
                 model_route_id=agent.get("model_route_id"),
             )
             await _asyncio.to_thread(executor.spawn, cfg)
-            logger.info("resurrect: spawned sandbox for agent '%s'", agent["name"])
+            logger.info("resurrect: spawned sandbox for agent '%s'", agent_name)
+
+            # LOG-61 defensive check: spawn() normally writes
+            # hermes_server_setup as part of its finalisation, but a
+            # state-file race or LOGOS_HERMES_SERVER_MODE toggle
+            # mid-spawn can leave the field missing, silently dropping
+            # the agent back onto v1 dispatch. Verify and re-run the
+            # setup if it's absent.
+            try:
+                from gateway.executors.openshell import (
+                    _load_state as _rl_load,
+                    _sanitize_sandbox_name as _rl_sanitize,
+                )
+                _rl_sb = _rl_sanitize(f"hermes-{agent_name}")
+                _rl_has_setup = False
+                for _rl_inst in _rl_load():
+                    if _rl_inst.get("sandbox_name") == _rl_sb:
+                        _rl_has_setup = bool(
+                            _rl_inst.get("hermes_server_setup")
+                        )
+                        break
+                if not _rl_has_setup:
+                    logger.warning(
+                        "resurrect(%s): spawn finished but state lacks "
+                        "hermes_server_setup — running "
+                        "resurrect_hermes_server_mode as backstop",
+                        agent_name,
+                    )
+                    await _asyncio.to_thread(
+                        executor.resurrect_hermes_server_mode, _rl_sb, cfg,
+                    )
+            except Exception as _rl_exc:
+                logger.debug(
+                    "resurrect(%s): post-spawn setup verification failed: %s",
+                    agent_name, _rl_exc,
+                )
         except Exception as exc:
-            logger.warning("resurrect: failed for agent '%s': %s", agent.get("name"), exc)
+            logger.warning("resurrect: failed for agent '%s': %s", agent_name, exc)
 
     for agent in missing:
         _asyncio.create_task(_spawn_one(agent))
