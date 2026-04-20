@@ -2252,7 +2252,8 @@ class GatewayRunner:
                     pass
 
         try:
-            result = await self.worker_registry.dispatch_task(
+            from gateway.worker_registry_v2 import dispatch_task_v2
+            result = await dispatch_task_v2(
                 worker_id, task_payload,
                 timeout=float(os.environ.get(
                     "LOGOS_AGENT_TIMEOUT",

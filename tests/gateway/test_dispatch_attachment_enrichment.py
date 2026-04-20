@@ -44,27 +44,39 @@ def gateway(tmp_path):
     gw.session_store = MagicMock()
     gw.session_store.get_or_create_session.return_value = session_entry
 
-    # worker_registry: present, healthy worker, dispatch returns a fixed reply
+    # Registry only queried for sandbox liveness + toolsets; the actual
+    # dispatch post-Phase-2 flows through worker_registry_v2.dispatch_task_v2,
+    # which each test patches at module level.
     worker_entry = MagicMock()
     worker_entry.healthy = True
-    worker_entry.ws = MagicMock()
-    worker_entry.ws.closed = False
     worker_entry.toolsets = ["hermes-cli"]
     gw.worker_registry = MagicMock()
     gw.worker_registry.get.return_value = worker_entry
-    gw.worker_registry.dispatch_task = AsyncMock(
-        return_value={"status": "ok", "response": "agent reply"}
-    )
 
     return gw
 
 
+@pytest.fixture
+def mock_dispatch_v2():
+    """Patch ``worker_registry_v2.dispatch_task_v2`` for the duration of a test.
+
+    dispatch_platform_message imports the helper inside its try-block,
+    so we have to patch the module attribute, not the caller's binding.
+    """
+    with patch(
+        "gateway.worker_registry_v2.dispatch_task_v2",
+        new_callable=AsyncMock,
+    ) as m:
+        m.return_value = {"status": "ok", "response": "agent reply"}
+        yield m
+
+
 @pytest.mark.asyncio
-async def test_dispatch_enriches_audio_attachments(gateway):
-    """Voice messages must be transcribed before reaching the sandbox worker.
+async def test_dispatch_enriches_audio_attachments(gateway, mock_dispatch_v2):
+    """Voice messages must be transcribed before reaching the sandbox agent.
 
     Verifies the wiring fixed in the audio-to-text repair after the
-    Phase 5.6 _handle_message deletion.
+    Phase 5.6 _handle_message deletion, now routed through v2 dispatch.
     """
     enriched_text = (
         '[The user sent a voice message~ '
@@ -112,15 +124,12 @@ async def test_dispatch_enriches_audio_attachments(gateway):
 
     # 2. The dispatched task payload carries the enriched text, NOT the
     #    raw event.text. This is the load-bearing assertion — if the fix
-    #    regresses, the worker will receive "hi" instead of the
+    #    regresses, the agent will receive "hi" instead of the
     #    transcript-prefixed message.
-    gateway.worker_registry.dispatch_task.assert_awaited_once()
-    _args, kwargs = gateway.worker_registry.dispatch_task.await_args
-    payload = _args[1] if len(_args) > 1 else kwargs.get("task_payload")
-    # dispatch_task is called positionally as (worker_id, task_payload, ...)
-    if payload is None:
-        # second positional arg
-        payload = _args[1]
+    mock_dispatch_v2.assert_awaited_once()
+    _args, kwargs = mock_dispatch_v2.await_args
+    # dispatch_task_v2 is called positionally as (worker_id, task_payload, ...)
+    payload = _args[1]
     assert payload["message"] == enriched_text, (
         f"task_payload.message should be the enriched text, got {payload['message']!r}"
     )
@@ -130,7 +139,7 @@ async def test_dispatch_enriches_audio_attachments(gateway):
 
 
 @pytest.mark.asyncio
-async def test_dispatch_skips_enrichment_when_no_media(gateway):
+async def test_dispatch_skips_enrichment_when_no_media(gateway, mock_dispatch_v2):
     """No media_urls → skip the enrichment call entirely (cheap path)."""
     event = MessageEvent(
         text="just text",
@@ -161,14 +170,14 @@ async def test_dispatch_skips_enrichment_when_no_media(gateway):
     # Enrichment should NOT have been called (no media to enrich)
     gateway._enrich_message_with_attachments.assert_not_awaited()
 
-    # And the raw text reaches the worker unchanged
-    _args, _kwargs = gateway.worker_registry.dispatch_task.await_args
+    # And the raw text reaches the agent unchanged
+    _args, _kwargs = mock_dispatch_v2.await_args
     payload = _args[1]
     assert payload["message"] == "just text"
 
 
 @pytest.mark.asyncio
-async def test_dispatch_continues_when_enrichment_fails(gateway):
+async def test_dispatch_continues_when_enrichment_fails(gateway, mock_dispatch_v2):
     """If transcription/vision blows up, fall through with the raw text
     rather than dropping the dispatch entirely. The user still gets a
     reply (to the caption / surrounding text) instead of silent
@@ -202,8 +211,8 @@ async def test_dispatch_continues_when_enrichment_fails(gateway):
         result = await gateway.dispatch_platform_message(event)
 
     # Dispatch still happened with the raw caption
-    gateway.worker_registry.dispatch_task.assert_awaited_once()
-    _args, _kwargs = gateway.worker_registry.dispatch_task.await_args
+    mock_dispatch_v2.assert_awaited_once()
+    _args, _kwargs = mock_dispatch_v2.await_args
     payload = _args[1]
     assert payload["message"] == "caption"
     assert result is not None
