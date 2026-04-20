@@ -10,7 +10,7 @@ from logos_cli.commands import COMMANDS, SlashCommandCompleter
 EXPECTED_COMMANDS = {
     "/help", "/tools", "/toolsets", "/model", "/provider", "/prompt",
     "/personality", "/clear", "/history", "/new", "/reset", "/retry",
-    "/undo", "/save", "/config", "/cron", "/skills", "/platforms",
+    "/undo", "/save", "/config", "/skills", "/platforms",
     "/verbose", "/reasoning", "/title", "/usage", "/insights", "/paste",
     "/reload-mcp", "/rollback", "/skin", "/voice", "/quit",
     "/runs", "/metrics", "/evals",
