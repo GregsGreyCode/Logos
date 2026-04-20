@@ -1326,10 +1326,6 @@ class DiscordAdapter(BasePlatformAdapter):
         async def slash_stop(interaction: discord.Interaction):
             await self._run_simple_slash(interaction, "/stop", "Stop requested~")
 
-        @tree.command(name="compress", description="Compress conversation context")
-        async def slash_compress(interaction: discord.Interaction):
-            await self._run_simple_slash(interaction, "/compress")
-
         @tree.command(name="title", description="Set or show the session title")
         @discord.app_commands.describe(name="Session title. Leave empty to show current.")
         async def slash_title(interaction: discord.Interaction, name: str = ""):
