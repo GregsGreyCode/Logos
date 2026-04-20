@@ -1380,9 +1380,10 @@ async def handle_agent_tools_get(request: web.Request) -> web.Response:
             toolsets_source = f"sandbox:{sandbox_name}"
         else:
             toolsets_error = (
-                "Cannot reach the sandbox's /v1/toolsets endpoint. The "
-                "agent's hermes process may predate the introspection "
-                "patch — click Restart runtime to bounce it."
+                "Couldn't read the sandbox's tool registry. Check the "
+                "gateway log for 'fetch_toolsets_from_sandbox' — it "
+                "will say whether the sandbox is up or the python probe "
+                "failed."
             )
     except Exception as exc:
         toolsets_error = f"Sandbox toolset query failed: {exc}"

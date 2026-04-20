@@ -395,50 +395,74 @@ async def sync_memories_from_sandbox(sandbox_name: str) -> None:
         logger.debug("v2 memory sync(%s): download raised: %s", sandbox_name, exc)
 
 
+_TOOLSET_PROBE_SCRIPT = r"""
+import json, sys
+try:
+    from tools.registry import registry
+except Exception as exc:
+    sys.stdout.write(json.dumps({"error": "registry import failed: " + repr(exc)}))
+    sys.exit(0)
+try:
+    ts_meta = registry.get_available_toolsets()
+except Exception as exc:
+    sys.stdout.write(json.dumps({"error": "get_available_toolsets raised: " + repr(exc)}))
+    sys.exit(0)
+try:
+    all_tools = sorted(registry.get_all_tool_names())
+except Exception:
+    all_tools = []
+try:
+    availability = registry.check_toolset_requirements()
+except Exception:
+    availability = {}
+sys.stdout.write(json.dumps({
+    "toolsets": ts_meta,
+    "all_tool_names": all_tools,
+    "availability": availability,
+    "source": "hermes.tools.registry",
+}))
+"""
+
+
 async def fetch_toolsets_from_sandbox(
     sandbox_name: str,
     timeout: float = 10.0,
 ) -> Optional[Dict[str, Any]]:
     """Query the sandbox's hermes for its live toolset registry.
 
-    LOG-64: the admin UI's /admin/toolsets endpoint used to read Logos's
-    vendored tools.registry — a static display-only copy. Now hermes
-    exposes GET /v1/toolsets (via hermes_cancel_monkeypatch's
-    ``_apply_toolset_introspection_patch``) and this helper curls it
-    through ``openshell sandbox exec``, returning the sandbox's actual
-    view.
+    Runs a tiny Python probe inside the sandbox via
+    ``openshell sandbox exec`` that imports ``tools.registry`` from
+    hermes's installed package and serialises
+    ``registry.get_available_toolsets()`` to stdout. This replaces the
+    earlier approach (curl GET /v1/toolsets against a monkeypatched
+    route), which had three points of fragility: patch file had to be
+    current, hermes had to be booted via the patch wrapper, and the
+    aiohttp Application __init__ monkeypatch had to survive import
+    ordering. Direct-exec sidesteps all three — works against any
+    hermes version without touching the running process.
 
-    Returns the parsed JSON body (dict with keys ``toolsets``,
+    Returns the probe's JSON output (dict with keys ``toolsets``,
     ``all_tool_names``, ``availability``, ``source``) on success; None
-    on any failure (no sandbox, no setup, openshell CLI missing, curl
-    error, malformed response). Never raises.
+    on any failure. Never raises.
     """
     setup = _load_server_setup(sandbox_name)
     if setup is None:
-        return None
-    api_key = setup.get("api_key")
-    base_url = setup.get("base_url")
-    if not api_key or not base_url:
-        return None
+        # No hermes-server-mode setup on this sandbox — still try the
+        # probe anyway, because `tools.registry` is a package-level
+        # import that doesn't need the server to be running. The
+        # setup check is only useful for v1 → v2 migration tracking.
+        pass
 
     from gateway.worker_registry import resolve_sandbox_gateway
     target_gateway = resolve_sandbox_gateway(sandbox_name)
 
-    # Build an `openshell sandbox exec` that curls the endpoint.
-    # ``curl -s`` suppresses progress noise; ``-f`` makes curl exit
-    # non-zero on 4xx/5xx so the outer subprocess captures it as a
-    # failure rather than silently returning an error body.
-    curl_cmd = (
-        f"curl -sf -H 'Authorization: Bearer {api_key}' "
-        f"--max-time {int(timeout)} {base_url}/v1/toolsets"
-    )
     openshell_cmd = ["openshell"]
     if target_gateway:
         openshell_cmd += ["-g", target_gateway]
     openshell_cmd += [
         "sandbox", "exec", "--no-tty",
         "--name", sandbox_name, "--",
-        "sh", "-c", curl_cmd,
+        "python3", "-",
     ]
 
     try:
@@ -448,7 +472,7 @@ async def fetch_toolsets_from_sandbox(
             capture_output=True,
             text=True,
             timeout=timeout + 5,
-            input="",
+            input=_TOOLSET_PROBE_SCRIPT,
         )
     except Exception as exc:
         logger.warning(
@@ -459,7 +483,7 @@ async def fetch_toolsets_from_sandbox(
 
     if result.returncode != 0:
         logger.warning(
-            "fetch_toolsets_from_sandbox(%s): curl rc=%d stderr=%r stdout=%r",
+            "fetch_toolsets_from_sandbox(%s): probe rc=%d stderr=%r stdout=%r",
             sandbox_name, result.returncode,
             (result.stderr or "")[:300],
             (result.stdout or "")[:300],
@@ -482,11 +506,16 @@ async def fetch_toolsets_from_sandbox(
             sandbox_name, type(payload).__name__,
         )
         return None
+    if "error" in payload:
+        logger.warning(
+            "fetch_toolsets_from_sandbox(%s): probe reported error: %s",
+            sandbox_name, payload["error"],
+        )
+        return None
     logger.info(
-        "fetch_toolsets_from_sandbox(%s): got %d toolset(s) from %s",
+        "fetch_toolsets_from_sandbox(%s): got %d toolset(s)",
         sandbox_name,
         len(payload.get("toolsets") or {}),
-        payload.get("source") or "unknown-source",
     )
     return payload
 
