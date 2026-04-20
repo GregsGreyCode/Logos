@@ -883,8 +883,18 @@ def sandbox_has_server_mode(sandbox_name: str) -> bool:
 
 
 def is_dispatch_v2_enabled() -> bool:
-    """Return True iff the LOG-44 dispatch-v2 routing is active for this run."""
-    return os.getenv("LOGOS_DISPATCH_V2", "") == "1"
+    """Return True iff the LOG-44 dispatch-v2 routing is active.
+
+    Phase 2: defaults to enabled. The env var is now opt-OUT — set
+    ``LOGOS_DISPATCH_V2=0`` (or any non-"1" value) to force v1 dispatch
+    for the gateway process. Absent env var means "on". Runtime
+    rollback without a redeploy is also available via the
+    ``LOGOS_DISPATCH_V2_FORCE_V1`` kill switch.
+    """
+    val = os.getenv("LOGOS_DISPATCH_V2")
+    if val is None:
+        return True
+    return val == "1"
 
 
 def is_dispatch_v2_forced_to_v1() -> bool:
