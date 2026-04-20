@@ -129,6 +129,38 @@ def _save_state(instances: List[dict]) -> None:
     _STATE_FILE.write_text(json.dumps(instances, indent=2), encoding="utf-8")
 
 
+def _hermes_server_setup_dict(setup) -> dict:
+    """Serialise a ``HermesServerSetup`` dataclass for the state file."""
+    return {
+        "api_key": setup.api_key,
+        "base_url": setup.base_url,
+        "hermes_home": setup.hermes_home,
+    }
+
+
+def persist_hermes_server_setup(sandbox_name: str, setup) -> bool:
+    """Write ``hermes_server_setup`` into the state record for ``sandbox_name``.
+
+    LOG-61 helper: the spawn path's inline write (see ``spawn()``) and
+    the resurrect path's reconcile branch both need the same "overwrite
+    the setup field under a state lock" operation. Factored out so both
+    call sites produce identical state — without this, resurrected or
+    reconciled agents silently fall back to v1 dispatch because
+    ``_load_server_setup`` returns None.
+
+    Returns True if the write found a matching state entry and applied;
+    False if no such entry exists yet (caller should insert one first).
+    """
+    with _state_lock():
+        cur = _load_state()
+        for i in cur:
+            if i.get("sandbox_name") == sandbox_name:
+                i["hermes_server_setup"] = _hermes_server_setup_dict(setup)
+                _save_state(cur)
+                return True
+    return False
+
+
 @contextmanager
 def _state_lock() -> Iterator[None]:
     """Exclusive ``fcntl.flock`` on ``_STATE_LOCK_FILE``.
@@ -1505,11 +1537,9 @@ class OpenShellExecutor:
                     if i.get("sandbox_name") == sandbox_name:
                         i["phase"] = "ready"
                         if _hermes_srv_setup is not None:
-                            i["hermes_server_setup"] = {
-                                "api_key": _hermes_srv_setup.api_key,
-                                "base_url": _hermes_srv_setup.base_url,
-                                "hermes_home": _hermes_srv_setup.hermes_home,
-                            }
+                            i["hermes_server_setup"] = _hermes_server_setup_dict(
+                                _hermes_srv_setup
+                            )
                         break
                 else:
                     # Our record vanished mid-spawn (e.g. user deleted
@@ -1518,6 +1548,10 @@ class OpenShellExecutor:
                     # Re-insert with phase=ready so the worker is
                     # discoverable.
                     record["phase"] = "ready"
+                    if _hermes_srv_setup is not None:
+                        record["hermes_server_setup"] = _hermes_server_setup_dict(
+                            _hermes_srv_setup
+                        )
                     cur.append(record)
                 _save_state(cur)
 
@@ -1778,6 +1812,119 @@ class OpenShellExecutor:
                     agent.get("name"), exc,
                 )
         return ok
+
+    def resurrect_hermes_server_mode(
+        self,
+        sandbox_name: str,
+        config: "InstanceConfig",
+    ) -> bool:
+        """Restore v2 setup on a sandbox that Logos has forgotten.
+
+        LOG-61 / LOG-62 fix. Two cases where a sandbox exists (or is
+        about to be respawned) but has no usable ``hermes_server_setup``
+        on its state record:
+
+        1. **Reconcile.** Gateway restart leaves OpenShell sandboxes
+           running from the previous generation, but Logos's state file
+           got truncated. The sandbox is alive; its hermes process is
+           running with an API key we no longer know. ``resurrect_missing
+           _sandboxes`` creates a replacement state entry but can't
+           populate ``hermes_server_setup`` without redeploying config
+           and restarting hermes.
+
+        2. **Fresh spawn that lost setup.** Defensive: if ``spawn()``'s
+           own state-write race lost the ``hermes_server_setup`` field,
+           this method reinstates it without reprovisioning the sandbox.
+
+        Flow:
+          - Deploy fresh ``.env`` + ``config.yaml`` + cancel monkeypatch +
+            BOOT.md + memories via ``enable_hermes_server_mode``.
+          - Force a pkill+relaunch so the running hermes picks up the
+            new API_SERVER_KEY (``enable_hermes_server_mode``'s
+            ``launch_hermes_gateway`` is idempotent and would otherwise
+            no-op when hermes is already running with stale config).
+          - Persist the new setup into state via
+            ``persist_hermes_server_setup``.
+
+        No-op (returns False) when ``LOGOS_HERMES_SERVER_MODE`` is
+        disabled. Returns True on successful end-to-end setup.
+        """
+        from .hermes_server_mode import (
+            is_enabled as _log44_on,
+            enable_hermes_server_mode as _log44_go,
+            restart_hermes_in_sandbox as _log44_restart,
+            wait_for_hermes_health as _log44_wait_health,
+            build_channel_extra_env as _log44_build_env,
+        )
+        if not _log44_on():
+            return False
+
+        # Resolve the owning gateway so subsequent CLI calls target the
+        # right cluster in a multi-route deployment.
+        target_gw: Optional[str] = None
+        for inst in _load_state():
+            if inst.get("sandbox_name") == sandbox_name:
+                target_gw = inst.get("openshell_name") or None
+                break
+
+        try:
+            from gateway.auth import db as _log44_auth_db
+            agent_rec = _log44_auth_db.get_agent_by_name(config.name) or {}
+            agent_id = agent_rec.get("id")
+            extra_env = (
+                _log44_build_env(agent_id, sandbox_name_for_log=sandbox_name)
+                if agent_id else {}
+            )
+        except Exception as exc:
+            logger.warning(
+                "resurrect_hermes_server_mode(%s): channel env lookup "
+                "failed, continuing without extras: %s",
+                sandbox_name, exc,
+            )
+            extra_env = {}
+
+        try:
+            setup = _log44_go(
+                sandbox_name, config,
+                extra_env=extra_env or None,
+                gateway=target_gw,
+            )
+        except Exception as exc:
+            logger.warning(
+                "resurrect_hermes_server_mode(%s): enable_hermes_server_mode "
+                "failed: %s", sandbox_name, exc,
+            )
+            return False
+
+        # Force a relaunch so the newly-deployed .env takes effect.
+        # launch_hermes_gateway inside enable_hermes_server_mode is a
+        # no-op when hermes was already running (reconcile case), so
+        # without this explicit restart the new API key is on disk but
+        # not in the running process.
+        try:
+            _log44_restart(sandbox_name, gateway=target_gw)
+            _log44_wait_health(sandbox_name, gateway=target_gw)
+        except Exception as exc:
+            logger.warning(
+                "resurrect_hermes_server_mode(%s): restart/health failed: %s",
+                sandbox_name, exc,
+            )
+            return False
+
+        if not persist_hermes_server_setup(sandbox_name, setup):
+            logger.warning(
+                "resurrect_hermes_server_mode(%s): persist failed — no "
+                "matching state entry. State may need reconciliation "
+                "before this call.",
+                sandbox_name,
+            )
+            return False
+
+        logger.info(
+            "resurrect_hermes_server_mode(%s): setup restored, key=%s...",
+            sandbox_name, setup.api_key[:12],
+        )
+        return True
 
     def refresh_channel_credentials(self, name: str) -> bool:
         """LOG-44.3.4 — hot-refresh a hermes-mode sandbox's channel creds.
