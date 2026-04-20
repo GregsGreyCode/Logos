@@ -1688,7 +1688,6 @@ async def start_gateway(config: Optional[GatewayConfig] = None, replace: bool = 
     cron_thread = threading.Thread(
         target=_start_maintenance_ticker,
         args=(cron_stop,),
-        kwargs={"adapters": runner.adapters},
         daemon=True,
         name="cron-ticker",
     )
