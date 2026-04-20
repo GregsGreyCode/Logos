@@ -1,23 +1,29 @@
-"""LOG-51.2 — Logos-side monkeypatch that teaches hermes's /v1/runs SSE
-stream to interrupt the agent on client disconnect.
+"""Logos-side monkeypatches applied before hermes boots in a v2 sandbox.
 
-Why this exists
-───────────────
-Upstream hermes-agent 0.7.0 already has the interrupt primitives —
-`agent.interrupt()` (run_agent.py:3086) sets a flag the run loop honors
-at 20+ checkpoints, including mid-LLM-stream HTTP-close at 5139 — but
-it only wires them on `/v1/responses`. The newer `/v1/runs` path (which
-LOG-44 Phase 1 dispatches through) has no cancel endpoint and its SSE
-handler doesn't interrupt on disconnect, so a Logos Stop button clicked
-mid-iteration does nothing.
+Two patches ship here:
+
+1. **LOG-51.2 — /v1/runs SSE-disconnect interrupt.** Upstream
+   hermes-agent 0.7.0 already has ``agent.interrupt()``, but only wires
+   it on ``/v1/responses``. The newer ``/v1/runs`` path (which LOG-44
+   Phase 1 dispatches through) has no cancel endpoint and its SSE
+   handler doesn't interrupt on disconnect, so a Logos Stop button
+   clicked mid-iteration does nothing.
+
+2. **Qwen OpenAI-SDK safety net.** Qwen models served via OpenAI-compatible
+   endpoints (LM Studio / llama.cpp / vLLM) surface three known bugs
+   at the response layer: XML tool calls arriving as text content
+   (``<function=...>…``) instead of parsed ``tool_calls``, ``<think>``
+   tag leaks into content, and wrong ``finish_reason`` (``stop``/``eos``
+   when real tool calls ARE present). Pre-v2 Logos patched this inside
+   ``sandbox_worker.py``. Post-v2 the agent runs inside hermes gateway,
+   so the patch has to wrap ``openai.ChatCompletions.create`` there.
 
 We don't want to fork hermes-agent (the sandbox image must stay
-swappable — see LOG-45). So this patch rides in via upload at spawn
-time, rebinds the two methods on ``APIServerAdapter`` in-process, and
-delegates to the hermes CLI via ``runpy``. When upstream eventually
-ships the capability, the whole file gets deleted and
-``hermes_server_mode.py`` reverts to launching ``hermes gateway run``
-directly.
+swappable — see LOG-45). So these patches ride in via upload at spawn
+time and this launcher applies them before handing off to hermes via
+``runpy``. When upstream eventually absorbs either piece of capability,
+the corresponding block gets deleted and ``hermes_server_mode.py``
+eventually reverts to launching ``hermes gateway run`` directly.
 
 How it's delivered
 ──────────────────
@@ -486,13 +492,209 @@ def _apply_cancel_patches() -> bool:
     return True
 
 
+# ---------------------------------------------------------------------------
+# Qwen OpenAI-SDK safety net
+# ---------------------------------------------------------------------------
+
+import json as _json
+import re as _re
+import uuid as _uuid
+
+_QWEN_XML_TOOL_RE = _re.compile(
+    r"<function=([\w.\-]+)>([\s\S]*?)</function>",
+    _re.IGNORECASE,
+)
+_QWEN_XML_PARAM_RE = _re.compile(
+    r"<parameter=([\w.\-]+)>([\s\S]*?)</parameter>",
+    _re.IGNORECASE,
+)
+_QWEN_THINK_LEAK_RE = _re.compile(
+    r"<think>[\s\S]*?</think>|^\s*</think>\s*",
+    _re.IGNORECASE,
+)
+_BAD_STOP_REASONS = {"stop", "error", "eos_token", "", None}
+
+
+def _parse_qwen_xml_tools(text):
+    """Extract Qwen-style XML tool calls that leaked into content."""
+    if not text or "<function=" not in text:
+        return []
+    out = []
+    for m in _QWEN_XML_TOOL_RE.finditer(text):
+        name = m.group(1)
+        body = m.group(2)
+        args = {}
+        for p in _QWEN_XML_PARAM_RE.finditer(body):
+            k = p.group(1).strip()
+            v = p.group(2).strip()
+            try:
+                v = _json.loads(v)
+            except Exception:
+                pass
+            args[k] = v
+        out.append({
+            "id": f"call_{_uuid.uuid4().hex[:24]}",
+            "type": "function",
+            "function": {"name": name, "arguments": _json.dumps(args)},
+        })
+    return out
+
+
+def _strip_qwen_think_leak(text):
+    """Drop whole <think>…</think> blocks and a leading orphan </think>."""
+    if not text:
+        return text
+    return _QWEN_THINK_LEAK_RE.sub("", text).strip()
+
+
+def _normalize_finish_reason(finish_reason, has_tool_calls):
+    if has_tool_calls and finish_reason in _BAD_STOP_REASONS:
+        return "tool_calls"
+    return finish_reason
+
+
+def _apply_qwen_safety_to_choice(choice):
+    """Mutate one OpenAI response choice in place. Returns (xml, think, finish)."""
+    msg = getattr(choice, "message", None) or (
+        choice.get("message") if isinstance(choice, dict) else None
+    )
+    if msg is None:
+        return (False, False, False)
+
+    def _get(obj, key, default=None):
+        if isinstance(obj, dict):
+            return obj.get(key, default)
+        return getattr(obj, key, default)
+
+    def _set(obj, key, value):
+        if isinstance(obj, dict):
+            obj[key] = value
+        else:
+            setattr(obj, key, value)
+
+    content = _get(msg, "content") or ""
+    existing_tools = _get(msg, "tool_calls") or []
+
+    fired_think = False
+    if content:
+        cleaned = _strip_qwen_think_leak(content)
+        if cleaned != content:
+            _set(msg, "content", cleaned)
+            content = cleaned
+            fired_think = True
+
+    fired_xml = False
+    if content and not existing_tools:
+        recovered = _parse_qwen_xml_tools(content)
+        if recovered:
+            _set(msg, "tool_calls", recovered)
+            stripped = _QWEN_XML_TOOL_RE.sub("", content).strip()
+            _set(msg, "content", stripped or None)
+            existing_tools = recovered
+            fired_xml = True
+
+    fired_finish = False
+    if existing_tools:
+        fr = _get(choice, "finish_reason")
+        new_fr = _normalize_finish_reason(fr, True)
+        if new_fr != fr:
+            _set(choice, "finish_reason", new_fr)
+            fired_finish = True
+
+    return (fired_xml, fired_think, fired_finish)
+
+
+def _apply_qwen_safety_net_patches() -> bool:
+    """Wrap ``openai.ChatCompletions.create`` (sync + async) with the
+    Qwen safety net. Idempotent — running twice is a no-op.
+
+    Returns True if the patch applied, False on any exception (patch
+    hermes with plain ChatCompletions.create; qwen-via-OpenAI-SDK will
+    misbehave as it did before this patch, but hermes still boots).
+    """
+    try:
+        from openai.resources.chat.completions import Completions, AsyncCompletions
+    except Exception as exc:  # openai SDK missing — silently skip
+        _logger.warning(
+            "logos.qwen_patch: openai SDK not importable (%s) — skipping",
+            exc,
+        )
+        return False
+
+    if getattr(Completions, "_logos_qwen_safety_patched", False):
+        return True
+
+    try:
+        _sync_create = Completions.create
+        _async_create = AsyncCompletions.create
+
+        def _apply_to_response(resp, model_hint):
+            try:
+                choices = getattr(resp, "choices", None)
+                if choices is None and isinstance(resp, dict):
+                    choices = resp.get("choices")
+                if not choices:
+                    return
+                any_xml = any_think = any_finish = False
+                for c in choices:
+                    fx, ft, ff = _apply_qwen_safety_to_choice(c)
+                    any_xml = any_xml or fx
+                    any_think = any_think or ft
+                    any_finish = any_finish or ff
+                if any_xml or any_think or any_finish:
+                    parts = []
+                    if any_xml:    parts.append("recovered XML tool_calls")
+                    if any_think:  parts.append("stripped <think> leak")
+                    if any_finish: parts.append("fixed finish_reason→tool_calls")
+                    _logger.info(
+                        "logos.qwen_patch: %s on model=%s",
+                        "; ".join(parts), model_hint or "?",
+                    )
+            except Exception as exc:
+                _logger.warning(
+                    "logos.qwen_patch: post-process failed: %s", exc,
+                )
+
+        def _sync_wrapper(self, *args, **kwargs):
+            stream = kwargs.get("stream", False)
+            resp = _sync_create(self, *args, **kwargs)
+            if not stream:
+                _apply_to_response(resp, kwargs.get("model", ""))
+            return resp
+
+        async def _async_wrapper(self, *args, **kwargs):
+            stream = kwargs.get("stream", False)
+            resp = await _async_create(self, *args, **kwargs)
+            if not stream:
+                _apply_to_response(resp, kwargs.get("model", ""))
+            return resp
+
+        Completions.create = _sync_wrapper
+        AsyncCompletions.create = _async_wrapper
+        Completions._logos_qwen_safety_patched = True
+        _logger.info(
+            "logos.qwen_patch: applied OpenAI ChatCompletions Qwen safety "
+            "net (XML tool-call recovery, <think>-leak strip, "
+            "finish_reason normalisation)"
+        )
+        return True
+    except Exception as exc:
+        _logger.warning(
+            "logos.qwen_patch: patch failed — qwen tool-calling may "
+            "misbehave until upstream hermes absorbs the recovery: %s",
+            exc,
+        )
+        return False
+
+
 def _main() -> int:
-    """Apply the patch (best-effort), then hand off to hermes's CLI.
+    """Apply all pre-hermes patches (best-effort), then hand off to hermes.
 
     Returns the hermes process exit code if reachable via runpy;
     otherwise a small nonzero sentinel.
     """
-    _apply_cancel_patches()  # non-fatal on failure — warning is logged
+    _apply_cancel_patches()            # non-fatal on failure — warning is logged
+    _apply_qwen_safety_net_patches()   # non-fatal on failure — warning is logged
 
     # The hermes binary is a pip-installed console_scripts entry at
     # /usr/local/bin/hermes. runpy.run_path executes it in this
