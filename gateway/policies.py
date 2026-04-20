@@ -298,6 +298,29 @@ def get_tool_readiness(agent_id: str) -> List[Dict[str, Any]]:
     # Resolve applied presets
     applied = set(get_applied_presets(agent_id))
 
+    # LOG-44.3 aftermath: per-agent channel credentials live in the DB,
+    # not gateway env. Build a set of env-var names that this agent has
+    # a credential for, so `TELEGRAM_BOT_TOKEN`-style readiness checks
+    # see the per-agent token and don't false-negative as "not set".
+    _per_agent_env_vars: set = set()
+    try:
+        from gateway.executors.hermes_server_mode import _PLATFORM_ENV_MAP
+        rows = auth_db.list_agent_channel_credentials(
+            agent_id=agent_id, enabled_only=True,
+        )
+        for row in rows:
+            platform = (row.get("platform") or "").lower()
+            env_name = _PLATFORM_ENV_MAP.get(platform)
+            if env_name and row.get("token"):
+                _per_agent_env_vars.add(env_name)
+    except Exception:
+        pass  # best-effort — falls back to os.environ only
+
+    def _env_satisfied(key: str) -> bool:
+        if os.environ.get(key):
+            return True
+        return key in _per_agent_env_vars
+
     results = []
 
     # First: tools that need external config
@@ -321,9 +344,9 @@ def get_tool_readiness(agent_id: str) -> List[Dict[str, Any]]:
         env_keys = info.get("env", [])
         any_env = info.get("any_env", False)
         if any_env:
-            has_env = bool(env_keys) and any(os.environ.get(k) for k in env_keys)
+            has_env = bool(env_keys) and any(_env_satisfied(k) for k in env_keys)
         else:
-            has_env = bool(env_keys) and all(os.environ.get(k) for k in env_keys)
+            has_env = bool(env_keys) and all(_env_satisfied(k) for k in env_keys)
 
         # Check presets
         needed_presets = info.get("presets", [])
@@ -337,7 +360,7 @@ def get_tool_readiness(agent_id: str) -> List[Dict[str, Any]]:
             status = "ready"
             reason = ""
         elif not has_env:
-            missing = [k for k in env_keys if not os.environ.get(k)]
+            missing = [k for k in env_keys if not _env_satisfied(k)]
             status = "needs_config"
             reason = f"{', '.join(missing)} not set"
         else:
