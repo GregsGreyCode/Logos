@@ -395,6 +395,91 @@ async def sync_memories_from_sandbox(sandbox_name: str) -> None:
         logger.debug("v2 memory sync(%s): download raised: %s", sandbox_name, exc)
 
 
+async def fetch_toolsets_from_sandbox(
+    sandbox_name: str,
+    timeout: float = 10.0,
+) -> Optional[Dict[str, Any]]:
+    """Query the sandbox's hermes for its live toolset registry.
+
+    LOG-64: the admin UI's /admin/toolsets endpoint used to read Logos's
+    vendored tools.registry — a static display-only copy. Now hermes
+    exposes GET /v1/toolsets (via hermes_cancel_monkeypatch's
+    ``_apply_toolset_introspection_patch``) and this helper curls it
+    through ``openshell sandbox exec``, returning the sandbox's actual
+    view.
+
+    Returns the parsed JSON body (dict with keys ``toolsets``,
+    ``all_tool_names``, ``availability``, ``source``) on success; None
+    on any failure (no sandbox, no setup, openshell CLI missing, curl
+    error, malformed response). Never raises.
+    """
+    setup = _load_server_setup(sandbox_name)
+    if setup is None:
+        return None
+    api_key = setup.get("api_key")
+    base_url = setup.get("base_url")
+    if not api_key or not base_url:
+        return None
+
+    from gateway.worker_registry import resolve_sandbox_gateway
+    target_gateway = resolve_sandbox_gateway(sandbox_name)
+
+    # Build an `openshell sandbox exec` that curls the endpoint.
+    # ``curl -s`` suppresses progress noise; ``-f`` makes curl exit
+    # non-zero on 4xx/5xx so the outer subprocess captures it as a
+    # failure rather than silently returning an error body.
+    curl_cmd = (
+        f"curl -sf -H 'Authorization: Bearer {api_key}' "
+        f"--max-time {int(timeout)} {base_url}/v1/toolsets"
+    )
+    openshell_cmd = ["openshell"]
+    if target_gateway:
+        openshell_cmd += ["-g", target_gateway]
+    openshell_cmd += [
+        "sandbox", "exec", "--no-tty",
+        "--name", sandbox_name, "--",
+        "sh", "-c", curl_cmd,
+    ]
+
+    try:
+        result = await asyncio.to_thread(
+            subprocess.run,
+            openshell_cmd,
+            capture_output=True,
+            text=True,
+            timeout=timeout + 5,
+            input="",
+        )
+    except Exception as exc:
+        logger.debug(
+            "fetch_toolsets_from_sandbox(%s): openshell exec raised: %s",
+            sandbox_name, exc,
+        )
+        return None
+
+    if result.returncode != 0:
+        logger.debug(
+            "fetch_toolsets_from_sandbox(%s): curl rc=%d stderr=%r",
+            sandbox_name, result.returncode,
+            (result.stderr or "")[:200],
+        )
+        return None
+
+    try:
+        payload = json.loads(result.stdout)
+    except json.JSONDecodeError as exc:
+        logger.debug(
+            "fetch_toolsets_from_sandbox(%s): malformed JSON: %s "
+            "(raw=%r)",
+            sandbox_name, exc, (result.stdout or "")[:200],
+        )
+        return None
+
+    if not isinstance(payload, dict):
+        return None
+    return payload
+
+
 def _load_server_setup(sandbox_name: str) -> Optional[Dict[str, str]]:
     """Retrieve the HermesServerSetup info for a sandbox from the
     executor state file.
@@ -888,5 +973,6 @@ __all__ = [
     "sandbox_has_server_mode",
     "sync_memories_from_sandbox",
     "record_cost_entry",
+    "fetch_toolsets_from_sandbox",
     "DEFAULT_TASK_TIMEOUT",
 ]
