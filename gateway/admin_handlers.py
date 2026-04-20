@@ -1354,19 +1354,46 @@ async def handle_agent_tools_get(request: web.Request) -> web.Response:
         return web.json_response({"error": "not_found"}, status=404)
 
     # ── Application layer: available + enabled toolsets ──
+    #
+    # LOG-64: query the agent's own sandbox for its live toolset view
+    # (via hermes's /v1/toolsets endpoint registered by the monkeypatch).
+    # Fall back to Logos's vendored core/toolsets.TOOLSETS only when the
+    # sandbox is unreachable — that dict is static residue from the
+    # pre-sandbox era and can silently disagree with what upstream
+    # hermes actually has.
     available_toolsets: list[dict] = []
+    toolsets_source = "local"
     try:
-        from core.toolsets import TOOLSETS
-        for name, meta in sorted(TOOLSETS.items()):
-            description = ""
-            if isinstance(meta, dict):
-                description = str(meta.get("description", ""))
-            available_toolsets.append({"name": name, "description": description})
+        from gateway.executors.openshell import _sanitize_sandbox_name
+        from gateway.worker_registry_v2 import fetch_toolsets_from_sandbox
+        sandbox_name = _sanitize_sandbox_name(f"hermes-{agent['name']}")
+        payload = await fetch_toolsets_from_sandbox(sandbox_name)
+        if payload and isinstance(payload.get("toolsets"), dict):
+            for name, meta in sorted(payload["toolsets"].items()):
+                description = ""
+                if isinstance(meta, dict):
+                    description = str(meta.get("description", ""))
+                available_toolsets.append({"name": name, "description": description})
+            toolsets_source = f"sandbox:{sandbox_name}"
     except Exception as exc:
-        logger.warning(
-            "handle_agent_tools_get(%s): failed to load core.toolsets.TOOLSETS: %s",
-            aid, exc,
+        logger.debug(
+            "handle_agent_tools_get(%s): sandbox toolset query failed, "
+            "falling back to local: %s", aid, exc,
         )
+
+    if not available_toolsets:
+        try:
+            from core.toolsets import TOOLSETS
+            for name, meta in sorted(TOOLSETS.items()):
+                description = ""
+                if isinstance(meta, dict):
+                    description = str(meta.get("description", ""))
+                available_toolsets.append({"name": name, "description": description})
+        except Exception as exc:
+            logger.warning(
+                "handle_agent_tools_get(%s): failed to load core.toolsets.TOOLSETS: %s",
+                aid, exc,
+            )
 
     import json as _json
     enabled_toolsets: list[str] = []
@@ -1414,6 +1441,7 @@ async def handle_agent_tools_get(request: web.Request) -> web.Response:
         "toolsets": {
             "enabled": enabled_toolsets,
             "available": available_toolsets,
+            "source": toolsets_source,
         },
         "presets": {
             "applied": applied_presets,
