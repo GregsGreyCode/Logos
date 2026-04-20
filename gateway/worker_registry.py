@@ -1,84 +1,48 @@
-"""
-Worker Registry — per-task dispatch via ``openshell sandbox exec``.
+"""Worker Registry — read-only view over OpenShell sandbox state.
 
-Plan A-prime architecture (TASKS.md #24): instead of keeping a long-
-running subprocess per sandbox (the original Plan A, which hit a hard
-wall on ``openshell sandbox exec --no-tty`` refusing to start the
-in-sandbox process until stdin reaches EOF), we spawn a fresh
-``openshell sandbox exec`` subprocess for every task dispatch:
+Post-Phase-2 this module is no longer a dispatcher. Plan A-Prime's
+per-task ``openshell sandbox exec`` subprocess model is gone; all
+dispatch flows through ``gateway.worker_registry_v2.dispatch_task_v2``
+against the in-sandbox ``hermes gateway run`` HTTP server.
 
-    1. ``openshell sandbox exec --no-tty --name <sandbox> --
-       python3 /app/sandbox_worker.py``
-    2. Write the task JSON to stdin + **close stdin** (the EOF is what
-       unblocks openshell's exec gate so the in-sandbox process
-       actually starts — proven empirically).
-    3. Read JSON lines from stdout; dispatch streaming events
-       (``token``, ``thinking``, ``tool_progress``) to the caller's
-       ``on_stream_event`` callback as they arrive.
-    4. Collect the ``task_result`` frame as the final result.
-    5. Wait for the subprocess to exit (the in-sandbox python returns
-       after emitting ``task_result``) and return the result.
+What stays:
 
-Cold-start tax: ~0.2s per dispatch for python import + config load.
-Negligible compared to 2–30s inference calls.
+* Read-only accessors over the executor state file
+  (``~/.logos/openshell_instances.json``) so the admin UI, health
+  checks, and heal logic can continue to ask "what sandboxes exist,
+  are they healthy, which gateway owns them" without knowing about
+  the executor internals. Exposed as ``get()`` / ``workers`` /
+  ``list_workers()`` / ``list_healthy()`` for back-compat with older
+  call sites.
 
-Why not a persistent worker
-────────────────────────────
-Directly tested — ``openshell sandbox exec --no-tty`` blocks the
-in-sandbox command until stdin reaches EOF. Writing bytes to stdin
-without closing the pipe does NOT unblock it. That makes any design
-that keeps stdin open for ongoing task delivery physically
-impossible on this transport. The persistent-worker variant of this
-module sat spinning for 60 seconds before timing out on every single
-spawn. One-shot-per-task matches the primitive's actual contract.
+* ``active_task_count`` — bridged to v2's ``_INFLIGHT`` registry so
+  the world-view thought bubbles still render.
 
-Public interface (preserved from the prior persistent-worker
-registry so external call sites don't change):
+* Periodic background sync of sandbox ``logs`` and ``sessions``
+  directories to the host per-agent dir. Runs every 30 / 60 minutes
+  respectively, independent of dispatch. v2's per-dispatch memory
+  sync (``gateway.worker_registry_v2.sync_memories_from_sandbox``)
+  handles the write-path-hot directory.
 
-    worker_registry.workers                   # always {} (stateless)
-    worker_registry.get(sandbox_name)         # Optional[_SandboxHealthEntry]
-    worker_registry.list_workers()            # list[dict]
-    worker_registry.list_healthy()            # list[dict]
-    await worker_registry.dispatch_task(sandbox_name, task, timeout, on_stream_event)
-
-Health reporting: ``get()`` / ``list_workers()`` now read from the
-executor state file (``~/.logos/openshell_instances.json``) rather
-than an in-memory subprocess map. "Healthy" means the sandbox CR is
-in ``phase == "ready"`` — the subprocess lifetime is ephemeral, so
-there's nothing else to check. A future improvement (MISSING.md M7)
-can query ``openshell sandbox list`` live for a richer phase field.
+``resolve_sandbox_gateway`` is the shared helper used by v2 dispatch
+to route a sandbox name to its owning OpenShell gateway — kept at
+module level so v2 doesn't depend on this class.
 """
 
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
-import shlex
 import subprocess
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional
+from typing import Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
 
-# Default dispatch budget — a task has up to this many seconds to
-# return its ``task_result`` frame. Matches the patched openshell-router
-# 600s ceiling (TASKS.md #22) so the whole chain agrees on the upper
-# bound for an inference call.
-DEFAULT_TASK_TIMEOUT = 600.0
-
-
 # ── Health entry shim ─────────────────────────────────────────────────────
-#
-# The old persistent-worker ``WorkerEntry`` exposed ``.healthy``,
-# ``.status``, ``.toolsets``, ``.soul`` etc. so callers (admin_handlers,
-# http_api chat dispatch) could poll per-worker state. Post-refactor
-# there is no persistent worker object — health is sourced from the
-# executor state file. This shim wraps a state-file dict and serves
-# the same attribute surface so the callers don't need to change.
 
 @dataclass
 class _SandboxHealthEntry:
@@ -184,9 +148,8 @@ def resolve_sandbox_gateway(sandbox_name: str) -> Optional[str]:
     Looking up the target gateway explicitly and passing ``-g``
     makes dispatch routing deterministic regardless of CLI state.
 
-    Both v1 (``WorkerRegistry.dispatch_task``) and v2
-    (``worker_registry_v2.dispatch_task_v2``) call this — keeping
-    it module-level stops the two dispatchers from drifting.
+    Called by ``worker_registry_v2.dispatch_task_v2``. Kept at
+    module level so v2 doesn't depend on the registry class.
     """
     # 1. State file lookup
     try:
@@ -241,50 +204,26 @@ def resolve_sandbox_gateway(sandbox_name: str) -> Optional[str]:
 
 
 class WorkerRegistry:
-    """Stateless dispatcher — spawns one ``openshell sandbox exec``
-    subprocess per task. Keeps no persistent per-sandbox state.
+    """Read-only view over the executor state file.
 
-    Health queries (``get``/``list_workers``) are answered from the
-    executor state file so the API surface matches the old persistent
-    registry without maintaining a parallel cache.
+    All dispatch runs through ``worker_registry_v2.dispatch_task_v2``
+    (see module docstring). This class exposes the query surface
+    (``get``, ``workers``, ``list_workers``, ``list_healthy``,
+    ``active_task_count``) used by admin UI, heal logic, and chat
+    routing to answer "which sandboxes exist and are they healthy".
     """
 
     def __init__(self) -> None:
-        # No persistent worker state. Old call sites that introspected
-        # ``.workers`` got a dict — we reconstruct that on demand from
-        # the executor state file.
-        #
-        # ``_active_tasks`` is an in-flight-dispatch counter keyed by
-        # sandbox_name. Incremented at the top of ``dispatch_task``,
-        # decremented in its ``finally`` block. Exposed via
-        # ``active_task_count()`` so admin_handlers can surface
-        # "agent is currently processing N tasks" to the UI — which
-        # the world view uses to render a thought-bubble indicator
-        # (MISSING.md — Phase A of the dispatch-activity tracking
-        # work). A ``defaultdict(int)`` would work but the plain dict
-        # + explicit ``get(..., 0)`` keeps the semantics obvious: the
-        # dict only holds non-zero entries; a missing key means zero
-        # in-flight tasks for that sandbox.
-        self._active_tasks: Dict[str, int] = {}
+        # No per-process dispatch state — v2 owns it all. The class
+        # still exists so older callers can bind one instance to the
+        # aiohttp app (``app["worker_registry"]``) and query it.
+        pass
 
-        # In-flight task registry — maps task_id → Process handle for
-        # the currently-running ``openshell sandbox exec`` subprocess.
-        # Populated in ``_dispatch_task_impl`` right after spawn, cleared
-        # in the finally. Used by ``cancel_task()`` so the /chat cancel
-        # endpoint can SIGTERM the subprocess and unblock a hung run
-        # without waiting for the full timeout.
-        self._in_flight: Dict[str, "asyncio.subprocess.Process"] = {}
-
-    # ─── Read accessors (back-compat with old persistent-worker API) ────
+    # ─── Read accessors ─────────────────────────────────────────────────
 
     @property
     def workers(self) -> Dict[str, _SandboxHealthEntry]:
-        """Return a dict of every state-file sandbox, keyed by worker_id.
-
-        Previously this was the in-memory map of subprocess-per-sandbox
-        worker entries. Post-refactor every value is a read-only shim
-        over the state-file row.
-        """
+        """Return a dict of every state-file sandbox, keyed by worker_id."""
         from gateway.executors.openshell import _load_state
         out: Dict[str, _SandboxHealthEntry] = {}
         try:
@@ -317,412 +256,23 @@ class WorkerRegistry:
         return [e for e in self.workers.values() if e.healthy]
 
     def active_task_count(self, sandbox_name: str) -> int:
-        """Return the number of dispatches currently in flight against
-        the given sandbox.
+        """Return the number of in-flight v2 dispatches against this
+        sandbox.
 
-        Used by ``admin_handlers.handle_agents_list`` to expose
-        ``active_tasks`` per-agent in ``/admin/agents`` responses so
-        the world view can render a thought-bubble animation on
-        agents that are currently processing a task.
+        Bridges to ``worker_registry_v2._INFLIGHT``. Used by
+        ``admin_handlers.handle_agents_list`` to render thought-bubble
+        indicators on agents currently processing a task.
         """
-        return self._active_tasks.get(sandbox_name, 0)
-
-    def cancel_task(self, task_id: str) -> bool:
-        """Abort an in-flight task by terminating its worker subprocess.
-
-        Looks up the running ``openshell sandbox exec`` process by
-        ``task_id``, sends SIGTERM, and lets the dispatch loop's
-        cleanup paths (stdout EOF, ``wait_for(proc.wait(), 5s)``, the
-        ``_in_flight.pop`` in the finally) unwind the rest.
-
-        Returns True if a matching in-flight task was found and
-        signalled, False if no such task exists (caller should return
-        404). Never blocks on the subprocess — the dispatch loop
-        handles reap + cleanup.
-        """
-        proc = self._in_flight.get(task_id)
-        if proc is None:
-            return False
         try:
-            proc.terminate()
-        except ProcessLookupError:
-            # Already exited between our lookup and terminate — treat
-            # as success; the dispatch finally will clean up.
-            pass
-        except Exception as exc:
-            logger.warning("cancel_task(%s): terminate failed: %s", task_id, exc)
-            return False
-        return True
-
-    # ─── Task dispatch ──────────────────────────────────────────────────
-
-    async def dispatch_task(
-        self,
-        worker_id: str,
-        task: dict,
-        timeout: float = DEFAULT_TASK_TIMEOUT,
-        on_stream_event: Optional[Callable[[Dict[str, Any]], Any]] = None,
-    ) -> dict:
-        """Spawn a fresh ``openshell sandbox exec`` subprocess, pipe the
-        task to its stdin, close stdin, and stream stdout back until the
-        subprocess exits. Return the final ``task_result`` frame.
-
-        ``worker_id`` is the OpenShell sandbox name (in Plan A-prime the
-        worker_id and sandbox_name are the same; the separate parameter
-        is kept for signature compatibility with the old persistent
-        registry).
-
-        Raises:
-            ConnectionError: if the subprocess fails to spawn (e.g.
-                             openshell CLI missing, sandbox not found).
-            TimeoutError:    if no ``task_result`` arrives within ``timeout``.
-            RuntimeError:    if the worker exits without emitting a
-                             ``task_result`` frame at all, or emits an
-                             error terminal frame.
-        """
-        sandbox_name = worker_id  # one-to-one mapping
-        task_id = task.get("task_id", "")
-        if not task_id:
-            raise ValueError("dispatch_task requires task_id in the task payload")
-
-        # Mark this sandbox as "actively processing a task" for the
-        # duration of the dispatch. See active_task_count() for the
-        # rationale — admin_handlers surfaces this counter to the
-        # frontend which uses it to render a thought-bubble animation
-        # on agents that are currently working. Decrement in the outer
-        # finally so every exit path (success, error, cancel) clears
-        # the count correctly.
-        self._active_tasks[sandbox_name] = self._active_tasks.get(sandbox_name, 0) + 1
-
-        try:
-            return await self._dispatch_task_impl(
-                sandbox_name, task_id, task, timeout, on_stream_event,
-            )
-        finally:
-            remaining = self._active_tasks.get(sandbox_name, 1) - 1
-            if remaining <= 0:
-                self._active_tasks.pop(sandbox_name, None)
-            else:
-                self._active_tasks[sandbox_name] = remaining
-
-    async def _dispatch_task_impl(
-        self,
-        sandbox_name: str,
-        task_id: str,
-        task: dict,
-        timeout: float,
-        on_stream_event: Optional[Callable[[Dict[str, Any]], Any]],
-    ) -> dict:
-        """Internal implementation of dispatch_task — the actual
-        subprocess-per-task machinery. Split out from the public
-        ``dispatch_task`` so the entry/exit counter update in the
-        outer wrapper stays readable and can't be accidentally
-        bypassed by an early return in the middle of the body."""
-        # CRITICAL: look up which OpenShell gateway this sandbox lives
-        # inside, and pass it via -g to the CLI. Without -g, the CLI
-        # uses whatever gateway is "currently selected" in
-        # ~/.config/openshell/gateways/ — which is whichever one was
-        # provisioned / selected most recently. That means a dispatch
-        # to hermes-tali (living in qwen-qwen3-5-9b) would actually
-        # run against openai-gpt-oss-20b if that was the last gateway
-        # the user added, and openshell returns
-        # ``status: NotFound, message: "sandbox not found"`` because
-        # the target sandbox isn't in the selected cluster.
-        #
-        # This bit us in the wild on 2026-04-11: agent Tali chats
-        # worked fine until agent Grace was re-bound to a new route,
-        # at which point openai-gpt-oss-20b became the active gateway
-        # and every Tali dispatch failed with NotFound. Grace worked
-        # by coincidence because her sandbox happened to be in the
-        # now-active gateway.
-        target_gateway = self._resolve_sandbox_gateway(sandbox_name)
-        if target_gateway is None:
-            raise ConnectionError(
-                f"dispatch_task({sandbox_name}): no gateway resolvable "
-                f"for this sandbox. Not in the state file, no default "
-                f"route configured, /setup may not have run yet."
-            )
-
-        # Build the exec command. --no-tty is critical — with a TTY,
-        # openshell allocates a PTY and stdout becomes a terminal which
-        # breaks JSON-line framing. -g forces exec into the correct
-        # cluster regardless of whichever gateway is CLI-selected.
-        cmd = [
-            "openshell",
-            "-g",
-            target_gateway,
-            "sandbox",
-            "exec",
-            "--no-tty",
-            "--name",
-            sandbox_name,
-            "--",
-            "bash", "-c",
-            "HERMES_HOME=/tmp/hermes exec python3 /tmp/sandbox_worker.py",
-        ]
-
-        logger.debug(
-            "dispatch_task(%s): spawning `%s` for task=%s",
-            sandbox_name, " ".join(shlex.quote(c) for c in cmd), task_id,
+            from gateway.worker_registry_v2 import _INFLIGHT as _v2_inflight
+        except ImportError:
+            return 0
+        return sum(
+            1 for e in _v2_inflight.values()
+            if e.get("sandbox_name") == sandbox_name
         )
 
-        # Normalise the task shape — sandbox_worker.py accepts either
-        # "task" or the legacy "run_conversation" type, but default to
-        # "task" for new dispatches.
-        if "type" not in task:
-            task = {"type": "task", **task}
-
-        try:
-            # asyncio.StreamReader's default readline buffer is 64 KiB
-            # (asyncio.streams._DEFAULT_LIMIT). A single JSON frame from
-            # the worker can exceed that: a full browser snapshot of a
-            # long page (~15 KiB), wrapped in the untrusted-content tags,
-            # tool_call metadata + usage + token stream state can all
-            # land in one task_result. When readline hits the limit it
-            # silently returns a truncated line → the gateway logs
-            # "malformed stdout line" and never sees task_result →
-            # dispatch times out. Bump the limit to 8 MiB which is
-            # plenty for any realistic single frame.
-            proc = await asyncio.create_subprocess_exec(
-                *cmd,
-                stdin=asyncio.subprocess.PIPE,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                limit=8 * 1024 * 1024,
-            )
-        except FileNotFoundError as exc:
-            raise ConnectionError(
-                f"openshell CLI not found on PATH — cannot dispatch to {sandbox_name}"
-            ) from exc
-        except Exception as exc:
-            raise ConnectionError(
-                f"Failed to spawn `openshell sandbox exec` for {sandbox_name}: {exc}"
-            ) from exc
-
-        # Register the proc so /chat/{task_id}/cancel can reach it.
-        # Cleared in the outer finally (below).
-        self._in_flight[task_id] = proc
-
-        # Pipe the task + close stdin. **This close is critical.**
-        # openshell's exec primitive waits for stdin EOF before
-        # invoking the in-sandbox process; without it the subprocess
-        # sits in a gRPC wait state forever and our stdout read hangs.
-        try:
-            assert proc.stdin is not None
-            payload = json.dumps(task).encode("utf-8") + b"\n"
-            proc.stdin.write(payload)
-            await proc.stdin.drain()
-            proc.stdin.close()
-        except Exception as exc:
-            self._in_flight.pop(task_id, None)
-            await self._cleanup_proc(proc)
-            raise ConnectionError(
-                f"Failed to pipe task to {sandbox_name}: {exc}"
-            ) from exc
-
-        # Drain stderr in parallel so the subprocess's pipe doesn't
-        # fill up and dead-lock the process. Tag lines with the
-        # sandbox name so they flow into the unified log correctly.
-        stderr_task = asyncio.create_task(
-            self._drain_stderr_loop(proc, sandbox_name),
-            name=f"worker-stderr-{sandbox_name}",
-        )
-
-        final_result: Optional[dict] = None
-        try:
-            deadline = asyncio.get_event_loop().time() + timeout
-            assert proc.stdout is not None
-            while True:
-                remaining = deadline - asyncio.get_event_loop().time()
-                if remaining <= 0:
-                    raise TimeoutError(
-                        f"Task {task_id} on {sandbox_name} did not "
-                        f"return task_result within {timeout}s"
-                    )
-                try:
-                    line_bytes = await asyncio.wait_for(
-                        proc.stdout.readline(), timeout=remaining,
-                    )
-                except asyncio.TimeoutError:
-                    raise TimeoutError(
-                        f"Task {task_id} on {sandbox_name} timed out "
-                        f"waiting for the next stdout line ({timeout}s)"
-                    )
-                if not line_bytes:
-                    # stdout EOF — subprocess has exited (or closed stdout).
-                    break
-                text = line_bytes.decode("utf-8", errors="replace").strip()
-                if not text:
-                    continue
-                try:
-                    msg = json.loads(text)
-                except json.JSONDecodeError as exc:
-                    logger.warning(
-                        "dispatch_task(%s) malformed stdout line (%s): %r",
-                        sandbox_name, exc, text[:200],
-                    )
-                    continue
-
-                msg_type = msg.get("type")
-                if msg_type == "task_result":
-                    final_result = msg
-                    # keep reading — the worker should exit immediately
-                    # after emitting task_result, so the next readline
-                    # should return b"" (EOF).
-                    continue
-
-                if msg_type == "ready":
-                    # Sanity line from the worker's first emit. Forward
-                    # as a stream event so on_stream_event callers that
-                    # want to surface "worker started" can do so, but
-                    # it's optional — most callers ignore it.
-                    if on_stream_event is not None:
-                        try:
-                            await on_stream_event(msg)
-                        except Exception as exc:
-                            logger.debug("on_stream_event(ready) raised: %s", exc)
-                    continue
-
-                # Stream-relay frames: forward the full envelope to the
-                # SSE client so the chat UI's live-tool panel can render
-                # tool_start / tool_end (with previews + duration_ms) and
-                # the streaming token / thinking ticker can update.
-                #
-                # tool_start and tool_end were dropped from this list
-                # during the Plan A-prime per-task exec refactor (the
-                # previous persistent-worker WS forwarded everything
-                # generically); re-adding them here restores the live
-                # execution display in the chat header.
-                if msg_type in (
-                    "token",
-                    "thinking",
-                    "tool_progress",
-                    "tool_start",
-                    "tool_end",
-                ):
-                    if on_stream_event is not None:
-                        try:
-                            await on_stream_event(msg)
-                        except Exception as exc:
-                            logger.debug(
-                                "on_stream_event(%s) raised: %s", msg_type, exc,
-                            )
-                    continue
-
-                if msg_type == "error":
-                    # Legacy error frame (non-terminal). Synthesize a
-                    # task_result with the error so callers get a
-                    # terminal frame.
-                    final_result = {
-                        "type": "task_result",
-                        "task_id": task_id,
-                        "status": "error",
-                        "final_response": "",
-                        "error": msg.get("error", "worker emitted error"),
-                    }
-                    continue
-
-                logger.debug(
-                    "dispatch_task(%s) unknown stdout type %r — ignoring",
-                    sandbox_name, msg_type,
-                )
-
-            # Wait for the subprocess to exit cleanly.
-            try:
-                await asyncio.wait_for(proc.wait(), timeout=5.0)
-            except asyncio.TimeoutError:
-                logger.warning(
-                    "dispatch_task(%s) subprocess didn't exit within 5s — killing",
-                    sandbox_name,
-                )
-                await self._cleanup_proc(proc)
-        finally:
-            stderr_task.cancel()
-            try:
-                await stderr_task
-            except Exception:
-                pass
-            # Drop the in-flight proc handle regardless of exit path so
-            # a cancel_task() call after completion is a no-op (404)
-            # rather than touching an already-reaped subprocess.
-            self._in_flight.pop(task_id, None)
-
-        if final_result is None:
-            raise RuntimeError(
-                f"Worker for {sandbox_name} exited (returncode="
-                f"{proc.returncode}) without emitting task_result. "
-                f"Check `openshell sandbox exec --name {sandbox_name} "
-                f"-- cat /tmp/worker.jsonl` for the in-sandbox trace."
-            )
-
-        # NB: we do NOT raise on status=error — the http_api chat
-        # dispatcher expects a dict back with status/error fields so
-        # it can render the failure as an in-chat error bubble rather
-        # than an opaque 500. Only the "no frame at all" case above is
-        # a hard failure worth raising.
-
-        # ── Sync memories back from sandbox to host ──────────────
-        #
-        # After each task, download the agent's /tmp/hermes/memories/
-        # directory to the per-agent host directory so memories persist
-        # across sandbox restarts. Best-effort — download failure must
-        # not block the chat response.
-        try:
-            await self._sync_memories_from_sandbox(
-                sandbox_name, target_gateway,
-            )
-        except Exception as exc:
-            logger.debug(
-                "dispatch_task(%s): memory sync-back failed (non-fatal): %s",
-                sandbox_name, exc,
-            )
-
-        # ── Cost log ────────────────────────────────────────────────────
-        # Write one row per dispatch with token usage + derived USD cost.
-        # Never raises — a logging failure must never block a reply.
-        try:
-            self._record_cost_entry(
-                final_result=final_result,
-                sandbox_name=sandbox_name,
-                task_id=task_id,
-                session_id=session_id,
-            )
-        except Exception as exc:
-            logger.debug(
-                "dispatch_task(%s): cost log write failed (non-fatal): %s",
-                sandbox_name, exc,
-            )
-
-        return final_result
-
-    def _record_cost_entry(
-        self,
-        final_result: Optional[dict],
-        sandbox_name: str,
-        task_id: str,
-        session_id: Optional[str],
-    ) -> None:
-        """Thin delegator to the shared v2 helper.
-
-        Kept as a method for backward compatibility with the single
-        caller at ``dispatch_task``; the full implementation lives in
-        ``worker_registry_v2.record_cost_entry`` so v1 and v2 share
-        bit-identical cost accounting. Deleted with v1 in Phase 2.
-        """
-        from gateway.worker_registry_v2 import record_cost_entry
-        record_cost_entry(final_result, sandbox_name, task_id, session_id)
-
-    # ─── Sandbox state sync ──────────────────────────────────────────────
-    #
-    # Three tiers of data sync from sandbox → gateway host:
-    #   1. Memories  — synced after dispatch, only when files changed (mtime)
-    #   2. Logs      — synced every 30 minutes by background task
-    #   3. Sessions  — synced every 60 minutes by background task
-    #
-    # All syncs are best-effort: failures never block chat responses.
-
-    # Track last-known mtime per sandbox for change detection
-    _memory_mtimes: Dict[str, float] = {}
+    # ─── Periodic sandbox → host sync (logs + sessions) ─────────────────
 
     def _download_sandbox_dir(
         self,
@@ -744,76 +294,10 @@ class WorkerRegistry:
         )
         return result.returncode == 0
 
-    def _resolve_agent_info(self, sandbox_name: str):
-        """Return (agent_name, gateway) for a sandbox, or (None, None)."""
-        from gateway.executors.openshell import _load_state
-        for inst in _load_state():
-            if inst.get("sandbox_name") == sandbox_name:
-                return inst.get("name"), inst.get("openshell_name", "")
-        return None, None
-
     def _agent_host_dir(self, agent_name: str) -> Path:
         """Return the per-agent host directory: ~/.logos/agents/<name>/"""
         from gateway.executors.openshell import _HERMES_HOME
         return _HERMES_HOME / "agents" / agent_name
-
-    async def _sync_memories_from_sandbox(
-        self,
-        sandbox_name: str,
-        gateway: str,
-    ) -> None:
-        """Sync memories only if the sandbox has newer files than last sync.
-
-        Uses ``openshell sandbox exec -- stat`` to check the mtime of the
-        memories directory. Only downloads if mtime is newer than the last
-        recorded sync. This avoids downloading an empty/unchanged directory
-        on every dispatch — memories only sync when the agent actually
-        wrote to them via the memory tool.
-        """
-        agent_name, _ = self._resolve_agent_info(sandbox_name)
-        if not agent_name:
-            return
-
-        # Check mtime of the memories directory inside the sandbox
-        try:
-            stat_result = await asyncio.to_thread(
-                subprocess.run,
-                [
-                    "openshell", "-g", gateway,
-                    "sandbox", "exec", "--no-tty",
-                    "--name", sandbox_name, "--",
-                    "stat", "-c", "%Y", "/tmp/hermes/memories/",
-                ],
-                capture_output=True, text=True, timeout=10,
-                input="",
-            )
-            if stat_result.returncode != 0:
-                return
-            current_mtime = float(stat_result.stdout.strip())
-        except Exception:
-            return
-
-        last_mtime = self._memory_mtimes.get(sandbox_name, 0.0)
-        if current_mtime <= last_mtime:
-            return  # no changes since last sync
-
-        host_dir = self._agent_host_dir(agent_name) / "memories"
-        try:
-            ok = await asyncio.to_thread(
-                self._download_sandbox_dir,
-                sandbox_name, gateway,
-                "/tmp/hermes/memories/", host_dir,
-            )
-            if ok:
-                self._memory_mtimes[sandbox_name] = current_mtime
-                n_files = len([f for f in host_dir.iterdir() if f.is_file()])
-                if n_files > 0:
-                    logger.info(
-                        "memory sync: %s → %s (%d file(s))",
-                        sandbox_name, host_dir, n_files,
-                    )
-        except Exception as exc:
-            logger.debug("memory sync: failed for %s: %s", sandbox_name, exc)
 
     async def _periodic_sync_loop(
         self,
@@ -826,8 +310,8 @@ class WorkerRegistry:
 
         Args:
             sync_type: Label for logging (e.g. "logs", "sessions")
-            sandbox_path: Path inside sandbox (e.g. "/tmp/hermes/logs/")
-            host_subdir: Subdirectory under ~/.logos/agents/<name>/ (e.g. "logs")
+            sandbox_path: Path inside sandbox (hermes-srv-home layout)
+            host_subdir: Subdirectory under ~/.logos/agents/<name>/
             interval_seconds: Seconds between sync cycles
         """
         await asyncio.sleep(60)  # initial delay — let gateway fully start
@@ -867,12 +351,14 @@ class WorkerRegistry:
     def start_background_sync_tasks(self) -> None:
         """Launch the periodic log and session sync background tasks.
 
-        Called once at gateway startup from start_http_api().
+        Called once at gateway startup from start_http_api(). Paths
+        target the v2 hermes-srv-home layout written by
+        ``gateway.executors.hermes_server_mode.deploy_hermes_config``.
         """
         asyncio.create_task(
             self._periodic_sync_loop(
                 sync_type="logs",
-                sandbox_path="/tmp/hermes/logs/",
+                sandbox_path="/tmp/hermes-srv-home/logs/",
                 host_subdir="logs",
                 interval_seconds=1800,  # 30 minutes
             ),
@@ -881,71 +367,25 @@ class WorkerRegistry:
         asyncio.create_task(
             self._periodic_sync_loop(
                 sync_type="sessions",
-                sandbox_path="/tmp/hermes/sessions/",
+                sandbox_path="/tmp/hermes-srv-home/sessions/",
                 host_subdir="sessions",
                 interval_seconds=3600,  # 1 hour
             ),
             name="sandbox-sync-sessions",
         )
+        logger.info("worker_registry: started background logs + sessions sync tasks")
 
-    # ─── Gateway routing helper ─────────────────────────────────────────
 
-    def _resolve_sandbox_gateway(self, sandbox_name: str) -> Optional[str]:
-        """Thin instance-method wrapper around ``resolve_sandbox_gateway``.
+_registry_singleton: Optional[WorkerRegistry] = None
 
-        Kept so existing v1 call sites in this class don't need to
-        import the module-level helper. See that function for the full
-        resolution rules.
-        """
-        return resolve_sandbox_gateway(sandbox_name)
 
-    # ─── Subprocess lifecycle helpers ───────────────────────────────────
+def get_registry() -> WorkerRegistry:
+    """Return a process-wide ``WorkerRegistry`` singleton.
 
-    async def _drain_stderr_loop(
-        self,
-        proc: asyncio.subprocess.Process,
-        sandbox_name: str,
-    ) -> None:
-        """Forward subprocess stderr line-by-line to the gateway logger.
-
-        Tagging each line with the sandbox name means
-        ``logos debug tail --filter worker_id=hermes-<agent>`` catches
-        them. Runs until stderr EOF or the task is cancelled.
-        """
-        assert proc.stderr is not None
-        try:
-            while True:
-                try:
-                    line = await proc.stderr.readline()
-                except Exception:
-                    break
-                if not line:
-                    break
-                text = line.decode("utf-8", errors="replace").rstrip()
-                if text:
-                    logger.info(
-                        "[worker:%s] %s",
-                        sandbox_name, text,
-                        extra={"worker_id": sandbox_name},
-                    )
-        except asyncio.CancelledError:
-            pass
-
-    async def _cleanup_proc(
-        self,
-        proc: asyncio.subprocess.Process,
-    ) -> None:
-        """Best-effort kill of a subprocess on error/timeout paths."""
-        if proc.returncode is not None:
-            return
-        try:
-            proc.terminate()
-            try:
-                await asyncio.wait_for(proc.wait(), timeout=3.0)
-            except asyncio.TimeoutError:
-                proc.kill()
-                await proc.wait()
-        except ProcessLookupError:
-            pass
-        except Exception as exc:
-            logger.debug("_cleanup_proc: unexpected error: %s", exc)
+    Used by modules that need the registry surface without threading
+    it through as a parameter (e.g. ``gateway.world_awareness``).
+    """
+    global _registry_singleton
+    if _registry_singleton is None:
+        _registry_singleton = WorkerRegistry()
+    return _registry_singleton
