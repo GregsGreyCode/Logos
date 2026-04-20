@@ -1428,17 +1428,12 @@ async def handle_agent_tools_get(request: web.Request) -> web.Response:
             aid, exc,
         )
 
-    # ── Tool readiness — per-tool status check ──
-    tool_readiness: list[dict] = []
-    try:
-        from gateway import policies as gp
-        tool_readiness = gp.get_tool_readiness(aid)
-    except Exception as exc:
-        logger.warning(
-            "handle_agent_tools_get(%s): failed to compute tool readiness: %s",
-            aid, exc,
-        )
-
+    # Per-tool readiness used to live here, but the T dropdown's top
+    # "Tool readiness" section was redundant with the sandbox-sourced
+    # toolsets list (and sometimes disagreed with it because it read
+    # gateway-local env vars instead of what's actually available in
+    # the sandbox). Removed from the T pill response. The /setup tools
+    # slash command still uses gp.get_tool_readiness directly.
     return web.json_response({
         "toolsets": {
             "available": available_toolsets,
@@ -1449,7 +1444,6 @@ async def handle_agent_tools_get(request: web.Request) -> web.Response:
             "applied": applied_presets,
             "available": available_presets,
         },
-        "readiness": tool_readiness,
     })
 
 
