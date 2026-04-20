@@ -451,32 +451,43 @@ async def fetch_toolsets_from_sandbox(
             input="",
         )
     except Exception as exc:
-        logger.debug(
+        logger.warning(
             "fetch_toolsets_from_sandbox(%s): openshell exec raised: %s",
             sandbox_name, exc,
         )
         return None
 
     if result.returncode != 0:
-        logger.debug(
-            "fetch_toolsets_from_sandbox(%s): curl rc=%d stderr=%r",
+        logger.warning(
+            "fetch_toolsets_from_sandbox(%s): curl rc=%d stderr=%r stdout=%r",
             sandbox_name, result.returncode,
-            (result.stderr or "")[:200],
+            (result.stderr or "")[:300],
+            (result.stdout or "")[:300],
         )
         return None
 
     try:
         payload = json.loads(result.stdout)
     except json.JSONDecodeError as exc:
-        logger.debug(
+        logger.warning(
             "fetch_toolsets_from_sandbox(%s): malformed JSON: %s "
             "(raw=%r)",
-            sandbox_name, exc, (result.stdout or "")[:200],
+            sandbox_name, exc, (result.stdout or "")[:300],
         )
         return None
 
     if not isinstance(payload, dict):
+        logger.warning(
+            "fetch_toolsets_from_sandbox(%s): response is %s, not dict",
+            sandbox_name, type(payload).__name__,
+        )
         return None
+    logger.info(
+        "fetch_toolsets_from_sandbox(%s): got %d toolset(s) from %s",
+        sandbox_name,
+        len(payload.get("toolsets") or {}),
+        payload.get("source") or "unknown-source",
+    )
     return payload
 
 
