@@ -699,8 +699,8 @@ Ticket deepened 2026-04-17 after attempted start — the per-sub-agent UI requir
 ### LOG-38 · Lightweight Python embedding fallback
 **Effort:** M · **Type:** Feature · **Status:** OPEN
 
-### LOG-63 · Scrub cosmetic residue from deleted-feature cleanups (Phase 3)
-**Effort:** XS (20–40m) · **Type:** Polish · **Status:** OPEN · **Surfaced:** 2026-04-20 during the Phase 3 "Logos stops running AI agents in-process" cleanup.
+### LOG-63 · Scrub cosmetic residue from deleted-feature cleanups (Phase 3) — **DONE (2026-04-20)**
+**Effort:** XS · **Type:** Polish · **Status:** DONE
 
 After deleting `cron/`, `tools/cronjob_tools.py`, `/compress`, `/background`, `_run_agent`, memory flush, batch runner, and `gateway/worker.py`, a small amount of **metadata residue** still references those deleted names. Nothing crashes (the references are in registration dicts and display-layer lookup tables, not at call sites), but the strings are misleading and confuse new readers. Clean them up in a single XS pass:
 
