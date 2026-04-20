@@ -3833,7 +3833,7 @@ async def _handle_chat(request: web.Request) -> web.StreamResponse:
     media_types: list[str] = []
     if raw_attachments:
         import base64
-        from gateway.channels.base import (
+        from gateway.media_cache import (
             cache_image_from_bytes,
             cache_audio_from_bytes,
             cache_document_from_bytes,
