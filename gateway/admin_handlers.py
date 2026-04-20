@@ -1355,14 +1355,18 @@ async def handle_agent_tools_get(request: web.Request) -> web.Response:
     if not agent:
         return web.json_response({"error": "not_found"}, status=404)
 
-    # ── Application layer: available + enabled toolsets ──
+    # ── Application layer: sandbox toolsets + availability ──
     #
     # The agent's own sandbox is the only source of truth for what
-    # toolsets hermes actually has. We query it via GET /v1/toolsets
-    # (registered by hermes_cancel_monkeypatch's introspection patch).
-    # No fallback — if the sandbox can't answer, we surface that
-    # clearly so the UI can offer a "Restart runtime" button rather
-    # than silently showing a stale hardcoded list.
+    # toolsets hermes actually has. We run a probe via openshell
+    # sandbox exec that imports tools.registry and serialises
+    # get_available_toolsets() + check_toolset_requirements().
+    #
+    # The UI is read-only: the toggle endpoint that used to write to
+    # agents.toolsets was a no-op (hermes's config.yaml ignored the
+    # column), so we don't expose a separate "enabled" list any more.
+    # Each toolset carries its own `available` flag from the registry's
+    # requirement check, which is what the UI renders as ✅ vs ⚠️.
     available_toolsets: list[dict] = []
     toolsets_source = "unavailable"
     toolsets_error: Optional[str] = None
@@ -1372,11 +1376,29 @@ async def handle_agent_tools_get(request: web.Request) -> web.Response:
         sandbox_name = _sanitize_sandbox_name(f"hermes-{agent['name']}")
         payload = await fetch_toolsets_from_sandbox(sandbox_name)
         if payload and isinstance(payload.get("toolsets"), dict):
+            availability = payload.get("availability") or {}
             for name, meta in sorted(payload["toolsets"].items()):
                 description = ""
+                tools = []
                 if isinstance(meta, dict):
                     description = str(meta.get("description", ""))
-                available_toolsets.append({"name": name, "description": description})
+                    raw_tools = meta.get("tools") or []
+                    if isinstance(raw_tools, list):
+                        tools = [str(t) for t in raw_tools]
+                # Prefer the per-toolset `available` flag inline on the
+                # meta dict (hermes's registry sets it directly); fall
+                # back to the top-level availability map; default True.
+                avail = True
+                if isinstance(meta, dict) and "available" in meta:
+                    avail = bool(meta["available"])
+                elif name in availability:
+                    avail = bool(availability[name])
+                available_toolsets.append({
+                    "name": name,
+                    "description": description,
+                    "tools": tools,
+                    "available": avail,
+                })
             toolsets_source = f"sandbox:{sandbox_name}"
         else:
             toolsets_error = (
@@ -1388,20 +1410,6 @@ async def handle_agent_tools_get(request: web.Request) -> web.Response:
     except Exception as exc:
         toolsets_error = f"Sandbox toolset query failed: {exc}"
         logger.warning("handle_agent_tools_get(%s): %s", aid, exc)
-
-    import json as _json
-    enabled_toolsets: list[str] = []
-    raw_ts = agent.get("toolsets")
-    if raw_ts:
-        try:
-            loaded = _json.loads(raw_ts)
-            if isinstance(loaded, list):
-                enabled_toolsets = [str(t) for t in loaded if isinstance(t, str)]
-        except _json.JSONDecodeError:
-            logger.warning(
-                "handle_agent_tools_get(%s): agents.toolsets is not valid JSON: %r",
-                aid, raw_ts,
-            )
 
     # ── Infrastructure layer: available + applied presets ──
     available_presets: list[dict] = []
@@ -1433,7 +1441,6 @@ async def handle_agent_tools_get(request: web.Request) -> web.Response:
 
     return web.json_response({
         "toolsets": {
-            "enabled": enabled_toolsets,
             "available": available_toolsets,
             "source": toolsets_source,
             "error": toolsets_error,
@@ -1444,96 +1451,6 @@ async def handle_agent_tools_get(request: web.Request) -> web.Response:
         },
         "readiness": tool_readiness,
     })
-
-
-async def handle_agent_toolsets_toggle(request: web.Request) -> web.Response:
-    """POST /admin/agents/{id}/tools/toolsets/toggle
-
-    Body: ``{"toolset": "<name>", "enabled": <bool>}``
-
-    Adds or removes the named toolset from ``agents.toolsets``.
-    Unknown toolset names are rejected with 400 so typos don't
-    silently persist as dead entries. Returns the updated enabled
-    list as the canonical "after" state the UI can render directly::
-
-        {"enabled": ["hermes-cli", "web"]}
-
-    Application-layer only — does not touch the network policy.
-    """
-    aid = request.match_info["id"]
-    agent = auth_db.get_agent(aid)
-    if not agent:
-        return web.json_response({"error": "not_found"}, status=404)
-
-    try:
-        body = await request.json()
-    except Exception:
-        return web.json_response({"error": "invalid_json"}, status=400)
-
-    toolset = (body.get("toolset") or "").strip()
-    enabled = bool(body.get("enabled"))
-    if not toolset:
-        return web.json_response({"error": "toolset is required"}, status=400)
-
-    # Validate against the sandbox's live toolset list when we can
-    # reach it — otherwise skip (better to persist the toggle and
-    # reconcile once the sandbox is back than block the user).
-    try:
-        from gateway.executors.openshell import _sanitize_sandbox_name
-        from gateway.worker_registry_v2 import fetch_toolsets_from_sandbox
-        sandbox_name = _sanitize_sandbox_name(f"hermes-{agent['name']}")
-        payload = await fetch_toolsets_from_sandbox(sandbox_name)
-        if payload and isinstance(payload.get("toolsets"), dict):
-            if toolset not in payload["toolsets"]:
-                return web.json_response(
-                    {"error": f"unknown toolset (not registered in sandbox): {toolset}"},
-                    status=400,
-                )
-    except Exception as exc:
-        logger.debug(
-            "handle_agent_toolsets_toggle(%s, %s): sandbox validate "
-            "failed, accepting toggle anyway: %s", aid, toolset, exc,
-        )
-
-    # Read, mutate, write-back the current JSON list.
-    import json as _json
-    current: list[str] = []
-    raw_ts = agent.get("toolsets")
-    if raw_ts:
-        try:
-            loaded = _json.loads(raw_ts)
-            if isinstance(loaded, list):
-                current = [str(t) for t in loaded if isinstance(t, str)]
-        except _json.JSONDecodeError:
-            pass  # treat corrupt state as empty — the toggle will fix it
-
-    if enabled and toolset not in current:
-        current.append(toolset)
-    elif not enabled and toolset in current:
-        current.remove(toolset)
-
-    auth_db.update_agent(aid, toolsets=_json.dumps(current))
-    logger.info(
-        "agent_toolsets_toggle(%s, %s=%s): enabled=%s",
-        aid, toolset, enabled, current,
-    )
-    # Push the new config to the running sandbox so the change takes
-    # effect on the NEXT dispatch (no sandbox restart needed). Plan
-    # A-prime spawns sandbox_worker.py per dispatch; each subprocess
-    # re-reads /tmp/hermes/instance-config.json at startup, so a fresh
-    # upload here is enough. Best-effort — if the sandbox isn't running
-    # yet (provisioning) or the gateway isn't reachable, the next
-    # spawn will pick up the new toolsets from the DB anyway.
-    executor = request.app.get("executor")
-    if executor and hasattr(executor, "refresh_instance_config"):
-        try:
-            executor.refresh_instance_config(agent["name"])
-        except Exception as exc:
-            logger.warning(
-                "agent_toolsets_toggle: refresh_instance_config failed for %s: %s",
-                agent["name"], exc,
-            )
-    return web.json_response({"enabled": current})
 
 
 async def handle_agent_presets_toggle(request: web.Request) -> web.Response:
