@@ -1490,41 +1490,58 @@ class OpenShellExecutor:
             # model works WITH the transport's contract instead of
             # against it.
 
-            # LOG-44 Phase 1 (opt-in via LOGOS_HERMES_SERVER_MODE=1):
-            # start upstream `hermes gateway run` HTTP server inside the
-            # sandbox so dispatch_task_v2 can POST to it. No-op when the
-            # env var is unset. See gateway/executors/hermes_server_mode.py
-            # and docs/architecture/hermes-as-server-prototype.md.
+            # Hermes-server mode (Phase 2 default). Deploys hermes config,
+            # launches `hermes gateway run` HTTP server in the sandbox,
+            # waits for /health. Failures bubble up so a broken spawn is
+            # visible at create-time instead of surfacing as silent v1
+            # fallback at chat-time. Disable only via explicit
+            # LOGOS_HERMES_SERVER_MODE=0 (opt-out). See
+            # gateway/executors/hermes_server_mode.py + hermes-as-server-
+            # prototype.md.
+            from .hermes_server_mode import (
+                is_enabled as _log44_on,
+                enable_hermes_server_mode as _log44_go,
+                build_channel_extra_env as _log44_build_env,
+            )
             _hermes_srv_setup = None
-            try:
-                from .hermes_server_mode import (
-                    is_enabled as _log44_on,
-                    enable_hermes_server_mode as _log44_go,
-                    build_channel_extra_env as _log44_build_env,
+            if _log44_on():
+                # LOG-44.3: look up per-agent channel credentials +
+                # auto-apply matching network policy presets. The helper
+                # writes to both the returned dict (→ .env) and the
+                # policies DB (→ sandbox egress rules).
+                from gateway.auth import db as _log44_auth_db
+                _log44_agent_rec = _log44_auth_db.get_agent_by_name(config.name) or {}
+                _log44_agent_id = _log44_agent_rec.get("id")
+                _log44_extra_env = (
+                    _log44_build_env(
+                        _log44_agent_id,
+                        sandbox_name_for_log=sandbox_name,
+                    )
+                    if _log44_agent_id else {}
                 )
-                if _log44_on():
-                    # LOG-44.3: look up per-agent channel credentials +
-                    # auto-apply matching network policy presets. The
-                    # helper writes to both the returned dict (→ .env)
-                    # and the policies DB (→ sandbox egress rules).
-                    from gateway.auth import db as _log44_auth_db
-                    _log44_agent_rec = _log44_auth_db.get_agent_by_name(config.name) or {}
-                    _log44_agent_id = _log44_agent_rec.get("id")
-                    _log44_extra_env = (
-                        _log44_build_env(
-                            _log44_agent_id,
-                            sandbox_name_for_log=sandbox_name,
-                        )
-                        if _log44_agent_id else {}
+                logger.info(
+                    "spawn(%s): hermes-server mode enabled (Phase 2 default)",
+                    sandbox_name,
+                )
+                _hermes_srv_setup = _log44_go(
+                    sandbox_name, config,
+                    extra_env=_log44_extra_env or None,
+                    gateway=openshell_gw,
+                )
+                if _hermes_srv_setup is None:
+                    raise RuntimeError(
+                        f"spawn({sandbox_name}): hermes-server mode "
+                        f"enabled but enable_hermes_server_mode returned "
+                        f"None. Cannot continue — chat dispatch would "
+                        f"silently regress to v1."
                     )
-                    logger.info("spawn(%s): LOGOS_HERMES_SERVER_MODE=1 — enabling", sandbox_name)
-                    _hermes_srv_setup = _log44_go(
-                        sandbox_name, config,
-                        extra_env=_log44_extra_env or None,
-                        gateway=openshell_gw,
-                    )
-            except ImportError:
-                pass
+            else:
+                logger.warning(
+                    "spawn(%s): LOGOS_HERMES_SERVER_MODE=0 — skipping "
+                    "server-mode setup. Agent will need v1 (Plan A-Prime) "
+                    "dispatch until the flag is flipped back.",
+                    sandbox_name,
+                )
 
             # Phase 3 (under lock): flip the record's phase to "ready"
             # so subsequent list_instances() prunes apply normal rules.
