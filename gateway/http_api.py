@@ -5524,8 +5524,6 @@ async def start_http_api(runner: Any, port: int = 8091) -> None:
                        _mm(admin_handlers.handle_agent_sandbox_files_get))
     app.router.add_get("/admin/agents/{id}/sandbox-files/download",
                        _mm(admin_handlers.handle_agent_sandbox_file_download))
-    app.router.add_post("/admin/agents/{id}/tools/toolsets/toggle",
-                        _mm(require_csrf(admin_handlers.handle_agent_toolsets_toggle)))
     app.router.add_post("/admin/agents/{id}/tools/presets/toggle",
                         _mm(require_csrf(admin_handlers.handle_agent_presets_toggle)))
     # Bounce the hermes process inside the sandbox — re-uploads the

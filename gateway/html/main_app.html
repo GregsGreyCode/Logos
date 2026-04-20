@@ -786,15 +786,19 @@
                     </div>
                   </div>
 
-                  <!-- Toolsets (application layer) -->
+                  <!-- Toolsets (in-agent) — read-only view of what hermes
+                       has registered. The old checkbox toggle was a no-op
+                       (agents.toolsets column wasn't read by the sandbox),
+                       so we surface the live registry with ✅/⚠️ badges
+                       instead of pretending we can flip them. -->
                   <div x-show="activeAgent && agentToolsState && agentToolsState._agentId === activeAgent.id">
                     <div class="px-3 pt-2 pb-1 text-[9px] text-gray-500 uppercase tracking-wider flex items-center justify-between">
                       <span>Toolsets (in-agent)</span>
                       <span class="text-gray-700 normal-case"
-                        x-text="'(' + (agentToolsState?.toolsets?.enabled?.length || 0) + '/' + (agentToolsState?.toolsets?.available?.length || 0) + ')'"></span>
+                        x-text="(agentToolsState?.toolsets?.available || []).filter(t => t.available).length + ' / ' + (agentToolsState?.toolsets?.available?.length || 0) + ' ready'"></span>
                     </div>
-                    <!-- Sandbox unreachable → surface error + offer Restart runtime -->
-                    <div x-show="agentToolsState?.toolsets?.error"
+                    <!-- Sandbox unreachable → surface + offer Restart runtime -->
+                    <div x-show="agentToolsState?.toolsets?.error && !(agentToolsState?.toolsets?.available?.length)"
                       class="px-3 py-2 text-[10px] text-yellow-500 border-b border-yellow-900/40 bg-yellow-950/20">
                       <div class="mb-1" x-text="agentToolsState?.toolsets?.error"></div>
                       <button type="button"
@@ -807,18 +811,14 @@
                     </div>
                     <div class="grid grid-cols-3" style="column-gap: 0.25rem;">
                       <template x-for="t in (agentToolsState?.toolsets?.available || [])" :key="'ts-' + t.name">
-                        <label class="flex items-start gap-2 px-3 py-1.5 text-[11px] hover:bg-gray-800 cursor-pointer" :title="t.description || t.name">
-                          <input type="checkbox"
-                            :checked="(agentToolsState?.toolsets?.enabled || []).includes(t.name)"
-                            :disabled="!!(agentToolsToggling && agentToolsToggling['ts:' + t.name])"
-                            @change="toggleToolset(activeAgent.id, t.name, $event.target.checked)"
-                            class="mt-0.5 h-3 w-3 rounded border-gray-700 bg-gray-900 text-indigo-500 focus:ring-0 focus:ring-offset-0 flex-shrink-0">
+                        <div class="flex items-start gap-2 px-3 py-1.5 text-[11px]" :title="t.description || t.name">
+                          <span x-show="t.available" class="text-green-500 text-[10px] leading-[1.1]">✅</span>
+                          <span x-show="!t.available" class="text-yellow-500 text-[10px] leading-[1.1]">⚠️</span>
                           <div class="flex-1 min-w-0">
                             <div class="text-gray-100 font-mono" x-text="t.name"></div>
                             <div class="text-gray-400 text-[11px] leading-snug line-clamp-2" x-text="t.description" x-show="t.description"></div>
                           </div>
-                          <span x-show="agentToolsToggling && agentToolsToggling['ts:' + t.name]" class="text-yellow-500 text-[9px]">…</span>
-                        </label>
+                        </div>
                       </template>
                     </div>
                   </div>
@@ -11875,11 +11875,23 @@ toolsets:
         d._agentId = agentId;
         // Defensive defaults so template bindings never hit undefined
         d.toolsets = d.toolsets || {};
-        d.toolsets.enabled = d.toolsets.enabled || [];
         d.toolsets.available = d.toolsets.available || [];
         d.presets = d.presets || {};
         d.presets.applied = d.presets.applied || [];
         d.presets.available = d.presets.available || [];
+        // Cache the last successful toolset list per agent so a
+        // transient sandbox blip doesn't empty the dropdown. If this
+        // fetch came back with zero toolsets but we have a previous
+        // non-empty snapshot for the same agent, keep the cached list
+        // and surface the error alongside it.
+        const cached = this._agentToolsetsCache && this._agentToolsetsCache[agentId];
+        if (!d.toolsets.available.length && cached && cached.length) {
+          d.toolsets.available = cached;
+          d.toolsets.stale = true;
+        } else if (d.toolsets.available.length) {
+          this._agentToolsetsCache = this._agentToolsetsCache || {};
+          this._agentToolsetsCache[agentId] = d.toolsets.available;
+        }
         this.agentToolsState = d;
       } catch(e) {
         this.agentToolsError = 'Failed to load tools: ' + (e.message || e);
@@ -12130,40 +12142,6 @@ toolsets:
         this.agentToolsError = 'Restart runtime failed: ' + (e.message || e);
       }
       this.agentRuntimeRestarting = false;
-    },
-
-    async toggleToolset(agentId, toolset, enabled) {
-      if (!agentId || !toolset) return;
-      const key = 'ts:' + toolset;
-      if (!this.agentToolsToggling) this.agentToolsToggling = {};
-      this.agentToolsToggling[key] = true;
-      this.agentToolsError = null;
-      try {
-        const r = await fetch(
-          '/admin/agents/' + encodeURIComponent(agentId) + '/tools/toolsets/toggle',
-          {
-            method: 'POST',
-            credentials: 'include',
-            headers: {'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken()},
-            body: JSON.stringify({toolset, enabled}),
-          },
-        );
-        if (!r.ok) throw new Error(await r.text() || r.statusText);
-        const d = await r.json();
-        // Update the in-memory state with the server's canonical list
-        // so the checkbox state matches the DB exactly even if
-        // concurrent toggles arrived out-of-order.
-        if (this.agentToolsState && this.agentToolsState._agentId === agentId) {
-          this.agentToolsState.toolsets.enabled = d.enabled || [];
-        }
-      } catch(e) {
-        this.agentToolsError = 'Toggle "' + toolset + '" failed: ' + (e.message || e);
-        // Re-fetch to recover canonical state — the checkbox might
-        // be out of sync with the DB if the server-side update
-        // partially succeeded.
-        this.loadAgentTools(agentId);
-      }
-      delete this.agentToolsToggling[key];
     },
 
     async togglePreset(agentId, preset, enabled) {
