@@ -1933,7 +1933,7 @@
       <template x-if="can('manage_machines') || can('manage_users')">
         <button class="pb-2 text-sm font-medium border-b-2 border-transparent"
           :class="infraTab==='messaging' ? 'tab-active' : 'text-gray-500 hover:text-white'"
-          @click="infraTab='messaging'; localStorage.setItem('logos_infra_tab','messaging'); loadMessagingChannels(); loadPlatforms(); if(!namedAgents?.length) loadNamedAgents(); loadAllAgentChannels()">Messaging</button>
+          @click="infraTab='messaging'; localStorage.setItem('logos_infra_tab','messaging'); loadMessagingChannels(); if(!namedAgents?.length) loadNamedAgents(); loadAllAgentChannels()">Messaging</button>
       </template>
     </div>
 
@@ -3893,7 +3893,7 @@
   <div x-show="tab==='infra' && infraTab==='messaging'" x-cloak class="space-y-6">
     <div class="flex items-center justify-between mb-2">
       <h2 class="text-sm font-semibold text-white">Messaging Channels</h2>
-      <button @click="loadAllAgentChannels()" class="text-xs text-gray-500 hover:text-gray-300">Refresh</button>
+      <button @click="loadAllAgentChannels()" class="text-xs px-3 py-1.5 rounded-lg border border-gray-700 text-gray-400 hover:text-white transition-colors">Refresh</button>
     </div>
     <p class="text-xs text-gray-500">Connect messaging bots per agent. Each agent can own multiple tokens (prod + staging) and different agents can own different bots on the same platform — the token chooses which agent receives the message.</p>
 
@@ -5440,182 +5440,6 @@
     </div><!-- /debugOpen -->
     </div><!-- /debug section -->
 
-    <!-- ── Platforms (Config → Messaging, "Routing" section) ── -->
-    <div x-show="tab==='infra' && infraTab==='messaging' && can('manage_users')" x-cloak class="mt-8">
-      <div class="text-[10px] font-semibold text-gray-500 uppercase tracking-[0.15em] border-b border-gray-800 pb-2 mb-3">Routing</div>
-      <div class="flex items-center justify-between mb-4">
-        <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Platforms &amp; Routing</div>
-        <button @click="loadPlatforms()" class="text-xs px-3 py-1.5 rounded-lg border border-gray-700 text-gray-400 hover:text-white transition-colors">Refresh</button>
-      </div>
-
-      <div class="text-xs text-gray-500 mb-4 max-w-2xl">
-        Inbound messages from each connected platform are routed to a specific agent's sandbox.
-        The most-specific match wins: <span class="text-gray-400 font-medium">chat</span> &rsaquo;
-        <span class="text-gray-400 font-medium">user</span> &rsaquo;
-        <span class="text-gray-400 font-medium">global</span>.
-        Setup wizard seeds one <span class="text-gray-400 font-medium">global</span> rule per
-        enabled platform; you can override per-chat or per-user here.
-      </div>
-
-      <template x-for="p in platforms" :key="p.name">
-        <div class="bg-gray-900 border border-gray-800 rounded-xl mb-4 overflow-hidden">
-          <!-- Header -->
-          <div class="flex items-center justify-between px-4 py-3 border-b border-gray-800">
-            <div class="flex items-center gap-3">
-              <span class="w-2 h-2 rounded-full"
-                    :class="p.connected ? 'bg-green-500' : (p.enabled ? 'bg-yellow-500' : 'bg-gray-600')"></span>
-              <span class="text-sm font-semibold text-white capitalize" x-text="p.name"></span>
-              <span class="text-[10px] uppercase tracking-wider"
-                    :class="p.connected ? 'text-green-400' : (p.enabled ? 'text-yellow-400' : 'text-gray-600')"
-                    x-text="p.connected ? 'connected' : (p.enabled ? 'configured' : 'disabled')"></span>
-            </div>
-            <button @click="platformRoutingForm = {platform: p.name, scope: 'chat', scope_id: '', agent_id: (platformAgents[0]?.id || '')}; platformRoutingFormOpen = true"
-                    class="text-[10px] px-2.5 py-1 rounded border border-gray-700 text-gray-400 hover:text-white hover:border-gray-500">
-              + Routing rule
-            </button>
-          </div>
-
-          <!-- Home channel (outbound destination for home_message) -->
-          <template x-if="p.supports_home_channel">
-            <div class="px-4 py-3 border-b border-gray-800 bg-gray-950/40">
-              <div class="flex items-center justify-between mb-2">
-                <div>
-                  <div class="text-[11px] font-semibold text-gray-300">Home channel</div>
-                  <div class="text-[10px] text-gray-600">Destination for proactive messages from agents (home_message tool).</div>
-                </div>
-                <template x-if="p.home_channel && p.home_channel.chat_id">
-                  <span class="text-[10px] text-green-500">configured</span>
-                </template>
-              </div>
-              <div class="flex items-center gap-2">
-                <input type="text"
-                       :placeholder="'Chat/Channel ID' + (p.name === 'email' ? ' or email address' : '')"
-                       x-model="homeChannelDraft[p.name] !== undefined ? homeChannelDraft[p.name] : (p.home_channel?.chat_id || '')"
-                       @input="homeChannelDraft[p.name] = $event.target.value"
-                       class="flex-1 bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs text-white font-mono"/>
-                <input type="text" placeholder="Label (optional)"
-                       x-model="homeChannelNameDraft[p.name] !== undefined ? homeChannelNameDraft[p.name] : (p.home_channel?.name || '')"
-                       @input="homeChannelNameDraft[p.name] = $event.target.value"
-                       class="w-32 bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs text-white"/>
-                <button @click="saveHomeChannel(p.name)"
-                        :disabled="homeChannelBusy[p.name]"
-                        class="text-[10px] px-2.5 py-1 rounded border border-gray-700 text-white hover:border-gray-500 disabled:opacity-50">Save</button>
-                <button x-show="p.home_channel && p.home_channel.chat_id"
-                        @click="testHomeChannel(p.name)"
-                        :disabled="homeChannelBusy[p.name] || !p.connected"
-                        :title="p.connected ? 'Send a test message' : 'Platform not connected'"
-                        class="text-[10px] px-2.5 py-1 rounded border border-gray-700 text-gray-300 hover:border-gray-500 disabled:opacity-50">Test</button>
-                <button x-show="p.home_channel && p.home_channel.chat_id"
-                        @click="deleteHomeChannel(p.name)"
-                        :disabled="homeChannelBusy[p.name]"
-                        class="text-[10px] px-2 py-1 rounded border border-gray-800 text-gray-500 hover:text-red-400 hover:border-red-900">Clear</button>
-              </div>
-              <template x-if="homeChannelMsg[p.name]">
-                <div class="mt-2 text-[10px]"
-                     :class="homeChannelMsg[p.name].ok ? 'text-green-500' : 'text-red-400'"
-                     x-text="homeChannelMsg[p.name].text"></div>
-              </template>
-            </div>
-          </template>
-
-          <!-- Rules table -->
-          <table class="w-full text-xs">
-            <thead>
-              <tr class="text-gray-600 border-b border-gray-800">
-                <th class="text-left px-4 py-2 font-medium w-[90px]">Scope</th>
-                <th class="text-left px-4 py-2 font-medium">Match</th>
-                <th class="text-left px-4 py-2 font-medium">Target Agent</th>
-                <th class="text-right px-4 py-2 font-medium w-[60px]"></th>
-              </tr>
-            </thead>
-            <tbody>
-              <template x-for="r in p.routing" :key="r.id">
-                <tr class="border-b border-gray-800/50">
-                  <td class="px-4 py-2">
-                    <span class="px-1.5 py-0.5 rounded text-[10px] font-medium border"
-                          :class="r.scope === 'global' ? 'bg-blue-950 text-blue-400 border-blue-900'
-                                : r.scope === 'chat'   ? 'bg-purple-900 text-purple-400 border-purple-800'
-                                                       : 'bg-amber-950 text-amber-400 border-amber-900'"
-                          x-text="r.scope"></span>
-                  </td>
-                  <td class="px-4 py-2 text-gray-300 font-mono"
-                      x-text="r.scope === 'global' ? '(any)' : r.scope_id"></td>
-                  <td class="px-4 py-2 text-white" x-text="r.agent_name"></td>
-                  <td class="px-4 py-2 text-right">
-                    <button @click="deletePlatformRouting(r.id)"
-                            class="text-red-700 hover:text-red-400 text-xs"
-                            title="Delete routing rule">&times;</button>
-                  </td>
-                </tr>
-              </template>
-              <template x-if="(p.routing || []).length === 0">
-                <tr><td colspan="4" class="px-4 py-4 text-center text-gray-600 text-xs">
-                  No routing rules. Inbound messages will fall back to the first agent.
-                </td></tr>
-              </template>
-            </tbody>
-          </table>
-        </div>
-      </template>
-
-      <template x-if="!platformsLoading && platforms.length === 0">
-        <div class="text-center text-gray-600 text-xs py-8">
-          No platforms configured. Add credentials in Settings → Channels.
-        </div>
-      </template>
-      <template x-if="platformsLoading && platforms.length === 0">
-        <div class="text-center text-gray-600 text-xs py-8">Loading...</div>
-      </template>
-
-      <!-- Routing rule modal -->
-      <div x-show="platformRoutingFormOpen" x-cloak
-           class="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
-           @click.self="platformRoutingFormOpen = false">
-        <div class="bg-gray-900 border border-gray-700 rounded-xl p-5 w-[420px] space-y-4">
-          <div class="flex items-center justify-between">
-            <div class="text-sm font-semibold text-white">
-              New routing rule
-              <span class="text-gray-500 text-xs ml-1" x-text="'· ' + platformRoutingForm.platform"></span>
-            </div>
-            <button @click="platformRoutingFormOpen = false" class="text-gray-500 hover:text-white">&times;</button>
-          </div>
-          <div>
-            <label class="block text-[10px] text-gray-500 uppercase tracking-wider mb-1">Scope</label>
-            <select x-model="platformRoutingForm.scope"
-                    class="w-full bg-gray-950 border border-gray-700 rounded px-3 py-1.5 text-xs text-white">
-              <option value="chat">chat — specific channel/group</option>
-              <option value="user">user — specific user across chats</option>
-              <option value="global">global — fallback for this platform</option>
-            </select>
-          </div>
-          <div x-show="platformRoutingForm.scope !== 'global'">
-            <label class="block text-[10px] text-gray-500 uppercase tracking-wider mb-1">
-              <span x-text="platformRoutingForm.scope === 'chat' ? 'Chat ID' : 'User ID'"></span>
-            </label>
-            <input type="text" x-model="platformRoutingForm.scope_id"
-                   class="w-full bg-gray-950 border border-gray-700 rounded px-3 py-1.5 text-xs text-white font-mono"
-                   placeholder="e.g. 12345 or @greg"/>
-          </div>
-          <div>
-            <label class="block text-[10px] text-gray-500 uppercase tracking-wider mb-1">Agent</label>
-            <select x-model="platformRoutingForm.agent_id"
-                    class="w-full bg-gray-950 border border-gray-700 rounded px-3 py-1.5 text-xs text-white">
-              <template x-for="a in platformAgents" :key="a.id">
-                <option :value="a.id" x-text="a.name"></option>
-              </template>
-            </select>
-          </div>
-          <div class="flex items-center justify-end gap-2 pt-2">
-            <button @click="platformRoutingFormOpen = false"
-                    class="text-xs text-gray-400 hover:text-white px-3 py-1.5">Cancel</button>
-            <button @click="savePlatformRouting()"
-                    class="text-xs px-4 py-1.5 rounded-lg bg-[var(--accent)] text-white hover:opacity-90">
-              Save rule
-            </button>
-          </div>
-        </div>
-      </div>
-    </div>
 
 
     <!-- ── Runs (Activity → Runs) — unified dispatch ledger ──
@@ -6768,15 +6592,6 @@ function app() {
       openrouter: ['anthropic/claude-sonnet-4.6', 'openai/gpt-5', 'meta-llama/llama-3.3-70b-instruct'],
     },
     // platforms (Admin → Platforms)
-    platforms: [],
-    platformsLoading: false,
-    platformAgents: [],
-    platformRoutingFormOpen: false,
-    platformRoutingForm: {platform: "", scope: "chat", scope_id: "", agent_id: ""},
-    homeChannelDraft: {},
-    homeChannelNameDraft: {},
-    homeChannelBusy: {},
-    homeChannelMsg: {},
     // evolution
     evoPanel: 'proposals',
     evolutionProposals: [],
@@ -7252,7 +7067,7 @@ function app() {
     _loadInfraTabData(name) {
       if (name === 'servers')   { this.loadAdminMachines(); this.loadCloudProviders?.(); this.probeAllMachines?.(); return; }
       if (name === 'tools')     { this.loadToolsTab?.(); this.loadServices?.(); this.loadLocalServices?.(); return; }
-      if (name === 'messaging') { this.loadMessagingChannels?.(); this.loadPlatforms?.(); return; }
+      if (name === 'messaging') { this.loadMessagingChannels?.(); return; }
     },
     _loadAdminTabData(name) {
       // Slimmed Admin: users + policies are fetched by loadAdminData(),
@@ -12243,136 +12058,6 @@ toolsets:
         alert(`Delete failed: ${e.message || e}`);
       }
       await this.loadModelRoutes();
-    },
-
-    async loadPlatforms() {
-      this.platformsLoading = true;
-      try {
-        const r = await fetch("/api/admin/platforms", {credentials: "include"});
-        if (!r.ok) throw new Error(await r.text());
-        const d = await r.json();
-        this.platforms = d.platforms || [];
-        this.platformAgents = d.agents || [];
-      } catch(e) {
-        this.platforms = [];
-        this.platformAgents = [];
-      }
-      this.platformsLoading = false;
-    },
-
-    async savePlatformRouting() {
-      const f = this.platformRoutingForm;
-      if (!f.platform || !f.scope || !f.agent_id) {
-        alert("Pick a scope and an agent.");
-        return;
-      }
-      if (f.scope !== "global" && !f.scope_id.trim()) {
-        alert("Enter the chat/user ID, or pick the global scope.");
-        return;
-      }
-      try {
-        const r = await fetch("/api/admin/platforms/routing", {
-          method: "POST",
-          credentials: "include",
-          headers: {
-            "Content-Type": "application/json",
-            "X-CSRF-Token": getCsrfToken(),
-          },
-          body: JSON.stringify({
-            platform: f.platform,
-            scope:    f.scope,
-            scope_id: f.scope_id.trim(),
-            agent_id: f.agent_id,
-          }),
-        });
-        if (!r.ok) throw new Error(await r.text());
-        this.platformRoutingFormOpen = false;
-        await this.loadPlatforms();
-      } catch(e) {
-        alert("Save failed: " + (e.message || e));
-      }
-    },
-
-    async saveHomeChannel(platformName) {
-      const chatId = (this.homeChannelDraft[platformName] ?? "").trim();
-      if (!chatId) { alert("Enter a chat/channel ID first."); return; }
-      const name = (this.homeChannelNameDraft[platformName] ?? "").trim();
-      this.homeChannelBusy[platformName] = true;
-      this.homeChannelMsg[platformName] = null;
-      try {
-        const r = await fetch("/api/admin/platforms/home-channel", {
-          method: "POST",
-          credentials: "include",
-          headers: {"Content-Type": "application/json", "X-CSRF-Token": getCsrfToken()},
-          body: JSON.stringify({platform: platformName, chat_id: chatId, name}),
-        });
-        const d = await r.json();
-        if (!r.ok || !d.ok) throw new Error(d.error || "save failed");
-        this.homeChannelMsg[platformName] = {ok: true, text: "Saved."};
-        delete this.homeChannelDraft[platformName];
-        delete this.homeChannelNameDraft[platformName];
-        await this.loadPlatforms();
-      } catch(e) {
-        this.homeChannelMsg[platformName] = {ok: false, text: e.message || String(e)};
-      } finally {
-        this.homeChannelBusy[platformName] = false;
-      }
-    },
-
-    async deleteHomeChannel(platformName) {
-      if (!confirm("Clear the home channel for " + platformName + "?")) return;
-      this.homeChannelBusy[platformName] = true;
-      this.homeChannelMsg[platformName] = null;
-      try {
-        const r = await fetch("/api/admin/platforms/home-channel", {
-          method: "DELETE",
-          credentials: "include",
-          headers: {"Content-Type": "application/json", "X-CSRF-Token": getCsrfToken()},
-          body: JSON.stringify({platform: platformName}),
-        });
-        const d = await r.json();
-        if (!r.ok || !d.ok) throw new Error(d.error || "delete failed");
-        await this.loadPlatforms();
-      } catch(e) {
-        this.homeChannelMsg[platformName] = {ok: false, text: e.message || String(e)};
-      } finally {
-        this.homeChannelBusy[platformName] = false;
-      }
-    },
-
-    async testHomeChannel(platformName) {
-      this.homeChannelBusy[platformName] = true;
-      this.homeChannelMsg[platformName] = null;
-      try {
-        const r = await fetch("/api/admin/platforms/home-channel/test", {
-          method: "POST",
-          credentials: "include",
-          headers: {"Content-Type": "application/json", "X-CSRF-Token": getCsrfToken()},
-          body: JSON.stringify({platform: platformName}),
-        });
-        const d = await r.json();
-        if (!r.ok || !d.ok) throw new Error(d.error || "test failed");
-        this.homeChannelMsg[platformName] = {ok: true, text: "Test sent" + (d.message_id ? " (id " + d.message_id + ")" : "") + "."};
-      } catch(e) {
-        this.homeChannelMsg[platformName] = {ok: false, text: e.message || String(e)};
-      } finally {
-        this.homeChannelBusy[platformName] = false;
-      }
-    },
-
-    async deletePlatformRouting(id) {
-      if (!confirm("Delete this routing rule?")) return;
-      try {
-        const r = await fetch(`/api/admin/platforms/routing/${encodeURIComponent(id)}`, {
-          method: "DELETE",
-          credentials: "include",
-          headers: {"X-CSRF-Token": getCsrfToken()},
-        });
-        if (!r.ok) throw new Error(await r.text());
-        await this.loadPlatforms();
-      } catch(e) {
-        alert("Delete failed: " + (e.message || e));
-      }
     },
 
     async loadAgentRunDetail(runId) {
