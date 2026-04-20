@@ -11951,19 +11951,36 @@ toolsets:
 
     async deleteAgentChannel(agentId, credId) {
       if (!agentId || !credId) return;
-      if (!confirm('Delete this credential? The adapter will stop on next gateway restart.')) return;
+      if (!confirm('Delete this credential? The sandbox will pick up the change on the next refresh.')) return;
+      // Reset any stale busy flag so a prior hung request can't keep
+      // the button disabled forever (pre-6f57159 the server blocked
+      // on wait_for_hermes_health, which could leave the UI stuck).
+      this.agentChannelsBusy = this.agentChannelsBusy || {};
       this.agentChannelsBusy[credId] = true;
+      this.agentChannelsError = null;
+      // 10s client-side abort so even if a future backend regression
+      // re-introduces a block, the UI doesn't hang on it.
+      const ctrl = new AbortController();
+      const t = setTimeout(() => ctrl.abort(), 10000);
       try {
         const r = await fetch(
           '/admin/agents/' + encodeURIComponent(agentId) + '/channels/' + encodeURIComponent(credId),
-          {method: 'DELETE', credentials: 'include', headers: {'X-CSRF-Token': getCsrfToken()}},
+          {
+            method: 'DELETE',
+            credentials: 'include',
+            headers: {'X-CSRF-Token': getCsrfToken()},
+            signal: ctrl.signal,
+          },
         );
         if (r.ok) await this.loadAgentChannels(agentId);
         else this.agentChannelsError = 'Delete failed: ' + (await r.text() || r.statusText);
       } catch(e) {
-        this.agentChannelsError = 'Delete failed: ' + (e.message || e);
+        const msg = e?.name === 'AbortError' ? 'request timed out after 10s' : (e.message || e);
+        this.agentChannelsError = 'Delete failed: ' + msg;
+      } finally {
+        clearTimeout(t);
+        delete this.agentChannelsBusy[credId];
       }
-      delete this.agentChannelsBusy[credId];
     },
 
     async toggleAgentChannel(agentId, credId, enabled) {
