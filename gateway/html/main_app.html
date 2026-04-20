@@ -4061,7 +4061,7 @@
       <button x-show="can('view_sandbox_policies')"
         class="pb-2 text-sm font-medium border-b-2 border-transparent"
         :class="adminTab==='sandbox-policies'?'tab-active':'text-gray-500 hover:text-white'"
-        @click="adminTab='sandbox-policies'; loadSandboxPresets(); if(!namedAgents?.length) loadNamedAgents()">Sandbox Policies</button>
+        @click="adminTab='sandbox-policies'; loadSandboxPresets(); if(!namedAgents?.length) loadNamedAgents()">Permissions</button>
       <button x-show="can('view_souls')"
         class="pb-2 text-sm font-medium border-b-2 border-transparent"
         :class="adminTab==='souls'?'tab-active':'text-gray-500 hover:text-white'"
@@ -4370,9 +4370,9 @@
          x-effect="if (tab==='admin' && adminTab==='sandbox-policies' && can('view_sandbox_policies')) { loadSandboxPresets() }">
       <div class="flex items-center justify-between mb-3">
         <div>
-          <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Sandbox Policies</div>
+          <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Permissions</div>
           <div class="text-[10px] text-gray-500 mt-0.5">
-            OpenShell network egress rules. Applied per-agent; saving hot-reloads every live sandbox using the preset.
+            OpenShell network egress rules. Applied per-agent; saving hot-reloads every live sandbox using the permission preset.
           </div>
         </div>
         <div class="flex items-center gap-2">
@@ -4385,20 +4385,20 @@
 
       <!-- Help panel — on by default for first-time visitors, toggleable. -->
       <div x-show="sandboxPresetHelp" x-cloak class="mb-4 p-3 rounded-xl border border-indigo-900/50 bg-indigo-950/10 text-[11px] text-gray-300 leading-relaxed">
-        <div class="font-semibold text-indigo-300 mb-2">What are sandbox policies?</div>
+        <div class="font-semibold text-indigo-300 mb-2">What are permissions?</div>
         <p class="mb-2">
-          Every Logos agent runs in an isolated OpenShell sandbox that blocks outbound network traffic by default. A <span class="font-mono text-white">preset</span> is a YAML file that grants access to specific hostnames and ports — e.g. the <span class="font-mono text-white">github</span> preset lets agents reach <span class="font-mono">api.github.com</span>, nothing else.
+          Every Logos agent runs in an isolated OpenShell sandbox that blocks outbound network traffic by default. A <span class="font-mono text-white">permission preset</span> is a YAML file that grants access to specific hostnames and ports — e.g. the <span class="font-mono text-white">github</span> preset lets agents reach <span class="font-mono">api.github.com</span>, nothing else.
         </p>
         <p class="mb-2">
-          When you apply a preset to an agent (from the agent's Tools tab), the sandbox merges it into the baseline policy and starts allowing those endpoints. Removing a preset revokes access.
+          When you apply a permission preset to an agent (from the P pill on the agent's chat), the sandbox merges it into the baseline policy and starts allowing those endpoints. Removing it revokes access.
         </p>
-        <div class="font-semibold text-indigo-300 mt-3 mb-1">When to add / edit a preset</div>
+        <div class="font-semibold text-indigo-300 mt-3 mb-1">When to add / edit a permission preset</div>
         <ul class="list-disc list-inside space-y-0.5 text-gray-400">
-          <li>A new third-party API your agents need to call (add a preset, apply it to the agent).</li>
-          <li>An existing preset is too permissive or too restrictive (edit its endpoints).</li>
+          <li>A new third-party API your agents need to call (add a permission preset, apply it to the agent).</li>
+          <li>An existing permission preset is too permissive or too restrictive (edit its endpoints).</li>
           <li>A service changed hostnames (update host glob).</li>
         </ul>
-        <div class="font-semibold text-indigo-300 mt-3 mb-1">Key fields in a preset</div>
+        <div class="font-semibold text-indigo-300 mt-3 mb-1">Key fields in a permission preset</div>
         <ul class="list-disc list-inside space-y-0.5 text-gray-400">
           <li><span class="font-mono text-gray-300">host</span> — hostname or glob, e.g. <span class="font-mono">api.github.com</span> or <span class="font-mono">*.amazonaws.com</span>.</li>
           <li><span class="font-mono text-gray-300">port</span> / <span class="font-mono">ports</span> — TCP port(s). 443 for HTTPS.</li>
@@ -4410,7 +4410,7 @@
         <div class="font-semibold text-indigo-300 mt-3 mb-1">Safe to edit / don't edit</div>
         <ul class="list-disc list-inside space-y-0.5 text-gray-400">
           <li>Change endpoints, hosts, ports, L7 rules — hot-reloads without restarting sandboxes.</li>
-          <li>Don't rename the preset (<span class="font-mono">preset.name</span>) — the filename and applied-list won't match and agents will silently lose the policy.</li>
+          <li>Don't rename the permission preset (<span class="font-mono">preset.name</span>) — the filename and applied-list won't match and agents will silently lose access.</li>
           <li>Syntax errors are rejected at save time; your changes are never partially written.</li>
         </ul>
       </div>
@@ -4419,7 +4419,7 @@
         <!-- Preset list (left column) -->
         <div class="col-span-1 bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
           <div class="px-3 py-2 border-b border-gray-800 text-[10px] uppercase tracking-wider text-gray-500">
-            Presets (<span x-text="sandboxPresets.length"></span>)
+            Permission presets (<span x-text="sandboxPresets.length"></span>)
           </div>
           <div class="divide-y divide-gray-800">
             <template x-for="p in sandboxPresets" :key="p.name">
@@ -4439,7 +4439,7 @@
           <template x-if="can('manage_sandbox_policies')">
             <div class="p-3 border-t border-gray-800">
               <button @click="newSandboxPreset()"
-                class="w-full px-2 py-1 rounded border border-gray-700 text-gray-500 hover:text-white hover:border-gray-500 text-[10px]">+ New preset</button>
+                class="w-full px-2 py-1 rounded border border-gray-700 text-gray-500 hover:text-white hover:border-gray-500 text-[10px]">+ New permission preset</button>
             </div>
           </template>
         </div>
@@ -4964,7 +4964,7 @@
       <div class="text-[10px] text-gray-600 mb-5">
         Policy config:
         <button class="text-indigo-400 hover:text-indigo-300 underline"
-                @click="tab='admin'; adminTab='sandbox-policies'">Admin → Sandbox Policies</button>
+                @click="tab='admin'; adminTab='sandbox-policies'">Admin → Permissions</button>
       </div>
 
     </div>
@@ -9924,7 +9924,7 @@ function app() {
       } catch(e) { this.sandboxPresetError = e.message; }
     },
     newSandboxPreset() {
-      const name = prompt('New preset filename (no .yaml extension, alphanumeric + dashes):');
+      const name = prompt('New permission preset filename (no .yaml extension, alphanumeric + dashes):');
       if (!name || !/^[a-z0-9][a-z0-9\-_]*$/i.test(name)) {
         alert('Invalid name. Use letters, digits, dashes, underscores.');
         return;
