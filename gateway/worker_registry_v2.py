@@ -216,6 +216,94 @@ def _resolve_agent_info(sandbox_name: str) -> Tuple[Optional[str], str]:
     return None, ""
 
 
+def record_cost_entry(
+    final_result: Optional[Dict[str, Any]],
+    sandbox_name: str,
+    task_id: str,
+    session_id: Optional[str],
+) -> None:
+    """Write a cost_log row from a completed task's usage stats.
+
+    Reads token counts from ``final_result["usage"]`` (populated on the
+    v2 path by the in-sandbox client's ``run.completed`` SSE mapping,
+    or on v1 by ``sandbox_worker`` after ``agent.run_conversation``),
+    looks up pricing via ``gateway.pricing``, and inserts into
+    ``auth.db``'s cost_log. Local models still get a zero-cost row so
+    the dashboard shows activity volume rather than implying $0 means
+    "ran for free but not counted".
+
+    Shared between v1 and v2 so the per-agent daily-budget gate in
+    ``_handle_chat`` sees identical data regardless of dispatch path
+    — the biggest risk of the v2 flip was silently dropping cost
+    attribution and breaking LOG-25.6's budget cap.
+    """
+    if not isinstance(final_result, dict):
+        return
+    usage = final_result.get("usage") or {}
+    model = usage.get("model") or ""
+    if not model:
+        return
+
+    agent_id = None
+    agent_name = None
+    provider = None
+    try:
+        from gateway.auth import db as _adb
+        if sandbox_name.startswith("hermes-"):
+            agent_name = sandbox_name[len("hermes-"):]
+            agent_row = _adb.get_agent_by_name(agent_name)
+            if agent_row:
+                agent_id = agent_row.get("id")
+                route_id = agent_row.get("model_route_id")
+                if route_id:
+                    route = _adb.get_model_route(route_id)
+                    provider = (route or {}).get("provider")
+    except Exception:
+        pass
+
+    input_tokens = int(usage.get("input_tokens", 0) or 0)
+    output_tokens = int(usage.get("output_tokens", 0) or 0)
+    cache_read = int(usage.get("cache_read_tokens", 0) or 0)
+    cache_write = int(usage.get("cache_write_tokens", 0) or 0)
+
+    cost = None
+    pricing_known = False
+    if input_tokens or output_tokens or cache_read or cache_write:
+        try:
+            from gateway import pricing as _pricing
+            cost = _pricing.cost_for_usage(
+                model,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                cache_read_tokens=cache_read,
+                cache_write_tokens=cache_write,
+            )
+            pricing_known = cost is not None
+        except Exception as exc:
+            logger.debug("cost lookup failed for %s: %s", model, exc)
+
+    from gateway.auth import db as _adb
+    _adb.insert_cost_entry(
+        agent_id=agent_id,
+        agent_name=agent_name,
+        session_id=session_id,
+        task_id=task_id,
+        provider=provider,
+        model=model,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        cache_read_tokens=cache_read,
+        cache_write_tokens=cache_write,
+        cost_usd=cost or 0.0,
+        pricing_known=pricing_known,
+        user_id=(
+            _adb.get_dispatch_by_task_id(task_id).get("user_id")
+            if task_id and hasattr(_adb, "get_dispatch_by_task_id")
+            else None
+        ),
+    )
+
+
 async def sync_memories_from_sandbox(sandbox_name: str) -> None:
     """Download ``{HERMES_HOME_IN_SANDBOX}/memories/`` → host, mtime-gated.
 
@@ -661,6 +749,22 @@ async def dispatch_task_v2(
                 sandbox_name, exc,
             )
 
+        # Cost-log write — parity with v1. session_id is in the task
+        # payload; task_id is the dispatch key. Best-effort; a logging
+        # failure must not poison the response.
+        try:
+            record_cost_entry(
+                final_result=final_result,
+                sandbox_name=sandbox_name,
+                task_id=task_id,
+                session_id=task.get("session_id"),
+            )
+        except Exception as exc:
+            logger.debug(
+                "dispatch_task_v2(%s): cost_log write failed (non-fatal): %s",
+                sandbox_name, exc,
+            )
+
         # LOG-51.3: drop the inflight entry before reaping so a late
         # cancel_task_v2 doesn't terminate a process we're already
         # about to reap.
@@ -789,5 +893,6 @@ __all__ = [
     "sandbox_has_server_mode",
     "is_dispatch_v2_enabled",
     "sync_memories_from_sandbox",
+    "record_cost_entry",
     "DEFAULT_TASK_TIMEOUT",
 ]
