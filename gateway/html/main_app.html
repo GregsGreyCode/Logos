@@ -640,26 +640,12 @@
               <template x-if="canary.active">
                 <span class="text-[10px] px-1.5 py-0.5 rounded bg-yellow-900 text-yellow-400 font-semibold animate-pulse">canary</span>
               </template>
-              <!-- Spacer + stop + logs button + chat ID -->
-              <button class="ml-auto text-[10px] px-2 py-0.5 rounded border border-red-900 text-red-400 hover:text-red-300 hover:border-red-700 transition-colors animate-pulse"
-                @click="cancelActiveTask()"
-                x-show="activeTaskId"
-                x-cloak
-                title="Abort the in-flight request">■ Stop</button>
-              <button class="text-[10px] px-2 py-0.5 rounded border border-gray-700 text-gray-400 hover:text-white hover:border-gray-500 transition-colors"
-                @click="(() => { const chat = chats.find(c => c.id === activeChatId); if (chat && chat.agent_id) { openAgentLogs({id: chat.agent_id, name: chat.agent_name}); } })()"
-                :class="activeTaskId ? '' : 'ml-auto'"
-                x-show="activeChatId && chats.find(c => c.id === activeChatId)?.agent_id"
-                title="View this agent's runtime log tail — tool calls, thinking, errors">📋 Logs</button>
-              <button class="text-[10px] px-2 py-0.5 rounded border border-gray-700 text-gray-400 hover:text-indigo-300 hover:border-indigo-500 transition-colors"
-                @click="(() => { const chat = chats.find(c => c.id === activeChatId); if (chat && chat.agent_id) { openAgentMind({id: chat.agent_id, name: chat.agent_name}); } })()"
-                x-show="activeChatId && chats.find(c => c.id === activeChatId)?.agent_id"
-                title="What this agent knows — memories, past sessions, files on disk">🧠 Mind</button>
-              <span class="text-[10px] text-gray-700 font-mono"
-                x-text="activeChatId ? '#' + activeChatId.slice(-6) : ''"></span>
             </div>
 
-            <!-- Row 2: STAMP governance — compact, interactive -->
+            <!-- Row 2: STAMP governance — compact, interactive
+                 (Stop / Logs / Mind / chat-id live on the right of
+                 this same row so the chat header is two clean lines
+                 rather than three.) -->
             <div class="flex items-center gap-1.5 flex-wrap">
               <!-- S: Soul — clickable dropdown -->
               <div class="relative" x-data="{ open: false }" @click.away="open = false">
@@ -1027,6 +1013,25 @@
                     x-text="agentToolsError"></div>
                 </div>
               </div>
+              <!-- Right cluster: Stop (when in-flight) / Logs / Mind /
+                   chat-id. ml-auto on the first visible element pushes
+                   the whole group to the right edge of the STAMP row. -->
+              <button class="ml-auto text-[10px] px-2 py-0.5 rounded border border-red-900 text-red-400 hover:text-red-300 hover:border-red-700 transition-colors animate-pulse"
+                @click="cancelActiveTask()"
+                x-show="activeTaskId"
+                x-cloak
+                title="Abort the in-flight request">■ Stop</button>
+              <button class="text-[10px] px-2 py-0.5 rounded border border-gray-700 text-gray-400 hover:text-white hover:border-gray-500 transition-colors"
+                @click="(() => { const chat = chats.find(c => c.id === activeChatId); if (chat && chat.agent_id) { openAgentLogs({id: chat.agent_id, name: chat.agent_name}); } })()"
+                :class="activeTaskId ? '' : 'ml-auto'"
+                x-show="activeChatId && chats.find(c => c.id === activeChatId)?.agent_id"
+                title="View this agent's runtime log tail — tool calls, thinking, errors">📋 Logs</button>
+              <button class="text-[10px] px-2 py-0.5 rounded border border-gray-700 text-gray-400 hover:text-indigo-300 hover:border-indigo-500 transition-colors"
+                @click="(() => { const chat = chats.find(c => c.id === activeChatId); if (chat && chat.agent_id) { openAgentMind({id: chat.agent_id, name: chat.agent_name}); } })()"
+                x-show="activeChatId && chats.find(c => c.id === activeChatId)?.agent_id"
+                title="What this agent knows — memories, past sessions, files on disk">🧠 Mind</button>
+              <span class="text-[10px] text-gray-700 font-mono"
+                x-text="activeChatId ? '#' + activeChatId.slice(-6) : ''"></span>
             </div>
 
 
