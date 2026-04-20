@@ -295,9 +295,6 @@
         data-testid="nav-activity"
         @click="tab='activity'; activityTab='dashboards'; localStorage.setItem('logos_activity_tab','dashboards'); _loadActivityTabData('dashboards')">
         Activity
-        <template x-if="pendingApprovalCount > 0">
-          <span class="absolute -top-1 -right-3 min-w-[16px] h-4 px-1 rounded-full bg-red-500 text-[9px] text-white font-bold flex items-center justify-center" x-text="pendingApprovalCount > 99 ? '99+' : pendingApprovalCount"></span>
-        </template>
       </button>
     </template>
     <template x-if="can('manage_users') || can('view_audit_logs')">
@@ -3637,7 +3634,7 @@
          "start SearxNG" before they think to configure an API key. -->
     <div class="flex items-center justify-between mb-1">
       <h2 class="text-sm font-semibold text-white">Local tool integrations</h2>
-      <button @click="loadLocalServices()" class="text-xs text-gray-500 hover:text-gray-300">Refresh</button>
+      <button @click="loadLocalServices()" class="text-xs px-3 py-1.5 rounded-lg border border-gray-700 text-gray-400 hover:text-white transition-colors">Refresh</button>
     </div>
     <p class="text-xs text-gray-500 -mt-1 mb-3">
       Self-hosted services bundled with Logos — queries stay on your network. Start or stop them here,
@@ -3693,7 +3690,7 @@
 
     <div class="flex items-center justify-between mb-1">
       <h2 class="text-sm font-semibold text-white">Cloud tool integrations</h2>
-      <button @click="loadServices()" class="text-xs text-gray-500 hover:text-gray-300">Refresh</button>
+      <button @click="loadServices()" class="text-xs px-3 py-1.5 rounded-lg border border-gray-700 text-gray-400 hover:text-white transition-colors">Refresh</button>
     </div>
     <p class="text-xs text-gray-500 -mt-1 mb-3">
       API keys for third-party SaaS providers — Firecrawl, OpenAI, Slack, etc. Data flows to the provider's servers when these tools are used.
@@ -4039,7 +4036,11 @@
       <button class="pb-2 text-sm font-medium border-b-2 border-transparent"
         :class="activityTab==='events'?'tab-active':'text-gray-500 hover:text-white'"
         @click="activityTab='events'; loadDispatches()">Runs</button>
-      <button x-show="can('view_approvals')"
+      <!-- Approvals tab hidden — no active approval flow on this
+           install. The handler + schema stay in place so the tab can
+           be re-enabled by flipping x-show back when approvals are
+           actually being generated. -->
+      <button x-show="false" x-cloak
         class="pb-2 text-sm font-medium border-b-2 border-transparent relative"
         :class="activityTab==='approvals'?'tab-active':'text-gray-500 hover:text-white'"
         @click="activityTab='approvals'; loadApprovals()">
