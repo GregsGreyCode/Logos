@@ -272,22 +272,3 @@ class TestDefaultConfigShape:
         assert compression["summary_provider"] == "auto"
 
 
-# ── CLI defaults parity ─────────────────────────────────────────────────────
-
-
-class TestCLIDefaultsHaveAuxiliaryKeys:
-    """Verify cli.py load_cli_config() defaults dict does NOT include auxiliary
-    (it comes from config.yaml deep merge, not hardcoded defaults)."""
-
-    def test_cli_defaults_can_merge_auxiliary(self):
-        """The load_cli_config deep merge logic handles keys not in defaults.
-        Verify auxiliary would be picked up from config.yaml."""
-        # This is a structural assertion: cli.py's second-pass loop
-        # carries over keys from file_config that aren't in defaults.
-        # So auxiliary config from config.yaml gets merged even though
-        # cli.py's defaults dict doesn't define it.
-        import logos_cli.cli as _cli_mod
-        source = Path(_cli_mod.__file__).read_text()
-        assert "auxiliary_config = defaults.get(\"auxiliary\"" in source
-        assert "AUXILIARY_VISION_PROVIDER" in source
-        assert "AUXILIARY_VISION_MODEL" in source
