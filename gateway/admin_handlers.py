@@ -1357,14 +1357,15 @@ async def handle_agent_tools_get(request: web.Request) -> web.Response:
 
     # ── Application layer: available + enabled toolsets ──
     #
-    # LOG-64: query the agent's own sandbox for its live toolset view
-    # (via hermes's /v1/toolsets endpoint registered by the monkeypatch).
-    # Fall back to Logos's vendored core/toolsets.TOOLSETS only when the
-    # sandbox is unreachable — that dict is static residue from the
-    # pre-sandbox era and can silently disagree with what upstream
-    # hermes actually has.
+    # The agent's own sandbox is the only source of truth for what
+    # toolsets hermes actually has. We query it via GET /v1/toolsets
+    # (registered by hermes_cancel_monkeypatch's introspection patch).
+    # No fallback — if the sandbox can't answer, we surface that
+    # clearly so the UI can offer a "Restart runtime" button rather
+    # than silently showing a stale hardcoded list.
     available_toolsets: list[dict] = []
-    toolsets_source = "local"
+    toolsets_source = "unavailable"
+    toolsets_error: Optional[str] = None
     try:
         from gateway.executors.openshell import _sanitize_sandbox_name
         from gateway.worker_registry_v2 import fetch_toolsets_from_sandbox
@@ -1377,25 +1378,15 @@ async def handle_agent_tools_get(request: web.Request) -> web.Response:
                     description = str(meta.get("description", ""))
                 available_toolsets.append({"name": name, "description": description})
             toolsets_source = f"sandbox:{sandbox_name}"
-    except Exception as exc:
-        logger.debug(
-            "handle_agent_tools_get(%s): sandbox toolset query failed, "
-            "falling back to local: %s", aid, exc,
-        )
-
-    if not available_toolsets:
-        try:
-            from core.toolsets import TOOLSETS
-            for name, meta in sorted(TOOLSETS.items()):
-                description = ""
-                if isinstance(meta, dict):
-                    description = str(meta.get("description", ""))
-                available_toolsets.append({"name": name, "description": description})
-        except Exception as exc:
-            logger.warning(
-                "handle_agent_tools_get(%s): failed to load core.toolsets.TOOLSETS: %s",
-                aid, exc,
+        else:
+            toolsets_error = (
+                "Cannot reach the sandbox's /v1/toolsets endpoint. The "
+                "agent's hermes process may predate the introspection "
+                "patch — click Restart runtime to bounce it."
             )
+    except Exception as exc:
+        toolsets_error = f"Sandbox toolset query failed: {exc}"
+        logger.warning("handle_agent_tools_get(%s): %s", aid, exc)
 
     import json as _json
     enabled_toolsets: list[str] = []
@@ -1444,6 +1435,7 @@ async def handle_agent_tools_get(request: web.Request) -> web.Response:
             "enabled": enabled_toolsets,
             "available": available_toolsets,
             "source": toolsets_source,
+            "error": toolsets_error,
         },
         "presets": {
             "applied": applied_presets,
@@ -1482,18 +1474,24 @@ async def handle_agent_toolsets_toggle(request: web.Request) -> web.Response:
     if not toolset:
         return web.json_response({"error": "toolset is required"}, status=400)
 
-    # Validate against the canonical toolset registry before writing.
+    # Validate against the sandbox's live toolset list when we can
+    # reach it — otherwise skip (better to persist the toggle and
+    # reconcile once the sandbox is back than block the user).
     try:
-        from core.toolsets import TOOLSETS
-        if toolset not in TOOLSETS:
-            return web.json_response(
-                {"error": f"unknown toolset: {toolset}"},
-                status=400,
-            )
+        from gateway.executors.openshell import _sanitize_sandbox_name
+        from gateway.worker_registry_v2 import fetch_toolsets_from_sandbox
+        sandbox_name = _sanitize_sandbox_name(f"hermes-{agent['name']}")
+        payload = await fetch_toolsets_from_sandbox(sandbox_name)
+        if payload and isinstance(payload.get("toolsets"), dict):
+            if toolset not in payload["toolsets"]:
+                return web.json_response(
+                    {"error": f"unknown toolset (not registered in sandbox): {toolset}"},
+                    status=400,
+                )
     except Exception as exc:
-        return web.json_response(
-            {"error": f"toolsets module unavailable: {exc}"},
-            status=500,
+        logger.debug(
+            "handle_agent_toolsets_toggle(%s, %s): sandbox validate "
+            "failed, accepting toggle anyway: %s", aid, toolset, exc,
         )
 
     # Read, mutate, write-back the current JSON list.
@@ -1601,6 +1599,65 @@ async def handle_agent_presets_toggle(request: web.Request) -> web.Response:
         aid, preset, enabled, applied,
     )
     return web.json_response({"applied": applied})
+
+
+async def handle_agent_runtime_restart(request: web.Request) -> web.Response:
+    """POST /admin/agents/{id}/runtime/restart
+
+    Re-uploads the hermes monkeypatch (``hermes_cancel_monkeypatch.py``
+    + the toolset-introspection patch) into the agent's sandbox, then
+    bounces the hermes process so it reads the latest patch. Useful
+    when the Logos gateway has been updated with a newer patch but the
+    sandbox's hermes process is still running against the version it
+    was booted with (e.g. agents created before LOG-64 still serving a
+    hermes without /v1/toolsets).
+    """
+    aid = request.match_info["id"]
+    agent = auth_db.get_agent(aid)
+    if not agent:
+        return web.json_response({"error": "not_found"}, status=404)
+
+    from gateway.executors.openshell import _sanitize_sandbox_name, _load_state
+    sandbox_name = _sanitize_sandbox_name(f"hermes-{agent['name']}")
+
+    target_gw = None
+    for inst in _load_state():
+        if inst.get("sandbox_name") == sandbox_name:
+            target_gw = inst.get("openshell_name")
+            break
+
+    try:
+        from gateway.executors.hermes_server_mode import (
+            deploy_cancel_monkeypatch,
+            restart_hermes_in_sandbox,
+        )
+    except Exception as exc:
+        return web.json_response(
+            {"error": f"hermes_server_mode unavailable: {exc}"},
+            status=500,
+        )
+
+    try:
+        deploy_cancel_monkeypatch(sandbox_name, gateway=target_gw)
+    except Exception as exc:
+        logger.exception("runtime restart: patch upload failed")
+        return web.json_response(
+            {"error": f"patch upload failed: {exc}"}, status=500,
+        )
+
+    try:
+        restart_hermes_in_sandbox(sandbox_name, gateway=target_gw)
+    except Exception as exc:
+        logger.exception("runtime restart: hermes restart failed")
+        return web.json_response(
+            {"error": f"hermes restart failed: {exc}"}, status=500,
+        )
+
+    logger.info(
+        "agent_runtime_restart(%s): patch redeployed + hermes bounced "
+        "in %s", aid, sandbox_name,
+    )
+    return web.json_response({"ok": True, "sandbox": sandbox_name})
 
 
 # ── Per-agent channel credentials ────────────────────────────────────────────

@@ -793,6 +793,18 @@
                       <span class="text-gray-700 normal-case"
                         x-text="'(' + (agentToolsState?.toolsets?.enabled?.length || 0) + '/' + (agentToolsState?.toolsets?.available?.length || 0) + ')'"></span>
                     </div>
+                    <!-- Sandbox unreachable → surface error + offer Restart runtime -->
+                    <div x-show="agentToolsState?.toolsets?.error"
+                      class="px-3 py-2 text-[10px] text-yellow-500 border-b border-yellow-900/40 bg-yellow-950/20">
+                      <div class="mb-1" x-text="agentToolsState?.toolsets?.error"></div>
+                      <button type="button"
+                        @click="restartAgentRuntime(activeAgent.id)"
+                        :disabled="agentRuntimeRestarting"
+                        class="mt-1 px-2 py-0.5 text-[10px] rounded border border-yellow-700 bg-yellow-900/30 hover:bg-yellow-800/40 disabled:opacity-50">
+                        <span x-show="!agentRuntimeRestarting">Restart runtime</span>
+                        <span x-show="agentRuntimeRestarting">Restarting…</span>
+                      </button>
+                    </div>
                     <div class="grid grid-cols-3" style="column-gap: 0.25rem;">
                       <template x-for="t in (agentToolsState?.toolsets?.available || [])" :key="'ts-' + t.name">
                         <label class="flex items-start gap-2 px-3 py-1.5 text-[11px] hover:bg-gray-800 cursor-pointer" :title="t.description || t.name">
@@ -6749,6 +6761,7 @@ function app() {
     // and "pre:<name>" for presets.
     agentToolsToggling: {},
     agentToolsError: null,
+    agentRuntimeRestarting: false,
     selectedRoute: null,
     provisionModalOpen: false,
     provisioningRoute: false,
@@ -12088,6 +12101,37 @@ toolsets:
         }
       };
       setTimeout(poll, 3000);
+    },
+
+    async restartAgentRuntime(agentId) {
+      // Re-upload the hermes monkeypatch + bounce the hermes process
+      // inside the sandbox so the running hermes picks up the latest
+      // patch (e.g. /v1/toolsets introspection). Refreshes the tools
+      // view on success so the dropdown swaps from empty/local to the
+      // live sandbox list.
+      if (!agentId || this.agentRuntimeRestarting) return;
+      this.agentRuntimeRestarting = true;
+      this.agentToolsError = null;
+      try {
+        const r = await fetch(
+          '/admin/agents/' + encodeURIComponent(agentId) + '/runtime/restart',
+          {
+            method: 'POST',
+            credentials: 'include',
+            headers: {'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken()},
+          },
+        );
+        if (!r.ok) throw new Error(await r.text() || r.statusText);
+        // Give hermes a beat to come back up before re-probing — the
+        // restart script sleeps 1s internally and then runs hermes in
+        // the background, so a short extra wait here avoids an empty
+        // first fetch that would show the error banner again.
+        await new Promise(resolve => setTimeout(resolve, 2500));
+        await this.loadAgentTools(agentId);
+      } catch(e) {
+        this.agentToolsError = 'Restart runtime failed: ' + (e.message || e);
+      }
+      this.agentRuntimeRestarting = false;
     },
 
     async toggleToolset(agentId, toolset, enabled) {
