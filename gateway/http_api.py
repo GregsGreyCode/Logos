@@ -4022,7 +4022,7 @@ async def _handle_chat(request: web.Request) -> web.StreamResponse:
                 "context_prompt": context_prompt,
                 "toolsets": worker_entry.toolsets or ["hermes-cli"],
                 "max_iterations": int(os.environ.get("LOGOS_MAX_ITERATIONS",
-                                                     os.environ.get("HERMES_MAX_ITERATIONS", "90"))),
+                                                     os.environ.get("HERMES_MAX_ITERATIONS", "1000"))),
             }
             # Seed _session_status for this sandbox run so the Live
             # Executions panel (/status → main_app.html Live list) shows
