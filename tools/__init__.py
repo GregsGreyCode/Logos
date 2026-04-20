@@ -120,19 +120,6 @@ from .code_execution_tool import (
     EXECUTE_CODE_SCHEMA,
 )
 
-# Subagent delegation (spawn child agents with isolated context)
-from .delegate_tool import (
-    delegate_task,
-    check_delegate_requirements,
-    DELEGATE_TASK_SCHEMA,
-)
-
-# Structured A2A handoffs with contracts
-from .handoff_tool import (
-    handoff_agent,
-    HANDOFF_AGENT_SCHEMA,
-)
-
 # File tools have no external requirements - they use the terminal backend
 def check_file_requirements():
     """File tools only require terminal backend to be available."""
@@ -212,12 +199,5 @@ __all__ = [
     'execute_code',
     'check_sandbox_requirements',
     'EXECUTE_CODE_SCHEMA',
-    # Subagent delegation
-    'delegate_task',
-    'check_delegate_requirements',
-    'DELEGATE_TASK_SCHEMA',
-    # Structured A2A handoffs
-    'handoff_agent',
-    'HANDOFF_AGENT_SCHEMA',
 ]
 
