@@ -192,6 +192,121 @@ DEFAULT_TASK_TIMEOUT = _default_task_timeout()
 _INFLIGHT: Dict[str, Dict[str, Any]] = {}
 
 
+# Mtime cache for memory sync-back. Same pattern as v1's
+# WorkerRegistry._memory_mtimes: only download from the sandbox when
+# the memories directory's mtime has advanced since the last successful
+# sync, avoiding a pointless transfer on every dispatch when the agent
+# didn't write anything.
+_MEMORY_MTIMES: Dict[str, float] = {}
+
+
+def _resolve_agent_info(sandbox_name: str) -> Tuple[Optional[str], str]:
+    """Return ``(agent_name, gateway)`` for a sandbox, or ``(None, "")``.
+
+    Mirror of ``WorkerRegistry._resolve_agent_info``. When v1 is deleted
+    in Phase 2, this is the remaining copy.
+    """
+    try:
+        from gateway.executors.openshell import _load_state
+    except ImportError:
+        return None, ""
+    for inst in _load_state():
+        if inst.get("sandbox_name") == sandbox_name:
+            return inst.get("name"), inst.get("openshell_name", "") or ""
+    return None, ""
+
+
+async def sync_memories_from_sandbox(sandbox_name: str) -> None:
+    """Download ``{HERMES_HOME_IN_SANDBOX}/memories/`` → host, mtime-gated.
+
+    Best-effort — never raises. Mirrors
+    ``WorkerRegistry._sync_memories_from_sandbox`` with the v2 sandbox
+    path. Without this, any memory the agent writes during a run would
+    evaporate on the next sandbox reset — the biggest silent regression
+    blocking v2 as the default dispatch mode.
+    """
+    agent_name, target_gateway = _resolve_agent_info(sandbox_name)
+    if not agent_name:
+        return
+
+    try:
+        from gateway.executors.hermes_server_mode import HERMES_HOME_IN_SANDBOX
+    except ImportError:
+        return
+    remote_dir = f"{HERMES_HOME_IN_SANDBOX}/memories/"
+
+    # Probe mtime — skip the download if nothing changed since last sync.
+    stat_cmd = ["openshell"]
+    if target_gateway:
+        stat_cmd += ["-g", target_gateway]
+    stat_cmd += [
+        "sandbox", "exec", "--no-tty",
+        "--name", sandbox_name, "--",
+        "stat", "-c", "%Y", remote_dir,
+    ]
+    try:
+        stat_result = await asyncio.to_thread(
+            subprocess.run,
+            stat_cmd, capture_output=True, text=True, timeout=10,
+            input="",
+        )
+        if stat_result.returncode != 0:
+            return
+        current_mtime = float(stat_result.stdout.strip())
+    except Exception:
+        return
+
+    last_mtime = _MEMORY_MTIMES.get(sandbox_name, 0.0)
+    if current_mtime <= last_mtime:
+        return
+
+    try:
+        from gateway.executors.openshell import _HERMES_HOME
+    except ImportError:
+        return
+    host_dir = _HERMES_HOME / "agents" / agent_name / "memories"
+    try:
+        host_dir.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        logger.debug(
+            "v2 memory sync(%s): cannot create %s: %s",
+            sandbox_name, host_dir, exc,
+        )
+        return
+
+    dl_cmd = ["openshell"]
+    if target_gateway:
+        dl_cmd += ["-g", target_gateway]
+    dl_cmd += [
+        "sandbox", "download",
+        sandbox_name, remote_dir, str(host_dir),
+    ]
+    try:
+        r = await asyncio.to_thread(
+            subprocess.run,
+            dl_cmd, capture_output=True, text=True, timeout=30,
+        )
+        if r.returncode == 0:
+            _MEMORY_MTIMES[sandbox_name] = current_mtime
+            try:
+                n_files = sum(1 for f in host_dir.iterdir() if f.is_file())
+            except OSError:
+                n_files = 0
+            if n_files > 0:
+                logger.info(
+                    "v2 memory sync: %s → %s (%d file(s))",
+                    sandbox_name, host_dir, n_files,
+                )
+        else:
+            logger.debug(
+                "v2 memory sync(%s): download rc=%d stderr=%r",
+                sandbox_name, r.returncode,
+                (r.stderr or "")[:200],
+            )
+    except Exception as exc:
+        logger.debug("v2 memory sync(%s): download raised: %s", sandbox_name, exc)
+
+
 def _load_server_setup(sandbox_name: str) -> Optional[Dict[str, str]]:
     """Retrieve the HermesServerSetup info for a sandbox from the
     executor state file.
@@ -533,6 +648,19 @@ async def dispatch_task_v2(
             f"timeout={timeout}s"
         ) from exc
     finally:
+        # Memory sync-back — bounded timeout so a slow/hung sandbox
+        # can't wedge cleanup. Non-fatal; stat failure or download
+        # failure both reduce to "no-op this dispatch, try next time."
+        try:
+            await asyncio.wait_for(
+                sync_memories_from_sandbox(sandbox_name), timeout=45,
+            )
+        except Exception as exc:
+            logger.debug(
+                "dispatch_task_v2(%s): memory sync-back failed (non-fatal): %s",
+                sandbox_name, exc,
+            )
+
         # LOG-51.3: drop the inflight entry before reaping so a late
         # cancel_task_v2 doesn't terminate a process we're already
         # about to reap.
@@ -660,5 +788,6 @@ __all__ = [
     "cancel_task",
     "sandbox_has_server_mode",
     "is_dispatch_v2_enabled",
+    "sync_memories_from_sandbox",
     "DEFAULT_TASK_TIMEOUT",
 ]
