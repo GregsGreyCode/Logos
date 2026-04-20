@@ -4438,55 +4438,20 @@ async def _handle_chat(request: web.Request) -> web.StreamResponse:
                     logger.warning("budget gate skipped: %s", _bgate_exc)
 
             try:
-                # LOG-44: route to v2 dispatcher (HTTP into in-sandbox
-                # `hermes gateway run`) if BOTH the env flag is on AND
-                # this specific sandbox was spawned with Hermes-server
-                # mode. Otherwise fall through to Plan A-prime per-task
-                # exec. No runtime cost to the default path.
-                _use_v2 = False
-                _forced_v1 = False
-                try:
-                    from gateway.worker_registry_v2 import (
-                        is_dispatch_v2_enabled as _v2_on,
-                        is_dispatch_v2_forced_to_v1 as _v2_forced_off,
-                        sandbox_has_server_mode as _v2_ready,
-                        dispatch_task_v2 as _v2_dispatch,
-                        record_dispatch_path as _v2_record_path,
-                    )
-                    _use_v2 = _v2_on() and _v2_ready(target_worker)
-                    # Kill switch (Phase 1.6): honour even when setup
-                    # exists, so rollback doesn't need a redeploy.
-                    if _use_v2 and _v2_forced_off():
-                        _use_v2 = False
-                        _forced_v1 = True
-                except ImportError:
-                    _v2_record_path = None  # type: ignore[assignment]
-
-                if _use_v2:
-                    if _v2_record_path:
-                        _v2_record_path("v2")
-                    logger.info(
-                        "dispatch: routing to v2 (hermes-as-server) for %s",
-                        target_worker,
-                    )
-                    worker_result = await _v2_dispatch(
-                        target_worker, task_payload, timeout=600,
-                        on_stream_event=_on_worker_stream,
-                    )
-                else:
-                    if _v2_record_path:
-                        _v2_record_path(
-                            "v2_forced_v1" if _forced_v1 else "v1",
-                        )
-                    if _forced_v1:
-                        logger.info(
-                            "dispatch: LOGOS_DISPATCH_V2_FORCE_V1=1 — "
-                            "forcing v1 for %s", target_worker,
-                        )
-                    worker_result = await worker_registry.dispatch_task(
-                        target_worker, task_payload, timeout=600,
-                        on_stream_event=_on_worker_stream,
-                    )
+                # Dispatch via v2 HTTP-in-sandbox (hermes-as-server).
+                # Phase 2 made this the only dispatch path: Plan A-Prime
+                # (per-task sandbox_worker.py subprocess) is gone.
+                # Sandboxes without hermes_server_setup surface a clear
+                # error — resurrect (LOG-61/62) reinstates setup for any
+                # sandbox that survives a gateway restart.
+                from gateway.worker_registry_v2 import dispatch_task_v2
+                logger.info(
+                    "dispatch: v2 (hermes-as-server) for %s", target_worker,
+                )
+                worker_result = await dispatch_task_v2(
+                    target_worker, task_payload, timeout=600,
+                    on_stream_event=_on_worker_stream,
+                )
             finally:
                 # Clear Live Executions entry whether the dispatch
                 # succeeded, errored, or raised — otherwise a crashed
