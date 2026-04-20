@@ -1744,18 +1744,11 @@ async def handle_agent_channels_post(request: web.Request) -> web.Response:
         aid, platform, label, row.get("id"),
     )
 
-    # Hot-connect the adapter so inbound polling starts immediately
-    # (no gateway restart needed). Best-effort: if the runner isn't
-    # wired (e.g. unit tests, headless script) the DB row still
-    # persists and the next startup picks it up.
+    # LOG-44.3: bot connection happens in-sandbox via hermes's own
+    # platform adapters, not in the Logos gateway process.
+    # _refresh_sandbox_channel_env below pushes the new token into the
+    # sandbox's .env and bounces hermes so it picks the bot up.
     connect_result = None
-    if enabled:
-        try:
-            runner = request.app.get("runner") if request.app else None
-            if runner:
-                connect_result = await runner.connect_agent_channel(row["id"])
-        except Exception:
-            logger.exception("channels_post: hot-connect failed (DB row persisted)")
 
     # Grant outbound capability: adds the `messaging` toolset + the
     # platform network preset if they aren't already active. Without
@@ -1796,16 +1789,9 @@ async def handle_agent_channels_delete(request: web.Request) -> web.Response:
     row = auth_db.get_agent_channel_credential(cred_id)
     if not row or row.get("agent_id") != aid:
         return web.json_response({"error": "not_found"}, status=404)
-    # Disconnect the live adapter BEFORE deleting the row so the
-    # disconnect can still resolve (agent, platform, label) from the
-    # DB. If we deleted first, connect_agent_channel's lookup would
-    # return nothing and we'd orphan the live poller.
-    try:
-        runner = request.app.get("runner") if request.app else None
-        if runner:
-            await runner.disconnect_agent_channel(cred_id)
-    except Exception:
-        logger.exception("channels_delete: hot-disconnect failed (continuing to row delete)")
+    # LOG-44.3: in-sandbox hermes is what runs the bot. Dropping the DB
+    # row + refreshing the sandbox .env (below) is enough to stop the
+    # poller — no Logos-side adapter to disconnect.
     try:
         auth_db.delete_agent_channel_credential(cred_id)
     except Exception as exc:
@@ -1845,18 +1831,9 @@ async def handle_agent_channels_toggle(request: web.Request) -> web.Response:
         logger.exception("channels toggle failed")
         return web.json_response({"error": str(exc)}, status=500)
 
-    # Enable flips the adapter on (hot-connect); disable flips it off
-    # (hot-disconnect). Without this, toggle is a silent DB change
-    # that only takes effect on the next gateway restart.
-    try:
-        runner = request.app.get("runner") if request.app else None
-        if runner:
-            if enabled:
-                await runner.connect_agent_channel(cred_id)
-            else:
-                await runner.disconnect_agent_channel(cred_id)
-    except Exception:
-        logger.exception("channels_toggle: hot-reconcile failed (DB flag updated)")
+    # LOG-44.3: enable/disable flows through the sandbox .env refresh
+    # below. Adding the token back / pulling it out there is what
+    # starts / stops hermes's in-sandbox bot poller.
 
     # LOG-44.3.4: enable/disable should also update the sandbox's
     # .env — disabling should drop the token from env (so the adapter

@@ -994,8 +994,6 @@ class GatewayRunner:
                 logger.info("Recovered %s background process(es) from previous run", recovered)
         except Exception as e:
             logger.warning("Process checkpoint recovery: %s", e)
-        
-        connected_count = 0
 
         # Auth DB initialisation — the HTTP layer calls this too during
         # start_http_api, but we need the tables up NOW so the per-agent
@@ -1022,61 +1020,16 @@ class GatewayRunner:
         except Exception as _mig_err:
             logger.warning("env → channel credentials migration: %s", _mig_err)
 
-        # ── Per-agent channel adapters (new path, one per credential row) ──
-        # Each enabled row in agent_channel_credentials spawns its own
-        # adapter instance, tagged with the owning agent_id. The
-        # adapter stamps source.agent_id on every inbound event so
-        # dispatch_platform_message skips the platform_routing lookup.
-        # Tracks which platforms have at least one credential-driven
-        # adapter so we know to SKIP the legacy env-token path below
-        # for that platform (avoids two adapters polling the same bot).
-        platforms_with_credentials: set = set()
-        try:
-            credential_count = await self._spawn_agent_channel_adapters(platforms_with_credentials)
-            if credential_count:
-                logger.info("✓ %d agent-scoped channel adapter(s) connected", credential_count)
-                connected_count += credential_count
-        except Exception as _ch_err:
-            logger.exception("agent-scoped adapter spawn: %s", _ch_err)
-
-        # ── Legacy platform adapters (env-token path, gateway-mediated) ──
-        # Inbound messages no longer run the in-process AIAgent loop.
-        # set_message_handler is bound to dispatch_platform_message, which
-        # routes the event into a sandbox worker via WorkerRegistry. The
-        # gateway holds platform credentials but never executes agent
-        # code; the sandbox holds no credentials but executes the agent.
-        # Skipped per-platform when a credential-driven adapter is already
-        # running for that platform (mutex to prevent double polling).
-        # See docs/migration/platforms-as-gateway-mediated.md.
-        for platform, platform_config in self.config.platforms.items():
-            if not platform_config.enabled:
-                continue
-            if platform in platforms_with_credentials:
-                logger.debug(
-                    "skipping legacy env-token adapter for %s (per-agent credentials active)",
-                    platform.value,
-                )
-                continue
-            adapter = self._create_adapter(platform, platform_config)
-            if not adapter:
-                logger.warning("No adapter available for %s", platform.value)
-                continue
-            adapter.set_message_handler(self.dispatch_platform_message)
-            logger.info("Connecting to %s...", platform.value)
-            try:
-                success = await adapter.connect()
-                if success:
-                    self.adapters[platform] = adapter
-                    self._sync_voice_mode_state_to_adapter(adapter)
-                    connected_count += 1
-                    logger.info("✓ %s connected", platform.value)
-                else:
-                    logger.warning("✗ %s failed to connect", platform.value)
-            except Exception as e:
-                logger.error("✗ %s error: %s", platform.value, e)
-
-        if connected_count == 0:
-            logger.info("Gateway running without platforms.")
+        # LOG-44.3 — Logos gateway no longer runs channel adapters
+        # in-process. Each agent's hermes server running inside its
+        # sandbox hosts its own TG/Discord/Slack/etc bot. Credentials
+        # still land in the DB here, but the bot connection happens in
+        # the sandbox via hermes's own gateway/platforms/* adapters,
+        # keyed off the env vars written by
+        # hermes_server_mode.build_channel_extra_env at spawn / credential
+        # refresh. The old in-gateway adapter loop (both legacy
+        # env-token and per-agent-credential variants) is deleted.
+        logger.info("Gateway running — channels handled in per-agent sandboxes (LOG-44.3).")
 
         # ── Bootstrap platform_routing for any newly-enabled platforms ──
         # Each enabled platform needs at least one 'global' rule so
@@ -1098,20 +1051,8 @@ class GatewayRunner:
         if hook_count:
             logger.info("%s hook(s) loaded", hook_count)
         await self.hooks.emit("gateway:startup", {
-            "platforms": [p.value for p in self.adapters.keys()],
+            "platforms": [],
         })
-        
-        if connected_count > 0:
-            logger.info("Gateway running with %s platform(s)", connected_count)
-        
-        # Build initial channel directory for send_message name resolution
-        try:
-            from gateway.channel_directory import build_channel_directory
-            directory = build_channel_directory(self.adapters)
-            ch_count = sum(len(chs) for chs in directory.get("platforms", {}).values())
-            logger.info("Channel directory built: %d target(s)", ch_count)
-        except Exception as e:
-            logger.warning("Channel directory build failed: %s", e)
 
         # Start background session expiry watcher for proactive memory flushing
         asyncio.create_task(self._session_expiry_watcher())
@@ -1280,60 +1221,6 @@ class GatewayRunner:
 
         return None
 
-    async def connect_platform(self, platform: Platform) -> dict:
-        """Connect (or reconnect) a single platform adapter at runtime.
-
-        Called when a messaging token is saved via the Channels UI.
-        Returns {ok, message}.
-        """
-        from gateway.config import PlatformConfig, load_gateway_config
-        # Reload config so it picks up the newly-injected env var
-        fresh_config = load_gateway_config()
-        pconfig = fresh_config.platforms.get(platform)
-        if not pconfig or not pconfig.enabled:
-            return {"ok": False, "message": f"{platform.value} not enabled in config"}
-
-        # Disconnect existing adapter if running
-        existing = self.adapters.pop(platform, None)
-        if existing:
-            try:
-                await existing.disconnect()
-                logger.info("Disconnected old %s adapter for reconnect", platform.value)
-            except Exception as e:
-                logger.warning("Error disconnecting old %s adapter: %s", platform.value, e)
-
-        adapter = self._create_adapter(platform, pconfig)
-        if not adapter:
-            return {"ok": False, "message": f"No adapter available for {platform.value}"}
-
-        adapter.set_message_handler(self.dispatch_platform_message)
-        try:
-            success = await adapter.connect()
-            if success:
-                self.adapters[platform] = adapter
-                self._sync_voice_mode_state_to_adapter(adapter)
-                self.delivery_router.adapters = self.adapters
-                logger.info("Runtime connect: %s connected", platform.value)
-                return {"ok": True, "message": f"{platform.value} connected"}
-            else:
-                return {"ok": False, "message": f"{platform.value} failed to connect"}
-        except Exception as e:
-            logger.error("Runtime connect: %s error: %s", platform.value, e)
-            return {"ok": False, "message": str(e)}
-
-    async def disconnect_platform(self, platform: Platform) -> dict:
-        """Disconnect a platform adapter at runtime."""
-        existing = self.adapters.pop(platform, None)
-        if not existing:
-            return {"ok": True, "message": f"{platform.value} was not connected"}
-        try:
-            await existing.disconnect()
-            self.delivery_router.adapters = self.adapters
-            logger.info("Runtime disconnect: %s disconnected", platform.value)
-            return {"ok": True, "message": f"{platform.value} disconnected"}
-        except Exception as e:
-            logger.warning("Runtime disconnect error: %s", e)
-            return {"ok": True, "message": f"{platform.value} disconnected (with warnings)"}
 
     def _is_user_authorized(self, source: SessionSource) -> bool:
         """
@@ -1536,234 +1423,6 @@ class GatewayRunner:
                 logger.exception("env→credentials: upsert %s failed", platform.value)
         if seeded:
             logger.info("env→credentials: migrated %d platform token(s)", seeded)
-
-    async def _spawn_agent_channel_adapters(
-        self, platforms_with_credentials: set,
-    ) -> int:
-        """Spawn one adapter per enabled ``agent_channel_credentials`` row.
-
-        Each adapter is tagged with its owning ``agent_id`` /
-        ``credential_label`` so incoming events get
-        ``source.agent_id`` stamped automatically (see
-        BasePlatformAdapter.set_message_handler). That stamping is
-        what lets dispatch_platform_message skip the platform_routing
-        lookup — the token IS the routing.
-
-        Populates ``self.agent_adapters`` by (agent_id, platform, label).
-        Also sets the FIRST adapter per platform into
-        ``self.adapters[platform]`` so the existing delivery_router /
-        channel_directory code (which keys by Platform) still finds an
-        outbound path. That promotion is a shim until task #4 teaches
-        the router to pick the right per-agent adapter for outbound.
-
-        Adds each platform it spawns for to
-        ``platforms_with_credentials`` so the legacy env-token startup
-        loop can skip them — prevents double-polling the same bot.
-
-        Returns the number of adapters successfully connected.
-        """
-        from gateway.auth import db as _auth_db
-        from gateway.config import Platform as _Platform, PlatformConfig
-        try:
-            rows = _auth_db.list_agent_channel_credentials(enabled_only=True)
-        except Exception:
-            logger.exception("_spawn_agent_channel_adapters: list failed")
-            return 0
-        if not rows:
-            return 0
-
-        connected = 0
-        for row in rows:
-            try:
-                platform = _Platform(row["platform"])
-            except ValueError:
-                logger.warning(
-                    "_spawn_agent_channel_adapters: unknown platform %s on row %s",
-                    row["platform"], row["id"],
-                )
-                continue
-            # Build a PlatformConfig that carries only this row's token,
-            # so the adapter talks to THIS bot and no other.
-            pconfig = PlatformConfig(enabled=True, token=row["token"])
-            adapter = self._create_adapter(
-                platform,
-                pconfig,
-                agent_id=row["agent_id"],
-                credential_label=row["label"],
-            )
-            if not adapter:
-                logger.warning(
-                    "_spawn_agent_channel_adapters: no adapter class for %s (row %s)",
-                    platform.value, row["id"],
-                )
-                continue
-            adapter.set_message_handler(self.dispatch_platform_message)
-            try:
-                success = await adapter.connect()
-            except Exception:
-                logger.exception(
-                    "_spawn_agent_channel_adapters: connect failed for %s/%s/%s",
-                    row["agent_id"], platform.value, row["label"],
-                )
-                continue
-            if not success:
-                logger.warning(
-                    "_spawn_agent_channel_adapters: adapter.connect returned False for %s/%s/%s",
-                    row["agent_id"], platform.value, row["label"],
-                )
-                continue
-            key = (row["agent_id"], platform, row["label"])
-            self.agent_adapters[key] = adapter
-            # Shim for outbound: first adapter per platform also lives
-            # in self.adapters[platform] so delivery_router finds one.
-            # Multi-agent outbound gets proper routing in task #4.
-            self.adapters.setdefault(platform, adapter)
-            self._sync_voice_mode_state_to_adapter(adapter)
-            platforms_with_credentials.add(platform)
-            connected += 1
-            logger.info(
-                "✓ %s/%s/%s connected (agent-scoped)",
-                row["agent_id"], platform.value, row["label"],
-            )
-        return connected
-
-    async def connect_agent_channel(self, cred_id: str) -> dict:
-        """Hot-connect an adapter for a newly-saved credential row.
-
-        Called from the POST /admin/agents/{id}/channels and the
-        toggle handler so users don't have to restart the gateway
-        after adding or re-enabling a bot.
-
-        Idempotent: if an adapter already exists for the row's
-        (agent_id, platform, label) key, it's disconnected first so
-        a token rotation cleanly replaces the old poller.
-
-        Returns ``{ok, message}``.
-        """
-        from gateway.auth import db as _auth_db
-        from gateway.config import Platform as _Platform, PlatformConfig
-        try:
-            row = _auth_db.get_agent_channel_credential(cred_id)
-        except Exception as exc:
-            return {"ok": False, "message": f"credential lookup failed: {exc}"}
-        if not row:
-            return {"ok": False, "message": "credential not found"}
-        if not row.get("enabled"):
-            # Explicitly disabled rows shouldn't be connected. Caller
-            # used the wrong entry point — tell them.
-            return {"ok": False, "message": "credential is disabled"}
-
-        try:
-            platform = _Platform(row["platform"])
-        except ValueError:
-            return {"ok": False, "message": f"unknown platform: {row['platform']}"}
-
-        key = (row["agent_id"], platform, row["label"])
-
-        # Disconnect any existing adapter for this key (rotation path).
-        existing = self.agent_adapters.pop(key, None)
-        if existing:
-            try:
-                await existing.disconnect()
-                # If this adapter was also the shim-promoted default in
-                # self.adapters[platform], drop it there too so the
-                # upcoming setdefault can re-promote the new instance.
-                if self.adapters.get(platform) is existing:
-                    self.adapters.pop(platform, None)
-            except Exception:
-                logger.exception("connect_agent_channel: old disconnect failed")
-
-        # Mutex with the legacy env-token path: if self.adapters[platform]
-        # currently holds an env-token adapter (not from a credential
-        # row — the new one will be the first agent_adapter for this
-        # platform), swap it out. Otherwise two pollers fight over the
-        # same bot and messages get double-delivered.
-        # Safe check: if the current self.adapters[platform] isn't any
-        # value in self.agent_adapters, it's the legacy one.
-        current_default = self.adapters.get(platform)
-        if current_default is not None and current_default not in self.agent_adapters.values():
-            try:
-                await current_default.disconnect()
-                logger.info(
-                    "connect_agent_channel: disconnected legacy env-token adapter for %s",
-                    platform.value,
-                )
-            except Exception:
-                logger.exception("connect_agent_channel: legacy disconnect failed")
-            self.adapters.pop(platform, None)
-
-        pconfig = PlatformConfig(enabled=True, token=row["token"])
-        adapter = self._create_adapter(
-            platform,
-            pconfig,
-            agent_id=row["agent_id"],
-            credential_label=row["label"],
-        )
-        if not adapter:
-            return {"ok": False, "message": f"no adapter class for {platform.value}"}
-        adapter.set_message_handler(self.dispatch_platform_message)
-        try:
-            success = await adapter.connect()
-        except Exception as exc:
-            logger.exception("connect_agent_channel: connect failed")
-            return {"ok": False, "message": str(exc)}
-        if not success:
-            return {"ok": False, "message": "adapter.connect returned False"}
-
-        self.agent_adapters[key] = adapter
-        self.adapters.setdefault(platform, adapter)
-        self._sync_voice_mode_state_to_adapter(adapter)
-        self.delivery_router.adapters = self.adapters
-        logger.info(
-            "connect_agent_channel: ✓ %s/%s/%s connected",
-            row["agent_id"], platform.value, row["label"],
-        )
-        return {"ok": True, "message": f"{platform.value} connected"}
-
-    async def disconnect_agent_channel(self, cred_id: str) -> dict:
-        """Hot-disconnect the adapter for a deleted/disabled credential.
-
-        Looks the row up either from the DB (if it still exists, e.g.
-        for the toggle-to-disabled case) or reconstructs the key from
-        the caller's info. Callers should pass the cred_id BEFORE
-        deleting the row so we can resolve the (agent, platform,
-        label) tuple.
-        """
-        from gateway.auth import db as _auth_db
-        try:
-            row = _auth_db.get_agent_channel_credential(cred_id)
-        except Exception:
-            row = None
-        if not row:
-            # The caller may have deleted the row already; sweep any
-            # adapters whose credential id matches (rare but possible).
-            # Nothing to do if we can't resolve the key and no orphans
-            # exist — that's the common path when the row is gone.
-            return {"ok": True, "message": "no adapter bound"}
-
-        from gateway.config import Platform as _Platform
-        try:
-            platform = _Platform(row["platform"])
-        except ValueError:
-            return {"ok": False, "message": f"unknown platform: {row['platform']}"}
-        key = (row["agent_id"], platform, row["label"])
-
-        existing = self.agent_adapters.pop(key, None)
-        if not existing:
-            return {"ok": True, "message": "not connected"}
-        try:
-            await existing.disconnect()
-            if self.adapters.get(platform) is existing:
-                self.adapters.pop(platform, None)
-            self.delivery_router.adapters = self.adapters
-            logger.info(
-                "disconnect_agent_channel: ✓ %s/%s/%s disconnected",
-                row["agent_id"], platform.value, row["label"],
-            )
-            return {"ok": True, "message": f"{platform.value} disconnected"}
-        except Exception as exc:
-            logger.exception("disconnect_agent_channel: disconnect failed")
-            return {"ok": False, "message": str(exc)}
 
     # ──────────────────────────────────────────────────────────────────
     # Phase 5.3 — dispatch_platform_message
