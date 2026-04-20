@@ -135,9 +135,9 @@ def _handle_send(args):
     if not pconfig or not pconfig.enabled:
         return json.dumps({"error": f"Platform '{platform_name}' is not configured. Set up credentials in ~/.hermes/gateway.json or environment variables."})
 
-    from gateway.channels.base import BasePlatformAdapter
+    from gateway.media_cache import extract_media
 
-    media_files, cleaned_message = BasePlatformAdapter.extract_media(message)
+    media_files, cleaned_message = extract_media(message)
     mirror_text = cleaned_message.strip() or _describe_media_for_mirror(media_files)
 
     used_home_channel = False

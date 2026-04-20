@@ -391,12 +391,11 @@ def _remaining_required_environment_names(
 
 
 def _gateway_setup_hint() -> str:
-    try:
-        from gateway.channels.base import GATEWAY_SECRET_CAPTURE_UNSUPPORTED_MESSAGE
-
-        return GATEWAY_SECRET_CAPTURE_UNSUPPORTED_MESSAGE
-    except Exception:
-        return "Secure secret entry is not available. Load this skill in the local CLI to be prompted, or add the key to ~/.hermes/.env manually."
+    return (
+        "Secure secret entry is not supported over messaging. "
+        "Load this skill in the local CLI to be prompted, or add the key to "
+        "~/.hermes/.env manually."
+    )
 
 
 def _build_setup_note(
