@@ -3506,7 +3506,14 @@ class GatewayRunner:
             return f"🧠 ✓ Reasoning effort set to `{effort}` (this session only)"
 
     async def _handle_compress_command(self, event: MessageEvent) -> str:
-        """Handle /compress command -- manually compress conversation context."""
+        """Handle /compress command -- manually compress conversation context.
+
+        Invokes ``ContextCompressor.compress`` directly on the gateway's
+        transcript — no ``AIAgent`` construction, no in-gateway agentic
+        loop. The sandbox-side agent has its own compression flow for its
+        own session DB; this command compresses the gateway's platform
+        transcript copy.
+        """
         source = event.source
         session_entry = self.session_store.get_or_create_session(source)
         history = self.session_store.load_transcript(session_entry.session_id)
@@ -3515,7 +3522,7 @@ class GatewayRunner:
             return "Not enough conversation to compress (need at least 4 messages)."
 
         try:
-            from agents.hermes.agent import AIAgent
+            from agent.context_compressor import ContextCompressor
             from agent.model_metadata import estimate_messages_tokens_rough
 
             runtime_kwargs = _resolve_runtime_agent_kwargs()
@@ -3533,19 +3540,13 @@ class GatewayRunner:
             original_count = len(msgs)
             approx_tokens = estimate_messages_tokens_rough(msgs)
 
-            tmp_agent = AIAgent(
-                **runtime_kwargs,
+            compressor = ContextCompressor(
                 model=model,
-                max_iterations=4,
                 quiet_mode=True,
-                enabled_toolsets=["memory"],
-                session_id=session_entry.session_id,
+                base_url=runtime_kwargs.get("base_url", ""),
             )
-
-            loop = asyncio.get_event_loop()
-            compressed, _ = await loop.run_in_executor(
-                None,
-                lambda: tmp_agent._compress_context(msgs, "", approx_tokens=approx_tokens),
+            compressed = await asyncio.to_thread(
+                compressor.compress, msgs, approx_tokens,
             )
 
             self.session_store.rewrite_transcript(session_entry.session_id, compressed)
