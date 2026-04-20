@@ -2406,7 +2406,6 @@ class GatewayRunner:
             "`/retry` — Retry your last message",
             "`/undo` — Remove the last exchange",
             "`/sethome` — Set this chat as the home channel",
-            "`/compress` — Compress conversation context",
             "`/title [name]` — Set or show the session title",
             "`/resume [name]` — Resume a previously-named session",
             "`/usage` — Show token usage for this session",
@@ -3504,66 +3503,6 @@ class GatewayRunner:
             return f"🧠 ✓ Reasoning effort set to `{effort}` (saved to config)\n_(takes effect on next message)_"
         else:
             return f"🧠 ✓ Reasoning effort set to `{effort}` (this session only)"
-
-    async def _handle_compress_command(self, event: MessageEvent) -> str:
-        """Handle /compress command -- manually compress conversation context.
-
-        Invokes ``ContextCompressor.compress`` directly on the gateway's
-        transcript — no ``AIAgent`` construction, no in-gateway agentic
-        loop. The sandbox-side agent has its own compression flow for its
-        own session DB; this command compresses the gateway's platform
-        transcript copy.
-        """
-        source = event.source
-        session_entry = self.session_store.get_or_create_session(source)
-        history = self.session_store.load_transcript(session_entry.session_id)
-
-        if not history or len(history) < 4:
-            return "Not enough conversation to compress (need at least 4 messages)."
-
-        try:
-            from agent.context_compressor import ContextCompressor
-            from agent.model_metadata import estimate_messages_tokens_rough
-
-            runtime_kwargs = _resolve_runtime_agent_kwargs()
-            if not runtime_kwargs.get("api_key"):
-                return "No provider configured -- cannot compress."
-
-            # Resolve model from config (same reason as memory flush above).
-            model = _resolve_gateway_model()
-
-            msgs = [
-                {"role": m.get("role"), "content": m.get("content")}
-                for m in history
-                if m.get("role") in ("user", "assistant") and m.get("content")
-            ]
-            original_count = len(msgs)
-            approx_tokens = estimate_messages_tokens_rough(msgs)
-
-            compressor = ContextCompressor(
-                model=model,
-                quiet_mode=True,
-                base_url=runtime_kwargs.get("base_url", ""),
-            )
-            compressed = await asyncio.to_thread(
-                compressor.compress, msgs, approx_tokens,
-            )
-
-            self.session_store.rewrite_transcript(session_entry.session_id, compressed)
-            # Reset stored token count — transcript changed, old value is stale
-            self.session_store.update_session(
-                session_entry.session_key, last_prompt_tokens=0,
-            )
-            new_count = len(compressed)
-            new_tokens = estimate_messages_tokens_rough(compressed)
-
-            return (
-                f"🗜️ Compressed: {original_count} → {new_count} messages\n"
-                f"~{approx_tokens:,} → ~{new_tokens:,} tokens"
-            )
-        except Exception as e:
-            logger.warning("Manual compress failed: %s", e)
-            return f"Compression failed: {e}"
 
     async def _handle_title_command(self, event: MessageEvent) -> str:
         """Handle /title command — set or show the current session's title."""
