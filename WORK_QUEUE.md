@@ -699,6 +699,22 @@ Ticket deepened 2026-04-17 after attempted start — the per-sub-agent UI requir
 ### LOG-38 · Lightweight Python embedding fallback
 **Effort:** M · **Type:** Feature · **Status:** OPEN
 
+### LOG-63 · Scrub cosmetic residue from deleted-feature cleanups (Phase 3)
+**Effort:** XS (20–40m) · **Type:** Polish · **Status:** OPEN · **Surfaced:** 2026-04-20 during the Phase 3 "Logos stops running AI agents in-process" cleanup.
+
+After deleting `cron/`, `tools/cronjob_tools.py`, `/compress`, `/background`, `_run_agent`, memory flush, batch runner, and `gateway/worker.py`, a small amount of **metadata residue** still references those deleted names. Nothing crashes (the references are in registration dicts and display-layer lookup tables, not at call sites), but the strings are misleading and confuse new readers. Clean them up in a single XS pass:
+
+- `agent/display.py:83, 501–505` — `schedule_cronjob` / `list_cronjobs` / `remove_cronjob` in the emoji + arg-name lookup tables. Delete the entries.
+- `agents/hermes/agent.py:3723` — same three tool names in the emoji map (this file will be deleted wholesale in Group F of the Phase 3 plan anyway, so this one is free).
+- `tools/request_tools_tool.py:42` — the `"cron"` entry in the category dispatch map (`{"tools": ["schedule_cronjob", ...]}`). Remove the whole entry.
+- `gateway/policies.py:373` — `"cronjob": "Scheduled tasks"` category label. Remove.
+- `gateway/delivery.py:318` — docstring mention of `schedule_cronjob`; harmless, can stay or be edited for clarity.
+- `core/toolsets.py:64, 129` — `cronjob` toolset definition still present. Delete.
+
+Also confirm: `agent/context_compressor.py` (still imported by the to-be-deleted HermesCLI and a couple of spots) needs to either move into a gateway-owned location or die with the local `agent/` package in Group F. Decide at Group-F-execution time.
+
+Acceptance: `grep -rn "schedule_cronjob\|list_cronjobs\|remove_cronjob\|cronjob_tools" gateway/ agent/ agents/ tools/ core/ logos_cli/ --include="*.py"` returns zero hits outside of intentionally-kept comments.
+
 `sentence-transformers` not in pyproject. Currently embeddings silently return empty when no LM Studio/Ollama endpoint is reachable.
 
 ### LOG-39 · "Show hidden" toggle for soft-deleted sessions — **DONE (2026-04-17)**
