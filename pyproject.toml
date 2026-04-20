@@ -74,14 +74,13 @@ all = [
 
 [project.scripts]
 logos = "logos_cli.main:main"
-hermes-agent = "agents.hermes.agent:main"
 logos-acp = "acp_adapter.entry:main"
 
 [tool.setuptools]
 py-modules = []
 
 [tool.setuptools.packages.find]
-include = ["agent", "agents", "agents.*", "tools", "tools.*", "logos_cli", "logos_cli.*", "gateway", "gateway.*", "core", "core.*", "cron", "acp_adapter", "logos", "logos.*", "workflows", "workflows.*"]
+include = ["agent", "tools", "tools.*", "logos_cli", "logos_cli.*", "gateway", "gateway.*", "core", "core.*", "acp_adapter", "logos", "logos.*", "workflows", "workflows.*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
