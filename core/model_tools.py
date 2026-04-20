@@ -79,7 +79,6 @@ def _discover_tools():
         "tools.skills_tool",
         "tools.skill_manager_tool",
         "tools.browser_tool",
-        "tools.cronjob_tools",
         "tools.tts_tool",
         "tools.todo_tool",
         "tools.memory_tool",
@@ -156,7 +155,6 @@ _LEGACY_TOOLSET_MAP = {
         "browser_press", "browser_close", "browser_get_images",
         "browser_vision"
     ],
-    "cronjob_tools": ["schedule_cronjob", "list_cronjobs", "remove_cronjob"],
     "file_tools": ["read_file", "write_file", "patch", "search_files"],
     "tts_tools": ["text_to_speech"],
 }

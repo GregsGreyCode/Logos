@@ -1975,7 +1975,7 @@ def _coalesce_session_name_args(argv: list) -> list:
     """
     _SUBCOMMANDS = {
         "chat", "model", "gateway", "setup", "whatsapp", "login", "logout",
-        "status", "cron", "doctor", "config", "pairing", "skills", "tools",
+        "status", "doctor", "config", "pairing", "skills", "tools",
         "sessions", "insights", "version", "update", "uninstall",
     }
     _SESSION_FLAGS = {"-c", "--continue", "-r", "--resume"}

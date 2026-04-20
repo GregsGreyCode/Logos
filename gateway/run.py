@@ -3980,30 +3980,23 @@ class GatewayRunner:
 
 
 
-def _start_cron_ticker(stop_event: threading.Event, adapters=None, interval: int = 60):
-    """
-    Background thread that ticks the cron scheduler at a regular interval.
-    
-    Runs inside the gateway process so cronjobs fire automatically without
-    needing a separate `hermes cron daemon` or system cron entry.
+def _start_maintenance_ticker(stop_event: threading.Event, adapters=None, interval: int = 60):
+    """Background thread that handles periodic maintenance inside the gateway.
 
-    Also refreshes the channel directory every 5 minutes and prunes the
-    image/audio/document cache once per hour.
+    Refreshes the channel directory every 5 minutes and prunes the
+    image/audio/document caches once per hour. The old cron scheduler
+    was removed with the rest of the in-process AIAgent paths — agents
+    schedule their own work inside their sandboxes now (hermes upstream
+    boot hooks + sandbox-side cron tools).
     """
-    from cron.scheduler import tick as cron_tick
     from gateway.channels.base import cleanup_image_cache, cleanup_document_cache
 
     IMAGE_CACHE_EVERY = 60   # ticks — once per hour at default 60s interval
     CHANNEL_DIR_EVERY = 5    # ticks — every 5 minutes
 
-    logger.info("Cron ticker started (interval=%ds)", interval)
+    logger.info("Maintenance ticker started (interval=%ds)", interval)
     tick_count = 0
     while not stop_event.is_set():
-        try:
-            cron_tick(verbose=False)
-        except Exception as e:
-            logger.debug("Cron tick error: %s", e)
-
         tick_count += 1
 
         if tick_count % CHANNEL_DIR_EVERY == 0 and adapters:
@@ -4250,10 +4243,12 @@ async def start_gateway(config: Optional[GatewayConfig] = None, replace: bool = 
     write_pid_file()
     atexit.register(remove_pid_file)
 
-    # Start background cron ticker so scheduled jobs fire automatically
+    # Start background maintenance ticker — channel directory refresh +
+    # image/document cache prune. Cron scheduling itself lives in the
+    # agent sandboxes, not in Logos.
     cron_stop = threading.Event()
     cron_thread = threading.Thread(
-        target=_start_cron_ticker,
+        target=_start_maintenance_ticker,
         args=(cron_stop,),
         kwargs={"adapters": runner.adapters},
         daemon=True,

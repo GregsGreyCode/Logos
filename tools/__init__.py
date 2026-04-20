@@ -82,18 +82,6 @@ from .browser_tool import (
     BROWSER_TOOL_SCHEMAS
 )
 
-# Cronjob management tools (CLI-only, hermes-cli toolset)
-from .cronjob_tools import (
-    schedule_cronjob,
-    list_cronjobs,
-    remove_cronjob,
-    check_cronjob_requirements,
-    get_cronjob_tool_definitions,
-    SCHEDULE_CRONJOB_SCHEMA,
-    LIST_CRONJOBS_SCHEMA,
-    REMOVE_CRONJOB_SCHEMA
-)
-
 # File manipulation tools (read, write, patch, search)
 from .file_tools import (
     read_file_tool,
@@ -200,15 +188,6 @@ __all__ = [
     'get_active_browser_sessions',
     'check_browser_requirements',
     'BROWSER_TOOL_SCHEMAS',
-    # Cronjob management tools (CLI-only)
-    'schedule_cronjob',
-    'list_cronjobs',
-    'remove_cronjob',
-    'check_cronjob_requirements',
-    'get_cronjob_tool_definitions',
-    'SCHEDULE_CRONJOB_SCHEMA',
-    'LIST_CRONJOBS_SCHEMA',
-    'REMOVE_CRONJOB_SCHEMA',
     # File manipulation tools
     'read_file_tool',
     'write_file_tool',

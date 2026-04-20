@@ -298,16 +298,6 @@ class TestSendMessageToolRouting(unittest.TestCase):
         self.assertIn("Platform.EMAIL", source)
 
 
-class TestCronDelivery(unittest.TestCase):
-    """Verify email in cron scheduler platform_map."""
-
-    def test_email_in_cron_platform_map(self):
-        import cron.scheduler
-        import inspect
-        source = inspect.getsource(cron.scheduler)
-        self.assertIn('"email"', source)
-
-
 class TestToolset(unittest.TestCase):
     """Verify email toolset is registered."""
 
