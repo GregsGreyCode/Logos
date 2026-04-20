@@ -699,6 +699,50 @@ Ticket deepened 2026-04-17 after attempted start — the per-sub-agent UI requir
 ### LOG-38 · Lightweight Python embedding fallback
 **Effort:** M · **Type:** Feature · **Status:** OPEN
 
+### LOG-64 · Rewire admin UI toolset display to query sandboxes dynamically
+**Effort:** M (2h–1d) · **Type:** Refactor · **Status:** OPEN · **Surfaced:** 2026-04-20 during the Phase 3 post-audit sweep.
+
+**Problem.** After Phase 3 deleted Logos's in-process AIAgent, the `/admin/toolsets` endpoint in `gateway/http_api.py:_handle_toolsets` still reports toolset availability by enumerating Logos's local `tools/` directory via `core/model_tools.check_tool_availability` + `tools.registry`. That enumeration is **cosmetic only** — the actual tool runtime lives in the sandbox's upstream hermes at `/usr/local/lib/python3.13/dist-packages/` (per `docker/Dockerfile.hermes-upstream`). So the admin UI claims "these tools are available" based on Logos's registry, but a different hermes inside the sandbox is what actually decides whether any specific tool runs. The two can disagree silently.
+
+A pile of `tools/*.py` modules stay in the tree just to feed this display — none of them execute on any live path. The Phase 3 post-audit catalogued ~14 modules whose sole purpose is keeping the admin UI's registry non-empty: `browser_tool`, `file_tools`, `web_tools`, `terminal_tool`, `code_execution_tool`, `skill_manager_tool`, `memory_tool`, `todo_tool`, `clarify_tool`, `skills_tool`, `image_generation_tool`, `mixture_of_agents_tool`, `homeassistant_tool`, `send_message_tool` (mostly display-registered; some have non-agent gateway uses like send_message_tool + vision_tools + transcription_tools + mcp_tool + knowledge_store, which must stay).
+
+**Fix.** The admin UI should ask the sandbox's hermes "what tools do you actually have?" over its HTTP API, and render those. Approach:
+
+1. Add a `GET /v1/toolsets` endpoint inside hermes (upstream — or via the same cancel-monkeypatch delivery pattern Logos uses for other sandbox-side patches). Hermes knows its own registry.
+2. `gateway/worker_registry_v2` exposes a helper `async def fetch_toolsets_from_sandbox(sandbox_name) -> dict` that curls the endpoint via `openshell sandbox exec`.
+3. `gateway/http_api.py:_handle_toolsets` queries every spawned sandbox in parallel and reports their union (or per-agent breakdown) instead of reading Logos's static registry.
+4. Delete the display-only tools/*.py modules and their entries in `core/model_tools._TOOL_MODULE_PATHS` / `core/toolsets.TOOLSET_REGISTRY`. Keep `tools/` for the modules that the gateway actually executes for non-agent reasons (vision, transcription, mcp, knowledge_store, session_search, send_message — plus utility shims like approval, tirith_security, process_registry, voice_mode).
+
+**Acceptance.** `/admin/toolsets` response shape matches what the sandbox reports, no dependence on Logos's local `tools.registry` for display. Deleting `tools/browser_tool.py` no longer causes admin UI to say "browser not available."
+
+**Why M not S.** The client-side endpoint is small; the server-side additions (endpoint + auth + schema shaping) and the deletion sweep are the bulk of the work. Also needs a fallback story for sandboxes that aren't running (no agent to query = what do we show?).
+
+---
+
+### LOG-65 · Split `agent/anthropic_adapter.py`: OAuth/token → logos_cli, delete message-conversion half
+**Effort:** S (30m–2h) · **Type:** Refactor · **Status:** OPEN · **Surfaced:** 2026-04-20 during the Phase 3 post-audit. **Confirmed:** upstream hermes at `github.com/NousResearch/hermes-agent/agent/anthropic_adapter.py` is 63 KB (larger than our 40-ish KB vendored copy) and contains its own message-conversion + OAuth + cache-control logic. Sandbox agents use upstream's version, never Logos's.
+
+**Problem.** `agent/anthropic_adapter.py` is a split-brain module post-Phase-3:
+
+- **Live half (OAuth + token plumbing):** `_is_oauth_token`, `_refresh_oauth_token`, `_write_claude_code_credentials`, `resolve_anthropic_token`, `run_oauth_setup_token`, `read_claude_code_credentials`, `is_claude_code_token_valid`, `_COMMON_BETAS`, `_OAUTH_ONLY_BETAS`. Used by `logos_cli/{doctor.py, setup.py, main.py, models.py, runtime_provider.py}` for the `logos setup` / `logos login` / `logos doctor` flows. These resolve the user's Anthropic credentials so the API key can flow into `model_routes` → the OpenShell route's provisioner → the sandbox `.env`. Legitimate gateway-side provisioning code.
+
+- **Dead half (client + message conversion):** `build_anthropic_client`, `convert_messages_to_anthropic`, `build_anthropic_kwargs`, `normalize_anthropic_response`. These were for the deleted in-process AIAgent to dispatch directly to Anthropic. Now that no agent runs in Logos, nothing calls them — upstream hermes inside the sandbox does the conversion on its own copy of the adapter.
+
+Having both halves in `agent/` makes the package look like part of the agent runtime when most of what's live is auth plumbing. It also blocks a future deletion of the whole `agent/` package (Phase 3 Group F couldn't land because of this + other utilities).
+
+**Fix.**
+
+1. Move OAuth/token functions to a new `logos_cli/anthropic_auth.py` (or similar — it's provisioning code, belongs with `auth.py` / `runtime_provider.py`).
+2. Update the 5 `logos_cli/` importers to point at the new module.
+3. Delete `agent/anthropic_adapter.py` entirely.
+4. Delete the 3 "message-conversion preservation" tests in `tests/test_anthropic_adapter.py` that use `apply_anthropic_cache_control` as a setup helper — they exercise dead code. Either delete `apply_anthropic_cache_control` (and `agent/prompt_caching.py` with it) or leave as a small library-only utility; recommend delete.
+
+**Acceptance.** `grep -rn "from agent.anthropic_adapter\|import agent.anthropic_adapter" gateway/ logos_cli/ tools/ core/` returns zero. `logos setup` + `logos doctor` + `logos login` still work end-to-end for Anthropic. All Anthropic-dispatching work happens inside the sandbox.
+
+**Bigger context.** Logos is "segregating the model to the provisioned routes (gateways)" — the gateway (OpenShell sub-gateway) is where the model lives. Authentication is a Logos-side concern (user's browser, local OAuth flow); model dispatch is a sandbox-side concern. This ticket makes the split explicit at the code level.
+
+---
+
 ### LOG-63 · Scrub cosmetic residue from deleted-feature cleanups (Phase 3) — **DONE (2026-04-20)**
 **Effort:** XS · **Type:** Polish · **Status:** DONE
 
