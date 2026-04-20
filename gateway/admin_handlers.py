@@ -972,7 +972,9 @@ async def handle_agents_post(request: web.Request) -> web.Response:
                     )
     import json as _json
     toolsets_raw = body.get("toolsets")
-    toolsets_str = _json.dumps(toolsets_raw) if isinstance(toolsets_raw, list) else ""
+    if not isinstance(toolsets_raw, list) or not toolsets_raw:
+        toolsets_raw = ["hermes-cli"]
+    toolsets_str = _json.dumps(toolsets_raw)
     soul_slug = (body.get("soul_slug") or "general").strip()
     model = (body.get("model") or "").strip()
     # "Auto" / empty model: pin to the gateway's currently active model so
