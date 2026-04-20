@@ -370,7 +370,6 @@ def get_tool_readiness(agent_id: str) -> List[Dict[str, Any]]:
         "session_search": "Session history search",
         "code_execution": "Python sandbox",
         "skills": "Skill management",
-        "cronjob": "Scheduled tasks",
         "homeassistant": "Home Assistant control",
     }
     for toolset, desc in local_toolsets.items():

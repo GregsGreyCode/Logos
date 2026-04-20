@@ -42,7 +42,6 @@ TOOL_KIND_MAP: Dict[str, ToolKind] = {
     "browser_close": "execute",
     "browser_get_images": "read",
     # Agent internals
-    "delegate_task": "execute",
     "vision_analyze": "read",
     "image_generate": "execute",
     "text_to_speech": "execute",
@@ -85,11 +84,6 @@ def build_tool_title(tool_name: str, args: Dict[str, Any]) -> str:
         if urls:
             return f"extract: {urls[0]}" + (f" (+{len(urls)-1})" if len(urls) > 1 else "")
         return "web extract"
-    if tool_name == "delegate_task":
-        goal = args.get("goal", "")
-        if goal and len(goal) > 60:
-            goal = goal[:57] + "..."
-        return f"delegate: {goal}" if goal else "delegate task"
     if tool_name == "execute_code":
         return "execute code"
     if tool_name == "vision_analyze":
