@@ -58,10 +58,8 @@ _HERMES_CORE_TOOLS = [
     "log_inspector", "bug_notes",
     # Workflow management
     "workflow",
-    # Code execution + delegation
-    "execute_code", "delegate_task",
-    # Cronjob management
-    "schedule_cronjob", "list_cronjobs", "remove_cronjob",
+    # Code execution
+    "execute_code",
     # Cross-platform messaging (gated on gateway running via check_fn)
     "send_message",
     # Home Assistant smart home control (gated on HASS_TOKEN via check_fn)
@@ -126,12 +124,6 @@ TOOLSETS = {
         "includes": []
     },
     
-    "cronjob": {
-        "description": "Cronjob management tools - schedule, list, and remove automated tasks",
-        "tools": ["schedule_cronjob", "list_cronjobs", "remove_cronjob"],
-        "includes": []
-    },
-
     "file": {
         "description": "File manipulation tools: read, write, patch (with fuzzy matching), and search (content + files)",
         "tools": ["read_file", "write_file", "patch", "search_files"],
@@ -174,12 +166,6 @@ TOOLSETS = {
         "includes": []
     },
     
-    "delegation": {
-        "description": "Spawn subagents with isolated context for complex subtasks",
-        "tools": ["delegate_task"],
-        "includes": []
-    },
-
     "world": {
         "description": "Agent World awareness — look up other named agents on this install, their souls, appearances, and status",
         "tools": ["get_agent_world"],
@@ -235,13 +221,13 @@ TOOLSETS = {
             "browser_vision",
             "todo", "memory",
             "session_search",
-            "execute_code", "delegate_task",
+            "execute_code",
         ],
         "includes": []
     },
     
     "hermes-cli": {
-        "description": "Full interactive toolset — all default tools plus cronjob management. Used across CLI and every messaging channel (Telegram/Discord/Slack/etc.); channel-specific variants used to exist but were identical clones.",
+        "description": "Full interactive toolset. Used across every messaging channel (Telegram/Discord/Slack/etc.); channel-specific variants used to exist but were identical clones.",
         "tools": _HERMES_CORE_TOOLS,
         "includes": []
     },
