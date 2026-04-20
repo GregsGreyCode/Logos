@@ -5527,6 +5527,12 @@ async def start_http_api(runner: Any, port: int = 8091) -> None:
                         _mm(require_csrf(admin_handlers.handle_agent_toolsets_toggle)))
     app.router.add_post("/admin/agents/{id}/tools/presets/toggle",
                         _mm(require_csrf(admin_handlers.handle_agent_presets_toggle)))
+    # Bounce the hermes process inside the sandbox — re-uploads the
+    # monkeypatch + pkill/relaunch. Needed when the patch file has
+    # been updated on the gateway host but the running hermes still
+    # has the older version (LOG-64 introspection patch, for example).
+    app.router.add_post("/admin/agents/{id}/runtime/restart",
+                        _mm(require_csrf(admin_handlers.handle_agent_runtime_restart)))
     # Per-agent channel credentials — Agent editor → Channels subtab.
     # Each agent owns its own messaging platform tokens; the adapter
     # lifecycle spawns one adapter instance per enabled row.
