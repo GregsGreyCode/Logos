@@ -1630,6 +1630,7 @@ async def handle_agent_runtime_restart(request: web.Request) -> web.Response:
         from gateway.executors.hermes_server_mode import (
             deploy_cancel_monkeypatch,
             restart_hermes_in_sandbox,
+            wait_for_hermes_health,
         )
     except Exception as exc:
         return web.json_response(
@@ -1637,6 +1638,10 @@ async def handle_agent_runtime_restart(request: web.Request) -> web.Response:
             status=500,
         )
 
+    logger.info(
+        "agent_runtime_restart(%s): starting — sandbox=%s gateway=%s",
+        aid, sandbox_name, target_gw,
+    )
     try:
         deploy_cancel_monkeypatch(sandbox_name, gateway=target_gw)
     except Exception as exc:
@@ -1653,11 +1658,29 @@ async def handle_agent_runtime_restart(request: web.Request) -> web.Response:
             {"error": f"hermes restart failed: {exc}"}, status=500,
         )
 
+    # Wait for hermes to come back up and bind its port before we
+    # respond. Otherwise the frontend re-fetches /v1/toolsets before
+    # the route is registered and still sees "sandbox unreachable".
+    try:
+        ready_s = await asyncio.to_thread(
+            wait_for_hermes_health, sandbox_name, 30, target_gw,
+        )
+    except Exception as exc:
+        logger.exception("runtime restart: health probe failed")
+        return web.json_response(
+            {"error": f"hermes did not come back healthy: {exc}"},
+            status=504,
+        )
+
     logger.info(
-        "agent_runtime_restart(%s): patch redeployed + hermes bounced "
-        "in %s", aid, sandbox_name,
+        "agent_runtime_restart(%s): complete in %.1fs — %s healthy",
+        aid, ready_s, sandbox_name,
     )
-    return web.json_response({"ok": True, "sandbox": sandbox_name})
+    return web.json_response({
+        "ok": True,
+        "sandbox": sandbox_name,
+        "ready_s": ready_s,
+    })
 
 
 # ── Per-agent channel credentials ────────────────────────────────────────────
