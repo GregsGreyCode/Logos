@@ -619,6 +619,42 @@ echo "[hermes-server] BOOT.md cleared (soul={soul_name} has no boot.md)"
     logger.info("hermes_server_mode: BOOT.md %s for %s", action, sandbox_name)
 
 
+def deploy_agent_memories(
+    sandbox_name: str,
+    agent_name: str,
+    gateway: Optional[str] = None,
+) -> int:
+    """Upload persisted agent memories from host into ``{HERMES_HOME_IN_SANDBOX}/memories/``.
+
+    Mirror of the Plan A-Prime upload at ``openshell.py:1421-1441``,
+    re-homed onto v2's sandbox layout. When Plan A-Prime is deleted,
+    this becomes the sole path by which pre-existing memories reach a
+    newly spawned sandbox. Host source is
+    ``~/.logos/agents/<agent_name>/memories/``.
+
+    Returns the number of files uploaded. No-op (returns 0) when the
+    host directory is missing or empty.
+    """
+    if not agent_name:
+        return 0
+    from gateway.executors.openshell import _HERMES_HOME
+    host_memories = _HERMES_HOME / "agents" / agent_name / "memories"
+    if not host_memories.is_dir():
+        return 0
+    files = [p for p in host_memories.iterdir() if p.is_file()]
+    if not files:
+        return 0
+
+    remote_dir = f"{HERMES_HOME_IN_SANDBOX}/memories"
+    for f in files:
+        _upload_file_via_openshell(sandbox_name, f, remote_dir, gateway=gateway)
+    logger.info(
+        "hermes_server_mode: uploaded %d memory file(s) for %s from %s",
+        len(files), sandbox_name, host_memories,
+    )
+    return len(files)
+
+
 def redeploy_hermes_env(
     sandbox_name: str,
     api_key: str,
@@ -846,6 +882,18 @@ def enable_hermes_server_mode(
     # without a boot.md; otherwise uploads the file for the built-in
     # boot_md hook inside hermes to pick up on next gateway:startup.
     deploy_boot_md(sandbox_name, getattr(config, "soul_name", "default"), gateway=gateway)
+    # Upload persisted memories before hermes starts so the memory
+    # tool sees them on first request. Best-effort — a bad memory file
+    # shouldn't block the sandbox from coming up.
+    try:
+        deploy_agent_memories(
+            sandbox_name, getattr(config, "name", ""), gateway=gateway,
+        )
+    except Exception as exc:
+        logger.warning(
+            "hermes_server_mode(%s): memory upload failed (non-fatal): %s",
+            sandbox_name, exc,
+        )
     launch_hermes_gateway(sandbox_name, gateway=gateway)
     wait_for_hermes_health(sandbox_name, gateway=gateway)
 
@@ -870,6 +918,7 @@ __all__ = [
     "deploy_hermes_config",
     "deploy_cancel_monkeypatch",
     "deploy_boot_md",
+    "deploy_agent_memories",
     "redeploy_hermes_env",
     "restart_hermes_in_sandbox",
     "launch_hermes_gateway",
