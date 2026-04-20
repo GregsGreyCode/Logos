@@ -797,7 +797,6 @@ class SlackAdapter(BasePlatformAdapter):
             "model": "/model", "personality": "/personality",
             "retry": "/retry", "undo": "/undo",
             "resume": "/resume",
-            "background": "/background",
             "usage": "/usage",
             "insights": "/insights",
             "title": "/title",
