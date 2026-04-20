@@ -764,13 +764,6 @@ class TestSlashCommands:
         assert msg.text == "/resume my session"
 
     @pytest.mark.asyncio
-    async def test_background_command(self, adapter):
-        command = {"text": "background run tests", "user_id": "U1", "channel_id": "C1"}
-        await adapter._handle_slash_command(command)
-        msg = adapter.handle_message.call_args[0][0]
-        assert msg.text == "/background run tests"
-
-    @pytest.mark.asyncio
     async def test_usage_command(self, adapter):
         command = {"text": "usage", "user_id": "U1", "channel_id": "C1"}
         await adapter._handle_slash_command(command)

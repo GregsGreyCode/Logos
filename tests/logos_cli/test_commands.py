@@ -12,7 +12,7 @@ EXPECTED_COMMANDS = {
     "/personality", "/clear", "/history", "/new", "/reset", "/retry",
     "/undo", "/save", "/config", "/cron", "/skills", "/platforms",
     "/verbose", "/reasoning", "/title", "/usage", "/insights", "/paste",
-    "/reload-mcp", "/rollback", "/background", "/skin", "/voice", "/quit",
+    "/reload-mcp", "/rollback", "/skin", "/voice", "/quit",
     "/runs", "/metrics", "/evals",
 }
 
