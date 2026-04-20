@@ -242,7 +242,9 @@ class TestExecute:
         result = env.execute("bad_cmd")
         assert result["returncode"] == 127
 
-    def test_stdin_data_wraps_heredoc(self, make_env):
+    def test_stdin_data_wraps_base64_pipeline(self, make_env):
+        import base64
+
         sb = _make_sandbox()
         sb.process.exec.side_effect = [
             _make_exec_response(result="/root"),
@@ -252,13 +254,20 @@ class TestExecute:
         env = make_env(sandbox=sb)
 
         env.execute("python3", stdin_data="print('hi')")
-        # Check that the command passed to exec contains heredoc markers
-        # (single quotes get shell-escaped by shlex.quote, so check components)
+        # stdin_data is base64-encoded and piped in on a single line — the
+        # heredoc approach used to break when Daytona's exec transport
+        # mangled embedded newlines.
         call_args = sb.process.exec.call_args_list[-1]
         cmd = call_args[0][0]
-        assert "HERMES_EOF_" in cmd
-        assert "print" in cmd
-        assert "hi" in cmd
+        expected_b64 = base64.b64encode(b"print('hi')").decode("ascii")
+        assert expected_b64 in cmd
+        assert "base64 -d" in cmd
+        assert "python3" in cmd
+        # Stdin payload must not introduce raw newlines into the command
+        # string — that was the original failure mode.
+        payload_start = cmd.find("printf")
+        payload_end = cmd.find("python3", payload_start)
+        assert "\n" not in cmd[payload_start:payload_end]
 
     def test_custom_cwd_passed_through(self, make_env):
         sb = _make_sandbox()

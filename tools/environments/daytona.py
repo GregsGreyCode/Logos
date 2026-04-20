@@ -5,12 +5,12 @@ Supports persistent sandboxes: when enabled, sandboxes are stopped on cleanup
 and resumed on next creation, preserving the filesystem across sessions.
 """
 
+import base64
 import logging
 import time
 import math
 import shlex
 import threading
-import uuid
 import warnings
 from typing import Optional
 
@@ -176,10 +176,14 @@ class DaytonaEnvironment(BaseEnvironment):
             self._ensure_sandbox_ready()
 
         if stdin_data is not None:
-            marker = f"HERMES_EOF_{uuid.uuid4().hex[:8]}"
-            while marker in stdin_data:
-                marker = f"HERMES_EOF_{uuid.uuid4().hex[:8]}"
-            command = f"{command} << '{marker}'\n{stdin_data}\n{marker}"
+            # Encode stdin as base64 and pipe via a single-line shell
+            # pipeline. Heredocs survive shlex.quote in principle but
+            # Daytona's process.exec transport has been observed to mangle
+            # embedded newlines, producing errors like "line 3: : No such
+            # file or directory" when the closing marker leaks out of the
+            # heredoc. Base64 keeps the entire command on one line.
+            b64 = base64.b64encode(stdin_data.encode("utf-8")).decode("ascii")
+            command = f"printf '%s' {shlex.quote(b64)} | base64 -d | {command}"
 
         exec_command, sudo_stdin = self._prepare_command(command)
 
@@ -191,7 +195,6 @@ class DaytonaEnvironment(BaseEnvironment):
         # remote sandbox's command line, but it is not exposed on the user's
         # local machine — which is the primary threat being mitigated.
         if sudo_stdin is not None:
-            import shlex
             exec_command = (
                 f"printf '%s\\n' {shlex.quote(sudo_stdin.rstrip())} | {exec_command}"
             )
