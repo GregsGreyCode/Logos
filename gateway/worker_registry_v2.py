@@ -882,68 +882,11 @@ def sandbox_has_server_mode(sandbox_name: str) -> bool:
     return _load_server_setup(sandbox_name) is not None
 
 
-def is_dispatch_v2_enabled() -> bool:
-    """Return True iff the LOG-44 dispatch-v2 routing is active.
-
-    Phase 2: defaults to enabled. The env var is now opt-OUT — set
-    ``LOGOS_DISPATCH_V2=0`` (or any non-"1" value) to force v1 dispatch
-    for the gateway process. Absent env var means "on". Runtime
-    rollback without a redeploy is also available via the
-    ``LOGOS_DISPATCH_V2_FORCE_V1`` kill switch.
-    """
-    val = os.getenv("LOGOS_DISPATCH_V2")
-    if val is None:
-        return True
-    return val == "1"
-
-
-def is_dispatch_v2_forced_to_v1() -> bool:
-    """Kill switch: force v1 dispatch even when v2 setup exists.
-
-    Phase 1.6 rollback knob for the v2-default soak. Setting
-    ``LOGOS_DISPATCH_V2_FORCE_V1=1`` routes every chat through v1
-    regardless of ``LOGOS_DISPATCH_V2`` / ``hermes_server_setup``.
-    Remove one release cycle after the v2 flip is confirmed green.
-    """
-    return os.getenv("LOGOS_DISPATCH_V2_FORCE_V1", "") == "1"
-
-
-# Dispatch-path metric: post-flip observability. Incremented on every
-# routing decision in _handle_chat. Expected steady state after Phase 2:
-# ~100% v2, 0 v1, 0 v2_forced_v1 (the latter only non-zero during an
-# active rollback). Any persistent v1 count means a resurrect/spawn
-# dropped ``hermes_server_setup`` and regressed an agent silently.
-_DISPATCH_COUNTS: Dict[str, int] = {"v2": 0, "v1": 0, "v2_forced_v1": 0}
-
-
-def record_dispatch_path(path: str) -> None:
-    """Increment the dispatch-path counter. ``path`` in
-    {``v2``, ``v1``, ``v2_forced_v1``}."""
-    if path in _DISPATCH_COUNTS:
-        _DISPATCH_COUNTS[path] += 1
-
-
-def dispatch_counts() -> Dict[str, int]:
-    """Snapshot of the dispatch-path counters."""
-    return dict(_DISPATCH_COUNTS)
-
-
-def reset_dispatch_counts() -> None:
-    """Zero the dispatch counters. Test-only helper."""
-    for k in _DISPATCH_COUNTS:
-        _DISPATCH_COUNTS[k] = 0
-
-
 __all__ = [
     "dispatch_task_v2",
     "cancel_task",
     "sandbox_has_server_mode",
-    "is_dispatch_v2_enabled",
-    "is_dispatch_v2_forced_to_v1",
     "sync_memories_from_sandbox",
     "record_cost_entry",
-    "record_dispatch_path",
-    "dispatch_counts",
-    "reset_dispatch_counts",
     "DEFAULT_TASK_TIMEOUT",
 ]
