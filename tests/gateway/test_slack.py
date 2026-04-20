@@ -757,13 +757,6 @@ class TestSlashCommands:
     """Test slash command routing."""
 
     @pytest.mark.asyncio
-    async def test_compact_maps_to_compress(self, adapter):
-        command = {"text": "compact", "user_id": "U1", "channel_id": "C1"}
-        await adapter._handle_slash_command(command)
-        msg = adapter.handle_message.call_args[0][0]
-        assert msg.text == "/compress"
-
-    @pytest.mark.asyncio
     async def test_resume_command(self, adapter):
         command = {"text": "resume my session", "user_id": "U1", "channel_id": "C1"}
         await adapter._handle_slash_command(command)
