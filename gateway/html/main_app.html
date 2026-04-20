@@ -716,21 +716,14 @@
                         : 'bg-gray-800/50 text-gray-600 border-gray-800')"
                   :title="activeAgent ? 'Tools — click to change' : 'No agent bound'">
                   <span class="font-bold text-gray-500">T</span>
-                  <!-- T pill = enabled-toolset count only. Network access
-                       (presets) moved to P, so this stays focused on
-                       "what tools the agent CAN call" — leaving "what
-                       endpoints the sandbox can reach" to its proper
-                       home under permissions. -->
-                  <!-- Show count immediately from activeAgent.toolsets (loaded
-                       with the agent list) so the badge isn't blank/"tools"
-                       until the dropdown is opened. agentToolsState wins once
-                       it's been fetched (which happens on open) so dynamic
-                       enable/disable still reflects in real time. -->
-                  <span x-text="(agentToolsState && activeAgent && agentToolsState._agentId === activeAgent.id)
-                    ? ((agentToolsState.toolsets?.enabled?.length || 0) + ' tools')
-                    : (activeAgent?.toolsets
-                        ? ((() => { try { return JSON.parse(activeAgent.toolsets).length; } catch(e) { return 0; } })() + ' tools')
-                        : (webSession?.tool_count ? webSession.tool_count + ' active' : (chatStats?.tool_count ? chatStats.tool_count + ' ready' : 'tools')))">
+                  <!-- T pill badge = "<ready>/<total> ready" from the
+                       sandbox-sourced toolset list. The bottom of the
+                       dropdown renders the same numbers in the section
+                       header; this is just an inline preview so the
+                       pill isn't blank before the dropdown is opened. -->
+                  <span x-text="(agentToolsState && activeAgent && agentToolsState._agentId === activeAgent.id && (agentToolsState.toolsets?.available?.length))
+                    ? ((agentToolsState.toolsets.available.filter(t => t.available).length) + '/' + agentToolsState.toolsets.available.length + ' ready')
+                    : 'tools'">
                   </span>
                 </button>
                 <div x-show="open" x-cloak
@@ -747,43 +740,6 @@
                   <!-- No agent -->
                   <div x-show="!activeAgent" class="px-3 py-3 text-[11px] text-gray-600">
                     No agent bound to this chat. Select or create one to edit its tools.
-                  </div>
-
-                  <!-- Tool readiness — per-tool status at a glance -->
-                  <div x-show="activeAgent && agentToolsState && agentToolsState._agentId === activeAgent.id && (agentToolsState.readiness || []).length > 0">
-                    <div class="px-3 pt-2 pb-1 text-[9px] text-gray-500 uppercase tracking-wider flex items-center justify-between">
-                      <span>Tool readiness</span>
-                      <span class="text-gray-700 normal-case"
-                        x-text="(() => { const r = agentToolsState?.readiness || []; const ok = r.filter(t => t.status === 'ready').length; return ok + '/' + r.length + ' ready'; })()"></span>
-                    </div>
-                    <div class="grid grid-cols-2" style="column-gap: 0.25rem;">
-                      <template x-for="t in (agentToolsState?.readiness || [])" :key="'rdy-' + t.name">
-                        <div class="flex items-start gap-2 px-3 py-1 text-[11px]">
-                          <span x-show="t.status === 'ready'" class="text-green-400 flex-shrink-0 mt-0.5" title="Ready">&#x2705;</span>
-                          <span x-show="t.status !== 'ready'" class="text-yellow-400 flex-shrink-0 mt-0.5" title="Needs configuration">&#x26a0;&#xfe0f;</span>
-                          <div class="flex-1 min-w-0">
-                            <div class="flex items-center gap-1.5">
-                              <span class="text-gray-100 font-mono" x-text="t.name"></span>
-                              <span x-show="t.optional" class="text-gray-600 text-[9px]">(optional)</span>
-                            </div>
-                            <template x-if="t.status === 'needs_config'">
-                              <a :href="t.setup_url" target="_blank" rel="noopener"
-                                class="block text-yellow-500 text-[10px] hover:text-yellow-300 underline underline-offset-2 truncate"
-                                :title="t.reason || 'needs API key'"
-                                x-text="t.reason || 'needs API key'"></a>
-                            </template>
-                            <template x-if="t.status === 'needs_preset'">
-                              <span class="block text-orange-500 text-[10px] truncate"
-                                    :title="(t.reason || 'needs network access') + ' — open the P pill to enable it'"
-                                    x-text="'needs P → ' + (t.preset || 'access')"></span>
-                            </template>
-                          </div>
-                        </div>
-                      </template>
-                    </div>
-                    <div class="px-3 py-1.5 text-[10px] text-gray-600 border-b border-gray-800 mb-1">
-                      Type <span class="font-mono text-gray-500">/setup tools</span> in chat to configure missing tools.
-                    </div>
                   </div>
 
                   <!-- Toolsets (in-agent) — read-only view of what hermes
