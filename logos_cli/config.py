@@ -296,15 +296,6 @@ DEFAULT_CONFIG = {
         "user_char_limit": 1375,     # ~500 tokens at 2.75 chars/token
     },
 
-    # Subagent delegation — override the provider:model used by delegate_task
-    # so child agents can run on a different (cheaper/faster) provider and model.
-    # Uses the same runtime provider resolution as CLI/gateway startup, so all
-    # configured providers (OpenRouter, Nous, Z.ai, Kimi, etc.) are supported.
-    "delegation": {
-        "model": "",       # e.g. "google/gemini-3-flash-preview" (empty = inherit parent model)
-        "provider": "",    # e.g. "openrouter" (empty = inherit parent provider + credentials)
-    },
-
     # Per-agent knowledge base (RAG) — semantic search over ingested documents.
     # Embeddings are generated via an OpenAI-compatible endpoint (Ollama default).
     # Search uses in-process numpy cosine similarity, no external vector DB.

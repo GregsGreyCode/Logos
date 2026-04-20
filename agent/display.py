@@ -80,8 +80,7 @@ def build_tool_preview(tool_name: str, args: dict, max_len: int = 40) -> str | N
         "image_generate": "prompt", "text_to_speech": "text",
         "vision_analyze": "question", "mixture_of_agents": "user_prompt",
         "skill_view": "name", "skills_list": "category",
-        "schedule_cronjob": "name",
-        "execute_code": "code", "delegate_task": "goal",
+        "execute_code": "code",
         "clarify": "question", "skill_manage": "name",
     }
 
@@ -498,21 +497,10 @@ def get_cute_tool_message(
         return _wrap(f"┊ 🧠 reason    {_trunc(args.get('user_prompt', ''), 30)}  {dur}")
     if tool_name == "send_message":
         return _wrap(f"┊ 📨 send      {args.get('target', '?')}: \"{_trunc(args.get('message', ''), 25)}\"  {dur}")
-    if tool_name == "schedule_cronjob":
-        return _wrap(f"┊ ⏰ schedule  {_trunc(args.get('name', args.get('prompt', 'task')), 30)}  {dur}")
-    if tool_name == "list_cronjobs":
-        return _wrap(f"┊ ⏰ jobs      listing  {dur}")
-    if tool_name == "remove_cronjob":
-        return _wrap(f"┊ ⏰ remove    job {args.get('job_id', '?')}  {dur}")
     if tool_name == "execute_code":
         code = args.get("code", "")
         first_line = code.strip().split("\n")[0] if code.strip() else ""
         return _wrap(f"┊ 🐍 exec      {_trunc(first_line, 35)}  {dur}")
-    if tool_name == "delegate_task":
-        tasks = args.get("tasks")
-        if tasks and isinstance(tasks, list):
-            return _wrap(f"┊ 🔀 delegate  {len(tasks)} parallel tasks  {dur}")
-        return _wrap(f"┊ 🔀 delegate  {_trunc(args.get('goal', ''), 35)}  {dur}")
 
     preview = build_tool_preview(tool_name, args) or ""
     return _wrap(f"┊ ⚡ {tool_name[:9]:9} {_trunc(preview, 35)}  {dur}")
