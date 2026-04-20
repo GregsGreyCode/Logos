@@ -650,24 +650,15 @@ def _resolve_delegation_credentials(cfg: dict, parent_agent) -> dict:
 
 
 def _load_config() -> dict:
-    """Load delegation config from CLI_CONFIG or persistent config.
+    """Load delegation config from ``logos_cli.config.load_config``.
 
-    Checks the runtime config (cli.py CLI_CONFIG) first, then falls back
-    to the persistent config (logos_cli/config.py load_config()) so that
-    ``delegation.model`` / ``delegation.provider`` are picked up regardless
-    of the entry point (CLI, gateway, cron).
+    Previously this also tried `logos_cli.cli.CLI_CONFIG` first — that
+    fallback is gone now that HermesCLI has been deleted. Only the
+    persistent config source remains.
     """
     try:
-        from logos_cli.cli import CLI_CONFIG
-        cfg = CLI_CONFIG.get("delegation", {})
-        if cfg:
-            return cfg
-    except Exception:
-        pass
-    try:
         from logos_cli.config import load_config
-        full = load_config()
-        return full.get("delegation", {})
+        return load_config().get("delegation", {})
     except Exception:
         return {}
 
