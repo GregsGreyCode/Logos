@@ -34,27 +34,37 @@ def _fake_state_entry(sandbox_name="hermes-alice", with_setup=True,
 
 
 class TestFetchToolsetsFromSandbox:
-    def test_returns_none_when_no_setup(self, monkeypatch):
+    def test_runs_probe_even_without_server_setup(self, monkeypatch):
+        # The probe imports tools.registry directly — no HTTP call
+        # against hermes — so hermes-server-mode setup isn't required.
         from gateway import worker_registry_v2 as v2
         monkeypatch.setattr(
             "gateway.executors.openshell._load_state",
             lambda: [_fake_state_entry(with_setup=False)],
         )
-        fake_run = MagicMock()
+        mock_result = MagicMock(returncode=0, stdout='{"toolsets": {}}', stderr="")
+        fake_run = MagicMock(return_value=mock_result)
         monkeypatch.setattr("subprocess.run", fake_run)
 
         result = asyncio.run(v2.fetch_toolsets_from_sandbox("hermes-alice"))
 
-        assert result is None
-        fake_run.assert_not_called()
+        assert result == {"toolsets": {}}
+        fake_run.assert_called_once()
 
-    def test_returns_none_when_sandbox_not_in_state(self, monkeypatch):
+    def test_runs_probe_even_when_sandbox_not_in_state(self, monkeypatch):
+        # openshell itself is authoritative for "does this sandbox exist";
+        # we don't gate on the state file.
         from gateway import worker_registry_v2 as v2
         monkeypatch.setattr(
             "gateway.executors.openshell._load_state", lambda: [],
         )
+        mock_result = MagicMock(returncode=0, stdout='{"toolsets": {}}', stderr="")
+        fake_run = MagicMock(return_value=mock_result)
+        monkeypatch.setattr("subprocess.run", fake_run)
+
         result = asyncio.run(v2.fetch_toolsets_from_sandbox("hermes-ghost"))
-        assert result is None
+        assert result == {"toolsets": {}}
+        fake_run.assert_called_once()
 
     def test_returns_parsed_payload_on_success(self, monkeypatch):
         from gateway import worker_registry_v2 as v2
@@ -114,7 +124,7 @@ class TestFetchToolsetsFromSandbox:
         result = asyncio.run(v2.fetch_toolsets_from_sandbox("hermes-alice"))
         assert result is None
 
-    def test_passes_gateway_and_auth_into_exec_command(self, monkeypatch):
+    def test_passes_gateway_and_pipes_probe_on_stdin(self, monkeypatch):
         from gateway import worker_registry_v2 as v2
         monkeypatch.setattr(
             "gateway.executors.openshell._load_state",
@@ -125,6 +135,7 @@ class TestFetchToolsetsFromSandbox:
 
         def _capture_run(cmd, **kwargs):
             captured["cmd"] = cmd
+            captured["input"] = kwargs.get("input", "")
             return MagicMock(returncode=0, stdout='{"toolsets": {}}', stderr="")
 
         monkeypatch.setattr("subprocess.run", _capture_run)
@@ -134,9 +145,26 @@ class TestFetchToolsetsFromSandbox:
         assert "-g" in captured["cmd"]
         gi = captured["cmd"].index("-g")
         assert captured["cmd"][gi + 1] == "zonk-gateway"
-        sh_arg = captured["cmd"][-1]
-        assert "Bearer test_key_xyz" in sh_arg
-        assert "http://127.0.0.1:8642/v1/toolsets" in sh_arg
+        # python3 reads the probe from stdin
+        assert captured["cmd"][-2:] == ["python3", "-"]
+        assert "from tools.registry import registry" in captured["input"]
+        assert "get_available_toolsets" in captured["input"]
+
+    def test_probe_reports_error_returns_none(self, monkeypatch):
+        from gateway import worker_registry_v2 as v2
+        monkeypatch.setattr(
+            "gateway.executors.openshell._load_state",
+            lambda: [_fake_state_entry()],
+        )
+        mock_result = MagicMock(
+            returncode=0,
+            stdout='{"error": "registry import failed: ImportError(\'no such module\')"}',
+            stderr="",
+        )
+        monkeypatch.setattr("subprocess.run", MagicMock(return_value=mock_result))
+
+        result = asyncio.run(v2.fetch_toolsets_from_sandbox("hermes-alice"))
+        assert result is None
 
     def test_timeout_exception_returns_none(self, monkeypatch):
         from gateway import worker_registry_v2 as v2
