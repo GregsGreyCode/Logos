@@ -1757,17 +1757,18 @@ async def handle_agent_channels_post(request: web.Request) -> web.Response:
         except Exception:
             logger.exception("channels_post: ensure_channel_access failed")
 
-    # LOG-44.3.4: push the new token into the agent's sandbox if it's
-    # running hermes-server mode so the in-sandbox bot picks it up now
-    # (rather than waiting for next respawn). No-op for legacy agents.
-    sandbox_refresh = _refresh_sandbox_channel_env(request, agent["name"])
+    # Fire-and-forget the sandbox .env refresh (see delete handler
+    # for why — synchronous call blocks the event loop for ~30s).
+    asyncio.create_task(
+        asyncio.to_thread(_refresh_sandbox_channel_env, request, agent["name"])
+    )
 
     return web.json_response({
         "credential": _scrub_credential_row(row),
         "validated": validation_result,
         "connected": connect_result,
         "access": access_result,
-        "sandbox_refreshed": sandbox_refresh,
+        "sandbox_refresh_scheduled": True,
     })
 
 
@@ -1790,13 +1791,18 @@ async def handle_agent_channels_delete(request: web.Request) -> web.Response:
         logger.exception("channels delete failed")
         return web.json_response({"error": str(exc)}, status=500)
 
-    # LOG-44.3.4: refresh the sandbox's .env so the deleted token
-    # stops leaking into hermes's process env. Without this the
-    # adapter keeps running in-sandbox until next respawn — surprising
-    # for a user who just clicked Delete.
-    sandbox_refresh = _refresh_sandbox_channel_env(request, agent["name"])
+    # Fire-and-forget the sandbox .env refresh so the HTTP delete
+    # returns immediately. refresh_channel_credentials synchronously
+    # does an openshell exec + waits up to 30s for hermes health,
+    # which was blocking the event loop and making the UI look stuck.
+    # The DB row is already gone; the sandbox picks up the token
+    # removal on this refresh or the next respawn, whichever comes
+    # first.
+    asyncio.create_task(
+        asyncio.to_thread(_refresh_sandbox_channel_env, request, agent["name"])
+    )
 
-    return web.json_response({"ok": True, "sandbox_refreshed": sandbox_refresh})
+    return web.json_response({"ok": True, "sandbox_refresh_scheduled": True})
 
 
 async def handle_agent_channels_toggle(request: web.Request) -> web.Response:
@@ -1827,16 +1833,16 @@ async def handle_agent_channels_toggle(request: web.Request) -> web.Response:
     # below. Adding the token back / pulling it out there is what
     # starts / stops hermes's in-sandbox bot poller.
 
-    # LOG-44.3.4: enable/disable should also update the sandbox's
-    # .env — disabling should drop the token from env (so the adapter
-    # actually stops polling inside the sandbox), enabling should
-    # re-introduce it.
-    sandbox_refresh = _refresh_sandbox_channel_env(request, agent["name"])
+    # Fire-and-forget the sandbox .env refresh (see delete handler
+    # for why — synchronous call blocks the event loop for ~30s).
+    asyncio.create_task(
+        asyncio.to_thread(_refresh_sandbox_channel_env, request, agent["name"])
+    )
 
     refreshed = auth_db.get_agent_channel_credential(cred_id)
     return web.json_response({
         "credential": _scrub_credential_row(refreshed or row),
-        "sandbox_refreshed": sandbox_refresh,
+        "sandbox_refresh_scheduled": True,
     })
 
 
