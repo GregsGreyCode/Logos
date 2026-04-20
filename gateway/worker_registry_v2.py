@@ -397,6 +397,16 @@ async def sync_memories_from_sandbox(sandbox_name: str) -> None:
 
 _TOOLSET_PROBE_SCRIPT = r"""
 import json, sys
+# hermes's tools self-register when their modules get imported. The
+# registry stays empty until something triggers those imports — in the
+# running hermes process, `model_tools` (top-level) does it at startup.
+# Importing it here produces the same side effect for our probe.
+try:
+    import model_tools  # noqa: F401
+except Exception as exc:
+    # Non-fatal — the registry may still be partially populated by
+    # whatever tools happened to import via another path.
+    sys.stderr.write("model_tools import: " + repr(exc) + "\n")
 try:
     from tools.registry import registry
 except Exception as exc:
