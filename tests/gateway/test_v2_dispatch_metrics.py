@@ -37,13 +37,25 @@ class TestIsDispatchV2ForcedToV1:
 
 
 class TestIsDispatchV2Enabled:
-    def test_unset_defaults_to_false(self, monkeypatch):
+    def test_unset_defaults_to_true(self, monkeypatch):
+        """Phase 2: v2 is the default. Absent env var means enabled."""
         monkeypatch.delenv("LOGOS_DISPATCH_V2", raising=False)
-        assert is_dispatch_v2_enabled() is False
+        assert is_dispatch_v2_enabled() is True
 
     def test_value_1_enables(self, monkeypatch):
         monkeypatch.setenv("LOGOS_DISPATCH_V2", "1")
         assert is_dispatch_v2_enabled() is True
+
+    def test_explicit_zero_disables(self, monkeypatch):
+        """Opt-out path: explicit "0" forces v1 dispatch."""
+        monkeypatch.setenv("LOGOS_DISPATCH_V2", "0")
+        assert is_dispatch_v2_enabled() is False
+
+    def test_other_value_disables(self, monkeypatch):
+        """Guard against accidental enablement via typos — exact "1"
+        matches, anything else falls back to disabled."""
+        monkeypatch.setenv("LOGOS_DISPATCH_V2", "true")
+        assert is_dispatch_v2_enabled() is False
 
 
 class TestDispatchCounter:

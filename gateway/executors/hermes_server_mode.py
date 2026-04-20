@@ -908,8 +908,17 @@ def enable_hermes_server_mode(
 
 
 def is_enabled() -> bool:
-    """Return True iff LOG-44 hermes-server-mode is active for this run."""
-    return os.getenv("LOGOS_HERMES_SERVER_MODE", "") == "1"
+    """Return True iff LOG-44 hermes-server-mode is active for this run.
+
+    Phase 2: defaults to enabled. The env var is now opt-OUT — set
+    ``LOGOS_HERMES_SERVER_MODE=0`` (or any non-"1" value) to disable
+    server-mode spawn for the gateway process. Absent env var still
+    means "on" so fresh installs get v2 without further configuration.
+    """
+    val = os.getenv("LOGOS_HERMES_SERVER_MODE")
+    if val is None:
+        return True
+    return val == "1"
 
 
 __all__ = [
