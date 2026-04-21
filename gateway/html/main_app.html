@@ -1808,10 +1808,18 @@
                       <span x-text="(() => { try { return JSON.parse(pane.applied_presets || '[]').length; } catch(e) { return 0; } })() + ' presets'"></span>
                     </span>
                     <!-- Right cluster — mirrors Chats STAMP layout: ml-auto on
-                         Logs pushes the pair to the right edge of this row. -->
+                         Logs pushes the pair to the right edge of this row.
+                         Mind sits next to Logs because compare right now
+                         DOES persist side effects (files, memories) — the
+                         user needs to be able to inspect what the agent
+                         created during the probe. See LOG-entry in
+                         WORK_QUEUE.md for the transient-compare plan. -->
                     <button class="ml-auto text-[10px] px-2 py-0.5 rounded border border-gray-700 text-gray-400 hover:text-white hover:border-gray-500 transition-colors"
                             @click="openAgentLogs(pane)"
                             title="View this agent's runtime log tail">📋 Logs</button>
+                    <button class="text-[10px] px-2 py-0.5 rounded border border-gray-700 text-gray-400 hover:text-indigo-300 hover:border-indigo-500 transition-colors"
+                            @click="openAgentMind(pane)"
+                            title="What this agent knows — memories, past sessions, files on disk">🧠 Mind</button>
                     <button class="text-[10px] px-2 py-0.5 rounded border border-indigo-700/60 text-indigo-300 hover:bg-indigo-900/40 transition-colors"
                             @click="promotePaneToChat(slotIdx)"
                             :disabled="!(compareTranscripts[pane.id] && compareTranscripts[pane.id].length)"
@@ -1820,8 +1828,10 @@
                   </div>
                 </div>
 
-                <!-- Transcript area -->
-                <div class="flex-1 overflow-y-auto p-3 space-y-3 text-sm" :data-pane-transcript="slotIdx">
+                <!-- Transcript area — chat-scroll gives the thin
+                     accent-coloured scrollbar used on the Chats tab,
+                     so both tabs match visually. -->
+                <div class="flex-1 chat-scroll p-3 space-y-3 text-sm" :data-pane-transcript="slotIdx">
                   <!-- Empty state when no messages yet -->
                   <template x-if="!(compareTranscripts[pane.id] && compareTranscripts[pane.id].length)">
                     <div class="text-xs text-gray-600 italic">No messages yet. Type a prompt below.</div>
@@ -1886,7 +1896,11 @@
                             <!-- Markdown-rendered content (or ellipsis
                                  placeholder while streaming) -->
                             <template x-if="msg.content">
-                              <div x-html="renderMsg(msg.content)"></div>
+                              <!-- Pass pane.id so sandbox-path downloads
+                                   target THIS pane's agent, not the
+                                   activeChatId agent. Fixes two panes
+                                   linking to the same sandbox. -->
+                              <div x-html="renderMsg(msg.content, pane.id)"></div>
                             </template>
                             <template x-if="!msg.content && msg._streaming">
                               <div class="text-gray-500">&hellip;</div>
@@ -1942,23 +1956,91 @@
         </template>
       </div>
 
-      <!-- Shared input row (disabled until at least one pane filled) -->
+      <!-- Shared input row — mirrors the Chats-tab composer (see the
+           textarea at line ~1479 + autoResizeChat helper). Same
+           autogrow trick: hide scrollbar → measure → set height →
+           only re-enable scrollbar if content exceeds max. Same
+           fixed-38px Send pill. Reusing the pattern keeps behaviour
+           (and styling) consistent across both tabs. -->
       <div class="shrink-0 border border-gray-800 rounded-2xl bg-gray-900/30 p-3">
-        <div class="flex items-center gap-2">
-          <input type="text"
-                 x-model="compareInput"
-                 :disabled="!comparePanes.some(p => p)"
-                 @keydown.enter="if (compareInput.trim() && comparePanes.some(p => p)) compareSend()"
-                 :placeholder="comparePanes.some(p => p) ? 'Send the same prompt to all panes…' : 'Drop an agent into a pane to start'"
-                 class="flex-1 bg-gray-950 border border-gray-800 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-indigo-600 disabled:opacity-40">
-          <button class="px-4 py-2 rounded-lg text-sm font-medium transition-colors"
-                  :class="(comparePanes.some(p => p) && compareInput.trim()) ? 'btn-primary' : 'bg-gray-800 text-gray-600 cursor-not-allowed'"
-                  :disabled="!(comparePanes.some(p => p) && compareInput.trim())"
-                  @click="compareSend()">
-            Send →
+        <div class="flex items-start gap-2">
+          <!-- Render mode drop-up (mirrors Chats tab). chatRenderMode is
+               a shared state so toggling it here flips Markdown/Plain/
+               Mono on both tabs simultaneously — matches the user's
+               mental model of "how I want AI responses rendered". -->
+          <div class="render-dropup self-start" x-data="{open:false}" @click.away="open=false">
+            <button @click="open=!open"
+              class="flex items-center gap-1 px-2.5 rounded-lg border text-xs font-medium transition-colors"
+              style="height:38px;"
+              :class="open
+                ? 'border-[var(--accent)] bg-[var(--accent-bg)] text-[var(--accent-light)]'
+                : 'border-gray-700 bg-gray-800 text-gray-500 hover:text-gray-300 hover:border-gray-600'"
+              :title="'Render: ' + chatRenderMode">
+              <span x-text="chatRenderMode==='markdown'?'MD':chatRenderMode==='plain'?'TXT':'01'"></span>
+              <svg class="w-2.5 h-2.5 transition-transform" :class="open?'rotate-180':''" viewBox="0 0 10 6" fill="none">
+                <path d="M1 5l4-4 4 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+              </svg>
+            </button>
+            <div class="render-menu" :class="open?'open':''">
+              <button @click="chatRenderMode='markdown'; open=false"
+                :class="chatRenderMode==='markdown'?'active':''">MD — Markdown</button>
+              <button @click="chatRenderMode='plain'; open=false"
+                :class="chatRenderMode==='plain'?'active':''">TXT — Plain</button>
+              <button @click="chatRenderMode='mono'; open=false"
+                :class="chatRenderMode==='mono'?'active':''">01 — Mono</button>
+            </div>
+          </div>
+          <div class="relative flex-1">
+            <textarea x-model="compareInput"
+                 x-ref="compareComposer"
+                 rows="1"
+                 autocomplete="off"
+                 :disabled="!comparePanes.some(p => p) || micTranscribing"
+                 @input="autoResizeChat($el)"
+                 @keydown.enter="if (!$event.shiftKey) { $event.preventDefault(); if (compareInput.trim() && _compareActivePaneIds().length) { compareSend(); $nextTick(() => { $refs.compareComposer && autoResizeChat($refs.compareComposer); }); } }"
+                 :placeholder="!comparePanes.some(p => p) ? 'Drop an agent into a pane to start'
+                   : micRecording ? ('Recording… ' + micCountdown + 's')
+                   : micTranscribing ? 'Transcribing…'
+                   : (compareTarget === 'both' ? 'Send to both panes (Shift+Enter for newline)…' : ('Send to ' + (comparePanes[compareTarget === 'left' ? 0 : 1]?.name || 'pane') + ' only (Shift+Enter for newline)…'))"
+                 class="block w-full bg-gray-800 border border-gray-700 rounded-lg px-4 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-indigo-500 transition-colors resize-none disabled:opacity-50 disabled:cursor-not-allowed"
+                 style="height:38px;min-height:38px;max-height:7rem;line-height:20px;overflow-y:hidden;padding-top:8px;padding-bottom:8px;vertical-align:bottom;"></textarea>
+            <template x-if="micSuccess">
+              <span class="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-green-400 pointer-events-none">✓ captured</span>
+            </template>
+          </div>
+          <!-- Mic button — shared toggleMic() handler that routes the
+               transcript to compareInput when this.tab==='compare' (see
+               the tab check inside toggleMic). One recording at a time
+               across both tabs. -->
+          <button @click="toggleMic()" :disabled="micTranscribing"
+            :title="micRecording ? 'Stop recording (or wait for 90s limit)' : 'Voice input — up to 90 seconds'"
+            class="self-start px-2.5 rounded-lg border text-sm transition-colors disabled:opacity-40"
+            style="height:38px;"
+            :class="micRecording
+              ? 'mic-recording border-red-700 bg-red-900 text-red-300'
+              : micTranscribing
+                ? 'border-yellow-700 bg-yellow-900 text-yellow-300 animate-pulse'
+                : 'border-gray-700 bg-gray-800 text-gray-500 hover:text-gray-300 hover:border-gray-600'">
+            <template x-if="micTranscribing">
+              <svg class="w-4 h-4 animate-spin" viewBox="0 0 24 24" fill="none">
+                <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2" stroke-dasharray="31.4" stroke-dashoffset="10"/>
+              </svg>
+            </template>
+            <template x-if="!micTranscribing">
+              <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <rect x="9" y="2" width="6" height="12" rx="3"/>
+                <path d="M5 10a7 7 0 0014 0M12 19v3M8 22h8"/>
+              </svg>
+            </template>
+          </button>
+          <button @click="compareSend(); $nextTick(() => { $refs.compareComposer && autoResizeChat($refs.compareComposer); })"
+                  :disabled="!(_compareActivePaneIds().length && compareInput.trim())"
+                  class="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 disabled:cursor-not-allowed px-4 rounded-lg text-sm font-medium transition-colors shrink-0 self-start"
+                  style="height:38px;">
+            Send
           </button>
         </div>
-        <div class="flex items-center justify-between mt-1.5">
+        <div class="flex items-center justify-between mt-1.5 gap-3 flex-wrap">
           <div class="text-[10px] text-gray-600">
             <template x-if="comparePanes.filter(p => p).length === 0">
               <span>Empty — drop two agents into the panes above.</span>
@@ -1970,21 +2052,50 @@
               <span>Both panes ready. Each agent gets its own session — transcripts don't bleed.</span>
             </template>
           </div>
-          <!-- Sequential / parallel toggle. Default sequential because the
-               OpenShell privacy router has a 60s hard cap on total request
-               duration (TASKS.md #22), and parallel inference doubles each
-               model's elapsed time, pushing both past the cap. Sequential
-               gives each model the full GPU and finishes inside 60s. -->
-          <div class="flex items-center gap-1.5 text-[10px] text-gray-500">
-            <span>dispatch:</span>
-            <button @click="compareSendMode = 'sequential'"
-              :class="compareSendMode === 'sequential' ? 'bg-indigo-900 text-indigo-200 border-indigo-700' : 'bg-gray-900 text-gray-500 border-gray-800 hover:border-gray-700'"
-              class="px-2 py-0.5 rounded border font-medium transition-colors"
-              title="One pane at a time. Each gets the full GPU and finishes inside the 60s OpenShell timeout. Slower total but reliable.">sequential</button>
-            <button @click="compareSendMode = 'parallel'"
-              :class="compareSendMode === 'parallel' ? 'bg-indigo-900 text-indigo-200 border-indigo-700' : 'bg-gray-900 text-gray-500 border-gray-800 hover:border-gray-700'"
-              class="px-2 py-0.5 rounded border font-medium transition-colors"
-              title="Both panes at once. Faster on big GPUs but currently broken on most hardware — OpenShell's 60s request cap truncates whichever pane runs longest.">parallel</button>
+          <div class="flex items-center gap-3">
+            <!-- Target pane selector. After a couple of rounds it often
+                 makes sense to drill into just one agent's thread
+                 without firing the prompt at the other one. Defaults to
+                 `both`; flips back to `both` automatically if a pane is
+                 cleared from beneath it. -->
+            <div class="flex items-center gap-1.5 text-[10px] text-gray-500">
+              <span>send to:</span>
+              <button @click="compareTarget = 'both'"
+                :disabled="comparePanes.filter(p => p).length < 2"
+                :class="compareTarget === 'both' ? 'bg-indigo-900 text-indigo-200 border-indigo-700' : 'bg-gray-900 text-gray-500 border-gray-800 hover:border-gray-700'"
+                class="px-2 py-0.5 rounded border font-medium transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+                title="Send the prompt to both panes">both</button>
+              <button @click="compareTarget = 'left'"
+                :disabled="!comparePanes[0]"
+                :class="compareTarget === 'left' ? 'bg-indigo-900 text-indigo-200 border-indigo-700' : 'bg-gray-900 text-gray-500 border-gray-800 hover:border-gray-700'"
+                class="px-2 py-0.5 rounded border font-medium transition-colors disabled:opacity-30 disabled:cursor-not-allowed truncate max-w-[140px]"
+                :title="'Send to left pane only' + (comparePanes[0]?.name ? ' (' + comparePanes[0].name + ')' : '')">
+                <span x-text="comparePanes[0]?.name ? ('← ' + comparePanes[0].name) : '← left'"></span>
+              </button>
+              <button @click="compareTarget = 'right'"
+                :disabled="!comparePanes[1]"
+                :class="compareTarget === 'right' ? 'bg-indigo-900 text-indigo-200 border-indigo-700' : 'bg-gray-900 text-gray-500 border-gray-800 hover:border-gray-700'"
+                class="px-2 py-0.5 rounded border font-medium transition-colors disabled:opacity-30 disabled:cursor-not-allowed truncate max-w-[140px]"
+                :title="'Send to right pane only' + (comparePanes[1]?.name ? ' (' + comparePanes[1].name + ')' : '')">
+                <span x-text="comparePanes[1]?.name ? (comparePanes[1].name + ' →') : 'right →'"></span>
+              </button>
+            </div>
+            <!-- Sequential / parallel toggle. Default sequential because the
+                 OpenShell privacy router has a 60s hard cap on total request
+                 duration (TASKS.md #22), and parallel inference doubles each
+                 model's elapsed time, pushing both past the cap. Sequential
+                 gives each model the full GPU and finishes inside 60s. -->
+            <div class="flex items-center gap-1.5 text-[10px] text-gray-500">
+              <span>dispatch:</span>
+              <button @click="compareSendMode = 'parallel'"
+                :class="compareSendMode === 'parallel' ? 'bg-indigo-900 text-indigo-200 border-indigo-700' : 'bg-gray-900 text-gray-500 border-gray-800 hover:border-gray-700'"
+                class="px-2 py-0.5 rounded border font-medium transition-colors"
+                title="Both panes at once. Faster on big GPUs but currently broken on most hardware — OpenShell's 60s request cap truncates whichever pane runs longest.">parallel</button>
+              <button @click="compareSendMode = 'sequential'"
+                :class="compareSendMode === 'sequential' ? 'bg-indigo-900 text-indigo-200 border-indigo-700' : 'bg-gray-900 text-gray-500 border-gray-800 hover:border-gray-700'"
+                class="px-2 py-0.5 rounded border font-medium transition-colors"
+                title="One pane at a time. Each gets the full GPU and finishes inside the 60s OpenShell timeout. Slower total but reliable.">sequential</button>
+            </div>
           </div>
         </div>
       </div>
@@ -6197,6 +6308,12 @@ function app() {
     compareProvisioning: {},  // {agent_id: {elapsed_s: number, expected_s: number}}
     compareThinking: {},      // {agent_id: in-progress reasoning text}
     compareInput: '',
+    // Target pane selector (2026-04-21). After a few comparison rounds
+    // the user often wants to drill into one agent's thread without
+    // firing the prompt at the other. Values: 'both' / 'left' / 'right'.
+    // Defaults to 'both'; auto-repairs to 'both' when the currently-
+    // selected pane gets cleared.
+    compareTarget: 'both',
     // Send mode: 'sequential' fires panes one at a time (each gets the
     // full GPU; works on systems where parallel inference saturates).
     // 'parallel' fires both at once (faster total time on beefy GPUs;
@@ -8754,11 +8871,26 @@ function app() {
             });
             const d = await r.json();
             if (d.transcript) {
-              this.chatInput = (this.chatInput + ' ' + d.transcript).trim();
-              this.micSuccess = true;
-              setTimeout(() => { this.micSuccess = false; }, 2500);
-              await this.$nextTick();
-              this.sendChat();
+              // Route the transcript to whichever composer the user
+              // triggered the mic from. Compare tab gets compareInput +
+              // compareSend; Chats tab (default) gets chatInput +
+              // sendChat. Keeps one mic handler serving both composers
+              // without duplicating the recording/transcription code.
+              if (this.tab === 'compare') {
+                this.compareInput = (this.compareInput + ' ' + d.transcript).trim();
+                this.micSuccess = true;
+                setTimeout(() => { this.micSuccess = false; }, 2500);
+                await this.$nextTick();
+                if (this._compareActivePaneIds && this._compareActivePaneIds().length) {
+                  this.compareSend();
+                }
+              } else {
+                this.chatInput = (this.chatInput + ' ' + d.transcript).trim();
+                this.micSuccess = true;
+                setTimeout(() => { this.micSuccess = false; }, 2500);
+                await this.$nextTick();
+                this.sendChat();
+              }
             } else if (d.error) {
               console.error('transcription error', d.error);
             }
@@ -8781,9 +8913,15 @@ function app() {
       }
     },
 
-    renderMsg(content) {
+    renderMsg(content, agentIdOverride) {
       // Returns safe HTML string for x-html binding.
       // mode 'markdown': parsed + sanitized; 'mono': escaped pre-wrap; 'plain': escaped.
+      //
+      // `agentIdOverride` lets the Compare panes pass their per-pane
+      // agent id so the sandbox-path linkifier points downloads at the
+      // RIGHT agent's sandbox instead of whatever the active chat
+      // happens to be bound to. Omit on the Chats tab (activeChatId
+      // is already correct there).
       const text = content || '';
       let html;
       if (this.chatRenderMode === 'markdown' && typeof marked !== 'undefined' && typeof DOMPurify !== 'undefined') {
@@ -8794,7 +8932,7 @@ function app() {
         el.textContent = text;
         html = el.innerHTML;
       }
-      return this._linkifySandboxPaths(html);
+      return this._linkifySandboxPaths(html, agentIdOverride);
     },
 
     // LOG-49 follow-on: turn sandbox file paths mentioned in agent
@@ -8808,19 +8946,41 @@ function app() {
     //   - Tilde-prefixed paths like ~/outputs/report.md (expanded to
     //     /tmp/hermes/...)
     // Skips paths already inside an anchor tag so we don't nest links.
-    _linkifySandboxPaths(html) {
-      if (!this.activeChatId) return html;
-      const chat = this.chats.find(c => c.id === this.activeChatId);
-      const aid = chat?.agent_id;
-      if (!aid) return html;  // no agent binding = no sandbox to fetch from
+    _linkifySandboxPaths(html, agentIdOverride) {
+      // Agent resolution order:
+      //   1. explicit override (Compare pane — each pane has its own agent)
+      //   2. active chat's bound agent (Chats tab)
+      //   3. bail — no agent means no sandbox to target
+      let aid = agentIdOverride || null;
+      if (!aid) {
+        if (!this.activeChatId) return html;
+        const chat = this.chats.find(c => c.id === this.activeChatId);
+        aid = chat?.agent_id || null;
+      }
+      if (!aid) return html;
 
-      // Regex: absolute /tmp/hermes/... or /tmp/... or ~/... . Path
-      // chars are conservative — letters, digits, _, -, ., /, and the
-      // leading ~/ form. Anchor trailing punctuation isn't part of
-      // the match so "see /tmp/hermes/foo.py." doesn't eat the dot.
-      // Wrapped in a negative lookahead/lookbehind so we don't
-      // re-linkify an already-anchored path.
-      const PATH_RE = /(?:^|[\s>("'`])(~(?=\/)|\/tmp(?:\/hermes)?)((?:\/[\w.\-]+)+)/g;
+      // Recognised path prefixes. Agents are inconsistent about how
+      // they cite file paths in replies — most say `/tmp/hermes/...`
+      // or `~/outputs/...`, but qwen-family models often abbreviate
+      // to just `/outputs/...` (treating the sandbox's workspace as
+      // an implicit root). Each recognised prefix maps to its real
+      // absolute path inside the sandbox.
+      const PATH_PREFIX_MAP = {
+        '~':            '/tmp/hermes',
+        '/tmp/hermes':  '/tmp/hermes',
+        '/tmp':         '/tmp',
+        '/outputs':     '/tmp/hermes/outputs',   // qwen short form
+        '/scripts':     '/tmp/hermes/scripts',   // qwen short form
+        '/memories':    '/tmp/hermes/memories',  // qwen short form
+      };
+      // Regex: any of the recognised prefixes (order longest-first so
+      // `/tmp/hermes` wins over `/tmp`), then at least one /segment
+      // with conservative path chars. Path chars: letters, digits,
+      // `_`, `-`, `.`, `/`. Trailing punctuation isn't part of the
+      // match so "see /outputs/foo.md." doesn't eat the dot. Negative
+      // lookbehind on leading char prevents re-linkify of already-
+      // anchored text.
+      const PATH_RE = /(?:^|[\s>("'`])(~(?=\/)|\/tmp\/hermes|\/tmp|\/outputs|\/scripts|\/memories)((?:\/[\w.\-]+)+)/g;
 
       return html.replace(PATH_RE, (match, prefix, rest) => {
         // The leading char in `match` is either the char that preceded
@@ -8828,12 +8988,18 @@ function app() {
         // the path starts the string. Preserve it so spacing stays
         // intact; just wrap the path itself.
         const lead = match[0] === prefix[0] ? '' : match[0];
-        const visible = (prefix === '~' ? '~' : prefix) + rest;
-        const absolute = (prefix === '~' ? '/tmp/hermes' : prefix) + rest;
+        const visible = prefix + rest;
+        const realRoot = PATH_PREFIX_MAP[prefix] || prefix;
+        const absolute = realRoot + rest;
         const href = '/admin/agents/' + encodeURIComponent(aid)
                    + '/sandbox-files/download?path=' + encodeURIComponent(absolute);
         const title = 'Download ' + absolute;
-        return lead + '<a href="' + href + '" download title="'
+        // target=_blank + rel=noopener: without this, plain-click in
+        // Chrome sometimes raced against the SPA's history navigation
+        // and showed "download.json — Site wasn't available" while
+        // Ctrl+click (new-tab) worked. Forcing new-tab makes the
+        // click behaviour consistent with what worked before.
+        return lead + '<a href="' + href + '" download target="_blank" rel="noopener" title="'
              + title.replace(/"/g, '&quot;') + '"'
              + ' class="underline decoration-dotted hover:text-indigo-300"'
              + '>' + visible + '</a>';
@@ -9397,6 +9563,35 @@ function app() {
         requestAnimationFrame(() => {
           const el = document.getElementById('chat-messages');
           if (el && el.scrollHeight > el.clientHeight) el.scrollTop = el.scrollHeight;
+        });
+      });
+    },
+
+    // Compare-tab analogue of _scrollChat. One pane is one slot index,
+    // so we resolve the agent_id → slot → [data-pane-transcript="N"]
+    // scroll container. Called from every mutation site that adds
+    // content to a pane (user send, streaming tokens, final reply,
+    // error card) so the latest message stays visible during a turn.
+    // Pass no argument to scroll BOTH panes — used by compareSend at
+    // dispatch time when both transcripts just got user bubbles
+    // appended simultaneously.
+    _scrollComparePane(agentId) {
+      const slots = [];
+      if (agentId) {
+        const idx = this.comparePanes.findIndex(p => p && p.id === agentId);
+        if (idx === -1) return;
+        slots.push(idx);
+      } else {
+        for (let i = 0; i < this.comparePanes.length; i++) {
+          if (this.comparePanes[i]) slots.push(i);
+        }
+      }
+      this.$nextTick(() => {
+        requestAnimationFrame(() => {
+          for (const i of slots) {
+            const el = document.querySelector(`[data-pane-transcript="${i}"]`);
+            if (el && el.scrollHeight > el.clientHeight) el.scrollTop = el.scrollHeight;
+          }
         });
       });
     },
@@ -10112,30 +10307,54 @@ user_accessible: true
     //
     // Each pane has its own session_id and runs an independent /chat
     // dispatch — transcripts never bleed across panes.
+    // Resolve which pane IDs the current target selector wants this send
+    // to reach. Empty list = nothing to send (button stays disabled).
+    _compareActivePaneIds() {
+      const slotsForTarget = this.compareTarget === 'left'  ? [0]
+                          :  this.compareTarget === 'right' ? [1]
+                          :                                   [0, 1];
+      const ids = [];
+      for (const i of slotsForTarget) {
+        const pane = this.comparePanes[i];
+        if (pane && pane.id) ids.push(pane.id);
+      }
+      // Auto-repair: if the user picked 'left'/'right' and then cleared
+      // that pane, fall back to whichever pane is actually filled rather
+      // than disabling the send button with no explanation.
+      if (ids.length === 0 && this.comparePanes.some(p => p)) {
+        this.compareTarget = 'both';
+        for (const p of this.comparePanes) if (p && p.id) ids.push(p.id);
+      }
+      return ids;
+    },
+
     async compareSend() {
       const text = this.compareInput.trim();
       if (!text) return;
-      if (!this.comparePanes.some(p => p)) return;
+      const targetIds = this._compareActivePaneIds();
+      if (targetIds.length === 0) return;
       // Snapshot + clear input immediately so the user can keep typing.
       this.compareInput = '';
-      // Append the user turn to ALL filled panes right away so the prompt
-      // shows up simultaneously even when dispatch is sequential. The
-      // user shouldn't have to wait for pane B to start before seeing
-      // their own message in pane B.
+      // Append the user turn to each targeted pane right away so the
+      // prompt shows up even before the dispatch begins. Only the
+      // panes the user actually wants to send to get the user-turn
+      // bubble — the untargeted pane stays quiet so the UI matches
+      // the send-to-X selector the user just chose.
       const filledIds = [];
-      for (let i = 0; i < this.comparePanes.length; i++) {
-        const pane = this.comparePanes[i];
-        if (!pane) continue;
+      for (const pid of targetIds) {
         const t = { ...this.compareTranscripts };
-        t[pane.id] = [...(t[pane.id] || []), { role: 'user', content: text }];
+        t[pid] = [...(t[pid] || []), { role: 'user', content: text }];
         this.compareTranscripts = t;
         // Mark queued so the UI shows "queued…" instead of empty until
         // the actual dispatch begins.
         const q = { ...this.compareQueued };
-        q[pane.id] = true;
+        q[pid] = true;
         this.compareQueued = q;
-        filledIds.push(pane.id);
+        filledIds.push(pid);
       }
+      // Pin every targeted pane to the bottom now that the user turn
+      // just landed — matches Chats-tab behaviour.
+      this._scrollComparePane();
 
       if (this.compareSendMode === 'parallel') {
         // True parallel — both dispatches fire at once. Currently
@@ -10302,6 +10521,7 @@ user_accessible: true
         messages[messages.length - 1] = { ...last, content };
         t[agentId] = messages;
         this.compareTranscripts = t;
+        this._scrollComparePane(agentId);
       }
     },
 
@@ -10350,6 +10570,7 @@ user_accessible: true
       const th = { ...this.compareThinking };
       th[agentId] = '';
       this.compareThinking = th;
+      this._scrollComparePane(agentId);
     },
 
     _compareAppendError(agentId, title, action) {
@@ -10361,6 +10582,7 @@ user_accessible: true
         errorAction: action || '',
       }];
       this.compareTranscripts = t;
+      this._scrollComparePane(agentId);
     },
 
     async createNamedAgent() {
