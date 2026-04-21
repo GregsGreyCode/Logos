@@ -367,6 +367,7 @@ From the dashboard's **Settings** tab (admins only) you can browse recent runs. 
 ## 📊 Local model benchmarking
 
 When you connect a local inference server (Ollama or LM Studio), the setup wizard automatically benchmarks your available models to find the best fit for driving the agent.
+<img width="1098" height="1042" alt="image" src="https://github.com/user-attachments/assets/63f5b294-d821-44c9-bb74-edf8210f48f5" />
 
 ### Candidate selection
 
