@@ -796,6 +796,63 @@ M10 never landed, and the scope expanded beyond just memory/session once we had 
 
 ---
 
+### LOG-67 · Multi-user hosting — keep remote-setup alive + audit cross-user endpoints
+**Effort:** M · **Type:** Feature + audit · **Status:** OPEN (not scheduled) · **Surfaced:** 2026-04-21
+
+**Goal.** Preserve the `/setup` → "Connect to existing server" flow (`/api/setup/set-remote` + launcher `_read_connect_url` / `_run_tray_client_mode`) so that in the future one person can host a Logos instance and 2–5 trusted users (friends, family, small team) connect and each own their private agents + chat history. Not multi-tenancy-at-scale — just "bookmark my URL + I create their user in Admin → Users."
+
+**Why this exists.** Came out of a 2026-04-21 discussion about whether the remote-setup branch was dead weight. Conclusion: it *is* dead weight today (Greg is the only user), but Logos already has enough RBAC bones (per-user auth, `agents.creator_id + shared`, per-user chat isolation, soul `user_accessible` gate, per-user `cost_log`) that flipping on multi-user requires a focused audit pass rather than a re-architecture. Cheaper to keep the plumbing than to re-build it later.
+
+**What already works (no code changes needed).**
+- Users table + per-user auth (JWT + bcrypt), admin creates users via Admin → Users → + New User
+- Fresh browser → no session cookie → middleware redirects to `/login` → user signs in as themselves
+- Agents scoped by `creator_id + shared`; `list_agents(user_id)` filters to "shared OR owned"
+- Private-agent GET/PATCH/DELETE returns 404 to non-owners (avoids enumeration)
+- Chats isolated per-user (ownership checked in `chat_handlers.py`)
+- Role=user restricted to `user_accessible` souls by `rbac.can_spawn`
+- Per-user `cost_log` rows (v26b migration) — enables per-friend budget caps
+
+**What's shared globally — ACCEPT for this scale.**
+- Model routes + `cloud_providers` keys (host pays inference bill, friends pick from provisioned routes)
+- `platform_routing` table (admin-only concept anyway)
+- Agent channel + env credentials (per-agent, not per-user; fine because each user creates their own agents)
+
+**Audit gaps — MUST fix before inviting anyone.**
+1. `GET /admin/agent-runs` — confirm role=user callers are filtered by `user_id`; today a curious user could enumerate run IDs and read another user's run log
+2. `approval_requests` endpoints — same audit; any listing or polling endpoint must filter by owning user
+3. `agent_events` (LOG-60 ingestion) — per-user filter? These carry tool outputs and can leak another user's sandbox activity
+4. Cross-agent session search aggregator — confirm it filters by user before aggregating
+5. `/setup` slash command — currently reads the host's sandbox `.env`; must 403 for role=user so friends can't inspect host credentials
+6. `/admin/agents/<id>/env-credentials` — confirm role=user can only view/edit credentials on agents they own
+
+**Quota: role=user limited to 1 agent (new).**
+- If LAN self-signup is ever turned on (`allow_registration=1`), a role=user account can spawn at most **1 agent**. Role=operator and above are unconstrained.
+- Sandbox cost is real (image pull, k3s pod, port binds). One rogue or curious sign-up making 50 agents eats all local quota.
+- Implementation: check in the create-agent endpoint — if `user.role == "user"` and `count_agents_by_creator(user.id) >= 1`, return 403 "Your account is limited to one agent. Ask the admin to upgrade you."
+- Admin UI: surface the per-user agent count in Admin → Users so the host can see who's near cap.
+- The limit is per-user-role, not per-user; upgrading a friend to `operator` lifts the cap without a separate flag.
+
+**Non-goals.**
+- Per-user model routes / per-user cloud keys (would need `model_routes.owner_id` + scoped list)
+- Per-user soul allowlists (vs. the existing binary `user_accessible` flag)
+- Self-service signup + email verification / invite links (admin-creates is fine at this scale)
+
+**How to land.**
+- Phase 1 (2–4h): endpoint audit — read each handler listed above, confirm `user["sub"]` is in the query WHERE clause, patch any that aren't
+- Phase 2 (half-day): end-to-end test — private browser window, log in as a freshly created role=user account, verify they see zero of the admin's agents/chats/runs/events; create an agent + chat with it end-to-end
+- Phase 3 (optional): per-user budget cap UI in Admin → Users (schema already exists)
+
+**Critical files.**
+- `gateway/http_api.py` — `/admin/agent-runs`, `/setup`, `/admin/agents/<id>/env-credentials`
+- `gateway/admin_handlers.py` — approval + events handlers
+- `gateway/auth/rbac.py` — role permissions
+- `gateway/auth/middleware.py` — unauthenticated redirect path (already correct)
+- `launcher/hermes_launcher.py` — `_read_connect_url` / `_run_tray_client_mode` (keep as-is)
+
+**Related.** Builds on LOG-25 (multi-user hardening, DONE 2026-04-17). Do NOT merge with LOG-25 — that ticket was about securing single-user assumptions; this is about opening the door to actual multi-user use.
+
+---
+
 ### LOG-63 · Scrub cosmetic residue from deleted-feature cleanups (Phase 3) — **DONE (2026-04-20)**
 **Effort:** XS · **Type:** Polish · **Status:** DONE
 
