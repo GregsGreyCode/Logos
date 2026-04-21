@@ -752,6 +752,50 @@ Having both halves in `agent/` makes the package look like part of the agent run
 
 ---
 
+### LOG-66 · Compare tab actually makes dispatches transient (skip memory / sessions / outbound tools)
+**Effort:** M · **Type:** Feature · **Status:** OPEN · **Surfaced:** 2026-04-21 while inspecting the Compare pane
+
+**Problem.** The Compare tab sends dispatches with `transient: true`. Today that flag **only** affects the `dispatches` ledger's `origin` column (tagged `compare` instead of `user_chat`). The agent still runs in its normal per-agent sandbox, so every side effect a normal chat would produce happens during a Compare probe too:
+
+| Side effect | Currently in Compare | Should be |
+|---|---|---|
+| File write (`write_file`, `image_generate`, `text_to_speech`) | Persists in the sandbox | Either persist (user's current mental model) or auto-expire |
+| `memory_write` | Persists in memories/ | Skipped |
+| `cron_schedule` | Actually runs on schedule | Rejected for Compare |
+| `send_message` to Telegram/Discord/Slack | **Actually sends** | Rejected for Compare |
+| Git commits / terminal side effects in the workspace | Persists | Skipped or rolled back |
+| Session transcript / session JSON | Should be skipped per the old TODO — isn't yet | Skipped |
+
+The existing `http_api.py:_handle_chat` comment at the `transient` branch admits the half-wired state:
+
+```
+# 2. session JSON / memory writes — should also be skipped, but
+#    that requires sandbox_worker.py changes that ship with M10.
+#    Tracked here so the wiring is one half-done piece, not two.
+```
+
+M10 never landed, and the scope expanded beyond just memory/session once we had tool-use running.
+
+**Proposal (one-pager — land in a `docs/proposals/` write-up before coding):**
+
+1. **Thread the flag into hermes.** `dispatch_task_v2` passes `transient=true` as an HTTP header (`X-Logos-Transient: 1`) to the sandbox's `/v1/runs`. Hermes parses it into a per-request flag attached to the task context. Hermes already has a notion of "ephemeral" chat (reset_triggers); reuse that plumbing if possible.
+2. **Tool gating.** A small set of tools get a capability attr `affects_outside_sandbox` = true: `send_message`, `platform_send`, `home_message`, `cron_schedule`, `cron_create`. When the task's transient flag is set, the registry refuses to dispatch these tools and surfaces "blocked in compare mode" to the agent. Inside-sandbox tools (write_file, image_generate, terminal, memory, etc.) still run — they're local to the sandbox and cleaning them up is a separate optional phase.
+3. **Memory / session skip.** `hermes` sees the flag and short-circuits `session_store.save()` + `memory_tool.write()`. Currently they run unconditionally.
+4. **Dispatch ledger.** Already tagged `origin='compare'`. Keep as-is.
+5. **UI truth-telling.** Today the Compare pane is labelled "Compare (transient)" in the runs filter + as a banner. Tone that down until the plumbing lands — right now it implies guarantees that don't exist. Possibly a one-line warning strip above Compare panes until the fix is in.
+
+**Stopgap (deployed 2026-04-21 alongside this ticket).** Added 🧠 Mind button next to 📋 Logs on each Compare pane so users can see what the agent actually created during a probe (files, memories). Once this ticket closes, that button stays useful but the surprise factor disappears.
+
+**Blast-radius.** Touches upstream hermes (sandbox image rebuild), sandbox's tool registry, and the chat dispatch path. Not a one-day change. Partial ship is fine — memory/session skip can land before tool gating.
+
+**Critical files.**
+- `gateway/http_api.py:_handle_chat` — forward the header
+- `gateway/worker_registry_v2.py:dispatch_task_v2` — pass it to the sandbox
+- Hermes inside the sandbox: `/v1/runs` handler + tool registry gate + session_store + memory_tool
+- `gateway/html/main_app.html` — tone down the "transient" label until the fix lands
+
+---
+
 ### LOG-63 · Scrub cosmetic residue from deleted-feature cleanups (Phase 3) — **DONE (2026-04-20)**
 **Effort:** XS · **Type:** Polish · **Status:** DONE
 
