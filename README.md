@@ -49,8 +49,6 @@ Run it on your laptop, a homelab box, or a $5 VPS. During the first-run setup wi
                         └───────────────────────────────────────────┘
 ```
 
-<img width="1268" height="1261" alt="image" src="https://github.com/user-attachments/assets/571806a6-b1cf-444d-bd7a-23f4f31d4783" />
-
 **Request lifecycle:**
 
 1. A message arrives via Telegram, the web dashboard, or an ACP-connected editor.
@@ -144,7 +142,7 @@ The soul lives in `SOUL.md` and is re-read from disk on every message (no cache,
 **Understanding the isolation boundary matters before you choose how to run Logos.** Agents can read files, execute code, and make network requests — what they _cannot_ reach is enforced by OpenShell (the sandbox runtime Logos depends on). Logos itself is a control plane; the isolation primitives described below — Landlock filesystem policy, per-binary egress allowlists, the credential-stripping Privacy Router — are provided by OpenShell and Logos composes with them. Replace OpenShell with a weaker sandbox and most of this section doesn't apply.
 
 ### Runtime modes at a glance
-
+<img width="1268" height="1261" alt="image" src="https://github.com/user-attachments/assets/571806a6-b1cf-444d-bd7a-23f4f31d4783" />
 OpenShell is the only supported sandbox runtime — `gateway/executors/build_executor()` always returns `OpenShellExecutor`.
 
 | Mode | Default? | How it spawns | Isolation boundary | Egress policy | Platform |
