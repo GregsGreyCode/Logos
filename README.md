@@ -578,7 +578,10 @@ OpenShell is the only supported runtime mode (see [Runtime modes at a glance](#r
 
 ## 🖼️ Gallery
 
-<img width="1631" height="1252" alt="memories" src="https://github.com/user-attachments/assets/59951d60-a0b6-49b1-b0e2-11164cf41cda" />
+<img width="1670" height="1262" alt="image" src="https://github.com/user-attachments/assets/4653c61c-240c-48ca-aace-af8c08e5f50a" />
+
+<img width="1668" height="1259" alt="image" src="https://github.com/user-attachments/assets/b68bbaf2-66ae-4f26-91d2-121041ec0bd2" />
+
 
 
 ## 🤝 Contributing
