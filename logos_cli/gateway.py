@@ -25,6 +25,20 @@ from logos_cli.colors import Colors, color
 # Process Management (for manual gateway runs)
 # =============================================================================
 
+def _pid_owned_by_us(pid: int) -> bool:
+    """Return True if ``pid`` is owned by the current user.
+
+    Containerd exposes sandbox-internal hermes processes in the host's
+    ``ps`` output under the container's UID (not our user). SIGTERMing
+    those fails with EPERM — harmless but noisy, and it confuses users
+    into thinking the restart failed. Skip them up-front.
+    """
+    try:
+        return os.stat(f"/proc/{pid}").st_uid == os.getuid()
+    except (FileNotFoundError, PermissionError, OSError):
+        return False
+
+
 def find_gateway_pids() -> list:
     """Find PIDs of running gateway processes."""
     pids = []
@@ -92,6 +106,12 @@ def find_gateway_pids() -> list:
                         if len(parts) > 1:
                             try:
                                 pid = int(parts[1])
+                                # Skip sandbox-internal hermes PIDs that
+                                # containerd leaks into the host's ps
+                                # output under a container UID — they
+                                # cannot be signalled from here.
+                                if not _pid_owned_by_us(pid):
+                                    continue
                                 if pid not in pids:
                                     pids.append(pid)
                             except ValueError:
