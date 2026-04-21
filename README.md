@@ -3,14 +3,13 @@
 </p>
 
 <p align="center">
-  <strong>Early alpha</strong> — core gateway, auth, dashboard, and setup wizard work.<br>
-  Expect rough edges; breaking changes between releases are likely.
+  <strong>v1.0</strong> — first stable release. Breaking changes possible between majors; the v1.x surface is the supported one going forward.
   <a href="https://github.com/GregsGreyCode/Logos/issues">Open an issue</a> if you hit a bug.
 </p>
 
 <img width="1278" height="1091" alt="Hero-Main Dashboard" src="https://github.com/user-attachments/assets/4cd12560-e990-4fb9-9ea0-3d0bfb5dd848" />
 
-> **Release history note:** v0.4 shipped 57 tagged patch releases (v0.4.26–v0.4.105) before graduating to v0.5. Pre-v0.5 tags have been removed from GitHub to keep the releases page clean; the commit history is fully intact.
+> **Release history note:** v0.4 shipped 57 tagged patch releases (v0.4.26–v0.4.105) before graduating to v0.5. Pre-v0.5 tags have been removed from GitHub to keep the releases page clean; the commit history is fully intact. **v1.0.0 shipped 2026-04-21** — first 1.x release; cuts over to upstream hermes-as-server dispatch and drops the vendored runtime fork.
 
 ---
 
@@ -35,23 +34,19 @@ Run it on your laptop, a homelab box, or a $5 VPS. During the first-run setup wi
   Telegram ───────────► │   HTTP / SSE / WebSocket entry point      │
   Web Dashboard ──────► │     ├── Auth + per-user policy            │
   ACP (IDE) ──────────► │     ├── MCP Gateway ──► MCP servers       │
-                        │     │     (one process,    (filesystem,   │
-                        │     │      shared by all    GitHub, etc.) │
-                        │     │      sandboxes)                     │
                         │     ▼                                     │
-                        │   Worker Registry                         │
-                        │     │                                     │
-                        │     │  openshell sandbox exec (per task)  │
-                        │     │  stdin: task JSON                   │
-                        │     │  stdout: token/thinking/result JSON │
+                        │   Worker Registry (v2)                    │
+                        │     │  openshell sandbox exec             │
+                        │     │    → curl $HERMES_BASE_URL/v1/runs  │
+                        │     │    ← SSE: token / thinking / result │
                         │     ▼                                     │
                         │   ┌─────────────────────────────────────┐ │
-                        │   │  OpenShell Sandbox (per agent)       │ │
-                        │   │    sandbox_worker.py ─► inference.local──► Local Ollama
-                        │   │      tools, MCP, sandbox FS          │ │     LM Studio
-                        │   └─────────────────────────────────────┘ │     Anthropic
-                        │                                           │     OpenAI
-                        └───────────────────────────────────────────┘     OpenRouter
+                        │   │  OpenShell Sandbox (per agent)      │ │
+                        │   │    hermes gateway run (HTTP server) │ │
+                        │   │      POST /v1/runs  → tool loop     │ │──► Ollama, LM Studio,
+                        │   │      → inference.local ─────────────┼─┼─►  Anthropic, OpenAI,
+                        │   └─────────────────────────────────────┘ │    OpenRouter
+                        └───────────────────────────────────────────┘
 ```
 
 <img width="1268" height="1261" alt="image" src="https://github.com/user-attachments/assets/571806a6-b1cf-444d-bd7a-23f4f31d4783" />
@@ -60,20 +55,20 @@ Run it on your laptop, a homelab box, or a $5 VPS. During the first-run setup wi
 
 1. A message arrives via Telegram, the web dashboard, or an ACP-connected editor.
 2. The **gateway** authenticates the request and applies the per-user policy snapshot.
-3. The gateway finds the target agent's existing sandbox via the **worker registry** (reads `~/.logos/openshell_instances.json`; healthy means the sandbox CR is `phase == "ready"`).
-4. The gateway spawns a one-shot **`openshell sandbox exec`** into that sandbox, running `docker/sandbox_worker.py`. The task JSON is written to the subprocess's stdin and stdin is closed — OpenShell's exec transport only starts the in-sandbox process once stdin reaches EOF.
-5. The worker runs the conversation through its tool loop, calling models via OpenShell's `inference.local` Privacy Router (which strips sandbox credentials and injects the real provider keys outside the isolation boundary).
-6. The worker streams `token` / `thinking` / `tool_progress` JSON lines on stdout as they arrive; the gateway forwards them to the dashboard over SSE and collects the terminal `task_result` frame. The subprocess exits; the sandbox stays up for the next task.
-7. The completed run is written to SQLite as a **STAMP record** — full tool trace, approval events, token counts, outcome — queryable and replayable later.
+3. The gateway finds the target agent's existing sandbox via the **worker registry** (reads `~/.logos/openshell_instances.json`; healthy means the sandbox CR is `phase == "ready"` and the in-sandbox `hermes gateway run` HTTP server is reachable).
+4. The gateway invokes `openshell sandbox exec` with a short shell stub that `curl`s the in-sandbox `hermes gateway run` HTTP server at `POST /v1/runs`, passing the task payload + the sandbox's own bearer token. This is the LOG-44 v2 dispatch path — the previous stdin/stdout `sandbox_worker.py` transport has been retired.
+5. Inside the sandbox, upstream `hermes-agent` runs the conversation through its tool loop, calling models via OpenShell's `inference.local` Privacy Router (which strips sandbox credentials and injects the real provider keys outside the isolation boundary).
+6. `hermes gateway run` streams an SSE response: `token` / `thinking` / `tool_start` / `tool_end` / `task_result` frames flow back through the `openshell sandbox exec` subprocess to the gateway, which forwards them to the dashboard over its own SSE channel.
+7. The completed run is written to SQLite as a **STAMP record** — tool sequence with per-tool previews and timings, approval events, token counts, outcome. Query any run via `GET /api/runs/{id}`, or clone one into a fresh chat with `GET /runs/{id}/clone` (returns a prefilled payload — same prompt + model, new dispatch; not a deterministic replay).
 
 **Key boundaries:**
 
 - `gateway/` — the always-on process: HTTP server, auth, routing, web dashboard, MCP gateway, worker registry
 - `gateway/channels/` — messaging adapters (Telegram, Discord, Slack, WhatsApp, Signal, Email, Home Assistant); one adapter instance spawns per agent credential row so inbound messages route directly to their owning agent
-- `agents/hermes/` — the Hermes runtime that runs *inside* sandbox workers
-- `tools/` — capabilities the agent can call; scoped per session and per policy level
 - `gateway/executors/` — the OpenShell executor (`openshell.py`), the only supported sandbox runtime
-- `docker/sandbox_worker.py` — the lightweight worker that runs inside an OpenShell sandbox, invoked per task by `openshell sandbox exec`
+- `agent/` — Logos's LLM adapter layer used by the gateway itself (`anthropic_adapter`, `prompt_builder`, `context_compressor`, `insights`)
+- `tools/` — capabilities the agent can call; scoped per session and per policy level
+- **In-sandbox runtime** — the agent tool loop, model calls, memory curation, and the `/v1/runs` HTTP endpoint are upstream `hermes-agent` running unchanged inside each sandbox. The image `ghcr.io/gregsgreycode/hermes-sandbox` wraps upstream hermes with the `sandbox` user (uid 10001), `iproute2`, and a staged `agent-browser` + Chromium install so OpenShell's sandbox policy is satisfied.
 
 ---
 
@@ -105,23 +100,24 @@ Test agentic combinations, then modify, extend, and break the platform and its a
 
 ## 🚀 What Logos does
 
-- **Runs agents** — Hermes is the current runtime. The runtime layer is pluggable; additional runtimes can register as alternative sandbox worker images.
+- **Runs agents** — upstream `hermes-agent` is the current runtime, running as an HTTP server (`hermes gateway run`) inside each sandbox. The runtime layer is pluggable at the sandbox-image level; alternative runtimes slot in by producing a compatible image.
 - **Records every run** — agent, model, soul, tool sequence, approvals, api call count, and outcome land in the `agent_runs` table; token and USD-cost totals are joined in from `cost_log`/`dispatches` at read time (`GET /api/runs/{id}` returns the unified "STAMP" view).
 - **Enforces policy** — workspace scoping (realpath-resolved), OpenShell egress policy, Landlock filesystem isolation, dangerous-command gate with regex + Tirith scan. (Dispatch-time ActionPolicy dimensions for write/exec/network/secret are not currently wired; see `gateway/auth/policy.py` for the live set.)
 - **Reaches you anywhere** — Telegram, Discord, Slack, WhatsApp, Signal, Email, plus a built-in web dashboard, all from a single gateway process. Each agent owns its own bot tokens (per-agent credentials) so multiple agents can run on the same platform simultaneously without fighting over one token.
-- **Web dashboard** — full chat UI at `http://localhost:8091`; real-time streaming, per-message stats, voice input, metrics, multiple named agents, world view with live agent sprites, live execution panel
+- **Web dashboard** — full chat UI at `http://localhost:8091`; real-time streaming, per-message stats, voice input, metrics, multiple named agents, live execution panel, world view with live agent sprites (💭 thought bubble renders while an agent is dispatching).
+- **Compare tab** — run the same prompt against two named agents side-by-side. Per-pane target selector (both / left / right), multi-line input, Mind button per pane, parallel/sequential toggle. Backed by transient sessions so probes don't pollute either agent's history.
+- **Per-agent cloud-tool credentials** — each agent owns its own API keys for built-in cloud tools (search, news, weather, etc.). Keys live in the agent's sandbox `.env`, survive respawns, and are managed from the in-chat `/setup` card. No more gateway-wide env vars for per-agent secrets.
 - **Persistent history** — searchable conversation history in SQLite with full-text search across all past conversations
 - **Voice input** — speak via Telegram or the dashboard; faster-whisper transcribes locally when the package is installed (falls back to Groq / OpenAI).
 - **Live execution view** — watch in real time which tools the agent calls, its chain of reasoning, and elapsed time per step
 - **AI routing layer** — provisions one OpenShell gateway per `(provider, model)` route on the local host, picked per dispatch based on readiness. Today every route is a local OpenShell gateway on its own port; cross-machine / multi-host routing is planned.
-- **Parallel sub-agents** — a parent agent can spawn sub-agents via the `delegate` tool, each with independent toolsets and model selection. (No separate "Mixture-of-Agents" mechanism — that's the same delegation flow.)
+- **Parallel sub-agents** — upstream hermes's own `delegate` and `handoff` flows run inside the sandbox; Logos's `mixture_of_agents_tool` adds multi-model fan-out for comparative reasoning.
 - **MCP gateway** — centralized Model Context Protocol server management; MCP servers boot once in the gateway, agents request access dynamically with per-category approval tiers (`auto_approve` / `user_approve` / `admin_approve` / `deny`).
 - **Memory system** — agent-curated persistent memory, FTS5 full-text session search with LLM summarisation. (Skills under `skills/` are human-authored prompts, not auto-generated.)
-- **Scheduling** — cron jobs with delivery to Telegram, Discord, Slack, WhatsApp adapters.
-- **Workflow engine** — JSON-defined task graphs with DAG execution, parallel steps, conditional branching, and human approval gates
+- **Dynamic toolset discovery** — toolsets and their live readiness state (API-key status, optional-tool availability) come from the sandbox itself via `GET /v1/toolsets`; the gateway falls back to a local view only when no sandbox is healthy.
 - **IDE integration** — ACP protocol for VS Code, Zed, and JetBrains
 - **Model support** — Anthropic, OpenAI, OpenRouter (200+ models), Nous Portal, or any OpenAI-compatible endpoint
-- **Cancel mid-response** — `POST /chat/{task_id}/cancel` SIGTERMs the in-flight sandbox exec subprocess; a "Stop" button in the chat header fires it for you.
+- **Cancel mid-response** — `POST /chat/{task_id}/cancel` SIGTERMs the in-flight `openshell sandbox exec` subprocess tracked by v2 dispatch's `_INFLIGHT` registry; a "Stop" button in the chat header fires it for you.
 
 ---
 
@@ -190,7 +186,7 @@ Set to `true` if Logos is behind an HTTPS reverse proxy (nginx, Caddy, Traefik).
 > **Env var note:** as of `848a6db refactor: rename HERMES_* env vars to LOGOS_*`, the canonical prefix is `LOGOS_*`. The old `HERMES_*` names still work as fallbacks during the migration window, but new config and docs should use `LOGOS_*`.
 
 **Provider API keys**
-In OpenShell mode, provider API keys are never exposed to the sandbox at all — they live in the gateway's environment and are injected at the Privacy Router boundary. In Docker mode, the sandbox container inherits the API keys needed to reach the model endpoint; a sufficiently capable agent could read them via `os.environ`. This is the strongest argument for running OpenShell mode whenever you can.
+Provider API keys are never exposed to the sandbox. They live in the gateway's environment (and, for per-agent cloud-tool keys, in each agent's own sandbox `.env` for only the tools that agent has been granted). Inference calls go through OpenShell's `inference.local` Privacy Router, which strips any sandbox-supplied credentials and injects the real provider key outside the isolation boundary.
 
 ### Network exposure
 
@@ -252,6 +248,14 @@ logos gateway update                    # ff-only git pull + restart
 <!-- screenshot: setup-benchmark — benchmark results page with several scored models -->
 <!-- screenshot: setup-complete — the final provisioning spinner (shows 1-3 minute copy) -->
 
+**Published images** (the installer pulls these automatically; listed here so you can inspect or pin them):
+
+| Image | What it is |
+| --- | --- |
+| `ghcr.io/gregsgreycode/logos:1.0.0` (also `:latest`, `:canary`) | The gateway — used when deploying Logos itself in a container. Optional for the local installer. |
+| `ghcr.io/gregsgreycode/hermes-sandbox:v1.0.0` (also `:latest`) | The sandbox runtime image that every agent runs inside. Wraps upstream hermes with the sandbox user, iproute2, and agent-browser. |
+| `ghcr.io/gregsgreycode/hermes-upstream:v1.0.0` (also `:latest`) | The upstream `hermes-agent` base image, rebuilt in our registry for determinism. The sandbox image `FROM`s this. |
+
 Env flags for the installer:
 
 | Flag | Default | What it does |
@@ -260,7 +264,7 @@ Env flags for the installer:
 | `BUMP_INOTIFY=1` | off | Raises `fs.inotify.max_user_instances` to 8192 (needed for ≥8 OpenShell routes) |
 | `SKIP_NPM=1` | off | Skips `npm install` (browser tools + WhatsApp bridge won't work) |
 | `LOGOS_SKIP_SANDBOX_BUILD=1` | off | Skips the local `docker build` of the sandbox image. Use when pulling from a pre-built registry |
-| `LOGOS_FORCE_SANDBOX_BUILD=1` | off | Forces a rebuild of the sandbox image even when it already exists locally (use after editing `docker/sandbox_worker.py`) |
+| `LOGOS_FORCE_SANDBOX_BUILD=1` | off | Forces a rebuild of the sandbox image even when it already exists locally (use after editing `docker/Dockerfile.hermes-upstream` or anything else baked into the sandbox image) |
 | `START_AFTER=1` | off | Launches `logos gateway start` at the end |
 | `LOGOS_REPO_DIR=/path` | `$HOME/logos` | Where to clone the repo |
 | `PYTHON_VERSION=<ver>` | `3.12` | Pins the venv's Python version (3.11 also supported) |
@@ -333,7 +337,7 @@ Run `logos gateway start` (or `python -m gateway.run` from source) and open `htt
 
 **2:00 — Complete the setup wizard**
 
-Pick a model (cloud API key or local Ollama/LM Studio endpoint), let the benchmark run, choose a runtime mode (OpenShell if it's available — otherwise Docker), and leave policy at the default. You can change everything later.
+Pick a model (cloud API key or local Ollama/LM Studio endpoint), let the benchmark run, and leave policy at the default. You can change everything later. (OpenShell is the only supported sandbox runtime — the wizard confirms it's installed before letting you proceed.)
 
 <!-- screenshot: wizard-benchmark-results — the benchmark scoreboard with tok/s + eval columns -->
 
@@ -360,7 +364,7 @@ From the dashboard's **Settings** tab (admins only) you can browse recent runs. 
 - Connect Telegram so you can reach your agent from anywhere
 - Swap the model — try a smaller local model for routine work and a frontier model for hard tasks
 - Try a more complex prompt — ask it to read a log file, query a URL, or write and run a script
-- Explore `workflows/examples/` for pre-built task graphs
+- Create a second agent with a different soul and use the **Compare** tab to run the same prompt through both
 
 ---
 
@@ -431,7 +435,7 @@ Eval quality and advanced-tier performance dominate. Speed is capped at 40 tok/s
 
 **Model** — switch via the dashboard's model picker (shown in the chat header), or set `HERMES_MODEL` / `LOGOS_MODEL` directly in `~/.logos/config.yaml`.
 
-**Policy** — set the action policy for an agent via the dashboard's Admin tab, or assign a policy ID per session at chat-start time.
+**Policy** — set the action policy for an agent via the dashboard's **Config → Permissions** tab (renamed from "Sandbox Policies"), or assign a policy ID per session at chat-start time.
 
 
 
@@ -517,7 +521,7 @@ The MCP port defaults to `8081` and can be overridden with `LOGOS_MCP_PORT` (ali
 
 ## 🛠️ Developer reference
 
-Source in `gateway/`, `tools/`, and `agents/hermes/`. See [`AGENTS.md`](AGENTS.md) for internals, local dev setup, gateway architecture, and how to add tools.
+Source in `gateway/`, `tools/`, and `agent/` (Logos's LLM adapter layer). The agent runtime itself is upstream `hermes-agent` running inside each sandbox — see `docker/Dockerfile.hermes-upstream` for how the sandbox image is assembled. For gateway architecture, local dev setup, and how to add tools, see [`AGENTS.md`](AGENTS.md).
 
 **Runtime support:**
 
@@ -532,6 +536,8 @@ Source in `gateway/`, `tools/`, and `agents/hermes/`. See [`AGENTS.md`](AGENTS.m
 
 ## 📦 Building & deploying
 
+Local dev build — tag as `:canary` so the dashboard's "canary" slot picks it up:
+
 ```bash
 docker buildx build \
   --platform linux/amd64 \
@@ -541,6 +547,8 @@ docker buildx build \
 ```
 
 > **`--build-arg BUILD_SHA=...` is required** — omit it and the version footer displays `unknown` instead of the actual commit SHA.
+
+Stable release builds happen automatically via `.github/workflows/build-image.yml` whenever a `v*` tag is pushed: the workflow builds the gateway image, logs in to GHCR with `GITHUB_TOKEN`, and publishes `:vX.Y.Z`, `:latest`, and `:canary` tags off the same SHA. A sibling workflow (`publish-sandbox-image.yml`) produces the matching `hermes-sandbox` + `hermes-upstream` images on the same trigger.
 
 ---
 
@@ -617,8 +625,8 @@ MIT — see [LICENSE](LICENSE).
 This project would not exist without the open-source work it stands on:
 
 - **[Anthropic / Claude](https://www.anthropic.com)** — Claude wrote a significant portion of the gateway, UI, tooling, and this documentation.
-- **[Nous Research / hermes-agent](https://github.com/NousResearch/hermes-agent)** — the Hermes agent runtime (`agents/hermes/`) is a heavily extended fork of their open-source hermes-agent. The platform layer (gateway, auth, dashboard, STAMP system, policy enforcement) is original work built on top of it. The `tinker-atropos` RL submodule combines [Atropos](https://github.com/NousResearch/atropos) (Nous Research) and [Tinker](https://github.com/thinking-machines-lab/tinker) (Thinking Machines Lab).
-- **[NVIDIA OpenShell](https://github.com/openshell-ai/openshell)** — the sandbox runtime that gives Logos its strongest isolation mode: kernel-level Landlock filesystem policy, per-binary egress allowlists, and the Privacy Router that keeps inference credentials out of the sandbox entirely.
+- **[Nous Research / hermes-agent](https://github.com/NousResearch/hermes-agent)** — Logos runs upstream `hermes-agent` unchanged as the in-sandbox runtime (the previously vendored fork was retired at v1.0.0). The platform layer (gateway, auth, dashboard, STAMP system, per-agent credential management, policy enforcement) is original work that composes around it. The `tinker-atropos` RL submodule combines [Atropos](https://github.com/NousResearch/atropos) (Nous Research) and [Tinker](https://github.com/thinking-machines-lab/tinker) (Thinking Machines Lab).
+- **[NVIDIA OpenShell](https://github.com/NVIDIA/OpenShell)** — the sandbox runtime that gives Logos its strongest isolation mode: kernel-level Landlock filesystem policy, per-binary egress allowlists, and the Privacy Router that keeps inference credentials out of the sandbox entirely.
 - **[Ollama](https://github.com/ollama/ollama)** — makes running local LLMs approachable. Powers the homelab GPU machines that handle inference.
 - **[LM Studio](https://lmstudio.ai)** — excellent local model serving, especially for experimentation and first-time model setup.
 - **[faster-whisper](https://github.com/SYSTRAN/faster-whisper)** — powers in-pod voice transcription without any cloud dependency.
