@@ -208,6 +208,82 @@ async def _prune_orphan_sandboxes(executor) -> None:
         _asyncio.create_task(_delete_one(sandbox_name, sandbox_gw))
 
 
+async def _prune_orphan_gateways() -> None:
+    """Destroy OpenShell cluster containers that no longer back a route.
+
+    Sibling of ``_prune_orphan_sandboxes``. When a user deletes a route
+    via the UI, ``destroy_route`` fires ``openshell gateway destroy`` as
+    best-effort; if that call fails (CLI flag rename between versions,
+    timeout, gateway already partially torn down, etc.) the DB row is
+    still removed so the UI shows the route as gone — but the cluster
+    container lives on forever as a visible orphan on the Clusters
+    strip, holding a port and a couple of GB of RAM for nothing.
+
+    This pass enumerates running ``openshell-cluster-*`` containers,
+    matches their suffix against the ``openshell_name`` of every route
+    in the DB, and asks openshell to destroy any that don't have a
+    match. Runs once at gateway startup alongside
+    ``_prune_orphan_sandboxes``. Safe — it only touches containers with
+    the ``openshell-cluster-`` prefix, so anything else on the host
+    (including the user's own openshell sandboxes) is untouched.
+    """
+    import asyncio as _asyncio
+    import subprocess as _sp
+
+    try:
+        result = _sp.run(
+            ["docker", "ps", "--filter", "name=openshell-cluster-",
+             "--format", "{{.Names}}"],
+            capture_output=True, text=True, timeout=5,
+        )
+        if result.returncode != 0:
+            return
+        running = [n.strip() for n in (result.stdout or "").splitlines() if n.strip()]
+    except Exception as exc:
+        logger.warning("prune-orphan-gateways: docker ps failed: %s", exc)
+        return
+    if not running:
+        return
+
+    try:
+        routes = auth_db.list_model_routes()
+    except Exception as exc:
+        logger.warning("prune-orphan-gateways: list_model_routes failed: %s", exc)
+        return
+    expected = {
+        r.get("openshell_name", "")
+        for r in routes if r.get("openshell_name")
+    }
+
+    orphans = []
+    for name in running:
+        # Container name is "openshell-cluster-<gateway_name>"; strip the
+        # prefix before comparing to the route's openshell_name.
+        prefix = "openshell-cluster-"
+        if not name.startswith(prefix):
+            continue
+        gw = name[len(prefix):]
+        if gw not in expected:
+            orphans.append(gw)
+    if not orphans:
+        return
+
+    logger.info("prune-orphan-gateways: destroying %d orphan(s): %s",
+                len(orphans), ", ".join(orphans))
+
+    def _destroy_one(gw: str) -> None:
+        try:
+            from gateway.openshell_routes import _run_openshell
+            _run_openshell("gateway", "destroy",
+                            gateway=gw, check=False, timeout=120)
+            logger.info("prune-orphan-gateways: destroyed '%s'", gw)
+        except Exception as exc:
+            logger.warning("prune-orphan-gateways: failed for '%s': %s", gw, exc)
+
+    for gw in orphans:
+        _asyncio.create_task(_asyncio.to_thread(_destroy_one, gw))
+
+
 async def _resurrect_missing_sandboxes(executor) -> None:
     """One-shot startup pass: spawn a sandbox for any named agent whose
     OpenShell sandbox no longer exists.
@@ -480,97 +556,16 @@ def _ensure_admin_exists() -> None:
 
 
 # ── Unified Services (tool credentials) ──────────────────────────────────
-
-async def _handle_services_catalogue(request: web.Request) -> web.Response:
-    """GET /api/services — unified catalogue of MCP servers + tool integrations."""
-    from gateway.services import get_tool_integrations
-    mcp_servers = []
-    try:
-        svc = request.app.get("mcp_service")
-        if svc:
-            mcp_servers = svc.get_catalogue()
-    except Exception:
-        pass
-    # Read inference settings from config
-    inference_cfg = {}
-    try:
-        import yaml as _yaml
-        _hermes_home = Path(os.environ.get("LOGOS_HOME") or os.environ.get("HERMES_HOME") or str(Path.home() / ".logos"))
-        _cfg_path = _hermes_home / "config.yaml"
-        if _cfg_path.exists():
-            _cfg = _yaml.safe_load(_cfg_path.read_text(encoding="utf-8")) or {}
-            _lms = _cfg.get("lmstudio") or {}
-            inference_cfg = {
-                "n_parallel": _lms.get("n_parallel", 2),
-                "server_type": os.environ.get("HERMES_SERVER_TYPE", ""),
-                "model": os.environ.get("HERMES_MODEL", ""),
-                "base_url": os.environ.get("OPENAI_BASE_URL", ""),
-            }
-    except Exception:
-        pass
-
-    return web.json_response({
-        "mcp_servers": mcp_servers,
-        "tool_integrations": get_tool_integrations(),
-        "inference": inference_cfg,
-    })
-
-
-async def _handle_services_set_key(request: web.Request) -> web.Response:
-    """POST /api/services/keys — set a tool credential (admin only)."""
-    user = request.get("current_user", {})
-    if user.get("role") not in ("admin",):
-        raise web.HTTPForbidden(text='{"error":"admin_required"}', content_type="application/json")
-    body = await request.json()
-    env_var = (body.get("env_var") or "").strip()
-    value = (body.get("value") or "").strip()
-    if not env_var or not value:
-        return web.json_response({"ok": False, "error": "env_var and value required"}, status=400)
-    from gateway.services import set_credential, get_tool_integrations
-    set_credential(env_var, value)
-    # Auto-apply the matching network preset(s) to every agent that has
-    # the corresponding toolset enabled. Without this, saving e.g.
-    # FIRECRAWL_API_KEY puts the key in the env but api.firecrawl.dev
-    # is still blocked by the sandbox egress policy, so web_search
-    # fails even though the tool looks configured.
-    presets_applied: list[str] = []
-    try:
-        from gateway import policies as gp
-        presets_applied = gp.auto_apply_presets_for_env(env_var)
-    except Exception as exc:
-        logger.warning("services_set_key: auto_apply_presets failed for %s: %s", env_var, exc)
-    # Push the new credential to every running sandbox via instance-config
-    # so the next chat already has it (sandbox_worker.py applies env from
-    # config at startup). Without this, saving a credential only affects
-    # the gateway's env — sandboxes wouldn't see it until a full
-    # destroy+respawn. Best-effort: failures log but don't tank the save.
-    executor = request.app.get("executor")
-    pushed = 0
-    if executor and hasattr(executor, "refresh_all_instance_configs"):
-        try:
-            pushed = executor.refresh_all_instance_configs()
-        except Exception as exc:
-            logger.warning("services_set_key: refresh broadcast failed: %s", exc)
-    return web.json_response({
-        "ok": True,
-        "integrations": get_tool_integrations(),
-        "sandboxes_refreshed": pushed,
-        "presets_applied": presets_applied,
-    })
-
-
-async def _handle_services_delete_key(request: web.Request) -> web.Response:
-    """DELETE /api/services/keys — remove a tool credential (admin only)."""
-    user = request.get("current_user", {})
-    if user.get("role") not in ("admin",):
-        raise web.HTTPForbidden(text='{"error":"admin_required"}', content_type="application/json")
-    body = await request.json()
-    env_var = (body.get("env_var") or "").strip()
-    if not env_var:
-        return web.json_response({"ok": False, "error": "env_var required"}, status=400)
-    from gateway.services import delete_credential, get_tool_integrations
-    delete_credential(env_var)
-    return web.json_response({"ok": True, "integrations": get_tool_integrations()})
+#
+# The gateway-wide tool-credential catalogue (TOOL_INTEGRATIONS) was
+# removed 2026-04-21. It stored keys in Logos's os.environ + DB but
+# never forwarded them into sandboxes, so hermes-side tools couldn't
+# use them anyway. Replaced by agent_env_credentials + the /setup
+# slash command in chat, which writes into each agent's own sandbox
+# .env. See admin_handlers.handle_agent_env_credentials_* and
+# the /setup handler in this file. Messaging integrations still use
+# the /api/services/messaging/* endpoints below — those are unrelated
+# and still functional.
 
 
 async def _handle_services_inference(request: web.Request) -> web.Response:
@@ -596,21 +591,6 @@ async def _handle_services_inference(request: web.Request) -> web.Response:
         return web.json_response({"ok": True, "n_parallel": n_parallel})
     except Exception as exc:
         return web.json_response({"ok": False, "error": str(exc)}, status=500)
-
-
-async def _handle_services_validate_key(request: web.Request) -> web.Response:
-    """POST /api/services/validate — test a credential with a real API call."""
-    user = request.get("current_user", {})
-    if user.get("role") not in ("admin",):
-        raise web.HTTPForbidden(text='{"error":"admin_required"}', content_type="application/json")
-    body = await request.json()
-    env_var = (body.get("env_var") or "").strip()
-    value = (body.get("value") or "").strip()
-    if not env_var or not value:
-        return web.json_response({"ok": False, "message": "env_var and value required"}, status=400)
-    from gateway.services import validate_credential
-    result = await validate_credential(env_var, value)
-    return web.json_response(result)
 
 
 async def _handle_messaging_catalogue(request: web.Request) -> web.Response:
@@ -756,12 +736,20 @@ async def _handle_sandboxes_list(request: web.Request) -> web.Response:
             "toolsets": inst.get("toolsets", []),
             "policy": inst.get("policy", ""),
             "sandbox_image": inst.get("sandbox_image", ""),
+            "openshell_name": inst.get("openshell_name", ""),
             "created_at": inst.get("created_at", 0),
             "phase": cli.get("phase") or inst.get("phase") or "unknown",
             "worker_status": worker.get("status", "disconnected"),
             "worker_healthy": worker.get("healthy", False),
             "worker_uptime_s": worker.get("uptime_s", 0),
             "current_task_id": worker.get("current_task_id"),
+            # Spawn substate — populated by OpenShellExecutor.spawn's
+            # internal _emit so the chat banner can render "Importing
+            # image 43%", "Creating pod…", "Starting agent…" instead
+            # of one opaque "provisioning…". Cleared when phase=ready.
+            "spawn_substage": inst.get("spawn_substage", ""),
+            "spawn_substage_label": inst.get("spawn_substage_label", ""),
+            "spawn_substage_pct": inst.get("spawn_substage_pct", 0),
         })
         seen_sandboxes.add(sandbox_name)
 
@@ -850,6 +838,67 @@ async def _handle_sandboxes_list(request: web.Request) -> web.Response:
         "resources": resources,
         "cli_available": cli_available,
     })
+
+
+async def _handle_clusters_list(request: web.Request) -> web.Response:
+    """GET /admin/clusters — one row per running ``openshell-cluster-*``
+    container: {openshell_name, image, port, status, healthy}.
+
+    Surfaces gateway-level state that the per-route and per-sandbox
+    tables don't capture: cluster image version (so version drift is
+    visible), orphan gateways (cluster running without a matching
+    model_routes row), and port bindings.
+    """
+    import re
+    import subprocess as _sp
+
+    clusters = []
+    try:
+        r = _sp.run(
+            ["docker", "ps", "--filter", "name=openshell-cluster-",
+             "--format", "{{.Names}}\t{{.Image}}\t{{.Ports}}\t{{.Status}}"],
+            capture_output=True, text=True, timeout=5,
+        )
+    except Exception:
+        return web.json_response({"clusters": []})
+
+    for line in (r.stdout or "").splitlines():
+        parts = line.split("\t")
+        if len(parts) < 3:
+            continue
+        name_container, image, ports = parts[0], parts[1], parts[2]
+        status = parts[3] if len(parts) > 3 else ""
+        gw = name_container[len("openshell-cluster-"):] if name_container.startswith("openshell-cluster-") else name_container
+        m = re.search(r":(\d+)->", ports or "")
+        port = int(m.group(1)) if m else 0
+        # Classify the docker status string into a single health state
+        # so the UI doesn't have to re-parse. Four real states: healthy,
+        # starting (health check in progress), unhealthy (check failed),
+        # no_hc (container running without a health check configured).
+        sl = (status or "").lower()
+        if "(healthy)" in sl:
+            health_state = "healthy"
+        elif "health: starting" in sl or "(starting)" in sl:
+            health_state = "starting"
+        elif "(unhealthy)" in sl:
+            health_state = "unhealthy"
+        elif sl.startswith("up "):
+            health_state = "no_hc"
+        else:
+            health_state = "unknown"
+        clusters.append({
+            "openshell_name": gw,
+            "container_name": name_container,
+            "image": image,
+            "port": port,
+            "status": status,
+            "health_state": health_state,
+            # Legacy bool, kept for any caller still reading it. Prefer
+            # health_state in new code — bool can't express "unhealthy".
+            "healthy": health_state == "healthy",
+        })
+    clusters.sort(key=lambda c: c["openshell_name"])
+    return web.json_response({"clusters": clusters})
 
 
 async def _handle_sandbox_logs(request: web.Request) -> web.Response:
@@ -1066,6 +1115,143 @@ async def _handle_sandbox_restart(request: web.Request) -> web.Response:
             )
 
     return web.json_response({"ok": True, "sandbox": spawned.name, "worker_registered": True})
+
+
+async def _handle_redeploy_all(request: web.Request) -> web.Response:
+    """POST /api/admin/redeploy-all — nuke-and-repave every sandbox,
+    cluster, and route.
+
+    Sequence:
+      1. Destroy every live sandbox (``openshell sandbox delete``).
+      2. For each ``ready`` model_route: destroy its gateway container,
+         re-run ``finish_provisioning`` (which recreates the cluster
+         with the pinned ``OPENSHELL_CLUSTER_IMAGE``, re-registers
+         the provider, re-pins inference, pre-warms the sandbox image).
+      3. Run the startup heal passes (prune orphan gateways, resurrect
+         missing sandboxes). Resurrect will trigger a full fresh spawn
+         for every named agent using the current Logos code — latest
+         ``platform_toolsets``, latest launcher, latest SOUL primer.
+
+    Destructive: kills every in-flight session, forces a full image
+    import on each cluster (~90-180 s each), per-agent cold spawn
+    (~30-60 s each). Expect 3-10 minutes total. Returns a JSON
+    summary; the UI renders each step's result.
+
+    Runs in the handler (not a background task) because the user is
+    watching a blocking spinner. aiohttp's default timeout is 5 min
+    so we explicitly disable it for this endpoint.
+    """
+    import time as _time
+    from gateway.executors.openshell import (
+        _sanitize_sandbox_name, _openshell, _load_state, _save_state,
+        _state_lock, _DEFAULT_IMAGE, _ensure_image_in_cluster,
+    )
+    from gateway import openshell_routes as _osr
+
+    start_ts = _time.time()
+    steps: list[dict] = []
+
+    def _step(name: str, ok: bool, detail: str = "") -> None:
+        steps.append({"name": name, "ok": bool(ok), "detail": detail[:500]})
+
+    # ── 1. Destroy every sandbox ──────────────────────────────────
+    # Read from state file and from each gateway's live CLI list so
+    # nothing gets missed. Delete is best-effort: already-gone is OK.
+    deleted_sandboxes: list[str] = []
+    try:
+        state_sbs = [
+            (i.get("sandbox_name", ""), i.get("openshell_name", ""))
+            for i in _load_state()
+            if i.get("sandbox_name")
+        ]
+        for sb_name, gw in state_sbs:
+            try:
+                await asyncio.to_thread(
+                    _openshell, "sandbox", "delete", sb_name,
+                    gateway=gw or None, check=False,
+                )
+                deleted_sandboxes.append(sb_name)
+            except Exception as exc:
+                logger.warning("redeploy-all: sandbox delete %s failed: %s", sb_name, exc)
+        # Clear state file so resurrect rebuilds from agents table.
+        with _state_lock():
+            _save_state([])
+        _step("destroy_sandboxes", True,
+              f"deleted {len(deleted_sandboxes)}: {', '.join(deleted_sandboxes) or '(none)'}")
+    except Exception as exc:
+        _step("destroy_sandboxes", False, str(exc))
+
+    # ── 2. Destroy + recreate each route's gateway ────────────────
+    # Include routes in `error` / `provisioning` state as well as
+    # `ready` — the whole point of redeploy is to re-run provisioning
+    # against whatever's in the DB. Skipping errored routes means a
+    # transient network hiccup during one redeploy leaves that route
+    # permanently unrecoverable via the button.
+    try:
+        routes = [
+            r for r in auth_db.list_model_routes()
+            if r.get("status") in ("ready", "error", "provisioning")
+        ]
+    except Exception as exc:
+        _step("list_routes", False, str(exc))
+        routes = []
+
+    for r in routes:
+        rid = r.get("id")
+        gw = r.get("openshell_name", "")
+        label = f"{r.get('provider','?')}/{r.get('model','?')} ({gw})"
+        if not rid or not gw:
+            _step(f"route {label}", False, "missing id or openshell_name")
+            continue
+        # Destroy current container (best-effort).
+        try:
+            await asyncio.to_thread(
+                _osr._run_openshell,
+                "gateway", "destroy",
+                gateway=gw, check=False, timeout=120,
+            )
+        except Exception as exc:
+            logger.warning("redeploy-all: gateway destroy %s failed: %s", gw, exc)
+        # Re-run the provisioning pipeline (creates cluster with
+        # pinned image, registers provider, pins inference, pre-warms
+        # sandbox image). Mark the row provisioning so the UI shows
+        # the in-flight state.
+        try:
+            auth_db.update_model_route(rid, status="provisioning", status_detail=None)
+            await asyncio.to_thread(_osr.finish_provisioning, rid)
+            _step(f"route {label}", True, "recreated")
+        except Exception as exc:
+            logger.exception("redeploy-all: finish_provisioning %s failed", rid)
+            _step(f"route {label}", False, str(exc))
+
+    # ── 3. Resurrect sandboxes ────────────────────────────────────
+    # Spawns a fresh sandbox for every agent using the latest Logos
+    # code (platform_toolsets, launcher, SOUL primer, etc). Each
+    # spawn is 30-60 s on a warm cluster so we don't await — let the
+    # resurrect background task run them in parallel and return.
+    try:
+        await _resurrect_missing_sandboxes(request.app.get("executor"))
+        _step("resurrect_sandboxes", True, "queued fresh spawn for every agent")
+    except Exception as exc:
+        _step("resurrect_sandboxes", False, str(exc))
+
+    elapsed_s = int(_time.time() - start_ts)
+    overall_ok = all(s["ok"] for s in steps)
+    logger.info(
+        "redeploy-all: completed in %ds ok=%s steps=%d",
+        elapsed_s, overall_ok, len(steps),
+    )
+    return web.json_response({
+        "ok": overall_ok,
+        "elapsed_s": elapsed_s,
+        "steps": steps,
+        "message": (
+            "All sandboxes destroyed, routes re-provisioned, agents "
+            "queued for fresh spawn. Sandboxes will go through normal "
+            "provisioning (30-60 s each, parallel) — watch the "
+            "Clusters / Sandboxes tables for Ready."
+        ) if overall_ok else "Redeploy completed with errors — see steps.",
+    })
 
 
 # ── Model routes ──────────────────────────────────────────────────────────
@@ -3220,93 +3406,6 @@ async def _handle_world_state(request: web.Request) -> web.Response:
 
 
 
-async def _handle_tools_configure(request: web.Request) -> web.Response:
-    """POST /tools/configure — save a tool API key and auto-apply presets.
-
-    Body: {"credentials": {"FIRECRAWL_API_KEY": "fc-..."}}
-
-    For each credential key:
-      1. Saves to ~/.hermes/.env via save_env_value() (legacy compat)
-      2. Saves to the services DB via set_credential() and injects into
-         the gateway's os.environ
-      3. Auto-applies the corresponding network preset to agents that
-         have the matching toolset enabled
-    After the loop: pushes the refreshed credentials to every running
-    sandbox via refresh_all_instance_configs so the next dispatch sees
-    them without requiring a sandbox rebuild.
-    """
-    try:
-        body = await request.json()
-    except Exception:
-        raise web.HTTPBadRequest(reason="Invalid JSON body")
-
-    credentials = body.get("credentials")
-    if not credentials or not isinstance(credentials, dict):
-        return web.json_response({"error": "credentials dict required"}, status=400)
-
-    saved = []
-    errors = []
-
-    from gateway.services import set_credential
-    for env_key, env_value in credentials.items():
-        if not env_key or not isinstance(env_key, str) or not isinstance(env_value, str):
-            errors.append({"key": env_key, "error": "invalid key or value"})
-            continue
-        env_value = env_value.strip()
-        if not env_value:
-            errors.append({"key": env_key, "error": "value cannot be empty"})
-            continue
-
-        # 1. Save to ~/.hermes/.env (legacy compat for tools that still read
-        #    the dotenv file directly).
-        try:
-            from logos_cli.config import save_env_value
-            save_env_value(env_key, env_value)
-        except Exception as exc:
-            errors.append({"key": env_key, "error": f"failed to save: {exc}"})
-            continue
-
-        # 2. Save to the services DB (platform_settings.credentials) and
-        #    inject into the gateway's os.environ. set_credential handles
-        #    both sides — this is what /api/services/keys uses.
-        try:
-            set_credential(env_key, env_value)
-        except Exception as exc:
-            logger.warning("tools/configure: set_credential failed for %s: %s", env_key, exc)
-
-        # 3. Auto-apply matching presets so sandbox egress policy permits
-        #    the tool's upstream host.
-        applied_presets = []
-        try:
-            from gateway import policies as gp
-            applied_presets = gp.auto_apply_presets_for_env(env_key)
-        except Exception as exc:
-            logger.warning("tools/configure: auto_apply failed for %s: %s", env_key, exc)
-
-        saved.append({
-            "key": env_key,
-            "presets_applied": applied_presets,
-        })
-
-    # 4. Push updated credentials to every running sandbox so the next
-    #    chat turn already has them. Matches /api/services/keys behaviour.
-    #    Best-effort — failures log but don't tank the save, since the
-    #    credential is already in the DB.
-    executor = request.app.get("executor")
-    sandboxes_refreshed = 0
-    if saved and executor and hasattr(executor, "refresh_all_instance_configs"):
-        try:
-            sandboxes_refreshed = executor.refresh_all_instance_configs()
-        except Exception as exc:
-            logger.warning("tools/configure: refresh broadcast failed: %s", exc)
-
-    return web.json_response({
-        "saved": saved,
-        "errors": errors,
-        "sandboxes_refreshed": sandboxes_refreshed,
-    })
-
-
 async def _reconcile_sandbox_state() -> None:
     """One-shot startup reconciliation between state file + cluster reality.
 
@@ -3403,6 +3502,45 @@ async def _reconcile_sandbox_state() -> None:
                     sandbox_name, inst.get("phase"), new_phase, gw,
                 )
                 inst["phase"] = new_phase
+            # v2 dispatch needs hermes_server_setup (api_key + base_url)
+            # on the state record. If the pod is Ready but the record is
+            # missing the setup — typically because a prior spawn hit the
+            # 30s health-probe race and never populated it — recover it
+            # by reading HERMES_API_KEY out of the sandbox's .env. Keeps
+            # a working hermes usable without forcing a re-spawn.
+            if new_phase == "ready" and not inst.get("hermes_server_setup"):
+                try:
+                    probe = await _asyncio.to_thread(
+                        _openshell, "sandbox", "exec", "-n", sandbox_name,
+                        "--", "cat", "/tmp/hermes-srv-home/.env",
+                        gateway=gw, check=False, timeout=10,
+                    )
+                    api_key = ""
+                    for raw in (probe.stdout or "").splitlines():
+                        if raw.startswith("API_SERVER_KEY="):
+                            api_key = raw.split("=", 1)[1].strip().strip('"').strip("'")
+                            break
+                    if api_key:
+                        inst["hermes_server_setup"] = {
+                            "sandbox_name": sandbox_name,
+                            "api_key": api_key,
+                            "base_url": "http://127.0.0.1:8642",
+                            "hermes_home": "/tmp/hermes-srv-home",
+                        }
+                        logger.info(
+                            "startup reconcile: recovered hermes_server_setup for %s from .env",
+                            sandbox_name,
+                        )
+                    else:
+                        logger.warning(
+                            "startup reconcile: %s ready but no API_SERVER_KEY in .env — dispatch will fail until re-spawn",
+                            sandbox_name,
+                        )
+                except Exception as exc:
+                    logger.warning(
+                        "startup reconcile: failed to recover hermes_server_setup for %s: %s",
+                        sandbox_name, exc,
+                    )
             updated.append(inst)
 
     # Hold the state lock only for the write — spawn() acquires the same
@@ -3451,9 +3589,12 @@ async def _handle_chat(request: web.Request) -> web.StreamResponse:
     #      Tracked here so the wiring is one half-done piece, not two.
     is_transient = bool(body.get("transient", False))
 
-    # ── Gateway command: /setup tools ──────────────────────────────────
-    # Intercept before any session/dispatch logic. Returns tool readiness
-    # as a special SSE message the frontend renders as an interactive card.
+    # ── Gateway command: /setup  (plan-C, 2026-04-21) ───────────────────
+    # Reads the agent's sandbox .env directly — NOT Logos's os.environ —
+    # so the card reflects what hermes inside the sandbox actually sees.
+    # Save/delete land via /api/agents/<id>/env-credentials, which
+    # persists to agent_env_credentials AND rewrites the sandbox .env
+    # in place, then bounces hermes so it picks up the change.
     _msg_stripped = (message or "").strip().lower()
     if _msg_stripped in ("/setup tools", "/setup", "/tools setup"):
         resp = web.StreamResponse(
@@ -3461,28 +3602,103 @@ async def _handle_chat(request: web.Request) -> web.StreamResponse:
             headers={"Content-Type": "text/event-stream", "Cache-Control": "no-cache"},
         )
         await resp.prepare(request)
-        readiness = []
+
+        # Known cloud-tool env vars. Small curated list — everything
+        # here is for tools hermes ships inside the sandbox image.
+        # Messaging tokens (TELEGRAM_BOT_TOKEN etc.) are intentionally
+        # NOT here; those live in agent_channel_credentials and have
+        # their own UI under the Messaging tab.
+        _CLOUD_ENV_CATALOGUE = [
+            {"env_var": "FIRECRAWL_API_KEY", "label": "Firecrawl",
+             "tools": ["web_search", "web_extract"],
+             "description": "Web search and content extraction",
+             "setup_url": "https://firecrawl.dev"},
+            {"env_var": "FAL_KEY", "label": "fal.ai",
+             "tools": ["image_generate"],
+             "description": "Image generation (Flux, SDXL, etc.)",
+             "setup_url": "https://fal.ai"},
+            {"env_var": "OPENROUTER_API_KEY", "label": "OpenRouter",
+             "tools": ["vision_analyze", "mixture_of_agents"],
+             "description": "Multi-model routing for vision + MoA",
+             "setup_url": "https://openrouter.ai"},
+            {"env_var": "BROWSERBASE_API_KEY", "label": "Browserbase",
+             "tools": ["browser_navigate"],
+             "description": "Cloud browser automation (local Chromium works without this)",
+             "setup_url": "https://browserbase.com",
+             "optional": True},
+            {"env_var": "ELEVENLABS_API_KEY", "label": "ElevenLabs",
+             "tools": ["text_to_speech"],
+             "description": "Premium TTS (Edge TTS works without this)",
+             "setup_url": "https://elevenlabs.io",
+             "optional": True},
+        ]
+
+        # Resolve the sandbox for this agent + read its .env. Best-effort
+        # — if the sandbox is down or doesn't exist yet, the card just
+        # shows "not set" for everything and the user can still save
+        # keys (they'll persist to DB and land on next spawn).
+        sandbox_env: dict = {}
+        sandbox_name_for_log = ""
         if agent_id:
             try:
-                from gateway import policies as gp
-                readiness = gp.get_tool_readiness(agent_id)
+                agent_rec = auth_db.get_agent(agent_id)
+                if agent_rec and agent_rec.get("name"):
+                    from gateway.executors.openshell import _sanitize_sandbox_name
+                    from gateway.worker_registry import resolve_sandbox_gateway
+                    _sb = _sanitize_sandbox_name(f"hermes-{agent_rec['name']}")
+                    sandbox_name_for_log = _sb
+                    _gw = resolve_sandbox_gateway(_sb)
+                    import subprocess as _subp
+                    _cmd = ["openshell"]
+                    if _gw:
+                        _cmd += ["-g", _gw]
+                    _cmd += ["sandbox", "exec", "--no-tty",
+                             "-n", _sb, "--",
+                             "cat", "/tmp/hermes-srv-home/.env"]
+                    _r = await asyncio.to_thread(
+                        _subp.run, _cmd, capture_output=True,
+                        text=True, timeout=8,
+                    )
+                    if _r.returncode == 0:
+                        for _ln in (_r.stdout or "").splitlines():
+                            _ln = _ln.strip()
+                            if not _ln or _ln.startswith("#") or "=" not in _ln:
+                                continue
+                            _k, _v = _ln.split("=", 1)
+                            sandbox_env[_k.strip()] = _v.strip()
+            except Exception as _env_exc:
+                logger.debug("/setup: could not read sandbox .env for %s: %s", agent_id, _env_exc)
+
+        # Managed-by-Logos flag: distinguishes keys that Logos persists
+        # (via agent_env_credentials, replay-on-respawn) from keys that
+        # happen to be in the sandbox .env but are unmanaged (set by
+        # some other process or leftover from an older deploy).
+        managed_vars: set = set()
+        if agent_id:
+            try:
+                for _row in auth_db.list_agent_env_credentials(
+                    agent_id=agent_id, enabled_only=False,
+                ):
+                    managed_vars.add(_row.get("env_var") or "")
             except Exception:
                 pass
-        # Also include available presets for context
-        from gateway import policies as gp
-        preset_map = {}
-        for tool_name, info in gp.TOOL_PRESET_MAP.items():
-            for env_key in info.get("env", []):
-                preset_map[env_key] = {
-                    "tool": tool_name,
-                    "preset": info.get("presets", [None])[0],
-                    "setup_url": info.get("setup_url", ""),
-                    "description": info.get("description", ""),
-                }
+
+        readiness = []
+        for cfg in _CLOUD_ENV_CATALOGUE:
+            env_var = cfg["env_var"]
+            has_key = bool(sandbox_env.get(env_var))
+            readiness.append({
+                **cfg,
+                "has_key":  has_key,
+                "managed":  env_var in managed_vars,
+            })
+
         await resp.write(("data: " + json.dumps({
             "type": "setup_tools",
             "readiness": readiness,
-            "preset_map": preset_map,
+            "agent_id": agent_id or "",
+            "sandbox_name": sandbox_name_for_log,
+            "sandbox_reachable": bool(sandbox_env) or not sandbox_name_for_log,
         }) + "\n\n").encode())
         await resp.write(("data: " + json.dumps({"type": "done", "elapsed_s": 0}) + "\n\n").encode())
         return resp
@@ -4780,6 +4996,7 @@ async def start_http_api(runner: Any, port: int = 8091) -> None:
     # they're in flight, and deletes are fire-and-forget.
     asyncio.create_task(_resurrect_missing_sandboxes(app["executor"]))
     asyncio.create_task(_prune_orphan_sandboxes(app["executor"]))
+    asyncio.create_task(_prune_orphan_gateways())
 
     # Worker registry lives on the runner (see GatewayRunner.__init__). We
     # just expose it on the aiohttp app so existing request handlers that
@@ -4988,11 +5205,9 @@ async def start_http_api(runner: Any, port: int = 8091) -> None:
     from gateway import mcp_management as _mcm
     _mcm.register_routes(app)
 
-    # ── Unified Services (tool credentials + MCP catalogue) ────────────
-    app.router.add_get("/api/services",       _handle_services_catalogue)
-    app.router.add_post("/api/services/keys", _handle_services_set_key)
-    app.router.add_delete("/api/services/keys", _handle_services_delete_key)
-    app.router.add_post("/api/services/validate", _handle_services_validate_key)
+    # ── Unified Services — inference settings + messaging (catalogue
+    # + per-key tool-credential endpoints were removed 2026-04-21; see
+    # admin_handlers.handle_agent_env_credentials_* for the replacement).
     app.router.add_post("/api/services/inference", _handle_services_inference)
 
     # ── Messaging platform integrations (Channels tab) ────────────────
@@ -5013,6 +5228,7 @@ async def start_http_api(runner: Any, port: int = 8091) -> None:
     app.router.add_post("/api/setup/validate-provider", _sh.handle_validate_provider)
     app.router.add_post("/api/setup/complete",    _sh.handle_setup_complete)
     app.router.add_post("/api/setup/prewarm",     _sh.handle_setup_prewarm)
+    app.router.add_post("/api/setup/preload-model", _sh.handle_setup_preload_model)
     app.router.add_get("/api/setup/progress",     _sh.handle_setup_progress)
     app.router.add_get("/api/setup/discover",       _sh.handle_setup_discover)
     app.router.add_post("/api/setup/set-remote",   _sh.handle_setup_set_remote)
@@ -5133,7 +5349,8 @@ async def start_http_api(runner: Any, port: int = 8091) -> None:
     app.router.add_post("/chat",               _handle_chat)
     app.router.add_post("/chat/{task_id}/cancel", require_csrf(_handle_chat_cancel))
     app.router.add_post("/chat/transcribe",    require_csrf(_handle_transcribe))
-    app.router.add_post("/tools/configure",    require_csrf(_handle_tools_configure))
+    # /tools/configure removed 2026-04-21 — per-agent keys now go via
+    # /admin/agents/<id>/env-credentials (registered below).
     app.router.add_route("OPTIONS", "/chat",   _handle_index)
     app.router.add_get("/canary/status", _handle_canary_status)
     app.router.add_get("/proxy/state",        _handle_proxy_state)
@@ -5198,6 +5415,8 @@ async def start_http_api(runner: Any, port: int = 8091) -> None:
     app.router.add_get("/api/admin/sandboxes",                    _vr(_handle_sandboxes_list))
     app.router.add_get("/api/admin/sandboxes/{name}/logs",        _vr(_handle_sandbox_logs))
     app.router.add_post("/api/admin/sandboxes/{name}/restart",    _mm(require_csrf(_handle_sandbox_restart)))
+    app.router.add_post("/api/admin/redeploy-all",                _mm(require_csrf(_handle_redeploy_all)))
+    app.router.add_get("/api/admin/clusters",                     _mm(_handle_clusters_list))
 
     # ── Model routes (multi-OpenShell-gateway routing) ────────────
     # REST CRUD for the model_routes table + the underlying OpenShell
@@ -5293,6 +5512,17 @@ async def start_http_api(runner: Any, port: int = 8091) -> None:
                           _mm(require_csrf(admin_handlers.handle_agent_channels_delete)))
     app.router.add_post("/admin/agents/{id}/channels/{cred_id}/toggle",
                         _mm(require_csrf(admin_handlers.handle_agent_channels_toggle)))
+    # Per-agent cloud-tool env credentials (plan-C, 2026-04-21). Same
+    # shape as channel credentials but no platform/label — just
+    # (env_var, value). Persists to agent_env_credentials + writes the
+    # sandbox's .env in place. UI entry point is the /setup slash
+    # command in chat.
+    app.router.add_get("/admin/agents/{id}/env-credentials",
+                       _mm(admin_handlers.handle_agent_env_credentials_list))
+    app.router.add_post("/admin/agents/{id}/env-credentials",
+                        _mm(require_csrf(admin_handlers.handle_agent_env_credentials_post)))
+    app.router.add_delete("/admin/agents/{id}/env-credentials/{env_var}",
+                          _mm(require_csrf(admin_handlers.handle_agent_env_credentials_delete)))
     # Internal sandbox-facing endpoints — called by agent code inside
     # OpenShell via host.openshell.internal:8091/api/internal/*. No auth.
     app.router.add_get("/api/internal/session-search",

@@ -29,16 +29,22 @@ _SOUL_REGISTRY: dict[str, "SoulManifest"] = {}
 
 @dataclasses.dataclass
 class SoulManifest:
+    """A persona bundle: identity + prompt + RBAC gate.
+
+    Trimmed 2026-04-21: `category / role_summary / status / version /
+    created_by / tags` were removed. They were software-release vocabulary
+    that didn't apply to personas — a prompt isn't "v1.0" or "stable",
+    it's either in use or not. If/when a proper soul registry ships,
+    category + tags can come back for discovery.
+
+    Toolset fields remain as plumbing but modern manifests leave them
+    empty (no `toolsets:` block) — users pick whatever they want from
+    the full catalogue. See `validate_soul_overrides` in this file.
+    """
     id: str
     slug: str
     name: str
     description: str
-    category: str
-    role_summary: str
-    status: str          # "stable" | "experimental" | "deprecated"
-    version: str
-    created_by: str
-    tags: list
     enforced_toolsets: list
     default_enabled_toolsets: list
     optional_toolsets: list
@@ -51,11 +57,6 @@ class SoulManifest:
             "slug": self.slug,
             "name": self.name,
             "description": self.description,
-            "category": self.category,
-            "role_summary": self.role_summary,
-            "status": self.status,
-            "version": self.version,
-            "tags": self.tags,
             "user_accessible": self.user_accessible,
             "toolsets": {
                 "enforced": self.enforced_toolsets,
@@ -143,12 +144,6 @@ def load_souls() -> dict[str, SoulManifest]:
                 slug=data.get("slug", soul_dir.name),
                 name=data.get("name", soul_dir.name),
                 description=data.get("description", ""),
-                category=data.get("category", "general"),
-                role_summary=data.get("role_summary", ""),
-                status=data.get("status", "stable"),
-                version=str(data.get("version", "1.0")),
-                created_by=data.get("created_by", ""),
-                tags=data.get("tags", []),
                 enforced_toolsets=toolsets.get("enforced", []),
                 default_enabled_toolsets=_default_enabled,
                 optional_toolsets=toolsets.get("optional", []),
@@ -177,20 +172,36 @@ def get_soul_registry() -> dict[str, SoulManifest]:
 
 
 def validate_soul_overrides(soul: SoulManifest, overrides: dict) -> None:
-    """Raise ValueError if overrides violate soul policy."""
+    """Raise ValueError if overrides violate soul policy.
+
+    As of 2026-04-21, soul manifests no longer carry toolset constraints
+    (``enforced / default_enabled / optional / forbidden`` were removed
+    to simplify agent configuration — users pick whatever they want from
+    the full toolset catalogue). This function now only raises when the
+    manifest still has a non-empty constraint list, so legacy manifests
+    keep working. In the default empty-list state it's a no-op.
+    """
     to_remove = set(overrides.get("remove", []))
     to_add = set(overrides.get("add", []))
     for ts in to_remove:
-        if ts in soul.enforced_toolsets:
+        if soul.enforced_toolsets and ts in soul.enforced_toolsets:
             raise ValueError(f"cannot_remove_enforced:{ts}")
     for ts in to_add:
-        if ts in soul.forbidden_toolsets:
+        if soul.forbidden_toolsets and ts in soul.forbidden_toolsets:
             raise ValueError(f"toolset_not_available:{ts}")
-        if ts not in soul.optional_toolsets:
-            raise ValueError(f"toolset_not_in_soul:{ts}")
+        # No longer require `ts in optional_toolsets` — absent `optional`
+        # list means "anything goes".
 
 
 def compute_effective_toolsets(soul: SoulManifest, overrides: dict) -> list[str]:
+    """Resolve the toolset set for an agent from soul defaults + overrides.
+
+    Modern souls ship no toolset constraints, so ``enforced`` and
+    ``default_enabled`` are both empty; the result is driven entirely by
+    ``overrides.add``. Callers that need a sane fallback (e.g. spawning
+    an agent for a soul with no overrides yet) should provide one at the
+    call site — this function deliberately doesn't invent defaults.
+    """
     effective = set(soul.enforced_toolsets)
     effective |= set(soul.default_enabled_toolsets)
     effective -= set(overrides.get("remove", []))

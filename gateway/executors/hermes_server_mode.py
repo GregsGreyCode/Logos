@@ -42,16 +42,32 @@ logger = logging.getLogger(__name__)
 HERMES_HOME_IN_SANDBOX = "/tmp/hermes-srv-home"
 HERMES_BIND_HOST = "127.0.0.1"
 HERMES_BIND_PORT = 8642
-HEALTH_TIMEOUT_S = 30
+HEALTH_TIMEOUT_S = 90  # generous: cold-boot DNS + Telegram adapter handshake
+                       # routinely eats 20-25s before the API binds. Previously
+                       # 30s, which caught the healthy-but-slow case as a
+                       # failure (see hermes-tony 2026-04-21 — /health came
+                       # up 1s after the old deadline).
 DEFAULT_EXEC_TIMEOUT_S = 30
 
-# LOG-51.2: the cancel monkeypatch file lives next to this module and
-# gets uploaded to every hermes-mode sandbox so hermes's /v1/runs SSE
-# stream interrupts the agent on client disconnect. Path-in-sandbox is
-# fixed so the launch command can reference it without per-sandbox
-# state.
-_CANCEL_PATCH_SRC = Path(__file__).parent / "hermes_cancel_monkeypatch.py"
-CANCEL_PATCH_PATH_IN_SANDBOX = f"{HERMES_HOME_IN_SANDBOX}/hermes_cancel_monkeypatch.py"
+# The Logos → hermes launcher script. Lives next to this module on the
+# host as a normal .py file (so tests can import it) but uploads into
+# every sandbox under the bare name ``hermes`` (no extension). That
+# bare name is load-bearing: hermes's own ``_looks_like_gateway_process``
+# check scans ``/proc/<pid>/cmdline`` for ``"hermes gateway"`` as a
+# substring, and the kernel cmdline includes the executed script path
+# verbatim — so naming the sandbox file ``hermes`` makes the cmdline
+# ``python3 /tmp/hermes-srv-home/hermes gateway run -v`` match
+# natively. Historical note: this file used to be called
+# ``hermes_cancel_monkeypatch.py`` from when LOG-51.2 was its only job,
+# but now carries several patches; renamed to reflect what it actually
+# is (a launcher).
+_HERMES_LAUNCHER_SRC = Path(__file__).parent / "hermes_launcher.py"
+HERMES_LAUNCHER_PATH_IN_SANDBOX = f"{HERMES_HOME_IN_SANDBOX}/hermes"
+# Legacy aliases kept so callers outside this module that still import
+# the old names (tests, admin_handlers, WORK_QUEUE notes) keep working
+# during the rename transition. Remove after all callers are updated.
+_CANCEL_PATCH_SRC = _HERMES_LAUNCHER_SRC
+CANCEL_PATCH_PATH_IN_SANDBOX = HERMES_LAUNCHER_PATH_IN_SANDBOX
 
 # LOG-44.2: per-soul boot hooks. If a soul ships a ``boot.md`` next to
 # its ``soul.md`` in ``souls/<name>/``, it gets uploaded to
@@ -207,11 +223,22 @@ def _resolve_system_prompt(config: Any) -> Optional[str]:
     return None
 
 
-def _build_config_yaml(model: str, system_prompt: Optional[str]) -> str:
+def _build_config_yaml(
+    model: str,
+    system_prompt: Optional[str],
+) -> str:
     """Generate a minimal hermes config.yaml.
 
     Schema reference: knowledge-repos/hermes-agent/cli-config.yaml.example.
     Validated empirically against hermes 0.7.0 (see prototype doc).
+
+    Every agent gets the full ``hermes-cli`` composite on every platform.
+    Earlier the function accepted an ``agent_toolsets`` parameter that
+    was meant to let per-agent selection thread through — but since the
+    body below hardcodes ``hermes-cli`` unconditionally, the parameter
+    was dead and was removed 2026-04-21. If per-agent toolset shape ever
+    comes back as a real feature, the UI selector and DB column + this
+    parameter would need to be re-wired end-to-end together.
     """
     lines = [
         "model:",
@@ -223,6 +250,38 @@ def _build_config_yaml(model: str, system_prompt: Optional[str]) -> str:
         f"  host: {HERMES_BIND_HOST}",
         f"  port: {HERMES_BIND_PORT}",
     ]
+    # Per-platform toolset override.
+    #
+    # Why: hermes's default toolset for the ``api_server`` platform is
+    # ``hermes-api-server``, which upstream curates to "non-interactive
+    # HTTP tools" — explicitly dropping ``send_message`` and
+    # ``clarify``. That makes sense for generic HTTP clients but not
+    # for Logos's web chat, which IS interactive: the agent wants to
+    # tell the user to wait via ``clarify`` or push a reply via
+    # ``send_message`` to a connected platform.
+    #
+    # We set every inbound platform to ``hermes-cli`` — hermes's
+    # "full interactive CLI toolset". Contains
+    # ``_HERMES_CORE_TOOLS``: web, terminal, files, browser, vision,
+    # image gen, skills, todo, memory, session_search, clarify,
+    # execute_code, delegate_task, cronjob, send_message, home
+    # assistant, tts. Every agent gets every tool regardless of
+    # channel.
+    #
+    # Earlier attempt: we tried listing the Logos-side toolsets
+    # directly (e.g. ``browser, messaging, world, github, …``).
+    # That exploded because hermes's ``_get_platform_tools`` filters
+    # by its own ``CONFIGURABLE_TOOLSETS`` keys (no ``world``, no
+    # ``github``, ``hermes-cli`` is a composite not a key) — the
+    # filter dropped most entries and hermes only loaded 2 toolsets.
+    # ``hermes-cli`` as a single composite sidesteps the CONFIGURABLE
+    # filter entirely and resolves to every core tool.
+    lines.append("platform_toolsets:")
+    for plat in ("api_server", "telegram", "discord", "slack",
+                 "whatsapp", "matrix", "signal", "mattermost",
+                 "email", "sms"):
+        lines.append(f"  {plat}:")
+        lines.append(f"    - hermes-cli")
     # `execute_code` and the terminal sandbox strip env vars by default
     # (safe-prefix allowlist + secret-substring blocklist). Two groups
     # of vars need explicit passthrough or outbound HTTP breaks:
@@ -404,6 +463,39 @@ def build_channel_extra_env(
                     "preset: %s (agent may be unable to reach %s API)",
                     label_tag, plat, preset_exc, plat,
                 )
+
+    # Per-agent cloud-tool env vars (plan-C, 2026-04-21). Same injection
+    # path as channel credentials but no platform semantics — it's a raw
+    # env_var → value mapping set via the /setup slash command in chat.
+    # Collision resolution: channel creds win on overlap. In practice the
+    # only collision-risk keys are the messaging tokens (TELEGRAM_BOT_TOKEN
+    # etc.) which belong to channel creds; env-cred callers should use
+    # the _PLATFORM_ENV_MAP lookup to detect and reject those if they
+    # want isolation, but for now we let the user set whatever they like
+    # and just apply a "channel-first" ordering.
+    try:
+        env_rows = _auth_db.list_agent_env_credentials(
+            agent_id=agent_id, enabled_only=True,
+        )
+    except Exception as exc:
+        logger.warning(
+            "build_channel_extra_env(%s): list_agent_env_credentials raised "
+            "%s — proceeding without cloud-tool env", label_tag, exc,
+        )
+        env_rows = []
+    for row in env_rows:
+        env_var = (row.get("env_var") or "").strip()
+        value = row.get("value") or ""
+        if not env_var or not value:
+            continue
+        if env_var in extra_env:
+            logger.debug(
+                "build_channel_extra_env(%s): env_var %s already set by "
+                "channel cred; skipping env-cred override", label_tag, env_var,
+            )
+            continue
+        extra_env[env_var] = value
+
     if extra_env:
         logger.info(
             "build_channel_extra_env(%s): env keys %s",
@@ -421,9 +513,12 @@ def deploy_hermes_config(
 ) -> None:
     """Write hermes config.yaml + .env into the sandbox's HERMES_HOME.
 
-    ``extra_env`` (LOG-44.3) — per-agent env vars appended to .env,
-    typically platform credentials like ``TELEGRAM_BOT_TOKEN``. Built
-    by the caller from ``agent_channel_credentials``.
+    ``extra_env`` — per-agent env vars appended to .env, sourced from two
+    tables: ``agent_channel_credentials`` (messaging tokens, LOG-44.3)
+    and ``agent_env_credentials`` (cloud-tool API keys set via the chat
+    /setup slash command, plan-C 2026-04-21). Both merge into a single
+    dict before this function runs; see ``build_channel_extra_env`` for
+    the merge.
 
     ``gateway`` — openshell sub-gateway that owns the sandbox. Threaded
     through ``_run_sb_exec`` so the CLI actually targets the right
@@ -500,69 +595,190 @@ def _upload_file_via_openshell(
         )
 
 
-def deploy_cancel_monkeypatch(sandbox_name: str, gateway: Optional[str] = None) -> None:
-    """Upload the LOG-51.2 cancel monkeypatch into the sandbox.
+def deploy_hermes_launcher(sandbox_name: str, gateway: Optional[str] = None) -> None:
+    """Upload the Logos hermes launcher into the sandbox.
 
-    The launcher is a standalone Python script (shipped in this repo
-    alongside ``hermes_server_mode.py``) that rebinds
-    ``APIServerAdapter._handle_runs`` + ``_handle_run_events`` on the
-    upstream hermes module before delegating to ``/usr/local/bin/hermes``
+    The launcher is a standalone Python script (shipped in this repo as
+    ``hermes_launcher.py``, next to this module) that applies Logos's
+    pre-boot monkeypatches then hands off to ``/usr/local/bin/hermes``
     via ``runpy``. Delivered by upload (not by forking hermes-agent) so
-    the sandbox image stays swappable — see LOG-45's runtime-contract
-    notes and LOG-51's temporary-patch framing.
+    the sandbox image stays swappable — see LOG-45.
+
+    Renamed in the sandbox: the host file is ``hermes_launcher.py``
+    (so tests can import it as a normal Python module), but it's
+    uploaded and then moved to ``/tmp/hermes-srv-home/hermes`` (no
+    extension) so that ``/proc/<pid>/cmdline`` contains the substring
+    ``hermes gateway`` — which is what hermes's own
+    ``_looks_like_gateway_process`` check requires for
+    ``is_gateway_running()`` to return True. Without that match,
+    ``send_message`` and anything else gated on the gateway-running
+    flag mis-reports as unavailable on web-chat dispatch.
 
     Uses ``openshell sandbox upload`` (separate streaming channel)
-    rather than base64-in-exec because the patch file has grown past
-    the 32 KB exec arg limit. Followed by a small exec for chmod +
-    stale-file cleanup since upload alone doesn't overwrite destructively.
+    rather than base64-in-exec because the launcher has grown past the
+    32 KB exec arg limit. Then a small exec to mv the uploaded file to
+    the bare ``hermes`` name + clean up any legacy copy.
 
-    Idempotent: overwrites any existing copy each spawn so patch updates
-    ship with the next sandbox refresh without extra plumbing.
+    Idempotent: overwrites any existing copy each spawn so patch
+    updates ship with the next sandbox refresh without extra plumbing.
     """
-    if not _CANCEL_PATCH_SRC.exists():
+    if not _HERMES_LAUNCHER_SRC.exists():
         raise RuntimeError(
-            f"deploy_cancel_monkeypatch: source file missing at "
-            f"{_CANCEL_PATCH_SRC}. Logos deploy is broken — bail out "
-            f"rather than launch hermes without the cancel patch."
+            f"deploy_hermes_launcher: source file missing at "
+            f"{_HERMES_LAUNCHER_SRC}. Logos deploy is broken — bail out "
+            f"rather than launch hermes without the launcher patches."
         )
-    target_path = shlex.quote(CANCEL_PATCH_PATH_IN_SANDBOX)
-    # Remove any stale file first — openshell sandbox upload refuses
-    # to overwrite a file with the same name as the source basename
-    # (it interprets the destination as the parent directory when it
-    # already exists as a regular file, which can error). Cheap to
-    # pre-clear; exec arg is tiny.
-    prep = f"mkdir -p {shlex.quote(HERMES_HOME_IN_SANDBOX)}; rm -f {target_path}"
+    target_path = shlex.quote(HERMES_LAUNCHER_PATH_IN_SANDBOX)
+    home = shlex.quote(HERMES_HOME_IN_SANDBOX)
+    # Pre-clear: remove any stale file at BOTH the new name AND the
+    # legacy ``hermes_cancel_monkeypatch.py`` name so sandboxes being
+    # upgraded from an older Logos don't end up with two launcher files
+    # fighting each other.
+    prep = (
+        f"mkdir -p {home}; "
+        f"rm -f {target_path} {home}/hermes_cancel_monkeypatch.py "
+        f"{home}/hermes_launcher.py"
+    )
     r = _run_sb_exec(sandbox_name, prep, gateway=gateway)
     if r.returncode != 0:
         raise RuntimeError(
-            f"deploy_cancel_monkeypatch({sandbox_name}) prep failed "
+            f"deploy_hermes_launcher({sandbox_name}) prep failed "
             f"rc={r.returncode}: {r.stderr.strip()[-500:]}"
         )
 
+    # Upload lands the file as hermes_launcher.py (basename of source).
     _upload_file_via_openshell(
-        sandbox_name, _CANCEL_PATCH_SRC, HERMES_HOME_IN_SANDBOX,
+        sandbox_name, _HERMES_LAUNCHER_SRC, HERMES_HOME_IN_SANDBOX,
         gateway=gateway,
     )
 
-    # chmod + confirm presence. `test -f` ensures the upload actually
-    # landed — catches edge cases where the CLI returns 0 but the file
-    # isn't readable (seen on permission-mismatched sandboxes).
+    # Rename to bare "hermes" + chmod + verify presence. All three in
+    # one exec to keep round-trip cost low.
     verify = (
+        f"mv {home}/hermes_launcher.py {target_path} && "
         f"chmod 644 {target_path} && "
         f"test -f {target_path} && "
-        f"echo \"[hermes-server] cancel monkeypatch deployed "
+        f"echo \"[hermes-server] hermes launcher deployed "
         f"($(wc -c < {target_path}) bytes) to "
-        f"{CANCEL_PATCH_PATH_IN_SANDBOX}\""
+        f"{HERMES_LAUNCHER_PATH_IN_SANDBOX}\""
     )
     r = _run_sb_exec(sandbox_name, verify, gateway=gateway)
     if r.returncode != 0:
         raise RuntimeError(
-            f"deploy_cancel_monkeypatch({sandbox_name}) verify failed "
+            f"deploy_hermes_launcher({sandbox_name}) verify failed "
             f"rc={r.returncode}: {r.stderr.strip()[-500:]}"
         )
     logger.info(
-        "hermes_server_mode: cancel monkeypatch deployed to %s (%d bytes source)",
-        sandbox_name, _CANCEL_PATCH_SRC.stat().st_size,
+        "hermes_server_mode: hermes launcher deployed to %s (%d bytes source)",
+        sandbox_name, _HERMES_LAUNCHER_SRC.stat().st_size,
+    )
+
+
+# Legacy alias kept for external callers (admin_handlers.handle_agent_runtime_restart,
+# tests) that still use the old name. Remove after every call site is updated.
+deploy_cancel_monkeypatch = deploy_hermes_launcher
+
+
+def deploy_soul_md(
+    sandbox_name: str,
+    agent_name: str,
+    soul_name: str,
+    gateway: Optional[str] = None,
+) -> None:
+    """Deploy a per-agent ``SOUL.md`` into the sandbox.
+
+    Hermes's ``prompt_builder.load_soul_md`` treats ``$HERMES_HOME/SOUL.md``
+    as "slot #1 agent identity" — higher priority than ``config.yaml``'s
+    ``system_prompt`` field. The hermes-agent docker image ships a stock
+    ``SOUL.md`` that says *"You are Hermes Agent, an intelligent AI
+    assistant created by Nous Research."* Without this function the
+    stock file survives and every Logos-managed agent identifies itself
+    as "Hermes Agent" regardless of what the user named it, because
+    ``config.yaml``'s soul content lands in a secondary prompt slot
+    that the model effectively ignores.
+
+    What we write:
+
+        You are **<agent_name>**.
+
+        <soul_md content, merged with _shared/*.md if the registry has it>
+
+    The name line is the load-bearing piece — it's what makes the agent
+    respond to "what's your name" with the Logos-side name rather than
+    the Nous default. The soul content still drives voice + style.
+
+    Falls back to a minimal identity-only SOUL.md if the soul registry
+    lookup fails, so a missing/misnamed soul doesn't leave the agent
+    with the stock Nous identity.
+    """
+    agent_name = (agent_name or "").strip() or sandbox_name
+    soul_md_body = ""
+    try:
+        from gateway.souls import get_soul_registry
+        soul = get_soul_registry().get(soul_name) if soul_name else None
+        if soul and soul.soul_md.strip():
+            soul_md_body = soul.soul_md.strip()
+    except Exception as exc:
+        logger.warning(
+            "deploy_soul_md(%s): soul registry lookup for %r failed "
+            "(will write identity-only SOUL.md): %s",
+            sandbox_name, soul_name, exc,
+        )
+
+    identity = f"You are **{agent_name}**. When asked your name, say \"{agent_name}\"."
+
+    # Logos runtime primer. Without this, agents hallucinate about
+    # their own wiring — claiming they have no Telegram credentials
+    # when the token is sitting in .env; telling users to visit a
+    # "Settings" menu that doesn't exist; saying "I can't run
+    # Chromium" when the browser is installed. The primer is factual
+    # context about the platform the agent is actually running on,
+    # not a persona / style instruction. Kept tight because every
+    # token here ships on every request.
+    logos_primer = """
+# Your runtime — Logos + hermes
+
+You're running inside a Logos-provisioned sandbox. Hermes is your agent runtime; Logos is the orchestrator that wired you up and is serving the chat UI the user is looking at.
+
+Credentials and integrations are already configured by Logos — they land in `/tmp/hermes-srv-home/.env` at spawn time. If a key is in that file, the corresponding integration is live and you can use it right now:
+
+- `TELEGRAM_BOT_TOKEN` → `send_message(platform='telegram', ...)` works. Call `send_message(action='list')` to see who you can reach.
+- `DISCORD_BOT_TOKEN` / `SLACK_BOT_TOKEN` → same, via `send_message`.
+- `SEARXNG_URL` → `web_search` works. Use it for any live-information query.
+- `OPENAI_API_KEY` / `OPENAI_BASE_URL` → your own inference path; you don't normally call this yourself.
+
+If a key is absent the integration isn't wired — but don't assume from training. Check by calling the tool or reading `.env` with `read_file` before telling the user something isn't available.
+
+The Logos web UI the user is in uses these tabs: **Chats**, **Compare**, **Agents**, **Activity**, **Settings**, **Admin**. Messaging credentials live under **Settings → Messaging**, model provisioning under **Settings → Inference**, tool API keys under **Settings → Tools**, network permissions under **Settings → Permissions**, agent personas (souls) under **Settings → Souls**.
+
+## Before claiming you can't do something
+
+Call the relevant tool first. If the tool errors, report the actual error. If you don't know what tool fits, try `send_message(action='list')`, `read_file`, or `web_search`. Saying "I can't" without checking is worse than trying and reporting failure honestly.
+""".rstrip()
+
+    body = f"{identity}\n\n{logos_primer}\n"
+    if soul_md_body:
+        body += f"\n{soul_md_body}\n"
+    full = body
+
+    b64 = base64.b64encode(full.encode("utf-8")).decode()
+    target = shlex.quote(f"{HERMES_HOME_IN_SANDBOX}/SOUL.md")
+    script = f"""
+set -e
+mkdir -p {shlex.quote(HERMES_HOME_IN_SANDBOX)}
+echo {b64} | base64 -d > {target}
+chmod 644 {target}
+echo "[hermes-server] SOUL.md deployed ({len(full)}b, agent={agent_name}, soul={soul_name or 'none'})"
+"""
+    r = _run_sb_exec(sandbox_name, script, gateway=gateway)
+    if r.returncode != 0:
+        raise RuntimeError(
+            f"deploy_soul_md({sandbox_name}) failed rc={r.returncode}: "
+            f"{r.stderr.strip()[-500:]}"
+        )
+    logger.info(
+        "hermes_server_mode: SOUL.md deployed for %s (agent=%s, soul=%s, %db)",
+        sandbox_name, agent_name, soul_name or "none", len(full),
     )
 
 
@@ -700,9 +916,14 @@ def restart_hermes_in_sandbox(sandbox_name: str, gateway: Optional[str] = None) 
     monkeypatch + logging stay consistent.
     """
     home = shlex.quote(HERMES_HOME_IN_SANDBOX)
-    patch = shlex.quote(CANCEL_PATCH_PATH_IN_SANDBOX)
+    launcher = shlex.quote(HERMES_LAUNCHER_PATH_IN_SANDBOX)
+    # pkill patterns cover the new bare ``hermes`` launcher AND the
+    # legacy ``hermes_cancel_monkeypatch.py`` name AND a plain
+    # ``hermes gateway run`` invocation (in case upstream's binary
+    # runs directly), so this function works across sandbox
+    # generations during the rename transition.
     script = f"""
-pkill -f 'hermes_cancel_monkeypatch\\.py gateway run|hermes gateway run' || true
+pkill -f 'hermes-srv-home/hermes gateway run|hermes_cancel_monkeypatch\\.py gateway run|/usr/local/bin/hermes gateway run' || true
 # Brief wait so the socket is released before we relaunch.
 sleep 1
 rm -f /tmp/hermes-gw.log
@@ -713,13 +934,13 @@ if [ -f "$HERMES_HOME/.env" ]; then
   . "$HERMES_HOME/.env"
   set +a
 fi
-if [ ! -f {patch} ]; then
-  echo '[hermes-server] ERROR: cancel monkeypatch missing at {CANCEL_PATCH_PATH_IN_SANDBOX}' >&2
+if [ ! -f {launcher} ]; then
+  echo '[hermes-server] ERROR: hermes launcher missing at {HERMES_LAUNCHER_PATH_IN_SANDBOX}' >&2
   exit 2
 fi
-nohup python3 {patch} gateway run -v > /tmp/hermes-gw.log 2>&1 &
+nohup python3 {launcher} gateway run -v > /tmp/hermes-gw.log 2>&1 &
 sleep 1
-pid=$(pgrep -f 'hermes_cancel_monkeypatch\\.py gateway run' | head -1)
+pid=$(pgrep -f 'hermes-srv-home/hermes gateway run|hermes_cancel_monkeypatch\\.py gateway run' | head -1)
 if [ -z "$pid" ]; then
   echo '[hermes-server] restart failed — no process after 1s'
   tail -20 /tmp/hermes-gw.log
@@ -746,23 +967,27 @@ def launch_hermes_gateway(sandbox_name: str, gateway: Optional[str] = None) -> N
     gateway logs to /tmp/hermes-gw.log inside the sandbox for
     post-mortem debugging (reachable via `openshell sandbox exec cat`).
 
-    LOG-51.2: launches via ``python3 <monkeypatch.py> gateway run -v``
-    rather than ``hermes gateway run -v`` so the SSE-disconnect-
-    interrupt patch is applied before hermes starts serving.
-    ``deploy_cancel_monkeypatch`` must have run first (orchestrated by
+    Launches via ``python3 /tmp/hermes-srv-home/hermes gateway run -v``
+    so Logos's pre-boot monkeypatches (cancel, qwen safety net,
+    /v1/toolsets introspection) are applied before hermes starts
+    serving. The launcher file is named ``hermes`` (no extension) so
+    the kernel cmdline includes ``hermes gateway`` — the literal
+    substring hermes's own ``is_gateway_running()`` scans for.
+    ``deploy_hermes_launcher`` must have run first (orchestrated by
     ``enable_hermes_server_mode``).
     """
     home = shlex.quote(HERMES_HOME_IN_SANDBOX)
-    patch = shlex.quote(CANCEL_PATCH_PATH_IN_SANDBOX)
-    # Match on a pgrep pattern that covers BOTH launch styles — the
-    # direct ``hermes gateway run`` and our new
-    # ``python3 …monkeypatch.py gateway run`` — so the idempotency
-    # check survives a mid-spawn switch between them (e.g. during
-    # rollout, if a sandbox was launched on the old command and we
-    # re-spawn on the new one we don't want to double-launch).
+    launcher = shlex.quote(HERMES_LAUNCHER_PATH_IN_SANDBOX)
+    # pgrep pattern covers the new bare ``hermes`` launcher path AND
+    # the legacy ``hermes_cancel_monkeypatch.py`` path (so sandboxes
+    # carried over from the old naming don't double-launch during
+    # rollout). A plain ``hermes gateway run`` pattern would match the
+    # bare launcher too but would also match the upstream binary's
+    # direct invocation if someone exec'd that by hand — kept explicit
+    # for clarity.
     script = f"""
-if pgrep -f 'hermes_cancel_monkeypatch\\.py gateway run|hermes gateway run' > /dev/null 2>&1; then
-  echo '[hermes-server] already running (pid='$(pgrep -f 'hermes_cancel_monkeypatch\\.py gateway run|hermes gateway run' | head -1)')'
+if pgrep -f 'hermes-srv-home/hermes gateway run|hermes_cancel_monkeypatch\\.py gateway run' > /dev/null 2>&1; then
+  echo '[hermes-server] already running (pid='$(pgrep -f 'hermes-srv-home/hermes gateway run|hermes_cancel_monkeypatch\\.py gateway run' | head -1)')'
   exit 0
 fi
 rm -f /tmp/hermes-gw.log
@@ -773,19 +998,19 @@ if [ -f "$HERMES_HOME/.env" ]; then
   . "$HERMES_HOME/.env"
   set +a
 fi
-if [ ! -f {patch} ]; then
-  echo '[hermes-server] ERROR: cancel monkeypatch missing at {CANCEL_PATCH_PATH_IN_SANDBOX}' >&2
+if [ ! -f {launcher} ]; then
+  echo '[hermes-server] ERROR: hermes launcher missing at {HERMES_LAUNCHER_PATH_IN_SANDBOX}' >&2
   exit 2
 fi
-nohup python3 {patch} gateway run -v > /tmp/hermes-gw.log 2>&1 &
+nohup python3 {launcher} gateway run -v > /tmp/hermes-gw.log 2>&1 &
 sleep 1
-pid=$(pgrep -f 'hermes_cancel_monkeypatch\\.py gateway run' | head -1)
+pid=$(pgrep -f 'hermes-srv-home/hermes gateway run' | head -1)
 if [ -z "$pid" ]; then
   echo '[hermes-server] launch failed — no process after 1s'
   tail -20 /tmp/hermes-gw.log
   exit 1
 fi
-echo "[hermes-server] launched pid=$pid (cancel monkeypatch applied)"
+echo "[hermes-server] launched pid=$pid (logos launcher applied)"
 """
     r = _run_sb_exec(sandbox_name, script, gateway=gateway)
     if r.returncode != 0:
@@ -877,7 +1102,18 @@ def enable_hermes_server_mode(
         sorted((extra_env or {}).keys()),
     )
     deploy_hermes_config(sandbox_name, config, api_key, extra_env=extra_env, gateway=gateway)
-    deploy_cancel_monkeypatch(sandbox_name, gateway=gateway)
+    deploy_hermes_launcher(sandbox_name, gateway=gateway)
+    # Per-agent identity. Overwrites the stock "You are Hermes Agent"
+    # SOUL.md that ships with the hermes-agent image so the agent
+    # actually knows its Logos-side name ("Levil") and picks up the
+    # Logos-side soul content as slot-#1 identity rather than the
+    # Nous default. See deploy_soul_md docstring for the why.
+    deploy_soul_md(
+        sandbox_name,
+        getattr(config, "name", "") or sandbox_name,
+        getattr(config, "soul_name", "") or "default",
+        gateway=gateway,
+    )
     # LOG-44.2: per-soul boot hook. No-op (explicit clear) for souls
     # without a boot.md; otherwise uploads the file for the built-in
     # boot_md hook inside hermes to pick up on next gateway:startup.
@@ -925,8 +1161,10 @@ __all__ = [
     "HermesServerSetup",
     "build_channel_extra_env",
     "deploy_hermes_config",
-    "deploy_cancel_monkeypatch",
+    "deploy_hermes_launcher",
+    "deploy_cancel_monkeypatch",  # legacy alias — kept for old callers
     "deploy_boot_md",
+    "deploy_soul_md",
     "deploy_agent_memories",
     "redeploy_hermes_env",
     "restart_hermes_in_sandbox",
