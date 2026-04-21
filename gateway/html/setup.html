@@ -2364,7 +2364,7 @@ function setup() {
     // Ordered as the executor walks through them.
     spawnSubStages: [
       { slug: 'check_image',   label: 'Checking sandbox image' },
-      { slug: 'import_image',  label: 'Importing sandbox image' },
+      { slug: 'import_image',  label: 'Staging image into cluster' },
       { slug: 'create_pod',    label: 'Creating sandbox pod' },
       { slug: 'upload_config', label: 'Uploading agent configuration' },
       { slug: 'finalize',      label: 'Finalizing sandbox' },
@@ -3151,6 +3151,11 @@ function setup() {
                 max_context_length: m._maxCtx || m.max_context_length || 0,
                 tool_use:    m._toolUse || false,
                 vision:      m._vision || false,
+                // Reasoning flag is set by the probe when LM Studio's
+                // capabilities.reasoning dict exists. The bench uses this
+                // to scale max_output_tokens up (2048 → 8000) so
+                // reasoning-model hard evals aren't truncated mid-think.
+                is_reasoning: m._isReasoning || m.is_reasoning || false,
               };
             }),
           }),
@@ -3232,6 +3237,8 @@ function setup() {
                 this.compareReason           = ev.reason || '';
                 this.compareFastRecommended  = ev.fast_recommendation || null;
                 this.compareFastReason       = ev.fast_reason || '';
+                this.compareCoderRecommended = ev.coder_recommendation || null;
+                this.compareCoderReason      = ev.coder_reason || '';
                 this.compareServerRecs       = ev.per_server_recommendations || {};
                 this.compareTtftWarnings     = ev.ttft_warnings || [];
                 // Seed per-server selections from benchmark recommendations
@@ -3318,6 +3325,7 @@ function setup() {
             _maxCtx: maxCtx,
             _toolUse: m.tool_use === true,
             _vision: m.vision === true,
+            _isReasoning: m.is_reasoning === true,
             _quant: m.quantization || null,
             _tooLarge: tooLarge,
           });
@@ -3854,6 +3862,12 @@ function setup() {
           }
           try { localStorage.removeItem('logos_setup_scan'); localStorage.removeItem('logos_setup_progress'); localStorage.removeItem('logos_setup_progress_v2'); } catch {}
           try { sessionStorage.setItem('logos_fl', '1'); } catch {}
+          // Pre-load the chosen LM Studio model so the user's first chat
+          // isn't a 15-60s cold-boot. The /setup benchmark explicitly
+          // unloads each model after testing, so at this point the picked
+          // model is cold. Local-only step — skipped for frontier (cloud)
+          // tracks since their models don't live in VRAM.
+          await this._preloadModelIfLocal();
           await this._flyLogoToNav();
           await this._fadeOutPage();
           // needs_login=true means the server completed setup but couldn't issue
@@ -3881,6 +3895,62 @@ function setup() {
           this.completeError = { warning: false, message: 'Network error: ' + e.message };
         }
         this.completing = false;
+      }
+    },
+
+    // Stream the LM Studio model preload — shows live progress in the
+    // final "Completing setup…" card so the user understands why the
+    // extra ~20s is happening (and that their first chat won't pay it).
+    // Only for local LM Studio / Ollama — cloud-provider models don't
+    // live in VRAM. Best-effort: if the preload fails, the user's first
+    // chat will just pay the cold-load cost instead.
+    async _preloadModelIfLocal() {
+      if (this.track === 'frontier') return;  // cloud — no preload
+      if (!this.activeServer || !this.selectedModel) return;
+      const type = (this.activeServer.type || '').toLowerCase();
+      if (type !== 'lmstudio') return;  // LM Studio only (Ollama loads on-demand, fast)
+      try {
+        this.completeStage = 'preload_model';
+        this.completeStageLabel = `Pre-loading ${this.selectedModel} into LM Studio…`;
+        // Resolve the native max-context for the chosen model from the
+        // active server's model list so the preload loads at something
+        // proportional (the backend will cap to sensible agent-runtime
+        // size). Falls through to 0 = "let the backend / LM Studio pick".
+        const _modelMeta = (this.activeServer.models || []).find(m => m.id === this.selectedModel) || {};
+        const _nativeMax = _modelMeta.max_context_length || _modelMeta._maxCtx || 0;
+        const r = await fetch('/api/setup/preload-model', {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken() },
+          body: JSON.stringify({
+            endpoint: this.activeServer.endpoint || '',
+            model:    this.selectedModel,
+            api_key:  this.serverKeys[this.activeServer.endpoint] || this.activeServer._apiKey || '',
+            context_length: _nativeMax,  // 0 → backend resolves or skips
+          }),
+        });
+        if (!r.ok || !r.body) return;
+        const reader = r.body.getReader();
+        const dec = new TextDecoder();
+        let buf = '', streamDone = false;
+        while (!streamDone) {
+          let chunk;
+          ({ done: streamDone, value: chunk } = await reader.read());
+          buf += streamDone ? dec.decode(new Uint8Array(), { stream: false })
+                            : dec.decode(chunk, { stream: true });
+          const lines = buf.split('\n'); buf = lines.pop();
+          for (const line of lines) {
+            if (!line.startsWith('data: ')) continue;
+            try {
+              const ev = JSON.parse(line.slice(6));
+              if (ev.log) this.completeStageLabel = ev.log;
+              if (typeof ev.progress === 'number') this.completeStageProgress = ev.progress;
+              if (ev.done) { streamDone = true; break; }
+            } catch {}
+          }
+        }
+      } catch (_e) {
+        // best-effort — don't block the setup finish
       }
     },
 

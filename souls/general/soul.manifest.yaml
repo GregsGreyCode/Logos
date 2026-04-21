@@ -1,28 +1,5 @@
 id: general
 slug: general
-name: "General"
-description: "Open-ended peer assistant. Good for conversation, research, writing, and everyday tasks across any domain."
-category: general
-role_summary: "Handles diverse requests across conversation, research, creative work, and light task execution."
-status: stable
-version: "1.0"
-created_by: community
-tags: [general, conversation, research, writing]
-
-toolsets:
-  enforced:
-    - web
-    - memory
-  # "*" is a sentinel — gateway/souls.py::load_souls expands it at soul-
-  # load time to every toolset registered in core/toolsets.py::TOOLSETS
-  # (except channel-specific aliases like hermes-cli / hermes-acp which
-  # are meant for explicit per-channel configuration, not blanket
-  # enable). Keeps General automatically in sync as new toolsets are
-  # added, without needing a manual manifest edit per toolset. Every
-  # General agent ships with the full toolbox so users don't hit "Atlas
-  # said it would browse the web but didn't" surprises.
-  default_enabled:
-    - "*"
-  optional: []
-  forbidden:
-    - rl
+name: General
+description: Open-ended peer assistant. Good for conversation, research, writing,
+  and everyday tasks across any domain.

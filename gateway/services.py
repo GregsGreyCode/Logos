@@ -21,78 +21,21 @@ logger = logging.getLogger(__name__)
 # adds human-readable labels, help URLs, and validation endpoints.
 # ---------------------------------------------------------------------------
 
-TOOL_INTEGRATIONS = {
-    "FIRECRAWL_API_KEY": {
-        "label": "Firecrawl",
-        "description": "Web search and content extraction",
-        "tools": ["web_search", "web_extract"],
-        "toolset": "web",
-        "help_url": "https://firecrawl.dev/",
-        # Hit the v2 scrape endpoint; v2 strict-rejects unknown keys so the
-        # body carries only the two required fields. (Previously included
-        # `limit: 1`, which is a /search or /crawl parameter and was
-        # silently tolerated by v1 but now returns BAD_REQUEST on v2.)
-        "validate_url": "https://api.firecrawl.dev/v2/scrape",
-        "validate_method": "POST",
-        "validate_headers": lambda key: {"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
-        "validate_body": {"url": "https://example.com", "formats": ["markdown"]},
-    },
-    "FAL_KEY": {
-        "label": "fal.ai",
-        "description": "Image generation (Flux, SDXL, etc.)",
-        "tools": ["image_generate"],
-        "toolset": "image",
-        "help_url": "https://fal.ai/",
-        "validate_url": "https://queue.fal.run/fal-ai/flux/schnell",
-        "validate_method": "HEAD",
-        "validate_headers": lambda key: {"Authorization": f"Key {key}"},
-    },
-    "OPENROUTER_API_KEY": {
-        "label": "OpenRouter",
-        "description": "Multi-model inference routing (200+ models)",
-        "tools": ["mixture_of_agents"],
-        "toolset": "moa",
-        "help_url": "https://openrouter.ai/",
-        "validate_url": "https://openrouter.ai/api/v1/models",
-        "validate_method": "GET",
-        "validate_headers": lambda key: {"Authorization": f"Bearer {key}"},
-    },
-    "BROWSERBASE_API_KEY": {
-        "label": "Browserbase",
-        "description": "Cloud browser automation with stealth and proxies",
-        "tools": ["browser_navigate", "browser_click", "browser_type", "browser_snapshot"],
-        "toolset": "browser",
-        "help_url": "https://browserbase.com/",
-        "validate_url": "https://www.browserbase.com/v1/sessions",
-        "validate_method": "GET",
-        "validate_headers": lambda key: {"x-bb-api-key": key},
-    },
-    "ELEVENLABS_API_KEY": {
-        "label": "ElevenLabs",
-        "description": "Premium text-to-speech voices",
-        "tools": ["text_to_speech"],
-        "toolset": "tts-premium",
-        "help_url": "https://elevenlabs.io/",
-        "validate_url": "https://api.elevenlabs.io/v1/voices",
-        "validate_method": "GET",
-        "validate_headers": lambda key: {"xi-api-key": key},
-    },
-    "ANTHROPIC_API_KEY": {
-        "label": "Anthropic",
-        "description": "Claude models (direct API, not via OpenRouter)",
-        "tools": [],
-        "toolset": "inference",
-        "help_url": "https://console.anthropic.com/",
-        "validate_url": "https://api.anthropic.com/v1/messages",
-        "validate_method": "POST",
-        "validate_headers": lambda key: {
-            "x-api-key": key,
-            "anthropic-version": "2023-06-01",
-            "Content-Type": "application/json",
-        },
-        "validate_body": {"model": "claude-haiku-4-5-20251001", "max_tokens": 1, "messages": [{"role": "user", "content": "hi"}]},
-    },
-}
+# TOOL_INTEGRATIONS dict removed 2026-04-21. It catalogued cloud-tool
+# API keys (Firecrawl / fal.ai / OpenRouter / Browserbase / ElevenLabs /
+# Anthropic) but the keys only landed in Logos's os.environ — they were
+# never forwarded into sandboxes where hermes actually reads env. Per-
+# agent cloud-tool keys now live in the `agent_env_credentials` table
+# and flow into each sandbox's own .env at spawn time (and on hot-
+# refresh) via `build_channel_extra_env`. See:
+#   - gateway/auth/db.py: agent_env_credentials table + CRUD
+#   - gateway/admin_handlers.py: handle_agent_env_credentials_*
+#   - gateway/http_api.py: /setup slash-command handler
+#   - gateway/executors/hermes_server_mode.py: build_channel_extra_env
+#
+# MESSAGING_INTEGRATIONS below is intentionally preserved — messaging
+# adapters inside the sandbox still read those env var names, and the
+# Messaging tab uses this table for per-platform validation logic.
 
 # ---------------------------------------------------------------------------
 # Messaging platform integrations — maps env var → metadata for Channels UI.
@@ -302,94 +245,14 @@ def inject_credentials() -> int:
 
 
 # ---------------------------------------------------------------------------
-# Catalogue
-# ---------------------------------------------------------------------------
-
-def get_tool_integrations() -> list[dict]:
-    """Build the tool integrations catalogue for the UI.
-
-    Merges TOOL_INTEGRATIONS metadata with live availability status.
-    """
-    creds = _get_credentials()
-    result = []
-    for env_var, meta in TOOL_INTEGRATIONS.items():
-        has_key = bool(os.environ.get(env_var) or creds.get(env_var))
-        # Check if the toolset is actually available (tool check_fn passes)
-        available = False
-        if has_key:
-            try:
-                from tools.registry import registry
-                available = registry.is_toolset_available(meta["toolset"])
-            except Exception:
-                available = has_key  # assume available if we can't check
-        result.append({
-            "env_var": env_var,
-            "label": meta["label"],
-            "description": meta["description"],
-            "tools": meta["tools"],
-            "toolset": meta["toolset"],
-            "has_key": has_key,
-            "available": available,
-            "help_url": meta["help_url"],
-            "source": "env" if os.environ.get(env_var) and env_var not in creds else "db" if env_var in creds else None,
-            # Extras for self-hosted variants — UI uses these to render
-            # a "(self-hosted)" badge, prefill the compose-default URL,
-            # and group cloud + selfhosted alternatives together.
-            "selfhosted": bool(meta.get("selfhosted")),
-            "value_kind": meta.get("value_kind", "key"),
-            "compose_profile": meta.get("compose_profile"),
-            "compose_default": meta.get("compose_default"),
-            "selfhosted_alt": meta.get("selfhosted_alt"),
-            "alt_of": meta.get("alt_of"),
-        })
-    return result
-
-
-async def validate_credential(env_var: str, value: str) -> dict:
-    """Test a credential with a real API call. Returns {ok: bool, message: str}."""
-    meta = TOOL_INTEGRATIONS.get(env_var)
-    if not meta or "validate_url" not in meta:
-        return {"ok": True, "message": "No validation available — key saved on trust."}
-
-    import aiohttp
-    try:
-        headers = meta["validate_headers"](value)
-        method = meta.get("validate_method", "GET")
-        body = meta.get("validate_body")
-
-        timeout = aiohttp.ClientTimeout(total=10)
-        async with aiohttp.ClientSession(timeout=timeout) as session:
-            kwargs = {"headers": headers}
-            if body and method == "POST":
-                kwargs["json"] = body
-
-            if method == "GET":
-                async with session.get(meta["validate_url"], **kwargs) as resp:
-                    if resp.status in (200, 201):
-                        return {"ok": True, "message": f"Validated ({resp.status})"}
-                    text = (await resp.text())[:200]
-                    return {"ok": False, "message": f"HTTP {resp.status}: {text}"}
-            elif method == "POST":
-                async with session.post(meta["validate_url"], **kwargs) as resp:
-                    if resp.status in (200, 201):
-                        return {"ok": True, "message": f"Validated ({resp.status})"}
-                    text = (await resp.text())[:200]
-                    return {"ok": False, "message": f"HTTP {resp.status}: {text}"}
-            elif method == "HEAD":
-                async with session.head(meta["validate_url"], **kwargs) as resp:
-                    if resp.status in (200, 201, 405):
-                        return {"ok": True, "message": f"Validated ({resp.status})"}
-                    return {"ok": False, "message": f"HTTP {resp.status}"}
-    except aiohttp.ClientError as e:
-        return {"ok": False, "message": f"Connection error: {e}"}
-    except Exception as e:
-        return {"ok": False, "message": str(e)}
-
-    return {"ok": True, "message": "Saved"}
-
-
-# ---------------------------------------------------------------------------
 # Messaging integrations catalogue + validation
+#
+# (The tool integrations catalogue + `validate_credential` were removed
+# 2026-04-21 when per-agent cloud-tool keys moved to the sandbox .env
+# via agent_env_credentials. Messaging stays here because the shape is
+# genuinely different — one credential per platform, centralised at the
+# Logos layer rather than per-agent. Per-agent messaging tokens live in
+# agent_channel_credentials and feed via the same .env injection path.)
 # ---------------------------------------------------------------------------
 
 def get_messaging_integrations() -> list[dict]:

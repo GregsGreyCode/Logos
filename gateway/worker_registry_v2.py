@@ -469,9 +469,22 @@ async def fetch_toolsets_from_sandbox(
     openshell_cmd = ["openshell"]
     if target_gateway:
         openshell_cmd += ["-g", target_gateway]
+    # Prepend env vars that the *real* hermes gateway process sets for
+    # itself at startup. The probe is a sibling subprocess of the hermes
+    # gateway inside the sandbox, so it doesn't inherit hermes's env —
+    # any toolset whose ``check_fn`` looks at these vars would report
+    # itself unavailable to the probe even though it works fine at
+    # runtime. Canonical example: cronjob's check reads
+    # ``HERMES_GATEWAY_SESSION / HERMES_INTERACTIVE / HERMES_EXEC_ASK``
+    # and returns False when none are set, which is what the probe saw
+    # pre-2026-04-21. Injecting them via shell ``env`` spawns python3
+    # with a runtime-like env without touching the real gateway.
     openshell_cmd += [
         "sandbox", "exec", "--no-tty",
         "--name", sandbox_name, "--",
+        "env",
+        "HERMES_GATEWAY_SESSION=1",
+        "HERMES_INTERACTIVE=1",
         "python3", "-",
     ]
 

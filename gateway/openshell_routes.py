@@ -72,6 +72,26 @@ from gateway.auth import db as auth_db
 logger = logging.getLogger(__name__)
 
 
+# Which cluster image to pin every Logos-provisioned gateway to. The
+# openshell CLI ships with a baked-in default tag (as of the 0.0.29-era
+# CLI binary Logos ships with, that default is "0.0.29" — we want
+# newer). Setting ``OPENSHELL_CLUSTER_IMAGE`` in the env that
+# ``openshell gateway start`` sees overrides that baked-in tag and
+# brings up the target version. Without this, every time Logos
+# provisions a new route via the UI the cluster spins up on the stale
+# 0.0.29 image and misses months of sandbox/policy/inference fixes.
+#
+# Overridable via the ``LOGOS_OPENSHELL_CLUSTER_IMAGE`` env var so a
+# host can pin a different version (downgrade for rollback, bump
+# without a code change, point at a private registry mirror) without
+# editing this file.
+_DEFAULT_OPENSHELL_CLUSTER_IMAGE = "ghcr.io/nvidia/openshell/cluster:0.0.33"
+OPENSHELL_CLUSTER_IMAGE = os.getenv(
+    "LOGOS_OPENSHELL_CLUSTER_IMAGE",
+    _DEFAULT_OPENSHELL_CLUSTER_IMAGE,
+)
+
+
 # ── Constants ───────────────────────────────────────────────────────────────
 
 # Auto-allocation pool for OpenShell gateway host ports. The first route
@@ -229,6 +249,14 @@ def _run_openshell(
     Raises ``RuntimeError`` if the binary isn't on PATH (rather than the
     less-informative ``FileNotFoundError`` from subprocess). Sets a hard
     timeout because ``gateway start`` can hang on a misconfigured host.
+
+    Env: injects ``OPENSHELL_CLUSTER_IMAGE`` into the subprocess env so
+    any ``gateway start`` that happens to run through here uses Logos's
+    pinned cluster version (``OPENSHELL_CLUSTER_IMAGE`` module constant,
+    overridable via ``LOGOS_OPENSHELL_CLUSTER_IMAGE``) instead of the
+    CLI binary's baked-in default. Setting the env var is a no-op for
+    non-``gateway start`` subcommands, so we can safely always set it
+    without branching on the args.
     """
     exe = _openshell_exe()
     if not exe:
@@ -240,13 +268,20 @@ def _run_openshell(
     if gateway:
         cmd.extend(["-g", gateway])
     cmd.extend(args)
-    logger.debug("running: %s", " ".join(cmd))
+    # Inject OPENSHELL_CLUSTER_IMAGE without clobbering anything else
+    # the user has in their env (proxy vars, OPENSHELL_GATEWAY, etc).
+    # Respect a caller-provided override if one is already set upstream.
+    env = os.environ.copy()
+    env.setdefault("OPENSHELL_CLUSTER_IMAGE", OPENSHELL_CLUSTER_IMAGE)
+    logger.debug("running: %s (OPENSHELL_CLUSTER_IMAGE=%s)",
+                 " ".join(cmd), env["OPENSHELL_CLUSTER_IMAGE"])
     return subprocess.run(
         cmd,
         capture_output=True,
         text=True,
         check=check,
         timeout=timeout,
+        env=env,
     )
 
 
@@ -779,6 +814,40 @@ def finish_provisioning(route_id: str, set_as_default: bool = False) -> dict:
     auth_db.update_model_route(route_id, status="ready", status_detail=None)
     if set_as_default:
         auth_db.set_default_model_route(route_id)
+
+    # Step 6: Pre-warm the sandbox image into the new cluster's
+    # containerd. Without this, the first agent that spawns into this
+    # route eats ~90-180 s of ``docker save | ctr import`` for the 2.8
+    # GB hermes-sandbox image — directly in the user's provisioning
+    # banner. Pre-warm here runs in a background thread so
+    # finish_provisioning returns as soon as the gateway is up, and
+    # the first agent spawn later sees a warm cluster. Idempotent:
+    # ``_ensure_image_in_cluster`` short-circuits if the image is
+    # already present.
+    try:
+        import threading
+        from gateway.executors.openshell import (
+            _ensure_image_in_cluster, _DEFAULT_IMAGE,
+        )
+        def _prewarm():
+            try:
+                imported = _ensure_image_in_cluster(_DEFAULT_IMAGE, name)
+                logger.info(
+                    "prewarm: cluster '%s' image=%s imported=%s",
+                    name, _DEFAULT_IMAGE, imported,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "prewarm: _ensure_image_in_cluster(%s, %s) failed: %s "
+                    "(first sandbox spawn will do it synchronously)",
+                    _DEFAULT_IMAGE, name, exc,
+                )
+        threading.Thread(target=_prewarm, daemon=True,
+                         name=f"prewarm-{name}").start()
+    except Exception as exc:
+        logger.warning("prewarm: could not kick off thread for %s: %s",
+                       name, exc)
+
     return auth_db.get_model_route(route_id)
 
 
@@ -930,14 +999,34 @@ def destroy_route(route_id: str) -> bool:
     # Best-effort destroy of the underlying gateway. Even if openshell
     # complains (gateway already gone, etc.), we still want to drop the
     # DB row so the UI doesn't show a phantom route.
+    #
+    # Note: openshell 0.0.33 dropped the `--force` flag from `gateway
+    # destroy` (used to skip the interactive confirmation prompt). The
+    # CLI now defaults to non-interactive when stdin isn't a TTY — which
+    # is always true for us since we're subprocess.run()-ing it — so
+    # passing `--force` made every delete error out with rc=2
+    # "unexpected argument" and silently leave the cluster container
+    # behind. Our own orphan clusters came from exactly this path.
+    rc = 0
+    stderr_tail = ""
     try:
-        _run_openshell("gateway", "destroy", "--force",
-                        gateway=route["openshell_name"], check=False,
-                        timeout=120)
+        result = _run_openshell(
+            "gateway", "destroy",
+            gateway=route["openshell_name"], check=False, timeout=120,
+        )
+        rc = result.returncode
+        stderr_tail = (result.stderr or "").strip()[-500:]
     except Exception as exc:
         logger.warning(
             "openshell gateway destroy failed for %s: %s — dropping DB row anyway",
             route["openshell_name"], exc,
+        )
+    if rc != 0:
+        logger.warning(
+            "openshell gateway destroy for %s returned rc=%d: %s — "
+            "cluster container may be left as an orphan; "
+            "_prune_orphan_gateways at next gateway startup will catch it.",
+            route["openshell_name"], rc, stderr_tail,
         )
 
     return auth_db.delete_model_route(route_id)

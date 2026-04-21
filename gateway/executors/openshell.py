@@ -125,8 +125,55 @@ def _load_state() -> List[dict]:
 
 
 def _save_state(instances: List[dict]) -> None:
+    """Write the executor state file, deduplicated by ``sandbox_name``.
+
+    Two independent heal paths — ``_resurrect_missing_sandboxes`` and
+    ``sandbox_heal`` auto-respawn — can each append a record for the
+    same sandbox if they run within the same window. The downstream
+    ``_SandboxHealthEntry`` pipeline builds a dict keyed on
+    ``worker_id``, and the LAST entry in iteration order wins — which
+    is usually the newer, ``phase=provisioning`` one, even though the
+    older entry has already flipped to ``phase=ready``. Net effect:
+    the UI shows "provisioning" indefinitely while the sandbox is
+    actually healthy and responding to chat.
+    Dedup at the write boundary so every persisted state has at most
+    one entry per sandbox, preferring (in order) the entry that is
+    already ``phase=ready``, then the most recently-created. Callers
+    that append without checking remain correct; the last write wins.
+    """
     _STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
-    _STATE_FILE.write_text(json.dumps(instances, indent=2), encoding="utf-8")
+    by_name: Dict[str, dict] = {}
+    for inst in instances:
+        name = inst.get("sandbox_name") or ""
+        if not name:
+            # Entries without a sandbox_name are malformed but we
+            # don't want to drop them silently — write them through
+            # with a synthetic key so _load_state still sees them.
+            by_name[f"__nameless_{id(inst)}"] = inst
+            continue
+        existing = by_name.get(name)
+        if existing is None:
+            by_name[name] = inst
+            continue
+        # Prefer ready over provisioning, then newer over older.
+        ep = existing.get("phase")
+        ip = inst.get("phase")
+        if ep == "ready" and ip != "ready":
+            continue  # keep existing
+        if ip == "ready" and ep != "ready":
+            by_name[name] = inst
+            continue
+        try:
+            e_ts = float(existing.get("created_at") or 0)
+        except (TypeError, ValueError):
+            e_ts = 0.0
+        try:
+            i_ts = float(inst.get("created_at") or 0)
+        except (TypeError, ValueError):
+            i_ts = 0.0
+        if i_ts >= e_ts:
+            by_name[name] = inst
+    _STATE_FILE.write_text(json.dumps(list(by_name.values()), indent=2), encoding="utf-8")
 
 
 def _hermes_server_setup_dict(setup) -> dict:
@@ -273,7 +320,7 @@ def _ensure_image_in_cluster(
         total_bytes = 0  # fall back to label-only (no percent)
 
     _emit(
-        "Importing sandbox image into cluster (first install: 3\u20135 min)\u2026",
+        "Staging image into cluster (first install: 3\u20135 min)\u2026",
         substage="import_image", sub_percent=0,
     )
     logger.info(
@@ -310,7 +357,7 @@ def _ensure_image_in_cluster(
                 if total_bytes and (now - last_emit_ts) > 0.5:
                     pct = min(99, int(bytes_read * 100 / total_bytes))
                     _emit(
-                        f"Importing sandbox image\u2026 {pct}% "
+                        f"Staging image into cluster\u2026 {pct}% "
                         f"({bytes_read // (1024 ** 2)} / {total_bytes // (1024 ** 2)} MB)",
                         substage="import_image", sub_percent=pct,
                     )
@@ -353,7 +400,7 @@ def _ensure_image_in_cluster(
                 image, cluster_container, bytes_read // (1024 ** 2),
             )
             _emit(
-                "Importing sandbox image\u2026 100%",
+                "Staging image into cluster\u2026 100%",
                 substage="import_image", sub_percent=100,
             )
     except subprocess.TimeoutExpired:
@@ -1036,6 +1083,12 @@ class OpenShellExecutor:
         """
         from gateway.openshell_routes import get_default_gateway_name
 
+        # OpenShell sandboxes are backed by Kubernetes Sandbox CRs, so the
+        # sandbox name must be a valid RFC 1123 subdomain: lowercase
+        # [a-z0-9.-], must start/end with alphanumeric, max 63 chars.
+        sandbox_name = _sanitize_sandbox_name(f"hermes-{config.name}")
+        worker_id = sandbox_name  # worker registers with this ID
+
         def _emit(label: str, *, substage: str = "", sub_percent: int = 0) -> None:
             if progress_cb:
                 try: progress_cb(label, substage=substage, sub_percent=sub_percent)
@@ -1044,12 +1097,24 @@ class OpenShellExecutor:
                     try: progress_cb(label)
                     except Exception: pass
                 except Exception: pass
-
-        # OpenShell sandboxes are backed by Kubernetes Sandbox CRs, so the
-        # sandbox name must be a valid RFC 1123 subdomain: lowercase
-        # [a-z0-9.-], must start/end with alphanumeric, max 63 chars.
-        sandbox_name = _sanitize_sandbox_name(f"hermes-{config.name}")
-        worker_id = sandbox_name  # worker registers with this ID
+            # Persist the current substage into the state file so the
+            # Chats-tab banner can render granular copy via
+            # /api/admin/sandboxes polling (instead of one opaque
+            # "provisioning" label for the whole multi-minute
+            # pipeline). Best-effort — never block the spawn on a
+            # state-file write hiccup, and never clobber phase.
+            try:
+                with _state_lock():
+                    cur = _load_state()
+                    for inst in cur:
+                        if inst.get("sandbox_name") == sandbox_name:
+                            inst["spawn_substage"] = substage or ""
+                            inst["spawn_substage_label"] = label or ""
+                            inst["spawn_substage_pct"] = int(sub_percent or 0)
+                            break
+                    _save_state(cur)
+            except Exception:
+                pass
 
         # Resolve which OpenShell gateway this sandbox should land inside,
         # and what model the worker should request from inference.local.
@@ -1304,7 +1369,14 @@ class OpenShellExecutor:
         # aborting the spawn.
         _effective_policy_tmp: Optional[Path] = None
         # Spawn-duration tracking — populated below and recorded on success.
+        # We also stamp a per-phase split so the UI's banner can say
+        # "usually Ns for the pod, then Ns for the agent" based on
+        # learned medians instead of a single hand-waved number. The
+        # phases are: pod-create (openshell sandbox create returns)
+        # vs agent-boot (hermes HTTP answers /health).
         _spawn_started_at = time.time()
+        _pod_ready_at: Optional[float] = None
+        _agent_ready_at: Optional[float] = None
         _image_was_imported = False
         try:
             # ── Step 0: ensure the sandbox image is in the cluster ─
@@ -1314,8 +1386,13 @@ class OpenShellExecutor:
             # them. This step imports the image if it's missing,
             # taking ~60-120s for a fresh import (layers are cached
             # after the first import, making subsequent spawns fast).
+            # Pass our local _emit as the progress_cb so image-import
+            # substages ("check_image", "import_image" with sub_percent)
+            # also get persisted to the state file — the banner reads
+            # from /api/admin/sandboxes polling and otherwise sees the
+            # 90-180s image-import window as an opaque "provisioning".
             _image_was_imported = _ensure_image_in_cluster(
-                self.sandbox_image, openshell_gw, progress_cb=progress_cb,
+                self.sandbox_image, openshell_gw, progress_cb=_emit,
             )
 
             # ── Step 1: create the sandbox CR ──────────────────────
@@ -1401,8 +1478,85 @@ class OpenShellExecutor:
                 # command exits, so we can run the upload + worker exec
                 # steps below as independent calls.
                 create_args += ["--", "true"]
-                result = _openshell(*create_args, gateway=openshell_gw, check=True)
-                logger.debug("openshell sandbox create stdout: %s", result.stdout.strip())
+                # Pod-created-but-cli-hung recovery path. Openshell's
+                # sandbox-create opens an SSH session to run the
+                # trailing `true` and occasionally hangs on the
+                # handshake under concurrent-spawn contention. The pod
+                # comes up fine, but the CLI never returns and we
+                # time out after 600 s. Before raising, check whether
+                # the sandbox now exists and is Ready — if so, the pod
+                # is there, the only thing missing is the Logos
+                # pipeline continuation, which we can still do.
+                # Catches ``subprocess.TimeoutExpired`` (the 600 s
+                # reaper) AND ``CalledProcessError`` (non-zero exit
+                # that might still have created the CR).
+                try:
+                    result = _openshell(*create_args, gateway=openshell_gw, check=True)
+                    logger.debug("openshell sandbox create stdout: %s", result.stdout.strip())
+                except (subprocess.TimeoutExpired, subprocess.CalledProcessError) as _create_exc:
+                    # Did the pod come up anyway?
+                    _pod_came_up = False
+                    try:
+                        _verify = _openshell(
+                            "sandbox", "list",
+                            gateway=openshell_gw, check=False, timeout=15,
+                        )
+                        for _line in (_verify.stdout or "").splitlines():
+                            if sandbox_name in _line and "Ready" in _line:
+                                _pod_came_up = True
+                                break
+                    except Exception as _verify_exc:
+                        logger.warning(
+                            "spawn(%s): post-timeout sandbox-list probe failed: %s",
+                            sandbox_name, _verify_exc,
+                        )
+                    if _pod_came_up:
+                        logger.warning(
+                            "spawn(%s): sandbox create %s but pod IS Ready — "
+                            "adopting the pod and continuing the pipeline",
+                            sandbox_name,
+                            "timed out" if isinstance(_create_exc, subprocess.TimeoutExpired)
+                                        else f"failed with rc={getattr(_create_exc, 'returncode', '?')}",
+                        )
+                        # Kill any hermes surviving from a prior pod so
+                        # the fresh deploy_hermes_config (which mints a
+                        # new API_SERVER_KEY) isn't left fighting an
+                        # already-running hermes that still has the OLD
+                        # key in memory. Without this, .env has key N+1
+                        # and hermes in memory has key N → every Logos
+                        # dispatch 401s until the user clicks Restart
+                        # runtime. Harmless if no hermes was running
+                        # (pkill -f returns 1, swallowed by `|| true`).
+                        try:
+                            subprocess.run(
+                                ["openshell", "-g", openshell_gw, "sandbox", "exec",
+                                 "-n", sandbox_name, "--no-tty", "--",
+                                 "sh", "-c",
+                                 "pkill -f 'hermes-srv-home/hermes gateway run|hermes_cancel_monkeypatch\\.py gateway run|/usr/local/bin/hermes gateway run' || true"],
+                                capture_output=True, text=True, timeout=15,
+                            )
+                            logger.info(
+                                "spawn(%s): killed any surviving hermes before adopt (prevents .env/key split-brain)",
+                                sandbox_name,
+                            )
+                        except Exception as _kill_exc:
+                            logger.warning(
+                                "spawn(%s): pre-adopt hermes kill failed (non-fatal): %s",
+                                sandbox_name, _kill_exc,
+                            )
+                        # Fall through — the pod exists, the rest of
+                        # the pipeline (deploy_hermes_config / launcher
+                        # / SOUL.md / hermes launch / health) runs
+                        # against the existing pod and finishes the spawn.
+                    else:
+                        # Pod didn't come up — re-raise the original
+                        # error so the normal cleanup path runs.
+                        raise
+                # Stamp pod-ready the moment openshell sandbox create
+                # returns — that call blocks until the pod phase = Ready,
+                # so this is the boundary between pod-spawn and agent-
+                # boot for metrics purposes.
+                _pod_ready_at = time.time()
 
             # ── Step 2: hermes-server mode setup ───────────────────
             _emit("Uploading agent configuration\u2026", substage="upload_config")
@@ -1452,6 +1606,11 @@ class OpenShellExecutor:
                         f"None. Cannot continue — chat dispatch would "
                         f"silently regress to v1."
                     )
+                # Stamp agent-ready: enable_hermes_server_mode returns
+                # after wait_for_hermes_health confirms /health is 200,
+                # so this is the boundary we want for the "agent-boot"
+                # phase metric.
+                _agent_ready_at = time.time()
             else:
                 logger.warning(
                     "spawn(%s): LOGOS_HERMES_SERVER_MODE=0 — skipping "
@@ -1522,17 +1681,28 @@ class OpenShellExecutor:
                 except OSError:
                     pass
 
-        # Record spawn duration so the UI hint can show a learned
-        # estimate ("usually ~95s") instead of hardcoded copy. Best-effort —
-        # never block return on a metrics write.
+        # Record spawn duration so the UI banner can show a learned
+        # estimate instead of a hardcoded guess. Best-effort — never
+        # block return on a metrics write. We split the total into
+        # two phases (pod-create → agent-boot) so the banner's two
+        # banner states (provisioning pod vs. starting agent) each
+        # get their own accurate learned median.
         try:
             from gateway import spawn_metrics as _sm
+            _now = time.time()
+            _pod_ms = int((_pod_ready_at - _spawn_started_at) * 1000) if _pod_ready_at else None
+            _agent_ms = (
+                int((_agent_ready_at - _pod_ready_at) * 1000)
+                if _agent_ready_at and _pod_ready_at else None
+            )
             _sm.record(
                 gateway=openshell_gw,
                 image=self.sandbox_image,
-                duration_ms=int((time.time() - _spawn_started_at) * 1000),
+                duration_ms=int((_now - _spawn_started_at) * 1000),
                 image_imported=_image_was_imported,
                 agent_name=config.name,
+                pod_ms=_pod_ms,
+                agent_ms=_agent_ms,
             )
         except Exception:
             pass

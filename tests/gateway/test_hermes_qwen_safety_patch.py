@@ -1,11 +1,12 @@
 """Unit tests for the Qwen OpenAI-SDK safety net in
-``gateway.executors.hermes_cancel_monkeypatch``.
+``gateway.executors.hermes_launcher``.
 
-The monkeypatch file is uploaded into v2 sandboxes and executed before
-hermes boots so the patches apply in the sandbox's Python process. These
-tests cover the pure helper functions directly against the module —
-they do not exercise the actual openai SDK wrap (that's validated in
-the live end-to-end test that runs against a real sandbox).
+The launcher file is uploaded into v2 sandboxes and executed before
+hermes boots so the patches apply in the sandbox's Python process.
+These tests cover the pure helper functions directly against the
+module — they do not exercise the actual openai SDK wrap (that's
+validated in the live end-to-end test that runs against a real
+sandbox).
 """
 
 from __future__ import annotations
@@ -15,7 +16,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from gateway.executors.hermes_cancel_monkeypatch import (
+from gateway.executors.hermes_launcher import (
     _apply_qwen_safety_to_choice,
     _normalize_finish_reason,
     _parse_qwen_xml_tools,

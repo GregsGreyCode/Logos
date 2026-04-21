@@ -20,6 +20,10 @@
 ARG BASE_IMAGE=hermes-upstream:latest
 FROM ${BASE_IMAGE}
 
+# Upstream ends as USER hermes (for editable-install safety). We need
+# root to install packages and stage files into /usr/local.
+USER root
+
 # OpenShell sandbox agent needs iproute2 for network namespace setup.
 # The upstream hermes image is debian-based but doesn't include it.
 #
@@ -35,12 +39,22 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3-pip \
     && rm -rf /var/lib/apt/lists/*
 
-# Re-install hermes-agent as a non-editable package. The upstream image
-# uses `pip install -e ".[all]"` which creates an editable install that
-# reads source from /opt/hermes — but OpenShell's sandbox policy blocks
-# /opt/ at runtime. A non-editable install copies the code into
-# site-packages where the sandbox user can read it.
-RUN python3 -m pip install --no-cache-dir --break-system-packages /opt/hermes
+# Re-install hermes-agent as a non-editable package WITH the [all] extras.
+# The upstream image uses `pip install -e ".[all]"` which creates an
+# editable install that reads source from /opt/hermes — but OpenShell's
+# sandbox policy blocks /opt/ at runtime. A non-editable install copies
+# the code into site-packages where the sandbox user can read it.
+#
+# Without [all], the extras (messaging, matrix, slack, cron, …) are
+# skipped — so python-telegram-bot, discord.py, slack-sdk etc. never
+# land in site-packages and hermes logs "Telegram: python-telegram-bot
+# not installed" on boot, silently disabling every platform adapter.
+#
+# Uses `uv pip install` (not `pip install`) because stock pip's resolver
+# collapses on the [all] dependency graph with "resolution-too-deep".
+# The upstream image already ships uv at /usr/local/bin/uv for its own
+# editable install; reusing it here keeps the two installs equivalent.
+RUN uv pip install --system --no-cache-dir --break-system-packages '/opt/hermes[all]'
 
 # Local browser: install Chromium via agent-browser so browser_navigate
 # works inside the sandbox with zero external dependencies. Pure

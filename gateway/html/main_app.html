@@ -278,16 +278,20 @@
       :class="tab==='compare'?'tab-active':'text-gray-400 hover:text-white'"
       data-testid="nav-compare"
       @click="tab='compare'; if(!namedAgents.length) loadNamedAgents()">Compare</button>
-    <!-- LOG-25.2: Config tab gated on `manage_machines` only. Previous
+    <!-- LOG-25.2: Settings tab gated on `manage_machines` only. Previous
          `|| can('view_evolution')` leaked the tab to the `user` role
-         (which gets view_evolution by default) even though all Config
+         (which gets view_evolution by default) even though all Settings
          sub-tabs require manage_machines. Evolution lives in the
-         Activity tab, not under Config, so the OR was always wrong. -->
+         Activity tab, not under Settings, so the OR was always wrong.
+         Tab renamed from "Config" to "Settings" in a later pass; the
+         internal state key (``infraTab``, localStorage
+         ``logos_infra_tab``) and URL prefix (``/config/``) are kept
+         to avoid breaking bookmarks / deep links. -->
     <template x-if="can('manage_machines')">
       <button class="pb-2 text-sm font-medium border-b-2 border-transparent"
         :class="tab==='infra'?'tab-active':'text-gray-400 hover:text-white'"
         data-testid="nav-settings"
-        @click="tab='infra'; infraTab='servers'; localStorage.setItem('logos_infra_tab','servers'); loadAdminMachines(); loadCloudProviders(); probeAllMachines()">Config</button>
+        @click="tab='infra'; infraTab='servers'; localStorage.setItem('logos_infra_tab','servers'); loadAdminMachines(); loadCloudProviders(); probeAllMachines()">Settings</button>
     </template>
     <template x-if="can('view_runs') || can('view_approvals') || can('view_evolution')">
       <button class="pb-2 text-sm font-medium border-b-2 border-transparent relative"
@@ -504,7 +508,7 @@
              ONLY when an enabled agent_channel_credentials row exists
              for that platform — so a fresh install shows just "Local"
              and new pills materialise as the user adds credentials in
-             Config → Messaging. The derivation runs off
+             Settings → Messaging. The derivation runs off
              allAgentChannels which is loaded when this tab opens. -->
         <div class="flex gap-1 mb-2 flex-wrap">
           <button @click="setSidebarFilter('web')"
@@ -788,9 +792,9 @@
                    and a second runtime lands. -->
               <span data-testid="stamp-a" class="text-[10px] px-1.5 py-0.5 rounded font-mono border flex items-center gap-1"
                 :class="activeAgent ? 'bg-gray-800 text-gray-400 border-gray-700' : 'bg-gray-800/50 text-gray-600 border-gray-800'"
-                :title="activeAgent ? ((activeAgent.agent_type || 'hermes') + ' runtime — agent: ' + activeAgent.name) : 'No agent bound to this chat'">
+                :title="activeAgent ? (((activeAgent.agent_type || 'hermes').charAt(0).toUpperCase() + (activeAgent.agent_type || 'hermes').slice(1)) + ' runtime — agent: ' + activeAgent.name) : 'No agent bound to this chat'">
                 <span class="font-bold text-gray-500">A</span>
-                <span x-text="activeAgent ? ((activeAgent.agent_type || 'hermes') + ' · ' + activeAgent.name) : 'none'"></span>
+                <span x-text="activeAgent ? (((activeAgent.agent_type || 'hermes').charAt(0).toUpperCase() + (activeAgent.agent_type || 'hermes').slice(1)) + ' · ' + activeAgent.name) : 'none'"></span>
               </span>
               <!--
                 M: Model — clickable dropdown driven by model_routes.
@@ -1051,13 +1055,10 @@
               <div class="mt-6 max-w-md text-center space-y-3" style="opacity:0.55">
                 <div class="text-xs uppercase tracking-widest text-gray-500">Getting started</div>
                 <div class="text-[11px] text-gray-400 leading-relaxed">
-                  Type
+                  Run
                   <button @click="chatInput = '/setup tools'; $nextTick(() => document.querySelector('[data-testid=chat-input]')?.focus())"
                           class="font-mono text-[var(--accent)] hover:underline cursor-pointer">/setup&nbsp;tools</button>
-                  to configure API keys for web search, vision, and other tools.
-                </div>
-                <div class="text-[11px] text-gray-500 leading-relaxed">
-                  Click the <span class="font-mono text-gray-300">T</span> pill above to pick this agent's tools, or the <span class="font-mono text-gray-300">P</span> pill to grant network permissions.
+                  to enable web search, vision, and other API-key tools.
                 </div>
                 <div class="text-[11px] text-gray-600 leading-relaxed">
                   Or just send a message below to start chatting.
@@ -1281,35 +1282,110 @@
                 <span class="font-mono text-indigo-400 text-xs tabular-nums" x-text="thinkingText"></span>
               </div>
             </div>
-            <!-- Sandbox provisioning guard (agent selected but worker not yet connected).
-                 Prominent banner so the user can immediately see why the chat
-                 input is disabled — earlier this was a small yellow text line
-                 that was easy to miss next to the spinner. -->
-            <!-- Provisioning banner — visible from the moment the user
-                 switches model / spawns an agent until the worker is
-                 connected. The progress bar fills toward the learned
-                 median (or 90s as a hardcoded fallback) so the user has
-                 a sense of pace. The bar caps at 95% so a slow spawn
-                 doesn't visually "complete" before it actually does;
-                 the spinner keeps moving the whole time. The seconds
-                 counter is gone — it was noisy and the bar conveys the
-                 same "still going" signal more humanely. -->
-            <div x-show="!chatLoading && activeInstance?.source === 'named' && !(activeInstance.worker_connected && activeInstance.worker_healthy)" x-cloak
-                 class="mx-4 mt-2 mb-1 px-4 py-3 rounded-lg bg-yellow-950/40 border border-yellow-900/60 flex items-start gap-3 text-sm text-yellow-300 shrink-0">
-              <span class="animate-spin inline-block text-lg shrink-0 mt-0.5">&#9881;</span>
-              <div class="flex-1 min-w-0">
-                <div class="font-medium"
-                     x-text="(switchingAgentIds.includes(activeAgent?.id) ? 'Switching model for ' : 'Sandbox for ') + (activeInstance?.name || 'agent') + (switchingAgentIds.includes(activeAgent?.id) ? '…' : ' is provisioning…')"></div>
-                <div class="text-xs text-yellow-500/70 mt-0.5"
-                     x-text="activeAgent ? provisioningHint(activeAgent.id) : 'Chat unlocks automatically when the worker connects.'"></div>
-                <!-- Progress bar — width = elapsed/expected, capped at 95%. -->
-                <div class="mt-2 h-1 w-full bg-yellow-900/40 rounded overflow-hidden"
-                     x-show="activeAgent && provisioningElapsed(activeAgent.id) > 0">
-                  <div class="h-full bg-yellow-500/70 transition-[width] duration-1000 ease-linear"
-                       :style="'width: ' + Math.min(95, Math.round((provisioningElapsed(activeAgent?.id) / Math.max(15, provisioningExpectedSec(activeAgent?.id))) * 100)) + '%'"></div>
+            <!-- Sandbox provisioning guard. Shown whenever the active
+                 agent's worker isn't healthy. The copy + colour now
+                 reflect the ACTUAL sandbox phase reported by
+                 /api/admin/sandboxes, not the UI-only timer. Four
+                 distinct states — see sandboxStateForAgent() for the
+                 backing classification.
+                   red  · missing       — no sandbox exists at all; the
+                                          UI used to say "provisioning
+                                          past p90" forever even though
+                                          nothing was in flight. Now
+                                          shows an actionable CTA.
+                   yellow · provisioning — a spawn is genuinely running;
+                                           progress bar + learned ETA.
+                   yellow · starting     — sandbox Ready but hermes HTTP
+                                           server not yet healthy.
+                   (hidden on `ready`)
+                 The `switchingAgentIds` model-switch case overlays on
+                 top — that's still pure UI state, no sandbox list
+                 lookup needed. -->
+            <template x-if="!chatLoading && activeInstance?.source === 'named' && !(activeInstance.worker_connected && activeInstance.worker_healthy)">
+              <div class="mx-4 mt-2 mb-1 px-4 py-3 rounded-lg border flex items-start gap-3 text-sm shrink-0"
+                   :class="sandboxStateForAgent(activeInstance?.name).state === 'missing' && !agentRuntimeRestarting ? 'bg-red-950/40 border-red-900/60 text-red-300'
+                                                                                                                     : 'bg-yellow-950/40 border-yellow-900/60 text-yellow-300'">
+                <!-- Icon: warning for true-missing (no restart in flight);
+                     spinner for anything actively moving (provisioning,
+                     starting, restart in progress, model switch). -->
+                <span x-show="sandboxStateForAgent(activeInstance?.name).state === 'missing' && !agentRuntimeRestarting" class="inline-block text-lg shrink-0 mt-0.5">&#9888;</span>
+                <span x-show="sandboxStateForAgent(activeInstance?.name).state !== 'missing' || agentRuntimeRestarting" class="animate-spin inline-block text-lg shrink-0 mt-0.5">&#9881;</span>
+                <div class="flex-1 min-w-0">
+                  <!-- Headline — varies per state. Restart-in-flight
+                       overrides "missing" because the user just
+                       triggered a respawn and seeing red "no sandbox"
+                       alongside their in-flight request is alarming. -->
+                  <div class="font-medium">
+                    <template x-if="agentRuntimeRestarting">
+                      <span>Restarting runtime for <span x-text="activeInstance?.name || 'agent'"></span>&hellip;</span>
+                    </template>
+                    <template x-if="!agentRuntimeRestarting && sandboxStateForAgent(activeInstance?.name).state === 'missing' && !switchingAgentIds.includes(activeAgent?.id)">
+                      <span>No sandbox running for <span x-text="activeInstance?.name || 'this agent'"></span>.</span>
+                    </template>
+                    <template x-if="!agentRuntimeRestarting && sandboxStateForAgent(activeInstance?.name).state === 'provisioning' && !switchingAgentIds.includes(activeAgent?.id)">
+                      <span>Spawning sandbox for <span x-text="activeInstance?.name || 'agent'"></span>&hellip;</span>
+                    </template>
+                    <template x-if="!agentRuntimeRestarting && sandboxStateForAgent(activeInstance?.name).state === 'starting' && !switchingAgentIds.includes(activeAgent?.id)">
+                      <span>Sandbox up — starting <span x-text="activeInstance?.name || 'agent'"></span>&hellip;</span>
+                    </template>
+                    <template x-if="!agentRuntimeRestarting && switchingAgentIds.includes(activeAgent?.id)">
+                      <span>Switching model for <span x-text="activeInstance?.name || 'agent'"></span>&hellip;</span>
+                    </template>
+                  </div>
+                  <!-- Subtext — differentiates by state. -->
+                  <div class="text-xs mt-0.5"
+                       :class="sandboxStateForAgent(activeInstance?.name).state === 'missing' && !agentRuntimeRestarting ? 'text-red-500/70' : 'text-yellow-500/70'">
+                    <template x-if="agentRuntimeRestarting">
+                      <span>Re-deploying the launcher and bouncing hermes &mdash; <span x-html="phaseHint('agent')"></span></span>
+                    </template>
+                    <template x-if="!agentRuntimeRestarting && sandboxStateForAgent(activeInstance?.name).state === 'missing' && !switchingAgentIds.includes(activeAgent?.id)">
+                      <span>
+                        Nothing is being provisioned right now. Send a message to trigger a spawn, or click
+                        <button @click="restartAgentRuntime(activeAgent?.id)"
+                                :disabled="agentRuntimeRestarting"
+                                class="underline hover:text-red-200 disabled:opacity-40">Restart runtime</button>
+                        on the agent card. Messages sent to this agent on Telegram / Discord won't be received until the sandbox is running.
+                      </span>
+                    </template>
+                    <template x-if="!agentRuntimeRestarting && sandboxStateForAgent(activeInstance?.name).state === 'provisioning' && !switchingAgentIds.includes(activeAgent?.id)">
+                      <!-- Prefer the live substage label ("Importing
+                           sandbox image… 43%", "Creating sandbox pod…")
+                           when the spawn is mid-flight and the state
+                           file has one; fall back to the learned-median
+                           phaseHint for the first tick before any
+                           substage lands. -->
+                      <span x-show="sandboxStateForAgent(activeInstance?.name).substageLabel"
+                            x-text="sandboxStateForAgent(activeInstance?.name).substageLabel"></span>
+                      <span x-show="!sandboxStateForAgent(activeInstance?.name).substageLabel"
+                            x-html="phaseHint('pod')"></span>
+                    </template>
+                    <template x-if="!agentRuntimeRestarting && sandboxStateForAgent(activeInstance?.name).state === 'starting' && !switchingAgentIds.includes(activeAgent?.id)">
+                      <span x-html="phaseHint('agent')"></span>
+                    </template>
+                    <template x-if="!agentRuntimeRestarting && sandboxStateForAgent(activeInstance?.name).state === 'unknown' && !switchingAgentIds.includes(activeAgent?.id)">
+                      <span>Checking sandbox state&hellip;</span>
+                    </template>
+                  </div>
+                  <!-- Progress bar — prefer the backend-reported
+                       sub-percent (exact, from e.g. image-import
+                       byte-count) over the elapsed/expected guess.
+                       `missing` + `starting` still don't get a bar
+                       because the elapsed window has no meaning for
+                       them. -->
+                  <div x-show="sandboxStateForAgent(activeInstance?.name).state === 'provisioning' && activeAgent && (sandboxStateForAgent(activeInstance?.name).substagePct > 0 || provisioningElapsed(activeAgent.id) > 0)"
+                       class="mt-2 h-1 w-full bg-yellow-900/40 rounded overflow-hidden">
+                    <div class="h-full bg-yellow-500/70 transition-[width] duration-1000 ease-linear"
+                         :style="(() => {
+                           const sb = sandboxStateForAgent(activeInstance?.name);
+                           if (sb.substagePct > 0) {
+                             return 'width: ' + Math.min(99, sb.substagePct) + '%';
+                           }
+                           return 'width: ' + Math.min(95, Math.round((provisioningElapsed(activeAgent?.id) / Math.max(15, provisioningExpectedSec(activeAgent?.id))) * 100)) + '%';
+                         })()"></div>
+                  </div>
                 </div>
               </div>
-            </div>
+            </template>
             <!-- No agents at all (e.g. post-setup before sandbox finishes) -->
             <div x-show="!chatLoading && (!namedAgents || namedAgents.length === 0)" x-cloak
                  class="flex items-center gap-2 text-sm text-indigo-400 py-1">
@@ -1684,20 +1760,6 @@
                       <span class="text-[10px] px-1.5 py-0.5 rounded bg-gray-800 text-gray-400 font-semibold">queued…</span>
                     </template>
                     <span class="ml-auto text-[10px] text-gray-700 font-mono uppercase" x-text="slotIdx === 0 ? 'pane a' : 'pane b'"></span>
-                    <!-- Promote-to-chat: copy this pane's transcript into
-                         a regular Chats-tab conversation and jump the user
-                         there. Lets you keep talking to just the winning
-                         agent without the other pane's agent also receiving
-                         your follow-ups. Disabled until the pane has at
-                         least one exchange — empty promote = no-op. -->
-                    <button class="text-[10px] px-2 py-0.5 rounded border border-gray-700 text-gray-400 hover:text-white hover:border-gray-500 transition-colors"
-                            @click="openAgentLogs(pane)"
-                            title="View this agent's runtime log tail">📋 Logs</button>
-                    <button class="text-[10px] px-2 py-0.5 rounded border border-indigo-700/60 text-indigo-300 hover:bg-indigo-900/40 transition-colors"
-                            @click="promotePaneToChat(slotIdx)"
-                            :disabled="!(compareTranscripts[pane.id] && compareTranscripts[pane.id].length)"
-                            :class="(compareTranscripts[pane.id] && compareTranscripts[pane.id].length) ? '' : 'opacity-40 cursor-not-allowed'"
-                            title="Continue this conversation one-on-one in the Chats tab">→ Continue</button>
                     <button class="text-gray-600 hover:text-red-400 text-lg leading-none px-1"
                             @click="compareRemovePane(slotIdx)"
                             title="Remove this agent">&times;</button>
@@ -1739,6 +1801,22 @@
                       <span class="font-bold">M</span>
                       <span class="truncate" x-text="pane.model || 'auto'"></span>
                     </span>
+                    <!-- P: Permissions — read-only count of applied network presets -->
+                    <span class="text-[10px] px-1.5 py-0.5 rounded font-mono bg-emerald-950 text-emerald-400 border border-emerald-900 flex items-center gap-1"
+                          :title="'Applied presets: ' + (() => { try { const p = JSON.parse(pane.applied_presets || '[]'); return p.length ? p.join(', ') : 'none'; } catch(e) { return 'none'; } })()">
+                      <span class="font-bold text-emerald-600">P</span>
+                      <span x-text="(() => { try { return JSON.parse(pane.applied_presets || '[]').length; } catch(e) { return 0; } })() + ' presets'"></span>
+                    </span>
+                    <!-- Right cluster — mirrors Chats STAMP layout: ml-auto on
+                         Logs pushes the pair to the right edge of this row. -->
+                    <button class="ml-auto text-[10px] px-2 py-0.5 rounded border border-gray-700 text-gray-400 hover:text-white hover:border-gray-500 transition-colors"
+                            @click="openAgentLogs(pane)"
+                            title="View this agent's runtime log tail">📋 Logs</button>
+                    <button class="text-[10px] px-2 py-0.5 rounded border border-indigo-700/60 text-indigo-300 hover:bg-indigo-900/40 transition-colors"
+                            @click="promotePaneToChat(slotIdx)"
+                            :disabled="!(compareTranscripts[pane.id] && compareTranscripts[pane.id].length)"
+                            :class="(compareTranscripts[pane.id] && compareTranscripts[pane.id].length) ? '' : 'opacity-40 cursor-not-allowed'"
+                            title="Continue this conversation one-on-one in the Chats tab">→ Continue</button>
                   </div>
                 </div>
 
@@ -1916,7 +1994,7 @@
   <!-- ── Routing Tab ───────────────────────────────────────────────── -->
   <div x-show="tab==='infra'" x-cloak>
 
-    <!-- Config sub-tabs — uses the same ``tab-active`` CSS class as
+    <!-- Settings sub-tabs — uses the same ``tab-active`` CSS class as
          the top-level nav and the Activity / Admin sub-navs, so all
          three rows of tabs share a single look (accent underline +
          accent text on active, grey + hover-white on inactive).
@@ -1930,12 +2008,22 @@
       <template x-if="can('manage_machines')">
         <button class="pb-2 text-sm font-medium border-b-2 border-transparent"
           :class="infraTab==='tools' ? 'tab-active' : 'text-gray-500 hover:text-white'"
-          @click="infraTab='tools'; localStorage.setItem('logos_infra_tab','tools'); loadToolsTab(); loadServices(); loadLocalServices()">Tools</button>
+          @click="infraTab='tools'; localStorage.setItem('logos_infra_tab','tools'); loadToolsTab(); loadLocalServices()">Tools</button>
       </template>
       <template x-if="can('manage_machines') || can('manage_users')">
         <button class="pb-2 text-sm font-medium border-b-2 border-transparent"
           :class="infraTab==='messaging' ? 'tab-active' : 'text-gray-500 hover:text-white'"
           @click="infraTab='messaging'; localStorage.setItem('logos_infra_tab','messaging'); loadMessagingChannels(); if(!namedAgents?.length) loadNamedAgents(); loadAllAgentChannels()">Messaging</button>
+      </template>
+      <template x-if="can('view_sandbox_policies')">
+        <button class="pb-2 text-sm font-medium border-b-2 border-transparent"
+          :class="infraTab==='sandbox-policies' ? 'tab-active' : 'text-gray-500 hover:text-white'"
+          @click="infraTab='sandbox-policies'; localStorage.setItem('logos_infra_tab','sandbox-policies'); loadSandboxPresets(); if(!namedAgents?.length) loadNamedAgents()">Permissions</button>
+      </template>
+      <template x-if="can('view_souls')">
+        <button class="pb-2 text-sm font-medium border-b-2 border-transparent"
+          :class="infraTab==='souls' ? 'tab-active' : 'text-gray-500 hover:text-white'"
+          @click="infraTab='souls'; localStorage.setItem('logos_infra_tab','souls'); loadAdminSouls()">Souls</button>
       </template>
     </div>
 
@@ -1981,13 +2069,22 @@
             class="text-xs px-3 py-1.5 rounded-lg border border-indigo-700 text-indigo-400 hover:text-white hover:border-indigo-500 disabled:opacity-40 transition-colors">
             <span x-text="cloudProviderValidating ? 'Validating...' : cloudProviderModels.length ? '\u2713 ' + cloudProviderModels.length + ' models' : 'Validate key'"></span>
           </button>
-          <select x-show="cloudProviderModels.length" x-model="cloudProviderForm.model"
-            class="flex-1 px-2 py-1.5 rounded-lg bg-gray-800 border border-gray-700 text-xs text-white focus:outline-none focus:border-indigo-500">
-            <template x-for="m in cloudProviderModels" :key="m">
-              <option :value="m" x-text="m"></option>
-            </template>
-          </select>
+          <div x-show="cloudProviderModels.length" class="flex-1 flex flex-col gap-0.5">
+            <label class="text-[10px] text-gray-500 uppercase tracking-wider">Default model</label>
+            <select x-model="cloudProviderForm.model"
+              class="px-2 py-1.5 rounded-lg bg-gray-800 border border-gray-700 text-xs text-white focus:outline-none focus:border-indigo-500">
+              <template x-for="m in cloudProviderModels" :key="m">
+                <option :value="m" x-text="m"></option>
+              </template>
+            </select>
+          </div>
         </div>
+        <!-- Explain why there's a model picker on a provider form —
+             the label alone is ambiguous ("default for what?"). Three
+             things it drives, in user-visible priority order. -->
+        <p x-show="cloudProviderModels.length" class="text-[10px] text-gray-500 leading-relaxed">
+          Used to auto-provision a model route when this provider is activated, as the fallback model for new agents that don't pick an explicit route, and to pre-populate the model dropdown in the agent-create form. You can change it per-agent later.
+        </p>
         <button @click="createCloudProvider()"
           :disabled="!cloudProviderForm.name || !cloudProviderForm.api_key"
           class="w-full py-2 rounded-lg text-xs font-medium bg-indigo-600 text-white hover:bg-indigo-500 disabled:opacity-40 transition-colors">
@@ -2006,21 +2103,29 @@
               <div class="w-2 h-2 rounded-full shrink-0 transition-colors"
                    :class="p.is_active ? 'bg-green-500' : 'bg-gray-600'"></div>
 
-              <!-- Name + meta -->
+              <!-- Name + meta — three rows mirroring the Local Servers card.
+                   Row 1: name + state pill only (Local Servers' Row 1 is
+                   name + enabled + health, same compact shape).
+                   Row 2: provider type + API key status + test result
+                   (Local Servers' Row 2 is endpoint URL + last checked —
+                   "how is this connection identified + working").
+                   Row 3: active model (Local Servers' Row 3 is description
+                   — the free-form detail line). -->
               <div class="flex-1 min-w-0">
                 <div class="flex items-center gap-2 flex-wrap">
                   <span class="font-medium text-white text-sm" x-text="p.name"></span>
                   <span class="text-xs px-1.5 py-0.5 rounded"
                     :class="p.is_active ? 'bg-green-950 text-green-500' : 'bg-gray-800 text-gray-500'"
                     x-text="p.is_active ? 'active' : 'inactive'"></span>
-                  <span class="text-xs text-gray-600 font-mono" x-text="p.provider"></span>
                 </div>
-                <!-- Info row: key state + default model + last test result -->
                 <div class="flex items-center gap-3 mt-0.5 text-xs text-gray-600">
-                  <span x-text="p.has_api_key ? '\uD83D\uDD11 Key set' : '\u26a0 No key'"></span>
-                  <span x-show="p.active_model" class="font-mono text-gray-500" x-text="p.active_model"></span>
+                  <span class="font-mono" x-text="p.provider"></span>
+                  <span x-text="p.has_api_key ? '\uD83D\uDD11 API Key set' : '\u26a0 No API key'"></span>
                   <span x-show="p._testResult?.ok" class="text-green-500">\u2713 Connected (<span x-text="p._testResult?.models"></span> models)</span>
                   <span x-show="p._testResult && !p._testResult?.ok" class="text-red-400" x-text="p._testResult?.error"></span>
+                </div>
+                <div x-show="p.active_model" class="mt-0.5">
+                  <span class="text-xs text-gray-500 font-mono truncate" x-text="p.active_model"></span>
                 </div>
               </div>
 
@@ -2040,56 +2145,62 @@
             </div>
             <!-- Inline edit form — matches the Local Servers edit panel:
                  same border-t separator, bg-gray-950 body, and input sizing
-                 so both kinds of card feel like the same component. -->
-            <div x-show="p._editing" x-cloak class="border-t border-gray-800 px-4 py-3 bg-gray-950 space-y-2">
-              <div>
-                <label class="text-xs text-gray-500 block mb-1">Display name</label>
-                <input x-model="p._edit.name" type="text"
-                  class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm text-white focus:border-indigo-500 focus:outline-none">
-              </div>
-              <div>
-                <label class="text-xs text-gray-500 block mb-1">API key
-                  <span class="ml-1 text-gray-600 text-[10px]">(leave blank to keep current)</span>
-                </label>
-                <input x-model="p._edit.api_key" type="password"
-                  class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm text-white placeholder-gray-600 focus:border-indigo-500 focus:outline-none font-mono">
-              </div>
-              <div x-show="p.provider === 'custom'">
-                <label class="text-xs text-gray-500 block mb-1">Base URL</label>
-                <input x-model="p._edit.base_url" type="text"
-                  class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm text-white placeholder-gray-600 focus:border-indigo-500 focus:outline-none font-mono">
-              </div>
-              <!-- Model selection: live catalog dropdown when available,
-                   free-text fallback when the provider isn't in the
-                   live-catalog set (e.g. custom). -->
-              <div x-data="{ manual: false }">
-                <label class="text-xs text-gray-500 block mb-1">Default model</label>
-                <template x-if="!manual && (cloudProviderModelsList[p.provider] || cloudProviderModelsFallback[p.provider])">
-                  <select x-model="p._edit.active_model"
-                    class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm text-white focus:border-indigo-500 focus:outline-none font-mono">
-                    <option value="">— no default —</option>
-                    <template x-for="m in (cloudProviderModelsList[p.provider] || cloudProviderModelsFallback[p.provider] || [])" :key="m">
-                      <option :value="m" x-text="m"></option>
-                    </template>
-                  </select>
-                </template>
-                <template x-if="manual || !(cloudProviderModelsList[p.provider] || cloudProviderModelsFallback[p.provider])">
-                  <input x-model="p._edit.active_model" type="text" placeholder="e.g. gpt-4o-mini"
+                 so both kinds of card feel like the same component.
+                 Wrapped in x-if (not x-show) so Alpine doesn't evaluate
+                 x-model="p._edit.*" bindings when _edit is null. Those
+                 evaluations were throwing and breaking event-handler
+                 binding on every component that rendered afterwards. -->
+            <template x-if="p._editing && p._edit">
+              <div x-cloak class="border-t border-gray-800 px-4 py-3 bg-gray-950 space-y-2">
+                <div>
+                  <label class="text-xs text-gray-500 block mb-1">Display name</label>
+                  <input x-model="p._edit.name" type="text"
+                    class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm text-white focus:border-indigo-500 focus:outline-none">
+                </div>
+                <div>
+                  <label class="text-xs text-gray-500 block mb-1">API key
+                    <span class="ml-1 text-gray-600 text-[10px]">(leave blank to keep current)</span>
+                  </label>
+                  <input x-model="p._edit.api_key" type="password"
                     class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm text-white placeholder-gray-600 focus:border-indigo-500 focus:outline-none font-mono">
-                </template>
-                <div class="flex items-center gap-2 mt-1">
-                  <button @click="manual = !manual" class="text-xs text-gray-500 hover:text-gray-300"
-                    x-text="manual ? 'Pick from list' : 'Type a model ID'"></button>
-                  <span x-show="cloudProviderModelsError[p.provider]" class="text-xs text-amber-500">Live catalog unavailable — showing fallback list</span>
+                </div>
+                <div x-show="p.provider === 'custom'">
+                  <label class="text-xs text-gray-500 block mb-1">Base URL</label>
+                  <input x-model="p._edit.base_url" type="text"
+                    class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm text-white placeholder-gray-600 focus:border-indigo-500 focus:outline-none font-mono">
+                </div>
+                <!-- Model selection: live catalog dropdown when available,
+                     free-text fallback when the provider isn't in the
+                     live-catalog set (e.g. custom). -->
+                <div x-data="{ manual: false }">
+                  <label class="text-xs text-gray-500 block mb-1">Default model</label>
+                  <template x-if="!manual && (cloudProviderModelsList[p.provider] || cloudProviderModelsFallback[p.provider])">
+                    <select x-model="p._edit.active_model"
+                      class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm text-white focus:border-indigo-500 focus:outline-none font-mono">
+                      <option value="">— no default —</option>
+                      <template x-for="m in (cloudProviderModelsList[p.provider] || cloudProviderModelsFallback[p.provider] || [])" :key="m">
+                        <option :value="m" x-text="m"></option>
+                      </template>
+                    </select>
+                  </template>
+                  <template x-if="manual || !(cloudProviderModelsList[p.provider] || cloudProviderModelsFallback[p.provider])">
+                    <input x-model="p._edit.active_model" type="text" placeholder="e.g. gpt-4o-mini"
+                      class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm text-white placeholder-gray-600 focus:border-indigo-500 focus:outline-none font-mono">
+                  </template>
+                  <div class="flex items-center gap-2 mt-1">
+                    <button @click="manual = !manual" class="text-xs text-gray-500 hover:text-gray-300"
+                      x-text="manual ? 'Pick from list' : 'Type a model ID'"></button>
+                    <span x-show="cloudProviderModelsError[p.provider]" class="text-xs text-amber-500">Live catalog unavailable — showing fallback list</span>
+                  </div>
+                </div>
+                <div class="flex gap-2 pt-1">
+                  <button @click="updateCloudProvider(p.id)"
+                    class="text-xs px-3 py-1.5 rounded-lg bg-[var(--accent)] text-white hover:opacity-90">Save</button>
+                  <button @click="p._editing = false; p._edit = null"
+                    class="text-xs px-3 py-1.5 rounded-lg border border-gray-700 text-gray-400 hover:text-white">Cancel</button>
                 </div>
               </div>
-              <div class="flex gap-2 pt-1">
-                <button @click="updateCloudProvider(p.id)"
-                  class="text-xs px-3 py-1.5 rounded-lg bg-[var(--accent)] text-white hover:opacity-90">Save</button>
-                <button @click="p._editing = false; p._edit = null"
-                  class="text-xs px-3 py-1.5 rounded-lg border border-gray-700 text-gray-400 hover:text-white">Cancel</button>
-              </div>
-            </div>
+            </template>
           </div>
         </template>
         <p x-show="cloudProviders.length === 0 && !cloudProviderFormOpen" class="text-xs text-gray-600 text-center py-4">
@@ -2428,76 +2539,6 @@
       </div>
     </div>
 
-    <!-- ── Install an agent-ready model ── -->
-    <!-- Curated list of models known to pass our h5/h6/h7 agent-loop
-         benchmarks. Lets a user one-click download a model that actually
-         works as an agent instead of hunting on Hugging Face. Uses LM
-         Studio's REST /api/v1/models/download endpoint; polls /status
-         while downloading. -->
-    <div x-show="can('manage_machines') && adminMachines.length>0" class="mb-6 border-t border-gray-800 pt-6">
-      <button @click="recommendedModelsOpen = !recommendedModelsOpen; if (recommendedModelsOpen && !recommendedModels.length) loadRecommendedModels()"
-              class="flex items-center gap-2 text-xs font-semibold text-gray-300 mb-3 hover:text-white">
-        <span class="text-gray-600 transition-transform" :class="recommendedModelsOpen ? 'rotate-90' : ''" style="display:inline-block">▶</span>
-        Install an agent-ready model
-        <span class="text-[10px] px-2 py-0.5 rounded-full bg-emerald-950 text-emerald-400 border border-emerald-900 font-normal">curated</span>
-      </button>
-      <div x-show="recommendedModelsOpen" x-cloak class="space-y-3">
-        <div class="flex items-center gap-2">
-          <label class="text-[10px] text-gray-500">Download to machine:</label>
-          <select x-model="installTargetMachineId" class="text-xs px-2 py-1 bg-gray-900 border border-gray-700 rounded text-white">
-            <template x-for="m in adminMachines" :key="m.id">
-              <option :value="m.id" x-text="(m.name || m.endpoint_url || m.id) + (m.enabled ? '' : ' (disabled)')"></option>
-            </template>
-          </select>
-          <button @click="loadRecommendedModels()" class="text-[10px] text-gray-500 hover:text-white" title="Refresh list">↻</button>
-        </div>
-        <p class="text-[10px] text-gray-500 leading-snug max-w-2xl">
-          These models pass our agent-loop benchmarks (post-tool summarisation, error recovery, multi-turn grounding).
-          Picking one here POSTs to LM Studio's download endpoint on the selected machine — your gateway is just the messenger.
-          Sorted best-agent-first within each tier.
-        </p>
-        <template x-for="rm in recommendedModels" :key="rm.id">
-          <div class="bg-gray-900 border border-gray-800 rounded-xl p-4 flex items-start gap-4">
-            <div class="flex-shrink-0 text-[10px] uppercase tracking-wider px-2 py-0.5 rounded border font-semibold"
-                 :class="rm.agent_tier==='excellent' ? 'border-emerald-700 text-emerald-400 bg-emerald-950/40' :
-                         rm.agent_tier==='good' ? 'border-indigo-700 text-indigo-300 bg-indigo-950/40' :
-                         'border-gray-700 text-gray-500 bg-gray-950/40'"
-                 x-text="rm.agent_tier"></div>
-            <div class="flex-1 min-w-0">
-              <div class="flex items-center gap-2 flex-wrap">
-                <span class="text-sm font-semibold text-white truncate" x-text="rm.name"></span>
-                <span class="text-[10px] text-gray-600" x-text="(rm.size_b || '?') + 'B'"></span>
-                <span class="text-[10px] text-gray-600" x-text="(rm.context_k || '?') + 'K ctx'"></span>
-                <span class="text-[10px] text-gray-600" x-text="'~' + (rm.size_gb || '?') + 'GB'"></span>
-              </div>
-              <div class="text-[11px] text-gray-400 mt-1 leading-snug" x-text="rm.notes || ''"></div>
-              <div class="mt-1.5 flex items-center gap-1 flex-wrap">
-                <template x-for="tag in (rm.good_for || [])" :key="tag">
-                  <span class="text-[9px] px-1.5 py-0.5 rounded bg-gray-800 text-gray-500 border border-gray-700" x-text="tag"></span>
-                </template>
-              </div>
-              <div x-show="downloadJobs[rm.id]" class="mt-2 text-[10px] text-yellow-400 font-mono">
-                <span x-text="downloadJobs[rm.id]?.status || ''"></span>
-                <span x-show="downloadJobs[rm.id]?.downloaded_bytes" class="ml-2" x-text="(() => { const j = downloadJobs[rm.id]; if (!j || !j.downloaded_bytes) return ''; const pct = j.total_size_bytes ? Math.round(j.downloaded_bytes/j.total_size_bytes*100) + '% — ' : ''; const mb = Math.round(j.downloaded_bytes/1024/1024); return pct + mb + 'MB'; })()"></span>
-                <span x-show="downloadJobs[rm.id]?.bytes_per_second" class="ml-2 text-gray-500" x-text="'(' + Math.round((downloadJobs[rm.id]?.bytes_per_second || 0)/1024/1024*10)/10 + ' MB/s)'"></span>
-                <span x-show="downloadJobs[rm.id]?.error" class="ml-2 text-red-400" x-text="downloadJobs[rm.id]?.error"></span>
-              </div>
-            </div>
-            <button @click="startModelDownload(rm)"
-                    :disabled="downloadJobs[rm.id]?.status === 'downloading' || !installTargetMachineId"
-                    :class="(downloadJobs[rm.id]?.status === 'downloading' || !installTargetMachineId) ? 'opacity-40 cursor-not-allowed' : 'hover:bg-indigo-500'"
-                    class="shrink-0 px-3 py-1.5 rounded bg-indigo-600 text-white text-xs font-medium transition-colors">
-              <span x-show="!downloadJobs[rm.id] || downloadJobs[rm.id]?.status === 'failed'">Download</span>
-              <span x-show="downloadJobs[rm.id]?.status === 'downloading'">Downloading…</span>
-              <span x-show="downloadJobs[rm.id]?.status === 'completed'">✓ Done</span>
-              <span x-show="downloadJobs[rm.id]?.status === 'already_downloaded'">Installed</span>
-            </button>
-          </div>
-        </template>
-        <div x-show="recommendedModelsLoading" class="text-[11px] text-gray-500 italic">Loading catalogue…</div>
-      </div>
-    </div>
-
     <!-- ── Benchmark section (moved from Settings/Routing 2026-04-11, pass-3 S1) ── -->
     <div x-show="can('manage_machines')" class="mb-6 border-t border-gray-800 pt-6">
       <button @click="benchmarkOpen=!benchmarkOpen"
@@ -2624,6 +2665,82 @@
           <template x-if="benchmarkResult?.error">
             <div class="text-xs text-red-400 mt-2" x-text="benchmarkResult.error"></div>
           </template>
+        </div>
+
+        <!-- Install an agent-ready model — curated catalogue of models that
+             pass the h5/h6/h7 agent-loop benchmarks. Sits below the
+             Synthetic Benchmark so the two main benchmark cards read
+             first, then the "now install one" CTA. -->
+        <div x-show="adminMachines.length>0" class="bg-gray-900 border border-gray-800 rounded-xl p-4 mt-4">
+          <div class="flex items-center justify-between mb-3">
+            <button @click="recommendedModelsOpen = !recommendedModelsOpen; if (recommendedModelsOpen && !recommendedModels.length) loadRecommendedModels()"
+                    class="flex items-center gap-2 text-left group">
+              <span class="text-gray-600 transition-transform" :class="recommendedModelsOpen ? 'rotate-90' : ''" style="display:inline-block">▶</span>
+              <div>
+                <div class="text-xs font-semibold text-gray-300 mb-0.5 group-hover:text-white flex items-center gap-2">
+                  Install an agent-ready model
+                  <span class="text-[10px] px-2 py-0.5 rounded-full bg-emerald-950 text-emerald-400 border border-emerald-900 font-normal">curated</span>
+                </div>
+                <div class="text-xs text-gray-600">One-click download of models known to pass agent-loop benchmarks.</div>
+              </div>
+            </button>
+            <div class="flex items-center gap-2 shrink-0 ml-4">
+              <select x-show="recommendedModelsOpen" x-model="installTargetMachineId"
+                      class="text-xs px-2 py-1 bg-gray-800 border border-gray-700 rounded text-white">
+                <template x-for="m in adminMachines" :key="m.id">
+                  <option :value="m.id" x-text="(m.name || m.endpoint_url || m.id) + (m.enabled ? '' : ' (disabled)')"></option>
+                </template>
+              </select>
+              <button x-show="recommendedModelsOpen" @click="loadRecommendedModels()"
+                      class="text-xs px-3 py-1.5 rounded border border-gray-700 text-gray-400 hover:text-white transition-colors">↻</button>
+            </div>
+          </div>
+          <div x-show="recommendedModelsOpen" x-cloak class="space-y-3">
+            <p class="text-[10px] text-gray-500 leading-snug max-w-2xl">
+              These models pass our agent-loop benchmarks (post-tool summarisation, error recovery, multi-turn grounding).
+              Picking one here POSTs to LM Studio's download endpoint on the selected machine — your gateway is just the messenger.
+              Sorted best-agent-first within each tier.
+            </p>
+            <template x-for="rm in recommendedModels" :key="rm.id">
+              <div class="bg-gray-950 border border-gray-800 rounded-xl p-4 flex items-start gap-4">
+                <div class="flex-shrink-0 text-[10px] uppercase tracking-wider px-2 py-0.5 rounded border font-semibold"
+                     :class="rm.agent_tier==='excellent' ? 'border-emerald-700 text-emerald-400 bg-emerald-950/40' :
+                             rm.agent_tier==='good' ? 'border-indigo-700 text-indigo-300 bg-indigo-950/40' :
+                             'border-gray-700 text-gray-500 bg-gray-950/40'"
+                     x-text="rm.agent_tier"></div>
+                <div class="flex-1 min-w-0">
+                  <div class="flex items-center gap-2 flex-wrap">
+                    <span class="text-sm font-semibold text-white truncate" x-text="rm.name"></span>
+                    <span class="text-[10px] text-gray-600" x-text="(rm.size_b || '?') + 'B'"></span>
+                    <span class="text-[10px] text-gray-600" x-text="(rm.context_k || '?') + 'K ctx'"></span>
+                    <span class="text-[10px] text-gray-600" x-text="'~' + (rm.size_gb || '?') + 'GB'"></span>
+                  </div>
+                  <div class="text-[11px] text-gray-400 mt-1 leading-snug" x-text="rm.notes || ''"></div>
+                  <div class="mt-1.5 flex items-center gap-1 flex-wrap">
+                    <template x-for="tag in (rm.good_for || [])" :key="tag">
+                      <span class="text-[9px] px-1.5 py-0.5 rounded bg-gray-800 text-gray-500 border border-gray-700" x-text="tag"></span>
+                    </template>
+                  </div>
+                  <div x-show="downloadJobs[rm.id]" class="mt-2 text-[10px] text-yellow-400 font-mono">
+                    <span x-text="downloadJobs[rm.id]?.status || ''"></span>
+                    <span x-show="downloadJobs[rm.id]?.downloaded_bytes" class="ml-2" x-text="(() => { const j = downloadJobs[rm.id]; if (!j || !j.downloaded_bytes) return ''; const pct = j.total_size_bytes ? Math.round(j.downloaded_bytes/j.total_size_bytes*100) + '% — ' : ''; const mb = Math.round(j.downloaded_bytes/1024/1024); return pct + mb + 'MB'; })()"></span>
+                    <span x-show="downloadJobs[rm.id]?.bytes_per_second" class="ml-2 text-gray-500" x-text="'(' + Math.round((downloadJobs[rm.id]?.bytes_per_second || 0)/1024/1024*10)/10 + ' MB/s)'"></span>
+                    <span x-show="downloadJobs[rm.id]?.error" class="ml-2 text-red-400" x-text="downloadJobs[rm.id]?.error"></span>
+                  </div>
+                </div>
+                <button @click="startModelDownload(rm)"
+                        :disabled="downloadJobs[rm.id]?.status === 'downloading' || !installTargetMachineId"
+                        :class="(downloadJobs[rm.id]?.status === 'downloading' || !installTargetMachineId) ? 'opacity-40 cursor-not-allowed' : 'hover:bg-indigo-500'"
+                        class="shrink-0 px-3 py-1.5 rounded bg-indigo-600 text-white text-xs font-medium transition-colors">
+                  <span x-show="!downloadJobs[rm.id] || downloadJobs[rm.id]?.status === 'failed'">Download</span>
+                  <span x-show="downloadJobs[rm.id]?.status === 'downloading'">Downloading…</span>
+                  <span x-show="downloadJobs[rm.id]?.status === 'completed'">✓ Done</span>
+                  <span x-show="downloadJobs[rm.id]?.status === 'already_downloaded'">Installed</span>
+                </button>
+              </div>
+            </template>
+            <div x-show="recommendedModelsLoading" class="text-[11px] text-gray-500 italic">Loading catalogue…</div>
+          </div>
         </div>
       </div><!-- /benchmarkOpen -->
     </div><!-- /benchmark section -->
@@ -2842,31 +2959,11 @@
           </div>
           <input x-model="namedAgentForm.description" type="text" placeholder="What does this agent do? (optional)"
             class="w-full px-2 py-1.5 rounded-lg bg-gray-800 border border-gray-700 text-xs text-white placeholder-gray-600 focus:outline-none focus:border-indigo-500">
-          <!-- Toolsets (expandable) -->
-          <details class="rounded-lg border border-gray-700 bg-gray-800/50 overflow-hidden">
-            <summary class="px-3 py-1.5 text-[10px] text-gray-500 cursor-pointer hover:text-gray-300 select-none flex items-center justify-between">
-              <span>Toolsets</span>
-              <span class="text-gray-600" x-text="namedAgentForm.toolsets.length ? namedAgentForm.toolsets.length + ' selected' : 'all defaults'"></span>
-            </summary>
-            <div class="px-3 pb-2 pt-1">
-              <template x-if="toolsets.toolsets">
-                <div class="grid grid-cols-2 gap-1">
-                  <template x-for="[name, ts] in Object.entries(toolsets.toolsets || {}).sort(([a],[b]) => a.localeCompare(b)).filter(([n, t]) => t.available)" :key="name">
-                    <label class="flex items-center gap-1.5 px-2 py-1 rounded border text-[10px] cursor-pointer transition-colors"
-                      :class="namedAgentForm.toolsets.includes(name) ? 'border-emerald-800 bg-emerald-950/50 text-emerald-300' : 'border-gray-700 text-gray-500 hover:border-gray-600'">
-                      <input type="checkbox" :checked="namedAgentForm.toolsets.includes(name)"
-                        @change="$event.target.checked ? namedAgentForm.toolsets.push(name) : namedAgentForm.toolsets.splice(namedAgentForm.toolsets.indexOf(name), 1)"
-                        class="w-3 h-3 rounded border-gray-600 bg-gray-800 accent-emerald-500">
-                      <span class="font-mono truncate" x-text="name"></span>
-                      <span class="ml-auto text-gray-700 shrink-0" x-text="(ts.tools||[]).length + 't'"></span>
-                    </label>
-                  </template>
-                </div>
-              </template>
-              <p x-show="!toolsets.toolsets" class="text-[10px] text-gray-600">Loading toolsets...</p>
-              <p class="text-[10px] text-gray-600 mt-1">Leave empty for soul defaults.</p>
-            </div>
-          </details>
+          <!-- Toolsets selector removed 2026-04-21. Every agent's
+               sandbox loads the full hermes-cli composite (_HERMES_CORE_TOOLS)
+               at boot regardless of what the DB says, so picking a
+               subset here did nothing. See _build_config_yaml in
+               gateway/executors/hermes_server_mode.py. -->
           <button @click="createNamedAgent()" :disabled="!namedAgentForm.name.trim()"
             class="w-full py-2 rounded-lg text-sm font-medium bg-indigo-600 text-white hover:bg-indigo-500 disabled:opacity-40 transition-colors">
             Create Agent
@@ -3531,112 +3628,14 @@
 
   </div>
 
-  <!-- ── Cloud tool integrations ─────────────────────────────────────
-       Third-party SaaS API credentials the gateway injects when an
-       agent calls a tool that needs them (Firecrawl, Browserbase,
-       Anthropic, etc.). Paired with the "Local tool integrations"
-       section above which handles self-hosted alternatives
-       (SearxNG for search, future Ollama for inference, etc.) —
-       three-tier trust taxonomy surfaces in both headings so the
-       cloud / local distinction is explicit.
-
-       Rendered as dense PILLS grouped by toolset so the whole
-       catalogue fits in a small vertical slice of the page. Clicking
-       a pill opens a single shared detail panel below — only one
-       pill is expanded at a time, so card-grid layouts and per-card
-       state are gone. State (selectedIntegration / editing /
-       keyInput / validating / result) lives on the wrapper x-data. -->
+  <!-- ── Local tool integrations ──────────────────────────────────────
+       Self-hosted services bundled via docker-compose (SearxNG today,
+       Ollama / Firecrawl-selfhosted etc. in future). Each declares a
+       service_install block in capabilities.yaml and renders here with
+       Start/Stop buttons. Rescued back into place after the Cloud Tool
+       Integrations cleanup on 2026-04-21 accidentally removed it too. -->
   <div x-show="tab==='infra' && infraTab==='tools'" x-cloak class="space-y-4"
-       style="margin-top:2rem"
-       x-data="{
-         selectedIntegration: null,
-         editing: false,
-         keyInput: '',
-         validating: false,
-         result: null,
-         selectPill(ti) {
-           if (this.selectedIntegration && this.selectedIntegration.env_var === ti.env_var) {
-             this.selectedIntegration = null;
-             this.editing = false;
-             this.result = null;
-             this.keyInput = '';
-             return;
-           }
-           this.selectedIntegration = ti;
-           this.editing = !ti.has_key;
-           this.result = null;
-           this.keyInput = (ti.selfhosted && !ti.has_key && ti.compose_default) ? ti.compose_default : '';
-         },
-         async saveKey() {
-           const ti = this.selectedIntegration;
-           const val = this.keyInput.trim();
-           if (!ti || !val) return;
-           this.validating = true; this.result = null;
-           try {
-             const vres = await fetch('/api/services/validate', {
-               method: 'POST', credentials: 'include',
-               headers: {'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken()},
-               body: JSON.stringify({env_var: ti.env_var, value: val}),
-             }).then(r => r.json());
-             this.result = vres;
-             if (vres.ok) {
-               const saveRes = await fetch('/api/services/keys', {
-                 method: 'POST', credentials: 'include',
-                 headers: {'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken()},
-                 body: JSON.stringify({env_var: ti.env_var, value: val}),
-               }).then(r => r.json()).catch(() => ({}));
-               // Extend the validation-success message with what the save
-               // actually did — the sandbox refresh count and which
-               // network permissions were auto-granted. Without this
-               // feedback users don't know whether agents actually got
-               // the key pushed or whether they need to restart a
-               // sandbox by hand.
-               const bits = [vres.message || 'Key saved.'];
-               const presets = saveRes.presets_applied || [];
-               if (presets.length) {
-                 bits.push('Granted ' + presets.join(', ') + ' permission' + (presets.length === 1 ? '' : 's') + '.');
-               }
-               const n = saveRes.sandboxes_refreshed || 0;
-               if (n > 0) {
-                 bits.push('Pushed to ' + n + ' running sandbox' + (n === 1 ? '' : 'es') + '.');
-               } else if (saveRes.ok) {
-                 bits.push('No running sandboxes to refresh.');
-               }
-               this.result = { ok: true, message: bits.join(' ') };
-               await this.loadServices();
-               // Re-pick the now-refreshed integration entry so the
-               // detail panel shows the updated has_key state.
-               const fresh = this.servicesTools.find(t => t.env_var === ti.env_var);
-               this.selectedIntegration = fresh || null;
-               this.editing = false;
-               this.keyInput = '';
-             }
-           } catch (e) {
-             this.result = {ok: false, message: String(e)};
-           } finally {
-             this.validating = false;
-           }
-         },
-         async removeKey() {
-           const ti = this.selectedIntegration;
-           if (!ti) return;
-           if (!confirm('Remove this key?')) return;
-           await fetch('/api/services/keys', {
-             method: 'DELETE', credentials: 'include',
-             headers: {'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken()},
-             body: JSON.stringify({env_var: ti.env_var}),
-           });
-           await this.loadServices();
-           this.selectedIntegration = this.servicesTools.find(t => t.env_var === ti.env_var) || null;
-           this.editing = false;
-         },
-       }">
-    <!-- ── Local services (bundled via docker-compose) ───────────────────
-         Each capability that declares a service_install block in
-         capabilities.yaml renders a card here. Status badge + Start /
-         Stop buttons. No URL inputs — connection info is baked in via
-         the compose file. Lives ABOVE Tool Integrations so users see
-         "start SearxNG" before they think to configure an API key. -->
+       style="margin-top:2rem">
     <div class="flex items-center justify-between mb-1">
       <h2 class="text-sm font-semibold text-white">Local tool integrations</h2>
       <button @click="loadLocalServices()" class="text-xs px-3 py-1.5 rounded-lg border border-gray-700 text-gray-400 hover:text-white transition-colors">Refresh</button>
@@ -3692,199 +3691,12 @@
         </div>
       </template>
     </div>
-
-    <div class="flex items-center justify-between mb-1">
-      <h2 class="text-sm font-semibold text-white">Cloud tool integrations</h2>
-      <button @click="loadServices()" class="text-xs px-3 py-1.5 rounded-lg border border-gray-700 text-gray-400 hover:text-white transition-colors">Refresh</button>
-    </div>
-    <p class="text-xs text-gray-500 -mt-1 mb-3">
-      API keys for third-party SaaS providers — Firecrawl, OpenAI, Slack, etc. Data flows to the provider's servers when these tools are used.
-      Click any pill to configure. Environment variables (<code class="text-gray-400">.env</code>, shell) take precedence over keys saved here.
+    <p class="text-[11px] text-gray-600">
+      Cloud-tool API keys (Firecrawl, fal.ai, OpenRouter, etc.) are now set per-agent via the
+      <code class="text-gray-400">/setup</code> slash command in the agent's chat.
     </p>
-
-    <!-- Groups rendered in a fixed order so layout is stable across
-         reloads. Groups with no integrations for this install are
-         hidden. _INTEGRATION_GROUPS lives in the Alpine data block.
-         The detail panel (editor) is rendered INSIDE each group's
-         iteration, conditional on the selected pill's toolset, so
-         clicking a pill opens the form directly under its own row
-         rather than at the bottom of all groups. -->
-    <template x-for="group in _INTEGRATION_GROUPS" :key="group.key">
-      <div x-show="servicesTools.some(t => t.toolset === group.key)" class="mb-3">
-        <div class="text-[10px] font-semibold text-gray-600 uppercase tracking-[0.15em] mb-1.5" x-text="group.label"></div>
-        <div class="flex flex-wrap gap-1.5">
-          <template x-for="ti in servicesTools.filter(t => t.toolset === group.key)" :key="ti.env_var">
-            <button @click="selectPill(ti)"
-              class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-xs transition-colors"
-              :class="selectedIntegration && selectedIntegration.env_var === ti.env_var
-                ? 'border-indigo-500 bg-indigo-950/50 text-white'
-                : ti.has_key
-                  ? 'border-emerald-900/60 bg-emerald-950/20 text-emerald-200 hover:border-emerald-700'
-                  : 'border-gray-800 bg-gray-900 text-gray-400 hover:border-gray-600 hover:text-gray-200'">
-              <span class="w-1.5 h-1.5 rounded-full"
-                :class="ti.has_key ? 'bg-emerald-400' : 'bg-gray-600'"></span>
-              <span x-text="ti.label"></span>
-            </button>
-          </template>
-        </div>
-        <!-- Inline detail panel bound to this group's key. Only one
-             group's panel renders at a time (selectPill sets a single
-             selectedIntegration), but the markup appears here and in
-             the catch-all so Alpine's reactivity stays intact — x-html
-             would break the nested x-model / @click bindings. -->
-        <template x-if="selectedIntegration && selectedIntegration.toolset === group.key">
-          <div class="p-4 rounded-xl border border-indigo-700/60 bg-indigo-950/10 text-xs space-y-3 mt-2">
-            <div class="flex items-start justify-between gap-3">
-              <div class="flex-1 min-w-0">
-                <div class="flex items-center gap-2 flex-wrap">
-                  <span class="text-white font-semibold text-sm" x-text="selectedIntegration.label"></span>
-                  <template x-if="selectedIntegration.has_key">
-                    <span class="text-[10px] text-green-400 font-medium">● key set<span x-show="selectedIntegration.source === 'env'" class="text-gray-600 ml-1">(from env)</span></span>
-                  </template>
-                </div>
-                <p class="text-gray-400 mt-1" x-text="selectedIntegration.description"></p>
-                <div x-show="selectedIntegration.tools && selectedIntegration.tools.length > 0" class="text-[10px] text-gray-600 mt-1">
-                  Tools: <span x-text="(selectedIntegration.tools || []).join(', ')"></span>
-                </div>
-              </div>
-              <button @click="selectedIntegration = null; editing = false; result = null; keyInput = ''"
-                class="text-gray-600 hover:text-gray-300 text-base leading-none flex-shrink-0">&times;</button>
-            </div>
-            <template x-if="!editing">
-              <div class="flex items-center gap-3">
-                <template x-if="selectedIntegration.has_key">
-                  <button @click="editing = true; result = null; keyInput = ''"
-                    class="px-3 py-1 rounded border border-gray-600 text-[11px] text-gray-300 hover:border-gray-400">Change key</button>
-                </template>
-                <template x-if="!selectedIntegration.has_key">
-                  <button @click="editing = true; result = null; keyInput = (selectedIntegration.selfhosted && selectedIntegration.compose_default) || ''"
-                    class="px-3 py-1 rounded bg-indigo-600 hover:bg-indigo-500 text-white text-[11px] font-medium">Add key</button>
-                </template>
-                <template x-if="selectedIntegration.has_key && selectedIntegration.source === 'db'">
-                  <button @click="removeKey()" class="text-red-500 hover:text-red-400 text-[11px]">Remove</button>
-                </template>
-                <a :href="selectedIntegration.help_url" target="_blank"
-                  class="text-[10px] text-indigo-500 hover:text-indigo-400 ml-auto">Get an API key &rarr;</a>
-              </div>
-            </template>
-            <template x-if="editing">
-              <div class="flex flex-col gap-2">
-                <div class="flex items-center gap-2">
-                  <input :type="selectedIntegration.value_kind === 'url' ? 'text' : 'password'"
-                    x-model="keyInput"
-                    :placeholder="selectedIntegration.value_kind === 'url' ? (selectedIntegration.compose_default || 'http://host:port') : ('Enter ' + selectedIntegration.env_var)"
-                    class="flex-1 min-w-0 bg-gray-900 border border-gray-600 rounded px-2 py-1.5 text-xs text-white placeholder-gray-600 focus:outline-none focus:border-indigo-500 font-mono"
-                    @keydown.enter="saveKey()">
-                  <button @click="saveKey()"
-                    :disabled="validating || !keyInput.trim()"
-                    class="px-3 py-1.5 rounded border border-gray-600 text-[11px] font-medium transition-colors disabled:opacity-40"
-                    :class="validating ? 'text-gray-400' : 'text-indigo-400 hover:border-indigo-500'">
-                    <span x-show="!validating">Save</span>
-                    <span x-show="validating" class="flex items-center gap-1">
-                      <div class="w-3 h-3 border border-gray-600 border-t-indigo-400 rounded-full animate-spin"></div>
-                      Testing
-                    </span>
-                  </button>
-                  <button @click="editing = false; keyInput = ''; result = null"
-                    class="text-gray-500 hover:text-gray-300 text-[11px] flex-shrink-0">Cancel</button>
-                </div>
-                <template x-if="result">
-                  <div class="text-[10px]"
-                    :class="result.ok ? 'text-green-400' : 'text-red-400'"
-                    x-text="(result.ok ? '\u2713 ' : '\u2717 ') + (result.message || '')"></div>
-                </template>
-              </div>
-            </template>
-          </div>
-        </template>
-      </div>
-    </template>
-
-    <!-- Catch-all: any integration whose toolset isn't in our known
-         groups (new providers added without updating
-         _INTEGRATION_GROUPS) still renders as its own pill group so
-         nothing silently disappears from the UI. -->
-    <template x-if="servicesTools.some(t => !_INTEGRATION_GROUPS.some(g => g.key === t.toolset))">
-      <div class="mb-3">
-        <div class="text-[10px] font-semibold text-gray-600 uppercase tracking-[0.15em] mb-1.5">Other</div>
-        <div class="flex flex-wrap gap-1.5">
-          <template x-for="ti in servicesTools.filter(t => !_INTEGRATION_GROUPS.some(g => g.key === t.toolset))" :key="ti.env_var">
-            <button @click="selectPill(ti)"
-              class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border border-gray-800 bg-gray-900 text-xs text-gray-400 hover:border-gray-600 hover:text-gray-200 transition-colors"
-              :class="selectedIntegration && selectedIntegration.env_var === ti.env_var ? 'border-indigo-500 bg-indigo-950/50 text-white' : ''">
-              <span class="w-1.5 h-1.5 rounded-full" :class="ti.has_key ? 'bg-emerald-400' : 'bg-gray-600'"></span>
-              <span x-text="ti.label"></span>
-            </button>
-          </template>
-        </div>
-        <template x-if="selectedIntegration && !_INTEGRATION_GROUPS.some(g => g.key === selectedIntegration.toolset)">
-          <div class="p-4 rounded-xl border border-indigo-700/60 bg-indigo-950/10 text-xs space-y-3 mt-2">
-            <div class="flex items-start justify-between gap-3">
-              <div class="flex-1 min-w-0">
-                <div class="flex items-center gap-2 flex-wrap">
-                  <span class="text-white font-semibold text-sm" x-text="selectedIntegration.label"></span>
-                  <template x-if="selectedIntegration.has_key">
-                    <span class="text-[10px] text-green-400 font-medium">● key set<span x-show="selectedIntegration.source === 'env'" class="text-gray-600 ml-1">(from env)</span></span>
-                  </template>
-                </div>
-                <p class="text-gray-400 mt-1" x-text="selectedIntegration.description"></p>
-                <div x-show="selectedIntegration.tools && selectedIntegration.tools.length > 0" class="text-[10px] text-gray-600 mt-1">
-                  Tools: <span x-text="(selectedIntegration.tools || []).join(', ')"></span>
-                </div>
-              </div>
-              <button @click="selectedIntegration = null; editing = false; result = null; keyInput = ''"
-                class="text-gray-600 hover:text-gray-300 text-base leading-none flex-shrink-0">&times;</button>
-            </div>
-            <template x-if="!editing">
-              <div class="flex items-center gap-3">
-                <template x-if="selectedIntegration.has_key">
-                  <button @click="editing = true; result = null; keyInput = ''"
-                    class="px-3 py-1 rounded border border-gray-600 text-[11px] text-gray-300 hover:border-gray-400">Change key</button>
-                </template>
-                <template x-if="!selectedIntegration.has_key">
-                  <button @click="editing = true; result = null; keyInput = (selectedIntegration.selfhosted && selectedIntegration.compose_default) || ''"
-                    class="px-3 py-1 rounded bg-indigo-600 hover:bg-indigo-500 text-white text-[11px] font-medium">Add key</button>
-                </template>
-                <template x-if="selectedIntegration.has_key && selectedIntegration.source === 'db'">
-                  <button @click="removeKey()" class="text-red-500 hover:text-red-400 text-[11px]">Remove</button>
-                </template>
-                <a :href="selectedIntegration.help_url" target="_blank"
-                  class="text-[10px] text-indigo-500 hover:text-indigo-400 ml-auto">Get an API key &rarr;</a>
-              </div>
-            </template>
-            <template x-if="editing">
-              <div class="flex flex-col gap-2">
-                <div class="flex items-center gap-2">
-                  <input :type="selectedIntegration.value_kind === 'url' ? 'text' : 'password'"
-                    x-model="keyInput"
-                    :placeholder="selectedIntegration.value_kind === 'url' ? (selectedIntegration.compose_default || 'http://host:port') : ('Enter ' + selectedIntegration.env_var)"
-                    class="flex-1 min-w-0 bg-gray-900 border border-gray-600 rounded px-2 py-1.5 text-xs text-white placeholder-gray-600 focus:outline-none focus:border-indigo-500 font-mono"
-                    @keydown.enter="saveKey()">
-                  <button @click="saveKey()"
-                    :disabled="validating || !keyInput.trim()"
-                    class="px-3 py-1.5 rounded border border-gray-600 text-[11px] font-medium transition-colors disabled:opacity-40"
-                    :class="validating ? 'text-gray-400' : 'text-indigo-400 hover:border-indigo-500'">
-                    <span x-show="!validating">Save</span>
-                    <span x-show="validating" class="flex items-center gap-1">
-                      <div class="w-3 h-3 border border-gray-600 border-t-indigo-400 rounded-full animate-spin"></div>
-                      Testing
-                    </span>
-                  </button>
-                  <button @click="editing = false; keyInput = ''; result = null"
-                    class="text-gray-500 hover:text-gray-300 text-[11px] flex-shrink-0">Cancel</button>
-                </div>
-                <template x-if="result">
-                  <div class="text-[10px]"
-                    :class="result.ok ? 'text-green-400' : 'text-red-400'"
-                    x-text="(result.ok ? '\u2713 ' : '\u2717 ') + (result.message || '')"></div>
-                </template>
-              </div>
-            </template>
-          </div>
-        </template>
-      </div>
-    </template>
   </div>
+
 
   <!-- ── Messaging → per-agent credentials ───────────────────────────
        Each agent owns its own Telegram/Discord/Slack/WhatsApp bot
@@ -3892,83 +3704,84 @@
        per-credential adapter lifecycle in gateway/run.py), so
        different agents can be reached on different bots
        simultaneously without one polling the other's token. -->
-  <div x-show="tab==='infra' && infraTab==='messaging'" x-cloak class="space-y-6">
-    <div class="flex items-center justify-between mb-2">
-      <h2 class="text-sm font-semibold text-white">Messaging Channels</h2>
-      <button @click="loadAllAgentChannels()" class="text-xs px-3 py-1.5 rounded-lg border border-gray-700 text-gray-400 hover:text-white transition-colors">Refresh</button>
-    </div>
-    <p class="text-xs text-gray-500">Connect messaging bots per agent. Each agent can own multiple tokens (prod + staging) and different agents can own different bots on the same platform — the token chooses which agent receives the message.</p>
+  <div x-show="tab==='infra' && infraTab==='messaging'" x-cloak class="space-y-5">
 
-    <!-- Per-agent grouped view. One card per agent, listing their
-         rows. Empty-state encourages adding at least one. -->
-    <div class="space-y-4" x-show="(namedAgents || []).length">
-      <template x-for="a in (namedAgents || [])" :key="'ch-agent-' + a.id">
-        <div class="px-4 py-3 rounded-lg bg-gray-800/50 border border-gray-700 text-xs">
-          <div class="flex items-center gap-2 mb-2">
-            <span class="text-white font-medium" x-text="a.name"></span>
-            <span class="text-[10px] text-gray-500"
-                  x-text="((allAgentChannels[a.id] || []).filter(c => c.enabled).length) + ' active'"></span>
-          </div>
-          <template x-if="(allAgentChannels[a.id] || []).length">
-            <div class="space-y-1">
-              <template x-for="c in allAgentChannels[a.id]" :key="c.id">
-                <div class="flex items-center gap-2 py-1 border-b border-gray-800/50 last:border-0">
-                  <span class="text-[11px] font-mono w-20"
-                        :class="c.enabled ? 'text-cyan-400' : 'text-gray-600 line-through'"
-                        x-text="c.platform"></span>
-                  <span class="text-[10px] text-gray-500 font-mono w-24 truncate" x-text="c.label"></span>
-                  <span class="text-[10px] text-gray-600 font-mono flex-1 truncate" x-text="c.token_preview"></span>
-                  <template x-if="c.metadata">
-                    <span class="text-[10px] text-gray-500"
-                          x-text="(() => { try { const m = typeof c.metadata === 'string' ? JSON.parse(c.metadata) : c.metadata; return m?.username ? '@' + m.username : (m?.team || ''); } catch(e) { return ''; } })()"></span>
-                  </template>
-                  <button @click="toggleAgentChannel(a.id, c.id, !c.enabled); allAgentChannels[a.id] = allAgentChannels[a.id].map(x => x.id === c.id ? {...x, enabled: !x.enabled} : x)"
-                          :disabled="agentChannelsBusy[c.id]"
-                          class="text-[10px] text-gray-500 hover:text-cyan-400 disabled:opacity-40"
-                          x-text="c.enabled ? 'disable' : 'enable'"></button>
-                  <button @click="deleteAgentChannel(a.id, c.id).then(() => loadAgentChannels(a.id))"
-                          :disabled="agentChannelsBusy[c.id]"
-                          class="text-[10px] text-red-700 hover:text-red-400 disabled:opacity-40">delete</button>
-                </div>
-              </template>
-            </div>
-          </template>
-          <template x-if="!(allAgentChannels[a.id] || []).length">
-            <div class="text-[10px] text-gray-600 italic">No credentials yet for this agent.</div>
-          </template>
-        </div>
-      </template>
+    <!-- Header: title + actions. Matches the action-bar pattern used by
+         Settings → Inference and Activity → Dashboards so this page reads
+         as a peer, not an outlier. -->
+    <div class="flex items-start justify-between gap-4">
+      <div>
+        <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Messaging</div>
+        <p class="text-[11px] text-gray-500 mt-1 max-w-2xl">
+          Connect bot credentials per agent. Each agent can own multiple tokens (prod + staging) and different agents can own different bots on the same platform — the token is what routes inbound messages to the right agent.
+        </p>
+      </div>
+      <div class="flex items-center gap-2 shrink-0">
+        <button @click="loadAllAgentChannels()" class="text-xs px-3 py-1.5 rounded-lg border border-gray-700 text-gray-400 hover:text-white transition-colors">Refresh</button>
+        <button @click="agentChannelsAddOpen = !agentChannelsAddOpen; if (agentChannelsAddOpen) agentChannelsForm.result = null"
+          class="text-xs px-3 py-1.5 rounded bg-[var(--accent)] text-black font-medium hover:opacity-90">
+          <span x-text="agentChannelsAddOpen ? 'Cancel' : '+ Add credential'"></span>
+        </button>
+      </div>
     </div>
 
-    <div x-show="!(namedAgents || []).length" class="text-xs text-gray-600 italic">
-      No agents yet. Go to the <a @click.prevent="tab='agents'; loadSouls(); loadNamedAgents()" class="underline cursor-pointer">Agents</a> tab to create one first.
+    <!-- Overview cards. Numbers pulled inline from allAgentChannels so
+         they stay in lockstep with the table below — no second endpoint. -->
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+      <div class="bg-gray-900 border border-gray-800 rounded-lg px-4 py-3">
+        <div class="text-2xl font-bold text-white"
+             x-text="Object.values(allAgentChannels).flat().length"></div>
+        <div class="text-[10px] text-gray-500 uppercase tracking-wider">Credentials</div>
+      </div>
+      <div class="bg-gray-900 border border-gray-800 rounded-lg px-4 py-3">
+        <div class="text-2xl font-bold"
+             :class="(() => {
+               const all = Object.values(allAgentChannels).flat();
+               const on = all.filter(c => c.enabled).length;
+               return all.length && on === all.length ? 'text-green-400' : 'text-yellow-400';
+             })()"
+             x-text="Object.values(allAgentChannels).flat().filter(c => c.enabled).length + ' / ' + Object.values(allAgentChannels).flat().length"></div>
+        <div class="text-[10px] text-gray-500 uppercase tracking-wider">Active</div>
+      </div>
+      <div class="bg-gray-900 border border-gray-800 rounded-lg px-4 py-3">
+        <div class="text-2xl font-bold text-white"
+             x-text="new Set(Object.values(allAgentChannels).flat().map(c => c.platform)).size"></div>
+        <div class="text-[10px] text-gray-500 uppercase tracking-wider">Platforms used</div>
+      </div>
+      <div class="bg-gray-900 border border-gray-800 rounded-lg px-4 py-3">
+        <div class="text-2xl font-bold text-white"
+             x-text="Object.keys(allAgentChannels).filter(k => (allAgentChannels[k] || []).length > 0).length + ' / ' + (namedAgents || []).length"></div>
+        <div class="text-[10px] text-gray-500 uppercase tracking-wider">Agents connected</div>
+      </div>
     </div>
 
-    <!-- Add credential form — spans full width under the per-agent
-         list. agent_id is the first selector because that's the
-         primary routing axis in this design. -->
-    <div class="px-4 py-4 rounded-lg bg-gray-900 border border-gray-700 text-xs space-y-3">
-      <div class="text-[11px] font-semibold text-white uppercase tracking-wider">Add credential</div>
+    <!-- Add credential form — collapsible. Closed by default; opens via
+         the header "+ Add credential" button. Matches the provision
+         modal pattern from Model Routes so this tab's write flow doesn't
+         feel out-of-step with the rest of the app. -->
+    <div x-show="agentChannelsAddOpen" x-cloak
+         class="bg-gray-900 border border-gray-700 rounded-xl p-4 space-y-3">
+      <div class="text-[10px] uppercase tracking-wider text-gray-500">Add credential</div>
       <div class="grid grid-cols-3 gap-2">
         <select x-model="agentChannelsForm.agent_id"
-                class="bg-gray-800 border border-gray-700 rounded px-2 py-2 text-xs text-white">
+                class="bg-gray-950 border border-gray-800 rounded px-2 py-2 text-xs text-white focus:outline-none focus:border-[var(--accent)]">
           <option value="">— Pick agent —</option>
           <template x-for="a in (namedAgents || [])" :key="'pick-' + a.id">
             <option :value="a.id" x-text="a.name"></option>
           </template>
         </select>
         <select x-model="agentChannelsForm.platform"
-                class="bg-gray-800 border border-gray-700 rounded px-2 py-2 text-xs text-white">
+                class="bg-gray-950 border border-gray-800 rounded px-2 py-2 text-xs text-white focus:outline-none focus:border-[var(--accent)]">
           <option value="telegram">Telegram</option>
           <option value="discord">Discord</option>
           <option value="slack">Slack</option>
           <option value="whatsapp">WhatsApp</option>
         </select>
         <input x-model="agentChannelsForm.label" type="text" placeholder="label (e.g. prod)"
-               class="bg-gray-800 border border-gray-700 rounded px-2 py-2 text-xs text-white">
+               class="bg-gray-950 border border-gray-800 rounded px-2 py-2 text-xs text-white placeholder-gray-600 focus:outline-none focus:border-[var(--accent)]">
       </div>
       <input x-model="agentChannelsForm.token" type="password" placeholder="paste bot token"
-             class="w-full bg-gray-800 border border-gray-700 rounded px-2 py-2 text-xs text-white font-mono">
+             class="w-full bg-gray-950 border border-gray-800 rounded px-2 py-2 text-xs text-white font-mono placeholder-gray-600 focus:outline-none focus:border-[var(--accent)]">
       <div class="flex items-center gap-3">
         <label class="text-[11px] text-gray-500 flex items-center gap-2 cursor-pointer">
           <input type="checkbox" x-model="agentChannelsForm.validate" class="w-3 h-3">
@@ -3977,7 +3790,7 @@
         <div class="flex-1"></div>
         <button @click="addAgentChannel()"
                 :disabled="agentChannelsForm.saving || !agentChannelsForm.token.trim() || !agentChannelsForm.agent_id"
-                class="px-4 py-2 rounded border text-xs font-medium border-[var(--accent)] text-[var(--accent)] hover:bg-[var(--accent)] hover:text-black disabled:opacity-40">
+                class="px-4 py-1.5 rounded text-xs font-medium bg-[var(--accent)] text-black hover:opacity-90 disabled:opacity-40">
           <span x-show="!agentChannelsForm.saving">Save credential</span>
           <span x-show="agentChannelsForm.saving">Saving…</span>
         </button>
@@ -3989,6 +3802,94 @@
           <span class="text-gray-400"> @<span x-text="agentChannelsForm.result.details.username"></span></span>
         </template>
       </div>
+    </div>
+
+    <!-- Credential table. One row per credential across all agents —
+         Agent is a column so the user can scan by platform / label /
+         status without the per-agent card nesting getting in the way.
+         Empty state lives inside the same table so the container
+         styling doesn't jump when credentials appear. -->
+    <div class="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
+      <table class="w-full text-xs">
+        <thead>
+          <tr class="border-b border-gray-800 text-gray-500">
+            <th class="text-left px-4 py-3 font-medium">Agent</th>
+            <th class="text-left px-4 py-3 font-medium">Platform</th>
+            <th class="text-left px-4 py-3 font-medium">Label</th>
+            <th class="text-left px-4 py-3 font-medium">Token</th>
+            <th class="text-left px-4 py-3 font-medium">Status</th>
+            <th class="text-right px-4 py-3 font-medium">Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          <template x-for="row in messagingRows" :key="'ch-row-' + row.cred.id">
+            <tr class="border-b border-gray-800/50 hover:bg-gray-800/30">
+              <td class="px-4 py-2 text-white font-medium" x-text="row.agent.name"></td>
+              <td class="px-4 py-2">
+                <span class="px-1.5 py-0.5 rounded text-[10px] font-mono border"
+                  :class="row.cred.platform === 'telegram' ? 'bg-sky-950 text-sky-400 border-sky-900'
+                        : row.cred.platform === 'discord'  ? 'bg-indigo-950 text-indigo-400 border-indigo-900'
+                        : row.cred.platform === 'slack'    ? 'bg-purple-950 text-purple-400 border-purple-900'
+                        : row.cred.platform === 'whatsapp' ? 'bg-green-950 text-green-400 border-green-900'
+                        :                                    'bg-gray-900 text-gray-400 border-gray-800'"
+                  x-text="row.cred.platform"></span>
+              </td>
+              <td class="px-4 py-2 text-gray-300 font-mono text-[10.5px]" x-text="row.cred.label || 'default'"></td>
+              <td class="px-4 py-2">
+                <div class="flex items-center gap-2">
+                  <span class="text-gray-500 font-mono text-[10.5px]" x-text="row.cred.token_preview"></span>
+                  <template x-if="row.cred.metadata">
+                    <span class="text-[10px] text-gray-600"
+                          x-text="(() => { try { const m = typeof row.cred.metadata === 'string' ? JSON.parse(row.cred.metadata) : row.cred.metadata; return m?.username ? '@' + m.username : (m?.team || ''); } catch(e) { return ''; } })()"></span>
+                  </template>
+                </div>
+              </td>
+              <td class="px-4 py-2">
+                <span class="px-1.5 py-0.5 rounded text-[10px] font-medium border"
+                  :class="row.cred.enabled ? 'bg-green-950 text-green-400 border-green-900'
+                                           : 'bg-gray-900 text-gray-500 border-gray-800'"
+                  x-text="row.cred.enabled ? 'enabled' : 'disabled'"></span>
+              </td>
+              <td class="px-4 py-2 text-right">
+                <div class="flex items-center gap-1 justify-end">
+                  <!-- :disabled removed — it was rendering as disabled="disabled"
+                       even on fresh page loads with agentChannelsBusy={},
+                       keeping the buttons greyed and un-clickable. The busy
+                       guard is still enforced inside the click handlers
+                       themselves (early-return when busy), so rapid double
+                       clicks can't double-fire. -->
+                  <button @click="toggleAgentChannel(row.agent.id, row.cred.id, !row.cred.enabled)"
+                          class="px-2 py-1 rounded border border-gray-700 text-gray-500 hover:text-white hover:border-gray-500 text-[10px] cursor-pointer"
+                          x-text="row.cred.enabled ? 'Disable' : 'Enable'"></button>
+                  <button @click="deleteAgentChannel(row.agent.id, row.cred.id)"
+                          class="px-2 py-1 rounded border border-red-900 text-red-700 hover:text-red-400 hover:border-red-700 text-[10px] cursor-pointer">Delete</button>
+                </div>
+              </td>
+            </tr>
+          </template>
+          <!-- Empty state — shown when no agents OR no credentials at all.
+               Tailored copy per reason so it's a pointer to the next action. -->
+          <template x-if="(namedAgents || []).length === 0">
+            <tr>
+              <td colspan="6" class="px-4 py-8 text-center text-gray-600">
+                No agents yet. Go to the
+                <a @click.prevent="tab='agents'; loadSouls(); loadNamedAgents()" class="underline cursor-pointer hover:text-white">Agents</a>
+                tab to create one first.
+              </td>
+            </tr>
+          </template>
+          <template x-if="(namedAgents || []).length > 0 && Object.values(allAgentChannels).flat().length === 0 && !allAgentChannelsLoading">
+            <tr>
+              <td colspan="6" class="px-4 py-8 text-center text-gray-600">
+                No credentials yet. Click <span class="text-gray-400">+ Add credential</span> above to connect a bot.
+              </td>
+            </tr>
+          </template>
+          <template x-if="allAgentChannelsLoading && Object.values(allAgentChannels).flat().length === 0">
+            <tr><td colspan="6" class="px-4 py-8 text-center text-gray-600">Loading&hellip;</td></tr>
+          </template>
+        </tbody>
+      </table>
     </div>
 
     <div x-show="agentChannelsError" x-cloak
@@ -4009,20 +3910,12 @@
     <!-- Admin sub-tab bar (slimmed). Uses the shared nav styling
          (`border-b-2 border-transparent` baseline + `tab-active` for
          the selected state) so this row matches the top-level nav
-         and the Config / Activity sub-navs. -->
+         and the Settings / Activity sub-navs. -->
     <div x-show="tab==='admin'" class="flex gap-4 border-b border-gray-800 mb-5">
       <button x-show="can('manage_users')"
         class="pb-2 text-sm font-medium border-b-2 border-transparent"
         :class="adminTab==='users'?'tab-active':'text-gray-500 hover:text-white'"
         @click="adminTab='users'; loadAdminUsers()">Users</button>
-      <button x-show="can('view_sandbox_policies')"
-        class="pb-2 text-sm font-medium border-b-2 border-transparent"
-        :class="adminTab==='sandbox-policies'?'tab-active':'text-gray-500 hover:text-white'"
-        @click="adminTab='sandbox-policies'; loadSandboxPresets(); if(!namedAgents?.length) loadNamedAgents()">Permissions</button>
-      <button x-show="can('view_souls')"
-        class="pb-2 text-sm font-medium border-b-2 border-transparent"
-        :class="adminTab==='souls'?'tab-active':'text-gray-500 hover:text-white'"
-        @click="adminTab='souls'; loadAdminSouls()">Souls</button>
       <button x-show="can('view_audit_logs')"
         class="pb-2 text-sm font-medium border-b-2 border-transparent"
         :class="adminTab==='audit'?'tab-active':'text-gray-500 hover:text-white'"
@@ -4032,12 +3925,12 @@
     <!-- Activity sub-tab bar — Dashboards first so landing on Activity
          shows the at-a-glance view (routes, sandboxes, health) rather
          than a raw event feed. Events still accessible one click away.
-         Styling matches the Config / Admin sub-navs. -->
+         Styling matches the Settings / Admin sub-navs. -->
     <div x-show="tab==='activity'" class="flex gap-4 border-b border-gray-800 mb-5">
       <button x-show="can('manage_machines') || can('view_runs')"
         class="pb-2 text-sm font-medium border-b-2 border-transparent"
         :class="activityTab==='dashboards'?'tab-active':'text-gray-500 hover:text-white'"
-        @click="activityTab='dashboards'; loadModelRoutes(); loadSandboxes(); loadNamedAgents()">Dashboards</button>
+        @click="activityTab='dashboards'; loadModelRoutes(); loadSandboxes(); loadClusters(); loadNamedAgents()">Dashboard</button>
       <button class="pb-2 text-sm font-medium border-b-2 border-transparent"
         :class="activityTab==='events'?'tab-active':'text-gray-500 hover:text-white'"
         @click="activityTab='events'; loadDispatches()">Runs</button>
@@ -4327,17 +4220,17 @@
          view_sandbox_policies sees the list + read-only YAML; only
          manage_sandbox_policies can Save/Delete. Changes hot-reload
          every agent currently applying the preset. -->
-    <div x-show="tab==='admin' && adminTab==='sandbox-policies' && can('view_sandbox_policies')" x-cloak
-         x-effect="if (tab==='admin' && adminTab==='sandbox-policies' && can('view_sandbox_policies')) { loadSandboxPresets() }">
-      <div class="flex items-center justify-between mb-3">
+    <div x-show="tab==='infra' && infraTab==='sandbox-policies' && can('view_sandbox_policies')" x-cloak
+         x-effect="if (tab==='infra' && infraTab==='sandbox-policies' && can('view_sandbox_policies')) { loadSandboxPresets() }">
+      <div class="flex items-center justify-between mb-4">
         <div>
-          <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Permissions</div>
-          <div class="text-[10px] text-gray-500 mt-0.5">
+          <div class="text-sm font-semibold text-gray-400 uppercase tracking-wider">Permissions</div>
+          <div class="text-xs text-gray-500 mt-0.5">
             OpenShell network egress rules. Applied per-agent; saving hot-reloads every live sandbox using the permission preset.
           </div>
         </div>
         <div class="flex items-center gap-2">
-          <button @click="sandboxPresetHelp = !sandboxPresetHelp" class="px-2 py-1 rounded border border-gray-700 text-gray-500 hover:text-white hover:border-gray-500 text-[10px]">
+          <button @click="sandboxPresetHelp = !sandboxPresetHelp" class="px-2 py-1 rounded border border-gray-700 text-gray-500 hover:text-white hover:border-gray-500 text-xs">
             <span x-text="sandboxPresetHelp ? 'Hide help' : 'What is this?'"></span>
           </button>
           <button @click="loadSandboxPresets()" class="text-xs px-3 py-1.5 rounded-lg border border-gray-700 text-gray-400 hover:text-white transition-colors">Refresh</button>
@@ -4379,7 +4272,7 @@
       <div class="grid grid-cols-3 gap-4 items-start">
         <!-- Preset list (left column) -->
         <div class="col-span-1 bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
-          <div class="px-3 py-2 border-b border-gray-800 text-[10px] uppercase tracking-wider text-gray-500">
+          <div class="px-3 py-2 border-b border-gray-800 text-xs uppercase tracking-wider text-gray-500">
             Permission presets (<span x-text="sandboxPresets.length"></span>)
           </div>
           <div class="divide-y divide-gray-800">
@@ -4388,19 +4281,19 @@
                 class="w-full text-left px-3 py-2 hover:bg-gray-800/60 transition-colors"
                 :class="sandboxPresetSelected && sandboxPresetSelected.name === p.name ? 'bg-gray-800/40' : ''">
                 <div class="flex items-center justify-between gap-2">
-                  <div class="text-xs font-mono text-white truncate" x-text="p.name"></div>
+                  <div class="text-sm font-mono text-white truncate" x-text="p.name"></div>
                   <span x-show="p.agent_count > 0"
-                    class="text-[9px] px-1.5 py-0.5 rounded-full bg-indigo-950 text-indigo-400 border border-indigo-800 flex-shrink-0"
+                    class="text-[10px] px-1.5 py-0.5 rounded-full bg-indigo-950 text-indigo-400 border border-indigo-800 flex-shrink-0"
                     x-text="p.agent_count + ' agent' + (p.agent_count === 1 ? '' : 's')"></span>
                 </div>
-                <div x-show="p.description" class="text-[10px] text-gray-500 mt-0.5 truncate" x-text="p.description"></div>
+                <div x-show="p.description" class="text-xs text-gray-500 mt-0.5 truncate" x-text="p.description"></div>
               </button>
             </template>
           </div>
           <template x-if="can('manage_sandbox_policies')">
             <div class="p-3 border-t border-gray-800">
               <button @click="newSandboxPreset()"
-                class="w-full px-2 py-1 rounded border border-gray-700 text-gray-500 hover:text-white hover:border-gray-500 text-[10px]">+ New permission preset</button>
+                class="w-full px-2 py-1 rounded border border-gray-700 text-gray-500 hover:text-white hover:border-gray-500 text-xs">+ New permission preset</button>
             </div>
           </template>
         </div>
@@ -4519,44 +4412,20 @@
          the manifest YAML + the soul.md persona content. Save triggers
          a hot-reload of the soul registry so the next agent dispatch
          sees the new definition without a gateway restart. -->
-    <div x-show="tab==='admin' && adminTab==='souls' && can('view_souls')" x-cloak
-         x-effect="if (tab==='admin' && adminTab==='souls' && can('view_souls')) { loadAdminSouls() }">
-      <div class="flex items-center justify-between mb-4 gap-3 flex-wrap">
+    <div x-show="tab==='infra' && infraTab==='souls' && can('view_souls')" x-cloak
+         x-effect="if (tab==='infra' && infraTab==='souls' && can('view_souls')) { loadAdminSouls() }">
+      <div class="flex items-center justify-between mb-4">
         <div>
-          <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Souls</div>
-          <div class="text-[10px] text-gray-500 mt-0.5">Agent personas. Each soul is a directory with a <span class="font-mono">soul.manifest.yaml</span> (metadata + toolset policy) and a <span class="font-mono">soul.md</span> (persona content).</div>
+          <div class="text-sm font-semibold text-gray-400 uppercase tracking-wider">Souls</div>
+          <div class="text-xs text-gray-500 mt-0.5">Agent personas. Each soul is a directory with a <span class="font-mono">soul.manifest.yaml</span> (identity + RBAC) and a <span class="font-mono">soul.md</span> (persona content).</div>
         </div>
         <button @click="loadAdminSouls()" class="text-xs px-3 py-1.5 rounded-lg border border-gray-700 text-gray-400 hover:text-white transition-colors">Refresh</button>
-      </div>
-
-      <!-- Help panel — shown by default first visit, toggleable. -->
-      <div x-show="adminSoulsHelp" x-cloak class="mb-4 p-3 rounded-xl border border-indigo-900/50 bg-indigo-950/10 text-[11px] text-gray-300 leading-relaxed">
-        <div class="font-semibold text-indigo-300 mb-2">What are souls?</div>
-        <p class="mb-2">
-          A soul is an agent's persona — its communication style, default toolset policy, and voice. Each soul lives in <span class="font-mono text-white">souls/&lt;slug&gt;/</span> with two files:
-        </p>
-        <ul class="list-disc list-inside space-y-0.5 text-gray-400 mb-2">
-          <li><span class="font-mono text-gray-300">soul.manifest.yaml</span> — metadata (id, slug, name, description, category, status) + toolset policy (<span class="font-mono">enforced</span> / <span class="font-mono">default_enabled</span> / <span class="font-mono">optional</span> / <span class="font-mono">forbidden</span>).</li>
-          <li><span class="font-mono text-gray-300">soul.md</span> — markdown describing how the agent speaks, reasons, and behaves.</li>
-        </ul>
-        <div class="font-semibold text-indigo-300 mt-3 mb-1">Editing rules</div>
-        <ul class="list-disc list-inside space-y-0.5 text-gray-400">
-          <li>The manifest's <span class="font-mono text-gray-300">slug</span> must match the URL/filename slug — otherwise the registry goes out of sync with the filesystem.</li>
-          <li>Saving hot-reloads the in-process soul registry. The next agent dispatch picks up the new manifest without a gateway restart.</li>
-          <li>A soul can only be deleted if no agent currently uses it (migrate agents first).</li>
-          <li><span class="font-mono text-gray-300">enforced</span> toolsets are always enabled; users can't untick them in the agent editor. <span class="font-mono text-gray-300">forbidden</span> toolsets are always disabled. <span class="font-mono text-gray-300">optional</span> toolsets are user-togglable.</li>
-        </ul>
-      </div>
-      <div class="flex items-center justify-start mb-3">
-        <button @click="adminSoulsHelp = !adminSoulsHelp" class="text-xs text-indigo-400 hover:text-indigo-200">
-          <span x-text="adminSoulsHelp ? 'Hide help' : 'What is this?'"></span>
-        </button>
       </div>
 
       <div class="grid grid-cols-3 gap-4 items-start">
         <!-- Soul list (left) -->
         <div class="col-span-1 bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
-          <div class="px-3 py-2 border-b border-gray-800 text-[10px] uppercase tracking-wider text-gray-500">
+          <div class="px-3 py-2 border-b border-gray-800 text-xs uppercase tracking-wider text-gray-500">
             Souls (<span x-text="adminSouls.length"></span>)
           </div>
           <div class="divide-y divide-gray-800">
@@ -4565,28 +4434,19 @@
                 class="w-full text-left px-3 py-2 hover:bg-gray-800/60 transition-colors"
                 :class="adminSoulSelected && adminSoulSelected.slug === s.slug ? 'bg-gray-800/40' : ''">
                 <div class="flex items-center justify-between gap-2">
-                  <div class="text-xs font-mono text-white truncate" x-text="s.slug"></div>
+                  <div class="text-sm font-mono text-white truncate" x-text="s.slug"></div>
                   <span x-show="s.agent_count > 0"
-                    class="text-[9px] px-1.5 py-0.5 rounded-full bg-indigo-950 text-indigo-400 border border-indigo-800 flex-shrink-0"
+                    class="text-[10px] px-1.5 py-0.5 rounded-full bg-indigo-950 text-indigo-400 border border-indigo-800 flex-shrink-0"
                     x-text="s.agent_count + ' agent' + (s.agent_count === 1 ? '' : 's')"></span>
                 </div>
-                <div x-show="s.description" class="text-[10px] text-gray-500 mt-0.5 truncate" x-text="s.description"></div>
-                <div class="flex items-center gap-1.5 mt-0.5">
-                  <span class="text-[9px] px-1 py-0.5 rounded font-mono"
-                        :class="s.status === 'stable' ? 'bg-green-950 text-green-400 border border-green-900'
-                              : s.status === 'experimental' ? 'bg-yellow-950 text-yellow-400 border border-yellow-900'
-                              : s.status === 'deprecated' ? 'bg-red-950 text-red-400 border border-red-900'
-                              : 'bg-gray-800 text-gray-500'"
-                        x-text="s.status"></span>
-                  <span class="text-[9px] text-gray-600 font-mono" x-text="'v' + s.version"></span>
-                </div>
+                <div x-show="s.description" class="text-xs text-gray-500 mt-0.5 truncate" x-text="s.description"></div>
               </button>
             </template>
           </div>
           <template x-if="can('manage_souls')">
             <div class="p-3 border-t border-gray-800">
               <button @click="newAdminSoul()"
-                class="w-full px-2 py-1 rounded border border-gray-700 text-gray-500 hover:text-white hover:border-gray-500 text-[10px]">+ New soul</button>
+                class="w-full px-2 py-1 rounded border border-gray-700 text-gray-500 hover:text-white hover:border-gray-500 text-xs">+ New soul</button>
             </div>
           </template>
         </div>
@@ -4617,31 +4477,34 @@
                 </template>
               </div>
 
-              <!-- Two-pane editor: manifest YAML on top, soul.md below.
-                   Both files are saved atomically on "Save & hot-reload". -->
-              <div class="p-3 space-y-3">
-                <div>
-                  <div class="text-[10px] uppercase tracking-wider text-gray-500 mb-1">Manifest YAML <span class="font-mono text-gray-600 normal-case">(soul.manifest.yaml)</span></div>
-                  <template x-if="can('manage_souls')">
-                    <textarea x-model="adminSoulManifest" spellcheck="false"
-                      style="height: calc(50vh - 200px); min-height: 200px;"
-                      class="w-full px-3 py-2 rounded-lg bg-gray-950 border border-gray-800 text-[11px] text-gray-200 font-mono focus:outline-none focus:border-indigo-500 resize-none"></textarea>
-                  </template>
-                  <template x-if="!can('manage_souls')">
-                    <pre style="height: calc(50vh - 200px); min-height: 200px;"
-                      class="w-full px-3 py-2 rounded-lg bg-gray-950 border border-gray-800 text-[11px] text-gray-400 font-mono whitespace-pre-wrap break-all overflow-auto" x-text="adminSoulManifest"></pre>
-                  </template>
-                </div>
-                <div>
-                  <div class="text-[10px] uppercase tracking-wider text-gray-500 mb-1">Persona content <span class="font-mono text-gray-600 normal-case">(soul.md)</span></div>
+              <!-- Two-pane editor: persona content on top (takes all
+                   remaining column height — that's what the user edits
+                   day-to-day), manifest YAML below at a fixed ~8-line
+                   height because post-strip it's just id/slug/name/
+                   description/user_accessible. Both files are saved
+                   atomically on "Save & hot-reload". -->
+              <div class="p-3 flex flex-col gap-3"
+                   style="height: calc(100vh - 260px); min-height: 420px;">
+                <div class="flex flex-col min-h-0 flex-1">
+                  <div class="text-[10px] uppercase tracking-wider text-gray-500 mb-1 shrink-0">Persona content <span class="font-mono text-gray-600 normal-case">(soul.md)</span></div>
                   <template x-if="can('manage_souls')">
                     <textarea x-model="adminSoulMd" spellcheck="false"
-                      style="height: calc(50vh - 200px); min-height: 200px;"
+                      class="flex-1 w-full px-3 py-2 rounded-lg bg-gray-950 border border-gray-800 text-[11px] text-gray-200 font-mono focus:outline-none focus:border-indigo-500 resize-none"></textarea>
+                  </template>
+                  <template x-if="!can('manage_souls')">
+                    <pre class="flex-1 w-full px-3 py-2 rounded-lg bg-gray-950 border border-gray-800 text-[11px] text-gray-400 font-mono whitespace-pre-wrap break-all overflow-auto" x-text="adminSoulMd"></pre>
+                  </template>
+                </div>
+                <div class="flex flex-col shrink-0">
+                  <div class="text-[10px] uppercase tracking-wider text-gray-500 mb-1 shrink-0">Manifest YAML <span class="font-mono text-gray-600 normal-case">(soul.manifest.yaml)</span></div>
+                  <template x-if="can('manage_souls')">
+                    <textarea x-model="adminSoulManifest" spellcheck="false"
+                      style="height: 9rem;"
                       class="w-full px-3 py-2 rounded-lg bg-gray-950 border border-gray-800 text-[11px] text-gray-200 font-mono focus:outline-none focus:border-indigo-500 resize-none"></textarea>
                   </template>
                   <template x-if="!can('manage_souls')">
-                    <pre style="height: calc(50vh - 200px); min-height: 200px;"
-                      class="w-full px-3 py-2 rounded-lg bg-gray-950 border border-gray-800 text-[11px] text-gray-400 font-mono whitespace-pre-wrap break-all overflow-auto" x-text="adminSoulMd"></pre>
+                    <pre style="height: 9rem;"
+                      class="w-full px-3 py-2 rounded-lg bg-gray-950 border border-gray-800 text-[11px] text-gray-400 font-mono whitespace-pre-wrap break-all overflow-auto" x-text="adminSoulManifest"></pre>
                   </template>
                 </div>
 
@@ -4787,6 +4650,103 @@
       </div>
     </div>
 
+    <!-- ── Clusters strip (Activity → Dashboards, full width) ──
+         One row per running ``openshell-cluster-*`` container. Catches
+         three cases the Routes/Sandboxes tables don't surface cleanly:
+           1. Version drift — different `image` tags across clusters.
+           2. Orphan gateways — cluster running without a matching route
+              (``route`` resolves to null on the frontend when no
+              modelRoutes row has the same openshell_name).
+           3. Shared gateways — one cluster hosting sandboxes for more
+              than one route (primordial pattern: qwen piggy-backing on
+              the default ``openshell`` gateway).
+         Polls every 10 s (vs 3 s for sandboxes) — gateway lifecycle is
+         much slower than sandbox lifecycle and costs a docker ps. -->
+    <div x-show="tab==='activity' && activityTab==='dashboards' && can('manage_machines')" x-cloak class="mb-6"
+         x-effect="if (tab==='activity' && activityTab==='dashboards' && can('manage_machines') && clusters.length === 0 && !clustersLoading) { loadClusters() }">
+      <div class="flex items-center justify-between mb-3">
+        <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Clusters</div>
+        <div class="flex items-center gap-2">
+          <button @click="redeployAllOpen = true; redeployAllConfirmText = ''"
+            class="text-xs px-3 py-1.5 rounded-lg border border-red-900 text-red-500 hover:text-red-300 hover:border-red-700 transition-colors"
+            :title="'Destroy every sandbox, re-create every gateway on the current cluster image, and resurrect every agent with the latest Logos code. 3-10 min. Sessions are lost.'">
+            Redeploy everything
+          </button>
+          <button @click="loadClusters()" class="text-xs px-3 py-1.5 rounded-lg border border-gray-700 text-gray-400 hover:text-white transition-colors">Refresh</button>
+        </div>
+      </div>
+      <div class="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
+        <table class="w-full text-xs">
+          <thead>
+            <tr class="border-b border-gray-800 text-gray-500">
+              <th class="text-left px-4 py-3 font-medium">Gateway</th>
+              <th class="text-left px-4 py-3 font-medium">Version</th>
+              <th class="text-left px-4 py-3 font-medium">Port</th>
+              <th class="text-left px-4 py-3 font-medium">Route</th>
+              <th class="text-left px-4 py-3 font-medium">Sandboxes</th>
+              <th class="text-left px-4 py-3 font-medium">Health</th>
+            </tr>
+          </thead>
+          <tbody>
+            <template x-for="c in clusters" :key="c.openshell_name">
+              <tr class="border-b border-gray-800/50 hover:bg-gray-800/30">
+                <td class="px-4 py-2 font-mono text-gray-200" x-text="c.openshell_name"></td>
+                <td class="px-4 py-2 font-mono text-[11px]"
+                    :title="c.image">
+                  <!-- Show only the tag (everything after the last ':').
+                       Full image path stays in title for drill-down.
+                       Accent drift-behind rows in amber; semver-aware
+                       so 0.0.10 ranks above 0.0.9. -->
+                  <span :class="_clusterImageIsLatest(c) ? 'text-gray-300' : 'text-amber-400'"
+                        x-text="(c.image || '').split(':').pop() || '—'"></span>
+                </td>
+                <td class="px-4 py-2 text-gray-500" x-text="c.port || '—'"></td>
+                <td class="px-4 py-2 text-[11px]">
+                  <!-- Cross-reference to modelRoutes. Filter (not find)
+                       so the primordial-sharing case (multiple routes on
+                       one gateway) renders all of them rather than
+                       silently hiding the second. Orphans (cluster with
+                       no matching route) get an explicit amber pill. -->
+                  <template x-if="(modelRoutes || []).some(r => r.openshell_name === c.openshell_name)">
+                    <div class="flex flex-wrap gap-1">
+                      <template x-for="r in (modelRoutes || []).filter(x => x.openshell_name === c.openshell_name)" :key="r.id">
+                        <span class="text-gray-300 font-mono" x-text="r.model"></span>
+                      </template>
+                    </div>
+                  </template>
+                  <template x-if="!(modelRoutes || []).some(r => r.openshell_name === c.openshell_name)">
+                    <span class="px-1.5 py-0.5 rounded text-[10px] font-medium border bg-amber-950 text-amber-400 border-amber-900">orphan · no route</span>
+                  </template>
+                </td>
+                <td class="px-4 py-2 text-gray-400"
+                    x-text="(sandboxes || []).filter(s => s.openshell_name === c.openshell_name).length"></td>
+                <td class="px-4 py-2">
+                  <!-- Four-state health pill. Backend classifies once in
+                       _handle_clusters_list so the UI only picks a colour
+                       and label. `unhealthy` is a real red because the
+                       old "starting" fallback hid failed health checks. -->
+                  <span class="px-1.5 py-0.5 rounded text-[10px] font-medium border"
+                    :class="c.health_state === 'healthy'   ? 'bg-green-950 text-green-400 border-green-900'
+                          : c.health_state === 'starting'  ? 'bg-yellow-950 text-yellow-400 border-yellow-900'
+                          : c.health_state === 'unhealthy' ? 'bg-red-950 text-red-400 border-red-900'
+                          : c.health_state === 'no_hc'     ? 'bg-gray-900 text-gray-400 border-gray-800'
+                          :                                  'bg-gray-900 text-gray-500 border-gray-800'"
+                    x-text="c.health_state === 'no_hc' ? 'running' : (c.health_state || 'unknown')"
+                    :title="c.status"></span>
+                </td>
+              </tr>
+            </template>
+            <template x-if="!clustersLoading && clusters.length === 0">
+              <tr><td colspan="6" class="px-4 py-6 text-center text-gray-600">No OpenShell cluster containers running.</td></tr>
+            </template>
+            <template x-if="clustersLoading && clusters.length === 0">
+              <tr><td colspan="6" class="px-4 py-6 text-center text-gray-600">Loading&hellip;</td></tr>
+            </template>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
     <!-- ── Dashboards two-column grid ──
          Sandboxes (left) + Model Routes (right) sit side-by-side so
          neither stretches uselessly across the full width when one of
@@ -4811,7 +4771,7 @@
         <div class="bg-gray-900 border border-gray-800 rounded-lg px-4 py-3">
           <div class="text-2xl font-bold" :class="sandboxes.filter(s => s.worker_healthy).length === sandboxes.length ? 'text-green-400' : 'text-yellow-400'"
             x-text="sandboxes.filter(s => s.worker_healthy).length + '/' + sandboxes.length"></div>
-          <div class="text-[10px] text-gray-500 uppercase tracking-wider">Ready Sandboxes</div>
+          <div class="text-[10px] text-gray-500 uppercase tracking-wider">Agents ready</div>
         </div>
         <div class="bg-gray-900 border border-gray-800 rounded-lg px-4 py-3">
           <div class="text-2xl font-bold text-white">
@@ -4841,7 +4801,7 @@
             <tr class="border-b border-gray-800 text-gray-500">
               <th class="text-left px-4 py-3 font-medium">Sandbox</th>
               <th class="text-left px-4 py-3 font-medium">Agent</th>
-              <th class="text-left px-4 py-3 font-medium">Phase</th>
+              <th class="text-left px-4 py-3 font-medium">Status</th>
               <th class="text-left px-4 py-3 font-medium">Uptime</th>
               <th class="text-right px-4 py-3 font-medium">Actions</th>
             </tr>
@@ -4853,12 +4813,52 @@
                 <td class="px-4 py-2 font-mono text-gray-300" x-text="sb.sandbox_name"></td>
                 <td class="px-4 py-2 text-white font-medium" x-text="sb.name"></td>
                 <td class="px-4 py-2">
-                  <span class="px-1.5 py-0.5 rounded text-[10px] font-medium border"
-                    :class="isSandboxSwitching(sb) ? 'bg-yellow-950 text-yellow-400 border-yellow-900 animate-pulse'
-                      : (sb.phase === 'ready' || sb.phase === 'Ready') ? 'bg-green-950 text-green-400 border-green-900'
-                      : (sb.phase === 'provisioning' || sb.phase === 'Provisioning') ? 'bg-yellow-950 text-yellow-400 border-yellow-900'
-                      : 'bg-gray-900 text-gray-500 border-gray-800'"
-                    x-text="isSandboxSwitching(sb) ? 'switching' : (sb.phase || 'unknown').toLowerCase()"></span>
+                  <!-- Two pills side by side: pod phase (from openshell
+                       sandbox list) + agent status (hermes HTTP health
+                       probe). They can legitimately disagree — pod goes
+                       Ready before hermes inside finishes booting — so
+                       showing both surfaces the split cleanly instead
+                       of the old single pill that said "ready" while
+                       the overview card said 0/1. -->
+                  <div class="flex items-center gap-1 flex-wrap">
+                    <span class="px-1.5 py-0.5 rounded text-[10px] font-medium border"
+                      :class="isSandboxSwitching(sb) ? 'bg-yellow-950 text-yellow-400 border-yellow-900 animate-pulse'
+                        : (sb.phase === 'ready' || sb.phase === 'Ready') ? 'bg-green-950 text-green-400 border-green-900'
+                        : (sb.phase === 'provisioning' || sb.phase === 'Provisioning') ? 'bg-yellow-950 text-yellow-400 border-yellow-900'
+                        : 'bg-gray-900 text-gray-500 border-gray-800'"
+                      :title="'OpenShell pod phase: ' + (sb.phase || 'unknown')">
+                      <span class="text-gray-500 mr-0.5">pod:</span>
+                      <span x-text="isSandboxSwitching(sb) ? 'switching' : (sb.phase || 'unknown').toLowerCase()"></span>
+                    </span>
+                    <span class="px-1.5 py-0.5 rounded text-[10px] font-medium border"
+                      :class="sb.worker_healthy ? 'bg-green-950 text-green-400 border-green-900'
+                            : (sb.phase === 'ready' || sb.phase === 'Ready') ? 'bg-yellow-950 text-yellow-400 border-yellow-900'
+                            : 'bg-gray-900 text-gray-500 border-gray-800'"
+                      :title="'Hermes HTTP health inside the sandbox. Pod can be Ready before hermes finishes booting.'">
+                      <span class="text-gray-500 mr-0.5">agent:</span>
+                      <span x-text="sb.worker_healthy ? 'ready' : (sb.worker_status || 'starting')"></span>
+                    </span>
+                  </div>
+                  <!-- Live substate while the spawn pipeline is still
+                       working — "Staging image into cluster 79%", "Creating
+                       sandbox pod…", "Uploading agent configuration…".
+                       Only shown when the agent isn't fully ready and
+                       the backend has populated spawn_substage_label;
+                       otherwise the row stays clean. Progress bar uses
+                       byte-accurate sub_percent from the backend
+                       (not an elapsed-based guess). -->
+                  <template x-if="!sb.worker_healthy && sb.spawn_substage_label">
+                    <div class="mt-1 max-w-xs">
+                      <div class="text-[10px] text-yellow-400/80 truncate"
+                           :title="sb.spawn_substage_label"
+                           x-text="sb.spawn_substage_label"></div>
+                      <div x-show="sb.spawn_substage_pct > 0"
+                           class="mt-0.5 h-0.5 w-full bg-yellow-900/40 rounded overflow-hidden">
+                        <div class="h-full bg-yellow-500/70 transition-[width] duration-1000 ease-linear"
+                             :style="'width: ' + Math.min(99, sb.spawn_substage_pct) + '%'"></div>
+                      </div>
+                    </div>
+                  </template>
                 </td>
                 <td class="px-4 py-2 text-gray-500"
                     x-text="(sb.phase === 'Ready' || sb.phase === 'ready')
@@ -4925,7 +4925,7 @@
       <div class="text-[10px] text-gray-600 mb-5">
         Policy config:
         <button class="text-indigo-400 hover:text-indigo-300 underline"
-                @click="tab='admin'; adminTab='sandbox-policies'">Admin → Permissions</button>
+                @click="tab='infra'; infraTab='sandbox-policies'; localStorage.setItem('logos_infra_tab','sandbox-policies'); loadSandboxPresets()">Settings → Permissions</button>
       </div>
 
     </div>
@@ -4986,7 +4986,7 @@
             <tr class="border-b border-gray-800 text-gray-500">
               <th class="text-left px-4 py-3 font-medium">Model</th>
               <th class="text-left px-4 py-3 font-medium">Provider</th>
-              <th class="text-left px-4 py-3 font-medium">OpenShell Gateway</th>
+              <th class="text-left px-4 py-3 font-medium">Gateway</th>
               <th class="text-left px-4 py-3 font-medium">Port</th>
               <th class="text-left px-4 py-3 font-medium">Status</th>
               <th class="text-left px-4 py-3 font-medium">Agents</th>
@@ -5070,7 +5070,7 @@
               <tr>
                 <td colspan="8" class="px-4 py-8 text-center text-gray-600">
                   No model routes provisioned yet. Click <span class="text-[var(--accent)]">+ Provision Model</span> to create one,
-                  or finish <button @click="tab='infra'; infraTab='servers'" class="underline text-[var(--accent)] hover:opacity-80">Config → Inference</button>
+                  or finish <button @click="tab='infra'; infraTab='servers'" class="underline text-[var(--accent)] hover:opacity-80">Settings → Inference</button>
                   if you haven't picked a model yet.
                 </td>
               </tr>
@@ -5179,7 +5179,7 @@
             </select>
             <p x-show="['anthropic','openai','openrouter'].includes(provisionForm.provider) && cloudProviderModelsError[provisionForm.provider]"
                class="mt-1 text-[10px] text-amber-500"
-               x-text="'Live catalog unavailable (' + cloudProviderModelsError[provisionForm.provider] + ') — showing fallback list. Add an API key under Config → Tools to enable live fetch.'"></p>
+               x-text="'Live catalog unavailable (' + cloudProviderModelsError[provisionForm.provider] + ') — showing fallback list. Add an API key under Settings → Tools to enable live fetch.'"></p>
             <input x-show="provisionFormCustom" x-model="provisionForm.model" type="text"
               placeholder="provider/model-id"
               class="w-full mt-2 px-3 py-2 bg-gray-800 border border-gray-700 rounded text-white text-sm font-mono"
@@ -5197,7 +5197,7 @@
               <div class="text-[10px] mt-1 space-y-1">
                 <template x-if="!adminMachines.length">
                   <p class="text-gray-600">
-                    No machines registered yet — go to <a href="#" @click.prevent="provisionModalOpen=false; tab='infra'; infraTab='servers'" class="text-[var(--accent)] hover:opacity-80">Config &rarr; Inference</a> to add one, or use Custom model id.
+                    No machines registered yet — go to <a href="#" @click.prevent="provisionModalOpen=false; tab='infra'; infraTab='servers'" class="text-[var(--accent)] hover:opacity-80">Settings &rarr; Inference</a> to add one, or use Custom model id.
                   </p>
                 </template>
                 <template x-if="adminMachines.length && machineProbeStatuses.length">
@@ -5209,7 +5209,7 @@
                       </div>
                     </template>
                     <p class="text-gray-600 pt-1">
-                      Fix the issue in <a href="#" @click.prevent="provisionModalOpen=false; tab='infra'; infraTab='servers'" class="text-[var(--accent)] hover:opacity-80">Config &rarr; Inference</a>, then click <em>refresh list</em> above. Or use Custom model id.
+                      Fix the issue in <a href="#" @click.prevent="provisionModalOpen=false; tab='infra'; infraTab='servers'" class="text-[var(--accent)] hover:opacity-80">Settings &rarr; Inference</a>, then click <em>refresh list</em> above. Or use Custom model id.
                     </p>
                   </div>
                 </template>
@@ -5240,212 +5240,77 @@
       </div>
     </div>
 
-    </div><!-- /Dashboards two-column grid -->
-
-    <!-- ── Debug section (moved from Settings/Routing 2026-04-11, pass-3 S1) ── -->
-    <!-- Sibling of the two-column grid; full-width below the columns. -->
-    <div x-show="tab==='activity' && activityTab==='dashboards' && can('view_routing_debug')" x-cloak class="mb-6 border-t border-gray-800 pt-6">
-      <button @click="debugOpen=!debugOpen; if(debugOpen) loadAdminUsers()"
-        class="flex items-center justify-between w-full text-left mb-4 group">
-        <span class="text-sm font-semibold text-white group-hover:text-gray-200">Routing Debug — Simulate Route</span>
-        <span class="text-xs text-gray-600 transition-transform" :class="debugOpen ? 'rotate-90' : ''" style="display:inline-block">▶</span>
-      </button>
-    <div x-show="debugOpen" x-cloak>
-
-      <!-- Query form -->
-      <div class="bg-gray-900 border border-gray-800 rounded-xl p-4 mb-4">
-        <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">Simulate Route</div>
-        <div class="grid grid-cols-2 gap-3 mb-3">
+    <!-- ── Redeploy-everything modal ──
+         Nuke-and-repave: destroys every sandbox, re-creates every
+         ready model-route's gateway (picks up pinned cluster image
+         version via OPENSHELL_CLUSTER_IMAGE), then resurrects every
+         agent with the latest Logos code. 3-10 minutes; sessions
+         inside sandboxes are lost.
+         Type-to-confirm gate: the button only enables once the user
+         literally types "redeploy". Prevents accidental clicks. -->
+    <div x-show="redeployAllOpen" x-cloak
+      class="fixed inset-0 bg-black/60 flex items-center justify-center z-50"
+      @click="if (!redeployAllRunning) redeployAllOpen = false">
+      <div class="bg-gray-900 border border-red-900 rounded-xl p-6 max-w-md w-full mx-4 space-y-4"
+        @click.stop>
+        <div class="flex items-start justify-between">
           <div>
-            <label class="text-xs text-gray-500 block mb-1">User</label>
-            <select x-model="routeDebugUserId"
-              class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm text-white focus:border-[var(--accent)] focus:outline-none">
-              <option value="">— you —</option>
-              <template x-for="u in adminUsers" :key="u.id">
-                <option :value="u.id" x-text="(u.display_name||u.username) + ' · ' + u.email"></option>
-              </template>
-            </select>
+            <div class="text-sm font-semibold text-red-300">Redeploy everything</div>
+            <div class="text-[10px] text-gray-500 mt-1">Destructive. Destroys every sandbox, re-creates every gateway on the pinned cluster image, and resurrects every agent with the latest Logos code. Any in-sandbox session state is lost. 3&ndash;10 minutes total.</div>
           </div>
-          <div>
-            <label class="text-xs text-gray-500 block mb-1">Model alias</label>
-            <select x-model="routeDebugModel"
-              class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm text-white focus:border-[var(--accent)] focus:outline-none">
-              <template x-for="group in spawnAliasGroups()" :key="group.cls">
-                <optgroup :label="group.label">
-                  <template x-for="alias in group.aliases" :key="alias">
-                    <option :value="alias" x-text="alias"></option>
-                  </template>
-                </optgroup>
-              </template>
-            </select>
-          </div>
+          <button x-show="!redeployAllRunning"
+            @click="redeployAllOpen = false"
+            class="text-gray-500 hover:text-white text-lg">&times;</button>
         </div>
-        <button @click="resolveRouteDebug()"
-          :disabled="routeDebugLoading"
-          class="px-4 py-1.5 rounded-lg bg-[var(--accent)] text-white text-xs font-medium hover:opacity-90 disabled:opacity-40 flex items-center gap-2">
-          <span x-show="routeDebugLoading" class="animate-spin inline-block">&#9881;</span>
-          <span>Resolve</span>
-        </button>
+        <template x-if="!redeployAllResult && !redeployAllRunning">
+          <div class="space-y-2">
+            <label class="text-[10px] text-gray-500 uppercase tracking-wider">Type <span class="font-mono text-gray-300">redeploy</span> to confirm</label>
+            <input x-model="redeployAllConfirmText" type="text"
+              class="w-full bg-gray-950 border border-gray-800 rounded px-3 py-2 text-sm text-white font-mono focus:outline-none focus:border-red-700"
+              placeholder="redeploy">
+          </div>
+        </template>
+        <template x-if="redeployAllRunning">
+          <div class="flex items-center gap-2 text-xs text-yellow-400">
+            <span class="animate-spin">&#9881;</span>
+            <span>Redeploying&hellip; do not close this window. Sandboxes and clusters are being torn down and rebuilt.</span>
+          </div>
+        </template>
+        <template x-if="redeployAllResult">
+          <div class="space-y-2">
+            <div class="text-xs"
+              :class="redeployAllResult.ok ? 'text-green-400' : 'text-red-400'"
+              x-text="redeployAllResult.message + ' (' + redeployAllResult.elapsed_s + 's)'"></div>
+            <div class="text-[10px] text-gray-500 space-y-0.5 max-h-60 overflow-y-auto">
+              <template x-for="step in (redeployAllResult.steps || [])" :key="step.name">
+                <div class="flex items-start gap-2">
+                  <span x-text="step.ok ? '\u2713' : '\u2717'"
+                    :class="step.ok ? 'text-green-500' : 'text-red-500'"></span>
+                  <span class="font-mono text-gray-400 shrink-0" x-text="step.name"></span>
+                  <span class="text-gray-600 flex-1" x-text="step.detail"></span>
+                </div>
+              </template>
+            </div>
+          </div>
+        </template>
+        <div class="flex items-center gap-2 justify-end">
+          <button x-show="!redeployAllRunning"
+            @click="redeployAllOpen = false; redeployAllResult = null; redeployAllConfirmText = ''"
+            class="px-3 py-1.5 rounded border border-gray-700 text-gray-400 hover:text-white text-xs">
+            <span x-text="redeployAllResult ? 'Close' : 'Cancel'"></span>
+          </button>
+          <button x-show="!redeployAllResult && !redeployAllRunning"
+            @click="redeployAll()"
+            :disabled="redeployAllConfirmText.trim() !== 'redeploy'"
+            :class="redeployAllConfirmText.trim() !== 'redeploy' ? 'opacity-40 cursor-not-allowed' : ''"
+            class="px-3 py-1.5 rounded bg-red-700 text-white font-medium text-xs hover:bg-red-600">
+            Redeploy everything
+          </button>
+        </div>
       </div>
+    </div>
 
-      <!-- Result: routing failed (503 / profile fail mode) -->
-      <template x-if="routeDebugResult && routeDebugResult.error && !routeDebugResult.result">
-        <div class="space-y-3">
-          <div class="bg-red-950 border border-red-900 rounded-xl px-5 py-4">
-            <div class="text-xs font-semibold text-red-400 mb-1">No route found</div>
-            <div class="text-red-300 text-sm"
-              x-text="routeDebugResult.error === 'no_available_machine'
-                ? 'All profile machines are unavailable and the profile is set to fail (no fallback).'
-                : routeDebugResult.error === 'no_machines_registered'
-                ? 'No machines are registered in the system.'
-                : routeDebugResult.error"></div>
-            <template x-if="routeDebugResult.profile">
-              <div class="text-xs text-red-700 mt-1" x-text="'Profile: ' + routeDebugResult.profile"></div>
-            </template>
-          </div>
-          <!-- Still show trace if present -->
-          <template x-if="routeDebugResult.trace && routeDebugResult.trace.length">
-            <div class="bg-gray-900 border border-gray-800 rounded-xl p-4">
-              <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">Trace</div>
-              <div class="space-y-1.5">
-                <template x-for="(t, i) in routeDebugResult.trace" :key="i">
-                  <div class="flex items-start gap-3 text-xs">
-                    <span class="text-gray-700 shrink-0 w-32 font-mono" x-text="t.layer"></span>
-                    <span class="shrink-0 px-1.5 py-0.5 rounded font-medium"
-                      :class="t.result==='match'?'bg-green-950 text-green-400':t.result==='skip'?'bg-gray-800 text-gray-600':'bg-yellow-950 text-yellow-500'"
-                      x-text="t.result"></span>
-                    <span class="text-gray-600" x-text="t.machine||t.profile_name||t.reason||''"></span>
-                  </div>
-                </template>
-              </div>
-            </div>
-          </template>
-        </div>
-      </template>
-
-      <!-- Result: success -->
-      <template x-if="routeDebugResult && routeDebugResult.result">
-        <div class="space-y-3">
-
-          <!-- Resolution banner -->
-          <div class="rounded-xl border border-gray-700 bg-gray-900 px-5 py-4">
-            <div class="flex items-start justify-between">
-              <div>
-                <div class="flex items-center gap-2 mb-1">
-                  <span class="font-mono text-[var(--accent)] text-sm" x-text="routeDebugResult.input.model_alias"></span>
-                  <span class="text-gray-700 text-xs">→</span>
-                  <span class="text-xs px-1.5 py-0.5 rounded border border-gray-700 text-gray-400"
-                    x-text="routeDebugResult.input.model_class"></span>
-                  <span class="text-gray-700 text-xs">→</span>
-                  <span class="font-semibold text-white text-sm" x-text="routeDebugResult.result.machine_name"></span>
-                </div>
-                <div class="text-xs text-gray-600 font-mono" x-text="routeDebugResult.result.endpoint_url"></div>
-              </div>
-              <span class="text-xs px-2 py-1 rounded-full bg-green-950 text-green-400 border border-green-900 shrink-0 ml-4">resolved</span>
-            </div>
-            <div class="mt-2 text-xs text-gray-600"
-              x-text="'For: ' + routeDebugResult.input.user_name + (routeDebugResult.input.user_id !== routeDebugResult.input.user_id ? '' : '')"></div>
-          </div>
-
-          <!-- Layer timeline -->
-          <div class="bg-gray-900 border border-gray-800 rounded-xl p-4">
-            <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">Decision Layers</div>
-            <div class="space-y-0">
-              <template x-for="(t, i) in routeDebugResult.trace" :key="i">
-                <div class="flex items-start gap-3 py-2"
-                  :class="i < routeDebugResult.trace.length - 1 ? 'border-b border-gray-800/50' : ''">
-                  <!-- Layer dot -->
-                  <div class="w-2 h-2 rounded-full mt-1 shrink-0"
-                    :class="t.result==='match' ? 'bg-green-500' : t.result==='skip' ? 'bg-gray-700' : 'bg-yellow-600'"></div>
-                  <div class="flex-1 min-w-0">
-                    <div class="flex items-center gap-2 mb-0.5">
-                      <!-- Human layer label -->
-                      <span class="text-xs font-medium text-gray-300"
-                        x-text="t.layer==='instance_override' ? 'Instance Override'
-                               : t.layer==='user_profile'       ? 'Profile Rules'
-                               : t.layer==='best_effort'        ? 'Best-Effort Fallback'
-                               : t.layer"></span>
-                      <span class="text-xs px-1.5 py-0.5 rounded font-medium"
-                        :class="t.result==='match'     ? 'bg-green-950 text-green-400'
-                               : t.result==='skip'      ? 'bg-gray-800 text-gray-600'
-                               : t.result==='exhausted' ? 'bg-yellow-950 text-yellow-500'
-                               :                          'bg-gray-800 text-gray-600'"
-                        x-text="t.result==='match'     ? '✓ matched'
-                               : t.result==='skip'      ? 'skipped'
-                               : t.result==='exhausted' ? 'all failed'
-                               : t.result"></span>
-                    </div>
-                    <!-- Layer detail -->
-                    <div class="text-xs text-gray-600"
-                      x-text="t.layer==='user_profile' && t.profile_name ? 'Profile: ' + t.profile_name + (t.rule_class ? '  ·  rule: ' + t.rule_class : '') + (t.machine ? '  →  ' + t.machine : '')
-                             : t.layer==='user_profile' && t.reason       ? t.reason
-                             : t.layer==='best_effort' && t.machine       ? t.machine
-                             : t.reason || ''"></div>
-                  </div>
-                </div>
-              </template>
-            </div>
-          </div>
-
-          <!-- Candidate machine checks (profile evaluation) -->
-          <template x-if="routeDebugResult.fallback_chain && routeDebugResult.fallback_chain.length > 0">
-            <div class="bg-gray-900 border border-gray-800 rounded-xl p-4">
-              <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">Candidate Machines</div>
-              <div class="space-y-2">
-                <template x-for="(c, i) in routeDebugResult.fallback_chain" :key="i">
-                  <div class="flex items-center gap-3 text-xs rounded-lg px-3 py-2"
-                    :class="c.selected ? 'bg-green-950/40 border border-green-900/50' : 'bg-gray-800/40'">
-                    <!-- Rank -->
-                    <span class="text-gray-700 w-4 shrink-0 text-center font-mono" x-text="c.rank"></span>
-                    <!-- Name + rule class -->
-                    <div class="flex-1 min-w-0">
-                      <div class="flex items-center gap-1.5">
-                        <span class="font-medium"
-                          :class="c.selected ? 'text-green-300' : 'text-gray-400'"
-                          x-text="c.machine_name"></span>
-                        <span class="text-gray-700 font-mono" x-text="c.rule_class !== '*' ? c.rule_class : ''"></span>
-                        <template x-if="c.selected">
-                          <span class="text-green-500 text-xs">✓ selected</span>
-                        </template>
-                      </div>
-                    </div>
-                    <!-- Check badges -->
-                    <div class="flex gap-1 shrink-0">
-                      <span class="px-1.5 py-0.5 rounded text-xs border"
-                        :class="c.checks.enabled
-                          ? 'border-gray-700 text-gray-500'
-                          : 'border-red-900 bg-red-950 text-red-400'"
-                        x-text="c.checks.enabled ? 'on' : 'disabled'"></span>
-                      <span class="px-1.5 py-0.5 rounded text-xs border"
-                        :class="c.checks.reachable
-                          ? 'border-gray-700 text-gray-500'
-                          : 'border-red-900 bg-red-950 text-red-400'"
-                        x-text="c.checks.reachable ? 'up' : 'down'"></span>
-                      <span class="px-1.5 py-0.5 rounded text-xs border"
-                        :class="c.checks.capable
-                          ? 'border-gray-700 text-gray-500'
-                          : 'border-yellow-900 bg-yellow-950 text-yellow-500'"
-                        x-text="c.checks.capable ? 'capable' : 'wrong class'"></span>
-                    </div>
-                  </div>
-                </template>
-              </div>
-            </div>
-          </template>
-
-        </div>
-      </template>
-
-      <!-- Generic fetch error -->
-      <template x-if="routeDebugResult && !routeDebugResult.result && !routeDebugResult.error && !routeDebugResult.trace">
-        <div class="bg-red-950 border border-red-900 rounded-xl px-4 py-3 text-red-300 text-xs">
-          Unexpected response from server.
-        </div>
-      </template>
-
-    </div><!-- /debugOpen -->
-    </div><!-- /debug section -->
-
+    </div><!-- /Dashboards two-column grid -->
 
 
     <!-- ── Runs (Activity → Runs) — unified dispatch ledger ──
@@ -5816,7 +5681,7 @@
                 <label class="text-xs text-gray-400 shrink-0">Model</label>
                 <select x-model="evoConsultModel"
                   class="text-xs bg-gray-800 border border-gray-700 rounded-lg px-2 py-1.5 text-gray-200 focus:outline-none focus:border-[var(--accent)]">
-                  <option value="claude-opus-4-6">Claude Opus 4.6</option>
+                  <option value="claude-opus-4-7">Claude Opus 4.7</option>
                   <option value="claude-sonnet-4-6">Claude Sonnet 4.6</option>
                   <option value="gpt-4o">GPT-4o</option>
                   <option value="gpt-4o-mini">GPT-4o Mini</option>
@@ -5922,7 +5787,7 @@
             <label class="text-xs text-gray-400 w-28 shrink-0">Model</label>
             <select x-model="evoSettingsForm.frontier_model"
               class="text-xs bg-gray-800 border border-gray-700 rounded-lg px-2 py-1.5 text-gray-200 focus:outline-none focus:border-[var(--accent)]">
-              <option value="claude-opus-4-6">Claude Opus 4.6</option>
+              <option value="claude-opus-4-7">Claude Opus 4.7</option>
               <option value="claude-sonnet-4-6">Claude Sonnet 4.6</option>
               <option value="gpt-4o">GPT-4o</option>
               <option value="gpt-4o-mini">GPT-4o Mini</option>
@@ -6079,44 +5944,87 @@ function getCsrfToken() {
     ?.split('=')[1] ?? '';
 }
 
-/** Save tool API key from the /setup tools card. Called by the inline
- *  "Save & Enable" button rendered in the setup_tools SSE handler. */
+/** Save a single env credential for the current agent from the /setup
+ *  card. Called by the inline "Save" button rendered per-row in the
+ *  setup_tools SSE handler. Writes to agent_env_credentials + refreshes
+ *  the sandbox .env so hermes picks up the key on its next request.
+ *
+ *  The button's data attributes carry the agent_id + env_var; the value
+ *  comes from the sibling input. On success the card row flips to a
+ *  "managed ✓" state and clears the input. */
 window._saveToolConfig = async function(btn) {
-  const card = btn.closest('[data-tool-config]');
+  const card = btn.closest('[data-cloud-env]');
   if (!card) return;
-  const inputs = card.querySelectorAll('input[data-env-key]');
-  const credentials = {};
-  for (const inp of inputs) {
-    const key = inp.dataset.envKey;
-    const val = inp.value.trim();
-    if (key && val) credentials[key] = val;
-  }
-  if (Object.keys(credentials).length === 0) return;
+  const agentId = btn.dataset.agentId;
+  const envVar = btn.dataset.envVar;
+  const input = card.querySelector('input[data-env-input]');
+  if (!agentId || !envVar || !input) return;
+  const value = (input.value || '').trim();
+  if (!value) return;
 
   btn.disabled = true;
-  btn.textContent = 'Saving...';
+  btn.textContent = 'Saving…';
   try {
-    const resp = await fetch('/tools/configure', {
+    const resp = await fetch(`/admin/agents/${encodeURIComponent(agentId)}/env-credentials`, {
       method: 'POST', credentials: 'include',
       headers: {'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken()},
-      body: JSON.stringify({ credentials }),
+      body: JSON.stringify({ env_var: envVar, value }),
     });
-    const data = await resp.json();
-    if (data.saved && data.saved.length > 0) {
-      card.innerHTML = '<div class="flex items-center gap-2 py-1"><span class="text-green-400">&#x2705;</span>'
-        + '<span class="text-green-300 text-xs font-medium">Configured! Tool is now available.</span></div>';
-    } else {
-      btn.textContent = 'Error';
+    if (!resp.ok) {
+      const data = await resp.json().catch(() => ({}));
+      btn.textContent = 'Failed';
       btn.classList.replace('bg-indigo-600', 'bg-red-600');
-      const errMsg = (data.errors || []).map(e => e.error).join(', ') || 'Unknown error';
       const errDiv = document.createElement('div');
       errDiv.className = 'text-[10px] text-red-400 mt-1';
-      errDiv.textContent = errMsg;
+      errDiv.textContent = data.detail || data.error || `HTTP ${resp.status}`;
       card.appendChild(errDiv);
+      return;
     }
+    // Success — collapse input, show managed badge. Sandbox refresh is
+    // fire-and-forget on the server; no need to block the UI.
+    card.innerHTML = '<div class="flex items-center gap-2 py-1.5">'
+      + '<span class="text-green-400">&#x2705;</span>'
+      + `<span class="text-green-300 text-xs font-medium">${envVar}</span>`
+      + '<span class="text-[10px] text-gray-500 ml-auto">saved — hermes reloading…</span>'
+      + '</div>';
   } catch (err) {
     btn.textContent = 'Failed';
     btn.classList.replace('bg-indigo-600', 'bg-red-600');
+  }
+};
+
+/** Delete a managed env credential for the current agent. Called by
+ *  the inline × button on rows where the key is already Logos-managed. */
+window._deleteToolConfig = async function(btn) {
+  const card = btn.closest('[data-cloud-env]');
+  if (!card) return;
+  const agentId = btn.dataset.agentId;
+  const envVar = btn.dataset.envVar;
+  if (!agentId || !envVar) return;
+  if (!confirm(`Remove ${envVar} from this agent's sandbox? The tool that needs it will stop working until you re-add.`)) return;
+  btn.disabled = true;
+  try {
+    const resp = await fetch(
+      `/admin/agents/${encodeURIComponent(agentId)}/env-credentials/${encodeURIComponent(envVar)}`,
+      { method: 'DELETE', credentials: 'include',
+        headers: {'X-CSRF-Token': getCsrfToken()} },
+    );
+    if (!resp.ok) {
+      const data = await resp.json().catch(() => ({}));
+      btn.disabled = false;
+      const errDiv = document.createElement('div');
+      errDiv.className = 'text-[10px] text-red-400 mt-1';
+      errDiv.textContent = data.detail || data.error || `HTTP ${resp.status}`;
+      card.appendChild(errDiv);
+      return;
+    }
+    card.innerHTML = '<div class="flex items-center gap-2 py-1.5">'
+      + '<span class="text-gray-500">&#x2718;</span>'
+      + `<span class="text-gray-400 text-xs font-medium">${envVar}</span>`
+      + '<span class="text-[10px] text-gray-500 ml-auto">removed — hermes reloading…</span>'
+      + '</div>';
+  } catch (_e) {
+    btn.disabled = false;
   }
 };
 
@@ -6272,7 +6180,7 @@ function app() {
     // Named agents
     namedAgents: [],
     namedAgentFormOpen: false,
-    namedAgentForm: { name: '', soul_slug: 'general', model: '', model_route_id: null, description: '', toolsets: [], char_index: null },
+    namedAgentForm: { name: '', soul_slug: 'general', model: '', model_route_id: null, description: '', char_index: null },
     namedAgentEditId: null,
     namedAgentMsg: null,
     // ── Compare tab (#13: side-by-side AB chat with two named agents) ─────
@@ -6336,7 +6244,7 @@ function app() {
     // admin (slimmed: only users/action-policies/audit live here now; runs/sandboxes/etc. moved to Activity)
     adminTab: (() => {
       const v = localStorage.getItem('hermes_admin_tab') || 'users';
-      const moved = ['workflows','runs','sandboxes','model-routes','platforms','approvals','activity'];
+      const moved = ['workflows','runs','sandboxes','model-routes','platforms','approvals','activity','sandbox-policies','souls'];
       return moved.includes(v) ? 'users' : v;
     })(),
     // activity sub-tabs (events/runs/dashboards/approvals/proposals)
@@ -6377,8 +6285,9 @@ function app() {
     },
     // Services tab
     servicesMcp: [],
-    servicesTools: [],
-    // Local bundled services (SearxNG etc). Separate from servicesTools
+    // Local bundled services (SearxNG etc). Separate from the removed
+    // servicesTools state (cloud tool integrations moved to per-agent
+    // sandbox .env; see /setup chat command).
     // which is the API-key integration catalogue.
     localServices: [],
     localServicesBusy: {},
@@ -6409,12 +6318,12 @@ function app() {
     agentChannelsState: null,
     agentChannelsLoading: false,
     agentChannelsError: null,
-    // Form for the "Add credential" row in Config → Messaging.
+    // Form for the "Add credential" row in Settings → Messaging.
     // `agent_id` is required — this is the whole point of per-agent
     // credentials. The form pre-picks the first named agent on load
     // so the UI isn't empty the first time someone opens it.
     agentChannelsForm: { agent_id: '', platform: 'telegram', label: 'default', token: '', validate: true, saving: false, result: null },
-    // Aggregate map {agent_id: credentials[]} used by Config → Messaging
+    // Aggregate map {agent_id: credentials[]} used by Settings → Messaging
     // to render a grouped view of every agent's credentials in one
     // round-trip. Keyed off the agents list so we fan out one request
     // per named agent when the tab opens.
@@ -6422,6 +6331,24 @@ function app() {
     allAgentChannelsLoading: false,
     // In-flight toggle/delete tracker — keyed by credential id.
     agentChannelsBusy: {},
+    // Messaging tab — collapsible "Add credential" form. Closed by
+    // default so the tab opens to the list rather than an empty form.
+    agentChannelsAddOpen: false,
+
+    // Flat [{agent, cred}] list for the Messaging table. Computed here
+    // rather than via two nested x-for iterators because Alpine fails
+    // to bind event handlers when an x-for template's only child is
+    // another x-for template — the rows render but @click never
+    // attaches, so Delete/Disable appear dead. Flattening fixes it.
+    get messagingRows() {
+      const rows = [];
+      for (const a of (this.namedAgents || [])) {
+        for (const c of (this.allAgentChannels[a.id] || [])) {
+          rows.push({agent: a, cred: c});
+        }
+      }
+      return rows;
+    },
 
     // ── Gateway self-update (banner near top nav) ────────────────────
     // Populated by loadGatewayUpdate() from GET /api/admin/gateway/update.
@@ -6529,6 +6456,20 @@ function app() {
     // setTimeout handle for auto-polling rows still in `provisioning`
     // status — set/cleared by loadModelRoutes().
     _modelRoutesPollTimer: null,
+    // clusters (Activity → Dashboards) — one row per running
+    // ``openshell-cluster-*`` container. Surfaces cluster image version,
+    // port binding, health, and sandbox count. Catches orphan gateways
+    // (container running without a model_routes row) and version drift.
+    clusters: [],
+    clustersLoading: false,
+    // Redeploy-everything modal state. Destructive "nuke and repave"
+    // that destroys every sandbox, re-creates every gateway, and
+    // resurrects every agent. Type-to-confirm gate so a misclick
+    // doesn't wipe the user's install.
+    redeployAllOpen: false,
+    redeployAllConfirmText: '',
+    redeployAllRunning: false,
+    redeployAllResult: null,  // {ok, elapsed_s, message, steps[]}
 
     // ── T pill state (per-agent Tools editor, MISSING.md M10 item 5) ──
     //
@@ -6593,7 +6534,7 @@ function app() {
     // network down, etc.) so the user can still pick from a reasonable set
     // without resorting to Custom-id entry. Updated rarely, intentionally minimal.
     cloudProviderModelsFallback: {
-      anthropic:  ['claude-opus-4-6', 'claude-sonnet-4-6', 'claude-haiku-4-5'],
+      anthropic:  ['claude-opus-4-7', 'claude-sonnet-4-6', 'claude-haiku-4-5-20251001'],
       openai:     ['gpt-5', 'gpt-5-mini', 'gpt-4o', 'gpt-4o-mini', 'o1', 'o1-mini'],
       openrouter: ['anthropic/claude-sonnet-4.6', 'openai/gpt-5', 'meta-llama/llama-3.3-70b-instruct'],
     },
@@ -6610,7 +6551,7 @@ function app() {
     evoQuestionText: '',
     evoAskingQuestion: null,
     evoConsultingFrontier: null,
-    evoConsultModel: 'claude-opus-4-6',
+    evoConsultModel: 'claude-opus-4-7',
     evoConsultResult: null,
     evoApplyingId: null,
     evoApplyResult: null,
@@ -6953,7 +6894,7 @@ function app() {
       if (this.adminTab === 'users' && !this.can('manage_users'))
         this.adminTab = 'audit';
       // Trigger initial data load for whichever tab is active on restore.
-      // The Config sub-tab loaders previously only ran from sub-tab click
+      // The Settings sub-tab loaders previously only ran from sub-tab click
       // handlers, so refreshing on /settings/messaging (or /settings/tools,
       // etc.) left the page empty until the user clicked the Refresh button.
       // Run the same loader the click would have run.
@@ -7015,6 +6956,19 @@ function app() {
       setInterval(() => { this.clientNow = Date.now(); }, 1000);
       setInterval(() => { this._now = Math.floor(Date.now() / 1000); }, 15000);
       setInterval(() => { if (this.tab === 'activity' && this.activityTab === 'dashboards') this.loadSandboxes(); }, 3000);
+      // Chats-tab sandbox poll — while the user's sitting on a chat
+      // whose worker isn't connected, keep /api/admin/sandboxes fresh so
+      // the provisioning banner can render *real* sandbox state instead
+      // of the old "we've been waiting for 37s" UI-only timer. Only runs
+      // in that narrow window; doesn't touch the Dashboards interval.
+      setInterval(() => {
+        if (this.tab !== 'sessions') return;
+        const inst = this.activeInstance;
+        if (!inst || inst.source !== 'named') return;
+        if (inst.worker_connected && inst.worker_healthy) return;
+        this.loadSandboxes();
+      }, 3000);
+      setInterval(() => { if (this.tab === 'activity' && this.activityTab === 'dashboards') this.loadClusters(); }, 10000);
       setInterval(() => { if (this.tab === 'activity' && this.activityTab === 'dashboards') this.loadModelRoutes(); }, 5000);
       // Poll named agents every 3s so worker_connected flips from false→true
       // the moment a sandbox finishes provisioning and its worker connects
@@ -7072,7 +7026,7 @@ function app() {
     // a manual click would have.
     _loadInfraTabData(name) {
       if (name === 'servers')   { this.loadAdminMachines(); this.loadCloudProviders?.(); this.probeAllMachines?.(); return; }
-      if (name === 'tools')     { this.loadToolsTab?.(); this.loadServices?.(); this.loadLocalServices?.(); return; }
+      if (name === 'tools')     { this.loadToolsTab?.(); this.loadLocalServices?.(); return; }
       if (name === 'messaging') { this.loadMessagingChannels?.(); return; }
     },
     _loadAdminTabData(name) {
@@ -7187,7 +7141,7 @@ function app() {
           this.startGatewayUpdatePolling();
           // Pre-load per-agent channel credentials so the Chats
           // sidebar's platform pill row renders correctly on first
-          // paint (before the user clicks into Config → Messaging).
+          // paint (before the user clicks into Settings → Messaging).
           if (this.namedAgents?.length) {
             this.loadAllAgentChannels();
           } else {
@@ -7619,8 +7573,19 @@ function app() {
     // Only the latest status is kept; displayed for at least 1.5s so the
     // user can read it.  Rapid-fire status events are coalesced — only the
     // most recent one is shown when the gate window expires.
+    //
+    // Truncate long previews — hermes sometimes sends the full tool
+    // argument string (entire search query, full file path, complete
+    // URL) as the preview, which then balloons the glanceable
+    // "thinking" indicator into a wall of text next to the moon emoji.
+    // 60 chars is enough to tell "searching DuckDuckGo for ma…" vs
+    // "reading /tmp/hermes-srv-home/.env" without obscuring the chat.
     _setStatusOverride(text) {
       const MIN_MS = 1500;
+      const MAX_LEN = 60;
+      if (typeof text === 'string' && text.length > MAX_LEN) {
+        text = text.slice(0, MAX_LEN - 1).trimEnd() + '\u2026';  // …
+      }
       // Always record the latest incoming text
       this._statusOverridePending = text;
       if (this._statusOverrideGate) return; // gate is active — pending will be picked up
@@ -8367,6 +8332,42 @@ function app() {
 
     // ── Helpers ───────────────────────────────────────────────────
 
+    // Cross-reference the active chat's agent against the live
+    // /api/admin/sandboxes list so the provisioning banner can tell the
+    // user what's *actually* happening, not just "we started a timer
+    // 37 seconds ago". Four outcomes the caller needs to distinguish:
+    //
+    //   missing      — no sandbox exists for this agent; nothing is
+    //                  being provisioned. The UI's banner timer is
+    //                  meaningless because there's no spawn in flight.
+    //                  Typical cause: sandbox was deleted out-of-band
+    //                  (manual delete, image rebuild) and nothing has
+    //                  triggered ensure_sandbox_alive since.
+    //   provisioning — openshell CLI phase = Provisioning. Sandbox
+    //                  pod is coming up; hermes isn't listening yet.
+    //   starting     — sandbox phase = Ready but the in-sandbox hermes
+    //                  HTTP server hasn't answered the worker probe
+    //                  yet. Usually lasts 2-5 s post-Ready.
+    //   ready        — worker is connected and healthy. Banner hidden.
+    //
+    // Returns an object with these fields so the banner template can
+    // branch on `.state` and the CTA can vary per outcome.
+    sandboxStateForAgent(agentName) {
+      if (!agentName) return { state: 'unknown' };
+      const sb = (this.sandboxes || []).find(s => s.name === agentName);
+      if (!sb) return { state: 'missing' };
+      const phase = String(sb.phase || '').toLowerCase();
+      // Also pull spawn substage so the banner can say "Importing
+      // image 43%" / "Creating pod…" / "Starting agent…" instead of
+      // one opaque "provisioning…" for the whole pipeline. Populated
+      // by OpenShellExecutor.spawn; cleared on phase=ready.
+      const substage = sb.spawn_substage || '';
+      const substageLabel = sb.spawn_substage_label || '';
+      const substagePct = sb.spawn_substage_pct || 0;
+      if (sb.worker_healthy) return { state: 'ready', phase, substage, substageLabel, substagePct };
+      if (phase === 'ready') return { state: 'starting', phase, substage, substageLabel, substagePct };
+      return { state: 'provisioning', phase, substage, substageLabel, substagePct };
+    },
     // Stamp/clear _provisioningStarts based on current worker_connected
     // state. Called after each loadNamedAgents() poll (every 3s) so the
     // chat banner's elapsed counter starts the moment the UI first sees
@@ -8408,6 +8409,30 @@ function app() {
       const learned = this.spawnStats && this.spawnStats[bucket];
       if (learned && learned.p90_ms) return Math.round(learned.p90_ms / 1000);
       return switching ? 180 : 60;
+    },
+    // Per-phase banner hint — honest, data-driven.
+    //
+    // `phase` is 'pod' (openshell pod-create) or 'agent' (hermes
+    // boot). Returns a one-line string suitable for the banner
+    // subtext. If we have ≥3 samples for that phase+bucket, the
+    // copy cites the learned median; otherwise it just names what's
+    // happening without a number. Keeps the UI from lying — no
+    // "usually <5s" when the reality is 20s.
+    phaseHint(phase) {
+      const agentId = this.activeAgent?.id;
+      const switching = this.switchingAgentIds.includes(agentId);
+      const bucket = switching ? 'cold' : 'warm';
+      const phaseBuckets = (this.spawnStats && this.spawnStats.phases) || null;
+      const learned = phaseBuckets ? phaseBuckets[phase]?.[bucket] : null;
+      const label = phase === 'pod'
+        ? (switching ? 'Spawning pod in a fresh cluster' : 'Spawning pod')
+        : 'Starting the agent';
+      if (learned && learned.median_ms) {
+        const medSec = Math.round(learned.median_ms / 1000);
+        return label + ' — typically ~' + medSec + 's (median of ' + learned.count + ' past spawns).';
+      }
+      // No learned data yet — just name the phase, don't invent a number.
+      return label + '&hellip;';
     },
     // Honest, progressive messaging based on actual elapsed time. The
     // earlier "(~10–30s)" hint was misleading — restarts can take
@@ -9094,61 +9119,91 @@ function app() {
                 }
               }
               if (d.type === 'setup_tools') {
-                // Gateway command: /setup tools — render interactive config card
+                // Gateway command: /setup — renders a per-env-var card
+                // backed by the sandbox's own .env file (not Logos's
+                // os.environ). Each row has a password input + Save
+                // button that POSTs to /admin/agents/<id>/env-credentials.
                 this.isWakingUp = false;
                 const readiness = d.readiness || [];
-                const presetMap = d.preset_map || {};
-                let cardHtml = '<div class="bg-gray-900 border border-gray-700 rounded-lg p-4 my-2 max-w-lg">';
-                cardHtml += '<div class="text-sm font-semibold text-gray-200 mb-3">Tool Configuration</div>';
-                const needsConfig = readiness.filter(t => t.status !== 'ready');
-                const ready = readiness.filter(t => t.status === 'ready');
-                if (needsConfig.length > 0) {
-                  for (const t of needsConfig) {
-                    cardHtml += `<div class="mb-3 p-2 bg-gray-800 rounded border border-gray-700" data-tool-config="${t.name}">`;
-                    cardHtml += `<div class="flex items-center gap-2 mb-1">`;
-                    cardHtml += `<span class="text-yellow-400">&#x26a0;&#xfe0f;</span>`;
-                    cardHtml += `<span class="text-gray-200 font-mono text-xs">${t.name}</span>`;
-                    cardHtml += `<span class="text-gray-500 text-[10px]">${t.description || ''}</span>`;
-                    cardHtml += `</div>`;
-                    cardHtml += `<div class="text-[10px] text-gray-500 mb-1.5">${t.reason || 'Needs API key'}</div>`;
-                    // Input for each env var
-                    const envKeys = Object.keys(presetMap).filter(k => {
-                      const m = presetMap[k]; return m && m.tool === t.name;
-                    });
-                    for (const ek of envKeys) {
-                      cardHtml += `<div class="flex items-center gap-2 mb-1">`;
-                      cardHtml += `<input type="password" placeholder="${ek}" data-env-key="${ek}"`;
-                      cardHtml += ` class="flex-1 bg-gray-900 border border-gray-600 rounded px-2 py-1 text-xs text-gray-200 font-mono placeholder:text-gray-600 focus:border-indigo-500 focus:outline-none">`;
-                      cardHtml += `</div>`;
-                    }
-                    if (envKeys.length === 0 && t.reason) {
-                      // Fallback: show the reason as a generic input hint
-                      const guessKey = t.reason.replace(' not set', '').replace(', ', '_').toUpperCase();
-                      cardHtml += `<input type="password" placeholder="${guessKey}" data-env-key="${guessKey}"`;
-                      cardHtml += ` class="w-full bg-gray-900 border border-gray-600 rounded px-2 py-1 text-xs text-gray-200 font-mono placeholder:text-gray-600 focus:border-indigo-500 focus:outline-none mb-1">`;
-                    }
-                    cardHtml += `<div class="flex items-center justify-between mt-1.5">`;
-                    if (t.setup_url) {
-                      cardHtml += `<a href="${t.setup_url}" target="_blank" class="text-[10px] text-indigo-400 hover:text-indigo-300">Get API key &rarr;</a>`;
-                    } else {
-                      cardHtml += `<span></span>`;
-                    }
-                    cardHtml += `<button onclick="window._saveToolConfig(this)" data-tool-name="${t.name}"`;
-                    cardHtml += ` class="px-2 py-0.5 bg-indigo-600 hover:bg-indigo-500 text-white text-[10px] rounded font-medium">Save &amp; Enable</button>`;
-                    cardHtml += `</div></div>`;
-                  }
+                const agentId = d.agent_id || '';
+                const sandboxName = d.sandbox_name || '';
+                const sandboxReachable = d.sandbox_reachable !== false;
+                const esc = s => (s == null ? '' : String(s).replace(/[&<>"']/g, c => (
+                  {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]
+                )));
+
+                let cardHtml = '<div class="bg-gray-900 border border-gray-700 rounded-lg p-4 my-2 max-w-xl">';
+                cardHtml += '<div class="flex items-center justify-between mb-2">';
+                cardHtml += '<div class="text-sm font-semibold text-gray-200">Cloud tool keys</div>';
+                if (sandboxName) {
+                  cardHtml += `<span class="text-[10px] text-gray-600 font-mono">${esc(sandboxName)}</span>`;
                 }
-                if (ready.length > 0) {
-                  cardHtml += '<div class="text-[10px] text-gray-500 uppercase tracking-wider mb-1 mt-2">Ready</div>';
-                  for (const t of ready) {
-                    cardHtml += `<div class="flex items-center gap-2 px-1 py-0.5 text-xs">`;
-                    cardHtml += `<span class="text-green-400">&#x2705;</span>`;
-                    cardHtml += `<span class="text-gray-400 font-mono">${t.name}</span>`;
-                    cardHtml += `</div>`;
-                  }
+                cardHtml += '</div>';
+                cardHtml += '<div class="text-[11px] text-gray-500 mb-3 leading-snug">';
+                cardHtml += 'API keys for hermes\'s built-in cloud tools. Keys land in this agent\'s sandbox <span class="font-mono">.env</span> and persist across respawns. Per-agent — another agent has its own set.';
+                cardHtml += '</div>';
+
+                if (!agentId) {
+                  cardHtml += '<div class="text-xs text-yellow-400">No agent bound to this chat — switch to an agent to configure its keys.</div>';
+                } else if (!sandboxReachable) {
+                  cardHtml += '<div class="text-[11px] text-amber-400 mb-2">Sandbox not reachable — keys you save here will land on the next spawn.</div>';
                 }
-                if (readiness.length === 0) {
-                  cardHtml += '<div class="text-xs text-gray-500">No agent selected or no tools configured.</div>';
+
+                if (readiness.length === 0 && agentId) {
+                  cardHtml += '<div class="text-xs text-gray-500">No cloud-tool env vars defined.</div>';
+                }
+
+                for (const t of readiness) {
+                  const isSet = !!t.has_key;
+                  const isManaged = !!t.managed;
+                  cardHtml += `<div class="mb-2 p-2 rounded border ${isSet ? 'border-emerald-900/60 bg-emerald-950/10' : 'border-gray-800 bg-gray-950/40'}" data-cloud-env="${esc(t.env_var)}">`;
+                  // Header row: status + label + env var name + tools it enables
+                  cardHtml += '<div class="flex items-center gap-2 mb-1">';
+                  cardHtml += isSet
+                    ? '<span class="text-green-400 text-xs">&#x2705;</span>'
+                    : '<span class="text-gray-600 text-xs">&#x25cb;</span>';
+                  cardHtml += `<span class="text-gray-200 text-xs font-medium">${esc(t.label || t.env_var)}</span>`;
+                  cardHtml += `<span class="text-[10px] text-gray-600 font-mono">${esc(t.env_var)}</span>`;
+                  if (t.optional) {
+                    cardHtml += '<span class="text-[9px] px-1 py-0.5 rounded bg-gray-800 text-gray-500 border border-gray-700">optional</span>';
+                  }
+                  if (isManaged) {
+                    cardHtml += '<span class="text-[9px] px-1 py-0.5 rounded bg-indigo-950 text-indigo-400 border border-indigo-900">managed</span>';
+                  } else if (isSet) {
+                    cardHtml += '<span class="text-[9px] px-1 py-0.5 rounded bg-gray-800 text-gray-600 border border-gray-700" title="Key is in sandbox .env but Logos didn\'t set it — it won\'t survive a respawn unless re-set here.">unmanaged</span>';
+                  }
+                  cardHtml += '</div>';
+                  // Description + enabled tools
+                  if (t.description) {
+                    cardHtml += `<div class="text-[10px] text-gray-500 mb-1.5">${esc(t.description)}</div>`;
+                  }
+                  if ((t.tools || []).length) {
+                    cardHtml += '<div class="flex flex-wrap gap-1 mb-1.5">';
+                    for (const tool of t.tools) {
+                      cardHtml += `<span class="text-[9px] px-1.5 py-0.5 rounded bg-gray-800 text-gray-500 border border-gray-700 font-mono">${esc(tool)}</span>`;
+                    }
+                    cardHtml += '</div>';
+                  }
+                  // Input + save/delete
+                  cardHtml += '<div class="flex items-center gap-1.5">';
+                  // Chrome logs an a11y warning when a form field lacks
+                  // both id + name; give it both (scoped with the agent
+                  // id so multiple agents' cards rendered in the same
+                  // chat don't collide on DOM ids).
+                  const _fid = `cloud-env-${esc(agentId)}-${esc(t.env_var)}`;
+                  cardHtml += `<input type="password" autocomplete="off" data-env-input id="${_fid}" name="${esc(t.env_var)}" placeholder="${esc(t.env_var)} value"`;
+                  cardHtml += ' class="flex-1 bg-gray-900 border border-gray-700 rounded px-2 py-1 text-xs text-gray-200 font-mono placeholder:text-gray-700 focus:border-indigo-500 focus:outline-none">';
+                  cardHtml += `<button onclick="window._saveToolConfig(this)" data-agent-id="${esc(agentId)}" data-env-var="${esc(t.env_var)}"`;
+                  cardHtml += ' class="px-2 py-1 bg-indigo-600 hover:bg-indigo-500 text-white text-[10px] rounded font-medium">Save</button>';
+                  if (isManaged) {
+                    cardHtml += `<button onclick="window._deleteToolConfig(this)" data-agent-id="${esc(agentId)}" data-env-var="${esc(t.env_var)}"`;
+                    cardHtml += ' title="Remove from agent" class="px-1.5 py-1 border border-red-900 text-red-500 hover:text-red-300 text-[10px] rounded">&times;</button>';
+                  }
+                  cardHtml += '</div>';
+                  if (t.setup_url) {
+                    cardHtml += `<a href="${esc(t.setup_url)}" target="_blank" class="text-[10px] text-indigo-400 hover:text-indigo-300 mt-1 inline-block">Get API key &rarr;</a>`;
+                  }
+                  cardHtml += '</div>';
                 }
                 cardHtml += '</div>';
                 chat.messages = [...chat.messages, { role: 'system', content: cardHtml, _html: true }];
@@ -9571,16 +9626,10 @@ function app() {
       }
     },
 
-    async loadServices() {
-      try {
-        const r = await fetch('/api/services', {credentials: 'include'});
-        if (r.ok) {
-          const d = await r.json();
-          this.servicesMcp = d.mcp_servers || [];
-          this.servicesTools = d.tool_integrations || [];
-        }
-      } catch(e) { console.warn('loadServices failed:', e.message); }
-    },
+    // loadServices() + the /api/services catalogue it hit were removed
+    // 2026-04-21 — tool-integration keys moved to per-agent sandbox .env
+    // via the chat /setup card. Messaging still uses loadMessagingChannels
+    // below against /api/services/messaging, which is unaffected.
 
     async loadMessagingChannels() {
       try {
@@ -9805,18 +9854,7 @@ network_policies:
 slug: ${slug}
 name: "${slug}"
 description: ""
-category: "general"
-role_summary: ""
-status: experimental
-version: "0.1"
-created_by: ""
-tags: []
 user_accessible: true
-toolsets:
-  enforced: []
-  default_enabled: [memory, clarify]
-  optional: []
-  forbidden: []
 `;
       this.adminSoulMd = `# ${slug}\n\nPersona description goes here.\n\n## Voice\n\n## Behaviour\n`;
       this.adminSoulError = '';
@@ -9955,16 +9993,14 @@ toolsets:
           }
         }
       }
-      // Push the fresh agent list directly to the world so deletions
-      // (and additions) appear immediately. The Alpine $watch on
-      // namedAgents inside initWorld() should fire on the assignment
-      // above, but the user reported deletions weren't reflected in
-      // the world view until a hard refresh — the watcher path is
-      // racy/unreliable. This direct call is the load-bearing one;
-      // the watcher is now belt-and-braces.
-      if (this.worldManager && this._worldAgentList) {
-        try { this.worldManager.syncAgents(this._worldAgentList()); } catch (_) {}
-      }
+      // Sync delegated to $watch('namedAgents') in initWorld() — the
+      // direct call used to live here as a belt-and-braces against
+      // racy watcher fires, but combined with forceResize + the
+      // setTimeout in createNamedAgent() it was causing the Phaser
+      // scene to re-layout 4× per add and halve the framerate. If the
+      // "new agent doesn't appear until refresh" regression comes
+      // back, the fix is in WorldManager/Scene.syncAgents's idempotency
+      // (not in firing syncAgents more times from more places).
     },
 
     // ── Compare tab actions (#13) ────────────────────────────────────
@@ -10339,30 +10375,18 @@ toolsets:
         });
         if (r.ok) {
           this.namedAgentFormOpen = false;
-          this.namedAgentForm = { name: '', soul_slug: 'general', model: '', model_route_id: null, description: '', toolsets: [], char_index: null, duplicate_from: null, duplicate_from_name: null };
+          this.namedAgentForm = { name: '', soul_slug: 'general', model: '', model_route_id: null, description: '', char_index: null, duplicate_from: null, duplicate_from_name: null };
           await this.loadNamedAgents();
-          // Force the world to resync after the form closes. Closing
-          // the form collapses the agent column from 24rem back to
-          // 16rem, which resizes the Phaser canvas mid-add — the
-          // ResizeObserver fires + the scene re-lays out, and the
-          // new sprite added by loadNamedAgents()'s implicit sync
-          // can land before the scene has finished repositioning.
-          // The user reported new agents weren't appearing in the
-          // world until hard-refresh; adding the agent has landed,
-          // but the render state was stale. A forceResize + a second
-          // deferred sync covers both the layout and the possibility
-          // that Phaser's scene is still catching up from the DOM
-          // churn.
-          if (this.worldManager) {
-            try { this.worldManager.forceResize?.(); } catch (_) {}
-            // One more sync a tick later so whatever pending layout
-            // settled after forceResize sees the fresh agent list.
-            setTimeout(() => {
-              if (this.worldManager && this._worldAgentList) {
-                try { this.worldManager.syncAgents(this._worldAgentList()); } catch (_) {}
-              }
-            }, 250);
-          }
+          // Trigger a one-shot resize after the column-width transition
+          // settles. Previously we also chained a syncAgents() in a 250ms
+          // setTimeout AND loadNamedAgents() did its own direct sync —
+          // combined with the $watch('namedAgents') that fires on every
+          // list change, every new-agent event was firing four separate
+          // syncAgents calls and halving the Phaser framerate. Left only
+          // the post-transition forceResize; $watch handles the render.
+          setTimeout(() => {
+            try { this.worldManager?.forceResize?.(); } catch (_) {}
+          }, 400);
         } else {
           const d = await r.json().catch(() => ({}));
           this.namedAgentMsg = { type: 'error', text: d.error || 'Failed to create agent' };
@@ -10424,21 +10448,12 @@ toolsets:
           n++;
         }
       }
-      // Parse toolsets from the JSON-string column. Tolerate malformed
-      // values defensively — an unparseable toolsets field shouldn't
-      // block the duplicate flow.
-      let toolsets = [];
-      try {
-        toolsets = JSON.parse(agent.toolsets || '[]');
-        if (!Array.isArray(toolsets)) toolsets = [];
-      } catch { toolsets = []; }
       this.namedAgentForm = {
         name: candidate,
         soul_slug: agent.soul_slug || 'general',
         model: agent.model || '',
         model_route_id: agent.model_route_id || null,
         description: agent.description || '',
-        toolsets,
         char_index: (agent.char_index !== undefined && agent.char_index !== null)
           ? Number(agent.char_index)
           : null,
@@ -11313,6 +11328,39 @@ toolsets:
       this.agentRunsLoading = false;
     },
 
+    async loadClusters() {
+      this.clustersLoading = true;
+      try {
+        const r = await fetch('/api/admin/clusters', {credentials: 'include'});
+        if (!r.ok) throw new Error(await r.text());
+        const d = await r.json();
+        this.clusters = d.clusters || [];
+      } catch(e) {
+        // Transient error — leave the last snapshot in place rather
+        // than zero the list (same rationale as loadSandboxes below).
+      }
+      this.clustersLoading = false;
+    },
+
+    // True when this cluster's image tag is the highest semver across
+    // the current cluster list. Used by the Clusters table to accent
+    // drift-behind rows in amber. Numeric compare (not string) so
+    // 0.0.10 is correctly ranked above 0.0.9.
+    _clusterImageIsLatest(cluster) {
+      if (!this.clusters || this.clusters.length <= 1) return true;
+      const parseKey = (img) => ((img || '').split(':').pop() || '')
+        .split('.').map(x => parseInt(x, 10) || 0);
+      const cmp = (a, b) => {
+        for (let i = 0; i < Math.max(a.length, b.length); i++) {
+          const d = (a[i] || 0) - (b[i] || 0);
+          if (d) return d;
+        }
+        return 0;
+      };
+      const myKey = parseKey(cluster.image);
+      return !this.clusters.some(c => cmp(parseKey(c.image), myKey) > 0);
+    },
+
     async loadSandboxes() {
       this.sandboxesLoading = true;
       try {
@@ -11381,6 +11429,37 @@ toolsets:
       if (!sb || !this.switchingAgentIds || this.switchingAgentIds.length === 0) return false;
       const agent = (this.namedAgents || []).find(a => a.name === sb.name);
       return !!(agent && this.switchingAgentIds.includes(agent.id));
+    },
+
+    async redeployAll() {
+      // Nuke-and-repave: destroys every sandbox, re-creates every
+      // gateway, resurrects every agent. Called from the Redeploy
+      // Everything modal after the user types "redeploy" to confirm.
+      if (this.redeployAllConfirmText.trim() !== 'redeploy') return;
+      this.redeployAllRunning = true;
+      this.redeployAllResult = null;
+      try {
+        // No timeout override — the endpoint blocks for 3-10 min.
+        // Browser fetch defaults to no timeout; rely on the server.
+        const r = await fetch('/api/admin/redeploy-all', {
+          method: 'POST', credentials: 'include',
+          headers: {'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken()},
+        });
+        const d = await r.json();
+        this.redeployAllResult = d;
+      } catch (e) {
+        this.redeployAllResult = {
+          ok: false,
+          elapsed_s: 0,
+          message: 'Request failed: ' + (e.message || e),
+          steps: [],
+        };
+      }
+      this.redeployAllRunning = false;
+      this.redeployAllConfirmText = '';
+      // Refresh all dashboard surfaces so the user can watch the
+      // new sandboxes come up.
+      try { await Promise.all([this.loadClusters(), this.loadSandboxes(), this.loadModelRoutes()]); } catch {}
     },
 
     async restartSandbox(name) {
@@ -11677,8 +11756,14 @@ toolsets:
 
     async loadAgentChannels(agentId) {
       // Fetch credentials for ONE agent; mirrors into allAgentChannels
-      // so the Config → Messaging grouped view stays consistent with
+      // so the Settings → Messaging grouped view stays consistent with
       // any single-agent round-trip.
+      //
+      // Spread-assignment (not index-assignment) so Alpine's Proxy
+      // re-renders any template iterating over allAgentChannels[id].
+      // A previous `this.allAgentChannels[id] = creds` mutation escaped
+      // Alpine's reactivity, leaving the Messaging list showing rows
+      // that had been deleted on the backend.
       if (!agentId) return [];
       try {
         const r = await fetch(
@@ -11688,7 +11773,7 @@ toolsets:
         if (!r.ok) throw new Error(await r.text() || r.statusText);
         const d = await r.json();
         const creds = d.credentials || [];
-        this.allAgentChannels[agentId] = creds;
+        this.allAgentChannels = {...this.allAgentChannels, [agentId]: creds};
         return creds;
       } catch(e) {
         this.agentChannelsError = 'Failed to load channels: ' + (e.message || e);
@@ -11697,7 +11782,7 @@ toolsets:
     },
 
     async loadAllAgentChannels() {
-      // Fan out one round-trip per named agent so Config → Messaging
+      // Fan out one round-trip per named agent so Settings → Messaging
       // can render a grouped view of every agent's credentials in one
       // pass. Cheap — one SELECT per agent — and avoids a backend
       // "list everything" endpoint that would need a separate auth
@@ -11772,6 +11857,7 @@ toolsets:
 
     async deleteAgentChannel(agentId, credId) {
       if (!agentId || !credId) return;
+      if (this.agentChannelsBusy?.[credId]) return;  // in-flight guard (replaces removed :disabled)
       if (!confirm('Delete this credential? The sandbox will pick up the change on the next refresh.')) return;
       // Reset any stale busy flag so a prior hung request can't keep
       // the button disabled forever (pre-6f57159 the server blocked
@@ -11806,6 +11892,7 @@ toolsets:
 
     async toggleAgentChannel(agentId, credId, enabled) {
       if (!agentId || !credId) return;
+      if (this.agentChannelsBusy?.[credId]) return;  // in-flight guard (replaces removed :disabled)
       this.agentChannelsBusy[credId] = true;
       try {
         const r = await fetch(
@@ -11819,11 +11906,20 @@ toolsets:
         );
         if (r.ok) {
           const d = await r.json();
-          // Update locally without a full reload
+          // Update the C-pill state (if the user has it open on this
+          // same agent) so the checkbox reflects the new enabled flag
+          // without a second round-trip.
           if (this.agentChannelsState && this.agentChannelsState._agentId === agentId) {
             const i = (this.agentChannelsState.credentials || []).findIndex(c => c.id === credId);
             if (i >= 0) this.agentChannelsState.credentials[i] = d.credential;
           }
+          // Update the Messaging-tab's allAgentChannels map too.
+          // Spread-replace (not in-place) so Alpine's Proxy re-renders
+          // the table row; in-place assignment escapes reactivity and
+          // leaves the Status pill showing the old value.
+          const existing = this.allAgentChannels[agentId] || [];
+          const updated = existing.map(x => x.id === credId ? (d.credential || {...x, enabled}) : x);
+          this.allAgentChannels = {...this.allAgentChannels, [agentId]: updated};
         } else {
           this.agentChannelsError = 'Toggle failed: ' + (await r.text() || r.statusText);
           await this.loadAgentChannels(agentId);

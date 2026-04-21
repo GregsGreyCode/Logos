@@ -93,11 +93,6 @@ CONFIGURABLE_TOOLSETS = [
     ("homeassistant",    "🏠 Home Assistant",           "smart home device control"),
 ]
 
-# Toolsets that are OFF by default for new installs.
-# They're still in _HERMES_CORE_TOOLS (available at runtime if enabled),
-# but the setup checklist won't pre-select them for first-time users.
-_DEFAULT_OFF_TOOLSETS = {"moa", "homeassistant"}
-
 # Platform display config. All channels share the same default toolset
 # (hermes-cli); per-channel variants used to exist but were identical clones.
 PLATFORMS = {
@@ -777,11 +772,8 @@ def tools_command(args=None, first_install: bool = False, config: dict = None):
             pinfo = PLATFORMS[pkey]
             current_enabled = _get_platform_tools(config, pkey)
 
-            # Uncheck toolsets that should be off by default
-            checklist_preselected = current_enabled - _DEFAULT_OFF_TOOLSETS
-
             # Show checklist
-            new_enabled = _prompt_toolset_checklist(pinfo["label"], checklist_preselected)
+            new_enabled = _prompt_toolset_checklist(pinfo["label"], current_enabled)
 
             added = new_enabled - current_enabled
             removed = current_enabled - new_enabled

@@ -1,6 +1,13 @@
-"""Logos-side monkeypatches applied before hermes boots in a v2 sandbox.
+"""Logos launcher for hermes inside a v2 sandbox.
 
-Two patches ship here:
+The hermes binary itself can't be modified (the sandbox image has to
+stay swappable — see LOG-45), but a handful of patches need to apply
+in-process before hermes's event loop starts. This script is what runs
+as the sandbox's main process; it applies the patches, then hands off
+to ``/usr/local/bin/hermes`` via ``runpy`` so the rest of hermes boots
+normally with the patches already in effect.
+
+Patches currently shipped here:
 
 1. **LOG-51.2 — /v1/runs SSE-disconnect interrupt.** Upstream
    hermes-agent 0.7.0 already has ``agent.interrupt()``, but only wires
@@ -18,20 +25,27 @@ Two patches ship here:
    ``sandbox_worker.py``. Post-v2 the agent runs inside hermes gateway,
    so the patch has to wrap ``openai.ChatCompletions.create`` there.
 
-We don't want to fork hermes-agent (the sandbox image must stay
-swappable — see LOG-45). So these patches ride in via upload at spawn
-time and this launcher applies them before handing off to hermes via
-``runpy``. When upstream eventually absorbs either piece of capability,
-the corresponding block gets deleted and ``hermes_server_mode.py``
-eventually reverts to launching ``hermes gateway run`` directly.
+3. **/v1/toolsets introspection endpoint.** Registered on every aiohttp
+   Application hermes creates so the Logos admin UI can read the live
+   tool registry from the in-sandbox hermes without shelling into it.
+
+When upstream absorbs any one of these, the corresponding block gets
+deleted and eventually this whole wrapper can retire.
 
 How it's delivered
 ──────────────────
-1. ``hermes_server_mode.upload_config_to_sandbox`` uploads this file
-   into the sandbox at ``/tmp/hermes-srv-home/hermes_cancel_monkeypatch.py``.
+1. ``hermes_server_mode.deploy_hermes_launcher`` uploads this file into
+   the sandbox as ``/tmp/hermes-srv-home/hermes`` (no extension — the
+   name matters: hermes's own ``_looks_like_gateway_process`` check in
+   ``gateway/status.py`` scans ``/proc/<pid>/cmdline`` for the literal
+   substring ``"hermes gateway"``, and naming the file ``hermes`` is
+   what makes the cmdline ``python3 /…/hermes gateway run -v`` — with
+   the required substring present — so ``is_gateway_running()`` returns
+   True. Without that, the ``send_message`` tool's availability gate
+   fails on web-chat dispatch because it relies on ``is_gateway_running``).
 2. ``hermes_server_mode.launch_hermes_gateway`` launches via
-   ``python3 /tmp/hermes-srv-home/hermes_cancel_monkeypatch.py gateway run -v``
-   instead of ``hermes gateway run -v``.
+   ``python3 /tmp/hermes-srv-home/hermes gateway run -v`` instead of
+   the upstream ``hermes gateway run -v``.
 3. This script applies the patches, then hands off to ``/usr/local/bin/hermes``
    via ``runpy.run_path`` so the rest of hermes boots normally in-process.
 
@@ -784,6 +798,125 @@ def _apply_qwen_safety_net_patches() -> bool:
         return False
 
 
+def _apply_channel_directory_patch() -> bool:
+    """Distinguish "adapter offline" from "adapter online, no targets yet".
+
+    Upstream ``gateway.channel_directory.format_directory_for_display``
+    returns the string::
+
+        "No messaging platforms connected or no channels discovered yet."
+
+    whenever every platform's channel list is empty — even when an
+    adapter IS connected and polling but simply hasn't learned any
+    target chat_ids. That ambiguity is load-bearing for model
+    behaviour: the agent reads "not connected", answers the user
+    "telegram isn't wired up", and the user concludes the whole
+    pipeline is broken. It's especially common the first time a new
+    bot goes online — Telegram bots learn user chat_ids only from
+    inbound DMs; there's no lookup API. A freshly-spawned Tony can be
+    fully configured and yet his directory is empty for the first
+    minute of his life.
+
+    This patch wraps the display function to check which adapters are
+    actually connected (via ``gateway.run.GatewayRunner._adapters``),
+    and return copy that tells the agent — and through it, the user —
+    the accurate story::
+
+        Telegram: connected (0 targets known — ask the user to DM the
+        bot once to register their chat_id).
+        Discord: not connected.
+        ...
+
+    Best-effort: if the wrapping fails (upstream structure changed,
+    runner not importable), the original function stays in place.
+    """
+    try:
+        import gateway.channel_directory as _cd
+    except Exception as exc:
+        _logger.warning(
+            "logos.channel_dir_patch: gateway.channel_directory not "
+            "importable (%s) — skipping", exc,
+        )
+        return False
+
+    if getattr(_cd, "_logos_dir_patched", False):
+        return True
+
+    _original_format = getattr(_cd, "format_directory_for_display", None)
+    if _original_format is None:
+        _logger.warning(
+            "logos.channel_dir_patch: format_directory_for_display not "
+            "found on gateway.channel_directory — skipping"
+        )
+        return False
+
+    def _connected_platforms() -> list:
+        """Best-effort probe of which platform adapters are live.
+
+        Looks up the singleton ``GatewayRunner`` and reads its
+        ``_adapters`` dict. Any platform with a registered adapter is
+        considered "connected" for display purposes. Returns a list of
+        platform names (lowercase).
+        """
+        try:
+            # The gateway module holds a module-level singleton set
+            # at startup via gateway.run's main(). Accessing it
+            # through the module avoids import-time coupling.
+            import gateway.run as _gr
+            runner = getattr(_gr, "_RUNNER", None) or getattr(_gr, "runner", None)
+            adapters = getattr(runner, "_adapters", None) or getattr(runner, "adapters", None) or {}
+            return [str(k).lower() for k in adapters.keys()]
+        except Exception:
+            return []
+
+    def _patched_format() -> str:
+        directory = _cd.load_directory()
+        platforms = directory.get("platforms", {}) or {}
+        connected = set(_connected_platforms())
+
+        # Any targets anywhere? If so, defer to upstream formatter.
+        if any(platforms.values()):
+            return _original_format()
+
+        # All empty. Build a more informative response.
+        lines = []
+        if connected:
+            lines.append("Messaging platform adapters are connected but "
+                         "no target chat_ids known yet. Platforms and how "
+                         "to register a target:")
+            lines.append("")
+            for plat in sorted(connected):
+                if plat == "telegram":
+                    lines.append(f"  {plat}: DM the bot once from your "
+                                 f"Telegram client — hermes records your "
+                                 f"chat_id on the first inbound message.")
+                elif plat in ("discord", "slack"):
+                    lines.append(f"  {plat}: post in any channel the bot "
+                                 f"can see — the channel gets indexed on "
+                                 f"the next directory refresh.")
+                else:
+                    lines.append(f"  {plat}: send any inbound message to "
+                                 f"the bot — the adapter indexes targets "
+                                 f"from inbound traffic.")
+            lines.append("")
+            lines.append("Once a target is registered, call "
+                         "send_message(action='list') again to see it.")
+            return "\n".join(lines)
+
+        # Genuinely nothing connected.
+        return ("No messaging platform adapters connected. Check that "
+                "the credential was saved and the sandbox was restarted "
+                "after saving.")
+
+    _cd.format_directory_for_display = _patched_format
+    _cd._logos_dir_patched = True
+    _logger.info(
+        "logos.channel_dir_patch: wrapped format_directory_for_display "
+        "to distinguish adapter-offline vs no-targets-registered"
+    )
+    return True
+
+
 def _main() -> int:
     """Apply all pre-hermes patches (best-effort), then hand off to hermes.
 
@@ -793,6 +926,7 @@ def _main() -> int:
     _apply_cancel_patches()             # non-fatal on failure — warning is logged
     _apply_qwen_safety_net_patches()    # non-fatal on failure — warning is logged
     _apply_toolset_introspection_patch()  # non-fatal — serves /v1/toolsets
+    _apply_channel_directory_patch()    # non-fatal — disambiguates send_message(list) empty response
 
     # The hermes binary is a pip-installed console_scripts entry at
     # /usr/local/bin/hermes. runpy.run_path executes it in this

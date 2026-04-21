@@ -187,14 +187,12 @@ def build_capability_manifest(context: SessionContext) -> str:
     except Exception:
         pass
 
-    # Tool integrations
-    try:
-        from gateway.services import get_tool_integrations
-        tools = [t["label"] for t in get_tool_integrations() if t.get("has_key")]
-        if tools:
-            sections.append(f"**Integrations:** {', '.join(tools)}")
-    except Exception:
-        pass
+    # Tool integrations summary removed 2026-04-21 — the gateway-wide
+    # tool_integrations catalogue is gone (keys moved to per-agent
+    # sandbox .env via agent_env_credentials). The per-agent summary
+    # could be rebuilt from that table if/when an admin-context needs
+    # it, but for now the detail belongs in the chat /setup card, not
+    # the admin prompt.
 
     # Sandbox runtime
     runtime = context.runtime_mode or "local"

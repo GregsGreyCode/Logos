@@ -364,12 +364,11 @@ def register_logos_server(runner: Any, service: Any) -> InProcessMCPServer:
     server = InProcessMCPServer(
         name="logos",
         # Keep the description honest to what's actually registered.
-        # Previously this said "(platform, session, memory, cron, agents)"
-        # but only platform is implemented — the other four were
-        # aspirational for a future phase and never shipped. When/if
-        # additional tool modules land under gateway/mcp_logos/tools/,
-        # this line should be updated to match.
-        description="Logos gateway capabilities — platform messaging",
+        # Platform tools (platform_send / home_message) were dropped
+        # 2026-04-21 — adapter ownership moved into each sandbox's
+        # hermes process, so gateway-mediated messaging no longer has
+        # a home here. Current surface: world roster + clock.
+        description="Logos gateway capabilities — world awareness + time",
         runner=runner,
     )
 
@@ -403,12 +402,13 @@ def _register_current_phase_tools(server: "InProcessMCPServer") -> None:
     Split out so tests can register a server without implicit tool side
     effects by constructing ``InProcessMCPServer`` directly.
     """
-    # Phase L.2
-    try:
-        from gateway.mcp_logos.tools import platform as _platform_tools
-        _platform_tools.register(server)
-    except Exception as exc:
-        logger.warning("mcp_logos: failed to register platform tools: %s", exc)
+    # Phase L.2 platform tools (platform_send / home_message) were
+    # removed 2026-04-21 — adapters moved into per-sandbox hermes, so
+    # gateway-mediated messaging isn't a thing here any more. The
+    # stub module ``tools/platform.py`` still exists (with a no-op
+    # register()) to avoid breaking any external importers, but we
+    # don't call it. If gateway-held adapters come back one day,
+    # re-add the import here.
 
     # LOG-41: current-time tool. Lives outside the phase taxonomy
     # because it's a trivial read-only utility — no phase gating.
@@ -417,5 +417,13 @@ def _register_current_phase_tools(server: "InProcessMCPServer") -> None:
         _time_tools.register(server)
     except Exception as exc:
         logger.warning("mcp_logos: failed to register time tools: %s", exc)
+
+    # World awareness — roster of every named agent on the system.
+    # Read-only; uses build_world_snapshot() from gateway.world_awareness.
+    try:
+        from gateway.mcp_logos.tools import world as _world_tools
+        _world_tools.register(server)
+    except Exception as exc:
+        logger.warning("mcp_logos: failed to register world tools: %s", exc)
 
     # L.3, L.4, L.5 tool modules get imported here as they land.

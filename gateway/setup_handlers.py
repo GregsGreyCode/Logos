@@ -24,8 +24,10 @@ import re
 import socket
 import time
 import uuid
+from typing import Awaitable, Callable, Optional
 
 import aiohttp
+import yaml
 from aiohttp import web
 
 import gateway.auth.db as auth_db
@@ -115,6 +117,177 @@ def _setup_progress_update(
 # spawn_sandbox) come through the sync path below and aren't paced.
 _STAGE_MIN_DWELL_SECS = 0.5
 _paced_stage_start_ts: float = 0.0
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# LM Studio context-probe helpers (2026-04-21)
+#
+# Some inference machines can't actually load a model at its native max
+# context — VRAM, KV-cache budget, or a silent LM Studio downshift
+# (HTTP 200 + partial load that OOMs on long prompts). To avoid the
+# "preload succeeds then first full-context chat OOMs" trap, we probe
+# the real max by: unload → load with a candidate size → read back
+# load_config.context_length → send a payload sized to the context and
+# check it succeeds. First size that clears all three wins.
+#
+# Probes are expensive (15-60s per candidate; several candidates per
+# machine/model). Cached in ``~/.logos/config.yaml`` under
+# ``lmstudio_context_lengths.<base_url>.<model_id>`` so subsequent
+# runs skip straight to the known-good value. The legacy OpenAI-compat
+# benchmark path in handle_setup_compare already writes a flatter cache
+# (model-only, no base_url); this supersedes but doesn't delete old
+# entries.
+# ─────────────────────────────────────────────────────────────────────────
+
+def _machine_cache_path() -> pathlib.Path:
+    return pathlib.Path(
+        os.environ.get("LOGOS_HOME")
+        or os.environ.get("HERMES_HOME")
+        or str(pathlib.Path.home() / ".logos")
+    ) / "config.yaml"
+
+
+def get_cached_machine_context(base_url: str, model_id: str) -> Optional[int]:
+    """Return the previously-probed max context for (base_url, model_id), or None.
+
+    Checks both the new nested form ``lmstudio_context_lengths[base][model]``
+    and the legacy flat form ``lmstudio_context_lengths[model]`` written
+    by the old OpenAI-compat benchmark path. Nested form wins if both present.
+    """
+    try:
+        p = _machine_cache_path()
+        if not p.exists():
+            return None
+        cfg = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
+        cache = cfg.get("lmstudio_context_lengths", {}) or {}
+        nested = cache.get(base_url, {}) or {}
+        if isinstance(nested, dict) and isinstance(nested.get(model_id), int):
+            return int(nested[model_id])
+        # Legacy flat-by-model fallback (pre-nested entries).
+        flat = cache.get(model_id)
+        if isinstance(flat, int):
+            return int(flat)
+    except Exception:
+        pass
+    return None
+
+
+def save_cached_machine_context(base_url: str, model_id: str, value: int) -> None:
+    """Persist a probe result under ``lmstudio_context_lengths[base][model]``."""
+    try:
+        p = _machine_cache_path()
+        cfg: dict = yaml.safe_load(p.read_text(encoding="utf-8")) if p.exists() else {}
+        cache = cfg.setdefault("lmstudio_context_lengths", {})
+        bucket = cache.setdefault(base_url, {})
+        if not isinstance(bucket, dict):
+            bucket = {}
+            cache[base_url] = bucket
+        bucket[model_id] = int(value)
+        p.write_text(yaml.dump(cfg, default_flow_style=False, allow_unicode=True))
+    except Exception as exc:
+        logger.warning("save_cached_machine_context(%s/%s) failed: %s", base_url, model_id, exc)
+
+
+async def probe_max_loadable_context(
+    http: aiohttp.ClientSession,
+    base_url: str,
+    model_id: str,
+    api_key: str,
+    native_ceiling: Optional[int] = None,
+    on_log: Optional[Callable[[str], Awaitable[None]]] = None,
+) -> Optional[int]:
+    """Find the largest context_length this machine can actually load for this model.
+
+    ``native_ceiling`` caps the candidate set — we don't probe above the
+    GGUF's native max (LM Studio would silently cap or reject). If not
+    provided, defaults to 262144.
+
+    Returns the probed value, or None if every candidate failed (machine
+    is too resource-constrained for this model at any size we tried).
+
+    ``on_log`` is called with each status string so callers can forward
+    progress to whatever transport they're using (SSE, logging, etc.).
+    """
+    async def _emit(msg: str) -> None:
+        if on_log:
+            try:
+                await on_log(msg)
+            except Exception:
+                pass
+        logger.debug("probe_max_loadable_context: %s", msg)
+
+    headers = {"Content-Type": "application/json"}
+    if api_key and api_key != "ollama":
+        headers["Authorization"] = f"Bearer {api_key}"
+
+    ceiling = int(native_ceiling or 262144)
+    candidates = [c for c in (262144, 131072, 65536, 32768, 16384, 8192, 4096) if c <= ceiling]
+    if not candidates:
+        candidates = [ceiling]
+
+    for ctx in candidates:
+        # Clean slot — LM Studio won't re-load at a new context if the model
+        # is already loaded with the previous one.
+        try:
+            async with http.post(
+                f"{base_url}/api/v1/models/unload",
+                headers=headers,
+                json={"instance_id": model_id},
+                timeout=aiohttp.ClientTimeout(total=8),
+            ):
+                pass
+            await asyncio.sleep(0.5)
+        except Exception:
+            pass
+        try:
+            load_timeout = max(60, ctx // 1000)
+            async with http.post(
+                f"{base_url}/api/v1/models/load",
+                headers=headers,
+                json={
+                    "model": model_id,
+                    "context_length": ctx,
+                    "flash_attention": True,
+                    "echo_load_config": True,
+                },
+                timeout=aiohttp.ClientTimeout(total=load_timeout),
+            ) as lr:
+                if lr.status != 200:
+                    await _emit(f"probe {ctx:,}: load HTTP {lr.status} — trying smaller")
+                    continue
+                lr_data = await lr.json(content_type=None)
+                applied = ((lr_data.get("load_config") or {}).get("context_length")) or ctx
+                if applied < ctx:
+                    await _emit(f"probe {ctx:,}: LM Studio applied {applied:,} instead — using that")
+                    ctx = int(applied)
+            # LM Studio can return HTTP 200 + silent downshift (partial load).
+            # Verify by sending a payload sized to the probed context — if the
+            # KV cache can't actually hold it, this fails. Longer init wait
+            # for larger contexts while cache allocates.
+            await asyncio.sleep(max(2.0, ctx / 32768))
+            _filler_unit = "The quick brown fox jumps over the lazy dog. "
+            _target_chars = max(512, (ctx - 200) * 3)  # ~3 chars/token
+            _reps = max(1, _target_chars // len(_filler_unit))
+            _filler = _filler_unit * _reps
+            async with http.post(
+                f"{base_url}/v1/chat/completions",
+                headers={**headers, "Content-Type": "application/json"},
+                json={
+                    "model": model_id,
+                    "messages": [{"role": "user", "content": _filler + "\n\nSay OK."}],
+                    "max_tokens": 1,
+                    "stream": False,
+                },
+                timeout=aiohttp.ClientTimeout(total=120),
+            ) as vr:
+                if vr.status == 200:
+                    await _emit(f"probe {ctx:,}: full payload accepted ✓")
+                    return int(ctx)
+                body = (await vr.text())[:120]
+                await _emit(f"probe {ctx:,}: verify HTTP {vr.status}: {body} — trying smaller")
+        except Exception as exc:
+            await _emit(f"probe {ctx:,}: {type(exc).__name__}: {str(exc)[:80]} — trying smaller")
+    return None
 
 
 async def _paced_progress_update(
@@ -432,6 +605,13 @@ async def _probe_server(
                                         "quantization": rich.get("quantization", {}).get("name"),
                                         "tool_use": caps.get("trained_for_tool_use", False),
                                         "vision": caps.get("vision", False),
+                                        # Reasoning-capable models need a larger
+                                        # max_output_tokens budget during bench so
+                                        # thinking tokens don't swallow the answer.
+                                        # LM Studio reports this as a dict with
+                                        # allowed_options like ["off","on"]; its
+                                        # presence (not the value) is the signal.
+                                        "is_reasoning": bool(caps.get("reasoning")),
                                         "format": rich.get("format"),
                                     })
                                 models = enriched
@@ -1142,10 +1322,14 @@ def _compare_score(r: dict) -> float:
         caps_bonus += 0.035  # tool use is critical for an agent platform
     if r.get("vision"):
         caps_bonus += 0.015  # vision is a nice-to-have
-    # Penalise domain-specific models (coder, math) — not good everyday agent defaults
-    # Vision-capable models are no longer penalised since vision is a useful capability
+    # Penalise other domain-specific models (math, ocr, embed, search).
+    # Coder models are now hard-excluded from the general pool at rank time
+    # (see handle_setup_compare → coder_pool), so they never reach this path
+    # in the general ranking — no need for a coder/code keyword here. But if
+    # every model is a coder (fall-back case), the penalty doesn't hurt and
+    # keeps the non-coder-but-math/ocr case behaving as before.
     name_lower = r["model"].lower()
-    _PENALISED_KEYWORDS = {"coder", "code", "math", "ocr", "embed", "search"}
+    _PENALISED_KEYWORDS = {"math", "ocr", "embed", "search"}
     specialized_penalty = -0.15 if any(kw in name_lower for kw in _PENALISED_KEYWORDS) else 0.0
     # Context viability: LM Studio defaults to n_parallel=4 which splits context.
     # Models with < 64K total get 16K/slot (marginal), < 128K get < 32K/slot.
@@ -1356,6 +1540,16 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
                 "api_key":     raw_key,
                 "server_type": m.get("server_type") or fallback_type,
                 "max_context_length": m.get("max_context_length", 0),
+                # Forward capability flags so the bench can tune per-model:
+                # - tool_use: scoring bonus (+0.035) — was silently dropped
+                # - vision:   scoring bonus (+0.015) — was silently dropped
+                # - is_reasoning: lets us scale max_output_tokens up (reasoning
+                #   models burn 2000+ thinking tokens before emitting answer;
+                #   the old 2048 cap truncated mid-think and failed hard eval
+                #   for ministral-3-14b-reasoning and qwen3.5-35b).
+                "tool_use": bool(m.get("tool_use")),
+                "vision":   bool(m.get("vision")),
+                "is_reasoning": bool(m.get("is_reasoning") or m.get("reasoning")),
             })
 
     response = web.StreamResponse(headers={
@@ -1417,39 +1611,68 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
 
         Models loaded outside our session (e.g. olmocr left loaded by the user)
         will consume VRAM and throttle throughput for every model we test.
+
+        Does up to 3 passes with a verify step between each — one unload+sleep
+        is not enough when a large model (30B+) is still draining VRAM when
+        the next load starts. Previously we saw the Run 1 qwen3.5-9b test at
+        13.9 tok/s (post-contention) vs Run 2 at 89.5 tok/s (clean start).
         """
         _headers = {"Authorization": f"Bearer {api_key}"} if api_key and api_key != "ollama" else {}
-        try:
-            async with http.get(
-                f"{base_url}/api/v1/models",
-                headers=_headers,
-                timeout=aiohttp.ClientTimeout(total=5),
-            ) as r:
-                if r.status != 200:
-                    return
-                data = await r.json(content_type=None)
-                loaded = [m["id"] for m in data.get("data", []) if m.get("state") in ("loaded", "loading", None)]
-        except Exception:
-            return
-        for mid in loaded:
+
+        async def _list_loaded() -> list[str]:
             try:
-                async with http.post(
-                    f"{base_url}/api/v1/models/unload",
-                    headers=_headers,
-                    json={"instance_id": mid},
-                    timeout=aiohttp.ClientTimeout(total=8),
-                ) as ur:
-                    await send({"log": f"  Pre-flush: unloaded {mid} (HTTP {ur.status})"})
-            except Exception as e:
-                await send({"log": f"  Pre-flush: could not unload {mid}: {str(e)[:60]}"})
-        if loaded:
-            await asyncio.sleep(1.5)   # give LM Studio time to actually free VRAM
+                async with http.get(
+                    f"{base_url}/api/v1/models", headers=_headers,
+                    timeout=aiohttp.ClientTimeout(total=5),
+                ) as r:
+                    if r.status != 200:
+                        return []
+                    data = await r.json(content_type=None)
+                    # Native /api/v1/models returns nested models list; /v1/models
+                    # returns data[] with OpenAI shape. Handle both.
+                    entries = data.get("models") or data.get("data") or []
+                    out: list[str] = []
+                    for m in entries:
+                        state = m.get("state")
+                        if state in ("loaded", "loading"):
+                            # native format uses "key"; OpenAI format uses "id"
+                            out.append(m.get("key") or m.get("id") or "")
+                    return [x for x in out if x]
+            except Exception:
+                return []
+
+        for _attempt in range(3):
+            loaded = await _list_loaded()
+            if not loaded:
+                break
+            for mid in loaded:
+                try:
+                    async with http.post(
+                        f"{base_url}/api/v1/models/unload",
+                        headers=_headers,
+                        json={"instance_id": mid},
+                        timeout=aiohttp.ClientTimeout(total=8),
+                    ) as ur:
+                        await send({"log": f"  Pre-flush[{_attempt+1}]: unloaded {mid} (HTTP {ur.status})"})
+                except Exception as e:
+                    await send({"log": f"  Pre-flush[{_attempt+1}]: could not unload {mid}: {str(e)[:60]}"})
+            # Big models (30B+) can take several seconds to actually release VRAM
+            # after the unload RPC returns 200. Verify next iteration.
+            await asyncio.sleep(3.0)
+        # Final wait to let driver settle before the first benchmark load.
+        final_loaded = await _list_loaded()
+        if final_loaded:
+            await send({"log": f"  ⚠ Pre-flush: {len(final_loaded)} model(s) still loaded after 3 passes: {final_loaded}"})
+        else:
+            await send({"log": "  Pre-flush: VRAM clean, waiting 2s for driver settle"})
+            await asyncio.sleep(2.0)
 
     async def _test_server_group(group: list[dict], http: aiohttp.ClientSession) -> None:
         async def _bench_model_lmstudio_native(
             model_id: str, base_url: str, api_key: str, endpoint: str,
             http_session: aiohttp.ClientSession,
             known_max_ctx: int = 0,
+            is_reasoning: bool = False,
         ) -> dict | None:
             """Benchmark a model using LM Studio's native /api/v1/chat endpoint.
 
@@ -1470,6 +1693,30 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
 
             await send(_phase("loading"))
             max_context = None
+            # Server-side fallback: if the caller didn't pass native max, fetch
+            # it from LM Studio's /api/v1/models before loading. The compare
+            # flow *should* forward max_context_length from the probe response,
+            # but any gap in that chain (stale cache, a frontend path that
+            # doesn't round-trip the field, a model that appeared after the
+            # last probe) silently falls through to `_loaded_ctx = 65536` —
+            # the benchmark cap — and the native max gets recorded as 65K.
+            # One extra request per model eliminates that failure mode.
+            if not known_max_ctx:
+                try:
+                    async with http_session.get(
+                        f"{base_url}/api/v1/models", headers=_headers,
+                        timeout=aiohttp.ClientTimeout(total=5),
+                    ) as _mr:
+                        if _mr.status == 200:
+                            _md = await _mr.json(content_type=None)
+                            for _m in (_md.get("models") or []):
+                                if _m.get("key") == model_id:
+                                    known_max_ctx = int(_m.get("max_context_length") or 0)
+                                    if known_max_ctx:
+                                        await send({"log": f"  Resolved native max_context={known_max_ctx:,} from LM Studio metadata"})
+                                    break
+                except Exception as _fetch_exc:
+                    await send({"log": f"  Could not fetch /api/v1/models for native max: {str(_fetch_exc)[:80]}"})
             try:
                 # Load at HALF the model's max context for benchmarking.
                 # Max context is recorded from metadata but loading at full max
@@ -1585,13 +1832,26 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
 
                 Returns the final result dict from chat.end, or None on failure.
                 Sends live progress: model loading, prompt processing, reasoning/message deltas.
+
+                Token budget scales with the model: 2048 for non-reasoning,
+                10000 for reasoning models. The 2048 default truncated reasoning
+                models mid-think (they burn 2000+ thinking tokens before the
+                answer), which was silently scoring ministral-3-14b-reasoning /
+                qwen3.5-35b as 0/3 hard when their reasoning was actually fine.
+                Bumped 8000 → 10000 on 2026-04-21 after qwen3.5-35b-a3b was
+                observed using 7,250 thinking tokens on agent eval — cutting it
+                close. 10000 leaves real headroom for deeper chains.
+                Timeout scales proportionally so a slow big reasoning model
+                doesn't hit the wall clock before it finishes thinking.
                 """
+                _max_out = 10000 if is_reasoning else 2048
+                _timeout_s = 540 if is_reasoning else 180
                 async with http_session.post(
                     f"{base_url}/api/v1/chat",
                     headers=_headers,
                     json={"model": model_id, "input": prompt, "temperature": 0,
-                          "max_output_tokens": 2048, "store": False, "stream": True},
-                    timeout=aiohttp.ClientTimeout(total=180),
+                          "max_output_tokens": _max_out, "store": False, "stream": True},
+                    timeout=aiohttp.ClientTimeout(total=_timeout_s),
                 ) as sr:
                     if sr.status != 200:
                         err_text = await sr.text()
@@ -1989,13 +2249,20 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
             if server_type == "lmstudio":
                 # Pass known max context from model metadata (if available)
                 _known_ctx = spec.get("max_context_length", 0)
+                _is_reasoning = bool(spec.get("is_reasoning"))
+                _meta_bits = []
                 if _known_ctx:
-                    await send({"log": f"  Model metadata: max_context={_known_ctx:,}"})
+                    _meta_bits.append(f"max_context={_known_ctx:,}")
+                if _is_reasoning:
+                    _meta_bits.append("reasoning=on (10000-token budget)")
+                if _meta_bits:
+                    await send({"log": f"  Model metadata: {', '.join(_meta_bits)}"})
                 else:
                     await send({"log": f"  No max_context metadata — LM Studio will use its default"})
                 native_result = await _bench_model_lmstudio_native(
                     model_id, base_url, api_key, endpoint, http,
                     known_max_ctx=_known_ctx,
+                    is_reasoning=_is_reasoning,
                 )
                 if native_result is not None:
                     # Carry capability metadata from discovery into the result
@@ -2734,15 +3001,55 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
     elif ctx_pool:
         await send({"log": "⚠ No model passed format+tool gates — ranking all viable models"})
 
-    # Best balanced: highest composite score
-    best = max(pool, key=_compare_score) if pool else None
+    # Speed floor (2026-04-21): a model can full-pass every eval and still
+    # be unusable if it runs at 4 tok/s — gemma-4-31b is the canonical
+    # example. Below 8 tok/s an interactive agent response of even 200
+    # tokens takes 25+ seconds, which nobody will tolerate. Exclude these
+    # from the recommendation pool but keep them in `results` so the user
+    # still sees them ranked if they click into the full list.
+    _MIN_USABLE_TOK_S = 8
+    speed_ok    = [r for r in pool if (r.get("tok_s") or 0) >= _MIN_USABLE_TOK_S]
+    speed_slow  = [r for r in pool if (r.get("tok_s") or 0) <  _MIN_USABLE_TOK_S]
+    if speed_slow:
+        _names = ", ".join(f"{r['model']} ({r.get('tok_s')} tok/s)" for r in speed_slow)
+        await send({"log": f"⚠ Too slow for interactive agent use (<{_MIN_USABLE_TOK_S} tok/s): {_names}"})
+    # Fallback: if every model is below the floor, still recommend one so
+    # the user gets *a* pick rather than nothing. Better to surface the
+    # best available with a caveat than to silently return null.
+    rank_base = speed_ok if speed_ok else pool
 
-    # Fastest acceptable: highest tok/s from gated pool (only surface if different from best)
-    fast = max(pool, key=lambda r: r.get("tok_s", 0)) if pool else None
+    # Coder-model segregation (2026-04-21): coding-specialised models
+    # (qwen3-coder-*, deepseek-coder-*, codestral, etc.) were appearing in
+    # the general recommendation pool and winning on full-pass + decent tok/s
+    # despite being poorly suited for conversational/agent use. They now get
+    # ranked separately and returned as `coder_recommendation` so the UI can
+    # route them to coding toolsets, not the general Tony/Sally-style agent.
+    _CODER_KEYWORDS = ("coder", "codestral")
+    def _is_coder(r: dict) -> bool:
+        return any(kw in (r.get("model", "").lower()) for kw in _CODER_KEYWORDS)
+    general_pool = [r for r in rank_base if not _is_coder(r)]
+    coder_pool   = [r for r in rank_base if _is_coder(r)]
+    # Fall back to the mixed pool if the coder split left nothing general-
+    # purpose — a user with only coder models should still get a pick.
+    rank_pool = general_pool if general_pool else rank_base
+
+    # Best balanced: highest composite score (excluding coder models)
+    best = max(rank_pool, key=_compare_score) if rank_pool else None
+
+    # Fastest acceptable: highest tok/s from general pool (only surface if different from best)
+    fast = max(rank_pool, key=lambda r: r.get("tok_s", 0)) if rank_pool else None
     fast_rec    = fast["model"]    if fast and fast is not best else None
     fast_reason = _fast_reason(fast) if fast and fast is not best else None
 
+    # Coder pick — same scoring, separate pool, surfaced distinctly
+    coder_best   = max(coder_pool, key=_compare_score) if coder_pool else None
+    coder_rec    = coder_best["model"] if coder_best else None
+    coder_reason = _compare_reason(coder_best) if coder_best else None
+
     # Per-server recommendations — best model on each individual inference machine
+    # Mirror the global split: coder models don't count for the general
+    # per-server rec (a user looking at "best model on this box for a
+    # general agent" shouldn't be shown qwen3-coder-30b).
     per_server_recs: dict[str, dict] = {}
     for ep, group in server_groups.items():
         ep_valid = [r for r in valid if r.get("endpoint") == ep]
@@ -2750,14 +3057,21 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
         ep_ctx   = ep_ctx if ep_ctx else ep_valid
         ep_gated = [r for r in ep_ctx if r.get("eval", {}).get("format") and r.get("eval", {}).get("tool_call")]
         ep_pool  = ep_gated if ep_gated else ep_ctx
-        if ep_pool:
-            ep_best = max(ep_pool, key=_compare_score)
+        # Apply the same speed floor as the global ranking — a 4 tok/s model
+        # isn't a useful "best on this box" suggestion even if it's the only
+        # thing that full-passes.
+        ep_speed   = [r for r in ep_pool if (r.get("tok_s") or 0) >= _MIN_USABLE_TOK_S] or ep_pool
+        ep_general = [r for r in ep_speed if not _is_coder(r)] or ep_speed
+        if ep_general:
+            ep_best = max(ep_general, key=_compare_score)
             per_server_recs[ep] = {"model": ep_best["model"], "reason": _compare_reason(ep_best)}
 
     if best:
         await send({"log": f"Recommendation: {best['model']}"})
     if fast_rec:
         await send({"log": f"Speed pick: {fast_rec}"})
+    if coder_rec:
+        await send({"log": f"Coder pick (specialty — for coding toolsets only): {coder_rec}"})
     if len(per_server_recs) > 1:
         for ep, rec in per_server_recs.items():
             await send({"log": f"  Server {ep}: {rec['model']}"})
@@ -2794,6 +3108,8 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
             "reason":                     _compare_reason(best) if best else "Could not benchmark any models.",
             "fast_recommendation":        fast_rec,
             "fast_reason":                fast_reason,
+            "coder_recommendation":       coder_rec,
+            "coder_reason":               coder_reason,
             "per_server_recommendations": per_server_recs,
             "results":                    results,
             "ttft_warnings":              ttft_warnings,
@@ -3831,6 +4147,186 @@ async def handle_setup_prewarm(request: web.Request) -> web.Response:
 
     asyncio.create_task(_prewarm())
     return web.json_response({"status": "accepted"}, status=202)
+
+
+async def handle_setup_preload_model(request: web.Request) -> web.Response:
+    """POST /api/setup/preload-model — warm the selected LM Studio model.
+
+    SSE response. Triggers a load by POSTing a trivial chat (``input=".",
+    max_output_tokens=1``) to LM Studio's native ``/api/v1/chat`` endpoint
+    with streaming — that path emits ``model_load.progress`` events we can
+    forward to the UI as a progress bar. The chat completes in < 1s once
+    the load finishes, so by the time we send ``done`` the model is both
+    loaded AND warmed with one inference already executed.
+
+    Rationale: the /setup benchmark explicitly unloads every model after
+    testing (so VRAM is clean for the next test). That leaves the user's
+    chosen model cold at the moment they finish the wizard, and their
+    first chat message eats 15-60s of cold-load time. Pre-loading as the
+    last step of the wizard moves that cost off the first chat.
+
+    Body:
+      {"endpoint": "http://192.168.1.117:1234",   # LM Studio base URL
+       "model":    "qwen3.5-9b",
+       "api_key":  "<optional>",
+       "context_length": 65536}                   # match agent runtime
+
+    Not applicable to cloud providers (anthropic / openai / etc.) — their
+    models don't live in your VRAM, so a preload is meaningless. Frontend
+    should skip this call for the frontier track.
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    endpoint       = (body.get("endpoint") or "").strip()
+    model          = (body.get("model") or "").strip()
+    api_key        = (body.get("api_key") or "").strip()
+    # context_length: if the frontend didn't forward a size, fall through
+    # to LM Studio's own default for the model (don't pin 65K — that's the
+    # *benchmark* load size; agent runtime can legitimately want more).
+    # Explicit 0/None → omit the field in the POST body below so LM Studio
+    # uses the model's last-loaded or default context.
+    context_length = int(body.get("context_length") or 0)
+
+    response = web.StreamResponse(headers={
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache",
+        "X-Accel-Buffering": "no",
+    })
+    await response.prepare(request)
+
+    async def send(data: dict) -> None:
+        await response.write(f"data: {json.dumps(data)}\n\n".encode())
+
+    if not endpoint or not model:
+        await send({"error": "missing endpoint or model", "done": True})
+        return response
+
+    # Strip trailing /v1 so we can target /api/v1/... consistently.
+    base = re.sub(r"/v1/?$", "", endpoint.rstrip("/"))
+    headers = {"Content-Type": "application/json"}
+    if api_key and api_key != "ollama":
+        headers["Authorization"] = f"Bearer {api_key}"
+
+    await send({"log": f"Warming {model} at {base}…", "stage": "connecting"})
+
+    # Resolve context_length via three layers, cheapest first:
+    #   1. Explicit caller value (already in context_length)
+    #   2. Cached probe result for (base, model) — written by a previous
+    #      run so we don't re-probe on every preload/spawn
+    #   3. Fresh probe (unload → load at each candidate size → verify
+    #      with a filler payload). Slow (~1-3 min across candidates) but
+    #      only runs on first contact with a machine/model combo.
+    # This catches the low-VRAM / silent-degraded-load case that pure
+    # native_max // 2 would miss.
+    if not context_length:
+        cached = get_cached_machine_context(base, model)
+        if cached:
+            context_length = cached
+            await send({"log": f"Using cached max context: {context_length:,} tokens"})
+    # Pull the native ceiling from metadata so the probe doesn't try
+    # sizes above what the model supports.
+    native_ceiling: Optional[int] = None
+    try:
+        async with aiohttp.ClientSession() as _sess:
+            async with _sess.get(
+                f"{base}/api/v1/models", headers=headers,
+                timeout=aiohttp.ClientTimeout(total=5),
+            ) as _mr:
+                if _mr.status == 200:
+                    _md = await _mr.json(content_type=None)
+                    for _m in (_md.get("models") or []):
+                        if _m.get("key") == model:
+                            _native = int(_m.get("max_context_length") or 0)
+                            if _native:
+                                native_ceiling = _native
+                            break
+    except Exception:
+        pass
+    if not context_length:
+        # No explicit value, no cache — probe this (machine, model).
+        await send({"log": f"Probing max loadable context on {base}…", "stage": "probing"})
+
+        async def _probe_log(msg: str) -> None:
+            await send({"log": f"  {msg}"})
+
+        async with aiohttp.ClientSession() as _probe_sess:
+            probed = await probe_max_loadable_context(
+                _probe_sess, base, model, api_key,
+                native_ceiling=native_ceiling,
+                on_log=_probe_log,
+            )
+        if probed:
+            context_length = probed
+            save_cached_machine_context(base, model, probed)
+            await send({"log": f"Cached max context for {model}: {context_length:,} tokens"})
+        else:
+            await send({"log": "Probe returned no usable context — falling back to LM Studio default"})
+    if context_length:
+        await send({"log": f"Target context: {context_length:,} tokens"})
+
+    _chat_body: dict = {
+        "model": model,
+        "input": ".",
+        "temperature": 0,
+        "max_output_tokens": 1,
+        "flash_attention": True,
+        "store": False,
+        "stream": True,
+    }
+    if context_length:
+        _chat_body["context_length"] = context_length
+
+    try:
+        async with aiohttp.ClientSession() as sess:
+            async with sess.post(
+                f"{base}/api/v1/chat",
+                headers=headers,
+                json=_chat_body,
+                timeout=aiohttp.ClientTimeout(total=600),
+            ) as r:
+                if r.status != 200:
+                    err_body = (await r.text())[:200]
+                    await send({"error": f"HTTP {r.status}: {err_body}", "done": True})
+                    return response
+
+                last_pct = -1
+                async for line in r.content:
+                    line = line.decode("utf-8", errors="replace").strip()
+                    if not line.startswith("data:"):
+                        continue
+                    try:
+                        ev = json.loads(line[5:].strip())
+                    except Exception:
+                        continue
+                    etype = ev.get("type", "")
+                    if etype == "model_load.progress":
+                        pct = round(ev.get("progress", 0) * 100)
+                        if pct != last_pct:
+                            last_pct = pct
+                            await send({
+                                "stage": "loading", "progress": pct,
+                                "log": f"Loading {model} into LM Studio… {pct}%",
+                            })
+                    elif etype == "prompt_processing.progress":
+                        # Load done, starting the throwaway inference.
+                        await send({"stage": "warming", "log": f"{model} loaded — warming up"})
+                    elif etype == "chat.end":
+                        # Success. Model is loaded AND warm.
+                        await send({"stage": "done", "progress": 100, "log": f"✓ {model} ready", "done": True})
+                        return response
+                    elif etype == "error":
+                        msg = (ev.get("error") or {}).get("message", "unknown")
+                        await send({"error": msg, "done": True})
+                        return response
+                # Stream ended without chat.end — treat as done anyway.
+                await send({"stage": "done", "progress": 100, "log": f"✓ {model} ready", "done": True})
+    except asyncio.TimeoutError:
+        await send({"error": "preload timed out after 600s", "done": True})
+    except Exception as exc:
+        await send({"error": f"{type(exc).__name__}: {str(exc)[:200]}", "done": True})
+    return response
 
 
 async def handle_setup_progress(request: web.Request) -> web.Response:
