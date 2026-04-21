@@ -354,8 +354,31 @@ def _resolve_lmstudio_provider_args() -> tuple[str, str]:
 # default base URL). The OpenShell `--type anthropic` provider knows how to
 # speak Anthropic's API natively; openrouter is OpenAI-compatible so it uses
 # `--type openai` with the OpenRouter base URL.
+# Why Anthropic uses ``openshell_type: openai`` (not "anthropic"):
+#
+# OpenShell's ``--type anthropic`` provider only exposes Anthropic's
+# native ``POST /v1/messages`` API. Hermes's config.yaml sets
+# ``model.provider: custom`` + ``base_url: https://inference.local/v1``,
+# which means hermes ALWAYS speaks OpenAI-compat (``/v1/chat/completions``)
+# regardless of the actual upstream. When hermes hit the anthropic-type
+# provider, OpenShell returned ``400 "no compatible inference route
+# available"`` because that path didn't exist.
+#
+# Anthropic ships an OpenAI-compat shim at
+# ``https://api.anthropic.com/v1/`` that accepts the same Anthropic API
+# key as a Bearer token and handles ``/v1/chat/completions`` natively.
+# Registering the provider as ``--type openai`` with that base URL makes
+# OpenShell a transparent forwarder — hermes's OpenAI-shaped request
+# lands on Anthropic's OpenAI shim and comes back with a
+# chat-completions envelope hermes already knows how to parse.
+#
+# Existing provisioned ``anthropic``-type providers need to be re-created
+# (see ``finish_provisioning`` — it calls ``provider create`` on cold
+# start and ``provider update`` on reuse; neither path changes ``--type``,
+# so a full destroy + recreate of the gateway is the easiest
+# remediation path for pre-2026-04-21 Anthropic routes).
 _CLOUD_PROVIDER_PROFILES = {
-    "anthropic":  {"openshell_type": "anthropic", "cred_key": "ANTHROPIC_API_KEY", "default_base": "https://api.anthropic.com"},
+    "anthropic":  {"openshell_type": "openai",    "cred_key": "OPENAI_API_KEY",    "default_base": "https://api.anthropic.com/v1/"},
     "openai":     {"openshell_type": "openai",    "cred_key": "OPENAI_API_KEY",    "default_base": "https://api.openai.com/v1"},
     "openrouter": {"openshell_type": "openai",    "cred_key": "OPENAI_API_KEY",    "default_base": "https://openrouter.ai/api/v1"},
 }
