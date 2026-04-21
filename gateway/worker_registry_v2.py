@@ -240,13 +240,17 @@ def record_cost_entry(
     if not isinstance(final_result, dict):
         return
     usage = final_result.get("usage") or {}
-    model = usage.get("model") or ""
-    if not model:
-        return
 
+    # Resolve the dispatch's agent + route up-front. We need these for
+    # the model fallback below (hermes's run.completed usage dict
+    # carries only token counts, not the model name — so we have to
+    # reach back to the bound route to know what model was actually
+    # served). Before this, every v2 cost row was silently dropped
+    # because usage.get("model") returned "" and the function bailed.
     agent_id = None
     agent_name = None
     provider = None
+    route_model: Optional[str] = None
     try:
         from gateway.auth import db as _adb
         if sandbox_name.startswith("hermes-"):
@@ -258,8 +262,22 @@ def record_cost_entry(
                 if route_id:
                     route = _adb.get_model_route(route_id)
                     provider = (route or {}).get("provider")
+                    route_model = (route or {}).get("model")
+                # Final fallback — the agent row's own ``model`` column.
+                # Used when the agent has no model_route_id (historical
+                # path) or when the route row went missing.
+                if not route_model:
+                    route_model = agent_row.get("model") or None
     except Exception:
         pass
+
+    # Model resolution order: usage.model (hermes might populate it in
+    # future) → route.model (current reliable source) → agent.model
+    # (fallback). If all three are empty, there's genuinely no way to
+    # attribute this — skip the row.
+    model = (usage.get("model") or route_model or "").strip()
+    if not model:
+        return
 
     input_tokens = int(usage.get("input_tokens", 0) or 0)
     output_tokens = int(usage.get("output_tokens", 0) or 0)
