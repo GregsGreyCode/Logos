@@ -54,8 +54,7 @@ Run it on your laptop, a homelab box, or a $5 VPS. During the first-run setup wi
                         └───────────────────────────────────────────┘     OpenRouter
 ```
 
-<img width="1271" height="1207" alt="Sandbox Dashboard" src="https://github.com/user-attachments/assets/f7f7ea73-fc3e-4093-be76-e15e6b7e00d6" />
-
+<img width="1268" height="1261" alt="image" src="https://github.com/user-attachments/assets/571806a6-b1cf-444d-bd7a-23f4f31d4783" />
 
 **Request lifecycle:**
 
