@@ -415,7 +415,8 @@ score = 0.40 × (eval_tests_passed / 6)
 
 Eval quality and advanced-tier performance dominate. Speed is capped at 40 tok/s — diminishing returns for interactive use above that. Weights rebalanced 2026-04-13 so agent-loop failures can actually move a model's ranking.
 
-<img width="1209" height="195" alt="STAMP" src="https://github.com/user-attachments/assets/9bece643-869c-4df0-9310-971a41014eff" />
+<img width="1674" height="258" alt="image" src="https://github.com/user-attachments/assets/f84afbc9-1930-4818-83a4-8467deb48dd9" />
+
 
 ---
 
