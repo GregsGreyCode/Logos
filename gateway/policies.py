@@ -122,14 +122,16 @@ class PolicyMergeError(Exception):
 
 # ── Tool → preset mapping ─────────────────────────────────────────────────
 #
-# Maps tool names to the network presets and environment variables they
-# need. Used by:
-#   - tool-readiness endpoint (Phase 2) to show which tools need config
-#   - auto-apply logic (Phase 1c) to apply presets when API keys are saved
-#   - /setup tools command (Phase 3) to present configuration options
-#
-# Tools not listed here run entirely inside the sandbox and need no
-# network preset (terminal, memory, file ops, todo, delegate, etc.).
+# TOOL_PRESET_MAP and its consumers (`get_tool_readiness`,
+# `auto_apply_presets_for_env`) were trimmed 2026-04-21 when per-agent
+# cloud-tool keys moved to the sandbox .env via agent_env_credentials.
+# The `/setup` chat command now reads the sandbox .env directly for
+# readiness, and auto-preset-apply happens on save inside the new
+# handle_agent_env_credentials_* flow. The map itself is kept here
+# (smaller) because `apply_initial_defaults` and the permission-preset
+# browser UI still reference a few entries to map an env var → the
+# sandbox egress preset that lets outbound HTTP to the provider work.
+# If an entry's value isn't used there, delete it.
 
 TOOL_PRESET_MAP: Dict[str, Dict[str, Any]] = {
     # Web search & extraction — Firecrawl cloud API
@@ -266,211 +268,6 @@ TOOL_PRESET_MAP: Dict[str, Dict[str, Any]] = {
 }
 
 
-def get_tool_readiness(agent_id: str) -> List[Dict[str, Any]]:
-    """Return per-tool readiness status for an agent.
-
-    Checks three things per tool:
-    1. Is the toolset enabled for this agent?
-    2. Is the required env var set?
-    3. Is the required network preset applied?
-
-    Returns a list of dicts with: name, toolset, status, reason, preset,
-    setup_url. Status is one of: "ready", "needs_config", "not_enabled".
-    """
-    from gateway.auth import db as auth_db
-
-    agent = auth_db.get_agent(agent_id)
-    if not agent:
-        return []
-
-    # Resolve enabled toolsets from the agent record
-    raw_toolsets = agent.get("toolsets")
-    if isinstance(raw_toolsets, str):
-        try:
-            enabled_toolsets = set(json.loads(raw_toolsets))
-        except (ValueError, TypeError):
-            enabled_toolsets = set()
-    elif isinstance(raw_toolsets, list):
-        enabled_toolsets = set(raw_toolsets)
-    else:
-        enabled_toolsets = set()
-
-    # Resolve applied presets
-    applied = set(get_applied_presets(agent_id))
-
-    # LOG-44.3 aftermath: per-agent channel credentials live in the DB,
-    # not gateway env. Build a set of env-var names that this agent has
-    # a credential for, so `TELEGRAM_BOT_TOKEN`-style readiness checks
-    # see the per-agent token and don't false-negative as "not set".
-    _per_agent_env_vars: set = set()
-    try:
-        from gateway.executors.hermes_server_mode import _PLATFORM_ENV_MAP
-        rows = auth_db.list_agent_channel_credentials(
-            agent_id=agent_id, enabled_only=True,
-        )
-        for row in rows:
-            platform = (row.get("platform") or "").lower()
-            env_name = _PLATFORM_ENV_MAP.get(platform)
-            if env_name and row.get("token"):
-                _per_agent_env_vars.add(env_name)
-    except Exception:
-        pass  # best-effort — falls back to os.environ only
-
-    def _env_satisfied(key: str) -> bool:
-        if os.environ.get(key):
-            return True
-        return key in _per_agent_env_vars
-
-    results = []
-
-    # First: tools that need external config
-    for tool_name, info in TOOL_PRESET_MAP.items():
-        # Skip per-platform stubs like send_telegram / send_slack that
-        # exist solely so auto_apply_presets_for_env can map an env
-        # var to a preset. They don't correspond to functions the
-        # agent can actually call (the real tool is `send_message`)
-        # and listing them in the readiness UI produced phantom rows
-        # the user couldn't act on.
-        if info.get("auto_apply_only"):
-            continue
-        toolset = info["toolset"]
-        if toolset not in enabled_toolsets:
-            continue  # toolset not enabled, skip
-
-        # Check env vars. "any_env" / "any_preset" mean "satisfied when
-        # at least one is set" (used by send_message where any one of
-        # TELEGRAM/SLACK/DISCORD/WHATSAPP tokens + the matching preset
-        # is enough to be ready).
-        env_keys = info.get("env", [])
-        any_env = info.get("any_env", False)
-        if any_env:
-            has_env = bool(env_keys) and any(_env_satisfied(k) for k in env_keys)
-        else:
-            has_env = bool(env_keys) and all(_env_satisfied(k) for k in env_keys)
-
-        # Check presets
-        needed_presets = info.get("presets", [])
-        any_preset = info.get("any_preset", False)
-        if any_preset:
-            has_presets = bool(needed_presets) and any(p in applied for p in needed_presets)
-        else:
-            has_presets = all(p in applied for p in needed_presets)
-
-        if has_env and has_presets:
-            status = "ready"
-            reason = ""
-        elif not has_env:
-            missing = [k for k in env_keys if not _env_satisfied(k)]
-            status = "needs_config"
-            reason = f"{', '.join(missing)} not set"
-        else:
-            status = "needs_preset"
-            reason = f"preset '{needed_presets[0]}' not applied"
-
-        missing_preset = next(
-            (p for p in needed_presets if p not in applied),
-            needed_presets[0] if needed_presets else None,
-        )
-        results.append({
-            "name": tool_name,
-            "toolset": toolset,
-            "status": status,
-            "reason": reason,
-            "preset": missing_preset,
-            "setup_url": info.get("setup_url", ""),
-            "description": info.get("description", ""),
-            "optional": info.get("optional", False),
-        })
-
-    # Second: tools that work locally (no config needed)
-    local_toolsets = {
-        "terminal": "Command execution",
-        "memory": "Persistent memory",
-        "file": "File operations",
-        "todo": "Task planning",
-        "delegation": "Subagent delegation",
-        "clarify": "Clarifying questions",
-        "session_search": "Session history search",
-        "code_execution": "Python sandbox",
-        "skills": "Skill management",
-        "homeassistant": "Home Assistant control",
-    }
-    for toolset, desc in local_toolsets.items():
-        if toolset in enabled_toolsets:
-            results.append({
-                "name": toolset,
-                "toolset": toolset,
-                "status": "ready",
-                "reason": "",
-                "preset": None,
-                "setup_url": "",
-                "description": desc,
-                "optional": False,
-            })
-
-    return results
-
-
-def auto_apply_presets_for_env(env_key: str) -> List[str]:
-    """When an API key env var is saved, auto-apply matching presets.
-
-    Finds all tools that need ``env_key``, looks up their required
-    presets, and applies those presets to every agent that has the
-    corresponding toolset enabled. Returns the list of preset names
-    that were applied.
-
-    Called by the ``POST /tools/configure`` endpoint after saving
-    a credential to ``~/.hermes/.env``.
-    """
-    from gateway.auth import db as auth_db
-
-    # Find which presets this env key unlocks.
-    presets_to_apply: Dict[str, str] = {}  # preset_name -> toolset
-    for tool_name, info in TOOL_PRESET_MAP.items():
-        if env_key not in info.get("env", []):
-            continue
-        for preset in info.get("presets", []):
-            presets_to_apply[preset] = info["toolset"]
-
-    if not presets_to_apply:
-        return []
-
-    applied_names = []
-    agents = auth_db.list_agents()
-
-    for preset_name, toolset in presets_to_apply.items():
-        for agent in agents:
-            # Check if the agent has the relevant toolset enabled
-            raw_ts = agent.get("toolsets")
-            if isinstance(raw_ts, str):
-                try:
-                    agent_toolsets = json.loads(raw_ts)
-                except (ValueError, TypeError):
-                    agent_toolsets = []
-            elif isinstance(raw_ts, list):
-                agent_toolsets = raw_ts
-            else:
-                agent_toolsets = []
-
-            if toolset in agent_toolsets:
-                current = get_applied_presets(agent["id"])
-                if preset_name not in current:
-                    try:
-                        apply_preset(agent["id"], preset_name)
-                        logger.info(
-                            "auto_apply: applied '%s' to agent '%s' (toolset '%s' enabled, %s configured)",
-                            preset_name, agent.get("name", agent["id"]), toolset, env_key,
-                        )
-                    except Exception as exc:
-                        logger.warning(
-                            "auto_apply: failed to apply '%s' to '%s': %s",
-                            preset_name, agent.get("name", agent["id"]), exc,
-                        )
-
-        if preset_name not in applied_names:
-            applied_names.append(preset_name)
-
-    return applied_names
 
 
 # ── Preset discovery ──────────────────────────────────────────────────────

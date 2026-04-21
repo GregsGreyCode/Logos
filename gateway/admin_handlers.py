@@ -971,6 +971,14 @@ async def handle_agents_post(request: web.Request) -> web.Response:
                         status=429,
                     )
     import json as _json
+    # The per-agent toolsets selector was removed from the UI (2026-04-21)
+    # because `_build_config_yaml` in hermes_server_mode hardcodes
+    # `hermes-cli` for every platform regardless of what this column says.
+    # We still write the column because `capabilities.py` and `policies.py`
+    # read it for unrelated purposes (capability-gate bookkeeping,
+    # policy resolution), and those paths expect a list. Legacy callers
+    # that still POST `toolsets` are honoured — the selector is gone from
+    # the UI but the API contract isn't breaking.
     toolsets_raw = body.get("toolsets")
     if not isinstance(toolsets_raw, list) or not toolsets_raw:
         toolsets_raw = ["hermes-cli"]
@@ -1516,13 +1524,14 @@ async def handle_agent_presets_toggle(request: web.Request) -> web.Response:
 async def handle_agent_runtime_restart(request: web.Request) -> web.Response:
     """POST /admin/agents/{id}/runtime/restart
 
-    Re-uploads the hermes monkeypatch (``hermes_cancel_monkeypatch.py``
-    + the toolset-introspection patch) into the agent's sandbox, then
-    bounces the hermes process so it reads the latest patch. Useful
-    when the Logos gateway has been updated with a newer patch but the
-    sandbox's hermes process is still running against the version it
-    was booted with (e.g. agents created before LOG-64 still serving a
-    hermes without /v1/toolsets).
+    Re-uploads the Logos hermes launcher (``hermes_launcher.py`` on the
+    host, uploaded to the sandbox as the bare ``hermes``) into the
+    agent's sandbox, then bounces the hermes process so it picks up the
+    latest pre-boot patches. Useful when the Logos gateway has been
+    updated with a newer launcher but the sandbox's hermes process is
+    still running against the version it was booted with (e.g. agents
+    created before a patch landed that adds /v1/toolsets or fixes
+    is_gateway_running detection).
     """
     aid = request.match_info["id"]
     agent = auth_db.get_agent(aid)
@@ -1540,7 +1549,10 @@ async def handle_agent_runtime_restart(request: web.Request) -> web.Response:
 
     try:
         from gateway.executors.hermes_server_mode import (
-            deploy_cancel_monkeypatch,
+            deploy_hermes_config,
+            deploy_hermes_launcher,
+            deploy_soul_md,
+            build_channel_extra_env,
             restart_hermes_in_sandbox,
             wait_for_hermes_health,
         )
@@ -1554,12 +1566,74 @@ async def handle_agent_runtime_restart(request: web.Request) -> web.Response:
         "agent_runtime_restart(%s): starting — sandbox=%s gateway=%s",
         aid, sandbox_name, target_gw,
     )
+
+    # Re-deploy config.yaml first. Without this, host-side changes to
+    # the generator (``_build_config_yaml`` — e.g. adding
+    # platform_toolsets, editing env_passthrough) never land on
+    # sandboxes spawned before the change. Restart-runtime should be
+    # the operator's "pick up my latest Logos edits and bounce" lever,
+    # not just a hermes process bounce.
+    #
+    # Preserve the existing ``api_key`` from the state record so we
+    # don't mint a fresh one — dispatch_task_v2 caches the Bearer and
+    # would 401 until the sandbox is fully respawned.
     try:
-        deploy_cancel_monkeypatch(sandbox_name, gateway=target_gw)
+        from gateway.executors.openshell import _load_state
+        from types import SimpleNamespace
+        existing_api_key = ""
+        for inst in _load_state():
+            if inst.get("sandbox_name") == sandbox_name:
+                existing_api_key = (inst.get("hermes_server_setup") or {}).get("api_key") or ""
+                break
+        if not existing_api_key:
+            raise RuntimeError("no hermes_server_setup.api_key in state file — cannot preserve Bearer")
+        # Build a minimal config object with the fields _build_config_yaml
+        # reads: name, model, soul_name. ``toolsets`` used to live here too
+        # but the parameter was dead code — every agent gets hermes-cli on
+        # every platform regardless of the DB column.
+        _cfg = SimpleNamespace(
+            name=agent.get("name") or "",
+            model=agent.get("model") or "",
+            soul_name=agent.get("soul_slug") or "general",
+        )
+        _extra_env = build_channel_extra_env(
+            agent.get("id") or "",
+            sandbox_name_for_log=sandbox_name,
+        ) if agent.get("id") else {}
+        deploy_hermes_config(
+            sandbox_name, _cfg, existing_api_key,
+            extra_env=_extra_env or None, gateway=target_gw,
+        )
     except Exception as exc:
-        logger.exception("runtime restart: patch upload failed")
+        logger.warning(
+            "runtime restart: config.yaml redeploy failed (non-fatal, "
+            "launcher+SOUL.md still refresh): %s", exc,
+        )
+
+    try:
+        deploy_hermes_launcher(sandbox_name, gateway=target_gw)
+    except Exception as exc:
+        logger.exception("runtime restart: launcher upload failed")
         return web.json_response(
-            {"error": f"patch upload failed: {exc}"}, status=500,
+            {"error": f"launcher upload failed: {exc}"}, status=500,
+        )
+
+    # Re-deploy SOUL.md so prompt-only changes (Logos runtime primer
+    # edits, soul-body tweaks on the host) actually ship to the
+    # sandbox when the user clicks Restart runtime. Without this, an
+    # operator edits soul.md on the host, clicks Restart, and sees no
+    # behaviour change because hermes rebooted against the old
+    # SOUL.md still sitting in the sandbox. Best-effort — a failure
+    # here shouldn't block the restart (the old SOUL is still valid,
+    # just stale).
+    try:
+        soul_name = (agent.get("soul_slug") or "default")
+        deploy_soul_md(sandbox_name, agent.get("name") or "",
+                       soul_name, gateway=target_gw)
+    except Exception as exc:
+        logger.warning(
+            "runtime restart: SOUL.md redeploy failed (non-fatal): %s",
+            exc,
         )
 
     try:
@@ -1574,8 +1648,9 @@ async def handle_agent_runtime_restart(request: web.Request) -> web.Response:
     # respond. Otherwise the frontend re-fetches /v1/toolsets before
     # the route is registered and still sees "sandbox unreachable".
     try:
+        from gateway.executors.hermes_server_mode import HEALTH_TIMEOUT_S
         ready_s = await asyncio.to_thread(
-            wait_for_hermes_health, sandbox_name, 30, target_gw,
+            wait_for_hermes_health, sandbox_name, HEALTH_TIMEOUT_S, target_gw,
         )
     except Exception as exc:
         logger.exception("runtime restart: health probe failed")
@@ -1844,6 +1919,156 @@ async def handle_agent_channels_toggle(request: web.Request) -> web.Response:
         "credential": _scrub_credential_row(refreshed or row),
         "sandbox_refresh_scheduled": True,
     })
+
+
+# ── Per-agent cloud-tool env credentials (plan-C, 2026-04-21) ──────────────
+# Handlers for the /setup slash command in chat: save/delete env vars that
+# land in the sandbox's .env and persist in agent_env_credentials for
+# respawn replay. Mirrors the agent_channels_* handlers above but with
+# (env_var, value) semantics instead of (platform, label, token).
+
+
+def _mask_env_value(value: str) -> str:
+    """Return a visual-identifier preview of a credential value without
+    leaking it. Long values show first-4 + ••• + last-4, short ones just
+    get fully masked. Never send the full value back to the browser.
+    """
+    if not value:
+        return ""
+    if len(value) <= 8:
+        return "•" * len(value)
+    return f"{value[:4]}•••{value[-4:]}"
+
+
+def _scrub_env_cred_row(row: dict) -> dict:
+    """Shape an agent_env_credentials row for the UI — drop the raw value
+    and substitute a preview."""
+    if not row:
+        return {}
+    out = dict(row)
+    out["value_preview"] = _mask_env_value(out.pop("value", "") or "")
+    return out
+
+
+async def handle_agent_env_credentials_list(request: web.Request) -> web.Response:
+    """GET /api/admin/agents/{id}/env-credentials
+
+    Returns the agent's env credential rows with values masked. Used by
+    the chat-side /setup card to know which vars are Logos-managed.
+    """
+    aid = request.match_info["id"]
+    agent = auth_db.get_agent(aid)
+    if not agent:
+        return web.json_response({"error": "not_found"}, status=404)
+    try:
+        rows = auth_db.list_agent_env_credentials(agent_id=aid)
+    except Exception as exc:
+        logger.exception("env-credentials list failed")
+        return web.json_response({"error": str(exc)}, status=500)
+    return web.json_response({
+        "credentials": [_scrub_env_cred_row(r) for r in rows],
+    })
+
+
+async def handle_agent_env_credentials_post(request: web.Request) -> web.Response:
+    """POST /api/admin/agents/{id}/env-credentials
+
+    Body: ``{"env_var": "FIRECRAWL_API_KEY", "value": "fc-xxx",
+             "description": "Firecrawl cloud API"}``
+
+    Upserts on (agent_id, env_var). Persists to agent_env_credentials
+    AND rewrites the sandbox .env in place via
+    ``refresh_channel_credentials`` (which re-runs ``build_channel_extra_env``
+    — that now pulls from both credential tables — and restarts hermes
+    so the new env is loaded).
+    """
+    aid = request.match_info["id"]
+    agent = auth_db.get_agent(aid)
+    if not agent:
+        return web.json_response({"error": "not_found"}, status=404)
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "invalid_json"}, status=400)
+
+    env_var = (body.get("env_var") or "").strip().upper()
+    value   = (body.get("value") or "").strip()
+    description = body.get("description") or None
+    if not env_var or not value:
+        return web.json_response(
+            {"error": "env_var_and_value_required"}, status=400,
+        )
+    # Basic shape validation — env var names must look like identifiers.
+    # Prevents accidental injection of whole lines ("KEY=x\nOTHER=y") and
+    # any env-name that would choke the .env parser inside the sandbox.
+    if not env_var.replace("_", "").isalnum() or env_var[0].isdigit():
+        return web.json_response(
+            {"error": "invalid_env_var_name",
+             "detail": "Must match [A-Z_][A-Z0-9_]* (all caps recommended)."},
+            status=400,
+        )
+    # Messaging tokens live in agent_channel_credentials — reject them
+    # here so the user doesn't end up with two copies of a bot token
+    # that can drift out of sync.
+    _MESSAGING_ENVS = {
+        "TELEGRAM_BOT_TOKEN", "DISCORD_BOT_TOKEN", "SLACK_BOT_TOKEN",
+        "WHATSAPP_TOKEN", "MATRIX_ACCESS_TOKEN", "SIGNAL_TOKEN",
+    }
+    if env_var in _MESSAGING_ENVS:
+        return web.json_response(
+            {"error": "use_channel_credentials",
+             "detail": f"{env_var} is a messaging token — set it via the Messaging tab so Logos can manage the platform adapter."},
+            status=400,
+        )
+
+    try:
+        row = auth_db.save_agent_env_credential(
+            aid, env_var, value,
+            enabled=True, description=description,
+        )
+    except Exception as exc:
+        logger.exception("env-credentials save failed")
+        return web.json_response({"error": str(exc)}, status=500)
+
+    # Fire-and-forget the sandbox .env refresh — same pattern as the
+    # channel-credential handlers. refresh_channel_credentials re-runs
+    # build_channel_extra_env (which reads from both tables) and
+    # restarts hermes. If the sandbox isn't up yet, this silently
+    # fails and the key lands on next spawn via build_channel_extra_env.
+    asyncio.create_task(
+        asyncio.to_thread(_refresh_sandbox_channel_env, request, agent["name"])
+    )
+
+    return web.json_response({
+        "credential": _scrub_env_cred_row(row),
+        "sandbox_refresh_scheduled": True,
+    })
+
+
+async def handle_agent_env_credentials_delete(request: web.Request) -> web.Response:
+    """DELETE /api/admin/agents/{id}/env-credentials/{env_var}
+
+    Drops the row from agent_env_credentials and refreshes the sandbox
+    .env so hermes loses the key immediately. Uses env_var as the URL
+    segment (not id) because it's the natural key the UI has.
+    """
+    aid = request.match_info["id"]
+    env_var = (request.match_info.get("env_var") or "").strip().upper()
+    if not env_var:
+        return web.json_response({"error": "env_var_required"}, status=400)
+    agent = auth_db.get_agent(aid)
+    if not agent:
+        return web.json_response({"error": "not_found"}, status=404)
+    try:
+        auth_db.delete_agent_env_credential_by_var(aid, env_var)
+    except Exception as exc:
+        logger.exception("env-credentials delete failed")
+        return web.json_response({"error": str(exc)}, status=500)
+
+    asyncio.create_task(
+        asyncio.to_thread(_refresh_sandbox_channel_env, request, agent["name"])
+    )
+    return web.json_response({"ok": True, "sandbox_refresh_scheduled": True})
 
 
 # ── User ↔ platform identity links ────────────────────────────────────────
@@ -2938,13 +3163,21 @@ async def handle_agent_logs_get(request: web.Request) -> web.Response:
     # Sync-on-demand from the sandbox side before reading. The
     # periodic sync task runs every 30 min which is fine for
     # long-lived background activity but useless when a user is
-    # watching a live log. Pull the sandbox's /tmp/hermes/logs
-    # directory into the host's per-agent logs dir first; the read
-    # below then sees the freshest data. Best-effort — failures
-    # (no sandbox, sandbox down, rsync error) fall through to the
-    # existing on-disk copy without an error response.
+    # watching a live log. Pull the sandbox's hermes log directory
+    # into the host's per-agent logs dir first; the read below then
+    # sees the freshest data. Best-effort — failures (no sandbox,
+    # sandbox down, rsync error) fall through to the existing on-disk
+    # copy without an error response.
+    #
+    # Path note: v2 hermes-server mode writes logs to
+    # ``/tmp/hermes-srv-home/logs/`` (HERMES_HOME_IN_SANDBOX). The
+    # older v1 path was ``/tmp/hermes/logs/``. We pull from the v2
+    # path; the v1 path is dead on any sandbox spawned after the
+    # LOG-44 rollout and returning empty here was indistinguishable
+    # from "agent is quiet".
     try:
         from gateway.executors.openshell import _load_state
+        from gateway.executors.hermes_server_mode import HERMES_HOME_IN_SANDBOX
         sandbox_name = None
         gateway_name = None
         for inst in _load_state():
@@ -2961,7 +3194,7 @@ async def handle_agent_logs_get(request: web.Request) -> web.Response:
                 await asyncio.to_thread(
                     wr._download_sandbox_dir,
                     sandbox_name, gateway_name,
-                    "/tmp/hermes/logs/",
+                    f"{HERMES_HOME_IN_SANDBOX}/logs/",
                     host_logs_dir,
                 )
     except Exception as exc:

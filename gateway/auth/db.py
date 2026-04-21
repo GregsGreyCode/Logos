@@ -393,6 +393,36 @@ CREATE TABLE IF NOT EXISTS agent_channel_credentials (
 CREATE INDEX IF NOT EXISTS idx_acc_agent    ON agent_channel_credentials(agent_id);
 CREATE INDEX IF NOT EXISTS idx_acc_platform ON agent_channel_credentials(platform);
 
+-- Per-agent cloud-tool credentials — one row per (agent, env_var) pair.
+-- Stored separately from agent_channel_credentials because the value
+-- semantics differ: channel creds map to a platform + label so we can
+-- model multiple bot tokens per platform ("work telegram", "personal
+-- telegram"), whereas env creds are simple env-var → value pairs. Both
+-- tables feed into the same .env injection path at spawn time via
+-- ``build_channel_extra_env`` (extended 2026-04-21).
+--
+-- Use case: setting FIRECRAWL_API_KEY / FAL_KEY / OPENROUTER_API_KEY /
+-- etc. per-agent so each agent's sandbox gets its own keys. Keys live
+-- where hermes actually reads them (/tmp/hermes-srv-home/.env) rather
+-- than in Logos's gateway os.environ (which never reached the
+-- sandbox). Replaces the dead TOOL_INTEGRATIONS / get_tool_readiness
+-- path that pretended to configure cloud tools for hermes but never
+-- actually forwarded the keys.
+
+CREATE TABLE IF NOT EXISTS agent_env_credentials (
+    id          TEXT PRIMARY KEY,
+    agent_id    TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+    env_var     TEXT NOT NULL,
+    value       TEXT NOT NULL,
+    enabled     INTEGER NOT NULL DEFAULT 1,
+    description TEXT,                   -- human hint ("Firecrawl cloud API"); nullable
+    created_at  INTEGER NOT NULL,
+    updated_at  INTEGER NOT NULL,
+    UNIQUE(agent_id, env_var)
+);
+CREATE INDEX IF NOT EXISTS idx_aec_agent   ON agent_env_credentials(agent_id);
+CREATE INDEX IF NOT EXISTS idx_aec_env_var ON agent_env_credentials(env_var);
+
 -- ── Model routes ───────────────────────────────────────────────────────────
 -- One row per (provider, model) pair the user has provisioned. Each route is
 -- backed by a dedicated OpenShell gateway pinned to that single model via
@@ -2246,6 +2276,102 @@ def get_agent_channel_credential(cred_id: str) -> Optional[dict]:
         row = conn.execute(
             "SELECT * FROM agent_channel_credentials WHERE id = ?",
             (cred_id,),
+        ).fetchone()
+        return dict(row) if row else None
+
+
+# ── Per-agent env credentials (cloud-tool API keys) ─────────────────────────
+# See the agent_env_credentials table definition above for rationale.
+# Read path: build_channel_extra_env in hermes_server_mode merges rows from
+# here with rows from agent_channel_credentials into the .env file that
+# deploy_hermes_config writes to /tmp/hermes-srv-home/.env inside the sandbox.
+
+
+def save_agent_env_credential(
+    agent_id: str,
+    env_var: str,
+    value: str,
+    enabled: bool = True,
+    description: Optional[str] = None,
+) -> dict:
+    """Insert or rotate a (agent, env_var) credential.
+
+    Idempotent on (agent_id, env_var): re-calling with the same env_var
+    rotates the value, flips enabled, and updates description. Returns
+    the saved row as a dict.
+    """
+    _ = _new_id("aec")  # not used — UNIQUE upsert keys on (agent_id, env_var)
+    now = int(time.time() * 1000)
+    with _conn() as conn:
+        conn.execute(
+            """INSERT INTO agent_env_credentials
+                   (id, agent_id, env_var, value, enabled, description, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT(agent_id, env_var) DO UPDATE SET
+                   value       = excluded.value,
+                   enabled     = excluded.enabled,
+                   description = excluded.description,
+                   updated_at  = excluded.updated_at""",
+            (_new_id("aec"), agent_id, env_var, value,
+             1 if enabled else 0, description, now, now),
+        )
+        row = conn.execute(
+            "SELECT * FROM agent_env_credentials WHERE agent_id = ? AND env_var = ?",
+            (agent_id, env_var),
+        ).fetchone()
+        return dict(row) if row else {}
+
+
+def delete_agent_env_credential(cred_id: str) -> None:
+    with _conn() as conn:
+        conn.execute("DELETE FROM agent_env_credentials WHERE id = ?", (cred_id,))
+
+
+def delete_agent_env_credential_by_var(agent_id: str, env_var: str) -> None:
+    """Delete by (agent_id, env_var) — the UI's natural key. Simpler than
+    the id-based delete when the caller has the pair but not the row id."""
+    with _conn() as conn:
+        conn.execute(
+            "DELETE FROM agent_env_credentials WHERE agent_id = ? AND env_var = ?",
+            (agent_id, env_var),
+        )
+
+
+def set_agent_env_credential_enabled(cred_id: str, enabled: bool) -> None:
+    now = int(time.time() * 1000)
+    with _conn() as conn:
+        conn.execute(
+            "UPDATE agent_env_credentials SET enabled = ?, updated_at = ? WHERE id = ?",
+            (1 if enabled else 0, now, cred_id),
+        )
+
+
+def list_agent_env_credentials(
+    agent_id: Optional[str] = None,
+    enabled_only: bool = False,
+) -> list[dict]:
+    """Fetch env credential rows with optional filters.
+
+    Value fields are returned verbatim — callers must not log these.
+    Rows are ordered by (agent_id, env_var) for deterministic output.
+    """
+    clauses: list[str] = []
+    args: list = []
+    if agent_id:
+        clauses.append("agent_id = ?")
+        args.append(agent_id)
+    if enabled_only:
+        clauses.append("enabled = 1")
+    where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+    sql = f"SELECT * FROM agent_env_credentials {where} ORDER BY agent_id, env_var"
+    with _conn() as conn:
+        return [dict(r) for r in conn.execute(sql, args).fetchall()]
+
+
+def get_agent_env_credential(cred_id: str) -> Optional[dict]:
+    with _conn() as conn:
+        row = conn.execute(
+            "SELECT * FROM agent_env_credentials WHERE id = ?", (cred_id,),
         ).fetchone()
         return dict(row) if row else None
 

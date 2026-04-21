@@ -1,7 +1,7 @@
 """Unit tests for ``worker_registry_v2.fetch_toolsets_from_sandbox``.
 
 The helper curls hermes's ``GET /v1/toolsets`` (registered by the
-monkeypatch at ``hermes_cancel_monkeypatch._apply_toolset_introspection_patch``)
+launcher patch at ``hermes_launcher._apply_toolset_introspection_patch``)
 through ``openshell sandbox exec`` and returns the parsed JSON. These
 tests cover the state-file lookup + subprocess wiring with a mock; the
 end-to-end path (real sandbox curl against a live hermes) is
