@@ -9274,9 +9274,12 @@ function app() {
                 this.activeTaskId = d.task_id;
               }
               if (d.type === 'tool_progress') {
-                // Live tool progress from worker (legacy)
+                // Live tool progress from worker (legacy). The preview
+                // (e.g. `import urllib.request`) belongs in the Live
+                // Executions panel only — the chat header stays on the
+                // kawaii thinking animation so the user isn't staring
+                // at raw Python mid-turn.
                 this.isWakingUp = false;
-                this._setStatusOverride(d.preview || d.tool || 'Working...');
               }
               if (d.type === 'tool_start') {
                 this.isWakingUp = false;
@@ -9286,7 +9289,6 @@ function app() {
                     status: 'running', duration_ms: null
                 }};
                 this._liveToolOrder = [...this._liveToolOrder, id];
-                this._setStatusOverride(d.preview || d.tool || 'Working...');
                 this._scrollChat();
               }
               if (d.type === 'tool_end') {
