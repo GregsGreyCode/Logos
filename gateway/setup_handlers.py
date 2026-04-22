@@ -4008,9 +4008,36 @@ async def _run_setup_complete_bg(
                 "Starting local search (SearxNG)\u2026",
             )
             try:
-                await _start_searxng_service(progress_cb=_searxng_progress)
+                _searxng_up = await _start_searxng_service(progress_cb=_searxng_progress)
             except Exception as _sx_err:
                 logger.warning("setup: _start_searxng_service raised: %s", _sx_err)
+                _searxng_up = False
+
+            # Persist SEARXNG_URL to ~/.logos/.env and the live process env so
+            # fresh sandbox spawns (which copy it via _FORWARDED_HOST_ENV in
+            # hermes_server_mode) actually get the URL. Without this, the
+            # gateway has no SEARXNG_URL to forward and the agent's soul
+            # correctly reports "SearxNG isn't configured for me" despite
+            # the container running. host.openshell.internal is the alias
+            # openshell wires into every sandbox pod's /etc/hosts for the
+            # Docker host (see openshell-bootstrap's host-gateway entries),
+            # so it's the correct sandbox-side URL. We don't overwrite an
+            # existing user-set value — someone pointing at a custom
+            # SearxNG instance on another host keeps their override.
+            if _searxng_up:
+                try:
+                    from logos_cli.config import get_env_value, save_env_value
+                    _SANDBOX_SEARXNG_URL = "http://host.openshell.internal:8888"
+                    if not (get_env_value("SEARXNG_URL") or os.environ.get("SEARXNG_URL")):
+                        save_env_value("SEARXNG_URL", _SANDBOX_SEARXNG_URL)
+                        os.environ["SEARXNG_URL"] = _SANDBOX_SEARXNG_URL
+                        logger.info(
+                            "setup: wrote SEARXNG_URL=%s (sandbox-side alias for "
+                            "the host SearxNG at localhost:8888)",
+                            _SANDBOX_SEARXNG_URL,
+                        )
+                except Exception as _env_err:
+                    logger.warning("setup: could not persist SEARXNG_URL: %s", _env_err)
 
             # Spawn the sandbox and BLOCK the /setup/complete response on
             # it. The previous version fired spawn in a background task
