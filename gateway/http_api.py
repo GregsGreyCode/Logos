@@ -122,9 +122,34 @@ _html_dir = (
     if getattr(_sys, "frozen", False)
     else Path(__file__).parent / "html"
 )
-_ADMIN_HTML  = (_html_dir / "main_app.html").read_text(encoding="utf-8")
-_LOGIN_HTML  = (_html_dir / "login.html").read_text(encoding="utf-8")
-_SETUP_HTML  = (_html_dir / "setup.html").read_text(encoding="utf-8")
+
+
+# mtime-cached HTML loader. Previously `main_app.html` / `login.html` /
+# `setup.html` were read once at import time and frozen into module-
+# level strings, which meant a running gateway never picked up HTML
+# edits — every "my change isn't showing up" ticket traced back to the
+# same stale snapshot. Re-reading on mtime change is effectively free
+# (main_app.html is ~300 KB, read at most once per page navigation) and
+# removes that whole class of foot-gun.
+_HTML_CACHE: dict[str, tuple[float, str]] = {}
+
+
+def _read_html(filename: str) -> str:
+    path = _html_dir / filename
+    try:
+        mtime = path.stat().st_mtime
+    except OSError:
+        return _HTML_CACHE.get(filename, (0.0, ""))[1]
+    cached = _HTML_CACHE.get(filename)
+    if cached is None or cached[0] != mtime:
+        _HTML_CACHE[filename] = (mtime, path.read_text(encoding="utf-8"))
+    return _HTML_CACHE[filename][1]
+
+
+# Warm the cache at import time so the first hit doesn't pay the read.
+_read_html("main_app.html")
+_read_html("login.html")
+_read_html("setup.html")
 
 
 def _check_auth(request: web.Request) -> bool:
@@ -1462,8 +1487,9 @@ async def _handle_setup_page(request: web.Request) -> web.Response:
     from gateway.auth.db import is_setup_completed
     if is_setup_completed():
         raise web.HTTPFound("/")
-    html = _SETUP_HTML.replace("__VERSION_LABEL__", _VERSION_LABEL).replace("__SETUP_TS__", _SERVER_START_TS)
-    return web.Response(text=html, content_type="text/html")
+    html = _read_html("setup.html").replace("__VERSION_LABEL__", _VERSION_LABEL).replace("__SETUP_TS__", _SERVER_START_TS)
+    return web.Response(text=html, content_type="text/html",
+                        headers={"Cache-Control": "no-store"})
 
 
 async def _handle_setup_status(request: web.Request) -> web.Response:
@@ -1603,13 +1629,19 @@ async def _handle_index(request: web.Request) -> web.Response:
     if not is_setup_completed():
         raise web.HTTPFound("/login")
     inject = f'<script>window.__LOGOS__={{isCanary:{str(_IS_CANARY).lower()},runtimeMode:"openshell",version:"{_VERSION_LABEL}"}};window._hueEpochMs={_HUE_EPOCH_MS};</script>'
-    html = _ADMIN_HTML.replace("</head>", inject + "</head>", 1)
-    return web.Response(text=html, content_type="text/html")
+    html = _read_html("main_app.html").replace("</head>", inject + "</head>", 1)
+    # no-store so no intermediate cache (browser, reverse proxy, CDN)
+    # can hold a stale version after an HTML edit. The ES module
+    # cache-bust query strings inside the HTML already version the
+    # JS; the HTML itself must be cheap to re-fetch.
+    return web.Response(text=html, content_type="text/html",
+                        headers={"Cache-Control": "no-store"})
 
 
 async def _handle_login_page(request: web.Request) -> web.Response:
-    html = _LOGIN_HTML.replace("__VERSION_LABEL__", _VERSION_LABEL)
-    return web.Response(text=html, content_type="text/html")
+    html = _read_html("login.html").replace("__VERSION_LABEL__", _VERSION_LABEL)
+    return web.Response(text=html, content_type="text/html",
+                        headers={"Cache-Control": "no-store"})
 
 
 async def _handle_log_tail(request: web.Request) -> web.Response:
