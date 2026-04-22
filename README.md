@@ -250,9 +250,9 @@ logos gateway update                    # ff-only git pull + restart
 
 | Image | What it is | Installer behaviour |
 | --- | --- | --- |
-| `ghcr.io/gregsgreycode/hermes-sandbox:v1.0.7` (also `:latest`) | The sandbox runtime image that every agent runs inside. Wraps upstream hermes with the sandbox user, iproute2, and agent-browser. | Pulled automatically. Override with `LOGOS_SANDBOX_IMAGE=…` or skip with `LOGOS_SKIP_SANDBOX_BUILD=1`. |
-| `ghcr.io/gregsgreycode/hermes-upstream:v1.0.7` (also `:latest`) | The upstream `hermes-agent` base image, rebuilt in our registry for determinism. The sandbox image `FROM`s this. | Not pulled separately — its layers arrive baked into `hermes-sandbox`. Only fetched directly when you rebuild from source (`LOGOS_FORCE_SANDBOX_BUILD=1`, or GHCR unreachable). |
-| `ghcr.io/gregsgreycode/logos:1.0.7` (also `:latest`, `:canary`) | The gateway — used when deploying Logos itself in a container. | Not pulled. The installer runs Logos from source. Only relevant if you're running the gateway as a container (e.g. via the `k8s/` manifests). |
+| `ghcr.io/gregsgreycode/hermes-sandbox:v1.0.8` (also `:latest`) | The sandbox runtime image that every agent runs inside. Wraps upstream hermes with the sandbox user, iproute2, and agent-browser. | Pulled automatically. Override with `LOGOS_SANDBOX_IMAGE=…` or skip with `LOGOS_SKIP_SANDBOX_BUILD=1`. |
+| `ghcr.io/gregsgreycode/hermes-upstream:v1.0.8` (also `:latest`) | The upstream `hermes-agent` base image, rebuilt in our registry for determinism. The sandbox image `FROM`s this. | Not pulled separately — its layers arrive baked into `hermes-sandbox`. Only fetched directly when you rebuild from source (`LOGOS_FORCE_SANDBOX_BUILD=1`, or GHCR unreachable). |
+| `ghcr.io/gregsgreycode/logos:1.0.8` (also `:latest`, `:canary`) | The gateway — used when deploying Logos itself in a container. | Not pulled. The installer runs Logos from source. Only relevant if you're running the gateway as a container (e.g. via the `k8s/` manifests). |
 
 Env flags for the installer:
 
