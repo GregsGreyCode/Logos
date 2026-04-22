@@ -5478,6 +5478,8 @@ async def start_http_api(runner: Any, port: int = 8091) -> None:
     # tree under ~/.logos/agents/<name>/).
     app.router.add_get("/admin/agents/{id}/memories",
                        _mm(admin_handlers.handle_agent_memories_get))
+    app.router.add_get("/admin/agents/{id}/skills",
+                       _mm(admin_handlers.handle_agent_skills_get))
     app.router.add_get("/admin/agents/{id}/sessions",
                        _mm(admin_handlers.handle_agent_sessions_get))
     app.router.add_get("/admin/agents/{id}/activity",
