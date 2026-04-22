@@ -5164,7 +5164,7 @@
                   </template>
                 </td>
                 <td class="px-4 py-2 text-right">
-                  <div class="flex flex-wrap items-center gap-1 justify-end" @click.stop>
+                  <div class="flex items-center gap-1 justify-end whitespace-nowrap" @click.stop>
                     <button x-show="!r.is_default" @click="setDefaultRoute(r.id)"
                       class="px-2 py-1 rounded border border-indigo-900 text-indigo-700 hover:text-indigo-400 text-[10px]">Set Default</button>
                     <button @click="restartRoute(r.id)"
