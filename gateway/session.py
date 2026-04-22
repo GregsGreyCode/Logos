@@ -227,16 +227,24 @@ def build_session_context_prompt(context: SessionContext) -> str:
     ]
 
     # Current time. Cheap, single line — gives the agent unambiguous
-    # awareness of "now" without needing a tool call. Format includes
-    # ISO date+time AND a human-readable weekday so the agent can
-    # reason about both. Uses the gateway server's local timezone via
-    # datetime.now().astimezone(); if the server is UTC the agent
-    # gets UTC and can convert if needed. A future enhancement could
-    # accept the user's timezone in the request body for client-local
-    # awareness — for now, server time is good enough for the "what
-    # time / day is it?" use case the user raised.
+    # awareness of "now" without needing a tool call. Honors the
+    # user-configured timezone (config.yaml → LOGOS_TIMEZONE /
+    # HERMES_TIMEZONE) so UK users see BST in summer instead of UTC.
+    # Without this, datetime.now().astimezone() falls back to the
+    # process's $TZ — which is unset on most container/systemd deploys
+    # and resolves to UTC regardless of where the user actually lives.
     from datetime import datetime as _dt
-    _now = _dt.now().astimezone()
+    import os as _os
+    _tz_cfg = (_os.environ.get("LOGOS_TIMEZONE") or _os.environ.get("HERMES_TIMEZONE") or "").strip()
+    _now = None
+    if _tz_cfg:
+        try:
+            from zoneinfo import ZoneInfo as _ZoneInfo
+            _now = _dt.now(_ZoneInfo(_tz_cfg))
+        except Exception:
+            _now = None  # fall through to host-local
+    if _now is None:
+        _now = _dt.now().astimezone()
     _tzname = _now.tzname() or "UTC"
     lines.append(f"**Current time:** {_now.strftime('%A %Y-%m-%d %H:%M:%S')} {_tzname}")
 
