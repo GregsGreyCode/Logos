@@ -483,7 +483,6 @@
           :class="activeChat?.agent_id === a.id ? 'inst-active' : 'bg-gray-800 text-gray-400 hover:bg-gray-700 hover:text-white'">
           <span class="text-[10px] font-bold tracking-wider uppercase px-1 py-0.5 rounded bg-emerald-900 text-emerald-300 mr-0.5">Agent</span>
           <span x-text="a.name"></span>
-          <span x-show="activeChat?.agent_id === a.id" class="w-1.5 h-1.5 bg-green-400 rounded-full ml-0.5 shrink-0"></span>
         </button>
       </template>
       <!-- No agents yet — prompt to create one -->
@@ -615,55 +614,55 @@
         <div class="bg-gray-900 border border-gray-700 rounded-xl overflow-hidden flex flex-col h-full">
 
           <!-- Card header -->
-          <div data-testid="chat-header" class="px-4 pt-3 pb-2 border-b border-gray-800 shrink-0">
+          <div data-testid="chat-header" class="px-3 pt-3 pb-2 border-b border-gray-800 shrink-0">
 
-            <!-- Row 1: Agent identity — who you are talking to -->
-            <div class="flex items-center gap-2.5 mb-2">
-              <!-- Agent portrait — same character sprite used in the world
-                   view, rendered from characters.png via agentSpriteStyle().
-                   Gives a visual "who is Timothy?" anchor so the user isn't
-                   relying on the name alone. Status dot becomes a corner
-                   badge on the portrait instead of a standalone pill. -->
-              <div class="relative shrink-0">
-                <span class="block rounded-lg overflow-hidden ring-1 ring-gray-800 bg-gray-950"
-                      :style="(() => {
-                        const c = chats.find(c => c.id === activeChatId);
-                        const a = c ? namedAgents.find(x => x.id === c.agent_id) : null;
-                        return agentSpriteStyle(c?.agent_name || '', a?.char_index, 40);
-                      })()"
-                      :title="(() => { const c = chats.find(c => c.id === activeChatId); return c?.agent_name || 'Agent'; })()"></span>
-                <span class="absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full ring-2 ring-gray-900"
-                  :class="chatLoading ? 'bg-indigo-500 animate-pulse icon-hue' : agentAlive === false ? 'bg-red-500' : agentAlive === null ? 'bg-gray-600 animate-pulse' : 'bg-green-500'"
-                  :title="chatLoading ? 'Thinking...' : agentAlive === false ? 'Agent not responding' : agentAlive === null ? 'Checking...' : 'Connected'"></span>
-              </div>
-              <!-- Agent name -->
-              <span data-testid="chat-agent-name" class="text-base font-semibold text-white"
-                x-text="(() => { const chat = chats.find(c => c.id === activeChatId); return chat?.agent_name || 'Agent'; })()"></span>
-              <!-- LOG-40: platform-of-origin badge. When the active chat
-                   was pulled from a messaging platform (TG/Discord/Slack/WA)
-                   the user shouldn't have to guess which side of the bridge
-                   it came from. Sidebar already shows a short pill; this
-                   one is the explicit "via X" so the chat header tells
-                   the whole story at a glance. -->
-              <template x-if="(() => { const c = chats.find(c => c.id === activeChatId); return c && c._platform; })()">
-                <span class="text-[10px] px-1.5 py-0.5 rounded bg-cyan-950 text-cyan-300 border border-cyan-900 font-medium"
-                      x-text="(() => {
-                        const c = chats.find(c => c.id === activeChatId);
-                        const name = ({telegram:'Telegram', discord:'Discord', slack:'Slack', whatsapp:'WhatsApp'})[c?._platform] || c?._platform;
-                        return 'via ' + name;
-                      })()"></span>
-              </template>
-              <!-- Canary badge -->
-              <template x-if="canary.active">
-                <span class="text-[10px] px-1.5 py-0.5 rounded bg-yellow-900 text-yellow-400 font-semibold animate-pulse">canary</span>
-              </template>
-            </div>
+            <!-- Two-column header: portrait column on the left spans both
+                 text rows; name + STAMP stack to its right. Keeps the
+                 portrait out of the STAMP row's vertical lane so
+                 S/T/A/M/P reads as a flat row, not an indented sub-item.
+                 Tight gap between portrait and the text column pulls the
+                 name + STAMP slightly left so the header doesn't feel
+                 indented. -->
+            <div class="flex items-start gap-2">
 
-            <!-- Row 2: STAMP governance — compact, interactive
-                 (Stop / Logs / Mind / chat-id live on the right of
-                 this same row so the chat header is two clean lines
-                 rather than three.) -->
-            <div class="flex items-center gap-1.5 flex-wrap">
+              <!-- Portrait (col 1) — bare sprite, no ring or background.
+                   Transparency of characters.png lets the sprite sit
+                   directly on the panel. -->
+              <span class="block shrink-0"
+                    :style="(() => {
+                      const c = chats.find(c => c.id === activeChatId);
+                      const a = c ? namedAgents.find(x => x.id === c.agent_id) : null;
+                      return agentSpriteStyle(c?.agent_name || '', a?.char_index, 56);
+                    })()"
+                    :title="(() => { const c = chats.find(c => c.id === activeChatId); return c?.agent_name || 'Agent'; })()"></span>
+
+              <!-- Identity + STAMP (col 2). min-w-0 so the flex child can
+                   shrink when the chat panel narrows. -->
+              <div class="flex-1 min-w-0 flex flex-col gap-1.5">
+
+                <!-- Row A: Name + platform badge + canary -->
+                <div class="flex items-center gap-2 min-h-[20px]">
+                  <span data-testid="chat-agent-name" class="text-base font-semibold text-white truncate"
+                    x-text="(() => { const chat = chats.find(c => c.id === activeChatId); return chat?.agent_name || 'Agent'; })()"></span>
+                  <!-- LOG-40: platform-of-origin badge. -->
+                  <template x-if="(() => { const c = chats.find(c => c.id === activeChatId); return c && c._platform; })()">
+                    <span class="text-[10px] px-1.5 py-0.5 rounded bg-cyan-950 text-cyan-300 border border-cyan-900 font-medium shrink-0"
+                          x-text="(() => {
+                            const c = chats.find(c => c.id === activeChatId);
+                            const name = ({telegram:'Telegram', discord:'Discord', slack:'Slack', whatsapp:'WhatsApp'})[c?._platform] || c?._platform;
+                            return 'via ' + name;
+                          })()"></span>
+                  </template>
+                  <template x-if="canary.active">
+                    <span class="text-[10px] px-1.5 py-0.5 rounded bg-yellow-900 text-yellow-400 font-semibold animate-pulse shrink-0">canary</span>
+                  </template>
+                </div>
+
+                <!-- Row B: STAMP governance — compact, interactive
+                     (Stop / Logs / Mind / chat-id live on the right of
+                     this same row so the chat header is two clean lines
+                     rather than three.) -->
+                <div class="flex items-center gap-1.5 flex-wrap">
               <!-- S: Soul — clickable dropdown -->
               <div class="relative" x-data="{ open: false }" @click.away="open = false">
                 <button @click="open = !open" data-testid="stamp-s"
@@ -1038,9 +1037,16 @@
                 x-show="activeTaskId"
                 x-cloak
                 title="Abort the in-flight request">■ Stop</button>
+              <!-- Liveness indicator — sits just left of Logs so the
+                   agent-status signal lives in the same cluster as the
+                   agent-inspection buttons (Logs / Mind). Moved here from
+                   the portrait corner badge. -->
+              <span class="w-2 h-2 rounded-full shrink-0 ring-2 ring-gray-900"
+                :class="(activeTaskId ? '' : 'ml-auto') + ' ' + (chatLoading ? 'bg-indigo-500 animate-pulse icon-hue' : agentAlive === false ? 'bg-red-500' : agentAlive === null ? 'bg-gray-600 animate-pulse' : 'bg-green-500')"
+                x-show="activeChatId && chats.find(c => c.id === activeChatId)?.agent_id"
+                :title="chatLoading ? 'Thinking...' : agentAlive === false ? 'Agent not responding' : agentAlive === null ? 'Checking...' : 'Connected'"></span>
               <button class="text-[10px] px-2 py-0.5 rounded border border-gray-700 text-gray-400 hover:text-white hover:border-gray-500 transition-colors"
                 @click="(() => { const chat = chats.find(c => c.id === activeChatId); if (chat && chat.agent_id) { openAgentLogs({id: chat.agent_id, name: chat.agent_name}); } })()"
-                :class="activeTaskId ? '' : 'ml-auto'"
                 x-show="activeChatId && chats.find(c => c.id === activeChatId)?.agent_id"
                 title="View this agent's runtime log tail — tool calls, thinking, errors">📋 Logs</button>
               <button class="text-[10px] px-2 py-0.5 rounded border border-gray-700 text-gray-400 hover:text-indigo-300 hover:border-indigo-500 transition-colors"
@@ -1049,8 +1055,10 @@
                 title="What this agent knows — memories, past sessions, files on disk">🧠 Mind</button>
               <span class="text-[10px] text-gray-700 font-mono"
                 x-text="activeChatId ? '#' + activeChatId.slice(-6) : ''"></span>
-            </div>
+                </div>  <!-- /Row B (STAMP) -->
 
+              </div>  <!-- /col 2 (identity + STAMP) -->
+            </div>  <!-- /two-column wrapper -->
 
           </div>
 
