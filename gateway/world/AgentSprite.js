@@ -29,12 +29,6 @@ function nameToCharIndex(name) {
   return Math.abs(hashCode(name)) % CHARACTER_COUNT;
 }
 
-function nameToTint(name) {
-  const hue = Math.abs(hashCode(name)) % 360;
-  const color = Phaser.Display.Color.HSLToColor(hue / 360, 0.65, 0.6);
-  return color.color;
-}
-
 export class AgentSprite {
   constructor(scene, inst, index, total, callbacks) {
     this.scene = scene;
@@ -134,37 +128,17 @@ export class AgentSprite {
       if (this.callbacks.onHover) this.callbacks.onHover(inst.name, inst, false);
     });
 
-    // Logo badge ABOVE sprite — agent's initial on a colored background.
-    // Sprite is scale 2, origin (0.5, 0.7), frame 32x32, so visual top edge
-    // sits around sprite.y - 45. Badge at y - 52 clears the head cleanly.
-    const tint = nameToTint(inst.name);
-    const tintHex = '#' + tint.toString(16).padStart(6, '0');
-    const initial = (inst.name || '?')[0].toUpperCase();
-    this.logoText = scene.add.text(startPos.x, startPos.y - 52, initial, {
-      fontFamily: 'monospace',
-      fontSize: '12px',
-      fontStyle: 'bold',
-      color: '#ffffff',
-      align: 'center',
-      backgroundColor: tintHex,
-      padding: { x: 4, y: 2 },
-      fixedWidth: 16,
-      fixedHeight: 16,
-    }).setOrigin(0.5, 0.5).setDepth(13);
+    // Header strip above the sprite is now a row of three state
+    // indicators at y - 52 instead of a letter badge:
+    //   [tier glyph]  [status dot]  [state bubble]
+    // Letter badge removed — agents are identified by their sprite +
+    // colour, not a letter over their head. Status dot takes the
+    // centre (where the badge used to live); the thinking/hourglass
+    // bubble slides over to where the dot used to be (right side).
+    // Tier glyph stays on the left.
+    this.logoText = null;
     this.logoBg = null;
 
-    // Maturity tier glyph (🌱→🪵) sits to the LEFT of the letter badge.
-    // Status dot lives on the RIGHT of the badge, so the glyph balances
-    // the cluster visually. Pulled from inst.tier_glyph which is set in
-    // _worldAgentList() from the same agentMaturity() helper the agent
-    // panel cards use — single source of truth, no duplicate formula.
-    // Hidden when the glyph is missing (e.g. legacy non-named agents).
-    //
-    // Spacing: badge is 16px wide centered on x; emoji renders ~14-16px
-    // wide depending on font fallback; status dot is 6px diameter. Push
-    // glyph out to x-18 and dot to x+18 so neither crowds the badge —
-    // gives ~2-4px of breathing room on each side instead of the prior
-    // ~5px overlap that made the cluster read as one mushy blob.
     this.tierGlyph = scene.add.text(startPos.x - 18, startPos.y - 52, inst.tier_glyph || '', {
       fontSize: '14px',
       align: 'center',
@@ -187,7 +161,7 @@ export class AgentSprite {
     // ``inst.active_tasks`` is computed in main_app._worldAgentList from
     // status.active_sessions (the same source the agent card's
     // "thinking…" row reads), so the bubble and card flip in lockstep.
-    this.bubble = scene.add.text(startPos.x, startPos.y - 72, '\u23f3', {
+    this.bubble = scene.add.text(startPos.x + 18, startPos.y - 52, '\u23f3', {
       fontSize: '16px',
       align: 'center',
     }).setOrigin(0.5, 0.5).setDepth(14);
@@ -290,11 +264,11 @@ export class AgentSprite {
         this._greyTinted = true;
         this._lastGlowT = -1; // force tree-glow to re-apply when running again
       }
-      // Sync UI elements (badge, bubble, status dot) to current pos
-      // so they don't drift if the sprite was moved by other code.
-      this.statusDot.setPosition(this.sprite.x + 18, this.sprite.y - 52);
-      this.bubble.setPosition(this.sprite.x, this.sprite.y - 72);
-      this.logoText.setPosition(this.sprite.x, this.sprite.y - 52);
+      // Sync the header row (tier glyph · status dot · state bubble)
+      // to the sprite's current position. All three share y - 52; the
+      // status dot now owns the centre and the bubble sits to its right.
+      this.statusDot.setPosition(this.sprite.x, this.sprite.y - 52);
+      this.bubble.setPosition(this.sprite.x + 18, this.sprite.y - 52);
       if (this.tierGlyph) this.tierGlyph.setPosition(this.sprite.x - 18, this.sprite.y - 52);
       // Still record position for persistence (cheap, in-memory).
       if (this.scene.recordPosition) {
@@ -352,15 +326,12 @@ export class AgentSprite {
       }
     }
 
-    // Sync logo badge + bubble + status dot positions. Badge sits above the
-    // sprite head (y - 52) with the bubble/hourglass layered above that so
-    // nothing overlaps the character itself. Status dot hangs off the right
-    // edge of the letter badge so running/idle state is visible next to the
-    // identifier rather than floating over the sprite's face. Tier glyph
-    // mirrors the status dot on the LEFT side of the badge.
-    this.statusDot.setPosition(this.sprite.x + 18, this.sprite.y - 52);
-    this.bubble.setPosition(this.sprite.x, this.sprite.y - 72);
-    this.logoText.setPosition(this.sprite.x, this.sprite.y - 52);
+    // Header-row sync: [tier glyph] [status dot] [state bubble], all at
+    // y - 52 above the sprite's head. Dot owns the centre now that the
+    // letter badge is gone; bubble lives to the right where the dot used
+    // to be; tier glyph stays on the left.
+    this.statusDot.setPosition(this.sprite.x, this.sprite.y - 52);
+    this.bubble.setPosition(this.sprite.x + 18, this.sprite.y - 52);
     if (this.tierGlyph) this.tierGlyph.setPosition(this.sprite.x - 18, this.sprite.y - 52);
 
     // Apply the tree-proximity glow tint. Cheap (~50 lines of math)
@@ -649,7 +620,7 @@ export class AgentSprite {
     this.statusDot.destroy();
     this.bubble.destroy();
     if (this.logoBg) this.logoBg.destroy();
-    this.logoText.destroy();
+    if (this.logoText) this.logoText.destroy();
     if (this.tierGlyph) this.tierGlyph.destroy();
   }
 
@@ -669,8 +640,8 @@ export class AgentSprite {
       this.sprite,
       this.statusDot,
       this.bubble,
-      this.logoText,
     ];
+    if (this.logoText) targets.push(this.logoText);
     if (this.nameLabel) targets.push(this.nameLabel);
     if (this.soulLabel) targets.push(this.soulLabel);
     if (this.logoBg) targets.push(this.logoBg);
