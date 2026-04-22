@@ -1203,12 +1203,12 @@
                           <div class="mb-2 pb-2 border-b border-gray-700/50">
                             <div class="text-[9px] text-gray-600 uppercase tracking-wider mb-1">Tool calls this turn</div>
                             <template x-for="(t, ti) in msg.stats.tool_detail" :key="ti">
-                              <div class="flex items-center gap-1.5 text-[10px] leading-relaxed py-0.5">
+                              <div class="flex items-start gap-1.5 text-[10px] leading-relaxed py-0.5">
                                 <span class="shrink-0" :class="t.ok === false ? 'text-red-400' : 'text-green-500/70'"
                                   x-text="t.ok === false ? '\u2717' : '\u2713'"></span>
-                                <span class="text-[var(--accent)] font-mono" x-text="t.tool"></span>
-                                <span x-show="t.preview" class="text-gray-600 truncate max-w-[180px]" x-text="t.preview"></span>
-                                <span x-show="t.ms != null" class="text-gray-700 ml-auto font-mono"
+                                <span class="text-[var(--accent)] font-mono flex-shrink-0" x-text="t.tool"></span>
+                                <span x-show="t.preview" class="text-gray-500 break-all whitespace-pre-wrap flex-1 min-w-0" x-text="t.preview"></span>
+                                <span x-show="t.ms != null" class="text-gray-700 ml-auto font-mono flex-shrink-0"
                                       x-text="(t.ms / 1000).toFixed(1) + 's'"></span>
                               </div>
                             </template>
@@ -1585,16 +1585,20 @@
                 <div class="mt-1.5 text-xs text-gray-700 font-mono truncate"
                   x-text="s.recent_tools.slice(-3).join(' \\u2192 ')"></div>
               </template>
-              <!-- Live tool call list (from SSE events) -->
+              <!-- Live tool call list (from SSE events).
+                   The preview wraps (no truncate) and the container grows
+                   to 20rem before scrolling so the full text of the tool
+                   use is readable without squinting. Rows use items-start
+                   so the spinner stays top-aligned when preview wraps. -->
               <template x-if="s.session_key && s.session_key.includes(activeChatId||'__none__') && _liveToolOrder.length > 0">
-                <div class="mt-2 space-y-0.5 max-h-40 overflow-y-auto thin-scroll">
+                <div class="mt-2 space-y-1 max-h-80 overflow-y-auto thin-scroll">
                   <template x-for="cid in _liveToolOrder" :key="cid">
-                    <div class="flex items-center gap-1.5 text-[10px] leading-relaxed">
-                      <span x-show="_liveTools[cid]?.status === 'running'" class="w-2.5 h-2.5 border border-gray-600 border-t-indigo-400 rounded-full animate-spin flex-shrink-0"></span>
+                    <div class="flex items-start gap-1.5 text-[10px] leading-relaxed">
+                      <span x-show="_liveTools[cid]?.status === 'running'" class="mt-0.5 w-2.5 h-2.5 border border-gray-600 border-t-indigo-400 rounded-full animate-spin flex-shrink-0"></span>
                       <span x-show="_liveTools[cid]?.status === 'done'" class="text-green-500/70 flex-shrink-0">&check;</span>
                       <span x-show="_liveTools[cid]?.status === 'error'" class="text-red-400 flex-shrink-0">&cross;</span>
-                      <span class="font-mono text-indigo-400 truncate" x-text="_liveTools[cid]?.tool"></span>
-                      <span class="text-gray-600 truncate max-w-[80px]" x-show="_liveTools[cid]?.preview" x-text="_liveTools[cid]?.preview"></span>
+                      <span class="font-mono text-indigo-400 flex-shrink-0" x-text="_liveTools[cid]?.tool"></span>
+                      <span class="text-gray-500 break-all whitespace-pre-wrap flex-1 min-w-0" x-show="_liveTools[cid]?.preview" x-text="_liveTools[cid]?.preview"></span>
                       <span class="text-gray-700 ml-auto flex-shrink-0" x-show="_liveTools[cid]?.duration_ms != null"
                         x-text="(_liveTools[cid]?.duration_ms / 1000).toFixed(1) + 's'"></span>
                     </div>
