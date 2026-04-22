@@ -253,13 +253,30 @@ if [[ "$INSTALL_OPENSHELL" == "1" ]]; then
     if command -v openshell >/dev/null 2>&1; then
         ok "openshell already installed: $(openshell --version 2>&1 | head -1)"
     else
-        log "fetching openshell release …"
+        # Pin to a specific openshell release by default. NVIDIA's 0.0.35
+        # shipped with an internally inconsistent bundle (cluster image
+        # tag :0.0.33 carries supervisor binary 0.0.33, but the CLI
+        # deploys a 0.0.35 gateway pod via IMAGE_TAG=0.0.35) — result:
+        # every sandbox exec fails with "supervisor session not
+        # connected" because the gateway↔supervisor mTLS handshake sees
+        # incompatible protocol versions. 0.0.33 was internally
+        # consistent and works end-to-end. Override with
+        # LOGOS_OPENSHELL_VERSION=latest to track upstream latest, or
+        # with any specific tag (e.g. 0.0.36) once NVIDIA ships a fix.
+        LOGOS_OPENSHELL_VERSION="${LOGOS_OPENSHELL_VERSION:-0.0.33}"
+        if [[ "$LOGOS_OPENSHELL_VERSION" == "latest" ]]; then
+            OSH_RELEASE_URL="https://api.github.com/repos/NVIDIA/OpenShell/releases/latest"
+            log "fetching openshell latest release (set LOGOS_OPENSHELL_VERSION=0.0.33 to pin to the last known-good)"
+        else
+            OSH_RELEASE_URL="https://api.github.com/repos/NVIDIA/OpenShell/releases/tags/v${LOGOS_OPENSHELL_VERSION}"
+            log "fetching openshell v${LOGOS_OPENSHELL_VERSION} (set LOGOS_OPENSHELL_VERSION=latest to track upstream)"
+        fi
         # Prefer the static Rust binary (musl tarball) over the Python
         # wheel. Reason: openshell 0.0.28+ ships wheels that require
         # Python >=3.12, but we pin our venv to 3.11 to keep the agent
         # runtime on a widely-available Python. The binary has no
         # Python dependency so it works regardless of venv version.
-        OSH_JSON="$(curl -fsSL https://api.github.com/repos/NVIDIA/OpenShell/releases/latest || true)"
+        OSH_JSON="$(curl -fsSL "$OSH_RELEASE_URL" || true)"
         OSH_TGZ="$(printf '%s' "$OSH_JSON" | grep -oE 'https://[^"]+x86_64-unknown-linux-musl\.tar\.gz' | head -1)"
         OSH_WHL="$(printf '%s' "$OSH_JSON" | grep -oE 'https://[^"]+manylinux[^"]*x86_64\.whl' | head -1)"
         if [[ -n "$OSH_TGZ" ]]; then
