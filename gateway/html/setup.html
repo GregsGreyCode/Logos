@@ -3806,16 +3806,18 @@ function setup() {
       this.completing = true;
       this.completeError = null;
       this._startCompletePolling();
-      // 8-minute client-side timeout. First-time install on a fresh
-      // box realistically runs ~4 minutes end-to-end (measured: image
-      // import + k3s boot + sandbox spawn + session issue), plus
-      // variance from disk speed, image-pull caching, and LM Studio
-      // cold starts. 8 minutes gives us comfortable headroom; if it
-      // hasn't finished by then, something really is wedged and the
-      // error is worth surfacing. (Previous values: 120s was a best-
-      // case wish; 300s tripped with ~40s margin on a normal install.)
+      // 12-minute client-side ceiling. Must exceed the reverse-proxy
+      // upstream timeout for /api/setup/complete (10 min on the
+      // current deployment) so the proxy stays the authoritative
+      // timeout and the browser doesn't abort a still-valid in-flight
+      // response. A fresh-install setup realistically runs 3-5 min on
+      // a warm box and up to ~8 min on a cold box (2.8 GB image
+      // import + k3s boot + sandbox spawn); 12 min gives comfortable
+      // headroom. If the proxy timeout drops below 10 min, drop this
+      // to match so the UI surfaces a clear "wedged" error instead of
+      // hanging.
       const abort = new AbortController();
-      const timeoutId = setTimeout(() => abort.abort(), 480000);
+      const timeoutId = setTimeout(() => abort.abort(), 720000);
       try {
         const r = await fetch('/api/setup/complete', {
           method: 'POST', credentials: 'include',
@@ -3883,13 +3885,13 @@ function setup() {
       } catch (e) {
         clearTimeout(timeoutId);
         this._stopCompletePolling();
-        // AbortError = our 120s client-side timeout fired. Distinguish
+        // AbortError = our 12-minute client-side timeout fired. Distinguish
         // that from a generic network error so the user gets actionable
         // guidance instead of "Network error: AbortError".
         if (e.name === 'AbortError') {
           this.completeError = {
             warning: false,
-            message: 'Setup is taking longer than 120 seconds. Likely culprit: image pull or sandbox spawn is wedged. Tail ~/.logos/logs/gateway.log to see the stuck stage. The server may still complete in the background — refresh in a minute or check the dashboard.'
+            message: 'Setup is taking longer than 12 minutes. Likely culprit: image pull or sandbox spawn is wedged. Tail ~/.logos/logs/gateway.log to see the stuck stage. The server may still complete in the background — refresh in a minute or check the dashboard.'
           };
         } else {
           this.completeError = { warning: false, message: 'Network error: ' + e.message };
