@@ -887,12 +887,6 @@ async def handle_agents_list(request: web.Request) -> web.Response:
         # M7 in docs/MISSING.md is where the richer sandbox_phase /
         # api_latency_ms / last_probe_ts fields will land.
         #
-        # ``active_tasks`` is the in-flight dispatch counter from
-        # ``WorkerRegistry.active_task_count`` (MISSING.md — dispatch
-        # activity tracking, Phase A). Goes > 0 while a chat dispatch
-        # is running a task in this sandbox; the world view renders a
-        # thought-bubble indicator while > 0 so the user can see the
-        # agent "thinking" live.
         worker = worker_registry.get(sandbox_name) if worker_registry and sandbox_name else None
         if worker:
             a["worker_healthy"] = worker.healthy
@@ -902,10 +896,6 @@ async def handle_agents_list(request: web.Request) -> web.Response:
             a["worker_healthy"] = False
             a["worker_status"] = "disconnected"
             a["worker_connected"] = False
-        a["active_tasks"] = (
-            worker_registry.active_task_count(sandbox_name)
-            if worker_registry and sandbox_name else 0
-        )
 
         # Maturity inputs (tier computation lives in the frontend so the
         # tier names + glyphs can iterate without a server roundtrip).
