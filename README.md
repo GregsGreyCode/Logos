@@ -246,13 +246,13 @@ logos gateway update                    # ff-only git pull + restart
 <!-- screenshot: setup-benchmark — benchmark results page with several scored models -->
 <!-- screenshot: setup-complete — the final provisioning spinner (shows 1-3 minute copy) -->
 
-**Published images** (the installer pulls these automatically; listed here so you can inspect or pin them):
+**Published images** (listed so you can inspect or pin them — the installer only pulls `hermes-sandbox` by default):
 
-| Image | What it is |
-| --- | --- |
-| `ghcr.io/gregsgreycode/logos:1.0.0` (also `:latest`, `:canary`) | The gateway — used when deploying Logos itself in a container. Optional for the local installer. |
-| `ghcr.io/gregsgreycode/hermes-sandbox:v1.0.0` (also `:latest`) | The sandbox runtime image that every agent runs inside. Wraps upstream hermes with the sandbox user, iproute2, and agent-browser. |
-| `ghcr.io/gregsgreycode/hermes-upstream:v1.0.0` (also `:latest`) | The upstream `hermes-agent` base image, rebuilt in our registry for determinism. The sandbox image `FROM`s this. |
+| Image | What it is | Installer behaviour |
+| --- | --- | --- |
+| `ghcr.io/gregsgreycode/hermes-sandbox:v1.0.2` (also `:latest`) | The sandbox runtime image that every agent runs inside. Wraps upstream hermes with the sandbox user, iproute2, and agent-browser. | Pulled automatically. Override with `LOGOS_SANDBOX_IMAGE=…` or skip with `LOGOS_SKIP_SANDBOX_BUILD=1`. |
+| `ghcr.io/gregsgreycode/hermes-upstream:v1.0.2` (also `:latest`) | The upstream `hermes-agent` base image, rebuilt in our registry for determinism. The sandbox image `FROM`s this. | Not pulled separately — its layers arrive baked into `hermes-sandbox`. Only fetched directly when you rebuild from source (`LOGOS_FORCE_SANDBOX_BUILD=1`, or GHCR unreachable). |
+| `ghcr.io/gregsgreycode/logos:1.0.2` (also `:latest`, `:canary`) | The gateway — used when deploying Logos itself in a container. | Not pulled. The installer runs Logos from source. Only relevant if you're running the gateway as a container (e.g. via the `k8s/` manifests). |
 
 Env flags for the installer:
 
