@@ -1041,10 +1041,16 @@
                    agent-status signal lives in the same cluster as the
                    agent-inspection buttons (Logs / Mind). Moved here from
                    the portrait corner badge. -->
+              <!-- Status reflects the ACTIVE AGENT'S sandbox (pod Ready
+                   AND hermes-server responding), not the Logos gateway's
+                   own health. Previously this was green whenever Logos
+                   itself could answer /status, which was misleading:
+                   it stayed green even while the agent's sandbox was
+                   still provisioning or its hermes runtime was down. -->
               <span class="w-2 h-2 rounded-full shrink-0 ring-2 ring-gray-900"
-                :class="(activeTaskId ? '' : 'ml-auto') + ' ' + (chatLoading ? 'bg-indigo-500 animate-pulse icon-hue' : agentAlive === false ? 'bg-red-500' : agentAlive === null ? 'bg-gray-600 animate-pulse' : 'bg-green-500')"
+                :class="(activeTaskId ? '' : 'ml-auto') + ' ' + (chatLoading ? 'bg-indigo-500 animate-pulse icon-hue' : activeAgentHealth === 'down' ? 'bg-red-500' : activeAgentHealth === 'ready' ? 'bg-green-500' : 'bg-gray-600 animate-pulse')"
                 x-show="activeChatId && chats.find(c => c.id === activeChatId)?.agent_id"
-                :title="chatLoading ? 'Thinking...' : agentAlive === false ? 'Agent not responding' : agentAlive === null ? 'Checking...' : 'Connected'"></span>
+                :title="chatLoading ? 'Thinking...' : activeAgentHealth === 'down' ? 'Agent runtime not responding' : activeAgentHealth === 'ready' ? 'Connected' : 'Starting…'"></span>
               <button class="text-[10px] px-2 py-0.5 rounded border border-gray-700 text-gray-400 hover:text-white hover:border-gray-500 transition-colors"
                 @click="(() => { const chat = chats.find(c => c.id === activeChatId); if (chat && chat.agent_id) { openAgentLogs({id: chat.agent_id, name: chat.agent_name}); } })()"
                 x-show="activeChatId && chats.find(c => c.id === activeChatId)?.agent_id"
@@ -7049,7 +7055,7 @@ function app() {
       }
       // Scroll to bottom after Alpine renders the restored messages
       this.$nextTick(() => this._scrollChat());
-      await Promise.all([this.loadStatus(), this.loadRouterState(), this.loadCanary(), this.loadInstances(), this.loadSpawnTemplates(), this.loadWorkers(), this.loadAdminMachines(), this.loadNamedAgents(), this.loadModelRoutes(), this.loadSpawnStats()]);
+      await Promise.all([this.loadStatus(), this.loadRouterState(), this.loadCanary(), this.loadInstances(), this.loadSpawnTemplates(), this.loadWorkers(), this.loadAdminMachines(), this.loadNamedAgents(), this.loadModelRoutes(), this.loadSpawnStats(), this.loadSandboxes()]);
       // Auto-select the *last-active* agent's most recent chat on refresh
       // — derived from whichever chat the user most recently updated.
       // Falls back to namedAgents[0] for first-load (no chats yet) or if
@@ -7090,6 +7096,11 @@ function app() {
       setInterval(() => this.loadStatus(), 4000);
       setInterval(() => this.loadRouterState(), 15000);
       setInterval(() => this.loadCanary(), 10000);
+      // Chat-page status circle reflects the active agent's sandbox
+      // health, not Logos's own reachability. Poll unconditionally
+      // (cheap — one admin endpoint read) at a lighter cadence than
+      // the Dashboards tab's 3s poll; 6s is plenty for a status dot.
+      setInterval(() => this.loadSandboxes(), 6000);
       setInterval(() => { this.clientNow = Date.now(); }, 1000);
       setInterval(() => { this._now = Math.floor(Date.now() / 1000); }, 15000);
       setInterval(() => { if (this.tab === 'activity' && this.activityTab === 'dashboards') this.loadSandboxes(); }, 3000);
@@ -11790,6 +11801,36 @@ user_accessible: true
       const chat = this.chats?.find(c => c.id === this.activeChatId);
       if (!chat || !chat.agent_id) return null;
       return this.namedAgents?.find(a => a.id === chat.agent_id) || null;
+    },
+
+    // Sandbox state for the active agent — sourced from
+    // /api/admin/sandboxes polling. Matches by display name (the
+    // list's `name` field is the agent display name; `sandbox_name`
+    // is the hermes-* pod name).
+    get activeAgentSandbox() {
+      const agent = this.activeAgent;
+      if (!agent) return null;
+      return (this.sandboxes || []).find(s =>
+        s.name === agent.name || s.sandbox_name === ('hermes-' + (agent.name || '').toLowerCase())
+      ) || null;
+    },
+
+    // Tri-state health for the chat-page status circle:
+    //   'ready'   — pod Ready AND hermes runtime connected (green)
+    //   'down'    — pod Ready but hermes runtime disconnected (red)
+    //   null/''   — provisioning / starting / unknown (gray pulsing)
+    // This is distinct from agentAlive (Logos process reachability);
+    // it reflects the agent's SANDBOX being usable for chat, which
+    // is what the user actually cares about when typing into the
+    // chat box.
+    get activeAgentHealth() {
+      const sb = this.activeAgentSandbox;
+      if (!sb) return null;
+      const phaseReady = (sb.phase || '').toLowerCase() === 'ready';
+      const workerOk   = sb.worker_healthy && (sb.worker_status === 'connected');
+      if (phaseReady && workerOk) return 'ready';
+      if (phaseReady && !workerOk) return 'down';
+      return null;  // provisioning / unknown → gray
     },
 
     // ── Model routes ──────────────────────────────────────────────
