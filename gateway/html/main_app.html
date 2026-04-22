@@ -4882,18 +4882,19 @@
 
     <!-- ── Dashboards two-column grid ──
          Sandboxes (left) + Model Routes (right) sit side-by-side so
-         neither stretches uselessly across the full width when one of
-         them only has a handful of rows. Split is asymmetric — Routes
-         gets ~2/3 because it has 7 columns + a three-button action cell
-         that clips at 50/50 on 1280-ish viewports; Sandboxes has fewer
-         columns and fits comfortably in 1/3. Below xl the grid
-         collapses to a single column so narrow windows get each table
-         at full viewport width, no clipping. `items-start` keeps each
-         column anchored to the top so a tall Model Routes table doesn't
-         drag the short Sandboxes panel down with it. The Routing-Debug
-         section below is a sibling of this grid and stays full-width. -->
+         neither stretches uselessly across the full viewport. Split is
+         asymmetric — Routes gets ~2/3 because it has 7 columns + a
+         three-button action cell; Sandboxes has fewer columns and fits
+         comfortably in 1/3. Breakpoint is `lg:` (1024px) so the split
+         kicks in on typical laptop viewports — the earlier `xl:`
+         (1280px) choice left anything smaller stuck in single-column
+         full-width mode, which wasn't the goal. Only genuinely narrow
+         screens (< lg) stack. `items-start` keeps each column anchored
+         to the top so a tall Routes table doesn't drag the short
+         Sandboxes panel down. Routing-Debug below is a sibling of this
+         grid and stays full-width. -->
     <div x-show="tab==='activity' && activityTab==='dashboards'" x-cloak
-         class="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_minmax(0,2fr)] gap-6 items-start">
+         class="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_minmax(0,2fr)] gap-6 items-start">
 
     <!-- ── Sandboxes (Activity → Dashboards, left column) ── -->
     <div>

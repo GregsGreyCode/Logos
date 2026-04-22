@@ -4,7 +4,7 @@ Logos CLI — control-plane command-line interface for the Logos platform.
 
 # Read the canonical version from the installed package metadata so the
 # CLI always reports what pyproject.toml declares. Previously this file
-# hardcoded ``__version__ = "1.0.16"`` which drifted ~30 patch releases
+# hardcoded ``__version__ = "1.0.17"`` which drifted ~30 patch releases
 # behind reality the moment we stopped updating two places in lockstep.
 from importlib.metadata import PackageNotFoundError, version as _pkg_version
 
@@ -13,7 +13,7 @@ try:
 except PackageNotFoundError:
     # Fall back to reading pyproject.toml directly (editable installs
     # occasionally miss metadata depending on the installer version).
-    __version__ = "1.0.16"
+    __version__ = "1.0.17"
     try:
         import tomllib  # Python 3.11+
         from pathlib import Path
