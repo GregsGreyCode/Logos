@@ -4438,8 +4438,18 @@ async def handle_setup_progress(request: web.Request) -> web.Response:
     sandbox (10\u201330s)..." instead of a static "Finishing up...".
     Public endpoint (already in _PUBLIC_PATHS as /api/setup/* is allowed
     during the first-run flow before any session exists).
+
+    Explicit Cache-Control: no-store is load-bearing here. Without it,
+    Cloudflare's edge cache (and some browsers' heuristic caching)
+    will freeze the first response and serve it for the whole poll
+    window — user sees "Registering inference servers…" stuck on
+    screen for 90 s while the server has actually moved on. Observed
+    on ai.home.gregandbere.com behind CF tunnel, 2026-04-22.
     """
-    return web.json_response(dict(_SETUP_PROGRESS))
+    return web.json_response(
+        dict(_SETUP_PROGRESS),
+        headers={"Cache-Control": "no-store, no-cache, must-revalidate"},
+    )
 
 
 async def handle_setup_session_claim(request: web.Request) -> web.Response:
@@ -4470,7 +4480,12 @@ async def handle_setup_session_claim(request: web.Request) -> web.Response:
     if pending.get("warning"):
         payload["warning"] = pending["warning"]
 
-    resp = web.json_response(payload)
+    # Same Cache-Control reasoning as handle_setup_progress — this
+    # endpoint is single-use and MUST NOT be served from any cache.
+    resp = web.json_response(
+        payload,
+        headers={"Cache-Control": "no-store, no-cache, must-revalidate"},
+    )
     access = pending.get("access_token")
     refresh = pending.get("refresh_token")
     if access and refresh:
