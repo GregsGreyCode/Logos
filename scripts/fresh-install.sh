@@ -327,7 +327,10 @@ if [[ "$INSTALL_OPENSHELL" == "1" ]]; then
         fi
 
         log "pulling openshell cluster image ${OSH_CLUSTER_REF} (keeps CLI + cluster + supervisor versions in lockstep)"
-        if docker pull "$OSH_CLUSTER_REF" >/dev/null 2>&1; then
+        # Don't redirect — let docker's per-layer progress reach the
+        # terminal. It's the only signal the user has that a multi-
+        # hundred-MB pull is actually making progress rather than wedged.
+        if docker pull "$OSH_CLUSTER_REF"; then
             ok "openshell cluster image ${OSH_CLUSTER_TAG} ready"
         else
             warn "could not pull ${OSH_CLUSTER_REF} — /setup will pull it on first gateway start. Override tag with OPENSHELL_CLUSTER_IMAGE_TAG=<version>."
@@ -390,8 +393,11 @@ if command -v docker >/dev/null 2>&1 \
     }
 
     _pull_from_ghcr() {
-        log "pulling $GHCR_IMAGE (30-60 s on broadband) …"
-        if docker pull "$GHCR_IMAGE" >/dev/null 2>&1; then
+        log "pulling $GHCR_IMAGE"
+        # Same reasoning as the cluster image pull: let docker's
+        # per-layer progress reach the terminal so the user can see
+        # the pull is making progress instead of wedged.
+        if docker pull "$GHCR_IMAGE"; then
             docker tag "$GHCR_IMAGE" "$SANDBOX_TAG"
             ok "pulled $GHCR_IMAGE → tagged as $SANDBOX_TAG"
             return 0
