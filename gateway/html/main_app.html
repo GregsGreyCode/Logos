@@ -8940,7 +8940,23 @@ function app() {
       const text = content || '';
       let html;
       if (this.chatRenderMode === 'markdown' && typeof marked !== 'undefined' && typeof DOMPurify !== 'undefined') {
-        html = DOMPurify.sanitize(marked.parse(text), {USE_PROFILES: {html: true}});
+        // Open external links in a new tab instead of replacing the
+        // Logos dashboard. Without target=_blank the agent citing
+        // e.g. github.com/foo would nuke the chat. Hook is idempotent —
+        // registered once per page load.
+        if (!window._chatLinkHookRegistered) {
+          window._chatLinkHookRegistered = true;
+          DOMPurify.addHook('afterSanitizeAttributes', (node) => {
+            if (node.tagName === 'A') {
+              const href = node.getAttribute('href') || '';
+              if (/^(https?:)?\/\//i.test(href)) {
+                node.setAttribute('target', '_blank');
+                node.setAttribute('rel', 'noopener noreferrer');
+              }
+            }
+          });
+        }
+        html = DOMPurify.sanitize(marked.parse(text), {USE_PROFILES: {html: true}, ADD_ATTR: ['target']});
       } else {
         // For plain/mono: escape HTML entities so x-html is safe
         const el = document.createElement('div');
