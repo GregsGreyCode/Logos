@@ -7,7 +7,8 @@
   <a href="https://github.com/GregsGreyCode/Logos/issues">Open an issue</a> if you hit a bug.
 </p>
 
-<img width="1278" height="1091" alt="Hero-Main Dashboard" src="https://github.com/user-attachments/assets/4cd12560-e990-4fb9-9ea0-3d0bfb5dd848" />
+<img width="1494" height="945" alt="image" src="https://github.com/user-attachments/assets/3643dc15-8967-42eb-bf9c-751f27412544" />
+
 
 > **Release history note:** v0.4 shipped 57 tagged patch releases (v0.4.26–v0.4.105) before graduating to v0.5. Pre-v0.5 tags have been removed from GitHub to keep the releases page clean; the commit history is fully intact. **v1.0.0 shipped 2026-04-21** — first 1.x release; cuts over to upstream hermes-as-server dispatch and drops the vendored runtime fork.
 
