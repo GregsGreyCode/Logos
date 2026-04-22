@@ -2,21 +2,45 @@
 # ============================================================================
 # Logos Fresh Uninstall
 # ============================================================================
-# Reverses everything `scripts/fresh-install.sh` does — cleans the install
-# directory, ~/.logos config, CLI symlinks, and (optionally) the OpenShell
-# binary + sysctl bumps.
+# Fully uninstalls Logos. One top-level confirmation, then it wipes
+# everything Logos owns — containers, config, DB, repo, CLI symlink, and
+# the OpenShell cluster + sandbox Docker images.
 #
-# Does NOT touch:
-#   - `uv` itself
-#   - Docker or your docker-group membership
-#   - Any running openshell-cluster containers (destroy them separately via
-#     `openshell gateway destroy --force --gateway <name>` if desired)
-#   - Files outside the paths listed below
+# Per-step prompts were removed after repeatedly producing partial states:
+# e.g. cluster containers deleted but auth.db.model_routes rows kept, or
+# docker pulled a newer :latest but a stale :0.0.33 image tag stayed
+# cached and openshell's bootstrap picked the older tag on next start.
+# "Fully uninstall" is what the script name promises; if you want a soft
+# reset, back up the bits you care about first.
+#
+# Always wiped (no prompt):
+#   - Running Logos gateway process
+#   - All openshell-cluster-* and hermes-* Docker containers
+#   - Docker images: ghcr.io/nvidia/openshell/cluster:* and hermes-sandbox:*
+#     (reason: version skew between a stale cluster image and the current
+#     openshell CLI produces a cryptic "supervisor session not connected"
+#     error with no obvious root cause. Wiping forces a clean re-pull.)
+#   - $LOGOS_HOME (~/.logos: auth.db, .env, sessions, memories, agents, logs)
+#   - $REPO_DIR (~/logos: repo + venv + node_modules)
+#   - ~/.local/bin/logos
+#   - ~/.config/openshell (gateway metadata + mTLS certs — stale entries
+#     pointing at deleted containers confuse the next provision)
+#
+# Still prompted (separate tool, not exclusively Logos):
+#   - ~/.local/bin/openshell
+#
+# Still opt-in via env var (system-level, may affect other users):
+#   - /etc/sysctl.d/99-openshell.conf   (PURGE_SYSCTL=1)
+#
+# Never touched:
+#   - Docker itself, docker-group membership
+#   - uv, python, the OS
+#   - Other Docker images (we only remove Logos/OpenShell-tagged ones)
 #
 # Usage:
-#   ./scripts/fresh-uninstall.sh                   # prompt before each step
-#   ./scripts/fresh-uninstall.sh --yes             # no prompts, wipe everything
-#   PURGE_SYSCTL=1 ./scripts/fresh-uninstall.sh --yes   # also remove /etc/sysctl.d/99-openshell.conf
+#   ./scripts/fresh-uninstall.sh                        # one confirmation
+#   ./scripts/fresh-uninstall.sh --yes                  # skip confirmation
+#   PURGE_SYSCTL=1 ./scripts/fresh-uninstall.sh --yes   # also remove sysctl file
 # ============================================================================
 
 set -euo pipefail
@@ -38,109 +62,155 @@ for arg in "$@"; do
     case "$arg" in
         -y|--yes) AUTO_YES=1 ;;
         -h|--help)
-            sed -n '2,20p' "$0"
+            sed -n '2,47p' "$0"
             exit 0
             ;;
     esac
 done
 
-confirm() {
-    local prompt="$1"
-    if [[ "$AUTO_YES" == "1" ]]; then return 0; fi
-    read -r -p "${C_YELLOW}?${C_RESET} $prompt [y/N] " ans
-    [[ "$ans" =~ ^[Yy]$ ]]
-}
-
 REPO_DIR="${LOGOS_REPO_DIR:-$HOME/logos}"
 LOGOS_HOME="${LOGOS_HOME:-$HOME/.logos}"
+OPENSHELL_CONFIG="${OPENSHELL_CONFIG:-$HOME/.config/openshell}"
 PURGE_SYSCTL="${PURGE_SYSCTL:-0}"
 
 hdr "Logos Fresh Uninstall"
-printf '  repo:       %s\n' "$REPO_DIR"
-printf '  config:     %s\n' "$LOGOS_HOME"
-printf '  CLI:        ~/.local/bin/logos, ~/.local/bin/openshell (optional)\n'
-printf '  sysctl:     /etc/sysctl.d/99-openshell.conf (only with PURGE_SYSCTL=1)\n'
+printf '  repo:        %s\n' "$REPO_DIR"
+printf '  config:      %s\n' "$LOGOS_HOME"
+printf '  openshell:   %s\n' "$OPENSHELL_CONFIG"
+printf '  CLI:         ~/.local/bin/logos\n'
+printf '  containers:  openshell-cluster-*, hermes-*\n'
+printf '  images:      ghcr.io/nvidia/openshell/cluster:*, hermes-sandbox:*\n'
+printf '  gateway:     any running logos gateway.run process\n'
+printf '\n  prompted:    ~/.local/bin/openshell (separate tool)\n'
+printf '  opt-in:      /etc/sysctl.d/99-openshell.conf (PURGE_SYSCTL=1)\n'
 
-# ── 1. Stop a running gateway (cannot wipe files out from under it cleanly) ──
+# Single top-level safety gate. --yes bypasses it.
+if [[ "$AUTO_YES" != "1" ]]; then
+    printf '\n%sThis will permanently delete everything above. Continue?%s [y/N] ' \
+        "${C_YELLOW}" "${C_RESET}"
+    read -r ans
+    if [[ ! "$ans" =~ ^[Yy]$ ]]; then
+        printf '\n%s aborted — nothing was changed.\n' "${C_DIM}•${C_RESET}"
+        exit 0
+    fi
+fi
+
+# ── 1. Stop a running gateway (always) ──────────────────────────────────
 hdr "Stop gateway"
 if pgrep -f "gateway\.run" >/dev/null 2>&1; then
-    if confirm "a Logos gateway is running — stop it now?"; then
-        pkill -TERM -f "gateway\.run" 2>/dev/null || true
-        for _ in 1 2 3 4 5; do
-            if ! pgrep -f "gateway\.run" >/dev/null 2>&1; then break; fi
-            sleep 1
-        done
-        pkill -KILL -f "gateway\.run" 2>/dev/null || true
-        ok "gateway stopped"
-    else
-        warn "leaving gateway running — files in $REPO_DIR may be held open"
-    fi
+    pkill -TERM -f "gateway\.run" 2>/dev/null || true
+    for _ in 1 2 3 4 5; do
+        if ! pgrep -f "gateway\.run" >/dev/null 2>&1; then break; fi
+        sleep 1
+    done
+    pkill -KILL -f "gateway\.run" 2>/dev/null || true
+    ok "gateway stopped"
 else
     ok "no gateway running"
 fi
 
-# ── 2. Delete OpenShell sandboxes (optional) ──
-if command -v openshell >/dev/null 2>&1 && command -v docker >/dev/null 2>&1; then
-    SANDBOXES=$(docker ps -a --format '{{.Names}}' 2>/dev/null | grep -E "^(openshell-cluster-|hermes-)" | head -20 || true)
+# ── 2. Delete OpenShell + sandbox containers (always) ───────────────────
+hdr "OpenShell containers"
+if command -v docker >/dev/null 2>&1; then
+    SANDBOXES=$(docker ps -a --format '{{.Names}}' 2>/dev/null | grep -E "^(openshell-cluster-|hermes-)" || true)
     if [[ -n "$SANDBOXES" ]]; then
-        hdr "OpenShell containers"
         printf '%s\n' "$SANDBOXES" | sed 's/^/  /'
-        if confirm "delete these openshell + sandbox containers?"; then
-            while IFS= read -r c; do
-                docker rm -f "$c" 2>&1 | tail -1
-            done <<<"$SANDBOXES"
-            ok "containers removed"
-        else
-            warn "leaving openshell containers running"
-        fi
+        while IFS= read -r c; do
+            docker rm -f "$c" >/dev/null 2>&1 && ok "removed $c" || warn "could not remove $c"
+        done <<<"$SANDBOXES"
+    else
+        ok "no openshell / sandbox containers to remove"
+    fi
+else
+    warn "docker not available — skipping container cleanup"
+fi
+
+# ── 3. Delete OpenShell cluster + sandbox Docker images (always) ────────
+# Stale cluster images are the root cause of the "works on a fresh host
+# but fails on upgrade" class of bug: openshell CLI 0.0.N expects cluster
+# image 0.0.N, but if 0.0.M<N is still cached (survived prior uninstall
+# since images aren't tied to containers in Docker's GC model), the CLI's
+# bootstrap happily uses the older tag and the sandbox pods mount a
+# mismatched supervisor binary → cryptic "supervisor session not
+# connected" on every exec. Wipe all tags of these repos unconditionally
+# so the next install starts with nothing cached and pulls fresh.
+hdr "OpenShell + sandbox images"
+if command -v docker >/dev/null 2>&1; then
+    IMAGES=$(docker images --format '{{.Repository}}:{{.Tag}}' 2>/dev/null | \
+        grep -E "^(ghcr\.io/nvidia/openshell/cluster|hermes-sandbox):" || true)
+    if [[ -n "$IMAGES" ]]; then
+        while IFS= read -r img; do
+            docker rmi -f "$img" >/dev/null 2>&1 && ok "removed $img" || warn "could not remove $img"
+        done <<<"$IMAGES"
+    else
+        ok "no logos / openshell images to remove"
     fi
 fi
 
-# ── 3. Config ~/.logos ──
-hdr "~/.logos config"
+# ── 4. Config ~/.logos (always) ─────────────────────────────────────────
+hdr "Config directory"
 if [[ -d "$LOGOS_HOME" ]]; then
-    if confirm "delete $LOGOS_HOME (auth.db, .env, sessions, memories, agents, logs)? this is NOT recoverable"; then
-        rm -rf "$LOGOS_HOME"
-        ok "$LOGOS_HOME removed"
-    else
-        warn "keeping $LOGOS_HOME — re-running fresh-install.sh will reuse it"
-    fi
+    rm -rf "$LOGOS_HOME"
+    ok "$LOGOS_HOME removed"
 else
     ok "$LOGOS_HOME already absent"
 fi
 
-# ── 4. Repo directory ──
+# ── 5. OpenShell CLI state (~/.config/openshell) (always) ───────────────
+# Contains per-gateway metadata.json + mTLS cert pairs. After deleting
+# cluster containers, stale metadata still points at them — next gateway
+# start re-reads it, expects a live cluster at the stored endpoint, and
+# can wedge the bootstrap.
+hdr "OpenShell CLI state"
+if [[ -d "$OPENSHELL_CONFIG" ]]; then
+    rm -rf "$OPENSHELL_CONFIG"
+    ok "$OPENSHELL_CONFIG removed"
+else
+    ok "$OPENSHELL_CONFIG already absent"
+fi
+
+# ── 6. Repo directory (always) ──────────────────────────────────────────
+# cd out first so we don't rm the cwd underneath ourselves. Bash can
+# survive it but the user's shell ends up in a deleted directory.
 hdr "Repo directory"
+cd /tmp
 if [[ -d "$REPO_DIR" ]]; then
-    if confirm "delete $REPO_DIR (repo + venv + node_modules)? not recoverable"; then
-        rm -rf "$REPO_DIR"
-        ok "$REPO_DIR removed"
-    else
-        warn "keeping $REPO_DIR"
-    fi
+    rm -rf "$REPO_DIR"
+    ok "$REPO_DIR removed"
 else
     ok "$REPO_DIR already absent"
 fi
 
-# ── 5. CLI symlinks ──
-hdr "CLI symlinks"
-for link in "$HOME/.local/bin/logos"; do
-    if [[ -L "$link" || -e "$link" ]]; then
-        rm -f "$link"
-        ok "removed $link"
-    fi
-done
+# ── 7. CLI symlink (always) ─────────────────────────────────────────────
+hdr "CLI symlink"
+if [[ -L "$HOME/.local/bin/logos" || -e "$HOME/.local/bin/logos" ]]; then
+    rm -f "$HOME/.local/bin/logos"
+    ok "removed ~/.local/bin/logos"
+else
+    ok "~/.local/bin/logos already absent"
+fi
 
-# openshell is a real binary (from the static tarball), not a symlink —
-# ask separately so the user can keep it if they use it standalone.
+# ── 8. OpenShell binary (prompted, separate tool) ───────────────────────
 if [[ -x "$HOME/.local/bin/openshell" ]]; then
-    if confirm "remove ~/.local/bin/openshell?"; then
+    hdr "OpenShell CLI"
+    if [[ "$AUTO_YES" == "1" ]]; then
         rm -f "$HOME/.local/bin/openshell"
-        ok "removed ~/.local/bin/openshell"
+        ok "removed ~/.local/bin/openshell (--yes)"
+    else
+        printf '  ~/.local/bin/openshell is a standalone tool (version %s).\n' \
+            "$(openshell --version 2>/dev/null | awk '{print $NF}' || echo unknown)"
+        printf '  %sRemove it?%s [y/N] ' "${C_YELLOW}" "${C_RESET}"
+        read -r ans
+        if [[ "$ans" =~ ^[Yy]$ ]]; then
+            rm -f "$HOME/.local/bin/openshell"
+            ok "removed ~/.local/bin/openshell"
+        else
+            ok "keeping ~/.local/bin/openshell"
+        fi
     fi
 fi
 
-# ── 6. Sysctl file (opt-in) ──
+# ── 9. Sysctl file (opt-in) ─────────────────────────────────────────────
 if [[ "$PURGE_SYSCTL" == "1" ]]; then
     hdr "Sysctl file"
     if [[ -f /etc/sysctl.d/99-openshell.conf ]]; then

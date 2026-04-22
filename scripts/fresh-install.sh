@@ -308,6 +308,24 @@ if [[ "$INSTALL_OPENSHELL" == "1" ]]; then
         OSH_VER="$(openshell --version 2>/dev/null | awk '{print $NF}' | head -1)"
         OSH_CLUSTER_TAG="${OPENSHELL_CLUSTER_IMAGE_TAG:-${OSH_VER:-latest}}"
         OSH_CLUSTER_REF="ghcr.io/nvidia/openshell/cluster:${OSH_CLUSTER_TAG}"
+
+        # Remove any *other* tags of this repo that survived a previous
+        # install. If the host has both :0.0.33 (stale) and :0.0.35 (new)
+        # cached at the same time, openshell's bootstrap will sometimes
+        # pick the older one, producing the "supervisor session not
+        # connected" class of failure. Purge anything that isn't exactly
+        # the tag we're about to pull, then pull fresh. Keeps
+        # other Docker images untouched — only the cluster repo.
+        STALE_TAGS=$(docker images --format '{{.Repository}}:{{.Tag}}' 2>/dev/null | \
+            grep -E "^ghcr\.io/nvidia/openshell/cluster:" | \
+            grep -vFx "$OSH_CLUSTER_REF" || true)
+        if [[ -n "$STALE_TAGS" ]]; then
+            while IFS= read -r stale; do
+                docker rmi -f "$stale" >/dev/null 2>&1 && \
+                    log "removed stale cluster tag $stale" || true
+            done <<<"$STALE_TAGS"
+        fi
+
         log "pulling openshell cluster image ${OSH_CLUSTER_REF} (keeps CLI + cluster + supervisor versions in lockstep)"
         if docker pull "$OSH_CLUSTER_REF" >/dev/null 2>&1; then
             ok "openshell cluster image ${OSH_CLUSTER_TAG} ready"
