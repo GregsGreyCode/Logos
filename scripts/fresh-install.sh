@@ -291,6 +291,30 @@ if [[ "$INSTALL_OPENSHELL" == "1" ]]; then
     else
         warn "openshell needs docker. Install it (e.g. \`curl -fsSL https://get.docker.com | sh && sudo usermod -aG docker \$USER\`) and log out/in."
     fi
+
+    # Pre-pull the matching cluster image so a CLI upgrade actually
+    # refreshes the whole stack, not just the host binary. OpenShell
+    # has three surfaces that all need to track the same version —
+    # the CLI, the gateway pod's binary, and the cluster container
+    # image whose /opt/openshell/bin/openshell-sandbox gets hostPath-
+    # mounted into every sandbox pod. Without this pull, upgrading
+    # the CLI while a stale cluster image is still cached leaves
+    # new sandbox pods mounting the old supervisor → "supervisor
+    # session not connected" with no matching error in the logs.
+    # Triggered once on install (docker pull is idempotent; no-op on
+    # digest match). Non-fatal: the user's setup will still work,
+    # they'll just pay the pull during /setup instead of here.
+    if command -v openshell >/dev/null 2>&1 && command -v docker >/dev/null 2>&1; then
+        OSH_VER="$(openshell --version 2>/dev/null | awk '{print $NF}' | head -1)"
+        OSH_CLUSTER_TAG="${OPENSHELL_CLUSTER_IMAGE_TAG:-${OSH_VER:-latest}}"
+        OSH_CLUSTER_REF="ghcr.io/nvidia/openshell/cluster:${OSH_CLUSTER_TAG}"
+        log "pulling openshell cluster image ${OSH_CLUSTER_REF} (keeps CLI + cluster + supervisor versions in lockstep)"
+        if docker pull "$OSH_CLUSTER_REF" >/dev/null 2>&1; then
+            ok "openshell cluster image ${OSH_CLUSTER_TAG} ready"
+        else
+            warn "could not pull ${OSH_CLUSTER_REF} — /setup will pull it on first gateway start. Override tag with OPENSHELL_CLUSTER_IMAGE_TAG=<version>."
+        fi
+    fi
 fi
 
 # ── Sandbox image (OpenShell mode) ──
