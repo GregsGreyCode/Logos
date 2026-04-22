@@ -184,13 +184,9 @@ export class AgentSprite {
     //   💭  (thought bubble)   — running AND at least one task in flight
     //   (hidden)               — running and idle
     //
-    // The active-task indicator is driven by ``inst.active_tasks``
-    // (populated by admin_handlers.handle_agents_list from
-    // WorkerRegistry.active_task_count). Phase A of the dispatch-
-    // activity observability work in docs/MISSING.md — the whole point
-    // is a live visual cue that the user can glance at and see "Tali
-    // is currently thinking about something" at a world-view glance,
-    // matching the tamagotchi/living-agent product identity.
+    // ``inst.active_tasks`` is computed in main_app._worldAgentList from
+    // status.active_sessions (the same source the agent card's
+    // "thinking…" row reads), so the bubble and card flip in lockstep.
     this.bubble = scene.add.text(startPos.x, startPos.y - 72, '\u23f3', {
       fontSize: '16px',
       align: 'center',
@@ -556,12 +552,10 @@ export class AgentSprite {
   }
 
   _isBusy(inst) {
-    // "Busy" = at least one dispatch_task currently in flight for this
-    // sandbox. Reads the ``active_tasks`` counter that admin_handlers
-    // adds to each agent record, sourced from
-    // WorkerRegistry.active_task_count() (Phase A of the dispatch-
-    // activity observability work — docs/MISSING.md). Defensive
-    // against the field being missing on older agent records.
+    // "Busy" = at least one active chat session for this agent. The
+    // count is derived in main_app._worldAgentList from
+    // status.active_sessions so the bubble and the agent-card row read
+    // the same source of truth.
     return Number(inst && inst.active_tasks) > 0;
   }
 
