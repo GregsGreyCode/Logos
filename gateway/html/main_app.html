@@ -6294,16 +6294,6 @@ function app() {
     namedAgentForm: { name: '', soul_slug: 'general', model: '', model_route_id: null, description: '', char_index: null },
     namedAgentEditId: null,
     namedAgentMsg: null,
-    // Local optimistic busy counter for the world-view thought bubble.
-    // The server-side `active_tasks` field on /admin/agents is authoritative
-    // but only reaches the UI via a 3s poll, so a chat dispatch that
-    // completes in under ~3s would start and end entirely between polls and
-    // the 💭 bubble would never appear. sendChat / _compareDispatchOne
-    // increment on dispatch start and decrement in their finally blocks;
-    // _worldAgentList() adds this to the server counter so the bubble shows
-    // instantly for UI-initiated chats. Background/ACP/cron dispatches still
-    // ride the 3s poll.
-    _localBusyAgents: {},
     // ── Compare tab (#13: side-by-side AB chat with two named agents) ─────
     // Two slots, each is null or an agent object pulled from namedAgents.
     // Order matters (left/right). v1 is hard-capped at 2 panes; the layout
@@ -7891,17 +7881,19 @@ function app() {
       // walking animation. The earlier hardcoded 'running' meant a
       // freshly-spawned agent looked identical to a healthy one even
       // while its sandbox was still booting.
+      // Derive busy from the same source the agent card reads
+      // (status.active_sessions). The card's truth is seeded in
+      // http_api._handle_chat the moment dispatch kicks off and cleared
+      // in the finally, so it flips instantly on loadStatus() — which
+      // sendChat also triggers after every message. Single source of
+      // truth for "is this agent thinking right now" means the bubble
+      // and the card can't drift.
+      const busySessions = this.status?.active_sessions || [];
       return (this.namedAgents || []).map(a => {
         const isReady = !!(a.worker_connected && a.worker_healthy);
         const status = isReady ? 'running' : 'starting';
         const m = this.agentMaturity(a);
-        // AgentSprite._isBusy reads inst.active_tasks to decide whether to
-        // render the 💭 thought bubble. The server counter from
-        // /admin/agents arrives on a 3s poll, so we overlay the local
-        // optimistic counter (bumped at dispatch start, cleared in finally)
-        // to make the bubble show instantly for UI-initiated chats.
-        const serverBusy = Number(a.active_tasks) || 0;
-        const localBusy = Number((this._localBusyAgents || {})[a.id]) || 0;
+        const active = busySessions.filter(s => s.agent_name === a.name).length;
         return {
           name: a.name,
           instance_name: a.name,
@@ -7910,7 +7902,7 @@ function app() {
           k8s_status: status,
           soul: { name: a.soul_slug, slug: a.soul_slug },
           source: 'named',
-          active_tasks: serverBusy + localBusy,
+          active_tasks: active,
           // Pass through the explicit sprite selection so AgentSprite renders
           // the chosen character instead of the name-hash fallback.
           char_index: (a.char_index !== undefined && a.char_index !== null) ? Number(a.char_index) : null,
@@ -7923,23 +7915,6 @@ function app() {
           _namedAgent: a,
         };
       });
-    },
-
-    _incLocalBusy(agentId) {
-      if (!agentId) return;
-      const cur = Number((this._localBusyAgents || {})[agentId]) || 0;
-      this._localBusyAgents = { ...(this._localBusyAgents || {}), [agentId]: cur + 1 };
-      if (this.worldManager) this.worldManager.syncAgents(this._worldAgentList());
-    },
-
-    _decLocalBusy(agentId) {
-      if (!agentId) return;
-      const m = { ...(this._localBusyAgents || {}) };
-      const next = Math.max(0, (Number(m[agentId]) || 0) - 1);
-      if (next === 0) delete m[agentId];
-      else m[agentId] = next;
-      this._localBusyAgents = m;
-      if (this.worldManager) this.worldManager.syncAgents(this._worldAgentList());
     },
 
     async initWorld() {
@@ -8462,6 +8437,11 @@ function app() {
           }
         }
         this.prevActiveSessions = [...(this.status.active_sessions||[])];
+        // Re-sync the world view so the 💭 thought bubble flips on/off
+        // in lockstep with the agent card's "thinking…" row — both read
+        // status.active_sessions now, so any gap between the two is a
+        // rendering bug, not a data-plumbing one.
+        if (this.worldManager) this.worldManager.syncAgents(this._worldAgentList());
       } catch(e) {
         if (this.agentEverConnected) console.warn('status poll failed:', e.message);
         this.agentAlive = false;
@@ -9234,9 +9214,6 @@ function app() {
       this.isWakingUp = idleMs > 5 * 60 * 1000;
       this._scrollChat();
 
-      const dispatchAgentId = chat.agent_id || this.activeInstance?.id || null;
-      this._incLocalBusy(dispatchAgentId);
-
       try {
         const r = await fetch(this.instanceUrl + '/chat', {
           method: 'POST',
@@ -9585,7 +9562,6 @@ function app() {
         this.isWakingUp = false;
         this.lastResponseAt = Date.now();
         this._scrollChat();
-        this._decLocalBusy(dispatchAgentId);
         await this.loadStatus();
       }
     },
@@ -10425,7 +10401,6 @@ user_accessible: true
       // Mark streaming + reset per-turn thinking buffer.
       this.compareStreaming = { ...this.compareStreaming, [agentId]: true };
       this.compareThinking = { ...this.compareThinking, [agentId]: '' };
-      this._incLocalBusy(agentId);
       // Plant an empty streaming-assistant message that the token
       // events will fill in-place. Same pattern as the chat tab's
       // _streaming sentinel.
@@ -10550,7 +10525,6 @@ user_accessible: true
         this._compareAppendError(agentId, `Dispatch failed: ${e.message || e}`);
       } finally {
         this.compareStreaming = { ...this.compareStreaming, [agentId]: false };
-        this._decLocalBusy(agentId);
       }
     },
 
