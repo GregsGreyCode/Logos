@@ -3335,6 +3335,136 @@ async def handle_agent_memories_get(request: web.Request) -> web.Response:
     })
 
 
+async def handle_agent_skills_get(request: web.Request) -> web.Response:
+    """GET /admin/agents/{id}/skills — agent-authored skills list.
+
+    Walks the host mirror at ``~/.logos/agents/<name>/skills/`` (populated
+    by worker_registry's periodic sync from the sandbox's
+    ``$HERMES_HOME/skills/``). Each SKILL.md is parsed for its YAML
+    frontmatter; body preview is the first 400 chars of the non-
+    frontmatter content. Entries sort newest-first by mtime, capped at
+    500 to bound response size.
+
+    Response shape::
+
+        {
+          "agent": "Hermes",
+          "root":  "/home/.../Hermes/skills",
+          "exists": true,
+          "skills": [
+            {
+              "name": "haiku-writer",
+              "description": "Composes three-line haiku in 5-7-5",
+              "category": "writing",
+              "version": "1.0.0",
+              "path": "skills/writing/haiku-writer/SKILL.md",
+              "size_bytes": 842,
+              "mtime_iso": "2026-04-22T13:55:12",
+              "body_preview": "## When to Use\\nUser asks for a haiku..."
+            }
+          ]
+        }
+    """
+    user = request.get("current_user") or {}
+    if user.get("role", "") not in ("admin", "operator"):
+        return web.json_response({"error": "forbidden"}, status=403)
+
+    name, agent_dir, err = _resolve_agent_dir(request.match_info["id"])
+    if err is not None:
+        return err
+
+    import datetime as _dt
+    import re as _re
+    import yaml as _yaml
+
+    skills_dir = agent_dir / "skills"
+    if not skills_dir.is_dir():
+        return web.json_response({
+            "agent": name, "root": str(skills_dir),
+            "exists": False, "skills": [],
+        })
+
+    # SKILL.md canonical frontmatter fence: starts with `---\n`, ends
+    # with `\n---\n`. Allow optional leading whitespace / BOM but nothing
+    # fancier — hermes-agent's _validate_frontmatter is equally strict.
+    _FM_RE = _re.compile(r"^﻿?---\s*\n(.*?)\n---\s*\n?(.*)$", _re.DOTALL)
+    MAX_BYTES = 256 * 1024
+
+    rows = []
+    for skill_md in skills_dir.rglob("SKILL.md"):
+        try:
+            st = skill_md.stat()
+        except OSError:
+            continue
+        entry = {
+            "path": str(skill_md.relative_to(agent_dir)),
+            "size_bytes": st.st_size,
+            "mtime_iso": _dt.datetime.fromtimestamp(st.st_mtime).isoformat(timespec="seconds"),
+            "name": skill_md.parent.name,
+            "description": "",
+            "category": "",
+            "version": "",
+            "body_preview": "",
+        }
+        if st.st_size > MAX_BYTES:
+            entry["error"] = "too_large"
+            rows.append(entry)
+            continue
+        try:
+            text = skill_md.read_text(encoding="utf-8", errors="replace")
+        except Exception as exc:
+            entry["error"] = f"read_failed: {str(exc)[:120]}"
+            rows.append(entry)
+            continue
+
+        m = _FM_RE.match(text)
+        if not m:
+            entry["error"] = "no_frontmatter"
+            entry["body_preview"] = text[:400].strip()
+            rows.append(entry)
+            continue
+
+        fm_raw, body = m.group(1), m.group(2)
+        try:
+            fm = _yaml.safe_load(fm_raw) or {}
+        except _yaml.YAMLError as exc:
+            entry["error"] = f"yaml_error: {str(exc)[:120]}"
+            entry["body_preview"] = body[:400].strip()
+            rows.append(entry)
+            continue
+
+        if isinstance(fm, dict):
+            entry["name"] = (fm.get("name") or entry["name"]).strip() or entry["name"]
+            entry["description"] = (fm.get("description") or "").strip()
+            entry["version"] = str(fm.get("version") or "").strip()
+            # Category: frontmatter wins, else parent-of-SKILL.md's
+            # parent dir (skills/<category>/<name>/SKILL.md layout).
+            cat = ""
+            meta = fm.get("metadata")
+            if isinstance(meta, dict):
+                hermes_meta = meta.get("hermes")
+                if isinstance(hermes_meta, dict):
+                    cat = str(hermes_meta.get("category") or "").strip()
+            if not cat and skill_md.parent.parent != skills_dir:
+                cat = skill_md.parent.parent.name
+            entry["category"] = cat
+
+        entry["body_preview"] = body[:400].strip()
+        rows.append(entry)
+
+    # Newest first, cap at 500 so a runaway skills tree doesn't blow
+    # the JSON response.
+    rows.sort(key=lambda r: r.get("mtime_iso", ""), reverse=True)
+    rows = rows[:500]
+
+    return web.json_response({
+        "agent": name,
+        "root":  str(skills_dir),
+        "exists": True,
+        "skills": rows,
+    })
+
+
 async def handle_agent_sessions_get(request: web.Request) -> web.Response:
     """GET /admin/agents/{id}/sessions?limit=N&offset=K — session list.
 

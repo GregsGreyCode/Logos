@@ -871,6 +871,64 @@ def deploy_agent_memories(
     return len(files)
 
 
+def deploy_agent_skills(
+    sandbox_name: str,
+    agent_name: str,
+    gateway: Optional[str] = None,
+) -> int:
+    """Upload persisted agent skills from host into ``{HERMES_HOME_IN_SANDBOX}/skills/``.
+
+    Host source is ``~/.logos/agents/<agent_name>/skills/``. Skills are
+    nested under ``<category>/<skill-name>/SKILL.md`` plus optional
+    sibling resources (references/, templates/), so the walk is
+    recursive — not a single-level iterdir like memories. Empty skills
+    directories and fresh agents get a silent no-op.
+
+    Returns the number of files uploaded. Raises nothing: callers treat
+    this as best-effort so a malformed skill can't block sandbox spawn.
+    """
+    if not agent_name:
+        return 0
+    from gateway.executors.openshell import _HERMES_HOME
+    host_skills = _HERMES_HOME / "agents" / agent_name / "skills"
+    if not host_skills.is_dir():
+        return 0
+    files = [p for p in host_skills.rglob("*") if p.is_file()]
+    if not files:
+        return 0
+
+    remote_root = f"{HERMES_HOME_IN_SANDBOX}/skills"
+    # Ensure every per-skill subdirectory exists before uploads — the
+    # openshell upload subcommand doesn't mkdir -p a deep target.
+    rel_parents = sorted({
+        str(f.relative_to(host_skills).parent).replace("\\", "/")
+        for f in files
+    })
+    mkdir_script_lines = ["set -e"]
+    for rp in rel_parents:
+        target = remote_root if rp in (".", "") else f"{remote_root}/{rp}"
+        mkdir_script_lines.append(f"mkdir -p {shlex.quote(target)}")
+    _run_sb_exec(sandbox_name, "\n".join(mkdir_script_lines), gateway=gateway)
+
+    uploaded = 0
+    for f in files:
+        rel_parent = str(f.relative_to(host_skills).parent).replace("\\", "/")
+        remote_dir = remote_root if rel_parent in (".", "") else f"{remote_root}/{rel_parent}"
+        try:
+            _upload_file_via_openshell(sandbox_name, f, remote_dir, gateway=gateway)
+            uploaded += 1
+        except Exception as exc:
+            logger.warning(
+                "hermes_server_mode: skill upload failed for %s (%s): %s",
+                f.relative_to(host_skills), sandbox_name, exc,
+            )
+    logger.info(
+        "hermes_server_mode: uploaded %d skill file(s) for %s from %s",
+        uploaded, sandbox_name, host_skills,
+    )
+    return uploaded
+
+
 def redeploy_hermes_env(
     sandbox_name: str,
     api_key: str,
@@ -1130,6 +1188,18 @@ def enable_hermes_server_mode(
             "hermes_server_mode(%s): memory upload failed (non-fatal): %s",
             sandbox_name, exc,
         )
+    # Restore agent-authored skills so they survive sandbox respawn.
+    # Same best-effort contract as memories — a bad SKILL.md shouldn't
+    # keep the sandbox from booting.
+    try:
+        deploy_agent_skills(
+            sandbox_name, getattr(config, "name", ""), gateway=gateway,
+        )
+    except Exception as exc:
+        logger.warning(
+            "hermes_server_mode(%s): skills upload failed (non-fatal): %s",
+            sandbox_name, exc,
+        )
     launch_hermes_gateway(sandbox_name, gateway=gateway)
     wait_for_hermes_health(sandbox_name, gateway=gateway)
 
@@ -1166,6 +1236,7 @@ __all__ = [
     "deploy_boot_md",
     "deploy_soul_md",
     "deploy_agent_memories",
+    "deploy_agent_skills",
     "redeploy_hermes_env",
     "restart_hermes_in_sandbox",
     "launch_hermes_gateway",

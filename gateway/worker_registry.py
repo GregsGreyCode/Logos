@@ -373,7 +373,23 @@ class WorkerRegistry:
             ),
             name="sandbox-sync-sessions",
         )
-        logger.info("worker_registry: started background logs + sessions sync tasks")
+        # Agent-created skills (hermes skill_manager tool writes here).
+        # 15 min cadence — skill creation is low-frequency, but we want
+        # them visible in the Mind modal's Skills tab soon enough that a
+        # user who just asked the agent to "save this as a skill" doesn't
+        # have to wait an hour. The host mirror at
+        # ~/.logos/agents/<name>/skills/ is what deploy_agent_skills
+        # re-uploads on respawn so skills survive sandbox death.
+        asyncio.create_task(
+            self._periodic_sync_loop(
+                sync_type="skills",
+                sandbox_path="/tmp/hermes-srv-home/skills/",
+                host_subdir="skills",
+                interval_seconds=900,  # 15 minutes
+            ),
+            name="sandbox-sync-skills",
+        )
+        logger.info("worker_registry: started background logs + sessions + skills sync tasks")
 
 
 _registry_singleton: Optional[WorkerRegistry] = None
