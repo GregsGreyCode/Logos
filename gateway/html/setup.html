@@ -3767,9 +3767,11 @@ function setup() {
     },
 
     _startCompletePolling() {
-      // Poll /api/setup/progress every 700ms while complete() is in flight.
-      // Updates completeStage/Label + sub-stage drill-down fields so the
-      // UI shows live progress instead of a static "Finishing up..." spinner.
+      // Poll /api/setup/progress every 700ms and resolve the returned
+      // promise when progress reports done=true. /setup/complete now
+      // returns 202 immediately after queuing — the real outcome only
+      // shows up here, so complete() awaits this resolution rather
+      // than the POST body.
       this.completeStage = '';
       this.completeStageLabel = '';
       this.completeSubstage = '';
@@ -3779,22 +3781,27 @@ function setup() {
       this._completeElapsedTimer = setInterval(() => {
         this.completeElapsedSec = Math.floor((Date.now() - this.completeStageStarted) / 1000);
       }, 1000);
-      this._completePollTimer = setInterval(async () => {
-        try {
-          const r = await fetch('/api/setup/progress', { credentials: 'include' });
-          if (!r.ok) return;
-          const d = await r.json();
-          if (d && d.label) {
-            this.completeStage = d.stage || '';
-            this.completeStageLabel = d.label;
-            // substage + sub_percent default to '' / 0 when the current
-            // stage has no sub-stepper (everything except spawn_sandbox).
-            this.completeSubstage = d.substage || '';
-            this.completeSubPercent = d.sub_percent || 0;
-          }
-          if (d && d.done) this._stopCompletePolling();
-        } catch (e) { /* swallow — polling is best-effort */ }
-      }, 700);
+      return new Promise((resolve) => {
+        this._completePollTimer = setInterval(async () => {
+          try {
+            const r = await fetch('/api/setup/progress', { credentials: 'include' });
+            if (!r.ok) return;
+            const d = await r.json();
+            if (d && d.label) {
+              this.completeStage = d.stage || '';
+              this.completeStageLabel = d.label;
+              // substage + sub_percent default to '' / 0 when the current
+              // stage has no sub-stepper (everything except spawn_sandbox).
+              this.completeSubstage = d.substage || '';
+              this.completeSubPercent = d.sub_percent || 0;
+            }
+            if (d && d.done) {
+              this._stopCompletePolling();
+              resolve(d);
+            }
+          } catch (e) { /* swallow — polling is best-effort */ }
+        }, 700);
+      });
     },
     _stopCompletePolling() {
       if (this._completePollTimer) { clearInterval(this._completePollTimer); this._completePollTimer = null; }
@@ -3805,23 +3812,35 @@ function setup() {
       if (this.completeError?.warning) { await this._flyLogoToNav(); await this._fadeOutPage(); window.location.href = '/'; return; }
       this.completing = true;
       this.completeError = null;
-      this._startCompletePolling();
-      // 12-minute client-side ceiling. Must exceed the reverse-proxy
-      // upstream timeout for /api/setup/complete (10 min on the
-      // current deployment) so the proxy stays the authoritative
-      // timeout and the browser doesn't abort a still-valid in-flight
-      // response. A fresh-install setup realistically runs 3-5 min on
-      // a warm box and up to ~8 min on a cold box (2.8 GB image
-      // import + k3s boot + sandbox spawn); 12 min gives comfortable
-      // headroom. If the proxy timeout drops below 10 min, drop this
-      // to match so the UI surfaces a clear "wedged" error instead of
-      // hanging.
-      const abort = new AbortController();
-      const timeoutId = setTimeout(() => abort.abort(), 720000);
+
+      // Start polling first so the UI picks up the "Saving setup
+      // configuration..." label the moment the bg task writes it.
+      // The returned promise resolves with the terminal progress
+      // object when done=true.
+      const terminalPromise = this._startCompletePolling();
+
+      // 15-minute ceiling on the terminal state. The POST itself
+      // returns a 202 in <1 s — this timeout covers the bg task's
+      // provision_route + image import + sandbox spawn, which on a
+      // cold box can take up to ~8 min. Proxy timeouts can no longer
+      // fire because each individual HTTP request in this flow
+      // (POST /complete, GET /progress, GET /session) completes in
+      // milliseconds; the long wait is in the bg task, invisible to
+      // any proxy.
+      const terminalTimeoutId = setTimeout(() => {
+        this._stopCompletePolling();
+        if (!this.completeError) {
+          this.completeError = {
+            warning: false,
+            message: 'Setup is taking longer than 15 minutes. Likely culprit: image pull or sandbox spawn is wedged. Tail ~/.logos/logs/gateway.log for the stuck stage. The server may still complete in the background — refresh in a minute or check the dashboard.'
+          };
+          this.completing = false;
+        }
+      }, 900000);
+
       try {
         const r = await fetch('/api/setup/complete', {
           method: 'POST', credentials: 'include',
-          signal: abort.signal,
           headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken() },
           body: JSON.stringify({
             endpoint:      this.activeServer ? this.activeServer.endpoint : '',
@@ -3833,14 +3852,12 @@ function setup() {
             setup_email:    this.setupEmail    || '',
             setup_username: this.setupUsername || '',
             setup_password: this.setupPassword || '',
-            // Frontier track fields
             ...(this.track === 'frontier' ? {
               track: 'frontier',
               provider: this.frontierProvider,
               provider_api_key: this.frontierApiKey,
               provider_base_url: this.frontierBaseUrl || '',
             } : {}),
-            // All selected servers so the backend can register each as a machine
             servers: (this.selectedServers || []).map(s => ({
               endpoint:          s.endpoint,
               type:              s.type || 'unknown',
@@ -3848,54 +3865,70 @@ function setup() {
               name:              s.customName || s.name || '',
               recommended_model: this.serverModelSelections[s.endpoint] || (this.compareServerRecs[s.endpoint] || {}).model || null,
             })),
-            // Additional users to create and assign to default routing profile
             additional_users: (this.setupAdditionalUsers || []).filter(u => u.username.trim() && u.email.trim() && u.password && u.password.length >= 8),
           }),
         });
-        if (r.ok) {
-          clearTimeout(timeoutId);
+
+        // Validation / concurrency errors come back immediately.
+        // Real setup outcomes arrive via the progress poller.
+        if (!r.ok) {
+          clearTimeout(terminalTimeoutId);
           this._stopCompletePolling();
           const d = await r.json().catch(() => ({}));
-          if (d.warning) {
-            // Endpoint unreachable but setup saved — show warning then proceed
-            this.completeError = { warning: true, message: d.warning };
-            this.completing = false;
-            return;
-          }
-          try { localStorage.removeItem('logos_setup_scan'); localStorage.removeItem('logos_setup_progress'); localStorage.removeItem('logos_setup_progress_v2'); } catch {}
-          try { sessionStorage.setItem('logos_fl', '1'); } catch {}
-          // Pre-load the chosen LM Studio model so the user's first chat
-          // isn't a 15-60s cold-boot. The /setup benchmark explicitly
-          // unloads each model after testing, so at this point the picked
-          // model is cold. Local-only step — skipped for frontier (cloud)
-          // tracks since their models don't live in VRAM.
-          await this._preloadModelIfLocal();
-          await this._flyLogoToNav();
-          await this._fadeOutPage();
-          // needs_login=true means the server completed setup but couldn't issue
-          // auth cookies (e.g. token-generation error). Fall back to /login.
-          window.location.href = d.needs_login ? '/login' : '/';
+          this.completeError = { warning: false, message: d.detail || d.error || `Setup failed to start (HTTP ${r.status}).` };
+          this.completing = false;
           return;
         }
-        clearTimeout(timeoutId);
-        this._stopCompletePolling();
-        const d = await r.json().catch(() => ({}));
-        this.completeError = { warning: false, message: d.detail || d.error || `Setup failed (HTTP ${r.status}) — check server logs.` };
-        this.completing = false;
-      } catch (e) {
-        clearTimeout(timeoutId);
-        this._stopCompletePolling();
-        // AbortError = our 12-minute client-side timeout fired. Distinguish
-        // that from a generic network error so the user gets actionable
-        // guidance instead of "Network error: AbortError".
-        if (e.name === 'AbortError') {
-          this.completeError = {
-            warning: false,
-            message: 'Setup is taking longer than 12 minutes. Likely culprit: image pull or sandbox spawn is wedged. Tail ~/.logos/logs/gateway.log to see the stuck stage. The server may still complete in the background — refresh in a minute or check the dashboard.'
-          };
-        } else {
-          this.completeError = { warning: false, message: 'Network error: ' + e.message };
+
+        // 202 accepted — wait for the background task to reach a
+        // terminal state (done=true in progress).
+        const terminal = await terminalPromise;
+        clearTimeout(terminalTimeoutId);
+        if (!terminal || !terminal.ok) {
+          this.completeError = { warning: false, message: (terminal && terminal.error) || 'Setup failed. Check ~/.logos/logs/gateway.log.' };
+          this.completing = false;
+          return;
         }
+
+        // Claim the auto-login session cookies the bg task stashed.
+        // Single-use endpoint — a second call returns 404. Failure
+        // means either another tab already claimed or token issuance
+        // failed bg-side; both paths fall through to /login.
+        let needsLogin = false, warning = null;
+        try {
+          const sResp = await fetch('/api/setup/session', { credentials: 'include' });
+          const sData = await sResp.json().catch(() => ({}));
+          if (sResp.ok) {
+            needsLogin = !!sData.needs_login;
+            warning = sData.warning || null;
+          } else {
+            needsLogin = true;
+          }
+        } catch {
+          needsLogin = true;
+        }
+
+        if (warning) {
+          // Endpoint unreachable but setup saved — show warning, user clicks to continue.
+          this.completeError = { warning: true, message: warning };
+          this.completing = false;
+          return;
+        }
+
+        try { localStorage.removeItem('logos_setup_scan'); localStorage.removeItem('logos_setup_progress'); localStorage.removeItem('logos_setup_progress_v2'); } catch {}
+        try { sessionStorage.setItem('logos_fl', '1'); } catch {}
+        // Pre-load the chosen LM Studio model so the user's first
+        // chat isn't a 15-60s cold-boot. Local-only step — skipped
+        // for frontier (cloud) tracks since their models don't live
+        // in VRAM.
+        await this._preloadModelIfLocal();
+        await this._flyLogoToNav();
+        await this._fadeOutPage();
+        window.location.href = needsLogin ? '/login' : '/';
+      } catch (e) {
+        clearTimeout(terminalTimeoutId);
+        this._stopCompletePolling();
+        this.completeError = { warning: false, message: 'Network error: ' + e.message };
         this.completing = false;
       }
     },

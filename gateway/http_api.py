@@ -5262,6 +5262,7 @@ async def start_http_api(runner: Any, port: int = 8091) -> None:
     app.router.add_post("/api/setup/prewarm",     _sh.handle_setup_prewarm)
     app.router.add_post("/api/setup/preload-model", _sh.handle_setup_preload_model)
     app.router.add_get("/api/setup/progress",     _sh.handle_setup_progress)
+    app.router.add_get("/api/setup/session",      _sh.handle_setup_session_claim)
     app.router.add_get("/api/setup/discover",       _sh.handle_setup_discover)
     app.router.add_post("/api/setup/set-remote",   _sh.handle_setup_set_remote)
     app.router.add_get("/api/setup/env-probe",       _sh.handle_setup_env_probe)

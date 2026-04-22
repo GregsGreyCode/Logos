@@ -118,6 +118,39 @@ def _setup_progress_update(
 _STAGE_MIN_DWELL_SECS = 0.5
 _paced_stage_start_ts: float = 0.0
 
+# Background task running the slow half of /api/setup/complete. Set by
+# handle_setup_complete, cleared implicitly when the task finishes. Used
+# as a concurrency guard — a second POST while the first is running
+# returns 409 instead of clobbering _SETUP_PROGRESS.
+_SETUP_BG_TASK: Optional["asyncio.Task"] = None
+
+# One-shot session handoff. The background task mints auth tokens at the
+# end of setup and stashes them here; the frontend claims them via
+# GET /api/setup/session once /api/setup/progress reports done=ok=True.
+# Single-use: the claim endpoint clears the slot on read so a lingering
+# tab can't re-grab cookies later. The handoff dance exists because
+# /api/setup/complete returns 202 before cookies can be minted — the
+# 202 response is already flushed by the time the background task gets
+# to token issuance, so we can't set cookies on it directly.
+_SETUP_PENDING_SESSION: Optional[dict] = None
+
+
+class _SetupUserError(Exception):
+    """User-actionable error raised from the background setup task.
+
+    Distinct from generic exceptions so the outer handler can log at
+    WARNING (not ERROR) and surface the detail verbatim to the UI
+    instead of a stack trace. ``status`` is kept for parity with the
+    old synchronous handler even though the HTTP response is already
+    gone by the time this raises.
+    """
+
+    def __init__(self, error: str, detail: str, status: int = 500):
+        super().__init__(detail)
+        self.error = error
+        self.detail = detail
+        self.status = status
+
 
 # ─────────────────────────────────────────────────────────────────────────
 # LM Studio context-probe helpers (2026-04-21)
@@ -3391,7 +3424,21 @@ async def handle_validate_provider(request: web.Request) -> web.Response:
 
 
 async def handle_setup_complete(request: web.Request) -> web.Response:
-    """Save machine config and mark setup complete."""
+    """POST /api/setup/complete — kick off setup in a background task.
+
+    Returns 202 immediately with ``{"status": "started"}``. The slow
+    work (provision_route / spawn_sandbox / deploy_hermes_config) runs
+    in ``_SETUP_BG_TASK`` and writes to ``_SETUP_PROGRESS``; the
+    frontend polls ``/api/setup/progress`` for the terminal ``done`` /
+    ``ok`` state and, on success, claims its auto-login cookies via
+    ``GET /api/setup/session``.
+
+    Replaces the synchronous handler that blocked the request for
+    2-8 minutes on fresh installs and tripped Cloudflare Free's 100s
+    origin-timeout cap (returning a 504 to the browser while setup
+    was still happily running server-side).
+    """
+    global _SETUP_BG_TASK, _SETUP_PENDING_SESSION
     try:
         body = await request.json()
     except Exception:
@@ -3399,14 +3446,49 @@ async def handle_setup_complete(request: web.Request) -> web.Response:
 
     endpoint = (body.get("endpoint") or "").strip()
     model = (body.get("model") or "").strip()
-
     if not endpoint or not model:
         return web.json_response({"error": "endpoint and model required"}, status=400)
 
-    # Reset progress tracker at the start of every complete attempt so
-    # retries get a fresh state instead of stale "done" from the last run.
-    _SETUP_PROGRESS.update({"stage": "idle", "label": "", "started_at": 0,
-                            "updated_at": 0, "done": False, "ok": False, "error": ""})
+    if _SETUP_BG_TASK is not None and not _SETUP_BG_TASK.done():
+        return web.json_response(
+            {"error": "setup_in_progress",
+             "detail": "Another setup is already running. Wait for it to "
+                       "finish or reload this page."},
+            status=409,
+        )
+
+    _SETUP_PENDING_SESSION = None
+    _SETUP_PROGRESS.update({
+        "stage": "idle", "label": "", "started_at": 0,
+        "updated_at": 0, "done": False, "ok": False, "error": "",
+        "substage": "", "sub_percent": 0,
+    })
+
+    _SETUP_BG_TASK = asyncio.create_task(
+        _run_setup_complete_bg(
+            body,
+            request_remote=request.remote,
+            user_agent=request.headers.get("User-Agent") or "",
+        )
+    )
+    return web.json_response({"status": "started"}, status=202)
+
+
+async def _run_setup_complete_bg(
+    body: dict,
+    request_remote: Optional[str],
+    user_agent: str,
+) -> None:
+    """Background implementation of /api/setup/complete.
+
+    Writes progress to ``_SETUP_PROGRESS`` throughout; stashes session
+    tokens in ``_SETUP_PENDING_SESSION`` on success. Exceptions are
+    caught and converted to a terminal progress update — raising past
+    this boundary would just log a stack trace with no response to
+    attach it to.
+    """
+    endpoint = (body.get("endpoint") or "").strip()
+    model = (body.get("model") or "").strip()
     await _paced_progress_update("init", "Saving setup configuration\u2026")
 
     try:
@@ -3477,7 +3559,11 @@ async def handle_setup_complete(request: web.Request) -> web.Response:
                 # Single-server path
                 result = _seed.apply_single_machine_setup(endpoint)
                 if "error" in result and result["error"] != "machines_already_exist":
-                    return web.json_response(result, status=409)
+                    raise _SetupUserError(
+                        result.get("error", "machine_setup_failed"),
+                        result.get("detail") or str(result),
+                        status=409,
+                    )
                 # Backfill default_model on the newly created machine
                 _single_rec = (body.get("model") or "").strip()
                 if _single_rec:
@@ -3545,17 +3631,17 @@ async def handle_setup_complete(request: web.Request) -> web.Response:
                     )
                 except Exception as _seed_err:
                     logger.error("setup: on-the-fly admin seed failed: %s", _seed_err)
-                    return web.json_response(
-                        {"error": "no_admin_user",
-                         "detail": f"Could not create admin account: {_seed_err}"},
+                    raise _SetupUserError(
+                        "no_admin_user",
+                        f"Could not create admin account: {_seed_err}",
                         status=500,
                     )
             else:
-                return web.json_response(
-                    {"error": "no_admin_user",
-                     "detail": "No admin account exists and no credentials were "
-                               "submitted in the wizard. Fill in the email, "
-                               "username, and password fields on the account step."},
+                raise _SetupUserError(
+                    "no_admin_user",
+                    "No admin account exists and no credentials were "
+                    "submitted in the wizard. Fill in the email, "
+                    "username, and password fields on the account step.",
                     status=500,
                 )
         user_id = primary_admin["id"]
@@ -3684,13 +3770,11 @@ async def handle_setup_complete(request: web.Request) -> web.Response:
                             f"'{conflicting['email']}'. Remove that account in Admin → Users first, "
                             f"or choose a different username."
                         ) if conflicting else f"Username '{setup_username}' is already taken."
-                        return web.json_response(
-                            {"error": "username_taken", "detail": detail}, status=409,
-                        )
+                        raise _SetupUserError("username_taken", detail, status=409)
                     if "unique" in _err_str and "email" in _err_str:
-                        return web.json_response(
-                            {"error": "email_taken",
-                             "detail": f"Email '{setup_email}' is already registered to another account."},
+                        raise _SetupUserError(
+                            "email_taken",
+                            f"Email '{setup_email}' is already registered to another account.",
                             status=409,
                         )
                     raise
@@ -3726,7 +3810,7 @@ async def handle_setup_complete(request: web.Request) -> web.Response:
         auth_db.write_audit_log(
             user_id, "setup_completed",
             metadata={"endpoint": endpoint, "model": model},
-            ip_address=request.remote,
+            ip_address=request_remote,
         )
         logger.info("setup completed: endpoint=%s model=%s by %s", endpoint, model, user_id)
 
@@ -3998,22 +4082,27 @@ async def handle_setup_complete(request: web.Request) -> web.Response:
                 logger.exception(
                     "setup: default agent sandbox spawn failed: %s", _spawn_err,
                 )
-                # Surface the failure as a 500 so the /setup UI can show
-                # a clear error. The agent DB row stays (next retry can
-                # reuse it) but the sandbox didn't come up.
-                return web.json_response(
-                    {
-                        "error": "sandbox_spawn_failed",
-                        "detail": str(_spawn_err)[:800],
-                        "hint": (
-                            "The agent was created in the database but its "
-                            "OpenShell sandbox could not be provisioned. "
-                            "Check ~/.logos/logs/gateway.log or run "
-                            "`logos debug tail -n 200` for the full error."
-                        ),
-                    },
+                # Surface the failure via progress (done=ok=False) so
+                # the /setup UI shows the error instead of spinning
+                # forever. The agent DB row stays (next retry can reuse
+                # it) but the sandbox didn't come up.
+                raise _SetupUserError(
+                    "sandbox_spawn_failed",
+                    f"{str(_spawn_err)[:600]} — The agent was created in "
+                    "the database but its OpenShell sandbox could not be "
+                    "provisioned. Check ~/.logos/logs/gateway.log or run "
+                    "`logos debug tail -n 200` for the full error.",
                     status=500,
                 )
+        except _SetupUserError:
+            # User-actionable failures (sandbox_spawn_failed, etc.)
+            # must propagate to the outer bg handler so progress
+            # reports ok=False. The broad Exception catch below
+            # otherwise demotes them to a warning and lets /setup
+            # march on to issue_session with a broken sandbox,
+            # surfacing "Ready!" for what is actually a failed setup.
+            # (Real bug hit on 2026-04-22.)
+            raise
         except Exception as _default_err:
             logger.warning("setup: could not create default agent: %s", _default_err)
 
@@ -4037,29 +4126,41 @@ async def handle_setup_complete(request: web.Request) -> web.Response:
             auth_db.store_refresh_token(
                 user_id, rtk_hash,
                 expires_at=int(time.time()) + REFRESH_TOKEN_TTL,
-                ip=request.remote,
-                ua=request.headers.get("User-Agent"),
+                ip=request_remote,
+                ua=user_agent,
             )
-            auth_db.write_audit_log(user_id, "setup_autologin", ip_address=request.remote)
+            auth_db.write_audit_log(user_id, "setup_autologin", ip_address=request_remote)
             autologin_ok = True
         except Exception as _tok_err:
             logger.warning("setup: auto-login token issuance failed (%s) — user will be sent to /login", _tok_err)
 
-        payload: dict = {"ok": True}
-        if not autologin_ok:
-            payload["needs_login"] = True
-        if warning:
-            payload["warning"] = warning
+        # Stash session tokens for the frontend to claim via GET
+        # /api/setup/session once it sees done=ok=True in progress.
+        # Can't ride the 202 response — that was sent at POST time,
+        # before this background task started.
+        global _SETUP_PENDING_SESSION
+        _SETUP_PENDING_SESSION = {
+            "access_token": access_token if autologin_ok else None,
+            "refresh_token": raw_refresh if autologin_ok else None,
+            "needs_login": not autologin_ok,
+            "warning": warning,
+        }
 
         await _paced_progress_update("done", "Ready!", done=True, ok=True)
-        resp = web.json_response(payload)
-        if autologin_ok:
-            set_auth_cookies(resp, access_token, raw_refresh)
-        return resp
+    except _SetupUserError as _user_err:
+        logger.warning("setup/complete aborted: %s", _user_err.detail)
+        await _paced_progress_update(
+            "done",
+            f"Setup failed: {_user_err.detail}",
+            done=True, ok=False, error=_user_err.detail[:300],
+        )
     except Exception as exc:
         logger.exception("setup/complete failed: %s", exc)
-        await _paced_progress_update("done", f"Setup failed: {exc}", done=True, ok=False, error=str(exc)[:300])
-        return web.json_response({"error": "internal_error", "detail": str(exc)[:300]}, status=500)
+        await _paced_progress_update(
+            "done",
+            f"Setup failed: {exc}",
+            done=True, ok=False, error=str(exc)[:300],
+        )
 
 
 async def handle_setup_prewarm(request: web.Request) -> web.Response:
@@ -4339,6 +4440,42 @@ async def handle_setup_progress(request: web.Request) -> web.Response:
     during the first-run flow before any session exists).
     """
     return web.json_response(dict(_SETUP_PROGRESS))
+
+
+async def handle_setup_session_claim(request: web.Request) -> web.Response:
+    """GET /api/setup/session — claim the auto-login session after setup.
+
+    /setup/complete returns 202 before setup finishes, so auth cookies
+    can't ride that response. The background task stashes tokens in
+    ``_SETUP_PENDING_SESSION``; the frontend calls this endpoint once
+    ``/api/setup/progress`` reports ``done=ok=True``. Single-use: the
+    slot clears on read so a lingering tab can't re-grab cookies.
+    """
+    global _SETUP_PENDING_SESSION
+    pending = _SETUP_PENDING_SESSION
+    _SETUP_PENDING_SESSION = None
+
+    if pending is None:
+        return web.json_response(
+            {"error": "no_pending_session",
+             "detail": "No pending setup session to claim. Either setup is "
+                       "still running (check /api/setup/progress), it failed, "
+                       "or another tab already claimed the session."},
+            status=404,
+        )
+
+    payload = {"ok": True}
+    if pending.get("needs_login"):
+        payload["needs_login"] = True
+    if pending.get("warning"):
+        payload["warning"] = pending["warning"]
+
+    resp = web.json_response(payload)
+    access = pending.get("access_token")
+    refresh = pending.get("refresh_token")
+    if access and refresh:
+        set_auth_cookies(resp, access, refresh)
+    return resp
 
 
 # ---------------------------------------------------------------------------
