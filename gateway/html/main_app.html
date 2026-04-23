@@ -2200,9 +2200,9 @@
         </div>
         <input x-model="cloudProviderForm.name" type="text" placeholder="Display name"
           class="w-full px-3 py-2 rounded-lg bg-gray-800 border border-gray-700 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-indigo-500">
-        <input x-model="cloudProviderForm.api_key" type="password" placeholder="API key"
+        <input x-model="cloudProviderForm.api_key" @input="cloudProviderModels = []" type="password" placeholder="API key"
           class="w-full px-3 py-2 rounded-lg bg-gray-800 border border-gray-700 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-indigo-500">
-        <input x-show="cloudProviderForm.provider === 'custom'" x-model="cloudProviderForm.base_url" type="text"
+        <input x-show="cloudProviderForm.provider === 'custom'" x-model="cloudProviderForm.base_url" @input="cloudProviderModels = []" type="text"
           placeholder="Base URL (https://api.example.com/v1)"
           class="w-full px-3 py-2 rounded-lg bg-gray-800 border border-gray-700 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-indigo-500">
         <div class="flex items-center gap-2">
@@ -2228,8 +2228,9 @@
           Used to auto-provision a model route when this provider is activated, as the fallback model for new agents that don't pick an explicit route, and to pre-populate the model dropdown in the agent-create form. You can change it per-agent later.
         </p>
         <button @click="createCloudProvider()"
-          :disabled="!cloudProviderForm.name || !cloudProviderForm.api_key"
-          class="w-full py-2 rounded-lg text-xs font-medium bg-indigo-600 text-white hover:bg-indigo-500 disabled:opacity-40 transition-colors">
+          :disabled="!cloudProviderForm.name || !cloudProviderForm.api_key || !cloudProviderModels.length"
+          :title="!cloudProviderModels.length ? 'Validate the API key first — the key must return a model list before the provider can be added.' : ''"
+          class="w-full py-2 rounded-lg text-xs font-medium bg-indigo-600 text-white hover:bg-indigo-500 disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
           Add Provider
         </button>
       </div>
@@ -3940,6 +3941,16 @@
         <template x-if="agentChannelsForm.result?.ok && agentChannelsForm.result?.details?.username">
           <span class="text-gray-400"> @<span x-text="agentChannelsForm.result.details.username"></span></span>
         </template>
+      </div>
+      <!-- Post-save hint. Without a home channel the agent can't
+           initiate outbound messages ("I don't know where to send
+           this") \u2014 so surface the one-command fix the moment the
+           user saves the token, not only after they hit the error. -->
+      <div class="text-[11px] text-gray-500 leading-relaxed border-t border-gray-800 pt-2">
+        <span class="text-gray-400 font-medium">Next step:</span>
+        open the chat with your bot on the platform and send
+        <code class="px-1 py-0.5 rounded bg-gray-800 text-gray-300 font-mono text-[10.5px]">/sethome</code>
+        to register that chat as the home channel. Without this, the agent can only reply to inbound messages \u2014 it won't know where to send outbound ones.
       </div>
     </div>
 
@@ -10706,20 +10717,18 @@ user_accessible: true
         if (r.ok) {
           this.namedAgentFormOpen = false;
           this.namedAgentForm = { name: '', soul_slug: 'general', model: '', model_route_id: null, description: '', char_index: null, duplicate_from: null, duplicate_from_name: null };
-          await this.loadNamedAgents();
-          // Belt-and-braces: the $watch('namedAgents') in initWorld()
-          // should already have fired syncAgents via the reactive
-          // setter, but in practice new sprites sometimes didn't
-          // appear until the user refreshed. Cheapest fix is an
-          // explicit sync here — scene.syncAgents is idempotent
-          // (diffs by name), so a duplicate call is a no-op.
-          try { this.worldManager?.syncAgents?.(this._worldAgentList()); } catch (_) {}
-          // Post-transition resize: the agent column width flips
-          // 16rem ↔ 24rem on form close; give the CSS transition
-          // time to settle, then tell Phaser to re-measure.
-          setTimeout(() => {
-            try { this.worldManager?.forceResize?.(); } catch (_) {}
-          }, 400);
+          // Hard page reload after create. The soft-refresh path
+          // (loadNamedAgents + $watch → Phaser syncAgents + per-tab
+          // state refetch) was missing enough derived state — sidebar
+          // pills, channel creds, sandbox rows, agent-world sprite
+          // positions, cost cards — that new agents sometimes
+          // rendered half-materialised until the user hit F5.
+          // Reloading is the least-clever fix: one fetch of every
+          // view re-runs the full init path and guarantees the new
+          // agent is visible everywhere. Downside is losing any
+          // in-flight create-form state, but the form was already
+          // reset above so there's nothing to preserve here.
+          window.location.reload();
         } else {
           const d = await r.json().catch(() => ({}));
           this.namedAgentMsg = { type: 'error', text: d.error || 'Failed to create agent' };

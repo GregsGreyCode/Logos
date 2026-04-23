@@ -1748,10 +1748,10 @@
 
         <!-- Soul grid — General is the only selectable option on first run.
              The remaining cards are shown as a teaser, fading out top-to-bottom. -->
-        <div class="relative mb-6">
+        <div class="relative mb-3">
           <div class="grid grid-cols-2 gap-2"
-            style="-webkit-mask-image:linear-gradient(to bottom,black 40%,transparent 100%);mask-image:linear-gradient(to bottom,black 40%,transparent 100%);">
-            <template x-for="(soul, idx) in soulOptions.slice(0, 5)" :key="soul.slug">
+            style="-webkit-mask-image:linear-gradient(to bottom,black 55%,transparent 100%);mask-image:linear-gradient(to bottom,black 55%,transparent 100%);">
+            <template x-for="(soul, idx) in soulOptions.slice(0, 4)" :key="soul.slug">
               <button
                 @click="soul.slug === 'general' && (selectedSoul = soul.slug)"
                 class="text-left p-3 rounded-xl border transition-colors duration-200 relative overflow-hidden"
@@ -1763,7 +1763,7 @@
                 :style="soul.slug === 'general' && selectedSoul === soul.slug
                   ? 'filter: hue-rotate(var(--hue-deg, 0deg))'
                   : soul.slug !== 'general'
-                    ? ('opacity:' + [0.45, 0.30, 0.18, 0.10][idx - 1])
+                    ? ('opacity:' + [0.45, 0.30, 0.18][idx - 1])
                     : ''">
                 <!-- icon -->
                 <div class="w-8 h-8 rounded-lg flex items-center justify-center mb-2 text-sm transition-colors"
@@ -2271,13 +2271,6 @@ function setup() {
         name:  'Homelab Investigator',
         desc:  'Investigates infrastructure — containers, Kubernetes, metrics, logs, network. Reports findings; lets you decide what to do.',
         tools: ['Terminal', 'SSH', 'Kubectl', 'Logs', 'File I/O'],
-      },
-      {
-        slug:  'homelab-code-fix',
-        icon:  '⌗',
-        name:  'Homelab Code Fix',
-        desc:  'Fixes code in homelab repositories. Reads before writing, makes targeted changes, explains what changed and why.',
-        tools: ['File I/O', 'Terminal', 'Git', 'Code execution'],
       },
       {
         slug:  'news-anchor',

@@ -338,11 +338,60 @@ def _ensure_image_in_cluster(
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             bufsize=4 * 1024 * 1024,
         )
-        # Hand-rolled progress-counting pipe: read from docker save,
-        # write to ctr import, emit sub_percent every ~500 ms. 4 MB
-        # chunks keep CPU overhead negligible vs raw pipe throughput.
+        # Bump OS-level pipe buffer on both pipes from the Linux 64 KiB
+        # default to 1 MiB. With the small default buffer, ctr's stdin
+        # fills almost immediately once it starts unpacking a layer,
+        # which stalls Python inside load.stdin.write() - progress
+        # reporting appears to freeze at whatever MB we last emitted,
+        # then "flies ahead" by hundreds of MB when ctr catches up and
+        # the pipe drains. 1 MiB is the kernel's common upper bound
+        # without CAP_SYS_RESOURCE; F_SETPIPE_SZ silently caps to
+        # /proc/sys/fs/pipe-max-size so this is safe to always attempt.
+        try:
+            import fcntl as _fcntl
+            _F_SETPIPE_SZ = getattr(_fcntl, "F_SETPIPE_SZ", 1031)
+            for _fh in (save.stdout, load.stdin):
+                try:
+                    _fcntl.fcntl(_fh.fileno(), _F_SETPIPE_SZ, 1 << 20)
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+        # Heartbeat thread: re-emits the last-known byte count every
+        # ~1 s, including while the main loop is blocked inside
+        # load.stdin.write() waiting for ctr to drain. Fixes the
+        # "stalls at 20 MB, then flies to 636 MB" UX - ctr IS making
+        # progress inside the cluster during those silent windows, but
+        # the reader loop can't advance bytes_read until its write()
+        # returns. A separate emitter thread keeps the label moving.
+        import threading as _threading
+        _hb_stop = _threading.Event()
+        _hb_state = {"bytes": 0}
+        def _heartbeat() -> None:
+            while not _hb_stop.wait(1.0):
+                b = _hb_state["bytes"]
+                if total_bytes:
+                    pct = min(99, int(b * 100 / total_bytes))
+                    _emit(
+                        f"Staging image into cluster\u2026 {pct}% "
+                        f"({b // (1024 ** 2)} / {total_bytes // (1024 ** 2)} MB)",
+                        substage="import_image", sub_percent=pct,
+                    )
+                else:
+                    _emit(
+                        f"Staging image into cluster\u2026 "
+                        f"{b // (1024 ** 2)} MB transferred",
+                        substage="import_image", sub_percent=0,
+                    )
+        _hb_thread = _threading.Thread(target=_heartbeat, daemon=True)
+        _hb_thread.start()
+
+        # Hand-rolled copy pipe: read from docker save, write to ctr
+        # import. The heartbeat thread above owns UI emission - this
+        # loop just updates _hb_state so both sides see the same count.
+        # 4 MB chunks keep CPU overhead negligible vs raw pipe throughput.
         bytes_read = 0
-        last_emit_ts = 0.0
         try:
             while True:
                 chunk = save.stdout.read(4 * 1024 * 1024)
@@ -353,20 +402,36 @@ def _ensure_image_in_cluster(
                 except BrokenPipeError:
                     break
                 bytes_read += len(chunk)
-                now = time.time()
-                if total_bytes and (now - last_emit_ts) > 0.5:
-                    pct = min(99, int(bytes_read * 100 / total_bytes))
-                    _emit(
-                        f"Staging image into cluster\u2026 {pct}% "
-                        f"({bytes_read // (1024 ** 2)} / {total_bytes // (1024 ** 2)} MB)",
-                        substage="import_image", sub_percent=pct,
-                    )
-                    last_emit_ts = now
+                _hb_state["bytes"] = bytes_read
         finally:
             try: save.stdout.close()
             except Exception: pass
             try: load.stdin.close()
             except Exception: pass
+
+        # Stream EOF reached. ctr now does its post-stream work:
+        # finalising layer unpacking and writing the image manifest
+        # to the content store. This is a 10-60 s silent window on
+        # cold installs. Stop the streaming heartbeat and start an
+        # "unpacking" one so the progress bar doesn't freeze at 99%.
+        _hb_stop.set()
+        _hb_thread.join(timeout=2.0)
+        _emit(
+            "Unpacking image layers inside cluster\u2026 "
+            f"({bytes_read // (1024 ** 2)} MB transferred)",
+            substage="import_image", sub_percent=99,
+        )
+        _unpack_stop = _threading.Event()
+        _unpack_t0 = time.time()
+        def _unpack_heartbeat() -> None:
+            while not _unpack_stop.wait(2.0):
+                elapsed = int(time.time() - _unpack_t0)
+                _emit(
+                    f"Unpacking image layers inside cluster\u2026 ({elapsed}s)",
+                    substage="import_image", sub_percent=99,
+                )
+        _unpack_thread = _threading.Thread(target=_unpack_heartbeat, daemon=True)
+        _unpack_thread.start()
         # Wait for both sides to finish. We can't use ``load.communicate()``
         # here because it calls ``self.stdin.flush()`` internally — and we
         # already closed stdin above (required to signal EOF so ctr import
@@ -374,12 +439,16 @@ def _ensure_image_in_cluster(
         # post-exit; their buffered output on a successful import is tiny
         # (one "unpacking..." + "Loaded image" line) so the OS pipe buffer
         # can't fill up and deadlock.
-        save.wait(timeout=30)
         try:
-            load.wait(timeout=600)
-        except subprocess.TimeoutExpired:
-            load.kill()
-            raise
+            save.wait(timeout=30)
+            try:
+                load.wait(timeout=600)
+            except subprocess.TimeoutExpired:
+                load.kill()
+                raise
+        finally:
+            _unpack_stop.set()
+            _unpack_thread.join(timeout=2.0)
         load_stderr = b""
         if load.stderr is not None:
             try: load_stderr = load.stderr.read() or b""
