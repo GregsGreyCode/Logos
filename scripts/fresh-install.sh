@@ -9,7 +9,7 @@
 # away from launching the gateway.
 #
 # Usage:
-#   curl -fsSL https://raw.githubusercontent.com/GregsGreyCode/logos/main/scripts/fresh-install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/GregsGreyCode/Logos/main/scripts/fresh-install.sh | bash
 #
 #   OR (from the repo directory):
 #   ./scripts/fresh-install.sh
@@ -49,7 +49,7 @@ die()  { printf '%s\n' "${C_RED}✗${C_RESET} $*" >&2; exit 1; }
 hdr()  { printf '\n%s\n%s\n' "${C_CYAN}$*${C_RESET}" "${C_DIM}$(printf '%.0s─' {1..60})${C_RESET}"; }
 
 # ── Config ──
-REPO_URL="${LOGOS_REPO_URL:-https://github.com/GregsGreyCode/logos.git}"
+REPO_URL="${LOGOS_REPO_URL:-https://github.com/GregsGreyCode/Logos.git}"
 REPO_DIR="${LOGOS_REPO_DIR:-$HOME/logos}"
 BRANCH="${LOGOS_BRANCH:-main}"
 PYTHON_VERSION="${PYTHON_VERSION:-3.12}"

@@ -16,7 +16,7 @@ Run the one-line installer:
 
 ```bash
 # Linux / macOS / WSL2
-curl -fsSL https://raw.githubusercontent.com/GregsGreyCode/logos/main/scripts/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/GregsGreyCode/Logos/main/scripts/install.sh | bash
 ```
 
 :::tip Windows Users
