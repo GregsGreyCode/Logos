@@ -47,7 +47,7 @@ const config: Config = {
         docs: {
           routeBasePath: '/',  // Docs at the root of /docs/
           sidebarPath: './sidebars.ts',
-          editUrl: 'https://github.com/GregsGreyCode/logos/edit/main/website/',
+          editUrl: 'https://github.com/GregsGreyCode/Logos/edit/main/website/',
         },
         blog: false,
         theme: {

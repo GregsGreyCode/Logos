@@ -33,7 +33,7 @@ Set your provider with `logos model` or by editing `~/.logos/.env`. See the [Env
 **Not natively.** Logos requires a Unix-like environment. On Windows, install [WSL2](https://learn.microsoft.com/en-us/windows/wsl/install) and run Hermes from inside it. The standard install command works perfectly in WSL2:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/GregsGreyCode/logos/main/scripts/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/GregsGreyCode/Logos/main/scripts/install.sh | bash
 ```
 
 ### Is my data sent anywhere?
@@ -144,7 +144,7 @@ source ~/.bashrc
 # If you previously installed with sudo, clean up:
 sudo rm /usr/local/bin/hermes
 # Then re-run the standard installer
-curl -fsSL https://raw.githubusercontent.com/GregsGreyCode/logos/main/scripts/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/GregsGreyCode/Logos/main/scripts/install.sh | bash
 ```
 
 ---
@@ -437,5 +437,5 @@ If an MCP server crashes mid-request, Hermes will report a timeout. Check the se
 
 If your issue isn't covered here:
 
-1. **Search existing issues:** [GitHub Issues](https://github.com/GregsGreyCode/logos/issues)
+1. **Search existing issues:** [GitHub Issues](https://github.com/GregsGreyCode/Logos/issues)
 2. **File a bug report:** Include your OS, Python version (`python3 --version`), Hermes version (`hermes --version`), and the full error message
