@@ -16,6 +16,13 @@
 # Always wiped (no prompt):
 #   - Running Logos gateway process
 #   - All openshell-cluster-* and hermes-* Docker containers
+#   - All openshell-cluster-* and hermes-* Docker named volumes
+#     (reason: each cluster container mounts /var/lib/rancher/k3s from a
+#     named volume — that's where k3s stores etcd, PVC data, and pod
+#     records. Nuking containers alone leaves the volumes intact, so on
+#     reinstall the new cluster container re-mounts the old state and
+#     previously-provisioned sandboxes walk right back out of etcd.
+#     Symptom: auth.db has 1 agent but `openshell sandbox list` shows four.)
 #   - Docker images: ghcr.io/nvidia/openshell/cluster:* and hermes-sandbox:*
 #     (reason: version skew between a stale cluster image and the current
 #     openshell CLI produces a cryptic "supervisor session not connected"
@@ -79,6 +86,7 @@ printf '  config:      %s\n' "$LOGOS_HOME"
 printf '  openshell:   %s\n' "$OPENSHELL_CONFIG"
 printf '  CLI:         ~/.local/bin/logos\n'
 printf '  containers:  openshell-cluster-*, hermes-*\n'
+printf '  volumes:     openshell-cluster-*, hermes-*\n'
 printf '  images:      ghcr.io/nvidia/openshell/cluster:*, hermes-sandbox:*\n'
 printf '  gateway:     any running logos gateway.run process\n'
 printf '\n  prompted:    ~/.local/bin/openshell (separate tool)\n'
@@ -123,6 +131,26 @@ if command -v docker >/dev/null 2>&1; then
     fi
 else
     warn "docker not available — skipping container cleanup"
+fi
+
+# ── 2b. Delete OpenShell + sandbox Docker volumes (always) ──────────────
+# Each cluster container mounts /var/lib/rancher/k3s from a named volume
+# (e.g. openshell-cluster-qwen3-5-9b). That path holds k3s's etcd, PVC
+# data, and pod records. Without this step the volumes survive `docker rm`
+# and the next reinstall's fresh cluster container re-mounts them,
+# resurrecting every previously-provisioned sandbox. Run this AFTER the
+# container removal above — Docker refuses to rm volumes still in use.
+hdr "OpenShell volumes"
+if command -v docker >/dev/null 2>&1; then
+    VOLUMES=$(docker volume ls --format '{{.Name}}' 2>/dev/null | grep -E "^(openshell-cluster-|hermes-)" || true)
+    if [[ -n "$VOLUMES" ]]; then
+        printf '%s\n' "$VOLUMES" | sed 's/^/  /'
+        while IFS= read -r v; do
+            docker volume rm -f "$v" >/dev/null 2>&1 && ok "removed volume $v" || warn "could not remove volume $v"
+        done <<<"$VOLUMES"
+    else
+        ok "no openshell / sandbox volumes to remove"
+    fi
 fi
 
 # ── 3. Delete OpenShell cluster + sandbox Docker images (always) ────────
