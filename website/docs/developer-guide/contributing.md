@@ -34,7 +34,7 @@ We value contributions in this order:
 ### Clone and Install
 
 ```bash
-git clone --recurse-submodules https://github.com/GregsGreyCode/logos.git
+git clone --recurse-submodules https://github.com/GregsGreyCode/Logos.git
 cd logos
 
 # Create venv with Python 3.11
@@ -231,7 +231,7 @@ kubectl rollout status  deployment/logos -n logos
 
 ## Reporting Issues
 
-- Use [GitHub Issues](https://github.com/GregsGreyCode/logos/issues)
+- Use [GitHub Issues](https://github.com/GregsGreyCode/Logos/issues)
 - Include: OS, Python version, Hermes version (`logos version`), full error traceback
 - Include steps to reproduce
 - Check existing issues before creating duplicates
@@ -239,10 +239,10 @@ kubectl rollout status  deployment/logos -n logos
 
 ## Community
 
-- **GitHub Issues**: [github.com/GregsGreyCode/logos/issues](https://github.com/GregsGreyCode/logos/issues)
+- **GitHub Issues**: [github.com/GregsGreyCode/Logos/issues](https://github.com/GregsGreyCode/Logos/issues)
 - **GitHub Discussions**: For design proposals and architecture discussions
 - **Skills Hub**: Upload specialized skills and share with the community
 
 ## License
 
-By contributing, you agree that your contributions will be licensed under the [MIT License](https://github.com/GregsGreyCode/logos/blob/main/LICENSE).
+By contributing, you agree that your contributions will be licensed under the [MIT License](https://github.com/GregsGreyCode/Logos/blob/main/LICENSE).

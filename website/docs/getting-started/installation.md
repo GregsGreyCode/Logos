@@ -13,7 +13,7 @@ Get Logos up and running with the one-line installer or a fully manual install.
 ### Linux / macOS / WSL2
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/GregsGreyCode/logos/main/scripts/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/GregsGreyCode/Logos/main/scripts/install.sh | bash
 ```
 
 The installer handles everything automatically — all dependencies (Python, Node.js, ripgrep, ffmpeg), the repo clone, virtual environment, global `logos` and `hermes` command setup, and LLM provider configuration.
@@ -70,7 +70,7 @@ If you prefer full control over the installation process, follow these steps.
 Clone with `--recurse-submodules` to pull the required submodules:
 
 ```bash
-git clone --recurse-submodules https://github.com/GregsGreyCode/logos.git
+git clone --recurse-submodules https://github.com/GregsGreyCode/Logos.git
 cd logos
 ```
 
@@ -230,7 +230,7 @@ For those who just want the commands:
 curl -LsSf https://astral.sh/uv/install.sh | sh
 
 # Clone & enter
-git clone --recurse-submodules https://github.com/GregsGreyCode/logos.git
+git clone --recurse-submodules https://github.com/GregsGreyCode/Logos.git
 cd logos
 
 # Create venv with Python 3.11
