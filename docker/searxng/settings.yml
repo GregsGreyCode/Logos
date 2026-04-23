@@ -6,14 +6,60 @@
 use_default_settings: true
 
 search:
+  # html + json: agents query with format=json; the HTML UI stays usable
+  # for humans debugging on :8888 directly.
   formats:
     - html
     - json
+  # Upstream engines are slow or throttled under load (especially news
+  # aggregators). The default 3.0s per-engine timeout drops half the
+  # engines on any given query, which surfaces to the agent as "SearxNG
+  # is restricted / only returned 3 hits". Raising request_timeout to
+  # 10s lets slow engines (BBC, Reuters, Google News) actually reply,
+  # with max_request_timeout as the hard ceiling.
+  request_timeout: 10.0
+  max_request_timeout: 15.0
+  default_lang: "en"
+  safe_search: 0
 
 server:
   # Stable secret, safe to be a fixed string because the instance is
   # local-only and not exposed on the public internet. Users who want a
   # hardened setup can override this volume with their own settings.yml.
   secret_key: "logos-local-searxng-dev-secret"
+  # Disable the anti-bot limiter for local-only use. Agents submit
+  # structured queries quickly; with the limiter on they get 429s.
   limiter: false
   public_instance: false
+
+# Per-engine overrides. Upstream SearxNG disables many news/reference
+# engines by default to keep a fresh install snappy; that's the wrong
+# trade-off for an agent workflow where news sweeps matter. Flip the
+# commonly-useful ones on. Keys match the engine `name:` entries in
+# upstream `searx/settings.yml` — unknown names are silently ignored
+# by SearxNG, so the block is safe across upstream version bumps.
+engines:
+  - name: bing news
+    disabled: false
+  - name: google news
+    disabled: false
+  - name: duckduckgo news
+    disabled: false
+  - name: reuters
+    disabled: false
+  - name: bbc
+    disabled: false
+  - name: wikipedia
+    disabled: false
+  - name: wikidata
+    disabled: false
+  - name: reddit
+    disabled: false
+  - name: github
+    disabled: false
+  - name: stackoverflow
+    disabled: false
+  - name: arxiv
+    disabled: false
+  - name: hackernews
+    disabled: false
