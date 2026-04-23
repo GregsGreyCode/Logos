@@ -5585,6 +5585,14 @@ async def start_http_api(runner: Any, port: int = 8091) -> None:
                        admin_handlers.handle_internal_embedding_stats)
     app.router.add_post("/api/internal/embedding-backfill",
                         admin_handlers.handle_internal_embedding_backfill)
+    # Sandbox-to-gateway turn mirror: hermes `agent:end` hooks inside
+    # each sandbox POST here so Telegram/Discord/Slack conversations
+    # land in the gateway's sessions + dispatches tables, where the
+    # Chats sidebar pill query at /api/platform-sessions can find
+    # them. Auth via shared secret in X-Mirror-Token header — not a
+    # CSRF-guarded user route; bypass the CSRF middleware.
+    from gateway.mirror_receiver import _handle_mirror_turn as _mirror_h
+    app.router.add_post("/api/internal/mirror-turn", _mirror_h)
     # User ↔ platform identity links (Admin → Users or Config → Messaging)
     app.router.add_get("/api/admin/platform-links",
                        _mm(admin_handlers.handle_platform_links_list))

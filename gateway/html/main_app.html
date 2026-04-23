@@ -1328,7 +1328,26 @@
                  The `switchingAgentIds` model-switch case overlays on
                  top — that's still pure UI state, no sandbox list
                  lookup needed. -->
-            <template x-if="!chatLoading && activeInstance?.source === 'named' && !(activeInstance.worker_connected && activeInstance.worker_healthy)">
+            <!-- Credential-refresh banner. Wins priority over the
+                 generic sandbox-state banner below because "the
+                 bot token changed and hermes is bouncing" is a
+                 user-triggered action with known bounded time
+                 (~20-30s), whereas the lower banner assumes an
+                 unexpected sandbox state. -->
+            <template x-if="credentialRefreshingAgentIds.includes(activeAgent?.id)">
+              <div class="mx-4 mt-2 mb-1 px-4 py-3 rounded-lg border flex items-start gap-3 text-sm shrink-0 bg-indigo-950/40 border-indigo-900/60 text-indigo-300">
+                <span class="animate-spin inline-block text-lg shrink-0 mt-0.5">&#9881;</span>
+                <div class="flex-1 min-w-0">
+                  <div class="font-medium">
+                    Updating credentials for <span x-text="activeInstance?.name || 'agent'"></span>&hellip;
+                  </div>
+                  <div class="text-xs mt-0.5 text-indigo-400/80">
+                    Platform adapters (Telegram / Discord / Slack) load tokens at hermes boot, so the sandbox is cycling hermes to pick up your change. Usually takes 20&ndash;30 seconds; messages sent here will queue and dispatch once the agent is back.
+                  </div>
+                </div>
+              </div>
+            </template>
+            <template x-if="!chatLoading && activeInstance?.source === 'named' && !credentialRefreshingAgentIds.includes(activeAgent?.id) && !(activeInstance.worker_connected && activeInstance.worker_healthy)">
               <div class="mx-4 mt-2 mb-1 px-4 py-3 rounded-lg border flex items-start gap-3 text-sm shrink-0"
                    :class="sandboxStateForAgent(activeInstance?.name).state === 'missing' && !agentRuntimeRestarting ? 'bg-red-950/40 border-red-900/60 text-red-300'
                                                                                                                      : 'bg-yellow-950/40 border-yellow-900/60 text-yellow-300'">
@@ -6667,6 +6686,16 @@ function app() {
     // up the change when we reassign with a new array literal in
     // switchAgentRoute.
     switchingAgentIds: [],
+    // Agents whose hermes runtime is mid-restart because a platform
+    // credential (Telegram/Discord/Slack bot token) was just added,
+    // edited, or deleted. Adapters instantiate at hermes boot, so
+    // hermes has to cycle (~20-30s) before the new token is live.
+    // During that window the worker is unhealthy — without a banner
+    // the chat UI just shows the "Agent runtime not responding" red
+    // dot, which reads like a failure. This list drives a "Updating
+    // credentials…" banner in the chat view and auto-clears when
+    // worker_healthy flips true (or after the safety timeout).
+    credentialRefreshingAgentIds: [],
     // Cached spawn-duration stats from /admin/spawn-stats. Shape:
     //   { warm: {count, median_ms, p90_ms}, cold: {count, median_ms, p90_ms} }
     // null until first fetch; medians may be null until enough samples
@@ -10286,6 +10315,19 @@ user_accessible: true
         }
         this.namedAgents = fresh;
         this._updateProvisioningTracker();
+        // Auto-clear credential-refresh flags for agents whose worker
+        // is back to healthy. The poll runs every 3s so the banner
+        // disappears within one cycle of hermes completing its
+        // restart — typically 20-30s after the credential save.
+        if ((this.credentialRefreshingAgentIds || []).length) {
+          const stillRefreshing = (this.credentialRefreshingAgentIds || []).filter(id => {
+            const a = fresh.find(x => x.id === id);
+            return a && !(a.worker_connected && a.worker_healthy);
+          });
+          if (stillRefreshing.length !== this.credentialRefreshingAgentIds.length) {
+            this.credentialRefreshingAgentIds = stillRefreshing;
+          }
+        }
         fetchOk = true;
       } catch (e) {
         // Leave the existing namedAgents in place — clearing it on a
@@ -12211,6 +12253,27 @@ user_accessible: true
       this.allAgentChannelsLoading = false;
     },
 
+    // Mark an agent as mid-credential-refresh. The chat banner watches
+    // this list and auto-clears an entry when the worker comes back
+    // healthy (via loadNamedAgents' poll loop) — the safety-net timer
+    // catches the pathological "worker never recovers" case so the
+    // banner doesn't stick forever.
+    _markCredentialRefreshing(agentId) {
+      if (!agentId) return;
+      const set = new Set(this.credentialRefreshingAgentIds || []);
+      set.add(agentId);
+      this.credentialRefreshingAgentIds = Array.from(set);
+      // Safety timeout: clear after 60s regardless. Typical refresh
+      // completes in ~20-30s; 60s covers the slow case without
+      // leaving a stale banner forever if something goes wrong.
+      setTimeout(() => {
+        const next = (this.credentialRefreshingAgentIds || []).filter(id => id !== agentId);
+        if (next.length !== (this.credentialRefreshingAgentIds || []).length) {
+          this.credentialRefreshingAgentIds = next;
+        }
+      }, 60000);
+    },
+
     async addAgentChannel() {
       const f = this.agentChannelsForm;
       if (!f.agent_id) { f.result = {ok: false, message: 'Pick an agent'}; return; }
@@ -12238,6 +12301,11 @@ user_accessible: true
         } else {
           f.result = {ok: true, message: 'Saved', details: d.validated?.details};
           f.token = '';
+          // Backend bounces hermes inside the sandbox to pick up the
+          // new adapter token — mark the agent so the chat UI shows
+          // "Updating credentials…" instead of the red "not responding"
+          // dot for the ~20-30s the restart takes.
+          this._markCredentialRefreshing(f.agent_id);
           await this.loadAgentChannels(f.agent_id);
         }
       } catch(e) {
@@ -12270,8 +12338,16 @@ user_accessible: true
             signal: ctrl.signal,
           },
         );
-        if (r.ok) await this.loadAgentChannels(agentId);
-        else this.agentChannelsError = 'Delete failed: ' + (await r.text() || r.statusText);
+        if (r.ok) {
+          // Delete also triggers a hermes respawn inside the sandbox
+          // so the adapter stops using the removed token. Same
+          // banner flow as add so the user knows the gap in chat
+          // responsiveness is expected.
+          this._markCredentialRefreshing(agentId);
+          await this.loadAgentChannels(agentId);
+        } else {
+          this.agentChannelsError = 'Delete failed: ' + (await r.text() || r.statusText);
+        }
       } catch(e) {
         const msg = e?.name === 'AbortError' ? 'request timed out after 10s' : (e.message || e);
         this.agentChannelsError = 'Delete failed: ' + msg;

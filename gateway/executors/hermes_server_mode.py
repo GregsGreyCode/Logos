@@ -86,7 +86,17 @@ BOOT_MD_PATH_IN_SANDBOX = f"{HERMES_HOME_IN_SANDBOX}/BOOT.md"
 # vars from child process env for security). Keep these two use-sites in
 # sync: _build_env_file reads .env baseline, _build_config_yaml writes
 # the passthrough list.
-_FORWARDED_HOST_ENV = ("SEARXNG_URL",)
+_FORWARDED_HOST_ENV = (
+    "SEARXNG_URL",
+    # Mirror wire: sandbox's logos-mirror hook needs both the gateway
+    # URL and the shared secret to call back with each completed turn.
+    # The gateway generates LOGOS_MIRROR_TOKEN once at startup (see
+    # run.py) and stashes it in its own environment; forwarding it
+    # here makes sure every sandbox respawn picks up the current
+    # value rather than going stale after a token rotation.
+    "LOGOS_MIRROR_TOKEN",
+    "LOGOS_GATEWAY_URL",
+)
 
 # Env vars that the openshell sandbox image sets natively (HTTP_PROXY,
 # CA bundles, etc — see the openshell-sandbox image's entrypoint) and
@@ -705,6 +715,80 @@ def deploy_hermes_launcher(sandbox_name: str, gateway: Optional[str] = None) -> 
 deploy_cancel_monkeypatch = deploy_hermes_launcher
 
 
+_LOGOS_MIRROR_HOOK_SRC = (
+    Path(__file__).parent.parent / "sandbox_hooks" / "logos-mirror"
+)
+
+
+def deploy_logos_mirror_hook(
+    sandbox_name: str, gateway: Optional[str] = None,
+) -> None:
+    """Install the `logos-mirror` hermes hook into the sandbox.
+
+    Writes ``HOOK.yaml`` + ``handler.py`` under
+    ``~/.hermes/hooks/logos-mirror/`` so hermes's ``HookRegistry``
+    picks up the ``agent:end`` handler on next gateway start. The
+    handler POSTs each completed turn back to the host gateway at
+    ``LOGOS_GATEWAY_URL/api/internal/mirror-turn`` so Telegram /
+    Discord / Slack conversations appear in the Chats sidebar.
+
+    Without this, inbound platform chats happen entirely inside the
+    sandbox — hermes handles the turn and replies, but the host
+    gateway's sessions + dispatches tables never see the exchange
+    and ``/api/platform-sessions?platform=telegram`` returns empty.
+
+    Idempotent: overwrites any existing copy each spawn so handler
+    updates ship with the next refresh. Best-effort — a mirror
+    failure is never fatal to the agent itself (same contract as
+    deploy_agent_memories / deploy_agent_skills).
+    """
+    if not _LOGOS_MIRROR_HOOK_SRC.is_dir():
+        logger.warning(
+            "deploy_logos_mirror_hook: source dir missing at %s — skipping",
+            _LOGOS_MIRROR_HOOK_SRC,
+        )
+        return
+
+    manifest = _LOGOS_MIRROR_HOOK_SRC / "HOOK.yaml"
+    handler  = _LOGOS_MIRROR_HOOK_SRC / "handler.py"
+    if not (manifest.exists() and handler.exists()):
+        logger.warning(
+            "deploy_logos_mirror_hook: expected files missing "
+            "(HOOK.yaml=%s, handler.py=%s) — skipping",
+            manifest.exists(), handler.exists(),
+        )
+        return
+
+    # Hermes reads hooks from $HERMES_HOME/hooks/<name>/, and
+    # HERMES_HOME inside the sandbox is HERMES_HOME_IN_SANDBOX
+    # (set via an env var the launcher injects). mkdir then upload
+    # both files — order doesn't matter since HookRegistry only
+    # loads a hook when BOTH files are present.
+    hook_dir = f"{HERMES_HOME_IN_SANDBOX}/hooks/logos-mirror"
+    r = _run_sb_exec(sandbox_name, f"mkdir -p {shlex.quote(hook_dir)}", gateway=gateway)
+    if r.returncode != 0:
+        logger.warning(
+            "deploy_logos_mirror_hook(%s): mkdir failed rc=%d: %s — skipping",
+            sandbox_name, r.returncode, r.stderr.strip()[-300:],
+        )
+        return
+
+    try:
+        _upload_file_via_openshell(sandbox_name, manifest, hook_dir, gateway=gateway)
+        _upload_file_via_openshell(sandbox_name, handler,  hook_dir, gateway=gateway)
+    except Exception as exc:
+        logger.warning(
+            "deploy_logos_mirror_hook(%s): upload failed: %s — skipping",
+            sandbox_name, exc,
+        )
+        return
+
+    logger.info(
+        "hermes_server_mode: logos-mirror hook deployed to %s:%s",
+        sandbox_name, hook_dir,
+    )
+
+
 def deploy_soul_md(
     sandbox_name: str,
     agent_name: str,
@@ -1202,6 +1286,18 @@ def enable_hermes_server_mode(
     # without a boot.md; otherwise uploads the file for the built-in
     # boot_md hook inside hermes to pick up on next gateway:startup.
     deploy_boot_md(sandbox_name, getattr(config, "soul_name", "default"), gateway=gateway)
+    # Install the turn-mirror hook so Telegram/Discord/Slack chats
+    # show up in the Logos Chats sidebar. Fire-and-forget — a failed
+    # install shouldn't keep the agent from booting; the worst case
+    # is an un-mirrored sandbox (same as before we added this).
+    try:
+        deploy_logos_mirror_hook(sandbox_name, gateway=gateway)
+    except Exception as exc:
+        logger.warning(
+            "hermes_server_mode(%s): logos-mirror hook install failed "
+            "(non-fatal, Chats sidebar will be empty for platform chats): %s",
+            sandbox_name, exc,
+        )
     # Upload persisted memories before hermes starts so the memory
     # tool sees them on first request. Best-effort — a bad memory file
     # shouldn't block the sandbox from coming up.
