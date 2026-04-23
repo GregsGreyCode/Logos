@@ -3964,10 +3964,13 @@ function setup() {
             context_length: _nativeMax,  // 0 → backend resolves or skips
           }),
         });
-        if (!r.ok || !r.body) return;
+        if (!r.ok || !r.body) {
+          console.warn('[setup] preload-model HTTP', r.status, '— first chat will pay cold-load cost');
+          return;
+        }
         const reader = r.body.getReader();
         const dec = new TextDecoder();
-        let buf = '', streamDone = false;
+        let buf = '', streamDone = false, sawError = null;
         while (!streamDone) {
           let chunk;
           ({ done: streamDone, value: chunk } = await reader.read());
@@ -3980,12 +3983,20 @@ function setup() {
               const ev = JSON.parse(line.slice(6));
               if (ev.log) this.completeStageLabel = ev.log;
               if (typeof ev.progress === 'number') this.completeStageProgress = ev.progress;
+              if (ev.error) sawError = ev.error;
               if (ev.done) { streamDone = true; break; }
             } catch {}
           }
         }
+        if (sawError) {
+          // Don't block setup completion — the first chat's ensure_loaded
+          // will still try to load the model. But surface the failure to
+          // the console so it's debuggable.
+          console.warn('[setup] preload-model reported error:', sawError);
+        }
       } catch (_e) {
         // best-effort — don't block the setup finish
+        console.warn('[setup] preload-model failed:', _e);
       }
     },
 
