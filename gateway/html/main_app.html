@@ -6198,7 +6198,13 @@ function app() {
     _micRecorder: null,
     _micChunks: [],
     _micTimer: null,
-    loadingChatId: null,
+    // In-flight chat ids. A map so two agents can stream concurrently
+    // (e.g. Takyo responding on one chat while the user types into
+    // Hattie's chat) without the second send stomping the first's
+    // loading state — which used to surface as the second chat's
+    // input showing "Agent is responding…" and its Send button
+    // being disabled because `activeTaskId` leaked across chats.
+    loadingChatIds: {},   // { [chat_id]: true } — presence = streaming
     _liveTools: {},       // { [call_id]: {tool, preview, status, duration_ms} }
     _liveToolOrder: [],   // [call_id, ...] in order of appearance
     lastResponseAt: null,
@@ -6207,10 +6213,12 @@ function app() {
     // backend). The first streaming event (token / tool_start / message)
     // flips this to false and reveals the kawaii thinking phrase.
     isWakingUp: true,
-    // Task-id of the in-flight chat turn (if any). Populated when the
-    // gateway emits task_started; cleared on done/error. Used by the
-    // Stop button in the chat header to call /chat/{id}/cancel.
-    activeTaskId: null,
+    // Task-ids of in-flight chat turns, keyed by chat_id. Populated when
+    // the gateway emits task_started; cleared on done/error. Used by
+    // the Stop button in the chat header to call /chat/{id}/cancel.
+    // Keyed per-chat so one agent's running task doesn't disable the
+    // Send button on another agent's chat.
+    activeTaskIds: {},    // { [chat_id]: task_id }
     lastRefresh: '',
     clientNow: Date.now(),
     // Capabilities (P dropdown) — lazy-fetched per agent. _agentId pinned
@@ -6799,7 +6807,14 @@ function app() {
       return (this.activeInstance.url || '').replace(/\/$/, '');
     },
     get chatLoading() {
-      return this.loadingChatId === this.activeChatId && this.loadingChatId !== null;
+      return !!(this.activeChatId && this.loadingChatIds[this.activeChatId]);
+    },
+    // Task-id for the currently-viewed chat (null if it's not streaming).
+    // Read via getter instead of a bare property so a concurrent stream
+    // on another chat can't mask the active chat's own state.
+    get activeTaskId() {
+      if (!this.activeChatId) return null;
+      return this.activeTaskIds[this.activeChatId] || null;
     },
     get activeChat() {
       return this.chats.find(c => c.id === this.activeChatId) || null;
@@ -9164,10 +9179,17 @@ function app() {
     async cancelActiveTask() {
       if (!this.activeTaskId) return;
       const id = this.activeTaskId;
+      const cid = this.activeChatId;
       // Optimistic clear — if the cancel arrives after done/error we
       // still want the button to stop showing. The 'done'/'error'
-      // handlers will also clear, whichever lands first.
-      this.activeTaskId = null;
+      // handlers will also clear, whichever lands first. Delete the
+      // specific chat's entry instead of nulling a scalar so a
+      // concurrent stream on a different chat keeps its task-id.
+      if (cid) {
+        const next = { ...this.activeTaskIds };
+        delete next[cid];
+        this.activeTaskIds = next;
+      }
       try {
         await fetch(`/chat/${encodeURIComponent(id)}/cancel`, {
           method: 'POST', credentials: 'include',
@@ -9261,7 +9283,7 @@ function app() {
       this.chats = [chat, ...this.chats.filter(c => c.id !== chat.id)];
       this._saveChats();
 
-      this.loadingChatId = chat.id;
+      this.loadingChatIds = { ...this.loadingChatIds, [chat.id]: true };
       // Show "waking up" if this is the first call or the agent has been idle >5 min
       const idleMs = this.lastResponseAt ? (Date.now() - this.lastResponseAt) : Infinity;
       this.isWakingUp = idleMs > 5 * 60 * 1000;
@@ -9323,8 +9345,10 @@ function app() {
               if (d.type === 'task_started' && d.task_id) {
                 // Remember the task_id so the user can cancel via the
                 // Stop button in the chat header. Cleared on 'done' /
-                // 'error'.
-                this.activeTaskId = d.task_id;
+                // 'error'. Keyed by chat.id so two concurrent streams
+                // keep independent task-ids (the Stop button reads
+                // activeTaskId = activeTaskIds[activeChatId]).
+                this.activeTaskIds = { ...this.activeTaskIds, [chat.id]: d.task_id };
               }
               if (d.type === 'tool_progress') {
                 // Live tool progress from worker (legacy). The preview
@@ -9499,7 +9523,9 @@ function app() {
               }
               if (d.type === 'message') { reply = d.content; this.isWakingUp = false; }
               if (d.type === 'done' || d.type === 'error') {
-                this.activeTaskId = null;
+                const _nextT = { ...this.activeTaskIds };
+                delete _nextT[chat.id];
+                this.activeTaskIds = _nextT;
               }
               if (d.type === 'done') {
                 // Keep _liveTools visible so the user can inspect what happened
@@ -9613,7 +9639,19 @@ function app() {
           this._saveChats();
         }
       } finally {
-        this.loadingChatId = null;
+        // Clear THIS chat's loading + task entries only. A concurrent
+        // stream on another chat (two same-model agents mid-reply)
+        // must keep its own state; previously a shared scalar got
+        // nulled here and the second chat lost its task-id and
+        // loading indicator mid-stream.
+        if (chat) {
+          const _next = { ...this.loadingChatIds };
+          delete _next[chat.id];
+          this.loadingChatIds = _next;
+          const _nextT = { ...this.activeTaskIds };
+          delete _nextT[chat.id];
+          this.activeTaskIds = _nextT;
+        }
         this.isWakingUp = false;
         this.lastResponseAt = Date.now();
         this._scrollChat();
@@ -11810,8 +11848,19 @@ user_accessible: true
     get activeAgentSandbox() {
       const agent = this.activeAgent;
       if (!agent) return null;
+      // Match case-insensitively: the server sanitises agent names to
+      // lowercase for the sandbox pod name (hermes-<name> → RFC-1123),
+      // so an agent named "Takyo" lives in pod "hermes-takyo" and its
+      // sandbox list entry's `name` field may carry either the display
+      // form or the sanitised form depending on which path populated it.
+      // Comparing with ===agent.name missed the sanitised row entirely,
+      // leaving activeAgentHealth null → gray or (worse) matching the
+      // wrong sandbox row and evaluating its worker_status as "down".
+      const agentNameLower = (agent.name || '').toLowerCase();
+      const expectedPod = 'hermes-' + agentNameLower;
       return (this.sandboxes || []).find(s =>
-        s.name === agent.name || s.sandbox_name === ('hermes-' + (agent.name || '').toLowerCase())
+        (s.name || '').toLowerCase() === agentNameLower ||
+        s.sandbox_name === expectedPod
       ) || null;
     },
 
