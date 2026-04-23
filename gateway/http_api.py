@@ -3818,15 +3818,34 @@ async def _handle_chat(request: web.Request) -> web.StreamResponse:
     if _agent_model_for_load and not _is_cloud_model:
         try:
             _machines = auth_db.list_machines()
+            _loaded_on_any = False
             for _m in _machines:
                 if _m.get("enabled") and _m.get("endpoint_url"):
                     from gateway.lmstudio_loader import ensure_loaded as _ensure
-                    await _ensure(
+                    _ok = await _ensure(
                         _m["endpoint_url"],
                         _agent_model_for_load,
                         _m.get("api_key"),
                     )
-                    break
+                    if _ok:
+                        _loaded_on_any = True
+                        break
+                    logger.warning(
+                        "ensure_loaded returned False for %s on %s — "
+                        "first chat will pay cold-load cost or fail",
+                        _agent_model_for_load, _m.get("endpoint_url"),
+                    )
+            if not _machines:
+                logger.warning(
+                    "ensure_loaded: no enabled machines in auth_db — "
+                    "agent %s cannot pre-load %s before dispatch",
+                    agent_id, _agent_model_for_load,
+                )
+            elif not _loaded_on_any:
+                logger.warning(
+                    "ensure_loaded: %s failed to load on all %d enabled machine(s)",
+                    _agent_model_for_load, len(_machines),
+                )
         except Exception as _ld_exc:
             logger.warning("lmstudio ensure_loaded skipped: %s", _ld_exc)
 
