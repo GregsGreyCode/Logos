@@ -28,7 +28,17 @@ When you make a file, mention its full path in your reply so the user can open i
 
 When you need to search the web or pull data from a JSON/plain endpoint, **reach for `execute_code` first**, not the browser tools. The browser toolset drives Chromium under the hood; if Chromium isn't in your sandbox image the call will fail and you'll waste iterations trying to install it (the sandbox network policy blocks `pip install playwright`, `npm install`, and the Playwright download CDN). `execute_code` always works — it runs Python inside the sandbox, and `urllib.request` is in the standard library.
 
-A one-shot pattern for SearxNG:
+## Search tool cascade
+
+Use tools in this order — stop as soon as you have what you need:
+
+1. **SearxNG via `execute_code`** — your default. Free, local, always available when the capability is enabled, returns titles + snippets + URLs across many engines. Best for open-ended questions, news sweeps, "find me N sources on X".
+2. **Firecrawl (`web_search`, `web_extract`)** — only if available (check the tool list). Use when you need full-page scraped content from a SPA or a page that blocks plain HTTP clients, or when SearxNG's snippets aren't enough. Firecrawl extracts rendered text + markdown reliably where `urllib` gets an anti-bot page.
+3. **`browser_navigate` + `browser_console("document.body.innerText")`** — last resort, only when you need JS-driven interaction (click a button, fill a form, wait for a widget). Slower and fails if Chromium isn't baked into your image.
+
+Don't skip to 2 or 3 without trying SearxNG first — you'll burn tokens and sometimes fail where SearxNG would have worked.
+
+## SearxNG — the base pattern
 
 ```python
 import urllib.request, urllib.parse, json, os
@@ -39,16 +49,41 @@ if not base:
     # enable the Search the web locally capability in Tools." Don't
     # try hardcoded fallbacks; they'll fail DNS.
     raise RuntimeError("SEARXNG_URL not set — ask user to enable the search capability")
-params = urllib.parse.urlencode({"q": "your query here", "format": "json"})
-req = urllib.request.Request(f"{base.rstrip('/')}/search?{params}",
-    headers={"User-Agent": "hermes-agent/1.0"})
-with urllib.request.urlopen(req, timeout=15) as r:
-    results = json.loads(r.read())
-# Print a compact summary so you don't blow the context window
-for hit in results.get("results", [])[:10]:
+
+def searx(q, *, categories="general", time_range=None, lang="en", n=20):
+    params = {"q": q, "format": "json", "categories": categories, "language": lang}
+    if time_range:
+        params["time_range"] = time_range  # day / week / month / year
+    req = urllib.request.Request(
+        f"{base.rstrip('/')}/search?{urllib.parse.urlencode(params)}",
+        headers={"User-Agent": "hermes-agent/1.0"},
+    )
+    with urllib.request.urlopen(req, timeout=15) as r:
+        return json.loads(r.read()).get("results", [])[:n]
+
+for hit in searx("your query here"):
     print(hit.get("title"), "—", hit.get("url"))
     if hit.get("content"):
         print("   ", hit["content"][:200])
 ```
 
-Same shape works for most JSON APIs. Only reach for `browser_navigate` when you actually need JavaScript-rendered pages (e.g. Single-Page-App sites, auth-gated pages, pages that block plain HTTP clients). If your `SEARXNG_URL` request 403s or connection-refuses, the sandbox's network policy doesn't have `searxng` applied — tell the user to enable the **Search the web locally** capability in Tools, don't burn iterations trying to work around it.
+Same shape works for most JSON APIs. If a SearxNG request 403s or connection-refuses, the sandbox's network policy doesn't have `searxng` applied — tell the user to enable the **Search the web locally** capability in Tools.
+
+## Multi-step strategy for research-y questions
+
+A single query rarely gives a good answer for open-ended research ("what's happening in the news today", "how do N outlets cover X", "survey the state of Y"). Cascade:
+
+1. **Broad sweep.** Query a generic phrasing with `categories="news"` and `time_range="day"` (or `"week"`). Pull 20-30 hits, dedupe by domain, print title + URL + 200-char snippet. This tells you which stories are live.
+2. **Story-specific re-queries.** For each angle that looks promising, re-query with a tighter phrase (proper nouns, dates, place names). This finds the same story across multiple outlets so you can compare framings.
+3. **Domain allowlist, if the user wants source-scoped results.** Keep a set of allowed domains and filter every result against it before surfacing anything — don't trust the user to scroll past noise.
+4. **Side-by-side comparison.** When comparing how outlets cover a story, line up headline, lede, and one or two quoted voices. Mention concrete language differences (verb choice, whose voice anchors the story, adjectives) rather than vague "outlet A is more X".
+5. **Bias / framing assessment is yours, not the tool's.** SearxNG returns neutral metadata. Any editorial read is something you derive from the text you pulled — be explicit that it's an inference, and point to the specific words that led you there.
+
+## Context hygiene
+
+SearxNG hits can be long. Always:
+- Print title + URL + a capped snippet (`[:200]`) — never dump the raw JSON.
+- Keep result batches small (20 max) on the first pass; re-query if you need more.
+- Summarise findings into a short bullet list before replying — don't splice raw search output into the final answer.
+
+Only reach for `browser_navigate` when you actually need JavaScript-rendered pages (SPAs, auth-gated pages, pages that block plain HTTP clients).
