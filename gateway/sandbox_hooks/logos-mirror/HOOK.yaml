@@ -1,0 +1,15 @@
+name: logos-mirror
+description: |
+  Mirror each completed agent turn on a platform channel (Telegram,
+  Discord, Slack, WhatsApp, Signal, Email) up to the host Logos
+  gateway so the Chats sidebar can show the conversation.
+
+  Without this, inbound platform chats happen entirely inside the
+  sandbox's hermes process — the gateway's sessions + dispatches
+  tables never see them and the "📱 TG" pill returns empty.
+
+  Posts to LOGOS_GATEWAY_URL/api/internal/mirror-turn with the
+  LOGOS_MIRROR_TOKEN shared-secret header set by the gateway at
+  spawn. Fire-and-forget; a failure here never blocks the turn.
+events:
+  - agent:end

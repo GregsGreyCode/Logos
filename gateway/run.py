@@ -248,6 +248,28 @@ if _cfg:
 os.environ["LOGOS_QUIET"] = "1"
 os.environ["HERMES_QUIET"] = "1"  # deprecated alias — kept for legacy in-flight code
 
+# ── Mirror-hook secret + gateway URL (used by in-sandbox logos-mirror hook) ──
+# The sandbox's logos-mirror handler POSTs each completed `agent:end`
+# turn back to this gateway, so Telegram/Discord/Slack chats appear in
+# the Logos Chats sidebar. Both values flow into the sandbox's .env via
+# hermes_server_mode._FORWARDED_HOST_ENV. Generated once per gateway
+# process (token) — persistence isn't needed because sandboxes re-read
+# the env on every spawn/refresh, so even across gateway restarts the
+# sandboxes pick up the current token on the next hermes respawn.
+if not os.environ.get("LOGOS_MIRROR_TOKEN"):
+    import secrets as _secrets
+    os.environ["LOGOS_MIRROR_TOKEN"] = _secrets.token_urlsafe(32)
+if not os.environ.get("LOGOS_GATEWAY_URL"):
+    # Sandbox pods resolve host.openshell.internal → the docker bridge
+    # IP the gateway listens on. Port matches the one passed via
+    # LOGOS_GATEWAY_PORT in gateway/executors/openshell.py.
+    _mirror_port = (
+        os.environ.get("LOGOS_GATEWAY_PORT")
+        or os.environ.get("HERMES_GATEWAY_PORT")
+        or "8091"
+    )
+    os.environ["LOGOS_GATEWAY_URL"] = f"http://host.openshell.internal:{_mirror_port}"
+
 # Enable interactive exec approval for dangerous commands on messaging platforms
 os.environ["LOGOS_EXEC_ASK"] = "1"
 os.environ["HERMES_EXEC_ASK"] = "1"  # deprecated alias — kept for legacy in-flight code
