@@ -240,11 +240,30 @@ def _build_config_yaml(
     comes back as a real feature, the UI selector and DB column + this
     parameter would need to be re-wired end-to-end together.
     """
+    # Resolve context length for this model from the Logos-side sources
+    # (benchmark results in config.yaml → hardcoded defaults → OpenRouter).
+    # Injecting it here means hermes inside the sandbox skips its own
+    # probe — which would otherwise hit inference.local's L7 proxy, get
+    # a non-standard response, fall through to the hardcoded 128,000
+    # fallback, and log the "Could not detect context length … defaulting
+    # to 128,000 tokens (probe-down)" warning. That fallback silently
+    # clips prompts for larger-context local models (qwen3.5-9b @ 256K,
+    # kimi @ 262K) and underuses Claude's 200K/1M on the cloud side.
+    try:
+        from agent.model_metadata import get_model_context_length
+        _ctx = get_model_context_length(model, "https://inference.local/v1")
+    except Exception:
+        _ctx = None
+
     lines = [
         "model:",
         f"  default: {model}",
         "  provider: custom",
         "  base_url: https://inference.local/v1",
+    ]
+    if _ctx and _ctx > 0:
+        lines.append(f"  context_length: {int(_ctx)}")
+    lines += [
         "api_server:",
         "  enabled: true",
         f"  host: {HERMES_BIND_HOST}",
