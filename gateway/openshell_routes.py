@@ -948,6 +948,16 @@ def restart_route(route_id: str) -> dict:
     Useful when the gateway has wedged or after the host reboots without
     an autostart unit. Sandboxes will lose their connection during the
     restart and will need to respawn.
+
+    Subtlety that burned the previous version: ``gateway stop`` +
+    ``gateway start`` brings the gateway back with an **empty provider
+    table** — provider definitions live in the gateway's own state and
+    do not persist across a stop/start cycle. Without re-registering
+    the provider, the follow-up ``inference set`` fails with the
+    cryptic ``provider 'lmstudio' not found`` even though auth.db still
+    knows the provider exists on the gateway. We mirror the provider-
+    setup path from ``finish_provisioning`` so a restart is truly
+    idempotent.
     """
     route = auth_db.get_model_route(route_id)
     if not route:
@@ -958,6 +968,8 @@ def restart_route(route_id: str) -> dict:
 
     name = route["openshell_name"]
     port = route["openshell_port"]
+    provider = route["provider"]
+    model = route["model"]
 
     try:
         _run_openshell("gateway", "stop", gateway=name, check=False, timeout=60)
@@ -967,10 +979,62 @@ def restart_route(route_id: str) -> dict:
             "--port", str(port),
             timeout=300,
         )
+
+        # Re-register the provider — see docstring for why this is
+        # required even though it "already existed" before the stop.
+        try:
+            openshell_type, cred_arg, config_arg = _resolve_provider_args(provider)
+        except RuntimeError as exc:
+            raise RuntimeError(
+                f"cannot resolve args for provider '{provider}': {exc}"
+            )
+
+        # Probe first — a fresh gateway shouldn't have the provider yet,
+        # but if a future openshell version adds persistence this avoids
+        # a redundant failed `provider create`.
+        _provider_exists = False
+        try:
+            _list_out = subprocess.run(
+                ["openshell", "-g", name, "provider", "list"],
+                capture_output=True, text=True, timeout=15, check=False,
+            )
+            if _list_out.returncode == 0:
+                for line in (_list_out.stdout or "").splitlines():
+                    tokens = line.split()
+                    if tokens and tokens[0] == provider:
+                        _provider_exists = True
+                        break
+        except Exception:
+            pass  # fall through; create will error loudly if it also fails
+
+        if _provider_exists:
+            try:
+                _run_openshell(
+                    "provider", "update",
+                    "--name", provider,
+                    "--credential", cred_arg,
+                    "--config", config_arg,
+                    gateway=name,
+                )
+            except subprocess.CalledProcessError as exc:
+                logger.warning(
+                    "restart_route: provider update on %s/%s failed (non-fatal): %s",
+                    name, provider, _stderr_or_stdout(exc),
+                )
+        else:
+            _run_openshell(
+                "provider", "create",
+                "--name", provider,
+                "--type", openshell_type,
+                "--credential", cred_arg,
+                "--config", config_arg,
+                gateway=name,
+            )
+
         _run_openshell(
             "inference", "set",
-            "--provider", route["provider"],
-            "--model", route["model"],
+            "--provider", provider,
+            "--model", model,
             "--no-verify",
             gateway=name,
         )
