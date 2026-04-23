@@ -10707,13 +10707,16 @@ user_accessible: true
           this.namedAgentFormOpen = false;
           this.namedAgentForm = { name: '', soul_slug: 'general', model: '', model_route_id: null, description: '', char_index: null, duplicate_from: null, duplicate_from_name: null };
           await this.loadNamedAgents();
-          // Trigger a one-shot resize after the column-width transition
-          // settles. Previously we also chained a syncAgents() in a 250ms
-          // setTimeout AND loadNamedAgents() did its own direct sync —
-          // combined with the $watch('namedAgents') that fires on every
-          // list change, every new-agent event was firing four separate
-          // syncAgents calls and halving the Phaser framerate. Left only
-          // the post-transition forceResize; $watch handles the render.
+          // Belt-and-braces: the $watch('namedAgents') in initWorld()
+          // should already have fired syncAgents via the reactive
+          // setter, but in practice new sprites sometimes didn't
+          // appear until the user refreshed. Cheapest fix is an
+          // explicit sync here — scene.syncAgents is idempotent
+          // (diffs by name), so a duplicate call is a no-op.
+          try { this.worldManager?.syncAgents?.(this._worldAgentList()); } catch (_) {}
+          // Post-transition resize: the agent column width flips
+          // 16rem ↔ 24rem on form close; give the CSS transition
+          // time to settle, then tell Phaser to re-measure.
           setTimeout(() => {
             try { this.worldManager?.forceResize?.(); } catch (_) {}
           }, 400);
@@ -11876,9 +11879,12 @@ user_accessible: true
       const sb = this.activeAgentSandbox;
       if (!sb) return null;
       const phaseReady = (sb.phase || '').toLowerCase() === 'ready';
-      const workerOk   = sb.worker_healthy && (sb.worker_status === 'connected');
-      if (phaseReady && workerOk) return 'ready';
-      if (phaseReady && !workerOk) return 'down';
+      // worker_healthy is the authoritative signal — worker_registry
+      // reports status='idle' when the worker is healthy and ready,
+      // not 'connected', so gating on a string match here was giving
+      // every healthy agent a red "not responding" dot.
+      if (phaseReady && sb.worker_healthy) return 'ready';
+      if (phaseReady && !sb.worker_healthy) return 'down';
       return null;  // provisioning / unknown → gray
     },
 
