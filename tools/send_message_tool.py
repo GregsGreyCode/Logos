@@ -147,10 +147,22 @@ def _handle_send(args):
             chat_id = home.chat_id
             used_home_channel = True
         else:
+            # Note the fix-it instruction ORDER: /sethome first because
+            # it's the one-command path that works without leaving the
+            # chat, then the explicit chat_id form for power users, then
+            # the env-var route for the "I already know the ID" case.
+            # When the user reads this back through an agent, the first
+            # option is the one they're most likely to actually follow.
             return json.dumps({
-                "error": f"No home channel set for {platform_name} to determine where to send the message. "
-                f"Either specify a channel directly with '{platform_name}:CHANNEL_NAME', "
-                f"or set a home channel via: hermes config set {platform_name.upper()}_HOME_CHANNEL <channel_id>"
+                "error": (
+                    f"No home channel set for {platform_name}, so I don't know where to send this. "
+                    f"The easiest fix: open your {platform_name} chat with the bot and send /sethome — "
+                    f"that registers the current chat as the home channel. "
+                    f"Or pass an explicit target like '{platform_name}:<chat_id>' "
+                    f"(for Telegram DMs, <chat_id> is your numeric Telegram user ID; "
+                    f"get it by messaging @userinfobot). "
+                    f"Power users can also set {platform_name.upper()}_HOME_CHANNEL=<chat_id> in ~/.logos/.env."
+                )
             })
 
     try:
