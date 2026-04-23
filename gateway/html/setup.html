@@ -318,18 +318,6 @@
             </template>
           </div>
 
-          <!-- When complete -->
-          <div class="px-7 py-6 border-t border-gray-800/60">
-            <div class="text-base font-semibold text-white mb-2" x-text="tldr ? 'When done' : 'When complete'"></div>
-            <p class="text-sm text-gray-500 leading-relaxed" x-show="!tldr">
-              You&rsquo;ll have a fully configured platform: inference routed to a benchmarked model,
-              agent runs sandboxed with policy-enforced isolation, a soul selected, and a secured admin account.
-              Ready for agent runs.
-            </p>
-            <p class="text-sm text-gray-500 leading-relaxed" x-show="tldr" x-cloak>
-              Logos is running, your model is connected, agents are sandboxed, and you have a login. You&rsquo;re ready to go.
-            </p>
-          </div>
         </div>
 
         <!-- Continue -->
@@ -2014,7 +2002,6 @@
                    :style="`width: ${completePercent()}%; background: linear-gradient(90deg, hsl(calc(var(--accent-hue,239) + 0),84%,64%) 0%, hsl(calc(var(--accent-hue,239) + 30),65%,60%) 100%);`"></div>
             </div>
             <span class="tabular-nums text-gray-400" x-text="completePercent() + '%'"></span>
-            <span x-show="completeElapsedSec > 0" class="tabular-nums text-gray-600" x-text="completeElapsedSec + 's'"></span>
           </div>
 
           <!-- Stepper: one row per stage -->
@@ -2079,7 +2066,7 @@
           </ol>
 
           <div class="text-[11px] text-gray-600 text-center pt-1">
-            First-ever install can take several minutes while the sandbox image is pulled.
+            First-ever install can take up to 5 minutes due to images and cold-clusters.
           </div>
         </div>
       </div>
@@ -2331,12 +2318,9 @@ function setup() {
     // Live progress state — driven by polling /api/setup/progress while
     // complete() is in flight. completeStage is the short slug from the
     // backend (e.g. "spawn_sandbox"); completeStageLabel is the
-    // user-facing sentence; completeElapsedSec is wall-clock seconds
-    // since the user clicked Launch.
+    // user-facing sentence.
     completeStage: '',
     completeStageLabel: '',
-    completeStageStarted: 0,
-    completeElapsedSec: 0,
     // Sub-stage drill-down. Only `spawn_sandbox` populates these today
     // (it's the only multi-minute stage). `completeSubstage` is a slug
     // the frontend maps into `spawnSubStages` below; `completeSubPercent`
@@ -2344,7 +2328,6 @@ function setup() {
     completeSubstage: '',
     completeSubPercent: 0,
     _completePollTimer: null,
-    _completeElapsedTimer: null,
     // Ordered pipeline shown as the stepper on the final screen. Slugs
     // MUST match the stage strings emitted by _setup_progress_update in
     // gateway/setup_handlers.py (plus `done`).
@@ -3776,11 +3759,6 @@ function setup() {
       this.completeStageLabel = '';
       this.completeSubstage = '';
       this.completeSubPercent = 0;
-      this.completeStageStarted = Date.now();
-      this.completeElapsedSec = 0;
-      this._completeElapsedTimer = setInterval(() => {
-        this.completeElapsedSec = Math.floor((Date.now() - this.completeStageStarted) / 1000);
-      }, 1000);
       return new Promise((resolve) => {
         this._completePollTimer = setInterval(async () => {
           try {
@@ -3805,7 +3783,6 @@ function setup() {
     },
     _stopCompletePolling() {
       if (this._completePollTimer) { clearInterval(this._completePollTimer); this._completePollTimer = null; }
-      if (this._completeElapsedTimer) { clearInterval(this._completeElapsedTimer); this._completeElapsedTimer = null; }
     },
 
     async complete() {
