@@ -54,7 +54,24 @@ class ContextCompressor:
         self.summary_target_tokens = summary_target_tokens
         self.quiet_mode = quiet_mode
 
-        self.context_length = get_model_context_length(model, base_url=base_url)
+        # get_model_context_length returns None when no authoritative
+        # source answered. Compression needs a number, so pick a
+        # conservative 128K fallback — matches what Hermes itself uses
+        # when its own probe fails, and is small enough not to OOM
+        # most local deploys but large enough not to trigger compaction
+        # prematurely on typical chat volumes. Surface loudly so the
+        # user notices they should run the benchmark.
+        resolved = get_model_context_length(model, base_url=base_url)
+        if resolved is None:
+            logger.warning(
+                "ContextCompressor: unknown context length for %r — "
+                "using conservative 128,000 fallback. Run the Logos "
+                "setup benchmark for %r to replace this estimate.",
+                model, base_url or "<unset>",
+            )
+            self.context_length = 128_000
+        else:
+            self.context_length = resolved
         self.threshold_tokens = int(self.context_length * threshold_percent)
         self.compression_count = 0
         self._context_probed = False  # True after a step-down from context error

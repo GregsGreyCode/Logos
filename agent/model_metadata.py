@@ -36,67 +36,22 @@ CONTEXT_PROBE_TIERS = [
     8_000,
 ]
 
-DEFAULT_CONTEXT_LENGTHS = {
-    "anthropic/claude-opus-4": 200000,
-    "anthropic/claude-opus-4.5": 200000,
-    "anthropic/claude-opus-4.6": 200000,
-    "anthropic/claude-opus-4.7": 200000,
-    "anthropic/claude-opus-4-7": 200000,
-    "anthropic/claude-opus-4-7[1m]": 1000000,
-    "anthropic/claude-sonnet-4": 200000,
-    "anthropic/claude-sonnet-4.6": 200000,
-    "anthropic/claude-sonnet-4-6": 200000,
-    "anthropic/claude-sonnet-4-20250514": 200000,
-    "anthropic/claude-haiku-4.5": 200000,
-    # Bare Anthropic model IDs (for native API provider)
-    "claude-opus-4-6": 200000,
-    "claude-opus-4-7": 200000,
-    "claude-opus-4-7[1m]": 1000000,
-    "claude-sonnet-4-6": 200000,
-    "claude-opus-4-5-20251101": 200000,
-    "claude-sonnet-4-5-20250929": 200000,
-    "claude-opus-4-1-20250805": 200000,
-    "claude-opus-4-20250514": 200000,
-    "claude-sonnet-4-20250514": 200000,
-    "claude-haiku-4-5-20251001": 200000,
-    "openai/gpt-4o": 128000,
-    "openai/gpt-4-turbo": 128000,
-    "openai/gpt-4o-mini": 128000,
-    "google/gemini-2.0-flash": 1048576,
-    "google/gemini-2.5-pro": 1048576,
-    "meta-llama/llama-3.3-70b-instruct": 131072,
-    "deepseek/deepseek-chat-v3": 65536,
-    "qwen/qwen-2.5-72b-instruct": 32768,
-    "qwen2.5-7b": 32768,
-    "qwen2.5-3b": 32768,
-    "qwen2.5-14b": 32768,
-    "qwen2.5-32b": 32768,
-    "qwen3-8b": 131072,
-    "qwen3-4b": 131072,
-    "qwen3-14b": 131072,
-    # Qwen 3.5 family ships a 256K native context window. Previous
-    # 32K defaults here were copy-pasted from Qwen 2.5 and caused the
-    # sandbox config.yaml to be seeded with a too-small value when no
-    # benchmark entry existed, which in turn tripped Hermes's 64K
-    # minimum-context guard.
-    "qwen3.5-9b": 262144,
-    "qwen3.5-4b": 262144,
-    "qwen3.5-14b": 262144,
-    "qwen3.5-32b": 262144,
-    "glm-4.7": 202752,
-    "glm-5": 202752,
-    "glm-4.5": 131072,
-    "glm-4.5-flash": 131072,
-    "kimi-for-coding": 262144,
-    "kimi-k2.5": 262144,
-    "kimi-k2-thinking": 262144,
-    "kimi-k2-thinking-turbo": 262144,
-    "kimi-k2-turbo-preview": 262144,
-    "kimi-k2-0905-preview": 131072,
-    "MiniMax-M2.5": 204800,
-    "MiniMax-M2.5-highspeed": 204800,
-    "MiniMax-M2.1": 204800,
-}
+# Intentionally no hardcoded context-length table.
+#
+# Previously a dict of model-id → context-length lived here as a last-
+# resort fallback. It was a constant source of silent bugs: every
+# vendor release required a manual update; entries for sibling model
+# families (Qwen 2.5 vs 3 vs 3.5) got copy-pasted with the wrong
+# number and shipped; and the table's mere existence meant callers
+# assumed a non-None return and stopped handling the "unknown" case.
+#
+# The cascade below (probe cache → setup benchmark → live /v1/models
+# → OpenRouter) covers every case we can answer from authoritative
+# sources. When it doesn't, `get_model_context_length` now returns
+# None and logs a warning telling the user how to populate the
+# benchmark. Callers that cannot tolerate None must pick their own
+# conservative fallback explicitly, at the call site, with a log line
+# that says so — not silently via a distant lookup table.
 
 
 def fetch_model_metadata(force_refresh: bool = False) -> Dict[str, Dict[str, Any]]:
@@ -327,16 +282,28 @@ def _query_server_context_length(model: str, base_url: str) -> Optional[int]:
     return None
 
 
-def get_model_context_length(model: str, base_url: str = "") -> int:
-    """Get the context length for a model.
+def get_model_context_length(model: str, base_url: str = "") -> Optional[int]:
+    """Resolve the usable context length for a model, or None if unknown.
 
-    Resolution order:
-    1. Persistent probe cache (previously discovered via runtime probing)
-    2. Config.yaml benchmark results (VRAM-validated by setup wizard)
-    3. Live query to inference server /v1/models endpoint
-    4. OpenRouter API metadata (for cloud models)
-    5. Hardcoded DEFAULT_CONTEXT_LENGTHS (fuzzy match)
-    6. First probe tier (2M) — will be narrowed on first context error
+    Resolution order — each step consults an authoritative source, and
+    we return as soon as one answers:
+
+    1. Persistent probe cache — a prior runtime probe wrote the real
+       limit to ``~/.logos/context_length_cache.yaml``.
+    2. Setup-wizard benchmark — the VRAM-validated value the benchmark
+       stored in ``config.yaml`` under ``lmstudio_context_lengths``.
+    3. Live ``/v1/models`` query — the inference server itself reports
+       ``max_context_length`` / ``max_model_len`` / etc.
+    4. OpenRouter metadata — for cloud models reachable by canonical
+       slug (skipped when ``base_url`` points at a private IP, since
+       OpenRouter reports the theoretical cloud context which may
+       exceed a local VRAM-limited deploy).
+
+    If every step fails we return ``None`` and log a WARNING telling
+    the user how to populate the benchmark. Callers that cannot carry
+    an Optional (e.g. ``ContextCompressor``) must pick their own
+    fallback at the call site, explicitly, with their own log line —
+    this function refuses to fabricate a number.
     """
     # 1. Check persistent cache (model+provider)
     if base_url:
@@ -370,16 +337,17 @@ def get_model_context_length(model: str, base_url: str = "") -> int:
     if not _is_local:
         metadata = fetch_model_metadata()
         if model in metadata:
-            return metadata[model].get("context_length", 128000)
+            ctx = metadata[model].get("context_length")
+            if isinstance(ctx, int) and ctx > 0:
+                return ctx
 
-    # 5. Hardcoded defaults (fuzzy match)
-    for default_model, length in DEFAULT_CONTEXT_LENGTHS.items():
-        if default_model in model or model in default_model:
-            return length
-
-    # 6. Unknown model — start at highest probe tier
-    logger.warning("No context length info for %s — starting at probe tier %s", model, f"{CONTEXT_PROBE_TIERS[0]:,}")
-    return CONTEXT_PROBE_TIERS[0]
+    logger.warning(
+        "Context length unknown for model %r at base_url=%r. "
+        "Run the Logos setup benchmark to probe it, or set "
+        "lmstudio_context_lengths[%r][%r] in ~/.logos/config.yaml.",
+        model, base_url or "<unset>", base_url or "<base_url>", model,
+    )
+    return None
 
 
 def estimate_tokens_rough(text: str) -> int:
