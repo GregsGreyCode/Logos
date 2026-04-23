@@ -249,6 +249,13 @@ def _build_config_yaml(
     # to 128,000 tokens (probe-down)" warning. That fallback silently
     # clips prompts for larger-context local models (qwen3.5-9b @ 256K,
     # kimi @ 262K) and underuses Claude's 200K/1M on the cloud side.
+    #
+    # Safety floor: Hermes Agent enforces a 64K minimum context and
+    # refuses to start below it. If our resolved value is under that
+    # floor (stale probe cache, optimistic OpenRouter metadata for a
+    # quantised local deploy, etc.), skip writing the key entirely —
+    # Hermes will do its own probe and default to 128K rather than
+    # refusing to boot with "context window below minimum 64,000".
     try:
         from agent.model_metadata import get_model_context_length
         _ctx = get_model_context_length(model, "https://inference.local/v1")
@@ -261,7 +268,7 @@ def _build_config_yaml(
         "  provider: custom",
         "  base_url: https://inference.local/v1",
     ]
-    if _ctx and _ctx > 0:
+    if isinstance(_ctx, int) and _ctx >= 64000:
         lines.append(f"  context_length: {int(_ctx)}")
     lines += [
         "api_server:",

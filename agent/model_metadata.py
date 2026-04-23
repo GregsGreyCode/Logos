@@ -71,13 +71,18 @@ DEFAULT_CONTEXT_LENGTHS = {
     "qwen2.5-3b": 32768,
     "qwen2.5-14b": 32768,
     "qwen2.5-32b": 32768,
-    "qwen3-8b": 32768,
-    "qwen3-4b": 32768,
-    "qwen3-14b": 32768,
-    "qwen3.5-9b": 32768,
-    "qwen3.5-4b": 32768,
-    "qwen3.5-14b": 32768,
-    "qwen3.5-32b": 32768,
+    "qwen3-8b": 131072,
+    "qwen3-4b": 131072,
+    "qwen3-14b": 131072,
+    # Qwen 3.5 family ships a 256K native context window. Previous
+    # 32K defaults here were copy-pasted from Qwen 2.5 and caused the
+    # sandbox config.yaml to be seeded with a too-small value when no
+    # benchmark entry existed, which in turn tripped Hermes's 64K
+    # minimum-context guard.
+    "qwen3.5-9b": 262144,
+    "qwen3.5-4b": 262144,
+    "qwen3.5-14b": 262144,
+    "qwen3.5-32b": 262144,
     "glm-4.7": 202752,
     "glm-5": 202752,
     "glm-4.5": 131072,
@@ -224,8 +229,17 @@ def _get_config_context_length(model: str) -> Optional[int]:
     the largest context the user's hardware can actually serve — not the
     model's theoretical max.
 
-    Stored under ``lmstudio_context_lengths`` in config.yaml (applies to all
-    OpenAI-compatible local backends, not just LM Studio).
+    Storage shape (see gateway/setup_handlers.py:get_cached_machine_context):
+      lmstudio_context_lengths:
+        <base_url>:           # nested form — current writer
+          <model_id>: <int>
+        <model_id>: <int>     # legacy flat form — old writer
+
+    Both are read here. We don't know the caller's inference base_url at
+    this layer (the Logos agent talks to inference.local while the
+    benchmark keyed the physical LM Studio URL like
+    http://host.docker.internal:1234/v1), so we scan all nested entries
+    for a matching model id and return the largest value seen.
     """
     try:
         hermes_home = Path(os.environ.get("LOGOS_HOME") or os.environ.get("HERMES_HOME") or str(Path.home() / ".logos"))
@@ -234,15 +248,38 @@ def _get_config_context_length(model: str) -> Optional[int]:
             return None
         cfg = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
         ctx_map = cfg.get("lmstudio_context_lengths") or {}
-        # Exact match first
-        if model in ctx_map:
-            return int(ctx_map[model])
-        # Fuzzy match (model ID may include or omit quantisation suffixes)
+        if not isinstance(ctx_map, dict):
+            return None
+
         model_lower = model.lower()
-        for cfg_model, length in ctx_map.items():
-            cfg_lower = cfg_model.lower()
-            if cfg_lower in model_lower or model_lower in cfg_lower:
-                return int(length)
+        best: Optional[int] = None
+
+        def _consider(val: Any) -> None:
+            nonlocal best
+            if isinstance(val, int) and val > 0:
+                if best is None or val > best:
+                    best = val
+
+        # Nested form: {base_url: {model_id: int}}. Keys look like URLs.
+        # Legacy flat form: {model_id: int}. We tell them apart by the
+        # leaf type.
+        for k, v in ctx_map.items():
+            if isinstance(v, dict):
+                # Nested — scan this base_url's models.
+                if model in v:
+                    _consider(v[model])
+                    continue
+                for inner_k, inner_v in v.items():
+                    inner_lower = (inner_k or "").lower()
+                    if inner_lower == model_lower or inner_lower in model_lower or model_lower in inner_lower:
+                        _consider(inner_v)
+            elif isinstance(v, int):
+                # Flat — k is a model id.
+                k_lower = (k or "").lower()
+                if k == model or k_lower == model_lower or k_lower in model_lower or model_lower in k_lower:
+                    _consider(v)
+
+        return best
     except Exception:
         pass
     return None
