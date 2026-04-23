@@ -21,7 +21,6 @@ from unittest.mock import patch, MagicMock
 
 from agent.model_metadata import (
     CONTEXT_PROBE_TIERS,
-    DEFAULT_CONTEXT_LENGTHS,
     estimate_tokens_rough,
     estimate_messages_tokens_rough,
     get_model_context_length,
@@ -101,86 +100,49 @@ class TestEstimateMessagesTokensRough:
 
 
 # =========================================================================
-# Default context lengths
-# =========================================================================
-
-class TestDefaultContextLengths:
-    def test_claude_models_200k(self):
-        for key, value in DEFAULT_CONTEXT_LENGTHS.items():
-            if "claude" in key:
-                assert value == 200000, f"{key} should be 200000"
-
-    def test_gpt4_models_128k(self):
-        for key, value in DEFAULT_CONTEXT_LENGTHS.items():
-            if "gpt-4" in key:
-                assert value == 128000, f"{key} should be 128000"
-
-    def test_gemini_models_1m(self):
-        for key, value in DEFAULT_CONTEXT_LENGTHS.items():
-            if "gemini" in key:
-                assert value == 1048576, f"{key} should be 1048576"
-
-    def test_all_values_positive(self):
-        for key, value in DEFAULT_CONTEXT_LENGTHS.items():
-            assert value > 0, f"{key} has non-positive context length"
-
-    def test_dict_is_not_empty(self):
-        assert len(DEFAULT_CONTEXT_LENGTHS) >= 10
-
-
-# =========================================================================
 # get_model_context_length — resolution order
 # =========================================================================
 
 class TestGetModelContextLength:
     @patch("agent.model_metadata.fetch_model_metadata")
-    def test_known_model_from_api(self, mock_fetch):
+    def test_known_model_from_openrouter(self, mock_fetch):
         mock_fetch.return_value = {
             "test/model": {"context_length": 32000}
         }
         assert get_model_context_length("test/model") == 32000
 
     @patch("agent.model_metadata.fetch_model_metadata")
-    def test_fallback_to_defaults(self, mock_fetch):
+    def test_unknown_model_returns_none(self, mock_fetch):
+        """No hardcoded fallback — truly unknown returns None."""
         mock_fetch.return_value = {}
-        assert get_model_context_length("anthropic/claude-sonnet-4") == 200000
+        assert get_model_context_length("unknown/never-heard-of-this") is None
 
     @patch("agent.model_metadata.fetch_model_metadata")
-    def test_unknown_model_returns_first_probe_tier(self, mock_fetch):
-        mock_fetch.return_value = {}
-        assert get_model_context_length("unknown/never-heard-of-this") == CONTEXT_PROBE_TIERS[0]
-
-    @patch("agent.model_metadata.fetch_model_metadata")
-    def test_partial_match_in_defaults(self, mock_fetch):
-        mock_fetch.return_value = {}
-        assert get_model_context_length("openai/gpt-4o") == 128000
-
-    @patch("agent.model_metadata.fetch_model_metadata")
-    def test_api_missing_context_length_key(self, mock_fetch):
-        """Model in API but without context_length → defaults to 128000."""
+    def test_openrouter_entry_without_context_length_returns_none(self, mock_fetch):
+        """Partial OpenRouter metadata (no context_length) → treat as unknown."""
         mock_fetch.return_value = {"test/model": {"name": "Test"}}
-        assert get_model_context_length("test/model") == 128000
+        assert get_model_context_length("test/model") is None
 
     @patch("agent.model_metadata.fetch_model_metadata")
-    def test_cache_takes_priority_over_api(self, mock_fetch, tmp_path):
-        """Persistent cache should be checked BEFORE API metadata."""
+    def test_cache_takes_priority_over_openrouter(self, mock_fetch, tmp_path):
+        """Persistent cache should be checked BEFORE OpenRouter metadata."""
         mock_fetch.return_value = {"my/model": {"context_length": 999999}}
         cache_file = tmp_path / "cache.yaml"
         with patch("agent.model_metadata._get_context_cache_path", return_value=cache_file):
             save_context_length("my/model", "http://local", 32768)
             result = get_model_context_length("my/model", base_url="http://local")
-            assert result == 32768  # cache wins over API's 999999
+            assert result == 32768  # cache wins over OpenRouter's 999999
 
     @patch("agent.model_metadata.fetch_model_metadata")
-    def test_no_base_url_skips_cache(self, mock_fetch, tmp_path):
-        """Without base_url, cache lookup is skipped."""
+    def test_no_base_url_skips_cache_and_returns_none(self, mock_fetch, tmp_path):
+        """Without base_url, cache lookup is skipped; unknown → None."""
         mock_fetch.return_value = {}
         cache_file = tmp_path / "cache.yaml"
         with patch("agent.model_metadata._get_context_cache_path", return_value=cache_file):
             save_context_length("custom/model", "http://local", 32768)
-            # No base_url → cache skipped → falls to probe tier
+            # No base_url → cache skipped → no other source → None
             result = get_model_context_length("custom/model")
-            assert result == CONTEXT_PROBE_TIERS[0]
+            assert result is None
 
 
 # =========================================================================
