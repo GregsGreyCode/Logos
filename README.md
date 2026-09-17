@@ -547,7 +547,7 @@ docker buildx build \
 
 > **`--build-arg BUILD_SHA=...` is required** — omit it and the version footer displays `unknown` instead of the actual commit SHA.
 
-Stable release builds happen automatically via `.github/workflows/build-image.yml` whenever a `v*` tag is pushed: the workflow builds the gateway image, logs in to GHCR with `GITHUB_TOKEN`, and publishes `:vX.Y.Z`, `:latest`, and `:canary` tags off the same SHA. A sibling workflow (`publish-sandbox-image.yml`) produces the matching `hermes-sandbox` + `hermes-upstream` images on the same trigger.
+Stable release builds happen automatically via `.github/workflows/build-image.yml` whenever a `v*` tag is pushed: the workflow builds the gateway image, logs in to GHCR with `GITHUB_TOKEN`, and publishes `:X.Y.Z`, `:latest`, and `:canary` tags off the same SHA. A sibling workflow (`publish-sandbox-image.yml`) produces the matching `hermes-sandbox` + `hermes-upstream` images on the same trigger.
 
 ---
 
