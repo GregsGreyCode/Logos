@@ -111,14 +111,15 @@ def build_world_snapshot(
         logger.warning("world_snapshot: list_agents failed: %s", exc)
         return {"agents": [], "total_agents": 0}
 
-    # Worker registry tells us which agents have a live sandbox connected.
+    # The sandbox backend tells us which agents have a live sandbox.
+    # NullBackend (until E2) has none, so every agent reports "offline".
     # Failure here is non-fatal — we just report status="unknown".
-    registry = None
+    backend = None
     try:
-        from gateway.worker_registry import get_registry
-        registry = get_registry()
+        from gateway.sandbox_backend import get_backend
+        backend = get_backend()
     except Exception:
-        registry = None
+        backend = None
 
     out = []
     for a in agents:
@@ -127,16 +128,10 @@ def build_world_snapshot(
 
         status = "unknown"
         active_tasks = 0
-        if registry is not None:
+        if backend is not None:
             try:
-                if hasattr(registry, "is_running") and registry.is_running(a["id"]):
-                    status = "running"
-                elif hasattr(registry, "worker_connected") and registry.worker_connected(a["id"]):
-                    status = "running"
-                else:
-                    status = "offline"
-                if hasattr(registry, "active_task_count"):
-                    active_tasks = int(registry.active_task_count(a["id"]) or 0)
+                st = backend.status(a.get("name") or "")
+                status = "running" if st.running else "offline"
             except Exception:
                 pass
 

@@ -1,4 +1,4 @@
-"""Process-wide runtime state shared between the gateway runner and executors.
+"""Process-wide runtime state shared between the gateway runner and other modules.
 
 Why this module exists
 ──────────────────────
@@ -8,14 +8,14 @@ Why this module exists
 file *again* as a second, completely independent module object. Both
 module objects have their own copy of any module-level globals —
 assigning to ``_current_runner`` inside ``main()`` mutates the
-``__main__`` module's copy, while ``executors.openshell`` and anyone
+``__main__`` module's copy, while http_api / admin handlers and anyone
 else doing ``import gateway.run`` reads from the second module's copy,
 which stays at its import-time default forever.
 
 This module sits outside that trap: it is *never* imported as
 ``__main__``, so every importer gets the same module object and the
 same globals. ``gateway/run.py`` now sets the state via
-``set_current_runner`` / ``set_current_loop``, and executors read
+``set_current_runner`` / ``set_current_loop``, and other modules read
 ``current_runner`` / ``current_loop`` as plain attributes.
 
 If you find yourself tempted to add new module-level state to

@@ -656,15 +656,9 @@ def ensure_channel_access(agent_id: str, platform: str) -> Dict[str, Any]:
     except Exception:
         logger.exception("ensure_channel_access: apply_preset(%s) failed", platform)
 
-    # Refresh the sandbox's instance-config so the new toolset + policy
-    # take effect immediately without waiting for a respawn.
-    try:
-        from gateway.executors.openshell import OpenShellExecutor
-        agent_name = (agent or {}).get("name") or ""
-        if agent_name:
-            OpenShellExecutor().refresh_instance_config(agent_name)
-    except Exception:
-        logger.exception("ensure_channel_access: sandbox refresh failed (non-fatal)")
+    # The v1 runtime hot-refreshed the sandbox's instance config here.
+    # No sandbox backend until E2: the DB is the source of truth and the
+    # E2 backend applies it when it creates the sandbox.
 
     return {
         "toolset_added": added_toolset,
@@ -708,119 +702,21 @@ def push_effective_policy(
     agent_id: str,
     effective: Optional[Dict[str, Any]] = None,
 ) -> bool:
-    """Write the effective policy to a tempfile and call
-    ``openshell policy set --policy <tempfile> --wait <sandbox>``.
+    """Push the effective policy to the agent's running sandbox.
 
-    Best-effort: returns True on success, False (with a warning log)
-    on any failure including "sandbox doesn't exist yet" and
-    "openshell CLI unreachable". Callers should NOT treat a False
-    return as a hard error — the DB is the source of truth for
-    applied presets, and :func:`gateway.executors.openshell.
-    OpenShellExecutor.spawn` re-reads the DB at next spawn so
-    a missed runtime push is recovered automatically.
-
-    Args:
-        agent_id: the agent whose policy we're pushing
-        effective: optional pre-computed effective policy (to avoid
-            recomputing if the caller already has it). When None,
-            computed from the DB state.
-
-    Returns:
-        True if the openshell CLI accepted the policy, False
-        otherwise. False does NOT mean the DB state is wrong —
-        only that the live sandbox didn't get the update this time.
+    The OpenShell 0.0.x path (``openshell policy set``) was removed in
+    S1.5 and there is no sandbox backend until epic E2, so this always
+    returns False ("no live sandbox; applies on next spawn"). The DB
+    (``agents.applied_presets``) remains the source of truth. Callers
+    already treat False as non-fatal.
     """
-    # Import inside the function to avoid a module-level import cycle:
-    # gateway.executors.openshell → gateway.auth.db → (would eventually
-    # pull in gateway.policies for the spawn flow) → gateway.executors.
-    from gateway.auth import db as auth_db
-    from gateway.executors.openshell import (
-        _openshell,
-        _sanitize_sandbox_name,
-        _load_state,
+    del effective  # unused until E2
+    logger.debug(
+        "push_effective_policy(%s): no sandbox backend configured (E2) — "
+        "policy will apply on next spawn",
+        agent_id,
     )
-
-    agent = auth_db.get_agent(agent_id)
-    if not agent:
-        logger.warning(
-            "push_effective_policy(%s): agent not found in DB — skipping",
-            agent_id,
-        )
-        return False
-
-    sandbox_name = _sanitize_sandbox_name(f"hermes-{agent.get('name', '')}")
-    if effective is None:
-        effective = compute_effective_policy(agent_id)
-
-    # Resolve which OpenShell gateway hosts this sandbox. Same lookup
-    # spawn() uses at ``openshell.py:_resolve_sandbox_gateway``, but
-    # inlined here to avoid pulling in the entire resolver chain for
-    # a simple "which -g flag do I pass" question.
-    target_gw: Optional[str] = None
-    try:
-        for inst in _load_state():
-            if (inst.get("sandbox_name") == sandbox_name
-                    or inst.get("worker_id") == sandbox_name):
-                target_gw = inst.get("openshell_name")
-                break
-    except Exception as exc:
-        logger.warning(
-            "push_effective_policy(%s): state file lookup failed: %s",
-            sandbox_name, exc,
-        )
-
-    if not target_gw:
-        logger.info(
-            "push_effective_policy(%s): no live sandbox in state file — "
-            "policy will apply on next spawn",
-            sandbox_name,
-        )
-        return False
-
-    tmp = tempfile.NamedTemporaryFile(
-        mode="w", suffix=".yaml", prefix="logos-policy-", delete=False,
-        encoding="utf-8",
-    )
-    try:
-        # ``sort_keys=False`` preserves the baseline's section order
-        # (filesystem_policy → landlock → process → network_policies)
-        # for readable debug output. ``default_flow_style=False``
-        # forces block style so the diff against the on-disk baseline
-        # is visually comparable.
-        yaml.safe_dump(
-            effective, tmp,
-            sort_keys=False,
-            default_flow_style=False,
-            allow_unicode=True,
-        )
-        tmp.close()
-
-        try:
-            _openshell(
-                "policy", "set",
-                "--policy", tmp.name,
-                "--wait", sandbox_name,
-                gateway=target_gw,
-                check=True,
-                timeout=60.0,
-            )
-            logger.info(
-                "push_effective_policy(%s): applied %d presets in gateway %s",
-                sandbox_name, len(get_applied_presets(agent_id)), target_gw,
-            )
-            return True
-        except Exception as exc:
-            logger.warning(
-                "push_effective_policy(%s): `openshell policy set` failed "
-                "(non-fatal, will apply on next spawn): %s",
-                sandbox_name, exc,
-            )
-            return False
-    finally:
-        try:
-            os.unlink(tmp.name)
-        except OSError:
-            pass
+    return False
 
 
 # ── Utility: preset-aware baseline path (for spawn-time merge) ────────────
@@ -859,8 +755,8 @@ def write_effective_policy_to_tempfile(agent_id: str) -> Path:
     """Compute the effective policy for an agent, serialize it, and
     return the tempfile path.
 
-    Used by :class:`gateway.executors.openshell.OpenShellExecutor` at
-    spawn time when applying the initial policy — the executor reads
+    Intended for sandbox-creation time (the v1 OpenShell executor used it;
+    E2's backend will too) when applying the initial policy — it reads
     ``agents.applied_presets`` and writes a merged baseline+presets
     policy for ``openshell sandbox create --policy <file>``.
 
