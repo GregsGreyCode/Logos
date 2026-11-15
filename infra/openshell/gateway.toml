@@ -1,0 +1,10 @@
+# Logos v2 gateway config (OpenShell 0.1.8). Tracked in the repo as infra/openshell/gateway.toml (S2.2).
+[openshell]
+version = 2
+
+[openshell.drivers.docker]
+# Needed so Logos can attach each agent's labelled brain volume.
+# Resource admission stays ON: only volumes labelled
+# openshell.ai/sandbox-attachable=true and
+# openshell.ai/sandbox-attachable-workspace=<workspace> can be mounted.
+allow_driver_config = true
