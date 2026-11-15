@@ -1654,7 +1654,7 @@ async def handle_platform_links_list(request: web.Request) -> web.Response:
 async def handle_platform_links_post(request: web.Request) -> web.Response:
     """POST /api/admin/platform-links
 
-    Body: ``{"user_id": "...", "platform": "telegram", "platform_uid": "123456789", "display_name": "Greg"}``
+    Body: ``{"user_id": "...", "platform": "telegram", "platform_uid": "123456789", "display_name": "Alex"}``
     """
     try:
         body = await request.json()

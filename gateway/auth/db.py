@@ -51,7 +51,7 @@ CREATE TABLE IF NOT EXISTS refresh_tokens (
 -- Maps a Logos user to their identity on each messaging platform
 -- (Telegram user_id, Discord user_id, Slack member_id, etc.) so
 -- dispatch_platform_message can resolve an inbound chat user to
--- a Logos user, and the Runs tab shows "Greg" instead of "123456789".
+-- a Logos user, and the Runs tab shows a name instead of a numeric platform ID.
 --
 -- Also tracks ownership attribution: agents created by a user
 -- show that user as the owner for any inbound messages on the
