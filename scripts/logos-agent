@@ -19,6 +19,7 @@ import yaml
 REPO = Path(__file__).resolve().parent.parent
 SANDBOX_UID = "10000:10000"          # `hermes` in the logos-agent image
 HELPER = "alpine:3"
+GIT_HELPER = "alpine/git:latest"
 LABELS = ["--label", "openshell.ai/sandbox-attachable=true",
           "--label", "openshell.ai/sandbox-attachable-workspace=default"]
 START = "/opt/hermes/docker/stage2-hook.sh; exec hermes gateway run"
@@ -61,6 +62,41 @@ def ensure_volume(vol):
         run(["docker", "volume", "create", *LABELS, vol])
         # A fresh volume is root-owned; the sandbox user must own it.
         run(["docker", "run", "--rm", "-v", f"{vol}:/v", HELPER, "chown", SANDBOX_UID, "/v"])
+
+
+def ensure_vault(vol):
+    """Seed the brain volume from infra/brain-template (never overwriting) and make it a git repo."""
+    tar = subprocess.run(["tar", "-C", str(REPO / "infra" / "brain-template"), "-c", "."],
+                         capture_output=True, check=True).stdout
+    sh = ("cd /v && tar -x -k -f - 2>/dev/null; "
+          "git config --global --add safe.directory /v; "
+          "[ -d .git ] || { git init -q -b main . && git add -A && "
+          "git -c user.name=logos -c user.email=logos@localhost commit -q -m 'Start the brain'; }; "
+          f"chown -R {SANDBOX_UID} /v")
+    p = subprocess.run(["docker", "run", "--rm", "-i", "--entrypoint", "sh", "-v", f"{vol}:/v", GIT_HELPER, "-c", sh],
+                       input=tar, capture_output=True)
+    if p.returncode != 0:
+        sys.exit("could not seed the brain volume:\n" + p.stderr.decode()[-400:])
+
+
+def ensure_model(model):
+    """LM Studio only: make sure the agent's model is loaded with the configured context length."""
+    if model.get("provider") != "lmstudio":
+        return
+    import urllib.request
+    base = model["base_url"].rsplit("/v1", 1)[0]
+    try:
+        loaded = {m["id"]: m.get("loaded_context_length") for m in
+                  json.load(urllib.request.urlopen(base + "/api/v0/models", timeout=10))["data"]
+                  if m.get("state") == "loaded"}
+        if loaded.get(model["default"]) == int(model["context_length"]):
+            return
+        body = json.dumps({"model": model["default"], "context_length": int(model["context_length"])}).encode()
+        urllib.request.urlopen(urllib.request.Request(base + "/api/v1/models/load", data=body,
+                               headers={"Content-Type": "application/json"}), timeout=600)
+        print(f"loaded {model['default']} in LM Studio (context {model['context_length']})")
+    except Exception as e:
+        print(f"warning: could not check or load the model in LM Studio: {e}", file=sys.stderr)
 
 
 def put(vol, rel, content, mode="0640"):
@@ -123,7 +159,11 @@ def up(name):
                      "context_length": int(m["context_length"])}}
     put(home, "config.yaml", "# Written by scripts/logos-agent; edit agents/%s.yaml instead.\n%s"
         % (name, yaml.safe_dump(cfg, sort_keys=False)))
-    put(home, "SOUL.md", (REPO / agent["soul"]).read_text())
+    ensure_vault(brain)
+    ensure_model(m)
+    # The soul is the persona plus the shared rules every agent follows (brain filing, honesty).
+    soul = (REPO / agent["soul"]).read_text().rstrip() + "\n\n" + (REPO / "souls/_shared/brain.md").read_text()
+    put(home, "SOUL.md", soul)
     put(home, ".env", env_file(agent, home), mode="0600")
     down(name)
     mounts = {"docker": {"mounts": [
