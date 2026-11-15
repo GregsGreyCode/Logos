@@ -102,8 +102,7 @@ async def ensure_loaded(
     AND token-auth mode. If the caller passes None, we fall back to the
     OPENAI_API_KEY env var, then to the literal "lm-studio" placeholder
     (which LM Studio accepts as a well-formed token in both modes —
-    same fallback we use for the openshell provider credential in
-    openshell_routes.finish_provisioning).
+    same fallback the v1 OpenShell provider credential used).
     """
     if not base_url or not model_id:
         return False

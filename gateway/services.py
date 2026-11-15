@@ -31,7 +31,7 @@ logger = logging.getLogger(__name__)
 #   - gateway/auth/db.py: agent_env_credentials table + CRUD
 #   - gateway/admin_handlers.py: handle_agent_env_credentials_*
 #   - gateway/http_api.py: /setup slash-command handler
-#   - gateway/executors/hermes_server_mode.py: build_channel_extra_env
+#   - (v1 sandbox runtime, removed in S1.5; E2 re-implements env injection)
 #
 # MESSAGING_INTEGRATIONS below is intentionally preserved — messaging
 # adapters inside the sandbox still read those env var names, and the

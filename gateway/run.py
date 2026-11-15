@@ -252,7 +252,7 @@ os.environ["HERMES_QUIET"] = "1"  # deprecated alias — kept for legacy in-flig
 # The sandbox's logos-mirror handler POSTs each completed `agent:end`
 # turn back to this gateway, so Telegram/Discord/Slack chats appear in
 # the Logos Chats sidebar. Both values flow into the sandbox's .env via
-# hermes_server_mode._FORWARDED_HOST_ENV. Generated once per gateway
+# the sandbox runtime's forwarded host env. Generated once per gateway
 # process (token) — persistence isn't needed because sandboxes re-read
 # the env on every spawn/refresh, so even across gateway restarts the
 # sandboxes pick up the current token on the next hermes respawn.
@@ -261,8 +261,7 @@ if not os.environ.get("LOGOS_MIRROR_TOKEN"):
     os.environ["LOGOS_MIRROR_TOKEN"] = _secrets.token_urlsafe(32)
 if not os.environ.get("LOGOS_GATEWAY_URL"):
     # Sandbox pods resolve host.openshell.internal → the docker bridge
-    # IP the gateway listens on. Port matches the one passed via
-    # LOGOS_GATEWAY_PORT in gateway/executors/openshell.py.
+    # IP the gateway listens on. Port matches LOGOS_GATEWAY_PORT.
     _mirror_port = (
         os.environ.get("LOGOS_GATEWAY_PORT")
         or os.environ.get("HERMES_GATEWAY_PORT")
@@ -434,7 +433,7 @@ class JsonRedactingFormatter(logging.Formatter):
         payload: Dict[str, Any] = {
             "ts": record.created,                      # float seconds epoch
             "level": record.levelname,                 # "INFO", "WARNING", ...
-            "logger": record.name,                     # "gateway.worker_registry"
+            "logger": record.name,                     # "gateway.http_api"
             "msg": message,
             "session_id": record.session_id,
             "task_id": record.task_id,
@@ -580,14 +579,11 @@ class GatewayRunner:
     def __init__(self, config: Optional[GatewayConfig] = None):
         self.config = config or load_gateway_config()
 
-        # WorkerRegistry tracks connected OpenShell sandbox workers over
-        # WebSocket (/ws/worker). It lives on the runner, not on the HTTP
-        # layer, because the runner has a longer lifecycle and the HTTP
-        # /chat endpoint needs to route tasks through it.
-        # http_api.start_http_api reads it from the runner at boot rather
-        # than creating its own copy.
-        from gateway.worker_registry import WorkerRegistry
-        self.worker_registry = WorkerRegistry()
+        # Agent sandbox runtime. NullBackend (no sandboxes) until epic E2
+        # lands the OpenShell 0.1 backend; see gateway/sandbox_backend.py.
+        # http_api.start_http_api exposes it as app["sandbox_backend"].
+        from gateway.sandbox_backend import get_backend
+        self.sandbox_backend = get_backend()
 
         # Load ephemeral config from config.yaml / env vars.
         # Both are injected at API-call time only and never persisted.
@@ -1033,7 +1029,7 @@ class GatewayRunner:
         # still land in the DB here, but the bot connection happens in
         # the sandbox via hermes's own gateway/platforms/* adapters,
         # keyed off the env vars written by
-        # hermes_server_mode.build_channel_extra_env at spawn / credential
+        # the v1 sandbox runtime at spawn / credential
         # refresh. The old in-gateway adapter loop (both legacy
         # env-token and per-agent-credential variants) is deleted.
         logger.info("Gateway running — channels handled in per-agent sandboxes (LOG-44.3).")
@@ -1504,7 +1500,7 @@ async def start_gateway(config: Optional[GatewayConfig] = None, replace: bool = 
     # allow concurrent instances without tripping this guard.
     #
     # Skip the guard when LOGOS_INSTANCE_NAME is set — that env var is used
-    # by container/pod-based executors to identify a child gateway distinct
+    # by container/pod-based runtimes to identify a child gateway distinct
     # from the host's main process.
     import time as _time
     from gateway.status import get_running_pid, remove_pid_file
@@ -1624,41 +1620,6 @@ async def start_gateway(config: Optional[GatewayConfig] = None, replace: bool = 
     unified_handler.setFormatter(JsonRedactingFormatter())
     logging.getLogger().addHandler(unified_handler)
 
-    # Reap any openshell CLI / ssh-proxy processes left over from a prior
-    # gateway run that died ungracefully (SIGKILL, crash, power loss).
-    # Must run BEFORE GatewayRunner.__init__ creates the WorkerRegistry —
-    # otherwise an orphaned worker can re-register with its stale
-    # sandbox name as soon as /ws/worker comes up and the gateway routes
-    # chats to the wrong agent (the day-long "Hermes thinks it's Ani"
-    # bug). shutdown_openshell_children() handles graceful shutdowns;
-    # this is its safety net for the SIGKILL/crash path.
-    try:
-        from gateway.executors.openshell import reap_orphan_openshell_processes
-        reap_orphan_openshell_processes()
-    except Exception as _reap_err:
-        logger.warning("reap_orphan_openshell_processes failed: %s", _reap_err)
-
-    # NOTE: the `migrate_routes_to_model_names` helper (in
-    # gateway/openshell_routes.py) used to run here and rename legacy
-    # `logos-openshell` / `logos-os-<model>` routes to the bare
-    # `<model>` scheme via a client-side `openshell gateway add` alias.
-    #
-    # That approach is structurally broken: `openshell sandbox create
-    # --from <Dockerfile>` derives its target container name from the
-    # gateway name (`openshell-cluster-<gateway>`), so the alias works
-    # for gRPC/exec calls (endpoint-URL routed) but the image-push
-    # path fails with `404: No such container: openshell-cluster-
-    # <alias>`. Image push has to target the actual Docker container
-    # name, not the client-side alias.
-    #
-    # Proper rename requires destroying the existing gateway and
-    # re-provisioning it under the clean name via `openshell gateway
-    # start --name <model>`, which is a user-driven action (loses any
-    # per-gateway provider/inference-router state). See TASKS.md entry
-    # for "model-based gateway names" and MISSING.md M-TBD for the
-    # proper flow — until that lands, the migration must stay OFF or
-    # /setup will break for any user whose routes were auto-renamed.
-
     runner = GatewayRunner(config)
     _set_current_runner(runner)
 
@@ -1720,19 +1681,6 @@ async def start_gateway(config: Optional[GatewayConfig] = None, replace: bool = 
     # Stop cron ticker cleanly
     cron_stop.set()
     cron_thread.join(timeout=5)
-
-    # Reap any in-flight openshell CLI subprocess groups so their
-    # ssh-proxy children don't outlive the gateway. The executor
-    # tracks every Popen pgid in a module-level registry; this call
-    # SIGTERMs the whole tree (then SIGKILLs anything that resists).
-    # Without this, restart-the-gateway would routinely leave
-    # leaked openshell+ssh-proxy processes pinning ports until the
-    # next reboot.
-    try:
-        from gateway.executors.openshell import shutdown_openshell_children
-        shutdown_openshell_children()
-    except Exception as _osh_err:
-        logger.warning("shutdown_openshell_children failed: %s", _osh_err)
 
     # Close MCP server connections
     try:
