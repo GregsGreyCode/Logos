@@ -36,7 +36,6 @@ logos/
 │   │   ├── COMPARISON.md       Logos vs competing projects
 │   │   ├── RELEASE_v*.md       Release notes per version
 │   │   └── onboarding_plan.md  Setup wizard planning
-│   ├── acp-setup.md            ACP protocol setup guide
 │   ├── checkpoint-rollback.md  Checkpoint/rollback guide
 │   ├── migration/              Migration guides (versioned breaking changes)
 │   └── skins/                  Theming documentation
@@ -45,8 +44,6 @@ logos/
 ├── agent/                      Agent loop, prompt builder, runtime adapter
 ├── tools/                      All agent tools (file, shell, approval, workspace, etc.)
 ├── core/                       Shared domain models and utilities
-├── acp_adapter/                ACP protocol adapter (VS Code, Zed, JetBrains)
-├── acp_registry/               ACP registry integration
 │
 │   ├── 00-namespace.yaml
 │   ├── 01-rbac.yaml
