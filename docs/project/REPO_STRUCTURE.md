@@ -48,7 +48,6 @@ logos/
 ├── acp_adapter/                ACP protocol adapter (VS Code, Zed, JetBrains)
 ├── acp_registry/               ACP registry integration
 │
-├── k8s/                        Kubernetes manifests (numbered in apply order)
 │   ├── 00-namespace.yaml
 │   ├── 01-rbac.yaml
 │   ├── ...
@@ -72,8 +71,6 @@ logos/
 ├── cron/                       Cron scheduler and job definitions
 │
 ├── environments/               Benchmark environments and eval harnesses
-├── landingpage/                Static marketing landing page (deployed to GitHub Pages root)
-├── website/                    Docusaurus docs site (deployed to GitHub Pages /docs/)
 │
 └── .github/
     └── workflows/

@@ -262,9 +262,6 @@
     <div class="pb-2 shrink-0 flex items-center gap-2" data-fl-logo>
       <img id="nav-logo-img" src="/static/logo.svg" alt="Logos"
            style="height:32px;width:32px;flex-shrink:0;object-fit:contain;filter:hue-rotate(var(--hue-deg,0deg)) brightness(1.35) saturate(1.35) drop-shadow(0 0 10px rgba(129,140,248,0.55)) drop-shadow(0 0 2px rgba(255,255,255,0.3));">
-      <template x-if="isCanary">
-        <span class="px-2 py-0.5 rounded-full text-[10px] font-bold tracking-widest uppercase border border-yellow-500 bg-yellow-950 text-yellow-400 self-center">canary</span>
-      </template>
     </div>
     <button class="pb-2 text-sm font-medium border-b-2 border-transparent"
       :class="tab==='agents'?'tab-active':'text-gray-400 hover:text-white'"
@@ -308,13 +305,6 @@
         @click="tab='admin'; loadAdminData()">
         Admin
       </button>
-    </template>
-    <!-- Canary pill (inline, between Admin and Theme) -->
-    <template x-if="canary.active">
-      <div class="pb-2 flex items-center gap-1.5 px-2.5 py-1 rounded-full border border-yellow-600 bg-yellow-950 text-yellow-400 text-xs font-medium animate-pulse self-center">
-        <span>🐤</span>
-        <span>canary live</span>
-      </div>
     </template>
     <!-- Update available — only rendered when the gateway's upstream
          has new commits. Clicking pulls origin/HEAD and re-execs the
@@ -640,7 +630,7 @@
                    shrink when the chat panel narrows. -->
               <div class="flex-1 min-w-0 flex flex-col gap-1.5">
 
-                <!-- Row A: Name + platform badge + canary -->
+                <!-- Row A: Name + platform badge -->
                 <div class="flex items-center gap-2 min-h-[20px]">
                   <span data-testid="chat-agent-name" class="text-base font-semibold text-white truncate"
                     x-text="(() => { const chat = chats.find(c => c.id === activeChatId); return chat?.agent_name || 'Agent'; })()"></span>
@@ -652,9 +642,6 @@
                             const name = ({telegram:'Telegram', discord:'Discord', slack:'Slack', whatsapp:'WhatsApp'})[c?._platform] || c?._platform;
                             return 'via ' + name;
                           })()"></span>
-                  </template>
-                  <template x-if="canary.active">
-                    <span class="text-[10px] px-1.5 py-0.5 rounded bg-yellow-900 text-yellow-400 font-semibold animate-pulse shrink-0">canary</span>
                   </template>
                 </div>
 
@@ -6203,7 +6190,6 @@ function app() {
     agentAlive: null,
     agentEverConnected: false,   // true once first /status succeeds; gate for the error banner
     routerState: { providers: {}, routes: {}, grafana_url: 'http://192.0.2.253:3200' },
-    canary: { active: false },
     chats: [],
     activeChatId: null,
     sidebarFilter: 'web',
@@ -6409,7 +6395,6 @@ function app() {
     // auth
     authUser: null,
     authPermissions: [],
-    isCanary: window.__LOGOS__?.isCanary || false,
     runtimeMode: window.__LOGOS__?.runtimeMode || 'openshell',
     appVersion: window.__LOGOS__?.version || '',
     // agents sub-tabs
@@ -7110,7 +7095,7 @@ function app() {
       }
       // Scroll to bottom after Alpine renders the restored messages
       this.$nextTick(() => this._scrollChat());
-      await Promise.all([this.loadStatus(), this.loadRouterState(), this.loadCanary(), this.loadInstances(), this.loadSpawnTemplates(), this.loadWorkers(), this.loadAdminMachines(), this.loadNamedAgents(), this.loadModelRoutes(), this.loadSpawnStats(), this.loadSandboxes()]);
+      await Promise.all([this.loadStatus(), this.loadRouterState(), this.loadInstances(), this.loadSpawnTemplates(), this.loadWorkers(), this.loadAdminMachines(), this.loadNamedAgents(), this.loadModelRoutes(), this.loadSpawnStats(), this.loadSandboxes()]);
       // Auto-select the *last-active* agent's most recent chat on refresh
       // — derived from whichever chat the user most recently updated.
       // Falls back to namedAgents[0] for first-load (no chats yet) or if
@@ -7150,7 +7135,6 @@ function app() {
       }
       setInterval(() => this.loadStatus(), 4000);
       setInterval(() => this.loadRouterState(), 15000);
-      setInterval(() => this.loadCanary(), 10000);
       // Chat-page status circle reflects the active agent's sandbox
       // health, not Logos's own reachability. Poll unconditionally
       // (cheap — one admin endpoint read) at a lighter cadence than
@@ -7523,7 +7507,6 @@ function app() {
       this.activeInstanceId = id;
       this.agentAlive = null;
       this.status = { uptime_s: 0, instance_name: 'Hermes', active_sessions: [] };
-      this.canary = { active: false };
       // Load chats scoped to the new instance
       this.chats = this._loadChats();
       if (this.chats.length === 0) {
@@ -7533,7 +7516,6 @@ function app() {
       }
       this.$nextTick(() => this._scrollChat());
       this.loadStatus();
-      this.loadCanary();
     },
 
     addInstance() {
@@ -8545,13 +8527,6 @@ function app() {
         const r = await fetch('/proxy/state');
         if (r.ok) this.routerState = await r.json();
       } catch(e) { console.error('router state failed', e); }
-    },
-
-    async loadCanary() {
-      try {
-        const r = await fetch(this.instanceUrl + '/canary/status');
-        if (r.ok) this.canary = await r.json();
-      } catch(e) { this.canary = { active: false }; }
     },
 
     // ── Helpers ───────────────────────────────────────────────────
