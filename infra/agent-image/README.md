@@ -1,0 +1,63 @@
+# Logos v2 agent image
+
+`logos-agent:<hermes version>` is upstream `nousresearch/hermes-agent`, pinned by digest and
+unmodified, plus a thin layer so it runs as an OpenShell 0.1.8 sandbox.
+
+| Item | Value |
+| --- | --- |
+| Base | `nousresearch/hermes-agent:v0.23.1@sha256:276d4468…` (published 2026-11-10) |
+| Size | 4.56 GB on disk (v1's `hermes-sandbox:m12` was 9.9 GB) |
+| Workload user | `hermes` (uid/gid 10000) |
+| Workspace | `/sandbox`, with the brain volume at `/sandbox/brain` |
+| Hermes home | `/opt/data` (its own volume) |
+| Bundled extras | upstream's image already includes messaging (Telegram), Anthropic, OTLP, documents |
+
+## Build
+
+```shell
+docker build -t logos-agent:0.23.1 infra/agent-image
+```
+
+The local gateway's Docker driver uses local images directly, so nothing needs pushing for a
+single-host setup. Publishing to GHCR is not set up yet.
+
+## Run as a sandbox
+
+```shell
+for v in logos-home-<agent> logos-brain-<agent>; do
+  docker volume create \
+    --label openshell.ai/sandbox-attachable=true \
+    --label openshell.ai/sandbox-attachable-workspace=default "$v"
+  docker run --rm -v "$v":/v alpine:3 chown 10000:10000 /v   # fresh volumes are root-owned
+done
+
+openshell sandbox create --name <agent> --detach --restart-policy always \
+  --from logos-agent:0.23.1 \
+  --policy infra/agent-image/policy.yaml \
+  --driver-config-json '{"docker":{"mounts":[
+      {"type":"volume","source":"logos-home-<agent>","target":"/opt/data","read_only":false},
+      {"type":"volume","source":"logos-brain-<agent>","target":"/sandbox/brain","read_only":false}]}}' \
+  -- sh -c '/opt/hermes/docker/stage2-hook.sh; exec hermes gateway run'
+```
+
+S3.1 wraps this in one command driven by `agents/<agent>.yaml`.
+
+## Why the extra layer
+
+OpenShell replaces the image ENTRYPOINT/CMD with its supervisor, requires a non-root OCI `USER`,
+and treats a non-`/` `WORKDIR` as the workspace. Upstream runs as root and drops privileges inside
+its s6 entrypoint, with `WORKDIR /opt/hermes`. Running upstream's `stage2-hook.sh` as `hermes`
+still seeds `/opt/data`; its root-only steps (UID remap, chown) print warnings and are skipped.
+
+## Policy
+
+`policy.yaml` grants read-only access to the system paths and `/opt/hermes`, and read-write to
+`/opt/data`, `/sandbox` and `/tmp`, with Landlock as a hard requirement. It has no network rules
+yet, so the sandbox has no outbound access until S2.4.
+
+## Verified (2026-11-15)
+
+- `hermes --version` inside the sandbox: `Hermes Agent v0.23.1 (2026.9.24) · upstream 3b421578`.
+- `stage2-hook.sh` as uid 10000 exits 0 and seeds `/opt/data`; expected warnings: XDG runtime
+  chown, config backend detection, dependency refresh (sealed venv, no network).
+- `hermes gateway run` starts its API server and stays up until stopped.
