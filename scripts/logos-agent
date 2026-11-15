@@ -124,6 +124,12 @@ def env_file(agent, home):
             sys.exit("telegram.enabled is true but no token: set LOGOS_TELEGRAM_BOT_TOKEN for the first `up`")
         cur["TELEGRAM_BOT_TOKEN"] = token
         cur["TELEGRAM_ALLOWED_USERS"] = ",".join(str(u) for u in tg.get("allowed_users") or [])
+        # Home channel: where scheduled jobs and failure notices are delivered. A person's DM chat
+        # id is their user id, so default to the first allowed user unless the definition says otherwise.
+        home_chat = tg.get("home_channel") or next(iter(tg.get("allowed_users") or []), None)
+        if home_chat:
+            cur["TELEGRAM_HOME_CHANNEL"] = str(home_chat)
+            cur.setdefault("TELEGRAM_HOME_CHANNEL_NAME", agent.get("display_name", agent["name"]))
     else:
         cur.pop("TELEGRAM_BOT_TOKEN", None)
         cur.pop("TELEGRAM_ALLOWED_USERS", None)
