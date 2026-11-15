@@ -33,15 +33,7 @@ network_policies:
         allowed_ips: [192.168.1.117/32]
     binaries:
       - path: /opt/hermes/tools/python-*/bin/python3*
-  anthropic:                       # Claude, used for nightly consolidation
-    endpoints:
-      - host: api.anthropic.com
-        port: 443
-        protocol: rest
-        enforcement: enforce
-        access: read-write
-    binaries:
-      - path: /opt/hermes/tools/python-*/bin/python3*
+
   telegram:                        # the agent's own bot
     endpoints:
       - host: api.telegram.org
@@ -51,3 +43,6 @@ network_policies:
         access: read-write
     binaries:
       - path: /opt/hermes/tools/python-*/bin/python3*
+
+  # api.anthropic.com is NOT listed here. It comes from the provider profile in
+  # infra/openshell/providers/anthropic.yaml, which also binds the API key to that host.

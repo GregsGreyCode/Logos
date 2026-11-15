@@ -1,0 +1,25 @@
+# Logos v2 provider profile: Anthropic API, for the hermes interpreter only.
+# Adapted from OpenShell's example providers/anthropic.yaml (v0.1.8): binaries changed from curl
+# to the hermes Python in the logos-agent image.
+# Credential scope: ANTHROPIC_API_KEY, sent as x-api-key to api.anthropic.com and nowhere else.
+id: anthropic
+display_name: Anthropic
+description: Anthropic inference API (Claude), used for nightly consolidation
+category: inference
+inference_capable: true
+credentials:
+  - name: api_key
+    description: Anthropic API key
+    env_vars: [ANTHROPIC_API_KEY]
+    required: true
+    auth_style: header
+    header_name: x-api-key
+discovery:
+  credentials: [api_key]
+endpoints:
+  - host: api.anthropic.com
+    port: 443
+    protocol: rest
+    access: read-write
+    enforcement: enforce
+binaries: ["/opt/hermes/tools/python-*/bin/python3*"]
