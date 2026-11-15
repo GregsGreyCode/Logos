@@ -11,266 +11,41 @@ Each agent has two labelled Docker volumes (docs/adr/0001):
   logos-home-<name>  -> /opt/data        hermes home (config, SOUL.md, memories, sessions)
   logos-brain-<name> -> /opt/data/brain   markdown vault
 """
-import json, os, re, secrets, subprocess, sys, time
+# The logic lives in gateway/agent_runtime.py, shared with the gateway's OpenShell backend.
+import importlib.util, sys
 from pathlib import Path
 
-import yaml
-
 REPO = Path(__file__).resolve().parent.parent
-SANDBOX_UID = "10000:10000"          # `hermes` in the logos-agent image
-HELPER = "alpine:3"
-GIT_HELPER = "alpine/git:latest"
-LABELS = ["--label", "openshell.ai/sandbox-attachable=true",
-          "--label", "openshell.ai/sandbox-attachable-workspace=default"]
-START = "/opt/hermes/docker/stage2-hook.sh; exec hermes gateway run"
-ANSI = re.compile(r"\x1b\[[0-9;]*m")
 
 
-def run(cmd, *, input=None, check=True, quiet=False):
-    p = subprocess.run(cmd, input=input, text=True, capture_output=True)
-    if check and p.returncode != 0:
-        sys.exit(f"command failed: {' '.join(cmd[:4])} ...\n{ANSI.sub('', p.stderr or p.stdout)[-800:]}")
-    return ANSI.sub("", p.stdout)
-
-
-def load(name):
-    path = REPO / "agents" / f"{name}.yaml"
-    if not path.exists():
-        sys.exit(f"no agent definition at {path}")
-    agent = yaml.safe_load(path.read_text())
-    # agents/<name>.local.yaml is untracked: personal values (Telegram user IDs) stay out of git.
-    local = path.with_suffix(".local.yaml")
-    if local.exists():
-        _merge(agent, yaml.safe_load(local.read_text()) or {})
-    return agent
-
-
-def _merge(base, extra):
-    for k, v in extra.items():
-        if isinstance(v, dict) and isinstance(base.get(k), dict):
-            _merge(base[k], v)
-        else:
-            base[k] = v
-
-
-def volumes(name):
-    return f"logos-home-{name}", f"logos-brain-{name}"
-
-
-def ensure_volume(vol):
-    if subprocess.run(["docker", "volume", "inspect", vol], capture_output=True).returncode != 0:
-        run(["docker", "volume", "create", *LABELS, vol])
-        # A fresh volume is root-owned; the sandbox user must own it.
-        run(["docker", "run", "--rm", "-v", f"{vol}:/v", HELPER, "chown", SANDBOX_UID, "/v"])
-
-
-def ensure_vault(vol):
-    """Seed the brain volume from infra/brain-template (never overwriting) and make it a git repo."""
-    tar = subprocess.run(["tar", "-C", str(REPO / "infra" / "brain-template"), "-c", "."],
-                         capture_output=True, check=True).stdout
-    # Unpack to a scratch dir, then copy without overwriting: files a person or the agent already
-    # changed are never replaced, and files added to the template later still arrive.
-    sh = ("mkdir -p /tmp/t && tar -x -C /tmp/t -f - && cd /tmp/t && find . -type f | while read f; do "
-          '[ -e "/v/$f" ] || { mkdir -p "/v/$(dirname "$f")" && cp "$f" "/v/$f"; }; done; cd /v; '
-          "git config --global --add safe.directory /v; "
-          "[ -d .git ] || { git init -q -b main . && git add -A && "
-          "git -c user.name=logos -c user.email=logos@localhost commit -q -m 'Start the brain'; }; "
-          f"chown -R {SANDBOX_UID} /v")
-    p = subprocess.run(["docker", "run", "--rm", "-i", "--entrypoint", "sh", "-v", f"{vol}:/v", GIT_HELPER, "-c", sh],
-                       input=tar, capture_output=True)
-    if p.returncode != 0:
-        sys.exit("could not seed the brain volume:\n" + p.stderr.decode()[-400:])
-
-
-def ensure_model(model):
-    """LM Studio only: make sure the agent's model is loaded with the configured context length."""
-    if model.get("provider") != "lmstudio":
-        return
-    import urllib.request
-    base = model["base_url"].rsplit("/v1", 1)[0]
-    try:
-        loaded = {m["id"]: m.get("loaded_context_length") for m in
-                  json.load(urllib.request.urlopen(base + "/api/v0/models", timeout=10))["data"]
-                  if m.get("state") == "loaded"}
-        if loaded.get(model["default"]) == int(model["context_length"]):
-            return
-        body = json.dumps({"model": model["default"], "context_length": int(model["context_length"])}).encode()
-        urllib.request.urlopen(urllib.request.Request(base + "/api/v1/models/load", data=body,
-                               headers={"Content-Type": "application/json"}), timeout=600)
-        print(f"loaded {model['default']} in LM Studio (context {model['context_length']})")
-    except Exception as e:
-        print(f"warning: could not check or load the model in LM Studio: {e}", file=sys.stderr)
-
-
-def put(vol, rel, content, mode="0640"):
-    """Write a file into a volume through a helper container."""
-    sh = f'mkdir -p "$(dirname /v/{rel})" && cat > /v/{rel} && chown {SANDBOX_UID} /v/{rel} && chmod {mode} /v/{rel}'
-    run(["docker", "run", "--rm", "-i", "-v", f"{vol}:/v", HELPER, "sh", "-c", sh], input=content)
-
-
-def get(vol, rel):
-    p = subprocess.run(["docker", "run", "--rm", "-v", f"{vol}:/v:ro", HELPER, "cat", f"/v/{rel}"],
-                       text=True, capture_output=True)
-    return p.stdout if p.returncode == 0 else ""
-
-
-def env_file(agent, home):
-    """Merge managed keys into the agent's .env, keeping secrets already stored there."""
-    cur = dict(l.split("=", 1) for l in get(home, ".env").splitlines() if "=" in l and not l.startswith("#"))
-    tg = agent.get("telegram") or {}
-    if tg.get("enabled"):
-        token = os.environ.get("LOGOS_TELEGRAM_BOT_TOKEN") or cur.get("TELEGRAM_BOT_TOKEN")
-        if not token:
-            sys.exit("telegram.enabled is true but no token: set LOGOS_TELEGRAM_BOT_TOKEN for the first `up`")
-        cur["TELEGRAM_BOT_TOKEN"] = token
-        cur["TELEGRAM_ALLOWED_USERS"] = ",".join(str(u) for u in tg.get("allowed_users") or [])
-        # Home channel: where scheduled jobs and failure notices are delivered. A person's DM chat
-        # id is their user id, so default to the first allowed user unless the definition says otherwise.
-        home_chat = tg.get("home_channel") or next(iter(tg.get("allowed_users") or []), None)
-        if home_chat:
-            cur["TELEGRAM_HOME_CHANNEL"] = str(home_chat)
-            cur.setdefault("TELEGRAM_HOME_CHANNEL_NAME", agent.get("display_name", agent["name"]))
-    else:
-        cur.pop("TELEGRAM_BOT_TOKEN", None)
-        cur.pop("TELEGRAM_ALLOWED_USERS", None)
-    cur["TZ"] = cur["HERMES_TIMEZONE"] = agent.get("timezone", "UTC")
-    cur.setdefault("API_SERVER_KEY", secrets.token_urlsafe(32))
-    cur["GATEWAY_ALLOW_ALL_USERS"] = "false"
-    return "".join(f"{k}={v}\n" for k, v in sorted(cur.items()))
-
-
-JOBS_DIR = REPO / "infra" / "agent-jobs"
-# Sessions opened with `openshell sandbox exec` do not inherit the image ENV, so hermes CLI calls
-# must be told where the agent's home is.
-HERMES = "export HERMES_HOME=/opt/data; hermes"
-
-
-def sbx(name, script, input=None):
-    p = subprocess.run(["openshell", "sandbox", "exec", "--name", name, "--no-tty", "--", "sh", "-c", script],
-                       input=input, text=True, capture_output=True)
-    return ANSI.sub("", p.stdout + p.stderr)
-
-
-def wait_api(name, tries=60):
-    for _ in range(tries):
-        if sbx(name, "curl -s -o /dev/null -w '%{http_code}' -m 3 http://127.0.0.1:8642/health").strip().endswith("200"):
-            return True
-        time.sleep(3)
-    return False
-
-
-def job_ids(name):
-    """Map cron job name -> id from `hermes cron list`."""
-    ids, last = {}, None
-    for line in sbx(name, f"{HERMES} cron list").splitlines():
-        m = re.match(r"\s+([0-9a-f]{8,})\s+\[", line)
-        if m:
-            last = m.group(1)
-        m = re.match(r"\s+Name:\s+(\S+)", line)
-        if m and last:
-            ids[m.group(1)] = last
-    return ids
-
-
-def ensure_jobs(name, agent, home):
-    """Install the brain jobs: an hourly git commit (no model) and the nightly consolidation."""
-    for script in ("brain_commit.sh", "brain_inbox_state.sh"):
-        put(home, f"scripts/{script}", (JOBS_DIR / script).read_text(), mode="0750")
-    if not wait_api(name):
-        print("warning: hermes API did not come up; brain jobs not installed", file=sys.stderr)
-        return
-    for jid in [i for n, i in job_ids(name).items() if n in ("brain-commit", "consolidate")]:
-        sbx(name, f"{HERMES} cron remove {jid}")
-    tz = agent.get("timezone", "UTC")
-    con = agent.get("consolidation") or {}
-    sbx(name, f'{HERMES} cron create --name brain-commit --no-agent --script brain_commit.sh '
-              f'--timezone {tz} --deliver local "0 * * * *"')
-    if con.get("enabled", True):
-        model = ""
-        if con.get("model"):  # omitted: the job follows the agent's main model
-            model = f'--model {con["model"]} --provider {con.get("provider", agent["model"]["provider"])} '
-        sbx(name, f'{HERMES} cron create --name consolidate --monitor-script brain_inbox_state.sh '
-                  f'--workdir /opt/data/brain --timezone {tz} --continuity --deliver local {model}'
-                  f'"{con.get("schedule", "0 3 * * *")}" "$(cat)"',
-            input=(JOBS_DIR / "consolidate.md").read_text())
-    have = job_ids(name)
-    print("jobs: " + ", ".join(sorted(have)) if have else "warning: no cron jobs registered")
-
-
-def phase(name):
-    for line in run(["openshell", "sandbox", "list"], check=False).splitlines():
-        parts = line.split()
-        if parts and parts[0] == name:
-            return parts[-1]
-    return "Missing"
-
-
-def down(name):
-    if phase(name) != "Missing":
-        run(["openshell", "sandbox", "delete", name])
-        for _ in range(30):
-            if phase(name) == "Missing":
-                break
-            time.sleep(1)
-
-
-def up(name):
-    agent = load(name)
-    home, brain = volumes(name)
-    for v in (home, brain):
-        ensure_volume(v)
-    m = agent["model"]
-    # _config_version marks the file as current for the pinned hermes (v0.23.1 = 53); without it
-    # hermes treats the file as pre-v12 and skips its config migrations. Bump with the image.
-    cfg = {"_config_version": 53,
-           "timezone": agent.get("timezone", "UTC"),
-           "model": {"default": m["default"], "provider": m["provider"], "base_url": m["base_url"],
-                     "context_length": int(m["context_length"])}}
-    put(home, "config.yaml", "# Written by scripts/logos-agent; edit agents/%s.yaml instead.\n%s"
-        % (name, yaml.safe_dump(cfg, sort_keys=False)))
-    ensure_vault(brain)
-    ensure_model(m)
-    # The soul is the persona plus the shared rules every agent follows (brain filing, honesty).
-    soul = (REPO / agent["soul"]).read_text().rstrip() + "\n\n" + (REPO / "souls/_shared/brain.md").read_text()
-    put(home, "SOUL.md", soul)
-    put(home, ".env", env_file(agent, home), mode="0600")
-    down(name)
-    mounts = {"docker": {"mounts": [
-        {"type": "volume", "source": home, "target": "/opt/data", "read_only": False},
-        {"type": "volume", "source": brain, "target": "/opt/data/brain", "read_only": False}]}}
-    cmd = ["openshell", "sandbox", "create", "--name", name, "--no-tty", "--detach",
-           "--restart-policy", "always", "--from", agent["image"],
-           "--policy", str(REPO / agent["policy"]), "--driver-config-json", json.dumps(mounts)]
-    for p in agent.get("providers") or []:
-        cmd += ["--provider", p]
-    run(cmd + ["--", "sh", "-c", START])
-    for _ in range(60):
-        ph = phase(name)
-        if ph in ("Ready", "Error"):
-            break
-        time.sleep(2)
-    print(f"{name}: {ph}")
-    if ph == "Ready":
-        ensure_jobs(name, agent, home)
-    return 0 if ph == "Ready" else 1
+def _runtime_module():
+    # Loaded by path: the CLI needs only this one file, not the whole gateway package.
+    spec = importlib.util.spec_from_file_location("logos_agent_runtime", REPO / "gateway" / "agent_runtime.py")
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = mod
+    spec.loader.exec_module(mod)
+    return mod
 
 
 def main(argv):
     if len(argv) < 2 or argv[1] in ("-h", "--help"):
         print(__doc__); return 0
+    art = _runtime_module()
+    rt = art.AgentRuntime(REPO)
     cmd, name = argv[1], (argv[2] if len(argv) > 2 else None)
-    if cmd == "up" and name:
-        return up(name)
-    if cmd == "down" and name:
-        down(name); print(f"{name}: deleted (volumes kept)"); return 0
-    if cmd == "status":
-        names = [name] if name else sorted(p.stem for p in (REPO / "agents").glob("*.yaml") if not p.stem.endswith(".local"))
-        for n in names:
-            print(f"{n}: {phase(n)}")
-        return 0
-    if cmd == "exec" and name and "--" in argv:
-        rest = argv[argv.index("--") + 1:]
-        return subprocess.call(["openshell", "sandbox", "exec", "--name", name, "--no-tty", "--", *rest])
+    try:
+        if cmd == "up" and name:
+            return rt.up(name)
+        if cmd == "down" and name:
+            rt.down(name); print(f"{name}: deleted (volumes kept)"); return 0
+        if cmd == "status":
+            for n in ([name] if name else rt.defined()):
+                print(f"{n}: {rt.phase(n)}")
+            return 0
+        if cmd == "exec" and name and "--" in argv:
+            return rt.exec(name, argv[argv.index("--") + 1:])
+    except art.AgentRuntimeError as e:
+        sys.exit(str(e))
     print(__doc__); return 2
 
 
