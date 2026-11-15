@@ -147,6 +147,7 @@ def repo(tmp_path):
     jobs.mkdir()
     (jobs / "brain_commit.sh").write_text("#!/bin/sh\n")
     (jobs / "brain_inbox_state.sh").write_text("#!/bin/sh\n")
+    (jobs / "brain_index.py").write_text("# index\n")
     (jobs / "consolidate.md").write_text("Consolidate the inbox.\n")
     return tmp_path
 
@@ -384,7 +385,7 @@ class TestCreate:
             "--policy", str(repo / "infra/agent-image/policy.yaml"),
             "--driver-config-json", mounts,
             "--provider", "anthropic", "--provider", "github",
-            "--", "sh", "-c", "/opt/hermes/docker/stage2-hook.sh; exec hermes gateway run",
+            "--", "sh", "-c", art.START,
         ]
         assert json.loads(mounts) == {"docker": {"mounts": [
             {"type": "volume", "source": "logos-home-alpha", "target": "/opt/data", "read_only": False},
@@ -403,7 +404,24 @@ class TestCreate:
         assert art.yaml.safe_load(text) == {
             "_config_version": 53, "timezone": "Europe/London",
             "model": {"default": "some/model", "provider": "lmstudio",
-                      "base_url": "http://10.0.0.5:1234/v1", "context_length": 65536}}
+                      "base_url": "http://10.0.0.5:1234/v1", "context_length": 65536},
+            "memory": {"memory_char_limit": 6000}}
+
+    def test_config_text_session_reset_enables_the_plugin(self, repo):
+        r = rt(repo)
+        agent = r.load("alpha")
+        agent["session_reset"] = {"mode": "daily", "at_hour": 3}
+        cfg = art.yaml.safe_load(r.config_text("alpha", agent))
+        assert cfg["plugins"] == {"enabled": ["hermes-session-reset-policy"]}
+        assert cfg["session_reset"] == {"mode": "daily", "at_hour": 3}
+        agent["session_reset"] = {"mode": "none"}
+        assert "plugins" not in art.yaml.safe_load(r.config_text("alpha", agent))
+
+    def test_config_text_without_brain_index_keeps_default_memory_limit(self, repo):
+        r = rt(repo)
+        agent = r.load("alpha")
+        agent["brain_index"] = False
+        assert "memory" not in art.yaml.safe_load(r.config_text("alpha", agent))
 
     def test_soul_is_persona_plus_shared_rules(self, repo):
         r = rt(repo)
@@ -459,6 +477,9 @@ class TestCreate:
         assert [s.split()[-1] for s in removed] == ["0123456789ab", "ba9876543210"]
         (commit,) = [s for s in scripts if "--name brain-commit" in s]
         assert '--no-agent --script brain_commit.sh --timezone Europe/London --deliver local "0 * * * *"' in commit
+        (idx,) = [s for s in scripts if "--name brain-index" in s]
+        assert '--no-agent --script brain_index.py --timezone Europe/London --deliver local "50 * * * *"' in idx
+        assert any("python /opt/data/scripts/brain_index.py" in s for s in scripts)   # run once at `up`
         (con,) = [s for s in scripts if "--name consolidate" in s]
         assert '--workdir /opt/data/brain --timezone Europe/London --continuity --deliver local "0 3 * * *" "$(cat)"' in con
         assert runner.inputs[runner.calls.index(next(c for c in runner.calls if c[-1] == con))] == "Consolidate the inbox.\n"

@@ -38,7 +38,16 @@ HELPER = "alpine:3"
 GIT_HELPER = "alpine/git:latest"
 LABELS = ["--label", "openshell.ai/sandbox-attachable=true",
           "--label", "openshell.ai/sandbox-attachable-workspace=default"]
-START = "/opt/hermes/docker/stage2-hook.sh; exec hermes gateway run"
+# Plugins baked into the image (/opt/logos/plugins) are copied into the home on every start, so the
+# running copy always matches the image. hermes loads plugins only from its home.
+START = ("/opt/hermes/docker/stage2-hook.sh; "
+         "if [ -d /opt/logos/plugins ]; then mkdir -p /opt/data/plugins && "
+         "for p in /opt/logos/plugins/*/; do n=$(basename \"$p\"); rm -rf \"/opt/data/plugins/$n\"; "
+         "cp -R \"$p\" \"/opt/data/plugins/$n\"; done; fi; "
+         "exec hermes gateway run")
+MEMORY_CHAR_LIMIT = 6000             # hermes default is 2,200; raised so the brain index has room
+RESET_PLUGIN = "hermes-session-reset-policy"
+MANAGED_JOBS = ("brain-commit", "brain-index", "consolidate")
 HOME_TARGET = "/opt/data"
 BRAIN_TARGET = "/opt/data/brain"
 ANSI = re.compile(r"\x1b\[[0-9;]*m")
@@ -245,6 +254,14 @@ class AgentRuntime:
                "timezone": agent.get("timezone", "UTC"),
                "model": {"default": m["default"], "provider": m["provider"], "base_url": m["base_url"],
                          "context_length": int(m["context_length"])}}
+        if agent.get("brain_index", True):
+            cfg["memory"] = {"memory_char_limit": MEMORY_CHAR_LIMIT}
+        reset = agent.get("session_reset")
+        if reset and str(reset.get("mode", "none")) != "none":
+            # hermes no longer resets conversations on a timer; this catalog plugin (baked into the
+            # image) starts a fresh session on the first message after the daily boundary.
+            cfg["plugins"] = {"enabled": [RESET_PLUGIN]}
+            cfg["session_reset"] = {k: reset[k] for k in ("mode", "at_hour", "idle_minutes") if k in reset}
         return ("# Written by scripts/logos-agent; edit agents/%s.yaml instead.\n%s"
                 % (name, yaml.safe_dump(cfg, sort_keys=False)))
 
@@ -314,17 +331,23 @@ class AgentRuntime:
 
     def ensure_jobs(self, name: str, agent: Mapping[str, Any], home: str) -> None:
         """Install the brain jobs: an hourly git commit (no model) and the nightly consolidation."""
-        for script in ("brain_commit.sh", "brain_inbox_state.sh"):
+        for script in ("brain_commit.sh", "brain_inbox_state.sh", "brain_index.py"):
             self.put(home, f"scripts/{script}", (self.jobs_dir / script).read_text(), mode="0750")
         if not self.wait_api(name):
             print("warning: hermes API did not come up; brain jobs not installed", file=sys.stderr)
             return
-        for jid in [i for n, i in self.job_ids(name).items() if n in ("brain-commit", "consolidate")]:
+        for jid in [i for n, i in self.job_ids(name).items() if n in MANAGED_JOBS]:
             self.sbx(name, f"{HERMES} cron remove {jid}")
         tz = agent.get("timezone", "UTC")
         con = agent.get("consolidation") or {}
         self.sbx(name, f'{HERMES} cron create --name brain-commit --no-agent --script brain_commit.sh '
                        f'--timezone {tz} --deliver local "0 * * * *"')
+        if agent.get("brain_index", True):
+            # Script only: refreshes the page list in built-in memory. New conversations pick it up.
+            self.sbx(name, f'{HERMES} cron create --name brain-index --no-agent --script brain_index.py '
+                           f'--timezone {tz} --deliver local "50 * * * *"')
+            self.sbx(name, f"export HERMES_HOME=/opt/data LOGOS_MEMORY_CHAR_LIMIT={MEMORY_CHAR_LIMIT}; "
+                           "python /opt/data/scripts/brain_index.py")
         if con.get("enabled", True):
             model = ""
             if con.get("model"):  # omitted: the job follows the agent's main model

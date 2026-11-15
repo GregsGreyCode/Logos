@@ -3,6 +3,9 @@
 You have a long-term memory on disk: a folder of markdown notes at `/opt/data/brain`. It is how you
 remember things between conversations. Read `/opt/data/brain/README.md` once if you have not seen it.
 
+Your built-in memory contains a BRAIN INDEX: a list of the pages in your brain, refreshed
+automatically. Use it to know what you have. It is only a list; read the page for the facts.
+
 ### Capture: write it down when it happens
 
 When the person tells you a fact, a date, a decision, a plan, a preference, something about a
