@@ -187,41 +187,6 @@ async def handle_machines_patch(request: web.Request) -> web.Response:
             metadata=updates, ip_address=request.remote,
         )
 
-        # Propagate credential / URL changes to every OpenShell sub-gateway's
-        # provider record. Without this hook, rotating the LM Studio API key
-        # (or moving the LM Studio host) silently leaves every previously-
-        # provisioned sub-gateway holding a stale credential — workers in
-        # those gateways still register and ensure_loaded still works
-        # (because both read auth.db directly), but the worker's chat
-        # completion call goes through OpenShell's privacy router which
-        # injects the stored stale credential and gets rejected by LM Studio.
-        # Run in a background task so the PATCH response returns immediately;
-        # the resync is best-effort and idempotent. See
-        # ``ensure_provider_configured`` for the per-gateway sync logic.
-        if "api_key" in updates or "endpoint_url" in updates:
-            try:
-                import asyncio as _asyncio
-                from gateway.openshell_routes import ensure_provider_configured
-                async def _propagate_bg():
-                    try:
-                        routes = auth_db.list_model_routes()
-                        for r in routes:
-                            try:
-                                await _asyncio.to_thread(
-                                    ensure_provider_configured,
-                                    r["openshell_name"], r["provider"],
-                                )
-                            except Exception as exc:
-                                logger.warning(
-                                    "Failed to propagate machine update to route %s (%s): %s",
-                                    r["id"], r["openshell_name"], exc,
-                                )
-                    except Exception as exc:
-                        logger.warning("Machine-update propagation raised: %s", exc)
-                _asyncio.create_task(_propagate_bg())
-            except Exception as exc:
-                logger.warning("Could not schedule machine-update propagation: %s", exc)
-
     machine = auth_db.get_machine(mid)
     machine["capabilities"] = auth_db.get_machine_capabilities(mid)
     machine["has_api_key"] = bool(machine.pop("api_key", None))
@@ -421,33 +386,12 @@ async def handle_cloud_providers_delete(request: web.Request) -> web.Response:
     if not existing:
         return web.json_response({"error": "not_found"}, status=404)
 
-    # Teardown any model_routes we auto-provisioned (or the user
-    # manually created) for this provider. Without this, deleting a
-    # provider leaves orphaned OpenShell gateways running with a
-    # broken API key — agents bound to those routes start failing
-    # mid-session. Best-effort: route-by-route errors are logged but
-    # don't block provider deletion.
-    torn_down: list[str] = []
-    torn_down_errors: list[dict] = []
-    try:
-        from gateway.openshell_routes import destroy_route
-        provider_type = existing.get("provider") or ""
-        for r in auth_db.list_model_routes():
-            if r.get("provider") == provider_type:
-                try:
-                    await asyncio.to_thread(destroy_route, r["id"])
-                    torn_down.append(r["id"])
-                except Exception as exc:
-                    torn_down_errors.append({"route_id": r["id"], "error": str(exc)[:200]})
-                    logger.warning("delete provider %s: route %s teardown failed: %s", pid, r["id"], exc)
-    except Exception as exc:
-        logger.warning("delete provider %s: route cleanup skipped: %s", pid, exc)
-
     auth_db.delete_cloud_provider(pid)
     return web.json_response({
         "ok": True,
-        "routes_destroyed": torn_down,
-        "route_teardown_errors": torn_down_errors,
+        # Kept for response-shape compatibility; model routes are gone.
+        "routes_destroyed": [],
+        "route_teardown_errors": [],
     })
 
 
@@ -455,12 +399,8 @@ async def _activate_cloud_provider(pid: str) -> None:
     """Shared activation path used by both the /activate handler and
     the auto-activate-on-first-add flow in ``handle_cloud_providers_post``.
 
-    Idempotent. Writes env vars + config.yaml + kicks off route
-    provisioning in the background so the first agent dispatch after
-    activation has a ready route to bind to. Provisioning can take
-    30-60s on a cold start, so we don't block the HTTP response on
-    it — the model-routes table polls and the UI will see the row
-    appear once OpenShell is up.
+    Idempotent. Writes env vars + config.yaml. (The v1 runtime also
+    auto-provisioned an OpenShell model route here; removed in S1.5.)
     """
     prov = auth_db.get_cloud_provider(pid)
     if not prov:
@@ -510,29 +450,6 @@ async def _activate_cloud_provider(pid: str) -> None:
         _config_path.write_text(yaml.dump(cfg, default_flow_style=False, allow_unicode=True))
     except Exception as e:
         logger.warning("cloud provider activate: config.yaml write failed: %s", e)
-
-    # Auto-provision a route for the active model if one doesn't
-    # already exist. Runs in a background task because cold-start
-    # provision_new_route is 30-60s — we don't want to hold the
-    # /activate response that long. If there's no active_model we
-    # skip; routes are per (provider, model) and need both.
-    if active_model:
-        async def _provision_bg():
-            try:
-                from gateway.openshell_routes import provision_or_reuse_route
-                await asyncio.to_thread(
-                    provision_or_reuse_route,
-                    provider_type, active_model,
-                    # First route ever? Make it the default so agents
-                    # without an explicit route_id fall back to it.
-                    not auth_db.list_model_routes(),
-                )
-            except Exception as exc:
-                logger.warning(
-                    "auto-provision route for %s/%s failed: %s",
-                    provider_type, active_model, exc,
-                )
-        asyncio.create_task(_provision_bg())
 
 
 async def handle_cloud_providers_activate(request: web.Request) -> web.Response:
@@ -843,15 +760,12 @@ async def handle_agents_list(request: web.Request) -> web.Response:
     user = request.get("current_user") or {}
     agents = auth_db.list_agents(user.get("id", ""))
 
-    # Augment each agent with the deterministic worker_id / sandbox_name that
-    # its OpenShell sandbox will register under, plus live worker state (if
-    # the sandbox is currently connected). The frontend uses this to grey
-    # out the chat UI until the sandbox is ready, and to pass worker_id on
-    # every /chat request.
-    try:
-        from gateway.executors.openshell import _sanitize_sandbox_name
-    except Exception:
-        _sanitize_sandbox_name = lambda s: s  # noqa: E731
+    # Augment each agent with the deterministic worker_id / sandbox_name its
+    # sandbox runs under, plus live state from the sandbox backend. The
+    # frontend uses this to grey out the chat UI until the sandbox is
+    # ready. NullBackend (until E2) reports every agent as disconnected.
+    from gateway.sandbox_backend import get_backend, sanitize_sandbox_name
+    backend = request.app.get("sandbox_backend") or get_backend()
 
     # Aggregate dispatch counts per agent in a single query so the world
     # view's per-agent maturity tier ("Sprout/Sapling/Branch/Tree/Old
@@ -873,29 +787,19 @@ async def handle_agents_list(request: web.Request) -> web.Response:
     except _sqlite3.Error:
         pass  # leave map empty; UI handles missing counts as 0
 
-    worker_registry = request.app.get("worker_registry")
     for a in agents:
         name = a.get("name", "")
-        sandbox_name = _sanitize_sandbox_name(f"hermes-{name}") if name else ""
+        sandbox_name = sanitize_sandbox_name(f"hermes-{name}") if name else ""
         a["sandbox_name"] = sandbox_name
         a["worker_id"] = sandbox_name
-        # Live worker status, if the sandbox has a registered state-file
-        # entry (Plan A-prime / TASKS.md #24: per-task ``openshell
-        # sandbox exec`` dispatch — ``worker_connected`` now means "the
-        # gateway has a state-file entry for this sandbox", and
-        # ``worker_healthy`` means "the sandbox CR is in phase=ready").
-        # M7 in docs/MISSING.md is where the richer sandbox_phase /
-        # api_latency_ms / last_probe_ts fields will land.
-        #
-        worker = worker_registry.get(sandbox_name) if worker_registry and sandbox_name else None
-        if worker:
-            a["worker_healthy"] = worker.healthy
-            a["worker_status"] = worker.status
-            a["worker_connected"] = True
-        else:
-            a["worker_healthy"] = False
-            a["worker_status"] = "disconnected"
-            a["worker_connected"] = False
+        try:
+            st = backend.status(sandbox_name) if sandbox_name else None
+        except Exception:
+            st = None
+        running = bool(st and st.running)
+        a["worker_healthy"] = running
+        a["worker_status"] = st.state if (st and running) else "disconnected"
+        a["worker_connected"] = running
 
         # Maturity inputs (tier computation lives in the frontend so the
         # tier names + glyphs can iterate without a server roundtrip).
@@ -962,7 +866,7 @@ async def handle_agents_post(request: web.Request) -> web.Response:
                     )
     import json as _json
     # The per-agent toolsets selector was removed from the UI (2026-04-21)
-    # because `_build_config_yaml` in hermes_server_mode hardcodes
+    # because the v1 sandbox config builder hardcoded
     # `hermes-cli` for every platform regardless of what this column says.
     # We still write the column because `capabilities.py` and `policies.py`
     # read it for unrelated purposes (capability-gate bookkeeping,
@@ -980,7 +884,7 @@ async def handle_agents_post(request: web.Request) -> web.Response:
     # see the same model the rest of the gateway is using. Without this,
     # the DB record stays empty and the world-view card shows no model
     # badge even though the executor's spawn-time fallback gives the
-    # sandbox a working model. Resolution mirrors openshell.spawn().
+    # sandbox a working model.
     if not model:
         model = (
             os.environ.get("HERMES_MODEL")
@@ -993,36 +897,6 @@ async def handle_agents_post(request: web.Request) -> web.Response:
         char_index = int(char_index) if char_index is not None else None
     except (TypeError, ValueError):
         char_index = None
-    # Bind to a model_routes row. UI route picker provides one; "Auto
-    # (use default)" sends NULL and we resolve the default here so the
-    # DB record is never NULL — keeps the Dashboards "bound agents"
-    # count accurate and lets the executor + admin queries treat the
-    # binding as the single source of truth instead of relying on a
-    # spawn-time fallback that leaves the DB looking unattached.
-    model_route_id = body.get("model_route_id") or None
-    if model_route_id:
-        _route = auth_db.get_model_route(model_route_id)
-        if _route:
-            # Sync model to the route's model so the agent card and
-            # the executor see the same value.
-            model = _route.get("model") or model
-        else:
-            # UI sent a stale id (route deleted between fetch and POST)
-            # — drop the binding so the default-route fallback below kicks in.
-            logger.warning(
-                "create_agent: model_route_id=%r not found, dropping binding",
-                model_route_id,
-            )
-            model_route_id = None
-    if not model_route_id:
-        _default = auth_db.get_default_model_route()
-        if _default:
-            model_route_id = _default["id"]
-            model = _default.get("model") or model
-            logger.info(
-                "create_agent(%s): no route specified, auto-binding to default route %s (%s)",
-                name, model_route_id, model,
-            )
     agent = auth_db.create_agent(
         name=name,
         soul_slug=soul_slug,
@@ -1032,7 +906,6 @@ async def handle_agents_post(request: web.Request) -> web.Response:
         shared=body.get("shared", True),
         toolsets=toolsets_str,
         char_index=char_index,
-        model_route_id=model_route_id,
     )
 
     # B-tier defaults: apply always_on capabilities + any flagged
@@ -1099,42 +972,10 @@ async def handle_agents_post(request: web.Request) -> web.Response:
             logger.exception("create_agent(%s): duplicate copy failed", name)
             duplicate_result = {"ok": False, "error": str(_dexc)[:200]}
 
-    # If OpenShell runtime is active, spawn a sandbox for this agent.
-    # `executor.spawn()` runs `openshell sandbox create` synchronously,
-    # which can take >60s while the underlying k8s Sandbox CR provisions.
-    # We must NOT block the asyncio event loop on it — instead we kick
-    # the spawn into a background thread and return immediately. The
-    # executor writes its state record with phase="provisioning" up
-    # front, so the Sandboxes dashboard sees the new entry within a
-    # second of this handler returning.
+    # The v1 runtime spawned an OpenShell sandbox here. No sandbox
+    # backend until E2: the agent row exists, chat answers 503
+    # no_agents_running until a backend can run it.
     spawn_result = None
-    executor = request.app.get("executor")
-    if executor and type(executor).__name__ == "OpenShellExecutor":
-        try:
-            import asyncio as _asyncio
-            from gateway.executors.base import InstanceConfig
-            config = InstanceConfig(
-                name=name,
-                soul_name=soul_slug,
-                model=model,
-                requester=user.get("display_name") or user.get("username") or "",
-                instance_label=name,
-                toolsets=_json.loads(toolsets_str) if toolsets_str else [],
-                model_route_id=model_route_id,
-            )
-
-            async def _spawn_bg():
-                try:
-                    await _asyncio.to_thread(executor.spawn, config)
-                    logger.info("Spawned OpenShell sandbox for agent '%s'", name)
-                except Exception as exc:
-                    logger.warning("Failed to spawn OpenShell sandbox for agent '%s': %s", name, exc)
-
-            _asyncio.create_task(_spawn_bg())
-            spawn_result = {"status": "provisioning", "agent": name}
-        except Exception as exc:
-            logger.warning("Failed to schedule sandbox spawn for agent '%s': %s", name, exc)
-            spawn_result = {"error": str(exc)}
 
     resp = dict(agent)
     if spawn_result:
@@ -1170,29 +1011,11 @@ async def handle_agents_patch(request: web.Request) -> web.Response:
     import json as _json
     updates = {}
     for k in ("name", "soul_slug", "model", "description", "shared", "char_index",
-              "daily_budget_usd", "fallback_route_id"):
+              "daily_budget_usd"):
         if k in body:
             updates[k] = body[k]
     if "toolsets" in body:
         updates["toolsets"] = _json.dumps(body["toolsets"]) if isinstance(body["toolsets"], list) else ""
-    # model_route_id rebind: validate the row exists and sync the
-    # agent's `model` field to the route's model so the card and
-    # executor stay consistent. NULL is allowed — clears the binding
-    # and falls back to the default route at spawn time. The chat M
-    # dropdown uses this path to switch an agent between routes.
-    if "model_route_id" in body:
-        _new_route_id = body.get("model_route_id") or None
-        if _new_route_id:
-            _route = auth_db.get_model_route(_new_route_id)
-            if not _route:
-                return web.json_response({"error": "model_route_id not found"}, status=404)
-            updates["model_route_id"] = _new_route_id
-            # Pull the model field forward from the route — keeps
-            # agent.model in sync with the bound route's model so
-            # display + executor see the same value.
-            updates["model"] = _route.get("model") or updates.get("model", existing.get("model", ""))
-        else:
-            updates["model_route_id"] = None
     renamed_from: Optional[str] = None
     if "name" in updates and updates["name"] != existing["name"]:
         dup = auth_db.get_agent_by_name(updates["name"])
@@ -1201,48 +1024,34 @@ async def handle_agents_patch(request: web.Request) -> web.Response:
         renamed_from = existing["name"]
     agent = auth_db.update_agent(aid, **updates)
 
-    # On rename: reap the old `hermes-<old_name>` sandbox and move the
-    # per-agent host data dir to the new name so memories / logs follow
-    # the agent. Next dispatch spawns `hermes-<new_name>` fresh from the
-    # (now-renamed) memories. Runs in the background so the PATCH
-    # response returns immediately — sandbox teardown can take 5-10s
-    # and the UI doesn't need to block on it. Guarded against failure:
-    # if either step errors, the agent row is still renamed in the DB
-    # and the worst case is an orphan sandbox the user can clean up
-    # from Admin → Sandboxes. (LOG-30.)
+    # On rename: move the per-agent host data dir to the new name so
+    # memories / logs follow the agent. Runs in the background so the
+    # PATCH response returns immediately. (The v1 runtime also reaped the
+    # old `hermes-<old_name>` sandbox here; no sandbox backend until E2.)
     if renamed_from:
-        executor = request.app.get("executor")
-        if executor and type(executor).__name__ == "OpenShellExecutor":
-            import asyncio as _asyncio
-            import shutil as _shutil
-            from gateway.executors.openshell import _HERMES_HOME as _HH
-            new_name = agent["name"]
-            async def _rename_bg():
-                try:
-                    await _asyncio.to_thread(executor.delete_instance, renamed_from)
+        import asyncio as _asyncio
+        import pathlib as _pathlib
+        import shutil as _shutil
+        _HH = _pathlib.Path(
+            os.environ.get("LOGOS_HOME") or os.environ.get("HERMES_HOME")
+            or str(_pathlib.Path.home() / ".logos")
+        )
+        new_name = agent["name"]
+        async def _rename_bg():
+            try:
+                old_dir = _HH / "agents" / renamed_from
+                new_dir = _HH / "agents" / new_name
+                if old_dir.exists() and not new_dir.exists():
+                    await _asyncio.to_thread(_shutil.move, str(old_dir), str(new_dir))
                     logger.info(
-                        "Rename: destroyed old sandbox 'hermes-%s' (agent renamed to '%s')",
-                        renamed_from, new_name,
+                        "Rename: moved host data dir %s → %s", old_dir, new_dir,
                     )
-                except Exception as exc:
-                    logger.warning(
-                        "Rename: failed to destroy old sandbox 'hermes-%s': %s",
-                        renamed_from, exc,
-                    )
-                try:
-                    old_dir = _HH / "agents" / renamed_from
-                    new_dir = _HH / "agents" / new_name
-                    if old_dir.exists() and not new_dir.exists():
-                        await _asyncio.to_thread(_shutil.move, str(old_dir), str(new_dir))
-                        logger.info(
-                            "Rename: moved host data dir %s → %s", old_dir, new_dir,
-                        )
-                except Exception as exc:
-                    logger.warning(
-                        "Rename: failed to move host data for '%s' → '%s': %s",
-                        renamed_from, new_name, exc,
-                    )
-            _asyncio.create_task(_rename_bg())
+            except Exception as exc:
+                logger.warning(
+                    "Rename: failed to move host data for '%s' → '%s': %s",
+                    renamed_from, new_name, exc,
+                )
+        _asyncio.create_task(_rename_bg())
 
     return web.json_response(agent)
 
@@ -1264,36 +1073,8 @@ async def handle_agents_delete(request: web.Request) -> web.Response:
             status=403,
         )
 
-    # If OpenShell runtime is active, destroy the agent's sandbox AND
-    # purge per-agent host data (memories, logs, sessions synced from
-    # sandbox by worker_registry). Run in a background thread so we
-    # don't block the asyncio event loop. Sandbox teardown must happen
-    # before rmtree — worker_registry may still be writing syncs until
-    # the sandbox is gone.
-    executor = request.app.get("executor")
-    agent_name = agent["name"]
-    if executor and type(executor).__name__ == "OpenShellExecutor":
-        try:
-            import asyncio as _asyncio
-            import shutil as _shutil
-            from gateway.executors.openshell import _HERMES_HOME as _HH
-            async def _delete_bg():
-                try:
-                    await _asyncio.to_thread(executor.delete_instance, agent_name)
-                    logger.info("Destroyed OpenShell sandbox for agent '%s'", agent_name)
-                except Exception as exc:
-                    logger.warning("Failed to destroy sandbox for agent '%s': %s", agent_name, exc)
-                try:
-                    agent_dir = _HH / "agents" / agent_name
-                    if agent_dir.exists():
-                        await _asyncio.to_thread(_shutil.rmtree, str(agent_dir), True)
-                        logger.info("Purged host data dir %s", agent_dir)
-                except Exception as exc:
-                    logger.warning("Failed to purge host data for agent '%s': %s", agent_name, exc)
-            _asyncio.create_task(_delete_bg())
-        except Exception as exc:
-            logger.warning("Failed to schedule sandbox delete for agent '%s': %s", agent_name, exc)
-
+    # delete_agent() wipes ~/.logos/agents/<name>/. (The v1 runtime also
+    # destroyed the agent's OpenShell sandbox here; no backend until E2.)
     auth_db.delete_agent(aid)
     return web.Response(status=204)
 
@@ -1313,7 +1094,7 @@ async def handle_agents_delete(request: web.Request) -> web.Response:
 #      column, JSON array) — which endpoint groups the sandbox can
 #      reach on the network. Managed by ``gateway.policies.apply_preset``
 #      / ``remove_preset`` which also push the merged effective policy
-#      to the running sandbox via ``openshell policy set``.
+#      to the running sandbox (a no-op until the E2 sandbox backend).
 #
 # Both dimensions surface in the same T pill UI because they're
 # conceptually "the tools this agent can use", but the underlying
@@ -1356,58 +1137,14 @@ async def handle_agent_tools_get(request: web.Request) -> web.Response:
     # ── Application layer: sandbox toolsets + availability ──
     #
     # The agent's own sandbox is the only source of truth for what
-    # toolsets hermes actually has. We run a probe via openshell
-    # sandbox exec that imports tools.registry and serialises
-    # get_available_toolsets() + check_toolset_requirements().
-    #
-    # The UI is read-only: the toggle endpoint that used to write to
-    # agents.toolsets was a no-op (hermes's config.yaml ignored the
-    # column), so we don't expose a separate "enabled" list any more.
-    # Each toolset carries its own `available` flag from the registry's
-    # requirement check, which is what the UI renders as ✅ vs ⚠️.
+    # toolsets hermes actually has. The v1 probe (openshell sandbox exec)
+    # went with OpenShell 0.0.x in S1.5; until E2 there is no sandbox to
+    # ask, so the list is empty and ``error`` explains why.
     available_toolsets: list[dict] = []
     toolsets_source = "unavailable"
-    toolsets_error: Optional[str] = None
-    try:
-        from gateway.executors.openshell import _sanitize_sandbox_name
-        from gateway.worker_registry_v2 import fetch_toolsets_from_sandbox
-        sandbox_name = _sanitize_sandbox_name(f"hermes-{agent['name']}")
-        payload = await fetch_toolsets_from_sandbox(sandbox_name)
-        if payload and isinstance(payload.get("toolsets"), dict):
-            availability = payload.get("availability") or {}
-            for name, meta in sorted(payload["toolsets"].items()):
-                description = ""
-                tools = []
-                if isinstance(meta, dict):
-                    description = str(meta.get("description", ""))
-                    raw_tools = meta.get("tools") or []
-                    if isinstance(raw_tools, list):
-                        tools = [str(t) for t in raw_tools]
-                # Prefer the per-toolset `available` flag inline on the
-                # meta dict (hermes's registry sets it directly); fall
-                # back to the top-level availability map; default True.
-                avail = True
-                if isinstance(meta, dict) and "available" in meta:
-                    avail = bool(meta["available"])
-                elif name in availability:
-                    avail = bool(availability[name])
-                available_toolsets.append({
-                    "name": name,
-                    "description": description,
-                    "tools": tools,
-                    "available": avail,
-                })
-            toolsets_source = f"sandbox:{sandbox_name}"
-        else:
-            toolsets_error = (
-                "Couldn't read the sandbox's tool registry. Check the "
-                "gateway log for 'fetch_toolsets_from_sandbox' — it "
-                "will say whether the sandbox is up or the python probe "
-                "failed."
-            )
-    except Exception as exc:
-        toolsets_error = f"Sandbox toolset query failed: {exc}"
-        logger.warning("handle_agent_tools_get(%s): %s", aid, exc)
+    toolsets_error: Optional[str] = (
+        "No agents are running yet: the v2 sandbox backend arrives in epic E2."
+    )
 
     # ── Infrastructure layer: available + applied presets ──
     available_presets: list[dict] = []
@@ -1452,12 +1189,12 @@ async def handle_agent_presets_toggle(request: web.Request) -> web.Response:
 
     When ``enabled=true`` calls ``gateway.policies.apply_preset``,
     otherwise ``remove_preset``. Both update ``agents.applied_presets``
-    in the DB AND push the merged effective policy to the running
-    sandbox via ``openshell policy set --wait``.
+    in the DB and try to push the merged effective policy to the
+    running sandbox (a no-op until the E2 sandbox backend).
 
-    The push is best-effort — if the sandbox isn't spawned yet, or
-    openshell is unreachable, the DB update still happens and the
-    next spawn picks up the new effective policy. Returns the full
+    The push is best-effort — if the sandbox isn't running, the DB
+    update still happens and the next spawn picks up the new
+    effective policy. Returns the full
     applied list so the UI can re-render without an extra GET::
 
         {"applied": ["github", "slack"]}
@@ -1511,155 +1248,6 @@ async def handle_agent_presets_toggle(request: web.Request) -> web.Response:
     return web.json_response({"applied": applied})
 
 
-async def handle_agent_runtime_restart(request: web.Request) -> web.Response:
-    """POST /admin/agents/{id}/runtime/restart
-
-    Re-uploads the Logos hermes launcher (``hermes_launcher.py`` on the
-    host, uploaded to the sandbox as the bare ``hermes``) into the
-    agent's sandbox, then bounces the hermes process so it picks up the
-    latest pre-boot patches. Useful when the Logos gateway has been
-    updated with a newer launcher but the sandbox's hermes process is
-    still running against the version it was booted with (e.g. agents
-    created before a patch landed that adds /v1/toolsets or fixes
-    is_gateway_running detection).
-    """
-    aid = request.match_info["id"]
-    agent = auth_db.get_agent(aid)
-    if not agent:
-        return web.json_response({"error": "not_found"}, status=404)
-
-    from gateway.executors.openshell import _sanitize_sandbox_name, _load_state
-    sandbox_name = _sanitize_sandbox_name(f"hermes-{agent['name']}")
-
-    target_gw = None
-    for inst in _load_state():
-        if inst.get("sandbox_name") == sandbox_name:
-            target_gw = inst.get("openshell_name")
-            break
-
-    try:
-        from gateway.executors.hermes_server_mode import (
-            deploy_hermes_config,
-            deploy_hermes_launcher,
-            deploy_soul_md,
-            build_channel_extra_env,
-            restart_hermes_in_sandbox,
-            wait_for_hermes_health,
-        )
-    except Exception as exc:
-        return web.json_response(
-            {"error": f"hermes_server_mode unavailable: {exc}"},
-            status=500,
-        )
-
-    logger.info(
-        "agent_runtime_restart(%s): starting — sandbox=%s gateway=%s",
-        aid, sandbox_name, target_gw,
-    )
-
-    # Re-deploy config.yaml first. Without this, host-side changes to
-    # the generator (``_build_config_yaml`` — e.g. adding
-    # platform_toolsets, editing env_passthrough) never land on
-    # sandboxes spawned before the change. Restart-runtime should be
-    # the operator's "pick up my latest Logos edits and bounce" lever,
-    # not just a hermes process bounce.
-    #
-    # Preserve the existing ``api_key`` from the state record so we
-    # don't mint a fresh one — dispatch_task_v2 caches the Bearer and
-    # would 401 until the sandbox is fully respawned.
-    try:
-        from gateway.executors.openshell import _load_state
-        from types import SimpleNamespace
-        existing_api_key = ""
-        for inst in _load_state():
-            if inst.get("sandbox_name") == sandbox_name:
-                existing_api_key = (inst.get("hermes_server_setup") or {}).get("api_key") or ""
-                break
-        if not existing_api_key:
-            raise RuntimeError("no hermes_server_setup.api_key in state file — cannot preserve Bearer")
-        # Build a minimal config object with the fields _build_config_yaml
-        # reads: name, model, soul_name. ``toolsets`` used to live here too
-        # but the parameter was dead code — every agent gets hermes-cli on
-        # every platform regardless of the DB column.
-        _cfg = SimpleNamespace(
-            name=agent.get("name") or "",
-            model=agent.get("model") or "",
-            soul_name=agent.get("soul_slug") or "general",
-        )
-        _extra_env = build_channel_extra_env(
-            agent.get("id") or "",
-            sandbox_name_for_log=sandbox_name,
-        ) if agent.get("id") else {}
-        deploy_hermes_config(
-            sandbox_name, _cfg, existing_api_key,
-            extra_env=_extra_env or None, gateway=target_gw,
-        )
-    except Exception as exc:
-        logger.warning(
-            "runtime restart: config.yaml redeploy failed (non-fatal, "
-            "launcher+SOUL.md still refresh): %s", exc,
-        )
-
-    try:
-        deploy_hermes_launcher(sandbox_name, gateway=target_gw)
-    except Exception as exc:
-        logger.exception("runtime restart: launcher upload failed")
-        return web.json_response(
-            {"error": f"launcher upload failed: {exc}"}, status=500,
-        )
-
-    # Re-deploy SOUL.md so prompt-only changes (Logos runtime primer
-    # edits, soul-body tweaks on the host) actually ship to the
-    # sandbox when the user clicks Restart runtime. Without this, an
-    # operator edits soul.md on the host, clicks Restart, and sees no
-    # behaviour change because hermes rebooted against the old
-    # SOUL.md still sitting in the sandbox. Best-effort — a failure
-    # here shouldn't block the restart (the old SOUL is still valid,
-    # just stale).
-    try:
-        soul_name = (agent.get("soul_slug") or "default")
-        deploy_soul_md(sandbox_name, agent.get("name") or "",
-                       soul_name, gateway=target_gw)
-    except Exception as exc:
-        logger.warning(
-            "runtime restart: SOUL.md redeploy failed (non-fatal): %s",
-            exc,
-        )
-
-    try:
-        restart_hermes_in_sandbox(sandbox_name, gateway=target_gw)
-    except Exception as exc:
-        logger.exception("runtime restart: hermes restart failed")
-        return web.json_response(
-            {"error": f"hermes restart failed: {exc}"}, status=500,
-        )
-
-    # Wait for hermes to come back up and bind its port before we
-    # respond. Otherwise the frontend re-fetches /v1/toolsets before
-    # the route is registered and still sees "sandbox unreachable".
-    try:
-        from gateway.executors.hermes_server_mode import HEALTH_TIMEOUT_S
-        ready_s = await asyncio.to_thread(
-            wait_for_hermes_health, sandbox_name, HEALTH_TIMEOUT_S, target_gw,
-        )
-    except Exception as exc:
-        logger.exception("runtime restart: health probe failed")
-        return web.json_response(
-            {"error": f"hermes did not come back healthy: {exc}"},
-            status=504,
-        )
-
-    logger.info(
-        "agent_runtime_restart(%s): complete in %.1fs — %s healthy",
-        aid, ready_s, sandbox_name,
-    )
-    return web.json_response({
-        "ok": True,
-        "sandbox": sandbox_name,
-        "ready_s": ready_s,
-    })
-
-
 # ── Per-agent channel credentials ────────────────────────────────────────────
 # Backend for the Agent editor → Channels subtab. Each agent owns its own
 # Telegram/Discord/Slack/WhatsApp bot tokens; the adapter-per-credential
@@ -1679,27 +1267,15 @@ def _scrub_credential_row(row: dict) -> dict:
 
 
 def _refresh_sandbox_channel_env(request: web.Request, agent_name: str) -> bool:
-    """LOG-44.3.4 — best-effort hot-refresh of a hermes-mode sandbox's
-    channel credentials after the UI edits a row. Silent no-op when the
-    agent isn't running hermes-server mode (Logos's central adapter
-    handles it instead) or when the executor isn't wired.
+    """Best-effort hot-refresh of a running sandbox's channel credentials
+    after the UI edits a row (LOG-44.3.4).
 
-    Never raises — caller should be able to ignore the return. The DB
-    row is the source of truth; a failed refresh just means the
-    sandbox picks up the change on its next respawn.
+    The v1 OpenShell executor did this; there is no sandbox backend until
+    E2, so this returns False. The DB row is the source of truth and the
+    sandbox picks the change up when it is (re)created.
     """
-    executor = request.app.get("executor") if request.app else None
-    if executor is None or not hasattr(executor, "refresh_channel_credentials"):
-        return False
-    try:
-        return bool(executor.refresh_channel_credentials(agent_name))
-    except Exception:
-        logger.exception(
-            "channel refresh: refresh_channel_credentials(%s) raised "
-            "(DB row still authoritative, sandbox will pick up on "
-            "next respawn)", agent_name,
-        )
-        return False
+    del request, agent_name
+    return False
 
 
 async def handle_agent_channels_list(request: web.Request) -> web.Response:
@@ -1857,9 +1433,7 @@ async def handle_agent_channels_delete(request: web.Request) -> web.Response:
         return web.json_response({"error": str(exc)}, status=500)
 
     # Fire-and-forget the sandbox .env refresh so the HTTP delete
-    # returns immediately. refresh_channel_credentials synchronously
-    # does an openshell exec + waits up to 30s for hermes health,
-    # which was blocking the event loop and making the UI look stuck.
+    # returns immediately (a no-op until the E2 sandbox backend).
     # The DB row is already gone; the sandbox picks up the token
     # removal on this refresh or the next respawn, whichever comes
     # first.
@@ -2314,7 +1888,7 @@ async def handle_agent_capabilities_toggle(request: web.Request) -> web.Response
     # Shield the apply from client-disconnect cancellation. aiohttp's
     # default behaviour is to cancel the request task when the client
     # goes away, which can abort a toggle mid-flight (DB written but
-    # openshell policy-set still pending) — users reported "I flipped
+    # policy push still pending) — users reported "I flipped
     # the toggle and left the page and it didn't complete". Shield
     # ensures the work finishes even if the browser gives up on the
     # response.
@@ -2328,17 +1902,8 @@ async def handle_agent_capabilities_toggle(request: web.Request) -> web.Response
         logger.exception("capability toggle failed for %s/%s", aid, cap_id)
         return web.json_response({"error": str(exc)}, status=500)
 
-    # Push the new config to the running sandbox so the next dispatch has it
-    # — same hook the toolset toggle handler uses.
-    executor = request.app.get("executor")
-    if executor and hasattr(executor, "refresh_instance_config"):
-        try:
-            executor.refresh_instance_config(agent["name"])
-        except Exception as exc:
-            logger.warning(
-                "capability toggle: refresh_instance_config(%s) failed: %s",
-                agent["name"], exc,
-            )
+    # The v1 runtime pushed the new config into the running sandbox here;
+    # no sandbox backend until E2 (the DB is authoritative).
     return web.json_response(new_state)
 
 
@@ -2371,16 +1936,8 @@ async def handle_agent_website_blocklist_put(request: web.Request) -> web.Respon
     enabled = bool(body.get("enabled", True))
     config = {"enabled": enabled, "patterns": patterns}
     auth_db.update_agent(aid, website_blocklist=json.dumps(config))
-    # Push to the sandbox immediately
-    executor = request.app.get("executor")
-    if executor and hasattr(executor, "refresh_instance_config"):
-        try:
-            executor.refresh_instance_config(agent["name"])
-        except Exception as exc:
-            logger.warning(
-                "website_blocklist PUT: refresh_instance_config(%s) failed: %s",
-                agent["name"], exc,
-            )
+    # The v1 runtime pushed this into the running sandbox; no sandbox
+    # backend until E2 (the DB is authoritative).
     return web.json_response({"ok": True, **config})
 
 
@@ -3150,45 +2707,9 @@ async def handle_agent_logs_get(request: web.Request) -> web.Response:
     )
     log_path = logos_home / "agents" / name / "logs" / log_name
 
-    # Sync-on-demand from the sandbox side before reading. The
-    # periodic sync task runs every 30 min which is fine for
-    # long-lived background activity but useless when a user is
-    # watching a live log. Pull the sandbox's hermes log directory
-    # into the host's per-agent logs dir first; the read below then
-    # sees the freshest data. Best-effort — failures (no sandbox,
-    # sandbox down, rsync error) fall through to the existing on-disk
-    # copy without an error response.
-    #
-    # Path note: v2 hermes-server mode writes logs to
-    # ``/tmp/hermes-srv-home/logs/`` (HERMES_HOME_IN_SANDBOX). The
-    # older v1 path was ``/tmp/hermes/logs/``. We pull from the v2
-    # path; the v1 path is dead on any sandbox spawned after the
-    # LOG-44 rollout and returning empty here was indistinguishable
-    # from "agent is quiet".
-    try:
-        from gateway.executors.openshell import _load_state
-        from gateway.executors.hermes_server_mode import HERMES_HOME_IN_SANDBOX
-        sandbox_name = None
-        gateway_name = None
-        for inst in _load_state():
-            if inst.get("name") == name and inst.get("phase") == "ready":
-                sandbox_name = inst.get("sandbox_name")
-                gateway_name = inst.get("openshell_name")
-                break
-        if sandbox_name and gateway_name:
-            app = request.app
-            wr = app.get("worker_registry") if app else None
-            if wr and hasattr(wr, "_download_sandbox_dir"):
-                host_logs_dir = logos_home / "agents" / name / "logs"
-                host_logs_dir.mkdir(parents=True, exist_ok=True)
-                await asyncio.to_thread(
-                    wr._download_sandbox_dir,
-                    sandbox_name, gateway_name,
-                    f"{HERMES_HOME_IN_SANDBOX}/logs/",
-                    host_logs_dir,
-                )
-    except Exception as exc:
-        logger.debug("agent logs: on-demand sync failed for %s: %s", name, exc)
+    # The v1 runtime pulled the sandbox's hermes log dir into the host
+    # copy before reading; gone with OpenShell 0.0.x (S1.5). Reads the
+    # on-disk copy only.
 
     if not log_path.exists():
         return web.json_response({
@@ -3339,7 +2860,7 @@ async def handle_agent_skills_get(request: web.Request) -> web.Response:
     """GET /admin/agents/{id}/skills — agent-authored skills list.
 
     Walks the host mirror at ``~/.logos/agents/<name>/skills/`` (populated
-    by worker_registry's periodic sync from the sandbox's
+    by the v1 runtime's periodic sync from the sandbox's
     ``$HERMES_HOME/skills/``). Each SKILL.md is parsed for its YAML
     frontmatter; body preview is the first 400 chars of the non-
     frontmatter content. Entries sort newest-first by mtime, capped at
@@ -3635,22 +3156,9 @@ async def handle_agent_sandbox_files_get(request: web.Request) -> web.Response:
     """GET /admin/agents/{id}/sandbox-files?path=… — directory listing from
     INSIDE the agent's sandbox (LOG-49.1/49.3).
 
-    Unlike handle_agent_files_get (which walks the host-side per-agent
-    dir), this runs ``openshell sandbox exec`` against the live sandbox
-    so users can see files the agent just created — scripts, cron
-    configs, outputs in /home, /tmp/hermes, etc.
-
-    On-demand, no caching. The sandbox exec cold-start is ~200ms so
-    navigation feels responsive without adding a sync layer.
-
-    Query params:
-      * path (optional) — absolute path inside the sandbox to list.
-        Defaults to ``/root`` (the sandbox user's home). Validated
-        to start with a whitelisted root to prevent shell-metachar
-        games and keep listings scoped to sensible locations.
-
-    Returns a short JSON payload: { path, entries: [{name, type,
-    size, mtime}], roots: [known useful dirs] }.
+    The v1 implementation ran ``openshell sandbox exec`` against the
+    live sandbox. That runtime was removed in S1.5; until the E2 sandbox
+    backend exists this answers 503 ``no_agents_running``.
     """
     user = request.get("current_user") or {}
     if user.get("role", "") not in ("admin", "operator"):
@@ -3660,138 +3168,20 @@ async def handle_agent_sandbox_files_get(request: web.Request) -> web.Response:
     if err is not None:
         return err
 
-    # Writable-root shortlist — the paths the policy YAML
-    # (gateway/policies/openshell_default.yaml `filesystem_policy`)
-    # grants read_write to the sandbox user. Surfaced in the UI as
-    # quick-jump pills so users know where the agent can actually
-    # save things. Ordered by expected usefulness.
-    KNOWN_ROOTS = [
-        "/tmp/hermes",        # $HOME — where the agent defaults under current soul guidance
-        "/sandbox",           # Policy-defined workspace root (also writable)
-        "/home/sandbox",      # Unix-convention home for uid 10001
-        "/tmp",               # World-writable ephemeral
-    ]
-
-    # Sandbox user is `sandbox` (uid 10001), not root. $HOME is
-    # /tmp/hermes — which is the directory the agent actually has
-    # write access to. Earlier default of /root was wrong: that path
-    # is root-owned and permission-denied to the sandbox user, so
-    # every file listing 403'd.
-    path = (request.rel_url.query.get("path") or "/tmp/hermes").strip() or "/tmp/hermes"
-    # Allow absolute paths only — reject relative + traversal tricks.
-    if not path.startswith("/") or ".." in path.split("/"):
-        return web.json_response({"error": "invalid_path"}, status=400)
-
-    # Optional recursive listing (UX: category view). Default stays at
-    # depth=1 so existing callers are unchanged. Capped at 4 to avoid
-    # DoS on deeply nested workspaces — most soul-directed layouts
-    # (~/outputs/<task>/<date>.md etc.) live within 3 levels.
-    try:
-        depth = max(1, min(4, int(request.rel_url.query.get("depth") or "1")))
-    except ValueError:
-        depth = 1
-
-    # Resolve sandbox_name + gateway via the state file (same lookup
-    # path worker_registry uses).
-    from gateway.executors.openshell import _load_state, _sanitize_sandbox_name
-    sandbox_name = _sanitize_sandbox_name(f"hermes-{name}")
-    gateway = None
-    for inst in _load_state():
-        if inst.get("sandbox_name") == sandbox_name:
-            gateway = inst.get("openshell_name", "")
-            break
-
-    import subprocess, shlex
-    # Probe for existence + readability BEFORE the listing so we can
-    # tell "dir missing" apart from "dir exists but denied to the
-    # sandbox user". Three-line script:
-    #   - test -e → 1 if missing
-    #   - test -r → 1 if no read perm (most common for system dirs)
-    #   - find …  → directory listing in parseable form
-    # All three run under the sandbox user (uid 10001, `sandbox`).
-    # `%P` emits the path relative to the search root — for depth=1
-    # that's the basename (same as %f), for depth>1 it's e.g.
-    # ``essay/minoxidil.md``. Either way the UI receives entries it
-    # can render without having to reconstruct paths.
-    probe_cmd = (
-        f"if [ ! -e {shlex.quote(path)} ]; then echo __MISSING__; exit 0; fi; "
-        f"if [ ! -d {shlex.quote(path)} ]; then echo __NOTDIR__; exit 0; fi; "
-        f"if [ ! -r {shlex.quote(path)} ]; then echo __DENIED__; exit 0; fi; "
-        f'cd {shlex.quote(path)} && '
-        f'find . -maxdepth {depth} -mindepth 1 '
-        f'-printf "%P\\t%y\\t%s\\t%T@\\n" '
-        f'2>/dev/null | sort'
+    return web.json_response(
+        {"error": "no_agents_running",
+         "message": "No agents are running yet: the v2 sandbox backend arrives in epic E2."},
+        status=503,
     )
-    exec_args = ["openshell"]
-    if gateway:
-        exec_args += ["-g", gateway]
-    exec_args += ["sandbox", "exec", "--no-tty", "--name", sandbox_name,
-                  "--", "sh", "-c", probe_cmd]
-    try:
-        result = subprocess.run(
-            exec_args, capture_output=True, text=True, timeout=15,
-            stdin=subprocess.DEVNULL,
-        )
-    except subprocess.TimeoutExpired:
-        return web.json_response({"error": "exec_timeout"}, status=504)
-    except Exception as exc:
-        return web.json_response({"error": "exec_failed", "detail": str(exc)[:200]}, status=500)
-
-    stdout = result.stdout or ""
-    # Translate sentinel lines into a specific error code the UI can
-    # render with helpful copy. These are first-line sentinels because
-    # the probe script exits early on them.
-    error_kind: Optional[str] = None
-    if stdout.startswith("__MISSING__"):
-        error_kind = "missing"
-    elif stdout.startswith("__NOTDIR__"):
-        error_kind = "not_dir"
-    elif stdout.startswith("__DENIED__"):
-        error_kind = "denied"
-
-    entries: list[dict] = []
-    if error_kind is None and result.returncode == 0:
-        for line in stdout.splitlines():
-            parts = line.split("\t")
-            if len(parts) != 4:
-                continue
-            fname, ftype, size_s, mtime_s = parts
-            try: size = int(size_s)
-            except ValueError: size = 0
-            try: mtime = float(mtime_s)
-            except ValueError: mtime = 0.0
-            # `find -printf %y` types: d=dir, f=file, l=symlink, c=char, ...
-            kind = {"d": "dir", "f": "file", "l": "link"}.get(ftype, "other")
-            entries.append({
-                "name": fname, "type": kind, "size": size, "mtime": mtime,
-            })
-
-    # Dirs first, then files, each group name-sorted.
-    entries.sort(key=lambda e: (0 if e["type"] == "dir" else 1, e["name"]))
-
-    return web.json_response({
-        "path": path,
-        "parent": ("/".join(path.rstrip("/").split("/")[:-1]) or "/") if path != "/" else None,
-        "entries": entries,
-        "roots": KNOWN_ROOTS,
-        "sandbox": sandbox_name,
-        "depth": depth,
-        # Legacy `exec_ok` kept for older UI code paths; prefer
-        # `error_kind` (null = ok, else one of "missing"/"not_dir"/
-        # "denied") which tells the UI exactly which copy to render.
-        "exec_ok": error_kind is None and result.returncode == 0,
-        "error_kind": error_kind,
-    })
 
 
 async def handle_agent_sandbox_file_download(request: web.Request) -> web.StreamResponse:
     """GET /admin/agents/{id}/sandbox-files/download?path=… — stream a
-    single file from INSIDE the sandbox via ``openshell sandbox download``
-    (LOG-49.2).
+    single file from INSIDE the sandbox (LOG-49.2).
 
-    Same safety model as handle_agent_file_download but reads from the
-    sandbox filesystem instead of the host. Downloads to a tempfile,
-    streams the bytes, then unlinks.
+    The v1 implementation used ``openshell sandbox download``; removed in
+    S1.5. Until the E2 sandbox backend this answers 503
+    ``no_agents_running`` after the usual auth / path checks.
     """
     user = request.get("current_user") or {}
     if user.get("role", "") not in ("admin", "operator"):
@@ -3805,87 +3195,11 @@ async def handle_agent_sandbox_file_download(request: web.Request) -> web.Stream
     if not path or not path.startswith("/") or ".." in path.split("/"):
         return web.json_response({"error": "invalid_path"}, status=400)
 
-    from gateway.executors.openshell import _load_state, _sanitize_sandbox_name
-    from pathlib import Path as _Path
-    import subprocess, tempfile, os as _os
-    sandbox_name = _sanitize_sandbox_name(f"hermes-{name}")
-    gateway = None
-    for inst in _load_state():
-        if inst.get("sandbox_name") == sandbox_name:
-            gateway = inst.get("openshell_name", "")
-            break
-
-    # openshell sandbox download wants (sandbox, sandbox-path, host-dir)
-    # and writes the file into host-dir keeping its basename. Use a
-    # unique tempdir per request so concurrent downloads don't collide.
-    tmp_root = _Path(tempfile.mkdtemp(prefix="logos-sb-dl-"))
-    exec_args = ["openshell"]
-    if gateway:
-        exec_args += ["-g", gateway]
-    exec_args += ["sandbox", "download", sandbox_name, path, str(tmp_root)]
-    try:
-        result = subprocess.run(
-            exec_args, capture_output=True, text=True, timeout=60,
-        )
-    except subprocess.TimeoutExpired:
-        return web.json_response({"error": "download_timeout"}, status=504)
-    except Exception as exc:
-        return web.json_response({"error": "download_failed", "detail": str(exc)[:200]}, status=500)
-
-    if result.returncode != 0:
-        return web.json_response({
-            "error": "download_returned_nonzero",
-            "detail": (result.stderr or result.stdout or "")[:400],
-        }, status=500)
-
-    # Locate the downloaded file. openshell preserves basename but the
-    # exact on-disk layout is implementation-defined; walk the tmp dir
-    # and grab the single file we find.
-    downloaded: Optional[_Path] = None
-    for p in tmp_root.rglob("*"):
-        if p.is_file():
-            downloaded = p
-            break
-    if downloaded is None:
-        return web.json_response({"error": "download_empty"}, status=500)
-
-    MAX_DOWNLOAD_BYTES = 100 * 1024 * 1024
-    size = downloaded.stat().st_size
-    if size > MAX_DOWNLOAD_BYTES:
-        try: downloaded.unlink()
-        except Exception: pass
-        return web.json_response({
-            "error": "file_too_large",
-            "size_bytes": size,
-            "max_bytes": MAX_DOWNLOAD_BYTES,
-        }, status=413)
-
-    fname = _Path(path).name or "download"
-    resp = web.StreamResponse(
-        status=200,
-        headers={
-            "Content-Type": "application/octet-stream",
-            "Content-Length": str(size),
-            "Content-Disposition": f'attachment; filename="{fname}"',
-            "X-Content-Type-Options": "nosniff",
-        },
+    return web.json_response(
+        {"error": "no_agents_running",
+         "message": "No agents are running yet: the v2 sandbox backend arrives in epic E2."},
+        status=503,
     )
-    await resp.prepare(request)
-    try:
-        with downloaded.open("rb") as fh:
-            while True:
-                chunk = fh.read(64 * 1024)
-                if not chunk: break
-                await resp.write(chunk)
-        await resp.write_eof()
-    finally:
-        # Clean up the tmpdir — no point leaving agent files on host fs
-        # under /tmp forever.
-        try:
-            import shutil as _sh
-            _sh.rmtree(tmp_root, ignore_errors=True)
-        except Exception: pass
-    return resp
 
 
 async def handle_agent_file_download(request: web.Request) -> web.StreamResponse:

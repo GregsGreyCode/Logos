@@ -9323,6 +9323,22 @@ function app() {
           this._saveChats();
           return;
         }
+        if (!r.ok) {
+          // Plain JSON error (e.g. 503 no_agents_running while no sandbox
+          // backend is configured) — render it as an error card.
+          let e = {};
+          try { e = await r.json(); } catch (_) {}
+          chat.messages = [...chat.messages, {
+            role: 'assistant', isError: true,
+            errorType: e.error || 'http_' + r.status,
+            errorTitle: e.message || e.error || ('HTTP ' + r.status),
+            errorAction: '', errorDetails: '',
+            content: e.message || e.error || ('HTTP ' + r.status),
+          }];
+          this.chats = [...this.chats];
+          this._saveChats();
+          return;
+        }
         const reader = r.body.getReader();
         const dec = new TextDecoder();
         let buf = '', reply = '', msgStats = null;
