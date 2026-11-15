@@ -124,9 +124,68 @@ def env_file(agent, home):
     else:
         cur.pop("TELEGRAM_BOT_TOKEN", None)
         cur.pop("TELEGRAM_ALLOWED_USERS", None)
+    cur["TZ"] = cur["HERMES_TIMEZONE"] = agent.get("timezone", "UTC")
     cur.setdefault("API_SERVER_KEY", secrets.token_urlsafe(32))
     cur["GATEWAY_ALLOW_ALL_USERS"] = "false"
     return "".join(f"{k}={v}\n" for k, v in sorted(cur.items()))
+
+
+JOBS_DIR = REPO / "infra" / "agent-jobs"
+# Sessions opened with `openshell sandbox exec` do not inherit the image ENV, so hermes CLI calls
+# must be told where the agent's home is.
+HERMES = "export HERMES_HOME=/opt/data; hermes"
+
+
+def sbx(name, script, input=None):
+    p = subprocess.run(["openshell", "sandbox", "exec", "--name", name, "--no-tty", "--", "sh", "-c", script],
+                       input=input, text=True, capture_output=True)
+    return ANSI.sub("", p.stdout + p.stderr)
+
+
+def wait_api(name, tries=60):
+    for _ in range(tries):
+        if sbx(name, "curl -s -o /dev/null -w '%{http_code}' -m 3 http://127.0.0.1:8642/health").strip().endswith("200"):
+            return True
+        time.sleep(3)
+    return False
+
+
+def job_ids(name):
+    """Map cron job name -> id from `hermes cron list`."""
+    ids, last = {}, None
+    for line in sbx(name, f"{HERMES} cron list").splitlines():
+        m = re.match(r"\s+([0-9a-f]{8,})\s+\[", line)
+        if m:
+            last = m.group(1)
+        m = re.match(r"\s+Name:\s+(\S+)", line)
+        if m and last:
+            ids[m.group(1)] = last
+    return ids
+
+
+def ensure_jobs(name, agent, home):
+    """Install the brain jobs: an hourly git commit (no model) and the nightly consolidation."""
+    for script in ("brain_commit.sh", "brain_inbox_state.sh"):
+        put(home, f"scripts/{script}", (JOBS_DIR / script).read_text(), mode="0750")
+    if not wait_api(name):
+        print("warning: hermes API did not come up; brain jobs not installed", file=sys.stderr)
+        return
+    for jid in [i for n, i in job_ids(name).items() if n in ("brain-commit", "consolidate")]:
+        sbx(name, f"{HERMES} cron remove {jid}")
+    tz = agent.get("timezone", "UTC")
+    con = agent.get("consolidation") or {}
+    sbx(name, f'{HERMES} cron create --name brain-commit --no-agent --script brain_commit.sh '
+              f'--timezone {tz} --deliver local "0 * * * *"')
+    if con.get("enabled", True):
+        model = ""
+        if con.get("model"):  # omitted: the job follows the agent's main model
+            model = f'--model {con["model"]} --provider {con.get("provider", agent["model"]["provider"])} '
+        sbx(name, f'{HERMES} cron create --name consolidate --monitor-script brain_inbox_state.sh '
+                  f'--workdir /sandbox/brain --timezone {tz} --continuity --deliver local {model}'
+                  f'"{con.get("schedule", "0 3 * * *")}" "$(cat)"',
+            input=(JOBS_DIR / "consolidate.md").read_text())
+    have = job_ids(name)
+    print("jobs: " + ", ".join(sorted(have)) if have else "warning: no cron jobs registered")
 
 
 def phase(name):
@@ -155,6 +214,7 @@ def up(name):
     # _config_version marks the file as current for the pinned hermes (v0.23.1 = 53); without it
     # hermes treats the file as pre-v12 and skips its config migrations. Bump with the image.
     cfg = {"_config_version": 53,
+           "timezone": agent.get("timezone", "UTC"),
            "model": {"default": m["default"], "provider": m["provider"], "base_url": m["base_url"],
                      "context_length": int(m["context_length"])}}
     put(home, "config.yaml", "# Written by scripts/logos-agent; edit agents/%s.yaml instead.\n%s"
@@ -181,6 +241,8 @@ def up(name):
             break
         time.sleep(2)
     print(f"{name}: {ph}")
+    if ph == "Ready":
+        ensure_jobs(name, agent, home)
     return 0 if ph == "Ready" else 1
 
 
