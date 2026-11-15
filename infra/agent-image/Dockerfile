@@ -11,20 +11,18 @@
 #
 # Persistent volumes (see docs/adr/0001):
 #   logos-home-<agent>   -> /opt/data        hermes home: config, memories, sessions, cron
-#   logos-brain-<agent>  -> /sandbox/brain   the agent's markdown vault
+#   logos-brain-<agent>  -> /opt/data/brain   the agent's markdown vault
 
 # hermes-agent v0.23.1 (Docker Hub, published 2026-11-10). Bump deliberately.
 FROM nousresearch/hermes-agent:v0.23.1@sha256:276d44685c65c0cb2a25f190b63c65c8906f9dc76486fb1c05ae71b5826bda08
 
 USER root
-RUN install -d -o hermes -g hermes -m 0750 /sandbox /sandbox/brain \
- && install -d -o hermes -g hermes -m 0750 /opt/data
+RUN install -d -o hermes -g hermes -m 0750 /sandbox /opt/data
 
-# Upstream limits hermes's write_file tool to HERMES_WRITE_SAFE_ROOT=/opt/data. The brain lives
-# at /sandbox/brain, so it must be on that list or every note needs a code-execution workaround.
+# Upstream limits hermes's write_file tool to HERMES_WRITE_SAFE_ROOT=/opt/data (set by the base
+# image). The brain volume is mounted inside the home, at /opt/data/brain, so it is covered.
 ENV PATH="/opt/hermes/.venv/bin:${PATH}" \
-    HERMES_HOME=/opt/data \
-    HERMES_WRITE_SAFE_ROOT=/opt/data:/sandbox/brain
+    HERMES_HOME=/opt/data
 
 LABEL org.opencontainers.image.title="logos-agent" \
       org.opencontainers.image.description="hermes-agent v0.23.1 for Logos v2 OpenShell sandboxes" \
