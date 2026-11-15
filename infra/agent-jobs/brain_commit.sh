@@ -1,6 +1,6 @@
 #!/bin/sh
 # Hourly, no model involved: commit whatever changed in the brain. Silent unless git fails.
-cd /sandbox/brain || { echo "brain volume missing"; exit 0; }
+cd /opt/data/brain || { echo "brain volume missing"; exit 0; }
 git add -A >/dev/null 2>&1
 if ! git diff --cached --quiet; then
   n=$(git diff --cached --name-only | wc -l)

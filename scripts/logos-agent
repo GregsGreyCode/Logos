@@ -9,7 +9,7 @@ Usage:
 
 Each agent has two labelled Docker volumes (docs/adr/0001):
   logos-home-<name>  -> /opt/data        hermes home (config, SOUL.md, memories, sessions)
-  logos-brain-<name> -> /sandbox/brain   markdown vault
+  logos-brain-<name> -> /opt/data/brain   markdown vault
 """
 import json, os, re, secrets, subprocess, sys, time
 from pathlib import Path
@@ -190,7 +190,7 @@ def ensure_jobs(name, agent, home):
         if con.get("model"):  # omitted: the job follows the agent's main model
             model = f'--model {con["model"]} --provider {con.get("provider", agent["model"]["provider"])} '
         sbx(name, f'{HERMES} cron create --name consolidate --monitor-script brain_inbox_state.sh '
-                  f'--workdir /sandbox/brain --timezone {tz} --continuity --deliver local {model}'
+                  f'--workdir /opt/data/brain --timezone {tz} --continuity --deliver local {model}'
                   f'"{con.get("schedule", "0 3 * * *")}" "$(cat)"',
             input=(JOBS_DIR / "consolidate.md").read_text())
     have = job_ids(name)
@@ -237,7 +237,7 @@ def up(name):
     down(name)
     mounts = {"docker": {"mounts": [
         {"type": "volume", "source": home, "target": "/opt/data", "read_only": False},
-        {"type": "volume", "source": brain, "target": "/sandbox/brain", "read_only": False}]}}
+        {"type": "volume", "source": brain, "target": "/opt/data/brain", "read_only": False}]}}
     cmd = ["openshell", "sandbox", "create", "--name", name, "--no-tty", "--detach",
            "--restart-policy", "always", "--from", agent["image"],
            "--policy", str(REPO / agent["policy"]), "--driver-config-json", json.dumps(mounts)]
