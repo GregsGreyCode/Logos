@@ -34,7 +34,7 @@ Run it on your laptop, a homelab box, or a $5 VPS. During the first-run setup wi
                         │                                           │
   Telegram ───────────► │   HTTP / SSE / WebSocket entry point      │
   Web Dashboard ──────► │     ├── Auth + per-user policy            │
-  ACP (IDE) ──────────► │     ├── MCP Gateway ──► MCP servers       │
+                        │     ├── MCP Gateway ──► MCP servers       │
                         │     ▼                                     │
                         │   Worker Registry (v2)                    │
                         │     │  openshell sandbox exec             │
@@ -52,7 +52,7 @@ Run it on your laptop, a homelab box, or a $5 VPS. During the first-run setup wi
 
 **Request lifecycle:**
 
-1. A message arrives via Telegram, the web dashboard, or an ACP-connected editor.
+1. A message arrives via Telegram or the web dashboard.
 2. The **gateway** authenticates the request and applies the per-user policy snapshot.
 3. The gateway finds the target agent's existing sandbox via the **worker registry** (reads `~/.logos/openshell_instances.json`; healthy means the sandbox CR is `phase == "ready"` and the in-sandbox `hermes gateway run` HTTP server is reachable).
 4. The gateway invokes `openshell sandbox exec` with a short shell stub that `curl`s the in-sandbox `hermes gateway run` HTTP server at `POST /v1/runs`, passing the task payload + the sandbox's own bearer token. This is the LOG-44 v2 dispatch path — the previous stdin/stdout `sandbox_worker.py` transport has been retired.
@@ -114,7 +114,6 @@ Test agentic combinations, then modify, extend, and break the platform and its a
 - **MCP gateway** — centralized Model Context Protocol server management; MCP servers boot once in the gateway, agents request access dynamically with per-category approval tiers (`auto_approve` / `user_approve` / `admin_approve` / `deny`).
 - **Memory system** — agent-curated persistent memory, FTS5 full-text session search with LLM summarisation. (Skills under `skills/` are human-authored prompts, not auto-generated.)
 - **Dynamic toolset discovery** — toolsets and their live readiness state (API-key status, optional-tool availability) come from the sandbox itself via `GET /v1/toolsets`; the gateway falls back to a local view only when no sandbox is healthy.
-- **IDE integration** — ACP protocol for VS Code, Zed, and JetBrains
 - **Model support** — Anthropic, OpenAI, OpenRouter (200+ models), Nous Portal, or any OpenAI-compatible endpoint
 - **Cancel mid-response** — `POST /chat/{task_id}/cancel` SIGTERMs the in-flight `openshell sandbox exec` subprocess tracked by v2 dispatch's `_INFLIGHT` registry; a "Stop" button in the chat header fires it for you.
 
@@ -430,7 +429,7 @@ Eval quality and advanced-tier performance dominate. Speed is capped at 40 tok/s
 
 **Tools** — enable or disable per agent via the Agents tab in the dashboard, or by editing `toolsets` on the agent record.
 
-**Agent** — choose which runtime processes your conversation. Currently available: **Hermes** (general-purpose, full tool loop). ACP clients (VS Code, Zed, JetBrains) connect through the ACP adapter.
+**Agent** — choose which runtime processes your conversation. Currently available: **Hermes** (general-purpose, full tool loop).
 
 **Model** — switch via the dashboard's model picker (shown in the chat header), or set `HERMES_MODEL` / `LOGOS_MODEL` directly in `~/.logos/config.yaml`.
 
