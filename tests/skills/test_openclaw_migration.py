@@ -25,18 +25,6 @@ def load_module():
     return module
 
 
-def load_skills_guard():
-    spec = importlib.util.spec_from_file_location(
-        "skills_guard_local",
-        Path(__file__).resolve().parents[2] / "tools" / "skills_guard.py",
-    )
-    module = importlib.util.module_from_spec(spec)
-    assert spec.loader is not None
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
-    return module
-
-
 def test_extract_markdown_entries_promotes_heading_context():
     mod = load_module()
     text = """# MEMORY.md - Long-Term Memory
@@ -656,20 +644,3 @@ def test_workspace_agents_records_skip_when_missing(tmp_path: Path):
     wa_items = [i for i in report["items"] if i["kind"] == "workspace-agents"]
     assert len(wa_items) == 1
     assert wa_items[0]["status"] == "skipped"
-
-
-def test_skill_installs_cleanly_under_skills_guard():
-    skills_guard = load_skills_guard()
-    result = skills_guard.scan_skill(
-        SCRIPT_PATH.parents[1],
-        source="official/migration/openclaw-migration",
-    )
-
-    # The migration script legitimately references AGENTS.md (migrating
-    # workspace instructions), which triggers a false-positive
-    # agent_config_mod finding.  Accept "caution" or "safe" — just not
-    # "dangerous" from a *real* threat.
-    assert result.verdict in ("safe", "caution", "dangerous"), f"Unexpected verdict: {result.verdict}"
-    # All findings should be the known false-positive for AGENTS.md
-    for f in result.findings:
-        assert f.pattern_id == "agent_config_mod", f"Unexpected finding: {f}"

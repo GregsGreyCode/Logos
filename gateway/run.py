@@ -8,7 +8,7 @@ This module provides:
 Usage:
     # Start the gateway
     python -m gateway.run
-    
+
     # Or from CLI
     python cli.py --gateway
 """
@@ -425,7 +425,7 @@ class JsonRedactingFormatter(logging.Formatter):
                 setattr(record, attr, default)
 
         try:
-            from agent.redact import redact_sensitive_text
+            from gateway.lib.redact import redact_sensitive_text
             message = redact_sensitive_text(record.getMessage())
         except Exception:
             message = record.getMessage()
@@ -447,7 +447,7 @@ class JsonRedactingFormatter(logging.Formatter):
         # Attach exception info if present (pre-formatted, redacted)
         if record.exc_info:
             try:
-                from agent.redact import redact_sensitive_text as _r
+                from gateway.lib.redact import redact_sensitive_text as _r
                 payload["exc"] = _r(self.formatException(record.exc_info))
             except Exception:
                 payload["exc"] = self.formatException(record.exc_info)
@@ -571,11 +571,11 @@ def request_gateway_shutdown() -> None:
 class GatewayRunner:
     """
     Main gateway controller.
-    
+
     Manages the lifecycle of all platform adapters and routes
     messages to/from the agent.
     """
-    
+
     def __init__(self, config: Optional[GatewayConfig] = None):
         self.config = config or load_gateway_config()
 
@@ -594,12 +594,7 @@ class GatewayRunner:
         self._provider_routing = self._load_provider_routing()
         self._fallback_model = self._load_fallback_model()
 
-        # Wire process registry into session store for reset protection
-        from tools.process_registry import process_registry
-        self.session_store = SessionStore(
-            self.config.sessions_dir, self.config,
-            has_active_processes_fn=lambda key: process_registry.has_active_for_session(key),
-        )
+        self.session_store = SessionStore(self.config.sessions_dir, self.config)
         self.delivery_router = DeliveryRouter(self.config)
         self._running = False
         self._shutdown_event = asyncio.Event()
@@ -620,7 +615,7 @@ class GatewayRunner:
         # Prevents double-processing when Telegram retries on timeout.
         import collections
         self._seen_message_ids: collections.deque = collections.deque(maxlen=500)
-        
+
         # Track pending exec approvals per session
         # Key: session_key, Value: {"command": str, "pattern_key": str, ...}
         self._pending_approvals: Dict[str, Dict[str, Any]] = {}
@@ -634,25 +629,10 @@ class GatewayRunner:
         import collections as _col
         self._recent_sessions: _col.deque = _col.deque(maxlen=20)
 
-        # Ensure tirith security scanner is available (downloads if needed)
-        try:
-            from tools.tirith_security import ensure_installed
-            ensure_installed()
-        except Exception:
-            pass  # Non-fatal — fail-open at scan time if unavailable
-        
-        # Initialize session database for session_search tool support
-        self._session_db = None
-        try:
-            from core.state import SessionDB
-            self._session_db = SessionDB()
-        except Exception as e:
-            logger.debug("SQLite session store not available: %s", e)
-        
         # DM pairing store for code-based user authorization
         from gateway.pairing import PairingStore
         self.pairing_store = PairingStore()
-        
+
         # Event hook system
         from gateway.hooks import HookRegistry
         self.hooks = HookRegistry()
@@ -730,67 +710,10 @@ class GatewayRunner:
 
     # -----------------------------------------------------------------
 
-    def _auto_ingest_session(self, session_id: str, msgs: list):
-        """Optionally ingest the session transcript into the knowledge base.
-
-        Gated by knowledge.auto_ingest_sessions config flag.  Extracts
-        assistant responses (the substantive content) and ingests them as a
-        single knowledge source named after the session.
-        """
-        try:
-            from logos_cli.config import load_config
-            cfg = load_config().get("knowledge", {})
-        except Exception:
-            return
-
-        if not cfg.get("auto_ingest_sessions", False):
-            return
-
-        min_messages = cfg.get("auto_ingest_min_messages", 8)
-        if len(msgs) < min_messages:
-            return
-
-        # Extract assistant turns — these contain the substantive analysis,
-        # explanations, code reviews, research findings etc.
-        parts = []
-        for m in msgs:
-            if m.get("role") == "assistant" and m.get("content"):
-                content = m["content"].strip()
-                if len(content) > 50:  # skip trivial responses
-                    parts.append(content)
-
-        if not parts:
-            return
-
-        transcript_text = "\n\n---\n\n".join(parts)
-        source_name = f"session-{session_id[:12]}"
-
-        try:
-            from tools.knowledge_store import KnowledgeStore
-            store = KnowledgeStore(
-                knowledge_dir=_hermes_home / "knowledge",
-                embedding_model=cfg.get("embedding_model", "nomic-embed-text"),
-                embedding_endpoint=cfg.get("embedding_endpoint"),
-                embedding_api_key=cfg.get("embedding_api_key"),
-                chunk_size=cfg.get("chunk_size", 512),
-                chunk_overlap=cfg.get("chunk_overlap", 64),
-                max_chunks=cfg.get("max_chunks", 10_000),
-            )
-            result = store.ingest(transcript_text, source_name=source_name, source_type="session")
-            if result.get("success"):
-                logger.info(
-                    "Auto-ingested session %s into knowledge base (%d chunks)",
-                    session_id[:12], result.get("chunk_count", 0),
-                )
-            else:
-                logger.debug("Auto-ingest skipped for session %s: %s", session_id[:12], result.get("error"))
-        except Exception as exc:
-            logger.debug("Auto-ingest failed for session %s: %s", session_id[:12], exc)
-
     @staticmethod
     def _load_prefill_messages() -> List[Dict[str, Any]]:
         """Load ephemeral prefill messages from config or env var.
-        
+
         Checks HERMES_PREFILL_MESSAGES_FILE env var first, then falls back to
         the prefill_messages_file key in ~/.logos/config.yaml.
         Relative paths are resolved from ~/.hermes/.
@@ -829,7 +752,7 @@ class GatewayRunner:
     @staticmethod
     def _load_ephemeral_system_prompt() -> str:
         """Load ephemeral system prompt from config or env var.
-        
+
         Checks HERMES_EPHEMERAL_SYSTEM_PROMPT env var first, then falls back to
         agent.system_prompt in ~/.logos/config.yaml.
         """
@@ -965,12 +888,12 @@ class GatewayRunner:
     async def start(self) -> bool:
         """
         Start the gateway and all configured platform adapters.
-        
+
         Returns True if at least one adapter connected successfully.
         """
         logger.info("Starting Hermes Gateway...")
         logger.info("Session storage: %s", self.config.sessions_dir)
-        
+
         # Warn if no user allowlists are configured and open access is not opted in
         _any_allowlist = any(
             os.getenv(v)
@@ -985,18 +908,9 @@ class GatewayRunner:
                 "Set GATEWAY_ALLOW_ALL_USERS=true in ~/.logos/.env to allow open access, "
                 "or configure platform allowlists (e.g., TELEGRAM_ALLOWED_USERS=your_id)."
             )
-        
+
         # Discover and load event hooks
         self.hooks.discover_and_load()
-        
-        # Recover background processes from checkpoint (crash recovery)
-        try:
-            from tools.process_registry import process_registry
-            recovered = process_registry.recover_from_checkpoint()
-            if recovered:
-                logger.info("Recovered %s background process(es) from previous run", recovered)
-        except Exception as e:
-            logger.warning("Process checkpoint recovery: %s", e)
 
         # Auth DB initialisation — the HTTP layer calls this too during
         # start_http_api, but we need the tables up NOW so the per-agent
@@ -1035,7 +949,7 @@ class GatewayRunner:
         logger.info("Gateway running — channels handled in per-agent sandboxes (LOG-44.3).")
 
         self._running = True
-        
+
         # Emit gateway:startup hook
         hook_count = len(self.hooks.loaded_hooks)
         if hook_count:
@@ -1048,9 +962,9 @@ class GatewayRunner:
         asyncio.create_task(self._session_expiry_watcher())
 
         logger.info("Press Ctrl+C to stop")
-        
+
         return True
-    
+
     async def _session_expiry_watcher(self, interval: int = 300,
                                        max_per_cycle: int = 3):
         """Background task that proactively flushes memories for expired sessions.
@@ -1112,11 +1026,11 @@ class GatewayRunner:
         remove_pid_file()
 
         logger.info("Gateway stopped")
-    
+
     async def wait_for_shutdown(self) -> None:
         """Wait for shutdown signal."""
         await self._shutdown_event.wait()
-    
+
     # ──────────────────────────────────────────────────────────────────
     # Per-agent channel credentials
     # ──────────────────────────────────────────────────────────────────
@@ -1200,233 +1114,17 @@ class GatewayRunner:
         os.environ["HERMES_SESSION_CHAT_ID"] = context.source.chat_id
         if context.source.chat_name:
             os.environ["HERMES_SESSION_CHAT_NAME"] = context.source.chat_name
-    
+
     def _clear_session_env(self) -> None:
         """Clear session environment variables."""
         for var in ["HERMES_SESSION_PLATFORM", "HERMES_SESSION_CHAT_ID", "HERMES_SESSION_CHAT_NAME"]:
             if var in os.environ:
                 del os.environ[var]
-    
-    async def _enrich_message_with_attachments(
-        self,
-        message_text: str,
-        media_urls: List[str],
-        media_types: List[str],
-    ) -> str:
-        """Enrich a user message with auto-analyzed images, transcribed audio,
-        and document context notes.
 
-        Shared enrichment pipeline used by the HTTP /chat endpoint.
-        (Platform adapters used to call this via _handle_message before
-        Phase 5.6; the platform path now goes through
-        dispatch_platform_message which doesn't yet enrich attachments —
-        a follow-up will port this when needed.)
-
-        Args:
-            message_text: The original user message text.
-            media_urls: List of cached file paths for attachments.
-            media_types: Parallel list of MIME types for each attachment.
-
-        Returns:
-            The enriched message text with descriptions/transcriptions prepended.
-        """
-        if not media_urls:
-            return message_text
-
-        # --- Images: auto-analyze with vision tool ---
-        image_paths = []
-        for i, path in enumerate(media_urls):
-            mtype = media_types[i] if i < len(media_types) else ""
-            if mtype.startswith("image/"):
-                image_paths.append(path)
-        if image_paths:
-            message_text = await self._enrich_message_with_vision(
-                message_text, image_paths
-            )
-
-        # --- Audio: auto-transcribe ---
-        audio_paths = []
-        for i, path in enumerate(media_urls):
-            mtype = media_types[i] if i < len(media_types) else ""
-            if mtype.startswith("audio/"):
-                audio_paths.append(path)
-        if audio_paths:
-            message_text = await self._enrich_message_with_transcription(
-                message_text, audio_paths
-            )
-
-        # --- Documents and code files: inject context notes ---
-        for i, path in enumerate(media_urls):
-            mtype = media_types[i] if i < len(media_types) else ""
-            if mtype.startswith("image/") or mtype.startswith("audio/"):
-                continue  # already handled above
-            if not (mtype.startswith("application/") or mtype.startswith("text/")):
-                continue
-            basename = os.path.basename(path)
-            # Strip doc_{uuid12}_ prefix from cached filenames
-            parts = basename.split("_", 2)
-            display_name = parts[2] if len(parts) >= 3 else basename
-            display_name = re.sub(r'[^\w.\- ]', '_', display_name)
-
-            if mtype.startswith("text/") or mtype == "application/json":
-                # Read and inject text content (capped at 8000 chars)
-                try:
-                    content = open(path, "r", errors="replace").read()
-                    if len(content) > 8000:
-                        content = content[:8000] + "\n\n[... truncated — full file at: " + path + "]"
-                    context_note = (
-                        f"[The user attached a file: '{display_name}'. "
-                        f"Its content is below. Full file at: {path}]\n\n{content}"
-                    )
-                except Exception:
-                    context_note = (
-                        f"[The user attached a file: '{display_name}'. "
-                        f"The file is saved at: {path}]"
-                    )
-            else:
-                context_note = (
-                    f"[The user attached a document: '{display_name}'. "
-                    f"The file is saved at: {path}. "
-                    f"Use appropriate tools to read or analyze it.]"
-                )
-            message_text = f"{context_note}\n\n{message_text}"
-
-        return message_text
-
-    async def _enrich_message_with_vision(
-        self,
-        user_text: str,
-        image_paths: List[str],
-    ) -> str:
-        """
-        Auto-analyze user-attached images with the vision tool and prepend
-        the descriptions to the message text.
-
-        Each image is analyzed with a general-purpose prompt.  The resulting
-        description *and* the local cache path are injected so the model can:
-          1. Immediately understand what the user sent (no extra tool call).
-          2. Re-examine the image with vision_analyze if it needs more detail.
-
-        Args:
-            user_text:   The user's original caption / message text.
-            image_paths: List of local file paths to cached images.
-
-        Returns:
-            The enriched message string with vision descriptions prepended.
-        """
-        from tools.vision_tools import vision_analyze_tool
-        import json as _json
-
-        analysis_prompt = (
-            "Describe everything visible in this image in thorough detail. "
-            "Include any text, code, data, objects, people, layout, colors, "
-            "and any other notable visual information."
-        )
-
-        enriched_parts = []
-        for path in image_paths:
-            try:
-                logger.debug("Auto-analyzing user image: %s", path)
-                result_json = await vision_analyze_tool(
-                    image_url=path,
-                    user_prompt=analysis_prompt,
-                )
-                result = _json.loads(result_json)
-                if result.get("success"):
-                    description = result.get("analysis", "")
-                    enriched_parts.append(
-                        f"[The user sent an image~ Here's what I can see:\n{description}]\n"
-                        f"[If you need a closer look, use vision_analyze with "
-                        f"image_url: {path} ~]"
-                    )
-                else:
-                    enriched_parts.append(
-                        "[The user sent an image but I couldn't quite see it "
-                        "this time (>_<) You can try looking at it yourself "
-                        f"with vision_analyze using image_url: {path}]"
-                    )
-            except Exception as e:
-                logger.error("Vision auto-analysis error: %s", e)
-                enriched_parts.append(
-                    f"[The user sent an image but something went wrong when I "
-                    f"tried to look at it~ You can try examining it yourself "
-                    f"with vision_analyze using image_url: {path}]"
-                )
-
-        # Combine: vision descriptions first, then the user's original text
-        if enriched_parts:
-            prefix = "\n\n".join(enriched_parts)
-            if user_text:
-                return f"{prefix}\n\n{user_text}"
-            return prefix
-        return user_text
-
-    async def _enrich_message_with_transcription(
-        self,
-        user_text: str,
-        audio_paths: List[str],
-    ) -> str:
-        """
-        Auto-transcribe user voice/audio messages using OpenAI Whisper API
-        and prepend the transcript to the message text.
-
-        Args:
-            user_text:   The user's original caption / message text.
-            audio_paths: List of local file paths to cached audio files.
-
-        Returns:
-            The enriched message string with transcriptions prepended.
-        """
-        from tools.transcription_tools import transcribe_audio, get_stt_model_from_config
-        import asyncio
-
-        stt_model = get_stt_model_from_config()
-
-        enriched_parts = []
-        for path in audio_paths:
-            try:
-                logger.debug("Transcribing user voice: %s", path)
-                result = await asyncio.to_thread(transcribe_audio, path, model=stt_model)
-                if result["success"]:
-                    transcript = result["transcript"]
-                    enriched_parts.append(
-                        f'[The user sent a voice message~ '
-                        f'Here\'s what they said: "{transcript}"]'
-                    )
-                else:
-                    error = result.get("error", "unknown error")
-                    if "No STT provider" in error or "not set" in error:
-                        enriched_parts.append(
-                            "[The user sent a voice message but I can't listen "
-                            "to it right now~ No STT provider is configured "
-                            "(';w;') Let them know!]"
-                        )
-                    else:
-                        enriched_parts.append(
-                            "[The user sent a voice message but I had trouble "
-                            f"transcribing it~ ({error})]"
-                        )
-            except Exception as e:
-                logger.error("Transcription error: %s", e)
-                enriched_parts.append(
-                    "[The user sent a voice message but something went wrong "
-                    "when I tried to listen to it~ Let them know!]"
-                )
-
-        if enriched_parts:
-            prefix = "\n\n".join(enriched_parts)
-            if user_text:
-                return f"{prefix}\n\n{user_text}"
-            return prefix
-        return user_text
-
-
-
-def _start_maintenance_ticker(stop_event: threading.Event, adapters=None, interval: int = 60):
+def _start_maintenance_ticker(stop_event: threading.Event, interval: int = 60):
     """Background thread that handles periodic maintenance inside the gateway.
 
-    Refreshes the channel directory every 5 minutes and prunes the
-    image/audio/document caches once per hour. The old cron scheduler
+    Prunes the image/audio/document caches once per hour. The old cron scheduler
     was removed with the rest of the in-process AIAgent paths — agents
     schedule their own work inside their sandboxes now (hermes upstream
     boot hooks + sandbox-side cron tools).
@@ -1434,19 +1132,11 @@ def _start_maintenance_ticker(stop_event: threading.Event, adapters=None, interv
     from gateway.media_cache import cleanup_image_cache, cleanup_document_cache
 
     IMAGE_CACHE_EVERY = 60   # ticks — once per hour at default 60s interval
-    CHANNEL_DIR_EVERY = 5    # ticks — every 5 minutes
 
     logger.info("Maintenance ticker started (interval=%ds)", interval)
     tick_count = 0
     while not stop_event.is_set():
         tick_count += 1
-
-        if tick_count % CHANNEL_DIR_EVERY == 0 and adapters:
-            try:
-                from gateway.channel_directory import build_channel_directory
-                build_channel_directory(adapters)
-            except Exception as e:
-                logger.debug("Channel directory refresh error: %s", e)
 
         if tick_count % IMAGE_CACHE_EVERY == 0:
             try:
@@ -1469,11 +1159,11 @@ def _start_maintenance_ticker(stop_event: threading.Event, adapters=None, interv
 async def start_gateway(config: Optional[GatewayConfig] = None, replace: bool = False) -> bool:
     """
     Start the gateway and run until interrupted.
-    
+
     This is the main entry point for running the gateway.
     Returns True if the gateway ran successfully, False if it failed to start.
     A False return causes a non-zero exit code so systemd can auto-restart.
-    
+
     Args:
         config: Optional gateway configuration override.
         replace: If True, kill any existing gateway instance before starting.
@@ -1549,13 +1239,6 @@ async def start_gateway(config: Optional[GatewayConfig] = None, replace: bool = 
             )
             return False
 
-    # Sync bundled skills on gateway start (fast -- skips unchanged)
-    try:
-        from tools.skills_sync import sync_skills
-        sync_skills(quiet=True)
-    except Exception:
-        pass
-
     # Configure rotating file log so gateway output is persisted for debugging
     log_dir = _hermes_home / 'logs'
     log_dir.mkdir(parents=True, exist_ok=True)
@@ -1564,7 +1247,7 @@ async def start_gateway(config: Optional[GatewayConfig] = None, replace: bool = 
         maxBytes=5 * 1024 * 1024,
         backupCount=3,
     )
-    from agent.redact import RedactingFormatter
+    from gateway.lib.redact import RedactingFormatter
     # _SessionFilter must be on the handlers, not the root logger.
     # Child loggers propagate records directly to the root's *handlers*,
     # bypassing the root logger's filter() chain entirely.  Adding the filter
@@ -1626,7 +1309,7 @@ async def start_gateway(config: Optional[GatewayConfig] = None, replace: bool = 
             loop.add_signal_handler(sig, signal_handler)
         except NotImplementedError:
             pass
-    
+
     # Start the gateway (platform adapters, hooks, session recovery)
     success = await runner.start()
     if not success:
@@ -1650,8 +1333,7 @@ async def start_gateway(config: Optional[GatewayConfig] = None, replace: bool = 
     write_pid_file()
     atexit.register(remove_pid_file)
 
-    # Start background maintenance ticker — channel directory refresh +
-    # image/document cache prune. Cron scheduling itself lives in the
+    # Start background maintenance ticker — image/document cache prune. Cron scheduling itself lives in the
     # agent sandboxes, not in Logos.
     cron_stop = threading.Event()
     cron_thread = threading.Thread(
@@ -1661,17 +1343,17 @@ async def start_gateway(config: Optional[GatewayConfig] = None, replace: bool = 
         name="cron-ticker",
     )
     cron_thread.start()
-    
+
     # Wait for shutdown
     await runner.wait_for_shutdown()
-    
+
     # Stop cron ticker cleanly
     cron_stop.set()
     cron_thread.join(timeout=5)
 
     # Close MCP server connections
     try:
-        from tools.mcp_tool import shutdown_mcp_servers
+        from gateway.lib.mcp_client import shutdown_mcp_servers
         shutdown_mcp_servers()
     except Exception:
         pass
@@ -1682,20 +1364,20 @@ async def start_gateway(config: Optional[GatewayConfig] = None, replace: bool = 
 def main():
     """CLI entry point for the gateway."""
     import argparse
-    
+
     parser = argparse.ArgumentParser(description="Hermes Gateway - Multi-platform messaging")
     parser.add_argument("--config", "-c", help="Path to gateway config file")
     parser.add_argument("--verbose", "-v", action="store_true", help="Verbose output")
-    
+
     args = parser.parse_args()
-    
+
     config = None
     if args.config:
         import json
         with open(args.config, encoding="utf-8") as f:
             data = json.load(f)
             config = GatewayConfig.from_dict(data)
-    
+
     # Run the gateway - exit with code 1 if no platforms connected,
     # so systemd Restart=on-failure will retry on transient errors (e.g. DNS)
     success = asyncio.run(start_gateway(config))
