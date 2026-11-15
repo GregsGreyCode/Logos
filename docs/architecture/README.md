@@ -19,6 +19,9 @@ deleting it.
 - [MCP server reachability from sandboxes](./mcp-sandbox-reachability.md) —
   why `http://host.openshell.internal:8091/mcp/<name>` is blocked by
   OpenShell's SSRF layer, and what the OpenShell-aligned options are.
+- [Hermes API client](./hermes-client.md) — the upstream hermes v0.23.1 endpoints and
+  SSE events `gateway/hermes_client.py` uses (with upstream file:line), and the open
+  question of how Logos reaches port 8642 inside the sandbox.
 
 ## Style
 
