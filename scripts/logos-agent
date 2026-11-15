@@ -68,7 +68,10 @@ def ensure_vault(vol):
     """Seed the brain volume from infra/brain-template (never overwriting) and make it a git repo."""
     tar = subprocess.run(["tar", "-C", str(REPO / "infra" / "brain-template"), "-c", "."],
                          capture_output=True, check=True).stdout
-    sh = ("cd /v && tar -x -k -f - 2>/dev/null; "
+    # Unpack to a scratch dir, then copy without overwriting: files a person or the agent already
+    # changed are never replaced, and files added to the template later still arrive.
+    sh = ("mkdir -p /tmp/t && tar -x -C /tmp/t -f - && cd /tmp/t && find . -type f | while read f; do "
+          '[ -e "/v/$f" ] || { mkdir -p "/v/$(dirname "$f")" && cp "$f" "/v/$f"; }; done; cd /v; '
           "git config --global --add safe.directory /v; "
           "[ -d .git ] || { git init -q -b main . && git add -A && "
           "git -c user.name=logos -c user.email=logos@localhost commit -q -m 'Start the brain'; }; "

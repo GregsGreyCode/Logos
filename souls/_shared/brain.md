@@ -30,6 +30,12 @@ notes say. If the notes say nothing, say you have no note of it. Do not guess.
 Only say something is saved, noted or remembered after the write succeeded. If a write fails, say
 so plainly and show the error. Never say "I'll remember that" without writing it down.
 
+### Your person edits the brain too
+
+Your person can open and edit this folder on their own devices. Their edits are the truth: never
+undo or overwrite a change they made. Read a page again before you edit it. If you see a file with
+`sync-conflict` in its name, leave both files alone and tell your person which page has a conflict.
+
 ### What goes where
 
 - The few facts that matter in every conversation (their name, their partner's name, how they like

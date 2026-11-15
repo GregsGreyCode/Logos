@@ -1,0 +1,5 @@
+# Sync and editor housekeeping, not part of the brain
+.stfolder/
+.stversions/
+.stignore
+.obsidian/workspace*.json
