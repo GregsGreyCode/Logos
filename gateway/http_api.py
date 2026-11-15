@@ -7,7 +7,6 @@ Provides:
   GET  /status    — agent execution status JSON (no auth)
   GET  /sessions  — list active sessions (Bearer auth)
   POST /chat      — send a message, SSE stream (no auth — same-origin dashboard)
-  GET  /canary/status                     — probe hermes-canary in-cluster health (active: bool)
   GET  /proxy/state                       — proxy → ai-router /admin/state
   POST /proxy/providers/{key}/toggle      — proxy → ai-router /admin/providers/{key}/toggle
 """
@@ -64,17 +63,11 @@ _AI_ROUTER_BASE = os.environ.get(
     "AI_ROUTER_BASE",
     "http://ai-router.hermes.svc.cluster.local:9001",
 )
-_CANARY_HEALTH_URL = "http://hermes-canary.hermes.svc.cluster.local/health"
 _INSTANCE_NAME = (
     os.environ.get("LOGOS_INSTANCE_NAME")
     or os.environ.get("HERMES_INSTANCE_NAME")
     or "Hermes"
 )
-_IS_CANARY = (
-    os.environ.get("LOGOS_IS_CANARY")
-    or os.environ.get("HERMES_IS_CANARY")
-    or ""
-).lower() in ("1", "true", "yes")
 
 try:
     # Read directly from pyproject.toml — immune to stale installed metadata
@@ -87,7 +80,7 @@ except Exception:
     except importlib.metadata.PackageNotFoundError:
         _APP_VERSION = "dev"
 _BUILD_SHA = os.environ.get("BUILD_SHA", "local")[:7]
-_VERSION_LABEL = f"v{_APP_VERSION} · {_BUILD_SHA}{' · canary' if _IS_CANARY else ''}"
+_VERSION_LABEL = f"v{_APP_VERSION} · {_BUILD_SHA}"
 _SERVER_START_TS = str(int(__import__("time").time()))  # unique per pod start; used to invalidate setup localStorage
 # Generic instance-name sanitiser (used by every executor for naming).
 from gateway.executors.base import safe_k8s_name as _safe_k8s_name
@@ -1628,7 +1621,7 @@ async def _handle_index(request: web.Request) -> web.Response:
     from gateway.auth.db import is_setup_completed
     if not is_setup_completed():
         raise web.HTTPFound("/login")
-    inject = f'<script>window.__LOGOS__={{isCanary:{str(_IS_CANARY).lower()},runtimeMode:"openshell",version:"{_VERSION_LABEL}"}};window._hueEpochMs={_HUE_EPOCH_MS};</script>'
+    inject = f'<script>window.__LOGOS__={{runtimeMode:"openshell",version:"{_VERSION_LABEL}"}};window._hueEpochMs={_HUE_EPOCH_MS};</script>'
     html = _read_html("main_app.html").replace("</head>", inject + "</head>", 1)
     # no-store so no intermediate cache (browser, reverse proxy, CDN)
     # can hold a stale version after an HTML edit. The ES module
@@ -1982,19 +1975,6 @@ async def _handle_toolsets_toggle(request: web.Request) -> web.Response:
         return web.json_response({"error": str(exc)}, status=500)
 
     return web.json_response({"ok": True, "toolsets": current})
-
-
-async def _handle_canary_status(request: web.Request) -> web.Response:
-    """Check if the canary pod is alive by probing its in-cluster health endpoint."""
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(
-                _CANARY_HEALTH_URL,
-                timeout=aiohttp.ClientTimeout(total=2),
-            ) as r:
-                return web.json_response({"active": r.status < 400})
-    except Exception:
-        return web.json_response({"active": False})
 
 
 async def _handle_proxy_state(request: web.Request) -> web.Response:
@@ -5404,7 +5384,6 @@ async def start_http_api(runner: Any, port: int = 8091) -> None:
     # /tools/configure removed 2026-04-21 — per-agent keys now go via
     # /admin/agents/<id>/env-credentials (registered below).
     app.router.add_route("OPTIONS", "/chat",   _handle_index)
-    app.router.add_get("/canary/status", _handle_canary_status)
     app.router.add_get("/proxy/state",        _handle_proxy_state)
     app.router.add_post("/proxy/providers/{key}/toggle", _handle_proxy_toggle)
     app.router.add_get("/proxy/models-live",  _handle_proxy_models_live)
