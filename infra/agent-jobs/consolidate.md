@@ -1,4 +1,4 @@
-Nightly brain consolidation. Work only inside /sandbox/brain. Read README.md there first.
+Nightly brain consolidation. Work only inside /opt/data/brain. Read README.md there first.
 
 1. Read every file in inbox/ from the last 3 days.
 2. For each line, make sure the fact is on the right page under people/, projects/ or topics/.

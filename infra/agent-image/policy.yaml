@@ -2,7 +2,7 @@
 version: 1
 
 filesystem_policy:
-  include_workdir: true            # /sandbox, including the brain volume at /sandbox/brain
+  include_workdir: true            # /sandbox, the agent's scratch workspace
   read_only:
     - /bin
     - /usr                         # includes /usr/local/bin/python3 used by the hermes venv
@@ -13,7 +13,7 @@ filesystem_policy:
     - /dev/urandom
     - /var/log
   read_write:
-    - /opt/data                    # hermes home volume: config, memories, sessions, cron
+    - /opt/data                    # hermes home volume, with the brain volume mounted at /opt/data/brain
     - /tmp
     - /dev/null
 
