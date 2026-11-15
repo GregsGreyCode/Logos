@@ -3,7 +3,7 @@ vault on disk and asks about them in fresh sessions. Prints one JSON list. First
 import json, re, sys, time, urllib.request, pathlib
 
 KEY = dict(l.strip().split("=", 1) for l in open("/opt/data/.env") if "=" in l)["API_SERVER_KEY"]
-BRAIN = pathlib.Path("/sandbox/brain")
+BRAIN = pathlib.Path("/opt/data/brain")
 NO_NOTE = re.compile(r"no (note|record)|don.t have|do not have|not (been )?(noted|recorded|saved)|nothing (in|about)|couldn.t find|could not find|haven.t (been told|noted)", re.I)
 
 

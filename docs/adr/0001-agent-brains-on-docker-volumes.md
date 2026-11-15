@@ -21,7 +21,7 @@ OpenShell 0.1.8 offers two ways to give a sandbox persistent storage beyond its 
 ## Decision
 
 Use one labelled Docker named volume per agent (`logos-brain-<agent>`), mounted read-write at
-`/sandbox/brain`. Keep resource admission enabled. Reach the files from the host with a short-lived
+`/opt/data/brain`. Keep resource admission enabled. Reach the files from the host with a short-lived
 helper container (`docker run --rm -v logos-brain-<agent>:/v ...`) for git commits, backups and sync.
 
 ## Spike results (2026-11-15, OpenShell 0.1.8, Docker 29.9.3)

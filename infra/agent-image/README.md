@@ -8,7 +8,7 @@ unmodified, plus a thin layer so it runs as an OpenShell 0.1.8 sandbox.
 | Base | `nousresearch/hermes-agent:v0.23.1@sha256:276d4468…` (published 2026-11-10) |
 | Size | 4.56 GB on disk (v1's `hermes-sandbox:m12` was 9.9 GB) |
 | Workload user | `hermes` (uid/gid 10000) |
-| Workspace | `/sandbox`, with the brain volume at `/sandbox/brain` |
+| Workspace | `/sandbox`, with the brain volume at `/opt/data/brain` |
 | Hermes home | `/opt/data` (its own volume) |
 | Bundled extras | upstream's image already includes messaging (Telegram), Anthropic, OTLP, documents |
 
@@ -36,7 +36,7 @@ openshell sandbox create --name <agent> --detach --restart-policy always \
   --policy infra/agent-image/policy.yaml \
   --driver-config-json '{"docker":{"mounts":[
       {"type":"volume","source":"logos-home-<agent>","target":"/opt/data","read_only":false},
-      {"type":"volume","source":"logos-brain-<agent>","target":"/sandbox/brain","read_only":false}]}}' \
+      {"type":"volume","source":"logos-brain-<agent>","target":"/opt/data/brain","read_only":false}]}}' \
   -- sh -c '/opt/hermes/docker/stage2-hook.sh; exec hermes gateway run'
 ```
 
