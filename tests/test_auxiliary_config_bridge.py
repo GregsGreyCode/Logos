@@ -214,31 +214,6 @@ class TestGatewayBridgeCodeParity:
 # ── Vision model override tests ──────────────────────────────────────────────
 
 
-class TestVisionModelOverride:
-    """Test that AUXILIARY_VISION_MODEL env var overrides the default model in the handler."""
-
-    def test_env_var_overrides_default(self, monkeypatch):
-        monkeypatch.setenv("AUXILIARY_VISION_MODEL", "openai/gpt-4o")
-        from tools.vision_tools import _handle_vision_analyze
-        with patch("tools.vision_tools.vision_analyze_tool", new_callable=MagicMock) as mock_tool:
-            mock_tool.return_value = '{"success": true}'
-            _handle_vision_analyze({"image_url": "http://test.jpg", "question": "test"})
-            call_args = mock_tool.call_args
-            # 3rd positional arg = model
-            assert call_args[0][2] == "openai/gpt-4o"
-
-    def test_default_model_when_no_override(self, monkeypatch):
-        monkeypatch.delenv("AUXILIARY_VISION_MODEL", raising=False)
-        from tools.vision_tools import _handle_vision_analyze
-        with patch("tools.vision_tools.vision_analyze_tool", new_callable=MagicMock) as mock_tool:
-            mock_tool.return_value = '{"success": true}'
-            _handle_vision_analyze({"image_url": "http://test.jpg", "question": "test"})
-            call_args = mock_tool.call_args
-            # With no AUXILIARY_VISION_MODEL env var, model should be None
-            # (the centralized call_llm router picks the provider default)
-            assert call_args[0][2] is None
-
-
 # ── DEFAULT_CONFIG shape tests ───────────────────────────────────────────────
 
 

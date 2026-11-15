@@ -114,7 +114,7 @@ async def _handle_mirror_turn(request: web.Request) -> web.Response:
     session_key_seed = f"{agent_id or agent_name}|{platform}|{chat_id}"
     session_id = session_id_hint or f"mir_{uuid.uuid5(uuid.NAMESPACE_URL, session_key_seed).hex[:20]}"
 
-    # ── Session upsert into core.state's sessions table ────────────
+    # ── Session upsert into gateway.lib.state's sessions table ────────────
     runner: Any = request.app.get("runner")
     db = getattr(getattr(runner, "session_store", None), "_db", None) if runner else None
     if db is not None:
