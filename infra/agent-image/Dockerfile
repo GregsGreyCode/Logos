@@ -20,8 +20,11 @@ USER root
 RUN install -d -o hermes -g hermes -m 0750 /sandbox /sandbox/brain \
  && install -d -o hermes -g hermes -m 0750 /opt/data
 
+# Upstream limits hermes's write_file tool to HERMES_WRITE_SAFE_ROOT=/opt/data. The brain lives
+# at /sandbox/brain, so it must be on that list or every note needs a code-execution workaround.
 ENV PATH="/opt/hermes/.venv/bin:${PATH}" \
-    HERMES_HOME=/opt/data
+    HERMES_HOME=/opt/data \
+    HERMES_WRITE_SAFE_ROOT=/opt/data:/sandbox/brain
 
 LABEL org.opencontainers.image.title="logos-agent" \
       org.opencontainers.image.description="hermes-agent v0.23.1 for Logos v2 OpenShell sandboxes" \
