@@ -52,8 +52,26 @@ still seeds `/opt/data`; its root-only steps (UID remap, chown) print warnings a
 ## Policy
 
 `policy.yaml` grants read-only access to the system paths and `/opt/hermes`, and read-write to
-`/opt/data`, `/sandbox` and `/tmp`, with Landlock as a hard requirement. It has no network rules
-yet, so the sandbox has no outbound access until S2.4.
+`/opt/data`, `/sandbox` and `/tmp`, with Landlock as a hard requirement.
+
+Network is deny-by-default. Only the hermes Python interpreter
+(`/opt/hermes/tools/python-*/bin/python3*`; OpenShell matches real paths, not the venv symlink) may
+connect, and only to:
+
+| Rule | Destination | Notes |
+| --- | --- | --- |
+| `lm_studio` | `192.168.1.117:1234` (HTTP) | Private address, so pinned with `allowed_ips` |
+| `anthropic` | `api.anthropic.com:443` | Nightly consolidation on Claude |
+| `telegram` | `api.telegram.org:443` | The agent's own bot |
+
+`boundary.yaml` is the most any agent may ever be granted. Check a policy against it before use:
+
+```shell
+openshell-prover check --boundary infra/agent-image/boundary.yaml infra/agent-image/policy.yaml
+# result: within_boundary
+```
+
+Denials show up in `openshell logs <sandbox> --since 5m --source sandbox` (don't filter by level).
 
 ## Verified (2026-11-15)
 
@@ -61,3 +79,7 @@ yet, so the sandbox has no outbound access until S2.4.
 - `stage2-hook.sh` as uid 10000 exits 0 and seeds `/opt/data`; expected warnings: XDG runtime
   chown, config backend detection, dependency refresh (sealed venv, no network).
 - `hermes gateway run` starts its API server and stays up until stopped.
+- Network (S2.4): from Python in the sandbox, LM Studio `/v1/models` returns 200, Anthropic and the
+  Telegram bot API answer 401 (reached, no credentials). example.com, other LAN ports and `curl`
+  are denied. The prover reports the policy `within_boundary`, and a policy adding example.com
+  `exceeds_boundary`.
