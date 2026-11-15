@@ -1511,7 +1511,7 @@ async def _handle_setup_wipe(request: web.Request) -> web.Response:
         executor's destroy path)
       - Every model route (OpenShell gateway destroyed when reachable;
         DB row removed unconditionally)
-      - Dispatch ledger, agent_runs, evolution_proposals, audit log
+      - Dispatch ledger, evolution_proposals, audit log
       - All users (caller is logging themselves out — the wizard's
         admin-create step will mint the next admin account)
       - Auth session cookie (force a clean re-auth flow)
@@ -1543,7 +1543,7 @@ async def _handle_setup_wipe(request: web.Request) -> web.Response:
     counts = {"agents": 0, "model_routes": 0, "users": 0}
 
     # Delete all agents — delete_agent() already wipes ~/.logos/agents/<name>/
-    # (sessions, memories, logs) and cleans dispatches/agent_runs/proposals
+    # (sessions, memories, logs) and cleans dispatches/proposals
     # for that agent. Also tries to destroy the OpenShell sandbox via the
     # executor when one exists.
     executor = request.app.get("executor")
@@ -1588,7 +1588,7 @@ async def _handle_setup_wipe(request: web.Request) -> web.Response:
 
     # Truncate orphan tables that aren't tied to a specific agent.
     with _conn() as conn:
-        for tbl in ("dispatches", "agent_runs", "evolution_proposals", "audit_log"):
+        for tbl in ("dispatches", "evolution_proposals", "audit_log"):
             try:
                 conn.execute(f"DELETE FROM {tbl}")
             except Exception:
@@ -4736,145 +4736,6 @@ async def _handle_chat(request: web.Request) -> web.StreamResponse:
     return resp
 
 
-# ── Agent Runs handlers ──────────────────────────────────────────────────────
-
-async def _handle_runs_list(request: web.Request) -> web.Response:
-    user = request.get("current_user") or {}
-    role = user.get("role", "viewer")
-    uid = user.get("sub", "")
-    # Operators/admins see all runs; users see only their own
-    from gateway.auth.rbac import has_permission
-    see_all = has_permission(role, "manage_users")
-    params = request.rel_url.query
-    status_f = params.get("status") or None
-    session_f = params.get("session_id") or None
-    q_f = (params.get("q") or "").strip() or None
-    try:
-        limit = min(int(params.get("limit", 20)), 200)
-    except (TypeError, ValueError):
-        limit = 20
-    try:
-        offset = max(0, int(params.get("offset", 0)))
-    except (TypeError, ValueError):
-        offset = 0
-    runs, total = auth_db.list_agent_runs(
-        user_id=None if see_all else uid,
-        status=status_f,
-        session_id=session_f,
-        q=q_f,
-        limit=limit,
-        offset=offset,
-    )
-    # Parse JSON fields and resolve user_id → username
-    user_ids = {r["user_id"] for r in runs if r.get("user_id")}
-    user_map = {}
-    for uid in user_ids:
-        u = auth_db.get_user_by_id(uid)
-        if u:
-            user_map[uid] = u.get("username") or u.get("email") or uid
-    for r in runs:
-        for field in ("tool_sequence", "tool_detail", "approval_ids"):
-            try:
-                r[field] = json.loads(r[field] or "[]")
-            except Exception:
-                r[field] = []
-        if r.get("user_id"):
-            r["username"] = user_map.get(r["user_id"], r["user_id"])
-    return web.json_response({
-        "runs": runs, "total": total,
-        "limit": limit, "offset": offset,
-    })
-
-
-async def _handle_run_get(request: web.Request) -> web.Response:
-    run_id = request.match_info["id"]
-    run = auth_db.get_agent_run(run_id)
-    if not run:
-        raise web.HTTPNotFound(reason="run_not_found")
-    for field in ("tool_sequence", "tool_detail", "approval_ids"):
-        try:
-            run[field] = json.loads(run[field] or "[]")
-        except Exception:
-            run[field] = []
-
-    # STAMP enrichment — the README frames a run as a unified record
-    # spanning agent (soul, model, tools, policy) and observability
-    # (tokens, cost, dispatch origin, approvals). The underlying data
-    # lives across agent_runs + dispatches + cost_log + approval_requests
-    # keyed by session_id. Rather than a new DB view (migration risk),
-    # stitch the satellite tables into the response here.
-    session_id = run.get("session_id") or ""
-    stamp: dict = {
-        "dispatches": [],
-        "cost": {"total_usd": 0.0, "entries": []},
-        "approvals": [],
-        "token_totals": {"prompt": 0, "completion": 0},
-    }
-    if session_id:
-        try:
-            disps = auth_db.list_dispatches(session_id=session_id, limit=50) if hasattr(auth_db, "list_dispatches") else []
-            # list_dispatches returns either a list or (list, total) — handle both.
-            if isinstance(disps, tuple):
-                disps = disps[0]
-            stamp["dispatches"] = disps or []
-            for d in (disps or []):
-                stamp["token_totals"]["prompt"] += d.get("prompt_tokens") or 0
-                stamp["token_totals"]["completion"] += d.get("completion_tokens") or 0
-        except Exception as exc:
-            logger.debug("run %s: dispatch enrichment failed: %s", run_id, exc)
-        try:
-            if hasattr(auth_db, "list_cost_entries_by_session"):
-                entries = auth_db.list_cost_entries_by_session(session_id) or []
-            else:
-                # Fallback: hit cost_log directly via a parameterised query.
-                with auth_db._conn() as _c:  # type: ignore[attr-defined]
-                    entries = [dict(r) for r in _c.execute(
-                        "SELECT * FROM cost_log WHERE session_id=? ORDER BY ts DESC LIMIT 100",
-                        (session_id,),
-                    ).fetchall()]
-            stamp["cost"]["entries"] = entries
-            stamp["cost"]["total_usd"] = round(sum((e.get("cost_usd") or 0.0) for e in entries), 6)
-        except Exception as exc:
-            logger.debug("run %s: cost enrichment failed: %s", run_id, exc)
-    for approval_id in (run.get("approval_ids") or []):
-        try:
-            row = auth_db.get_approval_request(approval_id) if hasattr(auth_db, "get_approval_request") else None
-            if row:
-                stamp["approvals"].append(row)
-        except Exception:
-            continue
-
-    return web.json_response({"run": run, "stamp": stamp})
-
-
-async def _handle_run_clone(request: web.Request) -> web.Response:
-    """Clone a run — return a prefilled payload the UI can use to start a new chat."""
-    run_id = request.match_info["id"]
-    run = auth_db.get_agent_run(run_id)
-    if not run:
-        raise web.HTTPNotFound(reason="run_not_found")
-    tool_seq = []
-    try:
-        tool_seq = json.loads(run.get("tool_sequence") or "[]")
-    except Exception:
-        pass
-    destructive_tools = {"write_file", "patch", "terminal", "execute_code", "delete_file"}
-    had_destructive = bool(set(tool_seq) & destructive_tools)
-    return web.json_response({
-        "clone": {
-            "user_message": run.get("user_message", ""),
-            "session_id": run.get("session_id", ""),
-            "model": run.get("model", ""),
-            "original_run_id": run_id,
-            "had_destructive_tools": had_destructive,
-            "warning": (
-                "This run used destructive tools. Review carefully before running."
-                if had_destructive else None
-            ),
-        }
-    })
-
-
 async def start_http_api(runner: Any, port: int = 8091) -> None:
     """Start the aiohttp server. Call as an asyncio task."""
     global _start_time
@@ -5641,18 +5502,6 @@ async def start_http_api(runner: Any, port: int = 8091) -> None:
     app.router.add_get("/approvals/{id}",         _vap(_handle_approvals_get))
     app.router.add_post("/approvals/{id}/approve", _dap(require_csrf(_handle_approvals_approve)))
     app.router.add_post("/approvals/{id}/reject",  _dap(require_csrf(_handle_approvals_reject)))
-
-    # ── Agent run records ───────────────────────────────────────────────────
-    _vrun = require_permission("view_runs")
-    app.router.add_get("/runs",            _vrun(_handle_runs_list))
-    app.router.add_get("/runs/{id}",       _vrun(_handle_run_get))
-    app.router.add_get("/runs/{id}/clone", _vrun(_handle_run_clone))
-    # /api/runs aliases for consistency with other admin endpoints.
-    # Same handlers; same RBAC; different path for clients that expect
-    # the /api/ prefix.
-    app.router.add_get("/api/runs",            _vrun(_handle_runs_list))
-    app.router.add_get("/api/runs/{id}",       _vrun(_handle_run_get))
-    app.router.add_get("/api/runs/{id}/clone", _vrun(_handle_run_clone))
 
     # ── Evolution ───────────────────────────────────────────────────────────
     from gateway import evolution_handlers as _eh
