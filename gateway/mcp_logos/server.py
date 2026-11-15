@@ -93,7 +93,7 @@ class RegisteredTool:
 class InProcessMCPServer:
     """In-process MCP server providing gateway-held capabilities to sandboxes.
 
-    Duck-types ``MCPServerTask`` (from ``tools/mcp_tool.py``) so
+    Duck-types ``MCPServerTask`` (from ``gateway/lib/mcp_client.py``) so
     ``MCPGatewayService`` can store it in the same ``_servers`` dict without
     a special case for catalogue queries. The HTTP JSON-RPC path picks the
     in-process branch by checking the :data:`IN_PROCESS_MARKER` attribute.
@@ -113,7 +113,7 @@ class InProcessMCPServer:
         self.runner = runner
 
         # ------------------------------------------------------------------
-        # Duck-typed surface matching tools.mcp_tool.MCPServerTask
+        # Duck-typed surface matching gateway.lib.mcp_client.MCPServerTask
         # ------------------------------------------------------------------
         # `session` is truthy so mcp_service.is_connected() returns True. The
         # value doesn't matter — the in-process dispatcher never touches it.

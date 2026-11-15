@@ -625,123 +625,6 @@ async def _handle_model_patch(request: web.Request) -> web.Response:
     return web.json_response({"ok": True, "model": new_model})
 
 
-async def _handle_toolsets(request: web.Request) -> web.Response:
-    """Return available toolsets + per-tool availability.
-
-    Source is Logos's local ``tools.registry``. (The v1 runtime asked a
-    healthy sandbox's hermes first; that path went with OpenShell 0.0.x
-    in S1.5 and E2 may bring a sandbox-side view back.)
-
-    Response shape stays back-compat with the pre-LOG-64 payload so the
-    admin UI doesn't need to change in lock-step: ``available`` (list),
-    ``toolsets`` (dict), ``unavailable`` (dict), ``enabled_toolsets``
-    (list, from ``config.yaml``), ``enabled_tools`` (list).
-    """
-    ts_meta: Dict[str, Any] = {}
-    available_ts: List[str] = []
-    unavailable_info: Dict[str, Any] = {}
-    source = "local"
-
-    # --- Local registry -----------------------------------------------
-    if not ts_meta:
-        try:
-            from core.model_tools import check_tool_availability
-            from tools.registry import registry
-            avail, unavail = check_tool_availability(quiet=True)
-            available_ts = sorted(avail)
-            unavailable_info = unavail
-            ts_meta = registry.get_available_toolsets()
-            try:
-                from core.toolsets import TOOLSET_REGISTRY
-                for name, meta in ts_meta.items():
-                    reg_entry = TOOLSET_REGISTRY.get(name, {})
-                    meta["description"] = reg_entry.get("description", "")
-                    meta["tools"] = reg_entry.get("tools", meta.get("tools", []))
-            except Exception:
-                pass
-        except Exception as e:
-            return web.json_response({"error": str(e)}, status=500)
-
-    # --- Merge in the user's config-enabled set ------------------------
-    try:
-        from logos_cli.config import load_config
-        cfg = load_config()
-        enabled = cfg.get("toolsets", ["hermes-cli"])
-        from core.toolsets import resolve_toolset
-        enabled_tools: set = set()
-        for ts_name in (enabled if isinstance(enabled, list) else [enabled]):
-            try:
-                enabled_tools.update(resolve_toolset(ts_name))
-            except Exception:
-                pass
-    except Exception:
-        enabled = ["hermes-cli"]
-        enabled_tools = set()
-
-    return web.json_response({
-        "available": sorted(available_ts),
-        "toolsets": ts_meta,
-        "unavailable": unavailable_info,
-        "enabled_toolsets": enabled if isinstance(enabled, list) else [enabled],
-        "enabled_tools": sorted(enabled_tools),
-        "source": source,
-    })
-
-
-@require_csrf
-async def _handle_toolsets_toggle(request: web.Request) -> web.Response:
-    """POST /api/toolsets/toggle — enable or disable a toolset in the active config.
-
-    Body: { "toolset": "knowledge", "enabled": true }
-
-    Updates the config.yaml toolsets list. The change takes effect on the next
-    agent session (existing sessions keep their current toolset).
-    """
-    try:
-        body = await request.json()
-    except Exception:
-        return web.json_response({"error": "invalid_json"}, status=400)
-
-    toolset_name = (body.get("toolset") or "").strip()
-    enabled = body.get("enabled", True)
-
-    if not toolset_name:
-        return web.json_response({"error": "toolset is required"}, status=400)
-
-    import yaml as _yaml
-    _home = pathlib.Path(
-        os.environ.get("LOGOS_HOME")
-        or os.environ.get("HERMES_HOME")
-        or str(pathlib.Path.home() / ".logos")
-    )
-    _config_path = _home / "config.yaml"
-
-    try:
-        _cfg: dict = {}
-        if _config_path.exists():
-            with open(_config_path, encoding="utf-8") as _f:
-                _cfg = _yaml.safe_load(_f) or {}
-
-        current = _cfg.get("toolsets", ["hermes-cli"])
-        if not isinstance(current, list):
-            current = [current]
-
-        if enabled and toolset_name not in current:
-            current.append(toolset_name)
-        elif not enabled and toolset_name in current:
-            current.remove(toolset_name)
-
-        _cfg["toolsets"] = current
-
-        with open(_config_path, "w", encoding="utf-8") as _f:
-            _yaml.dump(_cfg, _f, default_flow_style=False, sort_keys=False)
-
-    except Exception as exc:
-        return web.json_response({"error": str(exc)}, status=500)
-
-    return web.json_response({"ok": True, "toolsets": current})
-
-
 async def _handle_proxy_state(request: web.Request) -> web.Response:
     try:
         async with aiohttp.ClientSession() as session:
@@ -1188,107 +1071,6 @@ async def _handle_instance_memory_put(request: web.Request) -> web.Response:
 
 
 @require_permission("view_instances")
-async def _handle_instance_knowledge_get(request: web.Request) -> web.Response:
-    """GET /instances/{name}/knowledge — list sources and stats."""
-    name = request.match_info["name"]
-    home = _instance_home(name)
-
-    from tools.knowledge_store import KnowledgeStore
-    store = KnowledgeStore(knowledge_dir=home / "knowledge")
-    sources = store.list_sources()
-    stats = store.stats()
-
-    return web.json_response({
-        "instance": name,
-        "sources": sources.get("sources", []),
-        "stats": stats,
-    })
-
-
-@require_permission("view_instances")
-@require_csrf
-async def _handle_instance_knowledge_ingest(request: web.Request) -> web.Response:
-    """POST /instances/{name}/knowledge/ingest — ingest a document."""
-    name = request.match_info["name"]
-    home = _instance_home(name)
-
-    try:
-        body = await request.json()
-    except Exception:
-        return web.json_response({"error": "invalid_json"}, status=400)
-
-    source_name = (body.get("source_name") or "").strip()
-    content = body.get("content", "")
-
-    if not source_name:
-        return web.json_response({"error": "source_name is required"}, status=400)
-    if not content:
-        return web.json_response({"error": "content is required"}, status=400)
-
-    from tools.knowledge_store import KnowledgeStore
-    try:
-        from logos_cli.config import load_config
-        cfg = load_config().get("knowledge", {})
-    except Exception:
-        cfg = {}
-
-    store = KnowledgeStore(
-        knowledge_dir=home / "knowledge",
-        embedding_model=cfg.get("embedding_model", "nomic-embed-text"),
-        embedding_endpoint=cfg.get("embedding_endpoint"),
-        chunk_size=cfg.get("chunk_size", 512),
-        chunk_overlap=cfg.get("chunk_overlap", 64),
-        max_chunks=cfg.get("max_chunks", 10_000),
-    )
-    result = store.ingest(content, source_name=source_name, source_type="upload")
-
-    status_code = 200 if result.get("success") else 400
-    return web.json_response(result, status=status_code)
-
-
-@require_permission("view_instances")
-@require_csrf
-async def _handle_instance_knowledge_delete(request: web.Request) -> web.Response:
-    """DELETE /instances/{name}/knowledge/{source} — remove a knowledge source."""
-    name = request.match_info["name"]
-    source = request.match_info["source"]
-    home = _instance_home(name)
-
-    from tools.knowledge_store import KnowledgeStore
-    store = KnowledgeStore(knowledge_dir=home / "knowledge")
-    result = store.remove_source(source)
-
-    status_code = 200 if result.get("success") else 404
-    return web.json_response(result, status=status_code)
-
-
-@require_permission("view_instances")
-async def _handle_instance_knowledge_search(request: web.Request) -> web.Response:
-    """GET /instances/{name}/knowledge/search?q=... — semantic search preview."""
-    name = request.match_info["name"]
-    query = request.query.get("q", "").strip()
-    home = _instance_home(name)
-
-    if not query:
-        return web.json_response({"error": "query parameter 'q' is required"}, status=400)
-
-    from tools.knowledge_store import KnowledgeStore
-    try:
-        from logos_cli.config import load_config
-        cfg = load_config().get("knowledge", {})
-    except Exception:
-        cfg = {}
-
-    store = KnowledgeStore(
-        knowledge_dir=home / "knowledge",
-        embedding_model=cfg.get("embedding_model", "nomic-embed-text"),
-        embedding_endpoint=cfg.get("embedding_endpoint"),
-    )
-    result = store.search(query, top_k=int(request.query.get("top_k", "5")))
-    return web.json_response(result)
-
-
-@require_permission("view_instances")
 @require_csrf
 async def _handle_instance_fork(request: web.Request) -> web.Response:
     """POST /instances/{name}/fork — copy memory and/or knowledge to another instance.
@@ -1713,7 +1495,7 @@ async def _handle_transcribe(request: web.Request) -> web.Response:
         tmp_path = tmp.name
 
     try:
-        from tools.transcription_tools import transcribe_audio
+        from gateway.lib.transcription import transcribe_audio
         loop = asyncio.get_event_loop()
         try:
             result = await asyncio.wait_for(
@@ -1785,7 +1567,7 @@ async def _handle_approvals_approve(request: web.Request) -> web.Response:
 
     # ── MCP access grant hook ──────────────────────────────────────────────
     # If this approval was for an MCP server access request, grant the session
-    # access and inject the server's tools so they appear on the next agent turn.
+    # access to that server on the gateway's MCP proxy.
     try:
         from gateway.auth.policy import ACTION_MCP_ACCESS
         if updated.get("action_type") == ACTION_MCP_ACCESS:
@@ -1796,12 +1578,7 @@ async def _handle_approvals_approve(request: web.Request) -> web.Response:
             _mcp_svc  = request.app.get("mcp_service")
             if _srv_name and _sess_id and _mcp_svc:
                 from gateway.mcp_access import grant_access as _grant
-                from tools.mcp_tool import inject_mcp_server_for_session as _inject
                 _grant(_sess_id, _srv_name)
-                _url = _mcp_svc.get_server_url(_srv_name, "local")
-                await asyncio.get_event_loop().run_in_executor(
-                    None, _inject, _srv_name, _url
-                )
                 logger.info("mcp approval hook: granted session=%s server=%s", _sess_id, _srv_name)
     except Exception as _mcp_hook_err:
         logger.warning("mcp approval hook error: %s", _mcp_hook_err)
@@ -2406,10 +2183,6 @@ async def start_http_api(runner: Any, port: int = 8091) -> None:
     # Instance management (memory, knowledge, config)
     app.router.add_get("/instances/{name}/memory",              _handle_instance_memory_get)
     app.router.add_put("/instances/{name}/memory",              _handle_instance_memory_put)
-    app.router.add_get("/instances/{name}/knowledge",           _handle_instance_knowledge_get)
-    app.router.add_post("/instances/{name}/knowledge/ingest",   _handle_instance_knowledge_ingest)
-    app.router.add_delete("/instances/{name}/knowledge/{source}", _handle_instance_knowledge_delete)
-    app.router.add_get("/instances/{name}/knowledge/search",    _handle_instance_knowledge_search)
     app.router.add_post("/instances/{name}/fork",               _handle_instance_fork)
     # Polled by the dashboard on load. The v1 worker registry is gone;
     # no workers exist until the E2 sandbox backend.
@@ -2418,8 +2191,6 @@ async def start_http_api(runner: Any, port: int = 8091) -> None:
     app.router.add_put("/spawn-templates",         _handle_spawn_templates_put)
     app.router.add_delete("/spawn-templates/{id}", _handle_spawn_templates_delete)
     app.router.add_get("/status",        _handle_status)
-    app.router.add_get("/toolsets",      _handle_toolsets)
-    app.router.add_post("/api/toolsets/toggle", _handle_toolsets_toggle)
     app.router.add_get("/sessions",      _handle_sessions)
     app.router.add_get("/api/platform-sessions", _handle_api_platform_sessions)
     app.router.add_get("/api/platform-sessions/{session_id}/messages", _handle_api_session_messages)
@@ -2554,8 +2325,6 @@ async def start_http_api(runner: Any, port: int = 8091) -> None:
                           _mm(require_csrf(admin_handlers.handle_agent_env_credentials_delete)))
     # Internal sandbox-facing endpoints — called by agent code inside
     # OpenShell via host.openshell.internal:8091/api/internal/*. No auth.
-    app.router.add_get("/api/internal/session-search",
-                       admin_handlers.handle_internal_session_search)
     app.router.add_get("/api/internal/embedding-stats",
                        admin_handlers.handle_internal_embedding_stats)
     app.router.add_post("/api/internal/embedding-backfill",
