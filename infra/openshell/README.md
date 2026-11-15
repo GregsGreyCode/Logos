@@ -53,3 +53,26 @@ systemctl --user status openshell-gateway
 journalctl --user -u openshell-gateway -n 50 --no-pager
 openshell sandbox list
 ```
+
+## Providers (credentials the sandbox never sees)
+
+A new 0.1.x gateway has no provider profiles; import the ones Logos uses, then store the secret:
+
+```shell
+openshell provider profile lint   -f infra/openshell/providers/anthropic.yaml
+openshell provider profile import -f infra/openshell/providers/anthropic.yaml --global
+ANTHROPIC_API_KEY=sk-ant-... openshell provider create \
+  --name anthropic --type anthropic --credential ANTHROPIC_API_KEY
+```
+
+Agents attach it with `providers: [anthropic]` in `agents/<name>.yaml`. Inside the sandbox
+`ANTHROPIC_API_KEY` is a placeholder (`openshell:resolve:env:...`); the gateway swaps in the real
+key only in the `x-api-key` header of requests to `api.anthropic.com`, and only for the hermes
+Python interpreter. Verified: the API answers 200 with the placeholder, and the same placeholder
+sent to another host is refused (`credential_endpoint_mismatch`).
+
+| Service | How its credential is handled |
+| --- | --- |
+| Anthropic | OpenShell provider `anthropic` (header placement). The sandbox holds a placeholder. |
+| LM Studio | No credential. Reached through the `lm_studio` network rule only. |
+| Telegram | **Not** a provider. OpenShell 0.1.8 path placement matches one exact URL path per credential, and the Bot API puts the token in the path of every method (`/bot<token>/<method>`). The token lives in the agent's private home volume (`/opt/data/.env`, mode 0600) and the network policy limits it to `api.telegram.org`. Revisit when OpenShell supports wildcard path templates (S7.3). |
