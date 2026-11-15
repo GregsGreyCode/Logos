@@ -5466,11 +5466,7 @@
     </div><!-- /Dashboards two-column grid -->
 
 
-    <!-- ── Runs (Activity → Runs) — unified dispatch ledger ──
-         Previously two tabs (Events + Runs) backed by two tables
-         (dispatches + agent_runs) with heavy overlap. Merged: this
-         tab reads dispatches (every chat turn writes a row) and
-         shows it as the single "run" concept. -->
+    <!-- ── Runs (Activity → Runs) — reads the dispatches ledger ── -->
     <div x-show="tab==='activity' && activityTab==='events'">
       <div class="flex items-center justify-between mb-4 gap-3 flex-wrap">
         <div>
@@ -6581,10 +6577,6 @@ function app() {
     dispatchesQuery: '',
     _dispatchesSearchTimer: null,
     selectedDispatch: null,       // row clicked in Runs tab → drawer
-    // Agent Runs tab — runs detail enrichment (STAMP join). Core
-    // agentRuns*/selectedAgentRun state is declared below (line ~6598);
-    // this entry only adds the stamp-satellite payload.
-    agentRunStamp: null,
     dispatchOriginFilter: '',
     allMachineModels: [],
     // Per-machine probe results from the most recent loadAllMachineModels()
@@ -6593,18 +6585,6 @@ function app() {
     // but auth_required" vs "unreachable" vs "machine returned 0 models".
     machineProbeStatuses: [],
     adminMsg: null,
-    // agent runs
-    agentRuns: [],
-    agentRunsTotal: 0,
-    agentRunsOffset: 0,
-    agentRunsLimit: 20,
-    agentRunsStatusFilter: '',
-    agentRunsQuery: '',
-    agentRunsLoading: false,
-    selectedAgentRun: null,
-    agentRunsMsg: null,
-    clonePayload: null,
-    _agentRunsSearchTimer: null,
     // sandboxes (Admin → Sandboxes)
     sandboxes: [],
     sandboxesLoading: false,
@@ -11634,21 +11614,6 @@ user_accessible: true
       this.dispatchesLoading = false;
     },
 
-    async openAgentRunDetail(runSummary) {
-      // Fetch the enriched (STAMP) response — run + dispatches + cost +
-      // approvals + token_totals. Falls back to the summary row if
-      // the detail fetch fails so the drawer still opens.
-      this.selectedAgentRun = runSummary;
-      this.agentRunStamp = null;
-      try {
-        const r = await fetch(`/api/runs/${encodeURIComponent(runSummary.id)}`, {credentials:'include'});
-        if (!r.ok) return;
-        const d = await r.json();
-        this.selectedAgentRun = d.run || runSummary;
-        this.agentRunStamp = d.stamp || null;
-      } catch (e) { /* keep summary view */ }
-    },
-
     async loadApprovals() {
       try {
         const params = new URLSearchParams({ limit: 100 });
@@ -11676,20 +11641,6 @@ user_accessible: true
           this._adminMsg(false, d.error || 'Failed');
         }
       } catch(e) { this._adminMsg(false, String(e)); }
-    },
-
-    async loadAgentRuns() {
-      this.agentRunsLoading = true;
-      try {
-        let url = `/runs?limit=${this.agentRunsLimit}&offset=${this.agentRunsOffset}`;
-        if (this.agentRunsStatusFilter) url += `&status=${this.agentRunsStatusFilter}`;
-        const r = await fetch(url, {credentials: 'include'});
-        if (!r.ok) throw new Error(await r.text());
-        const d = await r.json();
-        this.agentRuns = d.runs || [];
-        this.agentRunsTotal = d.total || 0;
-      } catch(e) { this.agentRuns = []; }
-      this.agentRunsLoading = false;
     },
 
     async loadClusters() {
@@ -12587,27 +12538,6 @@ user_accessible: true
         alert(`Delete failed: ${e.message || e}`);
       }
       await this.loadModelRoutes();
-    },
-
-    async loadAgentRunDetail(runId) {
-      try {
-        const r = await fetch(`/runs/${runId}`, {credentials: 'include'});
-        const d = await r.json();
-        this.selectedAgentRun = d.run || null;
-      } catch(e) { this.selectedAgentRun = null; }
-    },
-
-    async cloneAgentRun(runId) {
-      try {
-        const r = await fetch(`/runs/${runId}/clone`, {credentials: 'include'});
-        const d = await r.json();
-        this.clonePayload = d.clone || null;
-        if (this.clonePayload) {
-          this.chatInput = this.clonePayload.user_message || '';
-          this.tab = 'sessions';
-          this.$nextTick(() => { this._scrollChat(); const el = this.$refs.chatTextarea; if (el) this.autoResizeChat(el); });
-        }
-      } catch(e) { console.error('clone failed', e); }
     },
 
     // ── Evolution methods ──────────────────────────────────────────────
