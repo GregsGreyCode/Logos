@@ -10,4 +10,7 @@ Nightly brain consolidation. Work only inside /sandbox/brain. Read README.md the
 5. Do not delete or rewrite inbox files. Do not invent facts. If something is unclear, add it to
    topics/open-questions.md as a question for your person.
 
+6. Your person may have edited pages themselves. Keep their wording and facts. If any file name
+   contains "sync-conflict", do not touch it or its original; list it in topics/open-questions.md.
+
 Finish with at most three lines saying which pages you created or changed, or "Nothing to consolidate".
