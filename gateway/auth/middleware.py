@@ -52,8 +52,6 @@ _PUBLIC_PATHS = frozenset({
     "/api/setup/progress",
     "/api/setup/session",
     "/api/setup/env-probe",
-    "/api/setup/discover",
-    "/api/setup/set-remote",
     "/api/setup/compare/cancel-server",
     "/setup",
 })

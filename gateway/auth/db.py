@@ -1,6 +1,5 @@
 """SQLite persistence for auth: users, refresh_tokens, user_settings, audit_logs,
-machines, machine_capabilities, routing_policies, policy_rules,
-approval_requests."""
+agents, approval_requests."""
 
 import json
 import logging
@@ -107,87 +106,6 @@ CREATE INDEX IF NOT EXISTS idx_rtk_user     ON refresh_tokens(user_id);
 CREATE INDEX IF NOT EXISTS idx_rtk_hash     ON refresh_tokens(token_hash);
 
 INSERT OR IGNORE INTO platform_settings (id, updated_at) VALUES (1, unixepoch() * 1000);
-
-CREATE TABLE IF NOT EXISTS machines (
-    id           TEXT PRIMARY KEY,
-    name         TEXT UNIQUE NOT NULL,
-    endpoint_url TEXT NOT NULL,
-    description  TEXT,
-    enabled      INTEGER NOT NULL DEFAULT 1,
-    sort_order   INTEGER NOT NULL DEFAULT 0,
-    created_at   INTEGER NOT NULL,
-    updated_at   INTEGER NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS machine_capabilities (
-    id          TEXT PRIMARY KEY,
-    machine_id  TEXT NOT NULL REFERENCES machines(id) ON DELETE CASCADE,
-    model_class TEXT NOT NULL,
-    priority    INTEGER NOT NULL DEFAULT 10,
-    max_context INTEGER,
-    enabled     INTEGER NOT NULL DEFAULT 1,
-    UNIQUE (machine_id, model_class)
-);
-
-CREATE TABLE IF NOT EXISTS routing_policies (
-    id          TEXT PRIMARY KEY,
-    name        TEXT UNIQUE NOT NULL,
-    description TEXT,
-    fallback    TEXT NOT NULL DEFAULT 'any_available',
-    created_at  INTEGER NOT NULL,
-    updated_at  INTEGER NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS policy_rules (
-    id         TEXT PRIMARY KEY,
-    policy_id  TEXT NOT NULL REFERENCES routing_policies(id) ON DELETE CASCADE,
-    model_class TEXT NOT NULL,
-    machine_id TEXT NOT NULL REFERENCES machines(id) ON DELETE CASCADE,
-    rank       INTEGER NOT NULL,
-    UNIQUE (policy_id, model_class, rank)
-);
-
-CREATE TABLE IF NOT EXISTS machine_users (
-    id          TEXT PRIMARY KEY,
-    machine_id  TEXT NOT NULL REFERENCES machines(id) ON DELETE CASCADE,
-    user_id     TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    priority    INTEGER NOT NULL DEFAULT 100,
-    created_at  INTEGER NOT NULL,
-    UNIQUE (machine_id, user_id)
-);
-
-CREATE INDEX IF NOT EXISTS idx_mu_machine ON machine_users(machine_id);
-CREATE INDEX IF NOT EXISTS idx_mu_user    ON machine_users(user_id);
-
-CREATE TABLE IF NOT EXISTS routing_log (
-    id           TEXT PRIMARY KEY,
-    user_id      TEXT,
-    model_alias  TEXT NOT NULL,
-    model_class  TEXT NOT NULL,
-    machine_id   TEXT,
-    machine_name TEXT,
-    layer        TEXT,
-    instance_name TEXT,
-    created_at   INTEGER NOT NULL
-);
-
-CREATE INDEX IF NOT EXISTS idx_cap_machine   ON machine_capabilities(machine_id);
-CREATE INDEX IF NOT EXISTS idx_rules_policy  ON policy_rules(policy_id);
-CREATE INDEX IF NOT EXISTS idx_rlog_user     ON routing_log(user_id);
-
-CREATE TABLE IF NOT EXISTS cloud_providers (
-    id           TEXT PRIMARY KEY,
-    provider     TEXT NOT NULL,
-    name         TEXT NOT NULL,
-    base_url     TEXT,
-    api_key      TEXT,
-    active_model TEXT,
-    is_active    INTEGER NOT NULL DEFAULT 0,
-    enabled      INTEGER NOT NULL DEFAULT 1,
-    created_at   INTEGER NOT NULL,
-    updated_at   INTEGER NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_rlog_ts       ON routing_log(created_at);
 
 CREATE TABLE IF NOT EXISTS agents (
     id                TEXT PRIMARY KEY,
@@ -406,12 +324,11 @@ def _run_migrations() -> None:
     """Idempotent ALTER TABLE migrations for existing databases."""
     with _conn() as conn:
         for stmt in (
-            "ALTER TABLE users ADD COLUMN policy_id TEXT REFERENCES routing_policies(id)",
-            "ALTER TABLE machines ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0",
-            # v5: machine default model
-            "ALTER TABLE machines ADD COLUMN default_model TEXT",
-            # v6: machine api key (optional bearer token for auth-protected local servers)
-            "ALTER TABLE machines ADD COLUMN api_key TEXT",
+            # v1 per-user routing profile. Unused since S1.6 (routing_policies
+            # is gone, see drop_machines_routing_v1); the column stays so
+            # existing rows keep lining up. No FK: its old target table no
+            # longer exists.
+            "ALTER TABLE users ADD COLUMN policy_id TEXT",
             # v7: per-agent toolset config (JSON array of enabled toolset names)
             "ALTER TABLE agents ADD COLUMN toolsets TEXT",
             # v8: per-agent sprite selection (0..7). NULL falls back to name-hash
@@ -422,22 +339,12 @@ def _run_migrations() -> None:
             # column stays so existing rows/ALTERs keep lining up. No FK:
             # its old target table no longer exists.
             "ALTER TABLE agents ADD COLUMN model_route_id TEXT",
-            # v10: per-agent network policy presets layered on top of the
-            # baseline in gateway/policies/openshell_default.yaml. JSON
-            # array of preset names from gateway/policies/presets/*.yaml
-            # (e.g. ["github", "slack"]). NULL means "no presets applied,
-            # baseline only". Read by gateway.policies.get_applied_presets()
-            # and merged into the effective policy at spawn time + when the
-            # Tools editor UI toggles presets (MISSING.md M10 scope items
-            # 4-5). Use get_agent_applied_presets() / set_agent_applied_presets()
-            # below for JSON-aware access instead of reading the column
-            # directly.
+            # v10: per-agent OpenShell network policy presets (JSON array).
+            # Unused since S1.6 removed the v1 preset machinery; kept so
+            # existing rows keep lining up.
             "ALTER TABLE agents ADD COLUMN applied_presets TEXT",
-            # v17: per-agent website blocklist (Layer 1 of URL control).
-            # JSON {"enabled": bool, "patterns": [...glob...]} read by hermes
-            # tools/website_policy.py before every browser navigation. Lives
-            # next to applied_presets since both are policy-shaped fields the
-            # capability system writes to.
+            # v17: per-agent website blocklist. Unused since S1.6; kept
+            # for the same reason as applied_presets.
             "ALTER TABLE agents ADD COLUMN website_blocklist TEXT",
             # v21: per-MCP-server auto_grant toggle. When True, the
             # server's tools are injected into every agent's effective
@@ -643,46 +550,9 @@ def _run_migrations() -> None:
                 ("char_index_v3", "1", int(time.time() * 1000)),
             )
 
-        # v18: apply B-tier capability defaults to agents that spawned with
-        # empty toolsets (e.g., Adam — created after the v15 backfill stamped
-        # its flag but before handle_agents_post wired capability defaults).
-        # Narrower than v15: only touches agents where toolsets is literally
-        # '[]' or NULL, so agents the user has deliberately customised stay
-        # untouched. Idempotent via schema_flags.
-        already_v18 = conn.execute(
-            "SELECT value FROM schema_flags WHERE key = 'agent_b_defaults_v1'"
-        ).fetchone()
-        if not already_v18:
-            empties = conn.execute(
-                "SELECT id, name FROM agents WHERE toolsets IS NULL OR toolsets = '' OR toolsets = '[]'"
-            ).fetchall()
-            if empties:
-                # Import lazily so the migration module stays dependency-lite.
-                try:
-                    from gateway import capabilities as _caps
-                    fixed = 0
-                    for row in empties:
-                        try:
-                            _caps.apply_initial_defaults(row["id"])
-                            fixed += 1
-                        except Exception as exc:
-                            logger.warning(
-                                "agent_b_defaults_v1: agent %s failed: %s",
-                                row["name"], exc,
-                            )
-                    logger.info(
-                        "agent_b_defaults_v1: stamped %d empty-toolset agent(s) with B-tier defaults",
-                        fixed,
-                    )
-                except Exception as exc:
-                    logger.warning(
-                        "agent_b_defaults_v1: could not import capabilities: %s — skipping",
-                        exc,
-                    )
-            conn.execute(
-                "INSERT INTO schema_flags (key, value, applied_at) VALUES (?, ?, ?)",
-                ("agent_b_defaults_v1", "1", int(time.time() * 1000)),
-            )
+        # v18 (agent_b_defaults_v1) applied v1 capability defaults to
+        # empty-toolset agents. The capability catalogue was removed in
+        # S1.6, so the backfill is gone; nothing reads the flag any more.
 
         # v19: add daily_budget_usd column + fallback_route_id column to
         # existing agents tables. Cost-tracker feature: a cap on how much
@@ -710,48 +580,8 @@ def _run_migrations() -> None:
             )
             logger.info("v19: added daily_budget_usd + fallback_route_id to agents")
 
-        # v16: apply the `browserless` preset to every existing agent so the
-        # local browser tool works out of the box. Pairs with the matching
-        # default in handle_agents_post (new agents get it too) and with the
-        # browserless.yaml preset that targets host.openshell.internal:3000.
-        # Idempotent — skips rows that already have it. Safe even if no
-        # browserless container is running; the network grant just sits there
-        # unused until one is.
-        already_v16 = conn.execute(
-            "SELECT value FROM schema_flags WHERE key = 'browserless_preset_default_v1'"
-        ).fetchone()
-        if not already_v16:
-            import json as _json
-            try:
-                rows = conn.execute(
-                    "SELECT id, applied_presets FROM agents"
-                ).fetchall()
-            except sqlite3.OperationalError:
-                rows = []
-            updated = 0
-            for row in rows:
-                raw = row["applied_presets"] or "[]"
-                try:
-                    presets = _json.loads(raw) if isinstance(raw, str) else list(raw)
-                    if not isinstance(presets, list):
-                        presets = []
-                except (ValueError, TypeError):
-                    presets = []
-                if "browserless" not in presets:
-                    presets.append("browserless")
-                    conn.execute(
-                        "UPDATE agents SET applied_presets = ? WHERE id = ?",
-                        (_json.dumps(presets), row["id"]),
-                    )
-                    updated += 1
-            logger.info(
-                "browserless_preset_default_v1: stamped %d agent(s) with the browserless preset",
-                updated,
-            )
-            conn.execute(
-                "INSERT INTO schema_flags (key, value, applied_at) VALUES (?, ?, ?)",
-                ("browserless_preset_default_v1", "1", int(time.time() * 1000)),
-            )
+        # v16 (browserless_preset_default_v1) stamped a v1 network preset
+        # onto agents.applied_presets. Presets were removed in S1.6.
 
         # v15: backfill agents.toolsets when empty. Agents created before
         # the default-enabled toolset expansion (or with explicit empty
@@ -898,7 +728,7 @@ def _run_migrations() -> None:
                             last_login         INTEGER,
                             failed_login_count INTEGER NOT NULL DEFAULT 0,
                             locked_until       INTEGER,
-                            policy_id          TEXT REFERENCES routing_policies(id)
+                            policy_id          TEXT
                         );
                         INSERT INTO users__new
                             (id, email, username, password_hash, role, status,
@@ -919,6 +749,50 @@ def _run_migrations() -> None:
                 "INSERT INTO schema_flags (key, value, applied_at) VALUES (?, ?, ?)",
                 ("drop_users_action_policy_id_column_v1", "1", int(time.time() * 1000)),
             )
+
+        # v27: drop v1 multi-machine routing (S1.6): machines, their
+        # capabilities/claims, routing profiles + rules, the routing log
+        # and cloud_providers. users.policy_id is left in place (unused)
+        # rather than rebuilding users, but its ``REFERENCES
+        # routing_policies(id)`` clause has to go first: with
+        # foreign_keys=ON SQLite refuses writes to users once the parent
+        # table is missing. Same writable_schema procedure as
+        # drop_model_routes_v1. Children are dropped before parents.
+        # Runs after v22b, whose rebuild used to re-add that FK.
+        already_v27 = conn.execute(
+            "SELECT value FROM schema_flags WHERE key = 'drop_machines_routing_v1'"
+        ).fetchone()
+        if not already_v27:
+            _strip_fk_clause(conn, "users", "routing_policies",
+                             "drop_machines_routing_v1")
+            for table in _DROPPED_ROUTING_TABLES:
+                conn.execute(f"DROP TABLE IF EXISTS {table}")
+            conn.execute(
+                "INSERT INTO schema_flags (key, value, applied_at) VALUES (?, ?, ?)",
+                ("drop_machines_routing_v1", "1", int(time.time() * 1000)),
+            )
+            logger.info("drop_machines_routing_v1: removed machines/routing/cloud_providers tables")
+
+        # v28: collapse the four v1 roles into two (S1.6). operator and
+        # viewer both become plain users; admin stays admin. The CHECK on
+        # users.role still lists the old names (changing it would need a
+        # table rebuild) but nothing writes them any more, and
+        # rbac.normalize_role() applies the same mapping to any stale
+        # role claim in an already-issued token.
+        already_v28 = conn.execute(
+            "SELECT value FROM schema_flags WHERE key = 'collapse_roles_v1'"
+        ).fetchone()
+        if not already_v28:
+            cur = conn.execute(
+                "UPDATE users SET role = 'user' WHERE role NOT IN ('admin', 'user')"
+            )
+            conn.execute(
+                "INSERT INTO schema_flags (key, value, applied_at) VALUES (?, ?, ?)",
+                ("collapse_roles_v1", "1", int(time.time() * 1000)),
+            )
+            if cur.rowcount:
+                logger.info("collapse_roles_v1: mapped %d operator/viewer user(s) to 'user'",
+                            cur.rowcount)
 
         # v23: collapse dead per-channel `hermes-<platform>` toolset aliases
         # on existing agents.toolsets JSON columns into `hermes-cli`. The
@@ -1100,21 +974,35 @@ def _migrate_dispatches_stamp_v1(conn) -> None:
         conn.execute(f"ALTER TABLE dispatches ADD COLUMN {name} {sqltype}")
 
 
-def _strip_agents_model_route_fk(conn: sqlite3.Connection) -> None:
-    """Remove ``REFERENCES model_routes(id)`` from the agents table schema.
+# Dropped by drop_machines_routing_v1, children before parents.
+_DROPPED_ROUTING_TABLES = (
+    "machine_capabilities",
+    "machine_users",
+    "policy_rules",
+    "routing_log",
+    "routing_policies",
+    "machines",
+    "cloud_providers",
+)
 
-    Part of drop_model_routes_v1. Rewrites only the schema text (column
-    data is untouched), bumps schema_version so open connections reload,
-    and verifies with ``PRAGMA integrity_check``.
+
+def _strip_fk_clause(conn: sqlite3.Connection, table: str, parent: str,
+                     migration: str) -> None:
+    """Remove ``REFERENCES <parent>(id)`` from ``table``'s stored schema.
+
+    Rewrites only the schema text (column data is untouched), bumps
+    schema_version so open connections reload, and verifies with
+    ``PRAGMA integrity_check``. No-op when the clause is absent.
     """
     row = conn.execute(
-        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'agents'"
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?", (table,)
     ).fetchone()
     if not row or not row[0]:
         return
     old_sql = row[0]
-    new_sql = re.sub(r"\s+REFERENCES\s+model_routes\s*\(\s*id\s*\)", "",
-                     old_sql, flags=re.IGNORECASE)
+    new_sql = re.sub(
+        r"\s+REFERENCES\s+[\"'`\[]?%s[\"'`\]]?\s*\(\s*id\s*\)" % re.escape(parent),
+        "", old_sql, flags=re.IGNORECASE)
     if new_sql == old_sql:
         return
     conn.commit()
@@ -1122,8 +1010,8 @@ def _strip_agents_model_route_fk(conn: sqlite3.Connection) -> None:
     conn.execute("PRAGMA writable_schema=ON")
     try:
         conn.execute(
-            "UPDATE sqlite_master SET sql = ? WHERE type = 'table' AND name = 'agents'",
-            (new_sql,),
+            "UPDATE sqlite_master SET sql = ? WHERE type = 'table' AND name = ?",
+            (new_sql, table),
         )
         conn.execute(f"PRAGMA schema_version={int(version) + 1}")
         conn.commit()
@@ -1131,8 +1019,16 @@ def _strip_agents_model_route_fk(conn: sqlite3.Connection) -> None:
         conn.execute("PRAGMA writable_schema=OFF")
     result = conn.execute("PRAGMA integrity_check").fetchone()
     if not result or result[0] != "ok":
-        logger.warning("drop_model_routes_v1: integrity_check after FK strip: %s",
-                       result[0] if result else None)
+        logger.warning("%s: integrity_check after FK strip: %s",
+                       migration, result[0] if result else None)
+
+
+def _strip_agents_model_route_fk(conn: sqlite3.Connection) -> None:
+    """Remove ``REFERENCES model_routes(id)`` from the agents table schema.
+
+    Part of drop_model_routes_v1.
+    """
+    _strip_fk_clause(conn, "agents", "model_routes", "drop_model_routes_v1")
 
 
 def _migrate_mcp_deploy_mode_v1(conn) -> None:
@@ -1266,6 +1162,19 @@ def get_user_by_id(user_id: str) -> Optional[dict]:
         return dict(row) if row else None
 
 
+def _storable_role(role: str) -> str:
+    """Return ``admin`` or ``user`` for a role about to be written.
+
+    v1 role names (operator, viewer) are mapped by rbac.normalize_role;
+    anything else raises ValueError rather than being stored.
+    """
+    from gateway.auth.rbac import normalize_role
+    normalized = normalize_role(role)
+    if not normalized:
+        raise ValueError(f"invalid_role: {role!r}")
+    return normalized
+
+
 def create_user(
     email: str,
     username: str,
@@ -1274,6 +1183,7 @@ def create_user(
     display_name: Optional[str] = None,
     status: str = "active",
 ) -> dict:
+    role = _storable_role(role)
     uid = _new_id("usr")
     now = int(time.time() * 1000)
     with _conn() as conn:
@@ -1306,28 +1216,13 @@ def record_failed_login(user_id: str, count: int, locked_until: Optional[int]) -
         )
 
 
-def assign_user_policy(user_id: str, policy_id: Optional[str]) -> None:
-    with _conn() as conn:
-        conn.execute("UPDATE users SET policy_id = ? WHERE id = ?", (policy_id, user_id))
-
-
-def get_user_policy(user_id: str) -> Optional[dict]:
-    """Return the routing_policies row for this user, or None if unassigned."""
-    with _conn() as conn:
-        row = conn.execute(
-            """SELECT rp.* FROM routing_policies rp
-               JOIN users u ON u.policy_id = rp.id
-               WHERE u.id = ?""",
-            (user_id,),
-        ).fetchone()
-        return dict(row) if row else None
-
-
 def update_user(user_id: str, **fields) -> Optional[dict]:
     allowed = {"role", "status", "display_name", "password_hash", "email", "username"}
     updates = {k: v for k, v in fields.items() if k in allowed}
     if not updates:
         return get_user_by_id(user_id)
+    if "role" in updates:
+        updates["role"] = _storable_role(updates["role"])
     set_clause = ", ".join(f"{k} = ?" for k in updates)
     with _conn() as conn:
         conn.execute(
@@ -1532,130 +1427,6 @@ def list_audit_logs(
     return [dict(r) for r in rows], total
 
 
-# ── Machines ──────────────────────────────────────────────────────────────────
-
-def create_machine(name: str, endpoint_url: str, description: Optional[str] = None) -> dict:
-    mid = _new_id("mach")
-    now = int(time.time() * 1000)
-    with _conn() as conn:
-        conn.execute(
-            """INSERT INTO machines (id, name, endpoint_url, description, enabled, created_at, updated_at)
-               VALUES (?, ?, ?, ?, 1, ?, ?)""",
-            (mid, name, endpoint_url, description, now, now),
-        )
-    return get_machine(mid)
-
-
-def get_machine(machine_id: str) -> Optional[dict]:
-    with _conn() as conn:
-        row = conn.execute("SELECT * FROM machines WHERE id = ?", (machine_id,)).fetchone()
-        return dict(row) if row else None
-
-
-def list_machines() -> list[dict]:
-    with _conn() as conn:
-        rows = conn.execute(
-            "SELECT * FROM machines ORDER BY sort_order, created_at"
-        ).fetchall()
-        return [dict(r) for r in rows]
-
-
-def reorder_machines(ordered_ids: list) -> None:
-    """Set sort_order for each machine based on the given id ordering."""
-    with _conn() as conn:
-        for i, mid in enumerate(ordered_ids):
-            conn.execute(
-                "UPDATE machines SET sort_order = ?, updated_at = ? WHERE id = ?",
-                (i, int(time.time() * 1000), mid),
-            )
-
-
-def update_machine(machine_id: str, **fields) -> Optional[dict]:
-    allowed = {"name", "endpoint_url", "description", "enabled", "default_model", "api_key"}
-    updates = {k: v for k, v in fields.items() if k in allowed}
-    if not updates:
-        return get_machine(machine_id)
-    updates["updated_at"] = int(time.time() * 1000)
-    set_clause = ", ".join(f"{k} = ?" for k in updates)
-    with _conn() as conn:
-        conn.execute(
-            f"UPDATE machines SET {set_clause} WHERE id = ?",
-            (*updates.values(), machine_id),
-        )
-    return get_machine(machine_id)
-
-
-def delete_machine(machine_id: str) -> None:
-    with _conn() as conn:
-        conn.execute("DELETE FROM machines WHERE id = ?", (machine_id,))
-
-
-# ── Cloud providers ──────────────────────────────────────────────────────────
-
-def create_cloud_provider(provider: str, name: str, api_key: str = "",
-                          base_url: str = "", active_model: str = "") -> dict:
-    pid = _new_id("cprov")
-    now = int(time.time() * 1000)
-    with _conn() as conn:
-        conn.execute(
-            """INSERT INTO cloud_providers
-               (id, provider, name, base_url, api_key, active_model, is_active, enabled, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, 0, 1, ?, ?)""",
-            (pid, provider, name, base_url, api_key, active_model, now, now),
-        )
-    return get_cloud_provider(pid)
-
-
-def get_cloud_provider(provider_id: str) -> Optional[dict]:
-    with _conn() as conn:
-        row = conn.execute("SELECT * FROM cloud_providers WHERE id = ?", (provider_id,)).fetchone()
-        return dict(row) if row else None
-
-
-def list_cloud_providers() -> list[dict]:
-    with _conn() as conn:
-        rows = conn.execute(
-            "SELECT * FROM cloud_providers ORDER BY is_active DESC, created_at"
-        ).fetchall()
-        return [dict(r) for r in rows]
-
-
-def update_cloud_provider(provider_id: str, **fields) -> Optional[dict]:
-    allowed = {"name", "base_url", "api_key", "active_model", "is_active", "enabled"}
-    updates = {k: v for k, v in fields.items() if k in allowed}
-    if not updates:
-        return get_cloud_provider(provider_id)
-    updates["updated_at"] = int(time.time() * 1000)
-    set_clause = ", ".join(f"{k} = ?" for k in updates)
-    with _conn() as conn:
-        conn.execute(
-            f"UPDATE cloud_providers SET {set_clause} WHERE id = ?",
-            (*updates.values(), provider_id),
-        )
-    return get_cloud_provider(provider_id)
-
-
-def delete_cloud_provider(provider_id: str) -> None:
-    with _conn() as conn:
-        conn.execute("DELETE FROM cloud_providers WHERE id = ?", (provider_id,))
-
-
-def set_active_cloud_provider(provider_id: str) -> Optional[dict]:
-    """Set one provider as active, deactivate all others."""
-    with _conn() as conn:
-        conn.execute("UPDATE cloud_providers SET is_active = 0, updated_at = ?",
-                     (int(time.time() * 1000),))
-        conn.execute("UPDATE cloud_providers SET is_active = 1, updated_at = ? WHERE id = ?",
-                     (int(time.time() * 1000), provider_id))
-    return get_cloud_provider(provider_id)
-
-
-def get_active_cloud_provider() -> Optional[dict]:
-    with _conn() as conn:
-        row = conn.execute("SELECT * FROM cloud_providers WHERE is_active = 1 LIMIT 1").fetchone()
-        return dict(row) if row else None
-
-
 # ── Named agents ─────────────────────────────────────────────────────────────
 
 def create_agent(name: str, soul_slug: str = "general", model: str = "",
@@ -1723,7 +1494,7 @@ def count_agents_by_creator(user_id: str) -> int:
 
 def update_agent(agent_id: str, **fields) -> Optional[dict]:
     allowed = {"name", "soul_slug", "model", "description", "shared", "toolsets",
-               "char_index", "applied_presets", "website_blocklist",
+               "char_index",
                "daily_budget_usd"}
     updates = {k: v for k, v in fields.items() if k in allowed}
     # Normalize daily_budget_usd: accept 0/empty as "clear the cap"
@@ -1793,58 +1564,6 @@ def delete_agent(agent_id: str) -> None:
                 "delete_agent(%s): failed to remove on-disk dir for %r: %s",
                 agent_id, name, exc,
             )
-
-
-def get_agent_applied_presets(agent_id: str) -> list[str]:
-    """Return the list of network policy preset names applied to an agent.
-
-    Returns an empty list for agents with no presets (either NULL in the
-    DB or an explicit empty JSON array). Invalid JSON in the column is
-    logged and treated as empty — callers should not crash on malformed
-    state. See gateway/policies.py for the merge/apply/remove logic that
-    consumes this.
-    """
-    agent = get_agent(agent_id)
-    if not agent:
-        return []
-    raw = agent.get("applied_presets")
-    if not raw:
-        return []
-    try:
-        loaded = json.loads(raw)
-    except json.JSONDecodeError:
-        logger.warning(
-            "get_agent_applied_presets(%s): applied_presets is not valid JSON: %r",
-            agent_id, raw,
-        )
-        return []
-    if not isinstance(loaded, list):
-        return []
-    return [str(p) for p in loaded if isinstance(p, str)]
-
-
-def set_agent_applied_presets(agent_id: str, presets: list[str]) -> None:
-    """Replace the applied preset list for an agent with the given list.
-
-    Deduplicates (preserving order) and coerces each entry to str.
-    Callers are responsible for validating that each preset name
-    matches a real file in gateway/policies/presets/ — this function
-    stores whatever it's given. gateway.policies.set_applied_presets
-    is the validating wrapper.
-    """
-    seen: set[str] = set()
-    clean: list[str] = []
-    for name in presets or []:
-        s = str(name)
-        if s in seen:
-            continue
-        seen.add(s)
-        clean.append(s)
-    with _conn() as conn:
-        conn.execute(
-            "UPDATE agents SET applied_presets = ?, updated_at = ? WHERE id = ?",
-            (json.dumps(clean), int(time.time() * 1000), agent_id),
-        )
 
 
 # ── Platform routing ────────────────────────────────────────────────────────
@@ -2181,310 +1900,6 @@ def get_agent_env_credential(cred_id: str) -> Optional[dict]:
             "SELECT * FROM agent_env_credentials WHERE id = ?", (cred_id,),
         ).fetchone()
         return dict(row) if row else None
-
-
-# ── Machine user claims ────────────────────────────────────────────────────────
-
-def claim_machine(machine_id: str, user_id: str, priority: int = 100) -> dict:
-    """Claim or update a user's priority on a machine."""
-    cid = _new_id("mu")
-    now = int(time.time() * 1000)
-    with _conn() as conn:
-        conn.execute(
-            """INSERT INTO machine_users (id, machine_id, user_id, priority, created_at)
-               VALUES (?, ?, ?, ?, ?)
-               ON CONFLICT(machine_id, user_id) DO UPDATE SET priority = excluded.priority""",
-            (cid, machine_id, user_id, priority, now),
-        )
-        row = conn.execute(
-            """SELECT mu.*, u.username, u.display_name, u.email
-               FROM machine_users mu JOIN users u ON u.id = mu.user_id
-               WHERE mu.machine_id = ? AND mu.user_id = ?""",
-            (machine_id, user_id),
-        ).fetchone()
-        return dict(row) if row else {}
-
-
-def unclaim_machine(machine_id: str, user_id: str) -> None:
-    with _conn() as conn:
-        conn.execute(
-            "DELETE FROM machine_users WHERE machine_id = ? AND user_id = ?",
-            (machine_id, user_id),
-        )
-
-
-def list_machine_claims(machine_id: str) -> list[dict]:
-    """Return all user claims for a machine, ordered by priority ascending."""
-    with _conn() as conn:
-        rows = conn.execute(
-            """SELECT mu.*, u.username, u.display_name, u.email
-               FROM machine_users mu JOIN users u ON u.id = mu.user_id
-               WHERE mu.machine_id = ?
-               ORDER BY mu.priority""",
-            (machine_id,),
-        ).fetchall()
-        return [dict(r) for r in rows]
-
-
-def list_user_machines(user_id: str) -> list[dict]:
-    """Return all machines claimed by a user, with their priority."""
-    with _conn() as conn:
-        rows = conn.execute(
-            """SELECT mu.priority, m.*
-               FROM machine_users mu JOIN machines m ON m.id = mu.machine_id
-               WHERE mu.user_id = ?
-               ORDER BY mu.priority""",
-            (user_id,),
-        ).fetchall()
-        return [dict(r) for r in rows]
-
-
-def list_all_claims() -> list[dict]:
-    """Return all machine→user claims for the MCP routing tool."""
-    with _conn() as conn:
-        rows = conn.execute(
-            """SELECT mu.priority, mu.created_at,
-                      m.id as machine_id, m.name as machine_name,
-                      m.endpoint_url, m.enabled as machine_enabled,
-                      u.id as user_id, u.username, u.display_name, u.email
-               FROM machine_users mu
-               JOIN machines m ON m.id = mu.machine_id
-               JOIN users u ON u.id = mu.user_id
-               ORDER BY m.name, mu.priority""",
-        ).fetchall()
-        return [dict(r) for r in rows]
-
-
-# ── Machine capabilities ──────────────────────────────────────────────────────
-
-def get_machine_capabilities(machine_id: str) -> list[dict]:
-    with _conn() as conn:
-        rows = conn.execute(
-            "SELECT * FROM machine_capabilities WHERE machine_id = ? ORDER BY priority",
-            (machine_id,),
-        ).fetchall()
-        return [dict(r) for r in rows]
-
-
-def set_machine_capabilities(machine_id: str, capabilities: list) -> None:
-    """Replace all capabilities for a machine atomically.
-
-    Accepts either a list of model class strings (e.g. ["lightweight", "coding"])
-    or a list of dicts with a "model_class" key.
-    """
-    with _conn() as conn:
-        conn.execute("DELETE FROM machine_capabilities WHERE machine_id = ?", (machine_id,))
-        for cap in capabilities:
-            if isinstance(cap, str):
-                cap = {"model_class": cap}
-            cid = _new_id("cap")
-            conn.execute(
-                """INSERT INTO machine_capabilities
-                   (id, machine_id, model_class, priority, max_context, enabled)
-                   VALUES (?, ?, ?, ?, ?, ?)""",
-                (
-                    cid, machine_id,
-                    cap.get("model_class", "general"),
-                    int(cap.get("priority", 10)),
-                    cap.get("max_context"),
-                    1 if cap.get("enabled", True) else 0,
-                ),
-            )
-
-
-# ── Routing policies ──────────────────────────────────────────────────────────
-
-def create_policy(
-    name: str,
-    description: Optional[str] = None,
-    fallback: str = "any_available",
-) -> dict:
-    pid = _new_id("pol")
-    now = int(time.time() * 1000)
-    with _conn() as conn:
-        conn.execute(
-            """INSERT INTO routing_policies (id, name, description, fallback, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?)""",
-            (pid, name, description, fallback, now, now),
-        )
-    return get_policy(pid)
-
-
-def get_policy(policy_id: str) -> Optional[dict]:
-    with _conn() as conn:
-        row = conn.execute(
-            "SELECT * FROM routing_policies WHERE id = ?", (policy_id,)
-        ).fetchone()
-        return dict(row) if row else None
-
-
-def list_policies() -> list[dict]:
-    with _conn() as conn:
-        rows = conn.execute(
-            "SELECT * FROM routing_policies ORDER BY name"
-        ).fetchall()
-        return [dict(r) for r in rows]
-
-
-def update_policy(policy_id: str, **fields) -> Optional[dict]:
-    allowed = {"name", "description", "fallback"}
-    updates = {k: v for k, v in fields.items() if k in allowed}
-    if not updates:
-        return get_policy(policy_id)
-    updates["updated_at"] = int(time.time() * 1000)
-    set_clause = ", ".join(f"{k} = ?" for k in updates)
-    with _conn() as conn:
-        conn.execute(
-            f"UPDATE routing_policies SET {set_clause} WHERE id = ?",
-            (*updates.values(), policy_id),
-        )
-    return get_policy(policy_id)
-
-
-def delete_policy(policy_id: str) -> None:
-    """Delete a policy and unassign it from all users atomically."""
-    with _conn() as conn:
-        conn.execute("UPDATE users SET policy_id = NULL WHERE policy_id = ?", (policy_id,))
-        conn.execute("DELETE FROM routing_policies WHERE id = ?", (policy_id,))
-
-
-def count_users_with_policy(policy_id: str) -> int:
-    with _conn() as conn:
-        return conn.execute(
-            "SELECT COUNT(*) FROM users WHERE policy_id = ?", (policy_id,)
-        ).fetchone()[0]
-
-
-def count_profiles_using_machine(machine_id: str) -> int:
-    """Return the number of distinct routing profiles that have a rule pointing at this machine."""
-    with _conn() as conn:
-        return conn.execute(
-            "SELECT COUNT(DISTINCT policy_id) FROM policy_rules WHERE machine_id = ?",
-            (machine_id,),
-        ).fetchone()[0]
-
-
-# ── Policy rules ──────────────────────────────────────────────────────────────
-
-def get_policy_rules(policy_id: str) -> list[dict]:
-    with _conn() as conn:
-        rows = conn.execute(
-            """SELECT pr.*, m.name as machine_name
-               FROM policy_rules pr
-               LEFT JOIN machines m ON m.id = pr.machine_id
-               WHERE pr.policy_id = ?
-               ORDER BY pr.model_class, pr.rank""",
-            (policy_id,),
-        ).fetchall()
-        return [dict(r) for r in rows]
-
-
-def set_policy_rules(policy_id: str, rules: list[dict]) -> None:
-    """Replace all rules for a policy atomically."""
-    with _conn() as conn:
-        conn.execute("DELETE FROM policy_rules WHERE policy_id = ?", (policy_id,))
-        for i, rule in enumerate(rules):
-            rid = _new_id("rul")
-            conn.execute(
-                """INSERT INTO policy_rules (id, policy_id, model_class, machine_id, rank)
-                   VALUES (?, ?, ?, ?, ?)""",
-                (
-                    rid, policy_id,
-                    rule.get("model_class", "*"),
-                    rule["machine_id"],
-                    rule.get("rank", i + 1),
-                ),
-            )
-
-
-def resolve_policy_machines(user_id: str, model_class: str) -> list[dict]:
-    """Return ordered list of machines for a user+model_class, honouring wildcard rules.
-
-    Returns empty list if the user has no policy assigned.
-    """
-    with _conn() as conn:
-        row = conn.execute(
-            "SELECT policy_id FROM users WHERE id = ?", (user_id,)
-        ).fetchone()
-        if not row or not row["policy_id"]:
-            return []
-        policy_id = row["policy_id"]
-        # Exact class rules first, then wildcard "*" as supplement
-        rows = conn.execute(
-            """SELECT m.*, pr.rank, pr.model_class as rule_class
-               FROM policy_rules pr
-               JOIN machines m ON m.id = pr.machine_id
-               WHERE pr.policy_id = ?
-                 AND pr.model_class IN (?, '*')
-                 AND m.enabled = 1
-               ORDER BY CASE WHEN pr.model_class = ? THEN 0 ELSE 1 END, pr.rank""",
-            (policy_id, model_class, model_class),
-        ).fetchall()
-        # Deduplicate by machine_id (exact-class rules win over wildcard)
-        seen: set[str] = set()
-        result = []
-        for r in rows:
-            d = dict(r)
-            if d["id"] not in seen:
-                seen.add(d["id"])
-                result.append(d)
-        return result
-
-
-# ── Routing log ────────────────────────────────────────────────────────────
-
-def log_routing_decision(
-    user_id: str | None,
-    model_alias: str,
-    model_class: str,
-    machine_id: str | None,
-    machine_name: str | None,
-    layer: str,
-    instance_name: str | None = None,
-) -> None:
-    with _conn() as conn:
-        conn.execute(
-            """INSERT INTO routing_log
-               (id, user_id, model_alias, model_class, machine_id, machine_name, layer, instance_name, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (_new_id("rlog"), user_id, model_alias, model_class,
-             machine_id, machine_name, layer, instance_name, int(time.time())),
-        )
-
-
-def list_routing_log(
-    *,
-    user_id: str | None = None,
-    since: int | None = None,
-    until: int | None = None,
-    page: int = 1,
-    limit: int = 50,
-) -> tuple[list[dict], int]:
-    """Return (rows, total) for the routing_log with optional filters."""
-    conditions: list[str] = []
-    params: list = []
-    if user_id:
-        conditions.append("user_id = ?")
-        params.append(user_id)
-    if since:
-        conditions.append("created_at >= ?")
-        params.append(since)
-    if until:
-        conditions.append("created_at <= ?")
-        params.append(until)
-
-    where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
-    offset = (page - 1) * limit
-
-    with _conn() as conn:
-        total = conn.execute(
-            f"SELECT COUNT(*) FROM routing_log {where}", params
-        ).fetchone()[0]
-        rows = conn.execute(
-            f"SELECT * FROM routing_log {where} ORDER BY created_at DESC LIMIT ? OFFSET ?",
-            params + [limit, offset],
-        ).fetchall()
-    return [dict(r) for r in rows], total
 
 
 # ── Approval requests ────────────────────────────────────────────────────────
