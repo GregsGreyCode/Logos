@@ -7,7 +7,9 @@ display_name: Greg's agent
 image: logos-agent:0.23.1
 soul: souls/general/soul.md
 policy: infra/agent-image/policy.yaml
-providers: [anthropic]            # OpenShell providers to attach (credentials stay in the gateway)
+providers: []                   # OpenShell providers to attach. None: everything runs on the local model,
+                                # so nothing can spend money. Add `anthropic` only once a spend cap exists.
+timezone: Europe/London
 
 model:
   provider: lmstudio
@@ -18,3 +20,8 @@ model:
 telegram:
   enabled: true
   allowed_users: []               # set in agents/greg.local.yaml (untracked): Telegram numeric user IDs
+
+consolidation:                  # nightly brain tidy-up (hermes cron job `consolidate`)
+  enabled: true
+  schedule: "0 3 * * *"         # in the agent's timezone
+  # model / provider: omit to use the agent's main (local) model
