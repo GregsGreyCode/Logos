@@ -3832,79 +3832,14 @@ async def _run_setup_complete_bg(
                 "If Logos runs in Kubernetes, use the node's LAN IP instead of localhost."
             )
 
-        # Provision (or reuse) the OpenShell route for the chosen
-        # (provider, model) BEFORE creating the default agent so we can
-        # bind the agent to the route at create time.
-        #
-        # Why this matters: OpenShell's privacy router enforces a single
-        # forced model per gateway via `openshell inference set --model`.
-        # Without this step, the user's chosen model in the wizard would
-        # be persisted to config.yaml + the agent record, but OpenShell's
-        # actual inference route would still be pinned to whatever model
-        # was last set (or the install default) — meaning the agent's
-        # first chat request silently lands on the wrong model. That's
-        # the regression the user originally hit ("I selected gpt-oss-20b
-        # but qwen3.5 loaded").
-        #
-        # provision_or_reuse_route handles both first-run (cold provisions
-        # a fresh OpenShell gateway via `openshell gateway start --name
-        # <sanitized-model> --port <next-free>`) and re-run with a new
-        # model (same, just allocated to a different port). On any
-        # failure we log + fall through with provisioned_route=None — the
-        # agent gets created without a route binding, and the executor's
-        # fallback handles spawning using the first available model
-        # route. The user can fix the route later from
-        # /admin/model-routes instead of having setup block on a
-        # recoverable failure.
-        await _paced_progress_update("provision_route", "Provisioning model route\u2026")
-        provisioned_route = None  # populated below if provision succeeds
-        try:
-            from gateway import openshell_routes as _osr
-            # _primary_server_type was resolved above from the user's
-            # chosen server (defaults to "lmstudio" for the local-first
-            # track). Maps directly to the OpenShell provider name.
-            _route_provider = (_primary_server_type or "lmstudio").strip()
-            if model:
-                provisioned_route = _osr.provision_or_reuse_route(
-                    _route_provider, model, set_as_default=True,
-                )
-                logger.info(
-                    "setup: provisioned/reused model route %s for %s/%s "
-                    "(openshell_name=%s, status=%s)",
-                    provisioned_route["id"], _route_provider, model,
-                    provisioned_route["openshell_name"],
-                    provisioned_route["status"],
-                )
-                # Wait for the sub-gateway's sandbox RPC to actually
-                # come online before the spawn step below. Without
-                # this block, fresh installs that just provisioned a
-                # new sub-gateway hit a race where `openshell sandbox
-                # create -g <new-gateway>` falls back to auto-starting
-                # the primordial (misleading error:
-                # "No gateway found — starting one automatically").
-                # Clicking Launch a second time used to mask this
-                # because the gateway had finished booting by then.
-                _osh_name = provisioned_route.get("openshell_name")
-                if _osh_name:
-                    _setup_progress_update(
-                        "provision_route",
-                        "Waiting for model route to come online\u2026",
-                    )
-                    if not _osr.wait_for_gateway_ready(_osh_name, timeout=90):
-                        logger.warning(
-                            "setup: sub-gateway '%s' did not reach Ready within 90s — "
-                            "proceeding anyway; spawn may fall back to default gateway",
-                            _osh_name,
-                        )
-        except Exception as _route_err:
-            logger.warning(
-                "setup: provision_or_reuse_route failed for %s/%s — agent will "
-                "fall back to the first available route via the executor's "
-                "default-route path; the user can re-provision from "
-                "/admin/model-routes. (%s: %s)",
-                _primary_server_type or "lmstudio", model,
-                type(_route_err).__name__, _route_err,
-            )
+        # The v1 wizard provisioned an OpenShell 0.0.x model route
+        # (a per-model gateway) here. Model routes were removed in S1.5;
+        # the step stays in the stepper as a no-op until S1.9 strips the
+        # wizard.
+        await _paced_progress_update(
+            "provision_route",
+            "Model routes are not used in v2 (skipped)\u2026",
+        )
 
         # Create the default named agent and spawn its OpenShell sandbox.
         # This gives the user a chat-ready agent the moment they land on
@@ -3936,29 +3871,18 @@ async def _run_setup_complete_bg(
                     shared=True,
                     toolsets=_json.dumps(_default_toolsets),
                     char_index=agent_char_index,
-                    model_route_id=(provisioned_route["id"] if provisioned_route else None),
                 )
-                logger.info(
-                    "setup: created default named agent '%s' bound to route %s",
-                    agent_name,
-                    provisioned_route["id"] if provisioned_route else "<none>",
-                )
+                logger.info("setup: created default named agent '%s'", agent_name)
             else:
                 # Re-running setup with the same agent name — update the
-                # agent's model/soul and re-bind it to the (possibly
-                # newly-provisioned) route so the next spawn lands in
-                # the right gateway with the user's latest choice.
-                # Without this update, the agent row's stale `model`
-                # column would win over the fresh choice in config.yaml
-                # (the executor passes `default_agent.get("model") or
-                # model` to InstanceConfig below), and the main page —
-                # which reads the agent record — would keep showing the
-                # old model.
+                # agent's model/soul so the agent row reflects the
+                # user's latest choice. Without this update, the row's
+                # stale `model` column would win over the fresh choice
+                # in config.yaml, and the main page — which reads the
+                # agent record — would keep showing the old model.
                 _agent_updates: dict = {"model": model}
                 if agent_type:
                     _agent_updates["soul_slug"] = agent_type
-                if provisioned_route:
-                    _agent_updates["model_route_id"] = provisioned_route["id"]
                 # Backfill toolsets if the existing agent was created before
                 # the default-toolsets fix landed (toolsets=[] makes the
                 # agent "tool-less" — no browser/memory/terminal/etc.).
@@ -3971,9 +3895,7 @@ async def _run_setup_complete_bg(
                 auth_db.update_agent(existing_default["id"], **_agent_updates)
                 default_agent = auth_db.get_agent(existing_default["id"]) or existing_default
                 logger.info(
-                    "setup: default agent '%s' already exists — re-bound to route %s",
-                    agent_name,
-                    provisioned_route["id"] if provisioned_route else "<unchanged>",
+                    "setup: default agent '%s' already exists — updated", agent_name,
                 )
 
             # Apply B-tier capability defaults (always_on + default_on_create)
@@ -4014,8 +3936,8 @@ async def _run_setup_complete_bg(
                 _searxng_up = False
 
             # Persist SEARXNG_URL to ~/.logos/.env and the live process env so
-            # fresh sandbox spawns (which copy it via _FORWARDED_HOST_ENV in
-            # hermes_server_mode) actually get the URL. Without this, the
+            # fresh sandbox spawns (which copy forwarded host env from the
+            # gateway) actually get the URL. Without this, the
             # gateway has no SEARXNG_URL to forward and the agent's soul
             # correctly reports "SearxNG isn't configured for me" despite
             # the container running. host.openshell.internal is the alias
@@ -4039,88 +3961,19 @@ async def _run_setup_complete_bg(
                 except Exception as _env_err:
                     logger.warning("setup: could not persist SEARXNG_URL: %s", _env_err)
 
-            # Spawn the sandbox and BLOCK the /setup/complete response on
-            # it. The previous version fired spawn in a background task
-            # and returned success immediately — which produced a nasty
-            # false-positive UX: /setup said "all done", the user was
-            # dropped into /chats, and then the sandbox silently failed
-            # to provision 1-2s later. The error only existed in the
-            # gateway log, and the user saw "Sandbox is provisioning…"
-            # forever with no way to see what went wrong.
-            #
-            # Blocking here means /setup/complete takes ~10-30s on the
-            # happy path (image build/push + sandbox create + Ready
-            # phase + config upload). Plan A-prime: there's no
-            # persistent worker to wait on — each chat dispatch spawns
-            # its own openshell sandbox exec subprocess on-demand. If
-            # anything in the stack is broken — image push, policy
-            # conflict, sandbox never reaches Ready — the user sees the
-            # actual error message in the /setup flow and can act on it.
-            #
-            # TODO (MISSING.md): add an explicit "Verifying your agent…"
-            # step to the /setup UI that dispatches a ping-sized chat
-            # message and waits for a reply, so the user gets positive
-            # confirmation the full stack works end-to-end (not just
-            # "the sandbox exists").
-            from gateway.executors.openshell import OpenShellExecutor
-            from gateway.executors.base import InstanceConfig
-            import asyncio as _asyncio
-            _executor = OpenShellExecutor()
-            _cfg = InstanceConfig(
-                name=default_agent["name"],
-                soul_name=default_agent.get("soul_slug") or agent_type or "general",
-                model=default_agent.get("model") or model,
-                requester=primary_admin.get("email") or primary_admin.get("username") or "",
-                instance_label=default_agent["name"],
-                toolsets=[],
-                # Pass the route binding through to the executor so the
-                # sandbox lands inside the gateway we just provisioned.
-                # When None, the executor falls back to the default route
-                # (or the first available route) per _resolve_route() in
-                # gateway/executors/openshell.py.
-                model_route_id=default_agent.get("model_route_id"),
-            )
-
+            # The v1 wizard spawned the agent's OpenShell 0.0.x sandbox
+            # here and blocked on it. No sandbox backend until E2: report
+            # the step as done with a note; chat answers 503
+            # no_agents_running until a backend exists. (S1.9 strips the
+            # wizard.)
             await _paced_progress_update(
                 "spawn_sandbox",
-                "Spawning the agent's sandbox\u2026",
+                "No sandbox backend yet (arrives in epic E2) \u2014 skipped",
             )
-            # Sub-stage callback — pins `stage` at "spawn_sandbox" so the
-            # frontend stepper stays on that row, and forwards the sub-
-            # stage slug + byte-level percent so the nested sub-stepper
-            # and the outer progress bar both advance meaningfully during
-            # the 3-5 min image import on a cold install.
-            def _spawn_progress(
-                sub_label: str,
-                *,
-                substage: str = "",
-                sub_percent: int = 0,
-            ) -> None:
-                _setup_progress_update(
-                    "spawn_sandbox", sub_label,
-                    substage=substage, sub_percent=sub_percent,
-                )
-            try:
-                await _asyncio.to_thread(
-                    _executor.spawn, _cfg, progress_cb=_spawn_progress,
-                )
-                logger.info("setup: spawned default sandbox for agent '%s'", agent_name)
-            except Exception as _spawn_err:
-                logger.exception(
-                    "setup: default agent sandbox spawn failed: %s", _spawn_err,
-                )
-                # Surface the failure via progress (done=ok=False) so
-                # the /setup UI shows the error instead of spinning
-                # forever. The agent DB row stays (next retry can reuse
-                # it) but the sandbox didn't come up.
-                raise _SetupUserError(
-                    "sandbox_spawn_failed",
-                    f"{str(_spawn_err)[:600]} — The agent was created in "
-                    "the database but its OpenShell sandbox could not be "
-                    "provisioned. Check ~/.logos/logs/gateway.log or run "
-                    "`logos debug tail -n 200` for the full error.",
-                    status=500,
-                )
+            logger.info(
+                "setup: skipped sandbox spawn for '%s' (no sandbox backend, E2)",
+                agent_name,
+            )
         except _SetupUserError:
             # User-actionable failures (sandbox_spawn_failed, etc.)
             # must propagate to the outer bg handler so progress
@@ -4194,12 +4047,10 @@ async def handle_setup_prewarm(request: web.Request) -> web.Response:
     """POST /api/setup/prewarm — pre-warm the slow setup-complete steps
     in the background while the user is still on Soul / Account steps.
 
-    The setup-complete flow spends ~3 minutes of its 4-minute budget in
-    two idempotent steps: provisioning the OpenShell route (spins up
-    the k3s cluster for the picked model) and importing the
-    hermes-sandbox image into that cluster's containerd. Both are safe
-    to run before the user has finished the wizard — the final
-    ``complete()`` call just finds the work already done and skips it.
+    The v1 runtime provisioned an OpenShell 0.0.x route and imported
+    the sandbox image here. Both went away in S1.5, so this is a no-op
+    that still validates its input and answers 202 (S1.9 strips the
+    wizard).
 
     Trigger point: step 4 → step 5 of /setup (right after the user
     picks a model). At that point we know ``endpoint``, ``model``,
@@ -4226,54 +4077,10 @@ async def handle_setup_prewarm(request: web.Request) -> web.Response:
     if not model:
         return web.json_response({"error": "missing_model"}, status=400)
 
-    async def _prewarm():
-        try:
-            logger.info(
-                "setup/prewarm: provisioning route for %s/%s (endpoint=%s)",
-                server_type, model, endpoint or "(unset)",
-            )
-            from gateway import openshell_routes as _osr
-            # provision_or_reuse_route: idempotent create/reuse, starts the
-            # openshell cluster. Don't set as default — the real complete()
-            # call decides that.
-            route = await asyncio.to_thread(
-                _osr.provision_or_reuse_route, server_type, model, False,
-            )
-            gw_name = (route or {}).get("openshell_name") or ""
-            if not gw_name:
-                logger.warning(
-                    "setup/prewarm: route for %s/%s had no openshell_name; "
-                    "skipping image import",
-                    server_type, model,
-                )
-                return
-            logger.info(
-                "setup/prewarm: route ready (%s, status=%s); importing image",
-                gw_name, (route or {}).get("status"),
-            )
-
-            from gateway.executors.openshell import (
-                _ensure_image_in_cluster,
-                _DEFAULT_IMAGE,
-            )
-            imported = await asyncio.to_thread(
-                _ensure_image_in_cluster, _DEFAULT_IMAGE, gw_name,
-            )
-            logger.info(
-                "setup/prewarm: finished for %s/%s — image %s into %s (%s)",
-                server_type, model, _DEFAULT_IMAGE, gw_name,
-                "newly imported" if imported else "already present",
-            )
-        except Exception as _err:
-            # Prewarm is best-effort. If it fails, the user's Finish click
-            # will just do the work then — with the timing surprise we're
-            # trying to avoid, but at least nothing is broken.
-            logger.warning(
-                "setup/prewarm: failed for %s/%s: %s: %s",
-                server_type, model, type(_err).__name__, _err,
-            )
-
-    asyncio.create_task(_prewarm())
+    logger.info(
+        "setup/prewarm: nothing to prewarm for %s/%s (endpoint=%s; no sandbox backend, E2)",
+        server_type, model, endpoint or "(unset)",
+    )
     return web.json_response({"status": "accepted"}, status=202)
 
 

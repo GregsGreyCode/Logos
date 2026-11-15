@@ -15,8 +15,7 @@ as they do for in-process and external servers.
 Rationale for shelling out to the ``docker`` CLI instead of the Python
 Docker SDK: the repo has a top-level ``docker/`` directory which takes
 import precedence over the ``docker`` PyPI package, so ``from docker
-import from_env`` doesn't work cleanly. ``gateway/executors/openshell.py``
-already shells out to the CLI for the same reason.
+import from_env`` doesn't work cleanly.
 
 Functions:
     deploy_container(name, image, port, env_vars, mcp_path, ...)

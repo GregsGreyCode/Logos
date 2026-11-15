@@ -389,32 +389,6 @@ CREATE TABLE IF NOT EXISTS agent_env_credentials (
 );
 CREATE INDEX IF NOT EXISTS idx_aec_agent   ON agent_env_credentials(agent_id);
 CREATE INDEX IF NOT EXISTS idx_aec_env_var ON agent_env_credentials(env_var);
-
--- ── Model routes ───────────────────────────────────────────────────────────
--- One row per (provider, model) pair the user has provisioned. Each route is
--- backed by a dedicated OpenShell gateway pinned to that single model via
--- `openshell inference set`. Agents bind to a route via agents.model_route_id;
--- the OpenShell executor reads the route's openshell_name to know which
--- gateway to spawn the sandbox in. Lets multiple agents target different
--- models simultaneously without OpenShell's "one forced model" design
--- becoming a bottleneck.
-
-CREATE TABLE IF NOT EXISTS model_routes (
-    id              TEXT PRIMARY KEY,
-    provider        TEXT NOT NULL,                      -- 'lmstudio' / 'openai' / 'anthropic' / etc
-    model           TEXT NOT NULL,                      -- 'openai/gpt-oss-20b'
-    openshell_name  TEXT NOT NULL UNIQUE,               -- sanitized model name, e.g. 'qwen-qwen3-5-9b'
-    openshell_port  INTEGER NOT NULL UNIQUE,            -- 9090, 9091, 9092, ...
-    status          TEXT NOT NULL DEFAULT 'provisioning', -- 'provisioning' | 'ready' | 'error' | 'stopped'
-    status_detail   TEXT,                               -- last error / phase note (truncated to 500 chars)
-    is_default      INTEGER NOT NULL DEFAULT 0,         -- exactly one row should have is_default=1
-    is_primordial   INTEGER NOT NULL DEFAULT 0,         -- DEPRECATED: always 0 in new rows (primordial concept removed)
-    created_at      INTEGER NOT NULL,
-    updated_at      INTEGER NOT NULL,
-    UNIQUE(provider, model)
-);
-CREATE INDEX IF NOT EXISTS idx_mroutes_status ON model_routes(status);
-CREATE INDEX IF NOT EXISTS idx_mroutes_default ON model_routes(is_default);
 """
 
 
@@ -443,13 +417,11 @@ def _run_migrations() -> None:
             # v8: per-agent sprite selection (0..7). NULL falls back to name-hash
             # in AgentSprite.js so pre-v8 agents still render.
             "ALTER TABLE agents ADD COLUMN char_index INTEGER",
-            # v9: per-agent OpenShell route binding. Each agent's sandbox is
-            # spawned inside the OpenShell gateway named in the linked
-            # model_routes row. NULL means "use the default route" (the row
-            # with is_default=1) and is the path the gateway-side resolver
-            # takes when an agent was created before this column existed
-            # or when the user explicitly wants the platform default.
-            "ALTER TABLE agents ADD COLUMN model_route_id TEXT REFERENCES model_routes(id)",
+            # v9: per-agent OpenShell 0.0.x route binding. Unused since S1.5
+            # (the route table is gone, see drop_model_routes_v1); the
+            # column stays so existing rows/ALTERs keep lining up. No FK:
+            # its old target table no longer exists.
+            "ALTER TABLE agents ADD COLUMN model_route_id TEXT",
             # v10: per-agent network policy presets layered on top of the
             # baseline in gateway/policies/openshell_default.yaml. JSON
             # array of preset names from gateway/policies/presets/*.yaml
@@ -814,38 +786,6 @@ def _run_migrations() -> None:
                 ("agent_toolsets_backfill_v1", "1", int(time.time() * 1000)),
             )
 
-        # v14: backfill agents.model_route_id from the default route. Agents
-        # created before handle_agents_post auto-binding (or before any
-        # routes were provisioned) carry NULL here and look "unattached"
-        # on the Dashboards bound-agents column even though the executor
-        # is happily resolving the default at spawn time. Make the DB the
-        # source of truth so the count is accurate. Idempotent: only
-        # touches NULL rows, only runs once.
-        already_v4 = conn.execute(
-            "SELECT value FROM schema_flags WHERE key = 'agent_route_backfill_v1'"
-        ).fetchone()
-        if not already_v4:
-            default_row = conn.execute(
-                "SELECT id FROM model_routes WHERE is_default = 1 LIMIT 1"
-            ).fetchone()
-            if default_row:
-                cur = conn.execute(
-                    "UPDATE agents SET model_route_id = ? WHERE model_route_id IS NULL",
-                    (default_row["id"],),
-                )
-                logger.info(
-                    "agent_route_backfill_v1: bound %d agent(s) to default route %s",
-                    cur.rowcount, default_row["id"],
-                )
-            # Stamp the flag even if no default route exists so we don't
-            # re-scan on every startup. If a default is provisioned later,
-            # the auto-bind in handle_agents_post covers new agents and
-            # existing nulls remain rare (only the explicit-no-route case).
-            conn.execute(
-                "INSERT INTO schema_flags (key, value, applied_at) VALUES (?, ?, ?)",
-                ("agent_route_backfill_v1", "1", int(time.time() * 1000)),
-            )
-
         # v20: migrate mcp_servers.deploy_mode CHECK constraint from
         # ('k8s', 'external') to ('external', 'docker'). The k8s deploy path
         # has been removed along with the rest of the legacy sandbox
@@ -900,6 +840,28 @@ def _run_migrations() -> None:
                 ("drop_agent_runs_v1", "1", int(time.time() * 1000)),
             )
             logger.info("drop_agent_runs_v1: removed agent_runs table")
+
+        # v24: drop the OpenShell 0.0.x model_routes table (S1.5). The
+        # agents.model_route_id / fallback_route_id columns are left in
+        # place (unused) rather than rebuilding agents. But on DBs where
+        # model_route_id was added with ``REFERENCES model_routes(id)``,
+        # SQLite (foreign_keys=ON) refuses every INSERT/DELETE on agents
+        # once the parent table is gone ("no such table: main.model_routes").
+        # So first strip that FK clause from the stored CREATE TABLE text via
+        # writable_schema, the procedure SQLite documents for removing
+        # FOREIGN KEY constraints without touching on-disk data
+        # (https://sqlite.org/lang_altertable.html#otheralter), then drop.
+        already_v24 = conn.execute(
+            "SELECT value FROM schema_flags WHERE key = 'drop_model_routes_v1'"
+        ).fetchone()
+        if not already_v24:
+            _strip_agents_model_route_fk(conn)
+            conn.execute("DROP TABLE IF EXISTS model_routes")
+            conn.execute(
+                "INSERT INTO schema_flags (key, value, applied_at) VALUES (?, ?, ?)",
+                ("drop_model_routes_v1", "1", int(time.time() * 1000)),
+            )
+            logger.info("drop_model_routes_v1: removed model_routes table")
 
         # v22b: rebuild `users` to drop the `action_policy_id` column, whose
         # FK pointed at the `action_policies` table just dropped above.
@@ -1136,6 +1098,41 @@ def _migrate_dispatches_stamp_v1(conn) -> None:
         if name in cols:
             continue
         conn.execute(f"ALTER TABLE dispatches ADD COLUMN {name} {sqltype}")
+
+
+def _strip_agents_model_route_fk(conn: sqlite3.Connection) -> None:
+    """Remove ``REFERENCES model_routes(id)`` from the agents table schema.
+
+    Part of drop_model_routes_v1. Rewrites only the schema text (column
+    data is untouched), bumps schema_version so open connections reload,
+    and verifies with ``PRAGMA integrity_check``.
+    """
+    row = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'agents'"
+    ).fetchone()
+    if not row or not row[0]:
+        return
+    old_sql = row[0]
+    new_sql = re.sub(r"\s+REFERENCES\s+model_routes\s*\(\s*id\s*\)", "",
+                     old_sql, flags=re.IGNORECASE)
+    if new_sql == old_sql:
+        return
+    conn.commit()
+    version = conn.execute("PRAGMA schema_version").fetchone()[0]
+    conn.execute("PRAGMA writable_schema=ON")
+    try:
+        conn.execute(
+            "UPDATE sqlite_master SET sql = ? WHERE type = 'table' AND name = 'agents'",
+            (new_sql,),
+        )
+        conn.execute(f"PRAGMA schema_version={int(version) + 1}")
+        conn.commit()
+    finally:
+        conn.execute("PRAGMA writable_schema=OFF")
+    result = conn.execute("PRAGMA integrity_check").fetchone()
+    if not result or result[0] != "ok":
+        logger.warning("drop_model_routes_v1: integrity_check after FK strip: %s",
+                       result[0] if result else None)
 
 
 def _migrate_mcp_deploy_mode_v1(conn) -> None:
@@ -1663,8 +1660,7 @@ def get_active_cloud_provider() -> Optional[dict]:
 
 def create_agent(name: str, soul_slug: str = "general", model: str = "",
                  description: str = "", creator_id: str = "", shared: bool = True,
-                 toolsets: str = "", char_index: Optional[int] = None,
-                 model_route_id: Optional[str] = None) -> dict:
+                 toolsets: str = "", char_index: Optional[int] = None) -> dict:
     aid = _new_id("agent")
     now = int(time.time() * 1000)
     # Clamp char_index to the 0..159 sprite-sheet range, or store NULL so the
@@ -1677,11 +1673,11 @@ def create_agent(name: str, soul_slug: str = "general", model: str = "",
     with _conn() as conn:
         conn.execute(
             """INSERT INTO agents (id, name, soul_slug, model, description, creator_id,
-                                   shared, toolsets, char_index, model_route_id,
+                                   shared, toolsets, char_index,
                                    created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (aid, name, soul_slug, model or "", description or "", creator_id or None,
-             1 if shared else 0, toolsets or "", ci, model_route_id,
+             1 if shared else 0, toolsets or "", ci,
              now, now),
         )
     return get_agent(aid)
@@ -1727,8 +1723,8 @@ def count_agents_by_creator(user_id: str) -> int:
 
 def update_agent(agent_id: str, **fields) -> Optional[dict]:
     allowed = {"name", "soul_slug", "model", "description", "shared", "toolsets",
-               "char_index", "model_route_id", "applied_presets", "website_blocklist",
-               "daily_budget_usd", "fallback_route_id"}
+               "char_index", "applied_presets", "website_blocklist",
+               "daily_budget_usd"}
     updates = {k: v for k, v in fields.items() if k in allowed}
     # Normalize daily_budget_usd: accept 0/empty as "clear the cap"
     if "daily_budget_usd" in updates:
@@ -1849,170 +1845,6 @@ def set_agent_applied_presets(agent_id: str, presets: list[str]) -> None:
             "UPDATE agents SET applied_presets = ?, updated_at = ? WHERE id = ?",
             (json.dumps(clean), int(time.time() * 1000), agent_id),
         )
-
-
-# ── Model routes ────────────────────────────────────────────────────────────
-# Each row corresponds to one OpenShell gateway pinned to a single
-# (provider, model) combination. See gateway/openshell_routes.py for the
-# subprocess wrappers that actually provision / restart / destroy the
-# underlying gateways. The CRUD functions here only manage DB state — they
-# never call the openshell CLI themselves.
-
-def create_model_route(
-    provider: str,
-    model: str,
-    openshell_name: str,
-    openshell_port: int,
-    status: str = "provisioning",
-    status_detail: Optional[str] = None,
-    is_default: bool = False,
-    is_primordial: bool = False,
-) -> dict:
-    """Insert a new model_routes row. The (provider, model) UNIQUE constraint
-    means re-provisioning the same model raises sqlite3.IntegrityError — the
-    caller should handle that by looking up the existing row first."""
-    rid = _new_id("mr")
-    now = int(time.time() * 1000)
-    with _conn() as conn:
-        conn.execute(
-            """INSERT INTO model_routes
-               (id, provider, model, openshell_name, openshell_port,
-                status, status_detail, is_default, is_primordial,
-                created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (rid, provider, model, openshell_name, int(openshell_port),
-             status, status_detail,
-             1 if is_default else 0, 1 if is_primordial else 0,
-             now, now),
-        )
-    return get_model_route(rid)
-
-
-def get_model_route(route_id: str) -> Optional[dict]:
-    with _conn() as conn:
-        row = conn.execute("SELECT * FROM model_routes WHERE id = ?", (route_id,)).fetchone()
-        return dict(row) if row else None
-
-
-def get_model_route_by_name(openshell_name: str) -> Optional[dict]:
-    with _conn() as conn:
-        row = conn.execute(
-            "SELECT * FROM model_routes WHERE openshell_name = ?",
-            (openshell_name,),
-        ).fetchone()
-        return dict(row) if row else None
-
-
-def get_model_route_by_provider_model(provider: str, model: str) -> Optional[dict]:
-    with _conn() as conn:
-        row = conn.execute(
-            "SELECT * FROM model_routes WHERE provider = ? AND model = ?",
-            (provider, model),
-        ).fetchone()
-        return dict(row) if row else None
-
-
-def get_default_model_route() -> Optional[dict]:
-    """Return the row with is_default=1, or None if no default is set."""
-    with _conn() as conn:
-        row = conn.execute(
-            "SELECT * FROM model_routes WHERE is_default = 1 LIMIT 1"
-        ).fetchone()
-        return dict(row) if row else None
-
-
-def list_model_routes() -> list[dict]:
-    with _conn() as conn:
-        rows = conn.execute(
-            "SELECT * FROM model_routes ORDER BY is_default DESC, created_at"
-        ).fetchall()
-        return [dict(r) for r in rows]
-
-
-def update_model_route(route_id: str, **fields) -> Optional[dict]:
-    """Partial update. Only the listed fields are mutable; created_at,
-    openshell_name, openshell_port, provider, model are immutable after
-    creation. Use set_default_model_route() to change is_default since
-    it has cross-row semantics."""
-    allowed = {"status", "status_detail"}
-    updates = {k: v for k, v in fields.items() if k in allowed}
-    if not updates:
-        return get_model_route(route_id)
-    updates["updated_at"] = int(time.time() * 1000)
-    set_clause = ", ".join(f"{k} = ?" for k in updates)
-    with _conn() as conn:
-        conn.execute(
-            f"UPDATE model_routes SET {set_clause} WHERE id = ?",
-            (*updates.values(), route_id),
-        )
-    return get_model_route(route_id)
-
-
-def rename_model_route_openshell_name(
-    route_id: str, new_openshell_name: str,
-) -> Optional[dict]:
-    """Rename the openshell_name on an existing route row.
-
-    Kept for future use by a proper "destroy container + re-provision
-    under new name" admin flow. The previous client-side-alias migration
-    that used this helper was structurally broken (see the module
-    docstring on gateway/openshell_routes.py) and has been removed.
-    """
-    now = int(time.time() * 1000)
-    with _conn() as conn:
-        cur = conn.execute(
-            "UPDATE model_routes SET openshell_name = ?, updated_at = ? WHERE id = ?",
-            (new_openshell_name, now, route_id),
-        )
-        if cur.rowcount == 0:
-            return None
-    return get_model_route(route_id)
-
-
-def set_default_model_route(route_id: str) -> Optional[dict]:
-    """Mark exactly one route as default. Clears all other is_default flags
-    in the same transaction."""
-    with _conn() as conn:
-        row = conn.execute(
-            "SELECT id FROM model_routes WHERE id = ?", (route_id,)
-        ).fetchone()
-        if not row:
-            return None
-        now = int(time.time() * 1000)
-        conn.execute("UPDATE model_routes SET is_default = 0, updated_at = ?", (now,))
-        conn.execute(
-            "UPDATE model_routes SET is_default = 1, updated_at = ? WHERE id = ?",
-            (now, route_id),
-        )
-    return get_model_route(route_id)
-
-
-def delete_model_route(route_id: str) -> bool:
-    """Delete a route. Caller must verify no agents are bound
-    (count_agents_using_route(route_id) == 0) and that this isn't the
-    last remaining route (see gateway.openshell_routes.destroy_route
-    for the full guards)."""
-    with _conn() as conn:
-        cur = conn.execute("DELETE FROM model_routes WHERE id = ?", (route_id,))
-        return cur.rowcount > 0
-
-
-def count_agents_using_route(route_id: str) -> int:
-    with _conn() as conn:
-        row = conn.execute(
-            "SELECT COUNT(*) AS n FROM agents WHERE model_route_id = ?",
-            (route_id,),
-        ).fetchone()
-        return int(row["n"] if row else 0)
-
-
-def list_agents_using_route(route_id: str) -> list[dict]:
-    with _conn() as conn:
-        rows = conn.execute(
-            "SELECT * FROM agents WHERE model_route_id = ? ORDER BY created_at",
-            (route_id,),
-        ).fetchall()
-        return [dict(r) for r in rows]
 
 
 # ── Platform routing ────────────────────────────────────────────────────────
@@ -2257,9 +2089,9 @@ def get_agent_channel_credential(cred_id: str) -> Optional[dict]:
 
 # ── Per-agent env credentials (cloud-tool API keys) ─────────────────────────
 # See the agent_env_credentials table definition above for rationale.
-# Read path: build_channel_extra_env in hermes_server_mode merges rows from
-# here with rows from agent_channel_credentials into the .env file that
-# deploy_hermes_config writes to /tmp/hermes-srv-home/.env inside the sandbox.
+# Read path: the v1 sandbox runtime merged rows from here with rows from
+# agent_channel_credentials into the sandbox's .env (removed in S1.5; the
+# E2 sandbox backend re-implements env injection).
 
 
 def save_agent_env_credential(
@@ -3436,7 +3268,7 @@ def set_platform_settings(**fields) -> dict:
 
 def get_dispatch_by_task_id(task_id: str) -> Optional[dict]:
     """Fetch the most-recent dispatch row for a task_id. Used by the
-    cost-logger in worker_registry to attribute cost rows to the user
+    v1 dispatch cost-logger to attribute cost rows to the user
     who initiated the dispatch (LOG-25.6). Returns None when the task
     isn't in the ledger (e.g. cron/system-initiated dispatches)."""
     if not task_id:

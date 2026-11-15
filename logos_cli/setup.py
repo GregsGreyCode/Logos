@@ -1422,9 +1422,8 @@ def setup_terminal_backend(config: dict):
     # NB: this picker is for the ``terminal`` *tool's* execution
     # target — where shell commands invoked by the agent actually
     # run. It is NOT the sandbox runtime (the thing that isolates the
-    # agent loop). Sandbox runtime is always OpenShell; see
-    # gateway/executors/build_executor() — Docker/k8s/LocalProcess
-    # executors were removed in the OpenShell-only cleanup.
+    # agent loop). The sandbox runtime lives behind
+    # gateway/sandbox_backend.py (OpenShell, epic E2).
     current_backend = config.get("terminal", {}).get("backend", "local")
     is_linux = _platform.system() == "Linux"
 
