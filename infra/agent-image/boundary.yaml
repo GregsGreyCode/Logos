@@ -1,0 +1,54 @@
+# Boundary policy: the most any Logos v2 agent may ever be granted (checked with openshell-prover).
+# Every per-agent policy must be contained in this one. Widen it deliberately, in review.
+version: 1
+
+filesystem_policy:
+  include_workdir: true            # /sandbox, including the brain volume at /sandbox/brain
+  read_only:
+    - /bin
+    - /usr                         # includes /usr/local/bin/python3 used by the hermes venv
+    - /lib
+    - /etc
+    - /opt/hermes                  # upstream hermes install (sealed venv, scripts)
+    - /proc
+    - /dev/urandom
+    - /var/log
+  read_write:
+    - /opt/data                    # hermes home volume: config, memories, sessions, cron
+    - /tmp
+    - /dev/null
+
+landlock:
+  compatibility: hard_requirement
+
+# S2.4: deny by default. Only the hermes Python interpreter may connect, and only to these.
+# The interpreter's real path (symlinks are not matched): /opt/hermes/tools/python-<ver>/bin/python3.<n>
+network_policies:
+  lm_studio:                       # local models on the LAN PC (private address, so pinned)
+    endpoints:
+      - host: 192.0.2.117
+        port: 1234
+        protocol: rest
+        enforcement: enforce
+        access: read-write
+        allowed_ips: [192.0.2.117/32]
+    binaries:
+      - path: /opt/hermes/tools/python-*/bin/python3*
+  anthropic:                       # Claude, used for nightly consolidation
+    endpoints:
+      - host: api.anthropic.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        access: read-write
+    binaries:
+      - path: /opt/hermes/tools/python-*/bin/python3*
+  telegram:                        # the agent's own bot
+    endpoints:
+      - host: api.telegram.org
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        access: read-write
+    binaries:
+      - path: /opt/hermes/tools/python-*/bin/python3*
