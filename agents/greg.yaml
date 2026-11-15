@@ -1,0 +1,20 @@
+# Agent definition for Greg's agent (story S3.1). Create or recreate with:
+#   scripts/logos-agent up greg
+# Secrets are not stored here. The Telegram bot token is read from the environment
+# (LOGOS_TELEGRAM_BOT_TOKEN) the first time and kept in the agent's private home volume.
+name: greg
+display_name: Greg's agent
+image: logos-agent:0.23.1
+soul: souls/general/soul.md
+policy: infra/agent-image/policy.yaml
+providers: [anthropic]            # OpenShell providers to attach (credentials stay in the gateway)
+
+model:
+  provider: lmstudio
+  base_url: http://192.0.2.117:1234/v1
+  default: qwen/qwen3.6-35b-a3b   # provisional; S3.4 benchmark decides
+  context_length: 65536           # must match what LM Studio loads the model with
+
+telegram:
+  enabled: true
+  allowed_users: []               # set in agents/greg.local.yaml (untracked): Telegram numeric user IDs

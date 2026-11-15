@@ -86,3 +86,6 @@ PROJECT_STATE.md
 # Claude Code — per-machine state (keep settings.json shared)
 .claude/settings.local.json
 .claude/worktrees/
+
+# Per-machine agent overrides (personal IDs)
+agents/*.local.yaml
