@@ -179,9 +179,7 @@ logos/                        ← repo root
 │
 ├── skills/                   # Bundled skills (copied to ~/.logos/skills/ on install)
 ├── optional-skills/          # Official optional skills (discoverable via hub, not activated by default)
-├── k8s/                      # Kubernetes deployment manifests
 ├── tests/                    # Test suite
-├── website/                  # Documentation site (Docusaurus)
 ├── docs/                     # Internal docs, architecture, project planning
 │
 └── AGENTS.md                 # Development guide for AI coding assistants
