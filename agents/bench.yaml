@@ -1,0 +1,16 @@
+# Throwaway agent used by evals/agent_writes/bench.py; the benchmark rewrites model.default.
+name: bench
+display_name: Benchmark agent (S3.4)
+image: logos-agent:0.23.1
+soul: souls/general/soul.md
+policy: infra/agent-image/policy.yaml
+providers:
+- anthropic
+model:
+  provider: lmstudio
+  base_url: http://192.168.1.117:1234/v1
+  default: qwen/qwen3.6-35b-a3b
+  context_length: 65536
+telegram:
+  enabled: false
+  allowed_users: []

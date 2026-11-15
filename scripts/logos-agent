@@ -1,0 +1,167 @@
+#!/usr/bin/env python3
+"""Create, inspect and remove Logos v2 agents (OpenShell 0.1 sandboxes running hermes).
+
+Usage:
+  scripts/logos-agent up <name>       create or recreate the sandbox from agents/<name>.yaml
+  scripts/logos-agent down <name>     delete the sandbox (volumes are kept)
+  scripts/logos-agent status [name]   show sandbox phase
+  scripts/logos-agent exec <name> -- <cmd...>   run a command inside the sandbox
+
+Each agent has two labelled Docker volumes (docs/adr/0001):
+  logos-home-<name>  -> /opt/data        hermes home (config, SOUL.md, memories, sessions)
+  logos-brain-<name> -> /sandbox/brain   markdown vault
+"""
+import json, os, re, secrets, subprocess, sys, time
+from pathlib import Path
+
+import yaml
+
+REPO = Path(__file__).resolve().parent.parent
+SANDBOX_UID = "10000:10000"          # `hermes` in the logos-agent image
+HELPER = "alpine:3"
+LABELS = ["--label", "openshell.ai/sandbox-attachable=true",
+          "--label", "openshell.ai/sandbox-attachable-workspace=default"]
+START = "/opt/hermes/docker/stage2-hook.sh; exec hermes gateway run"
+ANSI = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def run(cmd, *, input=None, check=True, quiet=False):
+    p = subprocess.run(cmd, input=input, text=True, capture_output=True)
+    if check and p.returncode != 0:
+        sys.exit(f"command failed: {' '.join(cmd[:4])} ...\n{ANSI.sub('', p.stderr or p.stdout)[-800:]}")
+    return ANSI.sub("", p.stdout)
+
+
+def load(name):
+    path = REPO / "agents" / f"{name}.yaml"
+    if not path.exists():
+        sys.exit(f"no agent definition at {path}")
+    agent = yaml.safe_load(path.read_text())
+    # agents/<name>.local.yaml is untracked: personal values (Telegram user IDs) stay out of git.
+    local = path.with_suffix(".local.yaml")
+    if local.exists():
+        _merge(agent, yaml.safe_load(local.read_text()) or {})
+    return agent
+
+
+def _merge(base, extra):
+    for k, v in extra.items():
+        if isinstance(v, dict) and isinstance(base.get(k), dict):
+            _merge(base[k], v)
+        else:
+            base[k] = v
+
+
+def volumes(name):
+    return f"logos-home-{name}", f"logos-brain-{name}"
+
+
+def ensure_volume(vol):
+    if subprocess.run(["docker", "volume", "inspect", vol], capture_output=True).returncode != 0:
+        run(["docker", "volume", "create", *LABELS, vol])
+        # A fresh volume is root-owned; the sandbox user must own it.
+        run(["docker", "run", "--rm", "-v", f"{vol}:/v", HELPER, "chown", SANDBOX_UID, "/v"])
+
+
+def put(vol, rel, content, mode="0640"):
+    """Write a file into a volume through a helper container."""
+    sh = f'mkdir -p "$(dirname /v/{rel})" && cat > /v/{rel} && chown {SANDBOX_UID} /v/{rel} && chmod {mode} /v/{rel}'
+    run(["docker", "run", "--rm", "-i", "-v", f"{vol}:/v", HELPER, "sh", "-c", sh], input=content)
+
+
+def get(vol, rel):
+    p = subprocess.run(["docker", "run", "--rm", "-v", f"{vol}:/v:ro", HELPER, "cat", f"/v/{rel}"],
+                       text=True, capture_output=True)
+    return p.stdout if p.returncode == 0 else ""
+
+
+def env_file(agent, home):
+    """Merge managed keys into the agent's .env, keeping secrets already stored there."""
+    cur = dict(l.split("=", 1) for l in get(home, ".env").splitlines() if "=" in l and not l.startswith("#"))
+    tg = agent.get("telegram") or {}
+    if tg.get("enabled"):
+        token = os.environ.get("LOGOS_TELEGRAM_BOT_TOKEN") or cur.get("TELEGRAM_BOT_TOKEN")
+        if not token:
+            sys.exit("telegram.enabled is true but no token: set LOGOS_TELEGRAM_BOT_TOKEN for the first `up`")
+        cur["TELEGRAM_BOT_TOKEN"] = token
+        cur["TELEGRAM_ALLOWED_USERS"] = ",".join(str(u) for u in tg.get("allowed_users") or [])
+    else:
+        cur.pop("TELEGRAM_BOT_TOKEN", None)
+        cur.pop("TELEGRAM_ALLOWED_USERS", None)
+    cur.setdefault("API_SERVER_KEY", secrets.token_urlsafe(32))
+    cur["GATEWAY_ALLOW_ALL_USERS"] = "false"
+    return "".join(f"{k}={v}\n" for k, v in sorted(cur.items()))
+
+
+def phase(name):
+    for line in run(["openshell", "sandbox", "list"], check=False).splitlines():
+        parts = line.split()
+        if parts and parts[0] == name:
+            return parts[-1]
+    return "Missing"
+
+
+def down(name):
+    if phase(name) != "Missing":
+        run(["openshell", "sandbox", "delete", name])
+        for _ in range(30):
+            if phase(name) == "Missing":
+                break
+            time.sleep(1)
+
+
+def up(name):
+    agent = load(name)
+    home, brain = volumes(name)
+    for v in (home, brain):
+        ensure_volume(v)
+    m = agent["model"]
+    # _config_version marks the file as current for the pinned hermes (v0.23.1 = 53); without it
+    # hermes treats the file as pre-v12 and skips its config migrations. Bump with the image.
+    cfg = {"_config_version": 53,
+           "model": {"default": m["default"], "provider": m["provider"], "base_url": m["base_url"],
+                     "context_length": int(m["context_length"])}}
+    put(home, "config.yaml", "# Written by scripts/logos-agent; edit agents/%s.yaml instead.\n%s"
+        % (name, yaml.safe_dump(cfg, sort_keys=False)))
+    put(home, "SOUL.md", (REPO / agent["soul"]).read_text())
+    put(home, ".env", env_file(agent, home), mode="0600")
+    down(name)
+    mounts = {"docker": {"mounts": [
+        {"type": "volume", "source": home, "target": "/opt/data", "read_only": False},
+        {"type": "volume", "source": brain, "target": "/sandbox/brain", "read_only": False}]}}
+    cmd = ["openshell", "sandbox", "create", "--name", name, "--no-tty", "--detach",
+           "--restart-policy", "always", "--from", agent["image"],
+           "--policy", str(REPO / agent["policy"]), "--driver-config-json", json.dumps(mounts)]
+    for p in agent.get("providers") or []:
+        cmd += ["--provider", p]
+    run(cmd + ["--", "sh", "-c", START])
+    for _ in range(60):
+        ph = phase(name)
+        if ph in ("Ready", "Error"):
+            break
+        time.sleep(2)
+    print(f"{name}: {ph}")
+    return 0 if ph == "Ready" else 1
+
+
+def main(argv):
+    if len(argv) < 2 or argv[1] in ("-h", "--help"):
+        print(__doc__); return 0
+    cmd, name = argv[1], (argv[2] if len(argv) > 2 else None)
+    if cmd == "up" and name:
+        return up(name)
+    if cmd == "down" and name:
+        down(name); print(f"{name}: deleted (volumes kept)"); return 0
+    if cmd == "status":
+        names = [name] if name else sorted(p.stem for p in (REPO / "agents").glob("*.yaml") if not p.stem.endswith(".local"))
+        for n in names:
+            print(f"{n}: {phase(n)}")
+        return 0
+    if cmd == "exec" and name and "--" in argv:
+        rest = argv[argv.index("--") + 1:]
+        return subprocess.call(["openshell", "sandbox", "exec", "--name", name, "--no-tty", "--", *rest])
+    print(__doc__); return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))
