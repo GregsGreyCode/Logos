@@ -1,0 +1,122 @@
+#!/usr/bin/env python3
+"""Share an agent's brain with its person's devices through Syncthing (story S4.6).
+
+Usage:
+  scripts/logos-sync up <agent>                      start Syncthing for the agent's brain volume
+  scripts/logos-sync status <agent>                  device ID, folder state, connected and pending devices
+  scripts/logos-sync add <agent> <device-id> <label> allow a device and share the brain with it
+  scripts/logos-sync remove <agent> <device-id>      stop sharing with a device
+  scripts/logos-sync down <agent>                    stop Syncthing (brain and pairing are kept)
+
+One container per agent (`logos-sync-<agent>`) mounts the brain volume and syncs it as a normal
+folder that Obsidian can open on each device. The web GUI is bound to 127.0.0.1 only.
+Several agents on one host need different ports; only one is supported for now.
+"""
+import json, subprocess, sys, time, urllib.request, urllib.error
+
+IMAGE = "syncthing/syncthing:2.1.7"
+UID = "10000"                      # the sandbox user; synced files must stay owned by it
+GUI = "http://127.0.0.1:8384"
+IGNORES = [".git", ".obsidian/workspace*.json", "(?d).DS_Store", "(?d)Thumbs.db"]
+
+
+def sh(cmd, check=True):
+    p = subprocess.run(cmd, text=True, capture_output=True)
+    if check and p.returncode != 0:
+        sys.exit(f"command failed: {' '.join(cmd[:5])}\n{(p.stderr or p.stdout)[-400:]}")
+    return p.stdout.strip()
+
+
+def api(agent, path, method="GET", body=None):
+    key = sh(["docker", "exec", f"logos-sync-{agent}", "sh", "-c",
+              r'sed -n "s:.*<apikey>\(.*\)</apikey>.*:\1:p" /var/syncthing/config/config.xml'])
+    req = urllib.request.Request(GUI + path, method=method, headers={"X-API-Key": key, "Content-Type": "application/json"},
+                                 data=json.dumps(body).encode() if body is not None else None)
+    raw = urllib.request.urlopen(req, timeout=15).read()
+    return json.loads(raw) if raw.strip() else None
+
+
+def wait(agent):
+    for _ in range(30):
+        try:
+            return api(agent, "/rest/system/status")
+        except Exception:
+            time.sleep(2)
+    sys.exit("Syncthing did not come up; see `docker logs logos-sync-%s`" % agent)
+
+
+def up(agent):
+    name, cfg, brain = f"logos-sync-{agent}", f"logos-sync-{agent}", f"logos-brain-{agent}"
+    if subprocess.run(["docker", "volume", "inspect", brain], capture_output=True).returncode != 0:
+        sys.exit(f"no brain volume {brain}; run scripts/logos-agent up {agent} first")
+    if subprocess.run(["docker", "volume", "inspect", cfg], capture_output=True).returncode != 0:
+        sh(["docker", "volume", "create", cfg])
+        sh(["docker", "run", "--rm", "-v", f"{cfg}:/v", "alpine:3", "chown", f"{UID}:{UID}", "/v"])
+    if not sh(["docker", "ps", "-q", "-f", f"name=^{name}$"], check=False):
+        sh(["docker", "rm", "-f", name], check=False)
+        sh(["docker", "run", "-d", "--name", name, "--restart", "unless-stopped", "--network", "host",
+            "-e", f"PUID={UID}", "-e", f"PGID={UID}", "-e", "STGUIADDRESS=127.0.0.1:8384",
+            "-v", f"{cfg}:/var/syncthing/config", "-v", f"{brain}:/var/syncthing/brain", IMAGE])
+    status = wait(agent)
+    fid = f"brain-{agent}"
+    api(agent, "/rest/config/options", "PATCH", {"urAccepted": -1, "crashReportingEnabled": False})
+    for f in api(agent, "/rest/config/folders"):       # drop Syncthing's default folder
+        if f["id"] != fid:
+            api(agent, f"/rest/config/folders/{f['id']}", "DELETE")
+    existing = {f["id"]: f for f in api(agent, "/rest/config/folders")}
+    folder = existing.get(fid) or {"id": fid, "devices": []}
+    folder.update({"label": f"{agent} brain", "path": "/var/syncthing/brain", "type": "sendreceive",
+                   "fsWatcherEnabled": True, "rescanIntervalS": 600,
+                   # Anything a device deletes or overwrites is kept for 30 days in .stversions.
+                   "versioning": {"type": "trashcan", "params": {"cleanoutDays": "30"}}})
+    api(agent, f"/rest/config/folders/{fid}", "PUT", folder)
+    api(agent, f"/rest/db/ignores?folder={fid}", "POST", {"ignore": IGNORES})
+    print(f"{agent}: syncing. This server's device ID:\n  {status['myID']}")
+
+
+def status(agent):
+    st = wait(agent)
+    fid = f"brain-{agent}"
+    print("device ID:", st["myID"])
+    conns = api(agent, "/rest/system/connections")["connections"]
+    names = {d["deviceID"]: d.get("name") or "?" for d in api(agent, "/rest/config/devices")}
+    for did, c in conns.items():
+        if did != st["myID"]:
+            print(f"  device {names.get(did, '?'):20} {'connected' if c.get('connected') else 'offline':10} {did[:7]}…")
+    try:
+        f = api(agent, f"/rest/db/status?folder={fid}")
+        print(f"folder {fid}: {f.get('state')} · {f.get('localFiles')} files · needs {f.get('needFiles')} from devices")
+    except urllib.error.HTTPError:
+        print(f"folder {fid}: not configured")
+    for did, p in (api(agent, "/rest/cluster/pending/devices") or {}).items():
+        print(f"  PENDING device wants to connect: {p.get('name')}  {did}")
+
+
+def add(agent, device_id, label):
+    wait(agent)
+    fid = f"brain-{agent}"
+    api(agent, f"/rest/config/devices/{device_id}", "PUT", {"deviceID": device_id, "name": label, "autoAcceptFolders": False})
+    folder = api(agent, f"/rest/config/folders/{fid}")
+    if device_id not in [d["deviceID"] for d in folder["devices"]]:
+        folder["devices"].append({"deviceID": device_id})
+        api(agent, f"/rest/config/folders/{fid}", "PUT", folder)
+    print(f"{label}: allowed and offered the folder '{agent} brain'. Accept it on the device.")
+
+
+def remove(agent, device_id):
+    wait(agent)
+    api(agent, f"/rest/config/devices/{device_id}", "DELETE")
+    print("removed")
+
+
+def main(a):
+    if len(a) >= 3 and a[1] == "up": return up(a[2])
+    if len(a) >= 3 and a[1] == "status": return status(a[2])
+    if len(a) >= 5 and a[1] == "add": return add(a[2], a[3], " ".join(a[4:]))
+    if len(a) >= 4 and a[1] == "remove": return remove(a[2], a[3])
+    if len(a) >= 3 and a[1] == "down": return print(sh(["docker", "rm", "-f", f"logos-sync-{a[2]}"]) and "stopped")
+    print(__doc__); return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv) or 0)
