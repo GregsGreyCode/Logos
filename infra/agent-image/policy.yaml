@@ -1,0 +1,21 @@
+# OpenShell 0.1.8 sandbox policy for Logos v2 agents (S2.3 filesystem; S2.4 adds network rules).
+version: 1
+
+filesystem_policy:
+  include_workdir: true            # /sandbox, including the brain volume at /sandbox/brain
+  read_only:
+    - /bin
+    - /usr                         # includes /usr/local/bin/python3 used by the hermes venv
+    - /lib
+    - /etc
+    - /opt/hermes                  # upstream hermes install (sealed venv, scripts)
+    - /proc
+    - /dev/urandom
+    - /var/log
+  read_write:
+    - /opt/data                    # hermes home volume: config, memories, sessions, cron
+    - /tmp
+    - /dev/null
+
+landlock:
+  compatibility: hard_requirement
