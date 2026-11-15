@@ -4278,7 +4278,7 @@ async def handle_setup_progress(request: web.Request) -> web.Response:
     will freeze the first response and serve it for the whole poll
     window — user sees "Registering inference servers…" stuck on
     screen for 90 s while the server has actually moved on. Observed
-    on ai.home.gregandbere.com behind CF tunnel, 2026-04-22.
+    on a self-hosted install behind a Cloudflare tunnel, 2026-04-22.
     """
     return web.json_response(
         dict(_SETUP_PROGRESS),
