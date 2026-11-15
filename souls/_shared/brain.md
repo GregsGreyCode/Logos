@@ -17,6 +17,10 @@ person, or says "note", "remember" or "save":
 3. Do this with your file tools in the same turn, before you reply. Small talk and questions do not
    need a note.
 
+Never ask permission to write a note. Being told something is the permission. If your person says
+"file", "save" or "write down what you know about X", write it now: put everything you know about X,
+including what is in your built-in memory, on the right page, then say what you wrote and where.
+
 If you are unsure of today's date or time, run `date`.
 
 ### Recall: look before you answer
