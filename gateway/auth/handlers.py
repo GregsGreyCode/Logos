@@ -8,7 +8,7 @@ from aiohttp import web
 import gateway.auth.db as auth_db
 from gateway.auth.middleware import check_rate_limit
 from gateway.auth.password import hash_password, verify_password, needs_rehash
-from gateway.auth.rbac import get_permissions
+from gateway.auth.rbac import get_permissions, normalize_role
 from gateway.auth.tokens import (
     ACCESS_TOKEN_TTL,
     REFRESH_TOKEN_TTL,
@@ -36,7 +36,6 @@ def _user_public(user: dict) -> dict:
         "display_name": user.get("display_name"),
         "created_at":   user["created_at"],
         "last_login":   user.get("last_login"),
-        "policy_id":        user.get("policy_id"),
     }
 
 
@@ -426,11 +425,17 @@ async def handle_users_post(request: web.Request) -> web.Response:
     if auth_db.get_user_by_email(body["email"]):
         return web.json_response({"error": "email_exists"}, status=409)
 
+    # Two roles since S1.6. v1 names (operator, viewer) are accepted and
+    # stored as "user"; anything else is rejected.
+    role = normalize_role(body.get("role") or "user")
+    if not role:
+        return web.json_response({"error": "invalid_role", "valid": ["admin", "user"]}, status=400)
+
     user = auth_db.create_user(
         email=body["email"],
         username=body["username"],
         password_hash=hash_password(body["password"]),
-        role=body.get("role", "user"),
+        role=role,
         display_name=body.get("display_name"),
     )
     auth_db.write_audit_log(
@@ -456,6 +461,10 @@ async def handle_users_patch(request: web.Request) -> web.Response:
         return web.json_response({"error": "invalid_json"}, status=400)
 
     updates = {f: body[f] for f in ("role", "status", "display_name") if f in body}
+    if "role" in updates:
+        updates["role"] = normalize_role(updates["role"])
+        if not updates["role"]:
+            return web.json_response({"error": "invalid_role", "valid": ["admin", "user"]}, status=400)
     if updates:
         auth_db.update_user(target_id, **updates)
         auth_db.write_audit_log(
