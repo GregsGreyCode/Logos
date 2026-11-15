@@ -296,7 +296,6 @@ from gateway.session import (
     build_session_key,
 )
 from gateway.delivery import DeliveryRouter
-from gateway.runs import start_run, finish_run
 
 # ── Correlation ID contextvars ──────────────────────────────────────────────
 # These propagate through the async request path so every log record in a
