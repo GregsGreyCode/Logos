@@ -1,0 +1,46 @@
+#!/usr/bin/env python3
+"""Run the model gateway that agents with `model.gateway: true` send their model calls through.
+
+Usage:
+  scripts/logos-models up       write the config from agents/*.yaml and start (or restart) the gateway
+  scripts/logos-models status   show the address, paid providers and each agent's monthly budget
+  scripts/logos-models down     stop and remove the container (spend history is kept on its volume)
+
+Paid providers are switched on by API keys in ~/.config/logos/models.env, for example:
+  ANTHROPIC_API_KEY=sk-ant-...
+An agent may use one only if its definition lists it under model.allow, and never beyond its
+budget.monthly_usd. See docs/model-gateway.md.
+"""
+import importlib.util, sys
+from pathlib import Path
+
+REPO = Path(__file__).resolve().parent.parent
+
+
+def _load(name):
+    spec = importlib.util.spec_from_file_location(f"logos_{name}", REPO / "gateway" / f"{name}.py")
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = mod
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def main(argv):
+    if len(argv) != 2 or argv[1] not in ("up", "status", "down"):
+        print(__doc__); return 0 if len(argv) > 1 and argv[1] in ("-h", "--help") else 2
+    art = _load("agent_runtime")
+    mg = _load("model_gateway")
+    gw = mg.ModelGateway(art.AgentRuntime(REPO))
+    try:
+        if argv[1] == "up":
+            print("model gateway: started" if gw.up() else "model gateway: already up to date")
+        elif argv[1] == "down":
+            gw.down(); print("model gateway: stopped (volume kept)")
+        print(gw.status()) if argv[1] != "down" else None
+    except (ValueError, TimeoutError, art.AgentRuntimeError) as e:
+        sys.exit(f"model gateway: {e}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))
