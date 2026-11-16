@@ -231,6 +231,8 @@ function setup() {
       this.submitting = true;
       this.error = '';
       const body = { name: this.name.trim(), email: this.email.trim(), password: this.password };
+      const setupToken = new URLSearchParams(window.location.search).get('token');
+      if (setupToken) body.token = setupToken;
       if (this.secondFilled()) {
         body.second = {
           name: this.second.name.trim(),

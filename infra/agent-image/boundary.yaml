@@ -74,7 +74,7 @@ network_policies:
   noticeboard_poll:                # the sandbox's own scripts ask "anything new?" and "anything urgent?"
     endpoints:
       - host: 192.0.2.1
-        port: 8091
+        port: 8092
         protocol: rest
         enforcement: enforce
         allowed_ips: [192.0.2.1/32]

@@ -9,18 +9,28 @@ fresh install still has to ask is who logs in.
         {"name": ..., "email": ..., "password": ...,
          "second": {"name": ..., "email": ..., "password": ...}}   # optional
 
-Creates the admin (or, when startup seeding already made one, replaces that
-account's credentials), creates the optional second user, flips the
-``setup_completed`` flag, and logs the admin in via cookies on the response.
+Creates the admin (or, when ``LOGOS_ADMIN_EMAIL`` seeding already made one,
+replaces that account's credentials), creates the optional second user, flips
+the ``setup_completed`` flag, and logs the admin in via cookies on the response.
 Refused with 409 once setup has completed.
+
+Setup is the one moment an install has no accounts, so it is guarded: the
+request must come from this machine, or carry the one-time setup token the
+gateway writes to ``LOGOS_HOME/.setup_token`` and prints at startup
+(``logos gateway setup-link`` shows the link again). There is no default
+admin account.
 """
 
 from __future__ import annotations
 
+import hmac
+import ipaddress
 import logging
 import re
+import secrets
 import time
 import unicodedata
+from pathlib import Path
 from typing import Optional
 
 from aiohttp import web
@@ -37,6 +47,43 @@ from gateway.auth.tokens import (
 logger = logging.getLogger(__name__)
 
 MIN_PASSWORD_LENGTH = 8
+SETUP_TOKEN_FILE = ".setup_token"
+_EMAIL = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+_token_path: Optional[Path] = None
+
+
+def ensure_setup_token(home: Path) -> Optional[str]:
+    """Return the one-time setup token, creating it if setup has not run yet.
+    Returns ``None`` (and removes any leftover token) once setup is complete."""
+    global _token_path
+    _token_path = Path(home) / SETUP_TOKEN_FILE
+    if auth_db.is_setup_completed():
+        _token_path.unlink(missing_ok=True)
+        return None
+    if _token_path.exists():
+        token = _token_path.read_text().strip()
+        if token:
+            return token
+    token = secrets.token_urlsafe(24)
+    _token_path.parent.mkdir(parents=True, exist_ok=True)
+    _token_path.write_text(token)
+    _token_path.chmod(0o600)
+    return token
+
+
+def _is_loopback(remote: Optional[str]) -> bool:
+    try:
+        return ipaddress.ip_address((remote or "").split("%")[0]).is_loopback
+    except ValueError:
+        return False
+
+
+def setup_allowed(remote: Optional[str], offered: object) -> bool:
+    """Setup may be completed from this machine, or by whoever holds the token."""
+    if _is_loopback(remote):
+        return True
+    expected = _token_path.read_text().strip() if _token_path and _token_path.exists() else ""
+    return bool(expected) and isinstance(offered, str) and hmac.compare_digest(offered.strip(), expected)
 
 
 class SetupError(Exception):
@@ -75,7 +122,7 @@ def _parse_account(raw: object, label: str) -> dict:
         password = ""
     if not name or len(name) > 100:
         raise SetupError("invalid_name", f"{label}: a name is required.")
-    if "@" not in email or " " in email or len(email) > 254:
+    if not _EMAIL.match(email) or len(email) > 254:
         raise SetupError("invalid_email", f"{label}: a valid email address is required.")
     if len(password) < MIN_PASSWORD_LENGTH:
         raise SetupError(
@@ -180,6 +227,8 @@ def complete_setup(admin_raw: object, second_raw: object = None) -> tuple[dict, 
         )
 
     auth_db.mark_setup_completed()
+    if _token_path:
+        _token_path.unlink(missing_ok=True)
     return admin_user, second_user
 
 
@@ -191,6 +240,13 @@ async def handle_setup_complete(request: web.Request) -> web.Response:
         return web.json_response({"error": "invalid_json"}, status=400)
     if not isinstance(body, dict):
         return web.json_response({"error": "invalid_json"}, status=400)
+
+    if not auth_db.is_setup_completed() and not setup_allowed(
+            request.remote, body.get("token") or request.query.get("token")):
+        return web.json_response(
+            {"error": "setup_token_required",
+             "detail": "Open the setup link printed when the server started "
+                       "(or run `logos gateway setup-link` on the server)."}, status=403)
 
     try:
         admin_user, second_user = complete_setup(body, body.get("second"))
