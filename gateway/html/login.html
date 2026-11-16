@@ -330,33 +330,6 @@
             </p>
           </div>
 
-          <!-- Update-available nudge — only visible when gateway is
-               behind origin. Non-interactive; the actual update
-               button lives in the authenticated header. Shown here
-               so admins know to sign in and update before using the
-               possibly-stale version. -->
-          <div x-show="updateAvailable" x-cloak
-               class="flex items-start gap-2.5 text-xs leading-relaxed"
-               style="background:linear-gradient(135deg,hsla(calc(var(--accent-hue,239)),84%,64%,0.12) 0%,hsla(calc(var(--accent-hue,239) + 30),65%,60%,0.12) 100%);border:1px solid hsla(calc(var(--accent-hue,239)),84%,54%,0.35);border-radius:10px;padding:10px 12px;">
-            <span class="shrink-0 text-sm" style="line-height:1.4;">&#10024;</span>
-            <div class="min-w-0">
-              <div class="font-semibold" style="color:rgba(226,232,240,0.95);">
-                <template x-if="updateTag">
-                  <span>A new version is ready &mdash; <span class="font-mono" x-text="updateTag" style="color:hsl(calc(var(--accent-hue,239)),84%,75%);"></span></span>
-                </template>
-                <template x-if="!updateTag">
-                  <span>New changes are ready to pull in</span>
-                </template>
-              </div>
-              <div class="mt-0.5" style="color:rgba(148,163,184,0.8);">
-                <template x-if="!updateTag && updateBehindBy">
-                  <span x-text="updateBehindBy + ' new commit' + (updateBehindBy === 1 ? '' : 's') + ' on origin. '"></span>
-                </template>
-                <span>Sign in as admin and tap the update pill in the header to install.</span>
-              </div>
-            </div>
-          </div>
-
         </form>
       </div>
 
@@ -397,10 +370,6 @@
       allowRegistration: false,
       regEmail: '',
       registeredPending: false,
-      // Update-available hint (populated from /auth/update-status).
-      updateAvailable: false,
-      updateTag: '',
-      updateBehindBy: 0,
       navigating: false, navBarDur: 2600,
       _hintTimer: null,
 
@@ -428,18 +397,6 @@
         fetch('/auth/registration-status', { credentials: 'same-origin' })
           .then(r => r.ok ? r.json() : null)
           .then(d => { if (d) this.allowRegistration = !!d.allow_registration; })
-          .catch(() => {});
-        // LOG-33 follow-on: pre-sign-in update hint. Public
-        // /auth/update-status returns { has_update, latest_tag,
-        // behind_by } without exposing any git commit messages.
-        fetch('/auth/update-status', { credentials: 'same-origin' })
-          .then(r => r.ok ? r.json() : null)
-          .then(d => {
-            if (!d) return;
-            this.updateAvailable = !!d.has_update;
-            this.updateTag = d.latest_tag || '';
-            this.updateBehindBy = d.behind_by || 0;
-          })
           .catch(() => {});
         this._hintTimer = setTimeout(() => { if (this.phase === 'splash') this.showHint = true; }, 1000);
         // Drive hue for logo + button via rAF so they're always in sync

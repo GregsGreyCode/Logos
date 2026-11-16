@@ -152,7 +152,7 @@ async def _handle_mirror_turn(request: web.Request) -> web.Response:
     # messages endpoint can replay the conversation. Two records per
     # turn: inbound user message + outbound agent reply. ────────────
     try:
-        from logos_cli.config import get_hermes_home
+        from gateway.local_config import get_hermes_home
         sessions_dir = get_hermes_home() / "sessions"
         sessions_dir.mkdir(parents=True, exist_ok=True)
         transcript = sessions_dir / f"{session_id}.jsonl"
