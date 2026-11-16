@@ -337,3 +337,13 @@ def test_brain_write_is_guarded():
 def test_reading_someone_elses_brain_is_a_404(run):
     assert run("u-bere", "/api/v2/agents/greg/brain")[0] == 404
     assert run("u-bere", "/api/v2/agents/greg/brain/page?path=README.md")[0] == 404
+
+
+def test_reformat_result_must_keep_the_content():
+    ok = dashboard_api.reformat_is_sane
+    before = "boiler service 20 November british gas\nbooked 9am cost 85"
+    assert ok(before, "## Boiler service\n\n- **Date:** 20 November\n- British Gas, booked 9am\n- Cost: 85")
+    assert not ok(before, "")                                              # nothing came back
+    assert not ok(before, "## Boiler\n\n- 21 November, 9am, cost 85")       # a number changed
+    assert not ok(before, "Boiler booked.")                                # most of it dropped
+    assert not ok(before, before + "\n" + "Extra invented detail. " * 10)  # padded

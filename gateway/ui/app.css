@@ -161,3 +161,17 @@ tr:last-child td { border-bottom: 0; }
 .edit-split .label { display: block; margin-bottom: 6px; }
 .preview { min-height: 420px; padding: 14px; border: 1px solid var(--line); border-radius: 10px; }
 .tree .btn { margin-bottom: 12px; min-height: 40px; }
+.doc-body { margin-top: 18px; }
+.new-page, .ask { display: flex; flex-direction: column; gap: 8px; }
+.new-page { margin-bottom: 12px; padding: 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); }
+.new-page input, .new-page select, .ask textarea { min-height: 40px; padding: 8px 12px; border: 1px solid var(--line);
+  border-radius: 10px; background: var(--ground); color: var(--ink); font: inherit; width: 100%; }
+.small-btn { min-height: 36px; padding: 0 14px; margin: 0; }
+.ask { padding: 14px; border: 1px solid var(--line); border-radius: 12px; background: var(--raised); }
+.ask-row { display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-end; }
+.ask-row textarea { flex: 1 1 280px; resize: vertical; }
+.ask .result { font-size: 14px; } .ask .result p { margin: 0 0 6px; }
+.toolbar { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
+.tool { min-height: 36px; min-width: 40px; padding: 0 12px; border: 1px solid var(--line); border-radius: 8px;
+  background: var(--raised); color: var(--ink); font-weight: 600; }
+.tool.accent { border-color: var(--accent); color: var(--accent-text); margin-left: auto; }
