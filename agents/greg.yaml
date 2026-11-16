@@ -32,6 +32,10 @@ consolidation:                  # nightly brain tidy-up (hermes cron job `consol
   schedule: "30 2 * * *"        # in the agent's timezone; before the 03:00 fresh session
   # model / provider: omit to use the agent's main (local) model
 
+digest:                         # weekly summary of what the brain learned, sent on Telegram
+  enabled: true
+  schedule: "0 18 * * 0"        # Sunday 18:00 in the agent's timezone
+
 session_reset:                  # start a fresh conversation on the first message after this hour
   mode: daily
   at_hour: 3                    # in the agent's timezone
