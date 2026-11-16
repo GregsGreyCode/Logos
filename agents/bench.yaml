@@ -9,6 +9,7 @@ policy: infra/agent-image/policy.yaml
 providers: []
 timezone: Europe/London
 noticeboard: true               # only so the evals can test the noticeboard rules
+voice: true                     # voice notes are turned into text by the voice service (docs/voice.md)
 role: test                      # test agents and real agents cannot message each other
 model:
   provider: lmstudio
