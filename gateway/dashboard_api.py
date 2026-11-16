@@ -254,6 +254,71 @@ async def handle_brain_page_create(request: web.Request) -> web.Response:
     return web.json_response({"ok": True, **made})
 
 
+REFORMAT_MAX_CHARS = 8000
+REFORMAT_SYSTEM = (
+    "You tidy the formatting of Markdown notes. Keep every fact, name, number and date, and keep the "
+    "wording. Only improve the structure: sensible headings, bullet lists for lists, one blank line "
+    "between blocks, **bold** for short labels, consistent list markers. Do not add, remove, summarise, "
+    "translate or comment. Reply with the tidied Markdown only, with no code fence around it.")
+
+
+def reformat_is_sane(before: str, after: str) -> bool:
+    """A tidy-up may move things around but must not drop or invent much: every number in the
+    original must survive, and the length must stay in the same range."""
+    if not after.strip():
+        return False
+    ratio = len(after) / max(len(before), 1)
+    if not 0.6 <= ratio <= 1.6:
+        return False
+    import re as _re
+    numbers = lambda t: sorted(_re.findall(r"\d+", t))
+    return numbers(before) == numbers(after)
+
+
+async def handle_brain_reformat(request: web.Request) -> web.Response:
+    """POST /api/v2/agents/{name}/brain/reformat  {"text": "..."}  ->  {"text": "..."}
+
+    One model call that tidies Markdown formatting and nothing else. It goes straight to the
+    agent's local model server, not through the agent, so it has no tools and no memory and
+    cannot change anything: the person sees the result in the editor and decides whether to save.
+    """
+    import aiohttp
+    _name, info, _user_ = await _agent_or_404(request)
+    try:
+        text = str((await request.json())["text"])
+    except Exception:
+        return web.json_response({"error": "invalid_request"}, status=400)
+    if not text.strip():
+        return web.json_response({"error": "empty", "message": "There is nothing to tidy."}, status=400)
+    if len(text) > REFORMAT_MAX_CHARS:
+        return web.json_response({"error": "too_long", "message":
+                                  f"Select a shorter part (up to {REFORMAT_MAX_CHARS:,} characters)."}, status=400)
+    model = info["definition"].get("model") or {}
+    if model.get("provider") != "lmstudio" or not model.get("base_url"):
+        return web.json_response({"error": "no_local_model", "message":
+                                  "Tidying needs a local model, and this agent has none."}, status=400)
+    # reasoning_effort "none": a formatting pass needs no deliberation, and with it a local
+    # reasoning model answers in a couple of seconds instead of a minute.
+    body = {"model": model["default"], "temperature": 0.1, "max_tokens": 6000, "reasoning_effort": "none",
+            "messages": [{"role": "system", "content": REFORMAT_SYSTEM}, {"role": "user", "content": text}]}
+    try:
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=180)) as s:
+            async with s.post(str(model["base_url"]).rstrip("/") + "/chat/completions", json=body) as r:
+                r.raise_for_status()
+                out = (await r.json())["choices"][0]["message"].get("content") or ""
+    except Exception as e:
+        logger.warning("brain reformat: model call failed: %s", e)
+        return web.json_response({"error": "model_unreachable", "message": "The model did not answer."}, status=503)
+    out = out.strip()
+    if out.startswith("```"):                       # a fence around the whole answer, despite the instruction
+        out = out.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
+    if not reformat_is_sane(text, out):
+        return web.json_response({"error": "changed_too_much", "message":
+                                  "The model changed more than the formatting, so its result was thrown away."},
+                                 status=422)
+    return web.json_response({"text": out + ("\n" if text.endswith("\n") else "")})
+
+
 async def handle_brain_search(request: web.Request) -> web.Response:
     """GET /api/v2/agents/{name}/brain/search?q=boiler"""
     from gateway import brain_reader
@@ -371,6 +436,7 @@ def register(app: web.Application) -> None:
     app.router.add_get("/api/v2/agents/{name}/brain/search", handle_brain_search)
     app.router.add_put("/api/v2/agents/{name}/brain/page", require_csrf(handle_brain_page_save))
     app.router.add_post("/api/v2/agents/{name}/brain/page", require_csrf(handle_brain_page_create))
+    app.router.add_post("/api/v2/agents/{name}/brain/reformat", require_csrf(handle_brain_reformat))
     app.router.add_get("/api/v2/noticeboard", handle_noticeboard)
     app.router.add_post("/api/v2/noticeboard/{id}/answer", require_csrf(handle_noticeboard_answer))
     app.router.add_get("/api/v2/me", handle_me)
