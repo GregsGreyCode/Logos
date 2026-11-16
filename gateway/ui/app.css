@@ -81,6 +81,16 @@ button:disabled { cursor: default; opacity: 0.55; }
 .composer { display: flex; gap: 10px; padding: 14px 24px; background: var(--surface); border-top: 1px solid var(--line); }
 .composer textarea { flex: 1; min-width: 0; min-height: 44px; max-height: 200px; resize: none; padding: 11px 14px;
   border: 1px solid var(--line); border-radius: 10px; background: var(--ground); }
+.mic { display: inline-flex; align-items: center; gap: 8px; padding: 0 14px; white-space: nowrap;
+  font-variant-numeric: tabular-nums; }
+.mic-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--muted); }
+.mic[aria-pressed="true"] { border-color: var(--bad); color: var(--bad); }
+.mic[aria-pressed="true"] .mic-dot { background: var(--bad); animation: mic-pulse 1.2s ease-in-out infinite; }
+@keyframes mic-pulse { 50% { opacity: .35; } }
+@media (prefers-reduced-motion: reduce) { .mic[aria-pressed="true"] .mic-dot { animation: none; } }
+.mic-note { padding: 8px 24px; background: var(--surface); color: var(--muted); font-size: 14px;
+  border-top: 1px solid var(--line); }
+@media (max-width: 560px) { .composer { flex-wrap: wrap; } .composer textarea { flex-basis: 100%; } }
 .side { flex: 1 1 260px; max-width: 100%; padding: 20px; background: var(--raised); border-left: 1px solid var(--line);
   display: flex; flex-direction: column; gap: 12px; }
 .convs { display: flex; flex-direction: column; overflow-y: auto; }

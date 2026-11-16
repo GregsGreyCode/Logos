@@ -56,4 +56,13 @@ understood.
 - One recording at a time; a second waits its turn.
 - 25 MB per recording.
 - Runs on the processor. A long recording takes roughly a fifth of its length.
-- The web chat has no microphone button yet.
+
+## In web chat
+
+The chat screen has a Speak button for agents with voice on. Press it, talk, press it again:
+the words appear in the message box, where they can be corrected before Send. Nothing reaches
+the agent until then. The recording goes from the browser to the dashboard server, which
+passes it to the voice service with the agent's own token (`POST /api/v2/agents/<name>/voice`).
+
+Browsers only allow the microphone on an `https://` address (or `localhost`), so the button
+explains itself and does nothing on a plain `http://` address.

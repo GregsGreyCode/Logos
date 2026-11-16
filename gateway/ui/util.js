@@ -19,10 +19,11 @@ function csrf() {
 // fetch with the session cookie; refreshes an expired session once, else goes to the login page.
 export async function api(path, opts = {}, retried = false) {
   const headers = { ...(opts.headers || {}) };
+  // opts.body is sent as JSON; opts.raw (a Blob, with its own Content-Type header) is sent as it is.
   if (opts.body !== undefined) headers['Content-Type'] = 'application/json';
   if (opts.method && opts.method !== 'GET') headers['X-CSRF-Token'] = csrf();
   const r = await fetch(path, { ...opts, headers, credentials: 'same-origin',
-    body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined });
+    body: opts.raw !== undefined ? opts.raw : (opts.body !== undefined ? JSON.stringify(opts.body) : undefined) });
   if (r.status === 401) {
     if (!retried) {
       const again = await fetch('/auth/refresh', { method: 'POST', credentials: 'same-origin',

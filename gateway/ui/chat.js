@@ -49,6 +49,10 @@ export async function chatView(root, [agentArg, chatArg], state) {
   const input = h('textarea', { id: 'msg', rows: '1', placeholder: `Message ${agent.display_name}` });
   const send = h('button', { type: 'submit', class: 'btn' }, 'Send');
   const stop = h('button', { type: 'button', class: 'btn quiet', hidden: true }, 'Stop');
+  const mic = h('button', { type: 'button', class: 'btn quiet mic', 'aria-pressed': 'false',
+    hidden: !agent.voice, title: 'Speak your message' });
+  const micNote = h('div', { class: 'mic-note', role: 'status', hidden: true });
+  let recording = null;          // { recorder, stream, chunks, timer } while the microphone is on
   const convs = h('div', { class: 'convs' });
 
   const scroll = () => { log.scrollTop = log.scrollHeight; };
@@ -71,6 +75,7 @@ export async function chatView(root, [agentArg, chatArg], state) {
   function setBusy(busy) {
     send.disabled = busy || waiting || readOnly || !agent.running;
     input.disabled = readOnly || !agent.running;
+    mic.disabled = readOnly || !agent.running;
     stop.hidden = !busy || waiting;
   }
 
@@ -219,6 +224,72 @@ export async function chatView(root, [agentArg, chatArg], state) {
     loadConversations();
   }
 
+  // Microphone: record, turn the recording into text at the voice service, and put the words
+  // in the message box. Nothing is sent to the agent until the person presses Send.
+  const micLabel = (text) => mic.replaceChildren(h('span', { class: 'mic-dot', 'aria-hidden': 'true' }), text);
+  const say = (text) => { micNote.textContent = text || ''; micNote.hidden = !text; };
+  micLabel('Speak');
+  function stopRecording() {
+    if (!recording) return;
+    clearInterval(recording.timer);
+    if (recording.recorder.state !== 'inactive') recording.recorder.stop();
+  }
+  async function toWords(blob) {
+    mic.disabled = true;
+    micLabel('Working…');
+    try {
+      const r = await api(`/api/v2/agents/${agent.name}/voice`, { method: 'POST', raw: blob,
+        headers: { 'Content-Type': blob.type || 'audio/webm' } });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(d.message || 'That did not work. Try again.');
+      if (!alive) return;
+      if (!d.text) say('No words were heard in that recording.');
+      else {
+        input.value = (input.value.trim() ? input.value.trimEnd() + ' ' : '') + d.text;
+        input.dispatchEvent(new Event('input'));
+        say('');
+      }
+    } catch (e) {
+      say(e.message);
+    }
+    if (!alive) return;
+    micLabel('Speak');
+    setBusy(Boolean(running));
+    input.focus();
+  }
+  mic.addEventListener('click', async () => {
+    if (recording) return stopRecording();
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || !window.MediaRecorder) {
+      return say(window.isSecureContext ? 'This browser cannot record audio.'
+        : 'The microphone only works on the https address of this dashboard.');
+    }
+    let stream;
+    try { stream = await navigator.mediaDevices.getUserMedia({ audio: true }); } catch (e) {
+      return say('The microphone is blocked. Allow it for this site in the browser, then try again.');
+    }
+    const recorder = new MediaRecorder(stream);
+    const chunks = [];
+    const started = Date.now();
+    recorder.addEventListener('dataavailable', (e) => { if (e.data.size) chunks.push(e.data); });
+    recorder.addEventListener('stop', () => {
+      stream.getTracks().forEach((t) => t.stop());
+      recording = null;
+      mic.setAttribute('aria-pressed', 'false');
+      if (alive && chunks.length) toWords(new Blob(chunks, { type: recorder.mimeType || 'audio/webm' }));
+      else micLabel('Speak');
+    });
+    recorder.start();
+    mic.setAttribute('aria-pressed', 'true');
+    say('');
+    const tick = () => {
+      const s = Math.floor((Date.now() - started) / 1000);
+      micLabel(`Stop ${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`);
+      if (s >= 300) stopRecording();          // five minutes is plenty for one message
+    };
+    tick();
+    recording = { recorder, stream, chunks, timer: setInterval(tick, 500) };
+  });
+
   const form = h('form', { class: 'composer', onsubmit: (e) => {
     e.preventDefault();
     const text = input.value.trim();
@@ -226,7 +297,7 @@ export async function chatView(root, [agentArg, chatArg], state) {
     input.value = '';
     input.style.height = 'auto';
     sendMessage(text);
-  } }, h('label', { for: 'msg', class: 'sr' }, 'Message'), input, stop, send);
+  } }, h('label', { for: 'msg', class: 'sr' }, 'Message'), input, mic, stop, send);
   input.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); form.requestSubmit(); }
   });
@@ -245,7 +316,7 @@ export async function chatView(root, [agentArg, chatArg], state) {
         h('h1', {}, agent.display_name), tabs,
         h('span', { class: `status ${agent.running ? 'up' : ''}` }, agent.running ? 'Running' : 'Not running'),
         h('span', { class: 'status' }, agent.shared ? 'Shared with the household' : 'Private to you')),
-      log, form),
+      log, micNote, form),
     h('aside', { class: 'side', 'aria-label': 'Conversations' },
       h('button', { type: 'button', class: 'btn quiet', onclick: () => { location.hash = `#/chat/${agent.name}/${newId()}`; } }, 'New conversation'),
       h('h2', { class: 'label' }, 'Earlier conversations'), convs));
@@ -267,5 +338,5 @@ export async function chatView(root, [agentArg, chatArg], state) {
     }
   }
   input.focus();
-  return () => { alive = false; };
+  return () => { alive = false; stopRecording(); };
 }
