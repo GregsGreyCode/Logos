@@ -16,7 +16,6 @@ ALGORITHM = "HS256"
 # Without HTTPS, Secure cookie flag is omitted so cookies work over HTTP.
 _COOKIE_SECURE = (
     os.environ.get("LOGOS_COOKIE_SECURE")
-    or os.environ.get("HERMES_COOKIE_SECURE")
     or ""
 ).lower() in ("1", "true", "yes")
 
@@ -24,7 +23,6 @@ _COOKIE_SECURE = (
 def _secret() -> str:
     s = (
         os.environ.get("LOGOS_JWT_SECRET")
-        or os.environ.get("HERMES_JWT_SECRET")
         or ""
     )
     if not s:

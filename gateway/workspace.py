@@ -52,13 +52,12 @@ _session_workspaces: dict[str, Path] = {}
 # run_id → workspace Path
 _run_workspaces: dict[str, Path] = {}
 
-_HERMES_HOME = Path(os.getenv("LOGOS_HOME") or os.getenv("HERMES_HOME") or str(Path.home() / ".logos"))
+_HERMES_HOME = Path(os.getenv("LOGOS_HOME") or str(Path.home() / ".logos"))
 _WORKSPACES_ROOT = _HERMES_HOME / "workspaces"
 
 # TTL is configurable via LOGOS_WORKSPACE_TTL_HOURS env var (default 24h).
 WORKSPACE_TTL_HOURS: float = float(
     os.getenv("LOGOS_WORKSPACE_TTL_HOURS")
-    or os.getenv("HERMES_WORKSPACE_TTL_HOURS")
     or "24"
 )
 

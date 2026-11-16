@@ -72,16 +72,12 @@ def get_stt_model_from_config() -> Optional[str]:
     Returns the value of ``stt.model`` if present, otherwise ``None``.
     Silently returns ``None`` on any error (missing file, bad YAML, etc.).
 
-    Honors ``LOGOS_HOME`` first, then ``HERMES_HOME`` as a legacy fallback,
-    then ``~/.logos`` as the default. The HERMES_HOME fallback is kept
-    for users mid-migration; remove once the dual-fallback rename is
-    fully retired.
+    Honors ``LOGOS_HOME`` first, then ``~/.logos`` as the default.
     """
     try:
         import yaml
         home = (
             os.getenv("LOGOS_HOME")
-            or os.getenv("HERMES_HOME")
             or str(Path.home() / ".logos")
         )
         cfg_path = Path(home) / "config.yaml"

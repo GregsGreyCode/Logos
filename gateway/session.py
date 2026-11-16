@@ -173,8 +173,8 @@ def build_capability_manifest(context: SessionContext) -> str:
         sections.append("**Messaging:** web only (no external platforms connected)")
 
     # Inference
-    model = os.environ.get("HERMES_MODEL") or os.environ.get("LLM_MODEL") or "unknown"
-    backend = os.environ.get("HERMES_SERVER_TYPE") or "local"
+    model = os.environ.get("LOGOS_MODEL") or os.environ.get("LLM_MODEL") or "unknown"
+    backend = os.environ.get("LOGOS_SERVER_TYPE") or "local"
     sections.append(f"**Inference:** {model} via {backend}")
 
     # MCP tools
@@ -228,14 +228,13 @@ def build_session_context_prompt(context: SessionContext) -> str:
 
     # Current time. Cheap, single line — gives the agent unambiguous
     # awareness of "now" without needing a tool call. Honors the
-    # user-configured timezone (config.yaml → LOGOS_TIMEZONE /
-    # HERMES_TIMEZONE) so UK users see BST in summer instead of UTC.
+    # user-configured timezone (config.yaml → LOGOS_TIMEZONE) so UK users see BST in summer instead of UTC.
     # Without this, datetime.now().astimezone() falls back to the
     # process's $TZ — which is unset on most container/systemd deploys
     # and resolves to UTC regardless of where the user actually lives.
     from datetime import datetime as _dt
     import os as _os
-    _tz_cfg = (_os.environ.get("LOGOS_TIMEZONE") or _os.environ.get("HERMES_TIMEZONE") or "").strip()
+    _tz_cfg = (_os.environ.get("LOGOS_TIMEZONE") or "").strip()
     _now = None
     if _tz_cfg:
         try:
