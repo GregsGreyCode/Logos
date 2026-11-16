@@ -6,6 +6,12 @@ Usage:
   scripts/logos-models status   show the address, paid providers and each agent's monthly budget
   scripts/logos-models down     stop and remove the container (spend history is kept on its volume)
 
+The local model server (LM Studio), which the gateway passes local model calls on to:
+  scripts/logos-models local               what the agents need, what is loaded, and anything extra
+  scripts/logos-models local load          load what the agents need, with their context size
+  scripts/logos-models local unload <id>   unload one model
+  scripts/logos-models local tidy          unload loaded models that no agent uses
+
 Paid providers are switched on by API keys in ~/.config/logos/models.env, for example:
   ANTHROPIC_API_KEY=sk-ant-...
 An agent may use one only if its definition lists it under model.allow, and never beyond its
@@ -25,7 +31,38 @@ def _load(name):
     return mod
 
 
+def local(args):
+    art = _load("agent_runtime")
+    lm = _load("local_models")
+    rt = art.AgentRuntime(REPO)
+    http = rt.runner.http
+    agents = {name: rt.load(name) for name in rt.defined()}
+    want = lm.wanted(agents)
+    try:
+        if args[:1] == ["load"]:
+            for base, models in want.items():
+                for model_id, ctx in models.items():
+                    did = lm.ensure(http, base, model_id, ctx)
+                    print(f"{model_id}: {'loaded' if did else 'already loaded'}")
+        elif args[:1] == ["unload"] and len(args) == 2:
+            for base in want:
+                if args[1] in lm.loaded(http, base):
+                    lm.unload(http, base, args[1]); print(f"{args[1]}: unloaded")
+        elif args[:1] == ["tidy"]:
+            for base, models in want.items():
+                for model_id in lm.strays(lm.loaded(http, base), models):
+                    lm.unload(http, base, model_id); print(f"{model_id}: unloaded")
+        elif args:
+            print(__doc__); return 2
+        print(lm.report(http, agents))
+    except OSError as e:
+        sys.exit(f"local model server: {e}")
+    return 0
+
+
 def main(argv):
+    if len(argv) >= 2 and argv[1] == "local":
+        return local(argv[2:])
     if len(argv) != 2 or argv[1] not in ("up", "status", "down"):
         print(__doc__); return 0 if len(argv) > 1 and argv[1] in ("-h", "--help") else 2
     art = _load("agent_runtime")

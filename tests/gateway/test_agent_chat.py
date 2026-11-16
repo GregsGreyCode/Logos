@@ -259,3 +259,38 @@ def test_keep_alive_writes_comment_lines_until_cancelled():
     count = asyncio.run(go())
     assert count >= 2 and len(sent) == count
     assert set(sent) == {b": keep-alive\n\n"}
+
+
+def test_wake_model_says_so_only_when_it_has_to_load():
+    import json
+
+    state = {"loaded": False, "loads": 0}
+
+    def http(url, *, data=None, headers=None, timeout=10):
+        if url.endswith("/api/v0/models"):
+            rows = [{"id": "qwen/q", "state": "loaded", "loaded_context_length": 65536}] if state["loaded"] else []
+            return json.dumps({"data": rows}).encode()
+        state["loaded"] = True
+        state["loads"] += 1
+        return b"{}"
+
+    model = {"provider": "lmstudio", "base_url": "http://10.0.0.5:1234/v1", "default": "qwen/q", "context_length": 65536}
+
+    async def events(m):
+        return [p async for p in agent_chat.wake_model(m, http)]
+
+    first = asyncio.run(events(model))
+    assert [p["type"] for p in first] == ["status"] and state["loads"] == 1
+    assert asyncio.run(events(model)) == [] and state["loads"] == 1
+    assert asyncio.run(events({"provider": "anthropic"})) == []
+
+
+def test_wake_model_survives_an_unreachable_server():
+    def http(url, **kw):
+        raise OSError("no route")
+
+    async def events():
+        return [p async for p in agent_chat.wake_model(
+            {"provider": "lmstudio", "base_url": "http://10.0.0.5:1234/v1", "default": "qwen/q"}, http)]
+
+    assert asyncio.run(events()) == []
