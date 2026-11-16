@@ -4,5 +4,5 @@
 - state          SessionDB, the SQLite session store behind gateway.session
 - redact         secret redaction for the gateway log formatters
 - transcription  speech-to-text for POST /chat/transcribe
-- atomic_write   crash-safe JSON/YAML writes (logos_cli.config.save_config)
+- atomic_write   crash-safe JSON/YAML writes (config and state files)
 """

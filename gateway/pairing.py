@@ -25,7 +25,7 @@ import time
 from pathlib import Path
 from typing import Optional
 
-from logos_cli.config import get_hermes_home
+from gateway.local_config import get_hermes_home
 
 
 # Unambiguous alphabet -- excludes 0/O, 1/I to prevent confusion

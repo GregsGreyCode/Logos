@@ -67,7 +67,7 @@ load_dotenv()
 
 # Openshell-style shell-env file: KEY=VALUE lines loaded with override=False
 # so explicit shell exports still win. Covers the `python -m gateway.run`
-# direct-launch path (logos_cli also overlays this into its subprocess env).
+# direct-launch path (`logos gateway start` also overlays this into its subprocess env).
 _shell_env_path = _hermes_home / 'env'
 if _shell_env_path.exists():
     try:
@@ -480,35 +480,6 @@ class JsonRedactingFormatter(logging.Formatter):
 logger = logging.getLogger(__name__)
 
 
-def _resolve_runtime_agent_kwargs() -> dict:
-    """Resolve provider credentials for gateway-created AIAgent instances."""
-    from logos_cli.runtime_provider import (
-        resolve_runtime_provider,
-        format_runtime_provider_error,
-    )
-
-    try:
-        runtime = resolve_runtime_provider(
-            requested=os.getenv("HERMES_INFERENCE_PROVIDER"),
-        )
-    except Exception as exc:
-        raise RuntimeError(format_runtime_provider_error(exc)) from exc
-
-    # The OpenAI Python SDK requires a non-empty api_key string (raises
-    # OpenAIError if None or "").  "not-needed" is the standard placeholder
-    # for local inference servers that don't require authentication —
-    # widely used across the OpenAI-compatible ecosystem (Ollama, LM Studio
-    # with auth disabled, llama.cpp, vLLM, etc.).  When auth IS enabled,
-    # the real key from .env/config.yaml is used instead.
-    _key = runtime.get("api_key") or ""
-    return {
-        "api_key": _key if _key else "not-needed",
-        "base_url": runtime.get("base_url"),
-        "provider": runtime.get("provider"),
-        "api_mode": runtime.get("api_mode"),
-    }
-
-
 def _resolve_gateway_model() -> str:
     """Read model from env/config — mirrors the resolution in _run_agent_sync.
 
@@ -919,7 +890,7 @@ class GatewayRunner:
         # flags guard re-runs), so calling it from both places is fine.
         try:
             from gateway.auth import db as _auth_db_init
-            from logos_cli.config import get_hermes_home as _get_hh
+            from gateway.local_config import get_hermes_home as _get_hh
             _auth_db_init.init_db(_get_hh())
         except Exception as _init_exc:
             logger.warning("auth DB init from start(): %s", _init_exc)
