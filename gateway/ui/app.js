@@ -2,10 +2,12 @@
 // No build step: plain ES modules served from /ui/.
 import { chatView } from './chat.js';
 import { brainView } from './brain.js';
+import { agentsView } from './agents.js';
+import { peopleView } from './people.js';
 import { noticeboardView, setBadge } from './noticeboard.js';
 import { h, api, getJSON } from './util.js';
 
-const views = { chat: chatView, brain: brainView, noticeboard: noticeboardView };
+const views = { chat: chatView, brain: brainView, noticeboard: noticeboardView, agents: agentsView, people: peopleView };
 const root = document.getElementById('view');
 let cleanup = null;
 
