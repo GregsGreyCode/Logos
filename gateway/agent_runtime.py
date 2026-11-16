@@ -49,7 +49,8 @@ START = ("/opt/hermes/docker/stage2-hook.sh; "
          "exec hermes gateway run")
 MEMORY_CHAR_LIMIT = 6000             # hermes default is 2,200; raised so the brain index has room
 RESET_PLUGIN = "hermes-session-reset-policy"
-MANAGED_JOBS = ("brain-commit", "brain-index", "consolidate", "noticeboard-check", "noticeboard-urgent")
+MANAGED_JOBS = ("brain-commit", "brain-index", "consolidate", "noticeboard-check", "noticeboard-urgent",
+                "weekly-digest")
 HOME_TARGET = "/opt/data"
 BRAIN_TARGET = "/opt/data/brain"
 ANSI = re.compile(r"\x1b\[[0-9;]*m")
@@ -418,6 +419,13 @@ class AgentRuntime:
                            f'--workdir /opt/data/brain --timezone {tz} --continuity --deliver local {model}'
                            f'"{con.get("schedule", "0 3 * * *")}" "$(cat)"',
                      input=(self.jobs_dir / "consolidate.md").read_text())
+        digest = agent.get("digest") or {}
+        if digest.get("enabled", True) and (agent.get("telegram") or {}).get("enabled"):
+            # Sunday evening: what the brain learned this week, sent to the person.
+            self.sbx(name, f'{HERMES} cron create --name weekly-digest --workdir /opt/data/brain '
+                           f'--timezone {tz} --deliver telegram --failure-deliver local '
+                           f'"{digest.get("schedule", "0 18 * * 0")}" "$(cat)"',
+                     input=(self.jobs_dir / "weekly_digest.md").read_text())
         if _sibling("noticeboard_host").uses_noticeboard(agent):
             # Every ten minutes a script asks the noticeboard whether anything new is waiting. The
             # model runs only when it is, and what it reports goes to the person (or stays silent).
