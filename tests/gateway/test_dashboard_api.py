@@ -147,3 +147,122 @@ def test_messages_fold_tool_calls_into_the_reply(run):
 
 def test_conversation_prefix():
     assert dashboard_api.conversation_prefix("usr_1") == "web-usr_1-"
+
+
+# ── noticeboard ──────────────────────────────────────────────────────────────
+
+class Board:
+    def __init__(self):
+        self.answers = []
+        self.items = {
+            "greg": [
+                {"id": 5, "ts": 50, "from": "bere", "to": "greg", "from_name": "Béré's agent", "to_name": "Greg's agent",
+                 "kind": "question", "text": "Free Saturday?", "status": "open", "urgent": False, "answer": None},
+                {"id": 4, "ts": 40, "from": "household", "to": "greg", "from_name": "Household agent",
+                 "to_name": "Greg's agent", "kind": "reminder", "text": "Bins Thursday 19:00", "status": "open",
+                 "urgent": False, "answer": None},
+                {"id": 3, "ts": 30, "from": "greg", "to": "bere", "from_name": "Greg's agent", "to_name": "Béré's agent",
+                 "kind": "question", "text": "Boiler evening?", "status": "open", "urgent": False, "answer": None},
+                {"id": 2, "ts": 20, "from": "bere", "to": "greg", "from_name": "Béré's agent", "to_name": "Greg's agent",
+                 "kind": "answer", "text": "x", "status": "delivered", "urgent": False},
+            ],
+            "household": [
+                {"id": 4, "ts": 40, "from": "household", "to": "greg", "from_name": "Household agent",
+                 "to_name": "Greg's agent", "kind": "reminder", "text": "Bins Thursday 19:00", "status": "open",
+                 "urgent": False, "answer": None},
+                {"id": 6, "ts": 60, "from": "bere", "to": "household", "from_name": "Béré's agent",
+                 "to_name": "Household agent", "kind": "shared_change", "text": "Add candles", "status": "open",
+                 "urgent": False, "answer": None},
+            ],
+        }
+
+    def uses(self, definition):
+        return True
+
+    async def history(self, agent):
+        return [dict(m) for m in self.items[agent]]
+
+    async def answer(self, agent, to, reply_to, decision, text):
+        self.answers.append((agent, to, reply_to, decision, text))
+        return {"ok": True}
+
+
+class RunClient:
+    def __init__(self):
+        self.runs = []
+
+    async def start_run(self, prompt, session_id=None):
+        self.runs.append((prompt, session_id))
+        return "run_1"
+
+
+@pytest.fixture
+def nb(monkeypatch):
+    class Db(FakeDb):
+        def write_audit_log(self, *a, **k):
+            pass
+    monkeypatch.setattr(dashboard_api, "auth_db", Db())
+    monkeypatch.setattr(dashboard_api.agent_chat, "sync_definitions",
+                        lambda rt, db: {n: dashboard_api.agent_chat.owners_of(d) for n, d in DEFS.items()
+                                        if d.get("dashboard") is not False})
+    board, runs = Board(), RunClient()
+
+    def go(user_id, method, path, body=None):
+        @web.middleware
+        async def as_user(request, handler):
+            request["current_user"] = {"sub": user_id, "role": "user"}
+            return await handler(request)
+
+        async def flow():
+            app = web.Application(middlewares=[as_user])
+            app["sandbox_backend"] = Backend()
+            app["agent_links"] = Links(runs)
+            app["noticeboard_client"] = board
+            dashboard_api.register(app)
+            async with TestClient(TestServer(app)) as client:
+                client.session.cookie_jar.update_cookies({"csrf_token": "t"})
+                r = await client.request(method, path, json=body, headers={"X-CSRF-Token": "t"})
+                return r.status, await r.json()
+        return asyncio.run(flow())
+    return go, board, runs
+
+
+def test_noticeboard_lists_what_waits_on_each_person(nb):
+    go, _board, _runs = nb
+    status, body = go("u-greg", "GET", "/api/v2/noticeboard")
+    assert status == 200
+    assert [m["id"] for m in body["waiting"]] == [6, 5, 4]              # his agent's and the household's
+    assert [m["id"] for m in body["log"]] == [6, 5, 4, 3]               # answers are folded away, no duplicates
+    hers = go("u-bere", "GET", "/api/v2/noticeboard")[1]
+    assert [m["id"] for m in hers["waiting"]] == [6]                    # only the shared agent's request
+    assert all(m["id"] != 5 for m in hers["log"])                       # nothing addressed to Greg's agent
+
+
+def test_answering_a_question_and_declining_go_straight_to_the_noticeboard(nb):
+    go, board, runs = nb
+    assert go("u-greg", "POST", "/api/v2/noticeboard/5/answer", {"decision": "accepted", "text": ""})[0] == 400
+    assert go("u-greg", "POST", "/api/v2/noticeboard/5/answer", {"decision": "accepted", "text": "Yes,  after 2"})[1] == {
+        "ok": True, "delegated": False}
+    assert go("u-greg", "POST", "/api/v2/noticeboard/4/answer", {"decision": "declined"})[1]["delegated"] is False
+    assert board.answers == [("greg", "bere", 5, "accepted", "Yes, after 2"),
+                             ("greg", "household", 4, "declined", "Greg declined.")]
+    assert runs.runs == []
+
+
+def test_accepting_a_reminder_or_shared_change_asks_the_agent_to_act(nb):
+    go, board, runs = nb
+    assert go("u-greg", "POST", "/api/v2/noticeboard/4/answer", {"decision": "accepted"})[1] == {
+        "ok": True, "delegated": True}
+    assert go("u-bere", "POST", "/api/v2/noticeboard/6/answer", {"decision": "accepted"})[1]["delegated"] is True
+    assert board.answers == []
+    (p1, s1), (p2, s2) = runs.runs
+    assert "request 4" in p1 and "Bins Thursday 19:00" in p1 and "scheduled job" in p1 and "Greg has just accepted" in p1
+    assert "request 6" in p2 and "shared brain" in p2 and s2 == "web-u-bere-noticeboard-6"
+
+
+def test_you_cannot_answer_for_an_agent_that_is_not_yours(nb):
+    go, board, _runs = nb
+    assert go("u-bere", "POST", "/api/v2/noticeboard/5/answer", {"decision": "declined"})[0] == 404
+    assert go("u-greg", "POST", "/api/v2/noticeboard/3/answer", {"decision": "declined"})[0] == 404   # he asked it
+    assert go("u-greg", "POST", "/api/v2/noticeboard/5/answer", {"decision": "maybe"})[0] == 400
+    assert board.answers == []

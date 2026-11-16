@@ -185,7 +185,111 @@ async def handle_conversation_messages(request: web.Request) -> web.Response:
     return web.json_response({"messages": [m for m in out if m["text"] or m["tools"]]})
 
 
+# ── noticeboard ──────────────────────────────────────────────────────────────
+
+REQUEST_KINDS = ("question", "shared_change", "reminder")
+
+
+def _board(request: web.Request):
+    client = request.app.get("noticeboard_client")
+    if client is None:
+        runtime = agent_chat.runtime_of(request.app.get("sandbox_backend"))
+        if runtime is None:
+            return None
+        from gateway.noticeboard_client import NoticeboardClient
+        client = request.app["noticeboard_client"] = NoticeboardClient(runtime)
+    return client
+
+
+async def _noticeboard(request: web.Request) -> tuple[List[dict], List[dict], Dict[str, str]]:
+    """``(waiting, log, user)``: requests waiting on this person, and everything their agents
+    sent or received (answers folded into the request they answer)."""
+    from gateway.noticeboard_client import NoticeboardError
+    user = _user(request)
+    board = _board(request)
+    if board is None:
+        return [], [], user
+    agents = await _visible_agents(request, user["username"])
+    mine = [n for n, info in agents.items() if board.uses(info["definition"])]
+    seen: Dict[int, dict] = {}
+    for name in mine:
+        try:
+            for m in await board.history(name):
+                seen.setdefault(m["id"], m)
+        except NoticeboardError as e:
+            logger.warning("noticeboard: %s: %s", name, e)
+    log = sorted((m for m in seen.values() if m["kind"] != "answer"), key=lambda m: m["id"], reverse=True)
+    for m in log:
+        m["to_mine"], m["from_mine"] = m["to"] in mine, m["from"] in mine
+    waiting = [m for m in log if m["kind"] in REQUEST_KINDS and m["status"] == "open" and m["to_mine"]]
+    return waiting, log, user
+
+
+async def handle_noticeboard(request: web.Request) -> web.Response:
+    """GET /api/v2/noticeboard"""
+    waiting, log, _user_ = await _noticeboard(request)
+    return web.json_response({"waiting": waiting, "log": log})
+
+
+def delegation_prompt(m: Mapping[str, Any], person: str) -> str:
+    """What the agent is told when its person accepts a request that needs the agent to act."""
+    what = ("Create the reminder as your own scheduled job, delivered to your person where they talk to "
+            "you, and check that it exists." if m["kind"] == "reminder" else
+            "Make the change in the shared brain.")
+    return (f"{person} has just accepted noticeboard request {m['id']} from {m['from_name']} using the "
+            f"dashboard. The request says: \"{m['text']}\"\n\n{what} Then send exactly one answer on the "
+            f"noticeboard (kind \"answer\", reply_to {m['id']}, decision \"accepted\") saying what you did. "
+            f"If you could not do it, answer with decision \"declined\" and the reason instead.")
+
+
+async def handle_noticeboard_answer(request: web.Request) -> web.Response:
+    """POST /api/v2/noticeboard/{id}/answer  {"decision": "accepted"|"declined", "text": "..."}
+
+    A decline, or the answer to a question, is passed on as it is. Accepting a reminder or a
+    shared change needs the agent to do something first, so the agent is told and answers itself.
+    """
+    from gateway.noticeboard_client import NoticeboardError
+    try:
+        body = await request.json()
+        mid = int(request.match_info["id"])
+    except Exception:
+        return web.json_response({"error": "invalid_request"}, status=400)
+    decision = str(body.get("decision") or "")
+    text = " ".join(str(body.get("text") or "").split())[:1500]
+    if decision not in ("accepted", "declined"):
+        return web.json_response({"error": "invalid_decision"}, status=400)
+    waiting, _log, user = await _noticeboard(request)
+    m = next((w for w in waiting if w["id"] == mid), None)
+    if m is None:
+        return web.json_response({"error": "not_found", "message": "That request is no longer waiting."}, status=404)
+    person = user["display_name"] or user["username"]
+    if decision == "accepted" and m["kind"] == "question" and not text:
+        return web.json_response({"error": "answer_required", "message": "Type the answer to send."}, status=400)
+    auth_db.write_audit_log(user["id"], "noticeboard_answer", target_type="noticeboard_message",
+                            target_id=str(mid), metadata={"decision": decision, "agent": m["to"]},
+                            ip_address=request.remote)
+    if decision == "accepted" and m["kind"] in ("reminder", "shared_change"):
+        try:
+            client = await _client(request, m["to"])
+            await client.start_run(delegation_prompt(m, person),
+                                   session_id=agent_chat.session_id_for(user["id"], f"noticeboard-{mid}"))
+        except HermesError as e:
+            logger.warning("noticeboard: could not ask %s to act: %s", m["to"], e)
+            return web.json_response({"error": "agent_unreachable",
+                                      "message": f"Could not reach {m['to_name']} to do this."}, status=503)
+        return web.json_response({"ok": True, "delegated": True})
+    try:
+        await _board(request).answer(m["to"], m["from"], mid, decision,
+                                     text or f"{person} declined." if decision == "declined" else text)
+    except NoticeboardError as e:
+        return web.json_response({"error": "refused", "message": str(e)}, status=409)
+    return web.json_response({"ok": True, "delegated": False})
+
+
 def register(app: web.Application) -> None:
+    from gateway.auth.middleware import require_csrf
+    app.router.add_get("/api/v2/noticeboard", handle_noticeboard)
+    app.router.add_post("/api/v2/noticeboard/{id}/answer", require_csrf(handle_noticeboard_answer))
     app.router.add_get("/api/v2/me", handle_me)
     app.router.add_get("/api/v2/agents", handle_agents)
     app.router.add_get("/api/v2/agents/{name}/conversations", handle_conversations)
