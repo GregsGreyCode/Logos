@@ -612,8 +612,33 @@ class TestConnectServer:
                 names = asyncio.run(connect_server("fs", {"command": "test"}))
             assert names == ["read_file", "write_file"]
             assert _servers["fs"] is server
+            # The catalogue reads this attribute off the tracked server.
+            assert server._registered_tool_names == ["read_file", "write_file"]
         finally:
             _servers.pop("fs", None)
+
+    def test_catalogue_reports_external_server_tools(self):
+        """MCPGatewayService.get_catalogue must surface an external
+        server's tools (regression: tool_count was 0 for stdio/HTTP)."""
+        from gateway.mcp_service import MCPGatewayService
+
+        svc = MCPGatewayService({"mcp_servers": {"fs": {"command": "test"}}})
+        server = _make_mock_server(
+            "fs", session=MagicMock(),
+            tools=[_make_mcp_tool("read_file"), _make_mcp_tool("write_file")],
+        )
+        svc._servers["fs"] = server
+
+        entry = next(e for e in svc.get_catalogue() if e["name"] == "fs")
+        assert entry["connected"] is True
+        assert entry["transport"] == "stdio"
+        assert entry["tool_count"] == 2
+        assert entry["tool_names"] == ["read_file", "write_file"]
+
+        # Re-discovery after a reconnect is reflected too.
+        server._tools = [_make_mcp_tool("only_one")]
+        entry = next(e for e in svc.get_catalogue() if e["name"] == "fs")
+        assert entry["tool_names"] == ["only_one"]
 
     def test_failed_connection_is_not_tracked(self):
         import gateway.lib.mcp_client as mcp_mod

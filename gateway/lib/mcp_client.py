@@ -262,6 +262,16 @@ class MCPServerTask:
         self._error: Optional[Exception] = None
         self._config: dict = {}
 
+    @property
+    def _registered_tool_names(self) -> List[str]:
+        """Names of the tools this server currently exposes.
+
+        Read by ``gateway.mcp_service.get_catalogue`` (same attribute the
+        in-process Logos server has). Derived from ``_tools`` so it stays
+        correct after a reconnect re-discovers tools.
+        """
+        return [tool.name for tool in self._tools]
+
     def _is_http(self) -> bool:
         """Check if this server uses HTTP transport."""
         return "url" in self._config
@@ -498,7 +508,7 @@ async def connect_server(name: str, config: dict) -> List[str]:
     )
     with _lock:
         _servers[name] = server
-    tool_names = [tool.name for tool in server._tools]
+    tool_names = list(server._registered_tool_names)
     logger.info(
         "MCP server '%s' (%s): connected, %d tool(s)",
         name, "HTTP" if "url" in config else "stdio", len(tool_names),
