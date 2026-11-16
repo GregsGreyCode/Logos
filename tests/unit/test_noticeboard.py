@@ -154,6 +154,23 @@ class TestRules:
         assert code(lambda: b.send("bench", "greg", "fyi", "hi")) == "unknown_recipient"
         assert b.send("bench-peer", "bench", "fyi", "hi")["status"] == "sent"
 
+    def test_history_marks_nothing_read_and_shows_outcomes(self, board):
+        q = board.send("greg", "bere", "question", "Free on Saturday?")["id"]
+        board.send("household", "bere", "fyi", "Bins on Thursday")
+        hist = board.history("bere")
+        assert [(m["from"], m["kind"], m["status"]) for m in hist] == [
+            ("household", "fyi", "waiting"), ("greg", "question", "open")]
+        assert hist[1]["expires_at"] == hist[1]["ts"] + nb.DAY and hist[1]["answer"] is None
+        assert board.pending("bere")["unread"] == 2                         # history read nothing
+        assert [m["id"] for m in board.history("greg")] == [q]              # only its own traffic
+        # the person answers from the dashboard before the agent has looked
+        board.send("bere", "greg", "answer", "Yes, after 2", reply_to=q, decision="accepted")
+        mine = {m["id"]: m for m in board.history("bere")}
+        assert mine[q]["status"] == "accepted" and mine[q]["answer"] == "Yes, after 2"
+        seen = {m["id"]: m for m in board.read("bere")["messages"]}
+        assert seen[q]["already_answered"] is True and "already answered" in seen[q]["expects"]
+        assert board.read("bere")["waiting_for_your_answer"] == []
+
     def test_everything_is_logged(self, board):
         board.send("greg", "bere", "fyi", "hello")
         code(lambda: board.send("greg", "bere", "order", "do it"))
@@ -227,6 +244,8 @@ class TestHttp:
         assert get("/pending")[0] == 401 and get("/urgent")[0] == 401
         assert get("/pending", "tok-greg") == (200, {"latest": 0, "unread": 0, "latest_expired": 0})
         assert get("/urgent", "tok-greg") == (200, {"lines": []})
+        assert get("/history")[0] == 401
+        assert get("/history", "tok-greg") == (200, {"agent": "greg", "messages": []})
 
 
 class Done:
