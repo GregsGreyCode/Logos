@@ -212,6 +212,30 @@ def print_status() -> bool:
     return True
 
 
+def _lan_address() -> str:
+    """This machine's address on the local network (no packet is sent)."""
+    import socket
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+            sock.connect(("192.0.2.1", 9))
+            return sock.getsockname()[0]
+    except OSError:
+        return "127.0.0.1"
+
+
+def print_setup_link() -> bool:
+    """Print the one-time link for creating the first account. False when setup is done."""
+    token_file = get_logos_home() / ".setup_token"
+    token = token_file.read_text().strip() if token_file.exists() else ""
+    if not token:
+        print("Setup is already finished (or the gateway has not been started yet). Sign in at "
+              f"http://{_lan_address()}:{gateway_port()}/login")
+        return False
+    print("Open this link once to create your account:")
+    print(f"  http://{_lan_address()}:{gateway_port()}/setup?token={token}")
+    return True
+
+
 def gateway_command(args) -> None:
     """Dispatch ``logos gateway <subcommand>``."""
     subcmd = getattr(args, "gateway_command", None) or "run"
@@ -231,6 +255,8 @@ def gateway_command(args) -> None:
     elif subcmd == "status":
         if not print_status():
             sys.exit(1)
+    elif subcmd == "setup-link":
+        print_setup_link()
     else:  # pragma: no cover - argparse rejects unknown subcommands
         print(f"Unknown gateway subcommand: {subcmd}")
         sys.exit(2)

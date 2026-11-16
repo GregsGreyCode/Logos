@@ -12,6 +12,13 @@ Start the gateway with `LOGOS_SANDBOX_BACKEND=openshell` (for example in `~/.log
 host needs the `openshell` CLI and a running OpenShell gateway, and the agents are created with
 `scripts/logos-agent up <name>` as before.
 
+## Running it as a service
+
+`infra/systemd/logos-gateway.service` is a user unit (install steps are in the file). On first
+start there are no accounts and no default login. The gateway writes a one-time setup token and
+prints a link; `logos gateway setup-link` shows it again. Setup is accepted only with that token
+or from the server itself, and the token is deleted once the first account exists.
+
 ## What happens
 
 1. **Agent list.** Every `agents/<name>.yaml` gets a row in the gateway's `agents` table, at boot

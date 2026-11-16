@@ -16,7 +16,7 @@ import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 
-from gateway import http_api, seed, setup_handlers
+from gateway import http_api, setup_handlers
 from gateway.auth import db as auth_db
 from gateway.auth.handlers import handle_login, handle_me
 from gateway.auth.middleware import (
@@ -188,9 +188,11 @@ def test_already_set_up_install_is_unaffected(fresh_db):
 # ── Seeded admin, validation, wipe ─────────────────────────────────────────
 
 def test_setup_takes_over_the_seeded_default_admin(fresh_db):
-    """Gateway startup seeds admin@example.com/admin; setup must replace it,
-    not leave a default-password admin beside the real one."""
-    seed.run_seed()
+    """An admin seeded from LOGOS_ADMIN_EMAIL before setup must be replaced by setup,
+    not left beside the real one with its old password."""
+    from gateway.auth.password import hash_password
+    auth_db.create_user(email="admin@example.com", username="admin",
+                        password_hash=hash_password("admin"), role="admin", display_name="Admin")
     seeded = auth_db.get_primary_admin()
     assert seeded["email"] == "admin@example.com"
 
@@ -345,3 +347,33 @@ def test_setup_page_only_asks_for_accounts():
     main = (GATEWAY_DIR / "html" / "main_app.html").read_text(encoding="utf-8")
     assert "/api/setup/reset" not in main and "resetSetup" not in main
     assert "/api/setup/wipe" in main
+
+
+# ── No default admin; setup needs this machine or the one-time token ─────────
+
+def test_no_default_admin_is_seeded():
+    assert not (GATEWAY_DIR / "seed.py").exists()
+    assert "run_seed" not in (GATEWAY_DIR / "http_api.py").read_text(encoding="utf-8")
+
+
+def test_setup_token_gate(fresh_db, tmp_path):
+    token = setup_handlers.ensure_setup_token(tmp_path)
+    assert token and (tmp_path / ".setup_token").read_text() == token
+    assert oct((tmp_path / ".setup_token").stat().st_mode & 0o777) == "0o600"
+    assert setup_handlers.ensure_setup_token(tmp_path) == token            # stable across restarts
+    assert setup_handlers.setup_allowed("127.0.0.1", None)                 # this machine
+    assert setup_handlers.setup_allowed("::1", None)
+    assert not setup_handlers.setup_allowed("192.168.1.50", None)          # the LAN needs the token
+    assert not setup_handlers.setup_allowed("192.168.1.50", "wrong")
+    assert not setup_handlers.setup_allowed("192.168.1.50", "")
+    assert setup_handlers.setup_allowed("192.168.1.50", token)
+    setup_handlers.complete_setup(GREG)
+    assert not (tmp_path / ".setup_token").exists()                         # used up
+    assert not setup_handlers.setup_allowed("192.168.1.50", token)
+    assert setup_handlers.ensure_setup_token(tmp_path) is None
+
+
+def test_bad_emails_are_rejected(fresh_db):
+    for email in ("@", "a@", "@b.com", "a@b", "a b@c.com"):
+        with pytest.raises(setup_handlers.SetupError):
+            setup_handlers.complete_setup({**GREG, "email": email})

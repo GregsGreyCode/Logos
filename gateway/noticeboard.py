@@ -452,7 +452,7 @@ def main() -> None:
     config = json.load(open(os.environ.get("NOTICEBOARD_CONFIG", "/data/config.json")))
     board = Board(os.environ.get("NOTICEBOARD_DB", "/data/noticeboard.db"), config["agents"])
     port = int(os.environ.get("NOTICEBOARD_PORT", "8090"))
-    poll_port = int(os.environ.get("NOTICEBOARD_POLL_PORT", "8091"))
+    poll_port = int(os.environ.get("NOTICEBOARD_POLL_PORT", "8092"))
     poll_server = ThreadingHTTPServer(("0.0.0.0", poll_port), make_handler(board, mcp=False, poll=True))
     threading.Thread(target=poll_server.serve_forever, daemon=True).start()
     server = ThreadingHTTPServer(("0.0.0.0", port), make_handler(board, mcp=True, poll=False))
