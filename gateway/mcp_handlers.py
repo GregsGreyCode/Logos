@@ -11,7 +11,7 @@ Routes registered in http_api.py:
 
 The /mcp/{name} proxy implements a lightweight StreamableHTTP-compatible
 JSON-RPC forwarder: POST for requests, GET for SSE (notification streams).
-Agents authenticate with a bearer token (HERMES_INTERNAL_TOKEN or a valid
+Agents authenticate with a bearer token (LOGOS_INTERNAL_TOKEN or a valid
 session JWT). Access is gated on mcp_access.has_access(session_id, server).
 """
 
@@ -36,7 +36,7 @@ logger = logging.getLogger(__name__)
 
 def _internal_token() -> str:
     import os
-    return os.getenv("LOGOS_INTERNAL_TOKEN") or os.getenv("HERMES_INTERNAL_TOKEN") or ""
+    return os.getenv("LOGOS_INTERNAL_TOKEN") or ""
 
 
 def _get_bearer_token(request: web.Request) -> str:

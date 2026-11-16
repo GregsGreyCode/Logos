@@ -20,8 +20,8 @@ def _home(tmp_path, monkeypatch):
 
 def test_gateway_port_resolution(monkeypatch):
     assert gw.gateway_port() == 8091
-    monkeypatch.setenv("HERMES_PORT", "18100")
-    assert gw.gateway_port() == 18100
+    monkeypatch.setenv("HERMES_PORT", "18100")  # removed alias: ignored
+    assert gw.gateway_port() == 8091
     monkeypatch.setenv("LOGOS_PORT", "18200")
     assert gw.gateway_port() == 18200
 

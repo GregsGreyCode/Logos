@@ -1,7 +1,7 @@
 """Local cache for user-uploaded media (images, audio, documents).
 
 Content arriving from external sources (messaging platforms, web UI
-attachments) is downloaded / decoded to ``$HERMES_HOME/{image,audio,
+attachments) is downloaded / decoded to ``$LOGOS_HOME/{image,audio,
 document}_cache/`` so tools can reference the files by a stable local
 path. Ephemeral platform URLs (Telegram file URLs expire after ~1h)
 can't be trusted to persist through an agent's tool-use loop; caching

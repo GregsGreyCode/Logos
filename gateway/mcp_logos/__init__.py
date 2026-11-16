@@ -8,7 +8,7 @@ back into runner-held state (platform adapters, session store, cron,
 memory, agent roster) via the same `/mcp/{name}/*` HTTP interface they
 already use for external tools.
 
-See docs/migration/logos-capabilities-mcp-server.md for the full design.
+See docs/archive/v1/migration/logos-capabilities-mcp-server.md for the full design.
 
 Public entry point:
 

@@ -19,10 +19,10 @@ def test_home_resolution_order(tmp_path, monkeypatch):
     monkeypatch.setenv("HERMES_HOME", str(tmp_path / "legacy"))
     assert lc.get_logos_home() == tmp_path / "home"
     monkeypatch.delenv("LOGOS_HOME")
-    assert lc.get_hermes_home() == tmp_path / "legacy"
-    monkeypatch.delenv("HERMES_HOME")
     monkeypatch.setenv("HOME", str(tmp_path / "user"))
+    # HERMES_HOME belongs to upstream hermes; the gateway no longer reads it.
     assert lc.get_logos_home() == tmp_path / "user" / ".logos"
+    assert lc.get_hermes_home() == tmp_path / "user" / ".logos"
 
 
 def test_get_home_has_no_side_effects(tmp_path, monkeypatch):
