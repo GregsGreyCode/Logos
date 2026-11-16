@@ -41,6 +41,8 @@ def main(argv):
             rt.down(name); print(f"{name}: deleted (volumes kept)"); return 0
         if cmd == "status":
             for n in ([name] if name else rt.defined()):
+                if not name and rt.load(n).get("sandbox") is False:
+                    continue        # an identity only (see agents/bench-peer.yaml)
                 print(f"{n}: {rt.phase(n)}")
             return 0
         if cmd == "policy" and name:

@@ -90,3 +90,4 @@ PROJECT_STATE.md
 # Per-machine agent overrides (personal IDs)
 agents/*.local.yaml
 .rendered/
+evals/results/
