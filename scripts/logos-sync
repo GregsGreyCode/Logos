@@ -1,22 +1,25 @@
 #!/usr/bin/env python3
-"""Share an agent's brain with its person's devices through Syncthing (story S4.6).
+"""Share agents' brains with their people's devices through Syncthing (stories S4.6, F23).
 
 Usage:
-  scripts/logos-sync up <agent>                      start Syncthing for the agent's brain volume
-  scripts/logos-sync status <agent>                  device ID, folder state, connected and pending devices
-  scripts/logos-sync add <agent> <device-id> <label> allow a device and share the brain with it
-  scripts/logos-sync remove <agent> <device-id>      stop sharing with a device
-  scripts/logos-sync down <agent>                    stop Syncthing (brain and pairing are kept)
+  scripts/logos-sync up <agent>                      share this agent's brain volume
+  scripts/logos-sync status [agent]                  device ID, folders, connected and pending devices
+  scripts/logos-sync add <agent> <device-id> <label> allow a device and share this brain with it
+  scripts/logos-sync remove <agent> <device-id>      stop sharing this brain with a device
+  scripts/logos-sync down <agent>                    stop sharing this brain (files and pairing are kept)
 
-One container per agent (`logos-sync-<agent>`) mounts the brain volume and syncs it as a normal
-folder that Obsidian can open on each device. The web GUI is bound to 127.0.0.1 only.
-Several agents on one host need different ports; only one is supported for now.
+One container (`logos-sync`) serves every shared brain, so the server has one device ID and a
+phone pairs with it once. Each brain is its own folder (`brain-<agent>`) and is shared only with
+the devices added to it: a device never sees a brain it was not given. Obsidian opens each
+folder as a normal vault. The web GUI is bound to 127.0.0.1 only.
 """
 import json, subprocess, sys, time, urllib.request, urllib.error
 
 IMAGE = "syncthing/syncthing:2.1.7"
 UID = "10000"                      # the sandbox user; synced files must stay owned by it
 GUI = "http://127.0.0.1:8384"
+NAME = "logos-sync"                # the container and its config volume
+ROOT = "/var/syncthing/brains"
 IGNORES = [".git", ".obsidian/workspace*.json", "(?d).DS_Store", "(?d)Thumbs.db"]
 
 
@@ -27,8 +30,12 @@ def sh(cmd, check=True):
     return p.stdout.strip()
 
 
-def api(agent, path, method="GET", body=None):
-    key = sh(["docker", "exec", f"logos-sync-{agent}", "sh", "-c",
+def exists(kind, name):
+    return subprocess.run(["docker", kind, "inspect", name], capture_output=True).returncode == 0
+
+
+def api(path, method="GET", body=None):
+    key = sh(["docker", "exec", NAME, "sh", "-c",
               r'sed -n "s:.*<apikey>\(.*\)</apikey>.*:\1:p" /var/syncthing/config/config.xml'])
     req = urllib.request.Request(GUI + path, method=method, headers={"X-API-Key": key, "Content-Type": "application/json"},
                                  data=json.dumps(body).encode() if body is not None else None)
@@ -36,85 +43,156 @@ def api(agent, path, method="GET", body=None):
     return json.loads(raw) if raw.strip() else None
 
 
-def wait(agent):
+def wait():
+    if not sh(["docker", "ps", "-q", "-f", f"name=^{NAME}$"], check=False):
+        sys.exit("Syncthing is not running; start it with scripts/logos-sync up <agent>")
     for _ in range(30):
         try:
-            return api(agent, "/rest/system/status")
+            return api("/rest/system/status")
         except Exception:
             time.sleep(2)
-    sys.exit("Syncthing did not come up; see `docker logs logos-sync-%s`" % agent)
+    sys.exit(f"Syncthing did not come up; see `docker logs {NAME}`")
 
 
-def up(agent):
-    name, cfg, brain = f"logos-sync-{agent}", f"logos-sync-{agent}", f"logos-brain-{agent}"
-    if subprocess.run(["docker", "volume", "inspect", brain], capture_output=True).returncode != 0:
-        sys.exit(f"no brain volume {brain}; run scripts/logos-agent up {agent} first")
-    if subprocess.run(["docker", "volume", "inspect", cfg], capture_output=True).returncode != 0:
-        sh(["docker", "volume", "create", cfg])
-        sh(["docker", "run", "--rm", "-v", f"{cfg}:/v", "alpine:3", "chown", f"{UID}:{UID}", "/v"])
-    if not sh(["docker", "ps", "-q", "-f", f"name=^{name}$"], check=False):
-        sh(["docker", "rm", "-f", name], check=False)
-        sh(["docker", "run", "-d", "--name", name, "--restart", "unless-stopped", "--network", "host",
-            "-e", f"PUID={UID}", "-e", f"PGID={UID}", "-e", "STGUIADDRESS=127.0.0.1:8384",
-            "-v", f"{cfg}:/var/syncthing/config", "-v", f"{brain}:/var/syncthing/brain", IMAGE])
-    status = wait(agent)
+def agents_from_mounts(mounts):
+    """Agent names whose brain is mounted, from `docker inspect` mount records."""
+    return sorted(m["Destination"][len(ROOT) + 1:] for m in mounts
+                  if m.get("Destination", "").startswith(ROOT + "/"))
+
+
+def mounted():
+    if not exists("container", NAME):
+        return []
+    return agents_from_mounts(json.loads(sh(["docker", "inspect", "-f", "{{json .Mounts}}", NAME])))
+
+
+def run(agents):
+    sh(["docker", "rm", "-f", NAME], check=False)
+    cmd = ["docker", "run", "-d", "--name", NAME, "--restart", "unless-stopped", "--network", "host",
+           "-e", f"PUID={UID}", "-e", f"PGID={UID}", "-e", "STGUIADDRESS=127.0.0.1:8384",
+           "-v", f"{NAME}:/var/syncthing/config"]
+    for a in agents:
+        cmd += ["-v", f"logos-brain-{a}:{ROOT}/{a}"]
+    sh(cmd + [IMAGE])
+
+
+def migrate():
+    """Move the earlier one-container-per-agent setup into the shared one, keeping the device ID
+    and pairings. Returns the agents that were shared before."""
+    old = [v for v in sh(["docker", "volume", "ls", "-q"]).split() if v.startswith("logos-sync-")]
+    sh(["docker", "volume", "create", NAME])
+    if not old:
+        sh(["docker", "run", "--rm", "-v", f"{NAME}:/v", "alpine:3", "chown", f"{UID}:{UID}", "/v"])
+        return []
+    if len(old) > 1:
+        sys.exit(f"more than one earlier sync volume ({', '.join(old)}); move one by hand")
+    agent = old[0][len("logos-sync-"):]
+    sh(["docker", "rm", "-f", old[0]], check=False)
+    # The folder path is rewritten before Syncthing ever starts on the copy, so it never sees
+    # the brain as missing.
+    sh(["docker", "run", "--rm", "-v", f"{old[0]}:/old:ro", "-v", f"{NAME}:/new", "alpine:3", "sh", "-c",
+        f"cp -a /old/. /new/ && sed -i 's#path=\"/var/syncthing/brain\"#path=\"{ROOT}/{agent}\"#' /new/config.xml"])
+    print(f"moved the earlier setup for {agent} (old volume {old[0]} kept as a copy)")
+    return [agent]
+
+
+def ensure_folder(agent):
     fid = f"brain-{agent}"
-    api(agent, "/rest/config/options", "PATCH", {"urAccepted": -1, "crashReportingEnabled": False})
-    for f in api(agent, "/rest/config/folders"):       # drop Syncthing's default folder
-        if f["id"] != fid:
-            api(agent, f"/rest/config/folders/{f['id']}", "DELETE")
-    existing = {f["id"]: f for f in api(agent, "/rest/config/folders")}
+    existing = {f["id"]: f for f in api("/rest/config/folders")}
     folder = existing.get(fid) or {"id": fid, "devices": []}
-    folder.update({"label": f"{agent} brain", "path": "/var/syncthing/brain", "type": "sendreceive",
+    folder.update({"label": f"{agent} brain", "path": f"{ROOT}/{agent}", "type": "sendreceive",
                    "fsWatcherEnabled": True, "rescanIntervalS": 600,
                    # Anything a device deletes or overwrites is kept for 30 days in .stversions.
                    "versioning": {"type": "trashcan", "params": {"cleanoutDays": "30"}}})
-    api(agent, f"/rest/config/folders/{fid}", "PUT", folder)
-    api(agent, f"/rest/db/ignores?folder={fid}", "POST", {"ignore": IGNORES})
+    api(f"/rest/config/folders/{fid}", "PUT", folder)
+    api(f"/rest/db/ignores?folder={fid}", "POST", {"ignore": IGNORES})
+
+
+def up(agent):
+    if not exists("volume", f"logos-brain-{agent}"):
+        sys.exit(f"no brain volume logos-brain-{agent}; run scripts/logos-agent up {agent} first")
+    have = mounted() if exists("volume", NAME) else migrate()
+    running = sh(["docker", "ps", "-q", "-f", f"name=^{NAME}$"], check=False)
+    if agent not in have or not running:
+        run(sorted(set(have) | {agent}))
+    status = wait()
+    api("/rest/config/options", "PATCH", {"urAccepted": -1, "crashReportingEnabled": False})
+    keep = {f"brain-{a}" for a in mounted()}
+    for f in api("/rest/config/folders"):              # drop Syncthing's default folder
+        if f["id"] not in keep:
+            api(f"/rest/config/folders/{f['id']}", "DELETE")
+    for a in mounted():
+        ensure_folder(a)
     print(f"{agent}: syncing. This server's device ID:\n  {status['myID']}")
 
 
-def status(agent):
-    st = wait(agent)
-    fid = f"brain-{agent}"
+def status(agent=None):
+    st = wait()
     print("device ID:", st["myID"])
-    conns = api(agent, "/rest/system/connections")["connections"]
-    names = {d["deviceID"]: d.get("name") or "?" for d in api(agent, "/rest/config/devices")}
+    conns = api("/rest/system/connections")["connections"]
+    names = {d["deviceID"]: d.get("name") or "?" for d in api("/rest/config/devices")}
     for did, c in conns.items():
         if did != st["myID"]:
             print(f"  device {names.get(did, '?'):20} {'connected' if c.get('connected') else 'offline':10} {did[:7]}…")
-    try:
-        f = api(agent, f"/rest/db/status?folder={fid}")
-        print(f"folder {fid}: {f.get('state')} · {f.get('localFiles')} files · needs {f.get('needFiles')} from devices")
-    except urllib.error.HTTPError:
-        print(f"folder {fid}: not configured")
-    for did, p in (api(agent, "/rest/cluster/pending/devices") or {}).items():
+    for folder in api("/rest/config/folders"):
+        fid = folder["id"]
+        if agent and fid != f"brain-{agent}":
+            continue
+        f = api(f"/rest/db/status?folder={fid}")
+        shared = [names.get(d["deviceID"], "?") for d in folder["devices"] if d["deviceID"] != st["myID"]]
+        print(f"folder {fid}: {f.get('state')} · {f.get('localFiles')} files · needs {f.get('needFiles')} from devices"
+              f" · shared with {', '.join(shared) or 'nobody yet'}")
+    for did, p in (api("/rest/cluster/pending/devices") or {}).items():
         print(f"  PENDING device wants to connect: {p.get('name')}  {did}")
 
 
 def add(agent, device_id, label):
-    wait(agent)
+    wait()
     fid = f"brain-{agent}"
-    api(agent, f"/rest/config/devices/{device_id}", "PUT", {"deviceID": device_id, "name": label, "autoAcceptFolders": False})
-    folder = api(agent, f"/rest/config/folders/{fid}")
+    try:
+        folder = api(f"/rest/config/folders/{fid}")
+    except urllib.error.HTTPError:
+        sys.exit(f"{agent}'s brain is not shared yet; run scripts/logos-sync up {agent} first")
+    if device_id not in [d["deviceID"] for d in api("/rest/config/devices")]:
+        api(f"/rest/config/devices/{device_id}", "PUT", {"deviceID": device_id, "name": label, "autoAcceptFolders": False})
     if device_id not in [d["deviceID"] for d in folder["devices"]]:
         folder["devices"].append({"deviceID": device_id})
-        api(agent, f"/rest/config/folders/{fid}", "PUT", folder)
-    print(f"{label}: allowed and offered the folder '{agent} brain'. Accept it on the device.")
+        api(f"/rest/config/folders/{fid}", "PUT", folder)
+    print(f"{label}: allowed and offered the folder '{agent} brain' (folder ID {fid}). Accept it on the device.")
 
 
 def remove(agent, device_id):
-    wait(agent)
-    api(agent, f"/rest/config/devices/{device_id}", "DELETE")
-    print("removed")
+    me = wait()["myID"]
+    fid = f"brain-{agent}"
+    folder = api(f"/rest/config/folders/{fid}")
+    folder["devices"] = [d for d in folder["devices"] if d["deviceID"] != device_id]
+    api(f"/rest/config/folders/{fid}", "PUT", folder)
+    still = [f["id"] for f in api("/rest/config/folders") if device_id in [d["deviceID"] for d in f["devices"]]]
+    if not still and device_id != me:                  # no brain left for it: forget the device
+        api(f"/rest/config/devices/{device_id}", "DELETE")
+    print("removed" + (f"; the device still has {', '.join(still)}" if still else ""))
+
+
+def down(agent):
+    have = mounted()
+    if agent not in have:
+        sys.exit(f"{agent}'s brain is not shared")
+    wait()
+    api(f"/rest/config/folders/brain-{agent}", "DELETE")
+    rest = [a for a in have if a != agent]
+    if rest:
+        run(rest); wait()
+    else:
+        sh(["docker", "rm", "-f", NAME])
+    print(f"{agent}: no longer shared")
 
 
 def main(a):
     if len(a) >= 3 and a[1] == "up": return up(a[2])
-    if len(a) >= 3 and a[1] == "status": return status(a[2])
+    if len(a) >= 2 and a[1] == "status": return status(a[2] if len(a) > 2 else None)
     if len(a) >= 5 and a[1] == "add": return add(a[2], a[3], " ".join(a[4:]))
     if len(a) >= 4 and a[1] == "remove": return remove(a[2], a[3])
-    if len(a) >= 3 and a[1] == "down": return print(sh(["docker", "rm", "-f", f"logos-sync-{a[2]}"]) and "stopped")
+    if len(a) >= 3 and a[1] == "down": return down(a[2])
     print(__doc__); return 2
 
 
