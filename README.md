@@ -226,9 +226,9 @@ ln -sf "$PWD/venv/bin/logos" ~/.local/bin/logos
 logos gateway start
 ```
 
-Then open <http://localhost:8091/setup> — the **setup wizard launches automatically on first run** (whenever `auth.db` doesn't have the `setup_completed` feature flag).
+Then open <http://localhost:8091/setup> — the **first-run setup page appears automatically** (whenever `auth.db` doesn't have the `setup_completed` feature flag) and asks you to create the admin account.
 
-> **OpenShell:** to use the default `openshell` runtime mode, install the OpenShell CLI first (see [infra/openshell/README.md](infra/openshell/README.md)). The setup wizard will detect it. If OpenShell is missing, you'll be steered to the `docker` fallback.
+> **OpenShell:** to use the default `openshell` runtime mode, install the OpenShell CLI first (see [infra/openshell/README.md](infra/openshell/README.md)).
 
 > **Windows:** there is no native Windows build at this time. Run Logos under WSL2 using the Linux install path above.
 
@@ -236,18 +236,13 @@ Then open <http://localhost:8091/setup> — the **setup wizard launches automati
 
 ## 🏁 Getting started
 
-On first run, the setup wizard at `/setup` walks you through:
+On first run, `/setup` asks for one thing: the **admin account** (name, email, password), plus an optional **second account**. Submitting it logs you in and lands you on the dashboard. Sign in afterwards with the email, or with the username derived from the name (`Greg` becomes `greg`).
 
-1. **Model provider** — local inference (Ollama or LM Studio), or a cloud provider (Anthropic, OpenAI, OpenRouter)
-2. **Inference servers** — Logos scans your local network automatically for Ollama / LM Studio endpoints via `GET /api/setup/scan` (ports 11434, 1234, 8080)
-3. **Benchmarking** — TTFT + tok/s + 6 capability evals (instruction following, 2-part reasoning, strict JSON, tool selection, nested JSON, multi-step reasoning), plus a 7-test hard tier (4 advanced static tests + 3 agent-loop tests) if a model passes ≥5/6 standard evals
-4. **Sandbox runtime** — OpenShell is the only supported runtime. The CLI setup also asks about a `terminal` backend (local / SSH / Daytona / Singularity) — that's where shell commands *executed by the agent's terminal tool* run, not where the agent itself is sandboxed.
-5. **Soul + first agent** — pick a starting persona; you can edit it later
-6. **Messaging (optional)** — connect a Telegram / Discord / Slack / WhatsApp bot token to a specific agent so you can chat from your phone. Tokens live per-agent (different agents can own different bots) and can be added or rotated later from **Config → Messaging** without a gateway restart.
+Setup does not provision models, sandboxes, tools or messaging. Agents are created from `agents/<name>.yaml` with `scripts/logos-agent`.
 
 Your configuration lives in `~/.logos/config.yaml` (Linux/macOS/WSL2). Per-user state and auth live in `~/.logos/auth.db`. Sessions and per-agent memory are under `~/.logos/sessions/` and `~/.logos/memories/`.
 
-To re-run the setup wizard, an admin user can hit `POST /api/setup/reset` (or just delete `auth.db` to start completely fresh).
+Setup runs once: `POST /api/setup/complete` answers `409` after that. To start over, an admin can use **Factory reset** in the dashboard's account menu (`POST /api/setup/wipe`, which deletes every user and agent), or delete `auth.db`.
 
 ---
 
@@ -257,15 +252,11 @@ To re-run the setup wizard, an admin user can hit `POST /api/setup/reset` (or ju
 
 **0:00 — Install and start**
 
-Run `logos gateway start` (or `python -m gateway.run` from source) and open `http://localhost:8091`. You should see the setup wizard.
+Run `logos gateway start` (or `python -m gateway.run` from source) and open `http://localhost:8091`. You should see the first-run setup page.
 
-<!-- screenshot: wizard-step1-providers — provider picker at the start of /setup -->
+**2:00 — Create your account**
 
-**2:00 — Complete the setup wizard**
-
-Pick a model (cloud API key or local Ollama/LM Studio endpoint), let the benchmark run, and leave policy at the default. You can change everything later. (OpenShell is the only supported sandbox runtime — the wizard confirms it's installed before letting you proceed.)
-
-<!-- screenshot: wizard-benchmark-results — the benchmark scoreboard with tok/s + eval columns -->
+Enter a name, email and password for the admin account, optionally add a second person, and submit. You land on the dashboard, logged in.
 
 **4:00 — Send your first message**
 
@@ -294,60 +285,16 @@ From the dashboard's **Settings** tab (admins only) you can browse recent runs. 
 
 ---
 
-## 📊 Local model benchmarking
+## 📊 Measuring local model speed
 
-When you connect a local inference server (Ollama or LM Studio), the setup wizard automatically benchmarks your available models to find the best fit for driving the agent.
-<img width="1098" height="1042" alt="image" src="https://github.com/user-attachments/assets/63f5b294-d821-44c9-bb74-edf8210f48f5" />
+The v1 setup wizard benchmarked local models with capability evals and a scoreboard. That is gone. What remains is a small speed measurement against any OpenAI-compatible base URL:
 
-### Candidate selection
-
-Up to 4 candidates are selected by sampling across **size buckets**: small (<5B), mid (5–13B), large (>13B), and unknown. One representative per bucket, then remaining slots filled from the best of the rest.
-
-Within each bucket, models are ranked by quality heuristics:
-- **Mid**: closest to the 9B sweet spot (large enough to reason, fast enough to use)
-- **Small**: largest available (4–5B beats 1–3B)
-- **Large**: smallest available (14B beats 70B on throughput)
-- **Unknown**: names containing `instruct`, `chat`, `tool`, `assistant` are preferred
-
-### Speed benchmark
-
-Two passes per model on different prompt types. Results are averaged. Time-to-first-token (TTFT) is measured on pass 1. Throughput is measured from first token to last so cold-start latency doesn't inflate the tok/s figure.
-
-| Label | Tokens/sec | Notes |
-|-------|-----------|-------|
-| Fast | ≥ 30 | Comfortable for interactive use |
-| Good | ≥ 15 | Responsive for most tasks |
-| Usable | ≥ 6 | Acceptable; notable latency on long outputs |
-| Slow | < 6 | Likely too large for real-time agent use on this hardware |
-
-### Capability evals
-
-| # | Test | Pass condition |
-|---|------|---------------|
-| 1 | **Instruction following** | 4-step ordered task: all four outputs present |
-| 2 | **Arithmetic reasoning** | Two-part maths problem: both answers correct |
-| 3 | **Strict JSON format** | Output parses cleanly as JSON with exact field values; extra prose fails |
-| 4 | **Tool selection** | Routes two scenarios to the right tool; both must be correct |
-| 5 | **Nested JSON schema** | JSON with required nesting, an array, and mixed types — no surrounding prose |
-| 6 | **Multi-step reasoning** | Three chained multiplications in one word problem; single numeric answer |
-
-A model passes the capability bar at **≥ 4/6** tests. Passing ≥ 5/6 unlocks a hard-tier run — advanced tool routing across 5 tools, deep-nested JSON, a harder reasoning problem, plus agent-loop tests (post-tool summarisation, error recovery, multi-turn grounding).
-
-### Scoring formula
-
-```
-score = 0.40 × (eval_tests_passed / 6)
-      + 0.15 × min(tok_s, 40) / 40
-      + 0.25 × advanced_eval_score     (hard + agent-loop tiers; only runs if model passed ≥ 5/6 standard)
-      +        param_size_bonus        (≤ 0.05, peaks near ~13B)
-      +        capability_bonus        (+0.035 tool_use, +0.015 vision)
-      +        penalties               (−0.15 specialised models, context viability, slow greeting-latency)
+```bash
+python -m gateway.model_speed http://localhost:1234/v1 qwen3-8b
+# {"tokens": 128, "ttft_s": 0.41, "total_s": 4.02, "tokens_per_second": 35.18, "exact": true}
 ```
 
-Eval quality and advanced-tier performance dominate. Speed is capped at 40 tok/s — diminishing returns for interactive use above that. Weights rebalanced 2026-04-13 so agent-loop failures can actually move a model's ranking.
-
-<img width="1674" height="258" alt="image" src="https://github.com/user-attachments/assets/f84afbc9-1930-4818-83a4-8467deb48dd9" />
-
+It streams one short completion and reports time-to-first-token and tokens/second, measured from the first token to the last so cold-start latency doesn't inflate the figure. `exact` is true when the server reported `usage.completion_tokens`; otherwise tokens are counted as stream chunks. As a rough guide, 30 tok/s and up is comfortable for interactive use and under 6 is too slow for a real-time agent.
 
 ---
 

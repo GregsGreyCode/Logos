@@ -53,8 +53,8 @@ _check "GET /health/ready" "$BASE_URL/health/ready"
 # 3. Login page renders (no auth)
 _check "GET /login" "$BASE_URL/login"
 
-# 4. Model catalog API (no auth)
-_check "GET /api/model-catalog" "$BASE_URL/api/model-catalog"
+# 4. Setup status API (no auth)
+_check "GET /api/setup/status" "$BASE_URL/api/setup/status"
 
 # 5. Auth-protected endpoints return 401 without credentials
 _check "GET /instances (no auth → 401)" "$BASE_URL/instances" "401"

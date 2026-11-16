@@ -32,23 +32,12 @@ _PUBLIC_PATHS = frozenset({
     "/auth/refresh",
     "/chat_logo.png",
     "/favicon.ico",
-    "/api/model-catalog",
     # "/ws/worker" removed — Plan A refactor (TASKS.md #24) deleted the
     # reverse-connection WebSocket endpoint. Workers are now subprocess-
     # per-sandbox, launched via `openshell sandbox exec` from the host
     # gateway, so no sandbox traffic ever hits an auth-gated URL.
     "/api/setup/status",
-    "/api/setup/scan",
-    "/api/setup/probe",
-    "/api/setup/pull",
-    "/api/setup/compare",
-    "/api/setup/test",
     "/api/setup/complete",
-    "/api/setup/prewarm",
-    "/api/setup/progress",
-    "/api/setup/session",
-    "/api/setup/env-probe",
-    "/api/setup/compare/cancel-server",
     "/setup",
 })
 
