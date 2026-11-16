@@ -1,0 +1,40 @@
+# Agent definition for the Household agent (story S5.2). Create or recreate with:
+#   scripts/logos-agent up household
+# Secrets are not stored here. The Telegram bot token is read from the environment
+# (LOGOS_TELEGRAM_BOT_TOKEN) the first time and kept in the agent's private home volume.
+name: household
+display_name: Household agent
+role: household                # the only agent that can be asked for a shared change
+owners: [greg, bere]               # web dashboard usernames that may see and talk to this agent
+image: logos-agent:0.23.1
+soul: souls/household/soul.md
+policy: infra/agent-image/policy.yaml
+providers: []                   # OpenShell providers to attach. None: everything runs on the local model,
+                                # so nothing can spend money. Add `anthropic` only once a spend cap exists.
+timezone: Europe/London
+noticeboard: true               # may exchange messages with the other agents (docs/noticeboard.md)
+
+model:
+  provider: lmstudio
+  base_url: http://192.0.2.117:1234/v1   # placeholder; put the real address in agents/household.local.yaml
+  default: qwen/qwen3.6-35b-a3b   # provisional; S3.4 benchmark decides
+  context_length: 65536           # must match what LM Studio loads the model with
+  gateway: true                 # model calls go through the model gateway (docs/model-gateway.md)
+  allow: []                     # paid providers this agent may use, e.g. [anthropic]. Local is always allowed
+budget:
+  monthly_usd: 5                # hard cap on paid model spend; the gateway refuses calls beyond it
+
+telegram:
+  enabled: true
+  allowed_users: []               # set in agents/household.local.yaml (untracked): both people's Telegram IDs
+  group_chats: []                 # set there too: the household group's chat ID (a negative number)
+  require_mention: true           # in the group it answers only when @mentioned
+
+consolidation:                  # nightly brain tidy-up (hermes cron job `consolidate`)
+  enabled: true
+  schedule: "30 1 * * *"        # staggered so the three agents do not share the local model
+  # model / provider: omit to use the agent's main (local) model
+
+session_reset:                  # start a fresh conversation on the first message after this hour
+  mode: daily
+  at_hour: 3                    # in the agent's timezone
