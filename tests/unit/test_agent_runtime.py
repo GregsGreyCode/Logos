@@ -231,6 +231,15 @@ class TestLoad:
         (repo / "agents" / "alpha.local.yaml").write_text("# nothing yet\n")
         assert rt(repo).load("alpha") == before
 
+    def test_all_local_applies_to_every_agent_and_the_agents_own_file_wins(self, repo):
+        (repo / "agents" / "all.local.yaml").write_text("model:\n  default: small/model\ntimezone: UTC\n")
+        agent = rt(repo).load("alpha")
+        assert agent["model"]["default"] == "small/model"
+        assert agent["model"]["base_url"] == "http://10.0.0.5:1234/v1"      # the rest of the block is kept
+        assert "all" not in rt(repo).defined() and "all.local" not in rt(repo).defined()
+        (repo / "agents" / "alpha.local.yaml").write_text("timezone: Europe/Paris\n")
+        assert rt(repo).load("alpha")["timezone"] == "Europe/Paris"
+
     def test_missing_definition(self, repo):
         with pytest.raises(AgentRuntimeError, match="no agent definition at .*nope.yaml"):
             rt(repo).load("nope")

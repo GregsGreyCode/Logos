@@ -86,7 +86,14 @@ scripts/logos-models local               # what the agents need, what is loaded,
 scripts/logos-models local load          # load what the agents need, with their context size
 scripts/logos-models local unload <id>   # unload one model
 scripts/logos-models local tidy          # unload loaded models that no agent uses
+scripts/logos-models local use <id>      # switch every agent to another model on the server
+scripts/logos-models local use default   # back to the model in each agent's definition
 ```
+
+`use` is for when the graphics card is needed for something else: it writes the model into the
+untracked `agents/all.local.yaml` (which applies to every agent), unloads the model the agents
+were using, loads the new one and restarts the agents, about two minutes in all. If the model
+server is switched off it still switches the agents; the model loads when the server is back.
 
 - `logos-agent up` loads the agent's model if it is missing, and replaces it if it is loaded
   with too small a window. It never loads a second copy.
