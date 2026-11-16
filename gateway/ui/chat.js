@@ -1,39 +1,5 @@
 // Chat screen: pick an agent, talk to it, see what it did, reopen earlier conversations.
-import { h, api, getJSON, when } from './util.js';
-
-// A small, safe Markdown subset: everything is escaped by building DOM nodes, never innerHTML.
-function inline(text) {
-  const out = [];
-  const re = /(`[^`]+`|\*\*[^*]+\*\*)/g;
-  let last = 0, m;
-  while ((m = re.exec(text))) {
-    if (m.index > last) out.push(text.slice(last, m.index));
-    out.push(m[0][0] === '`' ? h('code', {}, m[0].slice(1, -1)) : h('strong', {}, m[0].slice(2, -2)));
-    last = m.index + m[0].length;
-  }
-  if (last < text.length) out.push(text.slice(last));
-  return out;
-}
-
-export function markdown(text) {
-  const nodes = [];
-  const parts = text.split(/```[^\n]*\n?/);
-  parts.forEach((part, i) => {
-    if (i % 2) { nodes.push(h('pre', {}, h('code', {}, part.replace(/\n$/, '')))); return; }
-    for (const block of part.split(/\n{2,}/)) {
-      const lines = block.split('\n').filter((l) => l.trim());
-      if (!lines.length) continue;
-      if (lines.every((l) => /^\s*[-*]\s+/.test(l))) {
-        nodes.push(h('ul', {}, lines.map((l) => h('li', {}, inline(l.replace(/^\s*[-*]\s+/, ''))))));
-      } else {
-        const p = h('p', {});
-        lines.forEach((l, j) => { if (j) p.append(h('br')); p.append(...inline(l.replace(/^#{1,6}\s+/, ''))); });
-        nodes.push(p);
-      }
-    }
-  });
-  return nodes;
-}
+import { h, api, getJSON, when, markdown } from './util.js';
 
 const newId = () => Math.random().toString(36).slice(2, 12);
 
