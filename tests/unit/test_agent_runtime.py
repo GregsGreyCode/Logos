@@ -70,7 +70,8 @@ class FakeRunner:
         if argv[0] == "tar":
             return Completed(0, b"TARBYTES", b"")
         if argv[:3] == ["docker", "volume", "inspect"]:
-            return Completed(0 if argv[3] in self.volumes else 1, "", "")
+            exists = argv[3] in self.volumes or any(k[0] == argv[3] for k in self.files)
+            return Completed(0 if exists else 1, "", "")
         if argv[:3] == ["docker", "volume", "create"]:
             self.volumes.add(argv[-1])
             return Completed(0, "", "")
@@ -470,6 +471,52 @@ network_policies:
         assert "LOGOS_MODEL_KEY=sk-bf-" in env
         assert "LOGOS_MODEL_KEY" not in r.env_file(r.load("alpha"), "logos-home-alpha")
 
+    def test_group_chat_settings(self, repo):
+        r = rt(repo, env={"LOGOS_TELEGRAM_BOT_TOKEN": "tok"})
+        agent = r.load("alpha")
+        agent["telegram"] = {"enabled": True, "allowed_users": [11, 22], "group_chats": [-100123]}
+        env = dict(l.split("=", 1) for l in r.env_file(agent, "logos-home-alpha").splitlines() if "=" in l)
+        assert env["TELEGRAM_GROUP_ALLOWED_CHATS"] == "-100123"
+        assert env["TELEGRAM_REQUIRE_MENTION"] == "true"
+        assert env["TELEGRAM_HOME_CHANNEL"] == "-100123"          # scheduled jobs report to the group
+        assert env["TELEGRAM_ALLOWED_USERS"] == "11,22"
+        assert yaml.safe_load(r.config_text("alpha", agent))["group_sessions_per_user"] is False
+        agent["telegram"] = {"enabled": True, "allowed_users": [11]}
+        env = r.env_file(agent, "logos-home-alpha")
+        assert "TELEGRAM_GROUP_ALLOWED_CHATS" not in env and "TELEGRAM_HOME_CHANNEL=11" in env
+        assert "group_sessions_per_user" not in yaml.safe_load(r.config_text("alpha", agent))
+
+    POLICY_NB = POLICY + """\
+  noticeboard:
+    endpoints:
+      - host: 192.0.2.1
+        port: 8090
+        allowed_ips: [192.0.2.1/32]
+"""
+
+    def test_noticeboard_token_config_and_policy(self, repo):
+        path = repo / "infra/agent-image/policy.yaml"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(self.POLICY_NB)
+        r = rt(repo)
+        plain = r.load("alpha")
+        # not on the noticeboard: no token, no MCP server, and the rule is removed
+        assert "LOGOS_NOTICEBOARD_TOKEN" not in r.env_file(plain, "logos-home-alpha")
+        assert "mcp_servers" not in yaml.safe_load(r.config_text("alpha", plain, "tok"))
+        assert "noticeboard" not in yaml.safe_load(r.policy_path("alpha", plain).read_text())["network_policies"]
+        on = {**plain, "noticeboard": True}
+        assert "LOGOS_NOTICEBOARD_TOKEN=" in r.env_file(on, "logos-home-alpha")
+        cfg = yaml.safe_load(r.config_text("alpha", on, "tok"))
+        assert cfg["mcp_servers"] == {"noticeboard": {
+            "url": "http://172.17.0.1:8090/mcp", "headers": {"Authorization": "Bearer tok"}}}
+        ep = yaml.safe_load(r.policy_path("alpha", on).read_text())["network_policies"]["noticeboard"]["endpoints"][0]
+        assert (ep["host"], ep["port"], ep["allowed_ips"]) == ("172.17.0.1", 8090, ["172.17.0.1/32"])
+
+    def test_get_never_creates_a_missing_volume(self, repo):
+        runner = FakeRunner()
+        assert rt(repo, runner).get("logos-home-nobody", ".env") == ""
+        assert runner.matching("docker", "run") == []
+
     def test_no_providers_means_no_provider_flags(self, repo):
         r = rt(repo)
         agent = {**r.load("alpha"), "providers": []}
@@ -517,7 +564,7 @@ network_policies:
         # config, soul and env were written to the home volume before the sandbox was created
         written = [c[-1] for c in runner.calls[:runner.calls.index(create)]
                    if c[:2] == ["docker", "run"] and "cat > /v/" in c[-1]]
-        assert [w.split("cat > /v/")[1].split(" ")[0] for w in written] == ["config.yaml", "SOUL.md", ".env"]
+        assert [w.split("cat > /v/")[1].split(" ")[0] for w in written] == [".env", "config.yaml", "SOUL.md"]
         out = capsys.readouterr().out
         assert "alpha: Ready" in out
         assert "jobs: brain-commit, consolidate" in out
