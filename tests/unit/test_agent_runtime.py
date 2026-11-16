@@ -96,6 +96,8 @@ class FakeRunner:
             if "cron list" in script:
                 return Completed(0, CRON_LIST, "")
             return Completed(0, "", "")
+        if argv[:3] == ["docker", "network", "inspect"]:
+            return Completed(0, "172.17.0.1\n", "")
         raise AssertionError(f"unexpected command: {argv}")
 
     def call(self, argv):
@@ -452,6 +454,21 @@ network_policies:
         agent["model"]["base_url"] = "https://models.example.internal/v1"
         ep = yaml.safe_load(r.policy_path("alpha", agent).read_text())["network_policies"]["lm_studio"]["endpoints"][0]
         assert ep == {"host": "models.example.internal", "port": 443, "protocol": "rest"}
+
+    def test_gateway_mode_points_hermes_and_the_policy_at_the_gateway(self, repo):
+        self._with_policy(repo)
+        r = rt(repo)
+        agent = r.load("alpha")
+        agent["model"]["gateway"] = True
+        cfg = yaml.safe_load(r.config_text("alpha", agent))
+        assert cfg["model"] == {"default": "lm-studio/some/model", "provider": "custom",
+                                "base_url": "http://172.17.0.1:8089/v1", "key_env": "LOGOS_MODEL_KEY",
+                                "context_length": 65536}
+        ep = yaml.safe_load(r.policy_path("alpha", agent).read_text())["network_policies"]["lm_studio"]["endpoints"][0]
+        assert (ep["host"], ep["port"], ep["allowed_ips"]) == ("172.17.0.1", 8089, ["172.17.0.1/32"])
+        env = r.env_file(agent, "logos-home-alpha")
+        assert "LOGOS_MODEL_KEY=sk-bf-" in env
+        assert "LOGOS_MODEL_KEY" not in r.env_file(r.load("alpha"), "logos-home-alpha")
 
     def test_no_providers_means_no_provider_flags(self, repo):
         r = rt(repo)

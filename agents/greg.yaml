@@ -17,6 +17,10 @@ model:
   base_url: http://192.0.2.117:1234/v1   # placeholder; put the real address in agents/greg.local.yaml
   default: qwen/qwen3.6-35b-a3b   # provisional; S3.4 benchmark decides
   context_length: 65536           # must match what LM Studio loads the model with
+  gateway: true                 # model calls go through the model gateway (docs/model-gateway.md)
+  allow: []                     # paid providers this agent may use, e.g. [anthropic]. Local is always allowed
+budget:
+  monthly_usd: 5                # hard cap on paid model spend; the gateway refuses calls beyond it
 
 telegram:
   enabled: true

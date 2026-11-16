@@ -64,6 +64,20 @@ CONFIG_VERSION = 53
 Data = Union[str, bytes]
 
 
+def _sibling(module: str):
+    """Load a module that sits next to this file, whether or not ``gateway`` is importable
+    (the CLI loads this file by path)."""
+    import importlib.util
+    name = f"logos_{module}"
+    if name in sys.modules:
+        return sys.modules[name]
+    spec = importlib.util.spec_from_file_location(name, Path(__file__).with_name(f"{module}.py"))
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[name] = mod
+    spec.loader.exec_module(mod)
+    return mod
+
+
 class AgentRuntimeError(Exception):
     """A step failed; the message is what the CLI prints before exiting 1."""
 
@@ -254,10 +268,17 @@ class AgentRuntime:
     def config_text(self, name: str, agent: Mapping[str, Any]) -> str:
         """The hermes ``config.yaml`` written into the agent's home."""
         m = agent["model"]
+        model = {"default": m["default"], "provider": m["provider"], "base_url": m["base_url"],
+                 "context_length": int(m["context_length"])}
+        mg = _sibling("model_gateway")
+        if mg.uses_gateway(agent):
+            # Through the model gateway: an OpenAI-compatible endpoint, the agent's own capped key.
+            model = {"default": mg.gateway_model(agent), "provider": "custom",
+                     "base_url": mg.ModelGateway(self).base_url(), "key_env": mg.KEY_ENV,
+                     "context_length": int(m["context_length"])}
         cfg = {"_config_version": CONFIG_VERSION,
                "timezone": agent.get("timezone", "UTC"),
-               "model": {"default": m["default"], "provider": m["provider"], "base_url": m["base_url"],
-                         "context_length": int(m["context_length"])}}
+               "model": model}
         if agent.get("brain_index", True):
             cfg["memory"] = {"memory_char_limit": MEMORY_CHAR_LIMIT}
         reset = agent.get("session_reset")
@@ -297,6 +318,9 @@ class AgentRuntime:
             cur.pop("TELEGRAM_ALLOWED_USERS", None)
         cur["TZ"] = cur["HERMES_TIMEZONE"] = agent.get("timezone", "UTC")
         cur.setdefault("API_SERVER_KEY", secrets.token_urlsafe(32))
+        mg = _sibling("model_gateway")
+        if mg.uses_gateway(agent):
+            cur.setdefault(mg.KEY_ENV, "sk-bf-" + secrets.token_urlsafe(32))
         cur["GATEWAY_ALLOW_ALL_USERS"] = "false"
         return "".join(f"{k}={v}\n" for k, v in sorted(cur.items()))
 
@@ -388,7 +412,10 @@ class AgentRuntime:
         endpoints = ((policy.get("network_policies") or {}).get("lm_studio") or {}).get("endpoints")
         if not endpoints:
             return src
-        url = urllib.parse.urlsplit(model["base_url"])
+        mg = _sibling("model_gateway")
+        # Behind the model gateway the agent talks only to the gateway, never to LM Studio itself.
+        target = mg.ModelGateway(self).base_url() if mg.uses_gateway(agent) else model["base_url"]
+        url = urllib.parse.urlsplit(target)
         host, port = url.hostname, url.port or (443 if url.scheme == "https" else 80)
         if all(e.get("host") == host and e.get("port") == port for e in endpoints):
             return src
@@ -434,6 +461,13 @@ class AgentRuntime:
         self.ensure_model(agent["model"])
         self.put(home, "SOUL.md", self.soul_text(agent))
         self.put(home, ".env", self.env_file(agent, home), mode="0600")
+        mg = _sibling("model_gateway")
+        if mg.uses_gateway(agent):
+            try:
+                if mg.ModelGateway(self).up():
+                    print("model gateway: started with the current agents and budgets")
+            except (ValueError, TimeoutError) as e:
+                raise AgentRuntimeError(f"model gateway: {e}")
         self.down(name)
         self.run(self.create_argv(name, agent))
         for _ in range(60):
