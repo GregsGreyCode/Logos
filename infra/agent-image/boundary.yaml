@@ -10,6 +10,7 @@ filesystem_policy:
     - /lib
     - /etc
     - /opt/hermes                  # upstream hermes install (sealed venv, scripts)
+    - /opt/logos                   # plugins baked into the image, copied into the home at start
     - /proc
     - /dev/urandom
     - /var/log

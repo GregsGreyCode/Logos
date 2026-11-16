@@ -1,0 +1,701 @@
+"""Unit tests for gateway/agent_runtime.py and OpenShellBackend (S2.6).
+
+Everything external goes through ``FakeRunner``: no test here runs the real
+``docker`` or ``openshell`` binaries or makes an HTTP call.
+"""
+
+from __future__ import annotations
+
+import importlib.util
+import json
+import subprocess
+from importlib.machinery import SourceFileLoader
+from pathlib import Path
+
+import pytest
+
+from gateway import agent_runtime as art
+from gateway import sandbox_backend as sb
+from gateway.agent_runtime import AgentRuntime, AgentRuntimeError, Completed
+from gateway.sandbox_backend import NullBackend, OpenShellBackend, SandboxBackend
+
+REPO = Path(__file__).resolve().parents[2]
+
+# `openshell sandbox list` as the CLI prints it on a terminal: bold header,
+# coloured phase in the last column.
+LISTING = (
+    "\x1b[1mNAME\x1b[0m    \x1b[1mNAMESPACE\x1b[0m  \x1b[1mCREATED\x1b[0m              \x1b[1mPHASE\x1b[0m\n"
+    "greg    openshell  2026-11-15 09:12:44  \x1b[32mReady\x1b[0m\n"
+    "bench   openshell  2026-11-15 21:03:10  \x1b[33mProvisioning\x1b[0m\n"
+    "bere    openshell  2026-11-14 18:40:02  \x1b[2mStopped\x1b[0m\n"
+    "broken  openshell  2026-11-13 07:00:00  \x1b[31mError\x1b[0m\n"
+    "stray   openshell  2026-11-12 07:00:00  \x1b[32mReady\x1b[0m\n"
+)
+
+CRON_LIST = (
+    "Scheduled jobs:\n"
+    "  0123456789ab [active]\n"
+    "    Name:      brain-commit\n"
+    "  ba9876543210 [active]\n"
+    "    Name:      consolidate\n"
+)
+
+
+class FakeRunner:
+    """Records every call; answers from in-memory state."""
+
+    def __init__(self, listing: str = "", volumes=(), files=None):
+        self.listing = listing
+        self.volumes = set(volumes)
+        self.files = dict(files or {})       # (volume, rel) -> content
+        self.calls: list[list[str]] = []
+        self.inputs: list = []
+        self.http_calls: list[tuple] = []
+        self.http_response = b'{"data": []}'
+        self.slept = 0.0
+        self.after_create = "Ready"
+        self.fail: dict[tuple, Completed] = {}
+
+    # -- Runner protocol --
+    def run(self, argv, *, input=None, text=True):
+        argv = list(argv)
+        self.calls.append(argv)
+        self.inputs.append(input)
+        for prefix, result in self.fail.items():
+            if tuple(argv[:len(prefix)]) == prefix:
+                return result
+        empty = "" if text else b""
+        if argv[0] == "tar":
+            return Completed(0, b"TARBYTES", b"")
+        if argv[:3] == ["docker", "volume", "inspect"]:
+            return Completed(0 if argv[3] in self.volumes else 1, "", "")
+        if argv[:3] == ["docker", "volume", "create"]:
+            self.volumes.add(argv[-1])
+            return Completed(0, "", "")
+        if argv[:2] == ["docker", "run"]:
+            if "cat" in argv and argv[-1].startswith("/v/"):      # get()
+                vol = argv[argv.index("-v") + 1].split(":")[0]
+                key = (vol, argv[-1][3:])
+                return Completed(0, self.files[key], "") if key in self.files else Completed(1, "", "no such file")
+            return Completed(0, empty, empty)
+        if argv[:3] == ["openshell", "sandbox", "list"]:
+            return Completed(0, self.listing, "")
+        if argv[:3] == ["openshell", "sandbox", "delete"]:
+            self.listing = "".join(l for l in self.listing.splitlines(True) if l.split()[0] != argv[3])
+            return Completed(0, "", "")
+        if argv[:3] == ["openshell", "sandbox", "create"]:
+            name = argv[argv.index("--name") + 1]
+            self.listing += f"{name}  openshell  now  \x1b[32m{self.after_create}\x1b[0m\n"
+            return Completed(0, "", "")
+        if argv[:3] == ["openshell", "sandbox", "exec"]:
+            script = argv[-1]
+            if "/health" in script:
+                return Completed(0, "200", "")
+            if "cron list" in script:
+                return Completed(0, CRON_LIST, "")
+            return Completed(0, "", "")
+        raise AssertionError(f"unexpected command: {argv}")
+
+    def call(self, argv):
+        self.calls.append(list(argv))
+        return 7
+
+    def http(self, url, *, data=None, headers=None, timeout=10):
+        self.http_calls.append((url, data, dict(headers or {}), timeout))
+        return self.http_response
+
+    def sleep(self, seconds):
+        self.slept += seconds
+
+    # -- helpers --
+    def matching(self, *prefix):
+        return [c for c in self.calls if tuple(c[:len(prefix)]) == prefix]
+
+
+AGENT_YAML = """\
+name: alpha
+display_name: Alpha agent
+image: logos-agent:0.23.1
+soul: souls/general/soul.md
+policy: infra/agent-image/policy.yaml
+providers: [anthropic, github]
+timezone: Europe/London
+model:
+  provider: lmstudio
+  base_url: http://10.0.0.5:1234/v1
+  default: some/model
+  context_length: 65536
+telegram:
+  enabled: false
+  allowed_users: []
+consolidation:
+  enabled: true
+  schedule: "0 3 * * *"
+"""
+
+
+@pytest.fixture
+def repo(tmp_path):
+    (tmp_path / "agents").mkdir()
+    (tmp_path / "agents" / "alpha.yaml").write_text(AGENT_YAML)
+    (tmp_path / "souls" / "general").mkdir(parents=True)
+    (tmp_path / "souls" / "general" / "soul.md").write_text("You are Alpha.\n\n")
+    (tmp_path / "souls" / "_shared").mkdir()
+    (tmp_path / "souls" / "_shared" / "brain.md").write_text("Shared brain rules.\n")
+    (tmp_path / "infra" / "brain-template").mkdir(parents=True)
+    jobs = tmp_path / "infra" / "agent-jobs"
+    jobs.mkdir()
+    (jobs / "brain_commit.sh").write_text("#!/bin/sh\n")
+    (jobs / "brain_inbox_state.sh").write_text("#!/bin/sh\n")
+    (jobs / "brain_index.py").write_text("# index\n")
+    (jobs / "consolidate.md").write_text("Consolidate the inbox.\n")
+    return tmp_path
+
+
+def rt(repo, runner=None, env=None):
+    return AgentRuntime(repo, runner or FakeRunner(), env={} if env is None else env)
+
+
+@pytest.fixture(autouse=True)
+def _no_real_processes(monkeypatch):
+    """Belt and braces: a test that reaches the real subprocess layer fails."""
+    def boom(*a, **k):
+        raise AssertionError("test tried to run a real process")
+    monkeypatch.setattr(subprocess, "run", boom)
+    monkeypatch.setattr(subprocess, "call", boom)
+    monkeypatch.setattr(art.urllib.request, "urlopen", boom)
+
+
+# ── phase parsing ────────────────────────────────────────────────────────────
+
+class TestPhases:
+    def test_parse_strips_ansi_and_reads_first_and_last_column(self):
+        phases = art.parse_phases(LISTING)
+        assert phases["greg"] == "Ready"
+        assert phases["bench"] == "Provisioning"
+        assert phases["bere"] == "Stopped"
+        assert phases["broken"] == "Error"
+
+    def test_phase_of_each_sandbox(self, repo):
+        r = rt(repo, FakeRunner(LISTING))
+        assert r.phase("greg") == "Ready"
+        assert r.phase("bench") == "Provisioning"
+        assert r.phase("nobody") == "Missing"
+        assert r.runner.calls[0] == ["openshell", "sandbox", "list"]
+
+    def test_name_must_match_exactly(self, repo):
+        assert rt(repo, FakeRunner(LISTING)).phase("gre") == "Missing"
+
+    def test_empty_or_failed_listing_is_missing(self, repo):
+        assert rt(repo, FakeRunner("")).phase("greg") == "Missing"
+        runner = FakeRunner(LISTING)
+        runner.fail[("openshell", "sandbox", "list")] = Completed(1, "", "gateway unreachable")
+        assert rt(repo, runner).phase("greg") == "Missing"
+
+
+# ── definitions ──────────────────────────────────────────────────────────────
+
+class TestLoad:
+    def test_loads_definition(self, repo):
+        agent = rt(repo).load("alpha")
+        assert agent["image"] == "logos-agent:0.23.1"
+        assert agent["telegram"] == {"enabled": False, "allowed_users": []}
+
+    def test_local_yaml_is_deep_merged(self, repo):
+        (repo / "agents" / "alpha.local.yaml").write_text(
+            "telegram:\n  enabled: true\n  allowed_users: [111, 222]\n"
+            "model:\n  default: other/model\n"
+            "providers: [anthropic]\n")
+        agent = rt(repo).load("alpha")
+        assert agent["telegram"] == {"enabled": True, "allowed_users": [111, 222]}
+        # nested mapping merged key by key: untouched keys survive
+        assert agent["model"]["default"] == "other/model"
+        assert agent["model"]["base_url"] == "http://10.0.0.5:1234/v1"
+        # non-mapping values are replaced, not appended
+        assert agent["providers"] == ["anthropic"]
+        assert agent["name"] == "alpha"
+
+    def test_empty_local_yaml_changes_nothing(self, repo):
+        before = rt(repo).load("alpha")
+        (repo / "agents" / "alpha.local.yaml").write_text("# nothing yet\n")
+        assert rt(repo).load("alpha") == before
+
+    def test_missing_definition(self, repo):
+        with pytest.raises(AgentRuntimeError, match="no agent definition at .*nope.yaml"):
+            rt(repo).load("nope")
+
+    def test_defined_skips_local_files(self, repo):
+        (repo / "agents" / "alpha.local.yaml").write_text("{}\n")
+        (repo / "agents" / "beta.yaml").write_text("name: beta\n")
+        assert rt(repo).defined() == ["alpha", "beta"]
+
+    def test_merge_helper(self):
+        base = {"a": {"x": 1, "y": 2}, "b": [1], "c": "keep"}
+        art.merge(base, {"a": {"y": 3, "z": 4}, "b": [2], "d": {"new": True}})
+        assert base == {"a": {"x": 1, "y": 3, "z": 4}, "b": [2], "c": "keep", "d": {"new": True}}
+
+
+# ── volumes and files ────────────────────────────────────────────────────────
+
+class TestVolumes:
+    def test_names(self):
+        assert art.volumes("alpha") == ("logos-home-alpha", "logos-brain-alpha")
+
+    def test_fresh_volume_is_created_labelled_and_chowned(self, repo):
+        runner = FakeRunner()
+        rt(repo, runner).ensure_volume("logos-home-alpha")
+        assert runner.calls == [
+            ["docker", "volume", "inspect", "logos-home-alpha"],
+            ["docker", "volume", "create",
+             "--label", "openshell.ai/sandbox-attachable=true",
+             "--label", "openshell.ai/sandbox-attachable-workspace=default", "logos-home-alpha"],
+            ["docker", "run", "--rm", "-v", "logos-home-alpha:/v", "alpine:3", "chown", "10000:10000", "/v"],
+        ]
+
+    def test_existing_volume_is_left_alone(self, repo):
+        runner = FakeRunner(volumes=["logos-home-alpha"])
+        rt(repo, runner).ensure_volume("logos-home-alpha")
+        assert runner.calls == [["docker", "volume", "inspect", "logos-home-alpha"]]
+
+    def test_vault_seeding_pipes_template_into_git_helper(self, repo):
+        runner = FakeRunner()
+        rt(repo, runner).ensure_vault("logos-brain-alpha")
+        tar, seed = runner.calls
+        assert tar == ["tar", "-C", str(repo / "infra" / "brain-template"), "-c", "."]
+        assert seed[:9] == ["docker", "run", "--rm", "-i", "--entrypoint", "sh",
+                            "-v", "logos-brain-alpha:/v", "alpine/git:latest"]
+        assert runner.inputs[1] == b"TARBYTES"
+        script = seed[-1]
+        assert '[ -e "/v/$f" ] ||' in script          # never overwrites
+        assert "git init -q -b main ." in script
+        assert "chown -R 10000:10000 /v" in script
+
+    def test_vault_seeding_failure(self, repo):
+        runner = FakeRunner()
+        runner.fail[("docker", "run")] = Completed(1, b"", b"no space left")
+        with pytest.raises(AgentRuntimeError, match="could not seed the brain volume:\nno space left"):
+            rt(repo, runner).ensure_vault("logos-brain-alpha")
+
+    def test_put_writes_through_helper(self, repo):
+        runner = FakeRunner()
+        rt(repo, runner).put("logos-home-alpha", ".env", "A=1\n", mode="0600")
+        (cmd,) = runner.calls
+        assert cmd[:8] == ["docker", "run", "--rm", "-i", "-v", "logos-home-alpha:/v", "alpine:3", "sh"]
+        assert "cat > /v/.env" in cmd[-1] and "chmod 0600 /v/.env" in cmd[-1]
+        assert runner.inputs == ["A=1\n"]
+
+    def test_failed_command_raises_with_ansi_stripped(self, repo):
+        runner = FakeRunner()
+        runner.fail[("docker", "run")] = Completed(125, "", "\x1b[31mdaemon down\x1b[0m")
+        with pytest.raises(AgentRuntimeError) as e:
+            rt(repo, runner).put("v", "f", "x")
+        assert str(e.value) == "command failed: docker run --rm -i ...\ndaemon down"
+
+
+# ── env file ─────────────────────────────────────────────────────────────────
+
+def _env(text):
+    return dict(l.split("=", 1) for l in text.splitlines())
+
+
+class TestEnvFile:
+    def test_fresh_env_without_telegram(self, repo):
+        r = rt(repo)
+        env = _env(r.env_file(r.load("alpha"), "logos-home-alpha"))
+        assert env["TZ"] == env["HERMES_TIMEZONE"] == "Europe/London"
+        assert env["GATEWAY_ALLOW_ALL_USERS"] == "false"
+        assert len(env["API_SERVER_KEY"]) >= 32
+        assert "TELEGRAM_BOT_TOKEN" not in env
+
+    def test_existing_secrets_are_kept(self, repo):
+        runner = FakeRunner(files={("logos-home-alpha", ".env"):
+                                   "# comment\nAPI_SERVER_KEY=keepme\nANTHROPIC_API_KEY=sk-x\n"
+                                   "TELEGRAM_BOT_TOKEN=old\nTELEGRAM_ALLOWED_USERS=1\n"})
+        r = rt(repo, runner)
+        text = r.env_file(r.load("alpha"), "logos-home-alpha")
+        env = _env(text)
+        assert env["API_SERVER_KEY"] == "keepme"
+        assert env["ANTHROPIC_API_KEY"] == "sk-x"
+        # telegram disabled: its keys are dropped
+        assert "TELEGRAM_BOT_TOKEN" not in env and "TELEGRAM_ALLOWED_USERS" not in env
+        assert text.splitlines() == sorted(text.splitlines())
+
+    def test_telegram_token_from_environment(self, repo):
+        (repo / "agents" / "alpha.local.yaml").write_text(
+            "telegram:\n  enabled: true\n  allowed_users: [111, 222]\n")
+        r = rt(repo, env={"LOGOS_TELEGRAM_BOT_TOKEN": "tok"})
+        env = _env(r.env_file(r.load("alpha"), "logos-home-alpha"))
+        assert env["TELEGRAM_BOT_TOKEN"] == "tok"
+        assert env["TELEGRAM_ALLOWED_USERS"] == "111,222"
+        assert env["TELEGRAM_HOME_CHANNEL"] == "111"
+        assert env["TELEGRAM_HOME_CHANNEL_NAME"] == "Alpha agent"
+
+    def test_telegram_without_token_fails(self, repo):
+        (repo / "agents" / "alpha.local.yaml").write_text("telegram:\n  enabled: true\n")
+        r = rt(repo)
+        with pytest.raises(AgentRuntimeError, match="telegram.enabled is true but no token"):
+            r.env_file(r.load("alpha"), "logos-home-alpha")
+
+
+# ── model ────────────────────────────────────────────────────────────────────
+
+class TestEnsureModel:
+    MODEL = {"provider": "lmstudio", "base_url": "http://10.0.0.5:1234/v1",
+             "default": "some/model", "context_length": 65536}
+
+    def test_other_providers_make_no_calls(self, repo):
+        runner = FakeRunner()
+        rt(repo, runner).ensure_model({**self.MODEL, "provider": "anthropic"})
+        assert runner.http_calls == []
+
+    def test_already_loaded(self, repo):
+        runner = FakeRunner()
+        runner.http_response = json.dumps({"data": [
+            {"id": "some/model", "state": "loaded", "loaded_context_length": 65536}]}).encode()
+        rt(repo, runner).ensure_model(self.MODEL)
+        assert [c[0] for c in runner.http_calls] == ["http://10.0.0.5:1234/api/v0/models"]
+
+    def test_loads_when_missing(self, repo, capsys):
+        runner = FakeRunner()
+        rt(repo, runner).ensure_model(self.MODEL)
+        url, data, headers, timeout = runner.http_calls[1]
+        assert url == "http://10.0.0.5:1234/api/v1/models/load"
+        assert json.loads(data) == {"model": "some/model", "context_length": 65536}
+        assert headers == {"Content-Type": "application/json"} and timeout == 600
+        assert "loaded some/model in LM Studio" in capsys.readouterr().out
+
+    def test_unreachable_is_only_a_warning(self, repo, capsys):
+        runner = FakeRunner()
+        runner.http = lambda *a, **k: (_ for _ in ()).throw(OSError("refused"))
+        rt(repo, runner).ensure_model(self.MODEL)
+        assert "warning: could not check or load the model" in capsys.readouterr().err
+
+
+# ── create / delete / up ─────────────────────────────────────────────────────
+
+class TestCreate:
+    def test_create_argv(self, repo):
+        r = rt(repo)
+        argv = r.create_argv("alpha", r.load("alpha"))
+        mounts = argv[argv.index("--driver-config-json") + 1]
+        assert argv == [
+            "openshell", "sandbox", "create", "--name", "alpha", "--no-tty", "--detach",
+            "--restart-policy", "always",
+            "--from", "logos-agent:0.23.1",
+            "--policy", str(repo / "infra/agent-image/policy.yaml"),
+            "--driver-config-json", mounts,
+            "--provider", "anthropic", "--provider", "github",
+            "--", "sh", "-c", art.START,
+        ]
+        assert json.loads(mounts) == {"docker": {"mounts": [
+            {"type": "volume", "source": "logos-home-alpha", "target": "/opt/data", "read_only": False},
+            {"type": "volume", "source": "logos-brain-alpha", "target": "/opt/data/brain", "read_only": False},
+        ]}}
+
+    def test_no_providers_means_no_provider_flags(self, repo):
+        r = rt(repo)
+        agent = {**r.load("alpha"), "providers": []}
+        assert "--provider" not in r.create_argv("alpha", agent)
+
+    def test_config_text(self, repo):
+        r = rt(repo)
+        text = r.config_text("alpha", r.load("alpha"))
+        assert text.startswith("# Written by scripts/logos-agent; edit agents/alpha.yaml instead.\n")
+        assert art.yaml.safe_load(text) == {
+            "_config_version": 53, "timezone": "Europe/London",
+            "model": {"default": "some/model", "provider": "lmstudio",
+                      "base_url": "http://10.0.0.5:1234/v1", "context_length": 65536},
+            "memory": {"memory_char_limit": 6000}}
+
+    def test_config_text_session_reset_enables_the_plugin(self, repo):
+        r = rt(repo)
+        agent = r.load("alpha")
+        agent["session_reset"] = {"mode": "daily", "at_hour": 3}
+        cfg = art.yaml.safe_load(r.config_text("alpha", agent))
+        assert cfg["plugins"] == {"enabled": ["hermes-session-reset-policy"]}
+        assert cfg["session_reset"] == {"mode": "daily", "at_hour": 3}
+        agent["session_reset"] = {"mode": "none"}
+        assert "plugins" not in art.yaml.safe_load(r.config_text("alpha", agent))
+
+    def test_config_text_without_brain_index_keeps_default_memory_limit(self, repo):
+        r = rt(repo)
+        agent = r.load("alpha")
+        agent["brain_index"] = False
+        assert "memory" not in art.yaml.safe_load(r.config_text("alpha", agent))
+
+    def test_soul_is_persona_plus_shared_rules(self, repo):
+        r = rt(repo)
+        assert r.soul_text(r.load("alpha")) == "You are Alpha.\n\nShared brain rules.\n"
+
+    def test_up_runs_the_whole_sequence(self, repo, capsys):
+        runner = FakeRunner()
+        r = rt(repo, runner)
+        assert r.up("alpha") == 0
+        assert runner.volumes == {"logos-home-alpha", "logos-brain-alpha"}
+        (create,) = runner.matching("openshell", "sandbox", "create")
+        assert create == r.create_argv("alpha", r.load("alpha"))
+        # nothing existed, so nothing was deleted first
+        assert runner.matching("openshell", "sandbox", "delete") == []
+        # config, soul and env were written to the home volume before the sandbox was created
+        written = [c[-1] for c in runner.calls[:runner.calls.index(create)]
+                   if c[:2] == ["docker", "run"] and "cat > /v/" in c[-1]]
+        assert [w.split("cat > /v/")[1].split(" ")[0] for w in written] == ["config.yaml", "SOUL.md", ".env"]
+        out = capsys.readouterr().out
+        assert "alpha: Ready" in out
+        assert "jobs: brain-commit, consolidate" in out
+
+    def test_up_replaces_an_existing_sandbox(self, repo):
+        runner = FakeRunner("alpha  openshell  then  Ready\n", volumes=["logos-home-alpha", "logos-brain-alpha"])
+        assert rt(repo, runner).up("alpha") == 0
+        kinds = [c[2] for c in runner.calls if c[:2] == ["openshell", "sandbox"] and c[2] in ("delete", "create")]
+        assert kinds == ["delete", "create"]
+        assert runner.matching("docker", "volume", "create") == []
+
+    def test_up_reports_error_phase(self, repo, capsys):
+        runner = FakeRunner()
+        runner.after_create = "Error"
+        assert rt(repo, runner).up("alpha") == 1
+        assert "alpha: Error" in capsys.readouterr().out
+        # no jobs are installed into a sandbox that did not come up
+        assert runner.matching("openshell", "sandbox", "exec") == []
+
+    def test_up_gives_up_waiting_without_real_sleep(self, repo):
+        runner = FakeRunner()
+        runner.after_create = "Provisioning"
+        assert rt(repo, runner).up("alpha") == 1
+        assert runner.slept == 120
+
+    def test_cron_jobs_installed(self, repo):
+        runner = FakeRunner()
+        r = rt(repo, runner)
+        r.up("alpha")
+        scripts = [c[-1] for c in runner.matching("openshell", "sandbox", "exec")]
+        assert all(c[:7] == ["openshell", "sandbox", "exec", "--name", "alpha", "--no-tty", "--"]
+                   for c in runner.matching("openshell", "sandbox", "exec"))
+        # stale copies of our two jobs are removed, then both are created
+        removed = [s for s in scripts if "cron remove" in s]
+        assert [s.split()[-1] for s in removed] == ["0123456789ab", "ba9876543210"]
+        (commit,) = [s for s in scripts if "--name brain-commit" in s]
+        assert '--no-agent --script brain_commit.sh --timezone Europe/London --deliver local "0 * * * *"' in commit
+        (idx,) = [s for s in scripts if "--name brain-index" in s]
+        assert '--no-agent --script brain_index.py --timezone Europe/London --deliver local "50 * * * *"' in idx
+        assert any("python /opt/data/scripts/brain_index.py" in s for s in scripts)   # run once at `up`
+        (con,) = [s for s in scripts if "--name consolidate" in s]
+        assert '--workdir /opt/data/brain --timezone Europe/London --continuity --deliver local "0 3 * * *" "$(cat)"' in con
+        assert runner.inputs[runner.calls.index(next(c for c in runner.calls if c[-1] == con))] == "Consolidate the inbox.\n"
+
+    def test_job_ids(self, repo):
+        assert rt(repo).job_ids("alpha") == {"brain-commit": "0123456789ab", "consolidate": "ba9876543210"}
+
+
+class TestDown:
+    def test_deletes_and_waits(self, repo):
+        runner = FakeRunner(LISTING)
+        rt(repo, runner).down("greg")
+        assert runner.matching("openshell", "sandbox", "delete") == [["openshell", "sandbox", "delete", "greg"]]
+        assert "greg" not in art.parse_phases(runner.listing)
+        assert runner.matching("docker") == []          # volumes are kept
+
+    def test_missing_sandbox_is_a_no_op(self, repo):
+        runner = FakeRunner(LISTING)
+        rt(repo, runner).down("nobody")
+        assert runner.matching("openshell", "sandbox", "delete") == []
+
+    def test_delete_failure_raises(self, repo):
+        runner = FakeRunner(LISTING)
+        runner.fail[("openshell", "sandbox", "delete")] = Completed(1, "", "permission denied")
+        with pytest.raises(AgentRuntimeError, match="permission denied"):
+            rt(repo, runner).down("greg")
+
+
+def test_exec_passes_command_through(repo):
+    runner = FakeRunner()
+    assert rt(repo, runner).exec("alpha", ["hermes", "--version"]) == 7
+    assert runner.calls == [["openshell", "sandbox", "exec", "--name", "alpha", "--no-tty", "--", "hermes", "--version"]]
+
+
+# ── OpenShellBackend ─────────────────────────────────────────────────────────
+
+@pytest.fixture
+def backend(repo):
+    for n in ("greg", "bench", "bere", "broken", "ghost"):
+        (repo / "agents" / f"{n}.yaml").write_text(AGENT_YAML.replace("alpha", n))
+    return OpenShellBackend(rt(repo, FakeRunner(LISTING)))
+
+
+class TestOpenShellBackend:
+    def test_satisfies_protocol(self, backend):
+        assert isinstance(backend, SandboxBackend)
+
+    @pytest.mark.parametrize("phase,state", [
+        ("Ready", "running"), ("Provisioning", "creating"), ("Stopped", "stopped"),
+        ("Error", "error"), ("Missing", "missing"),
+    ])
+    def test_phase_mapping(self, phase, state):
+        assert sb.state_for_phase(phase) == state
+
+    def test_unknown_phase_is_error_with_detail(self, repo):
+        b = OpenShellBackend(rt(repo, FakeRunner("alpha  ns  now  Hibernating\n")))
+        st = b.status("alpha")
+        assert st.state == "error" and "Hibernating" in st.detail
+
+    @pytest.mark.parametrize("name,state", [
+        ("greg", "running"), ("bench", "creating"), ("bere", "stopped"), ("broken", "error"),
+    ])
+    def test_status(self, backend, name, state):
+        st = backend.status(name)
+        assert (st.name, st.state) == (name, state)
+        assert st.running == (state == "running")
+
+    def test_status_of_missing_sandbox(self, backend):
+        st = backend.status("ghost")
+        assert st.state == "missing" and not st.running and st.url is None
+        assert st.to_dict() == {"name": "ghost", "state": "missing", "detail": "Missing", "url": None}
+
+    def test_status_never_raises(self, backend):
+        backend.runtime.runner.run = lambda *a, **k: (_ for _ in ()).throw(FileNotFoundError("openshell"))
+        st = backend.status("greg")
+        assert st.state == "error" and "openshell" in st.detail
+        assert backend.list() == []
+
+    def test_list_is_defined_agents_that_have_a_sandbox(self, backend):
+        got = {st.name: st.state for st in backend.list()}
+        # "stray" has no definition, "ghost" and "alpha" have no sandbox, the header row is not an agent
+        assert got == {"bench": "creating", "bere": "stopped", "broken": "error", "greg": "running"}
+        assert len(backend.runtime.runner.matching("openshell", "sandbox", "list")) == 1
+
+    def test_create_uses_the_named_definition(self, backend, capsys):
+        st = backend.create({"id": "agent_1", "name": "ghost"})
+        assert (st.name, st.state) == ("ghost", "running")
+        (create,) = backend.runtime.runner.matching("openshell", "sandbox", "create")
+        assert create[create.index("--name") + 1] == "ghost"
+
+    def test_create_without_definition_is_an_error_status(self, backend):
+        st = backend.create({"name": "undefined"})
+        assert st.state == "error" and "no agent definition" in st.detail
+        assert backend.runtime.runner.matching("openshell", "sandbox", "create") == []
+
+    @pytest.mark.parametrize("bad", ["", "../etc", "Has Space", "a.local", "UPPER"])
+    def test_unsafe_names_never_reach_a_command(self, backend, bad):
+        assert backend.create({"name": bad}).state == "error"
+        with pytest.raises(ValueError):
+            backend.delete(bad)
+        assert backend.runtime.runner.calls == []
+
+    def test_start_is_a_no_op_when_running(self, backend):
+        assert backend.start("greg").state == "running"
+        assert backend.runtime.runner.matching("openshell", "sandbox", "create") == []
+
+    def test_start_recreates_a_stopped_sandbox(self, backend, capsys):
+        assert backend.start("bere").state == "running"
+        runner = backend.runtime.runner
+        assert len(runner.matching("openshell", "sandbox", "delete")) == 1
+        assert len(runner.matching("openshell", "sandbox", "create")) == 1
+
+    def test_stop_deletes_sandbox_and_keeps_volumes(self, backend):
+        st = backend.stop("greg")
+        assert st.state == "stopped" and "volumes kept" in st.detail
+        runner = backend.runtime.runner
+        assert runner.matching("openshell", "sandbox", "delete") == [["openshell", "sandbox", "delete", "greg"]]
+        assert runner.matching("docker") == []
+        assert backend.status("greg").state == "missing"
+
+    def test_delete(self, backend):
+        assert backend.delete("greg") is None
+        runner = backend.runtime.runner
+        assert runner.matching("openshell", "sandbox", "delete") == [["openshell", "sandbox", "delete", "greg"]]
+        assert runner.matching("docker") == []
+        backend.delete("ghost")                       # already gone: nothing to do
+        assert len(runner.matching("openshell", "sandbox", "delete")) == 1
+
+
+class TestGetBackend:
+    def test_default_is_null(self, monkeypatch):
+        monkeypatch.delenv("LOGOS_SANDBOX_BACKEND", raising=False)
+        assert isinstance(sb.get_backend(), NullBackend)
+
+    @pytest.mark.parametrize("value", ["", "null", "docker", "none"])
+    def test_other_values_stay_null(self, monkeypatch, value):
+        monkeypatch.setenv("LOGOS_SANDBOX_BACKEND", value)
+        assert isinstance(sb.get_backend(), NullBackend)
+
+    def test_openshell_selected_by_env(self, monkeypatch):
+        monkeypatch.setattr(sb, "_openshell_backend", None)
+        monkeypatch.setenv("LOGOS_SANDBOX_BACKEND", "openshell")
+        b = sb.get_backend()
+        assert isinstance(b, OpenShellBackend)
+        assert sb.get_backend() is b                  # one per process
+        assert b.runtime.repo == REPO
+
+
+# ── scripts/logos-agent stays a thin CLI over the module ─────────────────────
+
+@pytest.fixture
+def cli(repo, monkeypatch):
+    path = REPO / "scripts" / "logos-agent"
+    loader = SourceFileLoader("logos_agent_cli", str(path))
+    spec = importlib.util.spec_from_loader("logos_agent_cli", loader)
+    mod = importlib.util.module_from_spec(spec)
+    loader.exec_module(mod)
+    runner = FakeRunner(LISTING)
+
+    class Module:
+        AgentRuntimeError = AgentRuntimeError
+
+        @staticmethod
+        def AgentRuntime(_repo):
+            return AgentRuntime(repo, runner, env={})
+
+    monkeypatch.setattr(mod, "_runtime_module", lambda: Module)
+    mod.runner = runner
+    return mod
+
+
+class TestCli:
+    def test_help(self, cli, capsys):
+        assert cli.main(["logos-agent", "--help"]) == 0
+        assert cli.main(["logos-agent"]) == 0
+        assert "scripts/logos-agent up <name>" in capsys.readouterr().out
+        assert cli.runner.calls == []
+
+    def test_unknown_or_incomplete_command_is_usage_error(self, cli, capsys):
+        assert cli.main(["logos-agent", "frobnicate"]) == 2
+        assert cli.main(["logos-agent", "up"]) == 2
+        assert cli.main(["logos-agent", "exec", "greg", "ls"]) == 2
+        assert cli.runner.calls == []
+
+    def test_status_all_and_one(self, cli, repo, capsys):
+        (repo / "agents" / "greg.yaml").write_text("name: greg\n")
+        (repo / "agents" / "greg.local.yaml").write_text("{}\n")
+        assert cli.main(["logos-agent", "status"]) == 0
+        assert capsys.readouterr().out == "alpha: Missing\ngreg: Ready\n"
+        assert cli.main(["logos-agent", "status", "bench"]) == 0
+        assert capsys.readouterr().out == "bench: Provisioning\n"
+
+    def test_down(self, cli, capsys):
+        assert cli.main(["logos-agent", "down", "greg"]) == 0
+        assert capsys.readouterr().out == "greg: deleted (volumes kept)\n"
+        assert cli.runner.matching("openshell", "sandbox", "delete") == [["openshell", "sandbox", "delete", "greg"]]
+
+    def test_up(self, cli, capsys):
+        assert cli.main(["logos-agent", "up", "alpha"]) == 0
+        assert "alpha: Ready" in capsys.readouterr().out
+
+    def test_up_without_definition_exits_with_message(self, cli):
+        with pytest.raises(SystemExit) as e:
+            cli.main(["logos-agent", "up", "nope"])
+        assert "no agent definition at" in str(e.value.code)
+
+    def test_exec_returns_the_command_exit_code(self, cli):
+        assert cli.main(["logos-agent", "exec", "greg", "--", "ls", "-la"]) == 7
+        assert cli.runner.calls == [
+            ["openshell", "sandbox", "exec", "--name", "greg", "--no-tty", "--", "ls", "-la"]]
+
+    def test_real_module_loads_by_path(self):
+        path = REPO / "scripts" / "logos-agent"
+        loader = SourceFileLoader("logos_agent_cli2", str(path))
+        mod = importlib.util.module_from_spec(importlib.util.spec_from_loader("logos_agent_cli2", loader))
+        loader.exec_module(mod)
+        real = mod._runtime_module()
+        assert real.AgentRuntime(REPO).repo == REPO
+        assert hasattr(real, "SubprocessRunner")
