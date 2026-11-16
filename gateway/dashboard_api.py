@@ -279,6 +279,8 @@ async def handle_agent_status(request: web.Request) -> web.Response:
     allowed.append("The model gateway" if via_gateway else "Its model server")
     if nb.uses_noticeboard(definition):
         allowed.append("The noticeboard")
+    if definition.get("voice"):
+        allowed.append("The voice service (voice notes to text)")
     return web.json_response({
         "jobs": jobs,
         "model": {"name": str(model.get("default") or ""), "local": model.get("provider") == "lmstudio",
