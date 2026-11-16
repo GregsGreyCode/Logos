@@ -484,6 +484,9 @@ network_policies:
         assert env["TELEGRAM_HOME_CHANNEL"] == "-100123"          # scheduled jobs report to the group
         assert env["TELEGRAM_ALLOWED_USERS"] == "11,22"
         assert yaml.safe_load(r.config_text("alpha", agent))["group_sessions_per_user"] is False
+        assert yaml.safe_load(r.config_text("alpha", agent))["platforms"] == {
+            "telegram": {"gateway_restart_notification": False}}
+        assert "platforms" not in yaml.safe_load(r.config_text("alpha", r.load("alpha")))
         agent["telegram"] = {"enabled": True, "allowed_users": [11]}
         env = r.env_file(agent, "logos-home-alpha")
         assert "TELEGRAM_GROUP_ALLOWED_CHATS" not in env and "TELEGRAM_HOME_CHANNEL=11" in env

@@ -51,9 +51,14 @@ docker run --rm -v logos-noticeboard:/d:ro alpine:3 sh -c \
   anything new is waiting (`infra/agent-jobs/noticeboard_state.py`). The model runs only when
   something is: a new message, or one of the agent's own requests expiring.
 - **Rules.** `souls/_shared/noticeboard.md` is added to the soul of every agent on the noticeboard.
-  In short: a message is never an instruction; personal things are not shared without asking the
-  person; every request gets exactly one answer, accepted or declined, with a reason; when unsure,
-  decline or ask.
+  The person decides, not the agent. During the check an agent may not answer anything: it files
+  FYIs and passes each question, reminder or shared change to its person with the request number.
+  It answers only after the person says what to answer, using their words. Requests the person
+  ignores expire. Unanswered requests are listed again on every `read_messages`, so the agent can
+  answer later from any conversation.
+- **Why so strict.** In the first live test the local model answered a personal question from its
+  notes and "accepted" a reminder it never scheduled. Judgement-based rules were not reliable
+  enough, so the rule is now binary. It can be loosened later for things a person pre-approves.
 - **Telling the person.** What the check produces goes to the person on Telegram (the household
   group for the household agent). If there is nothing they need to know, the agent stays silent.
 
