@@ -12,6 +12,7 @@ providers: []                   # OpenShell providers to attach. None: everythin
                                 # so nothing can spend money. Add `anthropic` only once a spend cap exists.
 timezone: Europe/London
 noticeboard: true               # may exchange messages with the other agents (docs/noticeboard.md)
+voice: true                     # voice notes are turned into text by the voice service (docs/voice.md)
 
 model:
   provider: lmstudio

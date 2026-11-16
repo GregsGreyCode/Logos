@@ -33,6 +33,7 @@ https://claude.ai/artifact/JpSGvsY25zM7VHPdce6v6P
 | Agent lifecycle | [scripts/logos-agent](scripts/logos-agent), [agents/](agents/) | `up`, `down`, `status`, `exec` from `agents/<name>.yaml` |
 | Model gateway | [scripts/logos-models](scripts/logos-models), [docs/model-gateway.md](docs/model-gateway.md) | One container all model calls go through: a key and a hard monthly budget per agent, paid provider keys kept out of the sandboxes |
 | Noticeboard | [gateway/noticeboard.py](gateway/noticeboard.py), [docs/noticeboard.md](docs/noticeboard.md) | The only channel between agents: a fixed menu of message kinds, the recipient always decides, limits and a full log |
+| Voice | [gateway/voice.py](gateway/voice.py), [docs/voice.md](docs/voice.md) | One speech-to-text service for every agent: a voice note becomes text, nothing is kept |
 | Brain rules | [infra/brain-template/](infra/brain-template/), [infra/agent-jobs/](infra/agent-jobs/) | Vault layout, nightly consolidation, brain index, git history inside the vault |
 | Brain sync | [scripts/logos-sync](scripts/logos-sync), [docs/brain-sync.md](docs/brain-sync.md) | One Syncthing container; each brain is a folder shared only with its own devices and opens as an Obsidian vault |
 | Gateway and web chat | [gateway/](gateway/), [logos_cli/](logos_cli/) | Login, account setup, trimmed dashboard. With `LOGOS_SANDBOX_BACKEND=openshell` it lists the defined agents and chats with them ([docs/architecture/web-chat.md](docs/architecture/web-chat.md)) |

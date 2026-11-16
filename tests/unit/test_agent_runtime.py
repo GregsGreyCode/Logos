@@ -522,6 +522,41 @@ network_policies:
         ep = yaml.safe_load(r.policy_path("alpha", on).read_text())["network_policies"]["noticeboard"]["endpoints"][0]
         assert (ep["host"], ep["port"], ep["allowed_ips"]) == ("172.17.0.1", 8090, ["172.17.0.1/32"])
 
+    POLICY_VOICE = """
+version: 1
+network_policies:
+  lm_studio:
+    endpoints:
+      - {host: 10.0.0.5, port: 1234, allowed_ips: [10.0.0.5/32]}
+  voice:
+    endpoints:
+      - host: 192.0.2.1
+        port: 8093
+        protocol: rest
+        allowed_ips: [192.0.2.1/32]
+        rules:
+          - allow: {method: POST, path: /v1/audio/transcriptions}
+"""
+
+    def test_voice_token_config_and_policy(self, repo):
+        path = repo / "infra/agent-image/policy.yaml"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(self.POLICY_VOICE)
+        r = rt(repo)
+        plain = r.load("alpha")
+        # no voice: no token, speech-to-text off, and the rule is removed
+        assert "LOGOS_VOICE_TOKEN" not in r.env_file(plain, "logos-home-alpha")
+        assert yaml.safe_load(r.config_text("alpha", plain, voice_token="tok"))["stt"] == {"enabled": False}
+        assert "voice" not in yaml.safe_load(r.policy_path("alpha", plain).read_text())["network_policies"]
+        on = {**plain, "voice": True}
+        assert "LOGOS_VOICE_TOKEN=" in r.env_file(on, "logos-home-alpha")
+        assert yaml.safe_load(r.config_text("alpha", on, voice_token="tok"))["stt"] == {
+            "enabled": True, "provider": "openai",
+            "openai": {"api_key": "tok", "base_url": "http://172.17.0.1:8093/v1", "model": "whisper-1"}}
+        ep = yaml.safe_load(r.policy_path("alpha", on).read_text())["network_policies"]["voice"]["endpoints"][0]
+        assert (ep["host"], ep["port"], ep["allowed_ips"]) == ("172.17.0.1", 8093, ["172.17.0.1/32"])
+        assert ep["rules"] == [{"allow": {"method": "POST", "path": "/v1/audio/transcriptions"}}]
+
     def test_get_never_creates_a_missing_volume(self, repo):
         runner = FakeRunner()
         assert rt(repo, runner).get("logos-home-nobody", ".env") == ""
@@ -566,7 +601,8 @@ network_policies:
             "_config_version": 53, "timezone": "Europe/London",
             "model": {"default": "some/model", "provider": "lmstudio",
                       "base_url": "http://10.0.0.5:1234/v1", "context_length": 65536},
-            "memory": {"memory_char_limit": 6000}}
+            "memory": {"memory_char_limit": 6000},
+            "stt": {"enabled": False}}
 
     def test_config_text_session_reset_enables_the_plugin(self, repo):
         r = rt(repo)
