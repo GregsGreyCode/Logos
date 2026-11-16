@@ -19,6 +19,16 @@ FROM nousresearch/hermes-agent:v0.23.1@sha256:276d44685c65c0cb2a25f190b63c65c890
 USER root
 RUN install -d -o hermes -g hermes -m 0750 /sandbox /opt/data
 
+# hermes plugins Logos relies on, pinned by commit. A sandbox cannot reach GitHub, so they are
+# fetched at build time; the start command copies them into the agent's home.
+#   hermes-session-reset-policy 0.3.0 (hermes curated catalog, approved by Greg 2026-11-16):
+#   starts a fresh conversation on the first message after a daily boundary.
+RUN git clone -q https://github.com/fastfinge/hermes-session-reset-policy.git \
+        /opt/logos/plugins/hermes-session-reset-policy \
+ && git -C /opt/logos/plugins/hermes-session-reset-policy checkout -q 0f2ea5ad995f1e4ba7c92c2dbd21afa868b8ae21 \
+ && rm -rf /opt/logos/plugins/hermes-session-reset-policy/.git /opt/logos/plugins/hermes-session-reset-policy/tests \
+ && chmod -R a+rX /opt/logos
+
 # Upstream limits hermes's write_file tool to HERMES_WRITE_SAFE_ROOT=/opt/data (set by the base
 # image). The brain volume is mounted inside the home, at /opt/data/brain, so it is covered.
 ENV PATH="/opt/hermes/.venv/bin:${PATH}" \

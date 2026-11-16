@@ -83,3 +83,13 @@ Denials show up in `openshell logs <sandbox> --since 5m --source sandbox` (don't
   Telegram bot API answer 401 (reached, no credentials). example.com, other LAN ports and `curl`
   are denied. The prover reports the policy `within_boundary`, and a policy adding example.com
   `exceeds_boundary`.
+
+## Baked-in plugins
+
+hermes loads plugins from the agent's home, and a sandbox cannot reach GitHub, so plugins are
+cloned at image build time into `/opt/logos/plugins`, pinned by commit, and copied into
+`/opt/data/plugins` each time the agent starts.
+
+| Plugin | Version (commit) | Why |
+| --- | --- | --- |
+| [`hermes-session-reset-policy`](https://github.com/fastfinge/hermes-session-reset-policy) | 0.3.0 (`0f2ea5a`) | hermes no longer ends conversations on a timer. With `session_reset: {mode: daily, at_hour: 3}` in an agent definition, the first message after 03:00 starts a fresh conversation, which is when new rules and the refreshed brain index take effect. Third-party code from hermes's curated catalog: 431 lines, no network or process calls (read 2026-11-16). Re-read before bumping the pin. |
