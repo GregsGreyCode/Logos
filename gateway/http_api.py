@@ -7,8 +7,6 @@ Provides:
   GET  /status    — agent execution status JSON (no auth)
   GET  /sessions  — list active sessions (Bearer auth)
   POST /chat      — send a message, SSE stream (no auth — same-origin dashboard)
-  GET  /proxy/state                       — proxy → ai-router /admin/state
-  POST /proxy/providers/{key}/toggle      — proxy → ai-router /admin/providers/{key}/toggle
 """
 
 import asyncio
@@ -24,7 +22,6 @@ from typing import Any
 
 import yaml
 
-import aiohttp
 from aiohttp import web
 
 from gateway.auth import db as auth_db
@@ -55,10 +52,6 @@ _hermes_home: Path = Path(
     os.environ.get("LOGOS_HOME")
     or os.environ.get("HERMES_HOME")
     or str(Path.home() / ".logos")
-)
-_AI_ROUTER_BASE = os.environ.get(
-    "AI_ROUTER_BASE",
-    "http://ai-router.hermes.svc.cluster.local:9001",
 )
 _INSTANCE_NAME = (
     os.environ.get("LOGOS_INSTANCE_NAME")
@@ -313,47 +306,6 @@ async def _handle_messaging_validate(request: web.Request) -> web.Response:
     return web.json_response(result)
 
 
-# ── Sandbox dashboard (empty until E2) ──────────────────────────────────
-# The dashboard polls these on load. The OpenShell 0.0.x versions (CLI
-# sandbox table, cluster containers, model-route gateways) were removed
-# in S1.5; they now return empty-but-valid shapes backed by the sandbox
-# backend so the UI renders empty states. Logs / restart / redeploy and
-# the model-route mutation endpoints are gone.
-
-async def _handle_sandboxes_list(request: web.Request) -> web.Response:
-    """GET /api/admin/sandboxes — sandboxes known to the backend."""
-    backend = request.app.get("sandbox_backend") or _get_sandbox_backend()
-    return web.json_response({
-        "sandboxes": [st.to_dict() for st in backend.list()],
-        "policy": {},
-        "resources": {},
-        "cli_available": False,
-    })
-
-
-async def _handle_clusters_list(request: web.Request) -> web.Response:
-    """GET /api/admin/clusters — no OpenShell clusters in v2 (yet)."""
-    return web.json_response({"clusters": []})
-
-
-async def _handle_model_route_list_empty(request: web.Request) -> web.Response:
-    """GET /api/admin/model-routes — model routes are gone; always empty."""
-    return web.json_response({"routes": []})
-
-
-def _empty_shape_handler(shape: dict):
-    """GET handler answering a fixed empty-but-valid JSON body.
-
-    S1.6 removed v1 machines, cloud providers, policy presets,
-    capabilities and bundled local services. The dashboard still fetches
-    their list endpoints (S1.10 trims the UI), so those routes stay and
-    answer with the empty form of the shape the page expects.
-    """
-    async def _handler(request: web.Request) -> web.Response:
-        return web.json_response(shape)
-    return _handler
-
-
 async def _handle_setup_page(request: web.Request) -> web.Response:
     from gateway.auth.db import is_setup_completed
     if is_setup_completed():
@@ -576,116 +528,6 @@ async def _handle_status(request: web.Request) -> web.Response:
         "cpu_percent": cpu_percent,
         "mem_mb": mem_mb,
     })
-
-
-async def _handle_model_patch(request: web.Request) -> web.Response:
-    """PATCH /api/model — change the active model at runtime and persist to config.yaml.
-
-    Only the model name is written. v1 also switched provider/endpoint by
-    looking the model up in the cloud_providers and machines tables; both
-    were removed in S1.6.
-    """
-    try:
-        body = await request.json()
-    except Exception:
-        return web.json_response({"error": "invalid_json"}, status=400)
-    new_model = (body.get("model") or "").strip()
-    if not new_model:
-        return web.json_response({"error": "model required"}, status=400)
-    _hermes_home = pathlib.Path(os.environ.get("LOGOS_HOME") or os.environ.get("HERMES_HOME") or str(pathlib.Path.home() / ".logos"))
-    _config_path = _hermes_home / "config.yaml"
-    try:
-        import yaml as _yaml
-        _cfg: dict = {}
-        if _config_path.exists():
-            with open(_config_path, encoding="utf-8") as _f:
-                _cfg = _yaml.safe_load(_f) or {}
-        os.environ["HERMES_MODEL"] = new_model
-        # Write model to both locations for compatibility
-        _cfg["HERMES_MODEL"] = new_model
-        if "model" not in _cfg or not isinstance(_cfg.get("model"), dict):
-            _cfg["model"] = {}
-        _cfg["model"]["default"] = new_model
-
-        with open(_config_path, "w", encoding="utf-8") as _f:
-            _yaml.dump(_cfg, _f, default_flow_style=False, sort_keys=False)
-    except Exception as exc:
-        return web.json_response({"error": str(exc)}, status=500)
-    return web.json_response({"ok": True, "model": new_model})
-
-
-async def _handle_proxy_state(request: web.Request) -> web.Response:
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(
-                f"{_AI_ROUTER_BASE}/admin/state",
-                timeout=aiohttp.ClientTimeout(total=5),
-            ) as r:
-                data = await r.json()
-                from gateway import admin_handlers
-                routes = data.get("routes", {})
-                data["route_model_classes"] = {
-                    alias: admin_handlers.ALIAS_TO_CLASS.get(alias, "general")
-                    for alias in routes
-                }
-                return web.json_response(data)
-    except Exception as e:
-        return web.json_response({
-            "providers": {},
-            "routes": {},
-            "route_model_classes": {},
-            "grafana_url": "http://192.168.1.253:3200",
-            "_error": str(e),
-        })
-
-
-@require_permission("manage_platform")
-@require_csrf
-async def _handle_proxy_toggle(request: web.Request) -> web.Response:
-    key = request.match_info["key"]
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.post(
-                f"{_AI_ROUTER_BASE}/admin/providers/{key}/toggle",
-                timeout=aiohttp.ClientTimeout(total=5),
-            ) as r:
-                data = await r.json()
-                return web.json_response(data)
-    except Exception as e:
-        raise web.HTTPBadGateway(reason=str(e))
-
-
-async def _handle_proxy_models_live(request: web.Request) -> web.Response:
-    """GET /proxy/models-live — proxy to ai-router /admin/models-live."""
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(
-                f"{_AI_ROUTER_BASE}/admin/models-live",
-                timeout=aiohttp.ClientTimeout(total=15),
-            ) as r:
-                return web.json_response(await r.json())
-    except Exception as e:
-        return web.json_response({"providers": {}, "_error": str(e)})
-
-
-@require_permission("manage_machines")
-@require_csrf
-async def _handle_proxy_benchmark(request: web.Request) -> web.Response:
-    """POST /proxy/benchmark — proxy to ai-router /admin/benchmark."""
-    try:
-        body = await request.json()
-    except Exception:
-        body = {}
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.post(
-                f"{_AI_ROUTER_BASE}/admin/benchmark",
-                json=body,
-                timeout=aiohttp.ClientTimeout(total=300),
-            ) as r:
-                return web.json_response(await r.json())
-    except Exception as e:
-        raise web.HTTPBadGateway(reason=str(e))
 
 
 async def _handle_souls_get(request: web.Request) -> web.Response:
@@ -1615,90 +1457,6 @@ async def _handle_chat(request: web.Request) -> web.StreamResponse:
     session_id = body.get("session_id", "http-default")
     agent_id = body.get("agent_id")
 
-    # ── Gateway command: /setup  (plan-C, 2026-04-21) ───────────────────
-    # Reads the agent's sandbox .env directly — NOT Logos's os.environ —
-    # so the card reflects what hermes inside the sandbox actually sees.
-    # Save/delete land via /api/agents/<id>/env-credentials, which
-    # persists to agent_env_credentials AND rewrites the sandbox .env
-    # in place, then bounces hermes so it picks up the change.
-    _msg_stripped = (message or "").strip().lower()
-    if _msg_stripped in ("/setup tools", "/setup", "/tools setup"):
-        resp = web.StreamResponse(
-            status=200,
-            headers={"Content-Type": "text/event-stream", "Cache-Control": "no-cache"},
-        )
-        await resp.prepare(request)
-
-        # Known cloud-tool env vars. Small curated list — everything
-        # here is for tools hermes ships inside the sandbox image.
-        # Messaging tokens (TELEGRAM_BOT_TOKEN etc.) are intentionally
-        # NOT here; those live in agent_channel_credentials and have
-        # their own UI under the Messaging tab.
-        _CLOUD_ENV_CATALOGUE = [
-            {"env_var": "FIRECRAWL_API_KEY", "label": "Firecrawl",
-             "tools": ["web_search", "web_extract"],
-             "description": "Web search and content extraction",
-             "setup_url": "https://firecrawl.dev"},
-            {"env_var": "FAL_KEY", "label": "fal.ai",
-             "tools": ["image_generate"],
-             "description": "Image generation (Flux, SDXL, etc.)",
-             "setup_url": "https://fal.ai"},
-            {"env_var": "OPENROUTER_API_KEY", "label": "OpenRouter",
-             "tools": ["vision_analyze", "mixture_of_agents"],
-             "description": "Multi-model routing for vision + MoA",
-             "setup_url": "https://openrouter.ai"},
-            {"env_var": "BROWSERBASE_API_KEY", "label": "Browserbase",
-             "tools": ["browser_navigate"],
-             "description": "Cloud browser automation (local Chromium works without this)",
-             "setup_url": "https://browserbase.com",
-             "optional": True},
-            {"env_var": "ELEVENLABS_API_KEY", "label": "ElevenLabs",
-             "tools": ["text_to_speech"],
-             "description": "Premium TTS (Edge TTS works without this)",
-             "setup_url": "https://elevenlabs.io",
-             "optional": True},
-        ]
-
-        # The v1 runtime read the agent sandbox's .env here (openshell
-        # sandbox exec). No sandbox backend until E2, so every key shows
-        # as "not set" unless Logos manages it.
-        sandbox_env: dict = {}
-        sandbox_name_for_log = ""
-
-        # Managed-by-Logos flag: distinguishes keys that Logos persists
-        # (via agent_env_credentials, replay-on-respawn) from keys that
-        # happen to be in the sandbox .env but are unmanaged (set by
-        # some other process or leftover from an older deploy).
-        managed_vars: set = set()
-        if agent_id:
-            try:
-                for _row in auth_db.list_agent_env_credentials(
-                    agent_id=agent_id, enabled_only=False,
-                ):
-                    managed_vars.add(_row.get("env_var") or "")
-            except Exception:
-                pass
-
-        readiness = []
-        for cfg in _CLOUD_ENV_CATALOGUE:
-            env_var = cfg["env_var"]
-            has_key = bool(sandbox_env.get(env_var))
-            readiness.append({
-                **cfg,
-                "has_key":  has_key,
-                "managed":  env_var in managed_vars,
-            })
-
-        await resp.write(("data: " + json.dumps({
-            "type": "setup_tools",
-            "readiness": readiness,
-            "agent_id": agent_id or "",
-            "sandbox_name": sandbox_name_for_log,
-            "sandbox_reachable": bool(sandbox_env) or not sandbox_name_for_log,
-        }) + "\n\n").encode())
-        await resp.write(("data: " + json.dumps({"type": "done", "elapsed_s": 0}) + "\n\n").encode())
-        return resp
-
     # M6 correlation IDs: stamp every log record emitted during this request
     # with identifiers that can be grepped from the unified log afterwards.
     # Generate a fresh task_id per dispatch so a single chat turn (worker
@@ -2057,34 +1815,12 @@ async def start_http_api(runner: Any, port: int = 8091) -> None:
     for _tab_path in (
         "/agents",
         "/chats",
-        "/compare",
-        # New IA (post-reorg)
-        "/config",
-        "/config/inference",
-        "/config/tools",
-        "/config/messaging",
         "/activity",
         "/activity/events",
-        "/activity/dashboards",
         "/activity/approvals",
-        "/activity/proposals",
         "/admin",
         "/admin/users",
-        "/admin/security",
         "/admin/audit",
-        # Legacy aliases — kept so existing bookmarks redirect via SPA's
-        # _applyUrlToState soft-redirect logic instead of 404'ing.
-        "/settings",
-        "/settings/inference",
-        "/settings/routing",
-        "/settings/tools",
-        "/settings/channels",
-        "/settings/proposals",
-        "/admin/runs",
-        "/admin/sandboxes",
-        "/admin/model-routes",
-        "/admin/platforms",
-        "/admin/approvals",
     ):
         app.router.add_get(_tab_path, _handle_index)
     app.router.add_get("/auth/me",       handle_me)
@@ -2131,9 +1867,6 @@ async def start_http_api(runner: Any, port: int = 8091) -> None:
     app.router.add_get("/instances/{name}/memory",              _handle_instance_memory_get)
     app.router.add_put("/instances/{name}/memory",              _handle_instance_memory_put)
     app.router.add_post("/instances/{name}/fork",               _handle_instance_fork)
-    # Polled by the dashboard on load. The v1 worker registry is gone;
-    # no workers exist until the E2 sandbox backend.
-    app.router.add_get("/api/workers", lambda r: web.json_response({"workers": []}))
     app.router.add_get("/spawn-templates",         _handle_spawn_templates_get)
     app.router.add_put("/spawn-templates",         _handle_spawn_templates_put)
     app.router.add_delete("/spawn-templates/{id}", _handle_spawn_templates_delete)
@@ -2150,11 +1883,6 @@ async def start_http_api(runner: Any, port: int = 8091) -> None:
     # /tools/configure removed 2026-04-21 — per-agent keys now go via
     # /admin/agents/<id>/env-credentials (registered below).
     app.router.add_route("OPTIONS", "/chat",   _handle_index)
-    app.router.add_get("/proxy/state",        _handle_proxy_state)
-    app.router.add_post("/proxy/providers/{key}/toggle", _handle_proxy_toggle)
-    app.router.add_get("/proxy/models-live",  _handle_proxy_models_live)
-    app.router.add_post("/proxy/benchmark",   _handle_proxy_benchmark)
-    app.router.add_patch("/api/model", require_csrf(_handle_model_patch))
 
     # ── Admin routes ───────────────────────────────────────────────────────
     _mm  = require_permission("manage_machines")
@@ -2172,40 +1900,6 @@ async def start_http_api(runner: Any, port: int = 8091) -> None:
     app.router.add_get("/admin/costs",         _mm(admin_handlers.handle_costs))
     app.router.add_get("/admin/pricing/status",    _mm(admin_handlers.handle_pricing_status))
     app.router.add_post("/admin/pricing/refresh",  _mm(require_csrf(admin_handlers.handle_pricing_refresh)))
-    # v1 machines, cloud providers, policy presets, capabilities and
-    # bundled local services were removed in S1.6. Their list endpoints
-    # stay, always empty, because the dashboard still fetches them.
-    app.router.add_get("/admin/machines",
-                       _mm(_empty_shape_handler({"machines": []})))
-    app.router.add_get("/admin/cloud-providers",
-                       _mm(_empty_shape_handler({"providers": []})))
-    app.router.add_get("/admin/recommended-models",
-                       _mm(_empty_shape_handler({"recommended": []})))
-    app.router.add_get("/api/admin/services/local",
-                       _mm(_empty_shape_handler({"services": []})))
-    app.router.add_get("/api/openshell/presets",
-                       _mm(_empty_shape_handler({"presets": []})))
-    app.router.add_get("/admin/agents/{id}/capabilities",
-                       _mm(_empty_shape_handler(
-                           {"version": 1, "always_on": [], "capabilities": [], "power_tools": []})))
-    # Named agents
-    # ── Sandbox dashboard ──────────────────────────────────────────
-    # NOTE: served under /api/admin/* to avoid colliding with the SPA
-    # tab paths registered at /admin/sandboxes (those serve main_app.html
-    # so deep links / refreshes land on the right tab). The router uses
-    # first-match-wins resolution, so any same-path API would be shadowed.
-    _vr = require_permission("view_runs")
-    # Read-only, empty until E2 (see _handle_sandboxes_list).
-    app.router.add_get("/api/admin/sandboxes",                    _vr(_handle_sandboxes_list))
-    app.router.add_get("/api/admin/clusters",                     _mm(_handle_clusters_list))
-
-    # Model routes were OpenShell 0.0.x gateways (removed in S1.5). The
-    # list endpoint stays, always empty, because the dashboard polls it.
-    app.router.add_get(
-        "/api/admin/model-routes",
-        _mm(_handle_model_route_list_empty),
-    )
-
     # LOG-25.1: view_runs (not manage_machines). Users have view_runs in
     # RBAC and need the Runs tab to actually load; handle_dispatches_list
     # filters rows to the caller's own user_id for non-admin/operator so
@@ -2309,7 +2003,10 @@ async def start_http_api(runner: Any, port: int = 8091) -> None:
     app.router.add_post("/approvals/{id}/approve", _dap(require_csrf(_handle_approvals_approve)))
     app.router.add_post("/approvals/{id}/reject",  _dap(require_csrf(_handle_approvals_reject)))
 
-    # ── Evolution ───────────────────────────────────────────────────────────
+    # ── Evolution ──────────────────────────────────────────────────────
+    # No dashboard UI since S1.10 (the Proposals tab is gone). The API
+    # stays because skills/evolution/self-improvement still tells agents
+    # to POST proposals here.
     from gateway import evolution_handlers as _eh
     _vev  = require_permission("view_evolution")
     _mev  = require_permission("manage_evolution")
@@ -2323,7 +2020,6 @@ async def start_http_api(runner: Any, port: int = 8091) -> None:
     app.router.add_post("/evolution/proposals/{id}/apply",   _dev(require_csrf(_eh.handle_apply_proposal)))
     app.router.add_get("/evolution/settings",            _vev(_eh.handle_get_settings))
     app.router.add_patch("/evolution/settings",          _mev(require_csrf(_eh.handle_update_settings)))
-
 
     # ── Update status/trigger (launcher file-based IPC) ─────────────────
     import json as _json
@@ -2367,10 +2063,6 @@ async def start_http_api(runner: Any, port: int = 8091) -> None:
         _static_dir = _pathlib.Path(__file__).parent.parent / "assets"
     if _static_dir.exists():
         app.router.add_static("/static", str(_static_dir), show_index=False)
-    # Agent World JS modules
-    _world_dir = _pathlib.Path(__file__).parent / "world"
-    if _world_dir.exists():
-        app.router.add_static("/world", str(_world_dir), show_index=False)
 
     app_runner = web.AppRunner(app)
     await app_runner.setup()
