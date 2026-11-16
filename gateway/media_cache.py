@@ -21,7 +21,7 @@ import uuid
 from pathlib import Path
 from typing import List, Tuple
 
-from logos_cli.config import get_hermes_home
+from gateway.local_config import get_hermes_home
 
 
 # ── Image cache ──────────────────────────────────────────────────────

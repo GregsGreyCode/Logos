@@ -3335,7 +3335,7 @@ async def validate_provider_key(provider: str, api_key: str, base_url: str = "")
                         data = await r.json(content_type=None)
                         raw_models = [m.get("id", "") for m in (data.get("data") or []) if m.get("id")]
                         if provider == "openrouter":
-                            from logos_cli.models import OPENROUTER_MODELS
+                            from gateway.model_catalog import OPENROUTER_MODELS
                             curated = {mid for mid, _ in OPENROUTER_MODELS}
                             models = [m for m in raw_models if m in curated]
                             if not models:
@@ -3356,7 +3356,7 @@ async def validate_provider_key(provider: str, api_key: str, base_url: str = "")
         error = "No models returned from API"
     if error and error != "Invalid API key":
         try:
-            from logos_cli.models import _PROVIDER_MODELS, OPENROUTER_MODELS
+            from gateway.model_catalog import _PROVIDER_MODELS, OPENROUTER_MODELS
             if provider == "anthropic" and "anthropic" in _PROVIDER_MODELS:
                 models = _PROVIDER_MODELS["anthropic"]
                 error = None
@@ -3377,7 +3377,7 @@ async def handle_model_catalog(request: web.Request) -> web.Response:
     # Also accept a list of raw model IDs to enrich
     raw_models = request.query.get("models", "").strip()
 
-    from logos_cli.models import get_model_info, get_provider_catalog, MODEL_CATALOG
+    from gateway.model_catalog import get_model_info, get_provider_catalog, MODEL_CATALOG
 
     if provider:
         models = get_provider_catalog(provider)
@@ -3582,7 +3582,7 @@ async def _run_setup_complete_bg(
             endpoint = _frontier_base if _frontier_provider == "custom" else prov["base_url"]
             # Persist provider-specific API key securely to ~/.logos/.env
             try:
-                from logos_cli.config import save_env_value
+                from gateway.local_config import save_env_value
                 if prov["env_key"]:
                     save_env_value(prov["env_key"], _frontier_key)
                     logger.info("setup: saved %s to .env", prov["env_key"])
@@ -3831,7 +3831,7 @@ async def _run_setup_complete_bg(
             # SearxNG instance on another host keeps their override.
             if _searxng_up:
                 try:
-                    from logos_cli.config import get_env_value, save_env_value
+                    from gateway.local_config import get_env_value, save_env_value
                     _SANDBOX_SEARXNG_URL = "http://host.openshell.internal:8888"
                     if not (get_env_value("SEARXNG_URL") or os.environ.get("SEARXNG_URL")):
                         save_env_value("SEARXNG_URL", _SANDBOX_SEARXNG_URL)
