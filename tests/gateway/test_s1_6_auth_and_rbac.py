@@ -2,8 +2,8 @@
 
 Covers what must survive: login, logout, token refresh, /auth/me and admin
 user create/list; the two-role permission table; the idempotent drop
-migration (including the users.policy_id FK strip); and the empty shapes
-the dashboard still fetches.
+migration (including the users.policy_id FK strip). The empty list
+endpoints S1.6 kept for the old dashboard were removed with it in S1.10.
 """
 
 from __future__ import annotations
@@ -399,35 +399,7 @@ def test_admin_creates_and_lists_users_and_user_cannot(db_home):
     _with_client(flow)
 
 
-# ── Endpoints the dashboard still fetches ──────────────────────────────────
-
-def test_removed_list_endpoints_answer_empty_shapes():
-    from gateway import http_api
-
-    def body(shape):
-        req = make_mocked_request("GET", "/")
-        resp = asyncio.run(http_api._empty_shape_handler(shape)(req))
-        assert resp.status == 200
-        return json.loads(resp.body)
-
-    assert body({"machines": []}) == {"machines": []}
-
-    # The routes themselves are registered with those shapes.
-    src = (GATEWAY_DIR / "http_api.py").read_text(encoding="utf-8")
-    for path, key in (
-        ("/admin/machines", "machines"),
-        ("/admin/cloud-providers", "providers"),
-        ("/admin/recommended-models", "recommended"),
-        ("/api/admin/services/local", "services"),
-        ("/api/openshell/presets", "presets"),
-        ("/admin/agents/{id}/capabilities", "capabilities"),
-    ):
-        m = re.search(
-            r'add_get\("%s",\s*_mm\(_empty_shape_handler\(\s*(\{.*?\})\)\)\)' % re.escape(path),
-            src, re.S)
-        assert m, path
-        assert json.loads(m.group(1))[key] == []
-
+# ── Agent tools endpoint ───────────────────────────────────────────────────
 
 def test_agent_tools_endpoint_keeps_empty_presets(db_home):
     from gateway import admin_handlers
