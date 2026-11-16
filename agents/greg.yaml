@@ -4,6 +4,7 @@
 # (LOGOS_TELEGRAM_BOT_TOKEN) the first time and kept in the agent's private home volume.
 name: greg
 display_name: Greg's agent
+owners: [greg]                 # web dashboard usernames that may see and talk to this agent
 image: logos-agent:0.23.1
 soul: souls/general/soul.md
 policy: infra/agent-image/policy.yaml

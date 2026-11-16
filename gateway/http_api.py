@@ -1266,13 +1266,25 @@ async def _handle_api_session_restore(request: web.Request) -> web.Response:
 
 
 async def _handle_chat_cancel(request: web.Request) -> web.Response:
-    """POST /chat/{task_id}/cancel — abort an in-flight chat turn.
+    """POST /chat/{task_id}/cancel — stop an in-flight chat turn.
 
-    No chat turn can be in flight without a sandbox backend (E2), so
-    this always answers 503 ``no_agents_running``.
+    ``task_id`` is the hermes run id sent to the browser as ``task_started``.
     """
-    del request
-    return _no_agents_running_response()
+    task_id = request.match_info["task_id"]
+    links = request.app.get("agent_links")
+    agent_name = (request.app.get("chat_runs") or {}).get(task_id)
+    if links is None:
+        return _no_agents_running_response()
+    if not agent_name:
+        return web.json_response({"error": "not_found", "message": "No such running reply."}, status=404)
+    from gateway.agent_links import AgentLinkError as _AgentLinkError
+    from gateway.hermes_client import HermesError as _HermesError
+    try:
+        client = await links.client(agent_name)
+        await client.stop_run(task_id)
+    except (_AgentLinkError, _HermesError) as exc:
+        return web.json_response({"error": "stop_failed", "message": str(exc)}, status=502)
+    return web.json_response({"ok": True, "task_id": task_id})
 
 
 async def _handle_transcribe(request: web.Request) -> web.Response:
@@ -1506,11 +1518,74 @@ async def _handle_chat(request: web.Request) -> web.StreamResponse:
     if not message:
         raise web.HTTPBadRequest(reason="message is required")
 
-    # Dispatch into the agent's sandbox (the v1 worker registry
-    # on OpenShell 0.0.x) was removed in S1.5. Until epic E2 lands a
-    # sandbox backend there is nothing to dispatch to.
-    logger.info("chat: agent_id=%r has no running sandbox (no backend, E2)", agent_id)
-    return _no_agents_running_response()
+    # Dispatch to the agent's hermes server inside its OpenShell sandbox
+    # (gateway/agent_links.py, gateway/agent_chat.py). Without the
+    # OpenShell backend there is nothing to dispatch to.
+    links = request.app.get("agent_links")
+    backend = request.app.get("sandbox_backend") or _get_sandbox_backend()
+    agent_name = _agent_config.get("name") or ""
+    if links is None:
+        logger.info("chat: agent_id=%r has no running sandbox (no backend)", agent_id)
+        return _no_agents_running_response()
+    from gateway import agent_chat as _agent_chat
+    try:
+        _definition = await asyncio.to_thread(links.runtime.load, agent_name)
+    except Exception:
+        raise web.HTTPNotFound(reason=f"agent {agent_id} not found")
+    if not _agent_chat.may_use(_agent_chat.owners_of(_definition),
+                               _agent_chat.username_of(_auth_user, auth_db)):
+        # Someone else's private agent: same answer as an unknown one.
+        raise web.HTTPNotFound(reason=f"agent {agent_id} not found")
+    status = await asyncio.to_thread(backend.status, agent_name)
+    if not status.running:
+        return web.json_response({
+            "error": "agent_not_running",
+            "message": f"{agent_name} is not running ({status.detail or status.state}). "
+                       f"Start it with: scripts/logos-agent up {agent_name}",
+        }, status=503)
+    from gateway.agent_links import AgentLinkError as _AgentLinkError
+    from gateway.hermes_client import HermesError as _HermesError
+    try:
+        await links.health(agent_name)
+        client = await links.client(agent_name)
+    except (_AgentLinkError, _HermesError) as exc:
+        logger.warning("chat: %s unreachable: %s", agent_name, exc)
+        return web.json_response({
+            "error": "agent_unreachable",
+            "message": f"Could not reach {agent_name}: {exc}",
+        }, status=503)
+
+    resp = web.StreamResponse(headers={
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache",
+        "X-Accel-Buffering": "no",
+    })
+    await resp.prepare(request)
+    runs: dict = request.app["chat_runs"]
+    started: list = []
+
+    def _remember(run_id: str) -> None:
+        started.append(run_id)
+        runs[run_id] = agent_name
+
+    hermes_session = _agent_chat.session_id_for(
+        _auth_user.get("sub") or _auth_user.get("id") or "", str(session_id))
+    try:
+        async for payload in _agent_chat.stream_run(
+            client, message, session_id=hermes_session,
+            model=_agent_config.get("model") or "", on_started=_remember,
+        ):
+            await resp.write(_agent_chat.sse(payload))
+    except (ConnectionResetError, asyncio.CancelledError):
+        # The browser went away. The run carries on inside the agent and its
+        # result is kept in the agent's own session history.
+        logger.info("chat: client left during a run for %s", agent_name)
+        raise
+    finally:
+        for run_id in started:
+            runs.pop(run_id, None)
+    await resp.write_eof()
+    return resp
 
 
 async def start_http_api(runner: Any, port: int = 8091) -> None:
@@ -1648,6 +1723,41 @@ async def start_http_api(runner: Any, port: int = 8091) -> None:
     # Agent sandbox runtime (NullBackend until E2), owned by the runner.
     app["sandbox_backend"] = getattr(runner, "sandbox_backend", None) or _get_sandbox_backend()
     logger.info("Sandbox backend: %s", type(app["sandbox_backend"]).__name__)
+
+    # Links to each agent's hermes server (only with a backend that runs agents).
+    app["chat_runs"] = {}
+    app["agent_links"] = None
+    from gateway import agent_chat as _agent_chat
+    _agent_runtime = _agent_chat.runtime_of(app["sandbox_backend"])
+    if _agent_runtime is not None:
+        from gateway.agent_links import AgentLinks as _AgentLinks
+        app["agent_links"] = _AgentLinks(_agent_runtime)
+
+        async def _close_agent_links(_app: web.Application) -> None:
+            await _app["agent_links"].close()
+        app.on_cleanup.append(_close_agent_links)
+
+        async def _agents_boot_check(_app: web.Application) -> None:
+            # S2.8: on boot, register the defined agents and report which are reachable.
+            async def _check() -> None:
+                try:
+                    names = await asyncio.to_thread(_agent_chat.sync_definitions, _agent_runtime, auth_db)
+                    phases = {st.name: st for st in await asyncio.to_thread(_app["sandbox_backend"].list)}
+                except Exception as exc:
+                    logger.warning("Agent boot check failed: %s", exc)
+                    return
+                for name in names:
+                    st = phases.get(name)
+                    if not (st and st.running):
+                        logger.warning("Agent %s: not running (%s)", name, st.detail if st else "no sandbox")
+                        continue
+                    try:
+                        h = await _app["agent_links"].health(name)
+                        logger.info("Agent %s: healthy (hermes %s)", name, h.get("version", "?"))
+                    except Exception as exc:
+                        logger.warning("Agent %s: sandbox is Ready but hermes is unreachable: %s", name, exc)
+            _app["agents_boot_check"] = asyncio.create_task(_check())
+        app.on_startup.append(_agents_boot_check)
 
     # ── Pre-fetch cloud-model pricing from OpenRouter ──────────────────────
     # So the first dispatch doesn't stall waiting on a cold catalogue
@@ -1895,7 +2005,8 @@ async def start_http_api(runner: Any, port: int = 8091) -> None:
     # filters rows to the caller's own user_id for non-admin/operator so
     # they see their own runs but not other users' histories.
     app.router.add_get("/admin/dispatches",           require_permission("view_runs")(admin_handlers.handle_dispatches_list))
-    app.router.add_get("/admin/agents",              _mm(admin_handlers.handle_agents_list))
+    # Any signed-in user may list agents (they need the list to chat); changing them stays admin-only.
+    app.router.add_get("/admin/agents",              admin_handlers.handle_agents_list)
     app.router.add_post("/admin/agents",             _mm(require_csrf(admin_handlers.handle_agents_post)))
     app.router.add_patch("/admin/agents/{id}",       _mm(require_csrf(admin_handlers.handle_agents_patch)))
     app.router.add_delete("/admin/agents/{id}",      _mm(require_csrf(admin_handlers.handle_agents_delete)))
