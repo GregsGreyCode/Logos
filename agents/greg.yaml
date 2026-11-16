@@ -23,5 +23,9 @@ telegram:
 
 consolidation:                  # nightly brain tidy-up (hermes cron job `consolidate`)
   enabled: true
-  schedule: "0 3 * * *"         # in the agent's timezone
+  schedule: "30 2 * * *"        # in the agent's timezone; before the 03:00 fresh session
   # model / provider: omit to use the agent's main (local) model
+
+session_reset:                  # start a fresh conversation on the first message after this hour
+  mode: daily
+  at_hour: 3                    # in the agent's timezone
