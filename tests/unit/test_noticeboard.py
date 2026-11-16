@@ -115,6 +115,18 @@ class TestRules:
         assert [e["id"] for e in told] == [q] and "did not answer" in told[0]["note"]
         assert board.read("greg")["expired_requests"] == []              # told once
 
+    def test_pending_fingerprint_changes_only_on_new_work(self, board):
+        assert board.pending("bere") == {"latest": 0, "unread": 0, "latest_expired": 0}
+        q = board.send("greg", "bere", "question", "Free on Saturday?")["id"]
+        first = board.pending("bere")
+        assert first == {"latest": q, "unread": 1, "latest_expired": 0}
+        board.read("bere")
+        after = board.pending("bere")
+        assert (after["latest"], after["unread"]) == (q, 0)            # reading does not move "latest"
+        assert board.pending("greg")["latest_expired"] == 0
+        board.clock_obj.t += nb.DAY + 60
+        assert board.pending("greg")["latest_expired"] == q            # the asker learns it expired
+
     def test_everything_is_logged(self, board):
         board.send("greg", "bere", "fyi", "hello")
         code(lambda: board.send("greg", "bere", "order", "do it"))
