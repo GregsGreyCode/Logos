@@ -47,6 +47,7 @@ KINDS = ("fyi", "question", "shared_change", "reminder", "answer")
 REQUEST_KINDS = ("question", "shared_change", "reminder")     # these expect an answer
 DECISIONS = ("accepted", "declined")
 DAILY_LIMIT = 10
+URGENT_DAILY_LIMIT = 3          # urgent messages a day from one agent to another; the rest go as normal
 MAX_TEXT = 2000
 DAY = 24 * 3600
 PROTOCOL_VERSION = "2025-06-18"
@@ -84,6 +85,9 @@ class Board:
                 id INTEGER PRIMARY KEY AUTOINCREMENT, ts REAL NOT NULL, agent TEXT, event TEXT NOT NULL,
                 detail TEXT NOT NULL);
         """)
+        cols = {r["name"] for r in self.db.execute("PRAGMA table_info(messages)")}
+        if "urgent_told_at" not in cols:
+            self.db.execute("ALTER TABLE messages ADD COLUMN urgent_told_at REAL")
         self.db.commit()
 
     # ── who ──────────────────────────────────────────────────────────────
@@ -158,13 +162,25 @@ class Board:
             raise Rejected("rate_limited",
                            f"You have already sent {self.display(to)} {DAILY_LIMIT} messages in the last day. "
                            "Wait, or tell your person instead.")
+        downgraded = False
+        if urgent:
+            used = self.db.execute(
+                "SELECT COUNT(*) FROM messages WHERE sender = ? AND recipient = ? AND urgent = 1 AND ts > ?",
+                (sender, to, now - DAY)).fetchone()[0]
+            if used >= URGENT_DAILY_LIMIT:
+                urgent, downgraded = False, True
         cur = self.db.execute(
             "INSERT INTO messages (ts, sender, recipient, kind, text, urgent, digest) VALUES (?, ?, ?, ?, ?, ?, ?)",
             (now, sender, to, kind, text, 1 if urgent else 0, digest))
         self._event(sender, "sent", id=cur.lastrowid, to=to, kind=kind, urgent=bool(urgent))
         note = ("It expires if not answered within 24 hours. The answer will show up in read_messages."
                 if kind in REQUEST_KINDS else "No answer is expected.")
-        return {"id": cur.lastrowid, "status": "sent", "note": note}
+        if urgent:
+            note += " Their person is being told now."
+        if downgraded:
+            note += (f" It was sent as a normal message: you have already sent {self.display(to)} "
+                     f"{URGENT_DAILY_LIMIT} urgent messages in the last day.")
+        return {"id": cur.lastrowid, "status": "sent", "urgent": bool(urgent), "note": note}
 
     def _answer(self, sender, to, text, reply_to, decision, now) -> Dict[str, Any]:
         if decision not in DECISIONS:
@@ -232,6 +248,25 @@ class Board:
             return {"messages": out, "waiting_for_your_answer": waiting, "expired_requests": lapsed,
                     "you_can_write_to": self.directory(me)}
 
+    def urgent(self, me: str) -> List[str]:
+        """Lines to show ``me``'s person right now: urgent messages not yet announced. Each is
+        announced once. This never runs the recipient's agent; the agent handles the message at its
+        normal check."""
+        with self._lock:
+            now = self.clock()
+            rows = self.db.execute(
+                "SELECT * FROM messages WHERE recipient = ? AND urgent = 1 AND urgent_told_at IS NULL "
+                "AND kind != 'answer' AND ts > ? ORDER BY id", (me, now - DAY)).fetchall()
+            lines = []
+            for r in rows:
+                who = self.display(r["sender"])
+                tail = (f" (request {r['id']}: tell your agent what to answer)" if r["kind"] in REQUEST_KINDS else "")
+                lines.append(f"Urgent from {who}: {r['text']}{tail}")
+                self.db.execute("UPDATE messages SET urgent_told_at = ? WHERE id = ?", (now, r["id"]))
+                self._event(me, "urgent_told", id=r["id"])
+            self.db.commit()
+            return lines
+
     def pending(self, me: str) -> Dict[str, int]:
         """A cheap fingerprint an agent polls to learn that something new is waiting. It changes
         only when a new message arrives for ``me`` or one of its own requests expires, and it
@@ -298,7 +333,7 @@ TOOLS = [
                 "to": {"type": "string", "description": "Name of the agent to write to (see read_messages)."},
                 "kind": {"type": "string", "enum": list(KINDS)},
                 "text": {"type": "string", "description": "The message, in plain words. Up to 2,000 characters."},
-                "urgent": {"type": "boolean", "description": "True only if their person should be told now."},
+                "urgent": {"type": "boolean", "description": "True only if their person must be told right now. At most 3 a day."},
                 "reply_to": {"type": "integer", "description": "For kind 'answer': the id you are answering."},
                 "decision": {"type": "string", "enum": list(DECISIONS), "description": "For kind 'answer'."},
             },
@@ -351,7 +386,11 @@ def handle_rpc(board: Board, agent: str, req: Dict[str, Any]) -> Optional[Dict[s
     return {"jsonrpc": "2.0", "id": rid, "result": result}
 
 
-def make_handler(board: Board):
+def make_handler(board: Board, *, mcp: bool = True, poll: bool = True):
+    """``mcp`` serves POST /mcp (the two tools). ``poll`` serves the plain GET endpoints the
+    sandbox scripts use (/pending, /urgent). In the container they listen on separate ports so
+    the sandbox policy can inspect the MCP port as MCP and the poll port as two GET paths."""
+
     class Handler(BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
 
@@ -372,12 +411,14 @@ def make_handler(board: Board):
         def do_GET(self):
             if self.path == "/health":
                 return self._send(200, {"status": "ok", "agents": sorted(board.agents)})
-            if self.path == "/pending":
+            if poll and self.path in ("/pending", "/urgent"):
                 auth = self.headers.get("Authorization", "")
                 agent = board.agent_for_token(auth[7:].strip() if auth.lower().startswith("bearer ") else "")
                 if agent is None:
                     return self._send(401, {"error": "unknown or missing token"})
-                return self._send(200, board.pending(agent))
+                if self.path == "/pending":
+                    return self._send(200, board.pending(agent))
+                return self._send(200, {"lines": board.urgent(agent)})
             # No server-initiated stream: the MCP spec lets a server answer 405 here.
             self._send(405, {"error": "use POST"}, (("Allow", "POST"),))
 
@@ -385,7 +426,7 @@ def make_handler(board: Board):
             self._send(200, {})
 
         def do_POST(self):
-            if self.path.rstrip("/") != "/mcp":
+            if not mcp or self.path.rstrip("/") != "/mcp":
                 return self._send(404, {"error": "not found"})
             auth = self.headers.get("Authorization", "")
             agent = board.agent_for_token(auth[7:].strip() if auth.lower().startswith("bearer ") else "")
@@ -411,8 +452,11 @@ def main() -> None:
     config = json.load(open(os.environ.get("NOTICEBOARD_CONFIG", "/data/config.json")))
     board = Board(os.environ.get("NOTICEBOARD_DB", "/data/noticeboard.db"), config["agents"])
     port = int(os.environ.get("NOTICEBOARD_PORT", "8090"))
-    server = ThreadingHTTPServer(("0.0.0.0", port), make_handler(board))
-    print(f"noticeboard: {len(config['agents'])} agents, listening on :{port}", flush=True)
+    poll_port = int(os.environ.get("NOTICEBOARD_POLL_PORT", "8091"))
+    poll_server = ThreadingHTTPServer(("0.0.0.0", poll_port), make_handler(board, mcp=False, poll=True))
+    threading.Thread(target=poll_server.serve_forever, daemon=True).start()
+    server = ThreadingHTTPServer(("0.0.0.0", port), make_handler(board, mcp=True, poll=False))
+    print(f"noticeboard: {len(config['agents'])} agents, MCP on :{port}, polling on :{poll_port}", flush=True)
     server.serve_forever()
 
 

@@ -49,7 +49,7 @@ START = ("/opt/hermes/docker/stage2-hook.sh; "
          "exec hermes gateway run")
 MEMORY_CHAR_LIMIT = 6000             # hermes default is 2,200; raised so the brain index has room
 RESET_PLUGIN = "hermes-session-reset-policy"
-MANAGED_JOBS = ("brain-commit", "brain-index", "consolidate", "noticeboard-check")
+MANAGED_JOBS = ("brain-commit", "brain-index", "consolidate", "noticeboard-check", "noticeboard-urgent")
 HOME_TARGET = "/opt/data"
 BRAIN_TARGET = "/opt/data/brain"
 ANSI = re.compile(r"\x1b\[[0-9;]*m")
@@ -353,6 +353,7 @@ class AgentRuntime:
         if nb.uses_noticeboard(agent):
             cur.setdefault(nb.TOKEN_ENV, secrets.token_urlsafe(32))
             cur["LOGOS_NOTICEBOARD_URL"] = nb.NoticeboardHost(self).url()
+            cur["LOGOS_NOTICEBOARD_POLL_URL"] = nb.NoticeboardHost(self).poll_url()
         cur["GATEWAY_ALLOW_ALL_USERS"] = "false"
         return "".join(f"{k}={v}\n" for k, v in sorted(cur.items()))
 
@@ -391,7 +392,8 @@ class AgentRuntime:
 
     def ensure_jobs(self, name: str, agent: Mapping[str, Any], home: str) -> None:
         """Install the brain jobs: an hourly git commit (no model) and the nightly consolidation."""
-        for script in ("brain_commit.sh", "brain_inbox_state.sh", "brain_index.py", "noticeboard_state.py"):
+        for script in ("brain_commit.sh", "brain_inbox_state.sh", "brain_index.py", "noticeboard_state.py",
+                       "noticeboard_urgent.py"):
             self.put(home, f"scripts/{script}", (self.jobs_dir / script).read_text(), mode="0750")
         if not self.wait_api(name):
             print("warning: hermes API did not come up; brain jobs not installed", file=sys.stderr)
@@ -424,6 +426,10 @@ class AgentRuntime:
                            f'--monitor-script noticeboard_state.py --timezone {tz} '
                            f'--deliver {deliver} --failure-deliver local "*/10 * * * *" "$(cat)"',
                      input=(self.jobs_dir / "noticeboard_check.md").read_text())
+            # Every minute, no model: an urgent message is shown to the person at once.
+            self.sbx(name, f'{HERMES} cron create --name noticeboard-urgent --no-agent '
+                           f'--script noticeboard_urgent.py --timezone {tz} --deliver {deliver} '
+                           f'--failure-deliver local "* * * * *"')
         have = self.job_ids(name)
         print("jobs: " + ", ".join(sorted(have)) if have else "warning: no cron jobs registered")
 
@@ -453,11 +459,14 @@ class AgentRuntime:
         rules = policy.get("network_policies") or {}
         before = json.dumps(rules, sort_keys=True)
 
-        def point(rule: str, target: str) -> None:
+        def point(rule: str, target: str, rest_rules: Optional[list] = None) -> None:
             url = urllib.parse.urlsplit(target)
             host, port = url.hostname, url.port or (443 if url.scheme == "https" else 80)
             for e in (rules.get(rule) or {}).get("endpoints") or []:
                 e["host"], e["port"] = host, port
+                if rest_rules is not None:      # exact methods and paths instead of a preset
+                    e.pop("access", None)
+                    e["rules"] = [{"allow": {"method": m, "path": p}} for m, p in rest_rules]
                 try:
                     e["allowed_ips"] = [f"{ipaddress.ip_address(host)}/32"]
                 except ValueError:
@@ -467,14 +476,18 @@ class AgentRuntime:
         mg = _sibling("model_gateway")
         if mg.uses_gateway(agent):
             # Behind the model gateway the agent talks only to the gateway, never to LM Studio itself.
-            point("lm_studio", mg.ModelGateway(self).base_url())
+            # Only the inference API: the gateway's admin and UI paths stay out of reach.
+            point("lm_studio", mg.ModelGateway(self).base_url(),
+                  rest_rules=[("GET", "/v1/**"), ("POST", "/v1/**")])
         elif model.get("provider") == "lmstudio":
             point("lm_studio", model["base_url"])
         nb = _sibling("noticeboard_host")
         if nb.uses_noticeboard(agent):
             point("noticeboard", nb.NoticeboardHost(self).url())
+            point("noticeboard_poll", nb.NoticeboardHost(self).poll_url())
         else:
             rules.pop("noticeboard", None)
+            rules.pop("noticeboard_poll", None)
         if json.dumps(rules, sort_keys=True) == before:
             return src
         out = self.repo / ".rendered" / f"{name}.policy.yaml"

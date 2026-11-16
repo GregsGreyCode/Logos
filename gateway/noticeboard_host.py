@@ -18,7 +18,8 @@ from typing import Any, Dict, Mapping
 
 CONTAINER = "logos-noticeboard"
 VOLUME = "logos-noticeboard"
-PORT = 8090
+PORT = 8090                             # MCP: the two tools
+POLL_PORT = 8091                        # plain GET /pending and /urgent for the sandbox scripts
 HELPER = "alpine:3"
 RUN_AS = "10000:10000"                  # `hermes` in the logos-agent image
 TOKEN_ENV = "LOGOS_NOTICEBOARD_TOKEN"   # the agent's own token, kept in its home volume .env
@@ -50,6 +51,9 @@ class NoticeboardHost:
 
     def url(self) -> str:
         return f"http://{self.bind_address()}:{PORT}/mcp"
+
+    def poll_url(self) -> str:
+        return f"http://{self.bind_address()}:{POLL_PORT}"
 
     def agents(self) -> Dict[str, dict]:
         found = {}
@@ -96,9 +100,10 @@ class NoticeboardHost:
         self.rt.run(["docker", "run", "-d", "--name", CONTAINER, "--restart", "unless-stopped",
                      "--label", f"logos.noticeboard.stamp={stamp}", "--user", RUN_AS,
                      "-p", f"{self.bind_address()}:{PORT}:{PORT}",
+                     "-p", f"{self.bind_address()}:{POLL_PORT}:{POLL_PORT}",
                      "-v", f"{VOLUME}:/data", "-v", f"{SERVER_FILE}:/app/noticeboard.py:ro",
                      "-e", "NOTICEBOARD_CONFIG=/data/config.json", "-e", "NOTICEBOARD_DB=/data/noticeboard.db",
-                     "-e", f"NOTICEBOARD_PORT={PORT}", "--entrypoint", "python3", image, "/app/noticeboard.py"])
+                     "-e", f"NOTICEBOARD_PORT={PORT}", "-e", f"NOTICEBOARD_POLL_PORT={POLL_PORT}", "--entrypoint", "python3", image, "/app/noticeboard.py"])
         self.wait()
         return True
 
