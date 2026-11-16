@@ -1,10 +1,11 @@
 // Logos dashboard shell: sign-in handling, theme, and a tiny hash router.
 // No build step: plain ES modules served from /ui/.
 import { chatView } from './chat.js';
+import { brainView } from './brain.js';
 import { noticeboardView, setBadge } from './noticeboard.js';
 import { h, api, getJSON } from './util.js';
 
-const views = { chat: chatView, noticeboard: noticeboardView };
+const views = { chat: chatView, brain: brainView, noticeboard: noticeboardView };
 const root = document.getElementById('view');
 let cleanup = null;
 

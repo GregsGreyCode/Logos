@@ -185,6 +185,84 @@ async def handle_conversation_messages(request: web.Request) -> web.Response:
     return web.json_response({"messages": [m for m in out if m["text"] or m["tools"]]})
 
 
+# ── brain ────────────────────────────────────────────────────────────────────
+
+async def _brain(request: web.Request, fn, *args):
+    from gateway import brain_reader
+    name, _info, _user_ = await _agent_or_404(request)
+    runtime = agent_chat.runtime_of(request.app.get("sandbox_backend"))
+    try:
+        return web.json_response(await asyncio.to_thread(fn, runtime, name, *args))
+    except brain_reader.BrainError as e:
+        return web.json_response({"error": "brain_unavailable", "message": str(e)}, status=404)
+
+
+async def handle_brain(request: web.Request) -> web.Response:
+    """GET /api/v2/agents/{name}/brain — its pages and what changed this week."""
+    from gateway import brain_reader
+    return await _brain(request, brain_reader.list_pages)
+
+
+async def handle_brain_page(request: web.Request) -> web.Response:
+    """GET /api/v2/agents/{name}/brain/page?path=projects/Trip.md"""
+    from gateway import brain_reader
+    return await _brain(request, brain_reader.read_page, request.query.get("path", ""))
+
+
+async def handle_brain_page_save(request: web.Request) -> web.Response:
+    """PUT /api/v2/agents/{name}/brain/page  {"path", "text", "modified"}
+
+    Saves the person's edit of one existing page. ``modified`` is the value the page was
+    loaded with; if the page changed since (the agent wrote to it, or an Obsidian edit
+    synced in), the save is refused with 409 so nothing is overwritten unseen.
+    """
+    from gateway import brain_reader
+    name, _info, user = await _agent_or_404(request)
+    try:
+        body = await request.json()
+        path, text, modified = str(body["path"]), str(body["text"]), int(body["modified"])
+    except Exception:
+        return web.json_response({"error": "invalid_request"}, status=400)
+    runtime = agent_chat.runtime_of(request.app.get("sandbox_backend"))
+    try:
+        saved = await asyncio.to_thread(brain_reader.write_page, runtime, name, path, text, modified)
+    except brain_reader.PageChanged as e:
+        return web.json_response({"error": "page_changed", "message": str(e)}, status=409)
+    except brain_reader.BrainError as e:
+        return web.json_response({"error": "not_saved", "message": str(e)}, status=400)
+    auth_db.write_audit_log(user["id"], "brain_page_edit", target_type="brain_page",
+                            target_id=f"{name}:{saved['path']}", ip_address=request.remote)
+    return web.json_response({"ok": True, **saved})
+
+
+async def handle_brain_page_create(request: web.Request) -> web.Response:
+    """POST /api/v2/agents/{name}/brain/page  {"folder": "projects", "title": "Garden"}"""
+    from gateway import brain_reader
+    name, _info, user = await _agent_or_404(request)
+    try:
+        body = await request.json()
+        folder, title = str(body["folder"]), str(body["title"])
+    except Exception:
+        return web.json_response({"error": "invalid_request"}, status=400)
+    runtime = agent_chat.runtime_of(request.app.get("sandbox_backend"))
+    try:
+        made = await asyncio.to_thread(brain_reader.create_page, runtime, name, folder, title)
+    except brain_reader.BrainError as e:
+        return web.json_response({"error": "not_created", "message": str(e)}, status=400)
+    auth_db.write_audit_log(user["id"], "brain_page_create", target_type="brain_page",
+                            target_id=f"{name}:{made['path']}", ip_address=request.remote)
+    return web.json_response({"ok": True, **made})
+
+
+async def handle_brain_search(request: web.Request) -> web.Response:
+    """GET /api/v2/agents/{name}/brain/search?q=boiler"""
+    from gateway import brain_reader
+
+    def _search(runtime, name, q):
+        return {"hits": brain_reader.search(runtime, name, q)}
+    return await _brain(request, _search, request.query.get("q", ""))
+
+
 # ── noticeboard ──────────────────────────────────────────────────────────────
 
 REQUEST_KINDS = ("question", "shared_change", "reminder")
@@ -288,6 +366,11 @@ async def handle_noticeboard_answer(request: web.Request) -> web.Response:
 
 def register(app: web.Application) -> None:
     from gateway.auth.middleware import require_csrf
+    app.router.add_get("/api/v2/agents/{name}/brain", handle_brain)
+    app.router.add_get("/api/v2/agents/{name}/brain/page", handle_brain_page)
+    app.router.add_get("/api/v2/agents/{name}/brain/search", handle_brain_search)
+    app.router.add_put("/api/v2/agents/{name}/brain/page", require_csrf(handle_brain_page_save))
+    app.router.add_post("/api/v2/agents/{name}/brain/page", require_csrf(handle_brain_page_create))
     app.router.add_get("/api/v2/noticeboard", handle_noticeboard)
     app.router.add_post("/api/v2/noticeboard/{id}/answer", require_csrf(handle_noticeboard_answer))
     app.router.add_get("/api/v2/me", handle_me)

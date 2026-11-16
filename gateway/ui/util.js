@@ -52,3 +52,41 @@ export function when(ts) {
   return d.toLocaleDateString([], { day: 'numeric', month: 'short' });
 }
 
+// A small, safe Markdown subset: everything is escaped by building DOM nodes, never innerHTML.
+function inline(text) {
+  const out = [];
+  const re = /(`[^`]+`|\*\*[^*]+\*\*)/g;
+  let last = 0, m;
+  while ((m = re.exec(text))) {
+    if (m.index > last) out.push(text.slice(last, m.index));
+    out.push(m[0][0] === '`' ? h('code', {}, m[0].slice(1, -1)) : h('strong', {}, m[0].slice(2, -2)));
+    last = m.index + m[0].length;
+  }
+  if (last < text.length) out.push(text.slice(last));
+  return out;
+}
+
+export function markdown(text) {
+  const nodes = [];
+  const parts = text.split(/```[^\n]*\n?/);
+  parts.forEach((part, i) => {
+    if (i % 2) { nodes.push(h('pre', {}, h('code', {}, part.replace(/\n$/, '')))); return; }
+    for (const block of part.split(/\n{2,}/)) {
+      const lines = block.split('\n').filter((l) => l.trim());
+      if (!lines.length) continue;
+      if (lines.every((l) => /^\s*[-*]\s+/.test(l))) {
+        nodes.push(h('ul', {}, lines.map((l) => h('li', {}, inline(l.replace(/^\s*[-*]\s+/, ''))))));
+      } else {
+        // Headings become real headings; other lines of a block stay one paragraph.
+        let p = null;
+        for (const l of lines) {
+          const hm = l.match(/^(#{1,6})\s+(.*)$/);
+          if (hm) { p = null; nodes.push(h(hm[1].length === 1 ? 'h2' : hm[1].length === 2 ? 'h3' : 'h4', {}, inline(hm[2]))); continue; }
+          if (!p) { p = h('p', {}); nodes.push(p); } else p.append(h('br'));
+          p.append(...inline(l));
+        }
+      }
+    }
+  });
+  return nodes;
+}
