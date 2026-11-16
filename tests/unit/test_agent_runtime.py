@@ -157,6 +157,7 @@ def repo(tmp_path):
     (jobs / "noticeboard_urgent.py").write_text("print('')\n")
     (jobs / "weekly_digest.md").write_text("Weekly digest.\n")
     (tmp_path / "souls" / "_shared" / "noticeboard.md").write_text("## The household noticeboard\n")
+    (tmp_path / "souls" / "_shared" / "voice.md").write_text("# Voice notes\n")
     (jobs / "brain_index.py").write_text("# index\n")
     (jobs / "consolidate.md").write_text("Consolidate the inbox.\n")
     return tmp_path
@@ -569,6 +570,8 @@ network_policies:
                  "telegram": {"enabled": True, "allowed_users": [11]}}
         assert "## The household noticeboard" in r.soul_text(agent)
         assert "household noticeboard" not in r.soul_text(r.load("alpha"))
+        assert "# Voice notes" in r.soul_text({**r.load("alpha"), "voice": True})
+        assert "# Voice notes" not in r.soul_text(r.load("alpha"))
         assert "LOGOS_NOTICEBOARD_URL=http://172.17.0.1:8090/mcp" in r.env_file(agent, "logos-home-alpha")
         r.ensure_jobs("alpha", agent, "logos-home-alpha")
         created = [c[-1] for c in runner.matching("openshell", "sandbox", "exec") if "cron create" in c[-1]]
