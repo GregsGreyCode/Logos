@@ -1,151 +1,41 @@
-"""
-Gateway subcommand for hermes CLI.
+"""``logos gateway run|start|stop|restart|status``.
 
-Handles: logos gateway [run|start|stop|restart|status|install|uninstall|setup]
+Process control for the host-side gateway. A running gateway is identified by
+the PID file in LOGOS_HOME (``gateway.status``), so each LOGOS_HOME controls
+only its own gateway.
 """
+
+from __future__ import annotations
 
 import asyncio
 import os
 import signal
+import socket
 import subprocess
 import sys
+import time
 from pathlib import Path
+from typing import Optional
+
+from gateway.local_config import get_logos_home
+from gateway.status import get_running_pid
 
 PROJECT_ROOT = Path(__file__).parent.parent.resolve()
 
-from logos_cli.config import get_env_value, get_logos_home, save_env_value
-from logos_cli.setup import (
-    print_header, print_info, print_success, print_warning, print_error,
-    prompt, prompt_choice, prompt_yes_no,
-)
-from logos_cli.colors import Colors, color
+_START_TIMEOUT_SECONDS = 30.0
+_STOP_GRACE_SECONDS = 10.0
 
 
-# =============================================================================
-# Process Management (for manual gateway runs)
-# =============================================================================
-
-def _pid_owned_by_us(pid: int) -> bool:
-    """Return True if ``pid`` is owned by the current user.
-
-    Containerd exposes sandbox-internal hermes processes in the host's
-    ``ps`` output under the container's UID (not our user). SIGTERMing
-    those fails with EPERM — harmless but noisy, and it confuses users
-    into thinking the restart failed. Skip them up-front.
-    """
-    try:
-        return os.stat(f"/proc/{pid}").st_uid == os.getuid()
-    except (FileNotFoundError, PermissionError, OSError):
-        return False
+def gateway_port() -> int:
+    """HTTP port of the gateway (same resolution as ``gateway.run``)."""
+    return int(os.getenv("LOGOS_PORT") or os.getenv("HERMES_PORT") or "8091")
 
 
-def find_gateway_pids() -> list:
-    """Find PIDs of running gateway processes."""
-    pids = []
-    patterns = [
-        "logos_cli.main gateway",
-        "hermes gateway",
-        "logos gateway",
-        "logos_cli.main gateway",
-        "gateway/run.py",
-        # ``python -m gateway.run`` — how the CLI's detached launcher and
-        # any manual ``python -m …`` invocation shows up in ps. Without
-        # this pattern the stop/restart commands miss those processes
-        # and the "two gateways on 8091" zombie class comes back.
-        "gateway.run",
-    ]
-
-    try:
-        if is_windows():
-            # Windows: use wmic to search command lines
-            result = subprocess.run(
-                ["wmic", "process", "get", "ProcessId,CommandLine", "/FORMAT:LIST"],
-                capture_output=True, text=True
-            )
-            # Parse WMIC LIST output: blocks of "CommandLine=...\nProcessId=...\n"
-            current_cmd = ""
-            for line in result.stdout.split('\n'):
-                line = line.strip()
-                if line.startswith("CommandLine="):
-                    current_cmd = line[len("CommandLine="):]
-                elif line.startswith("ProcessId="):
-                    pid_str = line[len("ProcessId="):]
-                    if any(p in current_cmd for p in patterns):
-                        try:
-                            pid = int(pid_str)
-                            if pid != os.getpid() and pid not in pids:
-                                pids.append(pid)
-                        except ValueError:
-                            pass
-                    current_cmd = ""
-        else:
-            result = subprocess.run(
-                ["ps", "aux"],
-                capture_output=True,
-                text=True
-            )
-            for line in result.stdout.split('\n'):
-                # Skip grep and current process
-                if 'grep' in line or str(os.getpid()) in line:
-                    continue
-                # The patterns below ("logos gateway", "hermes gateway",
-                # "gateway.run", etc.) also match the user's parent shell
-                # when they invoke e.g. `bash -c "logos gateway start"` —
-                # because the shell's argv contains the full command
-                # string. Require "python" in the process line so only
-                # the Python interpreter actually running the gateway
-                # gets counted. Every gateway code path (systemd, detached
-                # launcher, foreground `logos gateway run`, `python -m
-                # gateway.run`) is a Python process; none of the shell
-                # wrappers are.
-                if 'python' not in line:
-                    continue
-                for pattern in patterns:
-                    if pattern in line:
-                        parts = line.split()
-                        if len(parts) > 1:
-                            try:
-                                pid = int(parts[1])
-                                # Skip sandbox-internal hermes PIDs that
-                                # containerd leaks into the host's ps
-                                # output under a container UID — they
-                                # cannot be signalled from here.
-                                if not _pid_owned_by_us(pid):
-                                    continue
-                                if pid not in pids:
-                                    pids.append(pid)
-                            except ValueError:
-                                continue
-                        break
-    except Exception:
-        pass
-
-    return pids
-
-
-def kill_gateway_processes(force: bool = False) -> int:
-    """Kill any running gateway processes. Returns count killed."""
-    pids = find_gateway_pids()
-    killed = 0
-
-    for pid in pids:
-        try:
-            if force and not is_windows():
-                os.kill(pid, signal.SIGKILL)
-            else:
-                os.kill(pid, signal.SIGTERM)
-            killed += 1
-        except ProcessLookupError:
-            # Process already gone
-            pass
-        except PermissionError:
-            print(f"⚠ Permission denied to kill PID {pid}")
-
-    return killed
+def background_log_path() -> Path:
+    return get_logos_home() / "logs" / "gateway.bg.log"
 
 
 def _pid_alive(pid: int) -> bool:
-    """Return True if the PID corresponds to a running process we can signal."""
     try:
         os.kill(pid, 0)
         return True
@@ -154,12 +44,11 @@ def _pid_alive(pid: int) -> bool:
 
 
 def _port_listening(port: int) -> bool:
-    """Return True if anything is listening on TCP ``port`` on localhost."""
-    import socket as _socket
-    for family, addr in ((_socket.AF_INET, ("127.0.0.1", port)),
-                         (_socket.AF_INET6, ("::1", port))):
+    """Return True if anything accepts TCP connections on localhost:``port``."""
+    for family, addr in ((socket.AF_INET, ("127.0.0.1", port)),
+                         (socket.AF_INET6, ("::1", port))):
         try:
-            with _socket.socket(family, _socket.SOCK_STREAM) as s:
+            with socket.socket(family, socket.SOCK_STREAM) as s:
                 s.settimeout(0.2)
                 if s.connect_ex(addr) == 0:
                     return True
@@ -168,1378 +57,180 @@ def _port_listening(port: int) -> bool:
     return False
 
 
-def stop_and_wait_for_gateway(grace_seconds: float = 10.0,
-                               verify_port: int = 8091) -> int:
-    """Graceful stop: SIGTERM every gateway PID, wait for each to exit,
-    escalate to SIGKILL after ``grace_seconds``, then verify the port is
-    free. Returns the number of processes that were running at start.
-
-    This replaces the old ``kill_gateway_processes() + time.sleep(2)``
-    restart pattern which produced the "two gateways fighting for the
-    port" failure mode — if the old process took >2s to tear down (common
-    during graceful aiohttp shutdown), the new one bound concurrently and
-    every request ended up on whichever copy the kernel picked.
-    """
-    import time as _time
-    pids = find_gateway_pids()
-    if not pids:
-        return 0
-
-    # Step 1: SIGTERM all in parallel
-    for pid in pids:
-        try:
-            os.kill(pid, signal.SIGTERM)
-        except ProcessLookupError:
-            pass
-        except PermissionError:
-            print(f"⚠ Permission denied to SIGTERM {pid}")
-
-    # Step 2: poll until every PID is gone or grace window elapses
-    deadline = _time.monotonic() + grace_seconds
-    pending = list(pids)
-    while pending and _time.monotonic() < deadline:
-        pending = [p for p in pending if _pid_alive(p)]
-        if pending:
-            _time.sleep(0.25)
-
-    # Step 3: SIGKILL stragglers
-    if pending:
-        print(f"⚠ {len(pending)} gateway process(es) didn't exit within "
-              f"{grace_seconds:.0f}s — escalating to SIGKILL: {pending}")
-        for pid in pending:
-            try:
-                os.kill(pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
-        # Brief wait for kernel reaping
-        _time.sleep(0.5)
-
-    # Step 4: confirm the port is actually free (catches the case where
-    # something other than our gateway is squatting 8091, or the SIGKILL
-    # hasn't finished tearing down the listener yet)
-    port_deadline = _time.monotonic() + 3
-    while _time.monotonic() < port_deadline:
-        if not _port_listening(verify_port):
-            break
-        _time.sleep(0.2)
-    else:
-        print(f"⚠ Port {verify_port} is still in use after stop — "
-              f"the new gateway will fail to bind.")
-
-    return len(pids)
-
-
-def run_gateway_detached(verbose: bool = False) -> int:
-    """Start the gateway as a background, detached process.
-
-    Returns the PID of the detached child. The child inherits
-    ``LOGOS_HOME`` + ``LOGOS_JWT_SECRET`` from the current env and
-    writes stdout/stderr to ``~/.logos/logs/gateway.bg.log``. stdin is
-    redirected from /dev/null and ``setsid`` creates a new session so
-    closing this terminal won't kill the gateway.
-    """
-    log_dir = get_logos_home() / "logs"
-    log_dir.mkdir(parents=True, exist_ok=True)
-    log_file = log_dir / "gateway.bg.log"
-
-    cmd = [get_python_path(), "-m", "gateway.run"]
-    if verbose:
-        cmd.append("--verbose")
-
-    # Propagate a JWT secret from the persisted file if the current env
-    # doesn't have one, so tokens issued by the running gateway remain
-    # valid across restarts.
-    env = os.environ.copy()
-    if not env.get("LOGOS_JWT_SECRET"):
-        secret_path = get_logos_home() / ".jwt_secret"
-        if secret_path.exists():
-            env["LOGOS_JWT_SECRET"] = secret_path.read_text().strip()
-
-    # Overlay KEY=VALUE lines from ~/.logos/env (openshell convention) so
-    # flags like LOGOS_HERMES_SERVER_MODE and LOGOS_DISPATCH_V2 survive
-    # `logos gateway restart` without needing to re-export them each time.
-    # Shell env wins — a value already in the caller's environment is not
-    # overwritten, matching python-dotenv's default (override=False).
+def _shell_env_overlay(env: dict) -> dict:
+    """Overlay KEY=VALUE lines from LOGOS_HOME/env; existing values win."""
     env_file = get_logos_home() / "env"
-    if env_file.exists():
-        try:
-            for raw in env_file.read_text(encoding="utf-8").splitlines():
-                line = raw.strip()
-                if not line or line.startswith("#") or "=" not in line:
-                    continue
-                if line.startswith("export "):
-                    line = line[len("export "):]
-                k, _, v = line.partition("=")
-                k = k.strip()
-                v = v.strip().strip('"').strip("'")
-                if k and k not in env:
-                    env[k] = v
-        except OSError:
-            pass  # unreadable file is best-effort — don't block the start
-
-    with open(log_file, "ab") as _log:
-        proc = subprocess.Popen(
-            cmd,
-            cwd=str(PROJECT_ROOT),
-            stdin=subprocess.DEVNULL,
-            stdout=_log,
-            stderr=_log,
-            start_new_session=True,  # setsid — detaches from our TTY
-            env=env,
-        )
-
-    return proc.pid
-
-
-def is_linux() -> bool:
-    return sys.platform.startswith('linux')
-
-def is_macos() -> bool:
-    return sys.platform == 'darwin'
-
-def is_windows() -> bool:
-    return sys.platform == 'win32'
-
-
-# =============================================================================
-# Service Configuration
-# =============================================================================
-
-SERVICE_NAME = "logos-gateway"
-SERVICE_DESCRIPTION = "Logos Gateway - Agent Platform Service"
-
-
-def get_systemd_unit_path() -> Path:
-    return Path.home() / ".config" / "systemd" / "user" / f"{SERVICE_NAME}.service"
-
-
-def get_systemd_linger_status() -> tuple[bool | None, str]:
-    """Return whether systemd user lingering is enabled for the current user.
-
-    Returns:
-        (True, "") when linger is enabled.
-        (False, "") when linger is disabled.
-        (None, detail) when the status could not be determined.
-    """
-    if not is_linux():
-        return None, "not supported on this platform"
-
-    import shutil
-
-    if not shutil.which("loginctl"):
-        return None, "loginctl not found"
-
-    username = os.getenv("USER") or os.getenv("LOGNAME")
-    if not username:
-        try:
-            import pwd
-            username = pwd.getpwuid(os.getuid()).pw_name
-        except Exception:
-            return None, "could not determine current user"
-
+    if not env_file.exists():
+        return env
     try:
-        result = subprocess.run(
-            ["loginctl", "show-user", username, "--property=Linger", "--value"],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-    except Exception as e:
-        return None, str(e)
-
-    if result.returncode != 0:
-        detail = (result.stderr or result.stdout or f"exit {result.returncode}").strip()
-        return None, detail or "loginctl query failed"
-
-    value = (result.stdout or "").strip().lower()
-    if value in {"yes", "true", "1"}:
-        return True, ""
-    if value in {"no", "false", "0"}:
-        return False, ""
-
-    rendered = value or "<empty>"
-    return None, f"unexpected loginctl output: {rendered}"
+        for raw in env_file.read_text(encoding="utf-8").splitlines():
+            line = raw.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            if line.startswith("export "):
+                line = line[len("export "):]
+            k, _, v = line.partition("=")
+            k = k.strip()
+            v = v.strip().strip('"').strip("'")
+            if k and k not in env:
+                env[k] = v
+    except OSError:
+        pass
+    return env
 
 
-def print_systemd_linger_guidance() -> None:
-    """Print the current linger status and the fix when it is disabled."""
-    linger_enabled, linger_detail = get_systemd_linger_status()
-    if linger_enabled is True:
-        print("✓ Systemd linger is enabled (service survives logout)")
-    elif linger_enabled is False:
-        print("⚠ Systemd linger is disabled (gateway may stop when you log out)")
-        print("  Run: sudo loginctl enable-linger $USER")
-    else:
-        print(f"⚠ Could not verify systemd linger ({linger_detail})")
-        print("  If you want the gateway user service to survive logout, run:")
-        print("  sudo loginctl enable-linger $USER")
+def run_gateway(replace: bool = False) -> None:
+    """Run the gateway in the foreground. Exits 1 if it fails to start.
 
-def get_launchd_plist_path() -> Path:
-    return Path.home() / "Library" / "LaunchAgents" / "ai.logos.gateway.plist"
-
-def get_python_path() -> str:
-    if is_windows():
-        venv_python = PROJECT_ROOT / "venv" / "Scripts" / "python.exe"
-    else:
-        venv_python = PROJECT_ROOT / "venv" / "bin" / "python"
-    if venv_python.exists():
-        return str(venv_python)
-    return sys.executable
-
-def get_logos_cli_path() -> str:
-    """Get the path to the logos CLI."""
-    # Check if installed via pip (prefer logos, fall back to hermes)
-    import shutil
-    logos_bin = shutil.which("logos")
-    if logos_bin:
-        return logos_bin
-    hermes_bin = shutil.which("hermes")
-    if hermes_bin:
-        return hermes_bin
-
-    # Fallback to direct module execution
-    return f"{get_python_path()} -m logos_cli.main"
-
-
-# =============================================================================
-# Systemd (Linux)
-# =============================================================================
-
-def generate_systemd_unit() -> str:
-    import shutil
-    python_path = get_python_path()
-    working_dir = str(PROJECT_ROOT)
-    venv_dir = str(PROJECT_ROOT / "venv")
-    venv_bin = str(PROJECT_ROOT / "venv" / "bin")
-    node_bin = str(PROJECT_ROOT / "node_modules" / ".bin")
-
-    # Build a PATH that includes the venv, node_modules, and standard system dirs
-    sane_path = f"{venv_bin}:{node_bin}:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
-    
-    logos_cli = shutil.which("hermes") or f"{python_path} -m logos_cli.main"
-    return f"""[Unit]
-Description={SERVICE_DESCRIPTION}
-After=network.target
-
-[Service]
-Type=simple
-ExecStart={python_path} -m logos_cli.main gateway run --replace
-ExecStop={logos_cli} gateway stop
-WorkingDirectory={working_dir}
-Environment="PATH={sane_path}"
-Environment="VIRTUAL_ENV={venv_dir}"
-Restart=on-failure
-RestartSec=10
-KillMode=mixed
-KillSignal=SIGTERM
-TimeoutStopSec=15
-StandardOutput=journal
-StandardError=journal
-
-[Install]
-WantedBy=default.target
-"""
-
-
-def _normalize_service_definition(text: str) -> str:
-    return "\n".join(line.rstrip() for line in text.strip().splitlines())
-
-
-def systemd_unit_is_current() -> bool:
-    unit_path = get_systemd_unit_path()
-    if not unit_path.exists():
-        return False
-
-    installed = unit_path.read_text(encoding="utf-8")
-    expected = generate_systemd_unit()
-    return _normalize_service_definition(installed) == _normalize_service_definition(expected)
-
-
-
-def refresh_systemd_unit_if_needed() -> bool:
-    """Rewrite the installed user unit when the generated definition has changed."""
-    unit_path = get_systemd_unit_path()
-    if not unit_path.exists() or systemd_unit_is_current():
-        return False
-
-    unit_path.write_text(generate_systemd_unit(), encoding="utf-8")
-    subprocess.run(["systemctl", "--user", "daemon-reload"], check=True)
-    print("↻ Updated gateway service definition to match the current Logos install")
-    return True
-
-
-def systemd_install(force: bool = False):
-    unit_path = get_systemd_unit_path()
-    
-    if unit_path.exists() and not force:
-        print(f"Service already installed at: {unit_path}")
-        print("Use --force to reinstall")
-        return
-    
-    unit_path.parent.mkdir(parents=True, exist_ok=True)
-    print(f"Installing systemd service to: {unit_path}")
-    unit_path.write_text(generate_systemd_unit())
-    
-    subprocess.run(["systemctl", "--user", "daemon-reload"], check=True)
-    subprocess.run(["systemctl", "--user", "enable", SERVICE_NAME], check=True)
-    
-    print()
-    print("✓ Service installed and enabled!")
-    print()
-    print("Next steps:")
-    print(f"  logos gateway start              # Start the service")
-    print(f"  logos gateway status             # Check status")
-    print(f"  journalctl --user -u {SERVICE_NAME} -f  # View logs")
-    print()
-    print_systemd_linger_guidance()
-
-def systemd_uninstall():
-    subprocess.run(["systemctl", "--user", "stop", SERVICE_NAME], check=False)
-    subprocess.run(["systemctl", "--user", "disable", SERVICE_NAME], check=False)
-    
-    unit_path = get_systemd_unit_path()
-    if unit_path.exists():
-        unit_path.unlink()
-        print(f"✓ Removed {unit_path}")
-    
-    subprocess.run(["systemctl", "--user", "daemon-reload"], check=True)
-    print("✓ Service uninstalled")
-
-def systemd_start():
-    refresh_systemd_unit_if_needed()
-    subprocess.run(["systemctl", "--user", "start", SERVICE_NAME], check=True)
-    print("✓ Service started")
-
-
-def systemd_stop():
-    subprocess.run(["systemctl", "--user", "stop", SERVICE_NAME], check=True)
-    print("✓ Service stopped")
-
-
-def systemd_restart():
-    refresh_systemd_unit_if_needed()
-    subprocess.run(["systemctl", "--user", "restart", SERVICE_NAME], check=True)
-    print("✓ Service restarted")
-
-
-def systemd_status(deep: bool = False):
-    # Check if service unit file exists
-    unit_path = get_systemd_unit_path()
-    if not unit_path.exists():
-        print("✗ Gateway service is not installed")
-        print("  Run: logos gateway install")
-        return
-
-    if not systemd_unit_is_current():
-        print("⚠ Installed gateway service definition is outdated")
-        print("  Run: logos gateway restart  # auto-refreshes the unit")
-        print()
-    
-    # Show detailed status first
-    subprocess.run(
-        ["systemctl", "--user", "status", SERVICE_NAME, "--no-pager"],
-        capture_output=False
-    )
-
-    # Check if service is active
-    result = subprocess.run(
-        ["systemctl", "--user", "is-active", SERVICE_NAME],
-        capture_output=True,
-        text=True
-    )
-
-    status = result.stdout.strip()
-
-    if status == "active":
-        print("✓ Gateway service is running")
-    else:
-        print("✗ Gateway service is stopped")
-        print("  Run: logos gateway start")
-
-    if deep:
-        print_systemd_linger_guidance()
-    else:
-        linger_enabled, _ = get_systemd_linger_status()
-        if linger_enabled is True:
-            print("✓ Systemd linger is enabled (service survives logout)")
-        elif linger_enabled is False:
-            print("⚠ Systemd linger is disabled (gateway may stop when you log out)")
-            print("  Run: sudo loginctl enable-linger $USER")
-
-    if deep:
-        print()
-        print("Recent logs:")
-        subprocess.run([
-            "journalctl", "--user", "-u", SERVICE_NAME,
-            "-n", "20", "--no-pager"
-        ])
-
-
-# =============================================================================
-# Launchd (macOS)
-# =============================================================================
-
-def generate_launchd_plist() -> str:
-    python_path = get_python_path()
-    working_dir = str(PROJECT_ROOT)
-    log_dir = get_logos_home() / "logs"
-    log_dir.mkdir(parents=True, exist_ok=True)
-    
-    return f"""<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>Label</key>
-    <string>ai.logos.gateway</string>
-    
-    <key>ProgramArguments</key>
-    <array>
-        <string>{python_path}</string>
-        <string>-m</string>
-        <string>logos_cli.main</string>
-        <string>gateway</string>
-        <string>run</string>
-    </array>
-    
-    <key>WorkingDirectory</key>
-    <string>{working_dir}</string>
-    
-    <key>RunAtLoad</key>
-    <true/>
-    
-    <key>KeepAlive</key>
-    <dict>
-        <key>SuccessfulExit</key>
-        <false/>
-    </dict>
-    
-    <key>StandardOutPath</key>
-    <string>{log_dir}/gateway.log</string>
-    
-    <key>StandardErrorPath</key>
-    <string>{log_dir}/gateway.error.log</string>
-</dict>
-</plist>
-"""
-
-def launchd_install(force: bool = False):
-    plist_path = get_launchd_plist_path()
-    
-    if plist_path.exists() and not force:
-        print(f"Service already installed at: {plist_path}")
-        print("Use --force to reinstall")
-        return
-    
-    plist_path.parent.mkdir(parents=True, exist_ok=True)
-    print(f"Installing launchd service to: {plist_path}")
-    plist_path.write_text(generate_launchd_plist())
-    
-    subprocess.run(["launchctl", "load", str(plist_path)], check=True)
-    
-    print()
-    print("✓ Service installed and loaded!")
-    print()
-    print("Next steps:")
-    print("  logos gateway status             # Check status")
-    print("  tail -f ~/.logos/logs/gateway.log  # View logs")
-
-def launchd_uninstall():
-    plist_path = get_launchd_plist_path()
-    subprocess.run(["launchctl", "unload", str(plist_path)], check=False)
-    
-    if plist_path.exists():
-        plist_path.unlink()
-        print(f"✓ Removed {plist_path}")
-    
-    print("✓ Service uninstalled")
-
-def launchd_start():
-    subprocess.run(["launchctl", "start", "ai.logos.gateway"], check=True)
-    print("✓ Service started")
-
-def launchd_stop():
-    subprocess.run(["launchctl", "stop", "ai.logos.gateway"], check=True)
-    print("✓ Service stopped")
-
-def launchd_restart():
-    launchd_stop()
-    launchd_start()
-
-def launchd_status(deep: bool = False):
-    result = subprocess.run(
-        ["launchctl", "list", "ai.logos.gateway"],
-        capture_output=True,
-        text=True
-    )
-    
-    if result.returncode == 0:
-        print("✓ Gateway service is loaded")
-        print(result.stdout)
-    else:
-        print("✗ Gateway service is not loaded")
-    
-    if deep:
-        log_file = get_logos_home() / "logs" / "gateway.log"
-        if log_file.exists():
-            print()
-            print("Recent logs:")
-            subprocess.run(["tail", "-20", str(log_file)])
-
-
-# =============================================================================
-# Gateway Runner
-# =============================================================================
-
-def run_gateway(verbose: bool = False, replace: bool = False):
-    """Run the gateway in foreground.
-    
-    Args:
-        verbose: Enable verbose logging output.
-        replace: If True, kill any existing gateway instance before starting.
-                 This prevents systemd restart loops when the old process
-                 hasn't fully exited yet.
+    ``replace`` stops an already-running gateway for this LOGOS_HOME first.
     """
-    sys.path.insert(0, str(PROJECT_ROOT))
-    
     from gateway.run import start_gateway
-    
-    print("┌─────────────────────────────────────────────────────────┐")
-    print("│           ⚕ Hermes Gateway Starting...                 │")
-    print("├─────────────────────────────────────────────────────────┤")
-    print("│  Messaging platforms + cron scheduler                    │")
-    print("│  Press Ctrl+C to stop                                   │")
-    print("└─────────────────────────────────────────────────────────┘")
-    print()
-    
-    # Exit with code 1 if gateway fails to connect any platform,
-    # so systemd Restart=on-failure will retry on transient errors
+
+    print(f"Logos gateway starting on port {gateway_port()} (Ctrl+C to stop)")
     success = asyncio.run(start_gateway(replace=replace))
     if not success:
         sys.exit(1)
 
 
-# =============================================================================
-# Gateway Setup (Interactive Messaging Platform Configuration)
-# =============================================================================
+def run_gateway_detached() -> int:
+    """Start the gateway as a detached background process; return its PID.
 
-# Per-platform config: each entry defines the env vars, setup instructions,
-# and prompts needed to configure a messaging platform.
-_PLATFORMS = [
-    {
-        "key": "telegram",
-        "label": "Telegram",
-        "emoji": "📱",
-        "token_var": "TELEGRAM_BOT_TOKEN",
-        "setup_instructions": [
-            "1. Open Telegram and message @BotFather",
-            "2. Send /newbot and follow the prompts to create your bot",
-            "3. Copy the bot token BotFather gives you",
-            "4. To find your user ID: message @userinfobot — it replies with your numeric ID",
-        ],
-        "vars": [
-            {"name": "TELEGRAM_BOT_TOKEN", "prompt": "Bot token", "password": True,
-             "help": "Paste the token from @BotFather (step 3 above)."},
-            {"name": "TELEGRAM_ALLOWED_USERS", "prompt": "Allowed user IDs (comma-separated)", "password": False,
-             "is_allowlist": True,
-             "help": "Paste your user ID from step 4 above."},
-            {"name": "TELEGRAM_HOME_CHANNEL", "prompt": "Home channel ID (for cron/notification delivery, or empty to set later with /set-home)", "password": False,
-             "help": "For DMs, this is your user ID. You can set it later by typing /set-home in chat."},
-        ],
-    },
-    {
-        "key": "discord",
-        "label": "Discord",
-        "emoji": "💬",
-        "token_var": "DISCORD_BOT_TOKEN",
-        "setup_instructions": [
-            "1. Go to https://discord.com/developers/applications → New Application",
-            "2. Go to Bot → Reset Token → copy the bot token",
-            "3. Enable: Bot → Privileged Gateway Intents → Message Content Intent",
-            "4. Invite the bot to your server:",
-            "   OAuth2 → URL Generator → check BOTH scopes:",
-            "     - bot",
-            "     - applications.commands  (required for slash commands!)",
-            "   Bot Permissions: Send Messages, Read Message History, Attach Files",
-            "   Copy the URL and open it in your browser to invite.",
-            "5. Get your user ID: enable Developer Mode in Discord settings,",
-            "   then right-click your name → Copy ID",
-        ],
-        "vars": [
-            {"name": "DISCORD_BOT_TOKEN", "prompt": "Bot token", "password": True,
-             "help": "Paste the token from step 2 above."},
-            {"name": "DISCORD_ALLOWED_USERS", "prompt": "Allowed user IDs or usernames (comma-separated)", "password": False,
-             "is_allowlist": True,
-             "help": "Paste your user ID from step 5 above."},
-            {"name": "DISCORD_HOME_CHANNEL", "prompt": "Home channel ID (for cron/notification delivery, or empty to set later with /set-home)", "password": False,
-             "help": "Right-click a channel → Copy Channel ID (requires Developer Mode)."},
-        ],
-    },
-    {
-        "key": "slack",
-        "label": "Slack",
-        "emoji": "💼",
-        "token_var": "SLACK_BOT_TOKEN",
-        "setup_instructions": [
-            "1. Go to https://api.slack.com/apps → Create New App → From Scratch",
-            "2. Enable Socket Mode: Settings → Socket Mode → Enable",
-            "   Create an App-Level Token with scope: connections:write → copy xapp-... token",
-            "3. Add Bot Token Scopes: Features → OAuth & Permissions → Scopes",
-            "   Required: chat:write, app_mentions:read, channels:history, channels:read,",
-            "   groups:history, im:history, im:read, im:write, users:read, files:write",
-            "4. Subscribe to Events: Features → Event Subscriptions → Enable",
-            "   Required events: message.im, message.channels, app_mention",
-            "   Optional: message.groups (for private channels)",
-            "   ⚠ Without message.channels the bot will ONLY work in DMs!",
-            "5. Install to Workspace: Settings → Install App → copy xoxb-... token",
-            "6. Reinstall the app after any scope or event changes",
-            "7. Find your user ID: click your profile → three dots → Copy member ID",
-            "8. Invite the bot to channels: /invite @YourBot",
-        ],
-        "vars": [
-            {"name": "SLACK_BOT_TOKEN", "prompt": "Bot Token (xoxb-...)", "password": True,
-             "help": "Paste the bot token from step 3 above."},
-            {"name": "SLACK_APP_TOKEN", "prompt": "App Token (xapp-...)", "password": True,
-             "help": "Paste the app-level token from step 4 above."},
-            {"name": "SLACK_ALLOWED_USERS", "prompt": "Allowed user IDs (comma-separated)", "password": False,
-             "is_allowlist": True,
-             "help": "Paste your member ID from step 7 above."},
-        ],
-    },
-    {
-        "key": "whatsapp",
-        "label": "WhatsApp",
-        "emoji": "📲",
-        "token_var": "WHATSAPP_ENABLED",
-    },
-    {
-        "key": "signal",
-        "label": "Signal",
-        "emoji": "📡",
-        "token_var": "SIGNAL_HTTP_URL",
-    },
-    {
-        "key": "email",
-        "label": "Email",
-        "emoji": "📧",
-        "token_var": "EMAIL_ADDRESS",
-        "setup_instructions": [
-            "1. Use a dedicated email account for your Hermes agent",
-            "2. For Gmail: enable 2FA, then create an App Password at",
-            "   https://myaccount.google.com/apppasswords",
-            "3. For other providers: use your email password or app-specific password",
-            "4. IMAP must be enabled on your email account",
-        ],
-        "vars": [
-            {"name": "EMAIL_ADDRESS", "prompt": "Email address", "password": False,
-             "help": "The email address Hermes will use (e.g., hermes@gmail.com)."},
-            {"name": "EMAIL_PASSWORD", "prompt": "Email password (or app password)", "password": True,
-             "help": "For Gmail, use an App Password (not your regular password)."},
-            {"name": "EMAIL_IMAP_HOST", "prompt": "IMAP host", "password": False,
-             "help": "e.g., imap.gmail.com for Gmail, outlook.office365.com for Outlook."},
-            {"name": "EMAIL_SMTP_HOST", "prompt": "SMTP host", "password": False,
-             "help": "e.g., smtp.gmail.com for Gmail, smtp.office365.com for Outlook."},
-            {"name": "EMAIL_ALLOWED_USERS", "prompt": "Allowed sender emails (comma-separated)", "password": False,
-             "is_allowlist": True,
-             "help": "Only emails from these addresses will be processed."},
-        ],
-    },
-]
-
-
-def _platform_status(platform: dict) -> str:
-    """Return a plain-text status string for a platform.
-
-    Returns uncolored text so it can safely be embedded in
-    simple_term_menu items (ANSI codes break width calculation).
+    stdout/stderr go to ``LOGOS_HOME/logs/gateway.bg.log``.
     """
-    token_var = platform["token_var"]
-    val = get_env_value(token_var)
-    if token_var == "WHATSAPP_ENABLED":
-        if val and val.lower() == "true":
-            session_file = get_hermes_home() / "whatsapp" / "session" / "creds.json"
-            if session_file.exists():
-                return "configured + paired"
-            return "enabled, not paired"
-        return "not configured"
-    if platform.get("key") == "signal":
-        account = get_env_value("SIGNAL_ACCOUNT")
-        if val and account:
-            return "configured"
-        if val or account:
-            return "partially configured"
-        return "not configured"
-    if platform.get("key") == "email":
-        pwd = get_env_value("EMAIL_PASSWORD")
-        imap = get_env_value("EMAIL_IMAP_HOST")
-        smtp = get_env_value("EMAIL_SMTP_HOST")
-        if all([val, pwd, imap, smtp]):
-            return "configured"
-        if any([val, pwd, imap, smtp]):
-            return "partially configured"
-        return "not configured"
-    if val:
-        return "configured"
-    return "not configured"
+    log_file = background_log_path()
+    log_file.parent.mkdir(parents=True, exist_ok=True)
 
+    env = os.environ.copy()
+    if not env.get("LOGOS_JWT_SECRET"):
+        secret_path = get_logos_home() / ".jwt_secret"
+        if secret_path.exists():
+            env["LOGOS_JWT_SECRET"] = secret_path.read_text().strip()
+    env = _shell_env_overlay(env)
 
-def _setup_standard_platform(platform: dict):
-    """Interactive setup for Telegram, Discord, or Slack."""
-    emoji = platform["emoji"]
-    label = platform["label"]
-    token_var = platform["token_var"]
-
-    print()
-    print(color(f"  ─── {emoji} {label} Setup ───", Colors.CYAN))
-
-    # Show step-by-step setup instructions if this platform has them
-    instructions = platform.get("setup_instructions")
-    if instructions:
-        print()
-        for line in instructions:
-            print_info(f"  {line}")
-
-    existing_token = get_env_value(token_var)
-    if existing_token:
-        print()
-        print_success(f"{label} is already configured.")
-        if not prompt_yes_no(f"  Reconfigure {label}?", False):
-            return
-
-    allowed_val_set = None  # Track if user set an allowlist (for home channel offer)
-
-    for var in platform["vars"]:
-        print()
-        print_info(f"  {var['help']}")
-        existing = get_env_value(var["name"])
-        if existing and var["name"] != token_var:
-            print_info(f"  Current: {existing}")
-
-        # Allowlist fields get special handling for the deny-by-default security model
-        if var.get("is_allowlist"):
-            print_info(f"  The gateway DENIES all users by default for security.")
-            print_info(f"  Enter user IDs to create an allowlist, or leave empty")
-            print_info(f"  and you'll be asked about open access next.")
-            value = prompt(f"  {var['prompt']}", password=False)
-            if value:
-                cleaned = value.replace(" ", "")
-                # For Discord, strip common prefixes (user:123, <@123>, <@!123>)
-                if "DISCORD" in var["name"]:
-                    parts = []
-                    for uid in cleaned.split(","):
-                        uid = uid.strip()
-                        if uid.startswith("<@") and uid.endswith(">"):
-                            uid = uid.lstrip("<@!").rstrip(">")
-                        if uid.lower().startswith("user:"):
-                            uid = uid[5:]
-                        if uid:
-                            parts.append(uid)
-                    cleaned = ",".join(parts)
-                save_env_value(var["name"], cleaned)
-                print_success(f"  Saved — only these users can interact with the bot.")
-                allowed_val_set = cleaned
-            else:
-                # No allowlist — ask about open access vs DM pairing
-                print()
-                access_choices = [
-                    "Enable open access (anyone can message the bot)",
-                    "Use DM pairing (unknown users request access, you approve with 'hermes pairing approve')",
-                    "Skip for now (bot will deny all users until configured)",
-                ]
-                access_idx = prompt_choice("  How should unauthorized users be handled?", access_choices, 1)
-                if access_idx == 0:
-                    save_env_value("GATEWAY_ALLOW_ALL_USERS", "true")
-                    print_warning("  Open access enabled — anyone can use your bot!")
-                elif access_idx == 1:
-                    print_success("  DM pairing mode — users will receive a code to request access.")
-                    print_info("  Approve with: logos pairing approve {platform} {code}")
-                else:
-                    print_info("  Skipped — configure later with 'logos gateway setup'")
-            continue
-
-        value = prompt(f"  {var['prompt']}", password=var.get("password", False))
-        if value:
-            save_env_value(var["name"], value)
-            print_success(f"  Saved {var['name']}")
-        elif var["name"] == token_var:
-            print_warning(f"  Skipped — {label} won't work without this.")
-            return
-        else:
-            print_info(f"  Skipped (can configure later)")
-
-    # If an allowlist was set and home channel wasn't, offer to reuse
-    # the first user ID (common for Telegram DMs).
-    home_var = f"{label.upper()}_HOME_CHANNEL"
-    home_val = get_env_value(home_var)
-    if allowed_val_set and not home_val and label == "Telegram":
-        first_id = allowed_val_set.split(",")[0].strip()
-        if first_id and prompt_yes_no(f"  Use your user ID ({first_id}) as the home channel?", True):
-            save_env_value(home_var, first_id)
-            print_success(f"  Home channel set to {first_id}")
-
-    print()
-    print_success(f"{emoji} {label} configured!")
-
-
-def _setup_whatsapp():
-    """Delegate to the existing WhatsApp setup flow."""
-    from logos_cli.main import cmd_whatsapp
-    import argparse
-    cmd_whatsapp(argparse.Namespace())
-
-
-def _is_service_installed() -> bool:
-    """Check if the gateway is installed as a system service."""
-    if is_linux():
-        return get_systemd_unit_path().exists()
-    elif is_macos():
-        return get_launchd_plist_path().exists()
-    return False
-
-
-def _is_service_running() -> bool:
-    """Check if the gateway service is currently running."""
-    if is_linux() and get_systemd_unit_path().exists():
-        result = subprocess.run(
-            ["systemctl", "--user", "is-active", SERVICE_NAME],
-            capture_output=True, text=True
+    with open(log_file, "ab") as log:
+        proc = subprocess.Popen(
+            [sys.executable, "-m", "gateway.run"],
+            cwd=str(PROJECT_ROOT),
+            stdin=subprocess.DEVNULL,
+            stdout=log,
+            stderr=log,
+            start_new_session=True,
+            env=env,
         )
-        return result.stdout.strip() == "active"
-    elif is_macos() and get_launchd_plist_path().exists():
-        result = subprocess.run(
-            ["launchctl", "list", "ai.logos.gateway"],
-            capture_output=True, text=True
-        )
-        return result.returncode == 0
-    # Check for manual processes
-    return len(find_gateway_pids()) > 0
+    return proc.pid
 
 
-def _setup_signal():
-    """Interactive setup for Signal messenger."""
-    import shutil
+def stop_gateway(grace_seconds: float = _STOP_GRACE_SECONDS) -> Optional[int]:
+    """SIGTERM the running gateway, escalate to SIGKILL after the grace window.
 
-    print()
-    print(color("  ─── 📡 Signal Setup ───", Colors.CYAN))
+    Returns the PID that was stopped, or None if no gateway was running.
+    """
+    pid = get_running_pid()
+    if pid is None:
+        return None
 
-    existing_url = get_env_value("SIGNAL_HTTP_URL")
-    existing_account = get_env_value("SIGNAL_ACCOUNT")
-    if existing_url and existing_account:
-        print()
-        print_success("Signal is already configured.")
-        if not prompt_yes_no("  Reconfigure Signal?", False):
-            return
-
-    # Check if signal-cli is available
-    print()
-    if shutil.which("signal-cli"):
-        print_success("signal-cli found on PATH.")
-    else:
-        print_warning("signal-cli not found on PATH.")
-        print_info("  Signal requires signal-cli running as an HTTP daemon.")
-        print_info("  Install options:")
-        print_info("    Linux:  sudo apt install signal-cli")
-        print_info("            or download from https://github.com/AsamK/signal-cli")
-        print_info("    macOS:  brew install signal-cli")
-        print_info("    Docker: bbernhard/signal-cli-rest-api")
-        print()
-        print_info("  After installing, link your account and start the daemon:")
-        print_info("    signal-cli link -n \"HermesAgent\"")
-        print_info("    signal-cli --account +YOURNUMBER daemon --http 127.0.0.1:8080")
-        print()
-
-    # HTTP URL
-    print()
-    print_info("  Enter the URL where signal-cli HTTP daemon is running.")
-    default_url = existing_url or "http://127.0.0.1:8080"
     try:
-        url = input(f"  HTTP URL [{default_url}]: ").strip() or default_url
-    except (EOFError, KeyboardInterrupt):
-        print("\n  Setup cancelled.")
-        return
+        os.kill(pid, signal.SIGTERM)
+    except ProcessLookupError:
+        return pid
+    except PermissionError:
+        print(f"✗ Permission denied stopping gateway PID {pid}")
+        sys.exit(1)
 
-    # Test connectivity
-    print_info("  Testing connection...")
-    try:
-        import httpx
-        resp = httpx.get(f"{url.rstrip('/')}/api/v1/check", timeout=10.0)
-        if resp.status_code == 200:
-            print_success("  signal-cli daemon is reachable!")
-        else:
-            print_warning(f"  signal-cli responded with status {resp.status_code}.")
-            if not prompt_yes_no("  Continue anyway?", False):
-                return
-    except Exception as e:
-        print_warning(f"  Could not reach signal-cli at {url}: {e}")
-        if not prompt_yes_no("  Save this URL anyway? (you can start signal-cli later)", True):
-            return
+    deadline = time.monotonic() + grace_seconds
+    while time.monotonic() < deadline and _pid_alive(pid):
+        time.sleep(0.25)
 
-    save_env_value("SIGNAL_HTTP_URL", url)
-
-    # Account phone number
-    print()
-    print_info("  Enter your Signal account phone number in E.164 format.")
-    print_info("  Example: +15551234567")
-    default_account = existing_account or ""
-    try:
-        account = input(f"  Account number{f' [{default_account}]' if default_account else ''}: ").strip()
-        if not account:
-            account = default_account
-    except (EOFError, KeyboardInterrupt):
-        print("\n  Setup cancelled.")
-        return
-
-    if not account:
-        print_error("  Account number is required.")
-        return
-
-    save_env_value("SIGNAL_ACCOUNT", account)
-
-    # Allowed users
-    print()
-    print_info("  The gateway DENIES all users by default for security.")
-    print_info("  Enter phone numbers or UUIDs of allowed users (comma-separated).")
-    existing_allowed = get_env_value("SIGNAL_ALLOWED_USERS") or ""
-    default_allowed = existing_allowed or account
-    try:
-        allowed = input(f"  Allowed users [{default_allowed}]: ").strip() or default_allowed
-    except (EOFError, KeyboardInterrupt):
-        print("\n  Setup cancelled.")
-        return
-
-    save_env_value("SIGNAL_ALLOWED_USERS", allowed)
-
-    # Group messaging
-    print()
-    if prompt_yes_no("  Enable group messaging? (disabled by default for security)", False):
-        print()
-        print_info("  Enter group IDs to allow, or * for all groups.")
-        existing_groups = get_env_value("SIGNAL_GROUP_ALLOWED_USERS") or ""
+    if _pid_alive(pid):
+        print(f"⚠ Gateway PID {pid} did not exit within {grace_seconds:.0f}s, sending SIGKILL")
         try:
-            groups = input(f"  Group IDs [{existing_groups or '*'}]: ").strip() or existing_groups or "*"
-        except (EOFError, KeyboardInterrupt):
-            print("\n  Setup cancelled.")
+            os.kill(pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        time.sleep(0.5)
+
+    port = gateway_port()
+    port_deadline = time.monotonic() + 3
+    while time.monotonic() < port_deadline and _port_listening(port):
+        time.sleep(0.2)
+    return pid
+
+
+def _start_and_wait() -> None:
+    port = gateway_port()
+    if _port_listening(port):
+        print(f"✗ Port {port} is already in use; not starting a second gateway.")
+        sys.exit(1)
+
+    pid = run_gateway_detached()
+    print(f"Starting gateway in background (PID {pid})…")
+    deadline = time.monotonic() + _START_TIMEOUT_SECONDS
+    while time.monotonic() < deadline:
+        if not _pid_alive(pid):
+            print(f"✗ Gateway PID {pid} exited before binding. See {background_log_path()}")
+            sys.exit(1)
+        if _port_listening(port):
+            print(f"✓ Gateway is listening on port {port}")
             return
-        save_env_value("SIGNAL_GROUP_ALLOWED_USERS", groups)
-
-    print()
-    print_success("Signal configured!")
-    print_info(f"  URL: {url}")
-    print_info(f"  Account: {account}")
-    print_info(f"  DM auth: via SIGNAL_ALLOWED_USERS + DM pairing")
-    print_info(f"  Groups: {'enabled' if get_env_value('SIGNAL_GROUP_ALLOWED_USERS') else 'disabled'}")
+        time.sleep(0.5)
+    print(f"⚠ Gateway did not bind to {port} within {_START_TIMEOUT_SECONDS:.0f}s "
+          f"(PID {pid} still running). See {background_log_path()}")
+    sys.exit(1)
 
 
-def gateway_setup():
-    """Interactive setup for messaging platforms + gateway service."""
-
-    print()
-    print(color("┌─────────────────────────────────────────────────────────┐", Colors.MAGENTA))
-    print(color("│             ⚕ Gateway Setup                            │", Colors.MAGENTA))
-    print(color("├─────────────────────────────────────────────────────────┤", Colors.MAGENTA))
-    print(color("│  Configure messaging platforms and the gateway service. │", Colors.MAGENTA))
-    print(color("│  Press Ctrl+C at any time to exit.                     │", Colors.MAGENTA))
-    print(color("└─────────────────────────────────────────────────────────┘", Colors.MAGENTA))
-
-    # ── Gateway service status ──
-    print()
-    service_installed = _is_service_installed()
-    service_running = _is_service_running()
-
-    if service_installed and service_running:
-        print_success("Gateway service is installed and running.")
-    elif service_installed:
-        print_warning("Gateway service is installed but not running.")
-        if prompt_yes_no("  Start it now?", True):
-            try:
-                if is_linux():
-                    systemd_start()
-                elif is_macos():
-                    launchd_start()
-            except subprocess.CalledProcessError as e:
-                print_error(f"  Failed to start: {e}")
-    else:
-        print_info("Gateway service is not installed yet.")
-        print_info("You'll be offered to install it after configuring platforms.")
-
-    # ── Platform configuration loop ──
-    while True:
-        print()
-        print_header("Messaging Platforms")
-
-        menu_items = []
-        for plat in _PLATFORMS:
-            status = _platform_status(plat)
-            menu_items.append(f"{plat['label']}  ({status})")
-        menu_items.append("Done")
-
-        choice = prompt_choice("Select a platform to configure:", menu_items, len(menu_items) - 1)
-
-        if choice == len(_PLATFORMS):
-            break
-
-        platform = _PLATFORMS[choice]
-
-        if platform["key"] == "whatsapp":
-            _setup_whatsapp()
-        elif platform["key"] == "signal":
-            _setup_signal()
-        else:
-            _setup_standard_platform(platform)
-
-    # ── Post-setup: offer to install/restart gateway ──
-    any_configured = any(
-        bool(get_env_value(p["token_var"]))
-        for p in _PLATFORMS
-        if p["key"] != "whatsapp"
-    ) or (get_env_value("WHATSAPP_ENABLED") or "").lower() == "true"
-
-    if any_configured:
-        print()
-        print(color("─" * 58, Colors.DIM))
-        service_installed = _is_service_installed()
-        service_running = _is_service_running()
-
-        if service_running:
-            if prompt_yes_no("  Restart the gateway to pick up changes?", True):
-                try:
-                    if is_linux():
-                        systemd_restart()
-                    elif is_macos():
-                        launchd_restart()
-                    else:
-                        kill_gateway_processes()
-                        print_info("Start manually: logos gateway run")
-                except subprocess.CalledProcessError as e:
-                    print_error(f"  Restart failed: {e}")
-        elif service_installed:
-            if prompt_yes_no("  Start the gateway service?", True):
-                try:
-                    if is_linux():
-                        systemd_start()
-                    elif is_macos():
-                        launchd_start()
-                except subprocess.CalledProcessError as e:
-                    print_error(f"  Start failed: {e}")
-        else:
-            print()
-            if is_linux() or is_macos():
-                platform_name = "systemd" if is_linux() else "launchd"
-                if prompt_yes_no(f"  Install the gateway as a {platform_name} service? (runs in background, starts on boot)", True):
-                    try:
-                        force = False
-                        if is_linux():
-                            systemd_install(force)
-                        else:
-                            launchd_install(force)
-                        print()
-                        if prompt_yes_no("  Start the service now?", True):
-                            try:
-                                if is_linux():
-                                    systemd_start()
-                                else:
-                                    launchd_start()
-                            except subprocess.CalledProcessError as e:
-                                print_error(f"  Start failed: {e}")
-                    except subprocess.CalledProcessError as e:
-                        print_error(f"  Install failed: {e}")
-                        print_info("  You can try manually: logos gateway install")
-                else:
-                    print_info("  You can install later: logos gateway install")
-                    print_info("  Or run in foreground:  logos gateway run")
-            else:
-                print_info("  Service install not supported on this platform.")
-                print_info("  Run in foreground: logos gateway run")
-    else:
-        print()
-        print_info("No platforms configured. Run 'logos gateway setup' when ready.")
-
-    print()
-
-
-# =============================================================================
-# Main Command Handler
-# =============================================================================
-
-def gateway_command(args):
-    """Handle gateway subcommands."""
-    subcmd = getattr(args, 'gateway_command', None)
-    
-    # Default to run if no subcommand
-    if subcmd is None or subcmd == "run":
-        verbose = getattr(args, 'verbose', False)
-        replace = getattr(args, 'replace', False)
-        run_gateway(verbose, replace=replace)
+def start_gateway_background() -> None:
+    pid = get_running_pid()
+    if pid is not None:
+        print(f"Gateway is already running (PID {pid}). Use `logos gateway restart` to cycle it.")
         return
+    _start_and_wait()
 
-    if subcmd == "setup":
-        gateway_setup()
-        return
 
-    # Service management commands
-    if subcmd == "install":
-        force = getattr(args, 'force', False)
-        if is_linux():
-            systemd_install(force)
-        elif is_macos():
-            launchd_install(force)
-        else:
-            print("Service installation not supported on this platform.")
-            print("Run manually: logos gateway run")
-            sys.exit(1)
-    
-    elif subcmd == "uninstall":
-        if is_linux():
-            systemd_uninstall()
-        elif is_macos():
-            launchd_uninstall()
-        else:
-            print("Not supported on this platform.")
-            sys.exit(1)
-    
+def restart_gateway() -> None:
+    pid = stop_gateway()
+    if pid is not None:
+        print(f"✓ Stopped gateway (PID {pid})")
+    _start_and_wait()
+
+
+def print_status() -> bool:
+    """Print gateway status; return True when it is running."""
+    pid = get_running_pid()
+    port = gateway_port()
+    if pid is None:
+        print("✗ Gateway is not running")
+        if _port_listening(port):
+            print(f"  (port {port} is in use by another process)")
+        print("  Start it with: logos gateway start")
+        return False
+    print(f"✓ Gateway is running (PID {pid})")
+    if _port_listening(port):
+        print(f"✓ Listening on port {port}")
+    else:
+        print(f"⚠ Not listening on port {port} yet")
+    print(f"  Home: {get_logos_home()}")
+    return True
+
+
+def gateway_command(args) -> None:
+    """Dispatch ``logos gateway <subcommand>``."""
+    subcmd = getattr(args, "gateway_command", None) or "run"
+
+    if subcmd == "run":
+        run_gateway(replace=getattr(args, "replace", False))
     elif subcmd == "start":
-        # Prefer systemd/launchd if installed, otherwise fall back to a
-        # detached background launch via run_gateway_detached. Previously
-        # the non-service start path errored out ("service not installed")
-        # and the user had to remember to run `nohup python -m gateway.run &`
-        # — doubling as the bug that left zombies around.
-        service_available = False
-        if is_linux() and get_systemd_unit_path().exists():
-            try:
-                systemd_start()
-                service_available = True
-            except subprocess.CalledProcessError:
-                pass
-        elif is_macos() and get_launchd_plist_path().exists():
-            try:
-                launchd_start()
-                service_available = True
-            except subprocess.CalledProcessError:
-                pass
-
-        if not service_available:
-            existing = find_gateway_pids()
-            if existing:
-                print(f"Gateway is already running (PIDs: {existing}). "
-                      f"Use `logos gateway restart` to cycle it.")
-                sys.exit(0)
-            print("Starting gateway in background…")
-            pid = run_gateway_detached(verbose=False)
-            print(f"✓ Spawned PID {pid}")
-            import time as _time
-            deadline = _time.monotonic() + 30
-            while _time.monotonic() < deadline:
-                if _port_listening(8091):
-                    print("✓ Gateway is listening on port 8091")
-                    break
-                if not _pid_alive(pid):
-                    log_path = get_logos_home() / "logs" / "gateway.bg.log"
-                    print(f"✗ Gateway PID {pid} exited before binding. "
-                          f"See {log_path} for details.")
-                    sys.exit(1)
-                _time.sleep(0.5)
-            else:
-                print(f"⚠ Gateway didn't bind to 8091 within 30s "
-                      f"(PID {pid} still running).")
-
+        start_gateway_background()
     elif subcmd == "stop":
-        # Service path first, then sweep any stray manual PIDs.
-        service_available = False
-
-        if is_linux() and get_systemd_unit_path().exists():
-            try:
-                systemd_stop()
-                service_available = True
-            except subprocess.CalledProcessError:
-                pass
-        elif is_macos() and get_launchd_plist_path().exists():
-            try:
-                launchd_stop()
-                service_available = True
-            except subprocess.CalledProcessError:
-                pass
-
-        # Use graceful-stop with 10s grace so in-flight SSE chats get to
-        # drain before we escalate to SIGKILL. Same primitive restart uses.
-        killed = stop_and_wait_for_gateway(grace_seconds=10.0) if not service_available \
-            else kill_gateway_processes()
-        if not service_available:
-            if killed:
-                print(f"✓ Stopped {killed} gateway process(es)")
-            else:
-                print("✗ No gateway processes found")
-        elif killed:
-            print(f"✓ Stopped {killed} additional manual gateway process(es)")
-    
-    elif subcmd == "restart":
-        # Try service first, fall back to killing and restarting
-        service_available = False
-
-        if is_linux() and get_systemd_unit_path().exists():
-            try:
-                systemd_restart()
-                service_available = True
-            except subprocess.CalledProcessError:
-                pass
-        elif is_macos() and get_launchd_plist_path().exists():
-            try:
-                launchd_restart()
-                service_available = True
-            except subprocess.CalledProcessError:
-                pass
-
-        if not service_available:
-            # Atomic manual restart: SIGTERM → waitpid → SIGKILL → verify
-            # port free → detached start. Replaces the old "SIGTERM +
-            # sleep 2 + run foreground" pattern that produced the
-            # "two gateways fighting on 8091" failure mode (stdout's
-            # asyncio default executor ended up shut down on one process
-            # while the other kept listening — every request 500'd with
-            # "Executor shutdown has been called"). The 10s grace is
-            # enough for aiohttp's graceful shutdown to complete
-            # (flushes in-flight SSE, closes worker subprocess streams,
-            # persists session state).
-            killed = stop_and_wait_for_gateway(grace_seconds=10.0)
-            if killed:
-                print(f"✓ Stopped {killed} gateway process(es)")
-
-            print("Starting gateway in background…")
-            pid = run_gateway_detached(verbose=False)
-            print(f"  spawned PID {pid}")
-
-            # Poll the port until the new gateway is accepting connections,
-            # up to ~30s. Keeps the CLI from returning before the gateway
-            # is actually serving requests — otherwise the next automated
-            # command (e.g. an admin handler rebind) would race the boot.
-            import time as _time
-            deadline = _time.monotonic() + 30
-            while _time.monotonic() < deadline:
-                if _port_listening(8091):
-                    print("✓ Gateway is listening on port 8091")
-                    break
-                if not _pid_alive(pid):
-                    log_path = get_logos_home() / "logs" / "gateway.bg.log"
-                    print(f"✗ Gateway PID {pid} exited before binding. "
-                          f"See {log_path} for details.")
-                    sys.exit(1)
-                _time.sleep(0.5)
-            else:
-                print(f"⚠ Gateway didn't bind to 8091 within 30s "
-                      f"(PID {pid} still running). Tail its log to diagnose:"
-                      f"\n  tail -f {get_logos_home() / 'logs' / 'gateway.bg.log'}")
-    
-    elif subcmd == "update":
-        # Pull latest origin/HEAD into the running checkout, then cycle
-        # the gateway so the new code is what's actually serving. Same
-        # underlying functions the UI "Update" button calls, so CLI and
-        # UI stay in sync. --check prints the status without mutating;
-        # --no-restart pulls but leaves the running process stale so
-        # the user can restart on their own schedule.
-        from logos_cli.updater import check_for_update, apply_update, resolve_repo_dir
-
-        repo = resolve_repo_dir()
-        print_info(f"Repo: {repo}")
-
-        status = check_for_update(repo)
-        if not status.get("ok"):
-            print_error(f"Check failed: {status.get('error') or 'unknown'}")
-            sys.exit(1)
-
-        cur = (status.get("current_sha") or "")[:8]
-        lat = (status.get("latest_sha") or "")[:8]
-        behind = status.get("behind_by", 0)
-        branch = status.get("branch") or "?"
-        print_info(f"Branch: {branch} · local {cur} · origin {lat} · behind by {behind}")
-
-        if not status.get("has_update"):
-            print_success("Already up to date.")
-            return
-
-        print_info(f"Latest on origin: {status.get('latest_message') or '(no message)'}")
-
-        if getattr(args, "check", False):
-            print_info("--check specified; not applying.")
-            return
-
-        # Apply. The restart flag tells apply_update whether to
-        # self-exec. Because the CLI runs OUT-OF-PROCESS from the
-        # gateway (different Python process), we don't want to
-        # os.execv the CLI itself; instead pull with restart=False
-        # and then cycle the gateway via the existing restart path.
-        print_info("Pulling…")
-        applied = apply_update(repo, restart=False)
-        if not applied.get("ok"):
-            print_error(f"Update failed: {applied.get('error') or 'unknown'}")
-            sys.exit(1)
-        print_success(f"Pulled to {applied.get('new_sha','')[:8]}")
-
-        if getattr(args, "no_restart", False):
-            print_info("--no-restart specified; leaving running gateway on old code.")
-            return
-
-        # Cycle the gateway using the exact restart path users already
-        # have installed (systemd / launchd / detached). Reuse the
-        # subcmd=="restart" branch below by fallthrough? No — that
-        # branch reads args.gateway_command, so emulate it inline.
-        print_info("Cycling gateway…")
-        _service_handled = False
-        if is_linux() and get_systemd_unit_path().exists():
-            try:
-                systemd_restart()
-                _service_handled = True
-            except subprocess.CalledProcessError:
-                pass
-        elif is_macos() and get_launchd_plist_path().exists():
-            try:
-                launchd_restart()
-                _service_handled = True
-            except subprocess.CalledProcessError:
-                pass
-
-        if not _service_handled:
-            killed = stop_and_wait_for_gateway(grace_seconds=10.0)
-            if killed:
-                print(f"✓ Stopped {killed} gateway process(es)")
-            pid = run_gateway_detached(verbose=False)
-            print(f"  spawned PID {pid}")
-            import time as _time
-            deadline = _time.monotonic() + 30
-            while _time.monotonic() < deadline:
-                if _port_listening(8091):
-                    print("✓ Gateway is listening on port 8091")
-                    break
-                if not _pid_alive(pid):
-                    log_path = get_logos_home() / "logs" / "gateway.bg.log"
-                    print_error(
-                        f"Gateway PID {pid} exited before binding. See {log_path}.",
-                    )
-                    sys.exit(1)
-                _time.sleep(0.5)
-            else:
-                print_warning(
-                    f"Gateway didn't bind to 8091 within 30s (PID {pid} still running)."
-                )
-        print_success("Update complete.")
-
-    elif subcmd == "status":
-        deep = getattr(args, 'deep', False)
-        
-        # Check for service first
-        if is_linux() and get_systemd_unit_path().exists():
-            systemd_status(deep)
-        elif is_macos() and get_launchd_plist_path().exists():
-            launchd_status(deep)
+        pid = stop_gateway()
+        if pid is None:
+            print("✗ Gateway is not running")
         else:
-            # Check for manually running processes
-            pids = find_gateway_pids()
-            if pids:
-                print(f"✓ Gateway is running (PID: {', '.join(map(str, pids))})")
-                print("  (Running manually, not as a system service)")
-                print()
-                print("To install as a service:")
-                print("  logos gateway install")
-            else:
-                print("✗ Gateway is not running")
-                print()
-                print("To start:")
-                print("  logos gateway run       # Run in foreground")
-                print("  logos gateway install   # Install as service")
+            print(f"✓ Stopped gateway (PID {pid})")
+    elif subcmd == "restart":
+        restart_gateway()
+    elif subcmd == "status":
+        if not print_status():
+            sys.exit(1)
+    else:  # pragma: no cover - argparse rejects unknown subcommands
+        print(f"Unknown gateway subcommand: {subcmd}")
+        sys.exit(2)

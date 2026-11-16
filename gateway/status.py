@@ -61,6 +61,10 @@ def _looks_like_gateway_process(pid: int) -> bool:
 
     patterns = (
         "logos_cli.main gateway",
+        # console-script launch: ``.../bin/logos gateway run``
+        "logos gateway",
+        # ``python -m gateway.run`` (how ``logos gateway start`` detaches)
+        "gateway.run",
         "hermes gateway",
         "gateway/run.py",
     )
