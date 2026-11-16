@@ -3,6 +3,34 @@ import { h, api, getJSON, when, markdown } from './util.js';
 
 const newId = () => Math.random().toString(36).slice(2, 12);
 
+// A message whose reply has not been seen yet, kept per agent in this browser. If the
+// connection drops or the page is reloaded mid-reply, the agent carries on regardless, and
+// this is how the chat knows to wait for the reply and fetch it from the agent's history.
+const WAIT_FOR_REPLY_MS = 15 * 60 * 1000;
+const pendingKey = (agent) => `logos-pending-${agent}`;
+function getPending(agent) {
+  try {
+    const p = JSON.parse(localStorage.getItem(pendingKey(agent)) || 'null');
+    return p && Date.now() - p.at < WAIT_FOR_REPLY_MS ? p : null;
+  } catch (e) { return null; }
+}
+function setPending(agent, value) {
+  try {
+    if (value) localStorage.setItem(pendingKey(agent), JSON.stringify(value));
+    else localStorage.removeItem(pendingKey(agent));
+  } catch (e) { /* private window: recovery after a reload is unavailable */ }
+}
+
+// True once the history holds the agent's reply to `text`: an assistant message with
+// words in it, after the last time the person said `text`, as the newest message.
+export function replyArrived(messages, text) {
+  let asked = -1;
+  messages.forEach((m, i) => { if (m.role === 'user' && (m.text || '').trim() === text) asked = i; });
+  if (asked < 0 || asked === messages.length - 1) return false;
+  const last = messages[messages.length - 1];
+  return last.role === 'assistant' && Boolean((last.text || '').trim());
+}
+
 export async function chatView(root, [agentArg, chatArg], state) {
   let alive = true;
   let agents = [];
@@ -39,10 +67,42 @@ export async function chatView(root, [agentArg, chatArg], state) {
   const emptyState = () => log.replaceChildren(h('div', { class: 'empty' },
     h('p', {}, `Say something to ${agent.display_name}. It remembers what matters in its brain, across web and Telegram.`)));
 
+  let waiting = false;           // true while waiting for a reply the stream did not deliver
   function setBusy(busy) {
-    send.disabled = busy || readOnly || !agent.running;
+    send.disabled = busy || waiting || readOnly || !agent.running;
     input.disabled = readOnly || !agent.running;
-    stop.hidden = !busy;
+    stop.hidden = !busy || waiting;
+  }
+
+  // The stream was lost (or the page reloaded) while the agent was still working.
+  // Look in the agent's own history until the reply is there, then show the conversation.
+  async function waitForReply(text) {
+    waiting = true;
+    setBusy(true);
+    const note = h('div', { class: 'notice' }, `The connection dropped, but ${agent.display_name} is still working. The reply will appear here.`);
+    log.append(note);
+    scroll();
+    const deadline = Date.now() + WAIT_FOR_REPLY_MS;
+    let seen = -1, found = false;
+    while (alive && Date.now() < deadline && !found) {
+      await new Promise((r) => setTimeout(r, 4000));
+      if (!alive) return;
+      try {
+        const conversations = await loadConversations();
+        const c = (conversations || []).find((x) => x.chat_id === chatId || x.id === chatId);
+        if (!c) continue;
+        const { messages } = await getJSON(`/api/v2/agents/${agent.name}/conversations/${encodeURIComponent(c.id)}`);
+        // Two looks in a row with the same length: the agent has finished, not paused mid-task.
+        if (replyArrived(messages, text) && messages.length === seen) { found = true; await openConversation(conversations); }
+        seen = messages.length;
+      } catch (e) { /* the connection may still be down; keep trying */ }
+    }
+    if (!alive) return;
+    waiting = false;
+    setPending(agent.name, null);
+    if (!found) note.textContent = `No reply was found. Check "Earlier conversations" in a moment, or send the message again.`;
+    setBusy(false);
+    input.focus();
   }
 
   async function loadConversations() {
@@ -90,13 +150,15 @@ export async function chatView(root, [agentArg, chatArg], state) {
     log.append(used);
     scroll();
     setBusy(true);
-    let body = '', failed = null;
+    let body = '', failed = null, lost = false, finished = false;
     const tools = {};
+    setPending(agent.name, { chatId, text, at: Date.now() });
     try {
       const r = await api('/chat', { method: 'POST', body: { agent_id: agent.id, session_id: chatId, message: text } });
       if (!r.ok) {
         const e = await r.json().catch(() => ({}));
-        throw new Error(e.message || e.error || `HTTP ${r.status}`);
+        failed = e.message || e.error || `HTTP ${r.status}`;
+        throw new Error(failed);
       }
       const reader = r.body.getReader();
       const dec = new TextDecoder();
@@ -123,14 +185,25 @@ export async function chatView(root, [agentArg, chatArg], state) {
             tools[d.call_id].textContent = d.success ? `Used ${name}` : `${name} failed`;
             if (!d.success) tools[d.call_id].classList.add('failed');
           } else if (d.type === 'done') {
+            finished = true;
             used.append(h('span', {}, d.stopped ? 'Stopped' : `${d.elapsed_s} s`));
           } else if (d.type === 'error') failed = d.error_title || d.content || 'Something went wrong';
           scroll();
         }
       }
+      // A stream that ends without "done" or an error was cut off on the way here.
+      if (!finished && !failed) lost = true;
     } catch (e) {
-      failed = e.message;
+      if (!failed) lost = true;    // the request or the stream broke; the agent may still be working
     }
+    running = null;
+    if (lost && !failed) {
+      if (!alive) return;
+      reply.remove(); used.remove();
+      if (location.hash !== `#/chat/${agent.name}/${chatId}`) history.replaceState(null, '', `#/chat/${agent.name}/${chatId}`);
+      return waitForReply(text);
+    }
+    setPending(agent.name, null);
     if (failed) {
       if (!body) reply.remove();
       log.append(h('div', { class: 'msg error' }, failed));
@@ -182,6 +255,17 @@ export async function chatView(root, [agentArg, chatArg], state) {
   setBusy(false);
   const conversations = await loadConversations();
   if (chatArg && conversations) await openConversation(conversations);
+  // A reply was still on its way when this page was last open: show the message and wait for it.
+  const pending = getPending(agent.name);
+  if (pending && pending.chatId === chatId && !readOnly) {
+    const asked = [...log.querySelectorAll('.msg.user')].some((el) => el.textContent.trim() === pending.text);
+    const answered = asked && log.lastElementChild && log.lastElementChild.classList.contains('assistant');
+    if (answered) setPending(agent.name, null);
+    else {
+      if (!asked) { if (log.querySelector('.empty')) log.replaceChildren(); bubble('user', pending.text); }
+      waitForReply(pending.text);
+    }
+  }
   input.focus();
   return () => { alive = false; };
 }

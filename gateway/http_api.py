@@ -1595,9 +1595,13 @@ async def _handle_chat(request: web.Request) -> web.StreamResponse:
             model=_agent_config.get("model") or "", on_started=_remember,
         ):
             await resp.write(_agent_chat.sse(payload))
-    except (ConnectionResetError, asyncio.CancelledError):
+    except ConnectionResetError:
         # The browser went away. The run carries on inside the agent and its
-        # result is kept in the agent's own session history.
+        # result is kept in the agent's own session history, where the chat
+        # screen looks for it. Not an error, so nothing is raised.
+        logger.info("chat: client left during a run for %s", agent_name)
+        return resp
+    except asyncio.CancelledError:
         logger.info("chat: client left during a run for %s", agent_name)
         raise
     finally:
