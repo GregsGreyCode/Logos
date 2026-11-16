@@ -175,3 +175,23 @@ tr:last-child td { border-bottom: 0; }
 .tool { min-height: 36px; min-width: 40px; padding: 0 12px; border: 1px solid var(--line); border-radius: 8px;
   background: var(--raised); color: var(--ink); font-weight: 600; }
 .tool.accent { border-color: var(--accent); color: var(--accent-text); margin-left: auto; }
+
+/* agents and people */
+.two-col { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 16px; align-items: start; }
+.stack { display: flex; flex-direction: column; gap: 16px; }
+.card h2 { margin: 0; font-size: 16px; font-weight: 600; font-family: inherit; }
+.card p { margin: 0; }
+a.agent-card { text-decoration: none; color: var(--ink); gap: 6px; }
+.agent-card { gap: 6px; }
+.agent-card.picked { border: 2px solid var(--accent); padding: 17px; }
+.agent-card.other { background: transparent; border-style: dashed; }
+.kv { display: flex; justify-content: space-between; gap: 12px; }
+.kv > :last-child { text-align: right; }
+.ok { color: var(--ok); } .bad { color: var(--bad); } .strong { font-weight: 600; }
+.table-inline { overflow-x: auto; }
+table.plain { min-width: 420px; } table.plain th, table.plain td { padding: 10px 8px; }
+table.plain th:first-child, table.plain td:first-child { padding-left: 0; }
+.block { display: block; }
+.form input { min-height: 44px; padding: 0 12px; border: 1px solid var(--line); border-radius: 10px;
+  background: var(--ground); color: var(--ink); font: inherit; width: 100%; }
+.btn.danger { background: var(--surface); color: var(--bad); border: 1px solid var(--bad); }
