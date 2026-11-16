@@ -343,6 +343,19 @@ async def _handle_model_route_list_empty(request: web.Request) -> web.Response:
     return web.json_response({"routes": []})
 
 
+def _empty_shape_handler(shape: dict):
+    """GET handler answering a fixed empty-but-valid JSON body.
+
+    S1.6 removed v1 machines, cloud providers, policy presets,
+    capabilities and bundled local services. The dashboard still fetches
+    their list endpoints (S1.10 trims the UI), so those routes stay and
+    answer with the empty form of the shape the page expects.
+    """
+    async def _handler(request: web.Request) -> web.Response:
+        return web.json_response(shape)
+    return _handler
+
+
 async def _handle_setup_page(request: web.Request) -> web.Response:
     from gateway.auth.db import is_setup_completed
     if is_setup_completed():
@@ -383,7 +396,6 @@ async def _handle_setup_wipe(request: web.Request) -> web.Response:
 
     Deliberately KEEPS:
       - Souls / skills / themes (platform fixtures, not user data)
-      - Action policies / routing policies (the wizard re-seeds basics)
 
     Body must contain {"confirm": "WIPE"} — the literal string. The
     UI's type-to-confirm modal sends exactly that, so a stray POST
@@ -580,10 +592,9 @@ async def _handle_status(request: web.Request) -> web.Response:
 async def _handle_model_patch(request: web.Request) -> web.Response:
     """PATCH /api/model — change the active model at runtime and persist to config.yaml.
 
-    Also resolves the correct provider: if the model belongs to a cloud
-    provider, activate that provider.  If it belongs to a local machine,
-    switch provider to the local endpoint so requests don't get routed
-    to the wrong backend (e.g. sending a qwen model to Anthropic).
+    Only the model name is written. v1 also switched provider/endpoint by
+    looking the model up in the cloud_providers and machines tables; both
+    were removed in S1.6.
     """
     try:
         body = await request.json()
@@ -606,55 +617,6 @@ async def _handle_model_patch(request: web.Request) -> web.Response:
         if "model" not in _cfg or not isinstance(_cfg.get("model"), dict):
             _cfg["model"] = {}
         _cfg["model"]["default"] = new_model
-
-        # Resolve the correct provider for this model
-        resolved_provider = None
-        # Check if model matches any cloud provider's active_model
-        try:
-            from gateway.auth import db as _adb
-            cloud_provs = _adb.list_cloud_providers()
-            for cp in cloud_provs:
-                if cp.get("active_model") == new_model:
-                    resolved_provider = cp.get("provider")  # e.g. "anthropic", "openrouter"
-                    # Also update endpoint env vars for this provider
-                    from gateway.setup_handlers import _FRONTIER_PROVIDERS
-                    frov = _FRONTIER_PROVIDERS.get(resolved_provider, {})
-                    _base_url = cp.get("base_url") or frov.get("base_url", "")
-                    _api_key = cp.get("api_key") or ""
-                    os.environ["OPENAI_API_KEY"] = _api_key
-                    os.environ["OPENAI_BASE_URL"] = _base_url
-                    if frov.get("server_type"):
-                        os.environ["HERMES_SERVER_TYPE"] = frov["server_type"]
-                        _cfg["HERMES_SERVER_TYPE"] = frov["server_type"]
-                    break
-        except Exception:
-            pass
-
-        if not resolved_provider:
-            # Model is local — use local machine endpoint
-            try:
-                from gateway.auth import db as _adb
-                machines = _adb.list_machines()
-                for m in machines:
-                    if m.get("enabled") and m.get("endpoint_url"):
-                        # Use the first enabled local machine
-                        _base_url = m["endpoint_url"].rstrip("/")
-                        os.environ["OPENAI_BASE_URL"] = _base_url
-                        os.environ["OPENAI_API_KEY"] = m.get("api_key") or "not-needed"
-                        os.environ["HERMES_SERVER_TYPE"] = "lmstudio"
-                        _cfg["OPENAI_BASE_URL"] = _base_url
-                        _cfg["HERMES_SERVER_TYPE"] = "lmstudio"
-                        resolved_provider = "openai"
-                        break
-            except Exception:
-                pass
-
-        # Update config.yaml provider
-        if resolved_provider:
-            _cfg.setdefault("model", {})
-            if isinstance(_cfg["model"], str):
-                _cfg["model"] = {"default": _cfg["model"]}
-            _cfg["model"]["provider"] = resolved_provider
 
         with open(_config_path, "w", encoding="utf-8") as _f:
             _yaml.dump(_cfg, _f, default_flow_style=False, sort_keys=False)
@@ -852,57 +814,6 @@ async def _handle_proxy_benchmark(request: web.Request) -> web.Response:
                 return web.json_response(await r.json())
     except Exception as e:
         raise web.HTTPBadGateway(reason=str(e))
-
-
-async def _handle_routing_claims(request: web.Request) -> web.Response:
-    """GET /internal/routing/claims — full machine→user claim map for the MCP routing tool."""
-    claims = auth_db.list_all_claims()
-    machines = auth_db.list_machines()
-    users = auth_db.list_users(limit=500)
-    return web.json_response({
-        "claims": claims,
-        "machines": machines,
-        "users": [{"id": u["id"], "username": u["username"], "display_name": u["display_name"],
-                   "email": u["email"], "policy_id": u.get("policy_id")} for u in users],
-    })
-
-
-async def _handle_routing_apply(request: web.Request) -> web.Response:
-    """POST /internal/routing/apply — Hermes MCP tool applies a suggested profile.
-    Body: {"user_id": str, "policy_name": str, "description": str, "rules": [...], "fallback": str}
-    """
-    try:
-        body = await request.json()
-    except Exception:
-        raise web.HTTPBadRequest(reason="invalid_json")
-
-    user_id = body.get("user_id")
-    policy_name = body.get("policy_name")
-    rules = body.get("rules", [])
-    description = body.get("description", "Auto-configured by Hermes")
-    fallback = body.get("fallback", "any_available")
-
-    if not user_id or not policy_name:
-        raise web.HTTPBadRequest(reason="user_id and policy_name required")
-
-    user = auth_db.get_user_by_id(user_id)
-    if not user:
-        raise web.HTTPNotFound(reason="user_not_found")
-
-    # Create or reuse policy with this name
-    existing = next((p for p in auth_db.list_policies() if p["name"] == policy_name), None)
-    if existing:
-        policy = auth_db.update_policy(existing["id"], description=description, fallback=fallback)
-        pid = existing["id"]
-    else:
-        policy = auth_db.create_policy(policy_name, description=description, fallback=fallback)
-        pid = policy["id"]
-
-    auth_db.set_policy_rules(pid, rules)
-    auth_db.assign_user_policy(user_id, pid)
-
-    return web.json_response({"ok": True, "policy": auth_db.get_policy(pid),
-                              "rules": auth_db.get_policy_rules(pid)})
 
 
 async def _handle_souls_get(request: web.Request) -> web.Response:
@@ -1127,7 +1038,6 @@ async def _handle_instances_post(request: web.Request) -> web.Response:
 
     soul_slug = (body.get("soul_slug") or "general").strip()
     tool_overrides = body.get("tool_overrides") or {}
-    machine_id_override = body.get("machine_id") or None
     instance_label = (body.get("instance_label") or "").strip()
 
     # Validate instance_label: lowercase alphanumeric + hyphens, max 32 chars
@@ -1159,17 +1069,10 @@ async def _handle_instances_post(request: web.Request) -> web.Response:
 
     from gateway.auth.rbac import has_permission as _has_perm
 
-    # RBAC: machine routing override requires override_routing permission
-    if machine_id_override and not _has_perm(caller_role, "override_routing"):
-        return web.json_response(
-            {"error": "forbidden", "message": "Machine routing override requires operator or admin role"},
-            status=403,
-        )
-
     # RBAC: toolset overrides require override_toolsets permission
     if tool_overrides and not _has_perm(caller_role, "override_toolsets"):
         return web.json_response(
-            {"error": "forbidden", "message": "Toolset overrides require operator or admin role"},
+            {"error": "forbidden", "message": "Toolset overrides require the admin role"},
             status=403,
         )
 
@@ -1834,128 +1737,6 @@ async def _handle_transcribe(request: web.Request) -> web.Response:
 
 
 
-# ── Sandbox policy presets handlers ────────────────────────────────────────
-
-async def _handle_sandbox_presets_list(request: web.Request) -> web.Response:
-    """GET /api/openshell/presets — list all presets with agent counts."""
-    from gateway import policies as _sp
-    presets = _sp.list_presets()
-    out = []
-    for p in presets:
-        try:
-            agents_using = _sp.get_agents_using_preset(p.name)
-        except Exception as exc:
-            logger.debug("get_agents_using_preset(%s) failed: %s", p.name, exc)
-            agents_using = []
-        out.append({
-            "name": p.name,
-            "description": p.description,
-            "agent_count": len(agents_using),
-            "agents": agents_using,
-        })
-    # Sort: in-use first (by agent count desc), then alphabetical. This
-    # surfaces policies that will actually affect live agents when the
-    # admin is scanning the list.
-    out.sort(key=lambda r: (-r["agent_count"], r["name"]))
-    return web.json_response({"presets": out})
-
-
-async def _handle_sandbox_presets_get(request: web.Request) -> web.Response:
-    """GET /api/openshell/presets/{name} — raw YAML + parsed structure."""
-    from gateway import policies as _sp
-    name = request.match_info["name"]
-    try:
-        data = _sp.load_preset(name)
-    except _sp.PresetNotFound:
-        raise web.HTTPNotFound(reason="Preset not found")
-    path = _sp._PRESETS_DIR / f"{name}.yaml"
-    try:
-        text = path.read_text(encoding="utf-8")
-    except OSError:
-        text = ""
-    return web.json_response({
-        "name": name,
-        "yaml": text,
-        "parsed": data,
-        "agents": _sp.get_agents_using_preset(name),
-    })
-
-
-async def _handle_sandbox_presets_put(request: web.Request) -> web.Response:
-    """PUT /api/openshell/presets/{name} — create or update preset YAML.
-
-    Body: ``{"yaml": "<full YAML text>"}``. Validates, writes to disk,
-    then hot-reloads every agent currently using the preset so the
-    change takes effect without respawning sandboxes.
-    """
-    from gateway import policies as _sp
-    name = request.match_info["name"]
-    try:
-        body = await request.json()
-    except Exception:
-        raise web.HTTPBadRequest(reason="Invalid JSON")
-    yaml_text = body.get("yaml")
-    if not isinstance(yaml_text, str):
-        raise web.HTTPBadRequest(reason="body.yaml is required (string)")
-
-    try:
-        _sp.write_preset(name, yaml_text)
-    except _sp.PolicyMergeError as exc:
-        return web.json_response({"error": "validation_failed", "detail": str(exc)}, status=400)
-
-    # Hot-reload every agent applying this preset. Failures are logged
-    # but don't fail the whole request — the YAML is already on disk
-    # and the next sandbox spawn will pick it up cleanly.
-    affected = _sp.get_agents_using_preset(name)
-    reload_errors = []
-    for agent_id in affected:
-        try:
-            _sp.push_effective_policy(agent_id)
-        except Exception as exc:
-            reload_errors.append({"agent_id": agent_id, "error": str(exc)})
-            logger.warning("push_effective_policy(%s) failed: %s", agent_id, exc)
-
-    auth_db.write_audit_log(
-        request.get("current_user", {}).get("sub"),
-        "update_sandbox_preset",
-        target_type="sandbox_preset", target_id=name,
-    )
-    return web.json_response({
-        "ok": True,
-        "affected_agents": affected,
-        "reload_errors": reload_errors,
-    })
-
-
-async def _handle_sandbox_presets_delete(request: web.Request) -> web.Response:
-    """DELETE /api/openshell/presets/{name} — remove preset YAML.
-
-    Refuses if any agent still applies it — caller must remove it
-    from those agents first to avoid silent policy drift.
-    """
-    from gateway import policies as _sp
-    name = request.match_info["name"]
-    affected = _sp.get_agents_using_preset(name)
-    if affected:
-        return web.json_response({
-            "error": "in_use",
-            "detail": f"{len(affected)} agent(s) still apply this preset",
-            "agents": affected,
-        }, status=409)
-    try:
-        removed = _sp.delete_preset(name)
-    except _sp.PolicyMergeError as exc:
-        return web.json_response({"error": "validation_failed", "detail": str(exc)}, status=400)
-    if not removed:
-        raise web.HTTPNotFound(reason="Preset not found")
-    auth_db.write_audit_log(
-        request.get("current_user", {}).get("sub"),
-        "delete_sandbox_preset",
-        target_type="sandbox_preset", target_id=name,
-    )
-    return web.json_response({"ok": True})
-
-
 # ── Approval request handlers ──────────────────────────────────────────────
 
 async def _handle_approvals_list(request: web.Request) -> web.Response:
@@ -2335,16 +2116,12 @@ async def start_http_api(runner: Any, port: int = 8091) -> None:
     if _wipe_flag in ("1", "true", "yes"):
         try:
             auth_db.reset_setup_completed()
-            for _m in auth_db.list_machines():
-                auth_db.delete_machine(_m["id"])
-            for _p in auth_db.list_policies():
-                auth_db.delete_policy(_p["id"])
-            logger.info("LOGOS_WIPE_ON_START: wiped setup state, machines, and policies")
+            logger.info("LOGOS_WIPE_ON_START: wiped setup state")
         except Exception as _wipe_err:
             logger.warning("LOGOS_WIPE_ON_START: partial failure: %s", _wipe_err)
     # Env-var admin seeding (takes priority over generic seed)
     _ensure_admin_exists()
-    # Generic seed: machines → profiles → admin user (all no-ops on existing data)
+    # Generic seed: default admin user (a no-op once any user exists)
     from gateway import seed as _seed
     _seed.run_seed()
 
@@ -2543,8 +2320,6 @@ async def start_http_api(runner: Any, port: int = 8091) -> None:
     app.router.add_post("/api/setup/preload-model", _sh.handle_setup_preload_model)
     app.router.add_get("/api/setup/progress",     _sh.handle_setup_progress)
     app.router.add_get("/api/setup/session",      _sh.handle_setup_session_claim)
-    app.router.add_get("/api/setup/discover",       _sh.handle_setup_discover)
-    app.router.add_post("/api/setup/set-remote",   _sh.handle_setup_set_remote)
     app.router.add_get("/api/setup/env-probe",       _sh.handle_setup_env_probe)
     app.router.add_post("/api/setup/reset",
         require_csrf(require_permission("manage_platform")(_handle_setup_reset)))
@@ -2661,17 +2436,11 @@ async def start_http_api(runner: Any, port: int = 8091) -> None:
     app.router.add_post("/proxy/providers/{key}/toggle", _handle_proxy_toggle)
     app.router.add_get("/proxy/models-live",  _handle_proxy_models_live)
     app.router.add_post("/proxy/benchmark",   _handle_proxy_benchmark)
-    app.router.add_get("/internal/routing/claims",  _handle_routing_claims)
-    app.router.add_post("/internal/routing/apply",  require_csrf(_handle_routing_apply))
     app.router.add_patch("/api/model", require_csrf(_handle_model_patch))
 
     # ── Admin routes ───────────────────────────────────────────────────────
     _mm  = require_permission("manage_machines")
-    _mp  = require_permission("claim_machine")
-    _mpr = require_permission("manage_profiles")
     _mu  = require_permission("manage_users")
-    _ap  = require_permission("assign_profile")
-    _vrd = require_permission("view_routing_debug")
 
     # LOG-25.7: admin-only platform-settings read/write. Backs the
     # registration toggles in Admin → Users. Gated on manage_users so
@@ -2683,32 +2452,24 @@ async def start_http_api(runner: Any, port: int = 8091) -> None:
 
     app.router.add_get("/admin/spawn-stats",   _mm(admin_handlers.handle_spawn_stats))
     app.router.add_get("/admin/costs",         _mm(admin_handlers.handle_costs))
-    app.router.add_get("/admin/recommended-models", _mm(admin_handlers.handle_recommended_models))
-    app.router.add_post("/admin/machines/{id}/download",
-                         _mm(require_csrf(admin_handlers.handle_machine_download_start)))
-    app.router.add_get("/admin/machines/{id}/download/{job_id}",
-                         _mm(admin_handlers.handle_machine_download_status))
     app.router.add_get("/admin/pricing/status",    _mm(admin_handlers.handle_pricing_status))
     app.router.add_post("/admin/pricing/refresh",  _mm(require_csrf(admin_handlers.handle_pricing_refresh)))
-    app.router.add_get("/admin/model-classes", _mm(admin_handlers.handle_model_classes))
-    app.router.add_get("/admin/machines",      _mm(admin_handlers.handle_machines_list))
-    app.router.add_post("/admin/machines",     _mm(require_csrf(admin_handlers.handle_machines_post)))
-    app.router.add_patch("/admin/machines/{id}", _mm(require_csrf(admin_handlers.handle_machines_patch)))
-    app.router.add_delete("/admin/machines/{id}", _mm(require_csrf(admin_handlers.handle_machines_delete)))
-    app.router.add_post("/admin/machines/reorder", _mm(require_csrf(admin_handlers.handle_machines_reorder)))
-    app.router.add_get("/admin/machines/{id}/claims",  _mm(admin_handlers.handle_machine_claims_get))
-    app.router.add_put("/machines/{id}/claim",         _mp(require_csrf(admin_handlers.handle_machine_claim_put)))
-    app.router.add_delete("/machines/{id}/claim",      _mp(require_csrf(admin_handlers.handle_machine_claim_delete)))
-    app.router.add_put("/admin/machines/{id}/capabilities", _mm(require_csrf(admin_handlers.handle_machine_capabilities_put)))
-    app.router.add_get("/admin/machines/{id}/health", _mm(admin_handlers.handle_machine_health))
-    # Cloud providers
-    app.router.add_get("/admin/cloud-providers",              _mm(admin_handlers.handle_cloud_providers_list))
-    app.router.add_get("/admin/cloud-provider-models",        _mm(admin_handlers.handle_cloud_provider_models))
-    app.router.add_post("/admin/cloud-providers",             _mm(require_csrf(admin_handlers.handle_cloud_providers_post)))
-    app.router.add_patch("/admin/cloud-providers/{id}",       _mm(require_csrf(admin_handlers.handle_cloud_providers_patch)))
-    app.router.add_delete("/admin/cloud-providers/{id}",      _mm(require_csrf(admin_handlers.handle_cloud_providers_delete)))
-    app.router.add_post("/admin/cloud-providers/{id}/activate", _mm(require_csrf(admin_handlers.handle_cloud_providers_activate)))
-    app.router.add_post("/admin/cloud-providers/{id}/test",     _mm(require_csrf(admin_handlers.handle_cloud_providers_test)))
+    # v1 machines, cloud providers, policy presets, capabilities and
+    # bundled local services were removed in S1.6. Their list endpoints
+    # stay, always empty, because the dashboard still fetches them.
+    app.router.add_get("/admin/machines",
+                       _mm(_empty_shape_handler({"machines": []})))
+    app.router.add_get("/admin/cloud-providers",
+                       _mm(_empty_shape_handler({"providers": []})))
+    app.router.add_get("/admin/recommended-models",
+                       _mm(_empty_shape_handler({"recommended": []})))
+    app.router.add_get("/api/admin/services/local",
+                       _mm(_empty_shape_handler({"services": []})))
+    app.router.add_get("/api/openshell/presets",
+                       _mm(_empty_shape_handler({"presets": []})))
+    app.router.add_get("/admin/agents/{id}/capabilities",
+                       _mm(_empty_shape_handler(
+                           {"version": 1, "always_on": [], "capabilities": [], "power_tools": []})))
     # Named agents
     # ── Sandbox dashboard ──────────────────────────────────────────
     # NOTE: served under /api/admin/* to avoid colliding with the SPA
@@ -2736,11 +2497,7 @@ async def start_http_api(runner: Any, port: int = 8091) -> None:
     app.router.add_post("/admin/agents",             _mm(require_csrf(admin_handlers.handle_agents_post)))
     app.router.add_patch("/admin/agents/{id}",       _mm(require_csrf(admin_handlers.handle_agents_patch)))
     app.router.add_delete("/admin/agents/{id}",      _mm(require_csrf(admin_handlers.handle_agents_delete)))
-    # Per-agent Tools editor (MISSING.md M10 scope item 5 — the T pill dropdown).
-    # GET bundles both application-layer (agents.toolsets) and infrastructure-
-    # layer (agents.applied_presets) state; POST variants toggle one item at a
-    # time. Toolset toggles are DB-only; preset toggles also push the merged
-    # effective policy to the running sandbox via `openshell policy set`.
+    # Per-agent Tools editor (the T pill dropdown). Read-only.
     app.router.add_get("/admin/agents/{id}/tools",
                        _mm(admin_handlers.handle_agent_tools_get))
     # Agent runtime logs — tails ~/.logos/agents/<name>/logs/agent.log.
@@ -2773,8 +2530,6 @@ async def start_http_api(runner: Any, port: int = 8091) -> None:
                        _mm(admin_handlers.handle_agent_sandbox_files_get))
     app.router.add_get("/admin/agents/{id}/sandbox-files/download",
                        _mm(admin_handlers.handle_agent_sandbox_file_download))
-    app.router.add_post("/admin/agents/{id}/tools/presets/toggle",
-                        _mm(require_csrf(admin_handlers.handle_agent_presets_toggle)))
     # Per-agent channel credentials — Agent editor → Channels subtab.
     # Each agent owns its own messaging platform tokens; the adapter
     # lifecycle spawns one adapter instance per enabled row.
@@ -2828,46 +2583,9 @@ async def start_http_api(runner: Any, port: int = 8091) -> None:
                        _mm(admin_handlers.handle_gateway_update_status))
     app.router.add_post("/api/admin/gateway/update",
                         _mm(require_csrf(admin_handlers.handle_gateway_update_apply)))
-    # Capabilities — user-facing collapse of toolsets + presets + creds.
-    # GET returns the catalogue annotated with per-agent state; POST
-    # toggles a capability (atomic apply/remove of all bundled toolsets
-    # and presets). Same auth as the legacy tools endpoints.
-    app.router.add_get("/admin/agents/{id}/capabilities",
-                       _mm(admin_handlers.handle_agent_capabilities_get))
-    app.router.add_post("/admin/agents/{id}/capabilities/toggle",
-                        _mm(require_csrf(admin_handlers.handle_agent_capabilities_toggle)))
-    # Local bundled services (docker compose up/down for things like
-    # SearxNG). Config → Tools → Local services. Separate from the
-    # capability-toggle surface because starting a service isn't the
-    # same as granting an agent permission to use it.
-    app.router.add_get("/api/admin/services/local",
-                       _mm(admin_handlers.handle_local_services_list))
-    app.router.add_post("/api/admin/services/local/{id}/start",
-                        _mm(require_csrf(admin_handlers.handle_local_service_start)))
-    app.router.add_post("/api/admin/services/local/{id}/stop",
-                        _mm(require_csrf(admin_handlers.handle_local_service_stop)))
-    # Layer 1 URL consent — per-agent website blocklist that the local
-    # browser tool checks before every navigation.
-    app.router.add_put("/admin/agents/{id}/website-blocklist",
-                       _mm(require_csrf(admin_handlers.handle_agent_website_blocklist_put)))
-    app.router.add_get("/admin/policies",      _mpr(admin_handlers.handle_policies_list))
-    app.router.add_post("/admin/policies",     _mpr(require_csrf(admin_handlers.handle_policies_post)))
-    app.router.add_patch("/admin/policies/{id}", _mpr(require_csrf(admin_handlers.handle_policies_patch)))
-    app.router.add_delete("/admin/policies/{id}", _mpr(require_csrf(admin_handlers.handle_policies_delete)))
-    app.router.add_put("/admin/policies/{id}/rules", _mpr(require_csrf(admin_handlers.handle_policy_rules_put)))
-    app.router.add_patch("/admin/users/{id}/policy", _ap(require_csrf(admin_handlers.handle_user_policy_patch)))
-
     # ── Action policies (behaviour enforcement) ────────────────────────────
     _vap = require_permission("view_approvals")
     _dap = require_permission("decide_approvals")
-
-    # ── OpenShell sandbox policy presets ──────────────────────────────────
-    _vsp = require_permission("view_sandbox_policies")
-    _msp = require_permission("manage_sandbox_policies")
-    app.router.add_get("/api/openshell/presets",          _vsp(_handle_sandbox_presets_list))
-    app.router.add_get("/api/openshell/presets/{name}",   _vsp(_handle_sandbox_presets_get))
-    app.router.add_put("/api/openshell/presets/{name}",   _msp(require_csrf(_handle_sandbox_presets_put)))
-    app.router.add_delete("/api/openshell/presets/{name}", _msp(require_csrf(_handle_sandbox_presets_delete)))
 
     # ── Souls admin CRUD ──────────────────────────────────────────────────
     _vsl = require_permission("view_souls")
@@ -2898,10 +2616,6 @@ async def start_http_api(runner: Any, port: int = 8091) -> None:
     app.router.add_get("/evolution/settings",            _vev(_eh.handle_get_settings))
     app.router.add_patch("/evolution/settings",          _mev(require_csrf(_eh.handle_update_settings)))
 
-    app.router.add_get("/admin/routing/resolve",  _vrd(admin_handlers.handle_routing_resolve))
-    app.router.add_get("/admin/routing/log",      require_permission("view_audit_logs")(admin_handlers.handle_routing_log))
-    app.router.add_post("/admin/setup",           _mm(require_csrf(admin_handlers.handle_setup_wizard)))
-    app.router.add_get("/routing/preview",        admin_handlers.handle_routing_preview)
 
     # ── Update status/trigger (launcher file-based IPC) ─────────────────
     import json as _json

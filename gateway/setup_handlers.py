@@ -31,7 +31,6 @@ import yaml
 from aiohttp import web
 
 import gateway.auth.db as auth_db
-from gateway import seed as _seed
 from gateway.auth.tokens import (
     REFRESH_TOKEN_TTL,
     issue_access_token,
@@ -722,26 +721,11 @@ async def handle_setup_probe(request: web.Request) -> web.Response:
     raw_url    = (request.query.get("url") or "").strip()
     api_key    = request.query.get("api_key") or None
     prefer     = request.query.get("prefer") or "ollama"
-    machine_id = request.query.get("machine_id") or None
 
-    # If a machine_id is supplied, look up the stored key from the DB
-    if machine_id and not api_key:
-        m = auth_db.get_machine(machine_id)
-        if m:
-            api_key = m.get("api_key") or None
-
-    # Final fallback: the gateway-wide OPENAI_API_KEY env var. The setup
-    # wizard writes the user's chosen LM Studio / Ollama / cloud key here
-    # at the end of /setup, but the seeded `machines` row's api_key
-    # column is left NULL (the env path is what the worker actually uses
-    # at inference time, so the row column is just for "users with
-    # multiple separately-keyed machines"). Without this fallback the
-    # /api/admin/model-routes provision modal's `loadAllMachineModels`
-    # call probes LM Studio anonymously, gets `auth_required`, and the
-    # dropdown shows zero models — which is the bug the user reported
-    # ("dropdown empty even though I have a machine + a model picked").
-    # Mirrors the worker's auth chain in docker/sandbox_worker.py:344
-    # so the probe sees the same backend the worker eventually will.
+    # Fallback: the gateway-wide OPENAI_API_KEY env var. The setup
+    # wizard writes the user's chosen LM Studio / Ollama / cloud key
+    # there at the end of /setup. (v1 could also look a key up by
+    # ?machine_id= in the machines table, removed in S1.6.)
     if not api_key:
         api_key = os.environ.get("OPENAI_API_KEY") or None
 
@@ -1563,10 +1547,11 @@ async def handle_setup_compare(request: web.Request) -> web.Response:
             model_specs.append({"id": m, "endpoint": fallback_endpoint, "api_key": fallback_key, "server_type": fallback_type})
         else:
             raw_key = m.get("api_key") or fallback_key
-            # Resolve '__stored__' placeholder — look up the api_key from the machine DB record
+            # '__stored__' meant "use the key saved on the machine row".
+            # The machines table is gone (S1.6); fall back to the
+            # gateway-wide key the wizard writes.
             if raw_key == "__stored__":
-                machine_rec = auth_db.get_machine(m.get("machine_id") or "")
-                raw_key = (machine_rec or {}).get("api_key") or "ollama"
+                raw_key = os.environ.get("OPENAI_API_KEY") or "ollama"
             model_specs.append({
                 "id":          m["id"],
                 "endpoint":    (m.get("endpoint") or fallback_endpoint).rstrip("/"),
@@ -3516,88 +3501,15 @@ async def _run_setup_complete_bg(
                            "OPENAI_API_KEY", "OPENAI_BASE_URL"):
             os.environ.pop(_stale_key, None)
 
-        # Clear any example-placeholder machines and their auto-generated profiles
-        for m in auth_db.list_machines():
-            if (m.get("description") or "").startswith("Example"):
-                auth_db.delete_machine(m["id"])
-        for p in auth_db.list_policies():
-            if (p.get("description") or "").startswith(("Auto-generated", "Auto-created")):
-                auth_db.delete_policy(p["id"])
-
-        # Register inference machines — one per selected server.
-        # Fall back to single-server path if no servers list provided.
-        await _paced_progress_update("register_machines", "Registering inference servers\u2026")
-        servers = body.get("servers") or []
-        if not auth_db.list_machines():
-            if servers and len(servers) > 1:
-                # Multi-server: create a machine for each server, one catch-all policy.
-                machine_ids = []
-                for idx, srv in enumerate(servers):
-                    ep   = (srv.get("endpoint") or "").strip().rstrip("/")
-                    name = (srv.get("name") or "").strip() or f"Inference Node {idx + 1}"
-                    desc = f"Auto-registered by setup wizard ({srv.get('type','unknown')})."
-                    m_obj = auth_db.create_machine(name=name, endpoint_url=ep or endpoint, description=desc)
-                    auth_db.set_machine_capabilities(
-                        m_obj["id"],
-                        ["lightweight", "general", "coding", "reasoning", "vision", "embedding"],
-                    )
-                    rec_model = (srv.get("recommended_model") or "").strip()
-                    if rec_model:
-                        auth_db.update_machine(m_obj["id"], default_model=rec_model)
-                    machine_ids.append(m_obj["id"])
-                # Catch-all policy routing to first machine (user can tune later)
-                policy = auth_db.create_policy(
-                    name="default",
-                    description="Auto-created by setup wizard.",
-                    fallback="any_available",
-                )
-                auth_db.set_policy_rules(policy["id"], [
-                    {"model_class": "*", "machine_id": machine_ids[0], "rank": 1},
-                ])
-                logger.info("setup wizard: %d machines registered", len(machine_ids))
-            else:
-                # Single-server path
-                result = _seed.apply_single_machine_setup(endpoint)
-                if "error" in result and result["error"] != "machines_already_exist":
-                    raise _SetupUserError(
-                        result.get("error", "machine_setup_failed"),
-                        result.get("detail") or str(result),
-                        status=409,
-                    )
-                # Backfill default_model on the newly created machine
-                _single_rec = (body.get("model") or "").strip()
-                if _single_rec:
-                    for _m in auth_db.list_machines():
-                        if (_m.get("endpoint_url") or "").rstrip("/") == endpoint.rstrip("/"):
-                            auth_db.update_machine(_m["id"], default_model=_single_rec)
-                            break
-        else:
-            # Reconfigure path: machines already exist from a prior setup run.
-            # Refresh the default_model on the machine matching the chosen
-            # endpoint and repoint the default policy's catch-all rule so
-            # routing follows the user's new choice. Without this the
-            # machine's default_model and the policy rules stay pinned to
-            # the old model while config.yaml silently moves on.
-            _chosen_ep = endpoint.rstrip("/")
-            _target_machine = next(
-                (_m for _m in auth_db.list_machines()
-                 if (_m.get("endpoint_url") or "").rstrip("/") == _chosen_ep),
-                None,
-            )
-            if _target_machine and model:
-                auth_db.update_machine(_target_machine["id"], default_model=model)
-                _default_policy = next(
-                    (p for p in auth_db.list_policies() if p.get("name") == "default"),
-                    None,
-                )
-                if _default_policy:
-                    auth_db.set_policy_rules(_default_policy["id"], [
-                        {"model_class": "*", "machine_id": _target_machine["id"], "rank": 1},
-                    ])
-                logger.info(
-                    "setup: reconfigure — set machine %s default_model=%s and repointed default policy",
-                    _target_machine["id"], model,
-                )
+        # The v1 wizard registered one inference "machine" per selected
+        # server plus a catch-all routing profile here. Both were removed
+        # in S1.6; the chosen endpoint/model reach the agent through
+        # config.yaml below. The step stays in the stepper as a no-op
+        # until S1.9 strips the wizard.
+        await _paced_progress_update(
+            "register_machines",
+            "Inference machines are not used in v2 (skipped)\u2026",
+        )
 
         # Save model preference on the admin user.
         # During first-run setup the browser has no session yet, so we look up
@@ -3779,14 +3691,7 @@ async def _run_setup_complete_bg(
                         )
                     raise
 
-        # Assign admin and any additional users to the default routing profile
         from gateway.auth.password import hash_password as _hp
-        default_policy = next(
-            (p for p in auth_db.list_policies() if p.get("name") == "default"),
-            None,
-        ) or (auth_db.list_policies() or [None])[0]
-        if default_policy:
-            auth_db.assign_user_policy(user_id, default_policy["id"])
 
         additional_users = body.get("additional_users") or []
         for u in additional_users:
@@ -3797,12 +3702,10 @@ async def _run_setup_complete_bg(
             if not (uname and uemail and upw):
                 continue
             try:
-                new_user = auth_db.create_user(
+                auth_db.create_user(
                     email=uemail, username=uname,
                     password_hash=_hp(upw), role=urole,
                 )
-                if default_policy:
-                    auth_db.assign_user_policy(new_user["id"], default_policy["id"])
                 logger.info("setup: created user %s (%s)", uname, urole)
             except Exception as _ue:
                 logger.warning("setup: could not create user %s: %s", uname, _ue)
@@ -3898,27 +3801,7 @@ async def _run_setup_complete_bg(
                     "setup: default agent '%s' already exists — updated", agent_name,
                 )
 
-            # Apply B-tier capability defaults (always_on + default_on_create)
-            # so the agent actually has working permissions, not just a
-            # toolsets list. For a brand-new agent this is the first
-            # application; for a reconfigured agent this is idempotent —
-            # `apply()` is a no-op when toolsets+presets are already in
-            # place. Third-party capabilities (slack, telegram, …) stay
-            # off until the user wires credentials in STAMP → P.
-            try:
-                from gateway import capabilities as _caps
-                _applied = _caps.apply_initial_defaults(default_agent["id"])
-                logger.info(
-                    "setup: applied %d default capabilities to %s: %s",
-                    len(_applied), agent_name, _applied,
-                )
-                default_agent = auth_db.get_agent(default_agent["id"]) or default_agent
-            except Exception as _cap_err:
-                logger.warning("setup: apply_initial_defaults failed: %s", _cap_err)
-
-            # Start SearxNG (local metasearch) — paired with the
-            # web_search_local capability that apply_initial_defaults
-            # just enabled. Non-fatal: logs + continues if docker
+            # Start SearxNG (local metasearch). Non-fatal: logs + continues if docker
             # compose can't bring it up, so /setup still succeeds and
             # the agent spawns; the user just gets a clear error when
             # the agent first tries to search. Labels surface as the
@@ -4325,112 +4208,6 @@ async def handle_setup_session_claim(request: web.Request) -> web.Response:
     if access and refresh:
         set_auth_cookies(resp, access, refresh)
     return resp
-
-
-# ---------------------------------------------------------------------------
-# LAN discovery — find existing Logos instances on the local network
-# ---------------------------------------------------------------------------
-
-_LOGOS_PORTS = [8080, 7860, 8000]   # ports to probe for Logos instances
-_DISCOVER_TIMEOUT = aiohttp.ClientTimeout(total=1.5)
-_DISCOVER_CONCURRENCY = 30
-_CONNECT_JSON = pathlib.Path(os.environ.get("LOGOS_HOME") or os.environ.get("HERMES_HOME") or str(pathlib.Path.home() / ".logos")) / "connect.json"
-
-
-async def _probe_logos(session: aiohttp.ClientSession, url: str) -> dict | None:
-    """Return instance info if url hosts a Logos instance, else None."""
-    try:
-        async with session.get(f"{url}/health", timeout=_DISCOVER_TIMEOUT) as r:
-            if r.status != 200:
-                return None
-            data = await r.json(content_type=None)
-            if data.get("product") != "logos":
-                return None
-            return {
-                "url": url,
-                "setup_completed": data.get("setup_completed", False),
-                "uptime_s": data.get("uptime_s"),
-            }
-    except Exception:
-        return None
-
-
-async def handle_setup_discover(request: web.Request) -> web.Response:
-    """Scan local network for running Logos instances.
-
-    Returns a list of discovered instances. Scans:
-      - localhost on all LOGOS_PORTS
-      - local /24 subnet on port 8080
-    """
-    own_ips = _own_ips()
-    targets: list[str] = []
-
-    # Always check localhost variants first
-    for port in _LOGOS_PORTS:
-        for host in ("127.0.0.1", "localhost"):
-            targets.append(f"http://{host}:{port}")
-
-    # Scan local /24 subnet
-    try:
-        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
-            s.connect(("8.8.8.8", 80))
-            own_ip = s.getsockname()[0]
-        prefix = ".".join(own_ip.split(".")[:3])
-        for i in range(1, 255):
-            host = f"{prefix}.{i}"
-            if host not in own_ips:
-                targets.append(f"http://{host}:8080")
-    except Exception:
-        pass
-
-    results = []
-    sem = asyncio.Semaphore(_DISCOVER_CONCURRENCY)
-
-    async def _bounded(url: str):
-        async with sem:
-            return await _probe_logos(session, url)
-
-    async with aiohttp.ClientSession() as session:
-        tasks = [_bounded(url) for url in targets]
-        for coro in asyncio.as_completed(tasks):
-            found = await coro
-            if found:
-                results.append(found)
-
-    return web.json_response({"instances": results})
-
-
-async def handle_setup_set_remote(request: web.Request) -> web.Response:
-    """Save a remote Logos URL so the launcher opens it instead of local mode.
-
-    Writes ~/.logos/connect.json with {"url": "..."}.
-    The launcher reads this on next start and skips the local gateway.
-    """
-    try:
-        body = await request.json()
-    except Exception:
-        return web.json_response({"error": "invalid_json"}, status=400)
-
-    url = (body.get("url") or "").strip().rstrip("/")
-    if not url:
-        return web.json_response({"error": "url required"}, status=400)
-
-    # Validate it's actually a Logos instance before saving
-    try:
-        async with aiohttp.ClientSession() as s:
-            async with s.get(f"{url}/health", timeout=_DISCOVER_TIMEOUT) as r:
-                if r.status != 200:
-                    return web.json_response({"error": "unreachable"}, status=400)
-                data = await r.json(content_type=None)
-                if data.get("product") != "logos":
-                    return web.json_response({"error": "not_logos"}, status=400)
-    except Exception as exc:
-        return web.json_response({"error": "unreachable", "detail": str(exc)[:200]}, status=400)
-
-    _CONNECT_JSON.parent.mkdir(parents=True, exist_ok=True)
-    _CONNECT_JSON.write_text(json.dumps({"url": url}, indent=2), encoding="utf-8")
-    logger.info("setup: saved remote connect URL: %s", url)
-    return web.json_response({"ok": True, "url": url})
 
 
 async def handle_setup_compare_cancel_server(request: web.Request) -> web.Response:
