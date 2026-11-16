@@ -227,7 +227,12 @@ class Board:
             out = []
             for r in rows:
                 expired = r["kind"] in REQUEST_KINDS and now - r["ts"] > DAY
-                out.append(self._present(r, expired))
+                m = self._present(r, expired)
+                if r["kind"] in REQUEST_KINDS and self.status_of(r, now) in DECISIONS:
+                    # Its person already answered it (from the dashboard) before the agent looked.
+                    m["expects"] = "Nothing: your person has already answered this one. Do not tell them again."
+                    m["already_answered"] = True
+                out.append(m)
             self.db.execute("UPDATE messages SET read_at = ? WHERE recipient = ? AND read_at IS NULL", (now, me))
             lapsed = []
             for r in self.db.execute(
@@ -308,6 +313,29 @@ class Board:
         else:
             m["expects"] = "Nothing. Do not reply to it. Note it if it is useful."
         return m
+
+    def history(self, me: str, limit: int = 100) -> List[Dict[str, Any]]:
+        """Messages ``me`` sent or received, newest first, with how each ended. Marks nothing as
+        read. This is what the dashboard shows the agent's person."""
+        with self._lock:
+            now = self.clock()
+            rows = self.db.execute(
+                "SELECT * FROM messages WHERE (sender = ? OR recipient = ?) ORDER BY id DESC LIMIT ?",
+                (me, me, int(limit))).fetchall()
+            out = []
+            for r in rows:
+                item = {"id": r["id"], "ts": r["ts"], "from": r["sender"], "to": r["recipient"],
+                        "from_name": self.display(r["sender"]), "to_name": self.display(r["recipient"]),
+                        "kind": r["kind"], "text": r["text"], "urgent": bool(r["urgent"]),
+                        "reply_to": r["reply_to"], "decision": r["decision"],
+                        "status": self.status_of(r, now)}
+                if r["kind"] in REQUEST_KINDS:
+                    item["expires_at"] = r["ts"] + DAY
+                    ans = self.db.execute("SELECT text FROM messages WHERE kind = 'answer' AND reply_to = ?",
+                                          (r["id"],)).fetchone()
+                    item["answer"] = ans["text"] if ans else None
+                out.append(item)
+            return out
 
     def log(self, limit: int = 200) -> List[Dict[str, Any]]:
         """Every message, newest first (for the dashboard and for tests)."""
@@ -415,13 +443,15 @@ def make_handler(board: Board, *, mcp: bool = True, poll: bool = True):
         def do_GET(self):
             if self.path == "/health":
                 return self._send(200, {"status": "ok", "agents": sorted(board.agents)})
-            if poll and self.path in ("/pending", "/urgent"):
+            if poll and self.path.split("?")[0] in ("/pending", "/urgent", "/history"):
                 auth = self.headers.get("Authorization", "")
                 agent = board.agent_for_token(auth[7:].strip() if auth.lower().startswith("bearer ") else "")
                 if agent is None:
                     return self._send(401, {"error": "unknown or missing token"})
                 if self.path == "/pending":
                     return self._send(200, board.pending(agent))
+                if self.path.split("?")[0] == "/history":       # for the dashboard, on the host
+                    return self._send(200, {"agent": agent, "messages": board.history(agent)})
                 return self._send(200, {"lines": board.urgent(agent)})
             # No server-initiated stream: the MCP spec lets a server answer 405 here.
             self._send(405, {"error": "use POST"}, (("Allow", "POST"),))

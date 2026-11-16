@@ -1,9 +1,10 @@
 // Logos dashboard shell: sign-in handling, theme, and a tiny hash router.
 // No build step: plain ES modules served from /ui/.
 import { chatView } from './chat.js';
+import { noticeboardView, setBadge } from './noticeboard.js';
 import { h, api, getJSON } from './util.js';
 
-const views = { chat: chatView };
+const views = { chat: chatView, noticeboard: noticeboardView };
 const root = document.getElementById('view');
 let cleanup = null;
 
@@ -44,5 +45,9 @@ document.getElementById('logout').addEventListener('click', async () => {
 paintTheme();
 state.me = await getJSON('/api/v2/me');
 document.getElementById('who').textContent = `Signed in as ${state.me.display_name || state.me.username}`;
+// Keep the "waiting on you" count in the menu current on every screen.
+const badge = () => getJSON('/api/v2/noticeboard').then((d) => setBadge(d.waiting.length)).catch(() => {});
+badge();
+setInterval(badge, 60000);
 window.addEventListener('hashchange', route);
 route();
