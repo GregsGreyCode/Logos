@@ -15,7 +15,7 @@ from logos_cli.auth import (
     resolve_api_key_provider_credentials,
 )
 from logos_cli.config import load_config
-from core.constants import OPENROUTER_BASE_URL
+from logos_cli.constants import OPENROUTER_BASE_URL
 
 
 def _get_model_config() -> Dict[str, Any]:

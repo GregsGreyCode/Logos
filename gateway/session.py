@@ -324,113 +324,6 @@ def build_session_context_prompt(context: SessionContext) -> str:
     return "\n".join(lines)
 
 
-def build_agent_system_prompt(agent_record: dict, session_context_prompt: str) -> str:
-    """Compose the FULL system prompt sent to a sandbox worker.
-
-    The sandbox worker is a thin transport: it ships whatever
-    `context_prompt` it receives straight to inference. So the gateway
-    has to assemble:
-
-      1. Identity preamble — "You are {name}." Without this the model
-         has no idea what name it's wearing and answers "I'm an AI
-         assistant" when asked. The user noticed this regression after
-         the move to sandboxed agents because the legacy in-process
-         path baked the name into a different prompt builder that no
-         longer runs.
-      2. Soul markdown — the persona definition (souls/<slug>/soul.md).
-         Loaded from the in-process soul registry; falls back gracefully
-         if the slug is unknown or has no soul.md on disk.
-      3. Description — the per-agent free-text description from the
-         agents table (if any), so users can customise voice without
-         editing soul files.
-      4. Session context — deployment, source, capability manifest,
-         delivery options. Built by ``build_session_context_prompt``.
-    """
-    name = (agent_record or {}).get("name") or "Agent"
-    soul_slug = (agent_record or {}).get("soul_slug") or ""
-    description = ((agent_record or {}).get("description") or "").strip()
-
-    parts: list[str] = []
-    # Identity preamble — just one natural-language line.
-    #
-    # Earlier this had a multi-paragraph "you must respond with X,
-    # this is non-negotiable" follow-up to defeat a one-off
-    # qwen3.5-9b hallucination ("Hermes" → "I'm Ani"). That worked
-    # for qwen but caught fire on gpt-oss-20b: the OpenAI Harmony
-    # chat format treats developer-constraint language as a signal
-    # to route the response through the `commentary` channel, and
-    # LM Studio's OpenAI-compat shim doesn't strip the channel
-    # framing — so users saw raw `<|channel|>commentary to=developer
-    # ... You must say "Michael". Michael` tokens leak into the
-    # response.
-    #
-    # The fix is to drop the constraint language entirely and rely
-    # on the standard OpenAI-style "You are X." preamble. If a
-    # specific name still trips a model's training bias (the
-    # original qwen + "Hermes" case), the user can either rename
-    # the agent or pin it to a different model.
-    parts.append(f"You are {name}.")
-    parts.append("")
-
-    # World awareness — self appearance + peer roster. Lets an agent
-    # answer "what do you look like?" correctly and know who else is
-    # around without waiting for a tool call. Best-effort: a failure
-    # here must never block dispatch, and the snippet is skipped on
-    # single-agent installs (no peers → nothing added beyond the self
-    # description, which the renderer also decides).
-    try:
-        from gateway.world_awareness import render_self_and_peers_prompt
-        awareness = render_self_and_peers_prompt(agent_record)
-        if awareness:
-            parts.append(awareness)
-            parts.append("")
-    except Exception as exc:
-        logger.debug("world_awareness failed (non-fatal): %s", exc)
-
-    # Soul persona — pulled from the registry, not from disk per-call,
-    # so this is fast even on the dispatch hot path.
-    if soul_slug:
-        try:
-            from gateway.souls import get_soul_registry
-            soul = get_soul_registry().get(soul_slug)
-            if soul and soul.soul_md:
-                parts.append(soul.soul_md.strip())
-                parts.append("")
-        except Exception:
-            pass
-
-    if description:
-        parts.append(f"## About you")
-        parts.append("")
-        parts.append(description)
-        parts.append("")
-
-    # Tool-use guidance nudges — tell the agent about memory + session
-    # recall so it actually USES the tools it has rather than saying
-    # "I don't remember" or "could you repeat that?". These constants
-    # live in agent/prompt_builder.py and are already used in the CLI
-    # path; the gateway path was missing them.
-    try:
-        from agent.prompt_builder import (
-            MEMORY_GUIDANCE,
-            SESSION_SEARCH_GUIDANCE,
-            SKILLS_GUIDANCE,
-        )
-        parts.append("## Tool guidance")
-        parts.append("")
-        parts.append(f"- {MEMORY_GUIDANCE}")
-        parts.append(f"- {SESSION_SEARCH_GUIDANCE}")
-        parts.append(f"- {SKILLS_GUIDANCE}")
-        parts.append("")
-    except ImportError:
-        pass
-
-    if session_context_prompt:
-        parts.append(session_context_prompt)
-
-    return "\n".join(parts).strip()
-
-
 @dataclass
 class SessionEntry:
     """
@@ -578,7 +471,7 @@ class SessionStore:
         # Initialize SQLite session database
         self._db = None
         try:
-            from core.state import SessionDB
+            from gateway.lib.state import SessionDB
             self._db = SessionDB()
         except Exception as e:
             print(f"[gateway] Warning: SQLite session store unavailable, falling back to JSONL: {e}")

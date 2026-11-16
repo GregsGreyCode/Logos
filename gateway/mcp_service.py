@@ -57,7 +57,7 @@ class MCPGatewayService:
         """
         self._servers_cfg: Dict[str, dict] = config.get("mcp_servers") or {}
         self._policy_cfg:  Dict[str, list] = config.get("mcp_policy")  or {}
-        # name → MCPServerTask (from tools/mcp_tool.py)
+        # name → MCPServerTask (from gateway/lib/mcp_client.py)
         self._servers: Dict[str, Any] = {}
         self._lock = threading.Lock()
         self._started = False
@@ -79,12 +79,14 @@ class MCPGatewayService:
             return
 
         try:
-            from tools.mcp_tool import _ensure_mcp_loop, _discover_and_register_server, _run_on_mcp_loop
+            from gateway.lib.mcp_client import (
+                _ensure_mcp_loop, _format_connect_error, _run_on_mcp_loop, connect_server,
+            )
         except ImportError:
             logger.warning("mcp_service: mcp package not installed — MCP gateway service disabled")
             return
 
-        # MCP servers use a dedicated event loop (managed by mcp_tool.py) because
+        # MCP servers use a dedicated event loop (managed by gateway.lib.mcp_client) because
         # the MCP SDK's stdio transport creates its own asyncio subprocesses which
         # conflict with the gateway's main aiohttp loop.  We bridge via
         # run_in_executor → _run_on_mcp_loop to dispatch from here.
@@ -103,12 +105,15 @@ class MCPGatewayService:
             if not external_items:
                 return
             results = await asyncio.gather(
-                *(_discover_and_register_server(name, cfg) for name, cfg in external_items),
+                *(connect_server(name, cfg) for name, cfg in external_items),
                 return_exceptions=True,
             )
             for (name, _cfg), result in zip(external_items, results):
                 if isinstance(result, Exception):
-                    logger.warning("mcp_service: failed to start '%s': %s", name, result)
+                    logger.warning(
+                        "mcp_service: failed to start '%s': %s",
+                        name, _format_connect_error(result),
+                    )
                 else:
                     logger.info("mcp_service: started '%s' (%d tools)", name, len(result))
 
@@ -116,12 +121,12 @@ class MCPGatewayService:
         loop = asyncio.get_event_loop()
         await loop.run_in_executor(None, lambda: _run_on_mcp_loop(_start_all(), timeout=120))
 
-        # Snapshot connected servers from the mcp_tool module's _servers dict.
+        # Snapshot connected servers from the mcp_client module's _servers dict.
         # We UPDATE rather than replace so any in-process servers (e.g. the
         # Logos capabilities server registered in http_api.py before start()
         # runs) survive the snapshot.
         try:
-            from tools.mcp_tool import _servers as _mcp_servers, _lock as _mcp_lock
+            from gateway.lib.mcp_client import _servers as _mcp_servers, _lock as _mcp_lock
             with _mcp_lock:
                 with self._lock:
                     for _name, _srv in _mcp_servers.items():
@@ -137,7 +142,7 @@ class MCPGatewayService:
         if not self._started:
             return
         try:
-            from tools.mcp_tool import shutdown_mcp_servers
+            from gateway.lib.mcp_client import shutdown_mcp_servers
             loop = asyncio.get_event_loop()
             await loop.run_in_executor(None, shutdown_mcp_servers)
         except Exception as exc:
@@ -203,17 +208,17 @@ class MCPGatewayService:
             with self._lock:
                 return name in self._servers
         try:
-            from tools.mcp_tool import _ensure_mcp_loop, _discover_and_register_server, _run_on_mcp_loop
+            from gateway.lib.mcp_client import _ensure_mcp_loop, connect_server, _run_on_mcp_loop
             _ensure_mcp_loop()
 
             async def _restart():
-                return await _discover_and_register_server(name, cfg)
+                return await connect_server(name, cfg)
 
             loop = asyncio.get_event_loop()
             result = await loop.run_in_executor(None, lambda: _run_on_mcp_loop(_restart(), timeout=60))
 
             # Update server snapshot
-            from tools.mcp_tool import _servers as _mcp_servers, _lock as _mcp_lock
+            from gateway.lib.mcp_client import _servers as _mcp_servers, _lock as _mcp_lock
             with _mcp_lock:
                 with self._lock:
                     if name in _mcp_servers:
@@ -327,7 +332,7 @@ class MCPGatewayService:
                 return _err(-32603, str(exc))
 
         try:
-            from tools.mcp_tool import _run_on_mcp_loop
+            from gateway.lib.mcp_client import _run_on_mcp_loop
             result = await asyncio.get_event_loop().run_in_executor(
                 None,
                 lambda: _run_on_mcp_loop(

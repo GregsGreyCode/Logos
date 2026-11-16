@@ -269,29 +269,29 @@ def _platform_toolset_summary(config: dict, platforms: Optional[List[str]] = Non
 
 
 def _get_platform_tools(config: dict, platform: str) -> Set[str]:
-    """Resolve which individual toolset names are enabled for a platform."""
-    from core.toolsets import resolve_toolset, TOOLSETS
+    """Resolve which configurable toolset keys are enabled for a platform.
+
+    The v1 toolset registry (core.toolsets) is gone. The only composite
+    toolset the CLI ever referenced was the platform default
+    (``hermes-cli``), which covered every configurable toolset; anything
+    else in the list is a configurable toolset key saved by
+    ``_save_platform_tools``.
+    """
+    configurable = {ts_key for ts_key, _, _ in CONFIGURABLE_TOOLSETS}
+    default_ts = PLATFORMS[platform]["default_toolset"]
 
     platform_toolsets = config.get("platform_toolsets", {})
     toolset_names = platform_toolsets.get(platform)
 
     if toolset_names is None or not isinstance(toolset_names, list):
-        default_ts = PLATFORMS[platform]["default_toolset"]
         toolset_names = [default_ts]
 
-    # Resolve to individual tool names, then map back to which
-    # configurable toolsets are covered
-    all_tool_names = set()
+    enabled_toolsets: Set[str] = set()
     for ts_name in toolset_names:
-        all_tool_names.update(resolve_toolset(ts_name))
-
-    # Map individual tool names back to configurable toolset keys
-    enabled_toolsets = set()
-    for ts_key, _, _ in CONFIGURABLE_TOOLSETS:
-        ts_tools = set(resolve_toolset(ts_key))
-        if ts_tools and ts_tools.issubset(all_tool_names):
-            enabled_toolsets.add(ts_key)
-
+        if ts_name == default_ts:
+            enabled_toolsets |= configurable
+        elif ts_name in configurable:
+            enabled_toolsets.add(ts_name)
     return enabled_toolsets
 
 

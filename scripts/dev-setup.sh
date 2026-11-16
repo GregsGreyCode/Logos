@@ -256,14 +256,9 @@ mkdir -p "$LOGOS_SKILLS_DIR"
 
 echo ""
 echo "Syncing bundled skills to ~/.logos/skills/ ..."
-if "$SCRIPT_DIR/venv/bin/python" "$SCRIPT_DIR/tools/skills_sync.py" 2>/dev/null; then
-    echo -e "${GREEN}✓${NC} Skills synced"
-else
-    # Fallback: copy if sync script fails (missing deps, etc.)
-    if [ -d "$SCRIPT_DIR/skills" ]; then
-        cp -rn "$SCRIPT_DIR/skills/"* "$LOGOS_SKILLS_DIR/" 2>/dev/null || true
-        echo -e "${GREEN}✓${NC} Skills copied"
-    fi
+if [ -d "$SCRIPT_DIR/skills" ]; then
+    cp -rn "$SCRIPT_DIR/skills/"* "$LOGOS_SKILLS_DIR/" 2>/dev/null || true
+    echo -e "${GREEN}✓${NC} Skills copied"
 fi
 
 # ============================================================================

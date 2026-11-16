@@ -185,56 +185,6 @@ class TestUserSkins:
         assert pirate["source"] == "user"
 
 
-class TestDisplayIntegration:
-    def test_get_skin_tool_prefix_default(self):
-        from agent.display import get_skin_tool_prefix
-        assert get_skin_tool_prefix() == "┊"
-
-    def test_get_skin_tool_prefix_custom(self):
-        from logos_cli.skin_engine import set_active_skin
-        from agent.display import get_skin_tool_prefix
-        set_active_skin("ares")
-        assert get_skin_tool_prefix() == "╎"
-
-    def test_get_skin_faces_default(self):
-        from agent.display import get_skin_faces, KawaiiSpinner
-        faces = get_skin_faces("waiting_faces", KawaiiSpinner.KAWAII_WAITING)
-        # Default skin has no custom faces, so should return the default list
-        assert faces == KawaiiSpinner.KAWAII_WAITING
-
-    def test_get_skin_faces_ares(self):
-        from logos_cli.skin_engine import set_active_skin
-        from agent.display import get_skin_faces, KawaiiSpinner
-        set_active_skin("ares")
-        faces = get_skin_faces("waiting_faces", KawaiiSpinner.KAWAII_WAITING)
-        assert "(⚔)" in faces
-
-    def test_get_skin_verbs_default(self):
-        from agent.display import get_skin_verbs, KawaiiSpinner
-        verbs = get_skin_verbs()
-        assert verbs == KawaiiSpinner.THINKING_VERBS
-
-    def test_get_skin_verbs_ares(self):
-        from logos_cli.skin_engine import set_active_skin
-        from agent.display import get_skin_verbs
-        set_active_skin("ares")
-        verbs = get_skin_verbs()
-        assert "forging" in verbs
-
-    def test_tool_message_uses_skin_prefix(self):
-        from logos_cli.skin_engine import set_active_skin
-        from agent.display import get_cute_tool_message
-        set_active_skin("ares")
-        msg = get_cute_tool_message("terminal", {"command": "ls"}, 0.5)
-        assert msg.startswith("╎")
-        assert "┊" not in msg
-
-    def test_tool_message_default_prefix(self):
-        from agent.display import get_cute_tool_message
-        msg = get_cute_tool_message("terminal", {"command": "ls"}, 0.5)
-        assert msg.startswith("┊")
-
-
 class TestCliBrandingHelpers:
     def test_active_prompt_symbol_default(self):
         from logos_cli.skin_engine import get_active_prompt_symbol

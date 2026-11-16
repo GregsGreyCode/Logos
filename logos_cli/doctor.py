@@ -31,7 +31,7 @@ os.environ.setdefault("MSWEA_GLOBAL_CONFIG_DIR", str(HERMES_HOME))
 os.environ.setdefault("MSWEA_SILENT_STARTUP", "1")
 
 from logos_cli.colors import Colors, color
-from core.constants import OPENROUTER_MODELS_URL
+from logos_cli.constants import OPENROUTER_MODELS_URL
 
 
 _PROVIDER_ENV_HINTS = (
@@ -52,11 +52,6 @@ _PROVIDER_ENV_HINTS = (
 def _has_provider_env_config(content: str) -> bool:
     """Return True when ~/.hermes/.env contains provider auth/base URL settings."""
     return any(key in content for key in _PROVIDER_ENV_HINTS)
-
-
-def _apply_doctor_tool_availability_overrides(available: list[str], unavailable: list[dict]) -> tuple[list[str], list[dict]]:
-    """Adjust runtime-gated tool availability for doctor diagnostics."""
-    return available, unavailable
 
 
 def check_ok(text: str, detail: str = ""):
@@ -586,39 +581,6 @@ def run_doctor(args):
             except Exception as _e:
                 print(f"\r  {color('⚠', Colors.YELLOW)} {_label} {color(f'({_e})', Colors.DIM)}           ")
 
-    # =========================================================================
-    # Check: Tool Availability
-    # =========================================================================
-    print()
-    print(color("◆ Tool Availability", Colors.CYAN, Colors.BOLD))
-    
-    try:
-        # Add project root to path for imports
-        sys.path.insert(0, str(PROJECT_ROOT))
-        from core.model_tools import check_tool_availability, TOOLSET_REQUIREMENTS
-        
-        available, unavailable = check_tool_availability()
-        available, unavailable = _apply_doctor_tool_availability_overrides(available, unavailable)
-        
-        for tid in available:
-            info = TOOLSET_REQUIREMENTS.get(tid, {})
-            check_ok(info.get("name", tid))
-        
-        for item in unavailable:
-            env_vars = item.get("missing_vars") or item.get("env_vars") or []
-            if env_vars:
-                vars_str = ", ".join(env_vars)
-                check_warn(item["name"], f"(missing {vars_str})")
-            else:
-                check_warn(item["name"], "(system dependency not met)")
-
-        # Count disabled tools with API key requirements
-        api_disabled = [u for u in unavailable if (u.get("missing_vars") or u.get("env_vars"))]
-        if api_disabled:
-            issues.append("Run 'logos setup' to configure missing API keys for full tool access")
-    except Exception as e:
-        check_warn("Could not check tool availability", f"({e})")
-    
     # =========================================================================
     # Check: Skills Hub
     # =========================================================================
