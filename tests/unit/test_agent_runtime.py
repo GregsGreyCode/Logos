@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import importlib.util
 import json
+
+import yaml
 import subprocess
 from importlib.machinery import SourceFileLoader
 from pathlib import Path
@@ -355,6 +357,13 @@ class TestEnsureModel:
         rt(repo, runner).ensure_model(self.MODEL)
         assert [c[0] for c in runner.http_calls] == ["http://10.0.0.5:1234/api/v0/models"]
 
+    def test_ensure_model_accepts_a_larger_loaded_window(self, repo):
+        runner = FakeRunner()
+        runner.http_response = json.dumps({"data": [
+            {"id": "some/model", "state": "loaded", "loaded_context_length": 131072}]}).encode()
+        rt(repo, runner).ensure_model(self.MODEL)
+        assert len(runner.http_calls) == 1
+
     def test_loads_when_missing(self, repo, capsys):
         runner = FakeRunner()
         rt(repo, runner).ensure_model(self.MODEL)
@@ -391,6 +400,58 @@ class TestCreate:
             {"type": "volume", "source": "logos-home-alpha", "target": "/opt/data", "read_only": False},
             {"type": "volume", "source": "logos-brain-alpha", "target": "/opt/data/brain", "read_only": False},
         ]}}
+
+    POLICY = """\
+version: 1
+network_policies:
+  lm_studio:
+    endpoints:
+      - host: 192.0.2.117
+        port: 1234
+        protocol: rest
+        allowed_ips: [192.0.2.117/32]
+    binaries:
+      - path: /opt/hermes/tools/python-*/bin/python3*
+  telegram:
+    endpoints:
+      - host: api.telegram.org
+        port: 443
+"""
+
+    def _with_policy(self, repo):
+        path = repo / "infra/agent-image/policy.yaml"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(self.POLICY)
+        return path
+
+    def test_policy_is_rendered_for_the_agents_model_address(self, repo):
+        self._with_policy(repo)
+        r = rt(repo)
+        agent = r.load("alpha")
+        out = r.policy_path("alpha", agent)
+        assert out == repo / ".rendered" / "alpha.policy.yaml"
+        rendered = yaml.safe_load(out.read_text())["network_policies"]
+        assert rendered["lm_studio"]["endpoints"] == [
+            {"host": "10.0.0.5", "port": 1234, "protocol": "rest", "allowed_ips": ["10.0.0.5/32"]}]
+        assert rendered["lm_studio"]["binaries"] == [{"path": "/opt/hermes/tools/python-*/bin/python3*"}]
+        assert rendered["telegram"]["endpoints"] == [{"host": "api.telegram.org", "port": 443}]
+        assert str(out) in r.create_argv("alpha", agent)
+
+    def test_policy_is_used_as_is_when_the_address_already_matches(self, repo):
+        src = self._with_policy(repo)
+        r = rt(repo)
+        agent = r.load("alpha")
+        agent["model"]["base_url"] = "http://192.0.2.117:1234/v1"
+        assert r.policy_path("alpha", agent) == src
+        assert not (repo / ".rendered").exists()
+
+    def test_policy_for_a_hostname_drops_the_ip_pin(self, repo):
+        self._with_policy(repo)
+        r = rt(repo)
+        agent = r.load("alpha")
+        agent["model"]["base_url"] = "https://models.example.internal/v1"
+        ep = yaml.safe_load(r.policy_path("alpha", agent).read_text())["network_policies"]["lm_studio"]["endpoints"][0]
+        assert ep == {"host": "models.example.internal", "port": 443, "protocol": "rest"}
 
     def test_no_providers_means_no_provider_flags(self, repo):
         r = rt(repo)
