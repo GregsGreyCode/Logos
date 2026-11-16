@@ -77,7 +77,7 @@ logos = "logos_cli.main:main"
 py-modules = []
 
 [tool.setuptools.packages.find]
-include = ["agent", "tools", "tools.*", "logos_cli", "logos_cli.*", "gateway", "gateway.*", "core", "core.*", "logos", "logos.*", "workflows", "workflows.*"]
+include = ["logos_cli", "logos_cli.*", "gateway", "gateway.*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -2,7 +2,7 @@
 gateway.mcp_logos — in-process MCP server exposing Logos gateway capabilities.
 
 External MCP servers (filesystem, github, ...) run as stdio subprocesses and
-are managed by `tools.mcp_tool`. This package adds a *parallel* server type
+are managed by `gateway.lib.mcp_client`. This package adds a *parallel* server type
 that runs inside the gateway process itself so sandboxed agents can call
 back into runner-held state (platform adapters, session store, cron,
 memory, agent roster) via the same `/mcp/{name}/*` HTTP interface they

@@ -16,7 +16,7 @@ from logos_cli.colors import Colors, color
 from logos_cli.config import get_env_path, get_env_value, get_hermes_home, load_config
 from logos_cli.models import provider_label
 from logos_cli.runtime_provider import resolve_requested_provider
-from core.constants import OPENROUTER_MODELS_URL
+from logos_cli.constants import OPENROUTER_MODELS_URL
 
 def check_mark(ok: bool) -> str:
     if ok:
