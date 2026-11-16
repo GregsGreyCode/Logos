@@ -32,6 +32,7 @@ https://claude.ai/artifact/JpSGvsY25zM7VHPdce6v6P
 | OpenShell setup | [infra/openshell/](infra/openshell/) | Gateway config and provider definitions for OpenShell 0.1.8 |
 | Agent lifecycle | [scripts/logos-agent](scripts/logos-agent), [agents/](agents/) | `up`, `down`, `status`, `exec` from `agents/<name>.yaml` |
 | Model gateway | [scripts/logos-models](scripts/logos-models), [docs/model-gateway.md](docs/model-gateway.md) | One container all model calls go through: a key and a hard monthly budget per agent, paid provider keys kept out of the sandboxes |
+| Noticeboard | [gateway/noticeboard.py](gateway/noticeboard.py), [docs/noticeboard.md](docs/noticeboard.md) | The only channel between agents: a fixed menu of message kinds, the recipient always decides, limits and a full log |
 | Brain rules | [infra/brain-template/](infra/brain-template/), [infra/agent-jobs/](infra/agent-jobs/) | Vault layout, nightly consolidation, brain index, git history inside the vault |
 | Brain sync | [scripts/logos-sync](scripts/logos-sync), [docs/brain-sync.md](docs/brain-sync.md) | One Syncthing container per agent, so a brain opens as an Obsidian vault |
 | Gateway and web chat | [gateway/](gateway/), [logos_cli/](logos_cli/) | Login, account setup, trimmed dashboard. With `LOGOS_SANDBOX_BACKEND=openshell` it lists the defined agents and chats with them ([docs/architecture/web-chat.md](docs/architecture/web-chat.md)) |
@@ -42,8 +43,9 @@ https://claude.ai/artifact/JpSGvsY25zM7VHPdce6v6P
 - The gateway talks to the agents only when started with `LOGOS_SANDBOX_BACKEND=openshell`
   (put it in `~/.logos/.env`). Without it the dashboard shows empty states and chat returns
   `503 no_agents_running`.
-- Only Greg's agent is defined (`agents/greg.yaml`, plus `agents/bench.yaml` for
-  benchmarking). Béré's agent and the Household agent do not exist yet.
+- Three agents are defined (`agents/greg.yaml`, `agents/bere.yaml`, `agents/household.yaml`), plus
+  `agents/bench.yaml` for benchmarking. They can exchange messages but do not yet check the
+  noticeboard on their own.
 - There is no brain browser in the dashboard yet.
 - Web conversations and Telegram conversations are separate sessions of the same agent. They
   share its memory and brain, not the message history.

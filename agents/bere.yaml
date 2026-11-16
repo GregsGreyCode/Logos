@@ -11,6 +11,7 @@ policy: infra/agent-image/policy.yaml
 providers: []                   # OpenShell providers to attach. None: everything runs on the local model,
                                 # so nothing can spend money. Add `anthropic` only once a spend cap exists.
 timezone: Europe/London
+noticeboard: true               # may exchange messages with the other agents (docs/noticeboard.md)
 
 model:
   provider: lmstudio

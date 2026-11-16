@@ -46,6 +46,19 @@ network_policies:
         access: read-write
     binaries:
       - path: /opt/hermes/tools/python-*/bin/python3*
+  noticeboard:                     # the only channel to other agents (gateway/noticeboard.py).
+                                   # Placeholder address: logos-agent fills in the real one, and
+                                   # removes this rule for agents with no `noticeboard: true`.
+    endpoints:
+      - host: 192.0.2.1
+        port: 8090
+        protocol: rest
+        enforcement: enforce
+        access: read-write
+        allowed_ips: [192.0.2.1/32]
+    binaries:
+      - path: /opt/hermes/tools/python-*/bin/python3*
+
   telegram:                        # the agent's own bot
     endpoints:
       - host: api.telegram.org
