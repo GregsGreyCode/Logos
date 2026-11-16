@@ -1,5 +1,6 @@
 """S1.5: with the OpenShell 0.0.x runtime gone, chat/cancel answer a
-well-formed 503 and the endpoints the dashboard polls return empty shapes."""
+well-formed 503 and /instances returns an empty shape. (The sandbox,
+cluster and model-route list stubs went away with their panels in S1.10.)"""
 
 from __future__ import annotations
 
@@ -39,9 +40,6 @@ def test_chat_cancel_is_503_no_agents_running():
 
 
 def test_polled_endpoints_return_empty_shapes():
-    assert _body(_run(http_api._handle_sandboxes_list(_req())))["sandboxes"] == []
-    assert _body(_run(http_api._handle_clusters_list(_req()))) == {"clusters": []}
-    assert _body(_run(http_api._handle_model_route_list_empty(_req()))) == {"routes": []}
     inst = _body(_run(http_api._handle_instances_get(_req())))
     assert inst["instances"] == [] and inst["queue"] == []
     assert inst["resources"]["can_spawn"] is False
